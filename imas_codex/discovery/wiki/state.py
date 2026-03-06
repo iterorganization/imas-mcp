@@ -10,11 +10,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
-import time
 from dataclasses import dataclass, field
 from typing import Any
 
 from imas_codex.discovery.base.progress import WorkerStats
+from imas_codex.discovery.base.state import DiscoveryStateBase
 from imas_codex.discovery.base.supervision import PipelinePhase
 
 logger = logging.getLogger(__name__)
@@ -29,17 +29,13 @@ def _get_graph_ops():
 
 
 @dataclass
-class WikiDiscoveryState:
+class WikiDiscoveryState(DiscoveryStateBase):
     """Shared state for parallel wiki discovery."""
 
-    facility: str
-    site_type: str  # mediawiki, confluence, twiki
-    base_url: str
-    portal_page: str
+    site_type: str = ""  # mediawiki, confluence, twiki
+    base_url: str = ""
+    portal_page: str = ""
     ssh_host: str | None = None
-
-    # Service monitor for worker gating (set by parallel.py)
-    service_monitor: Any = field(default=None, repr=False)
 
     # Authentication for HTTP-based access
     auth_type: str | None = None  # tequila, session, keycloak, basic, or None
@@ -84,11 +80,9 @@ class WikiDiscoveryState:
     _wiki_healthy: bool = True
 
     # Limits
-    cost_limit: float = 10.0
     page_limit: int | None = None
     max_depth: int | None = None
     focus: str | None = None
-    deadline: float | None = None  # Unix timestamp when discovery should stop
 
     # Worker stats (simplified: score + ingest only)
     scan_stats: WorkerStats = field(default_factory=WorkerStats)
@@ -99,7 +93,6 @@ class WikiDiscoveryState:
     image_stats: WorkerStats = field(default_factory=WorkerStats)
 
     # Control
-    stop_requested: bool = False
     provider_budget_exhausted: bool = False  # API key credit limit hit (402)
     score_only: bool = False  # When True, ingest workers are not started
     store_images: bool = False  # When True, keep image_data in graph after scoring
@@ -295,26 +288,9 @@ class WikiDiscoveryState:
             + self.document_score_stats.cost
         )
 
-    async def await_services(self) -> bool:
-        """Block until all critical services are healthy.
-
-        Returns True when services are ready, False if monitor was stopped.
-        No-op (returns True immediately) when no service_monitor is set.
-        """
-        if self.service_monitor is None:
-            return True
-        return await self.service_monitor.await_services_ready()
-
-    @property
-    def deadline_expired(self) -> bool:
-        """Check if the deadline has been reached."""
-        if self.deadline is None:
-            return False
-        return time.time() >= self.deadline
-
     @property
     def budget_exhausted(self) -> bool:
-        return self.total_cost >= self.cost_limit
+        return super().budget_exhausted or self.provider_budget_exhausted
 
     @property
     def page_limit_reached(self) -> bool:
@@ -337,13 +313,10 @@ class WikiDiscoveryState:
         are actively processing claimed pages — the idle detection can fire
         prematurely when one worker is idle while another is processing.
         """
-        if self.stop_requested:
+        if super().should_stop():
             return True
 
-        if self.deadline_expired:
-            return True
-
-        budget_done = self.budget_exhausted or self.provider_budget_exhausted
+        budget_done = self.budget_exhausted
         # Page limit also stops LLM workers (score workers check this too)
         limit_done = budget_done or self.page_limit_reached
 
@@ -421,7 +394,7 @@ class WikiDiscoveryState:
         Scan workers continue even when budget is exhausted. They only stop
         when explicitly requested or when no pending work remains.
         """
-        if self.stop_requested:
+        if self.stop_requested or self.deadline_expired:
             return True
         if (
             self.scan_phase.is_idle_or_done
@@ -436,11 +409,9 @@ class WikiDiscoveryState:
         Score workers stop when budget exhausted, page limit reached,
         provider budget exhausted, or deadline expired.
         """
-        if self.stop_requested:
+        if super().should_stop():
             return True
-        if self.deadline_expired:
-            return True
-        if self.budget_exhausted or self.provider_budget_exhausted:
+        if self.budget_exhausted:
             return True
         if self.page_limit_reached:
             return True
@@ -456,9 +427,7 @@ class WikiDiscoveryState:
         2. Idle with no pending ingest work AND
            score workers are also done (no more scoring happening)
         """
-        if self.stop_requested:
-            return True
-        if self.deadline_expired:
+        if super().should_stop():
             return True
         # Continue even when budget exhausted - drain the ingest queue
         # BUT don't exit early if scoring is still running - pages may arrive soon
@@ -467,7 +436,6 @@ class WikiDiscoveryState:
             scoring_done = (
                 self.score_phase.is_idle_or_done
                 or self.budget_exhausted
-                or self.provider_budget_exhausted
                 or self.page_limit_reached
             )
             if scoring_done and not _get_graph_ops().has_pending_ingest_work(
@@ -485,16 +453,12 @@ class WikiDiscoveryState:
         2. Idle with no pending ingest work AND
            document scoring is also done (no more scoring happening)
         """
-        if self.stop_requested:
-            return True
-        if self.deadline_expired:
+        if super().should_stop():
             return True
         if self.docs_phase.is_idle_or_done:
             # Only stop if document scoring is also done AND no pending work
             scoring_done = (
-                self.document_score_phase.is_idle_or_done
-                or self.budget_exhausted
-                or self.provider_budget_exhausted
+                self.document_score_phase.is_idle_or_done or self.budget_exhausted
             )
             if scoring_done and not _get_graph_ops().has_pending_document_ingest_work(
                 self.facility, base_url=self.base_url
@@ -508,11 +472,9 @@ class WikiDiscoveryState:
         Document score workers stop when budget exhausted, provider budget
         exhausted, deadline expired, or no more discovered documents.
         """
-        if self.stop_requested:
+        if super().should_stop():
             return True
-        if self.deadline_expired:
-            return True
-        if self.budget_exhausted or self.provider_budget_exhausted:
+        if self.budget_exhausted:
             return True
         if (
             self.document_score_phase.is_idle_or_done
@@ -534,11 +496,9 @@ class WikiDiscoveryState:
         2. Budget exhausted or provider budget exhausted
         3. Idle AND ingestion is done AND no pending images
         """
-        if self.stop_requested:
+        if super().should_stop():
             return True
-        if self.deadline_expired:
-            return True
-        if self.budget_exhausted or self.provider_budget_exhausted:
+        if self.budget_exhausted:
             return True
         # Wait for ingestion to finish before declaring no work.
         # Images only appear after pages are ingested, so the worker may
@@ -753,13 +713,10 @@ class WikiDiscoveryState:
         fire prematurely when one worker is idle while another is
         processing a batch.
         """
-        if self.stop_requested:
+        if super().should_stop():
             return True
 
-        if self.deadline_expired:
-            return True
-
-        budget_done = self.budget_exhausted or self.provider_budget_exhausted
+        budget_done = self.budget_exhausted
         limit_done = budget_done or self.page_limit_reached
 
         score_done = self.score_phase.is_idle_or_done or limit_done
@@ -820,7 +777,7 @@ class WikiDiscoveryState:
 
 
 @dataclass
-class FacilityWorkerState:
+class FacilityWorkerState(DiscoveryStateBase):
     """Lightweight state for facility-scoped workers (image, embed).
 
     These workers don't need site-specific fields (base_url, auth_type,
@@ -831,20 +788,11 @@ class FacilityWorkerState:
     lifecycle to run continuously across all sites.
     """
 
-    facility: str
     ssh_host: str | None = None
     focus: str | None = None
-
-    # Shared service monitor (same instance as site workers)
-    service_monitor: Any = field(default=None, repr=False)
-
-    # Budget / limits — shared with the orchestrator
-    cost_limit: float = 10.0
-    deadline: float | None = None
     store_images: bool = False
 
     # Control
-    stop_requested: bool = False
     provider_budget_exhausted: bool = False
 
     # Stats
@@ -858,14 +806,8 @@ class FacilityWorkerState:
         return self.image_stats.cost
 
     @property
-    def deadline_expired(self) -> bool:
-        if self.deadline is None:
-            return False
-        return time.time() >= self.deadline
-
-    @property
     def budget_exhausted(self) -> bool:
-        return self.total_cost >= self.cost_limit
+        return super().budget_exhausted or self.provider_budget_exhausted
 
     def should_stop(self) -> bool:
         """Check if facility-scoped workers should stop.
@@ -874,9 +816,7 @@ class FacilityWorkerState:
         all facility-scoped work is complete (image scoring done and
         no pending embed work).
         """
-        if self.stop_requested:
-            return True
-        if self.deadline_expired:
+        if super().should_stop():
             return True
         # Check if all facility-scoped work is genuinely complete.
         # Image worker has its own stop condition; embed worker checks
@@ -893,11 +833,9 @@ class FacilityWorkerState:
         phase — facility-scoped image workers drain the global queue and
         stop when no pending images remain after a debounce period.
         """
-        if self.stop_requested:
+        if super().should_stop():
             return True
-        if self.deadline_expired:
-            return True
-        if self.budget_exhausted or self.provider_budget_exhausted:
+        if self.budget_exhausted:
             return True
         if (
             self.image_phase.is_idle_or_done

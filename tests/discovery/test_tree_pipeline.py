@@ -68,7 +68,9 @@ class TestTreeDiscoveryState:
         assert not hasattr(state, "enrich_stats")
         assert not hasattr(state, "enrich_phase")
         assert not hasattr(state, "enrich")
-        assert not hasattr(state, "budget_exhausted")
+        # budget_exhausted is inherited from DiscoveryStateBase but always False
+        # for tree discovery (no cost tracking)
+        assert not state.budget_exhausted
 
 
 class TestBackwardCompatState:

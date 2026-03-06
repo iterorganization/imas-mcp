@@ -15,13 +15,10 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from imas_codex.discovery.base.engine import WorkerSpec, run_discovery_engine
 from imas_codex.discovery.base.progress import WorkerStats
-from imas_codex.discovery.base.supervision import (
-    PipelinePhase,
-    SupervisedWorkerGroup,
-    run_supervised_loop,
-    supervised_worker,
-)
+from imas_codex.discovery.base.state import DiscoveryStateBase
+from imas_codex.discovery.base.supervision import PipelinePhase
 
 from .workers import image_fetch_worker, image_score_worker
 
@@ -29,14 +26,12 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class DocumentDiscoveryState:
+class DocumentDiscoveryState(DiscoveryStateBase):
     """Shared state for document discovery workers."""
 
-    facility: str
-    ssh_host: str
+    ssh_host: str = ""
     cost_limit: float = 2.0
     min_score: float = 0.5
-    deadline: float | None = None
     store_images: bool = False
     scan_only: bool = False
     focus: str | None = None
@@ -51,23 +46,9 @@ class DocumentDiscoveryState:
         default_factory=lambda: PipelinePhase("image_score")
     )
 
-    # Control
-    stop_requested: bool = False
-
     @property
     def score_only(self) -> bool:
         return False
-
-    def should_stop(self) -> bool:
-        if self.stop_requested:
-            return True
-        if self.deadline is not None and time.time() >= self.deadline:
-            return True
-        return False
-
-    @property
-    def budget_exhausted(self) -> bool:
-        return self.image_score_stats.cost >= self.cost_limit
 
     @property
     def total_cost(self) -> float:
@@ -160,59 +141,27 @@ async def run_document_discovery(
         lambda: _has_pending_image_scores(facility) or not state.image_phase.done
     )
 
-    worker_group = SupervisedWorkerGroup()
+    workers = [
+        WorkerSpec(
+            "image",
+            "image_phase",
+            image_fetch_worker,
+            count=num_image_workers,
+        ),
+        WorkerSpec(
+            "vlm",
+            "image_score_phase",
+            image_score_worker,
+            count=num_vlm_workers,
+            enabled=not scan_only,
+        ),
+    ]
 
-    # Watch external stop event (from CLI signal handler)
-    stop_watcher: asyncio.Task | None = None
-    if stop_event is not None:
-        from imas_codex.cli.shutdown import watch_stop_event
-
-        stop_watcher = asyncio.create_task(watch_stop_event(stop_event, state))
-
-    for i in range(num_image_workers):
-        worker_name = f"image_worker_{i}"
-        status = worker_group.create_status(worker_name, group="image")
-        worker_group.add_task(
-            asyncio.create_task(
-                supervised_worker(
-                    image_fetch_worker,
-                    worker_name,
-                    state,
-                    state.should_stop,
-                    status_tracker=status,
-                )
-            )
-        )
-
-    if not scan_only:
-        for i in range(num_vlm_workers):
-            worker_name = f"vlm_worker_{i}"
-            status = worker_group.create_status(worker_name, group="vlm")
-            worker_group.add_task(
-                asyncio.create_task(
-                    supervised_worker(
-                        image_score_worker,
-                        worker_name,
-                        state,
-                        state.should_stop,
-                        status_tracker=status,
-                    )
-                )
-            )
-    else:
-        state.image_score_phase.mark_done()
-
-    logger.info(
-        "Started %d document workers: fetch=%d vlm=%d",
-        worker_group.get_active_count(),
-        num_image_workers,
-        num_vlm_workers if not scan_only else 0,
+    await run_discovery_engine(
+        state,
+        workers,
+        stop_event=stop_event,
     )
-
-    await run_supervised_loop(worker_group, state.should_stop)
-    state.stop_requested = True
-    if stop_watcher and not stop_watcher.done():
-        stop_watcher.cancel()
 
     elapsed = time.time() - start_time
 

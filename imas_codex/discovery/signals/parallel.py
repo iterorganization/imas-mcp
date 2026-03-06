@@ -42,14 +42,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from imas_codex.discovery.base.engine import WorkerSpec, run_discovery_engine
 from imas_codex.discovery.base.progress import WorkerStats
+from imas_codex.discovery.base.state import DiscoveryStateBase
 from imas_codex.discovery.base.supervision import (
     OrphanRecoverySpec,
     PipelinePhase,
-    SupervisedWorkerGroup,
-    make_orphan_recovery_tick,
-    run_supervised_loop,
-    supervised_worker,
 )
 from imas_codex.graph import GraphClient
 from imas_codex.graph.models import FacilitySignalStatus
@@ -57,6 +55,8 @@ from imas_codex.remote.executor import run_python_script
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+    from imas_codex.discovery.base.supervision import SupervisedWorkerGroup
 
 logger = logging.getLogger(__name__)
 
@@ -80,10 +80,9 @@ def get_checkpoint_dir() -> Path:
 
 
 @dataclass
-class DataDiscoveryState:
+class DataDiscoveryState(DiscoveryStateBase):
     """Shared state for parallel data discovery."""
 
-    facility: str
     ssh_host: str | None = None
 
     # Pre-fetched facility config (avoids sync get_facility() in workers)
@@ -108,7 +107,6 @@ class DataDiscoveryState:
     cost_limit: float = 10.0
     signal_limit: int | None = None
     focus: str | None = None
-    deadline: float | None = None  # Unix timestamp when discovery should stop
 
     # Worker stats — one per worker group for accurate display
     discover_stats: WorkerStats = field(default_factory=WorkerStats)
@@ -119,7 +117,6 @@ class DataDiscoveryState:
     check_stats: WorkerStats = field(default_factory=WorkerStats)
 
     # Control
-    stop_requested: bool = False
     enrich_only: bool = False  # When True, discover/check workers not started
 
     # Pipeline phases (initialized in __post_init__)
@@ -187,17 +184,6 @@ class DataDiscoveryState:
         return self.enrich_stats.cost
 
     @property
-    def deadline_expired(self) -> bool:
-        """Check if the deadline has been reached."""
-        if self.deadline is None:
-            return False
-        return time.time() >= self.deadline
-
-    @property
-    def budget_exhausted(self) -> bool:
-        return self.total_cost >= self.cost_limit
-
-    @property
     def signal_limit_reached(self) -> bool:
         if self.signal_limit is None:
             return False
@@ -209,9 +195,7 @@ class DataDiscoveryState:
         Uses PipelinePhase.done which combines idle detection with
         graph-level pending work checks.
         """
-        if self.stop_requested:
-            return True
-        if self.deadline_expired:
+        if super().should_stop():
             return True
 
         limit_done = self.budget_exhausted or self.signal_limit_reached
@@ -242,9 +226,7 @@ class DataDiscoveryState:
 
     def should_stop_enriching(self) -> bool:
         """Check if enrich workers should stop."""
-        if self.stop_requested:
-            return True
-        if self.deadline_expired:
+        if super().should_stop():
             return True
         if self.budget_exhausted:
             return True
@@ -258,9 +240,7 @@ class DataDiscoveryState:
         Check workers must wait for both upstream phases (scan + enrich)
         to finish producing work before exiting.
         """
-        if self.stop_requested:
-            return True
-        if self.deadline_expired:
+        if super().should_stop():
             return True
         if not self.check_phase.idle:
             return False
@@ -3662,100 +3642,59 @@ async def run_parallel_data_discovery(
         deadline=deadline,
     )
 
-    # Create worker group
-    worker_group = SupervisedWorkerGroup()
+    orphan_specs = [
+        OrphanRecoverySpec("FacilitySignal", timeout_seconds=CLAIM_TIMEOUT_SECONDS),
+        OrphanRecoverySpec("TreeModelVersion"),
+    ]
 
-    # Watch external stop event (from CLI signal handler)
-    stop_watcher: asyncio.Task | None = None
-    if stop_event is not None:
-        from imas_codex.cli.shutdown import watch_stop_event
-
-        stop_watcher = asyncio.create_task(watch_stop_event(stop_event, state))
-
-    # Periodic orphan recovery during discovery (every 60s)
-    orphan_tick = make_orphan_recovery_tick(
-        facility,
-        [
-            OrphanRecoverySpec("FacilitySignal", timeout_seconds=CLAIM_TIMEOUT_SECONDS),
-            OrphanRecoverySpec("TreeModelVersion"),
-        ],
-    )
+    # Build worker specs
+    workers: list[WorkerSpec] = []
 
     # --- Scan workers (unless enrich_only) ---
     if not enrich_only:
-        # Seed worker: seeds TreeModelVersions + runs non-MDSplus scanners
-        seed_status = worker_group.create_status("seed_worker_0", group="seed")
-        worker_group.add_task(
-            asyncio.create_task(
-                supervised_worker(
+        workers.extend(
+            [
+                WorkerSpec(
+                    "seed",
+                    "seed_phase",
                     seed_worker,
-                    "seed_worker_0",
-                    state,
-                    lambda: state.stop_requested,
+                    group="seed",
+                    should_stop_fn=lambda: state.stop_requested,
                     on_progress=on_discover_progress,
-                    status_tracker=seed_status,
-                )
-            )
-        )
-
-        # Epoch worker: independently detects epochs for dynamic trees
-        epoch_status = worker_group.create_status("epoch_worker_0", group="seed")
-        worker_group.add_task(
-            asyncio.create_task(
-                supervised_worker(
+                ),
+                WorkerSpec(
+                    "epoch",
+                    "epoch_phase",
                     epoch_worker,
-                    "epoch_worker_0",
-                    state,
-                    lambda: state.stop_requested,
+                    group="seed",
+                    should_stop_fn=lambda: state.stop_requested,
                     on_progress=on_discover_progress,
-                    status_tracker=epoch_status,
-                )
-            )
-        )
-
-        # Extract worker: claims TreeModelVersions facility-wide
-        extract_status = worker_group.create_status("extract_worker_0", group="extract")
-        worker_group.add_task(
-            asyncio.create_task(
-                supervised_worker(
+                ),
+                WorkerSpec(
+                    "extract",
+                    "extract_phase",
                     mdsplus_extract_worker,
-                    "extract_worker_0",
-                    state,
-                    lambda: state.stop_requested,
+                    group="extract",
+                    should_stop_fn=lambda: state.stop_requested,
                     on_progress=on_extract_progress or on_discover_progress,
-                    status_tracker=extract_status,
-                )
-            )
-        )
-
-        # Units worker: extracts units for ingested trees
-        units_status = worker_group.create_status("units_worker_0", group="promote")
-        worker_group.add_task(
-            asyncio.create_task(
-                supervised_worker(
+                ),
+                WorkerSpec(
+                    "units",
+                    "units_phase",
                     mdsplus_units_worker,
-                    "units_worker_0",
-                    state,
-                    lambda: state.stop_requested,
+                    group="promote",
+                    should_stop_fn=lambda: state.stop_requested,
                     on_progress=on_promote_progress or on_discover_progress,
-                    status_tracker=units_status,
-                )
-            )
-        )
-
-        # Promote worker: creates FacilitySignals from leaf TreeNodes
-        promote_status = worker_group.create_status("promote_worker_0", group="promote")
-        worker_group.add_task(
-            asyncio.create_task(
-                supervised_worker(
+                ),
+                WorkerSpec(
+                    "promote",
+                    "promote_phase",
                     mdsplus_promote_worker,
-                    "promote_worker_0",
-                    state,
-                    lambda: state.stop_requested,
+                    group="promote",
+                    should_stop_fn=lambda: state.stop_requested,
                     on_progress=on_promote_progress or on_discover_progress,
-                    status_tracker=promote_status,
-                )
-            )
+                ),
+            ]
         )
     else:
         # In enrich_only mode, mark all scan sub-phases as done
@@ -3767,21 +3706,15 @@ async def run_parallel_data_discovery(
         state._scan_phase.mark_done()
 
     if discover_only:
-        # Run supervision loop — scan workers only
-        await run_supervised_loop(
-            worker_group,
-            lambda: state._scan_phase.done,
+        # Run engine with scan workers only — stop when scan phase completes
+        await run_discovery_engine(
+            state,
+            workers,
+            stop_event=stop_event,
+            orphan_specs=orphan_specs,
             on_worker_status=on_worker_status,
-            on_tick=orphan_tick,
-            phases=[
-                state.extract_phase,
-                state.units_phase,
-                state.promote_phase,
-            ],
+            stop_fn=lambda: state._scan_phase.done,
         )
-        state.stop_requested = True
-        if stop_watcher and not stop_watcher.done():
-            stop_watcher.cancel()
 
         return {
             "scanned": state.discover_stats.processed,
@@ -3797,77 +3730,50 @@ async def run_parallel_data_discovery(
         }
 
     # --- Enrich workers ---
-    for i in range(num_enrich_workers):
-        worker_name = f"enrich_worker_{i}"
-        status = worker_group.create_status(worker_name, group="enrich")
-        worker_group.add_task(
-            asyncio.create_task(
-                supervised_worker(
-                    enrich_worker,
-                    worker_name,
-                    state,
-                    state.should_stop_enriching,
-                    on_progress=on_enrich_progress,
-                    status_tracker=status,
-                )
-            )
+    workers.append(
+        WorkerSpec(
+            "enrich",
+            "enrich_phase",
+            enrich_worker,
+            count=num_enrich_workers,
+            should_stop_fn=state.should_stop_enriching,
+            on_progress=on_enrich_progress,
         )
+    )
 
     # --- Check workers ---
     if num_check_workers > 0:
-        for i in range(num_check_workers):
-            worker_name = f"check_worker_{i}"
-            status = worker_group.create_status(worker_name, group="check")
-            worker_group.add_task(
-                asyncio.create_task(
-                    supervised_worker(
-                        check_worker,
-                        worker_name,
-                        state,
-                        state.should_stop_checking,
-                        on_progress=on_check_progress,
-                        status_tracker=status,
-                    )
-                )
+        workers.append(
+            WorkerSpec(
+                "check",
+                "check_phase",
+                check_worker,
+                count=num_check_workers,
+                should_stop_fn=state.should_stop_checking,
+                on_progress=on_check_progress,
             )
+        )
 
     # --- Embed worker ---
     from imas_codex.discovery.base.embed_worker import embed_description_worker
 
-    embed_status = worker_group.create_status("embed_worker", group="embed")
-    worker_group.add_task(
-        asyncio.create_task(
-            supervised_worker(
-                embed_description_worker,
-                "embed_worker",
-                state,
-                state.should_stop,
-                labels=["FacilitySignal"],
-                status_tracker=embed_status,
-            )
+    workers.append(
+        WorkerSpec(
+            "embed",
+            "enrich_phase",  # embed lifecycle follows enrich
+            embed_description_worker,
+            group="embed",
+            kwargs={"labels": ["FacilitySignal"]},
         )
     )
 
-    # Run supervision loop — handles status updates and clean shutdown
-    # Pass all graph-backed phases so their has_work caches are refreshed
-    # in a background thread, preventing event loop blocking.
-    all_phases = [
-        state.extract_phase,
-        state.units_phase,
-        state.promote_phase,
-        state.enrich_phase,
-        state.check_phase,
-    ]
-    await run_supervised_loop(
-        worker_group,
-        state.should_stop,
+    await run_discovery_engine(
+        state,
+        workers,
+        stop_event=stop_event,
+        orphan_specs=orphan_specs,
         on_worker_status=on_worker_status,
-        on_tick=orphan_tick,
-        phases=all_phases,
     )
-    state.stop_requested = True
-    if stop_watcher and not stop_watcher.done():
-        stop_watcher.cancel()
 
     elapsed = time.time() - start_time
     return {

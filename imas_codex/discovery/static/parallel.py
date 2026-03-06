@@ -17,13 +17,8 @@ import subprocess
 import time
 from typing import TYPE_CHECKING, Any
 
-from imas_codex.discovery.base.supervision import (
-    OrphanRecoverySpec,
-    SupervisedWorkerGroup,
-    make_orphan_recovery_tick,
-    run_supervised_loop,
-    supervised_worker,
-)
+from imas_codex.discovery.base.engine import WorkerSpec, run_discovery_engine
+from imas_codex.discovery.base.supervision import OrphanRecoverySpec
 from imas_codex.graph import GraphClient
 
 from .graph_ops import (
@@ -42,6 +37,8 @@ from .workers import (
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+    from imas_codex.discovery.base.supervision import SupervisedWorkerGroup
 
 logger = logging.getLogger(__name__)
 
@@ -133,6 +130,8 @@ async def run_parallel_static_discovery(
     state.ingest_phase.set_has_work_fn(
         lambda: has_pending_ingest_work(facility, tree_name)
     )
+    # Ingest is done inline in extract_worker, mark done immediately
+    state.ingest_phase.mark_done()
 
     # Pre-warm SSH ControlMaster
     logger.info("Pre-warming SSH ControlMaster to %s...", ssh_host)
@@ -154,95 +153,43 @@ async def run_parallel_static_discovery(
         except Exception as e:
             logger.warning("Failed to pre-warm SSH to %s: %s", ssh_host, e)
 
-    worker_group = SupervisedWorkerGroup()
+    # Declare workers
+    workers = [
+        WorkerSpec(
+            "extract",
+            "extract_phase",
+            extract_worker,
+            count=num_extract_workers,
+            enabled=not dry_run,
+            on_progress=on_extract_progress,
+        ),
+        WorkerSpec(
+            "units",
+            "units_phase",
+            units_worker,
+            enabled=not dry_run,
+            on_progress=on_units_progress,
+        ),
+        WorkerSpec(
+            "enrich",
+            "enrich_phase",
+            enrich_worker,
+            count=num_enrich_workers,
+            enabled=enrich and not dry_run,
+            on_progress=on_enrich_progress,
+        ),
+    ]
 
-    # Watch external stop event (from CLI signal handler)
-    stop_watcher: asyncio.Task | None = None
-    if stop_event is not None:
-        from imas_codex.cli.shutdown import watch_stop_event
-
-        stop_watcher = asyncio.create_task(watch_stop_event(stop_event, state))
-
-    # --- Extract workers ---
-    if not dry_run:
-        for i in range(num_extract_workers):
-            worker_name = f"extract_worker_{i}"
-            status = worker_group.create_status(worker_name, group="extract")
-            worker_group.add_task(
-                asyncio.create_task(
-                    supervised_worker(
-                        extract_worker,
-                        worker_name,
-                        state,
-                        state.should_stop,
-                        on_progress=on_extract_progress,
-                        status_tracker=status,
-                    )
-                )
-            )
-    else:
-        state.extract_phase.mark_done()
-
-    # --- Units worker (single instance) ---
-    if not dry_run:
-        worker_name = "units_worker_0"
-        status = worker_group.create_status(worker_name, group="units")
-        worker_group.add_task(
-            asyncio.create_task(
-                supervised_worker(
-                    units_worker,
-                    worker_name,
-                    state,
-                    state.should_stop,
-                    on_progress=on_units_progress,
-                    status_tracker=status,
-                )
-            )
-        )
-    else:
-        state.units_phase.mark_done()
-
-    # --- Enrich workers ---
-    if enrich and not dry_run:
-        for i in range(num_enrich_workers):
-            worker_name = f"enrich_worker_{i}"
-            status = worker_group.create_status(worker_name, group="enrich")
-            worker_group.add_task(
-                asyncio.create_task(
-                    supervised_worker(
-                        enrich_worker,
-                        worker_name,
-                        state,
-                        state.should_stop,
-                        on_progress=on_enrich_progress,
-                        status_tracker=status,
-                    )
-                )
-            )
-    else:
-        state.enrich_phase.mark_done()
-
-    # Ingest is done inline in extract_worker, mark done immediately
-    state.ingest_phase.mark_done()
-
-    # Periodic orphan recovery
-    orphan_tick = make_orphan_recovery_tick(
-        facility,
-        [
+    await run_discovery_engine(
+        state,
+        workers,
+        stop_event=stop_event,
+        orphan_specs=[
             OrphanRecoverySpec("TreeModelVersion"),
             OrphanRecoverySpec("TreeNode", timeout_seconds=300),
         ],
-    )
-
-    await run_supervised_loop(
-        worker_group,
-        state.should_stop,
         on_worker_status=on_worker_status,
-        on_tick=orphan_tick,
     )
-    state.stop_requested = True
-    if stop_watcher and not stop_watcher.done():
-        stop_watcher.cancel()
 
     elapsed = time.time() - start_time
 

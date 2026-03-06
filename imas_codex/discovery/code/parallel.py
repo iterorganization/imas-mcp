@@ -18,13 +18,8 @@ import subprocess
 import time
 from typing import TYPE_CHECKING, Any
 
-from imas_codex.discovery.base.supervision import (
-    OrphanRecoverySpec,
-    SupervisedWorkerGroup,
-    make_orphan_recovery_tick,
-    run_supervised_loop,
-    supervised_worker,
-)
+from imas_codex.discovery.base.engine import WorkerSpec, run_discovery_engine
+from imas_codex.discovery.base.supervision import OrphanRecoverySpec
 from imas_codex.graph import GraphClient
 
 from .graph_ops import (
@@ -48,6 +43,8 @@ from .workers import (
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+    from imas_codex.discovery.base.supervision import SupervisedWorkerGroup
 
 logger = logging.getLogger(__name__)
 
@@ -178,166 +175,67 @@ async def run_parallel_code_discovery(
         except Exception as e:
             logger.warning("Failed to pre-warm SSH to %s: %s", ssh_host, e)
 
-    worker_group = SupervisedWorkerGroup()
+    # Declare workers
+    workers = [
+        WorkerSpec(
+            "scan",
+            "scan_phase",
+            scan_worker,
+            count=num_scan_workers,
+            enabled=not score_only,
+            on_progress=on_scan_progress,
+        ),
+        WorkerSpec(
+            "triage",
+            "triage_phase",
+            triage_worker,
+            count=num_triage_workers,
+            enabled=not scan_only,
+            on_progress=on_triage_progress,
+        ),
+        WorkerSpec(
+            "enrich",
+            "enrich_phase",
+            enrich_worker,
+            count=num_enrich_workers,
+            enabled=not scan_only,
+            on_progress=on_enrich_progress,
+        ),
+        WorkerSpec(
+            "score",
+            "score_phase",
+            score_worker,
+            count=num_score_workers,
+            enabled=not scan_only,
+            on_progress=on_score_progress,
+        ),
+        WorkerSpec(
+            "code",
+            "code_phase",
+            code_worker,
+            count=num_code_workers,
+            enabled=not scan_only and not score_only,
+            on_progress=on_code_progress,
+        ),
+        WorkerSpec(
+            "link",
+            "link_phase",
+            link_worker,
+            enabled=not scan_only and not score_only,
+            on_progress=on_code_progress,
+        ),
+    ]
 
-    # Watch external stop event (from CLI signal handler)
-    stop_watcher: asyncio.Task | None = None
-    if stop_event is not None:
-        from imas_codex.cli.shutdown import watch_stop_event
-
-        stop_watcher = asyncio.create_task(watch_stop_event(stop_event, state))
-
-    # --- Scan workers (skip in score_only mode) ---
-    if not score_only:
-        for i in range(num_scan_workers):
-            worker_name = f"scan_worker_{i}"
-            status = worker_group.create_status(worker_name, group="scan")
-            worker_group.add_task(
-                asyncio.create_task(
-                    supervised_worker(
-                        scan_worker,
-                        worker_name,
-                        state,
-                        state.should_stop,
-                        on_progress=on_scan_progress,
-                        status_tracker=status,
-                    )
-                )
-            )
-    else:
-        state.scan_phase.mark_done()
-
-    # --- Triage workers ---
-    if not scan_only:
-        for i in range(num_triage_workers):
-            worker_name = f"triage_worker_{i}"
-            status = worker_group.create_status(worker_name, group="triage")
-            worker_group.add_task(
-                asyncio.create_task(
-                    supervised_worker(
-                        triage_worker,
-                        worker_name,
-                        state,
-                        state.should_stop,
-                        on_progress=on_triage_progress,
-                        status_tracker=status,
-                    )
-                )
-            )
-    else:
-        state.triage_phase.mark_done()
-
-    # --- Enrich workers (between triage and score) ---
-    if not scan_only:
-        for i in range(num_enrich_workers):
-            worker_name = f"enrich_worker_{i}"
-            status = worker_group.create_status(worker_name, group="enrich")
-            worker_group.add_task(
-                asyncio.create_task(
-                    supervised_worker(
-                        enrich_worker,
-                        worker_name,
-                        state,
-                        state.should_stop,
-                        on_progress=on_enrich_progress,
-                        status_tracker=status,
-                    )
-                )
-            )
-    else:
-        state.enrich_phase.mark_done()
-
-    # --- Score workers ---
-    if not scan_only:
-        for i in range(num_score_workers):
-            worker_name = f"score_worker_{i}"
-            status = worker_group.create_status(worker_name, group="score")
-            worker_group.add_task(
-                asyncio.create_task(
-                    supervised_worker(
-                        score_worker,
-                        worker_name,
-                        state,
-                        state.should_stop,
-                        on_progress=on_score_progress,
-                        status_tracker=status,
-                    )
-                )
-            )
-    else:
-        state.score_phase.mark_done()
-
-    # --- Code workers + link worker (skip in scan_only and score_only) ---
-    if not scan_only and not score_only:
-        for i in range(num_code_workers):
-            worker_name = f"code_worker_{i}"
-            status = worker_group.create_status(worker_name, group="code")
-            worker_group.add_task(
-                asyncio.create_task(
-                    supervised_worker(
-                        code_worker,
-                        worker_name,
-                        state,
-                        state.should_stop,
-                        on_progress=on_code_progress,
-                        status_tracker=status,
-                    )
-                )
-            )
-
-        # --- Link worker (code evidence → signal propagation) ---
-        worker_name = "link_worker_0"
-        status = worker_group.create_status(worker_name, group="link")
-        worker_group.add_task(
-            asyncio.create_task(
-                supervised_worker(
-                    link_worker,
-                    worker_name,
-                    state,
-                    state.should_stop,
-                    on_progress=on_code_progress,
-                    status_tracker=status,
-                )
-            )
-        )
-    else:
-        state.code_phase.mark_done()
-        state.link_phase.mark_done()
-
-    logger.info(
-        "Started %d workers: scan=%d triage=%d enrich=%d score=%d code=%d "
-        "scan_only=%s score_only=%s",
-        worker_group.get_active_count(),
-        num_scan_workers if not score_only else 0,
-        num_triage_workers if not scan_only else 0,
-        num_enrich_workers if not scan_only else 0,
-        num_score_workers if not scan_only else 0,
-        num_code_workers if not (scan_only or score_only) else 0,
-        scan_only,
-        score_only,
-    )
-
-    # Periodic orphan recovery (every 60s)
-    orphan_tick = make_orphan_recovery_tick(
-        facility,
-        [
+    await run_discovery_engine(
+        state,
+        workers,
+        stop_event=stop_event,
+        orphan_specs=[
             OrphanRecoverySpec("CodeFile"),
-            OrphanRecoverySpec(
-                "FacilityPath",
-                timeout_seconds=300,
-            ),
+            OrphanRecoverySpec("FacilityPath", timeout_seconds=300),
         ],
-    )
-
-    await run_supervised_loop(
-        worker_group,
-        state.should_stop,
         on_worker_status=on_worker_status,
-        on_tick=orphan_tick,
     )
-    state.stop_requested = True
-    if stop_watcher and not stop_watcher.done():
-        stop_watcher.cancel()
 
     elapsed = time.time() - start_time
 
