@@ -103,23 +103,125 @@ data_access_patterns:
     - "UDA modules available (2.6.1 default) but cpyuda Python import fails"
     - "IMAS modules available but import imas fails on default Python"
     - "No SAL REST endpoint responding at sal.jet.uk during SSH exploration"
+    # ── Machine Description ──────────────────────────────────────────────
+    # No centralized static tree (unlike TCV). Geometry data is scattered
+    # across EFIT input trees, flat files, and PPF DDAs.
     - >-
-      MACHINE DESCRIPTION: No centralized static tree (unlike TCV). Data scattered across:
-      (1) flat files in /home/MAGNW/chain1/input/xloc/ (vessel contours, probe positions, PF coil R,Z);
-      (2) PPF DDAs with static geometry embedded per-pulse (EFIT/RLIM,ZLIM limiter, KG1V/R,Z interferometer,
-      LIDR/Z LIDAR, HRTS/Z Thomson, KG10/Z ECE);
-      (3) EFIT++ response function NetCDF at /common/chain1/efitpp/response_functions/ (first wall, probe/flux
-      loop/PF circuit Green's functions);
-      (4) ASCOT TF coil geometry at /common/ascot/tuomas/jetcoil/ (biosaw format);
-      (5) MDWG working group (requirements phase, no unified database yet).
+      MACHINE DESCRIPTION OVERVIEW: No single machine description database.
+      Data scattered across multiple systems:
+      (1) EFIT device XML files — primary geometry source (PF coils, passive structures, sensors);
+      (2) MCFG sensor config system — canonical sensor positions from CATIA CAD;
+      (3) PPF DDAs with static geometry embedded per-pulse (EFIT/RLIM,ZLIM, KG1V/R,Z, etc.);
+      (4) Limiter contour text files — pulse-range-indexed wall geometry;
+      (5) CATIA CAD models at /home/fda/db/ (PF_TF_COIL_OCT3.model, STRUCTURE_AND_VESSEL_ASSY_OCT3.model);
+      (6) EFIT++ response function NetCDF at /common/chain1/efitpp/response_functions/.
+    # ── EFIT Device XML System ─────────────────────────────────────────
     - >-
-      STATIC PPF ACCESS: ppf.ppfget(pulse, DDA, Dtype) with ppfuid('jetppf','r').
-      Static signals (identical across ILW pulses): EFIT/RLIM,ZLIM (251-pt limiter), LIDR/Z (50-pt),
-      KG10/Z (scalar 0.258m). Quasi-static (minor recalibration): KG1V/R,Z (8-ch), HRTS/Z (63-pt).
+      EFIT DEVICE XML: The comprehensive machine geometry definition for EFIT equilibrium reconstruction.
+      File: device_p72258.xml (147KB, 3072 lines) — contains PF coils (22), passive structures (48),
+      magprobes (191/183), flux loops (36), circuit-to-coil mappings, and PPF signal references.
+      Older variant: device_p68613.xml (144KB, 71 pick-ups vs 95 in p72258).
+      SVN repository was at http://fussvn.fusion.culham.ukaea.org.uk/svnroot/efit_f90/trunk/
+      (UUID 362da94c-88df-489a-87f4-575e882968c3). SVN server is unreachable post-UKAEA Culham
+      domain decommissioning. Last known revision: 208 by vdrozdov, 2012-05-01.
+    # ── device_ppfs — PPF DDA Routing Namelist ─────────────────────────
+    - >-
+      DEVICE_PPFS: Fortran namelist (&ppfin_namelist) that maps PPF DDAs for EFIT input.
+      Tells EFIT which DDA to read for each data type: bvac_r, ip, dflux, flux, magprobes,
+      pfcircuits (all typically from MAGN DDA), plus interferometry (KG1V), HRTS, polarimetry
+      (KG4), MSE, and pressure (PRES or PLPR). Points to device XML via device_xml field.
+      Variants exist for each DDA type:
+        - MAGN/device_ppfs → reads from MAGN DDA (~1000 timepoints)
+        - MAGF/device_ppfs → reads from MAGF DDA (fast acquisition, ~7000 timepoints)
+        - MAGJ/device_ppfs → reads from MAGJ DDA
+        - EFCC variants: device_ppfs_efcc1 → MNEA DDA, device_ppfs_efcc2 → MNEB DDA
+      Note: pfcircuits always reads from MAGN, even in MAGF/MAGJ variants.
+    - >-
+      DEVICE_PPFS CANONICAL SOURCE: Found in vdrozdov's intershot deployment tree at
+      /home/vdrozdov/intershot/source/efit_f90/input_efit_f90/Devices/ (dated 2012-04-20).
+      This is NOT an SVN checkout (no .svn directory) — it is a standalone deployed copy.
+      Device XMLs in this tree: only device_p72258.xml; device_p68613*.xml are symlinks to it.
+      MAGN/MAGF/MAGJ subdirectories contain device_ppfs symlinks pointing to ../device_ppfs.
+      The intershot copy differs from SVN r208: uses standard PRES DDA for pressure,
+      whereas SVN r208 (gpasqual) uses trial 'PLPR' DDA under 'chain1' uid.
+    - >-
+      DEVICE_PPFS IN PRODUCTION: The production chain1 account (/home/chain1/input/efit_f90/)
+      does NOT use device_ppfs at all. Its configurationsMAGN maps inputfile input/device
+      directly to Devices/MAGN/device_p68613.xml (the XML file itself, not device_ppfs).
+      This means the DDA routing that device_ppfs provides is handled differently in production.
+      The MAGN directory in chain1 contains only XML files (device_p68613*.xml), no device_ppfs.
+    - >-
+      SVN WORKING COPIES ON JET (all at SVN format 10, SVN 1.6):
+        - /home/gpasqual/efit_f90 — revision 208 (most recent), last commit by vdrozdov 2012-05-01
+        - /home/mbrix/efit_f90 — same format, likely older revision
+        - /home/enardon/efit_f90 — same format
+        - /home/epeluso/efit_f90 — same format
+        - /home/vdrozdov/EFIT_ITM/EFIT_f90/efit_f90_svn — revision 53 (early checkout)
+      The /home/efit/ account has no device_ppfs files.
+    # ── PulseDependencyDB — Shot-to-Configuration Mapping ──────────────
+    - >-
+      PULSEDEPENDENCYDB: Shot-to-configuration mapping system in EFIT input tree.
+      EFIT.db maps shot ranges (68613-99999) to named configurations (p68613, p68967_efcc1,
+      p70468_efcc2, p74387, p78168, p78359, p78814_efcc2, p78461, p79854, p79854_efcc1,
+      p79854_efcc2, p81134). Each configuration specifies: efitsnap, device XML/ppfs,
+      limiter contour, and Green's functions. Shot ranges track hardware changes:
+      broken probes (p801b from p78168), EFCC coil shots (n=1 and n=2 modes),
+      new PFC DMSS modes (91→105→108), and the ILW first wall change at pulse 79854.
+      Production (chain1) EFIT.db #includes configurationsMAGN.
+      Intershot (vdrozdov) EFIT.db also #includes configurationsMAGN but with device_ppfs.
+    # ── MCFG Sensor Configuration ──────────────────────────────────────
+    - >-
+      MCFG SENSOR CONFIG: /home/MAGNW/chain1/input/magn_ep_2019-05-14/ (symlinked from magn_ep_new).
+      Master index MCFG.ix tracks pulse-dependent sensor calibration versions from 2002-2019.
+      Latest: 2019-05-14 pulse 93563 by Sergei Gerasimov, sensors_200c_2019-03-11.txt.
+      Sensor positions at /home/MAGNW/chain1/input/PPFcfg/sensors_200c_2019-03-11.txt (423 lines).
+      Header: "JET Magnetic Sensor Model @DIA001160_02-A CATIA Reference Model.
+      Coordinates at 200C Operating Temperature. 26-March-2002 Cliff Marren/Sergei Gerasimov".
+      MAG_.master in make/ is a CPP preprocessor source compiled with defines
+      (_MAGF_EP, _MAGN_EP etc.) to generate variant magn_ep .dat files.
     - >-
       MAGNETICS CHAIN1 CONFIG: /home/MAGNW/chain1/input/xloc/config/ contains probe definition files
       (pd04_ep: 40 BPME pick-up coils with R,Z,angle; limves: 28 flux loops SX/SY with R,Z + calibration;
       pdvessr: vessel-referenced probe positions). Master config at /home/MAGNW/chain1/input/magn_ep_new/magn_ep.dat.
+    # ── Limiter Contours ───────────────────────────────────────────────
+    - >-
+      LIMITER CONTOURS: Plain R,Z text files in efit_f90 input Limiters/ directory.
+      Current contours: limiter.mk2ilw_cc (251 pts, ILW — current wall),
+      limiter.mk2hd_cc (116 pts, pre-ILW), limiter.mk2gb_ns_cc (126 pts, Mk2GB).
+      Pulse range index at limiter_list.dat maps wall configurations to shot ranges:
+      L91NEW (1-28791), Mk1 (28792-35778), Mk2A (35779-45155), Mk2GB (45156-54549),
+      Mk2GB-SR (54550-63445), Mk2HD (63446-79853), Mk2ILW (79854-present).
+      EFIT RLIM,ZLIM PPF contains the 251-pt contour (identical across ILW pulses).
+      Vessel PPF source: /home/awhitef/vessel_ppf/Mk2GB.txt (141 pts) → VESL/CROS PPF pulse 42529.
+    # ── CATIA CAD & Green's Functions ──────────────────────────────────
+    - >-
+      CATIA 3D CAD MODELS: /home/fda/db/ — PF_TF_COIL_OCT3.model (2.7MB),
+      STRUCTURE_AND_VESSEL_ASSY_OCT3.model (2.1MB), LIMBS-COILS/ (individual coil models).
+      All dated June 2002. CalCam 3D mesh: /home/cxs/machine_geometry/JET/ (21 OBJ files, ~500MB).
+      SURF visualization tool data: /home/dmcd/surf_test_input/ has FC_coordinates.dat (flux coils),
+      wall geometry files (mark1 through mk2ilw), overlays, and diagnostic positions.
+    - >-
+      GREEN'S FUNCTIONS: /home/efit/efit_f90/input/Greens/Greens_EFUND_JET/ — computed by efund-jet
+      from coil geometry. Variants: JET_EP_71_DMSS_91, JET_EP_71_DMSS_105, JET_EP_95_DMSS_91.
+      Default symlink → JET_EP_71_DMSS_105. Chain1 Greens use naming convention
+      DMSS_{091,105,108}_T_200C with nbpol_71 suffix.
+    # ── Data Provenance Chains ─────────────────────────────────────────
+    - >-
+      DATA PROVENANCE:
+      Sensors: CATIA CAD @DIA001160_02-A → sensors_200c_*.txt → MAG_.master (CPP) → magn_ep.dat → MCFG PPF → EFIT.
+      PF Coils: Engineering drawings → device_p*.xml in efit_f90 SVN → production chain1 copies → pulse-specific device files.
+      Wall: R,Z text files (limiter.mk2ilw_cc etc.) indexed by limiter_list.dat → EFIT/RLIM,ZLIM PPF.
+      Vessel: Mk2GB.txt → VESL/CROS PPF (pulse 42529, written by awhitef via IDL vessel_ppf.pro).
+    - >-
+      STATIC PPF ACCESS: ppf.ppfget(pulse, DDA, Dtype) with ppfuid('jetppf','r').
+      Static signals (identical across ILW pulses): EFIT/RLIM,ZLIM (251-pt limiter), LIDR/Z (50-pt),
+      KG10/Z (scalar 0.258m). Quasi-static (minor recalibration): KG1V/R,Z (8-ch), HRTS/Z (63-pt).
+    # ── IMAS Investigation ─────────────────────────────────────────────
+    - >-
+      IMAS ON JET: Dead end for machine description. /common/IMAS/ exists with module
+      imas/3.19.1/ual/3.8.2, but requires Python 2.7/3.5 (import imp). System Python is 3.13.
+      IMAS databases under ETS users (dcoster, fcasson, mroma, rcoel, wpz) contain only
+      shot-specific data, no machine description IDSs.
     - >-
       EFIT++ RESPONSE FUNCTIONS: /common/chain1/efitpp/response_functions/jet/all_magnetics_C38/
       responseFunctions_jet_33x33.nc contains Green's function matrices linking 33x33 grid to 321 probes,
