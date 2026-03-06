@@ -43,6 +43,152 @@ data_sources:
       - mdsplus
     db_name: jet
 
+  # EFIT device model — virtual "static tree" for machine description.
+  # JET has no MDSplus static tree. Instead, geometry lives in device XMLs
+  # and Fortran namelists managed by the EFIT PulseDependencyDB system,
+  # versioned in /home/chain1/git/efit_f90.git (108 tags, bare repo).
+  # We model this as an efit_device tree with versioned epochs, one per
+  # PulseDependencyDB named configuration. The scanner plugin parses
+  # device XMLs, device_ppfs namelists, and limiter files into graph
+  # nodes equivalent to TCV's static tree.
+  efit_device:
+    # Git bare repo containing all EFIT input data
+    git_repo: /home/chain1/git/efit_f90.git
+    # Source repo tree path prefix for input files
+    input_prefix: JET/input
+    # Named configurations from PulseDependencyDB (EFIT.db → configurationsMAGN).
+    # Each maps to a specific device XML, device_ppfs, limiter, and Green's functions.
+    # Only base MAGN configurations are listed (EFCC sessions reuse device geometry).
+    versions:
+      - version: p68613
+        first_shot: 68613
+        last_shot: 74386
+        description: "Baseline — 71 pick-ups, DMSS=91, Mk2HD limiter"
+        device_xml: Devices/device_p68613.xml
+        device_ppfs: Devices/MAGN/device_ppfs
+        limiter: Limiters/limiter.mk2hd_cc
+        greens: Greens/DMSS_091_T_200C/
+      - version: p78359
+        first_shot: 78359
+        last_shot: 79853
+        description: "New PFC config DMSS=105, P801B broken"
+        device_xml: Devices/device_p68613.xml
+        device_ppfs: Devices/MAGN/device_ppfs
+        limiter: Limiters/limiter.mk2hd_cc
+        greens: Greens/DMSS_105_T_200C/
+      - version: p79854
+        first_shot: 79854
+        last_shot: 81133
+        description: "2011 ILW restart — Mk2ILW first wall"
+        device_xml: Devices/device_p68613.xml
+        device_ppfs: Devices/MAGN/device_ppfs
+        limiter: Limiters/limiter.mk2ilw_cc
+        greens: Greens/DMSS_105_T_200C/
+      - version: p81134
+        first_shot: 81134
+        last_shot: 87026
+        description: "P804B probe reinstated"
+        device_xml: Devices/device_p68613.xml
+        device_ppfs: Devices/MAGN/device_ppfs
+        limiter: Limiters/limiter.mk2ilw_cc
+        greens: Greens/DMSS_105_T_200C/
+      - version: p87027
+        first_shot: 87027
+        last_shot: 87721
+        description: "P804B/P805B broken, removed from fit"
+        device_xml: Devices/device_p68613.xml
+        device_ppfs: Devices/MAGN/device_ppfs
+        limiter: Limiters/limiter.mk2ilw_cc
+        greens: Greens/DMSS_105_T_200C/
+      - version: p87722
+        first_shot: 87722
+        last_shot: 88367
+        description: "P803B→P803A probe replacement, new device XML and Green's"
+        device_xml: Devices/device_p87722.xml
+        device_ppfs: Devices/MAGN/device_ppfs
+        limiter: Limiters/limiter.mk2ilw_cc
+        greens: Greens/DMSS_105_T_200C_P803A/
+      - version: p88368
+        first_shot: 88368
+        last_shot: 89430
+        description: "UP4E4 coordinates for BPME(91), new device XML"
+        device_xml: Devices/device_p88368.xml
+        device_ppfs: Devices/MAGN/device_ppfs
+        limiter: Limiters/limiter.mk2ilw_cc
+        greens: Greens/DMSS_105_T_200C_UP4E4/
+      - version: p89440
+        first_shot: 89440
+        last_shot: 90539
+        description: "P802B→P802A, new calibration, new device XML and Green's"
+        device_xml: Devices/device_p89440.xml
+        device_ppfs: Devices/MAGN/device_ppfs
+        limiter: Limiters/limiter.mk2ilw_cc
+        greens: Greens/DMSS_105_T_200C_P802A/
+      - version: p90626
+        first_shot: 90626
+        description: "I802+I803 failed, disabled — FINAL config through end of JET"
+        device_xml: Devices/device_p89440.xml
+        device_ppfs: Devices/MAGN/device_ppfs
+        limiter: Limiters/limiter.mk2ilw_cc
+        greens: Greens/DMSS_105_T_200C_P802A/
+    # Systems extracted from device XMLs — analogous to TCV static tree systems
+    systems:
+      - symbol: PF
+        name: Poloidal field coils
+        description: "22 PF coils: P1-P4 (central solenoid), DSH/DSV (divertor shaping), and circuit groups"
+        size: 22
+        parameters: [R, Z, W, H, TURNS, RESISTANCE]
+      - symbol: PS
+        name: Passive structures
+        description: "48 passive conducting elements (vessel wall, stabilizing plates)"
+        size: 48
+        parameters: [R, Z, W, H, RESISTANCE]
+      - symbol: MP
+        name: Magnetic probes (pick-up coils)
+        description: "BPME saddle coils — count varies by config (71-95 fitted pick-ups)"
+        parameters: [R, Z, ANG, AREA, TURNS]
+      - symbol: FL
+        name: Flux loops
+        description: "36 diamagnetic/saddle flux loops (SX/SY naming)"
+        size: 36
+        parameters: [R, Z, ANG, AREA]
+      - symbol: CI
+        name: Circuit-to-coil mappings
+        description: "10 PF circuits mapping coils to power supply connections"
+        size: 10
+        parameters: [COILS, TURNS_RATIO]
+      - symbol: LIM
+        name: Limiter contour
+        description: "First wall R,Z contour — 7 versions from L91NEW through Mk2ILW"
+        parameters: [R, Z]
+    # Limiter contour versions (independent of device XML epochs)
+    limiter_epochs:
+      - name: L91NEW
+        first_shot: 1
+        last_shot: 28791
+        file: Limiters/limiter.L91NEW
+      - name: Mk1
+        first_shot: 28792
+        last_shot: 35778
+      - name: Mk2A
+        first_shot: 35779
+        last_shot: 45155
+      - name: Mk2GB
+        first_shot: 45156
+        last_shot: 54549
+        file: Limiters/limiter.mk2gb_ns_cc
+      - name: Mk2GB-SR
+        first_shot: 54550
+        last_shot: 63445
+      - name: Mk2HD
+        first_shot: 63446
+        last_shot: 79853
+        file: Limiters/limiter.mk2hd_cc
+      - name: Mk2ILW
+        first_shot: 79854
+        description: "ITER-Like Wall (beryllium/tungsten)"
+        file: Limiters/limiter.mk2ilw_cc
+
 # Data access patterns discovered during facility exploration.
 data_access_patterns:
   primary_method: ppf
@@ -104,71 +250,84 @@ data_access_patterns:
     - "IMAS modules available but import imas fails on default Python"
     - "No SAL REST endpoint responding at sal.jet.uk during SSH exploration"
     # ── Machine Description ──────────────────────────────────────────────
-    # No centralized static tree (unlike TCV). Geometry data is scattered
-    # across EFIT input trees, flat files, and PPF DDAs.
+    # No centralized static tree (unlike TCV). Geometry data lives in EFIT
+    # input files, versioned in git (/home/chain1/git/efit_f90.git).
+    # PulseDependencyDB maps pulse ranges → named configurations, each
+    # specifying device XML, device_ppfs, limiter contour, and Green's functions.
     - >-
-      MACHINE DESCRIPTION OVERVIEW: No single machine description database.
-      Data scattered across multiple systems:
-      (1) EFIT device XML files — primary geometry source (PF coils, passive structures, sensors);
-      (2) MCFG sensor config system — canonical sensor positions from CATIA CAD;
-      (3) PPF DDAs with static geometry embedded per-pulse (EFIT/RLIM,ZLIM, KG1V/R,Z, etc.);
-      (4) Limiter contour text files — pulse-range-indexed wall geometry;
-      (5) CATIA CAD models at /home/fda/db/ (PF_TF_COIL_OCT3.model, STRUCTURE_AND_VESSEL_ASSY_OCT3.model);
-      (6) EFIT++ response function NetCDF at /common/chain1/efitpp/response_functions/.
+      MACHINE DESCRIPTION OVERVIEW: No single MDSplus machine description tree.
+      Instead, geometry is managed by EFIT's PulseDependencyDB system:
+      (1) EFIT device XML files — PF coils (22), passive structures (48), sensors, circuits;
+      (2) device_ppfs namelists — PPF DDA routing for each EFIT variant (MAGN/MAGF/MAGJ/MGZJ);
+      (3) Limiter contour text files — pulse-range-indexed wall geometry (7 configurations);
+      (4) MCFG sensor config system — canonical sensor positions from CATIA CAD;
+      (5) Green's function directories — precomputed response matrices per device configuration;
+      (6) CATIA CAD models at /home/fda/db/ (PF_TF_COIL_OCT3.model, STRUCTURE_AND_VESSEL_ASSY);
+      (7) EFIT++ response function NetCDF at /common/chain1/efitpp/response_functions/.
+    # ── Canonical Git Repository ───────────────────────────────────────
+    - >-
+      CANONICAL GIT REPO: /home/chain1/git/efit_f90.git — bare git repo,
+      single 'master' branch, 108 tags (Lx099-0 through Lx103-77).
+      HEAD commit 50a3e3b (2018-01-26, "Pulse ranges for EHPB").
+      No remote configured (SVN server decomissioned). Contains full EFIT source,
+      device XMLs, device_ppfs, PulseDependencyDB, limiter files, and Green's functions.
+      This is the most authoritative and up-to-date VCS for JET machine description.
+      Tags correspond to EFIT release versions deployed to intershot/chain1 systems.
     # ── EFIT Device XML System ─────────────────────────────────────────
     - >-
-      EFIT DEVICE XML: The comprehensive machine geometry definition for EFIT equilibrium reconstruction.
-      File: device_p72258.xml (147KB, 3072 lines) — contains PF coils (22), passive structures (48),
-      magprobes (191/183), flux loops (36), circuit-to-coil mappings, and PPF signal references.
-      Older variant: device_p68613.xml (144KB, 71 pick-ups vs 95 in p72258).
-      SVN repository was at http://fussvn.fusion.culham.ukaea.org.uk/svnroot/efit_f90/trunk/
-      (UUID 362da94c-88df-489a-87f4-575e882968c3). SVN server is unreachable post-UKAEA Culham
-      domain decommissioning. Last known revision: 208 by vdrozdov, 2012-05-01.
+      EFIT DEVICE XML: Six device XML generations in the git repo, each corresponding
+      to hardware changes (probe replacements, failures, recalibrations):
+        device_p68613.xml — baseline (71 pick-ups, 144KB)
+        device_p72258.xml — 95 pick-ups, 147KB (reprocessing; not used in git HEAD configs)
+        device_p87722.xml — probe P803B→P803A replacement, 2014
+        device_p88368.xml — UP4E4 coordinates for BPME(91)
+        device_p89440.xml — probe P802B→P802A replacement, 2015
+      Each has _bvch.xml and _efcc[12].xml variants for boundary/EFCC modes.
+      Original SVN repo (fussvn.fusion.culham.ukaea.org.uk) is unreachable post-Culham
+      domain decommissioning. Last SVN revision: 208 by vdrozdov, 2012-05-01.
     # ── device_ppfs — PPF DDA Routing Namelist ─────────────────────────
     - >-
-      DEVICE_PPFS: Fortran namelist (&ppfin_namelist) that maps PPF DDAs for EFIT input.
-      Tells EFIT which DDA to read for each data type: bvac_r, ip, dflux, flux, magprobes,
-      pfcircuits (all typically from MAGN DDA), plus interferometry (KG1V), HRTS, polarimetry
-      (KG4), MSE, and pressure (PRES or PLPR). Points to device XML via device_xml field.
-      Variants exist for each DDA type:
-        - MAGN/device_ppfs → reads from MAGN DDA (~1000 timepoints)
-        - MAGF/device_ppfs → reads from MAGF DDA (fast acquisition, ~7000 timepoints)
-        - MAGJ/device_ppfs → reads from MAGJ DDA
-        - EFCC variants: device_ppfs_efcc1 → MNEA DDA, device_ppfs_efcc2 → MNEB DDA
-      Note: pfcircuits always reads from MAGN, even in MAGF/MAGJ variants.
+      DEVICE_PPFS: Fortran namelist (&ppfin_namelist) mapping PPF DDAs for EFIT input.
+      Controls which DDA to read for: bvac_r, ip, dflux, flux, magprobes, pfcircuits
+      (typically MAGN), plus interferometry (KG1V), HRTS, polarimetry (KG4), MSE,
+      and pressure (PRES). Points to device XML path via device_xml field.
+      Git repo has device_ppfs for all 4 DDA types × 3 variants = 12 files:
+        MAGN/device_ppfs[_efcc1|_efcc2] → MAGN DDA (~1000 timepoints)
+        MAGF/device_ppfs[_efcc1|_efcc2] → MAGF DDA (fast, ~7000 timepoints)
+        MAGJ/device_ppfs[_efcc1|_efcc2] → MAGJ DDA
+        MGZJ/device_ppfs[_efcc1|_efcc2] → MGZJ DDA
+      pfcircuits always reads from MAGN regardless of variant.
     - >-
-      DEVICE_PPFS CANONICAL SOURCE: Found in vdrozdov's intershot deployment tree at
-      /home/vdrozdov/intershot/source/efit_f90/input_efit_f90/Devices/ (dated 2012-04-20).
-      This is NOT an SVN checkout (no .svn directory) — it is a standalone deployed copy.
-      Device XMLs in this tree: only device_p72258.xml; device_p68613*.xml are symlinks to it.
-      MAGN/MAGF/MAGJ subdirectories contain device_ppfs symlinks pointing to ../device_ppfs.
-      The intershot copy differs from SVN r208: uses standard PRES DDA for pressure,
-      whereas SVN r208 (gpasqual) uses trial 'PLPR' DDA under 'chain1' uid.
-    - >-
-      DEVICE_PPFS IN PRODUCTION: The production chain1 account (/home/chain1/input/efit_f90/)
-      does NOT use device_ppfs at all. Its configurationsMAGN maps inputfile input/device
-      directly to Devices/MAGN/device_p68613.xml (the XML file itself, not device_ppfs).
-      This means the DDA routing that device_ppfs provides is handled differently in production.
-      The MAGN directory in chain1 contains only XML files (device_p68613*.xml), no device_ppfs.
-    - >-
-      SVN WORKING COPIES ON JET (all at SVN format 10, SVN 1.6):
-        - /home/gpasqual/efit_f90 — revision 208 (most recent), last commit by vdrozdov 2012-05-01
-        - /home/mbrix/efit_f90 — same format, likely older revision
-        - /home/enardon/efit_f90 — same format
-        - /home/epeluso/efit_f90 — same format
-        - /home/vdrozdov/EFIT_ITM/EFIT_f90/efit_f90_svn — revision 53 (early checkout)
-      The /home/efit/ account has no device_ppfs files.
+      DEVICE_PPFS USAGE: The git HEAD configurationsMAGN uses device_ppfs
+      (inputfile input/device → Devices/MAGN/device_ppfs). This is the canonical
+      pattern. The frozen production copy at /home/chain1/input/efit_f90/ (last
+      modified 2011) maps input/device directly to XML files — an older pattern
+      predating the device_ppfs abstraction. vdrozdov's intershot deployment at
+      /home/vdrozdov/intershot/source/efit_f90/input_efit_f90/Devices/ (2012-04-20)
+      also uses device_ppfs with symlinks (MAGN/device_ppfs → ../device_ppfs).
     # ── PulseDependencyDB — Shot-to-Configuration Mapping ──────────────
     - >-
-      PULSEDEPENDENCYDB: Shot-to-configuration mapping system in EFIT input tree.
-      EFIT.db maps shot ranges (68613-99999) to named configurations (p68613, p68967_efcc1,
-      p70468_efcc2, p74387, p78168, p78359, p78814_efcc2, p78461, p79854, p79854_efcc1,
-      p79854_efcc2, p81134). Each configuration specifies: efitsnap, device XML/ppfs,
-      limiter contour, and Green's functions. Shot ranges track hardware changes:
-      broken probes (p801b from p78168), EFCC coil shots (n=1 and n=2 modes),
-      new PFC DMSS modes (91→105→108), and the ILW first wall change at pulse 79854.
-      Production (chain1) EFIT.db #includes configurationsMAGN.
-      Intershot (vdrozdov) EFIT.db also #includes configurationsMAGN but with device_ppfs.
+      PULSEDEPENDENCYDB: Shot-to-configuration mapping in EFIT.db
+      (git HEAD: /home/chain1/git/efit_f90.git). EFIT.db #includes configurationsMAGN
+      (and configurationsMGZJ, configurationsBVCH for other DDAs).
+      The git HEAD EFIT.db maps 16 named configurations across pulses 68613→999999:
+        p68613 (68613-74386): baseline, 71 pick-ups, DMSS=91, Mk2HD limiter
+        p74387 (74387-78167): FLME(3) timing issue
+        p78168 (78168-78358): P801B broken
+        p78359 (78359-78460): new PFC DMSS=105
+        p78461 (78461-78563): DMSS=108 transition
+        p79854 (79854-81133): ILW first wall (2011 restart), Mk2ILW limiter
+        p81134 (81134-87026): P804B probe turned on
+        p87027 (87027-87721): P804B/P805B broken and removed
+        p87722 (87722-88367): P803B→P803A probe replacement, new device XML
+        p88368 (88368-89430): UP4E4 coordinates for BPME(91), new device XML
+        p89431 (89431-89439): P802B broke, BPME(42) disabled
+        p89440 (89440-90539): P802B→P802A replacement, new device XML + Green's
+        p90540 (90540-90625): I803/BPME(57) failed
+        p90626 (90626-999999): I802/BPME(56) failed — FINAL CONFIGURATION
+      EFCC sessions (n=1 → MNEA DDA, n=2 → MNEB DDA) interleaved throughout.
+      The p90626 config covers ALL pulses from 92061 to end of JET operations (~104522, Dec 2023).
+      No machine description change occurred after April 2016.
     # ── MCFG Sensor Configuration ──────────────────────────────────────
     - >-
       MCFG SENSOR CONFIG: /home/MAGNW/chain1/input/magn_ep_2019-05-14/ (symlinked from magn_ep_new).
@@ -209,9 +368,10 @@ data_access_patterns:
     - >-
       DATA PROVENANCE:
       Sensors: CATIA CAD @DIA001160_02-A → sensors_200c_*.txt → MAG_.master (CPP) → magn_ep.dat → MCFG PPF → EFIT.
-      PF Coils: Engineering drawings → device_p*.xml in efit_f90 SVN → production chain1 copies → pulse-specific device files.
+      PF Coils: Engineering drawings → device_p*.xml in efit_f90 git → intershot/production copies.
       Wall: R,Z text files (limiter.mk2ilw_cc etc.) indexed by limiter_list.dat → EFIT/RLIM,ZLIM PPF.
       Vessel: Mk2GB.txt → VESL/CROS PPF (pulse 42529, written by awhitef via IDL vessel_ppf.pro).
+      All geometry data versioned in /home/chain1/git/efit_f90.git (108 tags, 2015-2018).
     - >-
       STATIC PPF ACCESS: ppf.ppfget(pulse, DDA, Dtype) with ppfuid('jetppf','r').
       Static signals (identical across ILW pulses): EFIT/RLIM,ZLIM (251-pt limiter), LIDR/Z (50-pt),
