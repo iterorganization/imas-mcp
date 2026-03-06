@@ -43,7 +43,7 @@ JET's machine description lives in XML files versioned in git. ITER will use IMA
 | `detect_epochs` (facility_config.yaml) | Boolean flag on TreeConfig |
 | `epoch_config` (facility_config.yaml) | Property referencing EpochConfig |
 | `discovery/mdsplus/epochs.py` | Entire module — `detect_epochs_for_tree()`, `discover_epochs_optimized()` |
-| `limiter_epochs` (jet.yaml) | JET limiter contour version list |
+| `limiter_versions` (jet.yaml) | JET limiter contour version list (renamed from `limiter_epochs`) |
 | `epoch_id` (graph_ops.py) | Variable constructing TreeModelVersion IDs |
 | FacilitySignal description | "epoch when signal first appeared/disappeared" |
 
@@ -526,6 +526,128 @@ EOF
 uv run imas-codex graph push --dev
 ```
 
+## Clarifications
+
+### What Are `limiter_epochs`?
+
+`limiter_epochs` in jet.yaml lists the 7 historical **first-wall contour geometries** used at JET. Each entry names a limiter design (e.g., `L91NEW`, `Mk1`, `Mk2A`, `Mk2GB`, `Mk2HD`, `Mk2ILW`) with the shot range during which it was installed. The limiter contour defines the R,Z boundary that plasmas touch — it changed independently of the device XML configurations (magnetic probes, flux loops, PF coils).
+
+These are **not** structural epochs of a data source. They're hardware configuration eras for one component (the limiter). In EFIT, each limiter contour is a separate R,Z text file (`Limiters/limiter.mk2ilw_cc` etc.), and each machine_description version references one of these files.
+
+**Why the name is unclear:** "epoch" is overloaded — it already means "structural version of a data source" in our naming system. Calling limiter geometry changes "epochs" conflates hardware installation history with data source schema versioning.
+
+**Recommendation:** Rename `limiter_epochs` → `limiter_versions` in jet.yaml. A limiter version is a specific first-wall geometry that was physically installed. This distinguishes it from `StructuralEpoch` (a schema revision of a data source) and from `EpochConfig` (configuration for automated epoch detection). The `versions` list under `machine_description` already uses `version` terminology for the same concept at the whole-machine level — `limiter_versions` follows the same pattern for a single component.
+
+## Dependency: Naming Generalization Before JET Cataloging
+
+The JET graph cataloging plan — ingesting JET's machine description signals into the graph — requires implementing a new scanner plugin for git-versioned XML data sources. This plugin will create `DataSource`, `StructuralEpoch`, and `DataNode` graph nodes.
+
+**The naming generalization must be completed first.** Here's why:
+
+1. **New code should use final names.** Writing the JET XML scanner with `TreeNode`, `TreeModelVersion`, `MDSplusTree` and then immediately renaming everything doubles the work. The scanner should emit `DataNode`, `StructuralEpoch`, `DataSource` from day one.
+
+2. **Schema slots needed for JET don't exist yet.** The current `MDSplusTree` class assumes MDSplus-specific properties (`server_hostname`, `shot_dependent`). The generic `DataSource` class will add `source_format` (git_xml, mdsplus_tree, imas_ids) and drop the MDSplus-specific fields to optional. JET's XML scanner needs these generic properties.
+
+3. **Relationship types must be final.** The XML scanner will create `IN_DATA_SOURCE` relationships to link `DataNode` → `DataSource`. Writing `IN_TREE` now and migrating later is unnecessary churn.
+
+4. **Config schema rename is a prerequisite.** The scanner will read from `SourceConfig` (currently `TreeConfig`). The JET YAML already uses the `machine_description` data source section, but the config schema needs its `TreeConfig` → `SourceConfig` rename before a non-MDSplus scanner can use it naturally.
+
+### Execution Order
+
+```
+Phase 1: Naming Generalization (schema + code + migration)
+   ├── Rename LinkML schemas
+   ├── Update all Python code (~400 replacements)
+   ├── Migrate TCV production graph data
+   └── Verify: test suite green, graph validated
+
+Phase 2: JET Graph Cataloging (new feature)
+   ├── Implement XML scanner plugin (uses DataSource, DataNode, StructuralEpoch)
+   ├── Parse device XMLs → DataNode (PF coils, probes, flux loops, circuits)
+   ├── Parse device_ppfs namelists → DataNode (PPF DDA mappings)
+   ├── Parse limiter contour files → DataNode (R,Z boundary points)
+   ├── Create StructuralEpoch per machine_description version (p68613–p90626)
+   ├── Promote leaf DataNodes to FacilitySignal (reuse existing pipeline)
+   └── IMAS mapping for JET machine description signals
+```
+
+### JET Graph Cataloging Plan (Updated for New Naming)
+
+The earlier JET cataloging plan used MDSplus-specific terminology. Here it is updated for the generalized naming:
+
+#### Step 1: Create DataSource Nodes
+
+```cypher
+// JET machine description data source
+MERGE (ds:DataSource {name: 'machine_description'})
+SET ds.facility_id = 'jet',
+    ds.source_format = 'git_xml',
+    ds.description = 'JET machine description — geometry from device XMLs, namelists, and limiter contours',
+    ds.shot_dependent = false
+WITH ds
+MATCH (f:Facility {id: 'jet'})
+MERGE (ds)-[:AT_FACILITY]->(f);
+```
+
+#### Step 2: Create StructuralEpoch Nodes (10 Versions)
+
+```cypher
+// One StructuralEpoch per machine_description version
+UNWIND $versions AS v
+MERGE (e:StructuralEpoch {id: 'jet:machine_description:' + v.version})
+SET e.data_source_name = 'machine_description',
+    e.facility_id = 'jet',
+    e.version = v.version,
+    e.first_shot = v.first_shot,
+    e.last_shot = v.last_shot,
+    e.description = v.description,
+    e.status = 'discovered'
+WITH e
+MATCH (ds:DataSource {name: 'machine_description', facility_id: 'jet'})
+MERGE (e)-[:IN_DATA_SOURCE]->(ds);
+
+// Build HAS_PREDECESSOR chain
+// (p78359 → p68613, p79854 → p78359, ...)
+```
+
+#### Step 3: Parse & Ingest DataNodes
+
+The XML scanner reads device XMLs and creates one `DataNode` per parameter:
+
+```cypher
+// Example: PF coil R coordinate
+MERGE (n:DataNode {path: 'jet:machine_description:PF:P1:R'})
+SET n.data_source_name = 'machine_description',
+    n.facility_id = 'jet',
+    n.node_type = 'NUMERIC',
+    n.source = 'introspection',
+    n.description = 'Major radius of PF coil P1',
+    n.unit = 'm'
+WITH n
+MATCH (ds:DataSource {name: 'machine_description', facility_id: 'jet'})
+MERGE (n)-[:IN_DATA_SOURCE]->(ds);
+
+// Link to StructuralEpoch for applicability
+MATCH (n:DataNode {path: 'jet:machine_description:PF:P1:R'})
+MATCH (e:StructuralEpoch {id: 'jet:machine_description:p68613'})
+MERGE (n)-[:INTRODUCED_IN]->(e);
+```
+
+#### Step 4: Promote to FacilitySignal
+
+```cypher
+// Reuse the existing promote pipeline — works identically
+// because it now operates on DataNode → FacilitySignal
+MATCH (n:DataNode {facility_id: 'jet', data_source_name: 'machine_description'})
+WHERE n.node_type IN ['NUMERIC', 'SIGNAL']
+AND NOT EXISTS { (n)<-[:HAS_DATA_SOURCE_NODE]-(:FacilitySignal) }
+// ... promote logic creates FacilitySignal with HAS_DATA_SOURCE_NODE edge
+```
+
+#### Step 5: IMAS Mapping
+
+Map JET machine description signals to IMAS paths (e.g., `pf_active.coil[*].element[*].geometry.rectangle.r` ← JET PF coil R coordinate).
+
 ## Summary
 
 The revised naming uses `data_source` as a consistent compound noun prefix across labels, relationships, and properties:
@@ -543,6 +665,9 @@ tree_name        → data_source_name  (graph property)
 tree_name        → source_name       (config property — shorter, unambiguous in context)
 node_path        → data_source_path
 source_node      → data_source_node
+limiter_epochs   → limiter_versions  (jet.yaml — hardware versions, not data epochs)
 ```
 
 ~55 files, ~400 replacements, 5 phases. Architecture unchanged. Production migration is batched, idempotent, and validated.
+
+**Naming generalization is a prerequisite for JET graph cataloging.** New scanner plugins should emit `DataSource`/`DataNode`/`StructuralEpoch` from day one, not `MDSplusTree`/`TreeNode`/`TreeModelVersion` that would need immediate re-migration.
