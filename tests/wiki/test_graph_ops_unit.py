@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from neo4j.exceptions import TransientError
 
+from imas_codex.discovery.base.claims import retry_on_deadlock
 from imas_codex.discovery.wiki.graph_ops import (
     CLAIM_TIMEOUT_SECONDS,
     IMAGE_DOCUMENT_TYPES,
@@ -19,7 +20,6 @@ from imas_codex.discovery.wiki.graph_ops import (
     SCORABLE_DOCUMENT_TYPES,
     _bulk_create_wiki_documents,
     _bulk_create_wiki_pages,
-    retry_on_deadlock,
 )
 
 # =============================================================================

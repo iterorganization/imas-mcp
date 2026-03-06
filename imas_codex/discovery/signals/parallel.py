@@ -42,6 +42,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from imas_codex.discovery.base.claims import retry_on_deadlock
 from imas_codex.discovery.base.engine import WorkerSpec, run_discovery_engine
 from imas_codex.discovery.base.progress import WorkerStats
 from imas_codex.discovery.base.state import DiscoveryStateBase
@@ -466,6 +467,7 @@ def clear_facility_signals(
 # =============================================================================
 
 
+@retry_on_deadlock()
 def claim_signals_for_enrichment(
     facility: str,
     batch_size: int = 10,
@@ -473,19 +475,19 @@ def claim_signals_for_enrichment(
     """Claim a batch of discovered signals for enrichment.
 
     Returns signals sorted by tdi_function to enable batching by function.
-    Uses claimed_at timeout for orphan recovery (parallel-safe).
+    Uses claim_token pattern with ORDER BY rand() to prevent deadlocks.
 
     Filters out numbered channel signals (e.g. CHANNEL_006, :003) that are
     array elements of a parent signal — these don't need individual LLM
     enrichment. They are marked as skipped with reason 'channel_element'.
     """
+    import uuid as _uuid
+
     cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
+    claim_token = str(_uuid.uuid4())
     try:
         with GraphClient() as gc:
             # First skip channel signals in bulk so they don't clog the queue.
-            # Catches: trailing CHANNEL_NNN, trailing _NNN/:NNN, pure numeric
-            # names, sub-nodes under channel subtrees (CHANNEL_NNN:LEAF),
-            # and TDI function wrappers like data(\TREE::CHANNEL_NNN).
             gc.query(
                 """
                 MATCH (s:FacilitySignal {facility_id: $facility})
@@ -505,15 +507,28 @@ def claim_signals_for_enrichment(
                 skipped=FacilitySignalStatus.skipped.value,
             )
 
-            result = gc.query(
+            # Step 1: Claim with random ordering and unique token
+            gc.query(
                 """
                 MATCH (s:FacilitySignal {facility_id: $facility})
                 WHERE s.status = $discovered
                   AND s.pattern_representative_id IS NULL
                   AND (s.claimed_at IS NULL
                        OR s.claimed_at < datetime() - duration($cutoff))
-                WITH s ORDER BY s.tdi_function, s.id LIMIT $batch_size
-                SET s.claimed_at = datetime()
+                WITH s ORDER BY rand() LIMIT $batch_size
+                SET s.claimed_at = datetime(), s.claim_token = $token
+                """,
+                facility=facility,
+                discovered=FacilitySignalStatus.discovered.value,
+                batch_size=batch_size,
+                cutoff=cutoff,
+                token=claim_token,
+            )
+
+            # Step 2: Read back only signals WE successfully claimed
+            result = gc.query(
+                """
+                MATCH (s:FacilitySignal {facility_id: $facility, claim_token: $token})
                 RETURN s.id AS id, s.accessor AS accessor, s.tree_name AS tree_name,
                        s.node_path AS node_path, s.unit AS unit, s.name AS name,
                        s.tdi_function AS tdi_function,
@@ -522,9 +537,7 @@ def claim_signals_for_enrichment(
                        s.source_node AS source_node
                 """,
                 facility=facility,
-                discovered=FacilitySignalStatus.discovered.value,
-                batch_size=batch_size,
-                cutoff=cutoff,
+                token=claim_token,
             )
             return list(result) if result else []
     except Exception as e:
@@ -603,6 +616,7 @@ def fetch_tree_context(
         return {}
 
 
+@retry_on_deadlock()
 def claim_signals_for_check(
     facility: str,
     batch_size: int = 5,
@@ -610,20 +624,36 @@ def claim_signals_for_check(
 ) -> list[dict]:
     """Claim a batch of enriched signals for check.
 
+    Uses claim_token pattern with ORDER BY rand() to prevent deadlocks.
     Uses reference_shot from config for TDI-based checking.
-    Uses claimed_at timeout for orphan recovery (parallel-safe).
     """
+    import uuid as _uuid
+
     cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
+    claim_token = str(_uuid.uuid4())
     try:
         with GraphClient() as gc:
-            result = gc.query(
+            # Step 1: Claim with random ordering and unique token
+            gc.query(
                 """
                 MATCH (s:FacilitySignal {facility_id: $facility})
                 WHERE s.status = $enriched
                   AND (s.claimed_at IS NULL
                        OR s.claimed_at < datetime() - duration($cutoff))
-                WITH s LIMIT $batch_size
-                SET s.claimed_at = datetime()
+                WITH s ORDER BY rand() LIMIT $batch_size
+                SET s.claimed_at = datetime(), s.claim_token = $token
+                """,
+                facility=facility,
+                enriched=FacilitySignalStatus.enriched.value,
+                batch_size=batch_size,
+                cutoff=cutoff,
+                token=claim_token,
+            )
+
+            # Step 2: Read back only signals WE successfully claimed
+            result = gc.query(
+                """
+                MATCH (s:FacilitySignal {facility_id: $facility, claim_token: $token})
                 // Derive data_access ID based on signal type
                 WITH s,
                      CASE WHEN s.tdi_function IS NOT NULL
@@ -638,9 +668,7 @@ def claim_signals_for_check(
                        COALESCE(s.data_access, derived_data_access) AS data_access
                 """,
                 facility=facility,
-                enriched=FacilitySignalStatus.enriched.value,
-                batch_size=batch_size,
-                cutoff=cutoff,
+                token=claim_token,
             )
             # Add reference_shot to each result
             signals = list(result) if result else []

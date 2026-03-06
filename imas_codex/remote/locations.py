@@ -20,10 +20,16 @@ from __future__ import annotations
 
 import logging
 import socket
+import time
 from dataclasses import dataclass
 from functools import cache
 
 logger = logging.getLogger(__name__)
+
+# TTL cache for resolve_service_url — avoids repeating slow SLURM
+# discovery (squeue + allocation.log + reachability check) on every call.
+_service_url_cache: dict[tuple[str, int, str], tuple[float, str | None]] = {}
+_SERVICE_URL_TTL = 120.0  # seconds
 
 
 @dataclass(frozen=True)
@@ -206,6 +212,25 @@ def resolve_service_url(
     if location == "local":
         return None
 
+    cache_key = (location, port, protocol)
+    now = time.monotonic()
+    if cache_key in _service_url_cache:
+        cached_time, cached_url = _service_url_cache[cache_key]
+        if now - cached_time < _SERVICE_URL_TTL:
+            return cached_url
+
+    url = _resolve_service_url_uncached(location, port, protocol=protocol)
+    _service_url_cache[cache_key] = (now, url)
+    return url
+
+
+def _resolve_service_url_uncached(
+    location: str,
+    port: int,
+    *,
+    protocol: str = "http",
+) -> str | None:
+    """Actual resolution logic (called by cached wrapper)."""
     info = resolve_location(location)
     local = is_location_local(location)
 

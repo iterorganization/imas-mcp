@@ -25,6 +25,7 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from imas_codex.discovery.base.claims import retry_on_deadlock
 from imas_codex.discovery.base.engine import WorkerSpec, run_discovery_engine
 from imas_codex.discovery.base.llm import ProviderBudgetExhausted
 from imas_codex.discovery.base.progress import WorkerStats
@@ -376,35 +377,47 @@ def _has_pending_user_work(facility: str) -> bool:
         return bool(result and result[0]["has_work"])
 
 
+@retry_on_deadlock()
 def claim_users_for_linking(facility: str, limit: int = 10) -> list[dict[str, Any]]:
     """Atomically claim FacilityUser nodes for Person linking (ORCID).
 
     Claims users where person_id IS NULL (no Person link yet).
-    Uses claimed_at for orphan recovery, same pattern as path claiming.
+    Uses claimed_at with ORDER BY rand() for orphan recovery.
 
     Args:
         facility: Facility ID
         limit: Maximum users to claim per batch
     """
+    import uuid as _uuid
+
     from imas_codex.graph import GraphClient
 
     cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
+    claim_token = str(_uuid.uuid4())
     with GraphClient() as gc:
-        result = gc.query(
+        gc.query(
             """
             MATCH (u:FacilityUser)-[:AT_FACILITY]->(f:Facility {id: $facility})
             WHERE u.person_id IS NULL
               AND (u.claimed_at IS NULL
                    OR u.claimed_at < datetime() - duration($cutoff))
-            WITH u ORDER BY u.discovered_at ASC LIMIT $limit
-            SET u.claimed_at = datetime()
+            WITH u ORDER BY rand() LIMIT $limit
+            SET u.claimed_at = datetime(), u.claim_token = $token
+            """,
+            facility=facility,
+            limit=limit,
+            cutoff=cutoff,
+            token=claim_token,
+        )
+        result = gc.query(
+            """
+            MATCH (u:FacilityUser {claim_token: $token})-[:AT_FACILITY]->(f:Facility {id: $facility})
             RETURN u.id AS id, u.username AS username,
                    u.name AS name, u.given_name AS given_name,
                    u.family_name AS family_name, u.email AS email
             """,
             facility=facility,
-            limit=limit,
-            cutoff=cutoff,
+            token=claim_token,
         )
         return list(result)
 
@@ -446,76 +459,88 @@ def reset_orphaned_claims(
 # ============================================================================
 
 
+@retry_on_deadlock()
 def claim_paths_for_scanning(
     facility: str, limit: int = 50, root_filter: list[str] | None = None
 ) -> list[dict[str, Any]]:
     """Atomically claim discovered paths for initial scanning.
 
     Claims only unscored discovered paths (first scan, enumerate only).
-    Expansion is handled by separate expand_worker.
-
-    Uses claimed_at timestamp for coordination (no status change during claim).
+    Uses claim_token pattern with ORDER BY rand() to prevent deadlocks.
 
     Args:
         facility: Facility ID
         limit: Maximum paths to claim
         root_filter: If set, only claim paths under these roots
     """
+    import uuid as _uuid
+
     from imas_codex.graph import GraphClient
 
-    # Build root filter clause
     root_clause = ""
     if root_filter:
         root_clause = "AND any(root IN $root_filter WHERE p.path STARTS WITH root)"
 
     cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
+    claim_token = str(_uuid.uuid4())
     with GraphClient() as gc:
-        # Claim unscored discovered paths (breadth-first by depth)
-        result = gc.query(
+        gc.query(
             f"""
             MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {{id: $facility}})
             WHERE p.status = $discovered AND p.triage_composite IS NULL
               AND (p.claimed_at IS NULL OR p.claimed_at < datetime() - duration($cutoff))
             {root_clause}
-            WITH p ORDER BY p.depth ASC, p.path ASC LIMIT $limit
-            SET p.claimed_at = datetime()
-            RETURN p.id AS id, p.path AS path, p.depth AS depth, false AS is_expanding
+            WITH p ORDER BY rand() LIMIT $limit
+            SET p.claimed_at = datetime(), p.claim_token = $token
             """,
             facility=facility,
             limit=limit,
             discovered=PathStatus.discovered.value,
             cutoff=cutoff,
             root_filter=root_filter or [],
+            token=claim_token,
+        )
+        result = gc.query(
+            f"""
+            MATCH (p:FacilityPath {{claim_token: $token}})-[:AT_FACILITY]->(f:Facility {{id: $facility}})
+            WHERE p.status = $discovered
+            {root_clause}
+            RETURN p.id AS id, p.path AS path, p.depth AS depth, false AS is_expanding
+            """,
+            facility=facility,
+            discovered=PathStatus.discovered.value,
+            root_filter=root_filter or [],
+            token=claim_token,
         )
         return list(result)
 
 
+@retry_on_deadlock()
 def claim_paths_for_expanding(
     facility: str, limit: int = 50, root_filter: list[str] | None = None
 ) -> list[dict[str, Any]]:
     """Atomically claim triaged paths for expansion scanning.
 
     Claims paths with should_expand=true that haven't been expanded yet.
-    These are triaged high-value directories that need child enumeration.
-
-    Uses claimed_at timestamp for coordination (no status change during claim).
+    Uses claim_token pattern with ORDER BY rand() to prevent deadlocks.
 
     Args:
         facility: Facility ID
         limit: Maximum paths to claim
         root_filter: If set, only claim paths under these roots
     """
+    import uuid as _uuid
+
     from imas_codex.graph import GraphClient
 
-    # Build root filter clause
     root_clause = ""
     if root_filter:
         root_clause = "AND any(root IN $root_filter WHERE p.path STARTS WITH root)"
 
     cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
+    claim_token = str(_uuid.uuid4())
     with GraphClient() as gc:
-        # Claim expansion paths (score-descending for valuable first)
-        result = gc.query(
+        gc.query(
             f"""
             MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {{id: $facility}})
             WHERE p.status = $triaged
@@ -523,49 +548,76 @@ def claim_paths_for_expanding(
               AND p.expanded_at IS NULL
               AND (p.claimed_at IS NULL OR p.claimed_at < datetime() - duration($cutoff))
             {root_clause}
-            WITH p ORDER BY p.triage_composite DESC, p.depth ASC LIMIT $limit
-            SET p.claimed_at = datetime()
-            RETURN p.id AS id, p.path AS path, p.depth AS depth, true AS is_expanding
+            WITH p ORDER BY rand() LIMIT $limit
+            SET p.claimed_at = datetime(), p.claim_token = $token
             """,
             facility=facility,
             limit=limit,
             triaged=PathStatus.triaged.value,
             cutoff=cutoff,
             root_filter=root_filter or [],
+            token=claim_token,
+        )
+        result = gc.query(
+            f"""
+            MATCH (p:FacilityPath {{claim_token: $token}})-[:AT_FACILITY]->(f:Facility {{id: $facility}})
+            WHERE p.status = $triaged AND p.should_expand = true
+            {root_clause}
+            RETURN p.id AS id, p.path AS path, p.depth AS depth, true AS is_expanding
+            """,
+            facility=facility,
+            triaged=PathStatus.triaged.value,
+            root_filter=root_filter or [],
+            token=claim_token,
         )
         return list(result)
 
 
+@retry_on_deadlock()
 def claim_paths_for_triaging(
     facility: str, limit: int = 25, root_filter: list[str] | None = None
 ) -> list[dict[str, Any]]:
     """Atomically claim scanned paths for triage.
 
-    Uses claimed_at timestamp for coordination (no status change during claim).
-    Returns paths that this worker now owns.
+    Uses claim_token pattern with ORDER BY rand() to prevent deadlocks.
 
     Args:
         facility: Facility ID
         limit: Maximum paths to claim
         root_filter: If set, only claim paths under these roots
     """
+    import uuid as _uuid
+
     from imas_codex.graph import GraphClient
 
-    # Build root filter clause
     root_clause = ""
     if root_filter:
         root_clause = "AND any(root IN $root_filter WHERE p.path STARTS WITH root)"
 
     cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
+    claim_token = str(_uuid.uuid4())
     with GraphClient() as gc:
-        result = gc.query(
+        gc.query(
             f"""
             MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {{id: $facility}})
             WHERE p.status = $scanned AND p.triage_composite IS NULL
               AND (p.claimed_at IS NULL OR p.claimed_at < datetime() - duration($cutoff))
             {root_clause}
-            WITH p ORDER BY p.depth ASC, p.path ASC LIMIT $limit
-            SET p.claimed_at = datetime()
+            WITH p ORDER BY rand() LIMIT $limit
+            SET p.claimed_at = datetime(), p.claim_token = $token
+            """,
+            facility=facility,
+            limit=limit,
+            scanned=PathStatus.scanned.value,
+            cutoff=cutoff,
+            root_filter=root_filter or [],
+            token=claim_token,
+        )
+        result = gc.query(
+            f"""
+            MATCH (p:FacilityPath {{claim_token: $token}})-[:AT_FACILITY]->(f:Facility {{id: $facility}})
+            WHERE p.status = $scanned
+            {root_clause}
             RETURN p.id AS id, p.path AS path, p.depth AS depth,
                    p.total_files AS total_files, p.total_dirs AS total_dirs,
                    p.file_type_counts AS file_type_counts,
@@ -579,10 +631,9 @@ def claim_paths_for_triaging(
                    p.numeric_dir_ratio AS numeric_dir_ratio
             """,
             facility=facility,
-            limit=limit,
             scanned=PathStatus.scanned.value,
-            cutoff=cutoff,
             root_filter=root_filter or [],
+            token=claim_token,
         )
         return list(result)
 
@@ -631,6 +682,7 @@ def mark_triage_complete(
     return mark_paths_triaged(facility, score_data)
 
 
+@retry_on_deadlock()
 def claim_paths_for_enriching(
     facility: str,
     limit: int = 25,
@@ -644,8 +696,7 @@ def claim_paths_for_enriching(
     - should_enrich = true OR triage_composite >= auto_enrich_threshold
     - is_enriched is null or false
 
-    Uses claimed_at timestamp for orphan recovery.
-    Returns paths that this worker now owns.
+    Uses claim_token pattern with ORDER BY rand() to prevent deadlocks.
 
     Args:
         facility: Facility ID
@@ -653,16 +704,14 @@ def claim_paths_for_enriching(
         root_filter: If set, only claim paths under these roots
         auto_enrich_threshold: If set, also claim paths with score >= threshold
     """
+    import uuid as _uuid
+
     from imas_codex.graph import GraphClient
 
-    # Build root filter clause
     root_clause = ""
     if root_filter:
         root_clause = "AND any(root IN $root_filter WHERE p.path STARTS WITH root)"
 
-    # Build enrich condition: should_enrich=true OR (threshold and score >= threshold)
-    # Always require a minimum score to avoid enriching worthless paths
-    # (e.g. empty dirs where should_enrich defaulted to true)
     min_enrich_score = 0.15
     if auto_enrich_threshold is not None:
         enrich_clause = (
@@ -672,8 +721,9 @@ def claim_paths_for_enriching(
         enrich_clause = "p.should_enrich = true"
 
     cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
+    claim_token = str(_uuid.uuid4())
     with GraphClient() as gc:
-        result = gc.query(
+        gc.query(
             f"""
             MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {{id: $facility}})
             WHERE p.status = $triaged
@@ -683,10 +733,8 @@ def claim_paths_for_enriching(
               AND (p.claimed_at IS NULL OR p.claimed_at < datetime() - duration($cutoff))
               AND (p.total_dirs IS NULL OR p.total_dirs <= 500)
             {root_clause}
-            With p ORDER BY p.triage_composite DESC, p.depth ASC LIMIT $limit
-            SET p.claimed_at = datetime()
-            RETURN p.id AS id, p.path AS path, p.depth AS depth, p.triage_composite AS triage_composite,
-                   p.path_purpose AS path_purpose
+            WITH p ORDER BY rand() LIMIT $limit
+            SET p.claimed_at = datetime(), p.claim_token = $token
             """,
             facility=facility,
             limit=limit,
@@ -695,10 +743,25 @@ def claim_paths_for_enriching(
             root_filter=root_filter or [],
             auto_enrich_threshold=auto_enrich_threshold,
             min_enrich_score=min_enrich_score,
+            token=claim_token,
+        )
+        result = gc.query(
+            f"""
+            MATCH (p:FacilityPath {{claim_token: $token}})-[:AT_FACILITY]->(f:Facility {{id: $facility}})
+            WHERE p.status = $triaged
+            {root_clause}
+            RETURN p.id AS id, p.path AS path, p.depth AS depth, p.triage_composite AS triage_composite,
+                   p.path_purpose AS path_purpose
+            """,
+            facility=facility,
+            triaged=PathStatus.triaged.value,
+            root_filter=root_filter or [],
+            token=claim_token,
         )
         return list(result)
 
 
+@retry_on_deadlock()
 def claim_paths_for_scoring(
     facility: str,
     limit: int = 10,
@@ -711,11 +774,7 @@ def claim_paths_for_scoring(
     - is_enriched = true
     - scored_at is null
 
-    All enriched paths are scored — we've already invested in
-    enrichment, so use the data. Scoring can raise or lower
-    triage scores based on concrete evidence (LOC, patterns, size).
-
-    Returns paths that this worker now owns.
+    Uses claim_token pattern with ORDER BY rand() to prevent deadlocks.
 
     Args:
         facility: Facility ID
@@ -723,18 +782,20 @@ def claim_paths_for_scoring(
         root_filter: If set, only claim paths under these roots
         min_score: Minimum triage_composite for scoring (default: 0.0 = score all)
     """
+    import uuid as _uuid
+
     from imas_codex.graph import GraphClient
 
     threshold = min_score if min_score is not None else 0.0
 
-    # Build root filter clause
     root_clause = ""
     if root_filter:
         root_clause = "AND any(root IN $root_filter WHERE p.path STARTS WITH root)"
 
     cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
+    claim_token = str(_uuid.uuid4())
     with GraphClient() as gc:
-        result = gc.query(
+        gc.query(
             f"""
             MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {{id: $facility}})
             WHERE p.is_enriched = true
@@ -742,8 +803,21 @@ def claim_paths_for_scoring(
               AND p.scored_at IS NULL
               AND (p.claimed_at IS NULL OR p.claimed_at < datetime() - duration($cutoff))
             {root_clause}
-            WITH p ORDER BY p.triage_composite DESC LIMIT $limit
-            SET p.claimed_at = datetime()
+            WITH p ORDER BY rand() LIMIT $limit
+            SET p.claimed_at = datetime(), p.claim_token = $token
+            """,
+            facility=facility,
+            limit=limit,
+            cutoff=cutoff,
+            root_filter=root_filter or [],
+            min_score=threshold,
+            token=claim_token,
+        )
+        result = gc.query(
+            f"""
+            MATCH (p:FacilityPath {{claim_token: $token}})-[:AT_FACILITY]->(f:Facility {{id: $facility}})
+            WHERE p.is_enriched = true
+            {root_clause}
             RETURN p.id AS id, p.path AS path, p.depth AS depth,
                    p.triage_composite AS triage_composite,
                    p.triage_modeling_code AS triage_modeling_code,
@@ -778,10 +852,8 @@ def claim_paths_for_scoring(
                    p.enrich_warnings AS enrich_warnings
             """,
             facility=facility,
-            limit=limit,
-            cutoff=cutoff,
             root_filter=root_filter or [],
-            min_score=threshold,
+            token=claim_token,
         )
         return list(result)
 
