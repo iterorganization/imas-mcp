@@ -48,17 +48,6 @@ ProgressCallback = Callable[[int, int, str], None]
 # With 1024-dim embeddings, 32 chunks ≈ 320KB text → ~1 GiB GPU memory.
 MAX_CHUNKS_PER_EMBED = 32
 
-# Maximum character length for text sent to the embedding model.
-# Qwen3-Embedding-0.6B supports 32K tokens (~100K chars) but a 16 GiB GPU
-# OOMs on sequences beyond ~8K tokens due to O(n²) attention memory.
-# 8192 tokens × ~4 chars/token ≈ 32K chars is a safe ceiling.
-MAX_EMBED_CHARS = 32_000
-
-
-def _truncate_for_embedding(texts: list[str]) -> list[str]:
-    """Truncate texts to MAX_EMBED_CHARS to prevent GPU OOM on long sequences."""
-    return [t[:MAX_EMBED_CHARS] if len(t) > MAX_EMBED_CHARS else t for t in texts]
-
 
 def _embed_chunks_safe(
     encoder: "Encoder",
@@ -68,9 +57,8 @@ def _embed_chunks_safe(
     """Embed chunks in sub-batches with OOM-aware retry.
 
     Splits large embedding requests into sub-batches to fit in GPU memory.
-    Truncates overly long texts before embedding. On CUDA OOM, halves
-    the sub-batch size and retries. Single-chunk OOMs skip only that
-    chunk (zero vector) instead of failing the entire batch.
+    On CUDA OOM, halves the sub-batch size and retries. Single-chunk OOMs
+    skip only that chunk (zero vector) instead of failing the entire batch.
 
     Args:
         encoder: Encoder instance (local or remote)
@@ -82,9 +70,6 @@ def _embed_chunks_safe(
     """
     if not chunk_texts:
         return np.array([])
-
-    # Truncate oversized texts before sending to embedding model
-    chunk_texts = _truncate_for_embedding(chunk_texts)
 
     all_embeddings: list[np.ndarray] = []
     i = 0

@@ -191,11 +191,12 @@ async def lifespan(app: FastAPI):
     if cuda_visible:
         logger.info("CUDA_VISIBLE_DEVICES=%s", cuda_visible)
 
-    # GPU memory protection: cap our usage to coexist with NX desktops.
-    # The T4 GPUs on the login node are shared with NoMachine sessions
-    # that consume 1-11 GB of VRAM unpredictably.  Without capping,
-    # PyTorch grabs all available memory and then OOMs when NX allocates
-    # more, causing a cascade fallback to CPU that destroys the login node.
+    # GPU memory protection.
+    # On shared login nodes (T4 + NX desktops), cap to 60% to coexist.
+    # On dedicated compute nodes (SLURM job on titan), use 95%.
+    is_dedicated = bool(os.environ.get("SLURM_JOB_ID"))
+    default_fraction = "0.95" if is_dedicated else "0.6"
+
     if device == "cuda":
         try:
             import torch
@@ -204,22 +205,20 @@ async def lifespan(app: FastAPI):
             # (recommended by PyTorch's own OOM error message)
             os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
-            # Cap our process to 60% of GPU memory.  On a 15 GB T4 this
-            # gives us ~9 GB which is plenty for Qwen3-0.6B (~1.2 GB model
-            # + batch workspace), while leaving ~6 GB for NX sessions.
             mem_fraction = float(
-                os.environ.get("IMAS_CODEX_GPU_MEMORY_FRACTION", "0.6")
+                os.environ.get("IMAS_CODEX_GPU_MEMORY_FRACTION", default_fraction)
             )
             torch.cuda.set_per_process_memory_fraction(mem_fraction)
             free_mb, total_mb = torch.cuda.mem_get_info(0)
             logger.info(
                 "GPU memory cap: %.0f%% of %.0f MiB = %.0f MiB "
-                "(free: %.0f MiB, others using: %.0f MiB)",
+                "(free: %.0f MiB, others using: %.0f MiB, dedicated=%s)",
                 mem_fraction * 100,
                 total_mb / 1024 / 1024,
                 mem_fraction * total_mb / 1024 / 1024,
                 free_mb / 1024 / 1024,
                 (total_mb - free_mb) / 1024 / 1024,
+                is_dedicated,
             )
         except Exception as e:
             logger.warning("Failed to set GPU memory cap: %s", e)
