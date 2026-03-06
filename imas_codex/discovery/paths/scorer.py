@@ -57,12 +57,7 @@ def combined_score(
     input_data: dict[str, Any],
     purpose: ResourcePurpose,
 ) -> float:
-    """Compute combined score from per-dimension LLM scores.
-
-    Uses a breadth-weighted formula: max × (1 + mean_nonzero) / 2.
-    This rewards paths that score well across multiple dimensions rather
-    than paths with a single high outlier. A path scoring 0.9 on one
-    dimension but 0.0 on all others gets 0.45 instead of 0.9.
+    """Compute combined score = max of per-dimension LLM scores.
 
     Args:
         scores: Dict of per-dimension scores (score_modeling_code, score_imas, etc.)
@@ -74,11 +69,7 @@ def combined_score(
     """
     if not scores:
         return 0.0
-    values = list(scores.values())
-    peak = max(values)
-    nonzero = [v for v in values if v > 0.0]
-    mean_nonzero = sum(nonzero) / len(nonzero) if nonzero else 0.0
-    return min(1.0, peak * (1.0 + mean_nonzero) / 2.0)
+    return min(1.0, max(scores.values()))
 
 
 @dataclass

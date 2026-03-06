@@ -49,7 +49,7 @@ Each dimension represents a distinct value category. Score dimensions independen
 
 ### Scoring Philosophy
 
-**Your scores are the ONLY dimension scores.** There are no boosts, multipliers, or caps applied after your response. If a directory has a README, Makefile, and git — factor that into your dimension scores directly. If it has IMAS integration code — score `score_imas` high directly. The combined score = `max(dims) × (1 + mean(nonzero_dims)) / 2`, so a directory must score well on MULTIPLE dimensions to achieve a high combined score.
+**Your scores are the ONLY dimension scores.** There are no boosts, multipliers, or caps applied after your response. If a directory has a README, Makefile, and git — factor that into your dimension scores directly. If it has IMAS integration code — score `score_imas` high directly. The combined score = `max(dims)`, so the highest-scoring dimension determines the composite.
 
 **We value unique content over well-known software.** A researcher's custom 200-line Python script that reads MDSplus data and computes q-profiles is far more valuable to our knowledge graph than a clone of a major simulation framework with 100k lines of well-documented public code.
 

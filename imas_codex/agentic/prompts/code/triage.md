@@ -43,7 +43,7 @@ Score each dimension independently (0.0-1.0):
 
 **Score from filenames and directory context.** The parent directory description tells you what kind of code lives in this area. File extensions and naming conventions reveal likely content. Sibling file names provide mutual context — a file named `read_mds.py` next to `equilibrium.py` and `profiles.py` is clearly part of an analysis pipeline.
 
-**Your scores are the ONLY triage dimension scores.** No boosts or multipliers are applied after your response. The composite triage score = `max(dims) * (1 + mean(nonzero_dims)) / 2`, so a file must suggest value on MULTIPLE dimensions to achieve a high composite.
+**Your scores are the ONLY triage dimension scores.** No boosts or multipliers are applied after your response. The composite triage score = `max(dims)`, so the highest-scoring dimension determines the composite.
 
 **We value unique content over well-known software.** A researcher's custom 200-line Python script that reads MDSplus data is far more valuable than a clone of a major simulation framework.
 
