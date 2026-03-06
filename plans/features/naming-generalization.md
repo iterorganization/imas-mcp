@@ -1,8 +1,8 @@
 # Signal Structure Naming Generalization
 
-**Status:** Proposal  
+**Status:** Proposal (v2 — revised)  
 **Author:** Agent (on behalf of user)  
-**Date:** 2025-06-03
+**Date:** 2025-06-03, revised 2026-03-06
 
 ## Problem Statement
 
@@ -29,56 +29,89 @@ JET's machine description lives in XML files versioned in git. ITER will use IMA
 2. **Format-specific properties stay as properties, not labels.** The MDSplus tree name, XML file path, or IDS identifier is a *property* of a generic node, not a *type* of node.
 3. **One rename, done right.** This is a greenfield project — rename everything once, update TCV's 34K nodes in a migration, and never look back.
 4. **Preserve the proven architecture.** The epoch-based versioning, super-structure concept, and promote-to-signal pipeline are excellent. Only the names change.
+5. **Use `data_source` consistently as a compound noun** — not bare `source` — to avoid ambiguity with code sources, discovery sources, evidence sources, and other "source" concepts in the codebase.
 
-## Proposed Naming
+## Naming Analysis
 
-### Tier 1: Graph Node Labels (Schema Classes)
+### "Epoch" Usage Audit
+
+"Epoch" appears throughout the codebase as a standalone concept:
+
+| Location | Usage |
+|---|---|
+| `EpochConfig` (facility_config.yaml) | Config class for structural epoch detection |
+| `detect_epochs` (facility_config.yaml) | Boolean flag on TreeConfig |
+| `epoch_config` (facility_config.yaml) | Property referencing EpochConfig |
+| `discovery/mdsplus/epochs.py` | Entire module — `detect_epochs_for_tree()`, `discover_epochs_optimized()` |
+| `limiter_epochs` (jet.yaml) | JET limiter contour version list |
+| `epoch_id` (graph_ops.py) | Variable constructing TreeModelVersion IDs |
+| FacilitySignal description | "epoch when signal first appeared/disappeared" |
+
+**IMAS does not use "epoch"** — the DD schema uses `DDVersion` with `HAS_PREDECESSOR` chains. The concept is analogous (versions of a schema that evolve over time) but IMAS calls them "versions", not "epochs".
+
+**Verdict:** `StructuralEpoch` is a good name. It's precise, doesn't collide with IMAS terminology, and aligns with the existing `EpochConfig` patterns. The "structural" prefix distinguishes from other epoch uses (limiter epochs, shot epochs). No rename needed for this term.
+
+### "DataSource" Collision Analysis
+
+The name `DataSource` already exists heavily in the config schema layer:
+
+| Existing Name | Layer | What It Is |
+|---|---|---|
+| `DataSourceType` | Graph enum | mdsplus, tdi, uda, hdf5, netcdf, imas, ppf, allas |
+| `DataSourceBase` | Config mixin | Common fields (setup_commands, python_command) |
+| `DataSourcesConfig` | Config class | Container: tdi, mdsplus, ppf, edas, hdf5, imas |
+| `data_sources:` | YAML key | Top-level config section in facility YAMLs |
+
+Using `DataSource` as both a **graph node label** and a **config mixin name** creates genuine ambiguity. An agent seeing `DataSource` won't know if we mean the Neo4j node or the config class.
+
+**However**, `DataSourceBase` is a *config-layer mixin* (never appears in the graph), while the proposed `DataSource` would be a *graph node label* (never appears in config). The namespaces don't overlap at runtime, but they do overlap in developer mental models and grep results.
+
+### Should We Use `data_source_*` Prefixes?
+
+The question: could we have non-data "sources" in the future?
+
+Current uses of "source" in the codebase:
+- `discovery_source` — how a signal was found (tree_traversal, wiki_scrape, code_analysis)
+- `enrichment_source` — who enriched a node (llm_agent, manual, wiki)
+- `TreeNodeSource` — how a node was discovered (tree_introspection, code_extraction)
+- `source_url` — evidence provenance
+- `source_node_id` — evidence graph node reference
+- `SourceFile` — a code file in the graph
+- `source_format` — JET's XML format identifier
+
+**"Source" alone is overloaded.** Five different meanings already exist. `source_name` without the `data_` prefix could mean any of these. `data_source_name` is unambiguous: it's the name of the data source this node belongs to.
+
+**Verdict:** Use the `data_source_` prefix consistently. The slight verbosity buys permanent clarity. In Cypher queries, `n.data_source_name` is self-documenting; `n.source_name` is not.
+
+### Will We Have Other Sources?
+
+Yes. The `DataSourceType` enum already lists 8 types, and the `DataSourcesConfig` has slots for tdi, mdsplus, ppf, edas, hdf5, imas. Future additions are expected:
+- **REST/API sources** (WEST, KSTAR have REST APIs)
+- **SQL databases** (some facilities store metadata in SQL)
+- **Object storage** (Allas for CSC, S3 for cloud)
+
+All of these are *data* sources. The `data_` prefix groups them correctly and distinguishes from code sources (`SourceFile`), wiki sources (`WikiPage`), and evidence sources (`MappingEvidence`).
+
+## Proposed Naming (v2)
+
+### Tier 1: Graph Node Labels
 
 | Current | Proposed | Rationale |
 |---|---|---|
-| `MDSplusTree` | `DataSource` | A hierarchical data container — could be an MDSplus tree, HDF5 file group, XML document, or IMAS IDS. "DataSource" is the standard term for "where data lives." |
-| `TreeModelVersion` | `StructuralEpoch` | A snapshot of the data structure at a point in time. "Epoch" is already used in the codebase (epoch_config, EpochConfig), and "structural" distinguishes it from shot/version epochs. |
-| `TreeNode` | `DataNode` | A single data point or structure within a hierarchy. "DataNode" is format-agnostic and self-explanatory. |
+| `MDSplusTree` | `DataSource` | Despite config-layer collision, this is the correct domain term. The config classes are prefixed (`DataSourceBase`, `DataSourcesConfig`), and the graph label is used in a different context. `DataSource` is what agents and Cypher queries will see; `DataSourceBase` is what pipeline developers import. |
+| `TreeModelVersion` | `StructuralEpoch` | Precise, aligns with existing `EpochConfig`. IMAS uses "version" not "epoch" — no collision. |
+| `TreeNode` | `DataNode` | Format-agnostic hierarchical data point. |
 | `TreeNodePattern` | `DataNodePattern` | Follows from DataNode. |
-| `TreeNodeType` | `DataNodeType` | Follows from DataNode. Values: STRUCTURE → STRUCTURE, SIGNAL → SIGNAL, NUMERIC → NUMERIC (these are general enough). |
-| `TreeNodeSource` | `DataNodeSource` | Follows from DataNode. Values: tree_introspection → introspection, code_extraction stays, tdi_parameter → accessor_parameter, manual stays. |
-
-**Why `DataSource` over alternatives:**
-
-| Candidate | Rejected because |
-|---|---|
-| `DataContainer` | Sounds like a runtime object, not a persistent store |
-| `DataStore` | Too close to "data store" (database), implies persistence layer |
-| `DataTree` | Still "tree" |
-| `DataCatalog` | Implies a registry, not a single container |
-| `DataSource` | ✅ Standard term. Clear. Used in facility configs already (`data_sources:` in YAML). |
-
-**Why `StructuralEpoch` over alternatives:**
-
-| Candidate | Rejected because |
-|---|---|
-| `SchemaVersion` | Conflicts with software schema versioning |
-| `DataVersion` | Too vague — version of data vs version of structure? |
-| `ConfigurationEpoch` | Too long, and "configuration" is overloaded |
-| `ModelVersion` | "Model" is ambiguous (ML model? physics model?) |
-| `StructuralEpoch` | ✅ Precise: structure of the data changed. "Epoch" already used in codebase. |
-
-**Why `DataNode` over alternatives:**
-
-| Candidate | Rejected because |
-|---|---|
-| `DataPoint` | Implies a single scalar, not a hierarchical element |
-| `DataElement` | Not bad, but "node" matches the hierarchical structure and is already natural |
-| `DataEntry` | Implies database row |
-| `DataNode` | ✅ Generic. Hierarchical. Clear. |
+| `TreeNodeType` | `DataNodeType` | Enum values stay: STRUCTURE, SIGNAL, NUMERIC, TEXT (general enough). |
+| `TreeNodeSource` | `DataNodeSource` | Values: tree_introspection → introspection, tdi_parameter → accessor_parameter. |
 
 ### Tier 2: Relationships
 
 | Current | Proposed | Rationale |
 |---|---|---|
-| `IN_TREE` | `IN_SOURCE` | "belongs to this data source". Applies to DataNode→DataSource and StructuralEpoch→DataSource. |
-| `SOURCE_NODE` | `HAS_SOURCE_NODE` | FacilitySignal→DataNode provenance. Direction: signal HAS a source node. Formalize in schema. |
-| `WRITES_TO_TREE` | `WRITES_TO` | AnalysisCode→DataSource. Drop "tree". |
+| `IN_TREE` | `IN_DATA_SOURCE` | "belongs to this data source". Unambiguous — cannot be confused with "in source file" or "in source code". |
+| `SOURCE_NODE` | `HAS_DATA_SOURCE_NODE` | FacilitySignal→DataNode provenance. The `data_source_` prefix distinguishes from `source_node_id` on MappingEvidence (which references WikiChunk/CodeChunk/TreeNode). Formalize in schema. |
+| `WRITES_TO_TREE` | `WRITES_TO` | AnalysisCode→DataSource. Short and clear — no ambiguity about what an analysis code writes to. |
 | `RESOLVES_TO_TREE_NODE` | `RESOLVES_TO_NODE` | DataReference→DataNode. Drop "tree". |
 | `INTRODUCED_IN` | `INTRODUCED_IN` | No change — already generic. |
 | `REMOVED_IN` | `REMOVED_IN` | No change — already generic. |
@@ -87,26 +120,27 @@ JET's machine description lives in XML files versioned in git. ITER will use IMA
 | `HAS_ERROR` | `HAS_ERROR` | No change. |
 | `FOLLOWS_PATTERN` | `FOLLOWS_PATTERN` | No change. |
 
-### Tier 3: Properties on FacilitySignal
+### Tier 3: Properties
 
-| Current | Proposed | Rationale |
-|---|---|---|
-| `tree_name` | `source_name` | Generic: which DataSource this signal comes from. |
-| `node_path` | `source_path` | Generic: path within the DataSource. |
-| `source_node` (ad-hoc) | `source_node` | Keep — formalize in schema as slot with `range: DataNode`. |
+| Current | Proposed | Context | Rationale |
+|---|---|---|---|
+| `tree_name` (on DataNode) | `data_source_name` | Which DataSource this node belongs to | Self-documenting. `n.data_source_name` in Cypher is unambiguous. |
+| `tree_name` (on StructuralEpoch) | `data_source_name` | Which DataSource this epoch belongs to | Consistent. |
+| `tree_name` (on FacilitySignal) | `data_source_name` | MDSplus tree containing this signal | Consistent. |
+| `tree_name` (on DataNodePattern) | `data_source_name` | Which DataSource this pattern belongs to | Consistent. |
+| `node_path` (on FacilitySignal) | `data_source_path` | Full path within the data source | `s.data_source_path` is unambiguous vs `s.source_path` which could mean source file path. |
+| `source_node` (ad-hoc on FacilitySignal) | `data_source_node` | ID of the DataNode backing this signal | Formalize in schema with `range: DataNode`, `relationship_type: HAS_DATA_SOURCE_NODE`. |
 
 ### Tier 4: Config Schema (facility_config.yaml)
-
-The config schema already uses reasonably generic names (`TreeConfig`, `TreeVersion`, `TreeSystem`). These map to MDSplus-specific *configuration* of the generic graph structure. The rename here is lighter:
 
 | Current | Proposed | Rationale |
 |---|---|---|
 | `TreeConfig` | `SourceConfig` | Configuration for a data source (MDSplus tree, XML archive, HDF5 store). |
 | `TreeVersion` | `SourceVersion` | Version definition within a data source config. |
 | `TreeSystem` | `SourceSystem` | Named subsystem within a data source. |
-| `tree_name` (property) | `source_name` | Consistent with graph property rename. |
+| `tree_name` (property) | `source_name` | Config-layer property — shorter is fine here since context is unambiguous within `data_sources.mdsplus.trees[].source_name`. |
 
-`MDSplusConfig`, `EpochConfig` stay unchanged — they are already correctly scoped as MDSplus-specific configuration. `MDSplusConfig` is the MDSplus-specific data source configuration, not a generic label.
+`MDSplusConfig`, `EpochConfig` stay unchanged — they are already correctly scoped as format-specific configuration.
 
 ### Tier 5: Vector Indexes
 
@@ -123,15 +157,15 @@ The question: should we have format-specific nodes (e.g., `MDSplusDataNode` vs `
 **Recommendation: Format-specific properties on generic nodes.**
 
 A `DataNode` gains its format identity through:
-- `source_type` property (already exists on `DataSource` via the `source_format` we added to JET's config)
+- `source_type` property on its parent `DataSource` node
 - Format-specific properties stored as regular node properties
 
 ```
 DataNode {
   path: "\\RESULTS::LIUQE:PSI",       # MDSplus path
-  source_name: "results",              # Which DataSource
-  node_type: SIGNAL,                   # MDSplus usage type
-  
+  data_source_name: "results",         # Which DataSource
+  node_type: SIGNAL,                   # Classification
+
   # Format-specific (nullable)
   mdsplus_usage: "SIGNAL",             # MDSplus-specific
   xml_xpath: null,                     # XML-specific
@@ -149,7 +183,7 @@ DataNode {
 Instead, format-specific behavior lives in:
 - **Config YAML**: `MDSplusConfig` (how to extract), `source_format: git_xml` (JET)
 - **Scanner plugins**: `MDSplusScanner`, `XMLScanner`, `HDF5Scanner` (how to discover)
-- **DataSource.source_type**: property on the DataSource node (MDSplus, XML, HDF5, IMAS)
+- **DataSource.source_type**: property on the DataSource graph node (MDSplus, XML, HDF5, IMAS)
 
 The `DataNode` is always just a `DataNode`. The scanner that created it knows the format, but the graph queries don't need to.
 
@@ -183,48 +217,6 @@ Based on the comprehensive audit:
 
 **Total: ~55 source files, ~400 individual string replacements.**
 
-### Graph Migration (Production Data)
-
-TCV has 34,082 signals and 8 TreeModelVersions in the production graph. Migration requires:
-
-```cypher
--- Phase 1: Add new labels alongside old
-MATCH (n:MDSplusTree) SET n:DataSource;
-MATCH (n:TreeModelVersion) SET n:StructuralEpoch;
-MATCH (n:TreeNode) SET n:DataNode;
-MATCH (n:TreeNodePattern) SET n:DataNodePattern;
-
--- Phase 2: Rename properties
-MATCH (n:DataNode) SET n.source_name = n.tree_name REMOVE n.tree_name;
-MATCH (n:StructuralEpoch) SET n.source_name = n.tree_name REMOVE n.tree_name;
-MATCH (s:FacilitySignal) SET s.source_name = s.tree_name, s.source_path = s.node_path
-  REMOVE s.tree_name, s.node_path;
-
--- Phase 3: Recreate relationships with new types
-// IN_TREE → IN_SOURCE
-MATCH (n)-[r:IN_TREE]->(t) CREATE (n)-[:IN_SOURCE]->(t) DELETE r;
-// SOURCE_NODE → HAS_SOURCE_NODE
-MATCH (s)-[r:SOURCE_NODE]->(n) CREATE (s)-[:HAS_SOURCE_NODE]->(n) DELETE r;
-// WRITES_TO_TREE → WRITES_TO
-MATCH (a)-[r:WRITES_TO_TREE]->(t) CREATE (a)-[:WRITES_TO]->(t) DELETE r;
-// RESOLVES_TO_TREE_NODE → RESOLVES_TO_NODE
-MATCH (d)-[r:RESOLVES_TO_TREE_NODE]->(n) CREATE (d)-[:RESOLVES_TO_NODE]->(n) DELETE r;
-
--- Phase 4: Remove old labels
-MATCH (n:MDSplusTree) REMOVE n:MDSplusTree;
-MATCH (n:TreeModelVersion) REMOVE n:TreeModelVersion;
-MATCH (n:TreeNode) REMOVE n:TreeNode;
-MATCH (n:TreeNodePattern) REMOVE n:TreeNodePattern;
-
--- Phase 5: Recreate vector index
-DROP INDEX tree_node_desc_embedding IF EXISTS;
-CREATE VECTOR INDEX data_node_desc_embedding IF NOT EXISTS
-FOR (n:DataNode) ON n.embedding
-OPTIONS {indexConfig: {`vector.dimensions`: 1024, `vector.similarity_function`: 'cosine'}};
-```
-
-This migration is reversible and can be tested on a graph archive before production.
-
 ### Risk Assessment
 
 | Risk | Severity | Mitigation |
@@ -233,73 +225,324 @@ This migration is reversible and can be tested on a graph archive before product
 | ~400 string replacements across 55 files | Medium | Systematic find-replace with tests as validation |
 | Vector index name change | Low | Auto-generated from schema, just rebuild |
 | Other agents' code references old names | Medium | Schema reference doc auto-regenerates |
-| Possible missed references | Low | Grep + test suite as safety net |
+| Possible missed references | Low | Grep + test suite + vector index rebuild as safety net |
+| `DataSource` label vs `DataSourceBase` config mixin | Low | Different layers — graph vs config. Docstrings clarify. |
 
 ## Implementation Plan
 
-### Phase 1: Schema (1 PR)
-1. Rename classes in `facility.yaml`: MDSplusTree→DataSource, TreeModelVersion→StructuralEpoch, TreeNode→DataNode, TreeNodePattern→DataNodePattern
-2. Rename enums: TreeNodeType→DataNodeType, TreeNodeSource→DataNodeSource
-3. Update relationship annotations: IN_TREE→IN_SOURCE, WRITES_TO_TREE→WRITES_TO, RESOLVES_TO_TREE_NODE→RESOLVES_TO_NODE
-4. Add `source_node` slot to FacilitySignal with `range: DataNode`, `relationship_type: HAS_SOURCE_NODE`
-5. Rename `tree_name` → `source_name`, `node_path` → `source_path` on FacilitySignal
-6. Update config schema: TreeConfig→SourceConfig, TreeVersion→SourceVersion, TreeSystem→SourceSystem
-7. Update `common.yaml` and `task_groups.yaml` descriptions
-8. `uv run build-models --force` — regenerate all models
-9. Run full test suite (expect failures — this is the baseline)
+### Phase 1: Schema + Models
 
-### Phase 2: Core Pipeline (1 PR)
-1. Update all Cypher queries in `graph_ops.py`, `extraction.py`, `batch_discovery.py`
-2. Update `tdi_linkage.py`
-3. Update variable names where they reference `tree_name` → `source_name`
-4. Update `discovery/mdsplus/pipeline.py`, `workers.py`, `epochs.py`
-5. Update `discovery/static/parallel.py`
-6. Update `discovery/signals/parallel.py`, `progress.py`
-7. Update `discovery/base/engine.py` orphan labels
+**Goal:** Single source of truth updated; all generated code rebuilt.
 
-### Phase 3: Agentic + Graph Layer (1 PR)
-1. Update `search_tools.py`, `server.py`, `tools.py`, `enrich.py`
-2. Update `domain_queries.py`, `schema_context.py`
-3. Update `graph/__init__.py` imports and `__all__`
-4. Update `graph/schema.py` docstrings
+1. Rename classes in `facility.yaml`:
+   - `MDSplusTree` → `DataSource`
+   - `TreeModelVersion` → `StructuralEpoch`
+   - `TreeNode` → `DataNode`
+   - `TreeNodePattern` → `DataNodePattern`
+2. Rename enums:
+   - `TreeNodeType` → `DataNodeType`
+   - `TreeNodeSource` → `DataNodeSource`
+   - Update `tree_introspection` → `introspection`, `tdi_parameter` → `accessor_parameter`
+3. Update relationship annotations:
+   - `IN_TREE` → `IN_DATA_SOURCE`
+   - `WRITES_TO_TREE` → `WRITES_TO`
+   - `RESOLVES_TO_TREE_NODE` → `RESOLVES_TO_NODE`
+4. Rename properties across all schema classes:
+   - `tree_name` → `data_source_name` (on DataNode, StructuralEpoch, DataNodePattern, FacilitySignal)
+   - `node_path` → `data_source_path` (on FacilitySignal)
+5. Add `data_source_node` slot to FacilitySignal:
+   - `range: DataNode`, `annotations: { relationship_type: HAS_DATA_SOURCE_NODE }`
+6. Update config schema (`facility_config.yaml`):
+   - `TreeConfig` → `SourceConfig`
+   - `TreeVersion` → `SourceVersion`
+   - `TreeSystem` → `SourceSystem`
+   - `tree_name` → `source_name` (config property)
+7. Update description references in `common.yaml`, `task_groups.yaml`
+8. Rebuild: `uv run build-models --force`
 
-### Phase 4: CLI + Tests (1 PR)
-1. Update `cli/enrich.py`, `cli/ingest.py`, `cli/discover/signals.py`
-2. Update all 12 test files
-3. Run full test suite — all tests must pass
+### Phase 2: Core Pipeline
 
-### Phase 5: Documentation + Migration (1 PR)
-1. Update 10 documentation files
+**Goal:** All discovery/ingestion code uses new labels.
+
+1. `discovery/mdsplus/graph_ops.py` — ~50 Cypher label/property/relationship updates
+2. `mdsplus/extraction.py` — ~15 updates
+3. `mdsplus/batch_discovery.py` — ~8 updates
+4. `discovery/mdsplus/pipeline.py`, `workers.py`, `epochs.py` — ~15 updates
+5. `discovery/static/parallel.py` — ~10 updates
+6. `discovery/signals/parallel.py` — ~40 updates (largest single file)
+7. `discovery/signals/progress.py` — `signals_in_tree` field rename consideration
+8. `discovery/mdsplus/tdi_linkage.py` — ~8 updates
+9. `discovery/base/engine.py` — orphan labels list
+
+### Phase 3: Agentic + Graph Layer
+
+**Goal:** MCP tools, search, and REPL use new labels.
+
+1. `agentic/search_tools.py` — Cypher queries, vector index name
+2. `agentic/server.py` — MCP tool definitions, example queries
+3. `agentic/tools.py` — Cypher queries
+4. `agentic/enrich.py` — enrichment Cypher
+5. `graph/domain_queries.py` — `find_tree_nodes()` → `find_data_nodes()`
+6. `graph/schema_context.py` — schema examples
+7. `graph/__init__.py` — imports and `__all__`
+8. `graph/schema.py` — docstrings
+
+### Phase 4: CLI + Tests
+
+**Goal:** All user-facing commands and test suite green.
+
+1. `cli/enrich.py` — label references
+2. `cli/ingest.py` — output labels
+3. `cli/discover/signals.py` — scanner references
+4. All 12 test files — labels, mocks, assertions
+5. Full test suite must pass
+
+### Phase 5: Documentation, Configs, and Live Graph Migration
+
+**Goal:** All references updated. Production graph migrated.
+
+1. Update 10 documentation files (docs/architecture/*.md, docs/api/REPL_API.md)
 2. Update 8 plans/agents files
-3. Update facility YAMLs (tcv.yaml, jet.yaml) property names
-4. Write and test graph migration script
-5. Execute migration on production graph
-6. Verify with `imas-codex graph status`
+3. Update facility YAMLs: `tree_name` → `source_name` in tcv.yaml, jet.yaml
+4. **Write migration script** (see below)
+5. **Execute migration sequence** (see below)
 
-## Open Questions
+### Live Graph Migration Steps
 
-1. **`DataSource` collision?** The name `DataSource` is used in `data_sources:` config key. Is `DataSource` (graph label) vs `data_sources` (YAML config section) confusing? Alternative: `SignalSource`. But `DataSource` aligns better with the existing config vocabulary.
+The production graph contains TCV data (34,082 FacilitySignal, ~50K TreeNode, 8 TreeModelVersion, ~5 MDSplusTree nodes). Migration must be atomic and tested.
 
-2. **`source_name` vs `data_source`?** For the property on DataNode that references which DataSource it belongs to: `source_name` (parallel to old `tree_name`) or `data_source` (matches the graph label)? The slot `range: DataSource` with relationship `IN_SOURCE` handles the graph edge; the string property just needs to be greppable.
+#### Pre-Migration
 
-3. **Should `MDSplusConfig` also rename?** It's correctly MDSplus-specific config. But if we add `XMLConfig`, `HDF5Config` later, the pattern is already established. Keep as-is.
+```bash
+# 1. Backup current graph
+uv run imas-codex graph backup
 
-4. **`StructuralEpoch` length?** At 15 characters it's longer than `TreeModelVersion` (16). Not a real concern — ID format changes from `tcv:results:v67` to the same `tcv:results:v67`. The label appears in Cypher which is already verbose.
+# 2. Export archive for testing
+uv run imas-codex graph export -o pre-migration-backup.tar.gz
+
+# 3. Load archive into test graph location for dry-run
+uv run imas-codex graph load pre-migration-backup.tar.gz -g codex-test
+```
+
+#### Migration Script (execute via `graph shell` or Python)
+
+```cypher
+// ============================================================
+// STEP 1: Add new labels (non-destructive, idempotent)
+// ============================================================
+// Each node gets the new label alongside the old one.
+// This means queries using EITHER label will work during transition.
+
+CALL apoc.periodic.iterate(
+  'MATCH (n:MDSplusTree) RETURN n',
+  'SET n:DataSource',
+  {batchSize: 1000}
+);
+
+CALL apoc.periodic.iterate(
+  'MATCH (n:TreeModelVersion) RETURN n',
+  'SET n:StructuralEpoch',
+  {batchSize: 1000}
+);
+
+CALL apoc.periodic.iterate(
+  'MATCH (n:TreeNode) RETURN n',
+  'SET n:DataNode',
+  {batchSize: 1000}
+);
+
+CALL apoc.periodic.iterate(
+  'MATCH (n:TreeNodePattern) RETURN n',
+  'SET n:DataNodePattern',
+  {batchSize: 1000}
+);
+
+// ============================================================
+// STEP 2: Rename properties (idempotent via COALESCE)
+// ============================================================
+// For nodes that have tree_name but not yet data_source_name.
+
+CALL apoc.periodic.iterate(
+  'MATCH (n:DataNode) WHERE n.tree_name IS NOT NULL AND n.data_source_name IS NULL RETURN n',
+  'SET n.data_source_name = n.tree_name REMOVE n.tree_name',
+  {batchSize: 1000}
+);
+
+CALL apoc.periodic.iterate(
+  'MATCH (n:StructuralEpoch) WHERE n.tree_name IS NOT NULL AND n.data_source_name IS NULL RETURN n',
+  'SET n.data_source_name = n.tree_name REMOVE n.tree_name',
+  {batchSize: 1000}
+);
+
+CALL apoc.periodic.iterate(
+  'MATCH (s:FacilitySignal) WHERE s.tree_name IS NOT NULL AND s.data_source_name IS NULL RETURN s',
+  'SET s.data_source_name = s.tree_name, s.data_source_path = s.node_path REMOVE s.tree_name, s.node_path',
+  {batchSize: 1000}
+);
+
+// Rename source_node → data_source_node on FacilitySignal
+CALL apoc.periodic.iterate(
+  'MATCH (s:FacilitySignal) WHERE s.source_node IS NOT NULL AND s.data_source_node IS NULL RETURN s',
+  'SET s.data_source_node = s.source_node REMOVE s.source_node',
+  {batchSize: 1000}
+);
+
+// ============================================================
+// STEP 3: Recreate relationships with new types
+// ============================================================
+// Neo4j cannot rename relationship types in-place.
+// Create new, delete old. Use APOC for batching.
+
+// IN_TREE → IN_DATA_SOURCE
+CALL apoc.periodic.iterate(
+  'MATCH (n)-[r:IN_TREE]->(t) RETURN r, n, t',
+  'CREATE (n)-[:IN_DATA_SOURCE]->(t) DELETE r',
+  {batchSize: 1000}
+);
+
+// SOURCE_NODE → HAS_DATA_SOURCE_NODE
+CALL apoc.periodic.iterate(
+  'MATCH (s)-[r:SOURCE_NODE]->(n) RETURN r, s, n',
+  'CREATE (s)-[:HAS_DATA_SOURCE_NODE]->(n) DELETE r',
+  {batchSize: 1000}
+);
+
+// WRITES_TO_TREE → WRITES_TO
+CALL apoc.periodic.iterate(
+  'MATCH (a)-[r:WRITES_TO_TREE]->(t) RETURN r, a, t',
+  'CREATE (a)-[:WRITES_TO]->(t) DELETE r',
+  {batchSize: 500}
+);
+
+// RESOLVES_TO_TREE_NODE → RESOLVES_TO_NODE
+CALL apoc.periodic.iterate(
+  'MATCH (d)-[r:RESOLVES_TO_TREE_NODE]->(n) RETURN r, d, n',
+  'CREATE (d)-[:RESOLVES_TO_NODE]->(n) DELETE r',
+  {batchSize: 500}
+);
+
+// ============================================================
+// STEP 4: Remove old labels
+// ============================================================
+CALL apoc.periodic.iterate(
+  'MATCH (n:MDSplusTree) RETURN n',
+  'REMOVE n:MDSplusTree',
+  {batchSize: 1000}
+);
+
+CALL apoc.periodic.iterate(
+  'MATCH (n:TreeModelVersion) RETURN n',
+  'REMOVE n:TreeModelVersion',
+  {batchSize: 1000}
+);
+
+CALL apoc.periodic.iterate(
+  'MATCH (n:TreeNode) RETURN n',
+  'REMOVE n:TreeNode',
+  {batchSize: 1000}
+);
+
+CALL apoc.periodic.iterate(
+  'MATCH (n:TreeNodePattern) RETURN n',
+  'REMOVE n:TreeNodePattern',
+  {batchSize: 1000}
+);
+
+// ============================================================
+// STEP 5: Recreate vector index
+// ============================================================
+DROP INDEX tree_node_desc_embedding IF EXISTS;
+
+CREATE VECTOR INDEX data_node_desc_embedding IF NOT EXISTS
+FOR (n:DataNode) ON n.embedding
+OPTIONS {
+  indexConfig: {
+    `vector.dimensions`: 1024,
+    `vector.similarity_function`: 'cosine'
+  }
+};
+```
+
+#### Post-Migration Validation
+
+```bash
+# 4. Verify node counts match pre-migration
+uv run imas-codex graph shell <<'EOF'
+MATCH (n:DataSource) RETURN 'DataSource' AS label, count(n) AS count
+UNION ALL
+MATCH (n:StructuralEpoch) RETURN 'StructuralEpoch', count(n)
+UNION ALL
+MATCH (n:DataNode) RETURN 'DataNode', count(n)
+UNION ALL
+MATCH (n:DataNodePattern) RETURN 'DataNodePattern', count(n)
+UNION ALL
+MATCH (n:FacilitySignal) RETURN 'FacilitySignal', count(n);
+EOF
+
+# 5. Verify no old labels remain
+uv run imas-codex graph shell <<'EOF'
+MATCH (n:MDSplusTree) RETURN 'MDSplusTree STILL EXISTS' AS warning, count(n)
+UNION ALL
+MATCH (n:TreeModelVersion) RETURN 'TreeModelVersion STILL EXISTS', count(n)
+UNION ALL
+MATCH (n:TreeNode) RETURN 'TreeNode STILL EXISTS', count(n);
+EOF
+
+# 6. Verify no old relationships remain
+uv run imas-codex graph shell <<'EOF'
+MATCH ()-[r:IN_TREE]->() RETURN 'IN_TREE STILL EXISTS' AS warning, count(r)
+UNION ALL
+MATCH ()-[r:SOURCE_NODE]->() RETURN 'SOURCE_NODE STILL EXISTS', count(r)
+UNION ALL
+MATCH ()-[r:WRITES_TO_TREE]->() RETURN 'WRITES_TO_TREE STILL EXISTS', count(r)
+UNION ALL
+MATCH ()-[r:RESOLVES_TO_TREE_NODE]->() RETURN 'RESOLVES_TO_TREE_NODE STILL EXISTS', count(r);
+EOF
+
+# 7. Verify vector index is online
+uv run imas-codex graph shell -c "SHOW INDEXES YIELD name, state WHERE name = 'data_node_desc_embedding' RETURN name, state"
+
+# 8. Verify new relationships exist
+uv run imas-codex graph shell <<'EOF'
+MATCH ()-[r:IN_DATA_SOURCE]->() RETURN 'IN_DATA_SOURCE' AS rel, count(r) AS count
+UNION ALL
+MATCH ()-[r:HAS_DATA_SOURCE_NODE]->() RETURN 'HAS_DATA_SOURCE_NODE', count(r)
+UNION ALL
+MATCH ()-[r:WRITES_TO]->() RETURN 'WRITES_TO', count(r);
+EOF
+
+# 9. Spot-check a signal's full traversal
+uv run imas-codex graph shell <<'EOF'
+MATCH (s:FacilitySignal {facility_id: 'tcv'})
+WHERE s.data_source_name IS NOT NULL
+WITH s LIMIT 1
+OPTIONAL MATCH (s)-[:HAS_DATA_SOURCE_NODE]->(dn:DataNode)
+OPTIONAL MATCH (dn)-[:IN_DATA_SOURCE]->(ds:DataSource)
+RETURN s.id, s.data_source_name, s.data_source_path,
+       dn.path, ds.name;
+EOF
+
+# 10. Push updated graph
+uv run imas-codex graph push --dev
+```
 
 ## Summary
 
-This rename touches ~55 files with ~400 replacements. The core architecture (epochs, super-structure, promote-to-signal pipeline) is unchanged. The benefit is permanent: every future data system (XML, HDF5, IMAS, SQL) fits naturally without forcing "tree" metaphors. The migration is straightforward Cypher. Five focused PRs over a few days of work.
-
-The recommended names:
+The revised naming uses `data_source` as a consistent compound noun prefix across labels, relationships, and properties:
 
 ```
-MDSplusTree     → DataSource
+MDSplusTree      → DataSource
 TreeModelVersion → StructuralEpoch
-TreeNode        → DataNode
-TreeNodePattern → DataNodePattern
-IN_TREE         → IN_SOURCE
-SOURCE_NODE     → HAS_SOURCE_NODE (formalized in schema)
-WRITES_TO_TREE  → WRITES_TO
-tree_name       → source_name
-node_path       → source_path
+TreeNode         → DataNode
+TreeNodePattern  → DataNodePattern
+IN_TREE          → IN_DATA_SOURCE
+SOURCE_NODE      → HAS_DATA_SOURCE_NODE (formalized in schema)
+WRITES_TO_TREE   → WRITES_TO
+RESOLVES_TO_TREE_NODE → RESOLVES_TO_NODE
+tree_name        → data_source_name  (graph property)
+tree_name        → source_name       (config property — shorter, unambiguous in context)
+node_path        → data_source_path
+source_node      → data_source_node
 ```
+
+~55 files, ~400 replacements, 5 phases. Architecture unchanged. Production migration is batched, idempotent, and validated.
