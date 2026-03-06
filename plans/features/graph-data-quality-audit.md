@@ -134,7 +134,7 @@ The following analysis is based on the LOCAL graph (171,364 nodes, 368,122 relat
 **Key observations:**
 - **ITER has ZERO wiki infrastructure** — only FacilityPaths and FacilityUsers exist
 - **Signals only exist for TCV** (322 signals, 21 TDI functions)
-- **No TreeNodes, CodeChunks, SourceFiles** exist anywhere — ingestion pipeline hasn't run
+- **No DataNodes, CodeChunks, SourceFiles** exist anywhere — ingestion pipeline hasn't run
 - **Zero MAPS_TO_IMAS relationships** — signal-to-IMAS mapping not established
 
 ### 3.2 Paths Discovery Quality
@@ -263,7 +263,7 @@ Since all URLs are valid:
 | WikiArtifact | 983 (2.5%) | **0** | 983 |
 | Image | 144 (9.5%) | **0** | 144 |
 
-**Five vector indexes are empty**: `facility_path_desc_embedding`, `facility_signal_desc_embedding`, `wiki_artifact_desc_embedding`, `image_desc_embedding`, `tree_node_desc_embedding`.
+**Five vector indexes are empty**: `facility_path_desc_embedding`, `facility_signal_desc_embedding`, `wiki_artifact_desc_embedding`, `image_desc_embedding`, `data_node_desc_embedding`.
 
 ---
 

@@ -27,7 +27,7 @@ Execute Cypher query and return results.
 **Examples:**
 ```python
 query('MATCH (f:Facility) RETURN f.id, f.name')
-query('MATCH (t:TreeNode {tree_name: $tree}) RETURN t.path LIMIT 10', tree='results')
+query('MATCH (t:DataNode {tree_name: $tree}) RETURN t.path LIMIT 10', tree='results')
 ```
 
 ### semantic_search()
@@ -141,7 +141,7 @@ Get prioritized exploration targets for a facility.
 ```python
 get_tree_structure(tree_name: str, path_prefix: str = "", limit: int = 50) -> list[dict[str, Any]]
 ```
-Get TreeNode structure from the graph.
+Get DataNode structure from the graph.
 
 ## Remote Execution
 
@@ -298,7 +298,7 @@ Get complete graph schema for Cypher query generation.
 
 **Graph (semantic data):**
 - Use: `add_to_graph()`
-- What: SourceFile, FacilityPath, TreeNode, CodeExample, AnalysisCode
+- What: SourceFile, FacilityPath, DataNode, CodeExample, AnalysisCode
 - Why: Searchable, relational, public
 
 **Private Config (infrastructure):**

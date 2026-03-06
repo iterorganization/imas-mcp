@@ -33,7 +33,7 @@ The system uses a three-phase pipeline:
 │  - Chunk using LlamaIndex SentenceSplitter                      │
 │  - Generate embeddings (Qwen3-Embedding-8B)                    │
 │  - Create WikiChunk nodes with vector index                     │
-│  - Link to TreeNodes and IMASPaths                              │
+│  - Link to DataNodes and IMASPaths                              │
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -86,7 +86,7 @@ Searchable text chunk with vector embedding.
 
 - `WikiPage` -[:AT_FACILITY]-> `Facility`
 - `WikiPage` -[:HAS_CHUNK]-> `WikiChunk`
-- `WikiChunk` -[:DOCUMENTS]-> `TreeNode`
+- `WikiChunk` -[:DOCUMENTS]-> `DataNode`
 - `WikiChunk` -[:MENTIONS_IMAS]-> `IMASPath`
 
 ## Semantic Search

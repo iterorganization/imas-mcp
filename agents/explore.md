@@ -176,7 +176,7 @@ After every exploration session, persist all discoveries:
 | Discovery Type | Tool |
 |----------------|------|
 | Analysis codes | `add_to_graph("AnalysisCode", [...])` |
-| MDSplus trees | `add_to_graph("MDSplusTree", [...])` |
+| MDSplus trees | `add_to_graph("DataSource", [...])` |
 | Directory paths | `add_to_graph("FacilityPath", [...])` |
 | Source files | `add_to_graph("SourceFile", [...])` |
 | Infrastructure (OS, tools, paths) | `update_infrastructure(facility, {...})` |

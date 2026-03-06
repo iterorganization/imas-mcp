@@ -63,7 +63,7 @@ uv run imas-codex agent mark-stale "\\RESULTS::*"
 from imas_codex.agentic import create_enrichment_agent
 
 agent = create_enrichment_agent(model="gemini-2.0-flash")
-result = await agent.run("Enrich these TreeNodes: \\RESULTS::PSI, \\RESULTS::IP")
+result = await agent.run("Enrich these DataNodes: \\RESULTS::PSI, \\RESULTS::IP")
 ```
 
 ## Batch Processing

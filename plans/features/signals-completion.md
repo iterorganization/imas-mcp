@@ -15,7 +15,7 @@ three deferred items remaining:
    and `agentic/prompt_loader.py`
 2. `remote/scripts/extract_tdi_functions.py` — still consumed by
    `discovery/signals/tdi.py`
-3. `TreeNode.is_static` property — used in 30+ Cypher queries across
+3. `DataNode.is_static` property — used in 30+ Cypher queries across
    `mdsplus/extraction.py` and `discovery/mdsplus/graph_ops.py`
 
 Additionally, three pre-existing schema compliance failures exist:
@@ -60,7 +60,7 @@ Steps:
 4. Delete `remote/scripts/extract_tdi_functions.py`
 5. Run tests, commit
 
-## Phase 3: Remove `TreeNode.is_static` ✅
+## Phase 3: Remove `DataNode.is_static` ✅
 
 **Goal:** Replace all `is_static` filters with tree-name or version-based
 queries that work identically for all tree types.
@@ -73,7 +73,7 @@ Steps:
 1. In `mdsplus/extraction.py`: replace `n.is_static = true` filters with
    tree-name membership checks (the versioned trees are known from config)
 2. In `discovery/mdsplus/graph_ops.py`: replace all 17 `is_static` filters
-   with equivalent `tree_name`-based or `introduced_version IS NOT NULL`
+   with equivalent `data_source_name`-based or `introduced_version IS NOT NULL`
    conditions
 3. Stop setting `is_static` on new nodes in extraction
 4. Remove `is_static` from the LinkML schema (`facility.yaml`)
@@ -115,14 +115,14 @@ The document should cover:
 - Scanner plugin system (mdsplus, tdi, ppf, edas)
 - Scan → Enrich → Check flow
 - Tree extraction: versioned vs epoched vs shot-scoped
-- TDI linkage: TreeNode ← RESOLVES_TO ← TDIFunction
+- TDI linkage: DataNode ← RESOLVES_TO ← TDIFunction
 - Enrichment context injection (wiki, code, tree hierarchy, TDI source)
 
 ### Graph Schema
-- Node types: FacilitySignal, TreeNode, TreeModelVersion, TreeNodePattern,
-  TDIFunction, DataAccess, Diagnostic, MDSplusTree
-- Key relationships: SOURCE_NODE, DATA_ACCESS, AT_FACILITY,
-  BELONGS_TO_DIAGNOSTIC, MAPS_TO_IMAS, RESOLVES_TO_TREE_NODE,
+- Node types: FacilitySignal, DataNode, StructuralEpoch, DataNodePattern,
+  TDIFunction, DataAccess, Diagnostic, DataSource
+- Key relationships: HAS_DATA_SOURCE_NODE, DATA_ACCESS, AT_FACILITY,
+  BELONGS_TO_DIAGNOSTIC, MAPS_TO_IMAS, RESOLVES_TO_NODE,
   INTRODUCED_IN, REMOVED_IN, HAS_UNIT, HAS_PATTERN
 
 ### Example Cypher Queries
@@ -139,12 +139,12 @@ Include working queries for each of these use cases:
 4. **Data access pattern resolution** — from a DataAccess node, find all
    signals and their access templates
 5. **Epoch-aware queries** — find signals that exist at a given shot number
-   via TreeModelVersion applicability ranges
+   via StructuralEpoch applicability ranges
 6. **Cross-domain traversal** — from a signal, traverse to related wiki
    documentation, code chunks, and IMAS paths
 7. **Diagnostic inventory** — list all diagnostics and their signal counts
 8. **TDI function resolution** — from a TDI function, follow RESOLVES_TO
-   edges to the underlying TreeNodes and their signals
+   edges to the underlying DataNodes and their signals
 
 ## Phase 6: E2E Testing ✅
 
@@ -168,10 +168,10 @@ the same pattern:
 imas-codex discover signals tcv -s mdsplus --scan-only -n 50
 ```
 Validate:
-- TreeModelVersion nodes created for configured versions
-- TreeNode nodes created with correct tree_name, facility_id, path
-- FacilitySignal nodes promoted from leaf TreeNodes
-- SOURCE_NODE edges from FacilitySignal → TreeNode
+- StructuralEpoch nodes created for configured versions
+- DataNode nodes created with correct tree_name, facility_id, path
+- FacilitySignal nodes promoted from leaf DataNodes
+- HAS_DATA_SOURCE_NODE edges from FacilitySignal → DataNode
 - DataAccess node created with correct method_type
 - Unit nodes created from SSH extraction
 
@@ -180,7 +180,7 @@ Validate:
 imas-codex discover signals tcv -s mdsplus --scan-only -n 50
 ```
 Validate:
-- TreeNode nodes created for `results` subtree
+- DataNode nodes created for `results` subtree
 - FacilitySignal nodes promoted with correct tree_name
 - node_usages filtering applied (only NUMERIC/SIGNAL)
 
@@ -196,7 +196,7 @@ Validate:
 #### E2E-4: TDI Linkage
 Run after E2E-1 and E2E-3 (don't clear between):
 Validate:
-- RESOLVES_TO_TREE_NODE edges exist between TDIFunction and TreeNode
+- RESOLVES_TO_NODE edges exist between TDIFunction and DataNode
 - FacilitySignal.preferred_accessor populated for linked signals
 
 #### E2E-5: Enrichment
@@ -219,11 +219,11 @@ Validate all of the above in a single run.
 
 After each E2E test, run validation queries:
 - All FacilitySignal nodes have non-null `facility_id`, `status`, `accessor`
-- All TreeNode nodes have non-null `path`, `tree_name`, `facility_id`
-- All SOURCE_NODE edges connect FacilitySignal → TreeNode
+- All DataNode nodes have non-null `path`, `data_source_name`, `facility_id`
+- All HAS_DATA_SOURCE_NODE edges connect FacilitySignal → DataNode
 - All DATA_ACCESS edges connect FacilitySignal → DataAccess
 - All AT_FACILITY edges connect to the correct Facility node
-- No orphaned TreeNode nodes (every leaf has a FacilitySignal or is STRUCTURE)
+- No orphaned DataNode nodes (every leaf has a FacilitySignal or is STRUCTURE)
 - Signal IDs follow the expected format: `{facility}:{tree}/{path}`
 
 ### Schema Compliance

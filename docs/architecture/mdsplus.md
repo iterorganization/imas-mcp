@@ -9,32 +9,32 @@ MDSplus trees are hierarchical data containers used at fusion facilities. We mod
 ## The "Super Tree" Concept
 
 ```
-TreeModelVersion v1 (shots 3000-50000): 6,895 nodes
-TreeModelVersion v2 (shots 50000-70000): 9,980 nodes  [+3,085 nodes]
-TreeModelVersion v3 (shots 70000-82000): 11,403 nodes [+1,423 nodes]
-TreeModelVersion v4 (shots 82000-current): 11,463 nodes [+60 nodes]
+StructuralEpoch v1 (shots 3000-50000): 6,895 nodes
+StructuralEpoch v2 (shots 50000-70000): 9,980 nodes  [+3,085 nodes]
+StructuralEpoch v3 (shots 70000-82000): 11,403 nodes [+1,423 nodes]
+StructuralEpoch v4 (shots 82000-current): 11,463 nodes [+60 nodes]
 ```
 
-Each TreeNode has:
+Each DataNode has:
 - `first_shot`: When this node first appeared
 - `last_shot`: When it was removed (null = still active)
-- `introduced_version`: Link to TreeModelVersion that added it
+- `introduced_version`: Link to StructuralEpoch that added it
 
 ## Schema
 
-### MDSplusTree
+### DataSource
 
 ```cypher
-(:MDSplusTree {
+(:DataSource {
     name: "results",
     facility_id: "tcv"
 })-[:AT_FACILITY]->(:Facility {id: "tcv"})
 ```
 
-### TreeNode
+### DataNode
 
 ```cypher
-(:TreeNode {
+(:DataNode {
     id: "tcv:results:\\RESULTS::PSI",
     path: "\\RESULTS::PSI",
     tree_name: "results",
@@ -61,7 +61,7 @@ uv run ingest-mdsplus tcv results tcv_shot magnetics
 
 ## Enrichment
 
-TreeNodes are enriched via `agent enrich`:
+DataNodes are enriched via `agent enrich`:
 
 ```bash
 uv run imas-codex agent enrich --tree results --batch-size 50
@@ -77,12 +77,12 @@ uv run imas-codex agent enrich --tree results --batch-size 50
 
 ```cypher
 // Find TDI function for a node
-MATCH (n:TreeNode {path: "\\RESULTS::PSI"})
+MATCH (n:DataNode {path: "\\RESULTS::PSI"})
 MATCH (t:TDIFunction {name: n.accessor_function})
 RETURN t.signature
 
 // Find all nodes accessible via tcv_eq
-MATCH (t:TDIFunction {name: "tcv_eq"})-[:ACCESSES]->(n:TreeNode)
+MATCH (t:TDIFunction {name: "tcv_eq"})-[:ACCESSES]->(n:DataNode)
 RETURN n.path, n.units
 ```
 
@@ -90,12 +90,12 @@ RETURN n.path, n.units
 
 ```cypher
 -- What nodes existed at shot 50000?
-MATCH (n:TreeNode {tree_name: "results", facility_id: "tcv"})
+MATCH (n:DataNode {tree_name: "results", facility_id: "tcv"})
 WHERE n.first_shot <= 50000 
   AND (n.last_shot IS NULL OR n.last_shot > 50000)
 RETURN n.path, n.description
 
 -- Physics domain query
-MATCH (n:TreeNode {physics_domain: "equilibrium", facility_id: "tcv"})
+MATCH (n:DataNode {physics_domain: "equilibrium", facility_id: "tcv"})
 RETURN n.path, n.description, n.units
 ```

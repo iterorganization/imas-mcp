@@ -5,7 +5,7 @@ Priority: High — core deliverable for imas-ambix
 
 ## Summary
 
-Discover and persist mappings between facility data (TreeNode/FacilitySignal)
+Discover and persist mappings between facility data (DataNode/FacilitySignal)
 and IMAS Data Dictionary paths (IMASPath). Each mapping connects a facility
 signal to its IMAS equivalent with transformation metadata (unit conversion,
 coordinate transforms, COCOS).
@@ -15,7 +15,7 @@ coordinate transforms, COCOS).
 Before mapping discovery can begin, three foundation steps must complete:
 
 1. **DataAccess nodes** — deterministic, generated from facility YAML config
-2. **FacilitySignal→TreeNode links** — batch Cypher from existing TreeNodes
+2. **FacilitySignal→DataNode links** — batch Cypher from existing DataNodes
 3. **MCP catalog tool** — agents need filtered graph views without context flooding
 
 ## Graph Schema
@@ -46,7 +46,7 @@ The user asked for "a considered evaluation for the need of agent teams."
 
 A team of 3-5 Claude Code agents working in parallel, each:
 1. Takes a physics domain (equilibrium, magnetics, edge_plasma, etc.)
-2. Queries TreeNodes in that domain via MCP
+2. Queries DataNodes in that domain via MCP
 3. Searches for matching IMASPaths via semantic search
 4. Proposes IMASMapping nodes with evidence
 5. Validates by checking unit compatibility and COCOS transforms
@@ -55,8 +55,8 @@ A team of 3-5 Claude Code agents working in parallel, each:
 
 | Factor | Assessment |
 |--------|------------|
-| **Scale** | TCV has ~11,596 leaf TreeNodes across ~15 physics domains. A single agent can process 50-100 mappings per session. At 3-4 sessions, coverage is achievable without parallelism. |
-| **Determinism** | Most mappings are discoverable via embedding similarity (TreeNode.embedding ↔ IMASPath.embedding). This is a vector search + heuristic pipeline, not a reasoning task requiring agent autonomy. |
+| **Scale** | TCV has ~11,596 leaf DataNodes across ~15 physics domains. A single agent can process 50-100 mappings per session. At 3-4 sessions, coverage is achievable without parallelism. |
+| **Determinism** | Most mappings are discoverable via embedding similarity (DataNode.embedding ↔ IMASPath.embedding). This is a vector search + heuristic pipeline, not a reasoning task requiring agent autonomy. |
 | **Coordination overhead** | Agent teams need a proxy server (LiteLLM), Langfuse observability, budget enforcement, conflict resolution for concurrent graph writes. This infrastructure doesn't exist yet. |
 | **Quality vs speed** | Mapping quality depends on domain expertise (COCOS, unit conventions, coordinate systems). A focused single agent with good prompts produces better mappings than 5 parallel agents with shallow context. |
 | **Cost** | Agent teams would cost ~$15-50 per facility (5 agents × ~$3-10 each). A deterministic pipeline with LLM fallback for ambiguous cases costs ~$0.50-2. |
@@ -70,14 +70,14 @@ Use agent teams only if the pipeline approach fails to achieve >80% coverage.
 
 ### Phase 1: Deterministic Matching (no LLM)
 
-Vector similarity between TreeNode and IMASPath embeddings, filtered by
+Vector similarity between DataNode and IMASPath embeddings, filtered by
 physics domain alignment.
 
 ```python
 # Pseudocode for deterministic matching
 for domain in physics_domains:
     tree_nodes = query("""
-        MATCH (tn:TreeNode {facility_id: $facility, physics_domain: $domain})
+        MATCH (tn:DataNode {facility_id: $facility, physics_domain: $domain})
         WHERE tn.node_type IN ['SIGNAL', 'NUMERIC']
         AND tn.embedding IS NOT NULL
         RETURN tn
@@ -98,13 +98,13 @@ for domain in physics_domains:
             create_mapping(tn, candidates[0], mapping_type="direct", confidence=score)
 ```
 
-**Expected yield**: 40-60% of leaf TreeNodes map directly (equilibrium,
+**Expected yield**: 40-60% of leaf DataNodes map directly (equilibrium,
 magnetics, and wall signals have near-identical naming).
 
 ### Phase 2: LLM-Assisted Matching (structured output)
 
-For TreeNodes without a high-confidence deterministic match, use an LLM
-with the TreeNode description + top-5 IMASPath candidates:
+For DataNodes without a high-confidence deterministic match, use an LLM
+with the DataNode description + top-5 IMASPath candidates:
 
 ```python
 # Input to LLM
@@ -140,7 +140,7 @@ but physics meaning matches.
 For all proposed mappings with confidence > 0.5:
 
 1. **Unit check** — pint-based: `ureg(tn.unit).dimensionality == ureg(imas.unit).dimensionality`
-2. **Shape check** — TreeNode.shape vs IMASPath coordinate specs (1D time series → 1D, 2D profile → 2D)
+2. **Shape check** — DataNode.shape vs IMASPath coordinate specs (1D time series → 1D, 2D profile → 2D)
 3. **COCOS check** — if both have sign_convention, verify COCOS compatibility
 4. **Access check** — use DataAccess to fetch sample data and verify it's physically reasonable
 
@@ -190,44 +190,44 @@ No SSH, no LLM. Reads facility YAML, writes to graph.
 
 ## FacilitySignal Generation (Prerequisite)
 
-Batch Cypher creates FacilitySignal nodes from leaf TreeNodes:
+Batch Cypher creates FacilitySignal nodes from leaf DataNodes:
 
 ```cypher
-MATCH (tn:TreeNode {facility_id: $facility})
+MATCH (tn:DataNode {facility_id: $facility})
 WHERE tn.node_type IN ['SIGNAL', 'NUMERIC']
-AND NOT EXISTS { MATCH (fs:FacilitySignal)-[:SOURCE_NODE]->(tn) }
+AND NOT EXISTS { MATCH (fs:FacilitySignal)-[:HAS_DATA_SOURCE_NODE]->(tn) }
 WITH tn
-MATCH (da:DataAccess {id: $facility + ':mdsplus:' + tn.tree_name})
+MATCH (da:DataAccess {id: $facility + ':mdsplus:' + tn.data_source_name})
 CREATE (fs:FacilitySignal {
     id: tn.facility_id + ':' + coalesce(tn.physics_domain, 'unknown') + '/' + 
         replace(replace(tn.path, '\\', ''), '::', '/'),
     facility_id: tn.facility_id,
     accessor: tn.path,
-    tree_name: tn.tree_name,
+    tree_name: tn.data_source_name,
     name: tn.description,
     physics_domain: tn.physics_domain,
     unit: tn.unit,
     status: 'discovered'
 })
-CREATE (fs)-[:SOURCE_NODE]->(tn)
+CREATE (fs)-[:HAS_DATA_SOURCE_NODE]->(tn)
 CREATE (fs)-[:DATA_ACCESS]->(da)
 CREATE (fs)-[:AT_FACILITY]->(:Facility {id: tn.facility_id})
 ```
 
-This preserves all existing TreeNode enrichment. FacilitySignal is a thin
-access wrapper — all physics metadata stays on TreeNode and is reached via
-the `SOURCE_NODE` edge.
+This preserves all existing DataNode enrichment. FacilitySignal is a thin
+access wrapper — all physics metadata stays on DataNode and is reached via
+the `HAS_DATA_SOURCE_NODE` edge.
 
 ## Migration Safety
 
 | Existing Data | Impact | Action |
 |---------------|--------|--------|
-| 47,976 TreeNodes | Zero modification | Untouched — FacilitySignal links TO them |
+| 47,976 DataNodes | Zero modification | Untouched — FacilitySignal links TO them |
 | 34,082 embeddings | Preserved | Used for similarity search in Phase 1 |
-| 11,596 unit values | Preserved | Inherited by FacilitySignal via SOURCE_NODE |
-| enrichment_* fields | Preserved | All stay on TreeNode |
-| TreeModelVersion epochs | Preserved | INTRODUCED_IN/REMOVED_IN edges unchanged |
-| TreeNodePattern | Preserved | FOLLOWS_PATTERN edges unchanged |
+| 11,596 unit values | Preserved | Inherited by FacilitySignal via HAS_DATA_SOURCE_NODE |
+| enrichment_* fields | Preserved | All stay on DataNode |
+| StructuralEpoch epochs | Preserved | INTRODUCED_IN/REMOVED_IN edges unchanged |
+| DataNodePattern | Preserved | FOLLOWS_PATTERN edges unchanged |
 
 ## Cost Estimate
 
@@ -255,7 +255,7 @@ The threshold is pragmatic: for TCV's ~11,596 signals, even 60% coverage =
 
 ## Implementation Order
 
-1. [ ] Add `SOURCE_NODE` relationship to `facility.yaml` schema
+1. [ ] Add `HAS_DATA_SOURCE_NODE` relationship to `facility.yaml` schema
 2. [ ] Create `get_catalog()` MCP tool
 3. [ ] Add DataAccess generation to `discover static` CLI
 4. [ ] Add FacilitySignal batch generation to `discover static` CLI

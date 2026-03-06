@@ -2,7 +2,7 @@
 
 ## Objective
 
-Use the `discover code` CLI to ingest analysis code from fusion facilities, extract data access patterns (MDSplus paths, TDI function calls), link them to TreeNodes and FacilitySignals, and use the code evidence to validate and enrich the signal graph. The approach learns from real code how scientists access data rather than probing signals blindly.
+Use the `discover code` CLI to ingest analysis code from fusion facilities, extract data access patterns (MDSplus paths, TDI function calls), link them to DataNodes and FacilitySignals, and use the code evidence to validate and enrich the signal graph. The approach learns from real code how scientists access data rather than probing signals blindly.
 
 ## Architecture
 
@@ -59,7 +59,7 @@ discovered → triaged → (enriched) → scored → ingested | skipped | failed
 | ENRICH | enrich_worker | triaged (composite ≥ 0.75) | triaged + is_enriched | `rg` patterns + preview text |
 | SCORE | score_worker | triaged + is_enriched | scored / skipped | Full LLM scoring (9 dims + enrichment) |
 | CODE | code_worker | scored (interest_score ≥ 0.75) | ingested / failed | tree-sitter chunk + embed |
-| LINK | link_worker | ingested | ingested + evidence_linked | DataReference → TreeNode → Signal |
+| LINK | link_worker | ingested | ingested + evidence_linked | DataReference → DataNode → Signal |
 
 **Workers:** All workers use `SupervisedWorkerGroup` with `PipelinePhase` tracking and orphan recovery via `claimed_at` timestamps.
 
@@ -165,7 +165,7 @@ RETURN cf.status, count(cf) AS n ORDER BY n DESC
 - All FacilityPaths re-scanned
 - CodeFiles triaged with 9-dimension properties
 - High-value files enriched, scored, ingested with CodeChunks + embeddings
-- DataReference → TreeNode links with AT_FACILITY edges
+- DataReference → DataNode links with AT_FACILITY edges
 - FacilitySignals annotated with code evidence
 
 ---
@@ -173,12 +173,12 @@ RETURN cf.status, count(cf) AS n ORDER BY n DESC
 ## Phase 4: Code-Evidence Signal Linking
 
 ### Goal
-Use code evidence to validate and prioritize FacilitySignals. The `link_worker` propagates DataReference → TreeNode → FacilitySignal evidence automatically during pipeline runs.
+Use code evidence to validate and prioritize FacilitySignals. The `link_worker` propagates DataReference → DataNode → FacilitySignal evidence automatically during pipeline runs.
 
 ### Step 4.1: Verify Evidence Chain
 
 ```cypher
-MATCH (dr:DataReference)-[:RESOLVES_TO_TREE_NODE]->(tn:TreeNode)
+MATCH (dr:DataReference)-[:RESOLVES_TO_NODE]->(tn:DataNode)
 WHERE tn.facility_id = 'tcv'
 RETURN count(dr) AS refs, count(DISTINCT tn.id) AS tree_nodes
 ```
@@ -190,7 +190,7 @@ Signals referenced in real code are high-confidence targets:
 ```cypher
 MATCH (sig:FacilitySignal)-[:AT_FACILITY]->(f:Facility {id: 'tcv'})
 WHERE sig.has_code_evidence = true AND sig.check_status IS NULL
-RETURN sig.id, sig.node_path, sig.code_evidence_count
+RETURN sig.id, sig.data_source_path, sig.code_evidence_count
 ORDER BY sig.code_evidence_count DESC
 ```
 
@@ -286,5 +286,5 @@ Agent-driven exploration via `search_code()`, `map_signals_to_imas()` MCP tools.
 | SSH timeouts on large directories | Time-limited runs, depth=1 scanning, exclude lists |
 | LLM cost overruns | Cost limits per run ($5-$20), triage filters 70-80% |
 | tree-sitter parse errors (IDL) | Errors don't affect chunking boundaries; see `tree-sitter-gdl-fixes.md` |
-| Pattern false positives | MDSplus paths validated against TreeNode graph |
+| Pattern false positives | MDSplus paths validated against DataNode graph |
 | Static tree signals unfixable | Mark as computational (not stored data), skip check |

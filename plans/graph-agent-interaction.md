@@ -170,8 +170,8 @@ TASK_GROUPS: dict[str, list[str]] = {
     "imas": ["IMASPath", "IDS", "IMASSemanticCluster", "DDVersion", "Unit",
              "IMASPathChange", "IMASCoordinateSpec"],
     "code": ["CodeFile", "CodeChunk", "CodeExample"],
-    "facility": ["Facility", "FacilityPath", "FacilitySignal", "TreeNode", "Diagnostic"],
-    "trees": ["TreeNode", "MDSplusTree", "TreeNodePattern"],
+    "facility": ["Facility", "FacilityPath", "FacilitySignal", "DataNode", "Diagnostic"],
+    "trees": ["DataNode", "DataSource", "DataNodePattern"],
 }
 ```
 
@@ -204,11 +204,11 @@ code:
   description: Ingested source code and code examples
 
 facility:
-  labels: [Facility, FacilityPath, FacilitySignal, TreeNode, Diagnostic]
+  labels: [Facility, FacilityPath, FacilitySignal, DataNode, Diagnostic]
   description: Facility infrastructure and discovery paths
 
 trees:
-  labels: [TreeNode, MDSplusTree, TreeNodePattern]
+  labels: [DataNode, DataSource, DataNodePattern]
   description: MDSplus tree structure and node patterns
 ```
 
@@ -244,7 +244,7 @@ def schema_for(
     the graph structure.
 
     Args:
-        labels: Specific node labels (e.g., 'FacilitySignal', 'TreeNode')
+        labels: Specific node labels (e.g., 'FacilitySignal', 'DataNode')
         task: Predefined task name for curated schema slices:
               'signals', 'wiki', 'imas', 'code', 'facility', 'trees'
         include_relationships: Include relevant relationship types
@@ -377,7 +377,7 @@ def find_code(
     """
 
 # ---- Tree exploration ----
-def find_tree_nodes(
+def find_data_nodes(
     query: str | None = None,
     tree_name: str | None = None,
     facility: str | None = None,
@@ -439,7 +439,7 @@ Several REPL functions in `server.py` already do similar things (`search_imas`, 
 |----------|-------------|--------|
 | `search_imas()` | `find_imas()` | Richer: includes clusters, units, physics domain |
 | `search_code()` | `find_code()` | Richer: direct graph query instead of ChunkSearch wrapper |
-| `get_tree_structure()` | `find_tree_nodes()` | Richer: adds semantic search + physics domain filter |
+| `get_tree_structure()` | `find_data_nodes()` | Richer: adds semantic search + physics domain filter |
 | `semantic_search()` | Kept | Low-level, still useful for ad-hoc index queries |
 | `get_facility()` | Kept + `facility_overview()` | Overview adds aggregated graph stats |
 
@@ -586,7 +586,7 @@ uv sync
 
 7. **`imas_codex/graph/domain_queries.py`** — Domain query functions
    - `find_signals()`, `find_wiki()`, `find_imas()`, `find_code()`
-   - `find_tree_nodes()`, `map_signals_to_imas()`, `facility_overview()`
+   - `find_data_nodes()`, `map_signals_to_imas()`, `facility_overview()`
 8. **Update REPL registration** in `server.py`
    - Add domain query functions to `_repl_globals`
    - Replace overlapping functions (`search_imas` → `find_imas`, etc.)

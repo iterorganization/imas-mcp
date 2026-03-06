@@ -47,7 +47,7 @@ Answers the documentation research question in one call. Replaces `find_wiki()` 
 ```
 WikiChunk ←[:HAS_CHUNK]- WikiPage          → page title, URL
 WikiChunk -[:DOCUMENTS]→ FacilitySignal     → cross-linked signals
-WikiChunk -[:DOCUMENTS]→ TreeNode           → cross-linked tree nodes
+WikiChunk -[:DOCUMENTS]→ DataNode           → cross-linked tree nodes
 WikiChunk -[:MENTIONS_IMAS]→ IMASPath       → referenced IMAS paths
 WikiChunk -[:NEXT_CHUNK]→ WikiChunk         → surrounding context
 WikiArtifact ←[:HAS_ARTIFACT]- WikiPage     → parent page context
@@ -92,15 +92,15 @@ Answers the data access question in one call. Replaces `find_signals()` → insp
 | Index | Why |
 |-------|-----|
 | `facility_signal_desc_embedding` | Core signal search |
-| `tree_node_desc_embedding` | MDSplus tree nodes matching the concept |
+| `data_node_desc_embedding` | MDSplus tree nodes matching the concept |
 
 **Graph traversals from results**:
 ```
 FacilitySignal -[:DATA_ACCESS]→ DataAccess       → access template (code snippet)
 FacilitySignal -[:BELONGS_TO_DIAGNOSTIC]→ Diagnostic → diagnostic name, category
-FacilitySignal -[:SOURCE_NODE]→ TreeNode          → MDSplus tree path
+FacilitySignal -[:HAS_DATA_SOURCE_NODE]→ DataNode          → MDSplus tree path
 DataAccess -[:MAPS_TO_IMAS]→ IMASPath             → IMAS standard path + docs
-TreeNode (from separate index search)              → additional tree context
+DataNode (from separate index search)              → additional tree context
 ```
 
 **Output format**:
@@ -154,7 +154,7 @@ Answers the code example question in one call. Replaces `find_code()` → `pytho
 ```
 CodeChunk ←[:HAS_CHUNK]- CodeFile               → source file path, facility
 CodeFile -[:CONTAINS_REF]→ DataReference         → what data it accesses
-DataReference -[:RESOLVES_TO_TREE_NODE]→ TreeNode → MDSplus paths used
+DataReference -[:RESOLVES_TO_NODE]→ DataNode → MDSplus paths used
 DataReference -[:RESOLVES_TO_IMAS_PATH]→ IMASPath → IMAS paths used
 DataReference -[:CALLS_TDI_FUNCTION]→ TDIFunction → TDI functions called
 CodeFile -[:IN_DIRECTORY]→ FacilityPath           → parent directory context
@@ -197,7 +197,7 @@ The REPL retains its role for operations that don't fit the crafted tool pattern
 | Schema introspection | `schema_for()`, `get_schema()` |
 | Chained processing | Multi-step logic with intermediate variables |
 
-The REPL functions (`find_wiki`, `find_signals`, `find_code`, `find_tree_nodes`, `find_imas`) remain available for custom compositions — they're the building blocks that the MCP tools orchestrate internally.
+The REPL functions (`find_wiki`, `find_signals`, `find_code`, `find_data_nodes`, `find_imas`) remain available for custom compositions — they're the building blocks that the MCP tools orchestrate internally.
 
 ## Architecture
 

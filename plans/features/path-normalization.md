@@ -1,11 +1,11 @@
-# TreeNode Path Consistency and TDI Function Integration
+# DataNode Path Consistency and TDI Function Integration
 
 > **Status**: Schema complete, implementation in progress
 > Applicable to any facility with MDSplus or similar tree-structured data.
 
 ## Problem Statement
 
-TreeNodes can be discovered from multiple sources, each with different path formats:
+DataNodes can be discovered from multiple sources, each with different path formats:
 - **Tree introspection**: Physical paths from MDSplus `getNodeWild()`
 - **Code extraction**: Abbreviated paths from source code analysis
 - **TDI parameters**: Logical accessor names (e.g., "I_P", "AMIN")
@@ -17,14 +17,14 @@ These represent different "views" of the same data and require:
 
 ## Proposed Schema Changes
 
-### 1. New Enum: TreeNodeSource
+### 1. New Enum: DataNodeSource
 
-Distinguishes how a TreeNode was discovered/created:
+Distinguishes how a DataNode was discovered/created:
 
 ```yaml
 enums:
-  TreeNodeSource:
-    description: How a TreeNode was discovered and ingested
+  DataNodeSource:
+    description: How a DataNode was discovered and ingested
     permissible_values:
       tree_introspection:
         description: >-
@@ -39,23 +39,23 @@ enums:
         description: >-
           A parameter accepted by a TDI function (e.g., tcv_eq("PSI")).
           Not a physical tree path but a logical data accessor name.
-          Links to TreeNode via accessor_function relationship.
+          Links to DataNode via accessor_function relationship.
       manual:
         description: Manually created during exploration or testing
 ```
 
-### 2. TreeNode Updates
+### 2. DataNode Updates
 
 Add `source` field to track provenance:
 
 ```yaml
 classes:
-  TreeNode:
+  DataNode:
     attributes:
       # ... existing fields ...
       source:
         description: How this node was discovered
-        range: TreeNodeSource
+        range: DataNodeSource
         required: true
       canonical_path:
         description: >-
@@ -126,10 +126,10 @@ def normalize_mdsplus_path(path: str) -> str:
 
 ### Migration Strategy
 
-1. Add `canonical_path` field to TreeNode
+1. Add `canonical_path` field to DataNode
 2. Populate via migration script:
    ```cypher
-   MATCH (n:TreeNode)
+   MATCH (n:DataNode)
    WHERE n.canonical_path IS NULL
    SET n.canonical_path = ... // normalize(n.path)
    ```
@@ -170,27 +170,27 @@ def parse_tdi_dependencies(content: str, quantity: str) -> list[str]:
 1. **Discovery**: List .fun files at `/usr/local/CRPP/tdi/tcv/`
 2. **Parse**: Extract function signature, case statements, dependencies
 3. **Ingest**: Create TDIFunction nodes with `supported_quantities`
-4. **Link**: Create TreeNode entries for each quantity with `source=tdi_parameter`
+4. **Link**: Create DataNode entries for each quantity with `source=tdi_parameter`
 
 ### Graph Relationships
 
 ```
 (TDIFunction {name: "tcv_eq"})
-  -[:SUPPORTS_QUANTITY]-> (TreeNode {path: "\RESULTS::I_P", source: "tdi_parameter"})
+  -[:SUPPORTS_QUANTITY]-> (DataNode {path: "\RESULTS::I_P", source: "tdi_parameter"})
   
-(TreeNode {path: "\RESULTS::I_P", source: "tdi_parameter"})
-  -[:PHYSICAL_PATH]-> (TreeNode {path: "\RESULTS::TOP.EQ_RECON.TRACES:I_P", source: "tree_introspection"})
+(DataNode {path: "\RESULTS::I_P", source: "tdi_parameter"})
+  -[:PHYSICAL_PATH]-> (DataNode {path: "\RESULTS::TOP.EQ_RECON.TRACES:I_P", source: "tree_introspection"})
 ```
 
 ## Implementation Plan
 
 ### Phase 1: Schema Updates ✅ Complete
-1. [x] TreeNodeSource enum defined in LinkML schema
+1. [x] DataNodeSource enum defined in LinkML schema
 2. [x] Source, canonical_path, physical_path fields available
 3. [x] Pydantic models regenerated
 
 ### Phase 2: Migration ✅ Complete
-1. [x] TreeNodes ingested from tree introspection (171k)
+1. [x] DataNodes ingested from tree introspection (171k)
 2. [x] `migrate_tree_nodes()` sets `source=tree_introspection` for nodes with `node_type`
 3. [x] `migrate_tree_nodes()` sets `source=code_extraction` for nodes from code pipeline
 4. [x] `compute_canonical_path()` function implemented
@@ -199,7 +199,7 @@ def parse_tdi_dependencies(content: str, quantity: str) -> list[str]:
 ### Phase 3: TDI Ingestion ⬜ Planned
 1. [ ] Create TDI parser script (or use tree-sitter-tdi when available)
 2. [ ] Parse tcv_get.fun and tcv_eq.fun quantities
-3. [ ] Create TreeNodes with `source=tdi_parameter`
+3. [ ] Create DataNodes with `source=tdi_parameter`
 4. [ ] Link to physical tree paths via ACCESSES relationship
 
 ### Phase 4: Deduplication ⬜ Future (Deferred)
@@ -222,7 +222,7 @@ Decision: Keep separate paths, link in graph via relationships.
    - `tdi_parameter`: Future - from TDI function parsing
    - Rationale: Code inspection unreliable for broken/incomplete code
 
-3. **TDI versioning**: Use epochs approach (like TreeModelVersion)
+3. **TDI versioning**: Use epochs approach (like StructuralEpoch)
    - TDIFunction has `valid_from_shot`, `valid_to_shot`, `version_history`
    - Matches existing MDSplus tree versioning pattern
    - Rationale: Consistent with existing architecture

@@ -222,17 +222,17 @@ Available IDS mappings: `core_profiles`, `equilibrium`, `nbi`, `summary`, `thoms
 
 ### Plugin Architecture
 
-The scan_worker currently handles only TDI function extraction. For multi-facility support, the scan phase needs **data source plugins** — each facility config declares which plugins to use via `data_sources`:
+The scan_worker currently handles only TDI function extraction. For multi-facility support, the scan phase needs **data source plugins** — each facility config declares which plugins to use via `data_systems`:
 
 ```yaml
 # tcv.yaml
-data_sources:
+data_systems:
   tdi:
     primary_path: /usr/local/CRPP/tdi/tcv
     reference_shot: 85000
 
 # jet.yaml (future)
-data_sources:
+data_systems:
   ppf:
     sal_endpoint: https://sal.jet.uk/rest/ppf
     reference_pulse: 99999
@@ -241,7 +241,7 @@ data_sources:
     reference_pulse: 99999
 
 # jt-60sa.yaml (future)
-data_sources:
+data_systems:
   edas:
     api_library: /analysis/src/edas
     reference_shot: 1000
@@ -250,7 +250,7 @@ data_sources:
     reference_shot: 1000
 
 # iter.yaml (future)
-data_sources:
+data_systems:
   imas:
     db_name: iter
     reference_shot: 100000
@@ -268,7 +268,7 @@ class DataSourceScanner(Protocol):
         self,
         facility: str,
         ssh_host: str,
-        config: dict,            # data_sources.{type} config
+        config: dict,            # data_systems.{type} config
         reference_shot: int,
     ) -> list[FacilitySignal]:
         """Discover signals from this data source."""
@@ -299,10 +299,10 @@ class DataSourceScanner(Protocol):
 ### Implementation Sequence
 
 1. **Extract TDI scanner** from scan_worker into `discovery/data/scanners/tdi.py`
-2. **Add `data_sources` config** to JET, JT-60SA, ITER facility YAMLs
+2. **Add `data_systems` config** to JET, JT-60SA, ITER facility YAMLs
 3. **Implement PPF scanner** for JET (SAL REST API is most accessible)
 4. **Implement EDAS scanner** for JT-60SA
-5. **Wire scanner dispatch** in scan_worker based on `data_sources` config keys
+5. **Wire scanner dispatch** in scan_worker based on `data_systems` config keys
 
 ### JET Signal Discovery Plan
 

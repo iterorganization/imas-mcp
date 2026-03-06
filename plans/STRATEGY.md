@@ -38,7 +38,7 @@ We reject the "Waterfall" approach to ontology. The schema must evolve as we dis
 ### 3.1 The "Core" vs. "Wild" Split
 The LinkML definitions (stored in `schemas/`) are divided:
 *   **`schemas/imas_dd.yaml`**: Rigid definitions for Zone A (IMAS) and base classes.
-*   **`schemas/facility.yaml`**: Permissive definitions for Zone B (Facility). Contains FacilityPath, SourceFile, TreeNode, etc.
+*   **`schemas/facility.yaml`**: Permissive definitions for Zone B (Facility). Contains FacilityPath, SourceFile, DataNode, etc.
 
 ### 3.2 The "LLM-as-Ontologist" Loop
 1.  **Discover:** Subagents scan the facility and return structured findings.
@@ -250,7 +250,7 @@ We treat the Database as an Artifact.
 - [ ] Incremental discovery scheduling
 
 ### Phase 6: Agent Enrichment 🔜
-- [ ] ReAct agents for TreeNode metadata enrichment
+- [ ] ReAct agents for DataNode metadata enrichment
 - [ ] IMAS mapping discovery with confidence scoring
 - [ ] Budget controls and checkpoint/resume logic
 - [ ] Multi-facility expansion (JET, DIII-D)
@@ -271,8 +271,8 @@ Detailed implementation plans for pending features:
 |------|-------|-------------|
 | [discovery-agents.md](features/discovery-agents.md) | 5-6 | Multi-facility discovery pipeline with Map → Score → Ingest |
 | [wiki-ingestion.md](features/wiki-ingestion.md) | 4 | Wiki content ingestion with ReAct agent evaluation |
-| [enrichment.md](features/enrichment.md) | 6 | TreeNode LLM enrichment for metadata generation |
-| [path-normalization.md](features/path-normalization.md) | 5 | TreeNode path normalization and TDI integration |
+| [enrichment.md](features/enrichment.md) | 6 | DataNode LLM enrichment for metadata generation |
+| [path-normalization.md](features/path-normalization.md) | 5 | DataNode path normalization and TDI integration |
 | [mcp-tool-fixes.md](features/mcp-tool-fixes.md) | 3 | IMAS MCP tool input handling and error recovery |
 
 See [plans/README.md](README.md) for the complete index.

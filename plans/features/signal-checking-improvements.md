@@ -152,7 +152,7 @@ Most single-use TDI functions are hardware control, shot management, or speciali
 ```python
 # For tree_traversal signals, determine the correct tree to open
 accessor = signal["accessor"]
-node_path = signal.get("node_path")
+node_path = signal.get("data_source_path")
 if node_path and signal.get("discovery_source") == "tree_traversal":
     accessor = node_path
     tree_name_parts = node_path.split("::")
@@ -208,7 +208,7 @@ except Exception as e:
         record["data_class"] = "unknown"
 ```
 
-Store `data_class` on TreeNode and propagate to FacilitySignal during promotion. This enables:
+Store `data_class` on DataNode and propagate to FacilitySignal during promotion. This enables:
 - **Skip expression nodes during check** (or classify differently)
 - **Report accurate statistics**: "1,200 stored data nodes, 32,000 expression nodes"
 - **Prioritize checking**: stored-data nodes first, expression nodes separately
@@ -280,7 +280,7 @@ base/FIR:LID_V01   → not available at any tested shot
 
 **Implementation**: Add tree-specific check configuration to facility YAML:
 ```yaml
-data_sources:
+data_systems:
   mdsplus:
     trees:
       - tree_name: static
@@ -406,7 +406,7 @@ data_sources:
    ```cypher
    // Aggregate check results by diagnostic and tree
    MATCH (s:FacilitySignal {facility_id: 'tcv'})-[c:CHECKED_WITH]->()
-   WITH s.tree_name AS tree, 
+   WITH s.data_source_name AS tree, 
         s.diagnostic AS diagnostic,
         sum(CASE WHEN c.success THEN 1 ELSE 0 END) AS success_count,
         count(s) AS total

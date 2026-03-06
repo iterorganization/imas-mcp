@@ -22,7 +22,7 @@ The scanner is named `DeviceXMLScanner` with `scanner_type = "device_xml"`, NOT 
 | TCV | MDSplus `static` tree | `mdsplus` (existing) |
 | ITER | IMAS IDS (native) | `imas` (existing) |
 
-The scanner is specific to the **EFIT device XML format** stored in git. The YAML config key is `data_sources.device_xml`.
+The scanner is specific to the **EFIT device XML format** stored in git. The YAML config key is `data_systems.device_xml`.
 
 ## Dependency: Naming Generalization
 
@@ -30,14 +30,14 @@ This plan uses the renamed graph schema from [naming-generalization.md](naming-g
 
 | Old Name | New Name | Used In This Plan |
 |---|---|---|
-| `MDSplusTree` | `DataSource` | Parent container for machine description |
-| `TreeModelVersion` | `StructuralEpoch` | One per PulseDependencyDB configuration |
-| `TreeNode` | `DataNode` | One per geometry element (coil, probe, loop) |
-| `TreeNodePattern` | `DataNodePattern` | Indexed repetition (BPME(1)..BPME(191)) |
-| `IN_TREE` | `IN_DATA_SOURCE` | DataNode → DataSource relationship |
-| `tree_name` | `data_source_name` | Property on DataNode, StructuralEpoch, FacilitySignal |
-| `node_path` | `data_source_path` | Full path within the data source |
-| `source_node` | `data_source_node` | FacilitySignal → DataNode provenance |
+| `DataSource` | `DataSource` | Parent container for machine description |
+| `StructuralEpoch` | `StructuralEpoch` | One per PulseDependencyDB configuration |
+| `DataNode` | `DataNode` | One per geometry element (coil, probe, loop) |
+| `DataNodePattern` | `DataNodePattern` | Indexed repetition (BPME(1)..BPME(191)) |
+| `IN_DATA_SOURCE` | `IN_DATA_SOURCE` | DataNode → DataSource relationship |
+| `data_source_name` | `data_source_name` | Property on DataNode, StructuralEpoch, FacilitySignal |
+| `data_source_path` | `data_source_path` | Full path within the data source |
+| `data_source_node` | `data_source_node` | FacilitySignal → DataNode provenance |
 
 **Implementation cannot begin until the naming generalization is merged.** The scanner plugin will import from the renamed model classes and create nodes using the new labels.
 
@@ -115,7 +115,7 @@ Three of the five "named" XML files are symlinks:
 EFITSNAP files contain probe enable/disable masks that record which sensors were fitted/working for each pulse range. This is critical for reconstructing which measurements were available for a given pulse.
 
 **Data flow:**
-1. Each version in `data_sources.device_xml.versions` references a `snap_file`
+1. Each version in `data_systems.device_xml.versions` references a `snap_file`
 2. The remote parsing script reads the snap file alongside the device XML
 3. Probe enable/disable status is stored as properties on `StructuralEpoch` nodes:
    - `enabled_probes: list[str]` — probe IDs that were active (e.g., `["BPME(1)", "BPME(2)", ...]`)
@@ -191,10 +191,10 @@ Registered via `register_scanner()` and imported in `_auto_register()`.
 
 ### Configuration (jet.yaml)
 
-The `data_sources.device_xml` section in jet.yaml provides all required config. **Note:** this requires a new `DeviceXMLConfig` class in `facility_config.yaml` (see [Schema Additions](#config-schema-additions) below).
+The `data_systems.device_xml` section in jet.yaml provides all required config. **Note:** this requires a new `DeviceXMLConfig` class in `facility_config.yaml` (see [Schema Additions](#config-schema-additions) below).
 
 ```yaml
-data_sources:
+data_systems:
   device_xml:
     git_repo: /home/chain1/git/efit_f90.git
     input_prefix: JET/input
@@ -373,7 +373,7 @@ FacilitySignal(
 
 Graph traversal from this signal:
 - `(signal)-[:DATA_ACCESS]->(da:DataAccess)` → Python snippet to extract from git repo
-- `(signal)-[:SOURCE_NODE]->(dn:DataNode)` → Stored value (dn.r = 4.292)
+- `(signal)-[:HAS_DATA_SOURCE_NODE]->(dn:DataNode)` → Stored value (dn.r = 4.292)
 ```
 
 #### DataNodePattern Nodes
@@ -429,7 +429,7 @@ Facility(id="jet")
   └── DataAccess(id="jet:device_xml:git")     ← Catalog: Python snippets + source paths
   └── FacilitySignal(id="jet:magnetics/bpme_1_r")
         ──DATA_ACCESS──> DataAccess(id="jet:device_xml:git")     ← "how to extract"
-        ──SOURCE_NODE──> DataNode(id="...:magprobes:1")          ← "the extracted value"
+        ──HAS_DATA_SOURCE_NODE──> DataNode(id="...:magprobes:1")          ← "the extracted value"
 ```
 
 An agent querying this signal gets both: the stored value for immediate use, and the
@@ -629,7 +629,7 @@ DataNode(
 )
 ```
 
-The signal links to both: `FacilitySignal → DATA_ACCESS → DataAccess` (how to extract, i.e. the catalog) AND `FacilitySignal → SOURCE_NODE → DataNode` (what was extracted, i.e. the data).
+The signal links to both: `FacilitySignal → DATA_ACCESS → DataAccess` (how to extract, i.e. the catalog) AND `FacilitySignal → HAS_DATA_SOURCE_NODE → DataNode` (what was extracted, i.e. the data).
 
 #### Decision Rule
 
@@ -642,7 +642,7 @@ The signal links to both: `FacilitySignal → DATA_ACCESS → DataAccess` (how t
 
 #### TCV Applicability
 
-The same dual pattern applies to TCV. The catalog side already exists (DataAccess nodes with MDSplus templates like `tcv:mdsplus:tree_tdi`). For TCV's static tree data — coil positions, probe geometry, first-wall contours stored in versioned static MDSplus trees — we add stored values as DataNode/TreeNode properties:
+The same dual pattern applies to TCV. The catalog side already exists (DataAccess nodes with MDSplus templates like `tcv:mdsplus:tree_tdi`). For TCV's static tree data — coil positions, probe geometry, first-wall contours stored in versioned static MDSplus trees — we add stored values as DataNode/DataNode properties:
 
 ```python
 # Catalog — already exists
@@ -654,7 +654,7 @@ DataAccess(
 
 # Stored values — new, for static trees only
 # e.g., coil geometry from MAGNETICS static tree
-TreeNode(
+DataNode(
     path="\\MAGNETICS::COIL_01:R",
     tree_name="magnetics",
     value=0.235,  # Static hardware position — doesn't change per shot
@@ -682,7 +682,7 @@ The git repo at `/home/chain1/git/efit_f90.git` lives on JET's filesystem. JET i
 
 ## Config Schema Additions
 
-The current `data_sources.device_xml` section in jet.yaml is **NOT schema-compliant**:
+The current `data_systems.device_xml` section in jet.yaml is **NOT schema-compliant**:
 
 | Issue | Current State | Fix |
 |---|---|---|
@@ -772,7 +772,7 @@ LimiterVersion:
 
 1. Complete naming generalization (Phase 1-5 of that plan)
 2. Add `DeviceXMLConfig`, `DeviceXMLVersion`, `LimiterVersion` to `facility_config.yaml`
-3. Rename `data_sources.machine_description` → `data_sources.device_xml` in jet.yaml, add `snap_file` per version
+3. Rename `data_systems.machine_description` → `data_systems.device_xml` in jet.yaml, add `snap_file` per version
 4. Implement `parse_device_xml.py` remote script (XML + snap file parsing)
 5. Implement `DeviceXMLScanner` plugin
 6. Register in `_auto_register()`

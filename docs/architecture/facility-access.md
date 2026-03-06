@@ -23,7 +23,7 @@ IMAS Ambix is a partner project that consumes distilled mappings from the Codex 
 - Code analysis uses Zero Data Retention (ZDR) LLM endpoints
 - Mappings are **frozen** in imas-ambix for deterministic runtime use (no LLM at runtime)
 
-**Track Record**: This approach has been deployed at EPFL (TCV), where we have mapped MDSPlus TreeNodes, ingested relevant code chunks, and indexed wiki pages.
+**Track Record**: This approach has been deployed at EPFL (TCV), where we have mapped MDSPlus DataNodes, ingested relevant code chunks, and indexed wiki pages.
 
 ---
 
@@ -190,7 +190,7 @@ flowchart TB
 
 ### MDSplus Tree Walking Pipeline
 
-At EPFL, we've developed a mapping procedure for MDSPlus TreeNodes with the schemas of 29 trees ingested.
+At EPFL, we've developed a mapping procedure for MDSPlus DataNodes with the schemas of 29 trees ingested.
 
 ```mermaid
 flowchart TB
@@ -502,8 +502,8 @@ The mappings discovered by Codex are exported to **imas-ambix** for deterministi
 
 ```cypher
 -- Extract validated EPFL/TCV mappings for ambix export
-MATCH (f:Facility {id: 'tcv'})-[:HAS_TREE]->(t:MDSplusTree)
-MATCH (tn:TreeNode)-[:IN_TREE]->(t)
+MATCH (f:Facility {id: 'tcv'})-[:HAS_TREE]->(t:DataSource)
+MATCH (tn:DataNode)-[:IN_DATA_SOURCE]->(t)
 MATCH (tn)-[:MAPS_TO]->(ip:IMASPath)
 WHERE tn.mapping_status = 'validated'
 RETURN tn.path AS mdsplus_path,

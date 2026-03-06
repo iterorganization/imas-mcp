@@ -51,7 +51,7 @@ Env var overrides (`NEO4J_URI`, `NEO4J_USERNAME`, `NEO4J_PASSWORD`) still apply 
 All graph node types, relationships, and properties are defined in LinkML schemas — the single source of truth.
 
 **Schema files:**
-- `imas_codex/schemas/facility.yaml` - Facility graph: SourceFile, TreeNode, CodeChunk, etc.
+- `imas_codex/schemas/facility.yaml` - Facility graph: SourceFile, DataNode, CodeChunk, etc.
 - `imas_codex/schemas/imas_dd.yaml` - DD graph: IMASPath, DDVersion, Unit, IMASCoordinateSpec
 - `imas_codex/schemas/common.yaml` - Shared: status enums, PhysicsDomain
 
@@ -70,7 +70,7 @@ All graph node types, relationships, and properties are defined in LinkML schema
 Always import enums and classes from generated models. Never hardcode status values:
 
 ```python
-from imas_codex.graph.models import SourceFile, SourceFileStatus, TreeNode
+from imas_codex.graph.models import SourceFile, SourceFileStatus, DataNode
 
 sf = SourceFile(
     id="tcv:/home/codes/liuqe.py",
@@ -209,9 +209,9 @@ Per-facility YAML configs define discovery roots, wiki sites, data sources, and 
 
 **What goes in public facility YAML** (`<facility>.yaml`):
 - `discovery_roots` — paths to scan for code/data
-- `data_sources.tdi.*` — TDI function directories, reference shots, exclude lists
-- `data_sources.mdsplus.*` — tree names, subtrees, node usages, setup commands
-- `data_sources.mdsplus.static_trees` — static tree versions, first_shot, descriptions, systems
+- `data_systems.tdi.*` — TDI function directories, reference shots, exclude lists
+- `data_systems.mdsplus.*` — tree names, subtrees, node usages, setup commands
+- `data_systems.mdsplus.static_trees` — static tree versions, first_shot, descriptions, systems
 - `data_access_patterns` — primary method, naming conventions, key tools
 - `wiki_sites` — wiki URLs for scraping
 

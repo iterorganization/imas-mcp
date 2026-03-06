@@ -1,11 +1,11 @@
-# TreeNode LLM Enrichment Plan
+# DataNode LLM Enrichment Plan
 
 > **Status**: Pending implementation  
-> Using LLM inference to generate metadata and discover graph relationships for MDSplus TreeNodes.
+> Using LLM inference to generate metadata and discover graph relationships for MDSplus DataNodes.
 
 ## Overview
 
-We have TreeNodes with missing descriptions and physics domain assignments. This plan describes a two-phase enrichment approach using LLM inference to:
+We have DataNodes with missing descriptions and physics domain assignments. This plan describes a two-phase enrichment approach using LLM inference to:
 
 1. **Generate metadata** - descriptions, units validation, physics domain classification
 2. **Discover graph links** - IMAS path mappings, diagnostic relationships, analysis code connections
@@ -14,7 +14,7 @@ We have TreeNodes with missing descriptions and physics domain assignments. This
 
 | Metric | Notes |
 |--------|-------|
-| TreeNodes | Per-facility, varying counts |
+| DataNodes | Per-facility, varying counts |
 | Missing description | Most nodes lack descriptions |
 | Missing physics_domain | Most nodes unclassified |
 | Nodes with code references | Subset with DataReference links |
@@ -47,7 +47,7 @@ We have TreeNodes with missing descriptions and physics domain assignments. This
 ### LLM Prompt Structure
 
 ```
-You are enriching MDSplus TreeNode metadata for the TCV tokamak.
+You are enriching MDSplus DataNode metadata for the TCV tokamak.
 
 For each path, provide:
 - description: 1-2 sentence physics description (or null if uncertain)
@@ -99,9 +99,9 @@ After metadata enrichment, discover and create new graph relationships.
 
 ### 2.1 IMAS Path Mapping
 
-Map TreeNodes to IMAS DD paths based on physics semantics:
+Map DataNodes to IMAS DD paths based on physics semantics:
 
-| TreeNode | IMAS Path | Mapping Type |
+| DataNode | IMAS Path | Mapping Type |
 |----------|-----------|--------------|
 | `I_PL` | `equilibrium/time_slice/global_quantities/ip` | direct |
 | `PSI` | `equilibrium/time_slice/profiles_2d/psi` | direct |
@@ -109,14 +109,14 @@ Map TreeNodes to IMAS DD paths based on physics semantics:
 
 ### 2.2 Diagnostic Relationships
 
-Link TreeNodes to Diagnostic entities:
+Link DataNodes to Diagnostic entities:
 - `CXRS_*` → Diagnostic(name="CXRS", type="spectroscopy")
 - `THOMSON_*` → Diagnostic(name="Thomson Scattering", type="laser")
 - `FIR_*` → Diagnostic(name="FIR Interferometer", type="interferometry")
 
 ### 2.3 Analysis Code Connections
 
-Link TreeNodes to AnalysisCode entities:
+Link DataNodes to AnalysisCode entities:
 - `LIUQE_*` → AnalysisCode(name="LIUQE", type="equilibrium")
 - `ASTRA_*` → AnalysisCode(name="ASTRA", type="transport")
 - `CXSFIT_*` → AnalysisCode(name="CXSFIT", type="spectroscopy")
@@ -175,7 +175,7 @@ Cost depends on model choice and batch size. Use OpenRouter for model flexibilit
 1. **Incremental enrichment**: Re-run on new code examples to improve confidence
 2. **User feedback loop**: Flag incorrect descriptions for correction
 3. **Cross-facility transfer**: Apply TCV learnings to other facilities
-4. **Embedding updates**: Re-embed TreeNodes with descriptions for better search
+4. **Embedding updates**: Re-embed DataNodes with descriptions for better search
 
 ## Dependencies
 
