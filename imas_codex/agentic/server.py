@@ -226,16 +226,11 @@ def _init_repl() -> dict[str, Any]:
     backend = get_embedding_location()
     logger.info(f"Embedding location: {backend}")
 
-    # Track embedding availability
-    _embedding_error: Exception | None = None
     _encoder: Encoder | None = None
 
     def _get_encoder() -> Encoder:
-        """Get or create the encoder, raising any deferred initialization error."""
-        nonlocal _encoder, _embedding_error
-
-        if _embedding_error is not None:
-            raise _embedding_error
+        """Get or create the encoder, retrying on failure."""
+        nonlocal _encoder
 
         if _encoder is None:
             try:
@@ -243,7 +238,6 @@ def _init_repl() -> dict[str, Any]:
                 _encoder = Encoder(config)
                 logger.info(f"Encoder initialized (backend={config.backend})")
             except Exception as e:
-                _embedding_error = e
                 logger.error(f"Embedding initialization failed: {e}")
                 raise EmbeddingBackendError(
                     f"Embedding backend '{backend}' unavailable: {e}. "
