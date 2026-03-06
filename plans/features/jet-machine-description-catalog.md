@@ -351,7 +351,7 @@ DataNode(
 
 #### FacilitySignal Nodes
 
-One per unique geometry parameter. Signals span epochs — they represent the physical measurement, not a specific version's value:
+One per unique geometry parameter. Signals span epochs — they represent the physical measurement, not a specific version's value. Each signal links to **both** catalog (DataAccess) and stored values (DataNode):
 
 ```python
 FacilitySignal(
@@ -361,14 +361,19 @@ FacilitySignal(
     physics_domain="magnetic_field_diagnostics",
     name="BPME(1)/R",
     accessor="device_xml:magprobes/1/r",
-    data_access="jet:device_xml:xml",
+    data_access="jet:device_xml:git",   # → Catalog (how to extract from git/XML)
     data_source_name="device_xml",
     data_source_path="magprobes/1/r",
-    data_source_node="jet:device_xml:p89440:magprobes:1",
+    data_source_node="jet:device_xml:p89440:magprobes:1",  # → Stored value (R=4.292)
     description="Radial position of magnetic probe BPME(1)",
     unit="m",
     discovery_source="xml_extraction",
 )
+```
+
+Graph traversal from this signal:
+- `(signal)-[:DATA_ACCESS]->(da:DataAccess)` → Python snippet to extract from git repo
+- `(signal)-[:SOURCE_NODE]->(dn:DataNode)` → Stored value (dn.r = 4.292)
 ```
 
 #### DataNodePattern Nodes
@@ -415,15 +420,20 @@ Error bounds (abs_error, rel_error) are stored as DataNode properties, not promo
 Facility(id="jet")
   └── DataSource(id="jet:device_xml")
         ├── StructuralEpoch(id="jet:device_xml:p68613")
-        │     └── DataNode(id="...:magprobes:1")  ──INTRODUCED_IN──> epoch
-        │     └── DataNode(id="...:pfcoils:1")
+        │     └── DataNode(id="...:magprobes:1", r=4.292, z=0.604)  ──INTRODUCED_IN──> epoch
+        │     └── DataNode(id="...:pfcoils:1", r=2.15, z=1.78)
         │     └── ...
         ├── StructuralEpoch(id="jet:device_xml:p87722")
-        │     └── ... (same pattern)
+        │     └── ... (same pattern, different values where geometry changed)
         └── ...
+  └── DataAccess(id="jet:device_xml:git")     ← Catalog: Python snippets + source paths
   └── FacilitySignal(id="jet:magnetics/bpme_1_r")
-        ──HAS_DATA_SOURCE_NODE──> DataNode
-        ──DATA_ACCESS──> DataAccess(id="jet:device_xml:xml")
+        ──DATA_ACCESS──> DataAccess(id="jet:device_xml:git")     ← "how to extract"
+        ──SOURCE_NODE──> DataNode(id="...:magprobes:1")          ← "the extracted value"
+```
+
+An agent querying this signal gets both: the stored value for immediate use, and the
+catalog entry showing the code to re-extract or verify it.
 ```
 
 ## Implementation Phases
@@ -544,13 +554,67 @@ Complete the [naming generalization plan](naming-generalization.md). This create
 | EFCC variants (n=1, n=2) | Low | Same geometry XML, different snap files — not separate geometry epochs |
 | Missing limiter files | Low | 4 of 7 historical versions have no surviving contour file — skip gracefully |
 
-### Data Persistence Strategy
+### Dual Catalog + Data Architecture
 
-The git repo at `/home/chain1/git/efit_f90.git` lives on JET's filesystem. JET is shutting down, so long-term access is uncertain.
+Every signal gets **two layers** — a catalog (how to extract) and optionally stored values (the extracted data). This pattern applies across all facilities.
 
-**Mitigation: Store geometry values in graph.** The remote parsing script extracts ALL numeric values (R, Z, angle, turns, resistance, etc.) and stores them directly as DataNode properties. This makes the graph self-contained — no need to re-read the source files at query time. The git repo is only needed for initial parsing.
+#### Layer 1: Catalog (DataAccess — universal)
 
-**DataNode property storage:**
+The `DataAccess` node stores executable code templates showing how to extract data from source. This is always present for every signal, regardless of facility status.
+
+**JET DataAccess (catalog):**
+```python
+DataAccess(
+    id="jet:device_xml:git",
+    facility_id="jet",
+    name="JET Device XML (git)",
+    method_type="device_xml",
+    library="xml.etree.ElementTree",
+    access_type="local",
+    data_source="/home/chain1/git/efit_f90.git",
+    imports_template="import subprocess\nimport xml.etree.ElementTree as ET",
+    connection_template=(
+        "xml_bytes = subprocess.check_output([\n"
+        "    'git', '-C', '{data_source}',\n"
+        "    'show', 'HEAD:JET/input/Devices/{device_xml}'\n"
+        "])\n"
+        "root = ET.fromstring(xml_bytes)"
+    ),
+    data_template=(
+        "elements = root.findall('.//{section}/{element}')\n"
+        "data = [{a: float(e.get(a)) for a in e.attrib if a != 'name'}\n"
+        "        for e in elements]"
+    ),
+    full_example="""import subprocess
+import xml.etree.ElementTree as ET
+
+xml_bytes = subprocess.check_output([
+    'git', '-C', '/home/chain1/git/efit_f90.git',
+    'show', 'HEAD:JET/input/Devices/device_p89440.xml'
+])
+root = ET.fromstring(xml_bytes)
+
+# Magnetic probes
+for probe in root.findall('.//magprobes/probe'):
+    print(f"{probe.get('name')}: R={probe.get('r')}, Z={probe.get('z')}")
+
+# PF coils
+for coil in root.findall('.//pfcoils/coil'):
+    print(f"{coil.get('name')}: R={coil.get('r')}, Z={coil.get('z')}, turns={coil.get('turns')}")
+
+# Flux loops
+for loop in root.findall('.//flux/loop'):
+    print(f"{loop.get('name')}: R={loop.get('r')}, Z={loop.get('z')}, dphi={loop.get('dphi')}")
+""",
+)
+```
+
+This catalog entry tells any agent or user exactly how to reproduce the data extraction — the source path, the code, the library. It's self-documenting and executable.
+
+#### Layer 2: Stored Values (DataNode properties — for static data)
+
+For static/immutable data (hardware geometry, versioned configuration), actual values are stored as DataNode properties. This makes the graph self-contained for read queries.
+
 ```python
 DataNode(
     id="jet:device_xml:p89440:magprobes:1",
@@ -565,7 +629,49 @@ DataNode(
 )
 ```
 
-This means pulse-based queries return actual geometry without requiring file access.
+The signal links to both: `FacilitySignal → DATA_ACCESS → DataAccess` (how to extract, i.e. the catalog) AND `FacilitySignal → SOURCE_NODE → DataNode` (what was extracted, i.e. the data).
+
+#### Decision Rule
+
+| Data characteristic | Catalog (DataAccess) | Stored values (DataNode) |
+|---|---|---|
+| Static hardware geometry (coil positions, probe locations) | Yes | Yes |
+| Versioned configuration (limiter contours, Green's functions) | Yes | Yes |
+| Per-shot time series (Ip, Te profiles) | Yes | No — values from access method |
+| Computed quantities (equilibrium reconstructions) | Yes | No — values from access method |
+
+#### TCV Applicability
+
+The same dual pattern applies to TCV. The catalog side already exists (DataAccess nodes with MDSplus templates like `tcv:mdsplus:tree_tdi`). For TCV's static tree data — coil positions, probe geometry, first-wall contours stored in versioned static MDSplus trees — we add stored values as DataNode/TreeNode properties:
+
+```python
+# Catalog — already exists
+DataAccess(
+    id="tcv:mdsplus:tree_tdi",
+    connection_template="tree = MDSplus.Tree('{data_source}', {shot}, 'readonly')",
+    data_template="data = tree.getNode('{accessor}').data()",
+)
+
+# Stored values — new, for static trees only
+# e.g., coil geometry from MAGNETICS static tree
+TreeNode(
+    path="\\MAGNETICS::COIL_01:R",
+    tree_name="magnetics",
+    value=0.235,  # Static hardware position — doesn't change per shot
+)
+```
+
+Dynamic TCV signals (plasma current, electron temperature) keep only the catalog pointer — their values come from MDSplus at query time via the DataAccess templates.
+
+**Key insight:** The catalog is always there regardless. Stored values are an optimization for static data and a necessity for facilities going offline (JET). The same architecture, the same graph traversal patterns, the same query API — applied uniformly across facilities.
+
+#### JET's git repo: Persistence
+
+The git repo at `/home/chain1/git/efit_f90.git` lives on JET's filesystem. JET is shutting down, so long-term access is uncertain. By storing both the catalog (so the extraction method is documented) AND the values (so the data is preserved), we get:
+
+1. **Self-contained graph** — queries return actual geometry without file access
+2. **Reproducibility** — the catalog documents exactly how values were derived
+3. **Provenance** — `full_example` on DataAccess is a runnable audit trail
 
 ### Not In Scope
 
