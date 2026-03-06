@@ -44,16 +44,11 @@ data_sources:
     db_name: jet
 
   # Machine description — geometry data for JET's tokamak components.
-  # JET has no MDSplus static tree. Geometry lives in device XMLs, Fortran
-  # namelists, and R,Z contour files, versioned in a git repo.
-  # The upstream sources are CATIA CAD models, engineering drawings, and
-  # sensor installation records (MCFG system). EFIT's PulseDependencyDB
-  # provides the best extant record of epoch boundaries (when hardware
-  # changed), so we use its named configurations as version markers.
-  # The data itself is machine geometry, not EFIT-specific.
-  machine_description:
-    # Source format for this facility's machine description
-    source_format: git_xml  # alternatives: mdsplus_tree (TCV), imas_ids (ITER)
+  # Accessed via the DeviceXMLScanner plugin (scanner_type: device_xml).
+  # Geometry lives in EFIT device XMLs, Fortran namelists, and R,Z contour
+  # files, versioned in a git repo. EFIT's PulseDependencyDB provides the
+  # epoch boundaries. The data itself is machine geometry, not EFIT-specific.
+  device_xml:
     # Git bare repo containing versioned geometry files
     git_repo: /home/chain1/git/efit_f90.git
     # Source repo tree path prefix for input files
@@ -62,6 +57,7 @@ data_sources:
     # valid for a pulse range. Epoch boundaries come from EFIT's
     # PulseDependencyDB but describe machine state, not EFIT config.
     # Only base configurations listed (EFCC sessions reuse geometry).
+    # snap_file tracks which probes were enabled/disabled per epoch.
     versions:
       - version: p68613
         first_shot: 68613
@@ -71,6 +67,7 @@ data_sources:
         device_ppfs: Devices/MAGN/device_ppfs
         limiter: Limiters/limiter.mk2hd_cc
         greens: Greens/DMSS_091_T_200C/
+        snap_file: Snap_files/EFITSNAP/efitsnap_p68613_bound0
       - version: p78359
         first_shot: 78359
         last_shot: 79853
@@ -79,6 +76,7 @@ data_sources:
         device_ppfs: Devices/MAGN/device_ppfs
         limiter: Limiters/limiter.mk2hd_cc
         greens: Greens/DMSS_105_T_200C/
+        snap_file: Snap_files/EFITSNAP/efitsnap_p78359_bound0
       - version: p79854
         first_shot: 79854
         last_shot: 81133
@@ -87,6 +85,7 @@ data_sources:
         device_ppfs: Devices/MAGN/device_ppfs
         limiter: Limiters/limiter.mk2ilw_cc
         greens: Greens/DMSS_105_T_200C/
+        snap_file: Snap_files/EFITSNAP/efitsnap_p79854_bound0
       - version: p81134
         first_shot: 81134
         last_shot: 87026
@@ -95,6 +94,7 @@ data_sources:
         device_ppfs: Devices/MAGN/device_ppfs
         limiter: Limiters/limiter.mk2ilw_cc
         greens: Greens/DMSS_105_T_200C/
+        snap_file: Snap_files/EFITSNAP/efitsnap_p81134_bound0
       - version: p87027
         first_shot: 87027
         last_shot: 87721
@@ -103,6 +103,7 @@ data_sources:
         device_ppfs: Devices/MAGN/device_ppfs
         limiter: Limiters/limiter.mk2ilw_cc
         greens: Greens/DMSS_105_T_200C/
+        snap_file: Snap_files/EFITSNAP/efitsnap_p87027_bound0
       - version: p87722
         first_shot: 87722
         last_shot: 88367
@@ -111,6 +112,7 @@ data_sources:
         device_ppfs: Devices/MAGN/device_ppfs
         limiter: Limiters/limiter.mk2ilw_cc
         greens: Greens/DMSS_105_T_200C_P803A/
+        snap_file: Snap_files/EFITSNAP/efitsnap_p87722_bound0
       - version: p88368
         first_shot: 88368
         last_shot: 89430
@@ -119,6 +121,7 @@ data_sources:
         device_ppfs: Devices/MAGN/device_ppfs
         limiter: Limiters/limiter.mk2ilw_cc
         greens: Greens/DMSS_105_T_200C_UP4E4/
+        snap_file: Snap_files/EFITSNAP/efitsnap_p88368_bound0
       - version: p89440
         first_shot: 89440
         last_shot: 90539
@@ -127,6 +130,7 @@ data_sources:
         device_ppfs: Devices/MAGN/device_ppfs
         limiter: Limiters/limiter.mk2ilw_cc
         greens: Greens/DMSS_105_T_200C_P802A/
+        snap_file: Snap_files/EFITSNAP/efitsnap_p89440_bound0
       - version: p90626
         first_shot: 90626
         description: "I802+I803 failed, disabled — FINAL config through end of JET"
@@ -134,6 +138,7 @@ data_sources:
         device_ppfs: Devices/MAGN/device_ppfs
         limiter: Limiters/limiter.mk2ilw_cc
         greens: Greens/DMSS_105_T_200C_P802A/
+        snap_file: Snap_files/EFITSNAP/efitsnap_p90626_bound0
     # Systems extracted from device XMLs — analogous to TCV static tree systems
     systems:
       - symbol: PF
