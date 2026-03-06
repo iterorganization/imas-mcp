@@ -43,22 +43,25 @@ data_sources:
       - mdsplus
     db_name: jet
 
-  # EFIT device model — virtual "static tree" for machine description.
-  # JET has no MDSplus static tree. Instead, geometry lives in device XMLs
-  # and Fortran namelists managed by the EFIT PulseDependencyDB system,
-  # versioned in /home/chain1/git/efit_f90.git (108 tags, bare repo).
-  # We model this as an efit_device tree with versioned epochs, one per
-  # PulseDependencyDB named configuration. The scanner plugin parses
-  # device XMLs, device_ppfs namelists, and limiter files into graph
-  # nodes equivalent to TCV's static tree.
-  efit_device:
-    # Git bare repo containing all EFIT input data
+  # Machine description — geometry data for JET's tokamak components.
+  # JET has no MDSplus static tree. Geometry lives in device XMLs, Fortran
+  # namelists, and R,Z contour files, versioned in a git repo.
+  # The upstream sources are CATIA CAD models, engineering drawings, and
+  # sensor installation records (MCFG system). EFIT's PulseDependencyDB
+  # provides the best extant record of epoch boundaries (when hardware
+  # changed), so we use its named configurations as version markers.
+  # The data itself is machine geometry, not EFIT-specific.
+  machine_description:
+    # Source format for this facility's machine description
+    source_format: git_xml  # alternatives: mdsplus_tree (TCV), imas_ids (ITER)
+    # Git bare repo containing versioned geometry files
     git_repo: /home/chain1/git/efit_f90.git
     # Source repo tree path prefix for input files
     input_prefix: JET/input
-    # Named configurations from PulseDependencyDB (EFIT.db → configurationsMAGN).
-    # Each maps to a specific device XML, device_ppfs, limiter, and Green's functions.
-    # Only base MAGN configurations are listed (EFCC sessions reuse device geometry).
+    # Machine configuration epochs. Each represents a hardware state
+    # valid for a pulse range. Epoch boundaries come from EFIT's
+    # PulseDependencyDB but describe machine state, not EFIT config.
+    # Only base configurations listed (EFCC sessions reuse geometry).
     versions:
       - version: p68613
         first_shot: 68613
