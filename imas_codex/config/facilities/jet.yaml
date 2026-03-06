@@ -164,8 +164,10 @@ data_sources:
         name: Limiter contour
         description: "First wall R,Z contour — 7 versions from L91NEW through Mk2ILW"
         parameters: [R, Z]
-    # Limiter contour versions (independent of device XML epochs)
-    limiter_epochs:
+    # Limiter contour versions (independent of device XML structural epochs).
+    # Each entry is a first-wall geometry that was physically installed.
+    # The R,Z contour files define the plasma-facing boundary shape.
+    limiter_versions:
       - name: L91NEW
         first_shot: 1
         last_shot: 28791
