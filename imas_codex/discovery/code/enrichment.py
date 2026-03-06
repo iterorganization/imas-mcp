@@ -122,6 +122,9 @@ def persist_file_enrichment(
             "total_pattern_matches": r.get("total_pattern_matches", 0),
             "line_count": r.get("line_count", 0),
         }
+        content_hash = r.get("content_hash", "")
+        if content_hash:
+            item["content_hash"] = content_hash
         preview = r.get("preview_text", "")
         if preview:
             item["preview_text"] = preview[:2000]
@@ -140,7 +143,8 @@ def persist_file_enrichment(
                 sf.pattern_categories = item.pattern_categories,
                 sf.total_pattern_matches = item.total_pattern_matches,
                 sf.line_count = item.line_count,
-                sf.preview_text = item.preview_text
+                sf.preview_text = item.preview_text,
+                sf.content_hash = item.content_hash
             """,
             items=items,
         )

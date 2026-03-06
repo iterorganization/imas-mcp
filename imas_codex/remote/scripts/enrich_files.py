@@ -35,6 +35,7 @@ Output (JSON on stdout):
     ]
 """
 
+import hashlib
 import json
 import os
 import subprocess
@@ -111,6 +112,7 @@ def enrich_file(path: str, pattern_categories: Dict[str, str]) -> Dict[str, Any]
         "total_pattern_matches": 0,
         "line_count": 0,
         "preview_text": "",
+        "content_hash": "",
     }
 
     if not os.path.isfile(path):
@@ -119,6 +121,16 @@ def enrich_file(path: str, pattern_categories: Dict[str, str]) -> Dict[str, Any]
 
     # Line count
     result["line_count"] = count_lines(path)
+
+    # Content hash (SHA-256)
+    try:
+        h = hashlib.sha256()
+        with open(path, "rb") as fh:
+            for block in iter(lambda: fh.read(8192), b""):
+                h.update(block)
+        result["content_hash"] = h.hexdigest()
+    except OSError:
+        pass
 
     # Preview text (head of file)
     result["preview_text"] = read_preview(path)

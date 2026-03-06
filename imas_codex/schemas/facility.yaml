@@ -2668,6 +2668,14 @@ classes:
       line_count:
         description: Number of lines in the file (from wc -l)
         range: integer
+      content_hash:
+        description: SHA-256 hash of file content (computed during enrichment)
+      copy_count:
+        description: >-
+          Number of CodeFile nodes sharing this content_hash across the facility.
+          Higher values indicate widely-copied, battle-tested code.
+          Used as a popularity signal to prioritize ingestion.
+        range: integer
       # Worker coordination
       claimed_at:
         description: >-
