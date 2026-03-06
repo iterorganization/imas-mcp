@@ -103,6 +103,28 @@ data_access_patterns:
     - "UDA modules available (2.6.1 default) but cpyuda Python import fails"
     - "IMAS modules available but import imas fails on default Python"
     - "No SAL REST endpoint responding at sal.jet.uk during SSH exploration"
+    - >-
+      MACHINE DESCRIPTION: No centralized static tree (unlike TCV). Data scattered across:
+      (1) flat files in /home/MAGNW/chain1/input/xloc/ (vessel contours, probe positions, PF coil R,Z);
+      (2) PPF DDAs with static geometry embedded per-pulse (EFIT/RLIM,ZLIM limiter, KG1V/R,Z interferometer,
+      LIDR/Z LIDAR, HRTS/Z Thomson, KG10/Z ECE);
+      (3) EFIT++ response function NetCDF at /common/chain1/efitpp/response_functions/ (first wall, probe/flux
+      loop/PF circuit Green's functions);
+      (4) ASCOT TF coil geometry at /common/ascot/tuomas/jetcoil/ (biosaw format);
+      (5) MDWG working group (requirements phase, no unified database yet).
+    - >-
+      STATIC PPF ACCESS: ppf.ppfget(pulse, DDA, Dtype) with ppfuid('jetppf','r').
+      Static signals (identical across ILW pulses): EFIT/RLIM,ZLIM (251-pt limiter), LIDR/Z (50-pt),
+      KG10/Z (scalar 0.258m). Quasi-static (minor recalibration): KG1V/R,Z (8-ch), HRTS/Z (63-pt).
+    - >-
+      MAGNETICS CHAIN1 CONFIG: /home/MAGNW/chain1/input/xloc/config/ contains probe definition files
+      (pd04_ep: 40 BPME pick-up coils with R,Z,angle; limves: 28 flux loops SX/SY with R,Z + calibration;
+      pdvessr: vessel-referenced probe positions). Master config at /home/MAGNW/chain1/input/magn_ep_new/magn_ep.dat.
+    - >-
+      EFIT++ RESPONSE FUNCTIONS: /common/chain1/efitpp/response_functions/jet/all_magnetics_C38/
+      responseFunctions_jet_33x33.nc contains Green's function matrices linking 33x33 grid to 321 probes,
+      150 flux loops, 10 PF circuits, 96 iron model basis functions, plus firstWallGrid (200 R,Z points,
+      R=[1.65,4.05]m, Z=[-1.90,2.15]m).
 
 # Discovery root paths for path discovery pipeline
 # These are seeded as starting points for directory scanning
