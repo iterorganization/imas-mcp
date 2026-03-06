@@ -117,19 +117,19 @@ def plot_poloidal(data: dict, epoch: str = "p89440") -> None:
 
     fig, ax = plt.subplots(1, 1, figsize=(10, 14))
 
-    # --- Limiter contours ---
-    colors = {"Mk2ILW": "#2c3e50", "Mk2HD": "#7f8c8d", "Mk2GB": "#bdc3c7"}
+    # --- Limiter contour (active for this epoch) ---
     for lim in data["limiters"]:
         name = lim["path"].split(":")[-1]
+        if name != "Mk2ILW":
+            continue
         r = np.array(lim["r"], dtype=float)
         z = np.array(lim["z"], dtype=float)
-        style = {"Mk2ILW": "-", "Mk2HD": "--", "Mk2GB": ":"}
         ax.plot(
             r,
             z,
-            style.get(name, "-"),
-            color=colors.get(name, "#555"),
-            linewidth=2 if name == "Mk2ILW" else 1,
+            "-",
+            color="#2c3e50",
+            linewidth=2,
             label=f"Limiter: {name} ({lim['n_points']} pts)",
             zorder=1,
         )
@@ -195,14 +195,15 @@ def plot_poloidal(data: dict, epoch: str = "p89440") -> None:
             )
 
     # --- Passive structures (rectangles) ---
+    min_dim = 0.06  # minimum visual size in metres
     passive_patches = []
     for ps in data["passives"]:
         r, z = ps["r"], ps["z"]
-        dr, dz = ps.get("dr", 0.05), ps.get("dz", 0.05)
+        dr, dz = ps.get("dr", min_dim), ps.get("dz", min_dim)
         if r is None or z is None:
             continue
-        dr = dr or 0.05
-        dz = dz or 0.05
+        dr = max(dr or min_dim, min_dim)
+        dz = max(dz or min_dim, min_dim)
         rect = mpatches.Rectangle(
             (r - dr / 2, z - dz / 2),
             dr,
@@ -286,7 +287,6 @@ def plot_poloidal(data: dict, epoch: str = "p89440") -> None:
     ax.set_xlabel("R [m]", fontsize=12)
     ax.set_ylabel("Z [m]", fontsize=12)
     ax.set_aspect("equal")
-    ax.grid(True, alpha=0.3, linestyle="--")
     ax.legend(loc="upper right", fontsize=9, framealpha=0.9)
 
     # Auto-scale to data extent with padding
