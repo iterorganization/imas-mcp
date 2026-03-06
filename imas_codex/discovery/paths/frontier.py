@@ -21,10 +21,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from imas_codex.discovery.base.claims import retry_on_deadlock
 from imas_codex.graph.models import PathStatus, TerminalReason
 
 if TYPE_CHECKING:
@@ -2876,6 +2878,7 @@ def get_accumulated_cost(facility: str) -> dict[str, Any]:
 # ============================================================================
 
 
+@retry_on_deadlock()
 def claim_paths_for_enriching(facility: str, limit: int = 25) -> list[dict[str, Any]]:
     """Claim paths ready for enrichment (deep analysis: du, tokei, patterns).
 
@@ -2884,9 +2887,9 @@ def claim_paths_for_enriching(facility: str, limit: int = 25) -> list[dict[str, 
     - should_enrich = true (LLM decided it's worth deep analysis)
     - is_enriched IS NULL OR is_enriched = false (not yet enriched)
 
-    Uses claimed_at timestamp to prevent concurrent workers from claiming
-    the same paths. Paths are claimed for 5 minutes - if not completed,
-    they become claimable again (orphan recovery).
+    Uses claim_token + ORDER BY rand() to prevent deadlocks and
+    claimed_at timestamp to prevent concurrent workers from claiming
+    the same paths.
 
     Args:
         facility: Facility ID
@@ -2900,9 +2903,10 @@ def claim_paths_for_enriching(facility: str, limit: int = 25) -> list[dict[str, 
     now = datetime.now(UTC)
     cutoff = (now - __import__("datetime").timedelta(minutes=5)).isoformat()
     now_iso = now.isoformat()
+    claim_token = str(uuid.uuid4())
 
     with GraphClient() as gc:
-        result = gc.query(
+        gc.query(
             """
             MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {id: $facility})
             WHERE p.status = $scored
@@ -2911,17 +2915,25 @@ def claim_paths_for_enriching(facility: str, limit: int = 25) -> list[dict[str, 
               AND (p.claimed_at IS NULL OR p.claimed_at < datetime($cutoff))
               AND (p.total_dirs IS NULL OR p.total_dirs <= 500)
             WITH p
-            ORDER BY p.score_composite DESC, p.depth ASC
+            ORDER BY rand()
             LIMIT $limit
-            SET p.claimed_at = $now
-            RETURN p.id AS id, p.path AS path, p.score_composite AS score,
-                   p.total_files AS total_files, p.total_dirs AS total_dirs
+            SET p.claimed_at = $now, p.claim_token = $token
             """,
             facility=facility,
             scored=PathStatus.scored.value,
             cutoff=cutoff,
             now=now_iso,
             limit=limit,
+            token=claim_token,
+        )
+
+        result = gc.query(
+            """
+            MATCH (p:FacilityPath {claim_token: $token})
+            RETURN p.id AS id, p.path AS path, p.score_composite AS score,
+                   p.total_files AS total_files, p.total_dirs AS total_dirs
+            """,
+            token=claim_token,
         )
 
         return list(result)
@@ -3013,6 +3025,7 @@ def mark_enrichment_complete(
     return updated
 
 
+@retry_on_deadlock()
 def claim_paths_for_scoring(facility: str, limit: int = 10) -> list[dict[str, Any]]:
     """Claim enriched paths ready for 2nd-pass scoring with full context.
 
@@ -3022,7 +3035,7 @@ def claim_paths_for_scoring(facility: str, limit: int = 10) -> list[dict[str, An
     - triage_composite >= 0.5 (only bother scoring potentially valuable paths)
     - scored_at IS NULL (not yet scored)
 
-    Uses claimed_at for worker coordination.
+    Uses claim_token + ORDER BY rand() for deadlock prevention.
 
     Args:
         facility: Facility ID
@@ -3036,9 +3049,10 @@ def claim_paths_for_scoring(facility: str, limit: int = 10) -> list[dict[str, An
     now = datetime.now(UTC)
     cutoff = (now - __import__("datetime").timedelta(minutes=5)).isoformat()
     now_iso = now.isoformat()
+    claim_token = str(uuid.uuid4())
 
     with GraphClient() as gc:
-        result = gc.query(
+        gc.query(
             """
             MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {id: $facility})
             WHERE p.status = $triaged
@@ -3047,9 +3061,21 @@ def claim_paths_for_scoring(facility: str, limit: int = 10) -> list[dict[str, An
               AND p.scored_at IS NULL
               AND (p.claimed_at IS NULL OR p.claimed_at < datetime($cutoff))
             WITH p
-            ORDER BY p.triage_composite DESC
+            ORDER BY rand()
             LIMIT $limit
-            SET p.claimed_at = $now
+            SET p.claimed_at = $now, p.claim_token = $token
+            """,
+            facility=facility,
+            triaged=PathStatus.triaged.value,
+            cutoff=cutoff,
+            now=now_iso,
+            limit=limit,
+            token=claim_token,
+        )
+
+        result = gc.query(
+            """
+            MATCH (p:FacilityPath {claim_token: $token})
             RETURN p.id AS id, p.path AS path, p.triage_composite AS triage_composite,
                    p.total_bytes AS total_bytes, p.total_lines AS total_lines,
                    p.language_breakdown AS language_breakdown,
@@ -3068,11 +3094,7 @@ def claim_paths_for_scoring(facility: str, limit: int = 10) -> list[dict[str, An
                    p.triage_documentation AS triage_documentation,
                    p.triage_imas AS triage_imas
             """,
-            facility=facility,
-            triaged=PathStatus.triaged.value,
-            cutoff=cutoff,
-            now=now_iso,
-            limit=limit,
+            token=claim_token,
         )
 
         return list(result)

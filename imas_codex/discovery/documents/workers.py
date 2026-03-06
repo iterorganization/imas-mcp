@@ -9,7 +9,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
 from typing import TYPE_CHECKING, Any
+
+from imas_codex.discovery.base.claims import retry_on_deadlock
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -19,25 +22,37 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+@retry_on_deadlock()
 def _claim_image_documents(
     facility: str,
     limit: int = 10,
 ) -> list[dict[str, Any]]:
-    """Claim Document nodes with document_type='image' for processing."""
+    """Claim Document nodes with document_type='image' for processing.
+
+    Uses claim_token + ORDER BY rand() to prevent deadlocks.
+    """
     from imas_codex.graph import GraphClient
 
+    claim_token = str(uuid.uuid4())
     with GraphClient() as gc:
-        result = gc.query(
+        gc.query(
             """
             MATCH (d:Document {facility_id: $facility, document_type: 'image'})
             WHERE d.status = 'discovered'
               AND d.claimed_at IS NULL
-            WITH d ORDER BY d.discovered_at ASC LIMIT $limit
-            SET d.claimed_at = datetime()
-            RETURN d.id AS id, d.path AS path, d.document_type AS document_type
+            WITH d ORDER BY rand() LIMIT $limit
+            SET d.claimed_at = datetime(), d.claim_token = $token
             """,
             facility=facility,
             limit=limit,
+            token=claim_token,
+        )
+        result = gc.query(
+            """
+            MATCH (d:Document {claim_token: $token})
+            RETURN d.id AS id, d.path AS path, d.document_type AS document_type
+            """,
+            token=claim_token,
         )
         return list(result)
 

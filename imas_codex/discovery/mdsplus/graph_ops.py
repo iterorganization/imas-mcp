@@ -1,18 +1,20 @@
 """Graph operations for MDSplus tree discovery claim coordination.
 
 Provides seed, claim, mark, and query functions for the tree discovery
-pipeline. TreeModelVersion nodes use status + claimed_at for extraction
-coordination. TreeNode enrichment uses enrichment_status.
+pipeline. StructuralEpoch nodes use status + claimed_at for extraction
+coordination. DataNode enrichment uses enrichment_status.
 """
 
 from __future__ import annotations
 
 import logging
+import uuid
 from typing import Any
 
 from imas_codex.discovery.base.claims import (
     DEFAULT_CLAIM_TIMEOUT_SECONDS,
     reset_stale_claims,
+    retry_on_deadlock,
 )
 from imas_codex.graph import GraphClient
 
@@ -22,24 +24,24 @@ CLAIM_TIMEOUT_SECONDS = DEFAULT_CLAIM_TIMEOUT_SECONDS  # 300s
 
 
 # ---------------------------------------------------------------------------
-# Seed — create pending TreeModelVersion nodes from config
+# Seed — create pending StructuralEpoch nodes from config
 # ---------------------------------------------------------------------------
 
 
 def seed_versions(
     facility: str,
-    tree_name: str,
+    data_source_name: str,
     ver_list: list[int],
     version_config: list[dict] | None = None,
 ) -> int:
-    """Create TreeModelVersion nodes with status=discovered for each version.
+    """Create StructuralEpoch nodes with status=discovered for each version.
 
     Idempotent: only creates nodes that don't already exist. Existing nodes
     are not modified (preserves status/claimed_at from prior runs).
 
     Args:
         facility: Facility identifier
-        tree_name: Static tree name
+        data_source_name: Static tree name
         ver_list: Version numbers to seed
         version_config: Optional version configs with first_shot info
 
@@ -62,12 +64,12 @@ def seed_versions(
 
     records = []
     for ver in ver_list:
-        epoch_id = f"{facility}:{tree_name}:v{ver}"
+        epoch_id = f"{facility}:{data_source_name}:v{ver}"
         records.append(
             {
                 "id": epoch_id,
                 "facility_id": facility,
-                "tree_name": tree_name,
+                "data_source_name": data_source_name,
                 "version": ver,
                 "first_shot": first_shot_map.get(ver, ver),
                 "description": description_map.get(ver, ""),
@@ -80,10 +82,10 @@ def seed_versions(
         result = gc.query(
             """
             UNWIND $records AS rec
-            MERGE (v:TreeModelVersion {id: rec.id})
+            MERGE (v:StructuralEpoch {id: rec.id})
             ON CREATE SET
                 v.facility_id = rec.facility_id,
-                v.tree_name = rec.tree_name,
+                v.data_source_name = rec.data_source_name,
                 v.version = rec.version,
                 v.first_shot = rec.first_shot,
                 v.description = rec.description,
@@ -92,9 +94,9 @@ def seed_versions(
             MATCH (f:Facility {id: rec.facility_id})
             MERGE (v)-[:AT_FACILITY]->(f)
             WITH v, rec, f
-            MERGE (t:MDSplusTree {name: rec.tree_name})
+            MERGE (t:DataSource {name: rec.data_source_name})
             ON CREATE SET t.facility_id = rec.facility_id
-            MERGE (v)-[:IN_TREE]->(t)
+            MERGE (v)-[:IN_DATA_SOURCE]->(t)
             MERGE (t)-[:AT_FACILITY]->(f)
             RETURN count(CASE WHEN v.status = 'discovered' THEN 1 END) AS seeded
             """,
@@ -104,21 +106,21 @@ def seed_versions(
 
 
 def backfill_tree_relationships(facility: str) -> int:
-    """Create missing MDSplusTree nodes and IN_TREE relationships.
+    """Create missing DataSource nodes and IN_DATA_SOURCE relationships.
 
-    One-time migration for TreeNodes ingested before IN_TREE relationships
+    One-time migration for DataNodes ingested before IN_DATA_SOURCE relationships
     were added. Checks cheaply first; skips entirely when nothing is missing.
 
     Returns:
-        Number of TreeNodes that gained an IN_TREE relationship.
+        Number of DataNodes that gained an IN_DATA_SOURCE relationship.
     """
     with GraphClient() as gc:
-        # Cheap existence check — avoids scanning all TreeNodes on every run
+        # Cheap existence check — avoids scanning all DataNodes on every run
         check = gc.query(
             """
-            MATCH (n:TreeNode {facility_id: $facility})
-            WHERE n.tree_name IS NOT NULL
-              AND NOT (n)-[:IN_TREE]->(:MDSplusTree)
+            MATCH (n:DataNode {facility_id: $facility})
+            WHERE n.data_source_name IS NOT NULL
+              AND NOT (n)-[:IN_DATA_SOURCE]->(:DataSource)
             RETURN count(n) > 0 AS needs_backfill
             """,
             facility=facility,
@@ -128,15 +130,15 @@ def backfill_tree_relationships(facility: str) -> int:
 
         result = gc.query(
             """
-            MATCH (n:TreeNode {facility_id: $facility})
-            WHERE n.tree_name IS NOT NULL
-              AND NOT (n)-[:IN_TREE]->(:MDSplusTree)
+            MATCH (n:DataNode {facility_id: $facility})
+            WHERE n.data_source_name IS NOT NULL
+              AND NOT (n)-[:IN_DATA_SOURCE]->(:DataSource)
             WITH n
             MATCH (f:Facility {id: $facility})
-            MERGE (t:MDSplusTree {name: n.tree_name})
+            MERGE (t:DataSource {name: n.data_source_name})
             ON CREATE SET t.facility_id = $facility
             MERGE (t)-[:AT_FACILITY]->(f)
-            MERGE (n)-[:IN_TREE]->(t)
+            MERGE (n)-[:IN_DATA_SOURCE]->(t)
             RETURN count(n) AS backfilled
             """,
             facility=facility,
@@ -144,7 +146,7 @@ def backfill_tree_relationships(facility: str) -> int:
         count = result[0]["backfilled"] if result else 0
         if count > 0:
             logger.info(
-                "Backfilled %d TreeNode→MDSplusTree IN_TREE relationships for %s",
+                "Backfilled %d DataNode→DataSource IN_DATA_SOURCE relationships for %s",
                 count,
                 facility,
             )
@@ -152,37 +154,46 @@ def backfill_tree_relationships(facility: str) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Claim — atomic claim of pending TreeModelVersion for extraction
+# Claim — atomic claim of pending StructuralEpoch for extraction
 # ---------------------------------------------------------------------------
 
 
+@retry_on_deadlock()
 def claim_version_for_extraction(
     facility: str,
-    tree_name: str,
+    data_source_name: str,
 ) -> dict[str, Any] | None:
-    """Atomically claim a pending TreeModelVersion for extraction.
+    """Atomically claim a pending StructuralEpoch for extraction.
 
-    Claims the lowest-numbered unclaimed version with status=discovered.
-    Sets claimed_at = datetime() for stale-claim recovery.
+    Claims an unclaimed version with status=discovered.
+    Uses claim_token + ORDER BY rand() to prevent deadlocks.
 
     Returns:
         Dict with id, version, first_shot or None if no work available
     """
+    claim_token = str(uuid.uuid4())
     with GraphClient() as gc:
-        result = gc.query(
+        gc.query(
             """
-            MATCH (v:TreeModelVersion)
+            MATCH (v:StructuralEpoch)
             WHERE v.facility_id = $facility
-              AND v.tree_name = $tree_name
+              AND v.data_source_name = $data_source_name
               AND v.status = 'discovered'
               AND v.claimed_at IS NULL
-            WITH v ORDER BY v.version ASC LIMIT 1
-            SET v.claimed_at = datetime()
+            WITH v ORDER BY rand() LIMIT 1
+            SET v.claimed_at = datetime(), v.claim_token = $token
+            """,
+            facility=facility,
+            data_source_name=data_source_name,
+            token=claim_token,
+        )
+        result = gc.query(
+            """
+            MATCH (v:StructuralEpoch {claim_token: $token})
             RETURN v.id AS id, v.version AS version,
                    v.first_shot AS first_shot
             """,
-            facility=facility,
-            tree_name=tree_name,
+            token=claim_token,
         )
         if result:
             return dict(result[0])
@@ -193,11 +204,11 @@ def mark_version_extracted(
     version_id: str,
     node_count: int,
 ) -> None:
-    """Mark a TreeModelVersion as extracted (status=ingested, clear claim)."""
+    """Mark a StructuralEpoch as extracted (status=ingested, clear claim)."""
     with GraphClient() as gc:
         gc.query(
             """
-            MATCH (v:TreeModelVersion {id: $id})
+            MATCH (v:StructuralEpoch {id: $id})
             SET v.status = 'ingested',
                 v.claimed_at = null,
                 v.node_count = $node_count,
@@ -209,11 +220,11 @@ def mark_version_extracted(
 
 
 def release_version_claim(version_id: str) -> None:
-    """Release claim on a TreeModelVersion (on error)."""
+    """Release claim on a StructuralEpoch (on error)."""
     with GraphClient() as gc:
         gc.query(
             """
-            MATCH (v:TreeModelVersion {id: $id})
+            MATCH (v:StructuralEpoch {id: $id})
             SET v.claimed_at = null
             """,
             id=version_id,
@@ -227,20 +238,20 @@ def release_version_claim(version_id: str) -> None:
 
 def has_pending_units_work(
     facility: str,
-    tree_name: str,
+    data_source_name: str,
 ) -> bool:
     """Check if any ingested versions need unit extraction."""
     with GraphClient() as gc:
         result = gc.query(
             """
-            MATCH (v:TreeModelVersion)
-            WHERE v.facility_id = $facility AND v.tree_name = $tree_name
+            MATCH (v:StructuralEpoch)
+            WHERE v.facility_id = $facility AND v.data_source_name = $data_source_name
               AND v.status = 'ingested'
               AND (v.units_extracted IS NULL OR v.units_extracted = false)
             RETURN count(v) AS cnt
             """,
             facility=facility,
-            tree_name=tree_name,
+            data_source_name=data_source_name,
         )
         return result[0]["cnt"] > 0 if result else False
 
@@ -249,11 +260,11 @@ def mark_version_units_extracted(
     version_id: str,
     units_count: int,
 ) -> None:
-    """Mark a TreeModelVersion as having completed unit extraction."""
+    """Mark a StructuralEpoch as having completed unit extraction."""
     with GraphClient() as gc:
         gc.query(
             """
-            MATCH (v:TreeModelVersion {id: $id})
+            MATCH (v:StructuralEpoch {id: $id})
             SET v.units_extracted = true,
                 v.units_count = $units_count
             """,
@@ -264,10 +275,10 @@ def mark_version_units_extracted(
 
 def mark_all_versions_units_extracted(
     facility: str,
-    tree_name: str,
+    data_source_name: str,
     units_count: int,
 ) -> None:
-    """Mark all ingested TreeModelVersions as having completed unit extraction.
+    """Mark all ingested StructuralEpochs as having completed unit extraction.
 
     Units are per-tree (shared nodes), not per-version. Marking all versions
     ensures idempotency so re-runs skip units extraction entirely.
@@ -275,28 +286,28 @@ def mark_all_versions_units_extracted(
     with GraphClient() as gc:
         gc.query(
             """
-            MATCH (v:TreeModelVersion)
-            WHERE v.facility_id = $facility AND v.tree_name = $tree_name
+            MATCH (v:StructuralEpoch)
+            WHERE v.facility_id = $facility AND v.data_source_name = $data_source_name
               AND v.status = 'ingested'
             SET v.units_extracted = true,
                 v.units_count = $units_count
             """,
             facility=facility,
-            tree_name=tree_name,
+            data_source_name=data_source_name,
             units_count=units_count,
         )
 
 
 def merge_units_to_graph(
     facility: str,
-    tree_name: str,
+    data_source_name: str,
     units: dict[str, str],
 ) -> int:
-    """MERGE Unit nodes and create HAS_UNIT relationships from TreeNodes.
+    """MERGE Unit nodes and create HAS_UNIT relationships from DataNodes.
 
     Creates or reuses existing Unit nodes (keyed by normalized symbol),
-    then creates HAS_UNIT relationships from matching TreeNode nodes.
-    Also sets the ``unit`` string property on each TreeNode for
+    then creates HAS_UNIT relationships from matching DataNode nodes.
+    Also sets the ``unit`` string property on each DataNode for
     efficient property-level filtering.
 
     Unit symbols are normalized via pint to prevent duplicate Unit nodes
@@ -304,7 +315,7 @@ def merge_units_to_graph(
 
     Args:
         facility: Facility identifier
-        tree_name: MDSplus tree name
+        data_source_name: MDSplus tree name
         units: Mapping of normalized node IDs to unit symbol strings
 
     Returns:
@@ -319,7 +330,7 @@ def merge_units_to_graph(
     updates = []
     for path, unit_str in units.items():
         normalized_path = normalize_mdsplus_path(path)
-        node_id = f"{facility}:{tree_name}:{normalized_path}"
+        node_id = f"{facility}:{data_source_name}:{normalized_path}"
         symbol = normalize_unit_symbol(unit_str) or unit_str
         updates.append({"id": node_id, "symbol": symbol})
 
@@ -327,7 +338,7 @@ def merge_units_to_graph(
         result = gc.query(
             """
             UNWIND $updates AS u
-            MATCH (n:TreeNode {id: u.id})
+            MATCH (n:DataNode {id: u.id})
             MERGE (unit:Unit {symbol: u.symbol})
             MERGE (n)-[:HAS_UNIT]->(unit)
             SET n.unit = u.symbol
@@ -345,7 +356,7 @@ def merge_units_to_graph(
 
 def fetch_enrichment_context(
     facility: str,
-    tree_name: str,
+    data_source_name: str,
     node_paths: list[str],
 ) -> dict[str, dict[str, Any]]:
     """Fetch tree hierarchy context for nodes being enriched.
@@ -356,7 +367,7 @@ def fetch_enrichment_context(
 
     Args:
         facility: Facility identifier
-        tree_name: Static tree name
+        data_source_name: Static tree name
         node_paths: Paths of nodes being enriched
 
     Returns:
@@ -371,15 +382,15 @@ def fetch_enrichment_context(
     with GraphClient() as gc:
         result = gc.query(
             """
-            UNWIND $paths AS node_path
-            MATCH (n:TreeNode {path: node_path, facility_id: $facility})
-            WHERE n.tree_name = $tree_name
-            OPTIONAL MATCH (parent:TreeNode {
+            UNWIND $paths AS data_source_path
+            MATCH (n:DataNode {path: data_source_path, facility_id: $facility})
+            WHERE n.data_source_name = $data_source_name
+            OPTIONAL MATCH (parent:DataNode {
                 path: n.parent_path, facility_id: $facility
             })
-            WHERE parent.tree_name = $tree_name
-            OPTIONAL MATCH (parent)-[:HAS_NODE]->(sibling:TreeNode)
-            WHERE sibling.tree_name = $tree_name
+            WHERE parent.data_source_name = $data_source_name
+            OPTIONAL MATCH (parent)-[:HAS_NODE]->(sibling:DataNode)
+            WHERE sibling.data_source_name = $data_source_name
               AND sibling.path <> n.path
               AND sibling.node_type IN $node_types
             WITH n, parent, collect(DISTINCT {
@@ -396,7 +407,7 @@ def fetch_enrichment_context(
             """,
             paths=node_paths,
             facility=facility,
-            tree_name=tree_name,
+            data_source_name=data_source_name,
             node_types=ENRICHABLE_NODE_TYPES,
         )
         context: dict[str, dict[str, Any]] = {}
@@ -422,22 +433,22 @@ MIN_PATTERN_INSTANCES = 3
 
 def detect_and_create_patterns(
     facility: str,
-    tree_name: str,
+    data_source_name: str,
     min_instances: int = MIN_PATTERN_INSTANCES,
 ) -> int:
-    """Detect indexed parameter groups and create TreeNodePattern nodes.
+    """Detect indexed parameter groups and create DataNodePattern nodes.
 
     Scans the graph for grandparent STRUCTURE nodes whose children (also
     STRUCTURE) each contain data-bearing leaves with the same name.
     For each (grandparent, leaf_name) combination with enough instances,
-    creates a TreeNodePattern and FOLLOWS_PATTERN relationships.
+    creates a DataNodePattern and FOLLOWS_PATTERN relationships.
 
     Example: TOP.W has children W001-W830, each with leaf R.
     Pattern: grandparent=TOP.W, leaf=R, index_count=830.
 
     Args:
         facility: Facility identifier
-        tree_name: Static tree name
+        data_source_name: Static tree name
         min_instances: Minimum indexed parents to qualify as a pattern
 
     Returns:
@@ -447,11 +458,11 @@ def detect_and_create_patterns(
         # Find (grandparent, leaf_name) groups with enough indexed parents
         groups = gc.query(
             """
-            MATCH (gp:TreeNode {facility_id: $facility, tree_name: $tree_name})
+            MATCH (gp:DataNode {facility_id: $facility, data_source_name: $data_source_name})
             WHERE gp.node_type = 'STRUCTURE'
-            MATCH (gp)-[:HAS_NODE]->(parent:TreeNode)
+            MATCH (gp)-[:HAS_NODE]->(parent:DataNode)
             WHERE parent.node_type = 'STRUCTURE'
-            MATCH (parent)-[:HAS_NODE]->(leaf:TreeNode)
+            MATCH (parent)-[:HAS_NODE]->(leaf:DataNode)
             WHERE leaf.node_type IN $node_types
             WITH gp.path AS gp_path,
                  split(leaf.path, '.')[-1] AS leaf_name,
@@ -462,24 +473,28 @@ def detect_and_create_patterns(
             RETURN gp_path, leaf_name, leaf_type, parent_count, representative
             """,
             facility=facility,
-            tree_name=tree_name,
+            data_source_name=data_source_name,
             node_types=ENRICHABLE_NODE_TYPES,
             min_instances=min_instances,
         )
 
         if not groups:
-            logger.info("No indexed patterns found for %s:%s", facility, tree_name)
+            logger.info(
+                "No indexed patterns found for %s:%s", facility, data_source_name
+            )
             return 0
 
-        # Create TreeNodePattern nodes and FOLLOWS_PATTERN relationships
+        # Create DataNodePattern nodes and FOLLOWS_PATTERN relationships
         patterns = []
         for g in groups:
-            pattern_id = f"{facility}:{tree_name}:{g['gp_path']}:{g['leaf_name']}"
+            pattern_id = (
+                f"{facility}:{data_source_name}:{g['gp_path']}:{g['leaf_name']}"
+            )
             patterns.append(
                 {
                     "id": pattern_id,
                     "facility_id": facility,
-                    "tree_name": tree_name,
+                    "data_source_name": data_source_name,
                     "grandparent_path": g["gp_path"],
                     "leaf_name": g["leaf_name"],
                     "index_count": g["parent_count"],
@@ -493,10 +508,10 @@ def detect_and_create_patterns(
         result = gc.query(
             """
             UNWIND $patterns AS p
-            MERGE (pat:TreeNodePattern {id: p.id})
+            MERGE (pat:DataNodePattern {id: p.id})
             ON CREATE SET
                 pat.facility_id = p.facility_id,
-                pat.tree_name = p.tree_name,
+                pat.data_source_name = p.data_source_name,
                 pat.grandparent_path = p.grandparent_path,
                 pat.leaf_name = p.leaf_name,
                 pat.index_count = p.index_count,
@@ -507,9 +522,9 @@ def detect_and_create_patterns(
             MERGE (pat)-[:AT_FACILITY]->(f)
             WITH pat, p
             // Link all matching leaf nodes to this pattern
-            MATCH (gp:TreeNode {path: p.grandparent_path, facility_id: p.facility_id})
-            WHERE gp.tree_name = p.tree_name
-            MATCH (gp)-[:HAS_NODE]->(parent:TreeNode)-[:HAS_NODE]->(leaf:TreeNode)
+            MATCH (gp:DataNode {path: p.grandparent_path, facility_id: p.facility_id})
+            WHERE gp.data_source_name = p.data_source_name
+            MATCH (gp)-[:HAS_NODE]->(parent:DataNode)-[:HAS_NODE]->(leaf:DataNode)
             WHERE leaf.node_type IN $node_types
               AND split(leaf.path, '.')[-1] = p.leaf_name
             MERGE (leaf)-[:FOLLOWS_PATTERN]->(pat)
@@ -525,7 +540,7 @@ def detect_and_create_patterns(
             "Created %d patterns for %s:%s (%d nodes linked)",
             created,
             facility,
-            tree_name,
+            data_source_name,
             total_linked,
         )
         return created
@@ -533,11 +548,11 @@ def detect_and_create_patterns(
 
 def detect_and_create_member_patterns(
     facility: str,
-    tree_name: str,
+    data_source_name: str,
     member_parent_types: list[str] | None = None,
     min_instances: int = MIN_PATTERN_INSTANCES,
 ) -> int:
-    """Detect member-suffix patterns and create TreeNodePattern nodes.
+    """Detect member-suffix patterns and create DataNodePattern nodes.
 
     MDSplus nodes often have member sub-nodes (colon-separated, e.g.
     `:PRE`, `:VAL`, `:STORE`) that share identical semantic meaning
@@ -556,7 +571,7 @@ def detect_and_create_member_patterns(
 
     Args:
         facility: Facility identifier
-        tree_name: Static tree name
+        data_source_name: Static tree name
         member_parent_types: Parent node types to scan for member children.
             Loaded from facility YAML ``trees[].member_parent_types``.
         min_instances: Minimum instances to qualify
@@ -572,11 +587,11 @@ def detect_and_create_member_patterns(
         # the configured types
         groups = gc.query(
             """
-            MATCH (parent:TreeNode {facility_id: $facility, tree_name: $tree_name})
+            MATCH (parent:DataNode {facility_id: $facility, data_source_name: $data_source_name})
             WHERE parent.node_type IN $parent_types
-            MATCH (parent)-[:HAS_NODE]->(leaf:TreeNode)
+            MATCH (parent)-[:HAS_NODE]->(leaf:DataNode)
             WHERE leaf.node_type IN $node_types
-              AND NOT EXISTS { (leaf)-[:FOLLOWS_PATTERN]->(:TreeNodePattern) }
+              AND NOT EXISTS { (leaf)-[:FOLLOWS_PATTERN]->(:DataNodePattern) }
             WITH split(leaf.path, ':')[-1] AS leaf_name,
                  parent.node_type AS parent_type,
                  count(leaf) AS instance_count,
@@ -586,7 +601,7 @@ def detect_and_create_member_patterns(
             RETURN leaf_name, parent_type, instance_count, representative, leaf_type
             """,
             facility=facility,
-            tree_name=tree_name,
+            data_source_name=data_source_name,
             parent_types=member_parent_types,
             node_types=ENRICHABLE_NODE_TYPES,
             min_instances=min_instances,
@@ -594,21 +609,19 @@ def detect_and_create_member_patterns(
 
         if not groups:
             logger.info(
-                "No member-suffix patterns found for %s:%s", facility, tree_name
+                "No member-suffix patterns found for %s:%s", facility, data_source_name
             )
             return 0
 
         # Create patterns — keyed by facility:tree:member:parent_type:leaf_name
         patterns = []
         for g in groups:
-            pattern_id = (
-                f"{facility}:{tree_name}:member:{g['parent_type']}:{g['leaf_name']}"
-            )
+            pattern_id = f"{facility}:{data_source_name}:member:{g['parent_type']}:{g['leaf_name']}"
             patterns.append(
                 {
                     "id": pattern_id,
                     "facility_id": facility,
-                    "tree_name": tree_name,
+                    "data_source_name": data_source_name,
                     "grandparent_path": g["parent_type"],  # parent type, not a path
                     "leaf_name": g["leaf_name"],
                     "index_count": g["instance_count"],
@@ -621,10 +634,10 @@ def detect_and_create_member_patterns(
         result = gc.query(
             """
             UNWIND $patterns AS p
-            MERGE (pat:TreeNodePattern {id: p.id})
+            MERGE (pat:DataNodePattern {id: p.id})
             ON CREATE SET
                 pat.facility_id = p.facility_id,
-                pat.tree_name = p.tree_name,
+                pat.data_source_name = p.data_source_name,
                 pat.grandparent_path = p.grandparent_path,
                 pat.leaf_name = p.leaf_name,
                 pat.index_count = p.index_count,
@@ -635,10 +648,10 @@ def detect_and_create_member_patterns(
             MERGE (pat)-[:AT_FACILITY]->(f)
             WITH pat, p
             // Link all matching leaf nodes under parents of the configured type
-            MATCH (parent:TreeNode {facility_id: p.facility_id})
-            WHERE parent.tree_name = p.tree_name
+            MATCH (parent:DataNode {facility_id: p.facility_id})
+            WHERE parent.data_source_name = p.data_source_name
               AND parent.node_type = p.grandparent_path
-            MATCH (parent)-[:HAS_NODE]->(leaf:TreeNode)
+            MATCH (parent)-[:HAS_NODE]->(leaf:DataNode)
             WHERE leaf.node_type IN $node_types
               AND split(leaf.path, ':')[-1] = p.leaf_name
             MERGE (leaf)-[:FOLLOWS_PATTERN]->(pat)
@@ -654,45 +667,56 @@ def detect_and_create_member_patterns(
             "Created %d member-suffix patterns for %s:%s (%d nodes linked)",
             created,
             facility,
-            tree_name,
+            data_source_name,
             total_linked,
         )
         return created
 
 
 # ---------------------------------------------------------------------------
-# Enrichment claiming — TreeNodePattern (pattern-first enrichment)
+# Enrichment claiming — DataNodePattern (pattern-first enrichment)
 # ---------------------------------------------------------------------------
 
 
+@retry_on_deadlock()
 def claim_patterns_for_enrichment(
     facility: str,
-    tree_name: str,
+    data_source_name: str,
     limit: int = 20,
 ) -> list[dict[str, Any]]:
-    """Claim unenriched TreeNodePatterns for LLM enrichment.
+    """Claim unenriched DataNodePatterns for LLM enrichment.
 
     Returns pattern info plus one representative node's details for the
     LLM prompt. After enriching, call mark_patterns_enriched() to
     propagate descriptions to all followers.
 
+    Uses claim_token + ORDER BY rand() to prevent deadlocks.
+
     Returns:
         List of dicts with pattern id, grandparent_path, leaf_name,
         index_count, and representative node details.
     """
+    claim_token = str(uuid.uuid4())
     with GraphClient() as gc:
-        result = gc.query(
+        gc.query(
             """
-            MATCH (p:TreeNodePattern)
+            MATCH (p:DataNodePattern)
             WHERE p.facility_id = $facility
-              AND p.tree_name = $tree_name
+              AND p.data_source_name = $data_source_name
               AND (p.description IS NULL OR p.description = '')
               AND p.claimed_at IS NULL
-            WITH p ORDER BY p.grandparent_path, p.leaf_name LIMIT $limit
-            SET p.claimed_at = datetime()
-            WITH p
-            // Fetch representative node details
-            OPTIONAL MATCH (rep:TreeNode {path: p.representative_path,
+            WITH p ORDER BY rand() LIMIT $limit
+            SET p.claimed_at = datetime(), p.claim_token = $token
+            """,
+            facility=facility,
+            data_source_name=data_source_name,
+            limit=limit,
+            token=claim_token,
+        )
+        result = gc.query(
+            """
+            MATCH (p:DataNodePattern {claim_token: $token})
+            OPTIONAL MATCH (rep:DataNode {path: p.representative_path,
                                           facility_id: $facility})
             RETURN p.id AS id,
                    p.grandparent_path AS grandparent_path,
@@ -705,8 +729,7 @@ def claim_patterns_for_enrichment(
                    rep.parent_path AS parent_path
             """,
             facility=facility,
-            tree_name=tree_name,
-            limit=limit,
+            token=claim_token,
         )
         return [dict(r) for r in result]
 
@@ -721,12 +744,12 @@ def mark_patterns_enriched(
 ) -> int:
     """Mark patterns as enriched and propagate to all followers.
 
-    Sets description/keywords/category on the TreeNodePattern and
-    copies them to every TreeNode linked via FOLLOWS_PATTERN.
+    Sets description/keywords/category on the DataNodePattern and
+    copies them to every DataNode linked via FOLLOWS_PATTERN.
     Distributes llm_cost evenly across all follower nodes.
 
     Returns:
-        Number of TreeNodes updated (followers).
+        Number of DataNodes updated (followers).
     """
     updates = []
     for pid in pattern_ids:
@@ -749,7 +772,7 @@ def mark_patterns_enriched(
         result = gc.query(
             """
             UNWIND $updates AS u
-            MATCH (p:TreeNodePattern {id: u.id})
+            MATCH (p:DataNodePattern {id: u.id})
             SET p.description = u.description,
                 p.keywords = u.keywords,
                 p.category = u.category,
@@ -757,7 +780,7 @@ def mark_patterns_enriched(
                 p.claimed_at = null
             WITH p, u
             // Propagate to all followers
-            MATCH (n:TreeNode)-[:FOLLOWS_PATTERN]->(p)
+            MATCH (n:DataNode)-[:FOLLOWS_PATTERN]->(p)
             SET n.description = u.description,
                 n.keywords = u.keywords,
                 n.category = u.category,
@@ -777,7 +800,7 @@ def mark_patterns_enriched(
                 gc.query(
                     """
                     UNWIND $ids AS pid
-                    MATCH (n:TreeNode)-[:FOLLOWS_PATTERN]->(:TreeNodePattern {id: pid})
+                    MATCH (n:DataNode)-[:FOLLOWS_PATTERN]->(:DataNodePattern {id: pid})
                     WHERE n.enrichment_status = 'enriched'
                     SET n.llm_cost = $per_node_cost,
                         n.llm_model = $llm_model,
@@ -792,14 +815,14 @@ def mark_patterns_enriched(
 
 
 def release_pattern_claims(pattern_ids: list[str]) -> int:
-    """Release claims on TreeNodePatterns (on error)."""
+    """Release claims on DataNodePatterns (on error)."""
     if not pattern_ids:
         return 0
     with GraphClient() as gc:
         result = gc.query(
             """
             UNWIND $ids AS pid
-            MATCH (p:TreeNodePattern {id: pid})
+            MATCH (p:DataNodePattern {id: pid})
             SET p.claimed_at = null
             RETURN count(p) AS released
             """,
@@ -808,25 +831,25 @@ def release_pattern_claims(pattern_ids: list[str]) -> int:
         return result[0]["released"] if result else 0
 
 
-def has_pending_pattern_work(facility: str, tree_name: str) -> bool:
-    """Check if any TreeNodePatterns need enrichment."""
+def has_pending_pattern_work(facility: str, data_source_name: str) -> bool:
+    """Check if any DataNodePatterns need enrichment."""
     with GraphClient() as gc:
         result = gc.query(
             """
-            MATCH (p:TreeNodePattern)
+            MATCH (p:DataNodePattern)
             WHERE p.facility_id = $facility
-              AND p.tree_name = $tree_name
+              AND p.data_source_name = $data_source_name
               AND (p.description IS NULL OR p.description = '')
             RETURN count(p) > 0 AS has_work
             """,
             facility=facility,
-            tree_name=tree_name,
+            data_source_name=data_source_name,
         )
         return result[0]["has_work"] if result else False
 
 
 # ---------------------------------------------------------------------------
-# Enrichment claiming — TreeNode nodes (non-pattern nodes only)
+# Enrichment claiming — DataNode nodes (non-pattern nodes only)
 # ---------------------------------------------------------------------------
 
 
@@ -836,39 +859,49 @@ def has_pending_pattern_work(facility: str, tree_name: str) -> bool:
 ENRICHABLE_NODE_TYPES = ["NUMERIC", "SIGNAL"]
 
 
+@retry_on_deadlock()
 def claim_parent_for_enrichment(
     facility: str,
-    tree_name: str,
+    data_source_name: str,
 ) -> dict[str, Any] | None:
     """Claim a parent node whose children need enrichment.
 
-    Finds any TreeNode with un-enriched NUMERIC/SIGNAL children
-    that don't follow a TreeNodePattern. Claims the parent by setting
-    claimed_at. Returns the parent info plus all its un-enriched children.
+    Finds any DataNode with un-enriched NUMERIC/SIGNAL children
+    that don't follow a DataNodePattern. Claims the parent by setting
+    claimed_at. Uses claim_token + ORDER BY rand() to prevent deadlocks.
 
     Returns:
         Dict with parent_id, parent_path, parent_tags, and children list,
         or None if no work available.
     """
+    claim_token = str(uuid.uuid4())
     with GraphClient() as gc:
-        result = gc.query(
+        gc.query(
             """
-            MATCH (parent:TreeNode {facility_id: $facility, tree_name: $tree_name})
+            MATCH (parent:DataNode {facility_id: $facility, data_source_name: $data_source_name})
             WHERE parent.claimed_at IS NULL
             WITH parent
-            MATCH (parent)-[:HAS_NODE]->(child:TreeNode)
+            MATCH (parent)-[:HAS_NODE]->(child:DataNode)
             WHERE child.node_type IN $node_types
               AND (child.description IS NULL OR child.description = '')
-              AND NOT EXISTS { (child)-[:FOLLOWS_PATTERN]->(:TreeNodePattern) }
+              AND NOT EXISTS { (child)-[:FOLLOWS_PATTERN]->(:DataNodePattern) }
             WITH parent, count(child) AS unenriched
             WHERE unenriched > 0
-            ORDER BY parent.path LIMIT 1
-            SET parent.claimed_at = datetime()
-            WITH parent
-            MATCH (parent)-[:HAS_NODE]->(child:TreeNode)
+            WITH parent ORDER BY rand() LIMIT 1
+            SET parent.claimed_at = datetime(), parent.claim_token = $token
+            """,
+            facility=facility,
+            data_source_name=data_source_name,
+            node_types=ENRICHABLE_NODE_TYPES,
+            token=claim_token,
+        )
+        result = gc.query(
+            """
+            MATCH (parent:DataNode {claim_token: $token})
+            MATCH (parent)-[:HAS_NODE]->(child:DataNode)
             WHERE child.node_type IN $node_types
               AND (child.description IS NULL OR child.description = '')
-              AND NOT EXISTS { (child)-[:FOLLOWS_PATTERN]->(:TreeNodePattern) }
+              AND NOT EXISTS { (child)-[:FOLLOWS_PATTERN]->(:DataNodePattern) }
             RETURN parent.id AS parent_id, parent.path AS parent_path,
                    parent.tags AS parent_tags,
                    collect({
@@ -877,47 +910,55 @@ def claim_parent_for_enrichment(
                        tags: child.tags, unit: child.unit
                    }) AS children
             """,
-            facility=facility,
-            tree_name=tree_name,
             node_types=ENRICHABLE_NODE_TYPES,
+            token=claim_token,
         )
         if result:
             return dict(result[0])
         return None
 
 
+@retry_on_deadlock()
 def claim_orphan_nodes_for_enrichment(
     facility: str,
-    tree_name: str,
+    data_source_name: str,
     limit: int = 40,
 ) -> list[dict[str, Any]]:
     """Claim enrichable nodes that have no parent HAS_NODE relationship.
 
     These are top-level tree nodes not nested under any parent.
-    Claims them by setting claimed_at and returns them as a batch.
+    Uses claim_token + ORDER BY rand() to prevent deadlocks.
 
     Returns:
         List of node dicts with id, path, node_type, tags, units.
     """
+    claim_token = str(uuid.uuid4())
     with GraphClient() as gc:
-        result = gc.query(
+        gc.query(
             """
-            MATCH (child:TreeNode {facility_id: $facility, tree_name: $tree_name})
+            MATCH (child:DataNode {facility_id: $facility, data_source_name: $data_source_name})
             WHERE child.node_type IN $node_types
               AND (child.description IS NULL OR child.description = '')
-              AND NOT EXISTS { (child)-[:FOLLOWS_PATTERN]->(:TreeNodePattern) }
-              AND NOT EXISTS { (:TreeNode)-[:HAS_NODE]->(child) }
+              AND NOT EXISTS { (child)-[:FOLLOWS_PATTERN]->(:DataNodePattern) }
+              AND NOT EXISTS { (:DataNode)-[:HAS_NODE]->(child) }
               AND child.claimed_at IS NULL
-            WITH child ORDER BY child.path LIMIT $limit
-            SET child.claimed_at = datetime()
+            WITH child ORDER BY rand() LIMIT $limit
+            SET child.claimed_at = datetime(), child.claim_token = $token
+            """,
+            facility=facility,
+            data_source_name=data_source_name,
+            node_types=ENRICHABLE_NODE_TYPES,
+            limit=limit,
+            token=claim_token,
+        )
+        result = gc.query(
+            """
+            MATCH (child:DataNode {claim_token: $token})
             RETURN child.id AS id, child.path AS path,
                    child.node_type AS node_type,
                    child.tags AS tags, child.unit AS unit
             """,
-            facility=facility,
-            tree_name=tree_name,
-            node_types=ENRICHABLE_NODE_TYPES,
-            limit=limit,
+            token=claim_token,
         )
         return [dict(r) for r in result] if result else []
 
@@ -962,7 +1003,7 @@ def mark_parent_children_enriched(
         # Release parent claim even if no enrichments
         with GraphClient() as gc:
             gc.query(
-                "MATCH (n:TreeNode {id: $id}) SET n.claimed_at = null",
+                "MATCH (n:DataNode {id: $id}) SET n.claimed_at = null",
                 id=parent_id,
             )
         return 0
@@ -973,7 +1014,7 @@ def mark_parent_children_enriched(
         result = gc.query(
             """
             UNWIND $updates AS u
-            MATCH (n:TreeNode {id: u.id})
+            MATCH (n:DataNode {id: u.id})
             SET n.description = u.description,
                 n.keywords = u.keywords,
                 n.category = u.category,
@@ -990,7 +1031,7 @@ def mark_parent_children_enriched(
         )
         # Release parent claim
         gc.query(
-            "MATCH (n:TreeNode {id: $id}) SET n.claimed_at = null",
+            "MATCH (n:DataNode {id: $id}) SET n.claimed_at = null",
             id=parent_id,
         )
         return result[0]["updated"] if result else 0
@@ -1000,7 +1041,7 @@ def release_parent_claim(parent_id: str) -> None:
     """Release claim on a parent node (on error)."""
     with GraphClient() as gc:
         gc.query(
-            "MATCH (n:TreeNode {id: $id}) SET n.claimed_at = null",
+            "MATCH (n:DataNode {id: $id}) SET n.claimed_at = null",
             id=parent_id,
         )
 
@@ -1013,7 +1054,7 @@ def release_orphan_claims(node_ids: list[str]) -> None:
         gc.query(
             """
             UNWIND $ids AS nid
-            MATCH (n:TreeNode {id: nid})
+            MATCH (n:DataNode {id: nid})
             SET n.claimed_at = null
             """,
             ids=node_ids,
@@ -1064,7 +1105,7 @@ def mark_orphan_nodes_enriched(
             result = gc.query(
                 """
                 UNWIND $updates AS u
-                MATCH (n:TreeNode {id: u.id})
+                MATCH (n:DataNode {id: u.id})
                 SET n.description = u.description,
                     n.keywords = u.keywords,
                     n.category = u.category,
@@ -1088,7 +1129,7 @@ def mark_orphan_nodes_enriched(
             gc.query(
                 """
                 UNWIND $ids AS nid
-                MATCH (n:TreeNode {id: nid})
+                MATCH (n:DataNode {id: nid})
                 SET n.claimed_at = null
                 """,
                 ids=remaining,
@@ -1101,41 +1142,41 @@ def mark_orphan_nodes_enriched(
 # ---------------------------------------------------------------------------
 
 
-def has_pending_extract_work(facility: str, tree_name: str) -> bool:
-    """Check if any TreeModelVersions need extraction (discovered or claimed)."""
+def has_pending_extract_work(facility: str, data_source_name: str) -> bool:
+    """Check if any StructuralEpochs need extraction (discovered or claimed)."""
     with GraphClient() as gc:
         result = gc.query(
             """
-            MATCH (v:TreeModelVersion)
+            MATCH (v:StructuralEpoch)
             WHERE v.facility_id = $facility
-              AND v.tree_name = $tree_name
+              AND v.data_source_name = $data_source_name
               AND v.status = 'discovered'
             RETURN count(v) > 0 AS has_work
             """,
             facility=facility,
-            tree_name=tree_name,
+            data_source_name=data_source_name,
         )
         return result[0]["has_work"] if result else False
 
 
-def has_pending_enrich_work(facility: str, tree_name: str) -> bool:
+def has_pending_enrich_work(facility: str, data_source_name: str) -> bool:
     """Check if any patterns, parent groups, or orphan nodes need enrichment."""
-    if has_pending_pattern_work(facility, tree_name):
+    if has_pending_pattern_work(facility, data_source_name):
         return True
     with GraphClient() as gc:
         # Check for parents with unenriched children (any parent type)
         result = gc.query(
             """
-            MATCH (parent:TreeNode {facility_id: $facility, tree_name: $tree_name})
+            MATCH (parent:DataNode {facility_id: $facility, data_source_name: $data_source_name})
             WITH parent
-            MATCH (parent)-[:HAS_NODE]->(child:TreeNode)
+            MATCH (parent)-[:HAS_NODE]->(child:DataNode)
             WHERE child.node_type IN $node_types
               AND (child.description IS NULL OR child.description = '')
-              AND NOT EXISTS { (child)-[:FOLLOWS_PATTERN]->(:TreeNodePattern) }
+              AND NOT EXISTS { (child)-[:FOLLOWS_PATTERN]->(:DataNodePattern) }
             RETURN count(DISTINCT parent) > 0 AS has_work
             """,
             facility=facility,
-            tree_name=tree_name,
+            data_source_name=data_source_name,
             node_types=ENRICHABLE_NODE_TYPES,
         )
         if result and result[0]["has_work"]:
@@ -1144,21 +1185,21 @@ def has_pending_enrich_work(facility: str, tree_name: str) -> bool:
         # Check for orphan nodes (no parent HAS_NODE relationship)
         orphan_result = gc.query(
             """
-            MATCH (child:TreeNode {facility_id: $facility, tree_name: $tree_name})
+            MATCH (child:DataNode {facility_id: $facility, data_source_name: $data_source_name})
             WHERE child.node_type IN $node_types
               AND (child.description IS NULL OR child.description = '')
-              AND NOT EXISTS { (child)-[:FOLLOWS_PATTERN]->(:TreeNodePattern) }
-              AND NOT EXISTS { (:TreeNode)-[:HAS_NODE]->(child) }
+              AND NOT EXISTS { (child)-[:FOLLOWS_PATTERN]->(:DataNodePattern) }
+              AND NOT EXISTS { (:DataNode)-[:HAS_NODE]->(child) }
             RETURN count(child) > 0 AS has_work
             """,
             facility=facility,
-            tree_name=tree_name,
+            data_source_name=data_source_name,
             node_types=ENRICHABLE_NODE_TYPES,
         )
         return orphan_result[0]["has_work"] if orphan_result else False
 
 
-def has_pending_ingest_work(facility: str, tree_name: str) -> bool:
+def has_pending_ingest_work(facility: str, data_source_name: str) -> bool:
     """Check if there are extracted versions not yet fully ingested.
 
     This is always False since we ingest inline after extraction.
@@ -1174,25 +1215,25 @@ def has_pending_ingest_work(facility: str, tree_name: str) -> bool:
 
 def reset_orphaned_static_claims(
     facility: str,
-    tree_name: str,
+    data_source_name: str,
     *,
     silent: bool = False,
 ) -> dict[str, int]:
     """Release stale claims for static tree discovery."""
     version_reset = reset_stale_claims(
-        "TreeModelVersion",
+        "StructuralEpoch",
         facility,
         timeout_seconds=CLAIM_TIMEOUT_SECONDS,
         silent=silent,
     )
     node_reset = reset_stale_claims(
-        "TreeNode",
+        "DataNode",
         facility,
         timeout_seconds=CLAIM_TIMEOUT_SECONDS,
         silent=silent,
     )
     pattern_reset = reset_stale_claims(
-        "TreeNodePattern",
+        "DataNodePattern",
         facility,
         timeout_seconds=CLAIM_TIMEOUT_SECONDS,
         silent=silent,
@@ -1220,20 +1261,20 @@ def reset_orphaned_static_claims(
 
 def get_static_discovery_stats(
     facility: str,
-    tree_name: str,
+    data_source_name: str,
 ) -> dict[str, int | float]:
     """Get static discovery statistics from graph for progress display."""
     with GraphClient() as gc:
         # Version status counts
         ver_result = gc.query(
             """
-            MATCH (v:TreeModelVersion)
-            WHERE v.facility_id = $facility AND v.tree_name = $tree_name
+            MATCH (v:StructuralEpoch)
+            WHERE v.facility_id = $facility AND v.data_source_name = $data_source_name
             RETURN v.status AS status, count(v) AS cnt,
                    sum(coalesce(v.node_count, 0)) AS nodes
             """,
             facility=facility,
-            tree_name=tree_name,
+            data_source_name=data_source_name,
         )
 
         stats: dict[str, int | float] = {
@@ -1257,21 +1298,21 @@ def get_static_discovery_stats(
         # Claimed versions (in-progress extraction)
         claimed = gc.query(
             """
-            MATCH (v:TreeModelVersion)
-            WHERE v.facility_id = $facility AND v.tree_name = $tree_name
+            MATCH (v:StructuralEpoch)
+            WHERE v.facility_id = $facility AND v.data_source_name = $data_source_name
               AND v.claimed_at IS NOT NULL
             RETURN count(v) AS cnt
             """,
             facility=facility,
-            tree_name=tree_name,
+            data_source_name=data_source_name,
         )
         stats["versions_claimed"] = claimed[0]["cnt"] if claimed else 0
 
-        # Units extraction stats from TreeModelVersion flags
+        # Units extraction stats from StructuralEpoch flags
         units_result = gc.query(
             """
-            MATCH (v:TreeModelVersion)
-            WHERE v.facility_id = $facility AND v.tree_name = $tree_name
+            MATCH (v:StructuralEpoch)
+            WHERE v.facility_id = $facility AND v.data_source_name = $data_source_name
               AND v.status = 'ingested'
             RETURN
                 count(v) AS total,
@@ -1280,7 +1321,7 @@ def get_static_discovery_stats(
                 sum(coalesce(v.units_count, 0)) AS units_count
             """,
             facility=facility,
-            tree_name=tree_name,
+            data_source_name=data_source_name,
         )
         if units_result:
             ur = units_result[0]
@@ -1295,7 +1336,7 @@ def get_static_discovery_stats(
         # Also count actual HAS_UNIT relationships for display
         hu_result = gc.query(
             """
-            MATCH (n:TreeNode {facility_id: $facility, tree_name: $tree_name})
+            MATCH (n:DataNode {facility_id: $facility, data_source_name: $data_source_name})
             OPTIONAL MATCH (n)-[:HAS_UNIT]->(u:Unit)
             RETURN
                 count(DISTINCT n) AS nodes_total,
@@ -1303,7 +1344,7 @@ def get_static_discovery_stats(
                 count(u) AS nodes_with_units
             """,
             facility=facility,
-            tree_name=tree_name,
+            data_source_name=data_source_name,
         )
         if hu_result:
             stats["nodes_with_units"] = hu_result[0]["nodes_with_units"]
@@ -1315,8 +1356,8 @@ def get_static_discovery_stats(
         # Node enrichment stats — count parent groups, not individual nodes
         node_result = gc.query(
             """
-            MATCH (n:TreeNode)
-            WHERE n.facility_id = $facility AND n.tree_name = $tree_name
+            MATCH (n:DataNode)
+            WHERE n.facility_id = $facility AND n.data_source_name = $data_source_name
             RETURN
                 count(n) AS total,
                 sum(CASE WHEN n.description IS NOT NULL AND n.description <> ''
@@ -1325,7 +1366,7 @@ def get_static_discovery_stats(
                     THEN 1 ELSE 0 END) AS enrichable
             """,
             facility=facility,
-            tree_name=tree_name,
+            data_source_name=data_source_name,
             node_types=ENRICHABLE_NODE_TYPES,
         )
 
@@ -1342,11 +1383,11 @@ def get_static_discovery_stats(
         # Parent groups pending enrichment (non-pattern work units, any parent type)
         parent_result = gc.query(
             """
-            MATCH (parent:TreeNode {facility_id: $facility, tree_name: $tree_name})
+            MATCH (parent:DataNode {facility_id: $facility, data_source_name: $data_source_name})
             WITH parent
-            MATCH (parent)-[:HAS_NODE]->(child:TreeNode)
+            MATCH (parent)-[:HAS_NODE]->(child:DataNode)
             WHERE child.node_type IN $node_types
-              AND NOT EXISTS { (child)-[:FOLLOWS_PATTERN]->(:TreeNodePattern) }
+              AND NOT EXISTS { (child)-[:FOLLOWS_PATTERN]->(:DataNodePattern) }
             WITH parent,
                  count(child) AS total_children,
                  sum(CASE WHEN child.description IS NOT NULL
@@ -1360,7 +1401,7 @@ def get_static_discovery_stats(
                        THEN 1 ELSE 0 END) AS enriched_parents
             """,
             facility=facility,
-            tree_name=tree_name,
+            data_source_name=data_source_name,
             node_types=ENRICHABLE_NODE_TYPES,
         )
         if parent_result:
@@ -1376,17 +1417,17 @@ def get_static_discovery_stats(
         # Orphan nodes (no parent HAS_NODE relationship)
         orphan_result = gc.query(
             """
-            MATCH (child:TreeNode {facility_id: $facility, tree_name: $tree_name})
+            MATCH (child:DataNode {facility_id: $facility, data_source_name: $data_source_name})
             WHERE child.node_type IN $node_types
-              AND NOT EXISTS { (child)-[:FOLLOWS_PATTERN]->(:TreeNodePattern) }
-              AND NOT EXISTS { (:TreeNode)-[:HAS_NODE]->(child) }
+              AND NOT EXISTS { (child)-[:FOLLOWS_PATTERN]->(:DataNodePattern) }
+              AND NOT EXISTS { (:DataNode)-[:HAS_NODE]->(child) }
             RETURN count(child) AS total_orphans,
                    sum(CASE WHEN child.description IS NOT NULL
                             AND child.description <> ''
                        THEN 1 ELSE 0 END) AS enriched_orphans
             """,
             facility=facility,
-            tree_name=tree_name,
+            data_source_name=data_source_name,
             node_types=ENRICHABLE_NODE_TYPES,
         )
         if orphan_result:
@@ -1400,8 +1441,8 @@ def get_static_discovery_stats(
         # Pattern stats
         pattern_result = gc.query(
             """
-            MATCH (p:TreeNodePattern)
-            WHERE p.facility_id = $facility AND p.tree_name = $tree_name
+            MATCH (p:DataNodePattern)
+            WHERE p.facility_id = $facility AND p.data_source_name = $data_source_name
             RETURN
                 count(p) AS total,
                 sum(CASE WHEN p.description IS NOT NULL AND p.description <> ''
@@ -1410,7 +1451,7 @@ def get_static_discovery_stats(
                     THEN 1 ELSE 0 END) AS pending
             """,
             facility=facility,
-            tree_name=tree_name,
+            data_source_name=data_source_name,
         )
         if pattern_result:
             pr = pattern_result[0]
@@ -1425,12 +1466,12 @@ def get_static_discovery_stats(
         # Accumulated LLM cost from per-node llm_cost fields
         cost_result = gc.query(
             """
-            MATCH (n:TreeNode {facility_id: $facility, tree_name: $tree_name})
+            MATCH (n:DataNode {facility_id: $facility, data_source_name: $data_source_name})
             WHERE n.llm_cost IS NOT NULL
             RETURN sum(n.llm_cost) AS total_cost
             """,
             facility=facility,
-            tree_name=tree_name,
+            data_source_name=data_source_name,
         )
         stats["accumulated_cost"] = (
             cost_result[0]["total_cost"] if cost_result else 0.0
@@ -1446,22 +1487,22 @@ def get_static_discovery_stats(
 
 def reset_enrichment(
     facility: str,
-    tree_name: str,
+    data_source_name: str,
 ) -> dict[str, int]:
     """Reset all enrichment data for static tree nodes.
 
     Clears descriptions, enrichment status, LLM cost/model/timestamp,
-    keywords, and category from all TreeNode and TreeNodePattern nodes.
+    keywords, and category from all DataNode and DataNodePattern nodes.
     After reset, the enrichment pipeline will re-process all nodes.
 
     Returns:
         Dict with counts: nodes_reset, patterns_reset
     """
     with GraphClient() as gc:
-        # Reset TreeNode enrichment fields
+        # Reset DataNode enrichment fields
         node_result = gc.query(
             """
-            MATCH (n:TreeNode {facility_id: $facility, tree_name: $tree_name})
+            MATCH (n:DataNode {facility_id: $facility, data_source_name: $data_source_name})
             WHERE (n.description IS NOT NULL OR n.enrichment_status IS NOT NULL
                    OR n.llm_cost IS NOT NULL)
             SET n.description = null,
@@ -1482,14 +1523,14 @@ def reset_enrichment(
             RETURN count(n) AS reset
             """,
             facility=facility,
-            tree_name=tree_name,
+            data_source_name=data_source_name,
         )
         nodes_reset = node_result[0]["reset"] if node_result else 0
 
-        # Reset TreeNodePattern enrichment fields
+        # Reset DataNodePattern enrichment fields
         pattern_result = gc.query(
             """
-            MATCH (p:TreeNodePattern {facility_id: $facility, tree_name: $tree_name})
+            MATCH (p:DataNodePattern {facility_id: $facility, data_source_name: $data_source_name})
             WHERE p.description IS NOT NULL OR p.enrichment_status IS NOT NULL
             SET p.description = null,
                 p.enrichment_status = null,
@@ -1499,7 +1540,7 @@ def reset_enrichment(
             RETURN count(p) AS reset
             """,
             facility=facility,
-            tree_name=tree_name,
+            data_source_name=data_source_name,
         )
         patterns_reset = pattern_result[0]["reset"] if pattern_result else 0
 
@@ -1520,8 +1561,8 @@ def clear_facility_static(
 ) -> dict[str, int]:
     """Clear all static tree discovery data for a facility.
 
-    Deletes TreeNode nodes, TreeNodePattern nodes,
-    and their TreeModelVersion nodes in batches.
+    Deletes DataNode nodes, DataNodePattern nodes,
+    and their StructuralEpoch nodes in batches.
 
     Args:
         facility: Facility ID
@@ -1537,10 +1578,10 @@ def clear_facility_static(
     }
 
     with GraphClient() as gc:
-        # Delete TreeNodePattern nodes first (they reference TreeNodes)
+        # Delete DataNodePattern nodes first (they reference DataNodes)
         result = gc.query(
             """
-            MATCH (p:TreeNodePattern {facility_id: $facility})
+            MATCH (p:DataNodePattern {facility_id: $facility})
             DETACH DELETE p
             RETURN count(p) AS deleted
             """,
@@ -1548,11 +1589,11 @@ def clear_facility_static(
         )
         results["patterns_deleted"] = result[0]["deleted"] if result else 0
 
-        # Delete static TreeNode nodes in batches
+        # Delete static DataNode nodes in batches
         while True:
             result = gc.query(
                 """
-                MATCH (n:TreeNode {facility_id: $facility})
+                MATCH (n:DataNode {facility_id: $facility})
                 WITH n LIMIT $batch_size
                 DETACH DELETE n
                 RETURN count(n) AS deleted
@@ -1565,11 +1606,11 @@ def clear_facility_static(
             if deleted < batch_size:
                 break
 
-        # Delete static TreeModelVersion nodes
+        # Delete static StructuralEpoch nodes
         while True:
             result = gc.query(
                 """
-                MATCH (v:TreeModelVersion {facility_id: $facility})
+                MATCH (v:StructuralEpoch {facility_id: $facility})
                 WHERE v.status IS NOT NULL
                 WITH v LIMIT $batch_size
                 DETACH DELETE v
@@ -1601,13 +1642,13 @@ def clear_facility_static(
 def get_static_summary_stats(facility: str) -> dict[str, int]:
     """Get static discovery statistics across all trees for a facility.
 
-    Unlike get_static_discovery_stats which requires a tree_name, this
+    Unlike get_static_discovery_stats which requires a data_source_name, this
     returns aggregate stats suitable for status/clear commands.
     """
     with GraphClient() as gc:
         ver_result = gc.query(
             """
-            MATCH (v:TreeModelVersion {facility_id: $facility})
+            MATCH (v:StructuralEpoch {facility_id: $facility})
             WHERE v.status IS NOT NULL
             RETURN v.status AS status, count(v) AS cnt,
                    sum(coalesce(v.node_count, 0)) AS nodes
@@ -1635,7 +1676,7 @@ def get_static_summary_stats(facility: str) -> dict[str, int]:
         # Node enrichment stats
         node_result = gc.query(
             """
-            MATCH (n:TreeNode {facility_id: $facility})
+            MATCH (n:DataNode {facility_id: $facility})
             RETURN
                 count(n) AS total,
                 sum(CASE WHEN n.description IS NOT NULL AND n.description <> ''
@@ -1656,18 +1697,18 @@ def get_static_summary_stats(facility: str) -> dict[str, int]:
 
 def promote_leaf_nodes_to_signals(
     facility: str,
-    tree_name: str,
+    data_source_name: str,
     batch_size: int = 500,
 ) -> int:
-    """Create FacilitySignal nodes from leaf TreeNodes (NUMERIC/SIGNAL).
+    """Create FacilitySignal nodes from leaf DataNodes (NUMERIC/SIGNAL).
 
-    Promotes leaf TreeNodes to FacilitySignals with status=discovered.
+    Promotes leaf DataNodes to FacilitySignals with status=discovered.
     Signals get no description at this stage — that comes from the
     signals enrichment pipeline later.
 
     Args:
         facility: Facility identifier
-        tree_name: MDSplus tree name
+        data_source_name: MDSplus tree name
         batch_size: Number of nodes to process per transaction
 
     Returns:
@@ -1698,26 +1739,28 @@ def promote_leaf_nodes_to_signals(
         # Count promotable leaf nodes
         count_result = gc.query(
             """
-            MATCH (n:TreeNode {facility_id: $facility, tree_name: $tree})
+            MATCH (n:DataNode {facility_id: $facility, data_source_name: $tree})
             WHERE n.node_type IN ['NUMERIC', 'SIGNAL']
               AND NOT EXISTS {
-                  MATCH (n)<-[:SOURCE_NODE]-(:FacilitySignal)
+                  MATCH (n)<-[:HAS_DATA_SOURCE_NODE]-(:FacilitySignal)
               }
             RETURN count(n) AS total
             """,
             facility=facility,
-            tree=tree_name,
+            tree=data_source_name,
         )
         total = count_result[0]["total"] if count_result else 0
         if total == 0:
-            logger.info("No new leaf nodes to promote for %s:%s", facility, tree_name)
+            logger.info(
+                "No new leaf nodes to promote for %s:%s", facility, data_source_name
+            )
             return 0
 
         logger.info(
-            "Promoting %d leaf TreeNodes to FacilitySignals for %s:%s",
+            "Promoting %d leaf DataNodes to FacilitySignals for %s:%s",
             total,
             facility,
-            tree_name,
+            data_source_name,
         )
 
         promoted = 0
@@ -1725,11 +1768,11 @@ def promote_leaf_nodes_to_signals(
             batch_limit = min(batch_size, total - offset)
             result = gc.query(
                 """
-                MATCH (n:TreeNode {facility_id: $facility,
-                                   tree_name: $tree})
+                MATCH (n:DataNode {facility_id: $facility,
+                                   data_source_name: $tree})
                 WHERE n.node_type IN ['NUMERIC', 'SIGNAL']
                   AND NOT EXISTS {
-                      MATCH (n)<-[:SOURCE_NODE]-(:FacilitySignal)
+                      MATCH (n)<-[:HAS_DATA_SOURCE_NODE]-(:FacilitySignal)
                   }
                 WITH n ORDER BY n.id LIMIT $batch_limit
                 WITH n,
@@ -1745,14 +1788,14 @@ def promote_leaf_nodes_to_signals(
                     s.status = 'discovered',
                     s.accessor = node_path_raw,
                     s.data_access = $da_id,
-                    s.tree_name = $tree,
-                    s.node_path = n.path,
+                    s.data_source_name = $tree,
+                    s.data_source_path = n.path,
                     s.unit = n.unit,
                     s.discovery_source = 'tree_traversal',
-                    s.source_node = n.id,
+                    s.data_source_node = n.id,
                     s.discovered_at = datetime()
                 WITH s, n
-                MERGE (s)-[:SOURCE_NODE]->(n)
+                MERGE (s)-[:HAS_DATA_SOURCE_NODE]->(n)
                 WITH s
                 MATCH (f:Facility {id: $facility})
                 MERGE (s)-[:AT_FACILITY]->(f)
@@ -1762,7 +1805,7 @@ def promote_leaf_nodes_to_signals(
                 RETURN count(s) AS promoted
                 """,
                 facility=facility,
-                tree=tree_name,
+                tree=data_source_name,
                 da_id=da_id,
                 batch_limit=batch_limit,
             )
@@ -1779,7 +1822,7 @@ def promote_leaf_nodes_to_signals(
             "Promoted %d FacilitySignals for %s:%s",
             promoted,
             facility,
-            tree_name,
+            data_source_name,
         )
         return promoted
 
@@ -1790,7 +1833,7 @@ def promote_leaf_nodes_to_signals(
 
 
 def get_version_counts(facility: str) -> dict[str, int]:
-    """Get TreeModelVersion counts by status for a facility.
+    """Get StructuralEpoch counts by status for a facility.
 
     Returns:
         Dict with keys: total, discovered, ingested, failed
@@ -1798,7 +1841,7 @@ def get_version_counts(facility: str) -> dict[str, int]:
     with GraphClient() as gc:
         result = gc.query(
             """
-            MATCH (v:TreeModelVersion {facility_id: $facility})
+            MATCH (v:StructuralEpoch {facility_id: $facility})
             RETURN count(v) AS total,
                    sum(CASE WHEN v.status = 'discovered' THEN 1 ELSE 0 END) AS discovered,
                    sum(CASE WHEN v.status = 'ingested' THEN 1 ELSE 0 END) AS ingested,
@@ -1834,11 +1877,11 @@ def get_signal_counts(facility: str) -> dict[str, int]:
 
 
 def has_pending_extract_work_facility(facility: str) -> bool:
-    """Check if any TreeModelVersions across all trees need extraction."""
+    """Check if any StructuralEpochs across all trees need extraction."""
     with GraphClient() as gc:
         result = gc.query(
             """
-            MATCH (v:TreeModelVersion {facility_id: $facility})
+            MATCH (v:StructuralEpoch {facility_id: $facility})
             WHERE v.status = 'discovered'
             RETURN count(v) > 0 AS has_work
             """,
@@ -1847,26 +1890,35 @@ def has_pending_extract_work_facility(facility: str) -> bool:
         return result[0]["has_work"] if result else False
 
 
+@retry_on_deadlock()
 def claim_version_for_extraction_facility(facility: str) -> dict | None:
-    """Claim a pending TreeModelVersion for extraction across all trees.
+    """Claim a pending StructuralEpoch for extraction across all trees.
 
-    Returns lowest-version unclaimed node with status=discovered.
+    Uses claim_token + ORDER BY rand() to prevent deadlocks.
     """
     cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
+    claim_token = str(uuid.uuid4())
     with GraphClient() as gc:
-        result = gc.query(
+        gc.query(
             """
-            MATCH (v:TreeModelVersion {facility_id: $facility})
+            MATCH (v:StructuralEpoch {facility_id: $facility})
             WHERE v.status = 'discovered'
               AND (v.claimed_at IS NULL
                    OR v.claimed_at < datetime() - duration($cutoff))
-            WITH v ORDER BY v.version ASC LIMIT 1
-            SET v.claimed_at = datetime()
-            RETURN v.id AS id, v.version AS version,
-                   v.first_shot AS first_shot, v.tree_name AS tree_name
+            WITH v ORDER BY rand() LIMIT 1
+            SET v.claimed_at = datetime(), v.claim_token = $token
             """,
             facility=facility,
             cutoff=cutoff,
+            token=claim_token,
+        )
+        result = gc.query(
+            """
+            MATCH (v:StructuralEpoch {claim_token: $token})
+            RETURN v.id AS id, v.version AS version,
+                   v.first_shot AS first_shot, v.data_source_name AS data_source_name
+            """,
+            token=claim_token,
         )
         if result:
             return dict(result[0])
@@ -1878,7 +1930,7 @@ def has_pending_units_work_facility(facility: str) -> bool:
     with GraphClient() as gc:
         result = gc.query(
             """
-            MATCH (v:TreeModelVersion {facility_id: $facility})
+            MATCH (v:StructuralEpoch {facility_id: $facility})
             WHERE v.status = 'ingested'
               AND (v.units_extracted IS NULL OR v.units_extracted = false)
             RETURN count(v) > 0 AS has_work
@@ -1888,20 +1940,21 @@ def has_pending_units_work_facility(facility: str) -> bool:
         return result[0]["has_work"] if result else False
 
 
+@retry_on_deadlock()
 def claim_tree_for_units(facility: str) -> dict | None:
     """Claim a tree that needs unit extraction (facility-wide).
 
-    Returns one tree_name with at least one ingested version that
+    Returns one data_source_name with at least one ingested version that
     hasn't had units extracted yet.
     """
     with GraphClient() as gc:
         result = gc.query(
             """
-            MATCH (v:TreeModelVersion {facility_id: $facility})
+            MATCH (v:StructuralEpoch {facility_id: $facility})
             WHERE v.status = 'ingested'
               AND (v.units_extracted IS NULL OR v.units_extracted = false)
-            WITH v.tree_name AS tree_name, max(v.version) AS latest_version
-            RETURN tree_name, latest_version
+            WITH v.data_source_name AS data_source_name, max(v.version) AS latest_version
+            RETURN data_source_name, latest_version
             LIMIT 1
             """,
             facility=facility,
@@ -1912,14 +1965,14 @@ def claim_tree_for_units(facility: str) -> dict | None:
 
 
 def has_pending_promote_work_facility(facility: str) -> bool:
-    """Check if any trees have leaf TreeNodes not yet promoted to FacilitySignal."""
+    """Check if any trees have leaf DataNodes not yet promoted to FacilitySignal."""
     with GraphClient() as gc:
         result = gc.query(
             """
-            MATCH (n:TreeNode {facility_id: $facility})
+            MATCH (n:DataNode {facility_id: $facility})
             WHERE n.node_type IN ['NUMERIC', 'SIGNAL']
               AND NOT EXISTS {
-                  MATCH (n)<-[:SOURCE_NODE]-(:FacilitySignal)
+                  MATCH (n)<-[:HAS_DATA_SOURCE_NODE]-(:FacilitySignal)
               }
             RETURN count(n) > 0 AS has_work
             """,
@@ -1928,25 +1981,26 @@ def has_pending_promote_work_facility(facility: str) -> bool:
         return result[0]["has_work"] if result else False
 
 
+@retry_on_deadlock()
 def claim_tree_for_promote(facility: str) -> str | None:
-    """Claim a tree that has un-promoted leaf TreeNodes.
+    """Claim a tree that has un-promoted leaf DataNodes.
 
-    Returns the tree_name for a tree with NUMERIC/SIGNAL nodes
-    that don't yet have a FacilitySignal backed by SOURCE_NODE.
+    Returns the data_source_name for a tree with NUMERIC/SIGNAL nodes
+    that don't yet have a FacilitySignal backed by HAS_DATA_SOURCE_NODE.
     """
     with GraphClient() as gc:
         result = gc.query(
             """
-            MATCH (n:TreeNode {facility_id: $facility})
+            MATCH (n:DataNode {facility_id: $facility})
             WHERE n.node_type IN ['NUMERIC', 'SIGNAL']
               AND NOT EXISTS {
-                  MATCH (n)<-[:SOURCE_NODE]-(:FacilitySignal)
+                  MATCH (n)<-[:HAS_DATA_SOURCE_NODE]-(:FacilitySignal)
               }
-            RETURN DISTINCT n.tree_name AS tree_name
+            RETURN DISTINCT n.data_source_name AS data_source_name
             LIMIT 1
             """,
             facility=facility,
         )
         if result:
-            return result[0]["tree_name"]
+            return result[0]["data_source_name"]
         return None
