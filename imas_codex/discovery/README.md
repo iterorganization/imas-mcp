@@ -206,6 +206,68 @@ WHERE p.claimed_at IS NOT NULL
 SET p.claimed_at = null
 ```
 
+### Deadlock Avoidance in Claim Queries
+
+Concurrent workers claiming nodes from the same pool cause Neo4j deadlocks unless
+three patterns are applied together. All claim functions across all pipelines (paths,
+code, wiki, signals, mdsplus) must follow this pattern.
+
+**Why deadlocks happen:** When multiple workers execute `SET n.claimed_at = datetime()`
+on overlapping node sets, Neo4j acquires write locks in node-ID order. Deterministic
+`ORDER BY` (e.g., `ORDER BY score DESC`) causes all workers to lock the same rows in the
+same order, creating lock convoys that escalate to deadlocks.
+
+**Required patterns** (all three, always together):
+
+1. **`@retry_on_deadlock()`** — decorator from `discovery/base/claims.py`. Catches
+   `TransientError` and retries with exponential backoff + jitter (up to 5 attempts).
+
+2. **`ORDER BY rand()`** — randomizes which nodes each worker locks first, breaking
+   the deterministic lock ordering that causes convoys.
+
+3. **`claim_token` two-step verify** — SET a UUID token in step 1, read back by token
+   in step 2. Prevents race conditions where two workers both think they claimed the
+   same node.
+
+**Correct pattern:**
+```python
+from imas_codex.discovery.base.claims import retry_on_deadlock
+
+@retry_on_deadlock()
+def claim_items(facility: str, limit: int = 10) -> list[dict]:
+    token = str(uuid.uuid4())
+    with GraphClient() as gc:
+        gc.query("""
+            MATCH (n:MyNode {facility_id: $facility})
+            WHERE n.status = 'discovered' AND n.claimed_at IS NULL
+            WITH n ORDER BY rand() LIMIT $limit
+            SET n.claimed_at = datetime(), n.claim_token = $token
+        """, facility=facility, limit=limit, token=token)
+        return list(gc.query("""
+            MATCH (n:MyNode {claim_token: $token})
+            RETURN n.id AS id, n.path AS path
+        """, token=token))
+```
+
+**Anti-patterns (never do these):**
+```python
+# BAD: deterministic ordering causes lock convoys
+ORDER BY score DESC LIMIT $limit
+
+# BAD: manual retry loop instead of decorator
+for attempt in range(3):
+    try: ...
+    except TransientError: time.sleep(1)
+
+# BAD: no claim_token — two workers can both "claim" the same node
+SET n.claimed_at = datetime()
+RETURN n.id  # Race: another worker may have claimed between SET and RETURN
+```
+
+**Shared infrastructure:** `discovery/base/claims.py` provides `retry_on_deadlock()`,
+`claim_items()` factory, `reset_stale_claims()`, `release_claim()`, and
+`release_claims_batch()`. Use these instead of writing raw claim Cypher.
+
 ## CLI Options
 
 ### discover paths
@@ -475,6 +537,115 @@ Key constants in `scorer.py`:
 | `RETRY_BASE_DELAY` | 2.0 | Base delay in seconds (doubles each retry) |
 | `max_tokens` | 32000 | LLM output token limit |
 | `SCORE_WEIGHTS` | code=1.0, data=0.8, imas=1.2 | Dimension weights |
+
+## Shared Infrastructure (`discovery/base/`)
+
+All discovery pipelines share common infrastructure in `discovery/base/`. New pipelines
+must compose from these modules — never reimplement parallel workers, claim logic,
+progress displays, or scoring from scratch.
+
+### Engine (`base/engine.py`)
+
+Single entry point for all parallel discovery pipelines:
+
+```python
+from imas_codex.discovery.base.engine import WorkerSpec, run_discovery_engine
+
+workers = [
+    WorkerSpec(name="scan", phase_attr="scan", worker_fn=scan_worker, count=1),
+    WorkerSpec(name="score", phase_attr="score", worker_fn=score_worker, count=4),
+]
+await run_discovery_engine(state, workers, orphan_recovery=orphan_spec)
+```
+
+`WorkerSpec` defines: name, phase attribute on state, async worker function, count,
+enabled flag, should_stop predicate, on_progress callback, worker group, and extra kwargs.
+
+`run_discovery_engine()` handles: phase disable logic, stop watcher task, worker
+registration, orphan recovery setup, supervised loop execution, and cleanup.
+
+### State (`base/state.py`)
+
+Common state dataclass inherited by all pipeline states:
+
+```python
+from imas_codex.discovery.base.state import DiscoveryStateBase
+
+@dataclass
+class MyPipelineState(DiscoveryStateBase):
+    my_custom_field: str = ""
+```
+
+Provides: `facility`, `cost_limit`, `deadline`, `stop_requested`, `service_monitor`,
+plus properties `deadline_expired`, `total_cost`, `budget_exhausted`, `should_stop()`,
+`all_phases`, `all_stats`, and `await_services()`.
+
+### Claims (`base/claims.py`)
+
+Anti-deadlock claim infrastructure (see Deadlock Avoidance section above):
+
+- `retry_on_deadlock()` — decorator with exponential backoff + jitter
+- `claim_items(label, facility, where, limit, return_props, token)` — generic claim factory
+- `reset_stale_claims(label, facility)` — clear all claims on startup
+- `release_claim(label, node_id)` / `release_claims_batch(label, node_ids)` — unclaim on error
+
+### Supervision (`base/supervision.py`)
+
+Worker lifecycle management with structured concurrency:
+
+- `SupervisedWorkerGroup` — manages worker tasks with health monitoring
+- `supervised_worker()` — wraps async workers with error handling and restart
+- `PipelinePhase` — tracks phase progress (items processed, errors, cost)
+- `run_supervised_loop()` — main event loop with graceful shutdown
+- `OrphanRecoverySpec` — periodic orphan recovery configuration
+
+### Scoring (`base/scoring.py`)
+
+Shared scoring models and composite functions used by paths and code pipelines:
+
+- `CODE_SCORE_DIMENSIONS` (9 dimensions): imas_relevance, mdsplus_usage, etc.
+- `CONTENT_SCORE_DIMENSIONS` (6 dimensions): for wiki/document scoring
+- `CodeScoreFields` / `ContentScoreFields` — Pydantic models for LLM structured output
+- `max_composite(scores)` — max-based composite (rewards any high signal)
+- `purpose_weighted_composite(scores, weights)` — weighted composite for ranking
+
+### Progress (`base/progress.py`)
+
+Rich terminal progress display:
+
+- `BaseProgressDisplay` — live-updating progress bars with scan/score rates
+- `WorkerStats` — per-worker statistics (processed, errors, rate)
+- `ProgressConfig` — display configuration (refresh rate, bar width)
+- Formatting utilities: `format_rate()`, `format_cost()`, `format_duration()`
+
+### CLI Harness (`cli/discover/common.py`)
+
+Shared CLI utilities that handle boilerplate for all `discover` subcommands:
+
+```python
+from imas_codex.cli.discover.common import DiscoveryConfig, run_discovery
+
+config = DiscoveryConfig(domain="paths", facility="tcv", ...)
+await run_discovery(config, run_pipeline_fn)
+```
+
+`DiscoveryConfig` fields: domain, facility, facility_config, service checks
+(graph/embed/ssh/auth/model), display mode, refresh intervals, verbose flag.
+
+`run_discovery()` handles: Rich vs plain mode selection, service monitor lifecycle,
+SIGINT/SIGTERM shutdown handlers, background graph refresh + ticker tasks.
+
+### Other Shared Modules
+
+| Module | Purpose |
+|--------|---------|
+| `base/llm.py` | LLM infrastructure: retry with backoff, cost tracking, structured output, `suppress_litellm_noise()` |
+| `base/image.py` | Image processing: downsample, content-addressed IDs, VLM scoring with claim patterns |
+| `base/embed_worker.py` | Embedding worker for batch vector computation |
+| `base/executor.py` | Parallel SSH execution with branch claiming |
+| `base/facility.py` | Facility configuration loading via `get_facility()` |
+| `base/services.py` | Service health monitoring (graph, embed server, SSH) |
+| `base/transfer.py` | File transfer utilities (SCP, content extraction) |
 
 ## Deprecation Notice
 
