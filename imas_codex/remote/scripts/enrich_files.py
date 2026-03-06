@@ -6,7 +6,7 @@ individual files (non-recursive) and counts lines. Much lighter than
 directory enrichment since each file is a single target.
 
 Requirements:
-- Python 3.8+ (stdlib only)
+- Python 3.6+ (stdlib only)
 - rg (ripgrep) for pattern matching
 - wc for line counting
 
