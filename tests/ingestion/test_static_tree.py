@@ -45,7 +45,7 @@ class TestGetStaticTreeConfig:
     def test_tcv_has_static_trees(self):
         configs = get_static_tree_config("tcv")
         assert len(configs) >= 1
-        assert configs[0]["tree_name"] == "static"
+        assert configs[0]["source_name"] == "static"
 
     def test_tcv_versions(self):
         configs = get_static_tree_config("tcv")

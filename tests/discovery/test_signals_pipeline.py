@@ -33,7 +33,7 @@ SSH_HOST = "test_host"
 
 # Static tree: 3 versions defined in config
 STATIC_TREE = {
-    "tree_name": "magnetics",
+    "source_name": "magnetics",
     "versions": [
         {"version": 1, "first_shot": 1000, "description": "v1"},
         {"version": 2, "first_shot": 2000, "description": "v2"},
@@ -43,7 +43,7 @@ STATIC_TREE = {
 
 # Dynamic tree: no versions in config — epochs detected at runtime
 DYNAMIC_TREE = {
-    "tree_name": "results",
+    "source_name": "results",
 }
 
 FACILITY_CONFIG = {

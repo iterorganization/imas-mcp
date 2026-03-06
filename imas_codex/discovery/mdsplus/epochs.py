@@ -111,7 +111,7 @@ def detect_epochs_for_subtrees(
     results: dict[str, list[dict[str, Any]]] = {}
 
     for sub_config in subtree_configs:
-        sub_name = sub_config.get("tree_name", "")
+        sub_name = sub_config.get("source_name", "")
         if not sub_config.get("detect_epochs"):
             continue
 

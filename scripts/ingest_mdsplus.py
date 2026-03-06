@@ -201,7 +201,7 @@ def ingest_tree_nodes(
         prepared.append(
             {
                 "path": path,
-                "tree_name": tree_name,
+                "data_source_name": tree_name,
                 "facility_id": facility_id,
                 "node_type": node.get("node_type", "STRUCTURE"),
                 "unit": node.get("units", "dimensionless"),

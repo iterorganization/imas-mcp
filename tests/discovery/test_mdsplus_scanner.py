@@ -31,7 +31,7 @@ def static_config():
         "setup_commands": ["source /etc/profile.d/mds.sh"],
         "trees": [
             {
-                "tree_name": "tcv_machconfig",
+                "source_name": "tcv_machconfig",
                 "versions": [
                     {"version": 1, "description": "Initial"},
                 ],
@@ -49,10 +49,10 @@ def dynamic_config():
         "setup_commands": ["source /etc/profile.d/mds.sh"],
         "trees": [
             {
-                "tree_name": "tcv_shot",
+                "source_name": "tcv_shot",
                 "subtrees": [
-                    {"tree_name": "results", "node_usages": ["NUMERIC", "SIGNAL"]},
-                    {"tree_name": "magnetics", "node_usages": ["SIGNAL"]},
+                    {"source_name": "results", "node_usages": ["NUMERIC", "SIGNAL"]},
+                    {"source_name": "magnetics", "node_usages": ["SIGNAL"]},
                 ],
             },
         ],
@@ -68,15 +68,15 @@ def mixed_config():
         "setup_commands": ["source /etc/profile.d/mds.sh"],
         "trees": [
             {
-                "tree_name": "tcv_machconfig",
+                "source_name": "tcv_machconfig",
                 "versions": [
                     {"version": 1, "description": "Initial"},
                 ],
             },
             {
-                "tree_name": "tcv_shot",
+                "source_name": "tcv_shot",
                 "subtrees": [
-                    {"tree_name": "results"},
+                    {"source_name": "results"},
                 ],
             },
         ],
@@ -180,7 +180,7 @@ async def test_scan_mixed_trees(scanner, mixed_config):
 async def test_scan_no_versions_or_ref_shot(scanner):
     """Tree with no versions and no reference_shot logs warning."""
     config = {
-        "trees": [{"tree_name": "orphan_tree"}],
+        "trees": [{"source_name": "orphan_tree"}],
     }
 
     with (
@@ -309,7 +309,7 @@ async def test_scan_data_access_fallback(scanner):
     """DataAccess falls back to first tree when no connection_tree."""
     config = {
         "reference_shot": 85000,
-        "trees": [{"tree_name": "first_tree", "versions": [{"version": 1}]}],
+        "trees": [{"source_name": "first_tree", "versions": [{"version": 1}]}],
     }
 
     with (
@@ -335,7 +335,7 @@ async def test_scan_setup_commands_merged(scanner):
     config = {
         "reference_shot": 85000,
         "setup_commands": ["source /etc/mds.sh"],
-        "trees": [{"tree_name": "mytest", "versions": [{"version": 1}]}],
+        "trees": [{"source_name": "mytest", "versions": [{"version": 1}]}],
     }
 
     with (
@@ -363,7 +363,7 @@ async def test_scan_tree_level_setup_not_overridden(scanner):
         "setup_commands": ["source /etc/mds.sh"],
         "trees": [
             {
-                "tree_name": "mytest",
+                "source_name": "mytest",
                 "versions": [{"version": 1}],
                 "setup_commands": ["source /opt/mds.sh"],
             }
