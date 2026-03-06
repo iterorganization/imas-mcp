@@ -177,20 +177,51 @@ def parse_snap_file(snap_bytes: bytes) -> tuple[list[str], list[str]]:
 
 
 def parse_limiter_file(data: bytes) -> dict:
-    """Parse a limiter contour file (plain text R,Z pairs)."""
+    """Parse a limiter contour file with segment-count headers.
+
+    Format: Each segment starts with an integer point-count on its own line,
+    followed by that many R,Z coordinate pairs.  Comment lines (C/c/!/# prefix)
+    and blank lines are skipped.  Only the first segment (the primary first-wall
+    contour) is returned; secondary segments (inner boundaries, septum outlines)
+    are discarded.
+    """
     text = data.decode("utf-8", errors="replace")
     r_vals: list[float] = []
     z_vals: list[float] = []
 
+    expected = 0  # remaining points in current segment
+    segment_done = False
+
     for line in text.strip().split("\n"):
         line = line.strip()
-        if not line or line.startswith("#") or line.startswith("!"):
+        if not line:
             continue
+        # Skip comment lines (Fortran-style C/c, or #/!)
+        if line[0] in ("C", "c", "!", "#"):
+            continue
+
         parts = line.split()
-        if len(parts) >= 2:
+
+        # A single integer on a line = segment point count
+        if len(parts) == 1:
+            try:
+                count = int(parts[0])
+            except ValueError:
+                continue
+            if segment_done:
+                # We already have the first segment — stop
+                break
+            expected = count
+            continue
+
+        # R,Z coordinate pair
+        if len(parts) >= 2 and expected > 0:
             try:
                 r_vals.append(float(parts[0]))
                 z_vals.append(float(parts[1]))
+                expected -= 1
+                if expected == 0:
+                    segment_done = True
             except ValueError:
                 continue
 
