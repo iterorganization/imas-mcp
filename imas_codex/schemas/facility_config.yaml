@@ -399,6 +399,9 @@ classes:
       imas:
         description: IMAS native data configuration
         range: IMASConfig
+      device_xml:
+        description: Device XML configuration (EFIT-format geometry files in git)
+        range: DeviceXMLConfig
 
   TDIConfig:
     description: >-
@@ -986,3 +989,85 @@ classes:
           Approximate number of active users sharing the login node.
           Informs load budget calculations.
         range: integer
+
+  # -------------------------------------------------------------------------
+  # Device XML (EFIT geometry files)
+  # -------------------------------------------------------------------------
+
+  DeviceXMLConfig:
+    description: >-
+      Device XML data source configuration. Used for EFIT-format geometry files
+      stored in a bare git repository. Contains versioned device XMLs describing
+      PF coils, passive structures, magnetic probes, flux loops, circuits,
+      and limiter contours.
+    class_uri: fc:DeviceXMLConfig
+    mixins:
+      - DataSystemBase
+    attributes:
+      git_repo:
+        description: Path to bare git repo containing device XML files
+        required: true
+      input_prefix:
+        description: Tree path prefix within git repo (e.g., JET/input)
+      versions:
+        description: Device geometry versions with pulse ranges
+        multivalued: true
+        range: DeviceXMLVersion
+      systems:
+        description: Named subsystems within device XML
+        multivalued: true
+        range: SourceSystem
+      limiter_versions:
+        description: First-wall contour versions
+        multivalued: true
+        range: LimiterVersion
+
+  DeviceXMLVersion:
+    description: >-
+      A version of the device XML geometry, corresponding to a hardware
+      configuration epoch. Each version maps to a pulse range and references
+      specific device XML, snap, limiter, and Green's function files.
+    class_uri: fc:DeviceXMLVersion
+    attributes:
+      version:
+        description: Version identifier (e.g., p68613, p89440)
+        required: true
+      first_shot:
+        description: First shot where this version applies
+        range: integer
+      last_shot:
+        description: Last shot where this version applies
+        range: integer
+      description:
+        description: What changed in this version
+      device_xml:
+        description: Git path to device XML file (relative to input_prefix)
+        required: true
+      device_ppfs:
+        description: Git path to PPF routing namelist
+      limiter:
+        description: Git path to limiter contour file
+      greens:
+        description: Git path to Green's function directory
+      snap_file:
+        description: Git path to EFITSNAP probe enable/disable mask
+
+  LimiterVersion:
+    description: >-
+      A version of the first-wall limiter contour. Each represents a
+      physically installed wall configuration with an R,Z contour file.
+    class_uri: fc:LimiterVersion
+    attributes:
+      name:
+        description: Limiter name (e.g., Mk2ILW, Mk2HD)
+        required: true
+      first_shot:
+        description: First shot with this limiter installed
+        range: integer
+      last_shot:
+        description: Last shot with this limiter
+        range: integer
+      description:
+        description: Description of this limiter configuration
+      file:
+        description: Git path to R,Z contour file (relative to input_prefix)
