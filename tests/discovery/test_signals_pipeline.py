@@ -48,7 +48,7 @@ DYNAMIC_TREE = {
 
 FACILITY_CONFIG = {
     "ssh_host": SSH_HOST,
-    "data_sources": {
+    "data_systems": {
         "mdsplus": {
             "setup_commands": ["module load mdsplus"],
             "trees": [STATIC_TREE, DYNAMIC_TREE],
@@ -61,18 +61,18 @@ FACILITY_CONFIG = {
 LEAF_NODES_PER_VERSION = 25
 
 
-def _make_tree_nodes(tree_name: str, version: int) -> dict:
-    """Build a mock extraction result with realistic TreeNode structure."""
+def _make_tree_nodes(data_source_name: str, version: int) -> dict:
+    """Build a mock extraction result with realistic DataNode structure."""
     nodes = {}
     for i in range(LEAF_NODES_PER_VERSION):
-        path = f"\\{tree_name.upper()}::TOP.NODE_{i:03d}"
+        path = f"\\{data_source_name.upper()}::TOP.NODE_{i:03d}"
         nodes[path] = {
             "path": path,
             "node_type": "SIGNAL" if i % 3 else "NUMERIC",
             "usage": "signal" if i % 3 else "numeric",
         }
     return {
-        "tree_name": tree_name,
+        "data_source_name": data_source_name,
         "versions": {
             str(version): {
                 "node_count": len(nodes),
@@ -118,7 +118,7 @@ def _mock_claim_version(facility: str) -> dict | None:
             return {
                 "id": f"{facility}:{tree}:v{ver}",
                 "version": ver,
-                "tree_name": tree,
+                "data_source_name": tree,
                 "first_shot": ver,
             }
     return None
@@ -126,24 +126,24 @@ def _mock_claim_version(facility: str) -> dict | None:
 
 def _mock_claim_tree_for_units(facility: str) -> dict | None:
     """Simulate claiming a tree for unit extraction."""
-    for tree_name in ["magnetics", "results"]:
-        if tree_name not in _units_extracted_trees:
-            _units_extracted_trees.add(tree_name)
+    for data_source_name in ["magnetics", "results"]:
+        if data_source_name not in _units_extracted_trees:
+            _units_extracted_trees.add(data_source_name)
             all_versions = _extracted_versions.get(facility, set())
             latest = max(
-                (v for t, v in all_versions if t == tree_name),
+                (v for t, v in all_versions if t == data_source_name),
                 default=1,
             )
-            return {"tree_name": tree_name, "latest_version": latest}
+            return {"data_source_name": data_source_name, "latest_version": latest}
     return None
 
 
 def _mock_claim_tree_for_promote(facility: str) -> str | None:
     """Simulate claiming a tree for promotion."""
-    for tree_name in ["magnetics", "results"]:
-        if tree_name not in _promoted_trees:
-            _promoted_trees.add(tree_name)
-            return tree_name
+    for data_source_name in ["magnetics", "results"]:
+        if data_source_name not in _promoted_trees:
+            _promoted_trees.add(data_source_name)
+            return data_source_name
     return None
 
 
@@ -262,7 +262,7 @@ class TestSeedWorker:
 
     @pytest.mark.anyio
     async def test_seed_static_versions(self):
-        """seed_worker creates TreeModelVersions from config."""
+        """seed_worker creates StructuralEpochs from config."""
         from imas_codex.discovery.signals.parallel import seed_worker
 
         state = DataDiscoveryState(
@@ -412,7 +412,7 @@ class TestEpochWorker:
         # Config where ALL trees have versions — no epochs needed
         config_all_static = {
             "ssh_host": SSH_HOST,
-            "data_sources": {
+            "data_systems": {
                 "mdsplus": {
                     "trees": [STATIC_TREE],  # Only static
                 },
@@ -477,13 +477,13 @@ class TestExtractWorker:
                 {
                     "id": f"{facility}:magnetics:v1",
                     "version": 1,
-                    "tree_name": "magnetics",
+                    "data_source_name": "magnetics",
                     "first_shot": 1000,
                 },
                 {
                     "id": f"{facility}:magnetics:v2",
                     "version": 2,
-                    "tree_name": "magnetics",
+                    "data_source_name": "magnetics",
                     "first_shot": 2000,
                 },
             ]
@@ -494,9 +494,9 @@ class TestExtractWorker:
             return None
 
         async def mock_extract(
-            *, facility, tree_name, shot, timeout=600, node_usages=None
+            *, facility, data_source_name, shot, timeout=600, node_usages=None
         ):
-            return _make_tree_nodes(tree_name, shot)
+            return _make_tree_nodes(data_source_name, shot)
 
         state.facility_config = FACILITY_CONFIG
         state.initial_version_counts = {
@@ -542,7 +542,7 @@ class TestPromoteWorker:
 
     @pytest.mark.anyio
     async def test_promote_creates_signals(self):
-        """promote_worker creates FacilitySignals from leaf TreeNodes."""
+        """promote_worker creates FacilitySignals from leaf DataNodes."""
         from imas_codex.discovery.signals.parallel import mdsplus_promote_worker
 
         state = DataDiscoveryState(
@@ -611,7 +611,7 @@ class TestPipelineE2E:
             {
                 "id": f"{FACILITY}:magnetics:v{v}",
                 "version": v,
-                "tree_name": "magnetics",
+                "data_source_name": "magnetics",
                 "first_shot": v * 1000,
             }
             for v in [1, 2, 3]
@@ -619,7 +619,7 @@ class TestPipelineE2E:
             {
                 "id": f"{FACILITY}:results:v{v}",
                 "version": v,
-                "tree_name": "results",
+                "data_source_name": "results",
                 "first_shot": v,
             }
             for v in [5000, 8000]
@@ -634,8 +634,8 @@ class TestPipelineE2E:
 
         units_tree_idx = {"value": 0}
         trees_for_units = [
-            {"tree_name": "magnetics", "latest_version": 3},
-            {"tree_name": "results", "latest_version": 8000},
+            {"data_source_name": "magnetics", "latest_version": 3},
+            {"data_source_name": "results", "latest_version": 8000},
         ]
 
         def mock_claim_tree_units(facility):
@@ -656,15 +656,15 @@ class TestPipelineE2E:
             return None
 
         async def mock_extract(
-            *, facility, tree_name, shot, timeout=600, node_usages=None
+            *, facility, data_source_name, shot, timeout=600, node_usages=None
         ):
-            return _make_tree_nodes(tree_name, shot)
+            return _make_tree_nodes(data_source_name, shot)
 
         async def mock_extract_units(
-            facility, tree_name, version, timeout=600, batch_size=500
+            facility, data_source_name, version, timeout=600, batch_size=500
         ):
             return [
-                {"path": f"\\{tree_name.upper()}::TOP.NODE_{i:03d}", "unit": "V"}
+                {"path": f"\\{data_source_name.upper()}::TOP.NODE_{i:03d}", "unit": "V"}
                 for i in range(10)
             ]
 
@@ -800,7 +800,7 @@ class TestPipelineE2E:
 
         Static tree (magnetics): 3 versions from config
         Dynamic tree (results): 2 epochs detected at runtime
-        Total: 5 versions × 25 nodes = 125 TreeNodes, 50 FacilitySignals
+        Total: 5 versions × 25 nodes = 125 DataNodes, 50 FacilitySignals
         """
         patches = self._build_patches()
         mocks = {}
@@ -852,11 +852,11 @@ class TestPipelineE2E:
     async def test_discover_only_static_trees_only(self):
         """Pipeline with only static trees (no epoch detection needed).
 
-        3 versions × 25 nodes = 75 TreeNodes, 25 FacilitySignals (1 tree)
+        3 versions × 25 nodes = 75 DataNodes, 25 FacilitySignals (1 tree)
         """
         config_static_only = {
             "ssh_host": SSH_HOST,
-            "data_sources": {
+            "data_systems": {
                 "mdsplus": {
                     "setup_commands": [],
                     "trees": [STATIC_TREE],
@@ -878,7 +878,7 @@ class TestPipelineE2E:
             {
                 "id": f"{FACILITY}:magnetics:v{v}",
                 "version": v,
-                "tree_name": "magnetics",
+                "data_source_name": "magnetics",
                 "first_shot": v * 1000,
             }
             for v in [1, 2, 3]
@@ -896,7 +896,7 @@ class TestPipelineE2E:
         def mock_claim_units(facility):
             if units_idx["value"] == 0:
                 units_idx["value"] += 1
-                return {"tree_name": "magnetics", "latest_version": 3}
+                return {"data_source_name": "magnetics", "latest_version": 3}
             return None
 
         promote_idx = {"value": 0}
@@ -973,7 +973,7 @@ class TestPipelineE2E:
                     {
                         "id": f"{FACILITY}:magnetics/top.node_000",
                         "accessor": "NODE_000",
-                        "tree_name": "magnetics",
+                        "data_source_name": "magnetics",
                     }
                 ]
             return []

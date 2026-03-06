@@ -3,7 +3,7 @@
 Wraps the existing TDI discovery pipeline (imas_codex.discovery.signals.tdi)
 as a DataSourceScanner for the plugin registry.
 
-Config key: data_sources.tdi
+Config key: data_systems.tdi
 Facility: TCV (and any facility with TDI .fun files)
 """
 
@@ -28,7 +28,7 @@ class TDIScanner:
     The scanner parses .fun files via SSH, extracts supported quantities,
     and creates FacilitySignal nodes with TDI accessor expressions.
 
-    Config (data_sources.tdi):
+    Config (data_systems.tdi):
         primary_path: str - Directory containing .fun files
         additional_paths: list[str] - Extra directories to scan
         reference_shot: int - Shot for validation
@@ -128,7 +128,7 @@ class TDIScanner:
             {
                 "id": s.id,
                 "accessor": s.accessor,
-                "tree_name": "tcv_shot",  # TDI default tree
+                "data_source_name": "tcv_shot",  # TDI default tree
                 "shot": ref_shot,
             }
             for s in signals

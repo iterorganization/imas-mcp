@@ -7,7 +7,7 @@ compact, relevant schema context for Cypher query generation.
 Example:
     >>> from imas_codex.graph.schema_context import schema_for
     >>> print(schema_for(task="signals"))  # Only signal-related schema
-    >>> print(schema_for("Facility", "MDSplusTree"))  # Specific labels
+    >>> print(schema_for("Facility", "DataSource"))  # Specific labels
 """
 
 from __future__ import annotations
@@ -79,7 +79,7 @@ _EXAMPLE_PATTERNS: dict[str, list[str]] = {
     "trees": [
         (
             "# List tree nodes for a specific tree\n"
-            "MATCH (n:TreeNode {tree_name: $tree})-[:AT_FACILITY]->(f:Facility {id: $facility})\n"
+            "MATCH (n:DataNode {data_source_name: $tree})-[:AT_FACILITY]->(f:Facility {id: $facility})\n"
             "RETURN n.path, n.description, n.unit, n.physics_domain\n"
             "ORDER BY n.path LIMIT $limit"
         ),
@@ -89,7 +89,7 @@ _EXAMPLE_PATTERNS: dict[str, list[str]] = {
             "# Facility overview with counts\n"
             "MATCH (f:Facility {id: $facility})\n"
             "OPTIONAL MATCH (d:Diagnostic)-[:AT_FACILITY]->(f)\n"
-            "OPTIONAL MATCH (t:MDSplusTree)-[:AT_FACILITY]->(f)\n"
+            "OPTIONAL MATCH (t:DataSource)-[:AT_FACILITY]->(f)\n"
             "RETURN f.id, f.name, count(DISTINCT d) AS diagnostics, count(DISTINCT t) AS trees"
         ),
     ],
@@ -123,7 +123,7 @@ def schema_for(
     Examples:
         >>> schema_for(task="signals")     # Signal-related schema only
         >>> schema_for(task="overview")    # Compact summary of everything
-        >>> schema_for("Facility", "MDSplusTree")  # Specific labels
+        >>> schema_for("Facility", "DataSource")  # Specific labels
     """
     if task and labels:
         msg = "Specify either task or labels, not both"

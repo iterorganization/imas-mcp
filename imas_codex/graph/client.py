@@ -697,7 +697,7 @@ class GraphClient:
         """Get all nodes of a type for a specific facility.
 
         Args:
-            label: Node label (e.g., "Diagnostic", "Tool", "TreeNode")
+            label: Node label (e.g., "Diagnostic", "Tool", "DataNode")
             facility_id: Facility identifier
 
         Returns:

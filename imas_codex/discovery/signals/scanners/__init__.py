@@ -1,7 +1,7 @@
 """Data source scanner plugins for signal discovery.
 
 Each scanner knows how to extract FacilitySignal nodes from a specific
-data source type. Scanners are dispatched based on data_sources keys
+data source type. Scanners are dispatched based on data_systems keys
 in facility config YAML files.
 
 Scanner lifecycle:
@@ -25,7 +25,7 @@ Usage:
     scanner = get_scanner("tdi")
     result = await scanner.scan(facility="tcv", ssh_host="tcv", config={...})
 
-    # Get all scanners for a facility based on data_sources config
+    # Get all scanners for a facility based on data_systems config
     for scanner in get_scanners_for_facility("tcv"):
         result = await scanner.scan(...)
 """

@@ -53,7 +53,7 @@ class TestExtractTreeVersion:
             "exclude_node_names": ["COMMENTS"],
             "setup_commands": ["source /etc/profile.d/mdsplus.sh"],
         }
-        mock_run.return_value = '{"tree_name": "results", "versions": {"85000": {"nodes": [], "node_count": 0, "tags": {}}}, "diff": {}}'
+        mock_run.return_value = '{"data_source_name": "results", "versions": {"85000": {"nodes": [], "node_count": 0, "tags": {}}}, "diff": {}}'
 
         extract_tree_version("tcv", "results", shot=85000)
 
@@ -63,7 +63,7 @@ class TestExtractTreeVersion:
         assert call_args[0][0] == "extract_tree.py"
         # input_data could be positional or keyword
         input_data = call_args[1].get("input_data") or call_args[0][1]
-        assert input_data["tree_name"] == "results"
+        assert input_data["data_source_name"] == "results"
         assert input_data["shots"] == [85000]
         assert input_data["exclude_names"] == ["COMMENTS"]
         assert "node_usages" not in input_data
@@ -75,7 +75,7 @@ class TestExtractTreeVersion:
             "exclude_node_names": [],
             "setup_commands": None,
         }
-        mock_run.return_value = '{"tree_name": "results", "versions": {"85000": {"nodes": [], "node_count": 0, "tags": {}}}, "diff": {}}'
+        mock_run.return_value = '{"data_source_name": "results", "versions": {"85000": {"nodes": [], "node_count": 0, "tags": {}}}, "diff": {}}'
 
         extract_tree_version(
             "tcv", "results", shot=85000, node_usages=["SIGNAL", "NUMERIC"]
@@ -92,7 +92,7 @@ class TestExtractTreeVersion:
             "exclude_node_names": [],
             "setup_commands": None,
         }
-        mock_run.return_value = '{"tree_name": "results", "versions": {"85000": {"error": "tree not found"}}, "diff": {}}'
+        mock_run.return_value = '{"data_source_name": "results", "versions": {"85000": {"error": "tree not found"}}, "diff": {}}'
 
         result = extract_tree_version("tcv", "results", shot=85000)
         assert "error" in result["versions"]["85000"]
@@ -106,7 +106,7 @@ class TestDiscoverTree:
     def test_extracts_each_shot(self, mock_resolve, mock_extract):
         mock_resolve.return_value = [85000]
         mock_extract.return_value = {
-            "tree_name": "results",
+            "data_source_name": "results",
             "versions": {
                 "85000": {
                     "nodes": [{"path": "\\RESULTS::TOP"}],
@@ -121,7 +121,7 @@ class TestDiscoverTree:
 
         mock_extract.assert_called_once_with(
             facility="tcv",
-            tree_name="results",
+            data_source_name="results",
             shot=85000,
             timeout=300,
             node_usages=None,
@@ -132,7 +132,7 @@ class TestDiscoverTree:
     def test_multiple_shots(self, mock_extract):
         mock_extract.side_effect = [
             {
-                "tree_name": "static",
+                "data_source_name": "static",
                 "versions": {
                     "1": {
                         "nodes": [{"path": "\\STATIC::TOP"}],
@@ -143,7 +143,7 @@ class TestDiscoverTree:
                 "diff": {},
             },
             {
-                "tree_name": "static",
+                "data_source_name": "static",
                 "versions": {
                     "2": {
                         "nodes": [

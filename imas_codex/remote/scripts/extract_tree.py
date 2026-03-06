@@ -19,12 +19,12 @@ Requirements:
 - MDSplus Python bindings
 
 Usage:
-    echo '{"tree_name": "static", "shots": [1,2,3]}' | python3 extract_tree.py
-    echo '{"tree_name": "results", "shots": [85000]}' | python3 extract_tree.py
+    echo '{"data_source_name": "static", "shots": [1,2,3]}' | python3 extract_tree.py
+    echo '{"data_source_name": "results", "shots": [85000]}' | python3 extract_tree.py
 
 Input (JSON on stdin):
     {
-        "tree_name": "static",
+        "data_source_name": "static",
         "shots": [1, 2, 3, 4, 5, 6, 7, 8],
         "exclude_names": ["COMMENTS", "DATE"],
         "node_usages": null
@@ -38,7 +38,7 @@ Input (JSON on stdin):
 
 Output (JSON on stdout):
     {
-        "tree_name": "static",
+        "data_source_name": "static",
         "versions": {
             "1": {
                 "nodes": [...],
@@ -60,7 +60,7 @@ from typing import Any
 
 
 def extract_version(
-    tree_name: str,
+    data_source_name: str,
     version: int,
     exclude_names: set | None = None,
     node_usages: set | None = None,
@@ -68,7 +68,7 @@ def extract_version(
     """Extract all nodes from a tree at a given shot/version number.
 
     Args:
-        tree_name: MDSplus tree name (e.g., "static", "results")
+        data_source_name: MDSplus tree name (e.g., "static", "results")
         version: Shot or version number (Tree is opened with this)
         exclude_names: Node names to skip
         node_usages: If set, only include nodes with these usage types.
@@ -83,7 +83,7 @@ def extract_version(
         exclude_names = set()
 
     try:
-        tree = MDSplus.Tree(tree_name, version, "readonly")
+        tree = MDSplus.Tree(data_source_name, version, "readonly")
     except Exception as e:
         return {"error": str(e)[:300], "version": version}
 
@@ -206,7 +206,7 @@ def main() -> None:
     """Read config from stdin, extract tree structure, output JSON."""
     config = json.loads(sys.stdin.read())
 
-    tree_name = config["tree_name"]
+    data_source_name = config["data_source_name"]
     # Accept "shots" (preferred) or "versions" (legacy compat)
     shots = config.get("shots") or config.get("versions", [1])
     exclude_names = {n.upper() for n in config.get("exclude_names", [])}
@@ -217,7 +217,7 @@ def main() -> None:
     version_data: dict[str, dict] = {}
     for shot in shots:
         result = extract_version(
-            tree_name=tree_name,
+            data_source_name=data_source_name,
             version=shot,
             exclude_names=exclude_names,
             node_usages=node_usages,
@@ -228,7 +228,7 @@ def main() -> None:
     diff = diff_versions(version_data)
 
     output = {
-        "tree_name": tree_name,
+        "data_source_name": data_source_name,
         "versions": version_data,
         "diff": diff,
     }

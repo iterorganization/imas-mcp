@@ -12,7 +12,7 @@ Discovery strategy:
 Remote execution uses the shared run_python_script() infrastructure
 with scripts in imas_codex/remote/scripts/ (enumerate_ppf.py, check_ppf.py).
 
-Config key: data_sources.ppf
+Config key: data_systems.ppf
 Facility: JET
 """
 
@@ -68,7 +68,7 @@ class PPFScanner:
     2. Create FacilitySignal per DDA/Dtype with PPF accessor format
     3. Heuristic physics domain from DDA name (refined by LLM enrichment)
 
-    Config (data_sources.ppf):
+    Config (data_systems.ppf):
         reference_pulse: int - Pulse for signal enumeration
         default_owner: str - Default PPF owner (e.g., "jetppf")
         exclude_ddas: list[str] - DDAs to skip

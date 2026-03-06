@@ -19,7 +19,7 @@ class TreeDiscoveryState(DiscoveryStateBase):
     """
 
     ssh_host: str = ""
-    tree_name: str = ""
+    data_source_name: str = ""
     tree_config: dict[str, Any] = field(default_factory=dict)
 
     # Limits

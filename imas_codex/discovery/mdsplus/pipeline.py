@@ -1,10 +1,10 @@
 """Parallel tree discovery engine.
 
 Main entry point for MDSplus tree discovery with async workers. Orchestrates:
-- Seed: Create TreeModelVersion nodes from config or epoch detection
+- Seed: Create StructuralEpoch nodes from config or epoch detection
 - Extract: SSH extraction + immediate ingestion per version/shot
 - Units: Batched unit extraction for NUMERIC/SIGNAL nodes
-- Promote: Create FacilitySignal nodes from leaf TreeNodes
+- Promote: Create FacilitySignal nodes from leaf DataNodes
 
 Use ``run_tree_discovery()`` as the main entry point.
 """
@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 async def run_tree_discovery(
     facility: str,
     ssh_host: str,
-    tree_name: str,
+    data_source_name: str,
     tree_config: dict[str, Any],
     ver_list: list[int],
     *,
@@ -69,10 +69,10 @@ async def run_tree_discovery(
     epoched MDSplus trees through a unified pipeline.
 
     Phases:
-    1. Seed TreeModelVersion nodes from config or epoch detection
+    1. Seed StructuralEpoch nodes from config or epoch detection
     2. Extract workers claim versions, SSH extract, ingest to graph
     3. Units worker extracts units for latest version
-    4. Promote worker creates FacilitySignal nodes from leaf TreeNodes
+    4. Promote worker creates FacilitySignal nodes from leaf DataNodes
 
     Returns:
         Dict with extraction/promotion statistics.
@@ -80,7 +80,7 @@ async def run_tree_discovery(
     start_time = time.time()
 
     # Release orphaned claims from previous runs
-    reset_orphaned_static_claims(facility, tree_name, silent=True)
+    reset_orphaned_static_claims(facility, data_source_name, silent=True)
 
     # Ensure Facility node exists
     with GraphClient() as gc:
@@ -89,21 +89,21 @@ async def run_tree_discovery(
     # Seed versions into graph
     version_configs = tree_config.get("versions", [])
     if force:
-        _force_reset_versions(facility, tree_name, ver_list)
+        _force_reset_versions(facility, data_source_name, ver_list)
 
-    seeded = seed_versions(facility, tree_name, ver_list, version_configs)
+    seeded = seed_versions(facility, data_source_name, ver_list, version_configs)
     logger.info(
-        "Seeded %d new TreeModelVersion nodes for %s:%s (total %d versions)",
+        "Seeded %d new StructuralEpoch nodes for %s:%s (total %d versions)",
         seeded,
         facility,
-        tree_name,
+        data_source_name,
         len(ver_list),
     )
 
     state = TreeDiscoveryState(
         facility=facility,
         ssh_host=ssh_host,
-        tree_name=tree_name,
+        data_source_name=data_source_name,
         tree_config=tree_config,
         cost_limit=cost_limit,
         timeout=timeout,
@@ -115,7 +115,7 @@ async def run_tree_discovery(
 
     # Wire up graph-backed has_work_fn on each phase
     state.extract_phase.set_has_work_fn(
-        lambda: has_pending_extract_work(facility, tree_name)
+        lambda: has_pending_extract_work(facility, data_source_name)
     )
     state.units_phase.set_has_work_fn(lambda: False)  # units runs once then exits
     state.promote_phase.set_has_work_fn(lambda: False)  # promote runs once then exits
@@ -171,8 +171,8 @@ async def run_tree_discovery(
         workers,
         stop_event=stop_event,
         orphan_specs=[
-            OrphanRecoverySpec("TreeModelVersion"),
-            OrphanRecoverySpec("TreeNode", timeout_seconds=300),
+            OrphanRecoverySpec("StructuralEpoch"),
+            OrphanRecoverySpec("DataNode", timeout_seconds=300),
         ],
         on_worker_status=on_worker_status,
     )
@@ -192,14 +192,16 @@ async def run_tree_discovery(
 run_parallel_static_discovery = run_tree_discovery
 
 
-def _force_reset_versions(facility: str, tree_name: str, ver_list: list[int]) -> int:
+def _force_reset_versions(
+    facility: str, data_source_name: str, ver_list: list[int]
+) -> int:
     """Reset ingested versions back to discovered for re-extraction."""
-    ids = [f"{facility}:{tree_name}:v{v}" for v in ver_list]
+    ids = [f"{facility}:{data_source_name}:v{v}" for v in ver_list]
     with GraphClient() as gc:
         result = gc.query(
             """
             UNWIND $ids AS vid
-            MATCH (v:TreeModelVersion {id: vid})
+            MATCH (v:StructuralEpoch {id: vid})
             WHERE v.status = 'ingested'
             SET v.status = 'discovered', v.claimed_at = null
             RETURN count(v) AS reset

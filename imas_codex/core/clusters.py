@@ -212,7 +212,10 @@ class Clusters:
                 coverage = row["coverage"]
                 logger.debug(
                     "Graph embedding coverage: %d/%d embeddable (%d total, %.0f%%)",
-                    count, row["embeddable"], row["total"], coverage * 100,
+                    count,
+                    row["embeddable"],
+                    row["total"],
+                    coverage * 100,
                 )
                 return coverage >= 0.5, count
             return False, 0

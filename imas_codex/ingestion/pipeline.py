@@ -4,7 +4,7 @@ Graph-driven ingestion via CodeFile queue:
 - Automatic deduplication (skips already-ingested files)
 - Per-file atomic commits (interrupt-safe)
 - Auto-updates FacilityPath status to 'explored'
-- Links extracted MDSplus paths to TreeNode entities
+- Links extracted MDSplus paths to DataNode entities
 - Routes files to appropriate splitters based on language/type
 
 Replaces code_examples.pipeline.
@@ -272,7 +272,7 @@ async def ingest_files(
     - Deduplication: Skips files that are already ingested (unless force=True)
     - Interrupt-safe: Each file is committed atomically
     - Auto status update: CodeFile nodes are marked 'ingested'
-    - MDSplus linking: Extracted paths are linked to TreeNode entities
+    - MDSplus linking: Extracted paths are linked to DataNode entities
 
     Args:
         facility: Facility SSH host alias (e.g., "tcv")

@@ -2,7 +2,7 @@
 
 Wraps BatchDiscovery to detect structural epoch boundaries for trees
 with ``detect_epochs: true`` in their TreeConfig. Discovered epochs
-become TreeModelVersion nodes, just like pre-configured versions.
+become StructuralEpoch nodes, just like pre-configured versions.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 def detect_epochs_for_tree(
     facility: str,
-    tree_name: str,
+    data_source_name: str,
     tree_config: dict[str, Any],
     client: GraphClient | None = None,
     on_progress: Callable[[EpochProgress], None] | None = None,
@@ -34,17 +34,17 @@ def detect_epochs_for_tree(
 
     Uses the batched SSH fingerprinting + binary search algorithm from
     ``BatchDiscovery`` to find shot boundaries where tree structure
-    changes. Returns epoch records ready for TreeModelVersion ingestion.
+    changes. Returns epoch records ready for StructuralEpoch ingestion.
 
     Args:
         facility: Facility identifier / SSH host alias
-        tree_name: MDSplus tree name (e.g., "results")
+        data_source_name: MDSplus tree name (e.g., "results")
         tree_config: TreeConfig dict from facility YAML
         client: Optional GraphClient for incremental mode
         on_progress: Optional callback for progress updates
 
     Returns:
-        List of epoch dicts with keys: id, tree_name, facility_id,
+        List of epoch dicts with keys: id, data_source_name, facility_id,
         version, first_shot, last_shot, representative_shot, node_count,
         is_new. Empty list if no epochs detected.
     """
@@ -55,13 +55,13 @@ def detect_epochs_for_tree(
     logger.info(
         "Detecting epochs for %s:%s (step=%d)",
         facility,
-        tree_name,
+        data_source_name,
         step_size,
     )
 
     epochs, _structures = discover_epochs_optimized(
         facility=facility,
-        tree_name=tree_name,
+        data_source_name=data_source_name,
         start_shot=start_shot,
         coarse_step=step_size,
         client=client,
@@ -69,7 +69,9 @@ def detect_epochs_for_tree(
     )
 
     if not epochs:
-        logger.info("No structural epochs detected for %s:%s", facility, tree_name)
+        logger.info(
+            "No structural epochs detected for %s:%s", facility, data_source_name
+        )
         return []
 
     new_count = sum(1 for e in epochs if e.get("is_new", True))
@@ -77,7 +79,7 @@ def detect_epochs_for_tree(
         "Detected %d epochs for %s:%s (%d new)",
         len(epochs),
         facility,
-        tree_name,
+        data_source_name,
         new_count,
     )
 
@@ -122,7 +124,7 @@ def detect_epochs_for_subtrees(
 
         epochs = detect_epochs_for_tree(
             facility=facility,
-            tree_name=sub_name,
+            data_source_name=sub_name,
             tree_config=sub_config,
             client=client,
             on_progress=on_progress,

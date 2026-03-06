@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 class EpochProgress:
     """Progress information during epoch detection."""
 
-    tree_name: str
+    data_source_name: str
     phase: str  # "coarse", "refine", "build"
     current_shot: int | None = None
     start_shot: int | None = None
@@ -44,13 +44,13 @@ import json
 import hashlib
 import MDSplus
 
-tree_name = "{tree_name}"
+data_source_name = "{data_source_name}"
 shots = {shots}
 
 results = {{}}
 for shot in shots:
     try:
-        t = MDSplus.Tree(tree_name, shot)
+        t = MDSplus.Tree(data_source_name, shot)
         paths = sorted(str(n.path) for n in t.getNodeWild("***"))
         # Deterministic fingerprint: MD5 of newline-joined sorted paths
         fingerprint = hashlib.md5("\\n".join(paths).encode()).hexdigest()
@@ -66,11 +66,11 @@ FULL_PATHS_SCRIPT = """
 import json
 import MDSplus
 
-tree_name = "{tree_name}"
+data_source_name = "{data_source_name}"
 shot = {shot}
 
 try:
-    t = MDSplus.Tree(tree_name, shot)
+    t = MDSplus.Tree(data_source_name, shot)
     paths = sorted(str(n.path) for n in t.getNodeWild("***"))
     print(json.dumps({{"paths": paths}}))
 except Exception as e:
@@ -83,7 +83,7 @@ class DiscoveryCheckpoint:
     """Checkpoint state for resumable discovery."""
 
     facility: str
-    tree_name: str
+    data_source_name: str
     current_shot: int
     start_shot: int
     coarse_step: int
@@ -100,7 +100,7 @@ class DiscoveryCheckpoint:
         """Save checkpoint to JSON file."""
         data = {
             "facility": self.facility,
-            "tree_name": self.tree_name,
+            "data_source_name": self.data_source_name,
             "current_shot": self.current_shot,
             "start_shot": self.start_shot,
             "coarse_step": self.coarse_step,
@@ -118,7 +118,7 @@ class DiscoveryCheckpoint:
         data = json.loads(path.read_text())
         return cls(
             facility=data["facility"],
-            tree_name=data["tree_name"],
+            data_source_name=data["data_source_name"],
             current_shot=data["current_shot"],
             start_shot=data["start_shot"],
             coarse_step=data["coarse_step"],
@@ -135,13 +135,13 @@ class BatchDiscovery:
     def __init__(
         self,
         facility: str,
-        tree_name: str,
+        data_source_name: str,
         shot_tree: str = "tcv_shot",
         batch_size: int = 50,
         ssh_timeout: int = 300,
     ):
         self.facility = facility
-        self.tree_name = tree_name
+        self.data_source_name = data_source_name
         self.shot_tree = shot_tree
         self.batch_size = batch_size
         self.ssh_timeout = ssh_timeout
@@ -167,7 +167,7 @@ print(t.getCurrent())
             return {}
 
         script = BATCH_QUERY_SCRIPT.format(
-            tree_name=self.tree_name,
+            data_source_name=self.data_source_name,
             shots=shots,
         )
 
@@ -192,7 +192,7 @@ print(t.getCurrent())
     def get_full_paths(self, shot: int) -> list[str] | None:
         """Get full list of paths at a specific shot."""
         script = FULL_PATHS_SCRIPT.format(
-            tree_name=self.tree_name,
+            data_source_name=self.data_source_name,
             shot=shot,
         )
 
@@ -322,7 +322,7 @@ print(t.getCurrent())
 
 def discover_epochs_optimized(
     facility: str,
-    tree_name: str,
+    data_source_name: str,
     start_shot: int | None = None,
     end_shot: int | None = None,
     coarse_step: int = 1000,
@@ -334,7 +334,7 @@ def discover_epochs_optimized(
 
     Args:
         facility: SSH host alias
-        tree_name: MDSplus tree name
+        data_source_name: MDSplus tree name
         start_shot: Start of scan (default: 3000)
         end_shot: End of scan (default: current shot)
         coarse_step: Step for initial coarse scan
@@ -347,7 +347,7 @@ def discover_epochs_optimized(
         - epochs: List of epoch dicts ready for ingestion
         - representative_structures: Dict of representative_shot -> paths
     """
-    discovery = BatchDiscovery(facility, tree_name)
+    discovery = BatchDiscovery(facility, data_source_name)
 
     # Load checkpoint if exists
     checkpoint = None
@@ -372,11 +372,11 @@ def discover_epochs_optimized(
     if client is not None:
         existing = client.query(
             """
-            MATCH (v:TreeModelVersion {tree_name: $tree, facility_id: $facility})
+            MATCH (v:StructuralEpoch {data_source_name: $tree, facility_id: $facility})
             RETURN min(v.first_shot) as min_shot, max(v.first_shot) as max_shot,
                    count(v) as epoch_count
             """,
-            tree=tree_name,
+            tree=data_source_name,
             facility=facility,
         )
         if existing and existing[0]["min_shot"]:
@@ -401,7 +401,7 @@ def discover_epochs_optimized(
     if checkpoint is None:
         checkpoint = DiscoveryCheckpoint(
             facility=facility,
-            tree_name=tree_name,
+            data_source_name=data_source_name,
             current_shot=end_shot,
             start_shot=start_shot,
             coarse_step=coarse_step,
@@ -416,14 +416,19 @@ def discover_epochs_optimized(
             f"Phase 1: Coarse scan from {end_shot} to {start_shot} (step={coarse_step})"
         )
         checkpoint = _coarse_scan(
-            discovery, checkpoint, checkpoint_path, tree_name, total_range, on_progress
+            discovery,
+            checkpoint,
+            checkpoint_path,
+            data_source_name,
+            total_range,
+            on_progress,
         )
 
     # Phase 2: Binary search refinement
     if checkpoint.phase == "refine":
         logger.info(f"Phase 2: Refining {len(checkpoint.boundaries)} boundaries")
         checkpoint = _refine_boundaries(
-            discovery, checkpoint, checkpoint_path, tree_name, on_progress
+            discovery, checkpoint, checkpoint_path, data_source_name, on_progress
         )
 
     # In incremental mode, check if first scanned shot matches existing epoch
@@ -475,7 +480,7 @@ def _coarse_scan(
     discovery: BatchDiscovery,
     checkpoint: DiscoveryCheckpoint,
     checkpoint_path: Path | None,
-    tree_name: str,
+    data_source_name: str,
     total_range: int,
     on_progress: Callable[[EpochProgress], None] | None,
 ) -> DiscoveryCheckpoint:
@@ -511,7 +516,7 @@ def _coarse_scan(
         if on_progress:
             on_progress(
                 EpochProgress(
-                    tree_name=tree_name,
+                    data_source_name=data_source_name,
                     phase="coarse",
                     current_shot=batch[-1],
                     start_shot=checkpoint.start_shot,
@@ -551,7 +556,7 @@ def _refine_boundaries(
     discovery: BatchDiscovery,
     checkpoint: DiscoveryCheckpoint,
     checkpoint_path: Path | None,
-    tree_name: str,
+    data_source_name: str,
     on_progress: Callable[[EpochProgress], None] | None,
 ) -> DiscoveryCheckpoint:
     """Phase 2: Binary search to find exact boundaries."""
@@ -565,7 +570,7 @@ def _refine_boundaries(
         if on_progress:
             on_progress(
                 EpochProgress(
-                    tree_name=tree_name,
+                    data_source_name=data_source_name,
                     phase="refine",
                     current_shot=low_shot,
                     boundaries_found=total_boundaries,
@@ -588,7 +593,7 @@ def _refine_boundaries(
     if on_progress:
         on_progress(
             EpochProgress(
-                tree_name=tree_name,
+                data_source_name=data_source_name,
                 phase="refine",
                 boundaries_found=total_boundaries,
                 boundaries_refined=len(checkpoint.refined_boundaries),
@@ -662,8 +667,8 @@ def _build_epoch_records(
         removed_subtrees = sorted({get_subtree(p) for p in removed})[:10]
 
         epoch = {
-            "id": f"{checkpoint.facility}:{checkpoint.tree_name}:v{version}",
-            "tree_name": checkpoint.tree_name,
+            "id": f"{checkpoint.facility}:{checkpoint.data_source_name}:v{version}",
+            "data_source_name": checkpoint.data_source_name,
             "facility_id": checkpoint.facility,
             "version": version,
             "first_shot": first_shot,
@@ -679,7 +684,7 @@ def _build_epoch_records(
 
         if version > 1:
             epoch["predecessor"] = (
-                f"{checkpoint.facility}:{checkpoint.tree_name}:v{version - 1}"
+                f"{checkpoint.facility}:{checkpoint.data_source_name}:v{version - 1}"
             )
 
         epochs.append(epoch)
@@ -696,7 +701,7 @@ def _build_epoch_records(
 def refine_boundaries(
     client: "GraphClient",
     facility: str,
-    tree_name: str,
+    data_source_name: str,
     dry_run: bool = False,
 ) -> dict[str, int]:
     """Refine rough epoch boundaries using binary search.
@@ -707,7 +712,7 @@ def refine_boundaries(
     Args:
         client: Neo4j GraphClient
         facility: SSH host alias
-        tree_name: MDSplus tree name
+        data_source_name: MDSplus tree name
         dry_run: If True, log but don't update
 
     Returns:
@@ -716,12 +721,12 @@ def refine_boundaries(
     # Get existing epochs sorted by first_shot
     result = client.query(
         """
-        MATCH (v:TreeModelVersion {facility_id: $facility, tree_name: $tree})
+        MATCH (v:StructuralEpoch {facility_id: $facility, data_source_name: $tree})
         RETURN v.id as id, v.first_shot as first_shot
         ORDER BY v.first_shot
         """,
         facility=facility,
-        tree=tree_name,
+        tree=data_source_name,
     )
 
     epochs = list(result)
@@ -731,7 +736,7 @@ def refine_boundaries(
 
     logger.info(f"Checking {len(epochs) - 1} boundaries for refinement")
 
-    discovery = BatchDiscovery(facility, tree_name)
+    discovery = BatchDiscovery(facility, data_source_name)
     refined_count = 0
 
     for i in range(1, len(epochs)):
@@ -781,7 +786,7 @@ def refine_boundaries(
             if not dry_run:
                 client.query(
                     """
-                    MATCH (v:TreeModelVersion {id: $id})
+                    MATCH (v:StructuralEpoch {id: $id})
                     SET v.first_shot = $shot,
                         v.boundary_refined = true
                     """,

@@ -8,7 +8,7 @@ Example:
     >>> from imas_codex.graph.schema import GraphSchema
     >>> schema = GraphSchema()
     >>> print(schema.node_labels)
-    ['Facility', 'MDSplusServer', 'MDSplusTree', ...]
+    ['Facility', 'MDSplusServer', 'DataSource', ...]
     >>> print(schema.get_identifier("Facility"))
     'id'
     >>> print(schema.get_relationships("MDSplusServer"))
@@ -539,7 +539,7 @@ class GraphSchema:
                     "device_inode",
                 ],  # device_inode for bind mount dedup
                 "MDSplusServer": ["role"],
-                "TreeNode": ["node_type"],
+                "DataNode": ["node_type"],
                 "Diagnostic": ["category"],
                 "AnalysisCode": ["code_type"],
                 "Tool": ["category", "available"],

@@ -17,7 +17,7 @@ Input (JSON on stdin):
             {
                 "id": "tcv:results:/ip",
                 "accessor": "\\ip",
-                "tree_name": "results",
+                "data_source_name": "results",
                 "shot": 80000
             },
             ...
@@ -62,7 +62,7 @@ def validate_signal(
     """Validate a single signal by testing data access.
 
     Args:
-        sig: Signal dict with id, accessor, tree_name, shot
+        sig: Signal dict with id, accessor, data_source_name, shot
         timeout: Timeout in seconds for this signal
 
     Returns:
@@ -71,7 +71,7 @@ def validate_signal(
     result: dict[str, Any] = {"id": sig["id"], "success": False}
 
     accessor = sig.get("accessor")
-    tree_name = sig.get("tree_name", "results")
+    data_source_name = sig.get("data_source_name", "results")
     shot = sig.get("shot")
 
     if not accessor or not shot:
@@ -85,7 +85,7 @@ def validate_signal(
     try:
         import MDSplus
 
-        tree = MDSplus.Tree(tree_name, int(shot), "readonly")
+        tree = MDSplus.Tree(data_source_name, int(shot), "readonly")
         data = tree.tdiExecute(accessor).data()
 
         result["success"] = True

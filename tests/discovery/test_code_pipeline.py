@@ -1,7 +1,7 @@
 """Comprehensive tests for the code discovery pipeline (Phases 3-6).
 
 Phase 3: Full pipeline run — tree-sitter chunking for all languages, extraction, embedding
-Phase 4: Code evidence → signal linking via DataReference → TreeNode → FacilitySignal
+Phase 4: Code evidence → signal linking via DataReference → DataNode → FacilitySignal
 Phase 5: DataAccess template generation from code evidence
 Phase 6: Static tree routing and recheck with code-evidence shots
 
@@ -165,13 +165,13 @@ end # module
         code = """#include <stdio.h>
 #include <mdslib.h>
 
-int read_signal(int shot, const char* node_path, float** data, int* len) {
+int read_signal(int shot, const char* data_source_path, float** data, int* len) {
     int status;
     int dtype = DTYPE_FLOAT;
 
     status = MdsOpen("tcv_shot", &shot);
     if (status & 1) {
-        status = MdsValue(node_path, &dtype, len, data);
+        status = MdsValue(data_source_path, &dtype, len, data);
         MdsClose("tcv_shot", &shot);
     }
     return status;
@@ -592,11 +592,11 @@ class TestCodeEvidenceLinking:
     """
 
     def test_link_resolves_data_references(self):
-        """link_code_evidence_to_signals resolves DataReference → TreeNode."""
+        """link_code_evidence_to_signals resolves DataReference → DataNode."""
         from imas_codex.discovery.code.graph_ops import link_code_evidence_to_signals
 
         mock_gc = MagicMock()
-        # Step 1: Resolve DataReference → TreeNode returns resolved count
+        # Step 1: Resolve DataReference → DataNode returns resolved count
         mock_gc.query.side_effect = [
             [{"resolved": 5}],  # Step 1: resolve refs
             [{"signals_linked": 3}],  # Step 2: propagate to signals
@@ -689,7 +689,7 @@ class TestSignalPrioritization:
         query = """
         MATCH (sig:FacilitySignal)-[:AT_FACILITY]->(f:Facility {id: $facility})
         WHERE sig.has_code_evidence = true AND sig.check_status IS NULL
-        RETURN sig.id, sig.node_path, sig.code_evidence_count
+        RETURN sig.id, sig.data_source_path, sig.code_evidence_count
         ORDER BY sig.code_evidence_count DESC
         """
         # Verify query structure
@@ -698,15 +698,15 @@ class TestSignalPrioritization:
         assert "ORDER BY" in query
 
     def test_evidence_chain_query(self):
-        """The evidence chain query checks DataReference → TreeNode."""
+        """The evidence chain query checks DataReference → DataNode."""
         query = """
-        MATCH (dr:DataReference)-[:RESOLVES_TO_TREE_NODE]->(tn:TreeNode)
+        MATCH (dr:DataReference)-[:RESOLVES_TO_NODE]->(tn:DataNode)
         WHERE tn.facility_id = $facility
         RETURN count(dr) AS refs, count(DISTINCT tn.id) AS tree_nodes
         """
-        assert "RESOLVES_TO_TREE_NODE" in query
+        assert "RESOLVES_TO_NODE" in query
         assert "DataReference" in query
-        assert "TreeNode" in query
+        assert "DataNode" in query
 
 
 # =============================================================================
@@ -1119,8 +1119,8 @@ class TestStaticTreeRouting:
 
         for tree in ["static", "vsystem", "heating"]:
             signal = {
-                "tree_name": tree,
-                "node_path": f"\\{tree.upper()}::SOME:NODE",
+                "data_source_name": tree,
+                "data_source_path": f"\\{tree.upper()}::SOME:NODE",
                 "discovery_source": "tree_traversal",
                 "accessor": "SOME:NODE",
             }
@@ -1141,8 +1141,8 @@ class TestStaticTreeRouting:
         from imas_codex.discovery.signals.parallel import _resolve_check_tree
 
         signal = {
-            "tree_name": "static",
-            "node_path": "\\STATIC::TOP.MECHANICAL.COIL:R",
+            "data_source_name": "static",
+            "data_source_path": "\\STATIC::TOP.MECHANICAL.COIL:R",
             "discovery_source": "tree_traversal",
             "accessor": "TOP.MECHANICAL.COIL:R",
         }
@@ -1156,12 +1156,12 @@ class TestStaticTreeRouting:
         assert shots == [1, 2, 3, 4, 5, 6, 7, 8]
 
     def test_tree_traversal_uses_node_path_as_accessor(self):
-        """tree_traversal signals use full node_path as accessor."""
+        """tree_traversal signals use full data_source_path as accessor."""
         from imas_codex.discovery.signals.parallel import _resolve_check_tree
 
         signal = {
-            "tree_name": "results",
-            "node_path": "\\RESULTS::THOMSON:NE",
+            "data_source_name": "results",
+            "data_source_path": "\\RESULTS::THOMSON:NE",
             "discovery_source": "tree_traversal",
             "accessor": "THOMSON:NE",
         }
@@ -1179,8 +1179,8 @@ class TestStaticTreeRouting:
         from imas_codex.discovery.signals.parallel import _resolve_check_tree
 
         signal = {
-            "tree_name": "results",
-            "node_path": "\\RESULTS::I_P",
+            "data_source_name": "results",
+            "data_source_path": "\\RESULTS::I_P",
             "discovery_source": "tdi_extraction",
             "accessor": "tcv_ip()",
         }
@@ -1210,8 +1210,8 @@ class TestCodeEvidenceShotPrioritization:
         known_shots = [48952, 55608, 55759, 56016, 58499, 60797]
 
         signal = {
-            "tree_name": "results",
-            "node_path": "\\RESULTS::I_P",
+            "data_source_name": "results",
+            "data_source_path": "\\RESULTS::I_P",
             "discovery_source": "tree_traversal",
             "accessor": "I_P",
         }
@@ -1238,7 +1238,7 @@ class TestCodeEvidenceShotPrioritization:
         MATCH (sig:FacilitySignal)-[:AT_FACILITY]->(f:Facility {id: $facility})
         WHERE sig.check_status = 'failed'
           AND sig.has_code_evidence = true
-        RETURN sig.id, sig.node_path, sig.code_evidence_count
+        RETURN sig.id, sig.data_source_path, sig.code_evidence_count
         ORDER BY sig.code_evidence_count DESC
         LIMIT $limit
         """

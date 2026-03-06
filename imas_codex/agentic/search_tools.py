@@ -73,7 +73,7 @@ def _search_signals(
     """Search facility signals with graph enrichment.
 
     Performs vector search on signal descriptions, enriches with
-    DataAccess, Diagnostic, TreeNode, and IMASPath traversals,
+    DataAccess, Diagnostic, DataNode, and IMASPath traversals,
     then formats the result.
     """
     try:
@@ -162,7 +162,7 @@ def _enrich_signals(
         MATCH (s:FacilitySignal {id: sid})
         OPTIONAL MATCH (s)-[:DATA_ACCESS]->(da:DataAccess)
         OPTIONAL MATCH (s)-[:BELONGS_TO_DIAGNOSTIC]->(diag:Diagnostic)
-        OPTIONAL MATCH (s)-[:SOURCE_NODE]->(tn:TreeNode)
+        OPTIONAL MATCH (s)-[:HAS_DATA_SOURCE_NODE]->(tn:DataNode)
         OPTIONAL MATCH (da)-[:MAPS_TO_IMAS]->(ip:IMASPath)
         OPTIONAL MATCH (ip)-[:HAS_UNIT]->(u:Unit)
         RETURN s.id AS id, s.name AS name, s.description AS description,
@@ -172,7 +172,7 @@ def _enrich_signals(
                da.data_template AS access_template, da.access_type AS access_type,
                da.imports_template AS imports_template,
                da.connection_template AS connection_template,
-               tn.path AS tree_path, tn.tree_name AS tree_name,
+               tn.path AS tree_path, tn.data_source_name AS data_source_name,
                ip.id AS imas_path, ip.documentation AS imas_docs,
                u.symbol AS imas_unit
     """
@@ -185,12 +185,12 @@ def _vector_search_tree_nodes(
     facility: str,
     k: int,
 ) -> list[dict[str, Any]]:
-    """Vector search on tree_node_desc_embedding index."""
+    """Vector search on data_node_desc_embedding index."""
     cypher = (
-        'CALL db.index.vector.queryNodes("tree_node_desc_embedding", $k, $embedding) '
+        'CALL db.index.vector.queryNodes("data_node_desc_embedding", $k, $embedding) '
         "YIELD node AS n, score "
         "WHERE (n)-[:AT_FACILITY]->(:Facility {id: $facility}) "
-        "RETURN n.id AS id, n.path AS path, n.tree_name AS tree_name, "
+        "RETURN n.id AS id, n.path AS path, n.data_source_name AS data_source_name, "
         "n.description AS description, n.unit AS unit "
         "ORDER BY score DESC"
     )
@@ -292,7 +292,7 @@ def _enrich_wiki_chunks(
         MATCH (c:WikiChunk {id: cid})
         OPTIONAL MATCH (p:WikiPage)-[:HAS_CHUNK]->(c)
         OPTIONAL MATCH (c)-[:DOCUMENTS]->(sig:FacilitySignal)
-        OPTIONAL MATCH (c)-[:DOCUMENTS]->(tn:TreeNode)
+        OPTIONAL MATCH (c)-[:DOCUMENTS]->(tn:DataNode)
         OPTIONAL MATCH (c)-[:MENTIONS_IMAS]->(ip:IMASPath)
         RETURN c.id AS id, c.text AS text, c.section AS section,
                p.id AS page_id, p.title AS page_title, p.url AS page_url,
@@ -622,7 +622,7 @@ def _enrich_code_chunks(
         OPTIONAL MATCH (ce:CodeExample)-[:HAS_CHUNK]->(cc)
         OPTIONAL MATCH (cf:CodeFile {id: ce.source_file})
         OPTIONAL MATCH (cf)-[:CONTAINS_REF]->(dr:DataReference)
-        OPTIONAL MATCH (dr)-[:RESOLVES_TO_TREE_NODE]->(tn:TreeNode)
+        OPTIONAL MATCH (dr)-[:RESOLVES_TO_NODE]->(tn:DataNode)
         OPTIONAL MATCH (dr)-[:RESOLVES_TO_IMAS_PATH]->(ip:IMASPath)
         OPTIONAL MATCH (dr)-[:CALLS_TDI_FUNCTION]->(tdi:TDIFunction)
         OPTIONAL MATCH (cf)-[:IN_DIRECTORY]->(fp:FacilityPath)

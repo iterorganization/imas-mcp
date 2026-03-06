@@ -1,7 +1,7 @@
 """Tests for domain query functions.
 
 These tests validate the domain query functions (find_signals, find_wiki,
-find_imas, find_code, find_tree_nodes, map_signals_to_imas, facility_overview)
+find_imas, find_code, find_data_nodes, map_signals_to_imas, facility_overview)
 without requiring Neo4j — they test structure and error handling using mocks.
 """
 
@@ -12,9 +12,9 @@ import pytest
 from imas_codex.graph.domain_queries import (
     facility_overview,
     find_code,
+    find_data_nodes,
     find_imas,
     find_signals,
-    find_tree_nodes,
     find_wiki,
     map_signals_to_imas,
     wiki_page_chunks,
@@ -237,21 +237,21 @@ class TestFindCode:
 
 
 class TestFindTreeNodes:
-    """Test find_tree_nodes domain query."""
+    """Test find_data_nodes domain query."""
 
     def test_returns_list(self, mock_gc, mock_embed):
-        result = find_tree_nodes(facility="tcv", gc=mock_gc, embed_fn=mock_embed)
+        result = find_data_nodes(facility="tcv", gc=mock_gc, embed_fn=mock_embed)
         assert isinstance(result, list)
 
     def test_with_tree_filter(self, mock_gc, mock_embed):
-        find_tree_nodes(
-            facility="tcv", tree_name="results", gc=mock_gc, embed_fn=mock_embed
+        find_data_nodes(
+            facility="tcv", data_source_name="results", gc=mock_gc, embed_fn=mock_embed
         )
         call_kwargs = mock_gc.query.call_args
         assert "results" in str(call_kwargs)
 
     def test_with_semantic_search(self, mock_gc, mock_embed):
-        find_tree_nodes(
+        find_data_nodes(
             query="electron density",
             facility="tcv",
             gc=mock_gc,
@@ -324,9 +324,9 @@ class TestFunctionSignatures:
         from imas_codex.graph.domain_queries import (
             facility_overview,
             find_code,
+            find_data_nodes,
             find_imas,
             find_signals,
-            find_tree_nodes,
             find_wiki,
             map_signals_to_imas,
         )

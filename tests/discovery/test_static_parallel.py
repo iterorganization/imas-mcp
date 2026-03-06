@@ -21,8 +21,8 @@ class TestStaticDiscoveryState:
         defaults = {
             "facility": "tcv",
             "ssh_host": "tcv",
-            "tree_name": "static",
-            "tree_config": {"tree_name": "static", "versions": []},
+            "data_source_name": "static",
+            "tree_config": {"data_source_name": "static", "versions": []},
         }
         defaults.update(kwargs)
         return StaticDiscoveryState(**defaults)

@@ -12,7 +12,7 @@ This module provides functions to populate Neo4j with IMAS DD structure:
 - Embeddings for IMASPath nodes with content-based caching
 
 The graph is augmented incrementally, not rebuilt - this preserves
-links to facility data (TreeNodes, IMASMappings).
+links to facility data (DataNodes, IMASMappings).
 
 Embedding Pipeline:
 - Generates enriched_text by concatenating IDS context, documentation, units

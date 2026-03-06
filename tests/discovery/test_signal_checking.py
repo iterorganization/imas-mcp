@@ -3,7 +3,7 @@
 Tests the check worker routing logic, multi-shot batch checking,
 DataAccess-driven signal routing, and expression node handling.
 
-Phase 1: Static tree routing - independent trees use their own tree_name/shot
+Phase 1: Static tree routing - independent trees use their own data_source_name/shot
 Phase 2: Multi-version batch checking as primary (not fallback)
 Phase 3: Expression node classification
 Phase 4: TDI function categorization
@@ -34,130 +34,130 @@ class TestResolveCheckTree:
     def test_subtree_signal_routes_to_connection_tree(self):
         """Subtree signals (results, magnetics) route to connection tree."""
         signal = {
-            "tree_name": "results",
-            "node_path": "\\RESULTS::THOMSON:NE",
+            "data_source_name": "results",
+            "data_source_path": "\\RESULTS::THOMSON:NE",
             "discovery_source": "tree_traversal",
             "accessor": "THOMSON:NE",
         }
-        tree_name, accessor, check_shots = _resolve_check_tree(
+        data_source_name, accessor, check_shots = _resolve_check_tree(
             signal,
             connection_tree="tcv_shot",
             independent_trees={"static", "vsystem"},
             tree_shots={"static": [1, 2, 3, 4, 5, 6, 7, 8]},
             reference_shot=85000,
         )
-        assert tree_name == "tcv_shot"
+        assert data_source_name == "tcv_shot"
         assert accessor == "\\RESULTS::THOMSON:NE"
         assert check_shots == [85000]
 
     def test_static_tree_routes_independently(self):
         """Static tree signals open the static tree directly, not tcv_shot."""
         signal = {
-            "tree_name": "static",
-            "node_path": "\\STATIC::TOP.MECHANICAL.COIL:R",
+            "data_source_name": "static",
+            "data_source_path": "\\STATIC::TOP.MECHANICAL.COIL:R",
             "discovery_source": "tree_traversal",
             "accessor": "TOP.MECHANICAL.COIL:R",
         }
-        tree_name, accessor, check_shots = _resolve_check_tree(
+        data_source_name, accessor, check_shots = _resolve_check_tree(
             signal,
             connection_tree="tcv_shot",
             independent_trees={"static", "vsystem"},
             tree_shots={"static": [1, 2, 3, 4, 5, 6, 7, 8]},
             reference_shot=85000,
         )
-        assert tree_name == "static"
+        assert data_source_name == "static"
         assert accessor == "\\STATIC::TOP.MECHANICAL.COIL:R"
 
     def test_static_tree_returns_all_version_shots(self):
         """Static tree returns ALL version shots as check_shots."""
         signal = {
-            "tree_name": "static",
-            "node_path": "\\STATIC::TOP.MECHANICAL.COIL:R",
+            "data_source_name": "static",
+            "data_source_path": "\\STATIC::TOP.MECHANICAL.COIL:R",
             "discovery_source": "tree_traversal",
             "accessor": "TOP.MECHANICAL.COIL:R",
         }
-        tree_name, accessor, check_shots = _resolve_check_tree(
+        data_source_name, accessor, check_shots = _resolve_check_tree(
             signal,
             connection_tree="tcv_shot",
             independent_trees={"static", "vsystem"},
             tree_shots={"static": [1, 2, 3, 4, 5, 6, 7, 8]},
             reference_shot=85000,
         )
-        assert tree_name == "static"
+        assert data_source_name == "static"
         # All versions returned, not just the first
         assert check_shots == [1, 2, 3, 4, 5, 6, 7, 8]
 
     def test_vsystem_routes_independently(self):
         """vsystem tree signals open vsystem directly."""
         signal = {
-            "tree_name": "vsystem",
-            "node_path": "\\VSYSTEM::SOME:NODE",
+            "data_source_name": "vsystem",
+            "data_source_path": "\\VSYSTEM::SOME:NODE",
             "discovery_source": "tree_traversal",
             "accessor": "SOME:NODE",
         }
-        tree_name, accessor, check_shots = _resolve_check_tree(
+        data_source_name, accessor, check_shots = _resolve_check_tree(
             signal,
             connection_tree="tcv_shot",
             independent_trees={"static", "vsystem"},
             tree_shots={},
             reference_shot=85000,
         )
-        assert tree_name == "vsystem"
+        assert data_source_name == "vsystem"
         # No version shots for vsystem, falls back to reference
         assert check_shots == [85000]
 
     def test_tdi_function_uses_connection_tree(self):
         """TDI function signals route through connection tree."""
         signal = {
-            "tree_name": None,
+            "data_source_name": None,
             "tdi_function": "tcv_eq",
             "discovery_source": "tdi_extraction",
             "accessor": 'tcv_eq("r_axis")',
         }
-        tree_name, accessor, check_shots = _resolve_check_tree(
+        data_source_name, accessor, check_shots = _resolve_check_tree(
             signal,
             connection_tree="tcv_shot",
             independent_trees={"static", "vsystem"},
             tree_shots={},
             reference_shot=85000,
         )
-        assert tree_name == "tcv_shot"
+        assert data_source_name == "tcv_shot"
         assert check_shots == [85000]
 
     def test_unknown_tree_defaults_to_connection_tree(self):
         """Signals from unknown trees default to connection tree."""
         signal = {
-            "tree_name": "unknown_tree",
-            "node_path": "\\UNKNOWN::NODE",
+            "data_source_name": "unknown_tree",
+            "data_source_path": "\\UNKNOWN::NODE",
             "discovery_source": "tree_traversal",
             "accessor": "NODE",
         }
-        tree_name, accessor, check_shots = _resolve_check_tree(
+        data_source_name, accessor, check_shots = _resolve_check_tree(
             signal,
             connection_tree="tcv_shot",
             independent_trees={"static", "vsystem"},
             tree_shots={},
             reference_shot=85000,
         )
-        assert tree_name == "tcv_shot"
+        assert data_source_name == "tcv_shot"
         assert check_shots == [85000]
 
     def test_subtree_with_fallback_shots(self):
         """Subtree signals include fallback shots from tree versions."""
         signal = {
-            "tree_name": "results",
-            "node_path": "\\RESULTS::THOMSON:NE",
+            "data_source_name": "results",
+            "data_source_path": "\\RESULTS::THOMSON:NE",
             "discovery_source": "tree_traversal",
             "accessor": "THOMSON:NE",
         }
-        tree_name, accessor, check_shots = _resolve_check_tree(
+        data_source_name, accessor, check_shots = _resolve_check_tree(
             signal,
             connection_tree="tcv_shot",
             independent_trees={"static"},
             tree_shots={"tcv_shot": [85000, 75000, 65000]},
             reference_shot=85000,
         )
-        assert tree_name == "tcv_shot"
+        assert data_source_name == "tcv_shot"
         # Reference shot first, then fallbacks from tcv_shot versions
         assert check_shots[0] == 85000
         assert 75000 in check_shots
@@ -166,19 +166,19 @@ class TestResolveCheckTree:
     def test_independent_tree_no_versions_uses_reference(self):
         """Independent tree with no configured versions uses reference shot."""
         signal = {
-            "tree_name": "vsystem",
-            "node_path": "\\VSYSTEM::NODE",
+            "data_source_name": "vsystem",
+            "data_source_path": "\\VSYSTEM::NODE",
             "discovery_source": "tree_traversal",
             "accessor": "NODE",
         }
-        tree_name, accessor, check_shots = _resolve_check_tree(
+        data_source_name, accessor, check_shots = _resolve_check_tree(
             signal,
             connection_tree="tcv_shot",
             independent_trees={"vsystem"},
             tree_shots={},
             reference_shot=85000,
         )
-        assert tree_name == "vsystem"
+        assert data_source_name == "vsystem"
         assert check_shots == [85000]
 
 
@@ -240,31 +240,31 @@ class TestCheckSignalsBatchScript:
     """Test the remote check_signals_batch.py script logic."""
 
     def test_groups_signals_by_tree_and_shot(self):
-        """Signals are grouped by (tree_name, shot) for efficient batching."""
+        """Signals are grouped by (data_source_name, shot) for efficient batching."""
         from collections import defaultdict
 
         signals = [
             {
                 "id": "s1",
-                "tree_name": "results",
+                "data_source_name": "results",
                 "check_shots": [85000],
                 "accessor": "\\RESULTS::A",
             },
             {
                 "id": "s2",
-                "tree_name": "results",
+                "data_source_name": "results",
                 "check_shots": [85000],
                 "accessor": "\\RESULTS::B",
             },
             {
                 "id": "s3",
-                "tree_name": "static",
+                "data_source_name": "static",
                 "check_shots": [1],
                 "accessor": "\\STATIC::C",
             },
             {
                 "id": "s4",
-                "tree_name": "results",
+                "data_source_name": "results",
                 "check_shots": [75000],
                 "accessor": "\\RESULTS::A",
             },
@@ -274,7 +274,7 @@ class TestCheckSignalsBatchScript:
         groups: dict[tuple[str, int], list] = defaultdict(list)
         for sig in signals:
             primary = sig["check_shots"][0]
-            groups[(sig["tree_name"], primary)].append(sig)
+            groups[(sig["data_source_name"], primary)].append(sig)
 
         assert len(groups) == 3
         assert len(groups[("results", 85000)]) == 2
@@ -288,7 +288,7 @@ class TestCheckSignalsBatchScript:
         signals = [
             {
                 "id": "s1",
-                "tree_name": "static",
+                "data_source_name": "static",
                 "check_shots": [1, 2, 3, 4, 5, 6, 7, 8],
                 "accessor": "\\STATIC::A",
             },
@@ -297,7 +297,7 @@ class TestCheckSignalsBatchScript:
         # Primary attempt uses first check_shot
         primary_groups: dict[tuple[str, int], list] = defaultdict(list)
         for sig in signals:
-            primary_groups[(sig["tree_name"], sig["check_shots"][0])].append(sig)
+            primary_groups[(sig["data_source_name"], sig["check_shots"][0])].append(sig)
 
         assert len(primary_groups) == 1
         assert ("static", 1) in primary_groups
@@ -319,13 +319,13 @@ class TestCheckSignalsBatchInputFormat:
                 {
                     "id": "tcv:static:/r_c",
                     "accessor": "\\STATIC::R_C",
-                    "tree_name": "static",
+                    "data_source_name": "static",
                     "check_shots": [1, 2, 3, 4, 5, 6, 7, 8],
                 },
                 {
                     "id": "tcv:results:/ip",
                     "accessor": "\\ip",
-                    "tree_name": "tcv_shot",
+                    "data_source_name": "tcv_shot",
                     "check_shots": [85000],
                 },
             ],
@@ -525,19 +525,19 @@ class TestCheckWorkerBatchInputConstruction:
     def _make_facility_config(self):
         """Create a realistic TCV-like facility config."""
         return {
-            "data_sources": {
+            "data_systems": {
                 "mdsplus": {
                     "connection_tree": "tcv_shot",
                     "trees": [
                         {
-                            "tree_name": "tcv_shot",
+                            "data_source_name": "tcv_shot",
                             "versions": [
                                 {"first_shot": 85000},
                                 {"first_shot": 75000},
                             ],
                         },
                         {
-                            "tree_name": "static",
+                            "data_source_name": "static",
                             "versions": [
                                 {"version": 1},
                                 {"version": 2},
@@ -555,15 +555,15 @@ class TestCheckWorkerBatchInputConstruction:
     def test_static_signal_gets_all_version_check_shots(self):
         """Static tree signal should get all versions as check_shots."""
         signal = {
-            "tree_name": "static",
-            "node_path": "\\STATIC::TOP.MECHANICAL.COIL:R",
+            "data_source_name": "static",
+            "data_source_path": "\\STATIC::TOP.MECHANICAL.COIL:R",
             "discovery_source": "tree_traversal",
             "accessor": "TOP.MECHANICAL.COIL:R",
         }
         config = self._make_facility_config()
 
         # Build routing tables as check_worker does
-        mdsplus_config = config["data_sources"]["mdsplus"]
+        mdsplus_config = config["data_systems"]["mdsplus"]
         dap = config["data_access_patterns"]
         independent_trees = set(dap.get("independent_trees", []))
         tree_shots: dict[str, list[int]] = {}
@@ -575,9 +575,9 @@ class TestCheckWorkerBatchInputConstruction:
                 if v.get("first_shot") or v.get("version")
             ]
             if shots:
-                tree_shots[st["tree_name"]] = sorted(shots)
+                tree_shots[st["data_source_name"]] = sorted(shots)
 
-        tree_name, accessor, check_shots = _resolve_check_tree(
+        data_source_name, accessor, check_shots = _resolve_check_tree(
             signal,
             connection_tree="tcv_shot",
             independent_trees=independent_trees,
@@ -589,11 +589,11 @@ class TestCheckWorkerBatchInputConstruction:
         batch_entry = {
             "id": "tcv:static:/mechanical/coil/r",
             "accessor": accessor,
-            "tree_name": tree_name,
+            "data_source_name": data_source_name,
             "check_shots": check_shots,
         }
 
-        assert batch_entry["tree_name"] == "static"
+        assert batch_entry["data_source_name"] == "static"
         assert batch_entry["check_shots"] == [1, 2, 3]
         assert "shot" not in batch_entry
         assert "fallback_shots" not in batch_entry
@@ -601,14 +601,14 @@ class TestCheckWorkerBatchInputConstruction:
     def test_subtree_signal_gets_connection_tree_shots(self):
         """Subtree signal should get reference + connection tree version shots."""
         signal = {
-            "tree_name": "results",
-            "node_path": "\\RESULTS::THOMSON:NE",
+            "data_source_name": "results",
+            "data_source_path": "\\RESULTS::THOMSON:NE",
             "discovery_source": "tree_traversal",
             "accessor": "THOMSON:NE",
         }
         config = self._make_facility_config()
 
-        mdsplus_config = config["data_sources"]["mdsplus"]
+        mdsplus_config = config["data_systems"]["mdsplus"]
         dap = config["data_access_patterns"]
         independent_trees = set(dap.get("independent_trees", []))
         tree_shots: dict[str, list[int]] = {}
@@ -620,9 +620,9 @@ class TestCheckWorkerBatchInputConstruction:
                 if v.get("first_shot") or v.get("version")
             ]
             if shots:
-                tree_shots[st["tree_name"]] = sorted(shots)
+                tree_shots[st["data_source_name"]] = sorted(shots)
 
-        tree_name, accessor, check_shots = _resolve_check_tree(
+        data_source_name, accessor, check_shots = _resolve_check_tree(
             signal,
             connection_tree="tcv_shot",
             independent_trees=independent_trees,
@@ -630,21 +630,21 @@ class TestCheckWorkerBatchInputConstruction:
             reference_shot=85000,
         )
 
-        assert tree_name == "tcv_shot"
+        assert data_source_name == "tcv_shot"
         assert check_shots[0] == 85000  # Reference shot first
         assert 75000 in check_shots  # Fallback included
 
     def test_tdi_function_gets_reference_shot_only(self):
         """TDI function signals should only check at reference shot."""
         signal = {
-            "tree_name": None,
+            "data_source_name": None,
             "tdi_function": "tcv_eq",
             "discovery_source": "tdi_extraction",
             "accessor": 'tcv_eq("r_axis")',
         }
         config = self._make_facility_config()
 
-        mdsplus_config = config["data_sources"]["mdsplus"]
+        mdsplus_config = config["data_systems"]["mdsplus"]
         dap = config["data_access_patterns"]
         independent_trees = set(dap.get("independent_trees", []))
         tree_shots: dict[str, list[int]] = {}
@@ -656,9 +656,9 @@ class TestCheckWorkerBatchInputConstruction:
                 if v.get("first_shot") or v.get("version")
             ]
             if shots:
-                tree_shots[st["tree_name"]] = sorted(shots)
+                tree_shots[st["data_source_name"]] = sorted(shots)
 
-        tree_name, accessor, check_shots = _resolve_check_tree(
+        data_source_name, accessor, check_shots = _resolve_check_tree(
             signal,
             connection_tree="tcv_shot",
             independent_trees=independent_trees,
@@ -666,7 +666,7 @@ class TestCheckWorkerBatchInputConstruction:
             reference_shot=85000,
         )
 
-        assert tree_name == "tcv_shot"
+        assert data_source_name == "tcv_shot"
         assert check_shots == [85000]
 
 

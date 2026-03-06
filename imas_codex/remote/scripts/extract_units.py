@@ -12,12 +12,12 @@ Requirements:
 - MDSplus Python bindings
 
 Usage:
-    echo '{"tree_name": "static", "version": 8}' | python3 extract_units.py
-    echo '{"tree_name": "static", "version": 8, "offset": 500, "limit": 500}' | python3 extract_units.py
+    echo '{"data_source_name": "static", "version": 8}' | python3 extract_units.py
+    echo '{"data_source_name": "static", "version": 8, "offset": 500, "limit": 500}' | python3 extract_units.py
 
 Input (JSON on stdin):
     {
-        "tree_name": "static",
+        "data_source_name": "static",
         "version": 8,
         "node_types": ["NUMERIC", "SIGNAL"],
         "offset": 0,
@@ -98,7 +98,7 @@ def _extract_units_from_record(record, _depth: int = 0) -> str | None:
 
 
 def extract_units(
-    tree_name: str,
+    data_source_name: str,
     version: int,
     node_types: list[str] | None = None,
     offset: int = 0,
@@ -115,7 +115,7 @@ def extract_units(
     Green's function evaluation in static trees) via ``node.units``.
 
     Args:
-        tree_name: MDSplus tree name (e.g., "static")
+        data_source_name: MDSplus tree name (e.g., "static")
         version: Version number (tree opened with this as shot number)
         node_types: Node usage types to filter. Defaults to
             ["NUMERIC", "SIGNAL"].
@@ -131,7 +131,7 @@ def extract_units(
         node_types = ["NUMERIC", "SIGNAL"]
 
     try:
-        tree = MDSplus.Tree(tree_name, version, "readonly")
+        tree = MDSplus.Tree(data_source_name, version, "readonly")
     except Exception as e:
         return {"error": str(e)[:300], "version": version}
 
@@ -213,7 +213,7 @@ def main() -> None:
     # Read stdin BEFORE redirecting fds
     config = json.loads(sys.stdin.read())
 
-    tree_name = config["tree_name"]
+    data_source_name = config["data_source_name"]
     version = config.get("version", 1)
     node_types = sorted(config.get("node_types", ["NUMERIC", "SIGNAL"]))
     offset = config.get("offset", 0)
@@ -231,7 +231,7 @@ def main() -> None:
     os.close(devnull_fd)
 
     result = extract_units(
-        tree_name=tree_name,
+        data_source_name=data_source_name,
         version=version,
         node_types=node_types,
         offset=offset,

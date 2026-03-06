@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 def get_tdi_exclude_functions(facility: str) -> frozenset[str]:
     """Load TDI function exclusion set from facility config.
 
-    Reads data_sources.tdi.exclude_functions from the facility YAML config.
+    Reads data_systems.tdi.exclude_functions from the facility YAML config.
     Function names are case-insensitive (lowered on load).
 
     Args:
@@ -54,8 +54,8 @@ def get_tdi_exclude_functions(facility: str) -> frozenset[str]:
 
     try:
         config = get_facility(facility)
-        data_sources = config.get("data_sources", {})
-        tdi_config = data_sources.get("tdi", {})
+        data_systems = config.get("data_systems", {})
+        tdi_config = data_systems.get("tdi", {})
         excludes = tdi_config.get("exclude_functions", [])
         return frozenset(name.lower() for name in excludes)
     except Exception:
@@ -278,7 +278,7 @@ async def discover_tdi_signals(
 ) -> tuple[list[FacilitySignal], list[TDIFunctionMeta]]:
     """Discover signals from TDI functions.
 
-    Loads exclude_functions from facility config (data_sources.tdi.exclude_functions)
+    Loads exclude_functions from facility config (data_systems.tdi.exclude_functions)
     to filter out hardware/operational functions that don't return physics data.
 
     Args:

@@ -49,7 +49,7 @@ class TestTaskGroupsYAML:
         assert path.exists()
 
     def test_task_groups_has_required_groups(self, task_groups):
-        expected = {"signals", "wiki", "imas", "code", "facility", "trees"}
+        expected = {"signals", "wiki", "imas", "code", "facility", "data_sources"}
         assert set(task_groups.keys()) == expected
 
     def test_each_group_has_labels_and_description(self, task_groups):
@@ -232,9 +232,9 @@ class TestSchemaFor:
     def test_schema_for_specific_labels(self):
         from imas_codex.graph.schema_context import schema_for
 
-        result = schema_for("Facility", "MDSplusTree")
+        result = schema_for("Facility", "DataSource")
         assert "Facility" in result
-        assert "MDSplusTree" in result
+        assert "DataSource" in result
         # Should not contain unrelated labels as section headers
         assert "## WikiChunk" not in result
 

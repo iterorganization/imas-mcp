@@ -22,7 +22,7 @@ or reduce LLM enrichment, potentially saving >80% of enrichment cost for
 well-documented facilities.
 
 Config: Activated for any facility with wiki_sites configured.
-Not a data_sources key — added automatically by get_scanners_for_facility().
+Not a data_systems key — added automatically by get_scanners_for_facility().
 """
 
 from __future__ import annotations
@@ -45,7 +45,7 @@ from imas_codex.graph.models import (
 logger = logging.getLogger(__name__)
 
 # MDSplus path pattern with capturing groups for table parsing.
-# Captures (tree, node_path) — distinct from entity_extraction.MDSPLUS_PATH_PATTERN
+# Captures (tree, data_source_path) — distinct from entity_extraction.MDSPLUS_PATH_PATTERN
 # which matches the full path without groups.
 _MDS_PATH_PATTERN = re.compile(
     r"\\\\?(\w+)::(\w+(?:[:.]\w+)*)",  # \TREE::SUBTREE:NODE or \TREE::SUB.NODE
@@ -77,11 +77,11 @@ def _extract_signals_from_chunk(
         if not mds_matches:
             continue
 
-        for tree, node_path in mds_matches:
-            full_path = f"\\{tree}::{node_path}"
+        for tree, data_source_path in mds_matches:
+            full_path = f"\\{tree}::{data_source_path}"
 
             # Extract the signal name from the node path
-            name = node_path.split(":")[-1].split(".")[-1]
+            name = data_source_path.split(":")[-1].split(".")[-1]
 
             # Look for description text in the same line
             # Remove the path itself and common separators
@@ -403,8 +403,8 @@ class WikiScanner:
                     name=name,
                     accessor=accessor,
                     data_access=f"{facility}:mdsplus:tree",
-                    tree_name=tree,
-                    node_path=path_key,
+                    data_source_name=tree,
+                    data_source_path=path_key,
                     unit=units or None,
                     description=description or None,
                     discovery_source="wiki_extraction",

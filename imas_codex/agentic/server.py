@@ -158,7 +158,7 @@ def _generate_api_reference() -> str:
             "  wiki_page_chunks(title_contains, facility=, text_contains=, limit=50)",
             "  find_signals(query, facility=, diagnostic=, physics_domain=, limit=20)",
             "  find_imas(query) | find_code(query, facility=, limit=10)",
-            "  find_tree_nodes(query, facility=, tree_name=)",
+            "  find_data_nodes(query, facility=, data_source_name=)",
             "  map_signals_to_imas(facility, diagnostic=, physics_domain=)",
             "  facility_overview(facility)",
             "  graph_search(label, where={}, semantic=, traverse=[], return_props=[], limit=25)",
@@ -262,7 +262,7 @@ def _init_repl() -> dict[str, Any]:
 
         Examples:
             query('MATCH (f:Facility) RETURN f.id, f.name')
-            query('MATCH (t:TreeNode {tree_name: $tree}) RETURN t.path LIMIT 10', tree='results')
+            query('MATCH (t:DataNode {data_source_name: $tree}) RETURN t.path LIMIT 10', tree='results')
         """
         return gc.query(cypher, **params)
 
@@ -411,7 +411,7 @@ def _init_repl() -> dict[str, Any]:
         """Get comprehensive facility info including graph state.
 
         Loads the full facility config validated against the LinkML schema
-        (FacilityConfig model) so all typed fields (data_sources, data_systems,
+        (FacilityConfig model) so all typed fields (data_systems, data_systems,
         data_access_patterns, wiki_sites, etc.) are included.
 
         Args:
@@ -445,7 +445,7 @@ def _init_repl() -> dict[str, Any]:
                 OPTIONAL MATCH (a:AnalysisCode)-[:AT_FACILITY]->(f)
                 OPTIONAL MATCH (d:Diagnostic)-[:AT_FACILITY]->(f)
                 OPTIONAL MATCH (t:TDIFunction)-[:AT_FACILITY]->(f)
-                OPTIONAL MATCH (m:MDSplusTree)-[:AT_FACILITY]->(f)
+                OPTIONAL MATCH (m:DataSource)-[:AT_FACILITY]->(f)
                 RETURN
                     count(DISTINCT a) AS analysis_codes,
                     count(DISTINCT d) AS diagnostics,
@@ -490,8 +490,8 @@ def _init_repl() -> dict[str, Any]:
             # Get MDSplus tree coverage
             trees = gc.query(
                 """
-                MATCH (t:MDSplusTree)-[:AT_FACILITY]->(f:Facility {id: $fid})
-                OPTIONAL MATCH (n:TreeNode {tree_name: t.name})-[:AT_FACILITY]->(f)
+                MATCH (t:DataSource)-[:AT_FACILITY]->(f:Facility {id: $fid})
+                OPTIONAL MATCH (n:DataNode {data_source_name: t.name})-[:AT_FACILITY]->(f)
                 RETURN t.name AS tree,
                        t.node_count_total AS total,
                        count(DISTINCT n) AS ingested
@@ -557,12 +557,12 @@ def _init_repl() -> dict[str, Any]:
         return targets[:limit]
 
     def get_tree_structure(
-        tree_name: str, path_prefix: str = "", limit: int = 50
+        data_source_name: str, path_prefix: str = "", limit: int = 50
     ) -> list[dict[str, Any]]:
-        """Get TreeNode structure from the graph.
+        """Get DataNode structure from the graph.
 
         Args:
-            tree_name: MDSplus tree name (e.g., 'results', 'magnetics')
+            data_source_name: MDSplus tree name (e.g., 'results', 'magnetics')
             path_prefix: Optional path prefix to filter
             limit: Maximum nodes to return
 
@@ -572,27 +572,27 @@ def _init_repl() -> dict[str, Any]:
         if path_prefix:
             return gc.query(
                 """
-                MATCH (n:TreeNode {tree_name: $tree})
+                MATCH (n:DataNode {data_source_name: $tree})
                 WHERE n.path STARTS WITH $prefix
                 RETURN n.path AS path, n.description AS description,
                        n.unit AS unit, n.physics_domain AS domain
                 ORDER BY n.path
                 LIMIT $limit
                 """,
-                tree=tree_name,
+                tree=data_source_name,
                 prefix=path_prefix,
                 limit=limit,
             )
         else:
             return gc.query(
                 """
-                MATCH (n:TreeNode {tree_name: $tree})
+                MATCH (n:DataNode {data_source_name: $tree})
                 RETURN n.path AS path, n.description AS description,
                        n.unit AS unit, n.physics_domain AS domain
                 ORDER BY n.path
                 LIMIT $limit
                 """,
-                tree=tree_name,
+                tree=data_source_name,
                 limit=limit,
             )
 
@@ -982,7 +982,7 @@ def _init_repl() -> dict[str, Any]:
     wiki_page_chunks = _bind_dq(_dq.wiki_page_chunks)
     find_imas = _bind_dq(_dq.find_imas)
     find_code = _bind_dq(_dq.find_code)
-    find_tree_nodes = _bind_dq(_dq.find_tree_nodes)
+    find_data_nodes = _bind_dq(_dq.find_data_nodes)
     map_signals_to_imas = _bind_dq(_dq.map_signals_to_imas)
     facility_overview = _bind_dq(_dq.facility_overview)
     graph_search = _bind_dq(_graph_search)
@@ -1006,7 +1006,7 @@ def _init_repl() -> dict[str, Any]:
                 ("wiki_page_chunks", wiki_page_chunks),
                 ("find_code", find_code),
                 ("find_imas", find_imas),
-                ("find_tree_nodes", find_tree_nodes),
+                ("find_data_nodes", find_data_nodes),
                 ("map_signals_to_imas", map_signals_to_imas),
                 ("facility_overview", facility_overview),
             ],
@@ -1362,7 +1362,7 @@ class AgentsServer:
 
             Special handling:
             - CodeFile: Auto-deduplicates already discovered/ingested files
-            - TreeNode: Auto-creates TREE_NAME and ACCESSOR_FUNCTION relationships
+            - DataNode: Auto-creates TREE_NAME and ACCESSOR_FUNCTION relationships
             - FacilityPath: Links to parent Facility
 
             Args:
