@@ -68,10 +68,10 @@ def chunk_code(
 
         # If adding this child would exceed max_chars and we have content, flush
         if current_chars + child_chars > max_chars and current_lines:
-            chunk_text = "\n".join(current_lines)
+            joined = "\n".join(current_lines)
             chunks.append(
                 Chunk(
-                    text=chunk_text,
+                    text=joined,
                     start_line=current_start,
                     end_line=current_start + len(current_lines) - 1,
                 )
@@ -82,14 +82,47 @@ def chunk_code(
             current_lines = list(overlap)
             current_chars = sum(len(line) for line in current_lines)
 
+        # If a single AST node exceeds max_chars, sub-chunk it via text
+        # splitting to prevent oversized chunks from reaching the embedder.
+        if child_chars > max_chars:
+            sub_chunks = chunk_text(
+                child_text,
+                chunk_size=max_chars,
+                chunk_overlap=chunk_lines_overlap * 60,
+            )
+            for sc in sub_chunks:
+                # Flush any accumulated content first
+                if current_lines:
+                    joined = "\n".join(current_lines)
+                    chunks.append(
+                        Chunk(
+                            text=joined,
+                            start_line=current_start,
+                            end_line=current_start + len(current_lines) - 1,
+                        )
+                    )
+                    current_start = current_start + len(current_lines)
+                    current_lines = []
+                    current_chars = 0
+                chunks.append(
+                    Chunk(
+                        text=sc.text,
+                        start_line=current_start + sc.start_line,
+                        end_line=current_start + sc.end_line,
+                    )
+                )
+            # Advance start past the sub-chunked node
+            current_start += len(child_lines)
+            continue
+
         current_lines.extend(child_lines)
         current_chars += child_chars
 
     if current_lines:
-        chunk_text = "\n".join(current_lines)
+        joined = "\n".join(current_lines)
         chunks.append(
             Chunk(
-                text=chunk_text,
+                text=joined,
                 start_line=current_start,
                 end_line=current_start + len(current_lines) - 1,
             )

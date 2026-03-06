@@ -48,6 +48,17 @@ ProgressCallback = Callable[[int, int, str], None]
 # With 1024-dim embeddings, 32 chunks ≈ 320KB text → ~1 GiB GPU memory.
 MAX_CHUNKS_PER_EMBED = 32
 
+# Maximum character length for text sent to the embedding model.
+# Qwen3-Embedding-0.6B supports 32K tokens (~100K chars) but a 16 GiB GPU
+# OOMs on sequences beyond ~8K tokens due to O(n²) attention memory.
+# 8192 tokens × ~4 chars/token ≈ 32K chars is a safe ceiling.
+MAX_EMBED_CHARS = 32_000
+
+
+def _truncate_for_embedding(texts: list[str]) -> list[str]:
+    """Truncate texts to MAX_EMBED_CHARS to prevent GPU OOM on long sequences."""
+    return [t[:MAX_EMBED_CHARS] if len(t) > MAX_EMBED_CHARS else t for t in texts]
+
 
 def _embed_chunks_safe(
     encoder: "Encoder",
@@ -57,7 +68,9 @@ def _embed_chunks_safe(
     """Embed chunks in sub-batches with OOM-aware retry.
 
     Splits large embedding requests into sub-batches to fit in GPU memory.
-    On CUDA OOM, halves the sub-batch size and retries (down to 1 chunk).
+    Truncates overly long texts before embedding. On CUDA OOM, halves
+    the sub-batch size and retries. Single-chunk OOMs skip only that
+    chunk (zero vector) instead of failing the entire batch.
 
     Args:
         encoder: Encoder instance (local or remote)
@@ -65,23 +78,26 @@ def _embed_chunks_safe(
         max_per_call: Maximum chunks per embedding call
 
     Returns:
-        Numpy array of embeddings
-
-    Raises:
-        RuntimeError: If embedding fails even at batch size 1
+        Numpy array of embeddings (zero vectors for skipped chunks)
     """
     if not chunk_texts:
         return np.array([])
 
+    # Truncate oversized texts before sending to embedding model
+    chunk_texts = _truncate_for_embedding(chunk_texts)
+
     all_embeddings: list[np.ndarray] = []
     i = 0
     current_batch = max_per_call
+    dim: int | None = None
 
     while i < len(chunk_texts):
         batch = chunk_texts[i : i + current_batch]
         try:
             emb = encoder.embed_texts(batch)
             all_embeddings.append(emb)
+            if dim is None:
+                dim = emb.shape[1]
             i += len(batch)
             # Gradually restore batch size after success
             if current_batch < max_per_call:
@@ -106,11 +122,19 @@ def _embed_chunks_safe(
                     )
                     continue
                 else:
-                    logger.error(
-                        "OOM embedding single chunk (%d chars), skipping",
+                    # Single chunk OOM — skip it with a zero vector and continue
+                    logger.warning(
+                        "OOM embedding single chunk (%d chars), inserting zero vector",
                         len(batch[0]),
                     )
-                    raise
+                    if dim is None:
+                        from imas_codex.settings import get_embedding_dimension
+
+                        dim = get_embedding_dimension()
+                    all_embeddings.append(np.zeros((1, dim), dtype=np.float32))
+                    i += 1
+                    current_batch = max_per_call
+                    continue
             else:
                 raise
 
