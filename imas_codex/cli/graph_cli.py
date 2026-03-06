@@ -2362,11 +2362,14 @@ def _dispatch_graph_quality(git_info: dict, version_tag: str, registry: str) -> 
     owner = git_info.get("remote_owner", "iterorganization")
     repo = "imas-codex"
 
-    payload = json.dumps(
+    body = json.dumps(
         {
-            "tag": version_tag,
-            "registry": registry,
-            "commit": git_info.get("commit", ""),
+            "event_type": "graph-pushed",
+            "client_payload": {
+                "tag": version_tag,
+                "registry": registry,
+                "commit": git_info.get("commit", ""),
+            },
         }
     )
 
@@ -2376,11 +2379,12 @@ def _dispatch_graph_quality(git_info: dict, version_tag: str, registry: str) -> 
                 "gh",
                 "api",
                 f"repos/{owner}/{repo}/dispatches",
-                "-f",
-                "event_type=graph-pushed",
-                "-f",
-                f"client_payload={payload}",
+                "--method",
+                "POST",
+                "--input",
+                "-",
             ],
+            input=body,
             capture_output=True,
             text=True,
             timeout=15,
