@@ -150,235 +150,168 @@ All of these are *data* sources. The `data_` prefix groups them correctly and di
 
 Auto-generated from schema, no manual change needed — just rebuild after schema update.
 
-## Static Value Properties on DataNode
+## Static Value Storage on DataNode
 
-The `DataNode` schema gains explicit typed properties for storing static/immutable values (machine geometry, hardware configuration). These are populated by scanners when the data is static and should be preserved in the graph — either for offline facilities (JET) or for static trees (TCV).
+DataNode stores source-native property names and values as-is. No cross-facility property standardization in the schema — IMAS mappings (`MAPS_TO_IMAS`) are the standardization layer.
 
-### Design Rationale
+### Why Free-Form Properties (not Typed Schema Slots)
 
-Why explicit typed properties instead of a JSON blob or ad-hoc properties:
-1. **Schema-visible** — `get_graph_schema()` exposes them to agents automatically
-2. **Pydantic-validated** — generated model catches type errors at ingest time
-3. **Cypher-queryable** — `WHERE n.r > 4.0 AND n.z < 1.0` without JSON parsing
-4. **Cross-facility** — same property names map the same physics across JET XML, TCV static trees, future facilities
+The previous iteration proposed 25+ explicit typed properties (`r`, `z`, `turns`, `resistance`, `nominal_current`, etc.) to create a unified cross-facility vocabulary. This was premature standardization:
 
-### Field Inventory (SSH-verified)
+1. **Duplication** — JET calls it `dr`/`dz`, TCV stores `W`/`H` for the same physics. A unified schema needs both, or lossy renaming (`turnsperelement` → `turns` loses provenance).
+2. **IMAS already solves this** — The `MAPS_TO_IMAS` relationship IS the crosswalk. JET's `turnsperelement=6` and TCV's `N=6` both map to `pf_active.coil[:].element[:].turns_with_sign`. No intermediate vocabulary needed.
+3. **Unbounded growth** — Every new facility adds its own naming conventions. A typed schema requires a code change + model rebuild for each. Free-form properties just appear.
+4. **Neo4j supports it** — `SET n += item` writes arbitrary properties. Cypher queries work on any property: `WHERE n.turnsperelement > 4` or `WHERE n.ANG < 90`.
 
-**JET device XML sub-elements** (332 instances × 10 sections × 4 distinct XMLs):
+### How It Works
+
+**Schema defines structure, not values.** The DataNode schema keeps its structural slots (`id`, `facility_id`, `path`, `node_type`, `status`, `description`, `embedding`, etc.) but does NOT define slots for physics values like `r`, `z`, `turns`.
+
+**Scanners write source-native properties via `SET n += item`.** The Pydantic model uses `model_config = ConfigDict(extra="allow")` so arbitrary key-value pairs pass through validation and land on the Neo4j node:
+
+```python
+# JET XML scanner writes source field names as-is
+DataNode(
+    id="jet:device_xml:magprobes:H302",
+    facility_id="jet",
+    path="magprobes/H302",
+    status=DataNodeStatus.discovered,
+    # Source-native values — NOT in the LinkML schema
+    r=4.292,
+    z=0.604,
+    angle=-74.1,
+    abs_error=0.005,
+    rel_error=0.002,
+)
+
+# TCV static tree scanner writes MDSplus field names as-is
+DataNode(
+    id="tcv:static:COIL:OH1:R",
+    facility_id="tcv",
+    path="\\STATIC::TOP.COIL.OH1:R",
+    status=DataNodeStatus.discovered,
+    # Source-native values
+    static_value=[0.243, 0.243, 0.243, ...],  # array of R per element
+)
+```
+
+**IMAS mappings provide the crosswalk:**
+
+```
+(jet:magprobes:H302 {r: 4.292})
+    -[:MAPS_TO_IMAS]-> (magnetics.flux_loop[:].position.r)
+
+(tcv:static:COIL:OH1:R {static_value: [0.243, ...]})
+    -[:MAPS_TO_IMAS]-> (pf_active.coil[:].element[:].geometry.rectangle.r)
+```
+
+An agent asking "what is the major radius of JET's H302 probe?" can:
+1. Query the DataNode directly: `WHERE n.r = 4.292` (source-native)
+2. Query via IMAS: find all nodes mapping to `magnetics.flux_loop[:].position.r`
+
+Both paths work. The first uses facility-specific knowledge, the second uses IMAS as lingua franca. Neither requires a pre-standardized property vocabulary.
+
+### Schema Additions (Minimal)
+
+Only two properties are added to the DataNode LinkML schema — both are generic containers, not physics-specific:
+
+```yaml
+static_value:
+  description: >-
+    Scalar or array value for static/immutable data. Populated by scanners
+    for nodes whose values never change across shots. The property name
+    on the Neo4j node may be the source-native field name (r, z, ANG, etc.)
+    rather than this generic slot — see extra properties below.
+  range: float
+
+static_values:
+  description: >-
+    Array of float values for static data with multiple elements.
+    Used when the node represents a collection (e.g., R positions of
+    all coil elements). Source-native names are preferred when available.
+  multivalued: true
+  range: float
+```
+
+All other properties (`r`, `z`, `angle`, `turnsperelement`, `ANG`, `XSECT`, `INOM`, etc.) are written as extra properties via `SET n += item`. They exist on the Neo4j node but not in the LinkML schema.
+
+### Pydantic Extra Properties
+
+The generated DataNode model must allow extra fields:
+
+```python
+class DataNode(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    id: str
+    facility_id: str
+    path: str
+    status: DataNodeStatus
+    # ... structural fields ...
+    static_value: float | None = None
+    static_values: list[float] | None = None
+    # Extra fields (r, z, angle, turnsperelement, etc.) pass through
+```
+
+The `create_nodes()` method already handles this — `item.model_dump()` includes extra fields, and `SET n += item` writes them all to Neo4j.
+
+### What Agents See
+
+Agents discover available properties through graph queries, not through the schema:
+
+```cypher
+-- "What properties exist on JET magprobe nodes?"
+MATCH (n:DataNode {facility_id: 'jet'})
+WHERE n.path STARTS WITH 'magprobes/'
+RETURN keys(n) AS properties LIMIT 1
+-- → [id, facility_id, path, status, r, z, angle, abs_error, rel_error]
+```
+
+The `get_graph_schema()` MCP tool shows the structural properties. Source-native value properties are discoverable only from the graph data itself — which is correct, because they vary by facility and scanner.
+
+### Field Inventory (Reference)
+
+For scanner implementors, here are the source-native field names observed at each facility. Scanners should preserve these names exactly.
+
+**JET device XML** (332 instances × 10 sections × 4 distinct XMLs):
 
 | Section | Fields | Types |
 |---------|--------|-------|
-| magprobes (191) | r, z, angle, abs_error, rel_error | float scalars |
-| flux (36) | r, z, dphi, abs_error, rel_error | float scalars |
-| pfcoils (22) | r, z, dr, dz, turnsperelement, abs_error, rel_error | float/float arrays (multi-element coils have space-separated values) |
-| pfcircuits (16) | coil_connect, supply_connect | int lists (topology) |
-| pfsupplies (16) | abs_error, rel_error | float scalars |
-| toroidalfield (1) | abs_error, rel_error | float scalars |
-| plasmacurrent (1) | abs_error, rel_error | float scalars |
-| diamagneticflux (1) | abs_error, rel_error | float scalars |
-| pfpassive (48) | r, z, dr, dz, ang1, ang2, resistance, abs_error, rel_error | float scalars |
+| magprobes (191) | r, z, angle, abs_error, rel_error | float |
+| flux (36) | r, z, dphi, abs_error, rel_error | float |
+| pfcoils (22) | r, z, dr, dz, turnsperelement, abs_error, rel_error | float (space-separated for multi-element) |
+| pfcircuits (16) | coil_connect, supply_connect | int list |
+| pfsupplies (16) | abs_error, rel_error | float |
+| toroidalfield (1) | abs_error, rel_error | float |
+| plasmacurrent (1) | abs_error, rel_error | float |
+| diamagneticflux (1) | abs_error, rel_error | float |
+| pfpassive (48) | r, z, dr, dz, ang1, ang2, resistance, abs_error, rel_error | float |
 
-Instance-level attributes (metadata, not values): `id`, `archive`, `file`, `owner`, `seq`, `signal`, `status`, `factor`
+Instance attributes (metadata): `id`, `archive`, `file`, `owner`, `seq`, `signal`, `status`, `factor`
 
-**TCV static tree** (`\STATIC::` NUMERIC nodes in graph — 34,082 FacilitySignals via `tcv:mdsplus:static` DataAccess):
+**TCV static tree** (`\STATIC::`, 1048 NUMERIC nodes, 34,082 FacilitySignals):
 
 | Category | Leaf fields | Types |
 |----------|-------------|-------|
-| COIL (18 nodes) | R, Z, A, B, D, W, H, ANG, N, NA, NB, NT, RHO, XSECT, INOM, UNOM, TRANSI, TRANSU | float arrays (per-coil), shape varies |
+| COIL (18) | R, Z, A, B, D, W, H, ANG, N, NA, NB, NT, RHO, XSECT, INOM, UNOM, TRANSI, TRANSU | float arrays |
 | ACTIVE_COIL (5) | INOM, UNOM, N, TRANSI, TRANSU | float arrays |
 | FLUX_LOOP (8) | R, Z, A, B, D, N, ANG | float arrays |
 | FLUX_LOOP_3D (9) | R, Z, A, B, D, N, ANG, PHI | float arrays |
-| VESSEL (24) | R, Z, A, B, D, N, ANG, RHO, W, S, PERIM, XSECT, R:IN, Z:IN, R:OUT, Z:OUT, PP:BREAKS, PP:COEFS | float arrays, nested structure |
-| VESSEL_EXP (11) | R, Z, A, B, D, N, RHO, W, S, PERIM, XSECT | float arrays |
-| TILES (8+) | R, Z, ANG, N, PERIM, S, PP:BREAKS, PP:COEFS | float arrays |
+| VESSEL (24) | R, Z, A, B, D, N, ANG, RHO, W, S, PERIM, XSECT | float arrays |
 | SLOOP (9) | R, Z, A, B, D, N, ANG, PHI, TRANSU | float arrays |
 | WINDING (9) | R, Z, A, B, D, N, ANG, RHO, XSECT | float arrays |
-| MESH/COARSE_MESH/FAR_MESH/FBT_MESH (15 each) | R, Z, A, B, D, N, NA, NB, RHO, MESH | float arrays |
-| PP_* probes (26 coil names × 8 each) | BREAKS, COEFS, IN, OUT, IN:BREAKS, IN:COEFS, OUT:BREAKS, OUT:COEFS | float arrays (magnetic probe transfer functions) |
-| Greens matrix nodes | VAL, PRE | float matrices (require libjmmshr_gsl.so) |
+| PP_* probes (208) | BREAKS, COEFS, IN, OUT | float arrays (transfer functions) |
+| MESH variants (60) | R, Z, A, B, D, N, NA, NB, RHO, MESH | float arrays |
 
-### Proposed DataNode Schema Additions
+### What NOT to Store as Properties
 
-Properties are grouped by physics category. All are optional (nullable) — only populated for nodes where the value is static/immutable.
+Large or computed data stays catalog-only (accessible via `DataAccess` templates, not stored on nodes):
 
-```yaml
-# === Geometry: Position ===
-r:
-  description: >-
-    Major radius position [m]. Scalar for probes/loops, array for
-    multi-element coils. JET: device XML r sub-element. TCV: COIL:VAL:R.
-  range: float
-z:
-  description: >-
-    Vertical position [m]. Same dimensionality as r.
-  range: float
-phi:
-  description: >-
-    Toroidal angle [rad]. For 3D flux loops, saddle coils.
-    TCV: FLUX_LOOP_3D:VAL:PHI, SLOOP:VAL:PHI.
-  range: float
-
-# === Geometry: Extent ===
-dr:
-  description: >-
-    Radial extent/width [m]. For rectangular cross-section elements
-    (PF coils, passive structures). JET: pfcoils/pfpassive dr.
-  range: float
-dz:
-  description: >-
-    Vertical extent/height [m]. JET: pfcoils/pfpassive dz.
-  range: float
-width:
-  description: >-
-    Element width [m]. TCV: COIL:VAL:W, VESSEL:VAL:W.
-  range: float
-height:
-  description: >-
-    Element height [m]. TCV: COIL:VAL:H.
-  range: float
-cross_section:
-  description: >-
-    Cross-sectional area [m²]. TCV: COIL:VAL:XSECT, VESSEL:VAL:XSECT.
-  range: float
-perimeter:
-  description: >-
-    Perimeter length [m]. TCV: VESSEL:VAL:PERIM, TILES:VAL:PERIM.
-  range: float
-surface:
-  description: >-
-    Surface area [m²]. TCV: VESSEL:VAL:S, TILES:VAL:S.
-  range: float
-
-# === Geometry: Orientation ===
-angle:
-  description: >-
-    Orientation angle [deg]. JET magprobes: probe tilt. TCV: COIL:VAL:ANG.
-    For multiple angles, use angle, angle_2 convention or store as array.
-  range: float
-angle_2:
-  description: >-
-    Second orientation angle [deg]. JET pfpassive has ang1 + ang2.
-  range: float
-dphi:
-  description: >-
-    Toroidal angular extent. JET flux loops: dphi in units of pi.
-  range: float
-
-# === Electrical ===
-turns:
-  description: >-
-    Number of turns per element. JET: pfcoils turnsperelement.
-    TCV: COIL:VAL:N, ACTIVE_COIL:VAL:N (array per coil).
-  range: float
-resistance:
-  description: >-
-    Electrical resistance [Ohm]. JET: pfpassive resistance.
-    TCV: via COIL:VAL:RHO (resistivity).
-  range: float
-resistivity:
-  description: >-
-    Electrical resistivity [Ohm·m]. TCV: COIL:VAL:RHO, VESSEL:VAL:RHO.
-  range: float
-nominal_current:
-  description: >-
-    Nominal operating current [A]. TCV: COIL:VAL:INOM, ACTIVE_COIL:VAL:INOM.
-  range: float
-nominal_voltage:
-  description: >-
-    Nominal operating voltage [V]. TCV: COIL:VAL:UNOM, ACTIVE_COIL:VAL:UNOM.
-  range: float
-
-# === Error/Uncertainty ===
-abs_error:
-  description: >-
-    Absolute measurement uncertainty. JET: all sections have abs_error.
-  range: float
-rel_error:
-  description: >-
-    Relative measurement uncertainty [fraction]. JET: all sections have rel_error.
-  range: float
-
-# === Topology (connectivity) ===
-coil_ids:
-  description: >-
-    Connected coil indices (circuit topology). JET: pfcircuits coil_connect.
-    Stored as integer list.
-  multivalued: true
-  range: integer
-supply_ids:
-  description: >-
-    Connected supply indices (circuit topology). JET: pfcircuits supply_connect.
-  multivalued: true
-  range: integer
-
-# === Transfer Functions ===
-transfer_current:
-  description: >-
-    Current transfer function coefficient. TCV: COIL/ACTIVE_COIL:VAL:TRANSI.
-  range: float
-transfer_voltage:
-  description: >-
-    Voltage transfer function coefficient. TCV: COIL/ACTIVE_COIL:VAL:TRANSU.
-  range: float
-transfer_inverse:
-  description: >-
-    Inverse transfer function. TCV: CRS_SEG:VAL:TRANSINV.
-  range: float
-
-# === Scaling/Calibration ===
-factor:
-  description: >-
-    Scaling factor for measurement. JET: instance attribute 'factor'
-    on pfsupplies, toroidalfield, diamagneticflux.
-  range: float
-
-# === Generic Scalar Fallback ===
-scalar_value:
-  description: >-
-    Generic scalar value for static data that doesn't fit named properties.
-    Use named properties (r, z, turns, etc.) whenever possible.
-    This is a fallback for facility-specific fields that appear rarely.
-  range: float
-```
-
-### Array-Valued Properties
-
-Many TCV static tree values are arrays (e.g., `COIL:VAL:R` has shape `(32,)` — one R value per coil). Neo4j supports `multivalued: true` for list properties, but this creates complications:
-
-- **Schema**: Each property would need both scalar and array variants, or always be `multivalued`
-- **Queries**: `WHERE n.r > 4.0` doesn't work on arrays; need `ANY(x IN n.r WHERE x > 4.0)`
-- **IMAS mapping**: Array indices map to IMAS array indices (e.g., `pf_active.coil[i].element[j].geometry.rectangle.r`)
-
-**Recommendation**: Store scalars as scalar properties. For array data, store only when the node represents a single element (JET magprobe #1: `r=4.292`) not when it represents the whole collection. TCV `COIL:VAL:R` is a collection node — its children are individual coils that get scalar `r` values.
-
-When a node genuinely represents an array (e.g., a limiter contour R,Z profile), use `multivalued: true`:
-
-```yaml
-r_contour:
-  description: >-
-    Array of R values defining a contour [m].
-    Used for limiter outlines, vessel cross-sections.
-  multivalued: true
-  range: float
-z_contour:
-  description: >-
-    Array of Z values defining a contour [m].
-    Parallel array to r_contour.
-  multivalued: true
-  range: float
-```
-
-### Properties NOT Added to Schema
-
-These exist in the source data but are stored as DataNode metadata or relationships, not as typed value properties:
-
-| Field | Why Not a Value Property | Where It Goes |
-|-------|------------------------|---------------|
-| `archive`, `file`, `owner`, `seq`, `signal`, `status` | JET PPF routing metadata, not physics values | DataNode.description or custom metadata property |
-| `BREAKS`, `COEFS` | Spline coefficients — large arrays, not queried by value | Store if needed as `multivalued` blob, but likely catalog-only (DataAccess) |
-| Greens matrices (`VAL`, `PRE`) | Large float matrices, computed on-demand | Catalog-only — `DataAccess` template shows how to compute |
-| `MESH` grid data | Computational mesh, not measurement geometry | Catalog-only |
-| `DIM` labels | Text metadata describing array dimensions | DataNode.description |
+| Data | Why Not a Property | Access Via |
+|------|--------------------|------------|
+| Greens matrices | Float matrices, too large for node properties | `DataAccess` template |
+| Spline coefficients (BREAKS/COEFS) | Large arrays, queried as pairs not individually | `DataAccess` template |
+| Computational meshes | Grid data, not scalar metadata | `DataAccess` template |
 
 ## Format-Specific Properties
 
