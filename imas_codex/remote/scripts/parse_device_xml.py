@@ -57,7 +57,27 @@ import xml.etree.ElementTree as ET
 
 
 def git_show(git_repo: str, path: str) -> bytes:
-    """Read a file from a bare git repo via git show."""
+    """Read a file from a bare git repo via git show, resolving symlinks."""
+    # Check if the path is a symlink (git mode 120000)
+    ls_result = subprocess.run(
+        ["git", "-C", git_repo, "ls-tree", "HEAD", path],
+        capture_output=True,
+        timeout=30,
+    )
+    if ls_result.returncode == 0 and ls_result.stdout:
+        mode = ls_result.stdout.split()[0].decode()
+        if mode == "120000":
+            # Symlink — read target and resolve relative to parent dir
+            target_result = subprocess.run(
+                ["git", "-C", git_repo, "show", f"HEAD:{path}"],
+                capture_output=True,
+                timeout=30,
+            )
+            target = target_result.stdout.decode().strip()
+            parent = "/".join(path.split("/")[:-1])
+            resolved = f"{parent}/{target}" if parent else target
+            path = resolved
+
     result = subprocess.run(
         ["git", "-C", git_repo, "show", f"HEAD:{path}"],
         capture_output=True,
