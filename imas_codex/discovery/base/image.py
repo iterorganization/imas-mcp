@@ -626,7 +626,8 @@ async def score_images_batch(
     """Score a batch of images using VLM with structured output.
 
     Sends image bytes + context to VLM and receives caption + scoring
-    in a single pass. Uses ImageScoreBatch Pydantic model.
+    in a single pass. Uses ImageScoreBatch Pydantic model via the
+    centralized acall_llm_structured() infrastructure.
 
     Args:
         images: List of image dicts with id, image_data, page_title, etc.
@@ -640,27 +641,12 @@ async def score_images_batch(
     Returns:
         (results, cost) tuple
     """
-    import os
-    import re
-
-    from imas_codex.discovery.base.llm import set_litellm_offline_env
-
-    set_litellm_offline_env()
-    import litellm
-
     from imas_codex.agentic.prompt_loader import render_prompt
+    from imas_codex.discovery.base.llm import acall_llm_structured
     from imas_codex.discovery.wiki.models import (
         ImageScoreBatch,
         grounded_image_score,
     )
-
-    api_key = os.environ.get("OPENROUTER_API_KEY")
-    if not api_key:
-        raise ValueError("OPENROUTER_API_KEY environment variable not set.")
-
-    model_id = model
-    if not model_id.startswith("openrouter/"):
-        model_id = f"openrouter/{model_id}"
 
     # Build system prompt
     context: dict[str, Any] = {}
@@ -713,104 +699,23 @@ async def score_images_batch(
         }
     )
 
-    # Retry loop
-    max_retries = 5
-    retry_base_delay = 4.0
-    last_error = None
-    total_cost = 0.0
-
-    from imas_codex.discovery.base.llm import (
-        _supports_cache_control,
-        inject_cache_control,
-    )
-
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_content},
     ]
-    if _supports_cache_control(model):
-        messages = inject_cache_control(messages)
 
-    for attempt in range(max_retries):
-        try:
-            response = await litellm.acompletion(
-                model=model_id,
-                api_key=api_key,
-                response_format=ImageScoreBatch,
-                messages=messages,
-                temperature=0.3,
-                max_tokens=32000,
-                timeout=180,
-            )
+    batch, total_cost, _ = await acall_llm_structured(
+        model=model,
+        messages=messages,
+        response_model=ImageScoreBatch,
+        max_tokens=32000,
+        temperature=0.3,
+        timeout=180,
+        max_retries=5,
+        retry_base_delay=4.0,
+    )
 
-            input_tokens = response.usage.prompt_tokens
-            output_tokens = response.usage.completion_tokens
-
-            if (
-                hasattr(response, "_hidden_params")
-                and "response_cost" in response._hidden_params
-            ):
-                cost = response._hidden_params["response_cost"]
-            else:
-                cost = (input_tokens * 3 + output_tokens * 15) / 1_000_000
-
-            total_cost += cost
-
-            content = response.choices[0].message.content
-            if not content:
-                return [], total_cost
-
-            content = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", content)
-            content = content.encode("utf-8", errors="surrogateescape").decode(
-                "utf-8", errors="replace"
-            )
-
-            batch = ImageScoreBatch.model_validate_json(content)
-            llm_results = batch.results
-            break
-
-        except Exception as e:
-            last_error = e
-            error_msg = str(e).lower()
-
-            from imas_codex.discovery.base.llm import (
-                ProviderBudgetExhausted,
-                _is_budget_exhausted,
-            )
-
-            if _is_budget_exhausted(error_msg):
-                raise ProviderBudgetExhausted(
-                    f"LLM provider budget exhausted: {str(e)[:200]}"
-                ) from e
-
-            is_retryable = any(
-                x in error_msg
-                for x in [
-                    "overloaded",
-                    "rate",
-                    "429",
-                    "503",
-                    "timeout",
-                    "eof",
-                    "json",
-                    "truncated",
-                    "validation",
-                ]
-            )
-            if is_retryable and attempt < max_retries - 1:
-                delay = retry_base_delay * (2**attempt)
-                logger.debug(
-                    "VLM error (attempt %d/%d): %s. Retrying in %.1fs...",
-                    attempt + 1,
-                    max_retries,
-                    str(e)[:100],
-                    delay,
-                )
-                await asyncio.sleep(delay)
-            else:
-                raise ValueError(f"VLM failed after {attempt + 1} attempts: {e}") from e
-    else:
-        raise last_error  # type: ignore[misc]
+    llm_results = batch.results
 
     # Convert to result dicts with grounded scoring
     cost_per_image = total_cost / len(images) if images else 0.0

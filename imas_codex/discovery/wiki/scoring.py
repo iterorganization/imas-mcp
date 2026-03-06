@@ -292,7 +292,7 @@ async def _score_documents_batch(
 ) -> tuple[list[dict[str, Any]], float]:
     """Score a batch of documents using LLM with structured output.
 
-    Uses litellm.acompletion with DocumentScoreBatch Pydantic model for
+    Uses acall_llm_structured with DocumentScoreBatch Pydantic model for
     structured output. Content-based scoring with per-dimension scores.
 
     Args:
@@ -306,27 +306,12 @@ async def _score_documents_batch(
     Returns:
         (results, cost) tuple where cost is actual LLM cost from OpenRouter.
     """
-    import os
-    import re
-
-    from imas_codex.discovery.base.llm import set_litellm_offline_env
-
-    set_litellm_offline_env()
-    import litellm
-
     from imas_codex.agentic.prompt_loader import render_prompt
+    from imas_codex.discovery.base.llm import acall_llm_structured
     from imas_codex.discovery.wiki.models import (
         DocumentScoreBatch,
         grounded_document_score,
     )
-
-    api_key = os.environ.get("OPENROUTER_API_KEY")
-    if not api_key:
-        raise ValueError("OPENROUTER_API_KEY environment variable not set.")
-
-    model_id = model
-    if not model_id.startswith("openrouter/"):
-        model_id = f"openrouter/{model_id}"
 
     # Build system prompt using document-scorer template
     context: dict[str, Any] = {}
@@ -369,116 +354,23 @@ async def _score_documents_batch(
 
     user_prompt = "\n".join(lines)
 
-    # Retry loop
-    max_retries = 5
-    retry_base_delay = 4.0
-    last_error = None
-    total_cost = 0.0
-
-    from imas_codex.discovery.base.llm import (
-        _supports_cache_control,
-        inject_cache_control,
-    )
-
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt},
     ]
-    if _supports_cache_control(model):
-        messages = inject_cache_control(messages)
 
-    for attempt in range(max_retries):
-        try:
-            response = await litellm.acompletion(
-                model=model_id,
-                api_key=api_key,
-                response_format=DocumentScoreBatch,
-                messages=messages,
-                temperature=0.3,
-                max_tokens=16000,
-                timeout=120,
-            )
+    batch, total_cost, _ = await acall_llm_structured(
+        model=model,
+        messages=messages,
+        response_model=DocumentScoreBatch,
+        max_tokens=16000,
+        temperature=0.3,
+        timeout=120,
+        max_retries=5,
+        retry_base_delay=4.0,
+    )
 
-            input_tokens = response.usage.prompt_tokens
-            output_tokens = response.usage.completion_tokens
-
-            if (
-                hasattr(response, "_hidden_params")
-                and "response_cost" in response._hidden_params
-            ):
-                cost = response._hidden_params["response_cost"]
-            else:
-                cost = (input_tokens * 3 + output_tokens * 15) / 1_000_000
-
-            total_cost += cost
-
-            content = response.choices[0].message.content
-            if not content:
-                logger.warning("LLM returned empty response for documents")
-                return [], total_cost
-
-            content = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", content)
-            content = content.encode("utf-8", errors="surrogateescape").decode(
-                "utf-8", errors="replace"
-            )
-
-            batch = DocumentScoreBatch.model_validate_json(content)
-            llm_results = batch.results
-            break
-
-        except Exception as e:
-            last_error = e
-            error_msg = str(e).lower()
-
-            from imas_codex.discovery.base.llm import (
-                ProviderBudgetExhausted,
-                _is_budget_exhausted,
-            )
-
-            if _is_budget_exhausted(error_msg):
-                raise ProviderBudgetExhausted(
-                    f"LLM provider budget exhausted: {str(e)[:200]}"
-                ) from e
-
-            is_retryable = any(
-                x in error_msg
-                for x in [
-                    "overloaded",
-                    "rate",
-                    "429",
-                    "503",
-                    "timeout",
-                    "eof",
-                    "json",
-                    "truncated",
-                    "validation",
-                ]
-            )
-
-            if is_retryable and attempt < max_retries - 1:
-                delay = retry_base_delay * (2**attempt)
-                logger.debug(
-                    "LLM error (attempt %d/%d): %s. Retrying in %.1fs...",
-                    attempt + 1,
-                    max_retries,
-                    str(e)[:100],
-                    delay,
-                )
-                await asyncio.sleep(delay)
-            else:
-                logger.error(
-                    "LLM failed for document batch of %d after %d attempts: %s. "
-                    "Documents reverted to discovered status for retry.",
-                    len(documents),
-                    attempt + 1,
-                    e,
-                )
-                raise ValueError(
-                    f"LLM failed after {attempt + 1} attempts: {e}. "
-                    f"Documents reverted to discovered status."
-                ) from e
-    else:
-        raise last_error  # type: ignore[misc]
+    llm_results = batch.results
 
     # Convert to result dicts
     cost_per_document = total_cost / len(documents) if documents else 0.0
