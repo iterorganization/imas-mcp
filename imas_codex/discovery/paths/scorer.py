@@ -187,6 +187,8 @@ class DirectoryTriager:
 
         Fully cancellable — no thread executors, uses litellm.acompletion().
         """
+        import time as time_mod
+
         from imas_codex.discovery.base.llm import acall_llm_structured
 
         if not directories:
@@ -197,9 +199,26 @@ class DirectoryTriager:
                 tokens_used=0,
             )
 
+        t0 = time_mod.monotonic()
         system_prompt = self._build_system_prompt(focus)
+        t1 = time_mod.monotonic()
         user_prompt = self._build_user_prompt(directories)
+        t2 = time_mod.monotonic()
 
+        sys_chars = len(system_prompt)
+        usr_chars = len(user_prompt)
+        logger.debug(
+            "Triage prompt built in %.1fs (system=%.1fs/%dk chars, "
+            "user=%.1fs/%dk chars) for %d dirs",
+            t2 - t0,
+            t1 - t0,
+            sys_chars // 1000,
+            t2 - t1,
+            usr_chars // 1000,
+            len(directories),
+        )
+
+        t_llm_start = time_mod.monotonic()
         batch, cost, total_tokens = await acall_llm_structured(
             model=self.model,
             messages=[
@@ -207,6 +226,17 @@ class DirectoryTriager:
                 {"role": "user", "content": user_prompt},
             ],
             response_model=TriageBatch,
+        )
+        t_llm_end = time_mod.monotonic()
+        logger.info(
+            "Triage LLM call: %.1fs, %d tokens, $%.4f for %d dirs "
+            "(%.1fs/dir, %d tok/dir)",
+            t_llm_end - t_llm_start,
+            total_tokens,
+            cost,
+            len(directories),
+            (t_llm_end - t_llm_start) / max(len(directories), 1),
+            total_tokens // max(len(directories), 1),
         )
 
         cost_per_path = cost / len(directories) if directories else 0.0
@@ -244,14 +274,14 @@ class DirectoryTriager:
         if focus:
             context["focus"] = focus
 
-        # Add dimension calibration examples (5 levels x 11 dimensions x 5 examples)
-        # This provides comprehensive calibration for the LLM to understand
+        # Add dimension calibration examples (5 levels x 11 dimensions x 3 examples)
+        # This provides calibration for the LLM to understand
         # what scores have historically been assigned at each level.
-        # Results are cached with 60s TTL to avoid redundant graph queries.
+        # Results are cached with 5-minute TTL to avoid redundant graph queries.
         # phase='triage' draws from triaged peers (1st-pass dimensions).
         dimension_calibration = sample_dimension_calibration_examples(
             facility=self.facility,
-            per_level=5,
+            per_level=3,
             tolerance=0.1,
             phase="triage",
         )
