@@ -2,9 +2,9 @@
 
 Thin loop over config.trees, delegating to run_tree_discovery() for the
 full EXTRACT → UNITS → PROMOTE pipeline per tree. After tree processing,
-runs TDI linkage to connect TDI functions to TreeNodes.
+runs TDI linkage to connect TDI functions to DataNodes.
 
-Config key: data_sources.mdsplus
+Config key: data_systems.mdsplus
 Facility: Any facility with MDSplus (TCV, JET, JT-60SA, ITER)
 """
 
@@ -34,9 +34,9 @@ class MDSplusScanner:
     Subtrees are expanded and processed individually.
 
     After tree extraction, runs TDI linkage to connect TDI function
-    build_path references to TreeNode nodes in the graph.
+    build_path references to DataNode nodes in the graph.
 
-    Config (data_sources.mdsplus):
+    Config (data_systems.mdsplus):
         connection_tree: str - Default tree for TDI context
         setup_commands: list[str] - MDSplus environment setup
         reference_shot: int - Shot for dynamic tree introspection
@@ -72,8 +72,8 @@ class MDSplusScanner:
 
         # Process each tree through the unified pipeline
         for tree_config in config.get("trees", []):
-            tree_name = tree_config.get("tree_name")
-            if not tree_name:
+            data_source_name = tree_config.get("tree_name")
+            if not data_source_name:
                 continue
 
             # Merge setup_commands from parent config
@@ -90,7 +90,7 @@ class MDSplusScanner:
                     if st.get("tree_name")
                 ]
                 if subtrees
-                else [(tree_name, merged_config)]
+                else [(data_source_name, merged_config)]
             )
 
             for sub_name, sub_config in trees_to_process:
@@ -121,7 +121,7 @@ class MDSplusScanner:
                     stats = await run_tree_discovery(
                         facility=facility,
                         ssh_host=ssh_host,
-                        tree_name=sub_name,
+                        data_source_name=sub_name,
                         tree_config=sub_config,
                         ver_list=ver_list,
                     )
@@ -164,7 +164,7 @@ class MDSplusScanner:
                     f"tree = MDSplus.Tree('{primary_tree}', "
                     f"{{shot}}, 'readonly')"
                 ),
-                data_template="data = tree.getNode('{node_path}').data()",
+                data_template="data = tree.getNode('{data_source_path}').data()",
                 data_source="mdsplus",
             )
 
@@ -210,7 +210,8 @@ class MDSplusScanner:
             {
                 "id": s.id,
                 "accessor": s.accessor,
-                "tree_name": s.tree_name or config.get("connection_tree", ""),
+                "data_source_name": s.data_source_name
+                or config.get("connection_tree", ""),
                 "shot": ref_shot,
             }
             for s in signals

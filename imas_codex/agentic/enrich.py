@@ -1,8 +1,8 @@
 """
-TreeNode metadata enrichment agent.
+DataNode metadata enrichment agent.
 
 Provides:
-- EnrichmentResult: Result of enriching a single TreeNode
+- EnrichmentResult: Result of enriching a single DataNode
 - batch_enrich_paths: Main enrichment function for CLI
 - quick_task: Simple task runner for ad-hoc agent tasks
 """
@@ -45,7 +45,7 @@ def _get_prompt(name: str) -> str:
 
 @dataclass
 class EnrichmentResult:
-    """Result of enriching a single TreeNode."""
+    """Result of enriching a single DataNode."""
 
     path: str
     description: str | None
@@ -224,7 +224,7 @@ def _save_enrichments_to_graph(results: list[EnrichmentResult], dry_run: bool) -
                 props["error_node"] = result.error_node
 
             query = """
-                MATCH (t:TreeNode {path: $path})
+                MATCH (t:DataNode {path: $path})
                 SET t += $props
                 RETURN t.path AS path
             """
@@ -236,16 +236,16 @@ def _save_enrichments_to_graph(results: list[EnrichmentResult], dry_run: bool) -
 
 
 def discover_nodes_to_enrich(
-    tree_name: str | None = None,
+    data_source_name: str | None = None,
     status: str = "pending",
     with_context_only: bool = False,
     limit: int | None = None,
 ) -> list[dict]:
     """
-    Discover TreeNodes that need enrichment.
+    Discover DataNodes that need enrichment.
 
     Args:
-        tree_name: Filter to specific tree
+        data_source_name: Filter to specific tree
         status: Target status (pending, enriched, stale, all)
         with_context_only: Only nodes with code context
         limit: Maximum nodes to return
@@ -260,8 +260,8 @@ def discover_nodes_to_enrich(
             f"(t.enrichment_status = '{status}' OR t.enrichment_status IS NULL)"
         )
 
-    if tree_name:
-        where_clauses.append(f"t.tree_name = '{tree_name}'")
+    if data_source_name:
+        where_clauses.append(f"t.data_source_name = '{data_source_name}'")
 
     if with_context_only:
         where_clauses.append("exists((t)-[:APPEARS_IN]->(:CodeChunk))")
@@ -270,11 +270,11 @@ def discover_nodes_to_enrich(
     limit_clause = f"LIMIT {limit}" if limit else ""
 
     query = f"""
-        MATCH (t:TreeNode)
+        MATCH (t:DataNode)
         {where}
         OPTIONAL MATCH (t)-[:APPEARS_IN]->(c:CodeChunk)
         WITH t, count(c) > 0 AS has_context
-        RETURN t.path AS path, t.tree_name AS tree, has_context
+        RETURN t.path AS path, t.data_source_name AS tree, has_context
         ORDER BY has_context DESC, t.path
         {limit_clause}
     """
@@ -380,7 +380,7 @@ def quick_task_sync(
 
 async def _run_batch_enrichment(
     paths: list[str],
-    tree_name: str,
+    data_source_name: str,
     model: str,
     verbose: bool = False,
 ) -> list[EnrichmentResult]:
@@ -397,9 +397,9 @@ async def _run_batch_enrichment(
     parent = get_parent_path(paths[0]) if paths else "unknown"
     paths_list = "\n".join(f"- {p}" for p in paths)
 
-    system_prompt = f"""You are an enrichment agent for MDSplus TreeNodes.
+    system_prompt = f"""You are an enrichment agent for MDSplus DataNodes.
 
-Your task is to generate physics-accurate descriptions for TreeNode paths.
+Your task is to generate physics-accurate descriptions for DataNode paths.
 You have tools to query the knowledge graph and search code examples.
 
 ## Available Tools
@@ -424,14 +424,14 @@ Output a JSON array with enrichments. Each object must have:
 Optional fields: sign_convention, dimensions, error_node
 """
 
-    task = f"""Enrich these {len(paths)} MDSplus paths from the {tree_name} tree.
+    task = f"""Enrich these {len(paths)} MDSplus paths from the {data_source_name} tree.
 Parent path: {parent}
 
 Paths:
 {paths_list}
 
 Steps:
-1. Query the graph: `query_neo4j("MATCH (t:TreeNode) WHERE t.path CONTAINS '{parent}' RETURN t.path, t.description LIMIT 20")`
+1. Query the graph: `query_neo4j("MATCH (t:DataNode) WHERE t.path CONTAINS '{parent}' RETURN t.path, t.description LIMIT 20")`
 2. Search code: `search_code_examples("{parent}")`
 3. Generate enrichments as JSON array for ALL {len(paths)} paths
 
@@ -485,7 +485,7 @@ Output ONLY the JSON array."""
 
 async def batch_enrich_paths(
     paths: list[str],
-    tree_name: str = "results",
+    data_source_name: str = "results",
     batch_size: int | None = None,
     verbose: bool = False,
     dry_run: bool = False,
@@ -493,11 +493,11 @@ async def batch_enrich_paths(
     progress_callback: ProgressCallback = None,
 ) -> list[EnrichmentResult]:
     """
-    Enrich TreeNode paths using smolagents CodeAgent.
+    Enrich DataNode paths using smolagents CodeAgent.
 
     Args:
         paths: List of MDSplus paths to enrich
-        tree_name: Tree name for context
+        data_source_name: Tree name for context
         batch_size: Paths per batch (auto-selected if None)
         verbose: Enable verbose output
         dry_run: If True, don't persist to graph
@@ -537,7 +537,7 @@ async def batch_enrich_paths(
         for attempt in range(max_retries):
             try:
                 results = await _run_batch_enrichment(
-                    batch, tree_name, effective_model, verbose
+                    batch, data_source_name, effective_model, verbose
                 )
                 valid_results = sum(1 for r in results if not r.error)
                 if valid_results > 0:
@@ -602,7 +602,7 @@ async def batch_enrich_paths(
 
 def batch_enrich_paths_sync(
     paths: list[str],
-    tree_name: str = "results",
+    data_source_name: str = "results",
     batch_size: int | None = None,
     verbose: bool = False,
     dry_run: bool = False,
@@ -612,6 +612,12 @@ def batch_enrich_paths_sync(
     """Synchronous wrapper for batch_enrich_paths."""
     return asyncio.run(
         batch_enrich_paths(
-            paths, tree_name, batch_size, verbose, dry_run, model, progress_callback
+            paths,
+            data_source_name,
+            batch_size,
+            verbose,
+            dry_run,
+            model,
+            progress_callback,
         )
     )

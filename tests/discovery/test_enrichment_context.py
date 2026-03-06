@@ -1,6 +1,6 @@
 """Tests for enrichment pipeline tree context integration (Phase 7).
 
-Verifies: fetch_tree_context graph query, claim_signals returns source_node,
+Verifies: fetch_tree_context graph query, claim_signals returns data_source_node,
 and enrich_worker prompt injection of tree/TDI/epoch context.
 """
 
@@ -83,7 +83,7 @@ class TestFetchTreeContext:
         assert "tcv_ip" in entry["tdi_source"]
 
     def test_includes_epoch_range(self):
-        """Context includes epoch range from TreeModelVersions."""
+        """Context includes epoch range from StructuralEpochs."""
         mock_result = [
             {
                 "signal_id": "tcv:magnetics/top/ip",
@@ -196,22 +196,22 @@ class TestFetchTreeContext:
 
 
 class TestClaimSignalsSourceNode:
-    """Test that claim_signals_for_enrichment returns source_node."""
+    """Test that claim_signals_for_enrichment returns data_source_node."""
 
     def test_claim_returns_source_node_field(self):
-        """Claimed signals include source_node from the query."""
+        """Claimed signals include data_source_node from the query."""
         mock_result = [
             {
                 "id": "tcv:results/top/ip",
                 "accessor": "TOP:IP",
-                "tree_name": "results",
-                "node_path": "\\RESULTS::TOP:IP",
+                "data_source_name": "results",
+                "data_source_path": "\\RESULTS::TOP:IP",
                 "unit": "A",
                 "name": "Plasma current",
                 "tdi_function": None,
                 "discovery_source": "tree_traversal",
                 "description": None,
-                "source_node": "tcv:results:\\RESULTS::TOP:IP",
+                "data_source_node": "tcv:results:\\RESULTS::TOP:IP",
             }
         ]
         mock_gc = MagicMock()
@@ -230,7 +230,7 @@ class TestClaimSignalsSourceNode:
             signals = claim_signals_for_enrichment("tcv", batch_size=10)
 
         assert len(signals) == 1
-        assert signals[0]["source_node"] == "tcv:results:\\RESULTS::TOP:IP"
+        assert signals[0]["data_source_node"] == "tcv:results:\\RESULTS::TOP:IP"
 
 
 class TestEnrichWorkerTreeContext:
@@ -238,14 +238,14 @@ class TestEnrichWorkerTreeContext:
 
     def test_tree_context_injected_into_prompt(self):
         """Verify tree context fields appear in the user prompt."""
-        # Build a minimal signal with source_node
+        # Build a minimal signal with data_source_node
         signal = {
             "id": "tcv:results/top/ip",
             "accessor": "TOP:IP",
             "name": "IP",
-            "tree_name": "results",
-            "node_path": "\\RESULTS::TOP:IP",
-            "source_node": "tcv:results:\\RESULTS::TOP:IP",
+            "data_source_name": "results",
+            "data_source_path": "\\RESULTS::TOP:IP",
+            "data_source_node": "tcv:results:\\RESULTS::TOP:IP",
         }
 
         # Simulate tree context
@@ -291,13 +291,13 @@ class TestEnrichWorkerTreeContext:
         assert "applicability: versions 1-5" in prompt
 
     def test_no_tree_context_for_non_tree_signals(self):
-        """Signals without source_node get no tree context."""
+        """Signals without data_source_node get no tree context."""
         signal = {
             "id": "tcv:tdi:ip",
             "accessor": "tcv_ip()",
             "name": "IP",
             "tdi_function": "tcv_ip",
-            "source_node": None,
+            "data_source_node": None,
         }
 
         tree_context = {}  # Empty — no tree signals

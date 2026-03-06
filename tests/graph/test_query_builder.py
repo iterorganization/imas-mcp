@@ -177,7 +177,7 @@ class TestGraphSearchFilterOps:
 
     def test_starts_with_operator(self, mock_gc, mock_embed):
         graph_search(
-            "TreeNode",
+            "DataNode",
             where={"path__starts_with": "\\RESULTS"},
             gc=mock_gc,
             embed_fn=mock_embed,

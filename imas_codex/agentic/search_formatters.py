@@ -93,11 +93,11 @@ def format_signals_report(
 
             # Tree node section
             tree_path = sig.get("tree_path")
-            tree_name = sig.get("tree_name")
+            data_source_name = sig.get("data_source_name")
             if tree_path:
                 parts.append(
                     f"\n  **Tree node**: {tree_path}"
-                    + (f" (tree: {tree_name})" if tree_name else "")
+                    + (f" (tree: {data_source_name})" if data_source_name else "")
                 )
 
             parts.append("")  # blank line between signals
@@ -107,7 +107,7 @@ def format_signals_report(
         for tn in tree_nodes:
             path = tn.get("path", "?")
             desc = tn.get("description") or ""
-            tree = tn.get("tree_name") or ""
+            tree = tn.get("data_source_name") or ""
             unit = tn.get("unit") or ""
             meta = []
             if tree:

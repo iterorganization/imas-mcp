@@ -153,7 +153,7 @@ def ingest_run(
     console.print(f"  Chunks created:  {stats['chunks']}")
     console.print(f"  IDS references:  {stats['ids_found']}")
     console.print(f"  MDSplus paths:   {stats['mdsplus_paths']}")
-    console.print(f"  TreeNodes linked: {stats['tree_nodes_linked']}")
+    console.print(f"  DataNodes linked: {stats['tree_nodes_linked']}")
     console.print(f"  Skipped:         {stats['skipped']}")
 
 

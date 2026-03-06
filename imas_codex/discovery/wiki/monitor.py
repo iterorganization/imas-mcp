@@ -83,7 +83,7 @@ class WikiProgressMonitor:
     The monitor tracks multi-stage progress:
     - Scrape: Fetching HTML from wiki
     - Chunk: Splitting content and generating embeddings
-    - Link: Creating graph relationships to TreeNodes/IMASPaths
+    - Link: Creating graph relationships to DataNodes/IMASPaths
     """
 
     def __init__(
@@ -174,7 +174,7 @@ class WikiProgressMonitor:
         Args:
             page_name: Name of the page just processed
             chunks: Number of chunks created from this page
-            tree_nodes: Number of TreeNode links created
+            tree_nodes: Number of DataNode links created
             imas_paths: Number of IMASPath links created
             conventions: Number of conventions found
             units: Number of units found
@@ -241,7 +241,7 @@ class WikiProgressMonitor:
             )
             summary.add_row("Pages failed:", f"[red]{self.stats.pages_failed}[/red]")
             summary.add_row("Chunks created:", str(self.stats.chunks_created))
-            summary.add_row("TreeNodes linked:", str(self.stats.tree_nodes_linked))
+            summary.add_row("DataNodes linked:", str(self.stats.tree_nodes_linked))
             summary.add_row("IMAS paths linked:", str(self.stats.imas_paths_linked))
             summary.add_row("Conventions found:", str(self.stats.conventions_found))
             summary.add_row("Time:", f"{self.stats.elapsed_seconds:.1f}s")
@@ -269,7 +269,7 @@ class WikiProgressMonitor:
         stats_table.add_column(justify="right")
         stats_table.add_row("Chunks:", str(self.stats.chunks_created))
         stats_table.add_row(
-            "TreeNodes:", f"[cyan]{self.stats.tree_nodes_linked}[/cyan]"
+            "DataNodes:", f"[cyan]{self.stats.tree_nodes_linked}[/cyan]"
         )
         stats_table.add_row(
             "IMAS paths:", f"[cyan]{self.stats.imas_paths_linked}[/cyan]"

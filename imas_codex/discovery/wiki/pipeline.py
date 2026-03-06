@@ -253,7 +253,7 @@ def link_chunks_to_entities(facility_id: str) -> dict[str, int]:
 
     Uses batched queries to link WikiChunks to graph entities based on
     the paths stored in chunk properties during ingestion:
-    - MDSplus paths → TreeNode (DOCUMENTS relationship)
+    - MDSplus paths → DataNode (DOCUMENTS relationship)
     - IMAS paths → IMASPath (MENTIONS_IMAS relationship)
     - PPF paths → FacilitySignal (DOCUMENTS relationship)
 
@@ -266,14 +266,14 @@ def link_chunks_to_entities(facility_id: str) -> dict[str, int]:
     stats = {"tree_nodes_linked": 0, "imas_paths_linked": 0, "ppf_signals_linked": 0}
 
     with GraphClient() as gc:
-        # Link to TreeNodes via MDSplus paths
+        # Link to DataNodes via MDSplus paths
         result = gc.query(
             """
             MATCH (c:WikiChunk {facility_id: $facility_id})
             WHERE c.mdsplus_paths_mentioned IS NOT NULL
                AND size(c.mdsplus_paths_mentioned) > 0
             UNWIND c.mdsplus_paths_mentioned AS mds_path
-            MATCH (t:TreeNode)
+            MATCH (t:DataNode)
             WHERE t.path = mds_path
                OR t.path ENDS WITH replace(mds_path, '\\\\', '')
                OR t.canonical_path = toUpper(mds_path)
@@ -999,14 +999,14 @@ class WikiIngestionPipeline:
                     page_id=page_id,
                 )
 
-            # Batch link chunks to TreeNodes
+            # Batch link chunks to DataNodes
             if all_mdsplus:
                 result = gc.query(
                     """
                     MATCH (c:WikiChunk {wiki_page_id: $page_id})
                     WHERE c.mdsplus_paths_mentioned IS NOT NULL
                     UNWIND c.mdsplus_paths_mentioned AS mds_path
-                    MATCH (t:TreeNode)
+                    MATCH (t:DataNode)
                     WHERE t.path = mds_path
                        OR t.path ENDS WITH replace(mds_path, '\\\\', '')
                        OR t.canonical_path = toUpper(mds_path)
@@ -1291,7 +1291,7 @@ def get_wiki_stats(facility_id: str) -> dict:
             """
             MATCH (wp:WikiPage {facility_id: $facility_id})
             OPTIONAL MATCH (wp)-[:HAS_CHUNK]->(wc:WikiChunk)
-            OPTIONAL MATCH (wc)-[:DOCUMENTS]->(t:TreeNode)
+            OPTIONAL MATCH (wc)-[:DOCUMENTS]->(t:DataNode)
             OPTIONAL MATCH (wc)-[:MENTIONS_IMAS]->(ip:IMASPath)
             WITH wp, count(DISTINCT wc) AS chunks,
                  count(DISTINCT t) AS tree_nodes,

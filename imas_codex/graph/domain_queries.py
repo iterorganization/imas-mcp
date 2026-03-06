@@ -459,11 +459,11 @@ def find_code(
 # ---------------------------------------------------------------------------
 
 
-def find_tree_nodes(
+def find_data_nodes(
     query: str | None = None,
     *,
     facility: str | None = None,
-    tree_name: str | None = None,
+    data_source_name: str | None = None,
     path_prefix: str | None = None,
     physics_domain: str | None = None,
     limit: int = 30,
@@ -475,7 +475,7 @@ def find_tree_nodes(
     Args:
         query: Search text (triggers vector search on description embedding).
         facility: Required facility id.
-        tree_name: Filter by tree name.
+        data_source_name: Filter by tree name.
         path_prefix: Filter by path prefix (e.g. ``"\\\\RESULTS::"``)..
         physics_domain: Filter by physics domain.
         limit: Max results.
@@ -485,10 +485,10 @@ def find_tree_nodes(
     gc, embed_fn = _resolve(gc, embed_fn)
 
     if query is not None:
-        return _find_tree_nodes_semantic(
+        return _find_data_nodes_semantic(
             query,
             facility=facility,
-            tree_name=tree_name,
+            data_source_name=data_source_name,
             path_prefix=path_prefix,
             physics_domain=physics_domain,
             limit=limit,
@@ -503,9 +503,9 @@ def find_tree_nodes(
     if facility is not None:
         where_parts.append("(n)-[:AT_FACILITY]->(:Facility {id: $facility})")
         params["facility"] = facility
-    if tree_name is not None:
-        where_parts.append("n.tree_name = $tree_name")
-        params["tree_name"] = tree_name
+    if data_source_name is not None:
+        where_parts.append("n.data_source_name = $data_source_name")
+        params["data_source_name"] = data_source_name
     if path_prefix is not None:
         where_parts.append("n.path STARTS WITH $path_prefix")
         params["path_prefix"] = path_prefix
@@ -518,8 +518,8 @@ def find_tree_nodes(
         where_clause = "WHERE " + " AND ".join(where_parts) + " "
 
     cypher = (
-        f"MATCH (n:TreeNode) {where_clause}"
-        "RETURN n.id AS id, n.path AS path, n.tree_name AS tree_name, "
+        f"MATCH (n:DataNode) {where_clause}"
+        "RETURN n.id AS id, n.path AS path, n.data_source_name AS data_source_name, "
         "n.description AS description, n.unit AS unit, "
         "n.physics_domain AS physics_domain, n.node_type AS node_type "
         "ORDER BY n.path LIMIT $limit"
@@ -528,18 +528,18 @@ def find_tree_nodes(
     return gc.query(cypher, **params)
 
 
-def _find_tree_nodes_semantic(
+def _find_data_nodes_semantic(
     query: str,
     *,
     facility: str | None,
-    tree_name: str | None,
+    data_source_name: str | None,
     path_prefix: str | None,
     physics_domain: str | None,
     limit: int,
     gc: GraphClient,
     embed_fn: Any,
 ) -> list[dict[str, Any]]:
-    """Semantic search branch for find_tree_nodes."""
+    """Semantic search branch for find_data_nodes."""
     embedding = embed_fn(query)
 
     where_parts: list[str] = []
@@ -548,9 +548,9 @@ def _find_tree_nodes_semantic(
     if facility is not None:
         where_parts.append("(n)-[:AT_FACILITY]->(:Facility {id: $facility})")
         params["facility"] = facility
-    if tree_name is not None:
-        where_parts.append("n.tree_name = $tree_name")
-        params["tree_name"] = tree_name
+    if data_source_name is not None:
+        where_parts.append("n.data_source_name = $data_source_name")
+        params["data_source_name"] = data_source_name
     if path_prefix is not None:
         where_parts.append("n.path STARTS WITH $path_prefix")
         params["path_prefix"] = path_prefix
@@ -563,9 +563,9 @@ def _find_tree_nodes_semantic(
         where_clause = "WHERE " + " AND ".join(where_parts) + " "
 
     cypher = (
-        'CALL db.index.vector.queryNodes("tree_node_desc_embedding", $k, $embedding) '
+        'CALL db.index.vector.queryNodes("data_node_desc_embedding", $k, $embedding) '
         f"YIELD node AS n, score {where_clause}"
-        "RETURN n.id AS id, n.path AS path, n.tree_name AS tree_name, "
+        "RETURN n.id AS id, n.path AS path, n.data_source_name AS data_source_name, "
         "n.description AS description, n.unit AS unit, "
         "n.physics_domain AS physics_domain, n.node_type AS node_type, score "
         "ORDER BY score DESC"
@@ -657,7 +657,7 @@ def facility_overview(
         """
         MATCH (f:Facility {id: $facility})
         OPTIONAL MATCH (d:Diagnostic)-[:AT_FACILITY]->(f)
-        OPTIONAL MATCH (t:MDSplusTree)-[:AT_FACILITY]->(f)
+        OPTIONAL MATCH (t:DataSource)-[:AT_FACILITY]->(f)
         OPTIONAL MATCH (s:FacilitySignal)-[:AT_FACILITY]->(f)
         OPTIONAL MATCH (wp:WikiPage)-[:AT_FACILITY]->(f)
         OPTIONAL MATCH (cf:CodeFile)-[:AT_FACILITY]->(f)

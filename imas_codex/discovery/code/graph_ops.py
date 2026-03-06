@@ -631,11 +631,11 @@ def has_pending_link_work(facility: str) -> bool:
 
 
 def link_code_evidence_to_signals(facility: str) -> dict[str, int]:
-    """Link code evidence to FacilitySignals via DataReference → TreeNode → Signal.
+    """Link code evidence to FacilitySignals via DataReference → DataNode → Signal.
 
     Traverses the chain:
-      CodeChunk → CONTAINS_REF → DataReference → RESOLVES_TO_TREE_NODE → TreeNode
-      FacilitySignal → SOURCE_NODE → TreeNode
+      CodeChunk → CONTAINS_REF → DataReference → RESOLVES_TO_NODE → DataNode
+      FacilitySignal → HAS_DATA_SOURCE_NODE → DataNode
 
     Sets code_evidence_count and has_code_evidence on matched signals.
     Marks processed CodeFiles as evidence_linked=true.
@@ -644,16 +644,16 @@ def link_code_evidence_to_signals(facility: str) -> dict[str, int]:
         Dict with signals_linked, refs_resolved counts
     """
     with GraphClient() as gc:
-        # Step 1: Ensure DataReference → TreeNode links exist
+        # Step 1: Ensure DataReference → DataNode links exist
         # (may not have been created yet for new ingestions)
         resolve_result = gc.query(
             """
             MATCH (d:DataReference {ref_type: 'mdsplus_path', facility_id: $facility})
-            WHERE NOT (d)-[:RESOLVES_TO_TREE_NODE]->()
-            MATCH (t:TreeNode {facility_id: $facility})
+            WHERE NOT (d)-[:RESOLVES_TO_NODE]->()
+            MATCH (t:DataNode {facility_id: $facility})
             WHERE t.path = d.raw_string
                OR toUpper(t.path) = toUpper(d.raw_string)
-            MERGE (d)-[:RESOLVES_TO_TREE_NODE]->(t)
+            MERGE (d)-[:RESOLVES_TO_NODE]->(t)
             RETURN count(*) AS resolved
             """,
             facility=facility,
@@ -661,12 +661,12 @@ def link_code_evidence_to_signals(facility: str) -> dict[str, int]:
         refs_resolved = resolve_result[0]["resolved"] if resolve_result else 0
 
         # Step 2: Propagate code evidence to FacilitySignals
-        # Find signals whose SOURCE_NODE TreeNode has DataReferences from code
+        # Find signals whose HAS_DATA_SOURCE_NODE DataNode has DataReferences from code
         link_result = gc.query(
             """
             MATCH (dr:DataReference {facility_id: $facility})
-                  -[:RESOLVES_TO_TREE_NODE]->(tn:TreeNode)
-                  <-[:SOURCE_NODE]-(sig:FacilitySignal {facility_id: $facility})
+                  -[:RESOLVES_TO_NODE]->(tn:DataNode)
+                  <-[:HAS_DATA_SOURCE_NODE]-(sig:FacilitySignal {facility_id: $facility})
             WITH sig, count(DISTINCT dr) AS ref_count
             SET sig.code_evidence_count = ref_count,
                 sig.has_code_evidence = true
@@ -814,7 +814,7 @@ def link_signals_to_data_access(facility: str) -> dict[str, int]:
 
     Signals with code evidence from specific access methods get linked
     to the corresponding DataAccess node. Also links signals without
-    explicit code evidence based on their tree_name/tdi_function.
+    explicit code evidence based on their data_source_name/tdi_function.
 
     Returns:
         Dict with linked count.

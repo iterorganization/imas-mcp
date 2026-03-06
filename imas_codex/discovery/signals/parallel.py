@@ -3244,7 +3244,7 @@ async def check_worker(
         all_trees = mdsplus_config.get("trees", [])
         for st in all_trees:
             if isinstance(st, dict):
-                data_source_name = st.get("data_source_name", "")
+                data_source_name = st.get("tree_name", "")
                 versions = st.get("versions", [])
                 if versions:
                     # Collect all version shots for this tree

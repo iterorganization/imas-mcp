@@ -16,7 +16,7 @@ aliases, data class, and shot validity ranges.
 Remote execution uses the shared run_python_script() infrastructure
 with scripts in imas_codex/remote/scripts/ (enumerate_edas.py, check_edas.py).
 
-Config key: data_sources.edas
+Config key: data_systems.edas
 Facility: JT-60SA
 """
 
@@ -49,7 +49,7 @@ class EDASScanner:
     3. Create FacilitySignal per (category, data_name) with EDAS accessor
     4. Japanese descriptions provide LLM enrichment context
 
-    Config (data_sources.edas):
+    Config (data_systems.edas):
         api_path: str - Path to EDAS API source files
         header_path: str - Path to C headers with signal definitions
         reference_shot: int - Shot for validation (E-prefix format)

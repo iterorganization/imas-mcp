@@ -16,11 +16,11 @@ Requirements:
 - MDSplus Python bindings
 
 Usage:
-    echo '{"tree_name": "static", "versions": [1,2,3]}' | python3 extract_static_tree.py
+    echo '{"data_source_name": "static", "versions": [1,2,3]}' | python3 extract_static_tree.py
 
 Input (JSON on stdin):
     {
-        "tree_name": "static",
+        "data_source_name": "static",
         "versions": [1, 2, 3, 4, 5, 6, 7, 8],
         "exclude_names": ["COMMENTS", "DATE"]
     }
@@ -48,14 +48,14 @@ from typing import Any
 
 
 def extract_version(
-    tree_name: str,
+    data_source_name: str,
     version: int,
     exclude_names: set | None = None,
 ) -> dict[str, Any]:
     """Extract all nodes from a static tree version.
 
     Args:
-        tree_name: MDSplus tree name (e.g., "static")
+        data_source_name: MDSplus tree name (e.g., "static")
         version: Version number (tree is opened with this as shot number)
         exclude_names: Node names to skip
 
@@ -68,7 +68,7 @@ def extract_version(
         exclude_names = set()
 
     try:
-        tree = MDSplus.Tree(tree_name, version, "readonly")
+        tree = MDSplus.Tree(data_source_name, version, "readonly")
     except Exception as e:
         return {"error": str(e)[:300], "version": version}
 
@@ -187,14 +187,14 @@ def main() -> None:
     """Read config from stdin, extract static tree versions, output JSON."""
     config = json.loads(sys.stdin.read())
 
-    tree_name = config["tree_name"]
+    data_source_name = config["data_source_name"]
     versions = config.get("versions", [1])
     exclude_names = {n.upper() for n in config.get("exclude_names", [])}
 
     version_data: dict[str, dict] = {}
     for ver in versions:
         result = extract_version(
-            tree_name=tree_name,
+            data_source_name=data_source_name,
             version=ver,
             exclude_names=exclude_names,
         )
@@ -204,7 +204,7 @@ def main() -> None:
     diff = diff_versions(version_data)
 
     output = {
-        "tree_name": tree_name,
+        "data_source_name": data_source_name,
         "versions": version_data,
         "diff": diff,
     }

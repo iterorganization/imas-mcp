@@ -28,12 +28,12 @@ def enrich() -> None:
     """Enrich graph nodes with AI-generated metadata.
 
     Uses CodeAgent to analyze and describe data from multiple sources:
-    - TreeNodes from MDSplus/HDF5 trees
+    - DataNodes from MDSplus/HDF5 trees
     - Wiki pages from facility documentation
     - Code files from ingested source
 
     \b
-      imas-codex enrich nodes     Enrich TreeNode metadata
+      imas-codex enrich nodes     Enrich DataNode metadata
       imas-codex enrich run       Run a custom enrichment task
     """
     pass
@@ -148,7 +148,7 @@ def enrich_nodes(
     dry_run: bool,
     verbose: bool,
 ) -> None:
-    """Enrich TreeNode metadata using CodeAgent.
+    """Enrich DataNode metadata using CodeAgent.
 
     The agent generates Python code to gather context from the
     knowledge graph and code examples, then produces physics-accurate
@@ -203,7 +203,7 @@ def enrich_nodes(
     if paths:
         path_list = list(paths)
         console.print(f"[cyan]Enriching {len(path_list)} specified paths...[/cyan]")
-        tree_name = tree or "unknown"
+        data_source_name = tree or "unknown"
     else:
         if force:
             filter_desc = "all statuses (--force)"
@@ -213,7 +213,7 @@ def enrich_nodes(
             filter_desc += ", with code context"
         console.print(f"[cyan]Discovering nodes with {filter_desc}...[/cyan]")
         nodes = discover_nodes_to_enrich(
-            tree_name=tree,
+            data_source_name=tree,
             status=target_status,
             with_context_only=linked,
             limit=limit,
@@ -227,7 +227,9 @@ def enrich_nodes(
             f"[green]Found {len(path_list)} nodes[/green] "
             f"([dim]{with_ctx} with code context[/dim])"
         )
-        tree_name = tree or nodes[0].get("tree", "unknown") if nodes else "unknown"
+        data_source_name = (
+            tree or nodes[0].get("tree", "unknown") if nodes else "unknown"
+        )
 
     # Auto-select batch size based on model
     effective_batch_size = batch_size
@@ -312,7 +314,7 @@ def enrich_nodes(
             "Batch:",
             f"{state.batch_num}/{state.total_batches}",
         )
-        batch_info.add_row("Tree:", tree_name)
+        batch_info.add_row("Tree:", data_source_name)
         batch_info.add_row("Group:", state.parent_path or "—")
 
         # Statistics
@@ -369,7 +371,7 @@ def enrich_nodes(
             live_display = live
             return await batch_enrich_paths(
                 paths=path_list,
-                tree_name=tree_name,
+                data_source_name=data_source_name,
                 batch_size=effective_batch_size,
                 verbose=verbose,
                 dry_run=False,
@@ -412,7 +414,7 @@ def enrich_mark_stale(
     tree: str | None,
     dry_run: bool,
 ) -> None:
-    """Mark TreeNodes as stale for re-enrichment.
+    """Mark DataNodes as stale for re-enrichment.
 
     Matches nodes by path pattern and sets enrichment_status='stale'.
     Use this when new context is available and you want to re-process nodes.
@@ -436,11 +438,11 @@ def enrich_mark_stale(
             f"t.path CONTAINS '{pattern}'",
         ]
         if tree:
-            where_clauses.append(f't.tree_name = "{tree}"')
+            where_clauses.append(f't.data_source_name = "{tree}"')
 
         # Count matching nodes
         count_query = f"""
-            MATCH (t:TreeNode)
+            MATCH (t:DataNode)
             WHERE {" AND ".join(where_clauses)}
             RETURN count(t) AS count
         """
@@ -455,7 +457,7 @@ def enrich_mark_stale(
             click.echo(f"[DRY RUN] Would mark {count} nodes as stale")
             # Show sample
             sample_query = f"""
-                MATCH (t:TreeNode)
+                MATCH (t:DataNode)
                 WHERE {" AND ".join(where_clauses)}
                 RETURN t.path AS path LIMIT 10
             """
@@ -468,7 +470,7 @@ def enrich_mark_stale(
 
         # Mark as stale
         update_query = f"""
-            MATCH (t:TreeNode)
+            MATCH (t:DataNode)
             WHERE {" AND ".join(where_clauses)}
             SET t.enrichment_status = 'stale'
             RETURN count(t) AS updated

@@ -4,7 +4,7 @@ Enumerates filled IDSs (Interface Data Structures) at facilities with native
 IMAS backend support. Discovers which IDSs contain data for a reference shot,
 creating FacilitySignal nodes for each filled IDS top-level signal.
 
-Config key: data_sources.imas
+Config key: data_systems.imas
 Facility: ITER (primary), JET (post-migration), JT-60SA
 """
 
@@ -31,7 +31,7 @@ class IMASScanner:
     3. For each filled IDS, walk top-level arrays/signals
     4. Create FacilitySignal per (IDS, signal_path) with IMAS accessor format
 
-    Config (data_sources.imas):
+    Config (data_systems.imas):
         backends: list[str] - Available IMAS backends (mdsplus, hdf5, memory)
         db_name: str - IMAS database name
         reference_shot: int - Shot for IDS enumeration

@@ -15,7 +15,7 @@ Usage:
 
     config = AgentConfig(
         name="enrichment",
-        instructions="Enrich TreeNode metadata with physics descriptions",
+        instructions="Enrich DataNode metadata with physics descriptions",
         tools=get_enrichment_tools(),
         cost_limit_usd=5.0,
     )
@@ -237,7 +237,7 @@ def get_enrichment_agent(
     model: str | None = None,
     cost_limit_usd: float = 5.0,
 ) -> CodeAgent:
-    """Create an agent configured for TreeNode metadata enrichment.
+    """Create an agent configured for DataNode metadata enrichment.
 
     This agent excels at:
     - Analyzing MDSplus path naming conventions

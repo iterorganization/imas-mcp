@@ -2,11 +2,11 @@
 
 Defines the interface all scanners must implement and provides a registry
 for dispatching scanners by data source type. Scanner types correspond to
-keys in the facility config data_sources section.
+keys in the facility config data_systems section.
 
 Architecture:
     The scanner system is facility-agnostic. Each facility declares its
-    data_sources in facility YAML, and the registry dispatches to the
+    data_systems in facility YAML, and the registry dispatches to the
     matching scanner plugin. Scanners handle facility-specific enumeration
     while shared infrastructure handles enrichment and validation.
 
@@ -62,7 +62,7 @@ class DataSourceScanner(Protocol):
 
     Each scanner handles one data source type (TDI, PPF, EDAS, MDSplus, IMAS).
     The scanner_type class attribute must match the key in facility config
-    data_sources section.
+    data_systems section.
 
     Lifecycle:
         1. scan() — discover signals from data source
@@ -73,7 +73,7 @@ class DataSourceScanner(Protocol):
     """
 
     scanner_type: str
-    """Data source type key matching data_sources config (e.g., 'tdi', 'ppf')."""
+    """Data source type key matching data_systems config (e.g., 'tdi', 'ppf')."""
 
     async def scan(
         self,
@@ -87,7 +87,7 @@ class DataSourceScanner(Protocol):
         Args:
             facility: Facility ID (e.g., "tcv", "jet")
             ssh_host: SSH host for remote access
-            config: Data source config from facility YAML (e.g., data_sources.tdi)
+            config: Data source config from facility YAML (e.g., data_systems.tdi)
             reference_shot: Reference shot for validation context
 
         Returns:
@@ -171,7 +171,7 @@ def list_scanners() -> list[str]:
 
 
 def get_scanners_for_facility(facility: str) -> list[DataSourceScanner]:
-    """Get scanners matching a facility's data_sources config.
+    """Get scanners matching a facility's data_systems config.
 
     Returns scanners for each configured data source type, plus the wiki
     scanner if the facility has wiki_sites configured.
@@ -192,7 +192,7 @@ def get_scanners_for_facility(facility: str) -> list[DataSourceScanner]:
         _auto_register()
 
     config = get_facility(facility)
-    data_sources = config.get("data_sources", {})
+    data_systems = config.get("data_systems", {})
 
     scanners = []
 
@@ -202,7 +202,7 @@ def get_scanners_for_facility(facility: str) -> list[DataSourceScanner]:
     if wiki_sites and "wiki" in _registry:
         scanners.append(_registry["wiki"])
 
-    for source_type in data_sources:
+    for source_type in data_systems:
         if source_type in _registry:
             scanners.append(_registry[source_type])
         else:
@@ -230,9 +230,9 @@ def get_facility_reference_shot(facility: str) -> int | None:
     from imas_codex.discovery.base.facility import get_facility
 
     config = get_facility(facility)
-    data_sources = config.get("data_sources", {})
+    data_systems = config.get("data_systems", {})
 
-    for source_config in data_sources.values():
+    for source_config in data_systems.values():
         if isinstance(source_config, dict):
             ref = source_config.get("reference_shot") or source_config.get(
                 "reference_pulse"

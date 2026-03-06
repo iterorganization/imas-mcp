@@ -173,8 +173,8 @@ class TestDisplayItems:
         """ScanItem has sensible defaults."""
         item = ScanItem(signal_id="tcv:magnetics/bpol_probe/flux")
         assert item.signal_id == "tcv:magnetics/bpol_probe/flux"
-        assert item.tree_name is None
-        assert item.node_path is None
+        assert item.data_source_name is None
+        assert item.data_source_path is None
         assert item.signals_in_tree == 0
         assert item.epoch_phase is None
 
@@ -182,7 +182,7 @@ class TestDisplayItems:
         """ScanItem tracks epoch detection progress."""
         item = ScanItem(
             signal_id="tcv:magnetics/ip",
-            tree_name="magnetics",
+            data_source_name="magnetics",
             epoch_phase="coarse",
             epoch_shots_scanned=50,
             epoch_total_shots=200,
@@ -470,8 +470,8 @@ class TestDataProgressDisplay:
         display.state.total_signals = 100
         display.state.current_scan = ScanItem(
             signal_id="tcv:magnetics/ip",
-            tree_name="magnetics",
-            node_path="\\MAGNETICS::IP",
+            data_source_name="magnetics",
+            data_source_path="\\MAGNETICS::IP",
             signals_in_tree=150,
         )
         section = display._build_pipeline_section()
@@ -486,7 +486,7 @@ class TestDataProgressDisplay:
         display.state.total_signals = 100
         display.state.current_scan = ScanItem(
             signal_id="tcv:magnetics/ip",
-            tree_name="magnetics",
+            data_source_name="magnetics",
             epoch_phase="coarse",
             epoch_shots_scanned=50,
             epoch_total_shots=200,

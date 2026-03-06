@@ -108,7 +108,7 @@ async def test_scan_versioned_tree(scanner, static_config):
     call_kw = mock_rtd.call_args.kwargs
     assert call_kw["facility"] == "tcv"
     assert call_kw["ssh_host"] == "tcv-ssh"
-    assert call_kw["tree_name"] == "tcv_machconfig"
+    assert call_kw["data_source_name"] == "tcv_machconfig"
     assert call_kw["ver_list"] == [1]
     assert result.signals == []
     assert result.stats["signals_promoted"] == 42
@@ -138,9 +138,9 @@ async def test_scan_dynamic_subtrees(scanner, dynamic_config):
 
     # Two subtrees should be processed
     assert len(call_log) == 2
-    assert call_log[0]["tree_name"] == "results"
+    assert call_log[0]["data_source_name"] == "results"
     assert call_log[0]["ver_list"] == [85000]
-    assert call_log[1]["tree_name"] == "magnetics"
+    assert call_log[1]["data_source_name"] == "magnetics"
     assert call_log[1]["ver_list"] == [85000]
 
     # node_usages from subtree config should be in tree_config
@@ -156,7 +156,7 @@ async def test_scan_mixed_trees(scanner, mixed_config):
     call_log = []
 
     async def fake_rtd(**kwargs):
-        call_log.append(kwargs["tree_name"])
+        call_log.append(kwargs["data_source_name"])
         return {"signals_promoted": 5, "versions_extracted": 1}
 
     with (
@@ -446,7 +446,7 @@ async def test_check_delegates_to_remote(scanner):
             physics_domain="general",
             data_access="tcv:mdsplus:tree_tdi",
             accessor="\\RESULTS::TOP:IP",
-            tree_name="results",
+            data_source_name="results",
         ),
     ]
     config = {"reference_shot": 85000, "setup_commands": ["source /mds.sh"]}

@@ -51,13 +51,13 @@ class StaticNodeBatch(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def _build_system_prompt(facility: str, tree_name: str) -> str:
+def _build_system_prompt(facility: str, data_source_name: str) -> str:
     """Build system prompt for static tree enrichment."""
     from imas_codex.agentic.prompt_loader import render_prompt
 
     return render_prompt(
         "discovery/static-enricher",
-        context={"facility": facility, "tree_name": tree_name},
+        context={"facility": facility, "data_source_name": data_source_name},
     )
 
 

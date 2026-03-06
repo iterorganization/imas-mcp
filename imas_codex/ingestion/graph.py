@@ -1,7 +1,7 @@
 """Graph relationship creation for ingested content.
 
 Post-ingestion processing to create relationships between Chunk nodes,
-DataReference nodes, and data entities (TreeNode, TDIFunction, IMASPath).
+DataReference nodes, and data entities (DataNode, TDIFunction, IMASPath).
 
 Architecture:
     Chunk -[:CONTAINS_REF]-> DataReference -[:RESOLVES_TO_*]-> Entity
@@ -30,7 +30,7 @@ CHANNEL_SUFFIX_PATTERN = re.compile(r"[_:](?:CHANNEL_?)?\d+$", re.IGNORECASE)
 
 
 def _normalize_for_matching(raw_path: str) -> str:
-    """Normalize a path for fuzzy TreeNode matching.
+    """Normalize a path for fuzzy DataNode matching.
 
     Strips channel indices and numeric suffixes to match tree structure.
     E.g., \\ATLAS::DT196_MHD_001:CHANNEL_006 -> \\ATLAS::DT196_MHD:CHANNEL
@@ -115,13 +115,13 @@ def link_examples_to_facility(graph_client: GraphClient | None = None) -> int:
 
 
 def link_chunks_to_tree_nodes(graph_client: GraphClient | None = None) -> int:
-    """Create DataReference nodes and link to TreeNodes for MDSplus paths.
+    """Create DataReference nodes and link to DataNodes for MDSplus paths.
 
     For chunks with mdsplus_paths metadata:
     1. Creates DataReference nodes (deduplicated by facility:type:hash)
     2. Creates CONTAINS_REF relationships from CodeChunk -> DataReference
     3. Computes normalized_path for fuzzy matching
-    4. Creates RESOLVES_TO_TREE_NODE relationships from DataReference -> TreeNode
+    4. Creates RESOLVES_TO_NODE relationships from DataReference -> DataNode
 
     Args:
         graph_client: Optional GraphClient instance.
@@ -188,21 +188,21 @@ def link_chunks_to_tree_nodes(graph_client: GraphClient | None = None) -> int:
             )
             logger.info("Computed normalized_path for %d refs", len(updates))
 
-        # Step 3: Create RESOLVES_TO_TREE_NODE relationships
+        # Step 3: Create RESOLVES_TO_NODE relationships
         resolve_to_tree = """
             MATCH (d:DataReference {ref_type: 'mdsplus_path'})
-            WHERE NOT (d)-[:RESOLVES_TO_TREE_NODE]->()
-            MATCH (t:TreeNode)
+            WHERE NOT (d)-[:RESOLVES_TO_NODE]->()
+            MATCH (t:DataNode)
             WHERE t.path = d.raw_string
                OR t.path ENDS WITH substring(d.raw_string, 1)
                OR toLower(split(t.path, ':')[-1]) = toLower(split(d.raw_string, '::')[-1])
                OR toUpper(t.path) = d.normalized_path
-            MERGE (d)-[:RESOLVES_TO_TREE_NODE]->(t)
+            MERGE (d)-[:RESOLVES_TO_NODE]->(t)
             RETURN count(*) AS resolved
         """
         result = client.query(resolve_to_tree)
         resolved_count = result[0]["resolved"] if result else 0
-        logger.info("Created %d RESOLVES_TO_TREE_NODE relationships", resolved_count)
+        logger.info("Created %d RESOLVES_TO_NODE relationships", resolved_count)
 
         # Update ref_count on CodeChunk nodes
         client.query("""
@@ -218,7 +218,7 @@ def link_example_mdsplus_paths(
     graph_client: GraphClient,
     example_id: str,
 ) -> int:
-    """Create DataReference nodes and link to TreeNodes for a specific example.
+    """Create DataReference nodes and link to DataNodes for a specific example.
 
     Args:
         graph_client: GraphClient instance
@@ -248,17 +248,17 @@ def link_example_mdsplus_paths(
     )
     refs_created = result[0]["refs_created"] if result else 0
 
-    # Resolve to TreeNodes
+    # Resolve to DataNodes
     graph_client.query(
         """
         MATCH (e:CodeExample {id: $example_id})-[:HAS_CHUNK]->(c:CodeChunk)
               -[:CONTAINS_REF]->(d:DataReference {ref_type: 'mdsplus_path'})
-        WHERE NOT (d)-[:RESOLVES_TO_TREE_NODE]->()
-        MATCH (t:TreeNode)
+        WHERE NOT (d)-[:RESOLVES_TO_NODE]->()
+        MATCH (t:DataNode)
         WHERE t.path = d.raw_string
            OR t.path ENDS WITH substring(d.raw_string, 1)
            OR toLower(split(t.path, ':')[-1]) = toLower(split(d.raw_string, '::')[-1])
-        MERGE (d)-[:RESOLVES_TO_TREE_NODE]->(t)
+        MERGE (d)-[:RESOLVES_TO_NODE]->(t)
         """,
         example_id=example_id,
     )

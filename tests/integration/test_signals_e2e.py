@@ -134,7 +134,7 @@ def get_signal_count() -> int:
 
 def get_tree_node_count() -> int:
     result = query_graph(
-        "MATCH (n:TreeNode {facility_id: $f}) RETURN count(n) AS cnt",
+        "MATCH (n:DataNode {facility_id: $f}) RETURN count(n) AS cnt",
         f=FACILITY,
     )
     return result[0]["cnt"] if result else 0
@@ -167,20 +167,20 @@ def mdsplus_data():
 
 @pytest.mark.timeout(60)
 def test_01_tree_nodes_exist(mdsplus_data):
-    """E2E-1: MDSplus scan creates TreeNode nodes with required properties."""
+    """E2E-1: MDSplus scan creates DataNode nodes with required properties."""
     tree_nodes = query_graph(
         """
-        MATCH (n:TreeNode {facility_id: $f})
-        RETURN n.path AS path, n.tree_name AS tree_name,
+        MATCH (n:DataNode {facility_id: $f})
+        RETURN n.path AS path, n.data_source_name AS data_source_name,
                n.facility_id AS facility_id
         LIMIT 20
         """,
         f=FACILITY,
     )
-    assert len(tree_nodes) > 0, "No TreeNode nodes"
+    assert len(tree_nodes) > 0, "No DataNode nodes"
     for n in tree_nodes:
         assert n["path"] is not None, f"Missing path: {n}"
-        assert n["tree_name"] is not None, f"Missing tree_name: {n}"
+        assert n["data_source_name"] is not None, f"Missing data_source_name: {n}"
         assert n["facility_id"] == FACILITY, f"Bad facility_id: {n}"
 
 
@@ -209,15 +209,15 @@ def test_02_facility_signals_exist(mdsplus_data):
 
 @pytest.mark.timeout(60)
 def test_03_source_node_edges(mdsplus_data):
-    """E2E-2: FacilitySignals have SOURCE_NODE edges to TreeNodes."""
+    """E2E-2: FacilitySignals have HAS_DATA_SOURCE_NODE edges to DataNodes."""
     result = query_graph(
         """
-        MATCH (s:FacilitySignal {facility_id: $f})-[:SOURCE_NODE]->(n:TreeNode)
+        MATCH (s:FacilitySignal {facility_id: $f})-[:HAS_DATA_SOURCE_NODE]->(n:DataNode)
         RETURN count(s) AS cnt
         """,
         f=FACILITY,
     )
-    assert result[0]["cnt"] > 0, "No SOURCE_NODE edges"
+    assert result[0]["cnt"] > 0, "No HAS_DATA_SOURCE_NODE edges"
 
 
 @pytest.mark.timeout(60)
@@ -260,18 +260,18 @@ def test_05_at_facility_edges(mdsplus_data):
 
 @pytest.mark.timeout(60)
 def test_06_tree_model_versions(mdsplus_data):
-    """E2E-2: MDSplus scan creates TreeModelVersion for versioned trees."""
+    """E2E-2: MDSplus scan creates StructuralEpoch for versioned trees."""
     versions = query_graph(
         """
-        MATCH (v:TreeModelVersion {facility_id: $f})
-        RETURN v.tree_name AS tree_name, v.version AS version,
+        MATCH (v:StructuralEpoch {facility_id: $f})
+        RETURN v.data_source_name AS data_source_name, v.version AS version,
                v.facility_id AS facility_id
         """,
         f=FACILITY,
     )
-    assert len(versions) > 0, "No TreeModelVersion nodes"
+    assert len(versions) > 0, "No StructuralEpoch nodes"
     for v in versions:
-        assert v["tree_name"] is not None
+        assert v["data_source_name"] is not None
         assert v["facility_id"] == FACILITY
 
 
@@ -358,9 +358,9 @@ def test_11_clear_signals():
 
     tmv = query_graph(
         """
-        MATCH (v:TreeModelVersion {facility_id: $f})
+        MATCH (v:StructuralEpoch {facility_id: $f})
         RETURN count(v) AS cnt
         """,
         f=FACILITY,
     )
-    assert tmv[0]["cnt"] == 0, "TreeModelVersion not cleaned up"
+    assert tmv[0]["cnt"] == 0, "StructuralEpoch not cleaned up"

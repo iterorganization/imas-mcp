@@ -1,9 +1,9 @@
 """Async workers for parallel tree discovery.
 
 Workers that process MDSplus trees through the pipeline:
-- extract_worker: Claim TreeModelVersion, SSH extract, ingest to graph
+- extract_worker: Claim StructuralEpoch, SSH extract, ingest to graph
 - units_worker: Batched unit extraction for NUMERIC/SIGNAL nodes
-- promote_worker: Create FacilitySignal nodes from leaf TreeNodes
+- promote_worker: Create FacilitySignal nodes from leaf DataNodes
 
 Workers coordinate through graph_ops claim/mark functions using
 claimed_at timestamps.
@@ -33,9 +33,9 @@ async def extract_worker(
     on_progress: Callable | None = None,
     **_kwargs,
 ) -> None:
-    """Extract worker: claim a TreeModelVersion, SSH extract, ingest to graph.
+    """Extract worker: claim a StructuralEpoch, SSH extract, ingest to graph.
 
-    Claims TreeModelVersion nodes with status=discovered, runs SSH extraction
+    Claims StructuralEpoch nodes with status=discovered, runs SSH extraction
     for that version, then immediately ingests the results into the graph.
     Each version is claimed-extracted-ingested as a unit.
     """
@@ -59,7 +59,7 @@ async def extract_worker(
         claimed = await asyncio.to_thread(
             claim_version_for_extraction,
             state.facility,
-            state.tree_name,
+            state.data_source_name,
         )
 
         if not claimed:
@@ -77,7 +77,7 @@ async def extract_worker(
 
         if on_progress:
             on_progress(
-                f"extracting v{version} {state.facility}:{state.tree_name}",
+                f"extracting v{version} {state.facility}:{state.data_source_name}",
                 state.extract_stats,
                 [{"version": version, "phase": "extract"}],
             )
@@ -87,7 +87,7 @@ async def extract_worker(
             node_usages = state.tree_config.get("node_usages")
             data = await async_extract_tree_version(
                 facility=state.facility,
-                tree_name=state.tree_name,
+                data_source_name=state.data_source_name,
                 shot=version,
                 timeout=state.timeout,
                 node_usages=node_usages,
@@ -194,7 +194,7 @@ async def units_worker(
 
     Runs batched unit extraction via SSH for NUMERIC/SIGNAL nodes,
     then creates Unit nodes and HAS_UNIT relationships in the graph.
-    Tracks completion via TreeModelVersion.units_extracted flag so
+    Tracks completion via StructuralEpoch.units_extracted flag so
     re-runs are no-ops for already-processed versions.
     """
     from imas_codex.mdsplus.extraction import async_extract_units_for_version
@@ -220,7 +220,7 @@ async def units_worker(
 
     # Check if units already extracted (graph is ledger)
     pending = await asyncio.to_thread(
-        has_pending_units_work, state.facility, state.tree_name
+        has_pending_units_work, state.facility, state.data_source_name
     )
     if not pending:
         if on_progress:
@@ -266,7 +266,7 @@ async def units_worker(
     try:
         units = await async_extract_units_for_version(
             state.facility,
-            state.tree_name,
+            state.data_source_name,
             latest_version,
             timeout=state.timeout,
             batch_size=units_batch_size,
@@ -276,7 +276,7 @@ async def units_worker(
         if units:
             # Create Unit nodes and HAS_UNIT relationships
             created = await asyncio.to_thread(
-                merge_units_to_graph, state.facility, state.tree_name, units
+                merge_units_to_graph, state.facility, state.data_source_name, units
             )
             logger.info(
                 "Created %d HAS_UNIT relationships for %d unique unit symbols",
@@ -299,7 +299,7 @@ async def units_worker(
         await asyncio.to_thread(
             mark_all_versions_units_extracted,
             state.facility,
-            state.tree_name,
+            state.data_source_name,
             len(units) if units else 0,
         )
 
@@ -327,9 +327,9 @@ async def promote_worker(
     on_progress: Callable | None = None,
     **_kwargs,
 ) -> None:
-    """Promote worker: create FacilitySignal nodes from leaf TreeNodes.
+    """Promote worker: create FacilitySignal nodes from leaf DataNodes.
 
-    After extraction and units complete, queries for leaf TreeNodes
+    After extraction and units complete, queries for leaf DataNodes
     (NUMERIC/SIGNAL usage) and creates FacilitySignal nodes with
     status=discovered. Descriptions come later from the signals
     enrichment pipeline.
@@ -354,7 +354,7 @@ async def promote_worker(
         promoted = await asyncio.to_thread(
             promote_leaf_nodes_to_signals,
             state.facility,
-            state.tree_name,
+            state.data_source_name,
         )
 
         state.promote_stats.processed = promoted

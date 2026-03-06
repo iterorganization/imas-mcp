@@ -438,7 +438,7 @@ def parse_tdi_function(
 def probe_signals(
     signals: list[TDISignal],
     shot: int,
-    tree_name: str = "tcv_shot",
+    data_source_name: str = "tcv_shot",
 ) -> None:
     """Execute TDI signals via MDSplus and collect runtime metadata.
 
@@ -452,9 +452,9 @@ def probe_signals(
         return
 
     try:
-        tree = MDSplus.Tree(tree_name, shot, "readonly")
+        tree = MDSplus.Tree(data_source_name, shot, "readonly")
     except Exception as e:
-        print(f"Cannot open tree {tree_name} shot {shot}: {e}", file=sys.stderr)
+        print(f"Cannot open tree {data_source_name} shot {shot}: {e}", file=sys.stderr)
         return
 
     for signal in signals:

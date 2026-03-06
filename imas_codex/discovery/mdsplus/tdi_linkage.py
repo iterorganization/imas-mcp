@@ -1,6 +1,6 @@
-"""TDI-to-TreeNode linkage for bidirectional context.
+"""TDI-to-DataNode linkage for bidirectional context.
 
-Links TDI function build_path references to TreeNode paths in the graph.
+Links TDI function build_path references to DataNode paths in the graph.
 This is a graph-only operation — no SSH needed. Idempotent: safe to
 rerun after either TDI or tree discovery completes.
 """
@@ -18,19 +18,19 @@ logger = logging.getLogger(__name__)
 def link_tdi_to_tree_nodes(
     facility: str,
 ) -> int:
-    """Match TDI build_path references to TreeNode paths.
+    """Match TDI build_path references to DataNode paths.
 
     For each TDIFunction with mdsplus_trees references:
     1. Look up build_path patterns in TDIFunction.source_code
-    2. Match against existing TreeNode nodes by path suffix
-    3. Create RESOLVES_TO_TREE_NODE edges from TDIFunction to TreeNode
-    4. Set accessor_function on matching TreeNodes
+    2. Match against existing DataNode nodes by path suffix
+    3. Create RESOLVES_TO_NODE edges from TDIFunction to DataNode
+    4. Set accessor_function on matching DataNodes
 
     Args:
         facility: Facility identifier (e.g., "tcv")
 
     Returns:
-        Number of RESOLVES_TO_TREE_NODE edges created.
+        Number of RESOLVES_TO_NODE edges created.
     """
     with GraphClient() as gc:
         # Get all TDI functions with source code and tree references
@@ -63,16 +63,16 @@ def link_tdi_to_tree_nodes(
             if not paths:
                 continue
 
-            # Create RESOLVES_TO_TREE_NODE edges for matching paths
+            # Create RESOLVES_TO_NODE edges for matching paths
             result = gc.query(
                 """
                 UNWIND $paths AS bp
                 WITH bp, $func_id AS fid
-                MATCH (tn:TreeNode {facility_id: $facility})
+                MATCH (tn:DataNode {facility_id: $facility})
                 WHERE tn.path ENDS WITH bp
                 WITH tn, fid
                 MATCH (tf:TDIFunction {id: fid})
-                MERGE (tf)-[:RESOLVES_TO_TREE_NODE]->(tn)
+                MERGE (tf)-[:RESOLVES_TO_NODE]->(tn)
                 ON CREATE SET tn.accessor_function = tf.name
                 RETURN count(*) AS linked
                 """,
@@ -85,14 +85,14 @@ def link_tdi_to_tree_nodes(
 
             if linked:
                 logger.debug(
-                    "Linked %s to %d TreeNodes (from %d build_paths)",
+                    "Linked %s to %d DataNodes (from %d build_paths)",
                     func["name"],
                     linked,
                     len(paths),
                 )
 
         logger.info(
-            "Created %d TDI→TreeNode links for %s",
+            "Created %d TDI→DataNode links for %s",
             total_linked,
             facility,
         )
@@ -102,9 +102,9 @@ def link_tdi_to_tree_nodes(
 def update_signal_accessors(
     facility: str,
 ) -> int:
-    """Set preferred TDI accessor on FacilitySignals with matching TreeNodes.
+    """Set preferred TDI accessor on FacilitySignals with matching DataNodes.
 
-    For FacilitySignals that have a SOURCE_NODE TreeNode with a linked
+    For FacilitySignals that have a HAS_DATA_SOURCE_NODE DataNode with a linked
     TDIFunction, set the preferred_accessor to the TDI expression.
 
     Args:
@@ -117,8 +117,8 @@ def update_signal_accessors(
         result = gc.query(
             """
             MATCH (s:FacilitySignal {facility_id: $facility})
-                  -[:SOURCE_NODE]->(tn:TreeNode)
-                  <-[:RESOLVES_TO_TREE_NODE]-(tf:TDIFunction)
+                  -[:HAS_DATA_SOURCE_NODE]->(tn:DataNode)
+                  <-[:RESOLVES_TO_NODE]-(tf:TDIFunction)
             WHERE s.preferred_accessor IS NULL
             SET s.preferred_accessor = tf.name + '("' + s.accessor + '")'
             RETURN count(s) AS updated
@@ -141,7 +141,7 @@ def _extract_build_paths(source_code: str) -> list[str]:
 
     Extracts the path portion after the tree qualifier (\\TREE::).
     Returns canonical uppercase path segments for matching against
-    TreeNode.path.
+    DataNode.path.
 
     Args:
         source_code: TDI .fun file content

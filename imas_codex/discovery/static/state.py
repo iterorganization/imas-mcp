@@ -15,7 +15,7 @@ class StaticDiscoveryState(DiscoveryStateBase):
     """Shared state for parallel static tree discovery workers."""
 
     ssh_host: str = ""
-    tree_name: str = ""
+    data_source_name: str = ""
     tree_config: dict[str, Any] = field(default_factory=dict)
 
     # Limits (cost_limit, deadline inherited from base)

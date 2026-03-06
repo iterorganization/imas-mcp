@@ -1,7 +1,7 @@
 """Async workers for parallel static tree discovery.
 
 Workers that process static MDSplus trees through the pipeline:
-- extract_worker: Claim TreeModelVersion, SSH extract, ingest to graph
+- extract_worker: Claim StructuralEpoch, SSH extract, ingest to graph
 - units_worker: Batched unit extraction for NUMERIC/SIGNAL nodes
 - enrich_worker: LLM batch description of tree nodes
 
@@ -32,9 +32,9 @@ async def extract_worker(
     on_progress: Callable | None = None,
     **_kwargs,
 ) -> None:
-    """Extract worker: claim a TreeModelVersion, SSH extract, ingest to graph.
+    """Extract worker: claim a StructuralEpoch, SSH extract, ingest to graph.
 
-    Claims TreeModelVersion nodes with status=discovered, runs SSH extraction
+    Claims StructuralEpoch nodes with status=discovered, runs SSH extraction
     for that version, then immediately ingests the results into the graph.
     Each version is claimed-extracted-ingested as a unit.
     """
@@ -58,7 +58,7 @@ async def extract_worker(
         claimed = await asyncio.to_thread(
             claim_version_for_extraction,
             state.facility,
-            state.tree_name,
+            state.data_source_name,
         )
 
         if not claimed:
@@ -76,7 +76,7 @@ async def extract_worker(
 
         if on_progress:
             on_progress(
-                f"extracting v{version} {state.facility}:{state.tree_name}",
+                f"extracting v{version} {state.facility}:{state.data_source_name}",
                 state.extract_stats,
                 [{"version": version, "phase": "extract"}],
             )
@@ -85,7 +85,7 @@ async def extract_worker(
             # SSH extraction
             data = await async_extract_tree_version(
                 facility=state.facility,
-                tree_name=state.tree_name,
+                data_source_name=state.data_source_name,
                 shot=version,
                 timeout=state.timeout,
             )
@@ -191,7 +191,7 @@ async def units_worker(
 
     Runs batched unit extraction via SSH for NUMERIC/SIGNAL nodes,
     then creates Unit nodes and HAS_UNIT relationships in the graph.
-    Tracks completion via TreeModelVersion.units_extracted flag so
+    Tracks completion via StructuralEpoch.units_extracted flag so
     re-runs are no-ops for already-processed versions.
     """
     from imas_codex.mdsplus.extraction import async_extract_units_for_version
@@ -217,7 +217,7 @@ async def units_worker(
 
     # Check if units already extracted (graph is ledger)
     pending = await asyncio.to_thread(
-        has_pending_units_work, state.facility, state.tree_name
+        has_pending_units_work, state.facility, state.data_source_name
     )
     if not pending:
         if on_progress:
@@ -263,7 +263,7 @@ async def units_worker(
     try:
         units = await async_extract_units_for_version(
             state.facility,
-            state.tree_name,
+            state.data_source_name,
             latest_version,
             timeout=state.timeout,
             batch_size=units_batch_size,
@@ -273,7 +273,7 @@ async def units_worker(
         if units:
             # Create Unit nodes and HAS_UNIT relationships
             created = await asyncio.to_thread(
-                merge_units_to_graph, state.facility, state.tree_name, units
+                merge_units_to_graph, state.facility, state.data_source_name, units
             )
             logger.info(
                 "Created %d HAS_UNIT relationships for %d unique unit symbols",
@@ -297,7 +297,7 @@ async def units_worker(
         await asyncio.to_thread(
             mark_all_versions_units_extracted,
             state.facility,
-            state.tree_name,
+            state.data_source_name,
             len(units) if units else 0,
         )
 
@@ -377,7 +377,7 @@ async def enrich_worker(
     patterns_created = await asyncio.to_thread(
         detect_and_create_patterns,
         state.facility,
-        state.tree_name,
+        state.data_source_name,
     )
 
     # Detect member-suffix patterns (:PRE, :VAL, :STORE under configured parent types)
@@ -385,7 +385,7 @@ async def enrich_worker(
     member_patterns_created = await asyncio.to_thread(
         detect_and_create_member_patterns,
         state.facility,
-        state.tree_name,
+        state.data_source_name,
         member_parent_types=member_parent_types,
     )
     patterns_created += member_patterns_created
@@ -398,7 +398,7 @@ async def enrich_worker(
         )
 
     model = get_model("language")
-    system_prompt = _build_system_prompt(state.facility, state.tree_name)
+    system_prompt = _build_system_prompt(state.facility, state.data_source_name)
 
     # Build version descriptions from config
     version_descs: dict[int, str] = {}
@@ -411,7 +411,7 @@ async def enrich_worker(
         patterns = await asyncio.to_thread(
             claim_patterns_for_enrichment,
             state.facility,
-            state.tree_name,
+            state.data_source_name,
             limit=state.batch_size,
         )
         if not patterns:
@@ -441,7 +441,7 @@ async def enrich_worker(
         tree_context = await asyncio.to_thread(
             fetch_enrichment_context,
             state.facility,
-            state.tree_name,
+            state.data_source_name,
             rep_paths,
         )
 
@@ -536,7 +536,7 @@ async def enrich_worker(
         parent_data = await asyncio.to_thread(
             claim_parent_for_enrichment,
             state.facility,
-            state.tree_name,
+            state.data_source_name,
         )
 
         if not parent_data:
@@ -563,7 +563,7 @@ async def enrich_worker(
         tree_context = await asyncio.to_thread(
             fetch_enrichment_context,
             state.facility,
-            state.tree_name,
+            state.data_source_name,
             child_paths,
         )
 
@@ -665,7 +665,7 @@ async def enrich_worker(
         orphans = await asyncio.to_thread(
             claim_orphan_nodes_for_enrichment,
             state.facility,
-            state.tree_name,
+            state.data_source_name,
             limit=state.batch_size,
         )
 
@@ -689,7 +689,7 @@ async def enrich_worker(
         tree_context = await asyncio.to_thread(
             fetch_enrichment_context,
             state.facility,
-            state.tree_name,
+            state.data_source_name,
             orphan_paths,
         )
 

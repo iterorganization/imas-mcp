@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 def query_neo4j(cypher: str, params: str = "") -> str:
     """Execute a read-only Cypher query against the Neo4j graph database.
 
-    Use this to explore TreeNodes, code examples, facility data, and relationships.
+    Use this to explore DataNodes, code examples, facility data, and relationships.
     The graph contains MDSplus tree structures, code chunks with embeddings, and wiki content.
 
     Args:
@@ -175,7 +175,7 @@ def _run_async(coro):
 def search_imas_paths(query: str, ids_filter: str = "", max_results: int = 10) -> str:
     """Search IMAS Data Dictionary for physics paths using semantic search.
 
-    Use this to find IMAS paths that might correspond to MDSplus TreeNodes,
+    Use this to find IMAS paths that might correspond to MDSplus DataNodes,
     enabling semantic mapping between local data and IMAS standard.
 
     Args:
@@ -343,7 +343,7 @@ def get_wiki_context_for_path(path: str, facility: str = "tcv") -> str:
         with GraphClient() as gc:
             result = gc.query(
                 """
-                MATCH (wc:WikiChunk)-[:DOCUMENTS]->(t:TreeNode)
+                MATCH (wc:WikiChunk)-[:DOCUMENTS]->(t:DataNode)
                 WHERE t.path CONTAINS $path OR t.canonical_path = $normalized
                 MATCH (wp:WikiPage)-[:HAS_CHUNK]->(wc)
                 RETURN wp.title AS page_title, wc.text AS text

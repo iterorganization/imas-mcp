@@ -1,6 +1,6 @@
 """Signals discovery command: facility-agnostic signal scanning and enrichment.
 
-Dispatches to registered scanner plugins based on facility config data_sources.
+Dispatches to registered scanner plugins based on facility config data_systems.
 Scanner plugins handle facility-specific enumeration (TDI, PPF, EDAS, MDSplus,
 IMAS, wiki), while shared infrastructure handles LLM enrichment and validation.
 """
@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
     type=str,
     default=None,
     help="Comma-separated scanner types to run (e.g., 'tdi,mdsplus'). "
-    "Default: auto-detect from facility config data_sources.",
+    "Default: auto-detect from facility config data_systems.",
 )
 @click.option(
     "--focus",
@@ -97,7 +97,7 @@ def signals(
 
     Scans configured data sources to discover facility signals, then enriches
     them with descriptions, physics domains, and IMAS mappings. Scanners are
-    auto-detected from facility config data_sources section.
+    auto-detected from facility config data_systems section.
 
     \b
     Examples:
@@ -155,14 +155,14 @@ def signals(
     if not scanner_types:
         log_print(
             f"[red]No data sources configured for {facility}.[/red]\n"
-            "Configure data_sources in facility YAML or specify --scanners."
+            "Configure data_systems in facility YAML or specify --scanners."
         )
         raise SystemExit(1)
 
     # Resolve reference shot from config if not specified
-    data_sources = config.get("data_sources", {})
+    data_systems = config.get("data_systems", {})
     if reference_shot is None:
-        for source_config in data_sources.values():
+        for source_config in data_systems.values():
             if isinstance(source_config, dict):
                 ref = source_config.get("reference_shot") or source_config.get(
                     "reference_pulse"

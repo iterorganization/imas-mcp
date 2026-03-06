@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""High-throughput batched signal check script.
+r"""High-throughput batched signal check script.
 
 Optimized for checking thousands of signals by:
-1. Grouping signals by (tree_name, shot) to minimize tree opens
+1. Grouping signals by (data_source_name, shot) to minimize tree opens
 2. Processing all signals for a tree/shot combination in one batch
 3. Trying multiple check_shots per signal (all versions/epochs)
 
@@ -16,9 +16,9 @@ Usage:
 Input (JSON on stdin):
     {
         "signals": [
-            {"id": "tcv:results:/ip", "accessor": "\\ip", "tree_name": "results",
+            {"id": "tcv:results:/ip", "accessor": "\ip", "data_source_name": "results",
              "check_shots": [85000]},
-            {"id": "tcv:static:/r_c", "accessor": "\\STATIC::R_C", "tree_name": "static",
+            {"id": "tcv:static:/r_c", "accessor": "\STATIC::R_C", "data_source_name": "static",
              "check_shots": [1, 2, 3, 4, 5, 6, 7, 8]},
             ...
         ],
@@ -119,7 +119,7 @@ def _normalize_signal_shots(sig: dict) -> list:
 
 
 def check_signal_group(
-    tree_name: str,
+    data_source_name: str,
     shot: int,
     signals: list[dict[str, Any]],
     timeout: int = 30,
@@ -131,7 +131,7 @@ def check_signal_group(
     functions like tile_store that print debug output.
 
     Args:
-        tree_name: MDSplus tree name
+        data_source_name: MDSplus tree name
         shot: Shot number
         signals: List of signal dicts with id, accessor
         timeout: Timeout in seconds for entire group
@@ -152,7 +152,7 @@ def check_signal_group(
         import MDSplus
 
         # Open tree once for all signals in group
-        tree = MDSplus.Tree(tree_name, int(shot), "readonly")
+        tree = MDSplus.Tree(data_source_name, int(shot), "readonly")
 
         for sig in signals:
             result: dict[str, Any] = {"id": sig["id"], "success": False}
@@ -264,16 +264,16 @@ def main() -> None:
         )
         return
 
-    # Group signals by (tree_name, first_check_shot) for efficient batch processing
+    # Group signals by (data_source_name, first_check_shot) for efficient batch processing
     groups: dict[tuple[str, int], list[dict]] = defaultdict(list)
     # Track remaining check_shots per signal for retry
     signal_remaining_shots: dict[str, list[int]] = {}
     for sig in signals:
-        tree_name = sig.get("tree_name", "results")
+        data_source_name = sig.get("data_source_name", "results")
         check_shots = _normalize_signal_shots(sig)
         if check_shots:
             primary_shot = check_shots[0]
-            groups[(tree_name, primary_shot)].append(sig)
+            groups[(data_source_name, primary_shot)].append(sig)
             if len(check_shots) > 1:
                 signal_remaining_shots[sig["id"]] = check_shots[1:]
         else:
@@ -282,9 +282,9 @@ def main() -> None:
 
     # Process each group
     all_results = []
-    for (tree_name, shot), group_signals in groups.items():
+    for (data_source_name, shot), group_signals in groups.items():
         group_results = check_signal_group(
-            tree_name,
+            data_source_name,
             shot,
             group_signals,
             timeout=timeout_per_group,
@@ -315,9 +315,9 @@ def main() -> None:
                     orig_sig = sig
                     break
             if orig_sig:
-                tree_name = orig_sig.get("tree_name", "results")
+                data_source_name = orig_sig.get("data_source_name", "results")
                 for retry_shot in signal_remaining_shots[sig_id]:
-                    retry_groups[(tree_name, retry_shot)].append(orig_sig)
+                    retry_groups[(data_source_name, retry_shot)].append(orig_sig)
         else:
             final_results.append(result)
 
@@ -325,13 +325,13 @@ def main() -> None:
     if retry_groups:
         # Track which signals have already succeeded during retries
         succeeded: set[str] = set()
-        for (tree_name, shot), group_signals in retry_groups.items():
+        for (data_source_name, shot), group_signals in retry_groups.items():
             # Skip signals that already succeeded on an earlier retry
             pending = [s for s in group_signals if s["id"] not in succeeded]
             if not pending:
                 continue
             group_results = check_signal_group(
-                tree_name, shot, pending, timeout=timeout_per_group
+                data_source_name, shot, pending, timeout=timeout_per_group
             )
             for r in group_results:
                 sig_id = r["id"]

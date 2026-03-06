@@ -46,8 +46,8 @@ def get_static_tree_config(facility: str) -> list[dict[str, Any]]:
     from imas_codex.discovery.base.facility import get_facility
 
     config = get_facility(facility)
-    data_sources = config.get("data_sources", {})
-    mdsplus = data_sources.get("mdsplus", {})
+    data_systems = config.get("data_systems", {})
+    mdsplus = data_systems.get("mdsplus", {})
     all_trees = mdsplus.get("trees", [])
     return [t for t in all_trees if t.get("versions")]
 
@@ -55,7 +55,7 @@ def get_static_tree_config(facility: str) -> list[dict[str, Any]]:
 def get_static_tree_graph_state(
     client: "GraphClient",
     facility: str,
-    tree_name: str,
+    data_source_name: str,
     ver_list: list[int],
 ) -> dict[str, Any]:
     """Query graph for existing static tree state.
@@ -66,23 +66,23 @@ def get_static_tree_graph_state(
     Args:
         client: Neo4j GraphClient
         facility: Facility identifier
-        tree_name: Static tree name
+        data_source_name: Static tree name
         ver_list: Version numbers to check
 
     Returns:
         Dict with:
           - ingested_versions: set of version ints already in graph
           - version_node_counts: {version_int: node_count} from graph
-          - total_nodes: total TreeNode count for this tree
-          - enriched_nodes: count of TreeNodes with descriptions
+          - total_nodes: total DataNode count for this tree
+          - enriched_nodes: count of DataNodes with descriptions
           - unenriched_paths: list of paths needing enrichment
     """
-    # Check which TreeModelVersions exist
-    epoch_ids = [f"{facility}:{tree_name}:v{v}" for v in ver_list]
+    # Check which StructuralEpochs exist
+    epoch_ids = [f"{facility}:{data_source_name}:v{v}" for v in ver_list]
     result = client.query(
         """
         UNWIND $ids AS eid
-        OPTIONAL MATCH (v:TreeModelVersion {id: eid})
+        OPTIONAL MATCH (v:StructuralEpoch {id: eid})
         RETURN eid, v.version AS version, v.node_count AS node_count
         """,
         ids=epoch_ids,
@@ -96,17 +96,17 @@ def get_static_tree_graph_state(
             ingested_versions.add(ver)
             version_node_counts[ver] = int(row["node_count"] or 0)
 
-    # Count TreeNodes and enrichment state
+    # Count DataNodes and enrichment state
     node_stats = client.query(
         """
-        MATCH (n:TreeNode)
-        WHERE n.tree_name = $tree_name AND n.facility_id = $facility
+        MATCH (n:DataNode)
+        WHERE n.data_source_name = $data_source_name AND n.facility_id = $facility
         RETURN
             count(n) AS total,
             sum(CASE WHEN n.description IS NOT NULL AND n.description <> ''
                 THEN 1 ELSE 0 END) AS enriched
         """,
-        tree_name=tree_name,
+        data_source_name=data_source_name,
         facility=facility,
     )
 
@@ -119,14 +119,14 @@ def get_static_tree_graph_state(
     # Get paths that need enrichment (data-bearing nodes without descriptions)
     unenriched = client.query(
         """
-        MATCH (n:TreeNode)
-        WHERE n.tree_name = $tree_name AND n.facility_id = $facility
+        MATCH (n:DataNode)
+        WHERE n.data_source_name = $data_source_name AND n.facility_id = $facility
           AND n.node_type IN ['NUMERIC', 'SIGNAL', 'AXIS', 'TEXT']
           AND (n.description IS NULL OR n.description = '')
         RETURN n.path AS path, n.node_type AS node_type,
                n.tags AS tags, n.unit AS unit
         """,
-        tree_name=tree_name,
+        data_source_name=data_source_name,
         facility=facility,
     )
 
@@ -146,12 +146,12 @@ def _load_mdsplus_config(facility: str) -> dict[str, Any]:
     from imas_codex.discovery.base.facility import get_facility
 
     config = get_facility(facility)
-    return config.get("data_sources", {}).get("mdsplus", {})
+    return config.get("data_systems", {}).get("mdsplus", {})
 
 
 def _resolve_shots(
     facility: str,
-    tree_name: str,
+    data_source_name: str,
     shots: list[int] | None,
 ) -> list[int]:
     """Resolve shot/version list from config if not provided.
@@ -168,18 +168,18 @@ def _resolve_shots(
     from imas_codex.discovery.base.facility import get_facility
 
     config = get_facility(facility)
-    mdsplus = config.get("data_sources", {}).get("mdsplus", {})
+    mdsplus = config.get("data_systems", {}).get("mdsplus", {})
     all_trees = mdsplus.get("trees", [])
 
     for cfg in all_trees:
-        if cfg.get("tree_name") == tree_name:
+        if cfg.get("tree_name") == data_source_name:
             ver_list = cfg.get("versions", [])
             if ver_list:
                 return [v["version"] for v in ver_list]
             break
         # Check subtrees
         for sub in cfg.get("subtrees", []):
-            if sub.get("tree_name") == tree_name:
+            if sub.get("tree_name") == data_source_name:
                 ref = cfg.get("reference_shot") or mdsplus.get("reference_shot")
                 if ref:
                     return [ref]
@@ -191,7 +191,7 @@ def _resolve_shots(
 
 def extract_tree_version(
     facility: str,
-    tree_name: str,
+    data_source_name: str,
     shot: int,
     timeout: int = 300,
     node_usages: list[str] | None = None,
@@ -203,21 +203,21 @@ def extract_tree_version(
 
     Args:
         facility: SSH host alias (e.g., "tcv")
-        tree_name: MDSplus tree name (e.g., "static", "results")
+        data_source_name: MDSplus tree name (e.g., "static", "results")
         shot: Shot or version number to extract
         timeout: SSH timeout in seconds
         node_usages: If set, only extract nodes with these usage types.
             None extracts all nodes (full structure).
 
     Returns:
-        Dict with version data: {"tree_name": str, "versions": {"N": {...}}, "diff": {}}
+        Dict with version data: {"data_source_name": str, "versions": {"N": {...}}, "diff": {}}
     """
     mdsplus = _load_mdsplus_config(facility)
     exclude_names = mdsplus.get("exclude_node_names", [])
     setup_commands = mdsplus.get("setup_commands")
 
     input_data: dict[str, Any] = {
-        "tree_name": tree_name,
+        "data_source_name": data_source_name,
         "shots": [shot],
         "exclude_names": exclude_names,
     }
@@ -226,7 +226,7 @@ def extract_tree_version(
 
     logger.info(
         "Extracting tree %s shot=%d from %s",
-        tree_name,
+        data_source_name,
         shot,
         facility,
     )
@@ -262,7 +262,7 @@ discover_static_tree_version = extract_tree_version
 
 async def async_extract_tree_version(
     facility: str,
-    tree_name: str,
+    data_source_name: str,
     shot: int,
     timeout: int = 300,
     node_usages: list[str] | None = None,
@@ -277,7 +277,7 @@ async def async_extract_tree_version(
     setup_commands = mdsplus.get("setup_commands")
 
     input_data: dict[str, Any] = {
-        "tree_name": tree_name,
+        "data_source_name": data_source_name,
         "shots": [shot],
         "exclude_names": exclude_names,
     }
@@ -286,7 +286,7 @@ async def async_extract_tree_version(
 
     logger.info(
         "Extracting tree %s shot=%d from %s",
-        tree_name,
+        data_source_name,
         shot,
         facility,
     )
@@ -322,7 +322,7 @@ async_discover_static_tree_version = async_extract_tree_version
 
 async def async_extract_units_for_version(
     facility: str,
-    tree_name: str,
+    data_source_name: str,
     version: int,
     timeout: int = 180,
     batch_size: int = 500,
@@ -344,7 +344,7 @@ async def async_extract_units_for_version(
     logger.info(
         "Extracting units from %s:%s v%d (batch_size=%d)...",
         facility,
-        tree_name,
+        data_source_name,
         version,
         batch_size,
     )
@@ -352,7 +352,7 @@ async def async_extract_units_for_version(
     while True:
         batch_num += 1
         input_data = {
-            "tree_name": tree_name,
+            "data_source_name": data_source_name,
             "version": version,
             "node_types": ["NUMERIC", "SIGNAL"],
             "offset": offset,
@@ -375,7 +375,7 @@ async def async_extract_units_for_version(
                 "Units batch %d failed for %s:%s v%d (offset=%d)",
                 batch_num,
                 facility,
-                tree_name,
+                data_source_name,
                 version,
                 offset,
             )
@@ -434,9 +434,9 @@ def merge_version_results(
         Combined dict with all versions and cross-version diff.
     """
     if not results:
-        return {"tree_name": "", "versions": {}, "diff": {}}
+        return {"data_source_name": "", "versions": {}, "diff": {}}
 
-    tree_name = results[0].get("tree_name", "")
+    data_source_name = results[0].get("data_source_name", "")
     merged_versions: dict[str, dict] = {}
 
     for r in results:
@@ -446,7 +446,11 @@ def merge_version_results(
     # Recompute diff across all merged versions
     diff = _compute_diff(merged_versions)
 
-    return {"tree_name": tree_name, "versions": merged_versions, "diff": diff}
+    return {
+        "data_source_name": data_source_name,
+        "versions": merged_versions,
+        "diff": diff,
+    }
 
 
 def _compute_diff(
@@ -477,7 +481,7 @@ def _compute_diff(
 
 def discover_tree(
     facility: str,
-    tree_name: str,
+    data_source_name: str,
     shots: list[int] | None = None,
     timeout: int = 300,
     node_usages: list[str] | None = None,
@@ -493,22 +497,22 @@ def discover_tree(
 
     Args:
         facility: SSH host alias (e.g., "tcv")
-        tree_name: MDSplus tree name (e.g., "static", "results")
+        data_source_name: MDSplus tree name (e.g., "static", "results")
         shots: Shot/version numbers to extract (default: from config)
         timeout: SSH timeout per shot/version in seconds
         node_usages: If set, only extract nodes with these usage types.
 
     Returns:
         Dict with version data, structural diffs, and tag mappings.
-        Structure: {"tree_name": str, "versions": {shot: {...}}, "diff": {...}}
+        Structure: {"data_source_name": str, "versions": {shot: {...}}, "diff": {...}}
     """
-    shots = _resolve_shots(facility, tree_name, shots)
+    shots = _resolve_shots(facility, data_source_name, shots)
 
     results = []
     for shot in shots:
         data = extract_tree_version(
             facility=facility,
-            tree_name=tree_name,
+            data_source_name=data_source_name,
             shot=shot,
             timeout=timeout,
             node_usages=node_usages,
@@ -524,7 +528,7 @@ discover_static_tree = discover_tree
 
 def extract_units_for_version(
     facility: str,
-    tree_name: str,
+    data_source_name: str,
     version: int,
     timeout: int = 180,
     batch_size: int = 5000,
@@ -540,7 +544,7 @@ def extract_units_for_version(
 
     Args:
         facility: SSH host alias (e.g., "tcv")
-        tree_name: MDSplus tree name (e.g., "static")
+        data_source_name: MDSplus tree name (e.g., "static")
         version: Version number to extract units from (typically the latest)
         timeout: SSH timeout per batch in seconds (default: 120)
         batch_size: Nodes per SSH call (default: 5000)
@@ -563,7 +567,7 @@ def extract_units_for_version(
     logger.info(
         "Extracting units from %s:%s v%d (batch_size=%d)...",
         facility,
-        tree_name,
+        data_source_name,
         version,
         batch_size,
     )
@@ -571,7 +575,7 @@ def extract_units_for_version(
     while True:
         batch_num += 1
         input_data = {
-            "tree_name": tree_name,
+            "data_source_name": data_source_name,
             "version": version,
             "node_types": ["NUMERIC", "SIGNAL"],
             "offset": offset,
@@ -596,7 +600,7 @@ def extract_units_for_version(
                 "Units batch %d failed for %s:%s v%d (offset=%d)",
                 batch_num,
                 facility,
-                tree_name,
+                data_source_name,
                 version,
                 offset,
             )
@@ -680,10 +684,10 @@ def ingest_static_tree(
     """Ingest static tree data into the Neo4j graph.
 
     Creates:
-    - TreeModelVersion nodes for each static tree version
-    - TreeNode nodes with applicability ranges (first_shot/last_shot)
+    - StructuralEpoch nodes for each static tree version
+    - DataNode nodes with applicability ranges (first_shot/last_shot)
     - INTRODUCED_IN / REMOVED_IN / AT_FACILITY relationships
-    - Tag metadata on TreeNodes
+    - Tag metadata on DataNodes
 
     Args:
         client: Neo4j GraphClient
@@ -698,7 +702,7 @@ def ingest_static_tree(
     Returns:
         Dict with counts: versions_created, nodes_created
     """
-    tree_name = data["tree_name"]
+    data_source_name = data["data_source_name"]
     versions = data.get("versions", {})
     diff = data.get("diff", {})
 
@@ -712,7 +716,7 @@ def ingest_static_tree(
     if version_config is None:
         configs = get_static_tree_config(facility)
         for cfg in configs:
-            if cfg.get("tree_name") == tree_name:
+            if cfg.get("tree_name") == data_source_name:
                 version_config = cfg.get("versions", [])
                 break
     if version_config is None:
@@ -740,13 +744,13 @@ def ingest_static_tree(
         else:
             last_shot_map[ver] = None  # Current version — no upper bound
 
-    # Phase 1: Create TreeModelVersion nodes
+    # Phase 1: Create StructuralEpoch nodes
     epoch_records = []
     for ver_str, ver_data in versions.items():
         if "error" in ver_data:
             continue
         ver_num = int(ver_str)
-        epoch_id = f"{facility}:{tree_name}:v{ver_num}"
+        epoch_id = f"{facility}:{data_source_name}:v{ver_num}"
         first_shot = first_shot_map.get(ver_num, ver_num)  # Fallback to version number
         last_shot = last_shot_map.get(ver_num)
         desc = description_map.get(ver_num, "")
@@ -754,7 +758,7 @@ def ingest_static_tree(
         record = {
             "id": epoch_id,
             "facility_id": facility,
-            "tree_name": tree_name,
+            "data_source_name": data_source_name,
             "version": ver_num,
             "first_shot": first_shot,
             "node_count": ver_data.get("node_count", 0),
@@ -769,7 +773,7 @@ def ingest_static_tree(
     if dry_run:
         for rec in epoch_records:
             logger.info(
-                "[DRY RUN] TreeModelVersion: %s (v%d, shots %d-%s) — %s",
+                "[DRY RUN] StructuralEpoch: %s (v%d, shots %d-%s) — %s",
                 rec["id"],
                 rec["version"],
                 rec["first_shot"],
@@ -781,15 +785,15 @@ def ingest_static_tree(
             client.query(
                 """
                 UNWIND $epochs AS epoch
-                MERGE (v:TreeModelVersion {id: epoch.id})
+                MERGE (v:StructuralEpoch {id: epoch.id})
                 SET v += epoch
                 WITH v, epoch
                 MATCH (f:Facility {id: epoch.facility_id})
                 MERGE (v)-[:AT_FACILITY]->(f)
                 WITH v, epoch
-                MERGE (t:MDSplusTree {name: epoch.tree_name})
+                MERGE (t:DataSource {name: epoch.data_source_name})
                 ON CREATE SET t.facility_id = epoch.facility_id
-                MERGE (v)-[:IN_TREE]->(t)
+                MERGE (v)-[:IN_DATA_SOURCE]->(t)
                 """,
                 epochs=epoch_records,
             )
@@ -797,8 +801,8 @@ def ingest_static_tree(
             for i in range(1, len(epoch_records)):
                 client.query(
                     """
-                    MATCH (curr:TreeModelVersion {id: $curr_id})
-                    MATCH (prev:TreeModelVersion {id: $prev_id})
+                    MATCH (curr:StructuralEpoch {id: $curr_id})
+                    MATCH (prev:StructuralEpoch {id: $prev_id})
                     MERGE (curr)-[:HAS_PREDECESSOR]->(prev)
                     """,
                     curr_id=epoch_records[i]["id"],
@@ -817,7 +821,7 @@ def ingest_static_tree(
             continue
         ver_num = int(ver_str)
         first_shot = first_shot_map.get(ver_num, ver_num)
-        epoch_id = f"{facility}:{tree_name}:v{ver_num}"
+        epoch_id = f"{facility}:{data_source_name}:v{ver_num}"
 
         for node in ver_data.get("nodes", []):
             path = node["path"]
@@ -834,14 +838,14 @@ def ingest_static_tree(
     # Mark removals from diff data
     for ver_str, removed_paths in diff.get("removed", {}).items():
         ver_num = int(ver_str)
-        epoch_id = f"{facility}:{tree_name}:v{ver_num}"
+        epoch_id = f"{facility}:{data_source_name}:v{ver_num}"
         prev_first_shot = first_shot_map.get(ver_num, ver_num)
         for path in removed_paths:
             if path in all_paths and all_paths[path]["removed_version"] is None:
                 all_paths[path]["last_shot"] = prev_first_shot - 1
                 all_paths[path]["removed_version"] = epoch_id
 
-    # Build TreeNode records
+    # Build DataNode records
     #
     # Build a fullpath → normalized-tag-path lookup first. MDSplus returns
     # tag-aliased paths (e.g. \STATIC::DBRDR_A_A) for nodes whose structural
@@ -861,13 +865,13 @@ def ingest_static_tree(
         node = info["node"]
         normalized = normalize_mdsplus_path(path)
         canonical = compute_canonical_path(path)
-        node_id = f"{facility}:{tree_name}:{normalized}"
+        node_id = f"{facility}:{data_source_name}:{normalized}"
 
         record: dict[str, Any] = {
             "id": node_id,
             "path": normalized,
             "canonical_path": canonical,
-            "tree_name": tree_name,
+            "data_source_name": data_source_name,
             "facility_id": facility,
             "node_type": node.get("node_type", "STRUCTURE"),
             "first_shot": info["first_shot"],
@@ -906,7 +910,7 @@ def ingest_static_tree(
         node_records.append(record)
 
     if dry_run:
-        logger.info("[DRY RUN] Would create %d TreeNode records", len(node_records))
+        logger.info("[DRY RUN] Would create %d DataNode records", len(node_records))
         # Show samples by node type
         by_type: dict[str, int] = {}
         for r in node_records:
@@ -915,7 +919,7 @@ def ingest_static_tree(
         for t, count in sorted(by_type.items()):
             logger.info("  %s: %d nodes", t, count)
     else:
-        # Batch insert TreeNodes
+        # Batch insert DataNodes
         batch_size = 500
         total_records = len(node_records)
         written = 0
@@ -924,9 +928,9 @@ def ingest_static_tree(
             client.query(
                 """
                 UNWIND $nodes AS node
-                MERGE (n:TreeNode {path: node.path, facility_id: node.facility_id})
+                MERGE (n:DataNode {path: node.path, facility_id: node.facility_id})
                 SET n.id = node.id,
-                    n.tree_name = node.tree_name,
+                    n.data_source_name = node.data_source_name,
                     n.canonical_path = node.canonical_path,
                     n.parent_path = node.parent_path,
                     n.first_shot = node.first_shot,
@@ -956,58 +960,58 @@ def ingest_static_tree(
             on_progress(written, total_records, "creating relationships...")
         client.query(
             """
-            MATCH (n:TreeNode)
-            WHERE n.tree_name = $tree_name AND n.facility_id = $facility
+            MATCH (n:DataNode)
+            WHERE n.data_source_name = $data_source_name AND n.facility_id = $facility
             WITH n
             MATCH (f:Facility {id: $facility})
             MERGE (n)-[:AT_FACILITY]->(f)
             WITH n
-            MERGE (t:MDSplusTree {name: $tree_name})
+            MERGE (t:DataSource {name: $data_source_name})
             ON CREATE SET t.facility_id = $facility
-            MERGE (n)-[:IN_TREE]->(t)
+            MERGE (n)-[:IN_DATA_SOURCE]->(t)
             """,
-            tree_name=tree_name,
+            data_source_name=data_source_name,
             facility=facility,
         )
 
         client.query(
             """
-            MATCH (n:TreeNode)
-            WHERE n.tree_name = $tree_name AND n.facility_id = $facility
+            MATCH (n:DataNode)
+            WHERE n.data_source_name = $data_source_name AND n.facility_id = $facility
               AND n.introduced_version IS NOT NULL
             WITH n
-            MATCH (v:TreeModelVersion {id: n.introduced_version})
+            MATCH (v:StructuralEpoch {id: n.introduced_version})
             MERGE (n)-[:INTRODUCED_IN]->(v)
             """,
-            tree_name=tree_name,
+            data_source_name=data_source_name,
             facility=facility,
         )
 
         client.query(
             """
-            MATCH (n:TreeNode)
-            WHERE n.tree_name = $tree_name AND n.facility_id = $facility
+            MATCH (n:DataNode)
+            WHERE n.data_source_name = $data_source_name AND n.facility_id = $facility
               AND n.removed_version IS NOT NULL
             WITH n
-            MATCH (v:TreeModelVersion {id: n.removed_version})
+            MATCH (v:StructuralEpoch {id: n.removed_version})
             MERGE (n)-[:REMOVED_IN]->(v)
             """,
-            tree_name=tree_name,
+            data_source_name=data_source_name,
             facility=facility,
         )
 
         # Parent-child relationships
         client.query(
             """
-            MATCH (child:TreeNode)
-            WHERE child.tree_name = $tree_name AND child.facility_id = $facility
+            MATCH (child:DataNode)
+            WHERE child.data_source_name = $data_source_name AND child.facility_id = $facility
               AND child.parent_path IS NOT NULL
             WITH child
-            MATCH (parent:TreeNode {path: child.parent_path, facility_id: $facility})
-            WHERE parent.tree_name = $tree_name
+            MATCH (parent:DataNode {path: child.parent_path, facility_id: $facility})
+            WHERE parent.data_source_name = $data_source_name
             MERGE (parent)-[:HAS_NODE]->(child)
             """,
-            tree_name=tree_name,
+            data_source_name=data_source_name,
             facility=facility,
         )
 
@@ -1016,7 +1020,7 @@ def ingest_static_tree(
     logger.info(
         "Static tree %s:%s — %d versions, %d nodes",
         facility,
-        tree_name,
+        data_source_name,
         stats["versions_created"],
         stats["nodes_created"],
     )

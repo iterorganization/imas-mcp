@@ -16,18 +16,18 @@ class TestTreeDiscoveryState:
         state = TreeDiscoveryState(
             facility="tcv",
             ssh_host="tcv",
-            tree_name="static",
+            data_source_name="static",
             tree_config={"versions": [{"version": 1}]},
         )
         assert state.facility == "tcv"
-        assert state.tree_name == "static"
+        assert state.data_source_name == "static"
         assert state.stop_requested is False
 
     def test_should_stop_on_request(self):
         state = TreeDiscoveryState(
             facility="tcv",
             ssh_host="tcv",
-            tree_name="static",
+            data_source_name="static",
             tree_config={},
         )
         assert state.should_stop() is False
@@ -40,7 +40,7 @@ class TestTreeDiscoveryState:
         state = TreeDiscoveryState(
             facility="tcv",
             ssh_host="tcv",
-            tree_name="static",
+            data_source_name="static",
             tree_config={},
             deadline=time.time() - 1,  # Already past
         )
@@ -50,7 +50,7 @@ class TestTreeDiscoveryState:
         state = TreeDiscoveryState(
             facility="tcv",
             ssh_host="tcv",
-            tree_name="static",
+            data_source_name="static",
             tree_config={},
         )
         assert hasattr(state, "promote_phase")
@@ -62,7 +62,7 @@ class TestTreeDiscoveryState:
         state = TreeDiscoveryState(
             facility="tcv",
             ssh_host="tcv",
-            tree_name="static",
+            data_source_name="static",
             tree_config={},
         )
         assert not hasattr(state, "enrich_stats")
@@ -87,7 +87,7 @@ class TestBackwardCompatState:
         state = StaticDiscoveryState(
             facility="tcv",
             ssh_host="tcv",
-            tree_name="static",
+            data_source_name="static",
             tree_config={},
         )
         # Old state still has enrich fields
@@ -191,7 +191,7 @@ class TestPromoteWorker:
         state = TreeDiscoveryState(
             facility="tcv",
             ssh_host="tcv",
-            tree_name="static",
+            data_source_name="static",
             tree_config={},
         )
         # Mark extract and units as done immediately

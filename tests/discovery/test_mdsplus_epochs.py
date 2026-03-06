@@ -22,7 +22,7 @@ class TestDetectEpochsForTree:
             [
                 {
                     "id": "tcv:results:v1",
-                    "tree_name": "results",
+                    "data_source_name": "results",
                     "facility_id": "tcv",
                     "version": 1,
                     "first_shot": 3000,
@@ -33,7 +33,7 @@ class TestDetectEpochsForTree:
                 },
                 {
                     "id": "tcv:results:v2",
-                    "tree_name": "results",
+                    "data_source_name": "results",
                     "facility_id": "tcv",
                     "version": 2,
                     "first_shot": 42001,
@@ -68,7 +68,7 @@ class TestDetectEpochsForTree:
         mock_discover.return_value = ([], {})
 
         config = {
-            "tree_name": "results",
+            "data_source_name": "results",
             "detect_epochs": True,
             "epoch_config": {
                 "start_shot": 5000,
