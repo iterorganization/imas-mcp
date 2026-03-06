@@ -142,7 +142,7 @@ These are SEPARATE fields. Never put scoring justification into the description.
 
 ### Combined Score
 
-`new_score` = `max(dims) × (1 + mean(nonzero_dims)) / 2`. A high score requires strength across multiple dimensions, not just one outlier. All dimensions must be 0.0-1.0.
+`new_score` = `max(dims)`. The highest-scoring dimension determines the composite. All dimensions must be 0.0-1.0.
 
 ### Evidence Tracking
 

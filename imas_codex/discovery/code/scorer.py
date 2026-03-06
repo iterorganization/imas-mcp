@@ -222,11 +222,7 @@ class FileTriageResult(BaseModel):
 
     @property
     def triage_composite(self) -> float:
-        """Composite = max(dims) * (1 + mean(nonzero_dims)) / 2.
-
-        Same formula as paths pipeline. Rewards breadth across
-        multiple dimensions rather than a single high dimension.
-        """
+        """Composite = max of all dimension scores."""
         scores = [
             self.score_modeling_code,
             self.score_analysis_code,
@@ -238,12 +234,7 @@ class FileTriageResult(BaseModel):
             self.score_imas,
             self.score_convention,
         ]
-        max_score = max(scores)
-        nonzero = [s for s in scores if s > 0]
-        if not nonzero:
-            return 0.0
-        mean_nonzero = sum(nonzero) / len(nonzero)
-        return max_score * (1 + mean_nonzero) / 2
+        return max(scores)
 
 
 class FileTriageBatch(BaseModel):
@@ -310,10 +301,7 @@ class FileScoreResult(BaseModel):
 
     @property
     def score_composite(self) -> float:
-        """Composite = max(dims) * (1 + mean(nonzero_dims)) / 2.
-
-        Same breadth-weighted formula as paths and triage.
-        """
+        """Composite = max of all dimension scores."""
         scores = [
             self.score_modeling_code,
             self.score_analysis_code,
@@ -325,12 +313,7 @@ class FileScoreResult(BaseModel):
             self.score_imas,
             self.score_convention,
         ]
-        max_score = max(scores)
-        nonzero = [s for s in scores if s > 0]
-        if not nonzero:
-            return 0.0
-        mean_nonzero = sum(nonzero) / len(nonzero)
-        return max_score * (1 + mean_nonzero) / 2
+        return max(scores)
 
 
 class FileScoreBatch(BaseModel):
