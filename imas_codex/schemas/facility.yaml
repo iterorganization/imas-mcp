@@ -62,6 +62,8 @@ enums:
         description: JET Processed Pulse File system
       allas:
         description: CSC Allas object storage
+      xml:
+        description: XML-based structured data (e.g., EFIT device geometry files)
 
   ToolStatus:
     description: Availability status of a command-line tool

@@ -16,6 +16,7 @@ Architecture:
     - edas: Experiment Data Access System — JT-60SA
     - mdsplus: Direct MDSplus tree traversal — any MDSplus facility
     - imas: IMAS IDS signal enumeration — ITER, JET, JT-60SA
+    - device_xml: EFIT device XML geometry files in git — JET
     - wiki: Wiki-documented signal extraction — any facility with wiki
 
     The wiki scanner is special: it runs for ALL facilities that have
@@ -248,6 +249,7 @@ def _auto_register() -> None:
     _auto_registered = True
     # Import triggers module-level registration
     from imas_codex.discovery.signals.scanners import (  # noqa: F401
+        device_xml,
         edas,
         imas,
         mdsplus,
