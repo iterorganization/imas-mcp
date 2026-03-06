@@ -9,8 +9,20 @@
 
 Catalog JET's machine description geometry into the knowledge graph as `DataSource`, `StructuralEpoch`, `DataNode`, and `FacilitySignal` nodes. JET has no MDSplus static tree — geometry lives in device XMLs, Fortran namelists, and R,Z contour files versioned in a git repo.
 
-**Current state:** 0 JET signals, 0 StructuralEpoch, 0 DataSource for machine description.
+**Current state:** 0 JET signals, 0 StructuralEpoch, 0 DataSource for device_xml.
 **Target:** ~330 DataNode per epoch, ~500 FacilitySignal, 10 StructuralEpoch, 1 DataSource.
+
+### Scanner Naming Rationale
+
+The scanner is named `DeviceXMLScanner` with `scanner_type = "device_xml"`, NOT `DeviceXMLScanner`. "Machine description" is a physics concept that every facility has — but each facility stores it differently:
+
+| Facility | Machine desc format | Scanner |
+|---|---|---|
+| JET | Git bare repo + EFIT device XMLs | `device_xml` (this plan) |
+| TCV | MDSplus `static` tree | `mdsplus` (existing) |
+| ITER | IMAS IDS (native) | `imas` (existing) |
+
+The scanner is specific to the **EFIT device XML format** stored in git. The YAML config key is `data_sources.device_xml`.
 
 ## Dependency: Naming Generalization
 
@@ -94,7 +106,29 @@ Three of the five "named" XML files are symlinks:
 | `Greens` | Response function matrices | `Greens/DMSS_105_T_200C_P802A/` |
 | `PPF_headers` | Output DDA/Dtype definitions | `PPF_headers/p79854/` |
 
-**Key insight from configurationsMAGN:** Many named ranges share the same `device.xml` but differ in snap files. This means the *geometry* epochs (which XML file is used) are fewer than the *operational* epochs (which probes are enabled). For graph cataloging we track geometry epochs — the XML file determines what geometry elements exist.
+**Key insight from configurationsMAGN:** Many named ranges share the same `device.xml` but differ in snap files. This means the *geometry* epochs (which XML file is used) are fewer than the *operational* epochs (which probes are enabled). For graph cataloging we track both:
+- **Structural epochs** — which XML file is active (4 distinct geometries)
+- **Operational state** — which probes are enabled/disabled per epoch (from EFITSNAP files)
+
+### Operational Epoch Tracking (Probe Enable/Disable)
+
+EFITSNAP files contain probe enable/disable masks that record which sensors were fitted/working for each pulse range. This is critical for reconstructing which measurements were available for a given pulse.
+
+**Data flow:**
+1. Each version in `data_sources.device_xml.versions` references a `snap_file`
+2. The remote parsing script reads the snap file alongside the device XML
+3. Probe enable/disable status is stored as properties on `StructuralEpoch` nodes:
+   - `enabled_probes: list[str]` — probe IDs that were active (e.g., `["BPME(1)", "BPME(2)", ...]`)
+   - `disabled_probes: list[str]` — probe IDs that were disabled (e.g., `["BPME(42)"]`)
+   - `disabled_reason: str` — human-readable reason (from version description)
+4. Queries can filter probes by operational status for any pulse
+
+**Example query — which probes were active at pulse 89000?**
+```cypher
+MATCH (se:StructuralEpoch {facility_id: 'jet', data_source_name: 'device_xml'})
+WHERE se.first_shot <= 89000 AND (se.last_shot IS NULL OR se.last_shot >= 89000)
+RETURN se.version, se.enabled_probes, se.disabled_probes, se.description
+```
 
 ### Geometry Epoch Mapping (from configurationsMAGN, SSH-verified)
 
@@ -143,33 +177,32 @@ Plain text R,Z pairs (one per line). Line counts:
 
 Three limiter files exist in git HEAD. The jet.yaml `limiter_versions` config tracks 7 historical wall configurations (L91NEW through Mk2ILW), but only 3 have surviving contour files in this repo.
 
-## Architecture: MachineDescriptionScanner Plugin
+## Architecture: DeviceXMLScanner Plugin
 
 ### Scanner Design
 
-A new `MachineDescriptionScanner` in `imas_codex/discovery/signals/scanners/machine_description.py` implementing the `DataSourceScanner` protocol:
+A new `DeviceXMLScanner` in `imas_codex/discovery/signals/scanners/device_xml.py` implementing the `DataSourceScanner` protocol:
 
 ```
-scanner_type = "machine_description"
+scanner_type = "device_xml"
 ```
 
 Registered via `register_scanner()` and imported in `_auto_register()`.
 
-### Configuration (jet.yaml — already in place)
+### Configuration (jet.yaml)
 
-The `data_sources.machine_description` section in jet.yaml provides all required config:
+The `data_sources.device_xml` section in jet.yaml provides all required config. **Note:** this requires a new `DeviceXMLConfig` class in `facility_config.yaml` (see [Schema Additions](#config-schema-additions) below).
 
 ```yaml
 data_sources:
-  machine_description:
-    source_format: git_xml
+  device_xml:
     git_repo: /home/chain1/git/efit_f90.git
     input_prefix: JET/input
     versions:
       - version: p68613
         first_shot: 68613
-        last_shot: 74386
         device_xml: Devices/device_p68613.xml
+        snap_file: Snap_files/EFITSNAP/efitsnap_p68613_bound0
         # ... (10 versions total)
     systems:
       - symbol: PF
@@ -184,7 +217,7 @@ data_sources:
       # ... (7 versions total)
 ```
 
-**No additional jet.yaml changes needed** — the existing config is sufficient for the scanner.
+**jet.yaml changes required:** rename `machine_description` → `device_xml`, add `snap_file` per version, add `DeviceXMLConfig` to schema.
 
 ### scan() Flow
 
@@ -192,12 +225,13 @@ data_sources:
 1. Read config.git_repo, config.input_prefix, config.versions
 2. SSH to JET: git show HEAD:<input_prefix>/<device_xml> for each version
 3. Parse XML with xml.etree.ElementTree (stdlib, no dependencies)
-4. Create graph nodes:
-   a. DataSource(id="jet:machine_description", source_type="xml")
-   b. StructuralEpoch per version (10 total)
-   c. DataNode per geometry element per epoch
+4. Parse EFITSNAP files for probe enable/disable masks
+5. Create graph nodes:
+   a. DataSource(id="jet:device_xml", source_type="xml")
+   b. StructuralEpoch per version (10 total), with enabled/disabled probe lists
+   c. DataNode per geometry element, with numeric values as properties
    d. FacilitySignal per unique geometry parameter
-5. Create DataNodePattern for indexed elements (BPME(1)..BPME(191))
+6. Create DataNodePattern for indexed elements (BPME(1)..BPME(191))
 ```
 
 ### Remote Execution Strategy
@@ -272,10 +306,10 @@ Output (JSON via stdout):
 
 ```python
 DataSource(
-    id="jet:machine_description",
+    id="jet:device_xml",
     facility_id="jet",
     name="JET Machine Description",
-    data_source_name="machine_description",
+    data_source_name="device_xml",
     source_type="xml",  # New property from naming generalization
     description="JET tokamak geometry: PF coils, passive structures, magnetic probes, flux loops, circuits, and limiter contours. Versioned in /home/chain1/git/efit_f90.git.",
 )
@@ -283,13 +317,13 @@ DataSource(
 
 #### StructuralEpoch Nodes (10)
 
-One per version in jet.yaml `machine_description.versions`:
+One per version in jet.yaml `device_xml.versions`:
 
 ```python
 StructuralEpoch(
-    id="jet:machine_description:p89440",
+    id="jet:device_xml:p89440",
     facility_id="jet",
-    data_source_name="machine_description",
+    data_source_name="device_xml",
     version="p89440",
     first_shot=89440,
     last_shot=90539,
@@ -304,9 +338,9 @@ Since only 4 distinct XML files exist, DataNodes can reference the geometry set 
 
 ```python
 DataNode(
-    id="jet:machine_description:p89440:magprobes:1",
+    id="jet:device_xml:p89440:magprobes:1",
     facility_id="jet",
-    data_source_name="machine_description",
+    data_source_name="device_xml",
     path="magprobes/1",  # Section/instance_id
     node_type=DataNodeType.SIGNAL,
     description="Magnetic probe BPME(1): R=4.292m, Z=0.604m, angle=-74.1°",
@@ -327,10 +361,10 @@ FacilitySignal(
     physics_domain="magnetic_field_diagnostics",
     name="BPME(1)/R",
     accessor="device_xml:magprobes/1/r",
-    data_access="jet:machine_description:xml",
-    data_source_name="machine_description",
+    data_access="jet:device_xml:xml",
+    data_source_name="device_xml",
     data_source_path="magprobes/1/r",
-    data_source_node="jet:machine_description:p89440:magprobes:1",
+    data_source_node="jet:device_xml:p89440:magprobes:1",
     description="Radial position of magnetic probe BPME(1)",
     unit="m",
     discovery_source="xml_extraction",
@@ -343,9 +377,9 @@ Indexed elements get patterns for efficient queries:
 
 ```python
 DataNodePattern(
-    id="jet:machine_description:magprobes:*",
+    id="jet:device_xml:magprobes:*",
     facility_id="jet",
-    data_source_name="machine_description",
+    data_source_name="device_xml",
     pattern="magprobes/{n}",
     member_count=191,
     description="Magnetic probes BPME(1) through BPME(191)",
@@ -379,43 +413,49 @@ Error bounds (abs_error, rel_error) are stored as DataNode properties, not promo
 
 ```
 Facility(id="jet")
-  └── DataSource(id="jet:machine_description")
-        ├── StructuralEpoch(id="jet:machine_description:p68613")
+  └── DataSource(id="jet:device_xml")
+        ├── StructuralEpoch(id="jet:device_xml:p68613")
         │     └── DataNode(id="...:magprobes:1")  ──INTRODUCED_IN──> epoch
         │     └── DataNode(id="...:pfcoils:1")
         │     └── ...
-        ├── StructuralEpoch(id="jet:machine_description:p87722")
+        ├── StructuralEpoch(id="jet:device_xml:p87722")
         │     └── ... (same pattern)
         └── ...
   └── FacilitySignal(id="jet:magnetics/bpme_1_r")
         ──HAS_DATA_SOURCE_NODE──> DataNode
-        ──DATA_ACCESS──> DataAccess(id="jet:machine_description:xml")
+        ──DATA_ACCESS──> DataAccess(id="jet:device_xml:xml")
 ```
 
 ## Implementation Phases
 
 ### Phase 0: Naming Generalization (prerequisite)
 
-Complete the [naming generalization plan](naming-generalization.md). This creates the `DataSource`, `StructuralEpoch`, `DataNode`, `DataNodePattern` node types that the machine description scanner depends on.
+Complete the [naming generalization plan](naming-generalization.md). This creates the `DataSource`, `StructuralEpoch`, `DataNode`, `DataNodePattern` node types that the DeviceXMLScanner depends on.
 
 ### Phase 1: Remote Script + Scanner Plugin
 
 1. **Create `imas_codex/remote/scripts/parse_device_xml.py`**
    - Parse device XML files from bare git repo via `git show`
-   - Return structured JSON with all geometry elements
+   - Parse EFITSNAP files for probe enable/disable masks
+   - Return structured JSON with all geometry elements + probe status
    - Test locally on JET: `ssh jet "python3 < parse_device_xml.py"`
 
-2. **Create `imas_codex/discovery/signals/scanners/machine_description.py`**
+2. **Create `imas_codex/discovery/signals/scanners/device_xml.py`**
    - Implement `DataSourceScanner` protocol (`scan()`, `check()`)
-   - `scan()`: SSH to JET, run parse script, create graph nodes
+   - `scan()`: SSH to JET, run parse script, create graph nodes with geometry values as properties
    - `check()`: Verify XML files still accessible (git show returns 0)
 
-3. **Register in `_auto_register()` in `base.py`**
-   - Add `machine_description` import to the auto-register function
+3. **Add `DeviceXMLConfig` to `facility_config.yaml`**
+   - New `DeviceXMLConfig`, `DeviceXMLVersion`, `LimiterVersion` classes
+   - Add `device_xml` slot to `DataSourcesConfig`
+   - Run `uv run build-models --force` to regenerate
 
-4. **Test locally:**
+4. **Register in `_auto_register()` in `base.py`**
+   - Add `device_xml` import to the auto-register function
+
+5. **Test locally:**
    ```bash
-   uv run imas-codex discover signals jet -s machine_description --scan-only
+   uv run imas-codex discover signals jet -s device_xml --scan-only
    ```
 
 ### Phase 2: Limiter Contour Integration
@@ -453,20 +493,20 @@ Complete the [naming generalization plan](naming-generalization.md). This create
 1. **Verification queries:**
    ```cypher
    -- Count nodes by type
-   MATCH (ds:DataSource {id: "jet:machine_description"})
+   MATCH (ds:DataSource {id: "jet:device_xml"})
    OPTIONAL MATCH (ds)<-[:IN_DATA_SOURCE]-(dn:DataNode)
    OPTIONAL MATCH (ds)<-[:IN_DATA_SOURCE]-(se:StructuralEpoch)
    RETURN count(DISTINCT se) AS epochs,
           count(DISTINCT dn) AS data_nodes
 
    -- Count signals
-   MATCH (s:FacilitySignal {facility_id: "jet", data_source_name: "machine_description"})
+   MATCH (s:FacilitySignal {facility_id: "jet", data_source_name: "device_xml"})
    RETURN s.physics_domain, count(*) AS n
    ORDER BY n DESC
 
    -- Check IMAS mappings
    MATCH (s:FacilitySignal {facility_id: "jet"})-[:MAPS_TO_IMAS]->(imas:IMASPath)
-   WHERE s.data_source_name = "machine_description"
+   WHERE s.data_source_name = "device_xml"
    RETURN imas.ids_name, count(*) AS mapped
    ORDER BY mapped DESC
    ```
@@ -504,31 +544,133 @@ Complete the [naming generalization plan](naming-generalization.md). This create
 | EFCC variants (n=1, n=2) | Low | Same geometry XML, different snap files — not separate geometry epochs |
 | Missing limiter files | Low | 4 of 7 historical versions have no surviving contour file — skip gracefully |
 
+### Data Persistence Strategy
+
+The git repo at `/home/chain1/git/efit_f90.git` lives on JET's filesystem. JET is shutting down, so long-term access is uncertain.
+
+**Mitigation: Store geometry values in graph.** The remote parsing script extracts ALL numeric values (R, Z, angle, turns, resistance, etc.) and stores them directly as DataNode properties. This makes the graph self-contained — no need to re-read the source files at query time. The git repo is only needed for initial parsing.
+
+**DataNode property storage:**
+```python
+DataNode(
+    id="jet:device_xml:p89440:magprobes:1",
+    # ... standard fields ...
+    properties={  # Geometry values stored directly
+        "r": 4.292,
+        "z": 0.604,
+        "angle": -74.1,
+        "abs_error": 0.003,
+        "rel_error": 0.001,
+    },
+)
+```
+
+This means pulse-based queries return actual geometry without requiring file access.
+
 ### Not In Scope
 
 - **PPF signal discovery** — handled by existing `PPFScanner` (separate data source)
 - **Greens function matrices** — large binary blobs, not geometry signals
-- **Snap files** — probe enable/disable masks, operational not geometric
 - **PPF headers** — output DDA definitions, not input geometry
 - **EFIT reconstruction results** — consumer data, not machine description
 
 ## Config Schema Additions
 
-The `limiter_versions` key in jet.yaml is currently ad-hoc (not in the LinkML facility_config.yaml schema). Two options:
+The current `data_sources.device_xml` section in jet.yaml is **NOT schema-compliant**:
 
-**Option A: Formalize in facility_config.yaml** — Add a `LimiterVersion` class to the config schema. This validates the config structure and auto-documents it.
+| Issue | Current State | Fix |
+|---|---|---|
+| No slot in `DataSourcesConfig` | `DataSourcesConfig` has slots for tdi, mdsplus, ppf, edas, hdf5, imas — no `device_xml` | Add `device_xml: DeviceXMLConfig` slot |
+| `TreeVersion.version` is integer | jet.yaml uses string versions like `p68613` | New `DeviceXMLVersion` class with string version |
+| Custom fields not in schema | `device_xml`, `device_ppfs`, `limiter`, `greens`, `snap_file` | Define in `DeviceXMLVersion` |
+| `limiter_versions` ad-hoc | Not in any schema class | Add `LimiterVersion` class |
+| Signals CLI skips it | No registered scanner matches key | Register `DeviceXMLScanner` |
 
-**Option B: Leave ad-hoc** — The machine_description scanner reads it as a raw dict from `get_facility()`. This works but doesn't get schema validation.
+### Required Schema Changes (`facility_config.yaml`)
 
-**Recommendation: Option A** after the naming generalization is complete. The `LimiterVersion` class would live alongside `SourceVersion` (renamed from `TreeVersion`).
+```yaml
+# Add to DataSourcesConfig:
+device_xml:
+  description: Device XML configuration (EFIT-format geometry files in git)
+  range: DeviceXMLConfig
+
+# New classes:
+DeviceXMLConfig:
+  class_uri: fc:DeviceXMLConfig
+  mixins:
+    - DataSourceBase
+  attributes:
+    git_repo:
+      description: Path to bare git repo containing device XML files
+      required: true
+    input_prefix:
+      description: Tree path prefix within git repo (e.g., JET/input)
+    versions:
+      description: Device geometry versions with pulse ranges
+      multivalued: true
+      range: DeviceXMLVersion
+    systems:
+      description: Named subsystems within device XML
+      multivalued: true
+      range: TreeSystem  # Reuse existing class
+    limiter_versions:
+      description: First-wall contour versions
+      multivalued: true
+      range: LimiterVersion
+
+DeviceXMLVersion:
+  class_uri: fc:DeviceXMLVersion
+  attributes:
+    version:
+      description: Version identifier (e.g., p68613, p89440)
+      required: true
+    first_shot:
+      description: First shot where this version applies
+      range: integer
+    last_shot:
+      description: Last shot where this version applies
+      range: integer
+    description:
+      description: What changed in this version
+    device_xml:
+      description: Git path to device XML file
+      required: true
+    device_ppfs:
+      description: Git path to PPF routing namelist
+    limiter:
+      description: Git path to limiter contour file
+    greens:
+      description: Git path to Green's function directory
+    snap_file:
+      description: Git path to EFITSNAP probe enable/disable mask
+
+LimiterVersion:
+  class_uri: fc:LimiterVersion
+  attributes:
+    name:
+      description: Limiter name (e.g., Mk2ILW, Mk2HD)
+      required: true
+    first_shot:
+      description: First shot with this limiter installed
+      range: integer
+    last_shot:
+      description: Last shot with this limiter
+      range: integer
+    description:
+      description: Description of this limiter configuration
+    file:
+      description: Git path to R,Z contour file
+```
 
 ## Execution Order
 
 1. Complete naming generalization (Phase 1-5 of that plan)
-2. Implement `parse_device_xml.py` remote script
-3. Implement `MachineDescriptionScanner` plugin
-4. Register in `_auto_register()`
-5. Run: `uv run imas-codex discover signals jet -s machine_description --scan-only`
-6. Verify graph state
-7. Run enrichment + IMAS mapping
-8. Verify signal counts match estimates
+2. Add `DeviceXMLConfig`, `DeviceXMLVersion`, `LimiterVersion` to `facility_config.yaml`
+3. Rename `data_sources.machine_description` → `data_sources.device_xml` in jet.yaml, add `snap_file` per version
+4. Implement `parse_device_xml.py` remote script (XML + snap file parsing)
+5. Implement `DeviceXMLScanner` plugin
+6. Register in `_auto_register()`
+7. Run: `uv run imas-codex discover signals jet -s device_xml --scan-only`
+8. Verify graph state
+9. Run enrichment + IMAS mapping
+10. Verify signal counts match estimates
