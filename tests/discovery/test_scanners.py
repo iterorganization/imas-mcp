@@ -25,6 +25,7 @@ class TestScannerRegistry:
         assert "edas" in scanners
         assert "mdsplus" in scanners
         assert "imas" in scanners
+        assert "device_xml" in scanners
 
     def test_get_scanner_returns_instance(self):
         """get_scanner returns a scanner with correct type."""
@@ -67,9 +68,6 @@ class TestGetScannersForFacility:
         )
         # Pre-populate registry
         _registry.clear()
-        scanner = (
-            get_scanner.__wrapped__ if hasattr(get_scanner, "__wrapped__") else None
-        )
 
         # Just test that the registry works with manual registration
         from imas_codex.discovery.signals.scanners.tdi import TDIScanner

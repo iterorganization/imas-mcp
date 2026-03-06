@@ -249,10 +249,9 @@ def _persist_graph_nodes(
                     se.data_source_name = rec.data_source_name,
                     se.version = rec.version,
                     se.first_shot = rec.first_shot,
+                    se.last_shot = rec.last_shot,
                     se.description = rec.description,
                     se.status = rec.status
-                WITH se, rec
-                CALL { WITH se, rec SET se.last_shot = rec.last_shot } IN TRANSACTIONS
                 WITH se, rec
                 MATCH (f:Facility {id: rec.facility_id})
                 MERGE (se)-[:AT_FACILITY]->(f)
