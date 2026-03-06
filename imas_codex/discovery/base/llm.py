@@ -388,7 +388,7 @@ def inject_cache_control(
 def _build_kwargs(
     model: str,
     api_key: str,
-    messages: list[dict[str, str]],
+    messages: list[dict[str, Any]],
     response_format: type[BaseModel] | None,
     max_tokens: int | None,
     temperature: float | None,
@@ -465,7 +465,7 @@ def _build_kwargs(
 
 def call_llm_structured(
     model: str,
-    messages: list[dict[str, str]],
+    messages: list[dict[str, Any]],
     response_model: type[BaseModel],
     *,
     max_tokens: int | None = None,
@@ -570,7 +570,7 @@ def call_llm_structured(
 
 async def acall_llm_structured(
     model: str,
-    messages: list[dict[str, str]],
+    messages: list[dict[str, Any]],
     response_model: type[BaseModel],
     *,
     max_tokens: int | None = None,
@@ -676,7 +676,7 @@ async def acall_llm_structured(
 
 def call_llm(
     model: str,
-    messages: list[dict[str, str]],
+    messages: list[dict[str, Any]],
     response_format: type[BaseModel] | None = None,
     *,
     max_tokens: int | None = None,
@@ -760,7 +760,7 @@ def call_llm(
 
 async def acall_llm(
     model: str,
-    messages: list[dict[str, str]],
+    messages: list[dict[str, Any]],
     response_format: type[BaseModel] | None = None,
     *,
     max_tokens: int | None = None,

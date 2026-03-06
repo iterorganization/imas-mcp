@@ -585,23 +585,22 @@ async def run_tdi_discovery(
 
     Returns number of signals created.
     """
-    gc = GraphClient()
+    with GraphClient() as gc:
+        # Create data access node
+        am = await create_tdi_data_access(gc, facility)
 
-    # Create data access node
-    am = await create_tdi_data_access(gc, facility)
+        # Discover signals
+        signals = await discover_tdi_signals(
+            facility=facility,
+            ssh_host=ssh_host,
+            tdi_path=tdi_path,
+            data_access_id=am.id,
+            filter_functions=filter_functions,
+        )
 
-    # Discover signals
-    signals = await discover_tdi_signals(
-        facility=facility,
-        ssh_host=ssh_host,
-        tdi_path=tdi_path,
-        data_access_id=am.id,
-        filter_functions=filter_functions,
-    )
+        logger.info("Discovered %d TDI signals", len(signals))
 
-    logger.info("Discovered %d TDI signals", len(signals))
-
-    # Ingest to graph
-    count = await ingest_tdi_signals(gc, signals)
+        # Ingest to graph
+        count = await ingest_tdi_signals(gc, signals)
 
     return count
