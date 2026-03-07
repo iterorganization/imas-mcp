@@ -266,7 +266,7 @@ data_systems:
         parameters: [COILS, TURNS_RATIO]
       - symbol: LIM
         name: Limiter contour
-        description: "First wall R,Z contour — 7 versions from L91NEW through Mk2ILW"
+        description: "First wall R,Z contour — 5 versions: Mk2A (shots 1-44414), Mk2GB, Mk2GB-NS, Mk2HD, Mk2ILW"
         parameters: [R, Z]
     # Limiter contour versions (independent of device XML structural epochs).
     # Each entry is a first-wall geometry that was physically installed.
@@ -274,54 +274,170 @@ data_systems:
     #
     # Sources:
     #   - Git repo: /home/chain1/git/efit_f90.git (3 files: mk2gb_ns_cc, mk2hd_cc, mk2ilw_cc)
-    #   - Frozen chain1: /home/chain1/input/efit_f90/Limiters/ (4 files: mk2a, mk2gb, mk2gb_ns, mk2hd)
-    #   - Frozen chain1 limiter_list maps shots 1-99999 across 4 contours
-    #   - L91NEW and Mk1 files NOT found on disk — may predate archival
-    chain1_limiter_dir: /home/chain1/input/efit_f90/Limiters
+    #   - Frozen chain1 efit: /home/chain1/input/efit/Limiters/ (4 files: mk2a, mk2gb, mk2gb_ns, mk2hd)
+    #   - Frozen chain1 efit_f90: /home/chain1/input/efit_f90/Limiters/ (3 files: mk2gb_ns_cc, mk2hd_cc, mk2ilw_cc)
+    #   - Authoritative shot-to-file mapping: /home/chain1/input/efit/limiter_list
+    #     1-44414 → mk2a, 44415-54351 → mk2gb, 54352-63445 → mk2gb_ns, 63446-99999 → mk2hd
+    #
+    # The mk2a file (108 R,Z points + 12 vacuum vessel + 5 centre column)
+    # covers ALL shots 1-44414, spanning the L91NEW, Mk1, and Mk2A hardware
+    # eras. While the physical first wall changed between these eras, EFIT
+    # used a single contour file for the entire pre-Mk2GB period.
+    #
+    # JEC2020 limiter.xml provides a separate high-resolution (248+ pt) ILW
+    # contour at T=200°C, valid from shot 79951. See jec2020 section below.
+    chain1_limiter_dir: /home/chain1/input/efit/Limiters
+    chain1_limiter_list: /home/chain1/input/efit/limiter_list
     limiter_versions:
-      - name: L91NEW
-        first_shot: 1
-        last_shot: 28791
-        description: "Pre-divertor limiter (1983-1991). File not found in git or chain1."
-        # file: NOT AVAILABLE — predates digital archival
-      - name: Mk1
-        first_shot: 28792
-        last_shot: 35778
-        description: "Mark 1 divertor (1994-1995). File not found in git or chain1."
-        # file: NOT AVAILABLE — predates digital archival
       - name: Mk2A
-        first_shot: 35779
-        last_shot: 45155
-        description: "Mark 2A Gas Box divertor (1998)"
-        file: Limiters/limiter.mk2a
-        source: chain1  # frozen chain1 (2002-08-15), not in git repo
+        first_shot: 1
+        last_shot: 44414
+        description: >-
+          Pre-Mk2GB contour (108 R,Z pts + 12 vacuum vessel + 5 centre column).
+          Covers L91NEW (limiter, 1983-1991), Mk1 (divertor, 1994-1995), and
+          Mk2A Gas Box (1998) eras. Single file used by EFIT for all shots 1-44414.
+        file: limiter.mk2a
+        source: chain1  # /home/chain1/input/efit/Limiters/limiter.mk2a (3124B, 2002-05-20)
+        n_points: 108  # primary contour; file also has 12+5 auxiliary points
       - name: Mk2GB
-        first_shot: 45156
-        last_shot: 54549
-        description: "Mark 2 Gas Box (2002)"
-        file: Limiters/limiter.mk2gb
-        source: chain1  # frozen chain1 (2002-11-21), not in git repo
+        first_shot: 44415
+        last_shot: 54351
+        description: "Mark 2 Gas Box (2002). 193-line contour file."
+        file: limiter.mk2gb
+        source: chain1  # /home/chain1/input/efit/Limiters/limiter.mk2gb (4030B, 2002-05-20)
       - name: Mk2GB-NS
-        first_shot: 54550
+        first_shot: 54352
         last_shot: 63445
-        description: "Mark 2 Gas Box with new septum (2006)"
-        file: Limiters/limiter.mk2gb_ns
-        source: chain1  # frozen chain1 (2006-01-31), not in git repo
-        file_cc: Limiters/limiter.mk2gb_ns_cc
+        description: "Mark 2 Gas Box with new septum (2006). 220-line contour file."
+        file: limiter.mk2gb_ns
+        source: chain1  # /home/chain1/input/efit/Limiters/limiter.mk2gb_ns (5281B, 2002-05-20)
+        file_cc: limiter.mk2gb_ns_cc
         source_cc: git  # coordinate-corrected version in git repo
       - name: Mk2HD
         first_shot: 63446
         last_shot: 79853
-        description: "Mark 2 High Delta divertor (2008)"
-        file: Limiters/limiter.mk2hd
-        source: chain1  # frozen chain1 (2006-01-31), not in git repo
-        file_cc: Limiters/limiter.mk2hd_cc
+        description: "Mark 2 High Delta divertor (2008). 117-line contour file."
+        file: limiter.mk2hd
+        source: chain1  # /home/chain1/input/efit/Limiters/limiter.mk2hd (2016B, 2006-06-14)
+        file_cc: limiter.mk2hd_cc
         source_cc: git  # coordinate-corrected version in git repo
       - name: Mk2ILW
         first_shot: 79854
         description: "ITER-Like Wall — beryllium/tungsten (2011-2023)"
-        file: Limiters/limiter.mk2ilw_cc
+        file: limiter.mk2ilw_cc
         source: git  # only exists in git repo (post 2011 restart)
+
+  # JEC2020 — EFIT++ equilibrium code input XMLs.
+  # These are the next-generation geometry files used by EFIT++ (JEC2020),
+  # providing richer metadata than the legacy EFIT device XMLs above.
+  # All files symlinked from /home/chain1/jec2020/ → live_chain1/source/jec2020/input_jec2020/active/
+  jec2020:
+    base_dir: /home/chain1/jec2020
+    files:
+      limiter:
+        path: limiter.xml
+        description: >-
+          ILW first wall contour at T=200°C. 248+ R,Z points in XML attributes
+          (rValues/zValues). Generated by write_jet_limiter from shot 82905.
+          Valid for shot range ≥79951. Higher resolution than limiter.mk2ilw_cc
+          (251 points in the git repo version).
+        line_count: 61
+      magnetics:
+        path: magnetics.xml
+        description: >-
+          95 magnetic probes (BPME saddle coils) + 36 flux loops with dual
+          data source references per probe. Each probe has:
+            signalName="BPME(n)" → PPF signal name
+            signalName2="DA/C2-CXnn" → JPF signal name
+            dataSource="JET::PPF::/magn/$pulseNumber$/0/jetppf"
+            dataSource2="JPF::$pulseNumber$"
+            geometry: rCentre, zCentre, poloidalOrientation (degrees)
+            errorType: relativeAbsolute with [relErr, absErr] pairs
+          Shot-independent (positions fixed at installation).
+          Generated by write_jet_magnetics, 2013-04-17.
+        probe_count: 95
+        flux_loop_count: 36
+      pf_systems:
+        path: pfSystems.xml
+        description: >-
+          20 PF coils and 10 circuits. Each coil has multi-element geometry
+          (comma-separated rCentre, zCentre, dR, dZ, turnCount arrays for
+          filamentary sub-coils). P2/SUI/8 has 16 sub-elements, P2/SUO/20
+          has 20 sub-elements. Generated by write_jet_pfsystems from shot 82905.
+        pf_coil_count: 20
+        circuit_count: 10
+        line_count: 305
+      iron_boundaries:
+        path: ironBoundaries3.xml
+        description: >-
+          Iron core geometry: 96 boundary segments with per-segment
+          permeabilities (initialPermeabilities array). Includes boundary
+          coordinates (boundaryCoordsR/Z), observation point angles,
+          segment lengths, normalized distances, and curvature data.
+          Boundary length: 32.962 m. Used for iron core contribution
+          to flux calculations in EFIT++.
+        segment_count: 96
+        line_count: 9
+
+  # MCFG — Magnetics calibration and sensor configuration system.
+  # Managed by the MAGNW group. Tracks sensor positions (from CATIA CAD),
+  # calibration gains/offsets, and per-pulse configuration changes.
+  mcfg:
+    base_dir: /home/MAGNW/chain1/input
+    sensor_file: /home/MAGNW/chain1/input/PPFcfg/sensors_200c_2019-03-11.txt
+    sensor_file_description: >-
+      Canonical sensor position file. 423 lines. CATIA reference model
+      @DIA001160_02-A (2002) + @DIA001288_01-A (2004). Coordinates at
+      200°C operating temperature. Format per line:
+        id  R(m)  Z(m)  angle(deg)  gain  relErr  absErr  JPF-name  description
+      Sections:
+        - Coils (id 1-238): pick-up coils with R,Z,angle positions
+        - Hall probes (id 1-8): ex-vessel probes with R,Z positions
+        - Other: Rogowski coils (DL8E, TFCI1B/2B) with gain factors
+      JPF data names follow pattern DA/<JPF-Name>.
+    mcfg_ix_file: /home/MAGNW/chain1/input/magn_ep_2019-05-14/MCFG.ix
+    mcfg_ix_description: >-
+      77 calibration epoch entries mapping pulse ranges to MCFG/MCAL/MOFF
+      and MTFC configuration numbers (e.g., MCFG:0011/MAGNW). Format:
+        $:YYYYMMDD PPPPPP user MCFG:NNNN/MAGNW type ! comment
+      Covers pulse range 54283 (2005) to 93563 (2019). Each entry changes
+      calibration gains, probe status, or TF compensation parameters.
+    config_dir: /home/MAGNW/chain1/input/magn_ep_2019-05-14
+    config_files:
+      - magn_ep.dat   # MAGN DDA epoch data
+      - magf_ep.dat   # MAGF DDA epoch data
+      - magj_ep.dat   # MAGJ DDA epoch data
+      - MCFG.ix       # Calibration epoch index
+
+  # PPF static geometry — signals containing machine description data.
+  # Some PPF DDAs store static geometry that duplicates device XML data
+  # but is accessible via the MDSplus thin-client / PPF API.
+  ppf_static_geometry:
+    access_method: thin_client  # via MDSplus.Connection → ppf("DDA/DTYPE", shot)
+    signals:
+      - dda: EFIT
+        dtype: RLIM
+        description: "Limiter R coordinates. Shape: (1, 251). Static across ILW pulses."
+        shape: [1, 251]
+      - dda: EFIT
+        dtype: ZLIM
+        description: "Limiter Z coordinates. Shape: (1, 251). Static across ILW pulses."
+        shape: [1, 251]
+      - dda: EFIT
+        dtype: RBND
+        description: "Plasma boundary R (time-resolved). Shape: (947, 105). Time-varying."
+        shape: [947, 105]
+      - dda: EFIT
+        dtype: ZBND
+        description: "Plasma boundary Z (time-resolved). Shape: (947, 105). Time-varying."
+        shape: [947, 105]
+      - dda: LIDR
+        dtype: Z
+        description: "LIDAR Thomson scattering Z positions. Shape: (50,). Static."
+        shape: [50]
+      - dda: VESL
+        dtype: CROS
+        description: "Vessel cross-section contour"
 
 # Data access patterns discovered during facility exploration.
 data_access_patterns:
