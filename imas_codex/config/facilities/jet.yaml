@@ -145,7 +145,7 @@ data_systems:
         first_shot: 1
         last_shot: 26087
         description: "Pre-divertor carbon wall + belt limiter (1983-1991)"
-        uses_limiter: Limiter
+        uses_limiter: Mk2A
         wall_configuration: limiter
       - version: mk1_mk2a
         first_shot: 33643
@@ -352,34 +352,27 @@ data_systems:
     #   - Authoritative shot-to-file mapping: /home/chain1/input/efit/limiter_list
     #     1-44414 → mk2a, 44415-54351 → mk2gb, 54352-63445 → mk2gb_ns, 63446-99999 → mk2hd
     #
-    # The mk2a file (108 R,Z points + 12 vacuum vessel + 5 centre column)
-    # covers ALL shots 1-44414, spanning the L91NEW, Mk1, and Mk2A hardware
-    # eras. While the physical first wall changed between these eras, EFIT
-    # used a single contour file for the entire pre-Mk2GB period.
+    # The mk2a file has 3 segments: 108 R,Z points (main contour used by
+    # EFIT) + 12 auxiliary points + 5 auxiliary points. EFIT's Fortran
+    # subroutine load_local_limiter() reads ONLY segment 0 (108 points);
+    # segments 1 and 2 are never used by the equilibrium solver.
+    # The file covers ALL shots 1-44414 (limiter_list), spanning the
+    # pre-divertor, Mk1, and Mk2A hardware eras. No separate pre-divertor
+    # contour file exists — EFIT retroactively applies mk2a to old shots.
     #
     # JEC2020 limiter.xml provides a separate high-resolution (248+ pt) ILW
     # contour at T=200°C, valid from shot 79951. See static_sources below.
     limiter_dir: /home/chain1/input/efit/Limiters
     limiter_versions:
-      - name: Limiter
-        first_shot: 1
-        last_shot: 26087
-        description: >-
-          Pre-divertor D-shaped vacuum vessel wall + belt limiter (1983-1991).
-          Composed from secondary segments (12-pt vessel wall + 5-pt belt
-          limiter) embedded in the limiter.mk2a contour file. These segments
-          are identical across mk2a, mk2gb, and mk2gb_ns files — they
-          represent the original JET first wall before divertor installation.
-        file: limiter.mk2a
-        source_dir: /home/chain1/input/efit/Limiters
-        contour_sections: [1, 2]
       - name: Mk2A
-        first_shot: 33643
+        first_shot: 1
         last_shot: 44414
         description: >-
-          Mark I + Mark IIA divertor contour (108 R,Z points). Primary segment
-          of limiter.mk2a. Covers Mk1 (1994-1995) and Mk2A Gas Box (1996-1998)
-          divertor eras. EFIT used a single contour file for shots 1-44414.
+          Primary EFIT limiter contour for shots 1-44414 (108 R,Z points).
+          First segment of limiter.mk2a. Covers the pre-divertor limiter era
+          (1983-1991), Mk1 divertor (1994-1995), and Mk2A Gas Box (1996-1998).
+          No distinct pre-divertor contour file exists — EFIT retroactively
+          applied this contour to all pre-Mk2GB shots via limiter_list.
         file: limiter.mk2a
         source_dir: /home/chain1/input/efit/Limiters
         n_points: 108

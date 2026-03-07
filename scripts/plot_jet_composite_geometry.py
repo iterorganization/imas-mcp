@@ -3,7 +3,7 @@
 Queries Neo4j for ALL geometry data ingested by the device_xml scanner
 and renders a publication-quality poloidal cross-section with layers:
 
-  1. Limiter contours (6 epochs, color-coded) + JEC2020 high-res
+  1. Limiter contours (5 versions, color-coded) + JEC2020 high-res
   2. PF coil rectangles (JEC2020 latest config)
   3. Magnetic probe positions (JEC2020, with orientation)
   4. MCFG sensor positions (CATIA CAD reference)
@@ -30,10 +30,8 @@ from imas_codex.graph.client import GraphClient
 
 ALL_LAYERS = {"limiter", "pf", "probes", "mcfg", "iron", "flux", "passive", "timeline"}
 
-# Limiter-era: warm orange for pre-divertor
-# Divertor-era: cool blues/greens/purples
+# Color per limiter version — consistent across plot and timeline
 EPOCH_COLORS = [
-    "#e67e22",  # Limiter (pre-divertor, orange)
     "#1f77b4",  # Mk2A
     "#2ca02c",  # Mk2GB
     "#9467bd",  # Mk2GB-NS
@@ -61,7 +59,8 @@ def query_limiters() -> list[dict]:
                 RETURN dn.path AS path, dn.r_contour AS r, dn.z_contour AS z,
                        dn.first_shot AS first_shot, dn.last_shot AS last_shot,
                        dn.n_points AS n_points,
-                       CASE WHEN 'limiter' IN wall_configs THEN 'limiter'
+                       CASE WHEN 'divertor' IN wall_configs THEN 'divertor'
+                            WHEN 'limiter' IN wall_configs THEN 'limiter'
                             ELSE 'divertor' END AS wall_config
                 ORDER BY dn.first_shot ASC
                 """
