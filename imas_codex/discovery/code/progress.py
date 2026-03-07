@@ -98,6 +98,8 @@ class IngestItem:
     path: str
     language: str = ""
     file_type: str = ""  # code, document, notebook, config
+    score: float | None = None  # composite score from scoring phase
+    chunks: int = 0  # average chunks per file in batch
 
 
 # =============================================================================
@@ -431,15 +433,19 @@ class FileProgressDisplay(BaseProgressDisplay):
                 if score.description:
                     score_desc = clean_text(score.description)
 
-        # INGEST activity
+        # INGEST activity — language + score + chunks
         ingest_text = ""
         ingest_desc = ""
         if ingest:
             ingest_text = ingest.path
+            desc_parts = []
             if ingest.language:
-                ingest_desc = f"[{ingest.language}]"
+                desc_parts.append(f"[{ingest.language}]")
             elif ingest.file_type:
-                ingest_desc = f"[{ingest.file_type}]"
+                desc_parts.append(f"[{ingest.file_type}]")
+            if ingest.chunks > 0:
+                desc_parts.append(f"~{ingest.chunks} chunks")
+            ingest_desc = "  ".join(desc_parts)
 
         # --- Build pipeline rows ---
 
@@ -613,17 +619,21 @@ class FileProgressDisplay(BaseProgressDisplay):
     ) -> None:
         """Update triage worker state with own display row."""
         self.state.run_triaged = stats.processed
-        self.state.triage_rate = stats.ema_rate or stats.active_rate
         self.state._run_triage_cost = stats.cost
 
         if "idle" in message.lower():
             self.state.triage_processing = False
+            stats.mark_idle()
             self._refresh()
             return
         elif "triaging" in message.lower():
             self.state.triage_processing = True
-        else:
-            self.state.triage_processing = False
+            stats.mark_active()
+        elif results:
+            self.state.triage_processing = not self.state.triage_queue.is_empty()
+            stats.mark_active()
+
+        self.state.triage_rate = stats.ema_rate
 
         if results:
             items = [
@@ -637,9 +647,11 @@ class FileProgressDisplay(BaseProgressDisplay):
                 for r in results
             ]
             self.state.run_skipped += sum(1 for r in results if r.get("skipped"))
-            max_rate = 2.0
-            display_rate = min(stats.rate, max_rate) if stats.rate else 0.5
-            self.state.triage_queue.add(items, display_rate)
+            self.state.triage_queue.add(
+                items,
+                stats.ema_rate,
+                last_batch_time=stats.last_batch_time,
+            )
 
         self._refresh()
 
@@ -651,17 +663,21 @@ class FileProgressDisplay(BaseProgressDisplay):
     ) -> None:
         """Update score worker state."""
         self.state.run_scored = stats.processed
-        self.state.score_rate = stats.ema_rate or stats.active_rate
         self.state._run_score_cost = stats.cost
 
         if "waiting" in message.lower():
             self.state.score_processing = False
+            stats.mark_idle()
             self._refresh()
             return
         elif "scoring" in message.lower():
             self.state.score_processing = True
-        else:
-            self.state.score_processing = False
+            stats.mark_active()
+        elif results:
+            self.state.score_processing = not self.state.score_queue.is_empty()
+            stats.mark_active()
+
+        self.state.score_rate = stats.ema_rate
 
         if results:
             items = [
@@ -674,10 +690,9 @@ class FileProgressDisplay(BaseProgressDisplay):
                 )
                 for r in results
             ]
-            ema = stats.ema_rate or stats.active_rate
             self.state.score_queue.add(
                 items,
-                ema,
+                stats.ema_rate,
                 last_batch_time=stats.last_batch_time,
             )
 
@@ -691,14 +706,18 @@ class FileProgressDisplay(BaseProgressDisplay):
     ) -> None:
         """Update enrich worker state."""
         self.state.run_enriched = stats.processed
-        self.state.enrich_rate = stats.ema_rate or stats.active_rate
 
         if "waiting" in message.lower() or "idle" in message.lower():
             self.state.enrich_processing = False
+            stats.mark_idle()
         elif "enriching" in message.lower() or "enriched" in message.lower():
             self.state.enrich_processing = True
-        else:
-            self.state.enrich_processing = False
+            stats.mark_active()
+        elif results:
+            self.state.enrich_processing = not self.state.enrich_queue.is_empty()
+            stats.mark_active()
+
+        self.state.enrich_rate = stats.ema_rate
 
         if results:
             items = [
@@ -710,10 +729,9 @@ class FileProgressDisplay(BaseProgressDisplay):
                 )
                 for r in results
             ]
-            ema = stats.ema_rate or stats.active_rate
             self.state.enrich_queue.add(
                 items,
-                ema,
+                stats.ema_rate,
                 last_batch_time=stats.last_batch_time,
             )
 
@@ -727,28 +745,36 @@ class FileProgressDisplay(BaseProgressDisplay):
     ) -> None:
         """Update code ingestion worker state (feeds into INGEST row)."""
         self.state.run_code_ingested = stats.processed
-        self.state.code_rate = stats.ema_rate or stats.active_rate
 
         if "waiting" in message.lower() or "idle" in message.lower():
             self.state.ingest_processing = False
+            stats.mark_idle()
             self._refresh()
             return
         elif "ingesting" in message.lower() or "fetching" in message.lower():
             self.state.ingest_processing = True
+            stats.mark_active()
+        elif results:
+            self.state.ingest_processing = not self.state.ingest_queue.is_empty()
+            stats.mark_active()
+
+        # Use EMA rate for live display (falls back to active_rate)
+        self.state.code_rate = stats.ema_rate
 
         if results:
             items = [
                 IngestItem(
                     path=r.get("path", ""),
                     language=r.get("language", ""),
+                    score=r.get("score"),
+                    chunks=r.get("chunks", 0),
                     file_type="code",
                 )
                 for r in results
             ]
-            ema = stats.ema_rate or stats.active_rate
             self.state.ingest_queue.add(
                 items,
-                ema,
+                stats.ema_rate,
                 last_batch_time=stats.last_batch_time,
             )
 
