@@ -74,6 +74,14 @@ MOCK_PARSED_OUTPUT = {
                     "abs_error": 0.001,
                     "rel_error": 0.001,
                 },
+                {
+                    "id": "3",
+                    "r": [3.827, 3.864, 3.901],
+                    "z": [-1.457, -1.457, -1.457],
+                    "dr": [0.068, 0.068, 0.068],
+                    "dz": [0.378, 0.378, 0.378],
+                    "turnsperelement": [6.0, 6.0, 6.0],
+                },
             ],
             "pfcircuits": [
                 {
@@ -298,12 +306,12 @@ class TestPersistGraphNodes:
         # Expected signals:
         # 2 magprobes × 3 fields (r,z,angle) = 6
         # 1 flux × 3 fields (r,z,dphi) = 3
-        # 1 pfcoil × 5 fields = 5
+        # 2 pfcoils × 5 fields = 10
         # 1 pfcircuit × 2 fields = 2
         # 1 pfpassive × 7 fields = 7
         # 1 limiter = 1
-        # Total = 24
-        assert stats["signals"] == 24
+        # Total = 29
+        assert stats["signals"] == 29
 
     def test_data_node_has_geometry_values(self):
         """DataNode dicts include r, z, angle etc. as properties."""
@@ -342,6 +350,41 @@ class TestPersistGraphNodes:
         assert dn["r"] == 4.292
         assert dn["z"] == 0.604
         assert dn["angle"] == -74.1
+
+    def test_multi_element_coil_has_array_properties(self):
+        """Multi-element PF coil DataNode stores R/Z as float arrays."""
+        created_nodes: list[list[dict]] = []
+
+        with patch(
+            "imas_codex.discovery.signals.scanners.device_xml.GraphClient"
+        ) as mock_gc_cls:
+            mock_gc = mock_gc_cls.return_value.__enter__.return_value
+            mock_gc.query.return_value = []
+            mock_gc.create_nodes.side_effect = lambda label, items, **kw: (
+                created_nodes.append(items)
+                or {"processed": len(items), "relationships": {}}
+            )
+
+            _persist_graph_nodes(
+                "jet",
+                MOCK_JET_CONFIG,
+                MOCK_PARSED_OUTPUT["versions"],
+                MOCK_PARSED_OUTPUT["limiters"],
+            )
+
+        data_node_batches = [
+            batch
+            for batch in created_nodes
+            if batch and "path" in batch[0] and "node_type" in batch[0]
+        ]
+        all_dns = [dn for batch in data_node_batches for dn in batch]
+        coil3_dns = [dn for dn in all_dns if "pfcoils:3" in dn["path"]]
+        assert len(coil3_dns) == 1
+        dn = coil3_dns[0]
+        assert isinstance(dn["r"], list)
+        assert dn["r"] == [3.827, 3.864, 3.901]
+        assert isinstance(dn["z"], list)
+        assert dn["z"] == [-1.457, -1.457, -1.457]
 
     def test_data_node_has_system_property(self):
         """DataNode includes system property for domain filtering."""
@@ -689,6 +732,54 @@ class TestParseDeviceXMLScript:
         assert result["r"][0] == pytest.approx(1.82396)
         assert result["z"][0] == pytest.approx(-0.02263)
         assert len(result["r"]) == 3
+
+    def test_parse_multi_element_coil(self):
+        """Multi-value R/Z text in PF coils is parsed as float arrays."""
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            "parse_device_xml",
+            "imas_codex/remote/scripts/parse_device_xml.py",
+        )
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        xml_bytes = b"""<?xml version="1.0"?>
+<device>
+  <pfcoils>
+    <instance id="3">
+      <r>3.827 3.864 3.901</r>
+      <z>-1.457 -1.457 -1.457</z>
+      <dr>0.068 0.068 0.068</dr>
+      <dz>0.378 0.378 0.378</dz>
+      <turnsperelement>6 6 6</turnsperelement>
+    </instance>
+    <instance id="1">
+      <r>2.15</r>
+      <z>1.78</z>
+      <dr>0.264</dr>
+      <dz>0.574</dz>
+      <turnsperelement>120</turnsperelement>
+    </instance>
+  </pfcoils>
+</device>"""
+        result = mod.parse_device_xml(xml_bytes)
+        coils = result["pfcoils"]
+        assert len(coils) == 2
+
+        # Multi-element coil: arrays
+        c3 = coils[0]
+        assert c3["id"] == "3"
+        assert isinstance(c3["r"], list)
+        assert c3["r"] == [3.827, 3.864, 3.901]
+        assert isinstance(c3["z"], list)
+        assert c3["z"] == [-1.457, -1.457, -1.457]
+
+        # Single-element coil: scalar float
+        c1 = coils[1]
+        assert c1["id"] == "1"
+        assert isinstance(c1["r"], float)
+        assert c1["r"] == 2.15
 
 
 class TestChain1LimiterParsing:

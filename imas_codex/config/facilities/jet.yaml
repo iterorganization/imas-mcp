@@ -345,7 +345,7 @@ data_systems:
       - name: Mk2ILW
         first_shot: 79854
         description: "ITER-Like Wall — beryllium/tungsten (2011-2023)"
-        file: limiter.mk2ilw_cc
+        file: Limiters/limiter.mk2ilw_cc
         n_points: 251
 
   # Static file-based data sources for machine description.

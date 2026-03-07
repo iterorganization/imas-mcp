@@ -108,7 +108,12 @@ def parse_instance(elem) -> dict:
             try:
                 data[tag] = float(text)
             except ValueError:
-                data[tag] = text
+                # Multi-value: whitespace-separated float array (e.g. PF coil turns)
+                parts = text.split()
+                try:
+                    data[tag] = [float(p) for p in parts] if len(parts) > 1 else text
+                except ValueError:
+                    data[tag] = text
     return data
 
 
