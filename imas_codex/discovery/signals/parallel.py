@@ -1899,40 +1899,6 @@ async def seed_worker(
                 total_discovered += count
                 state.discover_stats.processed += count
 
-                if result.data_access:
-                    try:
-                        da = result.data_access
-
-                        def _ingest_da(
-                            _da_id: str, _props: dict, _facility: str
-                        ) -> None:
-                            with GraphClient() as gc:
-                                gc.query(
-                                    """
-                                    MERGE (da:DataAccess {id: $id})
-                                    SET da += $props
-                                    WITH da
-                                    MATCH (f:Facility {id: $facility})
-                                    MERGE (da)-[:AT_FACILITY]->(f)
-                                    """,
-                                    id=_da_id,
-                                    props=_props,
-                                    facility=_facility,
-                                )
-
-                        await asyncio.to_thread(
-                            _ingest_da,
-                            da.id,
-                            da.model_dump(exclude_none=True),
-                            state.facility,
-                        )
-                    except Exception as e:
-                        logger.warning(
-                            "Failed to ingest DataAccess for %s: %s",
-                            scanner_type,
-                            e,
-                        )
-
                 if on_progress:
                     on_progress(
                         f"{scanner_type}: discovered {count} signals",
@@ -1946,6 +1912,40 @@ async def seed_worker(
                             }
                             for s in result.signals[:20]
                         ],
+                    )
+
+            # Persist DataAccess node independently of signals —
+            # thin-client scanners create access metadata without signals
+            if result.data_access:
+                try:
+                    da = result.data_access
+
+                    def _ingest_da(_da_id: str, _props: dict, _facility: str) -> None:
+                        with GraphClient() as gc:
+                            gc.query(
+                                """
+                                MERGE (da:DataAccess {id: $id})
+                                SET da += $props
+                                WITH da
+                                MATCH (f:Facility {id: $facility})
+                                MERGE (da)-[:AT_FACILITY]->(f)
+                                """,
+                                id=_da_id,
+                                props=_props,
+                                facility=_facility,
+                            )
+
+                    await asyncio.to_thread(
+                        _ingest_da,
+                        da.id,
+                        da.model_dump(exclude_none=True),
+                        state.facility,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "Failed to ingest DataAccess for %s: %s",
+                        scanner_type,
+                        e,
                     )
 
             if scanner_type == "tdi" and result.metadata.get("functions"):

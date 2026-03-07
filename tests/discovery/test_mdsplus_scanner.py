@@ -453,7 +453,7 @@ async def test_check_delegates_to_remote(scanner):
 
     mock_output = '{"results": [{"id": "tcv:results/top/ip", "success": true, "shape": [100], "dtype": "float64"}]}'
     with patch(
-        "imas_codex.discovery.signals.scanners.mdsplus.run_python_script",
+        "imas_codex.remote.executor.run_python_script",
         return_value=mock_output,
     ) as mock_rps:
         results = await scanner.check("tcv", "tcv-ssh", signals, config)
@@ -483,7 +483,7 @@ async def test_check_handles_remote_error(scanner):
     config = {"reference_shot": 85000}
 
     with patch(
-        "imas_codex.discovery.signals.scanners.mdsplus.run_python_script",
+        "imas_codex.remote.executor.run_python_script",
         side_effect=RuntimeError("SSH failed"),
     ):
         results = await scanner.check("tcv", "tcv-ssh", signals, config)

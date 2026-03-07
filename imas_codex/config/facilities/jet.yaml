@@ -30,6 +30,62 @@ data_systems:
     # Exclude DDAs with raw/engineering data (high volume, low physics value)
     exclude_ddas: []
 
+  # MDSplus thin-client access via TDI functions.
+  # JET's MDSplus server does NOT use traditional tree-based access.
+  # All data is accessed via TDI function calls over a thin-client
+  # connection (MDSplus.Connection). JPF raw hardware signals and
+  # PPF processed data are both accessible through this interface.
+  mdsplus:
+    server: mdsplus.jet.uk
+    connection_type: thin_client  # Remote via MDSplus.Connection (vs TCV's local tree access)
+    reference_shot: 99896
+    python_command: /common/software/micromamba/root/envs/python-3.12-minibundle/bin/python3
+    setup_commands:
+      - source /etc/profile.d/modules.sh
+      - module load jet/1.0
+    # JPF subsystem codes (32 subsystems, 2-char codes)
+    # Discovered via jpfsubsystems() TDI function
+    jpf_subsystems:
+      - DA  # Diagnostics A
+      - DB  # Diagnostics B
+      - DC  # Diagnostics C
+      - DD  # Diagnostics D
+      - DE  # Diagnostics E
+      - DF  # Diagnostics F
+      - DG  # Diagnostics G
+      - DH  # Diagnostics H
+      - DI  # Diagnostics I
+      - PF  # Poloidal Field
+      - TF  # Toroidal Field
+      - PL  # Plasma
+      - GS  # Gas
+      - VC  # Vacuum
+      - AH  # Additional Heating
+      - RF  # Radio Frequency
+      - CC  # Central Control
+      - LH  # Lower Hybrid
+      - MC  # Machine Control
+      - NM  # Neutron Monitoring
+      - PD  # PD subsystem
+      - PM  # PM subsystem
+      - SA  # Safety A
+      - SC  # Safety C
+      - SS  # SS subsystem
+      - TB  # TB subsystem
+      - XC  # XC subsystem
+      - XG  # XG subsystem
+      - YC  # YC subsystem
+      - YD  # YD subsystem
+      - YE  # YE subsystem
+      - DJ  # DJ subsystem
+    # TDI data access functions available on the server
+    tdi_access_functions:
+      jpf: dpf("{subsystem}/{signal}", {shot})     # Raw JPF signals
+      ppf: ppf("{dda}/{dtype}", {shot})             # Processed PPF data
+      jpf_subsystems: jpfsubsystems()               # List all JPF subsystem codes
+      jpf_active: jpfincludedsubsystems({shot})     # Active subsystems for a shot
+      ppf_info: ppfsignalinfo("{dda}")               # PPF DDA metadata
+
   # IMAS data available post-migration
   imas:
     backends:
@@ -252,6 +308,32 @@ data_access_patterns:
     - "UDA modules available (2.6.1 default) but cpyuda Python import fails"
     - "IMAS modules available but import imas fails on default Python"
     - "No SAL REST endpoint responding at sal.jet.uk during SSH exploration"
+    # ── MDSplus Thin-Client Access ─────────────────────────────────────
+    - >-
+      MDSPLUS THIN-CLIENT: JET MDSplus server at mdsplus.jet.uk provides
+      TDI function-based data access (NOT tree-based). No MDSplus trees exist
+      on this server — all access via compiled TDI functions. Connection:
+      MDSplus.Connection('mdsplus.jet.uk'). 1448 TDI functions total
+      (287 JET-specific across 5 categories: cmg=7, dgm=4, flush=181,
+      interpos=2, root=85). Requires module load jet/1.0 for MDSplus env.
+    - >-
+      MDSPLUS DATA ACCESS FUNCTIONS: dpf("sub/signal", shot) and
+      jpf("sub/signal", shot) for JPF raw signals. ppf("DDA/DTYPE", shot)
+      for PPF processed data (returns 2D arrays: time×points).
+      jpfsubsystems() returns 32 2-char subsystem codes. jpfincludedsubsystems(shot)
+      returns active subsystems for a given shot. EFIT geometry:
+      ppf("EFIT/RLIM", shot) → (1,251) limiter R coords,
+      ppf("EFIT/ZLIM", shot) → (1,251) limiter Z coords,
+      ppf("EFIT/RBND", shot) → (947,105) boundary R coords (time-resolved).
+    - >-
+      MDSPLUS DISCOVERY GAP: The MDSplus server was not discovered during
+      SSH/wiki/code exploration because: (1) JET MDSplus uses no traditional
+      trees — our entire MDSplus infrastructure assumed MDSplus.Tree() access;
+      (2) the server hostname 'mdsplus.jet.uk' does not appear in any config
+      files accessible via SSH; (3) the PPF/JPF native libraries (libppf.so,
+      getdat) worked without MDSplus, so there was no incentive to look for an
+      MDSplus server; (4) JET's MDSplus is a thin-client model (compiled .fun
+      files served remotely) which is architecturally unique among our facilities.
     # ── Machine Description ──────────────────────────────────────────────
     # No centralized static tree (unlike TCV). Geometry data lives in EFIT
     # input files, versioned in git (/home/chain1/git/efit_f90.git).
