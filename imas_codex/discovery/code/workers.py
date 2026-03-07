@@ -272,6 +272,8 @@ async def triage_worker(
                 None,
             )
 
+        batch_start = _time.monotonic()
+
         try:
             triage_user_prompt = _build_triage_user_prompt(file_groups)
             triage_raw, triage_cost, _ = await asyncio.to_thread(
@@ -294,7 +296,10 @@ async def triage_worker(
 
             triaged = triage_applied["triaged"]
             skipped = triage_applied["skipped"]
-            state.triage_stats.processed += triaged + skipped
+            batch_total = triaged + skipped
+            state.triage_stats.processed += batch_total
+            state.triage_stats.last_batch_time = _time.monotonic() - batch_start
+            state.triage_stats.record_batch(batch_total)
 
             if on_progress:
                 # Stream per-file triage results with scores and descriptions
@@ -430,6 +435,8 @@ async def score_worker(
                 None,
             )
 
+        batch_start = _time.monotonic()
+
         try:
             score_user_prompt = _build_score_user_prompt(file_groups)
             parsed_raw, cost, _tokens = await asyncio.to_thread(
@@ -449,9 +456,10 @@ async def score_worker(
             result = await asyncio.to_thread(
                 apply_file_scores, parsed.results, file_id_map
             )
-            state.score_stats.processed += result.get("scored", 0) + result.get(
-                "skipped", 0
-            )
+            batch_total = result.get("scored", 0) + result.get("skipped", 0)
+            state.score_stats.processed += batch_total
+            state.score_stats.last_batch_time = _time.monotonic() - batch_start
+            state.score_stats.record_batch(batch_total)
 
             await asyncio.to_thread(release_file_score_claims, batch_ids)
 
@@ -626,6 +634,8 @@ async def code_worker(
     Creates a single shared Encoder instance to avoid loading the
     embedding model multiple times on the same GPU.
     """
+    import time as _time
+
     from imas_codex.embeddings.encoder import Encoder
     from imas_codex.ingestion.pipeline import ingest_files
 
@@ -666,16 +676,21 @@ async def code_worker(
         remote_paths = [f["path"] for f in files]
         all_ids = [f["id"] for f in files]
 
+        batch_start = _time.monotonic()
+
         try:
-            stats = await ingest_files(
+            ingest_stats = await ingest_files(
                 facility=state.facility,
                 remote_paths=remote_paths,
                 force=False,
                 encoder=encoder,
             )
 
-            ingested_count = stats.get("files", 0)
-            skipped_count = stats.get("skipped", 0)
+            batch_elapsed = _time.monotonic() - batch_start
+
+            ingested_count = ingest_stats.get("files", 0)
+            skipped_count = ingest_stats.get("skipped", 0)
+            chunks_count = ingest_stats.get("chunks", 0)
 
             # Mark ALL claimed files as ingested — either their content
             # was just processed or was already present (dedup-skipped).
@@ -684,16 +699,21 @@ async def code_worker(
             if ingested_count > 0 or skipped_count > 0:
                 await asyncio.to_thread(_mark_files_ingested, all_ids)
 
-            state.code_stats.processed += ingested_count + skipped_count
+            batch_total = ingested_count + skipped_count
+            state.code_stats.processed += batch_total
+            state.code_stats.last_batch_time = batch_elapsed
+            state.code_stats.record_batch(batch_total)
 
             if on_progress:
                 on_progress(
-                    f"ingested {ingested_count}, dedup-skipped {skipped_count}",
+                    f"ingested {ingested_count}, {chunks_count} chunks",
                     state.code_stats,
                     [
                         {
                             "path": f["path"],
                             "language": f.get("language", ""),
+                            "score": f.get("score_composite"),
+                            "chunks": chunks_count // max(ingested_count, 1),
                             "file_type": "code",
                         }
                         for f in files
@@ -730,6 +750,8 @@ async def enrich_worker(
 
     Runs AFTER triage, BEFORE scoring.
     """
+    import time as _time  # noqa: PLC0415
+
     from imas_codex.discovery.code.enrichment import (
         enrich_files,
         persist_file_enrichment,
@@ -770,6 +792,8 @@ async def enrich_worker(
                 None,
             )
 
+        batch_start = _time.monotonic()
+
         try:
             results = await enrich_files(
                 state.facility,
@@ -781,6 +805,8 @@ async def enrich_worker(
             )
 
             state.enrich_stats.processed += enriched
+            state.enrich_stats.last_batch_time = _time.monotonic() - batch_start
+            state.enrich_stats.record_batch(enriched)
 
             # Release claims
             await asyncio.to_thread(release_file_enrich_claims, batch_ids)
