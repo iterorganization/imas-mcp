@@ -382,33 +382,103 @@ def plot_poloidal(data: dict, epoch: str = "p89440") -> None:
     plt.close()
 
 
-def main():
-    # Accept an optional epoch argument, otherwise plot all significant eras
-    if len(sys.argv) > 1:
-        epochs_to_plot = [sys.argv[1]]
-    else:
-        sig = get_significant_epochs()
-        print(f"Found {len(sig)} significant geometry eras:")
-        for s in sig:
-            print(
-                f"  {s['epoch']}: {s['limiter']} limiter, "
-                f"shots {s['first_shot']}–{s['last_shot'] or 'end'}"
-            )
-        epochs_to_plot = [s["epoch"] for s in sig]
+def plot_limiter_comparison() -> None:
+    """Overlay all first-wall / divertor contours, color-coded by era."""
+    import matplotlib.pyplot as plt
 
-    for epoch in epochs_to_plot:
-        print(f"\nQuerying graph for JET epoch {epoch}...")
-        data = query_geometry(epoch)
+    with GraphClient() as gc:
+        limiters = gc.query("""
+            MATCH (dn:DataNode)
+            WHERE dn.path STARTS WITH 'jet:device_xml:limiter:'
+            RETURN dn.path AS path,
+                   dn.r_contour AS r, dn.z_contour AS z,
+                   dn.n_points AS n_points,
+                   dn.first_shot AS first_shot,
+                   dn.last_shot AS last_shot
+            ORDER BY dn.first_shot
+        """)
 
-        print(
-            f"  Magnetic probes: {len(data['magprobes'])}\n"
-            f"  PF coils: {len(data['pfcoils'])}\n"
-            f"  Passive structures: {len(data['passives'])}\n"
-            f"  Limiters available: {len(data['limiters'])}\n"
-            f"  Epoch: {data['epoch']}"
+    colors = {
+        "Mk2GB": "#e67e22",  # orange
+        "Mk2HD": "#2980b9",  # blue
+        "Mk2ILW": "#27ae60",  # green
+    }
+
+    fig, ax = plt.subplots(1, 1, figsize=(10, 14))
+
+    for lim in limiters:
+        name = lim["path"].split(":")[-1]
+        r = np.array(lim["r"], dtype=float)
+        z = np.array(lim["z"], dtype=float)
+        fs = lim["first_shot"]
+        ls = lim["last_shot"]
+        color = colors.get(name, "#333")
+        shot_range = f"shots {fs}–{ls}" if ls else f"shots {fs}–end"
+        ax.plot(
+            r,
+            z,
+            "-",
+            color=color,
+            linewidth=2.0,
+            label=f"{name} ({lim['n_points']} pts, {shot_range})",
+            zorder=2,
         )
 
-        plot_poloidal(data, epoch)
+    ax.set_title(
+        "JET First Wall & Divertor — All Configurations\n"
+        "Mk2GB → Mk2HD → Mk2ILW (ITER-Like Wall)",
+        fontsize=13,
+        fontweight="bold",
+        pad=15,
+    )
+    ax.set_xlabel("R [m]", fontsize=12)
+    ax.set_ylabel("Z [m]", fontsize=12)
+    ax.set_aspect("equal")
+    ax.legend(loc="upper right", fontsize=10, framealpha=0.9)
+
+    ax.autoscale_view()
+    xmin, xmax = ax.get_xlim()
+    ymin, ymax = ax.get_ylim()
+    pad = 0.3
+    ax.set_xlim(max(0, xmin - pad), xmax + pad)
+    ax.set_ylim(ymin - pad, ymax + pad)
+
+    ax.annotate(
+        "Data source: Neo4j graph (device_xml scanner)",
+        xy=(0.02, 0.02),
+        xycoords="axes fraction",
+        fontsize=7,
+        color="#666",
+        fontstyle="italic",
+    )
+
+    plt.tight_layout()
+    out = "jet_limiter_comparison.png"
+    fig.savefig(out, dpi=200, bbox_inches="tight")
+    print(f"Saved: {out}")
+    plt.close()
+
+
+def main():
+    # --compare: overlay all limiter contours on one plot
+    # <epoch>: single epoch poloidal plot
+    # (no args): comparison plot
+    if len(sys.argv) > 1 and sys.argv[1] != "--compare":
+        epochs_to_plot = [sys.argv[1]]
+        for epoch in epochs_to_plot:
+            print(f"Querying graph for JET epoch {epoch}...")
+            data = query_geometry(epoch)
+            print(
+                f"  Magnetic probes: {len(data['magprobes'])}\n"
+                f"  PF coils: {len(data['pfcoils'])}\n"
+                f"  Passive structures: {len(data['passives'])}\n"
+                f"  Limiters available: {len(data['limiters'])}\n"
+                f"  Epoch: {data['epoch']}"
+            )
+            plot_poloidal(data, epoch)
+    else:
+        print("Generating first-wall / divertor comparison plot...")
+        plot_limiter_comparison()
 
 
 if __name__ == "__main__":
