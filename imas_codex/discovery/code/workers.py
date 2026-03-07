@@ -16,6 +16,8 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
+from imas_codex.discovery.base.claims import retry_on_deadlock
+
 from .state import FileDiscoveryState
 
 if TYPE_CHECKING:
@@ -485,6 +487,7 @@ async def score_worker(
 # ============================================================================
 
 
+@retry_on_deadlock()
 def _claim_code_files_for_ingestion(
     facility: str,
     limit: int = 20,
@@ -496,13 +499,20 @@ def _claim_code_files_for_ingestion(
     Claims CodeFiles with status='scored' above the minimum interest
     score threshold. Skips files exceeding max_line_count to avoid
     tree-sitter hangs on very large auto-generated files.
+
+    Uses anti-deadlock patterns: ORDER BY rand(), claim_token two-step
+    verify, and @retry_on_deadlock decorator.
     """
+    import uuid
+
     from imas_codex.discovery.base.claims import DEFAULT_CLAIM_TIMEOUT_SECONDS
     from imas_codex.graph import GraphClient
 
+    token = str(uuid.uuid4())
     cutoff = f"PT{DEFAULT_CLAIM_TIMEOUT_SECONDS}S"
     with GraphClient() as gc:
-        result = gc.query(
+        # Step 1: Claim with random ordering and token
+        gc.query(
             """
             MATCH (sf:CodeFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
             WHERE sf.status = 'scored'
@@ -517,22 +527,24 @@ def _claim_code_files_for_ingestion(
                      MATCH (dup:CodeFile {content_hash: sf.content_hash})
                      WHERE dup.status = 'ingested' AND dup.id <> sf.id
                    })
-            // Popularity boost: files copied across many repos are more valuable
-            WITH sf
-            OPTIONAL MATCH (sib:CodeFile {content_hash: sf.content_hash})
-            WHERE sf.content_hash IS NOT NULL
-            WITH sf, count(sib) AS copies
-            ORDER BY copies DESC, sf.score_composite DESC
-            LIMIT $limit
-            SET sf.claimed_at = datetime(), sf.copy_count = copies
-            RETURN sf.id AS id, sf.path AS path, sf.language AS language,
-                   sf.score_composite AS score_composite, copies AS copy_count
+            WITH sf ORDER BY rand() LIMIT $limit
+            SET sf.claimed_at = datetime(), sf.claim_token = $token
             """,
             facility=facility,
             min_score=min_score,
             max_line_count=max_line_count,
             limit=limit,
             cutoff=cutoff,
+            token=token,
+        )
+        # Step 2: Read back by token to confirm claims
+        result = gc.query(
+            """
+            MATCH (sf:CodeFile {claim_token: $token})
+            RETURN sf.id AS id, sf.path AS path, sf.language AS language,
+                   sf.score_composite AS score_composite
+            """,
+            token=token,
         )
         return list(result)
 
@@ -552,9 +564,11 @@ def _mark_files_ingested(file_ids: list[str]) -> int:
             """
             UNWIND $ids AS fid
             MATCH (sf:CodeFile {id: fid})
+            WHERE sf.status <> 'failed'
             SET sf.status = 'ingested',
                 sf.ingested_at = datetime(),
-                sf.claimed_at = null
+                sf.claimed_at = null,
+                sf.claim_token = null
             RETURN count(sf) AS updated
             """,
             ids=file_ids,
@@ -571,7 +585,8 @@ def _mark_files_ingested(file_ids: list[str]) -> int:
             WHERE dup.id <> sf.id AND dup.status IN ['scored', 'triaged']
             SET dup.status = 'skipped',
                 dup.skip_reason = 'duplicate of ' + sf.id,
-                dup.claimed_at = null
+                dup.claimed_at = null,
+                dup.claim_token = null
             """,
             ids=file_ids,
         )
@@ -589,7 +604,8 @@ def _mark_file_failed(file_id: str, error: str) -> None:
             MATCH (sf:CodeFile {id: $id})
             SET sf.status = 'failed',
                 sf.error = $error,
-                sf.claimed_at = null
+                sf.claimed_at = null,
+                sf.claim_token = null
             """,
             id=file_id,
             error=error[:200],
@@ -603,9 +619,9 @@ async def code_worker(
 ) -> None:
     """Code worker: Fetch, chunk, embed, and link code files.
 
-    Claims scored CodeFiles with file_category='code', runs the
-    ingestion pipeline (tree-sitter chunking, embedding, entity extraction).
-    Transitions: discovered (scored) → ingested | failed
+    Claims scored CodeFiles, runs the ingestion pipeline (tree-sitter
+    chunking, embedding, entity extraction).
+    Transitions: scored → ingested | failed
 
     Creates a single shared Encoder instance to avoid loading the
     embedding model multiple times on the same GPU.
@@ -620,12 +636,18 @@ async def code_worker(
         if state.scan_only or state.score_only:
             break
 
-        # Claim code files for ingestion
-        files = await asyncio.to_thread(
-            _claim_code_files_for_ingestion,
-            state.facility,
-            limit=batch_size,
-        )
+        # Claim code files for ingestion (wrapped in try/except to survive
+        # transient Neo4j errors without crashing the worker)
+        try:
+            files = await asyncio.to_thread(
+                _claim_code_files_for_ingestion,
+                state.facility,
+                limit=batch_size,
+            )
+        except Exception as e:
+            logger.warning("Code claim failed: %s", e)
+            await asyncio.sleep(2.0)
+            continue
 
         if not files:
             state.code_phase.record_idle()
@@ -642,7 +664,7 @@ async def code_worker(
             on_progress(f"ingesting {len(files)} code files", state.code_stats, None)
 
         remote_paths = [f["path"] for f in files]
-        file_id_map = {f["path"]: f["id"] for f in files}
+        all_ids = [f["id"] for f in files]
 
         try:
             stats = await ingest_files(
@@ -652,20 +674,21 @@ async def code_worker(
                 encoder=encoder,
             )
 
-            # Only mark files as ingested if they actually succeeded
             ingested_count = stats.get("files", 0)
-            if ingested_count > 0:
-                ingested_ids = [
-                    file_id_map[p] for p in remote_paths if p in file_id_map
-                ]
-                if ingested_ids:
-                    await asyncio.to_thread(_mark_files_ingested, ingested_ids)
+            skipped_count = stats.get("skipped", 0)
 
-            state.code_stats.processed += ingested_count
+            # Mark ALL claimed files as ingested — either their content
+            # was just processed or was already present (dedup-skipped).
+            # _mark_files_ingested skips files already marked 'failed'
+            # by ingest_files, so individual failures are preserved.
+            if ingested_count > 0 or skipped_count > 0:
+                await asyncio.to_thread(_mark_files_ingested, all_ids)
+
+            state.code_stats.processed += ingested_count + skipped_count
 
             if on_progress:
                 on_progress(
-                    f"ingested {stats.get('files', 0)} code files",
+                    f"ingested {ingested_count}, dedup-skipped {skipped_count}",
                     state.code_stats,
                     [
                         {
