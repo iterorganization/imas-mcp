@@ -1063,7 +1063,7 @@ class TestPreDivertorEpochs:
                     "first_shot": 1,
                     "last_shot": 26087,
                     "description": "Pre-divertor limiter era",
-                    "uses_limiter": "Limiter",
+                    "uses_limiter": "Mk2A",
                     "wall_configuration": "limiter",
                 },
                 {
@@ -1078,9 +1078,9 @@ class TestPreDivertorEpochs:
             ],
             "limiter_versions": [
                 {
-                    "name": "Limiter",
+                    "name": "Mk2A",
                     "first_shot": 1,
-                    "last_shot": 26087,
+                    "last_shot": 44414,
                     "file": "limiter.mk2a",
                     "source_dir": "/chain1/Limiters",
                 },
@@ -1096,7 +1096,7 @@ class TestPreDivertorEpochs:
             }
         }
         parsed_limiters = {
-            "Limiter": {"r": [2.0, 2.5], "z": [1.0, 0.0], "n_points": 2},
+            "Mk2A": {"r": [2.0, 2.5], "z": [1.0, 0.0], "n_points": 2},
         }
 
         query_calls: list[tuple] = []
@@ -1140,21 +1140,22 @@ class TestPreDivertorEpochs:
                     "first_shot": 1,
                     "last_shot": 26087,
                     "description": "Pre-divertor",
-                    "uses_limiter": "Limiter",
+                    "uses_limiter": "Mk2A",
                     "wall_configuration": "limiter",
                 },
             ],
             "limiter_versions": [
                 {
-                    "name": "Limiter",
+                    "name": "Mk2A",
                     "first_shot": 1,
+                    "last_shot": 44414,
                     "file": "limiter.mk2a",
                     "source_dir": "/chain1/Limiters",
                 },
             ],
         }
         parsed_limiters = {
-            "Limiter": {"r": [2.0, 2.5], "z": [1.0, 0.0], "n_points": 2},
+            "Mk2A": {"r": [2.0, 2.5], "z": [1.0, 0.0], "n_points": 2},
         }
 
         created_nodes: list[list[dict]] = []
@@ -1187,7 +1188,7 @@ class TestContourSections:
     """Test limiter contour_sections segment selection."""
 
     def test_contour_sections_selects_specific_segments(self):
-        """contour_sections [1, 2] selects vessel wall + belt limiter segments."""
+        """contour_sections [1, 2] selects specified auxiliary segments."""
         config = {
             "git_repo": "/repo",
             "input_prefix": "JET/input",
