@@ -85,6 +85,8 @@ enums:
         description: Static HTML documentation site
       static_html:
         description: Static HTML site (alias for static)
+      twiki_raw:
+        description: TWiki raw filesystem access (direct data/pub path, no HTTP)
 
   WikiAuthType:
     description: Authentication methods for wiki sites
@@ -300,6 +302,11 @@ classes:
         range: ComputeConfig
         annotations:
           is_private: true
+      compute_locations:
+        description: >-
+          Named compute locations for location-aware routing.
+          Maps location names to scheduler/partition/service_job_name.
+          Used by remote/locations.py for compute node discovery.
 
   # -------------------------------------------------------------------------
   # Nested Config Types
@@ -371,6 +378,34 @@ classes:
           (e.g. MediaWiki 1.16 + MariaDB 5.5). Default 10.
         range: integer
         ifabsent: int(10)
+      data_path:
+        description: >-
+          Filesystem path to wiki data directory (for twiki_raw sites).
+          Used by TWikiRawAdapter for direct filesystem page enumeration.
+      pub_path:
+        description: >-
+          Filesystem path to wiki pub/attachments directory.
+          Used for artifact discovery on twiki and twiki_raw sites.
+      web_name:
+        description: >-
+          TWiki web name (e.g., "Main"). Defaults to "Main".
+          Used by TWikiRawAdapter to scope page enumeration.
+        ifabsent: "Main"
+      exclude_patterns:
+        description: >-
+          Regex patterns to exclude topic names during enumeration.
+          E.g., ["^OperationStatusReport", "^DailyReport"].
+        multivalued: true
+      exclude_prefixes:
+        description: >-
+          URL path prefixes to exclude during static HTML crawling.
+          E.g., ["/twiki_html", "/matlab", "/idl"].
+        multivalued: true
+      languages:
+        description: >-
+          Content languages for this wiki site.
+          E.g., ["ja", "en"] for bilingual sites.
+        multivalued: true
 
   DataSystemBase:
     description: >-
@@ -509,6 +544,26 @@ classes:
           Default is SIGNAL only. NUMERIC nodes are typically
           configuration parameters, AXIS nodes are time bases.
         multivalued: true
+      server:
+        description: >-
+          MDSplus server hostname for thin-client connections.
+          Used when connection_type is "thin_client" to connect
+          remotely rather than opening local tree files.
+      connection_type:
+        description: >-
+          How to connect to MDSplus: "local" (open tree files directly)
+          or "thin_client" (connect to remote mdsip server).
+          Determines which scanner dispatch path is used.
+      jpf_subsystems:
+        description: >-
+          JET-specific JPF subsystem codes (two-character identifiers).
+          Used by the MDSplus scanner to enumerate JPF diagnostic subtrees.
+        multivalued: true
+      tdi_access_functions:
+        description: >-
+          Documentary mapping of TDI function templates for data access.
+          Keys are access method names, values are function signatures.
+          Not consumed programmatically — for reference only.
 
   SourceConfig:
     description: >-
@@ -680,6 +735,10 @@ classes:
       reference_shot:
         description: Reference shot for signal validation
         range: integer
+      lib_path:
+        description: >-
+          Path to the EDAS shared library (e.g., /analysis/lib/libeddb.so).
+          Used for ctypes bindings in signal discovery.
 
   HDF5Config:
     description: HDF5 file data source configuration
@@ -850,6 +909,15 @@ classes:
         description: Ordered list of tools to try for name lookup
         multivalued: true
         ifabsent: "[getent, passwd, id]"
+      gecos_suffix_pattern:
+        description: >-
+          Regex pattern to strip from GECOS field values.
+          E.g., "\\s+EXT$" removes " EXT" suffix from external users.
+      home_path_pattern:
+        description: >-
+          Regex pattern to extract username from home directory paths.
+          Must contain a capture group for the username.
+          E.g., "^/home/ITER/([a-z0-9_-]+)(?:/|$)".
 
   ExcludesConfig:
     description: >-
@@ -921,6 +989,23 @@ classes:
       notes:
         description: Free-form notes about data access at this facility
         multivalued: true
+      independent_trees:
+        description: >-
+          MDSplus trees that must be opened on independent connections
+          (not shared with the main connection tree). Used by the signal
+          checking pipeline to manage per-tree connection state.
+        multivalued: true
+      setup_commands:
+        description: >-
+          Shell commands for data access environment setup.
+          E.g., ["source /etc/profile.d/mdsplus.sh"].
+          Supplements per-data-system setup_commands.
+        multivalued: true
+      missing_libraries:
+        description: >-
+          Known missing shared libraries that affect data access.
+          Documentary field for tracking known blockers.
+          Each entry is a map with library, impact, severity, note.
 
   PortForwardsConfig:
     description: >-
