@@ -1,277 +1,454 @@
 # Facility Config Schema Restructure
 
-**Goal**: Replace the current ad-hoc, data-dump-style facility YAML configs with a clean, schema-typed structure where every field that feeds a scanner or CLI pipeline is defined in the LinkML schema, validated by Pydantic, and accessed via typed accessors. Exploration notes and raw findings move to their proper homes (`exploration_notes` in private YAML, or inline YAML comments) instead of polluting structured config with unstructured prose.
+**Goal**: Replace ad-hoc, facility-specific config sections with generic, reusable schema types. Any facility should be able to describe its machine description data sources — files, calibration epochs, static signals — without schema changes. Exploration notes move out of structured config.
 
-**Scope**: All 4 facility configs (tcv, jet, iter, jt-60sa), the `facility_config.yaml` LinkML schema, generated models, scanner code that consumes config, and the CLI pipelines.
+**Scope**: `facility_config.yaml` LinkML schema, all 4 facility configs, generated models.
 
-**Priority**: This work **precedes** the JET machine description ingestion plan. The ingestion plan depends on JEC2020, MCFG, and PPF config sections that are currently untyped blobs — they must become schema-typed `DataSystemsConfig` entries before scanner code can consume them reliably.
+**Priority**: Precedes the JET machine description ingestion plan. That plan's scanners need typed config inputs, and this plan provides them — generically.
 
 ---
 
 ## Problem Analysis
 
-### Current State
+### The core problem
 
-The facility YAML files serve **three conflicting purposes**:
+The previous proposal (v1) tried to fix untyped config by creating `JEC2020Config`, `MCFGConfig`, `PPFStaticGeometryConfig` — types named after JET-internal acronyms, tied to specific file names and directory structures. That's not a schema, it's a glossary. It promotes the clutter from YAML into LinkML without solving the underlying problem: **the schema models JET's filing system rather than the data patterns common to all fusion facilities.**
 
-1. **Scanner configuration** — structured data that feeds CLI pipelines (data_systems, wiki_sites, discovery_roots)
-2. **Exploration journal** — free-text findings from SSH exploration dumped into `data_access_patterns.notes` and inline comments
-3. **Reference documentation** — long prose descriptions explaining data provenance chains, system architecture, historical context
+Every tokamak/stellarator has:
+- **Files** containing machine geometry (vessel, limiters, coils, probes, iron core)
+- **Calibration data** that changes at specific shots/pulses
+- **Signals in existing data systems** (MDSplus, PPF, IMAS) that contain static geometry
+- **Versioned configurations** that map shot ranges to hardware states
 
-This mixing creates several concrete problems:
+These are the generic patterns. JEC2020 is an instance of "XML geometry files." MCFG is an instance of "sensor calibration with epoch tracking." PPF static geometry is an instance of "signals in a data system that happen to contain static data." The schema should model the pattern, not the instance.
 
-#### P1: Untyped scanner inputs
+### What the current schema gets right
 
-JET's `jet.yaml` has grown to 748 lines. Of these:
-- `data_systems.device_xml` (14 versions, 5 limiters, systems) — **well-typed** via `DeviceXMLConfig` in the schema
-- `data_systems.jec2020` — **completely untyped**, a free-form dict dumped during exploration
-- `data_systems.mcfg` — **completely untyped**, same problem
-- `data_systems.ppf_static_geometry` — **completely untyped**, same problem
-- `data_access_patterns.notes` — **43 multi-line YAML strings** containing a mix of operational knowledge, MDSplus discovery results, machine description architecture, git repo details, calibration chains, and IMAS dead-ends
+1. **`SourceConfig`** — already a good generic model: `source_name`, `versions[]` (shot ranges), `systems[]` (physical subsystems). Used for MDSplus trees but the structure is reusable.
+2. **`SourceVersion`** — shot-range epoch indexing. Reusable as-is.
+3. **`SourceSystem`** — physical subsystem grouping (symbol, name, parameters). Reusable as-is.
+4. **`DataSystemBase` mixin** — `setup_commands`, `python_command`. Reusable for any data source.
+5. **`DataSystemsConfig` → scanner dispatch** — keys map to scanner classes. Clean.
 
-A scanner trying to consume `jec2020` config must use unvalidated `dict.get()` calls with no schema backing — fragile, undocumented, and invisible to agents reading the schema.
+### What's wrong
 
-#### P2: Notes as config
-
-The `data_access_patterns.notes` list in jet.yaml is 43 entries long, each a multi-paragraph YAML literal block. This serves as an exploration journal, but it:
-- Is loaded into memory on every `get_facility('jet')` call
-- Is passed to scanners that don't need it
-- Makes the config file unreadable for its primary purpose (scanner configuration)
-- Has no structure — a future agent must read all 43 notes to find relevant information
-
-TCV and ITER have smaller versions of the same problem (4-8 notes each).
-
-#### P3: Inconsistent config ↔ scanner contract
-
-Each scanner accesses config differently:
-- `TDIScanner.scan(config=...)` receives `data_systems.tdi` as a dict
-- `MDSplusScanner.scan(config=...)` receives `data_systems.mdsplus` as a dict
-- `DeviceXMLScanner.scan(config=...)` receives `data_systems.device_xml` as a dict
-- `PPFScanner.scan(config=...)` (not yet implemented) would receive `data_systems.ppf` as a dict
-
-But `DeviceXMLScanner` also needs `data_systems.device_xml.limiter_versions`, `data_systems.jec2020`, `data_systems.mcfg` — which aren't part of the `DeviceXMLConfig` schema type. There's no contract saying what a scanner can expect.
-
-#### P4: JET-specific types leaked into schema
-
-`DeviceXMLConfig`, `DeviceXMLVersion`, `LimiterVersion` are JET-specific types in the facility-agnostic schema. No other facility has device XMLs or limiter contours in this format. If another facility needs machine description geometry, it will likely come from a different source (MDSplus static tree for TCV, IMAS IDS for ITER).
-
-The schema should model **data source patterns** generically, with facility-specific detailed configuration living in the YAML beyond what the schema validates.
-
-### What Works Well
-
-Before refactoring, it's important to note what the current design gets right:
-
-1. **DataSystemsConfig → scanner dispatch** — `data_systems` keys map to scanner `scanner_type` attributes. `get_scanners_for_facility()` iterates `data_systems` and dispatches. This is clean.
-
-2. **Type-safe scanner configs** — `TDIConfig`, `MDSplusConfig`, `PPFConfig`, `EDASConfig` are well-defined in LinkML with proper attribute types. The generated Pydantic models enforce constraints.
-
-3. **SourceConfig unification** — The recent `SourceConfig` type handles both versioned (static) and shot-scoped (dynamic) trees with a single model. This pattern should extend.
-
-4. **Private/public split** — Private YAML for infrastructure, public for scanner config. Clean separation.
-
-5. **Wiki sites** — `WikiSiteConfig` is well-typed and used consistently across all facilities.
+| Problem | Example | Why it matters |
+|---------|---------|----------------|
+| Untyped file-based sources | `jec2020`, `mcfg` in jet.yaml are raw dicts | Scanners use `dict.get()` with no validation |
+| Facility-specific type names | `DeviceXMLConfig` assumes git repo + EFIT format | Another facility's geometry files can't use it |
+| `LimiterVersion` missing fields | `source`, `n_points` used in YAML but not in schema | Schema doesn't match reality |
+| Notes as config | 43 prose entries in `data_access_patterns.notes` | Config unreadable, loaded on every `get_facility()` call |
+| No way to annotate existing data system signals as "static" | PPF signals with geometry live outside `ppf` config | Scanner must hardcode signal list or read untyped config |
 
 ---
 
-## Design Principles
+## Design: Generic before specific
 
-1. **Every field consumed by a scanner or CLI pipeline must be schema-typed** — if code does `config.get("some_key")`, that key must exist in the LinkML schema.
+### Principle
 
-2. **Exploration findings go in `exploration_notes`** (private YAML) — free-text knowledge about a facility belongs in timestamped notes, not in structured config sections.
+The schema models **data organization patterns**, not file names or facility acronyms. Three new generic types replace all facility-specific proposals:
 
-3. **`data_access_patterns.notes` is capped and curated** — maximum 10 concise notes per facility. Long prose moves to exploration_notes.
+1. **`StaticSourceConfig`** — a named collection of files providing machine description data
+2. **`StaticFileConfig`** — a single file within a source
+3. **`StaticSignalRef`** — a signal in an existing data system that contains static data
 
-4. **Each `data_systems` entry is a typed config class** — every key under `data_systems:` corresponds to a `DataSystemBase`-derived class in the schema. If no typed class exists, the key is invalid.
+These compose with existing types (`SourceVersion`, `SourceSystem`) and work for any facility without schema modification.
 
-5. **Scanner config is self-contained** — a scanner's `config` argument contains everything it needs. It should not reach into sibling `data_systems` entries or `data_access_patterns`.
+### Why this works across facilities
 
-6. **Generic before specific** — prefer composable schema primitives (version lists, file references, coordinate systems) over facility-specific types.
+| Facility | Data source | Previous approach | Generic approach |
+|----------|-------------|-------------------|------------------|
+| JET | JEC2020 XML geometry | `JEC2020Config` (JET-specific) | `StaticSourceConfig(name="jec2020", format=xml)` |
+| JET | MCFG sensor positions | `MCFGConfig` (JET-specific) | `StaticSourceConfig(name="mcfg", format=text)` |
+| JET | PPF limiter contour | `PPFStaticGeometryConfig` (JET-specific) | `StaticSignalRef` on existing `PPFConfig` |
+| TCV | CAD vessel geometry | Would need `TCV_CADConfig` | `StaticSourceConfig(name="vessel_cad", format=csv)` |
+| ITER | IMAS machine_description IDS | Would need `ITERMachDescConfig` | `StaticSignalRef` on existing `IMASConfig` |
+| W7-X | VMEC equilibrium files | Would need `VMECConfig` | `StaticSourceConfig(name="vmec_geometry", format=netcdf)` |
+| KSTAR | EFIT geometry files | Would need another `EFITConfig` | `StaticSourceConfig(name="efit_geometry", format=text)` |
+
+One schema type handles all cases. Adding a new facility's machine description data is a YAML-only change.
 
 ---
 
-## Proposed Changes
+## Proposed Schema Types
 
-### Change 1: Add typed schema classes for JEC2020, MCFG, PPF static geometry
+### StaticSourceConfig
 
-These are currently untyped dicts in jet.yaml. They must become proper `DataSystemBase`-derived classes in the LinkML schema.
-
-#### JEC2020Config
+A named collection of files providing static (non-shot-varying) machine description or calibration data. Generic container — no facility-specific fields.
 
 ```yaml
-JEC2020Config:
+StaticSourceConfig:
   description: >-
-    EFIT++ equilibrium code input XML files. Next-generation geometry files
-    providing richer metadata than legacy EFIT device XMLs, including dual
-    PPF/JPF data source references per probe, multi-element PF coil geometry,
-    and iron core boundaries. Facility-specific to JET.
-  class_uri: fc:JEC2020Config
+    A named collection of files providing machine description, calibration,
+    or other static technical data about the physical machine. "Static" means
+    the data does not change per-shot, or changes only at major hardware
+    modification boundaries (tracked via versions).
+
+    Generic container for any file-based technical data: geometry XMLs,
+    sensor position files, calibration tables, contour data, CAD exports,
+    equilibrium inputs, response function matrices.
+
+    Example Cypher (after ingestion):
+      MATCH (ds:DataSource {name: $source_name})-[:AT_FACILITY]->(f:Facility {id: $facility})
+      RETURN ds
+  class_uri: fc:StaticSourceConfig
   mixins:
     - DataSystemBase
   attributes:
+    name:
+      description: >-
+        Unique identifier within this facility. Use descriptive names that
+        indicate what the source provides, not internal project codes.
+        Examples: "efit_geometry", "sensor_positions", "vessel_cad",
+        "iron_core", "response_functions".
+      required: true
+    description:
+      description: What this data source provides
+    format:
+      description: Primary data format of files in this source
+      range: StaticSourceFormat
     base_dir:
-      description: Directory containing JEC2020 XML files
-      required: true
-    files:
-      description: Map of file role to file config
-      range: JEC2020FileConfig
-      multivalued: true
+      description: >-
+        Root filesystem directory containing the files. File paths
+        are resolved relative to this directory.
+    git_repo:
+      description: >-
+        Path to git repository containing the files (bare or working tree).
+        Mutually exclusive with base_dir for file path resolution.
+    input_prefix:
+      description: >-
+        Path prefix within git_repo for file resolution.
+        Example: "JET/input" means files are at <git_repo>/JET/input/<path>.
     reference_shot:
-      description: First shot where JEC2020 geometry applies
+      description: First shot where this source's data applies
       range: integer
+    files:
+      description: Individual files in this source
+      multivalued: true
+      range: StaticFileConfig
+    versions:
+      description: >-
+        Shot-range versions for epoch-dependent data. Each version
+        maps a shot range to a configuration state. Reuses the same
+        SourceVersion type used for MDSplus tree versions.
+      multivalued: true
+      range: SourceVersion
+    systems:
+      description: >-
+        Physical subsystems described by this source. Reuses the same
+        SourceSystem type used for MDSplus static tree systems.
+        Examples: magnetics, pf_coils, vessel, limiters, iron_core.
+      multivalued: true
+      range: SourceSystem
+```
 
-JEC2020FileConfig:
-  description: A single JEC2020 XML file definition
-  class_uri: fc:JEC2020FileConfig
+### StaticFileConfig
+
+A single file within a static source. Describes role, format, and validation hints — not file content.
+
+```yaml
+StaticFileConfig:
+  description: >-
+    A single file within a StaticSourceConfig. Describes what the file
+    provides (role), its format, and optional validation hints.
+    Path is relative to the parent source's base_dir or git_repo.
+  class_uri: fc:StaticFileConfig
   attributes:
-    role:
-      description: File role (limiter, magnetics, pf_systems, iron_boundaries)
-      required: true
     path:
-      description: Filename relative to base_dir
+      description: >-
+        File path relative to parent source's base_dir, or
+        input_prefix within git_repo.
+      required: true
+    role:
+      description: >-
+        What physical system or data category this file describes.
+        Use consistent role names across facilities:
+        limiter, vessel, magnetics, pf_coils, iron_core, sensors,
+        calibration_index, calibration_data, circuits, diagnostics,
+        response_functions.
       required: true
     description:
       description: What this file contains
-    element_counts:
+    format:
       description: >-
-        Named element counts for validation (e.g., probe_count: 95,
-        flux_loop_count: 36). Scanner can verify expected counts.
+        File format override. If omitted, inherits from parent source.
+      range: StaticSourceFormat
+    expected_count:
+      description: >-
+        Expected element count for validation. Scanner can verify
+        the parsed file produces this many elements (probes, coils,
+        contour points, etc.).
+      range: integer
 ```
 
-#### MCFGConfig
+### StaticSourceFormat enum
 
 ```yaml
-MCFGConfig:
-  description: >-
-    Magnetics calibration and sensor configuration system. Tracks sensor
-    positions (from CATIA CAD models), calibration gains/offsets, and
-    per-pulse configuration changes. Facility-specific to JET.
-  class_uri: fc:MCFGConfig
-  mixins:
-    - DataSystemBase
-  attributes:
-    base_dir:
-      description: Base directory for MCFG configuration files
-      required: true
-    sensor_file:
-      description: Path to canonical sensor position file
-      required: true
-    sensor_reference:
-      description: CATIA drawing reference for sensor positions
-    calibration_index:
-      description: Path to MCFG.ix calibration epoch index file
-    calibration_dir:
-      description: Directory containing epoch data files
-    calibration_files:
-      description: List of calibration data file names
-      multivalued: true
+StaticSourceFormat:
+  description: Data formats for static source files
+  permissible_values:
+    xml:
+      description: XML-structured data (device XMLs, geometry definitions)
+    text:
+      description: Plain text with whitespace-delimited or fixed-width columns
+    csv:
+      description: Comma-separated values
+    netcdf:
+      description: NetCDF scientific data format
+    hdf5:
+      description: HDF5 hierarchical data format
+    json:
+      description: JSON structured data
+    fortran_namelist:
+      description: Fortran namelist format (&name ... /)
 ```
 
-#### PPFStaticGeometryConfig
+### StaticSignalRef
+
+For signals in existing data systems (PPF, MDSplus, IMAS) that contain static machine description data. Added to the `DataSystemBase` mixin so any data system config can annotate its signals.
 
 ```yaml
-PPFStaticGeometryConfig:
+StaticSignalRef:
   description: >-
-    PPF signals containing static machine description geometry.
-    Some PPF DDAs store limiter contours, vessel cross-sections,
-    and diagnostic positions that are constant across shots (or
-    change only at major hardware changes). These provide an
-    alternative access method to geometry also available in device XMLs.
-  class_uri: fc:PPFStaticGeometryConfig
-  mixins:
-    - DataSystemBase
-  attributes:
-    access_method:
-      description: How to access these signals (thin_client, ppfget, sal)
-    signals:
-      description: Static geometry signal definitions
-      multivalued: true
-      range: PPFStaticSignal
+    A reference to a signal within a data system that contains static
+    (non-time-varying) machine description data. Used to annotate
+    signals in PPF, MDSplus, IMAS, or any other data system as
+    containing geometry, calibration, or other static technical data.
 
-PPFStaticSignal:
-  description: A single PPF signal containing static geometry data
-  class_uri: fc:PPFStaticSignal
+    This enables scanners to cross-reference file-based geometry with
+    data-system-accessible signals — the same limiter contour may exist
+    as both a text file and a PPF signal.
+  class_uri: fc:StaticSignalRef
   attributes:
-    dda:
-      description: PPF Diagnostic Data Area (e.g., EFIT, VESL, LIDR)
-      required: true
-    dtype:
-      description: PPF data type within the DDA (e.g., RLIM, ZLIM, CROS)
+    name:
+      description: >-
+        Signal identifier in the data system's native format.
+        PPF: "DDA/DTYPE" (e.g., "EFIT/RLIM").
+        MDSplus: node path (e.g., "\static::top.v:r").
+        IMAS: IDS path (e.g., "wall.description_2d[0].limiter.unit[0].outline.r").
       required: true
     description:
       description: What this signal contains
-    shape:
-      description: Expected array shape (list of ints)
+    static:
+      description: >-
+        Whether truly static (identical across all shots) or quasi-static
+        (changes only at major hardware boundaries).
+      range: boolean
+    expected_shape:
+      description: Expected array shape for validation
       multivalued: true
       range: integer
-    static:
-      description: Whether this signal is truly static (same across all shots)
-      range: boolean
 ```
 
-### Change 2: Register new data system types in DataSystemsConfig
+### DataSystemBase extension
+
+Add `static_signals` to the existing mixin:
+
+```yaml
+DataSystemBase:
+  attributes:
+    # ... existing setup_commands, python_command ...
+    static_signals:
+      description: >-
+        Signals from this data system that contain static machine
+        description data (geometry, calibration, diagnostic positions).
+        Enables scanners to discover which signals are non-time-varying
+        without hardcoding signal lists.
+      multivalued: true
+      range: StaticSignalRef
+```
+
+### DataSystemsConfig extension
+
+Add one generic list — no facility-specific keys:
 
 ```yaml
 DataSystemsConfig:
   attributes:
-    # ... existing attributes ...
-    jec2020:
-      description: JEC2020 EFIT++ XML geometry files
-      range: JEC2020Config
-    mcfg:
-      description: MCFG sensor calibration and configuration
-      range: MCFGConfig
-    ppf_static_geometry:
-      description: PPF signals with static machine description data
-      range: PPFStaticGeometryConfig
+    # ... existing tdi, mdsplus, ppf, edas, hdf5, imas, device_xml ...
+    static_sources:
+      description: >-
+        File-based static data sources providing machine description,
+        calibration, or geometry data. Each entry describes a collection
+        of files — any format, any facility. Scanners iterate this list
+        and dispatch based on source name and file format.
+      multivalued: true
+      range: StaticSourceConfig
 ```
 
-This means `data_systems.jec2020` will be validated against `JEC2020Config` by the generated Pydantic model. A scanner with `scanner_type = "jec2020"` can consume it type-safely.
+### LimiterVersion extensions
 
-### Change 3: Restructure LimiterVersion with source tracking
-
-The current `LimiterVersion` class lacks `source` and `file_cc` fields that are used in jet.yaml but not in the schema. Add them:
+Add only generic fields (not JET-specific `file_cc`/`source_cc`):
 
 ```yaml
 LimiterVersion:
   attributes:
-    name:
-      required: true
-    first_shot:
-      range: integer
-    last_shot:
-      range: integer
-    description: ...
-    file:
-      description: Primary R,Z contour file (relative to limiter dir)
-    file_cc:
-      description: Coordinate-corrected version of the file (preferred)
-    source:
-      description: Where the primary file lives (chain1, git)
-    source_cc:
-      description: Where the cc file lives (chain1, git)
+    # ... existing name, first_shot, last_shot, description, file ...
+    source_dir:
+      description: >-
+        Filesystem directory containing the limiter contour file.
+        Used when the file lives on the facility filesystem rather
+        than in the device_xml git_repo.
     n_points:
-      description: Number of primary contour points
+      description: Expected number of R,Z contour points (for validation)
       range: integer
 ```
 
-### Change 4: Curate data_access_patterns.notes
+### DeviceXMLConfig extensions
 
-Move long exploration prose from `data_access_patterns.notes` to `exploration_notes` (private YAML). Keep only concise, actionable notes in `data_access_patterns.notes`:
+Add generic filesystem fallback:
 
-**Before** (jet.yaml, 43 notes):
 ```yaml
-notes:
-  - "PPF Python API at /jet/share/DEPOT/pyppf/21260/lib/python/ppf.py..."
-  - >-
-    MDSPLUS THIN-CLIENT: JET MDSplus server at mdsplus.jet.uk provides...
-    (10 lines of prose)
-  - >-
-    MACHINE DESCRIPTION OVERVIEW: No single MDSplus machine description tree...
-    (15 lines of prose)
-  # ... 40 more entries
+DeviceXMLConfig:
+  attributes:
+    # ... existing git_repo, input_prefix, versions, systems, limiter_versions ...
+    limiter_dir:
+      description: >-
+        Filesystem directory containing limiter contour files.
+        Fallback source when files are not in the git repository.
 ```
 
-**After** (jet.yaml, ≤10 notes):
+---
+
+## How JET config looks after restructure
+
+```yaml
+data_systems:
+  device_xml:
+    git_repo: /home/chain1/git/efit_f90.git
+    input_prefix: JET/input
+    limiter_dir: /home/chain1/input/efit/Limiters
+    versions: [...]       # same 14 DeviceXMLVersion entries
+    systems: [...]        # same SourceSystem entries
+    limiter_versions:
+      - name: Mk2A
+        first_shot: 1
+        last_shot: 44414
+        file: limiter.mk2a
+        source_dir: /home/chain1/input/efit/Limiters
+        n_points: 108
+      - name: Mk2ILW
+        first_shot: 79854
+        file: limiter.mk2ilw_cc
+        n_points: 251
+        # no source_dir → file is in git_repo
+
+  ppf:
+    # ... existing PPF config ...
+    static_signals:
+      - name: EFIT/RLIM
+        description: Limiter R coordinates (251 points, static across ILW)
+        static: true
+        expected_shape: [1, 251]
+      - name: EFIT/ZLIM
+        description: Limiter Z coordinates
+        static: true
+        expected_shape: [1, 251]
+      - name: VESL/CROS
+        description: Vessel cross-section contour
+        static: true
+
+  static_sources:
+    - name: jec2020_geometry
+      description: EFIT++ equilibrium code geometry files (XML format)
+      format: xml
+      base_dir: /home/chain1/jec2020
+      reference_shot: 79951
+      files:
+        - path: limiter.xml
+          role: limiter
+          description: ILW first wall contour at T=200°C
+          expected_count: 248
+        - path: magnetics.xml
+          role: magnetics
+          description: Magnetic probes and flux loops with dual PPF/JPF sources
+          expected_count: 131
+        - path: pfSystems.xml
+          role: pf_coils
+          description: PF coils with multi-element sub-coil geometry
+          expected_count: 20
+        - path: ironBoundaries3.xml
+          role: iron_core
+          description: Iron core boundary segments with permeabilities
+          expected_count: 96
+
+    - name: sensor_calibration
+      description: Magnetics sensor positions and calibration epochs
+      format: text
+      base_dir: /home/MAGNW/chain1/input
+      files:
+        - path: PPFcfg/sensors_200c_2019-03-11.txt
+          role: sensors
+          description: Canonical sensor R,Z,angle positions from CATIA CAD
+          expected_count: 238
+        - path: magn_ep_2019-05-14/MCFG.ix
+          role: calibration_index
+          description: 77 calibration epoch entries (pulse 54283–93563)
+          expected_count: 77
+```
+
+Compare with the previous v1 approach which had `JEC2020Config`, `MCFGConfig`, `PPFStaticGeometryConfig` — three types that only JET could ever use. Now there are zero facility-specific types and any facility can add entries to `static_sources` without touching the schema.
+
+---
+
+## How a hypothetical new facility would use it
+
+```yaml
+# hypothetical ASDEX-Upgrade config
+data_systems:
+  mdsplus:
+    trees:
+      - source_name: machine
+        versions:
+          - version: 1
+            first_shot: 1
+            description: Original vessel
+        systems:
+          - symbol: PF
+            name: Poloidal field coils
+            size: 16
+  static_sources:
+    - name: vessel_geometry
+      description: Vessel cross-section from CAD export
+      format: csv
+      base_dir: /data/geometry
+      files:
+        - path: vessel_outline_2023.csv
+          role: vessel
+          description: Full vessel R,Z contour
+          expected_count: 500
+        - path: divertor_tiles.csv
+          role: limiter
+          description: Divertor tile positions
+```
+
+No schema changes required.
+
+---
+
+## What stays the same
+
+- **`DeviceXMLConfig`** — keep as-is (working scanner depends on it). Add only `limiter_dir`.
+- **`TDIConfig`, `MDSplusConfig`, `PPFConfig`, `EDASConfig`, `IMASConfig`** — unchanged.
+- **`SourceConfig`, `SourceVersion`, `SourceSystem`** — unchanged, reused by `StaticSourceConfig`.
+- **`DataSystemsConfig` → scanner dispatch** — preserved. `static_sources` adds a new dispatch target.
+- **Private/public YAML split** — preserved.
+
+---
+
+## Notes curation
+
+Orthogonal to the schema design but equally important for config readability.
+
+### Pattern
+
+- `data_access_patterns.notes`: ≤10 concise, one-line notes per facility
+- `exploration_notes` (private YAML): timestamped prose from exploration sessions
+- Nothing is deleted — long notes relocate to private YAML
+
+### JET (43 → ≤10 notes)
+
+Keep:
 ```yaml
 notes:
   - "PPF via ppfget/ppfdata (libppf.so ctypes), getdat for JPF raw signals"
@@ -282,132 +459,50 @@ notes:
   - "IMAS modules exist but import fails on current Python (dead end)"
 ```
 
-The long prose entries move to `exploration_notes` in `jet_private.yaml` with timestamps.
+Move to `jet_private.yaml` `exploration_notes`: all 43 verbose entries with `[2026-03-07]` timestamps.
 
-### Change 5: Add DeviceXMLConfig.chain1_limiter_dir to schema
+### Other facilities
 
-This field exists in jet.yaml but not in the schema:
-
-```yaml
-DeviceXMLConfig:
-  attributes:
-    # ... existing ...
-    chain1_limiter_dir:
-      description: >-
-        Filesystem directory containing frozen limiter contour files.
-        Used when limiter source is "chain1" rather than "git".
-    chain1_limiter_list:
-      description: >-
-        Path to authoritative shot-to-limiter-file mapping.
-        Format: "first_shot-last_shot → filename" per line.
-```
-
-### Change 6: Scanner config isolation via typed accessors
-
-Instead of scanners receiving raw dicts, provide typed access:
-
-```python
-# In scanner base or a config accessor module:
-def get_scanner_config(facility: str, scanner_type: str) -> BaseModel:
-    """Get typed config for a specific scanner.
-    
-    Returns the Pydantic model for data_systems.<scanner_type>,
-    validated against the schema.
-    """
-    from imas_codex.config.models import DataSystemsConfig
-    config = get_facility(facility)
-    ds = config.get("data_systems", {})
-    raw = ds.get(scanner_type, {})
-    # The DataSystemsConfig model knows the type for each key
-    model_cls = DataSystemsConfig.model_fields[scanner_type].annotation
-    return model_cls.model_validate(raw)
-```
-
-This is aspirational — the immediate change is ensuring all config keys are schema-typed. Full typed accessor can follow.
+Same pattern: curate notes to ≤10 concise entries, move verbose prose to private YAML.
 
 ---
 
 ## Implementation Plan
 
-### Phase 1: Schema — Add new typed classes
+### Phase 1: Schema — add generic types
 
-**Files to modify**:
-- `imas_codex/schemas/facility_config.yaml`
+**File**: `imas_codex/schemas/facility_config.yaml`
 
-**Changes**:
-1. Add `JEC2020Config`, `JEC2020FileConfig` classes
-2. Add `MCFGConfig` class
-3. Add `PPFStaticGeometryConfig`, `PPFStaticSignal` classes
-4. Add `jec2020`, `mcfg`, `ppf_static_geometry` attributes to `DataSystemsConfig`
-5. Add `source`, `source_cc`, `file_cc`, `n_points` to `LimiterVersion`
-6. Add `chain1_limiter_dir`, `chain1_limiter_list` to `DeviceXMLConfig`
-7. Add `DataSystemType` enum values: `jec2020`, `mcfg`, `ppf_static`
+1. Add `StaticSourceFormat` enum
+2. Add `StaticFileConfig` class
+3. Add `StaticSourceConfig` class (mixes in `DataSystemBase`, references `SourceVersion`, `SourceSystem`)
+4. Add `StaticSignalRef` class
+5. Add `static_signals` to `DataSystemBase` mixin
+6. Add `static_sources` to `DataSystemsConfig`
+7. Extend `LimiterVersion` with `source_dir`, `n_points`
+8. Extend `DeviceXMLConfig` with `limiter_dir`
 
-**Regenerate**: `uv run build-models --force`
+Regenerate: `uv run build-models --force`
 
-**Validation**: `uv run python -c "from imas_codex.config.models import FacilityConfig; print('OK')"`
+### Phase 2: Restructure JET config
 
-### Phase 2: Curate jet.yaml — separate notes from config
+**Files**: `jet.yaml`, `jet_private.yaml`
 
-**Files to modify**:
-- `imas_codex/config/facilities/jet.yaml`
-- `imas_codex/config/facilities/jet_private.yaml`
+1. Replace `data_systems.jec2020` (untyped dict) → `data_systems.static_sources[0]` (StaticSourceConfig)
+2. Replace `data_systems.mcfg` (untyped dict) → `data_systems.static_sources[1]` (StaticSourceConfig)
+3. Replace `data_systems.ppf_static_geometry` (untyped dict) → `data_systems.ppf.static_signals[]` (StaticSignalRef)
+4. Add `limiter_dir` and `source_dir` to DeviceXMLConfig and LimiterVersion entries
+5. Curate notes (43 → ≤10), move prose to `jet_private.yaml` `exploration_notes`
 
-**Changes**:
-1. Move 43 `data_access_patterns.notes` entries to `exploration_notes` in `jet_private.yaml`, each with a `[2026-03-07]` timestamp prefix
-2. Replace with ≤10 concise, actionable notes in `jet.yaml`
-3. Move file-level prose comments from `data_systems.jec2020`, `data_systems.mcfg`, `data_systems.ppf_static_geometry` into their schema-typed `description` fields
-4. Remove redundant inline comments where the schema `description` is sufficient
-5. Ensure all `data_systems.*` entries conform to their new schema types
+### Phase 3: Validate and test
 
-**What stays in jet.yaml**:
-- All `data_systems` entries (device_xml, jec2020, mcfg, ppf_static_geometry, ppf, mdsplus, imas)
-- `data_access_patterns` with curated notes (≤10)
-- `wiki_sites`, `discovery_roots`, `user_info`
-- Structural YAML comments where they add value
+1. `uv run build-models --force` (regenerate)
+2. Validate all 4 configs against schema
+3. Run existing test suite — no scanner code changes
 
-**What moves to jet_private.yaml**:
-- All 43 verbose exploration notes → `exploration_notes` list
-- Any infrastructure-specific details currently in public YAML comments
+### Phase 4: Curate other facility configs
 
-### Phase 3: Curate all other facility configs
-
-**Files to modify**:
-- `imas_codex/config/facilities/tcv.yaml` — minor cleanup, notes already reasonable
-- `imas_codex/config/facilities/iter.yaml` — move notes to private
-- `imas_codex/config/facilities/jt-60sa.yaml` — move notes to private
-
-**Pattern**: Same as jet.yaml — move verbose notes to `exploration_notes`, keep ≤10 concise notes.
-
-### Phase 4: Validate all configs against updated schema
-
-```bash
-uv run python -c "
-from imas_codex.discovery.base.facility import validate_facility_config
-for f in ['tcv', 'jet', 'iter', 'jt-60sa']:
-    errors = validate_facility_config(f)
-    print(f'{f}: {len(errors)} errors')
-    for e in errors[:5]:
-        print(f'  {e}')
-"
-```
-
-Fix any validation errors.
-
-### Phase 5: Update build_models.py for new types
-
-The `build_models.py` script has type fixes that post-process generated code. Check if new types need additional fixes (e.g., `data_systems: Optional[str]` → `Optional[DataSystemsConfig]` is already handled).
-
-### Phase 6: Tests
-
-1. **Schema validation test**: All 4 facility configs validate against schema
-2. **Config loading test**: `get_facility()` returns correct typed sections
-3. **Scanner config access**: Each scanner can access its config section
-4. **Regression**: Existing signals pipeline tests pass unchanged
-
-```bash
-uv run pytest tests/ -k "facility or config or scanner"
-```
+Minor notes cleanup for tcv, iter, jt-60sa. No structural changes needed.
 
 ---
 
@@ -415,61 +510,39 @@ uv run pytest tests/ -k "facility or config or scanner"
 
 | File | Before | After | Delta |
 |------|--------|-------|-------|
-| jet.yaml | 748 | ~350 | -398 (notes moved to private) |
-| tcv.yaml | 287 | ~260 | -27 |
-| iter.yaml | 123 | ~90 | -33 |
-| jt-60sa.yaml | 249 | ~230 | -19 |
-| facility_config.yaml (schema) | ~1100 | ~1300 | +200 (new types) |
-
----
-
-## Key Design Decisions
-
-1. **JEC2020/MCFG/PPF as separate `data_systems` entries** — not nested under `device_xml`. They are independent data sources with different file formats, file locations, and (eventually) different scanners. The `device_xml` scanner already does its own thing; JEC2020 XML is a different XML format requiring a different parser.
-
-2. **Keep `data_access_patterns` section** — it has value for wiki scoring and code ingestion even after note curation. The structured fields (`primary_method`, `key_tools`, `wiki_signal_patterns`, `code_import_patterns`) are consumed by scoring heuristics.
-
-3. **No breaking schema changes to existing typed configs** — `TDIConfig`, `MDSplusConfig`, `PPFConfig`, `EDASConfig`, `DeviceXMLConfig` keep their current attributes. We only add new attributes and new config classes.
-
-4. **Notes curation is content-preserving** — nothing is deleted. Long notes move to `exploration_notes` in private YAML. The knowledge is preserved, just relocated to where it belongs.
-
-5. **LimiterVersion extended, not replaced** — add `source`, `file_cc`, `source_cc`, `n_points` as optional fields. Existing configs continue to validate.
-
-6. **No scanner code changes in this plan** — scanner code that consumes the new typed configs is part of the jet machine description ingestion plan. This plan establishes the schema foundation only.
+| jet.yaml | 748 | ~350 | -398 (notes → private, untyped dicts → typed entries) |
+| facility_config.yaml | ~1100 | ~1230 | +130 (4 generic types + extensions) |
+| Other facility configs | — | ~same | minor notes cleanup |
 
 ---
 
 ## Relationship to JET Machine Description Ingestion Plan
 
-This plan is a **prerequisite** for the jet machine description ingestion plan:
+This plan is a **prerequisite**:
 
-- **Phase 7** (JEC2020 XML ingestion) requires `JEC2020Config` to be schema-typed
-- **Phase 8** (MCFG sensor calibration) requires `MCFGConfig` to be schema-typed
-- **Phase 9** (PPF static geometry) requires `PPFStaticGeometryConfig` to be schema-typed
-- **Phase 1** (complete limiter coverage) requires `LimiterVersion.source/file_cc` in schema
+- **Phase 1** (limiter coverage) → uses `LimiterVersion.source_dir`, `DeviceXMLConfig.limiter_dir`
+- **Phase 7** (JEC2020 ingestion) → scanner reads `static_sources` entry with `format: xml`
+- **Phase 8** (MCFG sensors) → scanner reads `static_sources` entry with `format: text`
+- **Phase 9** (PPF static geometry) → scanner reads `ppf.static_signals[]`
 
-After this plan is complete, the ingestion plan scanners can:
-1. Receive typed config objects instead of raw dicts
-2. Have their expected inputs documented in the schema
-3. Be validated at startup (missing required fields → clear error)
-4. Auto-generate API documentation from LinkML descriptions
-
-The jet machine description ingestion plan should reference this plan as a dependency and update its Phase 1+ descriptions to reference the schema-typed config classes.
+Scanners iterate `static_sources` and dispatch based on `format` and `role` — no hardcoded facility knowledge.
 
 ---
 
 ## Migration Checklist
 
-- [ ] Add new LinkML classes to `facility_config.yaml`
-- [ ] Run `uv run build-models --force` to regenerate Pydantic models
-- [ ] Verify generated `models.py` includes new types
-- [ ] Curate jet.yaml notes → jet_private.yaml exploration_notes
-- [ ] Restructure jet.yaml `data_systems.jec2020` to match `JEC2020Config`
-- [ ] Restructure jet.yaml `data_systems.mcfg` to match `MCFGConfig`
-- [ ] Restructure jet.yaml `data_systems.ppf_static_geometry` to match `PPFStaticGeometryConfig`
-- [ ] Add `source`, `file_cc`, `source_cc`, `n_points` to jet.yaml limiter versions (already done)
-- [ ] Add `chain1_limiter_dir`, `chain1_limiter_list` to jet.yaml (already done)
-- [ ] Curate tcv.yaml, iter.yaml, jt-60sa.yaml notes
-- [ ] Validate all 4 configs: `validate_facility_config()`
-- [ ] Run full test suite: `uv run pytest`
+- [ ] Add `StaticSourceFormat` enum to schema
+- [ ] Add `StaticFileConfig` class to schema
+- [ ] Add `StaticSourceConfig` class to schema
+- [ ] Add `StaticSignalRef` class to schema
+- [ ] Add `static_signals` to `DataSystemBase` mixin
+- [ ] Add `static_sources` to `DataSystemsConfig`
+- [ ] Add `source_dir`, `n_points` to `LimiterVersion`
+- [ ] Add `limiter_dir` to `DeviceXMLConfig`
+- [ ] `uv run build-models --force`
+- [ ] Restructure jet.yaml: jec2020/mcfg → static_sources, ppf_static → ppf.static_signals
+- [ ] Curate jet.yaml notes (43 → ≤10), move to jet_private.yaml
+- [ ] Validate all 4 configs
+- [ ] Run test suite
+- [ ] Curate other facility config notes
 - [ ] Commit and push
