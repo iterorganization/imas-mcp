@@ -337,6 +337,77 @@ class TestPersistGraphNodes:
         assert dn["z"] == 0.604
         assert dn["angle"] == -74.1
 
+    def test_data_node_has_system_property(self):
+        """DataNode includes system property for domain filtering."""
+        created_nodes: list[list[dict]] = []
+
+        with patch(
+            "imas_codex.discovery.signals.scanners.device_xml.GraphClient"
+        ) as mock_gc_cls:
+            mock_gc = mock_gc_cls.return_value.__enter__.return_value
+            mock_gc.query.return_value = []
+            mock_gc.create_nodes.side_effect = lambda label, items, **kw: (
+                created_nodes.append(items)
+                or {"processed": len(items), "relationships": {}}
+            )
+
+            _persist_graph_nodes(
+                "jet",
+                MOCK_JET_CONFIG,
+                MOCK_PARSED_OUTPUT["versions"],
+                MOCK_PARSED_OUTPUT["limiters"],
+            )
+
+        data_node_batches = [
+            batch
+            for batch in created_nodes
+            if batch and "path" in batch[0] and "node_type" in batch[0]
+        ]
+        all_dns = [dn for batch in data_node_batches for dn in batch]
+
+        # Magprobes have system=MP
+        mp_dns = [dn for dn in all_dns if "magprobes:" in dn["path"]]
+        assert all(dn["system"] == "MP" for dn in mp_dns)
+
+        # PF coils have system=PF
+        pf_dns = [dn for dn in all_dns if "pfcoils:" in dn["path"]]
+        assert all(dn["system"] == "PF" for dn in pf_dns)
+
+        # Passive structures have system=PS
+        ps_dns = [dn for dn in all_dns if "pfpassive:" in dn["path"]]
+        assert all(dn["system"] == "PS" for dn in ps_dns)
+
+    def test_introduced_in_relationships_created(self):
+        """INTRODUCED_IN relationships are created for all DataNodes."""
+        query_calls: list[tuple] = []
+
+        with patch(
+            "imas_codex.discovery.signals.scanners.device_xml.GraphClient"
+        ) as mock_gc_cls:
+            mock_gc = mock_gc_cls.return_value.__enter__.return_value
+            mock_gc.create_nodes.return_value = {"processed": 0, "relationships": {}}
+
+            def capture_query(cypher, **kwargs):
+                query_calls.append((cypher, kwargs))
+                return []
+
+            mock_gc.query.side_effect = capture_query
+
+            _persist_graph_nodes(
+                "jet",
+                MOCK_JET_CONFIG,
+                MOCK_PARSED_OUTPUT["versions"],
+                MOCK_PARSED_OUTPUT["limiters"],
+            )
+
+        # Find INTRODUCED_IN query calls
+        intro_calls = [(q, kw) for q, kw in query_calls if "INTRODUCED_IN" in q]
+        assert len(intro_calls) >= 1
+        # All records should point to the correct epoch
+        for _, kw in intro_calls:
+            for rec in kw["records"]:
+                assert rec["epoch_id"] == "jet:device_xml:p89440"
+
     def test_limiter_node_has_contour_data(self):
         """Limiter DataNode includes R,Z contour arrays."""
         created_nodes: list[list[dict]] = []
@@ -434,6 +505,12 @@ class TestSectionMetadata:
     def test_all_sections_have_physics_domain(self):
         for section, meta in SECTION_METADATA.items():
             assert "physics_domain" in meta, f"Missing physics_domain for {section}"
+
+    def test_all_sections_have_system(self):
+        """Every section has a system code for domain filtering."""
+        for section, meta in SECTION_METADATA.items():
+            assert "system" in meta, f"Missing system for {section}"
+            assert len(meta["system"]) > 0, f"Empty system for {section}"
 
     def test_all_sections_have_fields(self):
         for section, meta in SECTION_METADATA.items():

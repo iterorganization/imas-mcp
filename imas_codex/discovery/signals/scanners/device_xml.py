@@ -38,6 +38,7 @@ SECTION_METADATA: dict[str, dict[str, Any]] = {
     "magprobes": {
         "physics_domain": "magnetic_field_diagnostics",
         "imas_ids": "magnetics.bpol_probe",
+        "system": "MP",
         "fields": {
             "r": {"unit": "m", "desc": "Radial position"},
             "z": {"unit": "m", "desc": "Vertical position"},
@@ -48,6 +49,7 @@ SECTION_METADATA: dict[str, dict[str, Any]] = {
     "flux": {
         "physics_domain": "magnetic_field_diagnostics",
         "imas_ids": "magnetics.flux_loop",
+        "system": "FL",
         "fields": {
             "r": {"unit": "m", "desc": "Radial position"},
             "z": {"unit": "m", "desc": "Vertical position"},
@@ -58,6 +60,7 @@ SECTION_METADATA: dict[str, dict[str, Any]] = {
     "pfcoils": {
         "physics_domain": "magnetic_field_diagnostics",
         "imas_ids": "pf_active.coil",
+        "system": "PF",
         "fields": {
             "r": {"unit": "m", "desc": "Radial position"},
             "z": {"unit": "m", "desc": "Vertical position"},
@@ -70,6 +73,7 @@ SECTION_METADATA: dict[str, dict[str, Any]] = {
     "pfcircuits": {
         "physics_domain": "magnetic_field_diagnostics",
         "imas_ids": "pf_active.circuit",
+        "system": "CI",
         "fields": {
             "coil_connect": {"unit": "", "desc": "Coil connection string"},
             "supply_connect": {"unit": "", "desc": "Supply connection string"},
@@ -79,6 +83,7 @@ SECTION_METADATA: dict[str, dict[str, Any]] = {
     "pfpassive": {
         "physics_domain": "magnetic_field_diagnostics",
         "imas_ids": "pf_passive.loop",
+        "system": "PS",
         "fields": {
             "r": {"unit": "m", "desc": "Radial position"},
             "z": {"unit": "m", "desc": "Vertical position"},
@@ -311,6 +316,7 @@ def _persist_graph_nodes(
                         "source": DataNodeSource.introspection.value,
                         "description": ", ".join(desc_parts),
                         "introduced_version": epoch_id,
+                        "system": meta.get("system", ""),
                         "first_shot": vc.get("first_shot"),
                     }
                     if vc.get("last_shot"):
@@ -360,6 +366,20 @@ def _persist_graph_nodes(
             if data_nodes:
                 gc.create_nodes("DataNode", data_nodes, id_field="path", batch_size=100)
                 stats["data_nodes"] += len(data_nodes)
+
+                # Create INTRODUCED_IN relationships (DataNode → StructuralEpoch)
+                intro_records = [
+                    {"path": dn["path"], "epoch_id": epoch_id} for dn in data_nodes
+                ]
+                gc.query(
+                    """
+                    UNWIND $records AS rec
+                    MATCH (dn:DataNode {path: rec.path})
+                    MATCH (se:StructuralEpoch {id: rec.epoch_id})
+                    MERGE (dn)-[:INTRODUCED_IN]->(se)
+                    """,
+                    records=intro_records,
+                )
 
         # 4. Create limiter DataNodes
         limiter_versions = config.get("limiter_versions", [])
