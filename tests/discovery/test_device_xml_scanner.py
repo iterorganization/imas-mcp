@@ -13,12 +13,15 @@ import pytest
 
 from imas_codex.discovery.signals.scanners.base import get_scanner
 from imas_codex.discovery.signals.scanners.device_xml import (
+    JEC2020_SYSTEM_MAP,
     SECTION_METADATA,
     DeviceXMLScanner,
     _build_data_access,
+    _build_jec2020_data_access,
     _make_signal_id,
     _make_signal_name,
     _persist_graph_nodes,
+    _persist_jec2020_nodes,
 )
 
 # Minimal parsed output matching what parse_device_xml.py returns
@@ -979,3 +982,406 @@ class TestCompleteLimiterCoverage:
 
         names = {dn["path"].split(":")[-1] for dn in limiter_dns}
         assert names == {"Mk2A", "Mk2GB", "Mk2GB-NS", "Mk2HD", "Mk2ILW"}
+
+
+# =========================================================================
+# JEC2020 Tests
+# =========================================================================
+
+# Minimal JEC2020 source config matching jet.yaml static_sources entry
+MOCK_JEC2020_CONFIG = {
+    "name": "jec2020_geometry",
+    "description": "EFIT++ equilibrium geometry files",
+    "format": "xml",
+    "base_dir": "/home/chain1/jec2020",
+    "reference_shot": 79951,
+    "files": [
+        {"path": "magnetics.xml", "role": "magnetics"},
+        {"path": "pfSystems.xml", "role": "pf_coils"},
+        {"path": "ironBoundaries3.xml", "role": "iron_core"},
+        {"path": "limiter.xml", "role": "limiter"},
+    ],
+}
+
+# Mock parsed output from parse_jec2020.py
+MOCK_JEC2020_PARSED = {
+    "magnetics": {
+        "probes": [
+            {
+                "id": "1",
+                "description": "Internal Discrete Coil, Oct.3",
+                "rCentre": 4.292,
+                "zCentre": 0.604,
+                "poloidalOrientation": -74.1,
+                "angle_units": "degrees",
+                "ppf_signal": "BPME(1)",
+                "jpf_signal": "DA/C2-CX01",
+                "ppf_data_source": "JET::PPF::/magn/$pulseNumber$/0/jetppf",
+                "jpf_data_source": "JPF::$pulseNumber$",
+                "error_type": "relativeAbsolute",
+                "rel_error": 0.02,
+                "abs_error": 0.005,
+            },
+            {
+                "id": "2",
+                "description": "Internal Discrete Coil, Oct.3",
+                "rCentre": 4.281,
+                "zCentre": 0.724,
+                "poloidalOrientation": -73.5,
+                "ppf_signal": "BPME(2)",
+                "jpf_signal": "DA/C2-CX02",
+                "ppf_data_source": "JET::PPF::/magn/$pulseNumber$/0/jetppf",
+                "jpf_data_source": "JPF::$pulseNumber$",
+                "rel_error": 0.02,
+                "abs_error": 0.005,
+            },
+        ],
+        "flux_loops": [
+            {
+                "id": "1",
+                "description": "Flux loop at inboard midplane",
+                "rCentre": 2.0,
+                "zCentre": 0.0,
+                "ppf_signal": "FLME(1)",
+                "jpf_signal": "DA/C2-FL01",
+                "ppf_data_source": "JET::PPF",
+                "jpf_data_source": "JPF",
+            },
+        ],
+    },
+    "pf_coils": {
+        "coils": [
+            {
+                "id": "1",
+                "name": "P1/ME",
+                "rCentre": 0.897,
+                "zCentre": 0.0,
+                "dR": 0.337,
+                "dZ": 5.427,
+                "angle1": 0.0,
+                "angle2": 0.0,
+                "turnCount": 710.0,
+            },
+            {
+                "id": "3",
+                "name": "P2/SUI/8",
+                # Multi-element coil with comma-separated arrays
+                "rCentre": [1.967, 2.005, 2.043, 2.081],
+                "zCentre": [3.871, 3.871, 3.871, 3.871],
+                "dR": [0.035, 0.035, 0.035, 0.035],
+                "dZ": [0.035, 0.035, 0.035, 0.035],
+                "turnCount": [0.5, 0.5, 0.5, 0.5],
+            },
+        ],
+        "circuits": [
+            {
+                "id": "1",
+                "name": "P1U_circuit",
+                "coil_ids": ["1"],
+            },
+        ],
+    },
+    "iron_core": {
+        "material_id": "3",
+        "material2_id": "1",
+        "r": [6.512, 4.952, 3.392],
+        "z": [4.45, 4.45, 4.45],
+        "permeabilities": [852.82, 724.86, 887.43],
+        "segment_lengths": [1.56, 1.56, 1.56],
+        "n_segments": 3.0,
+        "boundary_length": 4.68,
+    },
+    "limiter": {
+        "r": [2.0, 2.5, 3.0, 3.5],
+        "z": [1.0, 0.5, -0.5, -1.0],
+        "n_points": 4,
+    },
+}
+
+
+class TestJEC2020DataAccess:
+    """Test JEC2020 DataAccess node construction."""
+
+    def test_build_jec2020_data_access(self):
+        da = _build_jec2020_data_access("jet", "/home/chain1/jec2020")
+        assert da.id == "jet:jec2020:xml"
+        assert da.method_type == "static_xml"
+        assert da.data_source == "jec2020_geometry"
+        assert da.library == "xml.etree.ElementTree"
+
+    def test_full_example_is_valid_python(self):
+        da = _build_jec2020_data_access("jet", "/home/chain1/jec2020")
+        # Should be parseable Python (syntax check)
+        compile(da.full_example, "<jec2020>", "exec")
+
+
+class TestJEC2020SystemMap:
+    """Test JEC2020 system code definitions."""
+
+    def test_all_roles_have_system_codes(self):
+        expected_roles = {
+            "magnetics_probe",
+            "magnetics_flux",
+            "pf_coils",
+            "pf_circuits",
+            "iron_core",
+            "limiter",
+        }
+        assert set(JEC2020_SYSTEM_MAP.keys()) == expected_roles
+
+
+class TestJEC2020Persist:
+    """Test _persist_jec2020_nodes with mock graph."""
+
+    def _run_persist(self, parsed=None):
+        """Run persist with mocked GraphClient and return captured data."""
+        if parsed is None:
+            parsed = MOCK_JEC2020_PARSED
+
+        created_nodes: dict[str, list[dict]] = {}
+        query_calls: list[tuple] = []
+
+        with patch(
+            "imas_codex.discovery.signals.scanners.device_xml.GraphClient"
+        ) as mock_gc_cls:
+            mock_gc = mock_gc_cls.return_value.__enter__.return_value
+
+            def capture_query(cypher, **kwargs):
+                query_calls.append((cypher, kwargs))
+                return []
+
+            mock_gc.query.side_effect = capture_query
+
+            def capture_create(label, items, **kw):
+                created_nodes.setdefault(label, []).extend(items)
+                return {"processed": len(items), "relationships": {}}
+
+            mock_gc.create_nodes.side_effect = capture_create
+
+            stats = _persist_jec2020_nodes("jet", MOCK_JEC2020_CONFIG, parsed)
+
+        return stats, created_nodes, query_calls
+
+    def test_persist_creates_probe_nodes(self):
+        """Magnetics probes create DataNodes with R,Z and dual data sources."""
+        stats, nodes, _ = self._run_persist()
+        assert stats["probes"] == 2
+
+        probe_dns = [
+            dn for dn in nodes.get("DataNode", []) if "probe:" in dn.get("path", "")
+        ]
+        assert len(probe_dns) == 2
+
+        probe1 = next(dn for dn in probe_dns if dn["path"].endswith(":1"))
+        assert probe1["r"] == 4.292
+        assert probe1["z"] == 0.604
+        assert probe1["ppf_signal"] == "BPME(1)"
+        assert probe1["jpf_signal"] == "DA/C2-CX01"
+        assert probe1["system"] == "MP"
+
+    def test_persist_creates_flux_loop_nodes(self):
+        """Flux loops create DataNodes with geometry and signal references."""
+        stats, nodes, _ = self._run_persist()
+        assert stats["flux_loops"] == 1
+
+        loop_dns = [
+            dn for dn in nodes.get("DataNode", []) if "flux_loop:" in dn.get("path", "")
+        ]
+        assert len(loop_dns) == 1
+        assert loop_dns[0]["r"] == 2.0
+        assert loop_dns[0]["system"] == "FL"
+
+    def test_persist_creates_pf_coil_nodes(self):
+        """PF coils create DataNodes with geometry (including multi-element)."""
+        stats, nodes, _ = self._run_persist()
+        assert stats["pf_coils"] == 2
+
+        coil_dns = [
+            dn for dn in nodes.get("DataNode", []) if "pf_coil:" in dn.get("path", "")
+        ]
+        assert len(coil_dns) == 2
+
+        # Single-element coil
+        coil1 = next(dn for dn in coil_dns if dn["path"].endswith(":1"))
+        assert coil1["rCentre"] == 0.897
+        assert coil1["system"] == "PF"
+
+        # Multi-element coil stores array and first element
+        coil3 = next(dn for dn in coil_dns if dn["path"].endswith(":3"))
+        assert coil3["rCentre"] == 1.967  # First element as scalar
+        assert coil3["rCentre_array"] == [1.967, 2.005, 2.043, 2.081]
+
+    def test_persist_creates_pf_circuits(self):
+        """PF circuits create DataNodes and IN_CIRCUIT relationships."""
+        stats, nodes, queries = self._run_persist()
+        assert stats["pf_circuits"] == 1
+
+        circuit_dns = [
+            dn
+            for dn in nodes.get("DataNode", [])
+            if "pf_circuit:" in dn.get("path", "")
+        ]
+        assert len(circuit_dns) == 1
+
+        # Check IN_CIRCUIT relationship query
+        circuit_queries = [(q, kw) for q, kw in queries if "IN_CIRCUIT" in q]
+        assert len(circuit_queries) == 1
+
+    def test_persist_creates_iron_boundary(self):
+        """Iron core boundary creates DataNode with R,Z contour and permeabilities."""
+        stats, nodes, _ = self._run_persist()
+        assert stats["iron_segments"] == 3
+
+        iron_dns = [
+            dn
+            for dn in nodes.get("DataNode", [])
+            if "iron_boundary" in dn.get("path", "")
+        ]
+        assert len(iron_dns) == 1
+        assert iron_dns[0]["r_contour"] == [6.512, 4.952, 3.392]
+        assert iron_dns[0]["permeabilities"] == [852.82, 724.86, 887.43]
+        assert iron_dns[0]["boundary_length"] == 4.68
+
+    def test_persist_creates_limiter(self):
+        """JEC2020 limiter creates DataNode with R,Z contour."""
+        stats, nodes, _ = self._run_persist()
+        assert stats["limiter_points"] == 4
+
+        lim_dns = [
+            dn
+            for dn in nodes.get("DataNode", [])
+            if dn.get("path", "") == "jet:jec2020:limiter"
+        ]
+        assert len(lim_dns) == 1
+        assert lim_dns[0]["r_contour"] == [2.0, 2.5, 3.0, 3.5]
+        assert lim_dns[0]["system"] == "LIM"
+
+    def test_persist_creates_same_geometry_link(self):
+        """JEC2020 limiter links to device_xml Mk2ILW via SAME_GEOMETRY."""
+        _, _, queries = self._run_persist()
+        geom_queries = [(q, kw) for q, kw in queries if "SAME_GEOMETRY" in q]
+        assert len(geom_queries) == 1
+        assert geom_queries[0][1]["dx_path"] == "jet:device_xml:limiter:Mk2ILW"
+
+    def test_persist_creates_signals(self):
+        """JEC2020 ingestion creates FacilitySignal nodes."""
+        stats, nodes, _ = self._run_persist()
+        # 2 probes + 1 flux loop + 2 PF coils + 1 iron + 1 limiter = 7
+        assert stats["signals"] == 7
+
+        signals = nodes.get("FacilitySignal", [])
+        assert len(signals) == 7
+
+        # Check probe signal has correct data access
+        probe_sigs = [s for s in signals if "jec2020_probe_" in s["id"]]
+        assert len(probe_sigs) == 2
+        assert probe_sigs[0]["data_access"] == "jet:jec2020:xml"
+        assert probe_sigs[0]["discovery_source"] == "jec2020_xml"
+
+    def test_persist_creates_data_access(self):
+        """JEC2020 ingestion creates DataAccess node."""
+        _, nodes, _ = self._run_persist()
+        da_nodes = nodes.get("DataAccess", [])
+        assert len(da_nodes) == 1
+        assert da_nodes[0]["id"] == "jet:jec2020:xml"
+
+
+class TestParseJEC2020Script:
+    """Test the JEC2020 remote parse script in isolation."""
+
+    def _load_module(self):
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            "parse_jec2020",
+            "imas_codex/remote/scripts/parse_jec2020.py",
+        )
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_parse_magnetics(self):
+        """Parse magnetics XML with probes and flux loops."""
+        mod = self._load_module()
+        xml = b"""<?xml version="1.0"?>
+<magnetics>
+  <magneticProbe id="1" description="Probe 1">
+    <geometry rCentre="4.292" zCentre="0.604" angleUnits="degrees"
+              poloidalOrientation="-74.1"/>
+    <timeTrace signalName="BPME(1)" signalName2="DA/C2-CX01"
+               dataSource="JET::PPF" dataSource2="JPF"
+               errorType="relativeAbsolute"
+               errorRelativeAbsolute="[0.02,0.005]"/>
+  </magneticProbe>
+  <fluxLoop id="1" description="Loop 1">
+    <geometry rCentre="2.0" zCentre="0.0"/>
+    <timeTrace signalName="FLME(1)" signalName2="DA/C2-FL01"
+               dataSource="JET::PPF" dataSource2="JPF"/>
+  </fluxLoop>
+</magnetics>"""
+        result = mod.parse_magnetics(xml)
+        assert len(result["probes"]) == 1
+        assert result["probes"][0]["rCentre"] == 4.292
+        assert result["probes"][0]["ppf_signal"] == "BPME(1)"
+        assert result["probes"][0]["jpf_signal"] == "DA/C2-CX01"
+        assert result["probes"][0]["rel_error"] == pytest.approx(0.02)
+        assert result["probes"][0]["abs_error"] == pytest.approx(0.005)
+        assert len(result["flux_loops"]) == 1
+        assert result["flux_loops"][0]["rCentre"] == 2.0
+
+    def test_parse_pf_systems(self):
+        """Parse PF coils with single and multi-element geometry."""
+        mod = self._load_module()
+        xml = b"""<?xml version="1.0"?>
+<pfSystems>
+  <pfCoil id="1" name="P1/ME">
+    <geometry rCentre="0.897" zCentre="0" dR="0.337" dZ="5.427"
+              angle1="0" angle2="0" turnCount="710"/>
+  </pfCoil>
+  <pfCoil id="3" name="P2/SUI/8">
+    <geometry rCentre="1.967,2.005" zCentre="3.871,3.871"
+              dR="0.035,0.035" dZ="0.035,0.035" turnCount="0.500,0.500"/>
+  </pfCoil>
+  <pfCircuit id="1" name="P1U_circuit">
+    <connections>
+      <connection coilId="1"/>
+    </connections>
+  </pfCircuit>
+</pfSystems>"""
+        result = mod.parse_pf_systems(xml)
+        assert len(result["coils"]) == 2
+        assert result["coils"][0]["rCentre"] == 0.897
+        # Multi-element coil
+        assert result["coils"][1]["rCentre"] == [1.967, 2.005]
+        assert len(result["circuits"]) == 1
+        assert result["circuits"][0]["coil_ids"] == ["1"]
+
+    def test_parse_iron_boundaries(self):
+        """Parse iron core boundary with coordinate arrays."""
+        mod = self._load_module()
+        xml = b"""<?xml version="1.0"?>
+<ironBoundaries>
+  <ironBoundary material2Id="1" materialId="3">
+    <knotSet basisFunctionCount="3"
+             boundaryCoordsR="6.512, 4.952, 3.392"
+             boundaryCoordsZ="4.45, 4.45, 4.45"
+             initialPermeabilities="852.82, 724.86, 887.43"
+             segmentLengths="1.56, 1.56, 1.56"
+             boundaryLength="4.68"/>
+  </ironBoundary>
+</ironBoundaries>"""
+        result = mod.parse_iron_boundaries(xml)
+        assert result["r"] == [6.512, 4.952, 3.392]
+        assert result["z"] == [4.45, 4.45, 4.45]
+        assert result["permeabilities"] == [852.82, 724.86, 887.43]
+        assert result["boundary_length"] == 4.68
+
+    def test_parse_limiter(self):
+        """Parse limiter XML with comma-separated R,Z arrays."""
+        mod = self._load_module()
+        xml = b"""<?xml version="1.0"?>
+<limiter rValues="2.0, 2.5, 3.0" zValues="1.0, 0.5, -0.5"/>"""
+        result = mod.parse_limiter(xml)
+        assert result["r"] == [2.0, 2.5, 3.0]
+        assert result["z"] == [1.0, 0.5, -0.5]
+        assert result["n_points"] == 3
