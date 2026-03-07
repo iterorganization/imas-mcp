@@ -375,23 +375,27 @@ def _persist_graph_nodes(
             z_vals = limiter_data["z"]
             n_points = limiter_data.get("n_points", len(r_vals))
 
-            limiter_nodes.append(
-                {
-                    "path": node_path,
-                    "data_source_name": "device_xml",
-                    "facility_id": facility,
-                    "node_type": DataNodeType.NUMERIC.value,
-                    "source": DataNodeSource.introspection.value,
-                    "description": (
-                        f"First wall contour '{name}': {n_points} R,Z points"
-                    ),
-                    "first_shot": lv.get("first_shot"),
-                    "last_shot": lv.get("last_shot"),
-                    "r_contour": r_vals,
-                    "z_contour": z_vals,
-                    "n_points": n_points,
-                }
-            )
+            dn: dict[str, Any] = {
+                "path": node_path,
+                "data_source_name": "device_xml",
+                "facility_id": facility,
+                "node_type": DataNodeType.NUMERIC.value,
+                "source": DataNodeSource.introspection.value,
+                "description": (f"First wall contour '{name}': {n_points} R,Z points"),
+                "first_shot": lv.get("first_shot"),
+                "last_shot": lv.get("last_shot"),
+                "r_contour": r_vals,
+                "z_contour": z_vals,
+                "n_points": n_points,
+            }
+
+            # Provenance: track where the file was read from
+            if limiter_data.get("file_source"):
+                dn["file_source"] = limiter_data["file_source"]
+            if limiter_data.get("file_path"):
+                dn["file_path"] = limiter_data["file_path"]
+
+            limiter_nodes.append(dn)
 
             # Create limiter signal
             sig_id = f"{facility}:magnetic_field_diagnostics/limiter_{name.lower()}"
@@ -414,6 +418,37 @@ def _persist_graph_nodes(
         if limiter_nodes:
             gc.create_nodes("DataNode", limiter_nodes, id_field="path", batch_size=50)
             stats["limiter_nodes"] = len(limiter_nodes)
+
+        # 4b. Create USES_LIMITER relationships (StructuralEpoch → limiter DataNode)
+        # Each config version specifies its limiter path → match to limiter DataNode
+        limiter_path_to_name: dict[str, str] = {}
+        for lv in limiter_versions:
+            if lv.get("file"):
+                limiter_path_to_name[lv["file"]] = lv["name"]
+
+        uses_limiter_records = []
+        for vc in versions_config:
+            limiter_file = vc.get("limiter", "")
+            # Match the version's limiter file to a limiter name
+            lim_name = limiter_path_to_name.get(limiter_file)
+            if lim_name:
+                uses_limiter_records.append(
+                    {
+                        "epoch_id": f"{facility}:device_xml:{vc['version']}",
+                        "limiter_path": f"{facility}:device_xml:limiter:{lim_name}",
+                    }
+                )
+
+        if uses_limiter_records:
+            gc.query(
+                """
+                UNWIND $records AS rec
+                MATCH (se:StructuralEpoch {id: rec.epoch_id})
+                MATCH (dn:DataNode {path: rec.limiter_path})
+                MERGE (se)-[:USES_LIMITER]->(dn)
+                """,
+                records=uses_limiter_records,
+            )
 
         # 5. Persist all signals
         if all_signals:
@@ -495,12 +530,13 @@ class DeviceXMLScanner:
         limiter_files = []
         for lv in limiter_versions:
             if lv.get("file"):
-                limiter_files.append(
-                    {
-                        "name": lv["name"],
-                        "file": lv["file"],
-                    }
-                )
+                entry: dict[str, Any] = {
+                    "name": lv["name"],
+                    "file": lv["file"],
+                }
+                if lv.get("source_dir"):
+                    entry["source_dir"] = lv["source_dir"]
+                limiter_files.append(entry)
 
         # Run remote parse script
         script_input = {
