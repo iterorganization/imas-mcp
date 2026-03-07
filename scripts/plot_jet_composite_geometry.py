@@ -3,18 +3,19 @@
 Queries Neo4j for ALL geometry data ingested by the device_xml scanner
 and renders a publication-quality poloidal cross-section with layers:
 
-  1. Limiter contours (5 epochs, color-coded) + JEC2020 high-res
+  1. Limiter contours (6 epochs, color-coded) + JEC2020 high-res
   2. PF coil rectangles (JEC2020 latest config)
   3. Magnetic probe positions (JEC2020, with orientation)
   4. MCFG sensor positions (CATIA CAD reference)
   5. Iron core boundary (96 segments)
   6. Flux loop positions
   7. Passive structure elements (rectangles)
+  8. Epoch timeline (StructuralEpoch nodes with wall_configuration)
 
 Usage:
     uv run python scripts/plot_jet_composite_geometry.py
-    uv run python scripts/plot_jet_composite_geometry.py --layers limiter,pf,probes
-    uv run python scripts/plot_jet_composite_geometry.py -o jet_geometry.pdf
+    uv run python scripts/plot_jet_composite_geometry.py --layers limiter,pf,probes,timeline
+    uv run python scripts/plot_jet_composite_geometry.py -o docs/images/jet_composite_geometry.png
 """
 
 from __future__ import annotations
@@ -22,21 +23,27 @@ from __future__ import annotations
 import argparse
 
 import matplotlib.pyplot as plt
-from matplotlib.patches import Rectangle
+import numpy as np
+from matplotlib.patches import FancyBboxPatch, Rectangle
 
 from imas_codex.graph.client import GraphClient
 
-ALL_LAYERS = {"limiter", "pf", "probes", "mcfg", "iron", "flux", "passive"}
+ALL_LAYERS = {"limiter", "pf", "probes", "mcfg", "iron", "flux", "passive", "timeline"}
 
+# Limiter-era: warm orange for pre-divertor
+# Divertor-era: cool blues/greens/purples
 EPOCH_COLORS = [
-    "#1f77b4",
-    "#ff7f0e",
-    "#2ca02c",
-    "#d62728",
-    "#9467bd",
-    "#8c564b",
-    "#e377c2",
+    "#e67e22",  # Limiter (pre-divertor, orange)
+    "#1f77b4",  # Mk2A
+    "#2ca02c",  # Mk2GB
+    "#9467bd",  # Mk2GB-NS
+    "#d62728",  # Mk2HD
+    "#ff7f0e",  # Mk2ILW
+    "#8c564b",  # spare
 ]
+
+LIMITER_STYLE = {"linestyle": "--", "linewidth": 2.5}
+DIVERTOR_STYLE = {"linestyle": "-", "linewidth": 1.5}
 
 
 def query_limiters() -> list[dict]:
@@ -48,10 +55,34 @@ def query_limiters() -> list[dict]:
                 WHERE dn.facility_id = 'jet'
                   AND dn.path STARTS WITH 'jet:device_xml:limiter:'
                   AND dn.r_contour IS NOT NULL
+                OPTIONAL MATCH (se:StructuralEpoch)-[:USES_LIMITER]->(dn)
+                WITH dn, collect(DISTINCT se.wall_configuration) AS wall_configs,
+                     min(se.first_shot) AS epoch_first_shot
                 RETURN dn.path AS path, dn.r_contour AS r, dn.z_contour AS z,
                        dn.first_shot AS first_shot, dn.last_shot AS last_shot,
-                       dn.n_points AS n_points
+                       dn.n_points AS n_points,
+                       CASE WHEN 'limiter' IN wall_configs THEN 'limiter'
+                            ELSE 'divertor' END AS wall_config
                 ORDER BY dn.first_shot ASC
+                """
+            )
+        )
+
+
+def query_epochs() -> list[dict]:
+    with GraphClient() as gc:
+        return list(
+            gc.query(
+                """
+                MATCH (se:StructuralEpoch {data_source_name: 'device_xml'})
+                OPTIONAL MATCH (se)-[:USES_LIMITER]->(lim:DataNode)
+                RETURN se.id AS id,
+                       se.first_shot AS first_shot,
+                       se.last_shot AS last_shot,
+                       se.description AS description,
+                       se.wall_configuration AS wall_config,
+                       lim.path AS limiter_path
+                ORDER BY se.first_shot ASC
                 """
             )
         )
@@ -165,7 +196,17 @@ def draw_limiter_layer(ax, limiters, jec2020):
         name = lim["path"].split(":")[-1]
         first = lim.get("first_shot", "?")
         last = lim.get("last_shot", "?")
-        ax.plot(r, z, color=color, lw=1.5, label=f"{name} ({first}–{last})", zorder=2)
+        wall = lim.get("wall_config", "divertor")
+        style = LIMITER_STYLE if wall == "limiter" else DIVERTOR_STYLE
+        suffix = " [limiter]" if wall == "limiter" else ""
+        ax.plot(
+            r,
+            z,
+            color=color,
+            label=f"{name} ({first}–{last}){suffix}",
+            zorder=2,
+            **style,
+        )
 
     if jec2020 and jec2020.get("r"):
         ax.plot(
@@ -327,6 +368,71 @@ def draw_passive_layer(ax, passive):
         )
 
 
+def draw_timeline(ax, epochs):
+    """Draw epoch timeline showing wall configuration evolution."""
+    if not epochs:
+        return
+
+    ax.set_xlim(0, 100000)
+    ax.set_ylim(-0.5, len(epochs) - 0.5)
+    ax.invert_yaxis()
+
+    for i, ep in enumerate(epochs):
+        first = ep.get("first_shot", 0) or 0
+        last = ep.get("last_shot") or 100000
+        wall = ep.get("wall_config", "divertor")
+
+        color = "#e67e22" if wall == "limiter" else "#3498db"
+        alpha = 0.9 if wall == "limiter" else 0.7
+
+        width = last - first
+        rect = FancyBboxPatch(
+            (first, i - 0.35),
+            width,
+            0.7,
+            boxstyle="round,pad=0.02",
+            facecolor=color,
+            edgecolor="white",
+            linewidth=0.5,
+            alpha=alpha,
+        )
+        ax.add_patch(rect)
+
+        # Label inside bar
+        version = ep["id"].split(":")[-1]
+        label = f"{version}"
+        mid = first + width / 2
+        ax.text(
+            mid,
+            i,
+            label,
+            ha="center",
+            va="center",
+            fontsize=5.5,
+            color="white",
+            fontweight="bold",
+        )
+
+    ax.set_xlabel("Shot number", fontsize=10)
+    ax.set_title("Machine Description Epochs", fontsize=11)
+    ax.set_yticks([])
+
+    # Mark eras
+    ax.axvline(x=26087, color="#e67e22", ls=":", lw=1, alpha=0.5)
+    ax.annotate(
+        "Divertor\ninstalled",
+        xy=(26087, -0.3),
+        fontsize=7,
+        ha="center",
+        va="bottom",
+        color="#e67e22",
+    )
+
+    # Add shot number ticks
+    ax.set_xticks(np.arange(0, 100001, 10000))
+    ax.tick_params(axis="x", labelsize=7)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Composite JET geometry plot from graph data"
@@ -336,12 +442,26 @@ def main():
         default=",".join(sorted(ALL_LAYERS)),
         help=f"Comma-separated layers to draw (default: all). Options: {','.join(sorted(ALL_LAYERS))}",
     )
-    parser.add_argument("-o", "--output", default="jet_composite_geometry.png")
+    parser.add_argument(
+        "-o", "--output", default="docs/images/jet_composite_geometry.png"
+    )
     args = parser.parse_args()
 
     layers = set(args.layers.split(","))
 
-    fig, ax = plt.subplots(1, 1, figsize=(12, 16))
+    has_timeline = "timeline" in layers
+
+    if has_timeline:
+        fig, (ax, ax_tl) = plt.subplots(
+            2,
+            1,
+            figsize=(14, 20),
+            gridspec_kw={"height_ratios": [3, 1]},
+        )
+    else:
+        fig, ax = plt.subplots(1, 1, figsize=(12, 16))
+        ax_tl = None
+
     drawn = []
 
     if "limiter" in layers:
@@ -388,9 +508,17 @@ def main():
         draw_passive_layer(ax, passive)
         drawn.append(f"passive: {len(passive)}")
 
+    if has_timeline and ax_tl is not None:
+        print("Querying epochs...")
+        epochs = query_epochs()
+        draw_timeline(ax_tl, epochs)
+        drawn.append(f"epochs: {len(epochs)}")
+
     ax.set_xlabel("R [m]", fontsize=12)
     ax.set_ylabel("Z [m]", fontsize=12)
-    ax.set_title("JET Composite Geometry — All Data Sources", fontsize=14)
+    ax.set_title(
+        "JET Machine Description — All Epochs (Limiter + Divertor)", fontsize=14
+    )
     ax.set_aspect("equal")
     ax.legend(loc="upper right", fontsize=7, ncol=2)
     ax.grid(True, alpha=0.2)

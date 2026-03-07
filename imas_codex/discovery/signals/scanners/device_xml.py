@@ -232,18 +232,19 @@ def _persist_graph_nodes(
         epoch_records = []
         for i, vc in enumerate(versions_config):
             version = vc["version"]
-            epoch_records.append(
-                {
-                    "id": f"{facility}:device_xml:{version}",
-                    "facility_id": facility,
-                    "data_source_name": "device_xml",
-                    "version": i + 1,
-                    "first_shot": vc.get("first_shot", 0),
-                    "last_shot": vc.get("last_shot"),
-                    "description": vc.get("description", ""),
-                    "status": IngestionStatus.ingested.value,
-                }
-            )
+            rec: dict[str, Any] = {
+                "id": f"{facility}:device_xml:{version}",
+                "facility_id": facility,
+                "data_source_name": "device_xml",
+                "version": i + 1,
+                "first_shot": vc.get("first_shot", 0),
+                "last_shot": vc.get("last_shot"),
+                "description": vc.get("description", ""),
+                "status": IngestionStatus.ingested.value,
+            }
+            if vc.get("wall_configuration"):
+                rec["wall_configuration"] = vc["wall_configuration"]
+            epoch_records.append(rec)
 
         if epoch_records:
             gc.query(
@@ -257,6 +258,7 @@ def _persist_graph_nodes(
                     se.last_shot = rec.last_shot,
                     se.description = rec.description,
                     se.status = rec.status
+                SET se.wall_configuration = rec.wall_configuration
                 WITH se, rec
                 MATCH (f:Facility {id: rec.facility_id})
                 MERGE (se)-[:AT_FACILITY]->(f)
@@ -272,6 +274,11 @@ def _persist_graph_nodes(
         for vc in versions_config:
             version = vc["version"]
             xml_file = vc.get("device_xml", "")
+
+            # Versions without device_xml (pre-EFIT++ limiter-only epochs)
+            # have no DataNodes from XML parsing — skip gracefully.
+            if not xml_file:
+                continue
 
             # Use parsed data from this version or from canonical version
             parsed = parsed_versions.get(version)
@@ -392,13 +399,30 @@ def _persist_graph_nodes(
         for lv in limiter_versions:
             name = lv.get("name", "")
             limiter_data = parsed_limiters.get(name, {})
-            if "error" in limiter_data or not limiter_data.get("r"):
+            if "error" in limiter_data:
+                continue
+
+            # Select contour segments: contour_sections specifies which
+            # segments (0-indexed) to concatenate. Default: segment 0 only.
+            contour_sections = lv.get("contour_sections")
+            segments = limiter_data.get("segments", [])
+            if contour_sections and segments:
+                r_vals: list[float] = []
+                z_vals: list[float] = []
+                for idx in contour_sections:
+                    if idx < len(segments):
+                        r_vals.extend(segments[idx]["r"])
+                        z_vals.extend(segments[idx]["z"])
+                n_points = len(r_vals)
+            else:
+                r_vals = limiter_data.get("r", [])
+                z_vals = limiter_data.get("z", [])
+                n_points = limiter_data.get("n_points", len(r_vals))
+
+            if not r_vals:
                 continue
 
             node_path = f"{facility}:device_xml:limiter:{name}"
-            r_vals = limiter_data["r"]
-            z_vals = limiter_data["z"]
-            n_points = limiter_data.get("n_points", len(r_vals))
 
             dn: dict[str, Any] = {
                 "path": node_path,
@@ -445,10 +469,9 @@ def _persist_graph_nodes(
             stats["limiter_nodes"] = len(limiter_nodes)
 
         # 4b. Create USES_LIMITER relationships (StructuralEpoch → limiter DataNode)
-        # Each config version specifies its limiter path → match to limiter DataNode
-        # Build lookup mapping: normalize both version limiter paths and limiter_version
-        # file names to bare filenames for matching (version configs may include
-        # directory prefixes like "Limiters/").
+        # Each config version specifies its limiter via:
+        #   1. uses_limiter: explicit limiter version name (pre-EFIT++ epochs)
+        #   2. limiter: file path → matched to limiter_version by basename
         limiter_file_to_name: dict[str, str] = {}
         for lv in limiter_versions:
             if lv.get("file"):
@@ -457,14 +480,18 @@ def _persist_graph_nodes(
 
         uses_limiter_records = []
         for vc in versions_config:
-            limiter_file = vc.get("limiter", "")
-            if not limiter_file:
-                continue
-            basename = limiter_file.rsplit("/", 1)[-1]
-            lim_name = limiter_file_to_name.get(basename)
-            # Try stripping _cc suffix (git vs filesystem naming convention)
-            if not lim_name and basename.endswith("_cc"):
-                lim_name = limiter_file_to_name.get(basename[:-3])
+            # Direct name reference takes priority
+            lim_name = vc.get("uses_limiter")
+            if not lim_name:
+                # Fall back to file-based matching
+                limiter_file = vc.get("limiter", "")
+                if not limiter_file:
+                    continue
+                basename = limiter_file.rsplit("/", 1)[-1]
+                lim_name = limiter_file_to_name.get(basename)
+                # Try stripping _cc suffix (git vs filesystem naming convention)
+                if not lim_name and basename.endswith("_cc"):
+                    lim_name = limiter_file_to_name.get(basename[:-3])
             if lim_name:
                 uses_limiter_records.append(
                     {
@@ -1273,6 +1300,8 @@ class DeviceXMLScanner:
         parse_versions = []
         for vc in versions:
             xml_file = vc.get("device_xml", "")
+            if not xml_file:
+                continue  # Limiter-only epochs have no device XML to parse
             version = vc["version"]
             entry = {
                 "version": version,

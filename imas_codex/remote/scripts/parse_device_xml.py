@@ -206,51 +206,57 @@ def parse_limiter_file(data: bytes) -> dict:
 
     Format: Each segment starts with an integer point-count on its own line,
     followed by that many R,Z coordinate pairs.  Comment lines (C/c/!/# prefix)
-    and blank lines are skipped.  Only the first segment (the primary first-wall
-    contour) is returned; secondary segments (inner boundaries, septum outlines)
-    are discarded.
+    and blank lines are skipped.
+
+    Returns all segments.  The primary contour (segment 0) is returned as
+    top-level ``r``, ``z``, ``n_points`` for backward compatibility.  All
+    segments (including the primary) are also available in ``segments``.
     """
     text = data.decode("utf-8", errors="replace")
-    r_vals: list[float] = []
-    z_vals: list[float] = []
-
-    expected = 0  # remaining points in current segment
-    segment_done = False
+    segments: list[dict] = []
+    cur_r: list[float] = []
+    cur_z: list[float] = []
+    expected = 0
 
     for line in text.strip().split("\n"):
         line = line.strip()
         if not line:
             continue
-        # Skip comment lines (Fortran-style C/c, or #/!)
         if line[0] in ("C", "c", "!", "#"):
             continue
 
         parts = line.split()
 
-        # A single integer on a line = segment point count
         if len(parts) == 1:
             try:
                 count = int(parts[0])
             except ValueError:
                 continue
-            if segment_done:
-                # We already have the first segment — stop
-                break
+            if cur_r and expected == 0:
+                segments.append({"r": cur_r, "z": cur_z, "n_points": len(cur_r)})
+                cur_r = []
+                cur_z = []
             expected = count
             continue
 
-        # R,Z coordinate pair
         if len(parts) >= 2 and expected > 0:
             try:
-                r_vals.append(float(parts[0]))
-                z_vals.append(float(parts[1]))
+                cur_r.append(float(parts[0]))
+                cur_z.append(float(parts[1]))
                 expected -= 1
-                if expected == 0:
-                    segment_done = True
             except ValueError:
                 continue
 
-    return {"r": r_vals, "z": z_vals, "n_points": len(r_vals)}
+    if cur_r:
+        segments.append({"r": cur_r, "z": cur_z, "n_points": len(cur_r)})
+
+    primary = segments[0] if segments else {"r": [], "z": [], "n_points": 0}
+    return {
+        "r": primary["r"],
+        "z": primary["z"],
+        "n_points": primary["n_points"],
+        "segments": segments,
+    }
 
 
 def main():
