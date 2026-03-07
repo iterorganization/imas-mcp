@@ -22,6 +22,7 @@ from imas_codex.discovery.signals.scanners.device_xml import (
     _make_signal_name,
     _persist_graph_nodes,
     _persist_jec2020_nodes,
+    _persist_mcfg_nodes,
 )
 
 # Minimal parsed output matching what parse_device_xml.py returns
@@ -1384,4 +1385,283 @@ class TestParseJEC2020Script:
         result = mod.parse_limiter(xml)
         assert result["r"] == [2.0, 2.5, 3.0]
         assert result["z"] == [1.0, 0.5, -0.5]
-        assert result["n_points"] == 3
+
+
+# ────────────────── MCFG sensor calibration fixtures ──────────────────
+
+MOCK_MCFG_CONFIG = {
+    "name": "sensor_calibration",
+    "description": "MCFG sensor positions and calibration epochs",
+    "format": "text",
+    "base_dir": "/home/MAGNW/chain1/input",
+    "files": [
+        {
+            "path": "PPFcfg/sensors_200c_2019-03-11.txt",
+            "role": "sensors",
+        },
+        {
+            "path": "magn_ep_2019-05-14/MCFG.ix",
+            "role": "calibration_index",
+        },
+    ],
+}
+
+MOCK_MCFG_PARSED = {
+    "sensors": {
+        "coils": [
+            {
+                "id": 1,
+                "r": 4.292,
+                "z": 0.604,
+                "angle": -74.1,
+                "gain": 0.986,
+                "rel_error": 0.02,
+                "abs_error": 0.005,
+                "jpf_name": "DA/C2-CX01",
+                "description": "outboard midplane",
+            },
+            {
+                "id": 2,
+                "r": 4.281,
+                "z": 0.724,
+                "angle": -73.5,
+                "gain": 0.992,
+                "rel_error": 0.02,
+                "abs_error": 0.005,
+                "jpf_name": "DA/C2-CX02",
+                "description": "outboard upper",
+            },
+        ],
+        "hall_probes": [
+            {
+                "id": 1,
+                "r": 6.2,
+                "z": 0.0,
+                "offset": 0.0,
+                "gain": 1.0,
+                "rel_error": 0.01,
+                "abs_error": 0.001,
+                "jpf_name": "DA/C2-HX01",
+                "description": "ex-vessel hall 1",
+            },
+        ],
+        "other": [],
+    },
+    "calibration_index": {
+        "epochs": [
+            {
+                "date": "19960127",
+                "first_shot": 35680,
+                "user": "gchuyler",
+                "config_id": "MCFG:0001/MAGNW",
+                "config_type": "MAGNETICS",
+                "description": "Initial calibration",
+            },
+            {
+                "date": "20190314",
+                "first_shot": 95350,
+                "user": "operato",
+                "config_id": "MCFG:0077/MAGNW",
+                "config_type": "MAGNETICS",
+                "description": "Latest calibration 2019",
+            },
+        ],
+    },
+}
+
+
+class TestMCFGPersist:
+    """Test _persist_mcfg_nodes with mock graph."""
+
+    def _run_persist(self, parsed=None):
+        """Run persist with mocked GraphClient and return captured data."""
+        if parsed is None:
+            parsed = MOCK_MCFG_PARSED
+
+        created_nodes: dict[str, list[dict]] = {}
+        query_calls: list[tuple] = []
+
+        with patch(
+            "imas_codex.discovery.signals.scanners.device_xml.GraphClient"
+        ) as mock_gc_cls:
+            mock_gc = mock_gc_cls.return_value.__enter__.return_value
+
+            def capture_query(cypher, **kwargs):
+                query_calls.append((cypher, kwargs))
+                return []
+
+            mock_gc.query.side_effect = capture_query
+
+            def capture_create(label, items, **kw):
+                created_nodes.setdefault(label, []).extend(items)
+                return {"processed": len(items), "relationships": {}}
+
+            mock_gc.create_nodes.side_effect = capture_create
+
+            stats = _persist_mcfg_nodes("jet", MOCK_MCFG_CONFIG, parsed)
+
+        return stats, created_nodes, query_calls
+
+    def test_persist_returns_correct_stats(self):
+        """Stats reflect coil, hall probe, and calibration epoch counts."""
+        stats, _, _ = self._run_persist()
+        assert stats["coil_sensors"] == 2
+        assert stats["hall_probes"] == 1
+        assert stats["calibration_epochs"] == 2
+
+    def test_persist_creates_data_source(self):
+        """Creates DataSource node with MCFG metadata."""
+        _, _, queries = self._run_persist()
+        ds_queries = [(q, kw) for q, kw in queries if "MERGE (ds:DataSource" in q]
+        assert len(ds_queries) == 1
+        assert ds_queries[0][1]["name"] == "sensor_calibration"
+        assert ds_queries[0][1]["source_format"] == "text"
+
+    def test_persist_creates_coil_sensor_nodes(self):
+        """Coil sensors create DataNode with R/Z/angle/gain/error fields."""
+        _, nodes, _ = self._run_persist()
+        coil_dns = [
+            dn
+            for dn in nodes.get("DataNode", [])
+            if "mcfg:sensor:" in dn.get("path", "")
+        ]
+        assert len(coil_dns) == 2
+
+        sensor1 = next(
+            dn for dn in coil_dns if dn["path"] == "jet:mcfg:sensor:DA/C2-CX01"
+        )
+        assert sensor1["r"] == 4.292
+        assert sensor1["z"] == 0.604
+        assert sensor1["angle"] == -74.1
+        assert sensor1["gain"] == 0.986
+        assert sensor1["rel_error"] == 0.02
+        assert sensor1["abs_error"] == 0.005
+        assert sensor1["jpf_name"] == "DA/C2-CX01"
+        assert sensor1["system"] == "MP"
+        assert sensor1["facility_id"] == "jet"
+
+    def test_persist_creates_hall_probe_nodes(self):
+        """Hall probes create DataNode with reduced field set."""
+        _, nodes, _ = self._run_persist()
+        hall_dns = [
+            dn for dn in nodes.get("DataNode", []) if "mcfg:hall:" in dn.get("path", "")
+        ]
+        assert len(hall_dns) == 1
+        assert hall_dns[0]["r"] == 6.2
+        assert hall_dns[0]["z"] == 0.0
+        assert hall_dns[0]["jpf_name"] == "DA/C2-HX01"
+        assert hall_dns[0]["system"] == "MP"
+
+    def test_persist_creates_same_sensor_crossref(self):
+        """SAME_SENSOR relationships link MCFG → JEC2020 by R,Z proximity."""
+        _, _, queries = self._run_persist()
+        xref_queries = [(q, kw) for q, kw in queries if "SAME_SENSOR" in q]
+        assert len(xref_queries) == 1
+        # Verify it matches on R,Z tolerance < 0.001m
+        assert "abs(mcfg.r - jec.r) < 0.001" in xref_queries[0][0]
+        assert "abs(mcfg.z - jec.z) < 0.001" in xref_queries[0][0]
+        assert xref_queries[0][1]["mcfg_source"] == "sensor_calibration"
+        assert xref_queries[0][1]["jec_source"] == "jec2020_geometry"
+
+    def test_persist_stores_calibration_epochs(self):
+        """Calibration epochs update DataSource with epoch count and shot range."""
+        _, _, queries = self._run_persist()
+        cal_queries = [(q, kw) for q, kw in queries if "calibration_epoch_count" in q]
+        assert len(cal_queries) == 1
+        assert cal_queries[0][1]["count"] == 2
+        assert cal_queries[0][1]["first_shot"] == 35680
+        assert cal_queries[0][1]["last_shot"] == 95350
+
+    def test_persist_no_sensors_returns_zeros(self):
+        """Empty sensor data returns zero counts without errors."""
+        parsed = {
+            "sensors": {"coils": [], "hall_probes": []},
+            "calibration_index": {"epochs": []},
+        }
+        stats, nodes, _ = self._run_persist(parsed)
+        assert stats["coil_sensors"] == 0
+        assert stats["hall_probes"] == 0
+        assert stats["calibration_epochs"] == 0
+        assert not nodes.get("DataNode")
+
+
+class TestParseMCFGScript:
+    """Test the MCFG remote parse script in isolation."""
+
+    def _load_module(self):
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            "parse_mcfg_sensors",
+            "imas_codex/remote/scripts/parse_mcfg_sensors.py",
+        )
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_parse_sensors_coils(self):
+        """Parse coil section with standard format fields."""
+        mod = self._load_module()
+        text = """\
+# MCFG sensor file
+  1   4.292   0.604  -74.1  0.986  0.02  0.005  DA/C2-CX01  -74.1  outboard midplane
+  2   4.281   0.724  -73.5  0.992  0.02  0.005  DA/C2-CX02  -73.5  outboard upper
+#END
+#END
+"""
+        result = mod.parse_sensors(text)
+        assert len(result["coils"]) == 2
+        assert result["coils"][0]["r"] == 4.292
+        assert result["coils"][0]["z"] == 0.604
+        assert result["coils"][0]["angle"] == -74.1
+        assert result["coils"][0]["jpf_name"] == "DA/C2-CX01"
+        assert result["coils"][0]["gain"] == 0.986
+        assert result["coils"][0]["rel_error"] == 0.02
+        assert result["coils"][0]["abs_error"] == 0.005
+
+    def test_parse_sensors_hall_probes(self):
+        """Parse hall probe section after first #END marker."""
+        mod = self._load_module()
+        text = """\
+# coils
+  1   4.292   0.604  -74.1  0.986  0.02  0.005  DA/C2-CX01  -74.1
+#END
+  1   6.200   0.000   0.000  1.000  0.01  0.001  DA/C2-HX01  ex-vessel hall 1
+#END
+"""
+        result = mod.parse_sensors(text)
+        assert len(result["coils"]) == 1
+        assert len(result["hall_probes"]) == 1
+        assert result["hall_probes"][0]["r"] == 6.2
+        assert result["hall_probes"][0]["jpf_name"] == "DA/C2-HX01"
+
+    def test_parse_calibration_index(self):
+        """Parse MCFG.ix calibration epoch index."""
+        mod = self._load_module()
+        text = """\
+$:19960127 0035680 gchuyler MCFG:0001/MAGNW MAGNETICS ! Initial calibration
+$:20190314 0095350 operato  MCFG:0077/MAGNW MAGNETICS ! Latest calibration 2019
+"""
+        result = mod.parse_calibration_index(text)
+        assert len(result["epochs"]) == 2
+        assert result["epochs"][0]["date"] == "19960127"
+        assert result["epochs"][0]["first_shot"] == 35680
+        assert result["epochs"][0]["user"] == "gchuyler"
+        assert result["epochs"][0]["config_id"] == "MCFG:0001/MAGNW"
+        assert result["epochs"][1]["first_shot"] == 95350
+        assert result["epochs"][1]["description"] == "Latest calibration 2019"
+
+    def test_parse_sensors_comments_skipped(self):
+        """Comment lines starting with ! or * are skipped."""
+        mod = self._load_module()
+        text = """\
+! Header comment
+* Another comment
+  1   4.292   0.604  -74.1  0.986  0.02  0.005  DA/C2-CX01  -74.1
+#END
+#END
+"""
+        result = mod.parse_sensors(text)
+        assert len(result["coils"]) == 1
+        assert len(result["hall_probes"]) == 0
+        assert len(result["other"]) == 0

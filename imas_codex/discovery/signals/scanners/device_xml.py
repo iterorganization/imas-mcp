@@ -943,6 +943,163 @@ def _persist_jec2020_nodes(
     return stats
 
 
+# =========================================================================
+# MCFG Sensor Calibration Ingestion
+# =========================================================================
+
+
+def _persist_mcfg_nodes(
+    facility: str,
+    source_config: dict[str, Any],
+    parsed: dict[str, dict],
+) -> dict[str, int]:
+    """Persist MCFG sensor positions and calibration data.
+
+    Creates DataSource, DataNode for each sensor, and cross-references
+    to JEC2020 probe nodes via SAME_SENSOR relationships.
+    """
+    source_name = source_config.get("name", "sensor_calibration")
+    base_dir = source_config.get("base_dir", "")
+
+    stats: dict[str, int] = {
+        "coil_sensors": 0,
+        "hall_probes": 0,
+        "calibration_epochs": 0,
+    }
+
+    with GraphClient() as gc:
+        # 1. Create DataSource
+        gc.query(
+            """
+            MERGE (ds:DataSource {name: $name})
+            ON CREATE SET
+                ds.facility_id = $facility,
+                ds.source_type = $source_type,
+                ds.source_format = $source_format,
+                ds.description = $description,
+                ds.shot_dependent = false
+            WITH ds
+            MATCH (f:Facility {id: $facility})
+            MERGE (ds)-[:AT_FACILITY]->(f)
+            """,
+            name=source_name,
+            facility=facility,
+            source_type=DataSourceType.xml.value,
+            source_format="text",
+            description=(
+                "MCFG magnetics sensor positions from CATIA CAD reference and "
+                f"calibration epochs. Files at {base_dir}."
+            ),
+        )
+
+        # 2. Coil sensors
+        sensors = parsed.get("sensors", {})
+        coils = sensors.get("coils", [])
+        if coils:
+            coil_nodes: list[dict] = []
+            for sensor in coils:
+                jpf_name = sensor.get("jpf_name", "")
+                node_path = f"{facility}:mcfg:sensor:{jpf_name}"
+
+                dn: dict[str, Any] = {
+                    "path": node_path,
+                    "data_source_name": source_name,
+                    "facility_id": facility,
+                    "node_type": DataNodeType.NUMERIC.value,
+                    "source": DataNodeSource.introspection.value,
+                    "system": "MP",
+                    "r": sensor["r"],
+                    "z": sensor["z"],
+                    "angle": sensor["angle"],
+                    "gain": sensor["gain"],
+                    "rel_error": sensor["rel_error"],
+                    "abs_error": sensor["abs_error"],
+                    "jpf_name": jpf_name,
+                    "description": (
+                        f"MCFG sensor {jpf_name}: "
+                        f"R={sensor['r']}m, Z={sensor['z']}m, "
+                        f"angle={sensor['angle']}°"
+                    ),
+                }
+                if sensor.get("description"):
+                    dn["sensor_description"] = sensor["description"]
+
+                coil_nodes.append(dn)
+
+            gc.create_nodes("DataNode", coil_nodes, id_field="path", batch_size=100)
+            stats["coil_sensors"] = len(coil_nodes)
+
+        # 3. Hall probes
+        hall_probes = sensors.get("hall_probes", [])
+        if hall_probes:
+            hall_nodes: list[dict] = []
+            for sensor in hall_probes:
+                jpf_name = sensor.get("jpf_name", "")
+                node_path = f"{facility}:mcfg:hall:{jpf_name}"
+
+                dn = {
+                    "path": node_path,
+                    "data_source_name": source_name,
+                    "facility_id": facility,
+                    "node_type": DataNodeType.NUMERIC.value,
+                    "source": DataNodeSource.introspection.value,
+                    "system": "MP",
+                    "r": sensor["r"],
+                    "z": sensor["z"],
+                    "gain": sensor["gain"],
+                    "rel_error": sensor["rel_error"],
+                    "abs_error": sensor["abs_error"],
+                    "jpf_name": jpf_name,
+                    "description": (
+                        f"MCFG hall probe {jpf_name}: "
+                        f"R={sensor['r']}m, Z={sensor['z']}m"
+                    ),
+                }
+                hall_nodes.append(dn)
+
+            gc.create_nodes("DataNode", hall_nodes, id_field="path", batch_size=50)
+            stats["hall_probes"] = len(hall_nodes)
+
+        # 4. Cross-reference MCFG ↔ JEC2020 sensors by R,Z proximity
+        if coils:
+            gc.query(
+                """
+                MATCH (mcfg:DataNode)
+                WHERE mcfg.data_source_name = $mcfg_source AND mcfg.facility_id = $facility
+                MATCH (jec:DataNode)
+                WHERE jec.data_source_name = $jec_source AND jec.facility_id = $facility
+                  AND jec.system = 'MP'
+                  AND abs(mcfg.r - jec.r) < 0.001
+                  AND abs(mcfg.z - jec.z) < 0.001
+                MERGE (mcfg)-[:SAME_SENSOR]->(jec)
+                """,
+                mcfg_source=source_name,
+                jec_source="jec2020_geometry",
+                facility=facility,
+            )
+
+        # 5. Calibration epochs (store as properties on DataSource)
+        cal_data = parsed.get("calibration_index", {})
+        cal_epochs = cal_data.get("epochs", [])
+        if cal_epochs:
+            # Store epoch count on DataSource
+            gc.query(
+                """
+                MATCH (ds:DataSource {name: $name})
+                SET ds.calibration_epoch_count = $count,
+                    ds.first_calibration_shot = $first_shot,
+                    ds.last_calibration_shot = $last_shot
+                """,
+                name=source_name,
+                count=len(cal_epochs),
+                first_shot=cal_epochs[0]["first_shot"],
+                last_shot=cal_epochs[-1]["first_shot"],
+            )
+            stats["calibration_epochs"] = len(cal_epochs)
+
+    return stats
+
+
 class DeviceXMLScanner:
     """Scanner for EFIT-format device XML geometry files in git.
 
@@ -1080,6 +1237,11 @@ class DeviceXMLScanner:
         if jec2020_stats:
             stats["jec2020"] = jec2020_stats
 
+        # Process MCFG sensor calibration if configured
+        mcfg_stats = await self._scan_mcfg(facility, ssh_host, config)
+        if mcfg_stats:
+            stats["mcfg"] = mcfg_stats
+
         return ScanResult(
             signals=[],  # Signals written directly to graph
             data_access=data_access,
@@ -1163,6 +1325,73 @@ class DeviceXMLScanner:
         )
 
         return jec_stats
+
+    async def _scan_mcfg(
+        self,
+        facility: str,
+        ssh_host: str,
+        config: dict[str, Any],
+    ) -> dict[str, int] | None:
+        """Scan MCFG sensor calibration static sources if configured.
+
+        Looks for a static_sources entry named 'sensor_calibration' in the
+        facility config and processes sensor position and calibration files.
+        """
+        from imas_codex.discovery.base.facility import get_facility
+
+        facility_config = get_facility(facility)
+        static_sources = facility_config.get("data_systems", {}).get(
+            "static_sources", []
+        )
+
+        mcfg_config = None
+        for source in static_sources:
+            if isinstance(source, dict) and source.get("name") == "sensor_calibration":
+                mcfg_config = source
+                break
+
+        if not mcfg_config:
+            return None
+
+        base_dir = mcfg_config.get("base_dir", "")
+        files = mcfg_config.get("files", [])
+        if not base_dir or not files:
+            return None
+
+        logger.info(
+            "device_xml scanner: processing MCFG sensor files from %s (%d files)",
+            base_dir,
+            len(files),
+        )
+
+        script_input = {
+            "base_dir": base_dir,
+            "files": [{"path": f["path"], "role": f["role"]} for f in files],
+        }
+
+        try:
+            output = run_python_script(
+                "parse_mcfg_sensors.py",
+                script_input,
+                ssh_host=ssh_host,
+                timeout=120,
+            )
+            parsed = json.loads(output.strip().split("\n")[-1])
+        except Exception as e:
+            logger.error("MCFG parse failed for %s: %s", facility, e)
+            return {"error": str(e)}
+
+        mcfg_stats = _persist_mcfg_nodes(facility, mcfg_config, parsed)
+
+        logger.info(
+            "MCFG scanner %s: %d coil sensors, %d hall probes, %d calibration epochs",
+            facility,
+            mcfg_stats.get("coil_sensors", 0),
+            mcfg_stats.get("hall_probes", 0),
+            mcfg_stats.get("calibration_epochs", 0),
+        )
+
+        return mcfg_stats
 
     async def check(
         self,
