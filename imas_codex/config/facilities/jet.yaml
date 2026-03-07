@@ -107,6 +107,11 @@ data_systems:
     # PulseDependencyDB but describe machine state, not EFIT config.
     # Only base configurations listed (EFCC sessions reuse geometry).
     # snap_file tracks which probes were enabled/disabled per epoch.
+    # Machine configuration epochs. Each represents a hardware state
+    # valid for a pulse range. Epoch boundaries from EFIT's PulseDependencyDB
+    # (configurationsMAGN). All 14 base configurations listed — EFCC sessions
+    # (p68967_efcc1, p70468_efcc2, p78814_efcc2, p79854_efcc1/efcc2) reuse
+    # the same device XML and limiter, changing only snap_file and Green's.
     versions:
       - version: p68613
         first_shot: 68613
@@ -117,19 +122,46 @@ data_systems:
         limiter: Limiters/limiter.mk2hd_cc
         greens: Greens/DMSS_091_T_200C/
         snap_file: Snap_files/EFITSNAP/efitsnap_p68613_bound0
+      - version: p74387
+        first_shot: 74387
+        last_shot: 78167
+        description: "FLME(3) out of order — timing issue"
+        device_xml: Devices/device_p68613.xml
+        device_ppfs: Devices/MAGN/device_ppfs
+        limiter: Limiters/limiter.mk2hd_cc
+        greens: Greens/DMSS_091_T_200C/
+        snap_file: Snap_files/EFITSNAP/efitsnap_p74387_bound0
+      - version: p78168
+        first_shot: 78168
+        last_shot: 78358
+        description: "P801B probe broken, still DMSS=91"
+        device_xml: Devices/device_p68613.xml
+        device_ppfs: Devices/MAGN/device_ppfs
+        limiter: Limiters/limiter.mk2hd_cc
+        greens: Greens/DMSS_091_T_200C/
+        snap_file: Snap_files/EFITSNAP/efitsnap_p78168_bound0
       - version: p78359
         first_shot: 78359
-        last_shot: 79853
-        description: "New PFC config DMSS=105, P801B broken"
+        last_shot: 78460
+        description: "New PFC config DMSS=105 trial, P801B still broken"
         device_xml: Devices/device_p68613.xml
         device_ppfs: Devices/MAGN/device_ppfs
         limiter: Limiters/limiter.mk2hd_cc
         greens: Greens/DMSS_105_T_200C/
         snap_file: Snap_files/EFITSNAP/efitsnap_p78359_bound0
+      - version: p78461
+        first_shot: 78461
+        last_shot: 79853
+        description: "DMSS=108 transition (pending p78461 snap), P801B broken"
+        device_xml: Devices/device_p68613.xml
+        device_ppfs: Devices/MAGN/device_ppfs
+        limiter: Limiters/limiter.mk2hd_cc
+        greens: Greens/DMSS_091_T_200C/
+        snap_file: Snap_files/EFITSNAP/efitsnap_p78168_bound0
       - version: p79854
         first_shot: 79854
         last_shot: 81133
-        description: "2011 ILW restart — Mk2ILW first wall"
+        description: "2011 ILW restart — Mk2ILW first wall, DMSS=105"
         device_xml: Devices/device_p68613.xml
         device_ppfs: Devices/MAGN/device_ppfs
         limiter: Limiters/limiter.mk2ilw_cc
@@ -171,6 +203,15 @@ data_systems:
         limiter: Limiters/limiter.mk2ilw_cc
         greens: Greens/DMSS_105_T_200C_UP4E4/
         snap_file: Snap_files/EFITSNAP/efitsnap_p88368_bound0
+      - version: p89431
+        first_shot: 89431
+        last_shot: 89439
+        description: "P802B broke, BPME(42) disabled"
+        device_xml: Devices/device_p88368.xml
+        device_ppfs: Devices/MAGN/device_ppfs
+        limiter: Limiters/limiter.mk2ilw_cc
+        greens: Greens/DMSS_105_T_200C_UP4E4/
+        snap_file: Snap_files/EFITSNAP/efitsnap_p81134_bound0
       - version: p89440
         first_shot: 89440
         last_shot: 90539
@@ -180,6 +221,15 @@ data_systems:
         limiter: Limiters/limiter.mk2ilw_cc
         greens: Greens/DMSS_105_T_200C_P802A/
         snap_file: Snap_files/EFITSNAP/efitsnap_p89440_bound0
+      - version: p90540
+        first_shot: 90540
+        last_shot: 90625
+        description: "I803/BPME(57) failed and disabled"
+        device_xml: Devices/device_p89440.xml
+        device_ppfs: Devices/MAGN/device_ppfs
+        limiter: Limiters/limiter.mk2ilw_cc
+        greens: Greens/DMSS_105_T_200C_P802A/
+        snap_file: Snap_files/EFITSNAP/efitsnap_p90540_bound0
       - version: p90626
         first_shot: 90626
         description: "I802+I803 failed, disabled — FINAL config through end of JET"
@@ -221,32 +271,57 @@ data_systems:
     # Limiter contour versions (independent of device XML structural epochs).
     # Each entry is a first-wall geometry that was physically installed.
     # The R,Z contour files define the plasma-facing boundary shape.
+    #
+    # Sources:
+    #   - Git repo: /home/chain1/git/efit_f90.git (3 files: mk2gb_ns_cc, mk2hd_cc, mk2ilw_cc)
+    #   - Frozen chain1: /home/chain1/input/efit_f90/Limiters/ (4 files: mk2a, mk2gb, mk2gb_ns, mk2hd)
+    #   - Frozen chain1 limiter_list maps shots 1-99999 across 4 contours
+    #   - L91NEW and Mk1 files NOT found on disk — may predate archival
+    chain1_limiter_dir: /home/chain1/input/efit_f90/Limiters
     limiter_versions:
       - name: L91NEW
         first_shot: 1
         last_shot: 28791
-        file: Limiters/limiter.L91NEW
+        description: "Pre-divertor limiter (1983-1991). File not found in git or chain1."
+        # file: NOT AVAILABLE — predates digital archival
       - name: Mk1
         first_shot: 28792
         last_shot: 35778
+        description: "Mark 1 divertor (1994-1995). File not found in git or chain1."
+        # file: NOT AVAILABLE — predates digital archival
       - name: Mk2A
         first_shot: 35779
         last_shot: 45155
+        description: "Mark 2A Gas Box divertor (1998)"
+        file: Limiters/limiter.mk2a
+        source: chain1  # frozen chain1 (2002-08-15), not in git repo
       - name: Mk2GB
         first_shot: 45156
         last_shot: 54549
-        file: Limiters/limiter.mk2gb_ns_cc
-      - name: Mk2GB-SR
+        description: "Mark 2 Gas Box (2002)"
+        file: Limiters/limiter.mk2gb
+        source: chain1  # frozen chain1 (2002-11-21), not in git repo
+      - name: Mk2GB-NS
         first_shot: 54550
         last_shot: 63445
+        description: "Mark 2 Gas Box with new septum (2006)"
+        file: Limiters/limiter.mk2gb_ns
+        source: chain1  # frozen chain1 (2006-01-31), not in git repo
+        file_cc: Limiters/limiter.mk2gb_ns_cc
+        source_cc: git  # coordinate-corrected version in git repo
       - name: Mk2HD
         first_shot: 63446
         last_shot: 79853
-        file: Limiters/limiter.mk2hd_cc
+        description: "Mark 2 High Delta divertor (2008)"
+        file: Limiters/limiter.mk2hd
+        source: chain1  # frozen chain1 (2006-01-31), not in git repo
+        file_cc: Limiters/limiter.mk2hd_cc
+        source_cc: git  # coordinate-corrected version in git repo
       - name: Mk2ILW
         first_shot: 79854
-        description: "ITER-Like Wall (beryllium/tungsten)"
+        description: "ITER-Like Wall — beryllium/tungsten (2011-2023)"
         file: Limiters/limiter.mk2ilw_cc
+        source: git  # only exists in git repo (post 2011 restart)
 
 # Data access patterns discovered during facility exploration.
 data_access_patterns:
