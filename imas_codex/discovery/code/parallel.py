@@ -334,12 +334,13 @@ def get_code_discovery_stats(facility: str) -> dict[str, int | float]:
         )
         stats["pending_score"] = score_pending[0]["pending"] if score_pending else 0
 
-        # Pending ingest: scored code files
+        # Pending ingest: scored code files (consistent with claim filters)
         ingest_result = gc.query(
             """
             MATCH (cf:CodeFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
             WHERE cf.status = 'scored'
               AND cf.score_composite >= 0.75
+              AND coalesce(cf.line_count, 0) <= 10000
             RETURN count(cf) AS pending
             """,
             facility=facility,
