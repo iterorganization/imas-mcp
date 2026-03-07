@@ -487,12 +487,469 @@ def _persist_graph_nodes(
     return stats
 
 
+# =========================================================================
+# JEC2020 Static Source Ingestion
+# =========================================================================
+
+# Physics domain → system code mapping for JEC2020 data
+JEC2020_SYSTEM_MAP = {
+    "magnetics_probe": "MP",
+    "magnetics_flux": "FL",
+    "pf_coils": "PF",
+    "pf_circuits": "CI",
+    "iron_core": "FE",
+    "limiter": "LIM",
+}
+
+
+def _build_jec2020_data_access(facility: str, base_dir: str) -> DataAccess:
+    """Build DataAccess node for JEC2020 filesystem XML access."""
+    return DataAccess(
+        id=f"{facility}:jec2020:xml",
+        facility_id=facility,
+        name="JEC2020 EFIT++ Geometry (XML)",
+        method_type="static_xml",
+        library="xml.etree.ElementTree",
+        access_type="local",
+        data_source="jec2020_geometry",
+        imports_template="import xml.etree.ElementTree as ET",
+        connection_template=(
+            f"with open('{base_dir}/magnetics.xml', 'rb') as f:\n"
+            "    root = ET.fromstring(f.read())"
+        ),
+        data_template=(
+            "probes = root.iter('magneticProbe')\n"
+            "for p in probes:\n"
+            "    geom = p.find('geometry')\n"
+            "    r = float(geom.get('rCentre'))\n"
+            "    z = float(geom.get('zCentre'))"
+        ),
+        full_example=(
+            "import xml.etree.ElementTree as ET\n\n"
+            f"with open('{base_dir}/magnetics.xml', 'rb') as f:\n"
+            "    root = ET.fromstring(f.read())\n\n"
+            "for probe in root.iter('magneticProbe'):\n"
+            "    geom = probe.find('geometry')\n"
+            "    tt = probe.find('timeTrace')\n"
+            "    print(f'Probe {probe.get(\"id\")}: '\n"
+            '          f\'R={geom.get("rCentre")}, Z={geom.get("zCentre")}\'\n'
+            "          f' PPF={tt.get(\"signalName\")}'\n"
+            "          f' JPF={tt.get(\"signalName2\")}')"
+        ),
+    )
+
+
+def _persist_jec2020_nodes(
+    facility: str,
+    source_config: dict[str, Any],
+    parsed: dict[str, dict],
+) -> dict[str, int]:
+    """Persist JEC2020 data into the graph.
+
+    Creates DataSource, DataNode, and FacilitySignal nodes for magnetics,
+    PF systems, iron core boundaries, and high-res limiter contour.
+    """
+    source_name = source_config.get("name", "jec2020_geometry")
+    base_dir = source_config.get("base_dir", "")
+    reference_shot = source_config.get("reference_shot", 0)
+    data_access_id = f"{facility}:jec2020:xml"
+
+    stats: dict[str, int] = {
+        "probes": 0,
+        "flux_loops": 0,
+        "pf_coils": 0,
+        "pf_circuits": 0,
+        "iron_segments": 0,
+        "limiter_points": 0,
+    }
+    all_signals: dict[str, FacilitySignal] = {}
+
+    with GraphClient() as gc:
+        # 1. Create DataSource
+        gc.query(
+            """
+            MERGE (ds:DataSource {name: $name})
+            ON CREATE SET
+                ds.facility_id = $facility,
+                ds.source_type = $source_type,
+                ds.source_format = $source_format,
+                ds.description = $description,
+                ds.shot_dependent = false
+            WITH ds
+            MATCH (f:Facility {id: $facility})
+            MERGE (ds)-[:AT_FACILITY]->(f)
+            """,
+            name=source_name,
+            facility=facility,
+            source_type=DataSourceType.xml.value,
+            source_format="jec2020_xml",
+            description=(
+                "JEC2020 EFIT++ geometry: magnetics probes, flux loops, "
+                "PF coils/circuits, iron core boundary, and high-resolution "
+                f"ILW limiter contour. Files at {base_dir}."
+            ),
+        )
+
+        # 2. Magnetics probes
+        magnetics = parsed.get("magnetics", {})
+        probes = magnetics.get("probes", [])
+        if probes:
+            probe_nodes: list[dict] = []
+            for p in probes:
+                pid = p.get("id", "")
+                node_path = f"{facility}:jec2020:probe:{pid}"
+                desc_parts = [f"Magnetic probe {pid}"]
+                if p.get("description"):
+                    desc_parts.append(p["description"])
+
+                dn: dict[str, Any] = {
+                    "path": node_path,
+                    "data_source_name": source_name,
+                    "facility_id": facility,
+                    "node_type": DataNodeType.NUMERIC.value,
+                    "source": DataNodeSource.introspection.value,
+                    "system": JEC2020_SYSTEM_MAP["magnetics_probe"],
+                    "first_shot": reference_shot,
+                    "description": ", ".join(desc_parts),
+                }
+                if p.get("rCentre") is not None:
+                    dn["r"] = p["rCentre"]
+                if p.get("zCentre") is not None:
+                    dn["z"] = p["zCentre"]
+                if p.get("poloidalOrientation") is not None:
+                    dn["poloidal_orientation"] = p["poloidalOrientation"]
+                if p.get("ppf_signal"):
+                    dn["ppf_signal"] = p["ppf_signal"]
+                if p.get("jpf_signal"):
+                    dn["jpf_signal"] = p["jpf_signal"]
+                if p.get("ppf_data_source"):
+                    dn["ppf_data_source"] = p["ppf_data_source"]
+                if p.get("jpf_data_source"):
+                    dn["jpf_data_source"] = p["jpf_data_source"]
+                if p.get("rel_error") is not None:
+                    dn["rel_error"] = p["rel_error"]
+                if p.get("abs_error") is not None:
+                    dn["abs_error"] = p["abs_error"]
+
+                probe_nodes.append(dn)
+
+                # FacilitySignal for each probe
+                sig_id = f"{facility}:magnetic_field_diagnostics/jec2020_probe_{pid}"
+                if sig_id not in all_signals:
+                    all_signals[sig_id] = FacilitySignal(
+                        id=sig_id,
+                        facility_id=facility,
+                        status=FacilitySignalStatus.discovered,
+                        physics_domain="magnetic_field_diagnostics",
+                        name=f"JEC2020 Probe {pid} ({p.get('description', '')})",
+                        accessor=f"jec2020:probe/{pid}",
+                        data_access=data_access_id,
+                        data_source_name=source_name,
+                        data_source_path=f"probe/{pid}",
+                        data_source_node=node_path,
+                        description=(
+                            f"Magnetic probe {pid}: "
+                            f"PPF={p.get('ppf_signal', '')}, "
+                            f"JPF={p.get('jpf_signal', '')}"
+                        ),
+                        discovery_source="jec2020_xml",
+                    )
+
+            gc.create_nodes("DataNode", probe_nodes, id_field="path", batch_size=100)
+            stats["probes"] = len(probe_nodes)
+
+        # 3. Flux loops
+        flux_loops = magnetics.get("flux_loops", [])
+        if flux_loops:
+            loop_nodes: list[dict] = []
+            for fl in flux_loops:
+                fid = fl.get("id", "")
+                node_path = f"{facility}:jec2020:flux_loop:{fid}"
+
+                dn = {
+                    "path": node_path,
+                    "data_source_name": source_name,
+                    "facility_id": facility,
+                    "node_type": DataNodeType.NUMERIC.value,
+                    "source": DataNodeSource.introspection.value,
+                    "system": JEC2020_SYSTEM_MAP["magnetics_flux"],
+                    "first_shot": reference_shot,
+                    "description": f"Flux loop {fid}: {fl.get('description', '')}",
+                }
+                if fl.get("rCentre") is not None:
+                    dn["r"] = fl["rCentre"]
+                if fl.get("zCentre") is not None:
+                    dn["z"] = fl["zCentre"]
+                if fl.get("ppf_signal"):
+                    dn["ppf_signal"] = fl["ppf_signal"]
+                if fl.get("jpf_signal"):
+                    dn["jpf_signal"] = fl["jpf_signal"]
+
+                loop_nodes.append(dn)
+
+                sig_id = (
+                    f"{facility}:magnetic_field_diagnostics/jec2020_flux_loop_{fid}"
+                )
+                if sig_id not in all_signals:
+                    all_signals[sig_id] = FacilitySignal(
+                        id=sig_id,
+                        facility_id=facility,
+                        status=FacilitySignalStatus.discovered,
+                        physics_domain="magnetic_field_diagnostics",
+                        name=f"JEC2020 Flux Loop {fid}",
+                        accessor=f"jec2020:flux_loop/{fid}",
+                        data_access=data_access_id,
+                        data_source_name=source_name,
+                        data_source_path=f"flux_loop/{fid}",
+                        data_source_node=node_path,
+                        description=f"Flux loop {fid}: {fl.get('description', '')}",
+                        discovery_source="jec2020_xml",
+                    )
+
+            gc.create_nodes("DataNode", loop_nodes, id_field="path", batch_size=100)
+            stats["flux_loops"] = len(loop_nodes)
+
+        # 4. PF coils
+        pf_data = parsed.get("pf_coils", {})
+        pf_coils = pf_data.get("coils", [])
+        if pf_coils:
+            coil_nodes: list[dict] = []
+            for coil in pf_coils:
+                cid = coil.get("id", "")
+                cname = coil.get("name", "")
+                node_path = f"{facility}:jec2020:pf_coil:{cid}"
+
+                dn = {
+                    "path": node_path,
+                    "data_source_name": source_name,
+                    "facility_id": facility,
+                    "node_type": DataNodeType.NUMERIC.value,
+                    "source": DataNodeSource.introspection.value,
+                    "system": JEC2020_SYSTEM_MAP["pf_coils"],
+                    "first_shot": reference_shot,
+                    "description": f"PF coil {cid} ({cname})",
+                }
+                # Single-value geometry
+                for attr in (
+                    "rCentre",
+                    "zCentre",
+                    "dR",
+                    "dZ",
+                    "angle1",
+                    "angle2",
+                    "turnCount",
+                ):
+                    val = coil.get(attr)
+                    if val is not None:
+                        if isinstance(val, list):
+                            # Multi-element coil — store as JSON array
+                            dn[f"{attr}_array"] = val
+                            dn[attr] = val[0]  # Store first element as scalar
+                        else:
+                            dn[attr] = val
+
+                coil_nodes.append(dn)
+
+                sig_id = f"{facility}:magnetic_field_diagnostics/jec2020_pf_coil_{cid}"
+                if sig_id not in all_signals:
+                    all_signals[sig_id] = FacilitySignal(
+                        id=sig_id,
+                        facility_id=facility,
+                        status=FacilitySignalStatus.discovered,
+                        physics_domain="magnetic_field_diagnostics",
+                        name=f"JEC2020 PF Coil {cid} ({cname})",
+                        accessor=f"jec2020:pf_coil/{cid}",
+                        data_access=data_access_id,
+                        data_source_name=source_name,
+                        data_source_path=f"pf_coil/{cid}",
+                        data_source_node=node_path,
+                        description=f"PF coil {cid} ({cname})",
+                        discovery_source="jec2020_xml",
+                    )
+
+            gc.create_nodes("DataNode", coil_nodes, id_field="path", batch_size=100)
+            stats["pf_coils"] = len(coil_nodes)
+
+        # 5. PF circuits
+        pf_circuits = pf_data.get("circuits", [])
+        if pf_circuits:
+            circuit_nodes: list[dict] = []
+            for circ in pf_circuits:
+                cid = circ.get("id", "")
+                cname = circ.get("name", "")
+                node_path = f"{facility}:jec2020:pf_circuit:{cid}"
+
+                dn = {
+                    "path": node_path,
+                    "data_source_name": source_name,
+                    "facility_id": facility,
+                    "node_type": DataNodeType.NUMERIC.value,
+                    "source": DataNodeSource.introspection.value,
+                    "system": JEC2020_SYSTEM_MAP["pf_circuits"],
+                    "first_shot": reference_shot,
+                    "description": f"PF circuit {cid} ({cname})",
+                }
+                if circ.get("coil_ids"):
+                    dn["coil_ids"] = circ["coil_ids"]
+
+                circuit_nodes.append(dn)
+
+            gc.create_nodes("DataNode", circuit_nodes, id_field="path", batch_size=50)
+            stats["pf_circuits"] = len(circuit_nodes)
+
+            # Create COIL_IN_CIRCUIT relationships
+            coil_circuit_records = []
+            for circ in pf_circuits:
+                cid = circ.get("id", "")
+                for coil_id in circ.get("coil_ids", []):
+                    coil_circuit_records.append(
+                        {
+                            "circuit_path": f"{facility}:jec2020:pf_circuit:{cid}",
+                            "coil_path": f"{facility}:jec2020:pf_coil:{coil_id}",
+                        }
+                    )
+
+            if coil_circuit_records:
+                gc.query(
+                    """
+                    UNWIND $records AS rec
+                    MATCH (circuit:DataNode {path: rec.circuit_path})
+                    MATCH (coil:DataNode {path: rec.coil_path})
+                    MERGE (coil)-[:IN_CIRCUIT]->(circuit)
+                    """,
+                    records=coil_circuit_records,
+                )
+
+        # 6. Iron core boundary
+        iron_data = parsed.get("iron_core", {})
+        if iron_data and "error" not in iron_data:
+            r_vals = iron_data.get("r", [])
+            z_vals = iron_data.get("z", [])
+            if r_vals and z_vals:
+                iron_node = {
+                    "path": f"{facility}:jec2020:iron_boundary",
+                    "data_source_name": source_name,
+                    "facility_id": facility,
+                    "node_type": DataNodeType.NUMERIC.value,
+                    "source": DataNodeSource.introspection.value,
+                    "system": JEC2020_SYSTEM_MAP["iron_core"],
+                    "first_shot": reference_shot,
+                    "description": (
+                        f"Iron core boundary: {len(r_vals)} segments, "
+                        f"length={iron_data.get('boundary_length', '?')}m"
+                    ),
+                    "r_contour": r_vals,
+                    "z_contour": z_vals,
+                    "n_points": len(r_vals),
+                }
+                if iron_data.get("permeabilities"):
+                    iron_node["permeabilities"] = iron_data["permeabilities"]
+                if iron_data.get("segment_lengths"):
+                    iron_node["segment_lengths"] = iron_data["segment_lengths"]
+                if iron_data.get("boundary_length"):
+                    iron_node["boundary_length"] = iron_data["boundary_length"]
+
+                gc.create_nodes("DataNode", [iron_node], id_field="path")
+                stats["iron_segments"] = len(r_vals)
+
+                sig_id = f"{facility}:magnetic_field_diagnostics/jec2020_iron_boundary"
+                all_signals[sig_id] = FacilitySignal(
+                    id=sig_id,
+                    facility_id=facility,
+                    status=FacilitySignalStatus.discovered,
+                    physics_domain="magnetic_field_diagnostics",
+                    name="JEC2020 Iron Core Boundary",
+                    accessor="jec2020:iron_boundary",
+                    data_access=data_access_id,
+                    data_source_name=source_name,
+                    data_source_path="iron_boundary",
+                    data_source_node=f"{facility}:jec2020:iron_boundary",
+                    description=(
+                        f"Iron core boundary: {len(r_vals)} segments "
+                        f"with permeabilities"
+                    ),
+                    discovery_source="jec2020_xml",
+                )
+
+        # 7. High-res limiter
+        limiter_data = parsed.get("limiter", {})
+        if limiter_data and "error" not in limiter_data:
+            r_vals = limiter_data.get("r", [])
+            z_vals = limiter_data.get("z", [])
+            if r_vals and z_vals:
+                limiter_node = {
+                    "path": f"{facility}:jec2020:limiter",
+                    "data_source_name": source_name,
+                    "facility_id": facility,
+                    "node_type": DataNodeType.NUMERIC.value,
+                    "source": DataNodeSource.introspection.value,
+                    "system": JEC2020_SYSTEM_MAP["limiter"],
+                    "first_shot": reference_shot,
+                    "description": (
+                        f"JEC2020 ILW first wall contour at T=200°C: "
+                        f"{len(r_vals)} R,Z points"
+                    ),
+                    "r_contour": r_vals,
+                    "z_contour": z_vals,
+                    "n_points": len(r_vals),
+                }
+                gc.create_nodes("DataNode", [limiter_node], id_field="path")
+                stats["limiter_points"] = len(r_vals)
+
+                sig_id = f"{facility}:magnetic_field_diagnostics/jec2020_limiter"
+                all_signals[sig_id] = FacilitySignal(
+                    id=sig_id,
+                    facility_id=facility,
+                    status=FacilitySignalStatus.discovered,
+                    physics_domain="magnetic_field_diagnostics",
+                    name="JEC2020 ILW Limiter Contour",
+                    accessor="jec2020:limiter",
+                    data_access=data_access_id,
+                    data_source_name=source_name,
+                    data_source_path="limiter",
+                    data_source_node=f"{facility}:jec2020:limiter",
+                    description=(
+                        f"High-resolution ILW first wall contour at T=200°C: "
+                        f"{len(r_vals)} R,Z points"
+                    ),
+                    discovery_source="jec2020_xml",
+                )
+
+                # Create SAME_GEOMETRY link to device_xml limiter if it exists
+                gc.query(
+                    """
+                    MATCH (jec:DataNode {path: $jec_path})
+                    MATCH (dx:DataNode {path: $dx_path})
+                    MERGE (jec)-[:SAME_GEOMETRY]->(dx)
+                    """,
+                    jec_path=f"{facility}:jec2020:limiter",
+                    dx_path=f"{facility}:device_xml:limiter:Mk2ILW",
+                )
+
+        # 8. Persist signals
+        if all_signals:
+            signal_dicts = [
+                s.model_dump(exclude_none=True) for s in all_signals.values()
+            ]
+            gc.create_nodes(
+                "FacilitySignal", signal_dicts, id_field="id", batch_size=100
+            )
+
+        # 9. Persist DataAccess
+        da = _build_jec2020_data_access(facility, base_dir)
+        gc.create_nodes("DataAccess", [da.model_dump(exclude_none=True)], id_field="id")
+
+    stats["signals"] = len(all_signals)
+    return stats
+
+
 class DeviceXMLScanner:
     """Scanner for EFIT-format device XML geometry files in git.
 
     Reads device XML files from a bare git repo via SSH, parses geometry
     for PF coils, passive structures, magnetic probes, flux loops, and
-    limiter contours. Creates graph nodes directly.
+    limiter contours. Also processes JEC2020 static XML sources for
+    next-generation EFIT++ geometry. Creates graph nodes directly.
 
     Config (data_systems.device_xml):
         git_repo: str - Path to bare git repo
@@ -500,6 +957,9 @@ class DeviceXMLScanner:
         versions: list - Device geometry versions with pulse ranges
         limiter_versions: list - First-wall contour versions
         systems: list - Named subsystems (informational)
+
+    Also processes data_systems.static_sources entries with name
+    'jec2020_geometry' for JEC2020 XML ingestion.
     """
 
     scanner_type: str = "device_xml"
@@ -615,6 +1075,11 @@ class DeviceXMLScanner:
         # Build DataAccess for return
         data_access = _build_data_access(facility, config)
 
+        # Process JEC2020 static sources if configured
+        jec2020_stats = await self._scan_jec2020(facility, ssh_host, config)
+        if jec2020_stats:
+            stats["jec2020"] = jec2020_stats
+
         return ScanResult(
             signals=[],  # Signals written directly to graph
             data_access=data_access,
@@ -625,6 +1090,79 @@ class DeviceXMLScanner:
             },
             stats=stats,
         )
+
+    async def _scan_jec2020(
+        self,
+        facility: str,
+        ssh_host: str,
+        config: dict[str, Any],
+    ) -> dict[str, int] | None:
+        """Scan JEC2020 static sources if configured.
+
+        Looks for a static_sources entry named 'jec2020_geometry' in the
+        facility config and processes its XML files.
+        """
+        from imas_codex.discovery.base.facility import get_facility
+
+        facility_config = get_facility(facility)
+        static_sources = facility_config.get("data_systems", {}).get(
+            "static_sources", []
+        )
+
+        # Find JEC2020 source config
+        jec2020_config = None
+        for source in static_sources:
+            if isinstance(source, dict) and source.get("name") == "jec2020_geometry":
+                jec2020_config = source
+                break
+
+        if not jec2020_config:
+            return None
+
+        base_dir = jec2020_config.get("base_dir", "")
+        files = jec2020_config.get("files", [])
+        if not base_dir or not files:
+            return None
+
+        logger.info(
+            "device_xml scanner: processing JEC2020 files from %s (%d files)",
+            base_dir,
+            len(files),
+        )
+
+        # Build script input
+        script_input = {
+            "base_dir": base_dir,
+            "files": [{"path": f["path"], "role": f["role"]} for f in files],
+        }
+
+        try:
+            output = run_python_script(
+                "parse_jec2020.py",
+                script_input,
+                ssh_host=ssh_host,
+                timeout=120,
+            )
+            parsed = json.loads(output.strip().split("\n")[-1])
+        except Exception as e:
+            logger.error("JEC2020 parse failed for %s: %s", facility, e)
+            return {"error": str(e)}
+
+        # Persist to graph
+        jec_stats = _persist_jec2020_nodes(facility, jec2020_config, parsed)
+
+        logger.info(
+            "JEC2020 scanner %s: %d probes, %d flux loops, %d PF coils, "
+            "%d iron segments, %d limiter points",
+            facility,
+            jec_stats.get("probes", 0),
+            jec_stats.get("flux_loops", 0),
+            jec_stats.get("pf_coils", 0),
+            jec_stats.get("iron_segments", 0),
+            jec_stats.get("limiter_points", 0),
+        )
+
+        return jec_stats
 
     async def check(
         self,
