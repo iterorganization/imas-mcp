@@ -360,4 +360,17 @@ def get_code_discovery_stats(facility: str) -> dict[str, int | float]:
             enriched_result[0]["enriched"] if enriched_result else 0
         )
 
+        # Accumulated LLM cost from graph (source of truth across runs)
+        cost_result = gc.query(
+            """
+            MATCH (cf:CodeFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
+            WHERE cf.score_cost IS NOT NULL
+            RETURN sum(cf.score_cost) AS accumulated_cost
+            """,
+            facility=facility,
+        )
+        stats["accumulated_cost"] = (
+            cost_result[0]["accumulated_cost"] or 0.0 if cost_result else 0.0
+        )
+
         return stats

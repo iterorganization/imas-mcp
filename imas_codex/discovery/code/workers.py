@@ -291,7 +291,10 @@ async def triage_worker(
             state.triage_stats.cost += triage_cost
 
             triage_applied = await asyncio.to_thread(
-                apply_triage_results, triage_parsed.results, file_id_map
+                apply_triage_results,
+                triage_parsed.results,
+                file_id_map,
+                batch_cost=triage_cost,
             )
 
             triaged = triage_applied["triaged"]
@@ -454,7 +457,10 @@ async def score_worker(
             state.score_stats.cost += cost
 
             result = await asyncio.to_thread(
-                apply_file_scores, parsed.results, file_id_map
+                apply_file_scores,
+                parsed.results,
+                file_id_map,
+                batch_cost=cost,
             )
             batch_total = result.get("scored", 0) + result.get("skipped", 0)
             state.score_stats.processed += batch_total
