@@ -2,6 +2,9 @@
 
 **Goal**: Complete ingestion of ALL JET tokamak machine description geometry into the knowledge graph — covering shots 1 through 104522 — via the `imas-codex discover signals jet` CLI pipeline. This includes EFIT device XMLs, chain1 limiter contours, JEC2020 XMLs (PF systems, magnetics, iron boundaries, high-res limiter), MCFG sensor calibration data, and PPF static geometry signals. Final deliverable: epoch-evolving composite plot of JET vessel geometry produced entirely from graph queries.
 
+**Prerequisites**:
+- [Facility Config Schema Restructure](facility-config-schema-restructure.md) — **must be completed first**. Phases 1, 7, 8, and 9 of this plan depend on schema-typed config classes (`LimiterVersion` extensions, `JEC2020Config`, `MCFGConfig`, `PPFStaticGeometryConfig`) that are defined and implemented in that plan. Without the schema restructure, scanner code would consume unvalidated dicts.
+
 **Constraints**:
 - All ingestion via CLI + scanners — not agent-led
 - TCV pipeline retains full functionality and feature parity
@@ -77,6 +80,8 @@
 ---
 
 ## Phase 1: Complete Limiter Contour Coverage (Shots 1–104522)
+
+**Depends on**: Schema restructure Phase 1 — `LimiterVersion.source`, `LimiterVersion.file_cc`, `DeviceXMLConfig.chain1_limiter_dir` must be schema-typed.
 
 **Objective**: Ingest ALL 5 available limiter R,Z contour files into the graph. Every shot from 1 to 104522 will map to a limiter contour.
 
@@ -281,6 +286,8 @@ Do NOT add EFCC variants as separate StructuralEpochs. They share geometry.
 
 ## Phase 7: JEC2020 XML Ingestion
 
+**Depends on**: Schema restructure Phase 1 — `JEC2020Config` and `JEC2020FileConfig` must be schema-typed and registered in `DataSystemsConfig`.
+
 **Objective**: Ingest JET's next-generation EFIT++ geometry files, which provide richer metadata than legacy device XMLs including dual PPF/JPF data source references, iron core geometry, and high-resolution limiter contours.
 
 ### Verified Evidence
@@ -396,6 +403,8 @@ def test_jec2020_magnetics_dual_source():
 
 ## Phase 8: MCFG Sensor Calibration Data
 
+**Depends on**: Schema restructure Phase 1 — `MCFGConfig` must be schema-typed and registered in `DataSystemsConfig`.
+
 **Objective**: Ingest canonical sensor positions from CATIA CAD reference and track calibration epoch changes.
 
 ### Verified Evidence
@@ -497,6 +506,8 @@ def test_mcfg_jec2020_cross_reference():
 ---
 
 ## Phase 9: PPF Static Geometry Signals
+
+**Depends on**: Schema restructure Phase 1 — `PPFStaticGeometryConfig` and `PPFStaticSignal` must be schema-typed and registered in `DataSystemsConfig`.
 
 **Objective**: Link PPF signals containing static machine description data to their corresponding device_xml/JEC2020 DataNodes, and ingest geometry data accessible only via PPF.
 
