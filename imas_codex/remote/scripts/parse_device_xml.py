@@ -305,13 +305,27 @@ def main():
     for lim in limiter_files:
         name = lim.get("name", "unknown")
         file_path = lim.get("file")
+        source_dir = lim.get("source_dir")
         if not file_path:
             continue
 
-        full_path = f"{input_prefix}/{file_path}" if input_prefix else file_path
         try:
-            data = git_show(git_repo, full_path)
-            result["limiters"][name] = parse_limiter_file(data)
+            if source_dir:
+                # Read from filesystem directory
+                abs_path = f"{source_dir}/{file_path}"
+                with open(abs_path, "rb") as f:
+                    data = f.read()
+                limiter_result = parse_limiter_file(data)
+                limiter_result["file_source"] = "filesystem"
+                limiter_result["file_path"] = abs_path
+            else:
+                # Read from git repo
+                full_path = f"{input_prefix}/{file_path}" if input_prefix else file_path
+                data = git_show(git_repo, full_path)
+                limiter_result = parse_limiter_file(data)
+                limiter_result["file_source"] = "git"
+                limiter_result["file_path"] = full_path
+            result["limiters"][name] = limiter_result
         except Exception as e:
             result["limiters"][name] = {"error": str(e)[:200]}
 

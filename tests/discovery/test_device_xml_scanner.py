@@ -572,8 +572,333 @@ class TestParseDeviceXMLScript:
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
 
-        data = b"2.0 1.5\n2.5 1.8\n3.0 1.5\n"
+        data = b"3\n2.0 1.5\n2.5 1.8\n3.0 1.5\n"
         result = mod.parse_limiter_file(data)
         assert result["r"] == [2.0, 2.5, 3.0]
         assert result["z"] == [1.5, 1.8, 1.5]
         assert result["n_points"] == 3
+
+    def test_parse_limiter_file_with_segment_header(self):
+        """Test limiter contour parsing with segment count header (chain1 format)."""
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            "parse_device_xml",
+            "imas_codex/remote/scripts/parse_device_xml.py",
+        )
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        # Format matching the real mk2a file: segment count + R,Z pairs
+        # then second segment (should be ignored)
+        data = (
+            b"  3\n"
+            b" 1.82396       -.02263\n"
+            b" 1.83565       -.12204\n"
+            b" 1.85062       -.22101\n"
+            b"    2\n"
+            b"2.3921      -0.3922\n"
+            b"2.4123      -0.4011\n"
+        )
+        result = mod.parse_limiter_file(data)
+        # Only first segment extracted (3 points)
+        assert result["n_points"] == 3
+        assert result["r"][0] == pytest.approx(1.82396)
+        assert result["z"][0] == pytest.approx(-0.02263)
+        assert len(result["r"]) == 3
+
+
+class TestChain1LimiterParsing:
+    """Test filesystem-based limiter file reading (chain1 directory)."""
+
+    def test_chain1_limiter_produces_same_format_as_git(self):
+        """Limiter files from chain1 use identical R,Z format as git files."""
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            "parse_device_xml",
+            "imas_codex/remote/scripts/parse_device_xml.py",
+        )
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        # Both sources use the same segment-count + R,Z format
+        git_data = b"3\n2.0 1.5\n2.5 1.8\n3.0 1.5\n"
+        git_result = mod.parse_limiter_file(git_data)
+
+        chain1_data = b"  3\n2.0 1.5\n2.5 1.8\n3.0 1.5\n"
+        chain1_result = mod.parse_limiter_file(chain1_data)
+
+        # Both should produce identical R,Z contours
+        assert git_result["r"] == chain1_result["r"]
+        assert git_result["z"] == chain1_result["z"]
+        assert git_result["n_points"] == chain1_result["n_points"]
+
+
+class TestLimiterProvenance:
+    """Test limiter DataNode provenance tracking (file_source, file_path)."""
+
+    def test_limiter_node_has_provenance(self):
+        """Limiter DataNode includes file_source and file_path properties."""
+        parsed_limiters = {
+            "Mk2A": {
+                "r": [1.8, 1.9, 2.0],
+                "z": [0.0, -0.1, -0.2],
+                "n_points": 3,
+                "file_source": "filesystem",
+                "file_path": "/home/chain1/input/efit/Limiters/limiter.mk2a",
+            },
+            "Mk2ILW": {
+                "r": [2.0, 2.5, 3.0],
+                "z": [1.5, 0.0, -1.5],
+                "n_points": 3,
+                "file_source": "git",
+                "file_path": "JET/input/Limiters/limiter.mk2ilw_cc",
+            },
+        }
+        config = {
+            **MOCK_JET_CONFIG,
+            "limiter_versions": [
+                {
+                    "name": "Mk2A",
+                    "first_shot": 1,
+                    "last_shot": 44414,
+                    "file": "limiter.mk2a",
+                    "source_dir": "/home/chain1/input/efit/Limiters",
+                },
+                {
+                    "name": "Mk2ILW",
+                    "first_shot": 79854,
+                    "file": "Limiters/limiter.mk2ilw_cc",
+                },
+            ],
+        }
+
+        created_nodes: list[list[dict]] = []
+
+        with patch(
+            "imas_codex.discovery.signals.scanners.device_xml.GraphClient"
+        ) as mock_gc_cls:
+            mock_gc = mock_gc_cls.return_value.__enter__.return_value
+            mock_gc.query.return_value = []
+            mock_gc.create_nodes.side_effect = lambda label, items, **kw: (
+                created_nodes.append(items)
+                or {"processed": len(items), "relationships": {}}
+            )
+
+            _persist_graph_nodes(
+                "jet", config, MOCK_PARSED_OUTPUT["versions"], parsed_limiters
+            )
+
+        all_dns = [dn for batch in created_nodes for dn in batch]
+        limiter_dns = [dn for dn in all_dns if "limiter:" in dn.get("path", "")]
+        assert len(limiter_dns) == 2
+
+        mk2a = next(dn for dn in limiter_dns if "Mk2A" in dn["path"])
+        assert mk2a["file_source"] == "filesystem"
+        assert mk2a["file_path"] == "/home/chain1/input/efit/Limiters/limiter.mk2a"
+
+        mk2ilw = next(dn for dn in limiter_dns if "Mk2ILW" in dn["path"])
+        assert mk2ilw["file_source"] == "git"
+        assert mk2ilw["file_path"] == "JET/input/Limiters/limiter.mk2ilw_cc"
+
+
+class TestUsesLimiterRelationship:
+    """Test StructuralEpoch → Limiter DataNode USES_LIMITER relationships."""
+
+    def test_uses_limiter_relationships_created(self):
+        """USES_LIMITER graph queries are invoked with correct epoch/limiter pairs."""
+        config = {
+            "git_repo": "/repo",
+            "input_prefix": "JET/input",
+            "versions": [
+                {
+                    "version": "p68613",
+                    "first_shot": 68613,
+                    "last_shot": 79853,
+                    "description": "Mk2HD era",
+                    "device_xml": "Devices/device_p68613.xml",
+                    "limiter": "Limiters/limiter.mk2hd_cc",
+                },
+                {
+                    "version": "p79854",
+                    "first_shot": 79854,
+                    "description": "ILW era",
+                    "device_xml": "Devices/device_p68613.xml",
+                    "limiter": "Limiters/limiter.mk2ilw_cc",
+                },
+            ],
+            "limiter_versions": [
+                {
+                    "name": "Mk2HD",
+                    "first_shot": 63446,
+                    "last_shot": 79853,
+                    "file": "Limiters/limiter.mk2hd_cc",
+                },
+                {
+                    "name": "Mk2ILW",
+                    "first_shot": 79854,
+                    "file": "Limiters/limiter.mk2ilw_cc",
+                },
+            ],
+        }
+        parsed = {
+            "p68613": {
+                "magprobes": [{"id": "1", "r": 4.0, "z": 0.5, "angle": -70.0}],
+                "flux": [],
+                "pfcoils": [],
+                "pfcircuits": [],
+                "pfpassive": [],
+            },
+        }
+        parsed_limiters = {
+            "Mk2HD": {"r": [2.0, 2.5], "z": [1.0, 0.0], "n_points": 2},
+            "Mk2ILW": {"r": [2.0, 3.0], "z": [1.5, -1.5], "n_points": 2},
+        }
+
+        query_calls: list[tuple] = []
+
+        with patch(
+            "imas_codex.discovery.signals.scanners.device_xml.GraphClient"
+        ) as mock_gc_cls:
+            mock_gc = mock_gc_cls.return_value.__enter__.return_value
+            mock_gc.query.return_value = []
+            mock_gc.create_nodes.return_value = {"processed": 0, "relationships": {}}
+
+            def capture_query(cypher, **kwargs):
+                query_calls.append((cypher, kwargs))
+                return []
+
+            mock_gc.query.side_effect = capture_query
+
+            _persist_graph_nodes("jet", config, parsed, parsed_limiters)
+
+        # Find the USES_LIMITER query call
+        ul_calls = [(q, kw) for q, kw in query_calls if "USES_LIMITER" in q]
+        assert len(ul_calls) == 1
+        records = ul_calls[0][1]["records"]
+        assert len(records) == 2
+        assert records[0]["epoch_id"] == "jet:device_xml:p68613"
+        assert records[0]["limiter_path"] == "jet:device_xml:limiter:Mk2HD"
+        assert records[1]["epoch_id"] == "jet:device_xml:p79854"
+        assert records[1]["limiter_path"] == "jet:device_xml:limiter:Mk2ILW"
+
+
+class TestCompleteLimiterCoverage:
+    """Test that all 5 limiter versions produce DataNodes when both sources used."""
+
+    def test_all_five_limiters_ingested(self):
+        """All 5 limiter contour files (Mk2A-Mk2ILW) produce DataNodes with R,Z data."""
+        config = {
+            "git_repo": "/repo",
+            "input_prefix": "JET/input",
+            "versions": [
+                {
+                    "version": "p68613",
+                    "first_shot": 68613,
+                    "device_xml": "Devices/device_p68613.xml",
+                    "limiter": "Limiters/limiter.mk2hd_cc",
+                },
+            ],
+            "limiter_versions": [
+                {
+                    "name": "Mk2A",
+                    "first_shot": 1,
+                    "last_shot": 44414,
+                    "file": "limiter.mk2a",
+                    "source_dir": "/chain1/Limiters",
+                },
+                {
+                    "name": "Mk2GB",
+                    "first_shot": 44415,
+                    "last_shot": 54351,
+                    "file": "limiter.mk2gb",
+                    "source_dir": "/chain1/Limiters",
+                },
+                {
+                    "name": "Mk2GB-NS",
+                    "first_shot": 54352,
+                    "last_shot": 63445,
+                    "file": "limiter.mk2gb_ns_cc",
+                },
+                {
+                    "name": "Mk2HD",
+                    "first_shot": 63446,
+                    "last_shot": 79853,
+                    "file": "limiter.mk2hd_cc",
+                },
+                {"name": "Mk2ILW", "first_shot": 79854, "file": "limiter.mk2ilw_cc"},
+            ],
+        }
+        parsed_limiters = {
+            "Mk2A": {
+                "r": [1.8, 1.9],
+                "z": [0.0, -0.1],
+                "n_points": 2,
+                "file_source": "filesystem",
+                "file_path": "/chain1/Limiters/limiter.mk2a",
+            },
+            "Mk2GB": {
+                "r": [2.0, 2.1],
+                "z": [-0.9, -1.1],
+                "n_points": 2,
+                "file_source": "filesystem",
+                "file_path": "/chain1/Limiters/limiter.mk2gb",
+            },
+            "Mk2GB-NS": {
+                "r": [2.0, 2.3],
+                "z": [-0.9, -1.3],
+                "n_points": 2,
+                "file_source": "git",
+                "file_path": "JET/input/Limiters/limiter.mk2gb_ns_cc",
+            },
+            "Mk2HD": {
+                "r": [2.0, 2.4],
+                "z": [-0.5, -1.3],
+                "n_points": 2,
+                "file_source": "git",
+                "file_path": "JET/input/Limiters/limiter.mk2hd_cc",
+            },
+            "Mk2ILW": {
+                "r": [2.0, 3.0],
+                "z": [1.5, -1.5],
+                "n_points": 2,
+                "file_source": "git",
+                "file_path": "JET/input/Limiters/limiter.mk2ilw_cc",
+            },
+        }
+
+        created_nodes: list[list[dict]] = []
+
+        with patch(
+            "imas_codex.discovery.signals.scanners.device_xml.GraphClient"
+        ) as mock_gc_cls:
+            mock_gc = mock_gc_cls.return_value.__enter__.return_value
+            mock_gc.query.return_value = []
+            mock_gc.create_nodes.side_effect = lambda label, items, **kw: (
+                created_nodes.append(items)
+                or {"processed": len(items), "relationships": {}}
+            )
+
+            stats = _persist_graph_nodes(
+                "jet",
+                config,
+                {
+                    "p68613": {
+                        "magprobes": [],
+                        "flux": [],
+                        "pfcoils": [],
+                        "pfcircuits": [],
+                        "pfpassive": [],
+                    }
+                },
+                parsed_limiters,
+            )
+
+        assert stats["limiter_nodes"] == 5
+        all_dns = [dn for batch in created_nodes for dn in batch]
+        limiter_dns = [dn for dn in all_dns if "limiter:" in dn.get("path", "")]
+        assert len(limiter_dns) == 5
+
+        names = {dn["path"].split(":")[-1] for dn in limiter_dns}
+        assert names == {"Mk2A", "Mk2GB", "Mk2GB-NS", "Mk2HD", "Mk2ILW"}
