@@ -798,6 +798,10 @@ class FileProgressDisplay(BaseProgressDisplay):
         self.state.scored_count = stats["scored"]
         self.state.enriched_count = stats["enriched_count"]
         self.state.code_files = stats["total"]
+
+        # Accumulated LLM cost from graph (source of truth across runs)
+        self.state.accumulated_cost = stats.get("accumulated_cost", 0.0)
+
         self._refresh()
 
     def tick(self) -> None:

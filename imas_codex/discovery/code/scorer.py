@@ -450,16 +450,26 @@ def apply_triage_results(
     results: list[FileTriageResult],
     file_id_map: dict[str, str],
     threshold: float = 0.75,
+    batch_cost: float = 0.0,
 ) -> dict[str, Any]:
     """Persist triage dimension scores to CodeFile nodes.
 
     Files triaging above threshold -> status 'triaged' (proceed to enrichment).
     Files below threshold -> status 'skipped'.
 
+    Args:
+        results: Triage results from LLM.
+        file_id_map: Mapping from path to CodeFile ID.
+        threshold: Minimum triage composite to proceed.
+        batch_cost: Total LLM cost for the batch, distributed per-file.
+
     Returns dict with triaged, skipped counts and triaged_ids.
     """
     triaged_items = []
     skipped_items = []
+
+    matched_count = sum(1 for r in results if file_id_map.get(r.path))
+    cost_per_file = batch_cost / matched_count if matched_count > 0 else 0.0
 
     for result in results:
         sf_id = file_id_map.get(result.path)
@@ -469,6 +479,7 @@ def apply_triage_results(
         composite = result.triage_composite
         item = {
             "id": sf_id,
+            "score_cost": cost_per_file,
             "triage_composite": round(composite, 4),
             "triage_description": result.description,
             "triage_modeling_code": result.score_modeling_code,
@@ -494,6 +505,7 @@ def apply_triage_results(
                 UNWIND $items AS item
                 MATCH (sf:CodeFile {id: item.id})
                 SET sf.status = 'triaged',
+                    sf.score_cost = coalesce(sf.score_cost, 0) + item.score_cost,
                     sf.triage_composite = item.triage_composite,
                     sf.triage_description = item.triage_description,
                     sf.triage_modeling_code = item.triage_modeling_code,
@@ -517,6 +529,7 @@ def apply_triage_results(
                 UNWIND $items AS item
                 MATCH (sf:CodeFile {id: item.id})
                 SET sf.status = 'skipped',
+                    sf.score_cost = coalesce(sf.score_cost, 0) + item.score_cost,
                     sf.triage_composite = item.triage_composite,
                     sf.triage_description = item.triage_description,
                     sf.triage_modeling_code = item.triage_modeling_code,
@@ -546,13 +559,22 @@ def apply_triage_results(
 def apply_file_scores(
     results: list[FileScoreResult],
     file_id_map: dict[str, str],
+    batch_cost: float = 0.0,
 ) -> dict[str, int]:
     """Persist full scoring results to CodeFile nodes.
 
     Sets status to 'scored' and writes all dimension scores.
+
+    Args:
+        results: Score results from LLM.
+        file_id_map: Mapping from path to CodeFile ID.
+        batch_cost: Total LLM cost for the batch, distributed per-file.
     """
     scored_items = []
     skipped_items = []
+
+    matched_count = sum(1 for r in results if file_id_map.get(r.path))
+    cost_per_file = batch_cost / matched_count if matched_count > 0 else 0.0
 
     for result in results:
         sf_id = file_id_map.get(result.path)
@@ -560,11 +582,14 @@ def apply_file_scores(
             continue
 
         if result.skip:
-            skipped_items.append({"id": sf_id, "reason": result.description})
+            skipped_items.append(
+                {"id": sf_id, "score_cost": cost_per_file, "reason": result.description}
+            )
         else:
             scored_items.append(
                 {
                     "id": sf_id,
+                    "score_cost": cost_per_file,
                     "score_composite": round(result.score_composite, 4),
                     "score_reason": result.description,
                     "file_category": result.file_category,
@@ -587,6 +612,7 @@ def apply_file_scores(
                 UNWIND $items AS item
                 MATCH (sf:CodeFile {id: item.id})
                 SET sf.status = 'scored',
+                    sf.score_cost = coalesce(sf.score_cost, 0) + item.score_cost,
                     sf.score_composite = item.score_composite,
                     sf.score_reason = item.score_reason,
                     sf.file_category = item.file_category,
@@ -611,6 +637,7 @@ def apply_file_scores(
                 UNWIND $items AS item
                 MATCH (sf:CodeFile {id: item.id})
                 SET sf.status = 'skipped',
+                    sf.score_cost = coalesce(sf.score_cost, 0) + item.score_cost,
                     sf.skip_reason = item.reason,
                     sf.scored_at = datetime(),
                     sf.claimed_at = null
