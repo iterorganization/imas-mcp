@@ -248,6 +248,17 @@ enums:
       failed:
         description: Error during processing (check error field)
 
+  WallConfiguration:
+    description: >-
+      Type of plasma-facing component configuration for a structural epoch.
+      Facility-generic: applicable to any tokamak that transitioned from
+      limiter-only to divertor operation.
+    permissible_values:
+      limiter:
+        description: Limiter-only configuration (no divertor installed)
+      divertor:
+        description: Divertor configuration (one or more divertor targets installed)
+
   SignalTemporality:
     description: >-
       Whether a signal's data is time-varying (dynamic, shot-scoped) or

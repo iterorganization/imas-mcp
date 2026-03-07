@@ -1367,6 +1367,12 @@ classes:
       removed_subtrees:
         description: Top-level subtrees removed in this version
         multivalued: true
+      wall_configuration:
+        description: >-
+          Type of plasma-facing component configuration (limiter or divertor).
+          Facility-generic field for tokamaks that transitioned between
+          limiter and divertor operation across their lifetime.
+        range: WallConfiguration
       predecessor:
         description: Previous structure version
         range: StructuralEpoch

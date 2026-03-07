@@ -139,6 +139,39 @@ data_systems:
     # (p68967_efcc1, p70468_efcc2, p78814_efcc2, p79854_efcc1/efcc2) reuse
     # the same device XML and limiter, changing only snap_file and Green's.
     versions:
+      # Pre-EFIT++ epochs — no device XMLs, limiter contour geometry only.
+      # Shot ranges from limiter_list and known JET operational history.
+      - version: limiter_era
+        first_shot: 1
+        last_shot: 26087
+        description: "Pre-divertor carbon wall + belt limiter (1983-1991)"
+        uses_limiter: Limiter
+        wall_configuration: limiter
+      - version: mk1_mk2a
+        first_shot: 33643
+        last_shot: 44414
+        description: "Mark I + Mark IIA divertor (1994-1998)"
+        uses_limiter: Mk2A
+        wall_configuration: divertor
+      - version: mk2gb_era
+        first_shot: 44415
+        last_shot: 54351
+        description: "Mark II Gas Box divertor (1999-2001)"
+        uses_limiter: Mk2GB
+        wall_configuration: divertor
+      - version: mk2gb_ns_era
+        first_shot: 54352
+        last_shot: 63445
+        description: "Mark IIGB-NS divertor, no septum (2002-2005)"
+        uses_limiter: Mk2GB-NS
+        wall_configuration: divertor
+      - version: mk2hd_pre
+        first_shot: 63446
+        last_shot: 68612
+        description: "Mark II High Delta pre-EFIT++ (2005-2006)"
+        uses_limiter: Mk2HD
+        wall_configuration: divertor
+      # EFIT++ epochs — full device XML + limiter + coils + probes.
       - version: p68613
         first_shot: 68613
         last_shot: 74386
@@ -148,6 +181,7 @@ data_systems:
         limiter: Limiters/limiter.mk2hd_cc
         greens: Greens/DMSS_091_T_200C/
         snap_file: Snap_files/EFITSNAP/efitsnap_p68613_bound0
+        wall_configuration: divertor
       - version: p74387
         first_shot: 74387
         last_shot: 78167
@@ -157,6 +191,7 @@ data_systems:
         limiter: Limiters/limiter.mk2hd_cc
         greens: Greens/DMSS_091_T_200C/
         snap_file: Snap_files/EFITSNAP/efitsnap_p74387_bound0
+        wall_configuration: divertor
       - version: p78168
         first_shot: 78168
         last_shot: 78358
@@ -166,6 +201,7 @@ data_systems:
         limiter: Limiters/limiter.mk2hd_cc
         greens: Greens/DMSS_091_T_200C/
         snap_file: Snap_files/EFITSNAP/efitsnap_p78168_bound0
+        wall_configuration: divertor
       - version: p78359
         first_shot: 78359
         last_shot: 78460
@@ -175,6 +211,7 @@ data_systems:
         limiter: Limiters/limiter.mk2hd_cc
         greens: Greens/DMSS_105_T_200C/
         snap_file: Snap_files/EFITSNAP/efitsnap_p78359_bound0
+        wall_configuration: divertor
       - version: p78461
         first_shot: 78461
         last_shot: 79853
@@ -184,6 +221,7 @@ data_systems:
         limiter: Limiters/limiter.mk2hd_cc
         greens: Greens/DMSS_091_T_200C/
         snap_file: Snap_files/EFITSNAP/efitsnap_p78168_bound0
+        wall_configuration: divertor
       - version: p79854
         first_shot: 79854
         last_shot: 81133
@@ -193,6 +231,7 @@ data_systems:
         limiter: Limiters/limiter.mk2ilw_cc
         greens: Greens/DMSS_105_T_200C/
         snap_file: Snap_files/EFITSNAP/efitsnap_p79854_bound0
+        wall_configuration: divertor
       - version: p81134
         first_shot: 81134
         last_shot: 87026
@@ -202,6 +241,7 @@ data_systems:
         limiter: Limiters/limiter.mk2ilw_cc
         greens: Greens/DMSS_105_T_200C/
         snap_file: Snap_files/EFITSNAP/efitsnap_p81134_bound0
+        wall_configuration: divertor
       - version: p87027
         first_shot: 87027
         last_shot: 87721
@@ -211,6 +251,7 @@ data_systems:
         limiter: Limiters/limiter.mk2ilw_cc
         greens: Greens/DMSS_105_T_200C/
         snap_file: Snap_files/EFITSNAP/efitsnap_p87027_bound0
+        wall_configuration: divertor
       - version: p87722
         first_shot: 87722
         last_shot: 88367
@@ -220,6 +261,7 @@ data_systems:
         limiter: Limiters/limiter.mk2ilw_cc
         greens: Greens/DMSS_105_T_200C_P803A/
         snap_file: Snap_files/EFITSNAP/efitsnap_p87722_bound0
+        wall_configuration: divertor
       - version: p88368
         first_shot: 88368
         last_shot: 89430
@@ -229,6 +271,7 @@ data_systems:
         limiter: Limiters/limiter.mk2ilw_cc
         greens: Greens/DMSS_105_T_200C_UP4E4/
         snap_file: Snap_files/EFITSNAP/efitsnap_p88368_bound0
+        wall_configuration: divertor
       - version: p89431
         first_shot: 89431
         last_shot: 89439
@@ -238,6 +281,7 @@ data_systems:
         limiter: Limiters/limiter.mk2ilw_cc
         greens: Greens/DMSS_105_T_200C_UP4E4/
         snap_file: Snap_files/EFITSNAP/efitsnap_p81134_bound0
+        wall_configuration: divertor
       - version: p89440
         first_shot: 89440
         last_shot: 90539
@@ -247,6 +291,7 @@ data_systems:
         limiter: Limiters/limiter.mk2ilw_cc
         greens: Greens/DMSS_105_T_200C_P802A/
         snap_file: Snap_files/EFITSNAP/efitsnap_p89440_bound0
+        wall_configuration: divertor
       - version: p90540
         first_shot: 90540
         last_shot: 90625
@@ -256,6 +301,7 @@ data_systems:
         limiter: Limiters/limiter.mk2ilw_cc
         greens: Greens/DMSS_105_T_200C_P802A/
         snap_file: Snap_files/EFITSNAP/efitsnap_p90540_bound0
+        wall_configuration: divertor
       - version: p90626
         first_shot: 90626
         description: "I802+I803 failed, disabled — FINAL config through end of JET"
@@ -264,6 +310,7 @@ data_systems:
         limiter: Limiters/limiter.mk2ilw_cc
         greens: Greens/DMSS_105_T_200C_P802A/
         snap_file: Snap_files/EFITSNAP/efitsnap_p90626_bound0
+        wall_configuration: divertor
     # Systems extracted from device XMLs — analogous to TCV static tree systems
     systems:
       - symbol: PF
@@ -314,13 +361,25 @@ data_systems:
     # contour at T=200°C, valid from shot 79951. See static_sources below.
     limiter_dir: /home/chain1/input/efit/Limiters
     limiter_versions:
-      - name: Mk2A
+      - name: Limiter
         first_shot: 1
+        last_shot: 26087
+        description: >-
+          Pre-divertor D-shaped vacuum vessel wall + belt limiter (1983-1991).
+          Composed from secondary segments (12-pt vessel wall + 5-pt belt
+          limiter) embedded in the limiter.mk2a contour file. These segments
+          are identical across mk2a, mk2gb, and mk2gb_ns files — they
+          represent the original JET first wall before divertor installation.
+        file: limiter.mk2a
+        source_dir: /home/chain1/input/efit/Limiters
+        contour_sections: [1, 2]
+      - name: Mk2A
+        first_shot: 33643
         last_shot: 44414
         description: >-
-          Pre-Mk2GB contour (108 R,Z pts + 12 vacuum vessel + 5 centre column).
-          Covers L91NEW (limiter, 1983-1991), Mk1 (divertor, 1994-1995), and
-          Mk2A Gas Box (1998) eras. Single file used by EFIT for all shots 1-44414.
+          Mark I + Mark IIA divertor contour (108 R,Z points). Primary segment
+          of limiter.mk2a. Covers Mk1 (1994-1995) and Mk2A Gas Box (1996-1998)
+          divertor eras. EFIT used a single contour file for shots 1-44414.
         file: limiter.mk2a
         source_dir: /home/chain1/input/efit/Limiters
         n_points: 108
