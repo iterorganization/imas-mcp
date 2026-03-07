@@ -999,6 +999,8 @@ def detect_signal_patterns(
     # Group signals by pattern template
     pattern_groups: dict[str, list[dict]] = {}
     for r in results:
+        if r["accessor"] is None:
+            continue
         pattern = _accessor_to_pattern(r["accessor"])
         pattern_groups.setdefault(pattern, []).append(
             {"id": r["id"], "accessor": r["accessor"]}

@@ -179,26 +179,59 @@ def draw_limiter_layer(ax, limiters, jec2020):
         )
 
 
+def _draw_rect_elements(
+    ax, r, z, dr, dz, facecolor, edgecolor, linewidth, alpha, zorder
+):
+    """Draw rectangle(s) for scalar or array-valued geometry properties."""
+    if isinstance(r, list):
+        for ri, zi, dri, dzi in zip(r, z, dr, dz, strict=True):
+            ax.add_patch(
+                Rectangle(
+                    (ri - dri / 2, zi - dzi / 2),
+                    dri,
+                    dzi,
+                    fill=True,
+                    facecolor=facecolor,
+                    edgecolor=edgecolor,
+                    linewidth=linewidth,
+                    alpha=alpha,
+                    zorder=zorder,
+                )
+            )
+    else:
+        ax.add_patch(
+            Rectangle(
+                (r - dr / 2, z - dz / 2),
+                dr,
+                dz,
+                fill=True,
+                facecolor=facecolor,
+                edgecolor=edgecolor,
+                linewidth=linewidth,
+                alpha=alpha,
+                zorder=zorder,
+            )
+        )
+
+
 def draw_pf_layer(ax, coils):
     for coil in coils:
         r, z = coil.get("r"), coil.get("z")
         dr, dz = coil.get("dr"), coil.get("dz")
         if r is None or z is None or dr is None or dz is None:
             continue
-        if isinstance(r, list):
-            r, z, dr, dz = r[0], z[0], dr[0], dz[0]
-        rect = Rectangle(
-            (r - dr / 2, z - dz / 2),
+        _draw_rect_elements(
+            ax,
+            r,
+            z,
             dr,
             dz,
-            fill=True,
             facecolor="#aec7e8",
             edgecolor="#1f77b4",
             linewidth=0.5,
             alpha=0.6,
             zorder=5,
         )
-        ax.add_patch(rect)
 
 
 def draw_probe_layer(ax, probes):
@@ -280,18 +313,18 @@ def draw_passive_layer(ax, passive):
         dr, dz = elem.get("dr"), elem.get("dz")
         if r is None or z is None or dr is None or dz is None:
             continue
-        rect = Rectangle(
-            (r - dr / 2, z - dz / 2),
+        _draw_rect_elements(
+            ax,
+            r,
+            z,
             dr,
             dz,
-            fill=True,
             facecolor="#d9d9d9",
             edgecolor="#777777",
             linewidth=0.3,
             alpha=0.4,
             zorder=1,
         )
-        ax.add_patch(rect)
 
 
 def main():

@@ -304,9 +304,14 @@ def _persist_graph_nodes(
                     for field, field_meta in meta.get("fields", {}).items():
                         val = inst.get(field)
                         if val is not None and field_meta.get("unit"):
-                            desc_parts.append(
-                                f"{field_meta['desc']}={val}{field_meta['unit']}"
-                            )
+                            if isinstance(val, list):
+                                desc_parts.append(
+                                    f"{field_meta['desc']}: {len(val)} elements"
+                                )
+                            else:
+                                desc_parts.append(
+                                    f"{field_meta['desc']}={val}{field_meta['unit']}"
+                                )
 
                     dn = {
                         "path": node_path,
@@ -441,16 +446,25 @@ def _persist_graph_nodes(
 
         # 4b. Create USES_LIMITER relationships (StructuralEpoch → limiter DataNode)
         # Each config version specifies its limiter path → match to limiter DataNode
-        limiter_path_to_name: dict[str, str] = {}
+        # Build lookup mapping: normalize both version limiter paths and limiter_version
+        # file names to bare filenames for matching (version configs may include
+        # directory prefixes like "Limiters/").
+        limiter_file_to_name: dict[str, str] = {}
         for lv in limiter_versions:
             if lv.get("file"):
-                limiter_path_to_name[lv["file"]] = lv["name"]
+                basename = lv["file"].rsplit("/", 1)[-1]
+                limiter_file_to_name[basename] = lv["name"]
 
         uses_limiter_records = []
         for vc in versions_config:
             limiter_file = vc.get("limiter", "")
-            # Match the version's limiter file to a limiter name
-            lim_name = limiter_path_to_name.get(limiter_file)
+            if not limiter_file:
+                continue
+            basename = limiter_file.rsplit("/", 1)[-1]
+            lim_name = limiter_file_to_name.get(basename)
+            # Try stripping _cc suffix (git vs filesystem naming convention)
+            if not lim_name and basename.endswith("_cc"):
+                lim_name = limiter_file_to_name.get(basename[:-3])
             if lim_name:
                 uses_limiter_records.append(
                     {
