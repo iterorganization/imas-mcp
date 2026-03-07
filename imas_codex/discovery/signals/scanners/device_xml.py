@@ -1100,6 +1100,117 @@ def _persist_mcfg_nodes(
     return stats
 
 
+# =========================================================================
+# PPF Static Geometry Signal Ingestion
+# =========================================================================
+
+# Map PPF static signals to their corresponding device_xml DataNode paths.
+# EFIT/RLIM and EFIT/ZLIM both reference the Mk2ILW limiter contour.
+PPF_GEOMETRY_CROSSREFS: dict[str, str] = {
+    "EFIT/RLIM": "jet:device_xml:limiter:Mk2ILW",
+    "EFIT/ZLIM": "jet:device_xml:limiter:Mk2ILW",
+}
+
+
+def _persist_ppf_static_nodes(
+    facility: str,
+    ppf_config: dict[str, Any],
+) -> dict[str, int]:
+    """Persist PPF static geometry DataAccess nodes and cross-references.
+
+    Creates DataAccess nodes for each static PPF signal, a ppf_static
+    DataSource, and ACCESSES_GEOMETRY relationships to device_xml DataNodes
+    where the same geometry data exists in file-based form.
+    """
+    static_signals = ppf_config.get("static_signals", [])
+    reference_pulse = ppf_config.get("reference_pulse", 0)
+    setup_commands = ppf_config.get("setup_commands", [])
+
+    stats: dict[str, int] = {
+        "data_access_nodes": 0,
+        "cross_references": 0,
+    }
+
+    # Filter to only truly static signals
+    static_only = [s for s in static_signals if s.get("static", False)]
+    if not static_only:
+        return stats
+
+    with GraphClient() as gc:
+        # 1. Create ppf_static DataSource
+        gc.query(
+            """
+            MERGE (ds:DataSource {name: $name})
+            ON CREATE SET
+                ds.facility_id = $facility,
+                ds.source_type = $source_type,
+                ds.source_format = 'ppf',
+                ds.description = $description,
+                ds.shot_dependent = false
+            WITH ds
+            MATCH (f:Facility {id: $facility})
+            MERGE (ds)-[:AT_FACILITY]->(f)
+            """,
+            name="ppf_static",
+            facility=facility,
+            source_type=DataSourceType.ppf.value,
+            description=(
+                "PPF signals containing static machine description data. "
+                "Accessed via MDSplus thin-client ppf() calls."
+            ),
+        )
+
+        # 2. Create DataAccess nodes for each static signal
+        da_nodes: list[dict] = []
+        for sig in static_only:
+            name = sig["name"]
+            dda, dtype = name.split("/", 1)
+            da_id = f"{facility}:ppf:{name}"
+
+            da = DataAccess(
+                id=da_id,
+                facility_id=facility,
+                name=f"PPF {name}",
+                method_type="ppf",
+                library="MDSplus",
+                access_type="remote",
+                data_source="ppf_static",
+                imports_template="import MDSplus",
+                connection_template=("conn = MDSplus.Connection('mdsplus.jet.uk')"),
+                data_template=f"data = conn.get('ppf(\"{name}\", $)')",
+                full_example=(
+                    "import MDSplus\n\n"
+                    "conn = MDSplus.Connection('mdsplus.jet.uk')\n"
+                    f"data = conn.get('ppf(\"{name}\", {reference_pulse})')\n"
+                    f"print(f'{name}: shape={{data.shape}}')"
+                ),
+                setup_commands=setup_commands,
+            )
+            da_nodes.append(da.model_dump())
+
+        gc.create_nodes("DataAccess", da_nodes, id_field="id", batch_size=50)
+        stats["data_access_nodes"] = len(da_nodes)
+
+        # 3. Create ACCESSES_GEOMETRY cross-references to device_xml DataNodes
+        for sig in static_only:
+            name = sig["name"]
+            da_id = f"{facility}:ppf:{name}"
+            dx_path = PPF_GEOMETRY_CROSSREFS.get(name)
+            if dx_path:
+                gc.query(
+                    """
+                    MATCH (da:DataAccess {id: $da_id})
+                    MATCH (dn:DataNode {path: $dx_path})
+                    MERGE (da)-[:ACCESSES_GEOMETRY]->(dn)
+                    """,
+                    da_id=da_id,
+                    dx_path=dx_path,
+                )
+                stats["cross_references"] += 1
+
+    return stats
+
+
 class DeviceXMLScanner:
     """Scanner for EFIT-format device XML geometry files in git.
 
@@ -1241,6 +1352,11 @@ class DeviceXMLScanner:
         mcfg_stats = await self._scan_mcfg(facility, ssh_host, config)
         if mcfg_stats:
             stats["mcfg"] = mcfg_stats
+
+        # Process PPF static geometry signals if configured
+        ppf_stats = await self._scan_ppf_static(facility, config)
+        if ppf_stats:
+            stats["ppf_static"] = ppf_stats
 
         return ScanResult(
             signals=[],  # Signals written directly to graph
@@ -1392,6 +1508,48 @@ class DeviceXMLScanner:
         )
 
         return mcfg_stats
+
+    async def _scan_ppf_static(
+        self,
+        facility: str,
+        config: dict[str, Any],
+    ) -> dict[str, int] | None:
+        """Scan PPF static geometry signals if configured.
+
+        Reads data_systems.ppf.static_signals[] from the facility config
+        and creates DataAccess nodes with ACCESSES_GEOMETRY cross-references
+        to device_xml DataNodes.
+        """
+        from imas_codex.discovery.base.facility import get_facility
+
+        facility_config = get_facility(facility)
+        ppf_config = facility_config.get("data_systems", {}).get("ppf", {})
+
+        static_signals = ppf_config.get("static_signals", [])
+        if not static_signals:
+            return None
+
+        # Only process if there are static signals
+        has_static = any(s.get("static", False) for s in static_signals)
+        if not has_static:
+            return None
+
+        logger.info(
+            "device_xml scanner: processing %d PPF static signals for %s",
+            sum(1 for s in static_signals if s.get("static")),
+            facility,
+        )
+
+        ppf_stats = _persist_ppf_static_nodes(facility, ppf_config)
+
+        logger.info(
+            "PPF static scanner %s: %d DataAccess nodes, %d cross-references",
+            facility,
+            ppf_stats.get("data_access_nodes", 0),
+            ppf_stats.get("cross_references", 0),
+        )
+
+        return ppf_stats
 
     async def check(
         self,
