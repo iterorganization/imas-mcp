@@ -14,6 +14,7 @@ import pytest
 from imas_codex.discovery.signals.scanners.base import get_scanner
 from imas_codex.discovery.signals.scanners.device_xml import (
     JEC2020_SYSTEM_MAP,
+    PPF_GEOMETRY_CROSSREFS,
     SECTION_METADATA,
     DeviceXMLScanner,
     _build_data_access,
@@ -23,6 +24,7 @@ from imas_codex.discovery.signals.scanners.device_xml import (
     _persist_graph_nodes,
     _persist_jec2020_nodes,
     _persist_mcfg_nodes,
+    _persist_ppf_static_nodes,
 )
 
 # Minimal parsed output matching what parse_device_xml.py returns
@@ -1665,3 +1667,162 @@ $:20190314 0095350 operato  MCFG:0077/MAGNW MAGNETICS ! Latest calibration 2019
         assert len(result["coils"]) == 1
         assert len(result["hall_probes"]) == 0
         assert len(result["other"]) == 0
+
+
+# ────────────────── PPF static geometry signal fixtures ──────────────────
+
+MOCK_PPF_CONFIG = {
+    "sal_endpoint": "https://sal.jet.uk",
+    "reference_pulse": 99896,
+    "default_owner": "jetppf",
+    "setup_commands": ["source /etc/profile.d/modules.sh", "module load jet/1.0"],
+    "static_signals": [
+        {
+            "name": "EFIT/RLIM",
+            "description": "Limiter R coordinates (251 points, static across ILW)",
+            "static": True,
+            "expected_shape": [1, 251],
+        },
+        {
+            "name": "EFIT/ZLIM",
+            "description": "Limiter Z coordinates (251 points, static across ILW)",
+            "static": True,
+            "expected_shape": [1, 251],
+        },
+        {
+            "name": "EFIT/RBND",
+            "description": "Plasma boundary R (time-resolved, 947×105)",
+            "static": False,  # Not static — should be skipped
+            "expected_shape": [947, 105],
+        },
+        {
+            "name": "LIDR/Z",
+            "description": "LIDAR Thomson scattering Z positions",
+            "static": True,
+            "expected_shape": [50],
+        },
+        {
+            "name": "VESL/CROS",
+            "description": "Vessel cross-section contour",
+            "static": True,
+        },
+    ],
+}
+
+
+class TestPPFStaticPersist:
+    """Test _persist_ppf_static_nodes with mock graph."""
+
+    def _run_persist(self, ppf_config=None):
+        """Run persist with mocked GraphClient and return captured data."""
+        if ppf_config is None:
+            ppf_config = MOCK_PPF_CONFIG
+
+        created_nodes: dict[str, list[dict]] = {}
+        query_calls: list[tuple] = []
+
+        with patch(
+            "imas_codex.discovery.signals.scanners.device_xml.GraphClient"
+        ) as mock_gc_cls:
+            mock_gc = mock_gc_cls.return_value.__enter__.return_value
+
+            def capture_query(cypher, **kwargs):
+                query_calls.append((cypher, kwargs))
+                return []
+
+            mock_gc.query.side_effect = capture_query
+
+            def capture_create(label, items, **kw):
+                created_nodes.setdefault(label, []).extend(items)
+                return {"processed": len(items), "relationships": {}}
+
+            mock_gc.create_nodes.side_effect = capture_create
+
+            stats = _persist_ppf_static_nodes("jet", ppf_config)
+
+        return stats, created_nodes, query_calls
+
+    def test_persist_returns_correct_stats(self):
+        """Stats reflect static-only DataAccess count and cross-references."""
+        stats, _, _ = self._run_persist()
+        # 4 static signals (EFIT/RLIM, EFIT/ZLIM, LIDR/Z, VESL/CROS)
+        # EFIT/RBND is not static so excluded
+        assert stats["data_access_nodes"] == 4
+        # EFIT/RLIM and EFIT/ZLIM have cross-refs in PPF_GEOMETRY_CROSSREFS
+        assert stats["cross_references"] == 2
+
+    def test_persist_creates_data_source(self):
+        """Creates ppf_static DataSource node."""
+        _, _, queries = self._run_persist()
+        ds_queries = [(q, kw) for q, kw in queries if "MERGE (ds:DataSource" in q]
+        assert len(ds_queries) == 1
+        assert ds_queries[0][1]["name"] == "ppf_static"
+
+    def test_persist_creates_data_access_for_static_only(self):
+        """Only static PPF signals get DataAccess nodes."""
+        _, nodes, _ = self._run_persist()
+        da_nodes = nodes.get("DataAccess", [])
+        assert len(da_nodes) == 4
+
+        da_ids = {da["id"] for da in da_nodes}
+        assert "jet:ppf:EFIT/RLIM" in da_ids
+        assert "jet:ppf:EFIT/ZLIM" in da_ids
+        assert "jet:ppf:LIDR/Z" in da_ids
+        assert "jet:ppf:VESL/CROS" in da_ids
+        # RBND is time-resolved, should NOT be present
+        assert "jet:ppf:EFIT/RBND" not in da_ids
+
+    def test_data_access_has_ppf_method(self):
+        """DataAccess nodes have method_type=ppf and MDSplus library."""
+        _, nodes, _ = self._run_persist()
+        rlim = next(da for da in nodes["DataAccess"] if da["id"] == "jet:ppf:EFIT/RLIM")
+        assert rlim["method_type"] == "ppf"
+        assert rlim["library"] == "MDSplus"
+        assert rlim["access_type"] == "remote"
+        assert rlim["data_source"] == "ppf_static"
+
+    def test_data_access_has_full_example(self):
+        """DataAccess full_example is valid Python."""
+        _, nodes, _ = self._run_persist()
+        rlim = next(da for da in nodes["DataAccess"] if da["id"] == "jet:ppf:EFIT/RLIM")
+        compile(rlim["full_example"], "<ppf_rlim>", "exec")
+        assert "ppf" in rlim["full_example"]
+        assert "99896" in rlim["full_example"]
+
+    def test_persist_creates_accesses_geometry_crossrefs(self):
+        """ACCESSES_GEOMETRY links PPF DataAccess to device_xml DataNodes."""
+        _, _, queries = self._run_persist()
+        geom_queries = [(q, kw) for q, kw in queries if "ACCESSES_GEOMETRY" in q]
+        assert len(geom_queries) == 2
+
+        # Both EFIT/RLIM and EFIT/ZLIM link to Mk2ILW limiter
+        dx_paths = {kw["dx_path"] for _, kw in geom_queries}
+        assert dx_paths == {"jet:device_xml:limiter:Mk2ILW"}
+
+        da_ids = {kw["da_id"] for _, kw in geom_queries}
+        assert "jet:ppf:EFIT/RLIM" in da_ids
+        assert "jet:ppf:EFIT/ZLIM" in da_ids
+
+    def test_persist_no_static_returns_zeros(self):
+        """No static signals returns zero counts."""
+        ppf_config = {
+            "static_signals": [
+                {"name": "EFIT/RBND", "static": False},
+            ]
+        }
+        stats, _, _ = self._run_persist(ppf_config)
+        assert stats["data_access_nodes"] == 0
+        assert stats["cross_references"] == 0
+
+
+class TestPPFGeometryCrossrefs:
+    """Test PPF_GEOMETRY_CROSSREFS mapping."""
+
+    def test_rlim_zlim_map_to_mk2ilw(self):
+        """EFIT/RLIM and EFIT/ZLIM both reference Mk2ILW limiter."""
+        assert PPF_GEOMETRY_CROSSREFS["EFIT/RLIM"] == "jet:device_xml:limiter:Mk2ILW"
+        assert PPF_GEOMETRY_CROSSREFS["EFIT/ZLIM"] == "jet:device_xml:limiter:Mk2ILW"
+
+    def test_no_crossref_for_unique_signals(self):
+        """VESL/CROS has no device_xml equivalent (unique PPF data)."""
+        assert "VESL/CROS" not in PPF_GEOMETRY_CROSSREFS
