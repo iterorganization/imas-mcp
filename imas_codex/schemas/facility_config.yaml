@@ -116,6 +116,24 @@ enums:
       condor:
         description: HTCondor workload management
 
+  StaticSourceFormat:
+    description: Data formats for static source files
+    permissible_values:
+      xml:
+        description: XML-structured data (device XMLs, geometry definitions)
+      text:
+        description: Plain text with whitespace-delimited or fixed-width columns
+      csv:
+        description: Comma-separated values
+      netcdf:
+        description: NetCDF scientific data format
+      hdf5:
+        description: HDF5 hierarchical data format
+      json:
+        description: JSON structured data
+      fortran_namelist:
+        description: Fortran namelist format (&name ... /)
+
   NameFormat:
     description: Format of user names in GECOS field
     permissible_values:
@@ -373,6 +391,14 @@ classes:
           Python interpreter for remote script execution. Can be a bare
           command name or full path. Default: "python3".
           Example: "/common/software/micromamba/root/envs/python-3.12/bin/python3"
+      static_signals:
+        description: >-
+          Signals from this data system that contain static machine
+          description data (geometry, calibration, diagnostic positions).
+          Enables scanners to discover which signals are non-time-varying
+          without hardcoding signal lists.
+        multivalued: true
+        range: StaticSignalRef
 
   DataSystemsConfig:
     description: >-
@@ -402,6 +428,14 @@ classes:
       device_xml:
         description: Device XML configuration (EFIT-format geometry files in git)
         range: DeviceXMLConfig
+      static_sources:
+        description: >-
+          File-based static data sources providing machine description,
+          calibration, or geometry data. Each entry describes a collection
+          of files — any format, any facility. Scanners iterate this list
+          and dispatch based on source name and file format.
+        multivalued: true
+        range: StaticSourceConfig
 
   TDIConfig:
     description: >-
@@ -673,6 +707,134 @@ classes:
       reference_shot:
         description: Reference shot for IDS enumeration
         range: integer
+
+  StaticSignalRef:
+    description: >-
+      A reference to a signal within a data system that contains static
+      (non-time-varying) machine description data. Used to annotate
+      signals in PPF, MDSplus, IMAS, or any other data system as
+      containing geometry, calibration, or other static technical data.
+
+      This enables scanners to cross-reference file-based geometry with
+      data-system-accessible signals — the same limiter contour may exist
+      as both a text file and a PPF signal.
+    class_uri: fc:StaticSignalRef
+    attributes:
+      name:
+        description: >-
+          Signal identifier in the data system's native format.
+          PPF: "DDA/DTYPE" (e.g., "EFIT/RLIM").
+          MDSplus: node path (e.g., "\static::top.v:r").
+          IMAS: IDS path (e.g., "wall.description_2d[0].limiter.unit[0].outline.r").
+        required: true
+      description:
+        description: What this signal contains
+      static:
+        description: >-
+          Whether truly static (identical across all shots) or quasi-static
+          (changes only at major hardware boundaries).
+        range: boolean
+      expected_shape:
+        description: Expected array shape for validation
+        multivalued: true
+        range: integer
+
+  StaticFileConfig:
+    description: >-
+      A single file within a StaticSourceConfig. Describes what the file
+      provides (role), its format, and optional validation hints.
+      Path is relative to the parent source's base_dir or git_repo.
+    class_uri: fc:StaticFileConfig
+    attributes:
+      path:
+        description: >-
+          File path relative to parent source's base_dir, or
+          input_prefix within git_repo.
+        required: true
+      role:
+        description: >-
+          What physical system or data category this file describes.
+          Use consistent role names across facilities:
+          limiter, vessel, magnetics, pf_coils, iron_core, sensors,
+          calibration_index, calibration_data, circuits, diagnostics,
+          response_functions.
+        required: true
+      description:
+        description: What this file contains
+      format:
+        description: >-
+          File format override. If omitted, inherits from parent source.
+        range: StaticSourceFormat
+      expected_count:
+        description: >-
+          Expected element count for validation. Scanner can verify
+          the parsed file produces this many elements (probes, coils,
+          contour points, etc.).
+        range: integer
+
+  StaticSourceConfig:
+    description: >-
+      A named collection of files providing machine description, calibration,
+      or other static technical data about the physical machine. "Static" means
+      the data does not change per-shot, or changes only at major hardware
+      modification boundaries (tracked via versions).
+
+      Generic container for any file-based technical data: geometry XMLs,
+      sensor position files, calibration tables, contour data, CAD exports,
+      equilibrium inputs, response function matrices.
+
+      Example Cypher (after ingestion):
+        MATCH (ds:DataSource {name: $source_name})-[:AT_FACILITY]->(f:Facility {id: $facility})
+        RETURN ds
+    class_uri: fc:StaticSourceConfig
+    mixins:
+      - DataSystemBase
+    attributes:
+      name:
+        description: >-
+          Unique identifier within this facility. Use descriptive names that
+          indicate what the source provides, not internal project codes.
+          Examples: "efit_geometry", "sensor_positions", "vessel_cad",
+          "iron_core", "response_functions".
+        required: true
+      description:
+        description: What this data source provides
+      format:
+        description: Primary data format of files in this source
+        range: StaticSourceFormat
+      base_dir:
+        description: >-
+          Root filesystem directory containing the files. File paths
+          are resolved relative to this directory.
+      git_repo:
+        description: >-
+          Path to git repository containing the files (bare or working tree).
+          Mutually exclusive with base_dir for file path resolution.
+      input_prefix:
+        description: >-
+          Path prefix within git_repo for file resolution.
+          Example: "JET/input" means files are at <git_repo>/JET/input/<path>.
+      reference_shot:
+        description: First shot where this source's data applies
+        range: integer
+      files:
+        description: Individual files in this source
+        multivalued: true
+        range: StaticFileConfig
+      versions:
+        description: >-
+          Shot-range versions for epoch-dependent data. Each version
+          maps a shot range to a configuration state. Reuses the same
+          SourceVersion type used for MDSplus tree versions.
+        multivalued: true
+        range: SourceVersion
+      systems:
+        description: >-
+          Physical subsystems described by this source. Reuses the same
+          SourceSystem type used for MDSplus static tree systems.
+          Examples: magnetics, pf_coils, vessel, limiters, iron_core.
+        multivalued: true
+        range: SourceSystem
 
   UserInfoConfig:
     description: >-
@@ -1021,6 +1183,10 @@ classes:
         description: First-wall contour versions
         multivalued: true
         range: LimiterVersion
+      limiter_dir:
+        description: >-
+          Filesystem directory containing limiter contour files.
+          Fallback source when files are not in the git repository.
 
   DeviceXMLVersion:
     description: >-
@@ -1071,3 +1237,11 @@ classes:
         description: Description of this limiter configuration
       file:
         description: Git path to R,Z contour file (relative to input_prefix)
+      source_dir:
+        description: >-
+          Filesystem directory containing the limiter contour file.
+          Used when the file lives on the facility filesystem rather
+          than in the device_xml git_repo.
+      n_points:
+        description: Expected number of R,Z contour points (for validation)
+        range: integer
