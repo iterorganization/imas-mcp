@@ -3,7 +3,7 @@
 Queries Neo4j for ALL geometry data ingested by the device_xml scanner
 and renders a publication-quality poloidal cross-section with layers:
 
-  1. Limiter contours (5 versions, color-coded) + JEC2020 high-res
+  1. Limiter contours (7 versions, color-coded) + JEC2020 high-res
   2. PF coil rectangles (JEC2020 latest config)
   3. Magnetic probe positions (JEC2020, with orientation)
   4. MCFG sensor positions (CATIA CAD reference)
@@ -32,9 +32,11 @@ ALL_LAYERS = {"limiter", "pf", "probes", "mcfg", "iron", "flux", "passive", "tim
 
 # Color per limiter version — consistent across plot and timeline
 EPOCH_COLORS = [
+    "#7f7f7f",  # Limiter (pre-divertor, grey)
+    "#17becf",  # Mk1 (teal)
     "#1f77b4",  # Mk2A
     "#2ca02c",  # Mk2GB
-    "#9467bd",  # Mk2GB-NS
+    "#9467bd",  # Mk2GB-SR
     "#d62728",  # Mk2HD
     "#ff7f0e",  # Mk2ILW
     "#8c564b",  # spare

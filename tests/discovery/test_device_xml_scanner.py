@@ -966,7 +966,7 @@ class TestUsesLimiterRelationship:
                 {
                     "version": "limiter_era",
                     "first_shot": 1,
-                    "last_shot": 26087,
+                    "last_shot": 28791,
                     "description": "Pre-divertor limiter era",
                     "uses_limiter": "Limiter",
                     "wall_configuration": "limiter",
@@ -984,10 +984,9 @@ class TestUsesLimiterRelationship:
                 {
                     "name": "Limiter",
                     "first_shot": 1,
-                    "last_shot": 26087,
-                    "file": "limiter.mk2a",
-                    "source_dir": "/chain1/Limiters",
-                    "contour_sections": [1, 2],
+                    "last_shot": 28791,
+                    "file": "L91NEW",
+                    "source_dir": "/usr/local/data/flush",
                 },
                 {
                     "name": "Mk2HD",
@@ -1013,8 +1012,6 @@ class TestUsesLimiterRelationship:
                 "n_points": 2,
                 "segments": [
                     {"r": [2.0, 2.5], "z": [1.0, 0.0], "n_points": 2},
-                    {"r": [1.0, 1.5], "z": [0.5, -0.5], "n_points": 2},
-                    {"r": [2.3, 2.4], "z": [0.3, -0.3], "n_points": 2},
                 ],
             },
             "Mk2HD": {"r": [2.0, 2.4], "z": [-0.5, -1.3], "n_points": 2},
@@ -1061,9 +1058,9 @@ class TestPreDivertorEpochs:
                 {
                     "version": "limiter_era",
                     "first_shot": 1,
-                    "last_shot": 26087,
+                    "last_shot": 28791,
                     "description": "Pre-divertor limiter era",
-                    "uses_limiter": "Mk2A",
+                    "uses_limiter": "Limiter",
                     "wall_configuration": "limiter",
                 },
                 {
@@ -1078,11 +1075,11 @@ class TestPreDivertorEpochs:
             ],
             "limiter_versions": [
                 {
-                    "name": "Mk2A",
+                    "name": "Limiter",
                     "first_shot": 1,
-                    "last_shot": 44414,
-                    "file": "limiter.mk2a",
-                    "source_dir": "/chain1/Limiters",
+                    "last_shot": 28791,
+                    "file": "L91NEW",
+                    "source_dir": "/usr/local/data/flush",
                 },
             ],
         }
@@ -1096,7 +1093,7 @@ class TestPreDivertorEpochs:
             }
         }
         parsed_limiters = {
-            "Mk2A": {"r": [2.0, 2.5], "z": [1.0, 0.0], "n_points": 2},
+            "Limiter": {"r": [2.0, 2.5], "z": [1.0, 0.0], "n_points": 2},
         }
 
         query_calls: list[tuple] = []
@@ -1138,24 +1135,24 @@ class TestPreDivertorEpochs:
                 {
                     "version": "limiter_era",
                     "first_shot": 1,
-                    "last_shot": 26087,
+                    "last_shot": 28791,
                     "description": "Pre-divertor",
-                    "uses_limiter": "Mk2A",
+                    "uses_limiter": "Limiter",
                     "wall_configuration": "limiter",
                 },
             ],
             "limiter_versions": [
                 {
-                    "name": "Mk2A",
+                    "name": "Limiter",
                     "first_shot": 1,
-                    "last_shot": 44414,
-                    "file": "limiter.mk2a",
-                    "source_dir": "/chain1/Limiters",
+                    "last_shot": 28791,
+                    "file": "L91NEW",
+                    "source_dir": "/usr/local/data/flush",
                 },
             ],
         }
         parsed_limiters = {
-            "Mk2A": {"r": [2.0, 2.5], "z": [1.0, 0.0], "n_points": 2},
+            "Limiter": {"r": [2.0, 2.5], "z": [1.0, 0.0], "n_points": 2},
         }
 
         created_nodes: list[list[dict]] = []
