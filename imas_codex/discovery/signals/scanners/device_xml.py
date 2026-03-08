@@ -1991,18 +1991,24 @@ class DeviceXMLScanner:
         if errors:
             logger.warning("device_xml parse errors: %s", errors)
 
-        # Persist to graph
-        stats = _persist_graph_nodes(facility, config, parsed_versions, parsed_limiters)
-        stats["parse_errors"] = errors
+        # Persist to graph (non-fatal — static source scans should still run)
+        try:
+            stats = _persist_graph_nodes(
+                facility, config, parsed_versions, parsed_limiters
+            )
+            stats["parse_errors"] = errors
 
-        logger.info(
-            "device_xml scanner %s: %d epochs, %d nodes, %d signals, %d limiters",
-            facility,
-            stats["epochs"],
-            stats["data_nodes"],
-            stats["signals"],
-            stats["limiter_nodes"],
-        )
+            logger.info(
+                "device_xml scanner %s: %d epochs, %d nodes, %d signals, %d limiters",
+                facility,
+                stats["epochs"],
+                stats["data_nodes"],
+                stats["signals"],
+                stats["limiter_nodes"],
+            )
+        except Exception as e:
+            logger.error("device_xml graph persist failed for %s: %s", facility, e)
+            stats = {"error": str(e), "parse_errors": errors}
 
         # Build DataAccess for return
         data_access = _build_data_access(facility, config)
@@ -2106,7 +2112,11 @@ class DeviceXMLScanner:
             return {"error": str(e)}
 
         # Persist to graph
-        jec_stats = _persist_jec2020_nodes(facility, jec2020_config, parsed)
+        try:
+            jec_stats = _persist_jec2020_nodes(facility, jec2020_config, parsed)
+        except Exception as e:
+            logger.error("JEC2020 graph persist failed for %s: %s", facility, e)
+            return {"error": str(e)}
 
         logger.info(
             "JEC2020 scanner %s: %d probes, %d flux loops, %d PF coils, "
@@ -2176,7 +2186,11 @@ class DeviceXMLScanner:
             logger.error("MCFG parse failed for %s: %s", facility, e)
             return {"error": str(e)}
 
-        mcfg_stats = _persist_mcfg_nodes(facility, mcfg_config, parsed)
+        try:
+            mcfg_stats = _persist_mcfg_nodes(facility, mcfg_config, parsed)
+        except Exception as e:
+            logger.error("MCFG graph persist failed for %s: %s", facility, e)
+            return {"error": str(e)}
 
         logger.info(
             "MCFG scanner %s: %d coil sensors, %d hall probes, %d calibration epochs",
@@ -2219,7 +2233,11 @@ class DeviceXMLScanner:
             facility,
         )
 
-        ppf_stats = _persist_ppf_static_nodes(facility, ppf_config)
+        try:
+            ppf_stats = _persist_ppf_static_nodes(facility, ppf_config)
+        except Exception as e:
+            logger.error("PPF static graph persist failed for %s: %s", facility, e)
+            return {"error": str(e)}
 
         logger.info(
             "PPF static scanner %s: %d DataAccess nodes, %d cross-references",
@@ -2285,7 +2303,11 @@ class DeviceXMLScanner:
             logger.error("Magnetics config parse failed for %s: %s", facility, e)
             return {"error": str(e)}
 
-        mc_stats = _persist_magnetics_config_nodes(facility, mc_config, parsed)
+        try:
+            mc_stats = _persist_magnetics_config_nodes(facility, mc_config, parsed)
+        except Exception as e:
+            logger.error("Magnetics config persist failed for %s: %s", facility, e)
+            return {"error": str(e)}
 
         logger.info(
             "Magnetics config scanner %s: %d epochs, %d data nodes, %d signals",
@@ -2349,7 +2371,11 @@ class DeviceXMLScanner:
             logger.error("PF coil turns parse failed for %s: %s", facility, e)
             return {"error": str(e)}
 
-        ct_stats = _persist_pf_coil_turns_nodes(facility, ct_config, parsed)
+        try:
+            ct_stats = _persist_pf_coil_turns_nodes(facility, ct_config, parsed)
+        except Exception as e:
+            logger.error("PF coil turns persist failed for %s: %s", facility, e)
+            return {"error": str(e)}
 
         logger.info(
             "PF coil turns scanner %s: %d coil entries",
@@ -2411,7 +2437,11 @@ class DeviceXMLScanner:
             logger.error("Greens table parse failed for %s: %s", facility, e)
             return {"error": str(e)}
 
-        gt_stats = _persist_greens_table_nodes(facility, gt_config, parsed)
+        try:
+            gt_stats = _persist_greens_table_nodes(facility, gt_config, parsed)
+        except Exception as e:
+            logger.error("Greens table persist failed for %s: %s", facility, e)
+            return {"error": str(e)}
 
         logger.info(
             "Greens table scanner %s: %d versions",

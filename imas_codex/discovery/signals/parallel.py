@@ -316,6 +316,7 @@ def get_data_discovery_stats(facility: str) -> dict[str, Any]:
             result = gc.query(
                 """
                 MATCH (s:FacilitySignal {facility_id: $facility})
+                WHERE 'FacilitySignal' IN labels(s)
                 OPTIONAL MATCH (s)-[c:CHECKED_WITH]->()
                 RETURN
                     count(DISTINCT s) AS total,
@@ -1812,7 +1813,7 @@ async def seed_worker(
                                     {
                                         "id": f"{state.facility}:{sub_name}",
                                         "data_source_name": sub_name,
-                                        "signals_in_tree": seeded,
+                                        "signals_in_source": seeded,
                                     }
                                 ],
                             )
@@ -1910,7 +1911,7 @@ async def seed_worker(
                                 "id": s.id,
                                 "data_source_name": scanner_type,
                                 "data_source_path": s.accessor,
-                                "signals_in_tree": count,
+                                "signals_in_source": count,
                             }
                             for s in result.signals[:20]
                         ],
@@ -2193,7 +2194,7 @@ async def mdsplus_extract_worker(
                         "id": version_id,
                         "data_source_name": data_source_name,
                         "data_source_path": f"v{version}",
-                        "signals_in_tree": 0,
+                        "signals_in_source": 0,
                     }
                 ],
             )
@@ -2245,7 +2246,7 @@ async def mdsplus_extract_worker(
                             "id": version_id,
                             "data_source_name": data_source_name,
                             "data_source_path": f"v{version}",
-                            "signals_in_tree": node_count,
+                            "signals_in_source": node_count,
                         }
                     ],
                 )
@@ -2449,7 +2450,7 @@ async def mdsplus_promote_worker(
                         {
                             "id": f"{state.facility}:{data_source_name}",
                             "data_source_name": data_source_name,
-                            "signals_in_tree": promoted,
+                            "signals_in_source": promoted,
                         }
                     ],
                 )
@@ -2457,10 +2458,10 @@ async def mdsplus_promote_worker(
             # Run TDI linkage after promotion
             try:
                 from imas_codex.discovery.mdsplus.tdi_linkage import (
-                    link_tdi_to_tree_nodes,
+                    link_tdi_to_data_nodes,
                 )
 
-                tdi_links = link_tdi_to_tree_nodes(state.facility)
+                tdi_links = link_tdi_to_data_nodes(state.facility)
                 if tdi_links:
                     logger.info(
                         "TDI linkage: %d edges for %s", tdi_links, data_source_name
