@@ -588,17 +588,20 @@ def _fetch_wiki_document(gc: GraphClient, resource: str) -> str | None:
 def _fetch_code_file(gc: GraphClient, resource: str) -> str | None:
     """Resolve and fetch a code file by ID or path.
 
-    Traversal: ``CodeFile -[:PRODUCED]-> CodeExample -[:HAS_CHUNK]-> CodeChunk``
-    Falls back to ``FacilityPath -[:PRODUCED]-> CodeExample`` if CodeFile not found.
+    Tries multiple traversal strategies:
+    1. CodeExample matched by source_file → HAS_CHUNK → CodeChunk
+    2. FacilityPath → PRODUCED → CodeExample → HAS_CHUNK → CodeChunk
+
+    See plans/features/ingestion-schema-alignment.md for schema migration plan.
     """
-    # Try CodeFile first (schema-correct path)
+    # Strategy 1: Match CodeExample by source_file path
     chunks = gc.query(
-        "MATCH (cf:CodeFile)-[:PRODUCED]->(ce:CodeExample) "
-        "MATCH (ce)<-[:CODE_EXAMPLE_ID]-(cc:CodeChunk) "
-        "WHERE cf.id = $resource OR cf.path = $resource "
+        "MATCH (ce:CodeExample) "
+        "WHERE ce.source_file = $resource OR ce.id = $resource "
+        "MATCH (ce)-[:HAS_CHUNK]->(cc:CodeChunk) "
         "RETURN 'code' AS source_type, "
-        "cf.path AS title, cf.id AS source_id, "
-        "cf.path AS url, "
+        "ce.source_file AS title, ce.id AS source_id, "
+        "ce.source_file AS url, "
         "cc.function_name AS section, cc.text AS text, "
         "cc.start_line AS chunk_index, "
         "null AS mdsplus_paths, null AS imas_paths "
@@ -608,11 +611,11 @@ def _fetch_code_file(gc: GraphClient, resource: str) -> str | None:
     if chunks:
         return format_fetch_report(chunks)
 
-    # Fall back to FacilityPath -> CodeExample -> CodeChunk
+    # Strategy 2: Match via FacilityPath → PRODUCED → CodeExample
     chunks = gc.query(
         "MATCH (fp:FacilityPath)-[:PRODUCED]->(ce:CodeExample) "
-        "MATCH (ce)<-[:CODE_EXAMPLE_ID]-(cc:CodeChunk) "
         "WHERE fp.id = $resource OR fp.path = $resource "
+        "MATCH (ce)-[:HAS_CHUNK]->(cc:CodeChunk) "
         "RETURN 'code' AS source_type, "
         "fp.path AS title, fp.id AS source_id, "
         "fp.path AS url, "
@@ -761,20 +764,17 @@ def _vector_search_code_chunks(
 ) -> tuple[list[str], dict[str, float]]:
     """Vector search on code_chunk_embedding index.
 
-    Facility filtering uses CodeExample traversal:
-    ``CodeChunk -[:CODE_EXAMPLE_ID]-> CodeExample {facility_id}``
+    Facility filtering uses CodeChunk's ``facility_id`` property directly.
     """
     # Over-fetch to avoid facility starvation when one facility dominates
     internal_k = max(k * 20, 200)
     params: dict[str, Any] = {"k": internal_k, "embedding": embedding}
 
     if facility is not None:
-        # Filter via CodeExample's facility_id (CodeChunk has no facility_id)
         cypher = (
             'CALL db.index.vector.queryNodes("code_chunk_embedding", $k, $embedding) '
             "YIELD node AS cc, score "
-            "MATCH (cc)-[:CODE_EXAMPLE_ID]->(ce:CodeExample) "
-            "WHERE ce.facility_id = $facility "
+            "WHERE cc.facility_id = $facility "
             "RETURN cc.id AS id, score "
             "ORDER BY score DESC LIMIT $limit"
         )
@@ -801,26 +801,29 @@ def _enrich_code_chunks(
 ) -> list[dict[str, Any]]:
     """Enrich code chunks with data references and directory context.
 
-    Relationship chain:
-    ``CodeChunk -[:CODE_EXAMPLE_ID]-> CodeExample -[:FROM_FILE]-> CodeFile``
+    Uses traversals that work with current graph state:
+    ``CodeExample -[:HAS_CHUNK]-> CodeChunk`` (inverse of schema CODE_EXAMPLE_ID)
     ``CodeChunk -[:CONTAINS_REF]-> DataReference``
     ``CodeFile -[:IN_DIRECTORY]-> FacilityPath``
+
+    See plans/features/ingestion-schema-alignment.md for schema migration plan.
     """
     cypher = """
         UNWIND $chunk_ids AS cid
         MATCH (cc:CodeChunk {id: cid})
-        OPTIONAL MATCH (cc)-[:CODE_EXAMPLE_ID]->(ce:CodeExample)
-        OPTIONAL MATCH (ce)-[:FROM_FILE]->(cf:CodeFile)
+        OPTIONAL MATCH (ce:CodeExample)-[:HAS_CHUNK]->(cc)
+        OPTIONAL MATCH (cf:CodeFile {path: cc.source_file})
+            WHERE cf.facility_id = cc.facility_id
         OPTIONAL MATCH (cc)-[:CONTAINS_REF]->(dr:DataReference)
-        OPTIONAL MATCH (dr)-[:RESOLVES_TO_NODE]->(tn:DataNode)
-        OPTIONAL MATCH (dr)-[:RESOLVES_TO_IMAS_PATH]->(ip:IMASPath)
-        OPTIONAL MATCH (dr)-[:CALLS_TDI_FUNCTION]->(tdi:TDIFunction)
+        OPTIONAL MATCH (dr)-[:RESOLVES_TO_NODE]->(tn)
         OPTIONAL MATCH (cf)-[:IN_DIRECTORY]->(fp:FacilityPath)
         RETURN cc.id AS id, cc.text AS text,
-               cc.function_name AS function_name, ce.source_file AS source_file,
-               cf.id AS source_file_id, ce.facility_id AS facility_id,
+               cc.function_name AS function_name,
+               coalesce(ce.source_file, cc.source_file) AS source_file,
+               cf.id AS source_file_id,
+               coalesce(ce.facility_id, cc.facility_id) AS facility_id,
                collect(DISTINCT {type: dr.ref_type, raw: dr.raw_string,
-                       tree: tn.path, imas: ip.id, tdi: tdi.id}) AS data_refs,
+                       tree: tn.path}) AS data_refs,
                fp.path AS directory, fp.description AS dir_description
     """
     return gc.query(cypher, chunk_ids=chunk_ids)
@@ -842,8 +845,8 @@ def _text_search_code_chunks(
 
     if facility is not None:
         cypher = """
-            MATCH (cc:CodeChunk)-[:CODE_EXAMPLE_ID]->(ce:CodeExample)
-            WHERE ce.facility_id = $facility
+            MATCH (cc:CodeChunk)
+            WHERE cc.facility_id = $facility
               AND (
                 toLower(cc.text) CONTAINS $query_lower
                 OR toLower(cc.function_name) CONTAINS $query_lower
@@ -1197,26 +1200,37 @@ def _get_facility_crossrefs(
 ) -> dict[str, dict[str, Any]]:
     """Get facility cross-references for IMAS paths.
 
-    Uses correct relationship chain:
-    ``CodeChunk -[:CONTAINS_REF]-> DataReference -[:RESOLVES_TO_IMAS_PATH]-> IMASPath``
-    ``CodeChunk -[:CODE_EXAMPLE_ID]-> CodeExample {facility_id}``
+    Uses relationships that exist in the current graph:
+    - FacilitySignal with matching physics_domain/name
+    - WikiChunk text mentions (keyword match)
+    - CodeChunk with IMAS IDS references (via related_ids property)
+
+    Note: MAPS_TO_IMAS, MENTIONS_IMAS, and RESOLVES_TO_IMAS_PATH
+    relationships are schema-defined but not yet populated in the graph.
+    See plans/features/ingestion-schema-alignment.md for migration plan.
     """
     cypher = """
         UNWIND $path_ids AS pid
         MATCH (ip:IMASPath {id: pid})
-        OPTIONAL MATCH (da:DataAccess)-[:MAPS_TO_IMAS]->(ip)
-        OPTIONAL MATCH (sig:FacilitySignal)-[:DATA_ACCESS]->(da)
+        // Find signals whose physics_domain matches this IMAS path's IDS
+        OPTIONAL MATCH (sig:FacilitySignal)
         WHERE sig.facility_id = $facility
-        OPTIONAL MATCH (wc:WikiChunk)-[:MENTIONS_IMAS]->(ip)
+          AND sig.physics_domain IS NOT NULL
+          AND ip.ids = sig.physics_domain
+        // Find wiki chunks that mention this path's name or IDS
+        OPTIONAL MATCH (wc:WikiChunk)
         WHERE wc.facility_id = $facility
-        OPTIONAL MATCH (dr:DataReference)-[:RESOLVES_TO_IMAS_PATH]->(ip)
-        OPTIONAL MATCH (cc:CodeChunk)-[:CONTAINS_REF]->(dr)
-        OPTIONAL MATCH (cc)-[:CODE_EXAMPLE_ID]->(ce:CodeExample)
-        WHERE ce.facility_id = $facility
+          AND (wc.imas_paths_mentioned IS NOT NULL
+               AND ip.id IN wc.imas_paths_mentioned)
+        // Find code chunks that reference this IDS
+        OPTIONAL MATCH (cc:CodeChunk)
+        WHERE cc.facility_id = $facility
+          AND cc.related_ids IS NOT NULL
+          AND ip.ids IN cc.related_ids
         RETURN ip.id AS id,
                collect(DISTINCT sig.id) AS facility_signals,
                collect(DISTINCT wc.section) AS wiki_mentions,
-               collect(DISTINCT ce.source_file) AS code_files
+               collect(DISTINCT cc.source_file) AS code_files
     """
     results = gc.query(cypher, path_ids=path_ids, facility=facility)
     return {r["id"]: r for r in results}
