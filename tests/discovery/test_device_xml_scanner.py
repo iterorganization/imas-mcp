@@ -2287,3 +2287,237 @@ class TestPPFGeometryCrossrefs:
     def test_no_crossref_for_unique_signals(self):
         """VESL/CROS has no device_xml equivalent (unique PPF data)."""
         assert "VESL/CROS" not in PPF_GEOMETRY_CROSSREFS
+
+
+class TestProbeStatusPersistence:
+    """Test that EFITSNAP probe enable/disable data is persisted to epochs."""
+
+    def test_epoch_has_probes_enabled_disabled(self):
+        """Epoch records include probes_enabled/probes_disabled from snap data."""
+        query_calls: list[tuple] = []
+
+        with patch(
+            "imas_codex.discovery.signals.scanners.device_xml.GraphClient"
+        ) as mock_gc_cls:
+            mock_gc = mock_gc_cls.return_value.__enter__.return_value
+            mock_gc.create_nodes.return_value = {"processed": 0, "relationships": {}}
+
+            def capture_query(cypher, **kwargs):
+                query_calls.append((cypher, kwargs))
+                return []
+
+            mock_gc.query.side_effect = capture_query
+
+            _persist_graph_nodes(
+                "jet",
+                MOCK_JET_CONFIG,
+                MOCK_PARSED_OUTPUT["versions"],
+                MOCK_PARSED_OUTPUT["limiters"],
+            )
+
+        # Find epoch creation query
+        epoch_calls = [
+            (q, kw) for q, kw in query_calls if "StructuralEpoch" in q and "UNWIND" in q
+        ]
+        assert len(epoch_calls) >= 1
+        records = epoch_calls[0][1]["records"]
+        epoch = records[0]
+        assert epoch["probes_enabled"] == ["BPME(1)", "BPME(2)"]
+        # Empty disabled list is omitted from record
+        assert "probes_disabled" not in epoch
+
+    def test_epoch_without_snap_has_no_probe_data(self):
+        """Epochs with no snap file data omit probe fields from record."""
+        config = {
+            "git_repo": "/repo",
+            "input_prefix": "JET/input",
+            "versions": [
+                {
+                    "version": "limiter_era",
+                    "first_shot": 1,
+                    "last_shot": 28791,
+                    "description": "Pre-divertor limiter",
+                    "uses_limiter": "Limiter",
+                    "wall_configuration": "limiter",
+                },
+            ],
+            "limiter_versions": [],
+        }
+        query_calls: list[tuple] = []
+
+        with patch(
+            "imas_codex.discovery.signals.scanners.device_xml.GraphClient"
+        ) as mock_gc_cls:
+            mock_gc = mock_gc_cls.return_value.__enter__.return_value
+            mock_gc.create_nodes.return_value = {"processed": 0, "relationships": {}}
+
+            def capture_query(cypher, **kwargs):
+                query_calls.append((cypher, kwargs))
+                return []
+
+            mock_gc.query.side_effect = capture_query
+
+            _persist_graph_nodes("jet", config, {}, {})
+
+        epoch_calls = [
+            (q, kw) for q, kw in query_calls if "StructuralEpoch" in q and "UNWIND" in q
+        ]
+        records = epoch_calls[0][1]["records"]
+        epoch = records[0]
+        # Pre-divertor epoch has no snap data → no probe fields
+        assert "probes_enabled" not in epoch
+        assert "probes_disabled" not in epoch
+
+
+class TestPFConfigurationPersistence:
+    """Test that pf_configuration is persisted from config to epochs."""
+
+    def test_epoch_has_pf_configuration(self):
+        """Epoch record includes pf_configuration when configured."""
+        config = {
+            "git_repo": "/repo",
+            "input_prefix": "JET/input",
+            "versions": [
+                {
+                    "version": "p68613",
+                    "first_shot": 68613,
+                    "last_shot": 74386,
+                    "description": "Baseline DMSS=91",
+                    "device_xml": "Devices/device_p68613.xml",
+                    "pf_configuration": "DMSS=091",
+                    "wall_configuration": "divertor",
+                },
+            ],
+            "limiter_versions": [],
+        }
+        parsed = {
+            "p68613": {
+                "magprobes": [{"id": "1", "r": 4.0, "z": 0.5, "angle": -70.0}],
+                "flux": [],
+                "pfcoils": [],
+                "pfcircuits": [],
+                "pfpassive": [],
+            }
+        }
+        query_calls: list[tuple] = []
+
+        with patch(
+            "imas_codex.discovery.signals.scanners.device_xml.GraphClient"
+        ) as mock_gc_cls:
+            mock_gc = mock_gc_cls.return_value.__enter__.return_value
+            mock_gc.create_nodes.return_value = {"processed": 0, "relationships": {}}
+            mock_gc.query.side_effect = lambda q, **kw: (
+                query_calls.append((q, kw)) or []
+            )
+
+            _persist_graph_nodes("jet", config, parsed, {})
+
+        epoch_calls = [
+            (q, kw) for q, kw in query_calls if "StructuralEpoch" in q and "UNWIND" in q
+        ]
+        records = epoch_calls[0][1]["records"]
+        assert records[0]["pf_configuration"] == "DMSS=091"
+
+    def test_pre_divertor_epoch_has_no_pf_configuration(self):
+        """Pre-divertor epochs have no pf_configuration."""
+        config = {
+            "git_repo": "/repo",
+            "input_prefix": "JET/input",
+            "versions": [
+                {
+                    "version": "limiter_era",
+                    "first_shot": 1,
+                    "last_shot": 28791,
+                    "description": "Pre-divertor",
+                    "uses_limiter": "Limiter",
+                    "wall_configuration": "limiter",
+                },
+            ],
+            "limiter_versions": [],
+        }
+        query_calls: list[tuple] = []
+        with patch(
+            "imas_codex.discovery.signals.scanners.device_xml.GraphClient"
+        ) as mock_gc_cls:
+            mock_gc = mock_gc_cls.return_value.__enter__.return_value
+            mock_gc.create_nodes.return_value = {"processed": 0, "relationships": {}}
+            mock_gc.query.side_effect = lambda q, **kw: (
+                query_calls.append((q, kw)) or []
+            )
+
+            _persist_graph_nodes("jet", config, {}, {})
+
+        epoch_calls = [
+            (q, kw) for q, kw in query_calls if "StructuralEpoch" in q and "UNWIND" in q
+        ]
+        records = epoch_calls[0][1]["records"]
+        assert "pf_configuration" not in records[0]
+
+
+class TestDeviceXMLProvenance:
+    """Test file_source/file_path provenance on DataNode dicts."""
+
+    def test_device_xml_data_node_has_provenance(self):
+        """DataNodes from device XML include file_source=git and file_path."""
+        created_nodes: list[list[dict]] = []
+
+        with patch(
+            "imas_codex.discovery.signals.scanners.device_xml.GraphClient"
+        ) as mock_gc_cls:
+            mock_gc = mock_gc_cls.return_value.__enter__.return_value
+            mock_gc.query.return_value = []
+            mock_gc.create_nodes.side_effect = lambda label, items, **kw: (
+                created_nodes.append(items)
+                or {"processed": len(items), "relationships": {}}
+            )
+
+            _persist_graph_nodes(
+                "jet",
+                MOCK_JET_CONFIG,
+                MOCK_PARSED_OUTPUT["versions"],
+                MOCK_PARSED_OUTPUT["limiters"],
+            )
+
+        # Find DataNode calls (exclude signals and access)
+        data_node_batches = [
+            batch
+            for batch in created_nodes
+            if batch
+            and isinstance(batch[0], dict)
+            and "path" in batch[0]
+            and "node_type" in batch[0]
+        ]
+        all_dns = [dn for batch in data_node_batches for dn in batch]
+        magprobe_dns = [dn for dn in all_dns if "magprobes:1" in dn["path"]]
+        assert len(magprobe_dns) == 1
+        dn = magprobe_dns[0]
+        assert dn["file_source"] == "git"
+        assert dn["file_path"] == "Devices/device_p89440.xml"
+
+    def test_epoch_has_device_xml_path(self):
+        """Epoch records include device_xml_path for provenance."""
+        query_calls: list[tuple] = []
+
+        with patch(
+            "imas_codex.discovery.signals.scanners.device_xml.GraphClient"
+        ) as mock_gc_cls:
+            mock_gc = mock_gc_cls.return_value.__enter__.return_value
+            mock_gc.create_nodes.return_value = {"processed": 0, "relationships": {}}
+            mock_gc.query.side_effect = lambda q, **kw: (
+                query_calls.append((q, kw)) or []
+            )
+
+            _persist_graph_nodes(
+                "jet",
+                MOCK_JET_CONFIG,
+                MOCK_PARSED_OUTPUT["versions"],
+                MOCK_PARSED_OUTPUT["limiters"],
+            )
+
+        epoch_calls = [
+            (q, kw) for q, kw in query_calls if "StructuralEpoch" in q and "UNWIND" in q
+        ]
+        records = epoch_calls[0][1]["records"]
+        epoch = records[0]
+        assert epoch["device_xml_path"] == "Devices/device_p89440.xml"
+        assert epoch["snap_file_path"] == "Snap_files/EFITSNAP/efitsnap_p89440_bound0"
