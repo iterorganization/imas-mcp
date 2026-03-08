@@ -1016,7 +1016,7 @@ class TestSearchImas:
         mock_gc.query.side_effect = _route_query(
             {
                 "imas_path_embedding": path_vector,
-                "RESOLVES_TO_IMAS_PATH": crossrefs,
+                "FacilitySignal": crossrefs,
                 "UNWIND $path_ids": [_IMAS_ENRICHMENT_IP],
             }
         )
@@ -1301,7 +1301,7 @@ class TestFetch:
                 "imas_paths": None,
             },
         ]
-        mock_gc.query.side_effect = _route_query({"CodeFile": code_chunks})
+        mock_gc.query.side_effect = _route_query({"CodeExample": code_chunks})
 
         result = _fetch("tcv:/home/codes/liuqe.py", gc=mock_gc)
 
@@ -1598,7 +1598,7 @@ class TestSchemaGuard:
                 break
 
     def test_code_enrichment_uses_code_example(self, mock_gc, mock_encoder):
-        """Code enrichment traverses CodeChunk → CodeExample → CodeFile."""
+        """Code enrichment traverses CodeExample -[:HAS_CHUNK]-> CodeChunk."""
         mock_gc.query.side_effect = _route_query(
             {
                 "code_chunk_embedding": [{"id": "cc:1", "score": 0.9}],
@@ -1608,21 +1608,20 @@ class TestSchemaGuard:
         for call in mock_gc.query.call_args_list:
             cypher = call[0][0]
             if "CodeChunk {id: cid}" in cypher:
-                # Must use CodeExample traversal (CodeChunk has no facility_id)
-                assert "CODE_EXAMPLE_ID" in cypher
+                # Uses HAS_CHUNK reversed (CodeExample -[:HAS_CHUNK]-> CodeChunk)
+                assert "HAS_CHUNK" in cypher
                 assert "CodeExample" in cypher
-                # Data refs via CodeChunk, not CodeFile
+                # Data refs via CodeChunk
                 assert "CONTAINS_REF" in cypher
                 break
 
-    def test_code_vector_uses_code_example_for_facility(self, mock_gc, mock_encoder):
-        """Code vector search filters facility via CodeExample, not CodeChunk."""
+    def test_code_vector_uses_facility_id_property(self, mock_gc, mock_encoder):
+        """Code vector search filters facility via CodeChunk.facility_id property."""
         _search_code(query="test", facility="tcv", gc=mock_gc, encoder=mock_encoder)
         for call in mock_gc.query.call_args_list:
             cypher = call[0][0]
             if "code_chunk_embedding" in cypher:
-                assert "CodeExample" in cypher
-                assert "ce.facility_id" in cypher
+                assert "cc.facility_id" in cypher
                 break
         else:
             pytest.fail("No code vector search call found")
@@ -1644,8 +1643,8 @@ class TestSchemaGuard:
                 assert "structure_reference" in cypher or "path_doc" in cypher
                 break
 
-    def test_facility_crossrefs_uses_code_chunk(self, mock_gc, mock_encoder):
-        """Facility crossrefs use CodeChunk → DataReference, not CodeFile."""
+    def test_facility_crossrefs_uses_property_match(self, mock_gc, mock_encoder):
+        """Facility crossrefs use property-based matching, not relationship traversal."""
         mock_gc.query.side_effect = _route_query(
             {
                 "imas_path_embedding": [
@@ -1657,10 +1656,9 @@ class TestSchemaGuard:
         _search_imas(query="ip", facility="tcv", gc=mock_gc, encoder=mock_encoder)
         for call in mock_gc.query.call_args_list:
             cypher = call[0][0]
-            if "RESOLVES_TO_IMAS_PATH" in cypher:
-                # Must traverse CodeChunk → CONTAINS_REF → DataReference
+            if "FacilitySignal" in cypher and "WikiChunk" in cypher:
+                # Uses property-based facility filter
+                assert "facility_id" in cypher
+                # CodeChunk matched via related_ids property
                 assert "CodeChunk" in cypher
-                assert "CONTAINS_REF" in cypher
-                # Facility filter via CodeExample
-                assert "CodeExample" in cypher
                 break
