@@ -590,9 +590,8 @@ def _fetch_code_file(gc: GraphClient, resource: str) -> str | None:
 
     Tries multiple traversal strategies:
     1. CodeExample matched by source_file → HAS_CHUNK → CodeChunk
-    2. FacilityPath → PRODUCED → CodeExample → HAS_CHUNK → CodeChunk
-
-    See plans/features/ingestion-schema-alignment.md for schema migration plan.
+    2. CodeFile → PRODUCED → CodeExample → HAS_CHUNK → CodeChunk
+    3. FacilityPath → PRODUCED → CodeExample → HAS_CHUNK → CodeChunk
     """
     # Strategy 1: Match CodeExample by source_file path
     chunks = gc.query(
@@ -611,7 +610,24 @@ def _fetch_code_file(gc: GraphClient, resource: str) -> str | None:
     if chunks:
         return format_fetch_report(chunks)
 
-    # Strategy 2: Match via FacilityPath → PRODUCED → CodeExample
+    # Strategy 2: Match via CodeFile → PRODUCED → CodeExample
+    chunks = gc.query(
+        "MATCH (cf:CodeFile)-[:PRODUCED]->(ce:CodeExample) "
+        "WHERE cf.id = $resource OR cf.path = $resource "
+        "MATCH (ce)-[:HAS_CHUNK]->(cc:CodeChunk) "
+        "RETURN 'code' AS source_type, "
+        "cf.path AS title, cf.id AS source_id, "
+        "cf.path AS url, "
+        "cc.function_name AS section, cc.text AS text, "
+        "cc.start_line AS chunk_index, "
+        "null AS mdsplus_paths, null AS imas_paths "
+        "ORDER BY cc.start_line",
+        resource=resource,
+    )
+    if chunks:
+        return format_fetch_report(chunks)
+
+    # Strategy 3: Match via FacilityPath → PRODUCED → CodeExample
     chunks = gc.query(
         "MATCH (fp:FacilityPath)-[:PRODUCED]->(ce:CodeExample) "
         "WHERE fp.id = $resource OR fp.path = $resource "
@@ -801,12 +817,11 @@ def _enrich_code_chunks(
 ) -> list[dict[str, Any]]:
     """Enrich code chunks with data references and directory context.
 
-    Uses traversals that work with current graph state:
+    Uses traversals that work with both current and migrated graph states:
     ``CodeExample -[:HAS_CHUNK]-> CodeChunk`` (inverse of schema CODE_EXAMPLE_ID)
-    ``CodeChunk -[:CONTAINS_REF]-> DataReference``
+    ``CodeChunk -[:CONTAINS_REF]-> DataReference -[:RESOLVES_TO_NODE]-> DataNode``
+    ``DataReference -[:RESOLVES_TO_IMAS_PATH]-> IMASPath``
     ``CodeFile -[:IN_DIRECTORY]-> FacilityPath``
-
-    See plans/features/ingestion-schema-alignment.md for schema migration plan.
     """
     cypher = """
         UNWIND $chunk_ids AS cid
@@ -816,6 +831,7 @@ def _enrich_code_chunks(
             WHERE cf.facility_id = cc.facility_id
         OPTIONAL MATCH (cc)-[:CONTAINS_REF]->(dr:DataReference)
         OPTIONAL MATCH (dr)-[:RESOLVES_TO_NODE]->(tn)
+        OPTIONAL MATCH (dr)-[:RESOLVES_TO_IMAS_PATH]->(ip:IMASPath)
         OPTIONAL MATCH (cf)-[:IN_DIRECTORY]->(fp:FacilityPath)
         RETURN cc.id AS id, cc.text AS text,
                cc.function_name AS function_name,
@@ -823,7 +839,7 @@ def _enrich_code_chunks(
                cf.id AS source_file_id,
                coalesce(ce.facility_id, cc.facility_id) AS facility_id,
                collect(DISTINCT {type: dr.ref_type, raw: dr.raw_string,
-                       tree: tn.path}) AS data_refs,
+                       tree: tn.path, imas_path: ip.id}) AS data_refs,
                fp.path AS directory, fp.description AS dir_description
     """
     return gc.query(cypher, chunk_ids=chunk_ids)
@@ -1200,37 +1216,44 @@ def _get_facility_crossrefs(
 ) -> dict[str, dict[str, Any]]:
     """Get facility cross-references for IMAS paths.
 
-    Uses relationships that exist in the current graph:
-    - FacilitySignal with matching physics_domain/name
-    - WikiChunk text mentions (keyword match)
-    - CodeChunk with IMAS IDS references (via related_ids property)
-
-    Note: MAPS_TO_IMAS, MENTIONS_IMAS, and RESOLVES_TO_IMAS_PATH
-    relationships are schema-defined but not yet populated in the graph.
-    See plans/features/ingestion-schema-alignment.md for migration plan.
+    Uses both relationship-based traversals (populated by migration/ingestion)
+    and property-based fallbacks for comprehensive results:
+    - FacilitySignal: physics_domain match OR MAPS_TO_IMAS relationship
+    - WikiChunk: MENTIONS_IMAS relationship OR imas_paths_mentioned property
+    - CodeChunk: RESOLVES_TO_IMAS_PATH via DataReference OR related_ids property
     """
     cypher = """
         UNWIND $path_ids AS pid
         MATCH (ip:IMASPath {id: pid})
-        // Find signals whose physics_domain matches this IMAS path's IDS
-        OPTIONAL MATCH (sig:FacilitySignal)
-        WHERE sig.facility_id = $facility
-          AND sig.physics_domain IS NOT NULL
-          AND ip.ids = sig.physics_domain
-        // Find wiki chunks that mention this path's name or IDS
-        OPTIONAL MATCH (wc:WikiChunk)
-        WHERE wc.facility_id = $facility
-          AND (wc.imas_paths_mentioned IS NOT NULL
-               AND ip.id IN wc.imas_paths_mentioned)
-        // Find code chunks that reference this IDS
-        OPTIONAL MATCH (cc:CodeChunk)
-        WHERE cc.facility_id = $facility
-          AND cc.related_ids IS NOT NULL
-          AND ip.ids IN cc.related_ids
+        // Signals: relationship-based (MAPS_TO_IMAS) + property-based fallback
+        OPTIONAL MATCH (sig:FacilitySignal {facility_id: $facility})
+            -[:DATA_ACCESS]->(da:DataAccess)-[:MAPS_TO_IMAS]->(ip)
+        OPTIONAL MATCH (sig2:FacilitySignal)
+        WHERE sig2.facility_id = $facility
+          AND sig2.physics_domain IS NOT NULL
+          AND ip.ids = sig2.physics_domain
+        WITH ip,
+             collect(DISTINCT sig.id) + collect(DISTINCT sig2.id) AS all_sigs
+        // Wiki: relationship-based (MENTIONS_IMAS) + property-based fallback
+        OPTIONAL MATCH (wc:WikiChunk {facility_id: $facility})-[:MENTIONS_IMAS]->(ip)
+        OPTIONAL MATCH (wc2:WikiChunk)
+        WHERE wc2.facility_id = $facility
+          AND wc2.imas_paths_mentioned IS NOT NULL
+          AND ip.id IN wc2.imas_paths_mentioned
+        WITH ip, all_sigs,
+             collect(DISTINCT wc.section) + collect(DISTINCT wc2.section) AS all_wiki
+        // Code: relationship-based (RESOLVES_TO_IMAS_PATH) + property-based fallback
+        OPTIONAL MATCH (cc:CodeChunk {facility_id: $facility})
+            -[:CONTAINS_REF]->(dr:DataReference)-[:RESOLVES_TO_IMAS_PATH]->(ip)
+        OPTIONAL MATCH (cc2:CodeChunk)
+        WHERE cc2.facility_id = $facility
+          AND cc2.related_ids IS NOT NULL
+          AND ip.ids IN cc2.related_ids
         RETURN ip.id AS id,
-               collect(DISTINCT sig.id) AS facility_signals,
-               collect(DISTINCT wc.section) AS wiki_mentions,
-               collect(DISTINCT cc.source_file) AS code_files
+               [x IN all_sigs WHERE x IS NOT NULL] AS facility_signals,
+               [x IN all_wiki WHERE x IS NOT NULL] AS wiki_mentions,
+               [x IN collect(DISTINCT cc.source_file) +
+                    collect(DISTINCT cc2.source_file) WHERE x IS NOT NULL] AS code_files
     """
     results = gc.query(cypher, path_ids=path_ids, facility=facility)
     return {r["id"]: r for r in results}

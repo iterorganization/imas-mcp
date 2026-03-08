@@ -1884,7 +1884,10 @@ classes:
       Optional relationships:
         - HAS_UNIT -> Unit (data units)
         - MEASURES -> StandardName (cross-facility semantic linking)
-        - MAPS_TO_IMAS -> IMASPath (IMAS data dictionary mapping)
+      
+      IMAS mapping: Use IMASMapping nodes (SOURCE_PATH from DataNode,
+      TARGET_PATH to IMASPath) — not a direct MAPS_TO_IMAS relationship
+      on FacilitySignal or DataAccess.
       
       Lifecycle relationships (data source epoch tracking):
         - INTRODUCED_IN -> StructuralEpoch (epoch when signal first appeared)
@@ -2957,6 +2960,17 @@ classes:
         description: Parent CodeExample
         required: true
         range: CodeExample
+      facility_id:
+        description: Parent facility ID (denormalized for query performance)
+        required: true
+        range: Facility
+        annotations:
+          relationship_type: AT_FACILITY
+      source_file:
+        description: Source file path (denormalized from CodeExample.source_file)
+      language:
+        description: Programming language (denormalized from CodeExample.language)
+        range: ProgrammingLanguage
       text:
         description: The actual code content
         required: true
