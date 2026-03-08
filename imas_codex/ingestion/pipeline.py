@@ -498,20 +498,10 @@ async def ingest_files(
             stats["ids_found"] += batch_ids_found
             stats["mdsplus_paths"] += batch_mdsplus_paths
 
-            # Write chunks to graph via Cypher UNWIND
+            # Write to graph using create_nodes() for schema-correct relationships.
+            # Order matters: CodeExample must exist before CodeChunk (for CODE_EXAMPLE_ID).
             with GraphClient() as graph_client:
-                graph_client.query(
-                    """
-                    UNWIND $chunks AS chunk
-                    MERGE (c:CodeChunk {id: chunk.id})
-                    SET c += chunk
-                    WITH c, chunk
-                    MATCH (f:Facility {id: chunk.facility_id})
-                    MERGE (c)-[:AT_FACILITY]->(f)
-                    """,
-                    chunks=all_chunks,
-                )
-
+                # Step 1: Create CodeExample nodes first (auto-creates AT_FACILITY)
                 for file_info in batch_files:
                     example_id = file_info["example_id"]
                     meta = file_metadata.get(example_id)
@@ -520,17 +510,29 @@ async def ingest_files(
 
                     source_file_id = meta.pop("_source_file_id", None)
 
-                    graph_client.query(
-                        """
-                        MERGE (e:CodeExample {id: $id})
-                        SET e += $props
-                        """,
-                        id=example_id,
-                        props=meta,
-                    )
+                    # Compute from_file for the FROM_FILE relationship
+                    from_file_id = f"{facility}:{meta['source_file']}"
+                    example_props = {
+                        "id": example_id,
+                        **meta,
+                        "from_file": from_file_id,
+                    }
+
+                    graph_client.create_nodes("CodeExample", [example_props])
 
                     _update_facility_path_status(
                         graph_client, facility, meta["source_file"], example_id
+                    )
+
+                    # Link CodeFile → PRODUCED → CodeExample
+                    graph_client.query(
+                        """
+                        MATCH (cf:CodeFile {id: $cf_id})
+                        MATCH (ce:CodeExample {id: $ce_id})
+                        MERGE (cf)-[:PRODUCED]->(ce)
+                        """,
+                        cf_id=from_file_id,
+                        ce_id=example_id,
                     )
 
                     if source_file_id:
@@ -538,6 +540,10 @@ async def ingest_files(
                             source_file_id, "ingested", code_example_id=example_id
                         )
 
+                # Step 2: Create CodeChunk nodes (auto-creates CODE_EXAMPLE_ID, AT_FACILITY)
+                graph_client.create_nodes("CodeChunk", all_chunks)
+
+                # Step 3: Create HAS_CHUNK (inverse traversal convenience)
                 graph_client.query(
                     """
                     MATCH (c:CodeChunk)

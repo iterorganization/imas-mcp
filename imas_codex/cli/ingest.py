@@ -381,3 +381,62 @@ def ingest_list(facility: str, status: str, limit: int) -> None:
 
     console.print(table)
     console.print(f"\n[dim]Showing {len(result)} of possibly more files[/dim]")
+
+
+@ingest.command("migrate")
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Only report counts, don't create relationships",
+)
+def ingest_migrate(dry_run: bool) -> None:
+    """Migrate graph to create missing schema-defined relationships.
+
+    Creates relationships that the schema defines but were not created
+    by earlier versions of the ingestion pipeline. Idempotent — safe
+    to run multiple times.
+
+    \b
+    Migrations:
+      1. CODE_EXAMPLE_ID: CodeChunk → CodeExample
+      2. AT_FACILITY:     CodeChunk → Facility
+      3. FROM_FILE:       CodeExample → CodeFile
+      4. PRODUCED:        CodeFile → CodeExample
+      5. TreeNode label:  Add DataNode label to legacy TreeNode nodes
+    """
+    from imas_codex.ingestion.graph import migrate_schema_relationships
+
+    mode = "[yellow]DRY RUN[/yellow]" if dry_run else "[green]LIVE[/green]"
+    console.print(f"\n[bold]Schema Relationship Migration[/bold] ({mode})\n")
+
+    try:
+        stats = migrate_schema_relationships(dry_run=dry_run)
+    except Exception as e:
+        console.print(f"[red]Migration failed: {e}[/red]")
+        raise SystemExit(1) from e
+
+    table = Table(title="Migration Results")
+    table.add_column("Relationship", style="cyan")
+    table.add_column("Pending", justify="right")
+    table.add_column("Created", justify="right", style="green")
+
+    migrations = [
+        ("CODE_EXAMPLE_ID", "code_example_id"),
+        ("AT_FACILITY (CodeChunk)", "at_facility"),
+        ("FROM_FILE", "from_file"),
+        ("PRODUCED", "produced"),
+        ("TreeNode → DataNode", "treenode_relabel"),
+    ]
+
+    for label, key in migrations:
+        pending = stats.get(f"{key}_pending", 0)
+        created = stats.get(f"{key}_created", "-" if dry_run else 0)
+        table.add_row(label, str(pending), str(created))
+
+    console.print(table)
+
+    if dry_run:
+        console.print(
+            "\n[yellow]Dry run complete. "
+            "Run without --dry-run to apply changes.[/yellow]"
+        )

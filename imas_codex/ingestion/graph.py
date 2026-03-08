@@ -65,7 +65,7 @@ def link_chunks_to_imas_paths(graph_client: GraphClient | None = None) -> int:
     """Create REFERENCES_IMAS relationships for chunks with IDS references.
 
     Matches CodeChunk nodes that have related_ids metadata to
-    existing IMASPath nodes (IDS-level paths where id = ids name).
+    existing IMASPath IDS root nodes (where ids field matches the IDS name).
 
     Args:
         graph_client: Optional GraphClient instance. If None, creates one.
@@ -78,7 +78,7 @@ def link_chunks_to_imas_paths(graph_client: GraphClient | None = None) -> int:
         WHERE c.related_ids IS NOT NULL
         UNWIND c.related_ids AS ids_name
         MATCH (p:IMASPath)
-        WHERE p.id = ids_name AND p.ids = ids_name
+        WHERE p.ids = ids_name AND p.id = ids_name
         MERGE (c)-[:REFERENCES_IMAS]->(p)
         RETURN count(*) AS created
     """
@@ -204,6 +204,33 @@ def link_chunks_to_tree_nodes(graph_client: GraphClient | None = None) -> int:
         resolved_count = result[0]["resolved"] if result else 0
         logger.info("Created %d RESOLVES_TO_NODE relationships", resolved_count)
 
+        # Step 4: Create RESOLVES_TO_IMAS_PATH via DataNode → IMASMapping → IMASPath
+        result = client.query("""
+            MATCH (dr:DataReference)-[:RESOLVES_TO_NODE]->(dn:DataNode)
+            WHERE NOT (dr)-[:RESOLVES_TO_IMAS_PATH]->()
+            MATCH (m:IMASMapping)-[:SOURCE_PATH]->(dn)
+            MATCH (m)-[:TARGET_PATH]->(ip:IMASPath)
+            MERGE (dr)-[:RESOLVES_TO_IMAS_PATH]->(ip)
+            RETURN count(*) AS linked
+        """)
+        imas_linked = result[0]["linked"] if result else 0
+        if imas_linked:
+            logger.info("Created %d RESOLVES_TO_IMAS_PATH relationships", imas_linked)
+
+        # Step 5: Create CALLS_TDI_FUNCTION for TDI call references
+        result = client.query("""
+            MATCH (dr:DataReference {ref_type: 'tdi_call'})
+            WHERE NOT (dr)-[:CALLS_TDI_FUNCTION]->()
+            MATCH (tdi:TDIFunction {facility_id: dr.facility_id})
+            WHERE tdi.name = dr.raw_string
+               OR dr.raw_string CONTAINS tdi.name
+            MERGE (dr)-[:CALLS_TDI_FUNCTION]->(tdi)
+            RETURN count(*) AS linked
+        """)
+        tdi_linked = result[0]["linked"] if result else 0
+        if tdi_linked:
+            logger.info("Created %d CALLS_TDI_FUNCTION relationships", tdi_linked)
+
         # Update ref_count on CodeChunk nodes
         client.query("""
             MATCH (c:CodeChunk)-[r:CONTAINS_REF]->(d:DataReference)
@@ -277,9 +304,158 @@ def link_example_mdsplus_paths(
     return refs_created
 
 
+def migrate_schema_relationships(
+    dry_run: bool = False,
+    graph_client: GraphClient | None = None,
+) -> dict[str, int]:
+    """One-time migration to create missing schema-defined relationships.
+
+    Fixes drift between LinkML schema and graph state for already-ingested data.
+    All operations are idempotent (MERGE, not CREATE).
+
+    Migrations:
+    1. CODE_EXAMPLE_ID: CodeChunk → CodeExample
+    2. AT_FACILITY: CodeChunk → Facility (using denormalized facility_id)
+    3. FROM_FILE: CodeExample → CodeFile
+    4. PRODUCED: CodeFile → CodeExample
+    5. TreeNode → DataNode label fix
+
+    Args:
+        dry_run: If True, only report counts without creating relationships.
+        graph_client: Optional GraphClient instance.
+
+    Returns:
+        Dict with counts per migration step.
+    """
+    stats: dict[str, int] = {}
+
+    with _get_client(graph_client) as client:
+        # 1. Create CODE_EXAMPLE_ID relationships from existing property
+        result = client.query("""
+            MATCH (cc:CodeChunk)
+            WHERE cc.code_example_id IS NOT NULL
+            MATCH (ce:CodeExample {id: cc.code_example_id})
+            WHERE NOT (cc)-[:CODE_EXAMPLE_ID]->(ce)
+            RETURN count(cc) AS pending
+        """)
+        pending = result[0]["pending"] if result else 0
+        stats["code_example_id_pending"] = pending
+
+        if not dry_run and pending > 0:
+            result = client.query("""
+                MATCH (cc:CodeChunk)
+                WHERE cc.code_example_id IS NOT NULL
+                MATCH (ce:CodeExample {id: cc.code_example_id})
+                MERGE (cc)-[:CODE_EXAMPLE_ID]->(ce)
+                RETURN count(*) AS created
+            """)
+            stats["code_example_id_created"] = result[0]["created"] if result else 0
+            logger.info(
+                "Created %d CODE_EXAMPLE_ID relationships",
+                stats["code_example_id_created"],
+            )
+
+        # 2. Create AT_FACILITY for CodeChunks missing the relationship
+        result = client.query("""
+            MATCH (cc:CodeChunk)
+            WHERE cc.facility_id IS NOT NULL
+            AND NOT (cc)-[:AT_FACILITY]->()
+            RETURN count(cc) AS pending
+        """)
+        pending = result[0]["pending"] if result else 0
+        stats["at_facility_pending"] = pending
+
+        if not dry_run and pending > 0:
+            result = client.query("""
+                MATCH (cc:CodeChunk)
+                WHERE cc.facility_id IS NOT NULL
+                MATCH (f:Facility {id: cc.facility_id})
+                MERGE (cc)-[:AT_FACILITY]->(f)
+                RETURN count(*) AS created
+            """)
+            stats["at_facility_created"] = result[0]["created"] if result else 0
+            logger.info(
+                "Created %d AT_FACILITY relationships for CodeChunks",
+                stats["at_facility_created"],
+            )
+
+        # 3. Create FROM_FILE relationships
+        result = client.query("""
+            MATCH (ce:CodeExample)
+            WHERE ce.source_file IS NOT NULL AND ce.facility_id IS NOT NULL
+            AND NOT (ce)-[:FROM_FILE]->()
+            MATCH (cf:CodeFile {path: ce.source_file})
+            WHERE cf.facility_id = ce.facility_id
+            RETURN count(ce) AS pending
+        """)
+        pending = result[0]["pending"] if result else 0
+        stats["from_file_pending"] = pending
+
+        if not dry_run and pending > 0:
+            result = client.query("""
+                MATCH (ce:CodeExample)
+                WHERE ce.source_file IS NOT NULL AND ce.facility_id IS NOT NULL
+                MATCH (cf:CodeFile {path: ce.source_file})
+                WHERE cf.facility_id = ce.facility_id
+                MERGE (ce)-[:FROM_FILE]->(cf)
+                RETURN count(*) AS created
+            """)
+            stats["from_file_created"] = result[0]["created"] if result else 0
+            logger.info(
+                "Created %d FROM_FILE relationships",
+                stats["from_file_created"],
+            )
+
+        # 4. Create PRODUCED from CodeFile to CodeExample
+        result = client.query("""
+            MATCH (ce:CodeExample)-[:FROM_FILE]->(cf:CodeFile)
+            WHERE NOT (cf)-[:PRODUCED]->(ce)
+            RETURN count(*) AS pending
+        """)
+        pending = result[0]["pending"] if result else 0
+        stats["produced_pending"] = pending
+
+        if not dry_run and pending > 0:
+            result = client.query("""
+                MATCH (ce:CodeExample)-[:FROM_FILE]->(cf:CodeFile)
+                MERGE (cf)-[:PRODUCED]->(ce)
+                RETURN count(*) AS created
+            """)
+            stats["produced_created"] = result[0]["created"] if result else 0
+            logger.info(
+                "Created %d PRODUCED relationships",
+                stats["produced_created"],
+            )
+
+        # 5. Fix TreeNode → DataNode label (add DataNode label to TreeNode nodes)
+        result = client.query("""
+            MATCH (n:TreeNode)
+            WHERE NOT n:DataNode
+            RETURN count(n) AS pending
+        """)
+        pending = result[0]["pending"] if result else 0
+        stats["treenode_relabel_pending"] = pending
+
+        if not dry_run and pending > 0:
+            result = client.query("""
+                MATCH (n:TreeNode)
+                WHERE NOT n:DataNode
+                SET n:DataNode
+                RETURN count(n) AS relabeled
+            """)
+            stats["treenode_relabeled"] = result[0]["relabeled"] if result else 0
+            logger.info(
+                "Added DataNode label to %d TreeNode nodes",
+                stats["treenode_relabeled"],
+            )
+
+    return stats
+
+
 __all__ = [
     "link_chunks_to_imas_paths",
     "link_chunks_to_tree_nodes",
     "link_example_mdsplus_paths",
     "link_examples_to_facility",
+    "migrate_schema_relationships",
 ]
