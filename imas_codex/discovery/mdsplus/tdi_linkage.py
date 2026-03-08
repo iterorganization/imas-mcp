@@ -15,7 +15,7 @@ from imas_codex.graph import GraphClient
 logger = logging.getLogger(__name__)
 
 
-def link_tdi_to_tree_nodes(
+def link_tdi_to_data_nodes(
     facility: str,
 ) -> int:
     """Match TDI build_path references to DataNode paths.

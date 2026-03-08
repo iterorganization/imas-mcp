@@ -140,7 +140,7 @@ schema = get_schema()
 
 # Node labels (non-abstract classes)
 print(schema.node_labels)
-# ['Facility', 'MDSplusServer', 'MDSplusTree', ...]
+# ['Facility', 'MDSplusServer', 'DataSource', ...]
 
 # Relationships (slots with class ranges)
 for rel in schema.relationships:

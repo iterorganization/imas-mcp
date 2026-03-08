@@ -132,7 +132,7 @@ def get_signal_count() -> int:
     return result[0]["cnt"] if result else 0
 
 
-def get_tree_node_count() -> int:
+def get_data_node_count() -> int:
     result = query_graph(
         "MATCH (n:DataNode {facility_id: $f}) RETURN count(n) AS cnt",
         f=FACILITY,
@@ -166,9 +166,9 @@ def mdsplus_data():
 
 
 @pytest.mark.timeout(60)
-def test_01_tree_nodes_exist(mdsplus_data):
+def test_01_data_nodes_exist(mdsplus_data):
     """E2E-1: MDSplus scan creates DataNode nodes with required properties."""
-    tree_nodes = query_graph(
+    data_nodes = query_graph(
         """
         MATCH (n:DataNode {facility_id: $f})
         RETURN n.path AS path, n.data_source_name AS data_source_name,
@@ -177,8 +177,8 @@ def test_01_tree_nodes_exist(mdsplus_data):
         """,
         f=FACILITY,
     )
-    assert len(tree_nodes) > 0, "No DataNode nodes"
-    for n in tree_nodes:
+    assert len(data_nodes) > 0, "No DataNode nodes"
+    for n in data_nodes:
         assert n["path"] is not None, f"Missing path: {n}"
         assert n["data_source_name"] is not None, f"Missing data_source_name: {n}"
         assert n["facility_id"] == FACILITY, f"Bad facility_id: {n}"

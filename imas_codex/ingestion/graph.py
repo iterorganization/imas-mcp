@@ -114,7 +114,7 @@ def link_examples_to_facility(graph_client: GraphClient | None = None) -> int:
         return count
 
 
-def link_chunks_to_tree_nodes(graph_client: GraphClient | None = None) -> int:
+def link_chunks_to_data_nodes(graph_client: GraphClient | None = None) -> int:
     """Create DataReference nodes and link to DataNodes for MDSplus paths.
 
     For chunks with mdsplus_paths metadata:
@@ -304,24 +304,80 @@ def link_example_mdsplus_paths(
     return refs_created
 
 
+def _run_migration_step(
+    client: GraphClient,
+    *,
+    key: str,
+    stats: dict[str, int],
+    dry_run: bool,
+    count_query: str,
+    apply_query: str,
+    count_field: str = "pending",
+    apply_field: str = "created",
+    log_msg: str = "",
+    batch_size: int = 0,
+    **params: object,
+) -> None:
+    """Run a single idempotent migration step (count then apply).
+
+    Args:
+        batch_size: If >0, apply in batches using LIMIT. The apply_query
+            must NOT already contain a LIMIT clause. Set this for steps
+            that modify >10K nodes to avoid OOM.
+    """
+    result = client.query(count_query, **params)
+    pending = result[0][count_field] if result else 0
+    stats[f"{key}_pending"] = pending
+
+    if not dry_run and pending > 0:
+        if batch_size > 0:
+            total = 0
+            while True:
+                result = client.query(apply_query, batch_size=batch_size, **params)
+                batch_count = result[0][apply_field] if result else 0
+                total += batch_count
+                if batch_count == 0:
+                    break
+            stats[f"{key}_created"] = total
+        else:
+            result = client.query(apply_query, **params)
+            stats[f"{key}_created"] = result[0][apply_field] if result else 0
+        if log_msg:
+            logger.info(log_msg, stats[f"{key}_created"])
+
+
 def migrate_schema_relationships(
     dry_run: bool = False,
     graph_client: GraphClient | None = None,
 ) -> dict[str, int]:
-    """One-time migration to create missing schema-defined relationships.
+    """Migrate graph to match the authoritative LinkML schema.
 
-    Fixes drift between LinkML schema and graph state for already-ingested data.
-    All operations are idempotent (MERGE, not CREATE).
+    Fixes drift between the LinkML schema and graph state for already-ingested
+    data. All operations are idempotent (MERGE, not CREATE). Safe to run
+    multiple times.
 
     Migrations:
-    1. CODE_EXAMPLE_ID: CodeChunk → CodeExample
-    2. AT_FACILITY: CodeChunk → Facility (using denormalized facility_id)
-    3. FROM_FILE: CodeExample → CodeFile
-    4. PRODUCED: CodeFile → CodeExample
-    5. TreeNode → DataNode label fix
+     1. CODE_EXAMPLE_ID:   CodeChunk → CodeExample
+     2. AT_FACILITY:       CodeChunk → Facility
+     3. FROM_FILE:         CodeExample → CodeFile
+     4. PRODUCED:          CodeFile → CodeExample
+     5. TreeNode → DataNode:  Relabel + remove old label
+     6. TreeNodePattern → DataNodePattern:  Relabel + remove old label
+     7. TreeModelVersion → StructuralEpoch:  Relabel + remove old label
+     8. IN_DATA_SOURCE:    DataNode → DataSource (from tree_name property)
+     9. IN_TREE → IN_DATA_SOURCE:  Migrate legacy relationships
+    10. RESOLVES_TO_TREE_NODE → RESOLVES_TO_NODE:  Migrate legacy relationships
+    11. MDSplusTree cleanup:  Remove legacy MDSplusTree nodes
+    12. Signal status fix: Map non-enum statuses to valid values
+    13. Signal null status: Set discovered on null-status signals
+    14. Ghost cleanup:     Remove empty FacilitySignal nodes
+    15. SOURCE_NODE → HAS_DATA_SOURCE_NODE:  Migrate legacy relationships
+    16. SAME_GEOMETRY cleanup:  Remove undeclared relationships
+    17. ACCESSES_GEOMETRY cleanup:  Remove undeclared relationships
+    18. Deprecated properties:  Remove _node_content, _node_type from CodeChunks
 
     Args:
-        dry_run: If True, only report counts without creating relationships.
+        dry_run: If True, only report counts without making changes.
         graph_client: Optional GraphClient instance.
 
     Returns:
@@ -331,130 +387,453 @@ def migrate_schema_relationships(
 
     with _get_client(graph_client) as client:
         # 1. Create CODE_EXAMPLE_ID relationships from existing property
-        result = client.query("""
-            MATCH (cc:CodeChunk)
-            WHERE cc.code_example_id IS NOT NULL
-            MATCH (ce:CodeExample {id: cc.code_example_id})
-            WHERE NOT (cc)-[:CODE_EXAMPLE_ID]->(ce)
-            RETURN count(cc) AS pending
-        """)
-        pending = result[0]["pending"] if result else 0
-        stats["code_example_id_pending"] = pending
-
-        if not dry_run and pending > 0:
-            result = client.query("""
+        _run_migration_step(
+            client,
+            key="code_example_id",
+            stats=stats,
+            dry_run=dry_run,
+            count_query="""
                 MATCH (cc:CodeChunk)
                 WHERE cc.code_example_id IS NOT NULL
                 MATCH (ce:CodeExample {id: cc.code_example_id})
+                WHERE NOT (cc)-[:CODE_EXAMPLE_ID]->(ce)
+                RETURN count(cc) AS pending
+            """,
+            apply_query="""
+                MATCH (cc:CodeChunk)
+                WHERE cc.code_example_id IS NOT NULL
+                MATCH (ce:CodeExample {id: cc.code_example_id})
+                WHERE NOT (cc)-[:CODE_EXAMPLE_ID]->(ce)
+                WITH cc, ce LIMIT $batch_size
                 MERGE (cc)-[:CODE_EXAMPLE_ID]->(ce)
                 RETURN count(*) AS created
-            """)
-            stats["code_example_id_created"] = result[0]["created"] if result else 0
-            logger.info(
-                "Created %d CODE_EXAMPLE_ID relationships",
-                stats["code_example_id_created"],
-            )
+            """,
+            log_msg="Created %d CODE_EXAMPLE_ID relationships",
+            batch_size=5000,
+        )
 
         # 2. Create AT_FACILITY for CodeChunks missing the relationship
-        result = client.query("""
-            MATCH (cc:CodeChunk)
-            WHERE cc.facility_id IS NOT NULL
-            AND NOT (cc)-[:AT_FACILITY]->()
-            RETURN count(cc) AS pending
-        """)
-        pending = result[0]["pending"] if result else 0
-        stats["at_facility_pending"] = pending
-
-        if not dry_run and pending > 0:
-            result = client.query("""
+        _run_migration_step(
+            client,
+            key="at_facility",
+            stats=stats,
+            dry_run=dry_run,
+            count_query="""
                 MATCH (cc:CodeChunk)
                 WHERE cc.facility_id IS NOT NULL
+                AND NOT (cc)-[:AT_FACILITY]->()
+                RETURN count(cc) AS pending
+            """,
+            apply_query="""
+                MATCH (cc:CodeChunk)
+                WHERE cc.facility_id IS NOT NULL
+                AND NOT (cc)-[:AT_FACILITY]->()
+                WITH cc LIMIT $batch_size
                 MATCH (f:Facility {id: cc.facility_id})
                 MERGE (cc)-[:AT_FACILITY]->(f)
                 RETURN count(*) AS created
-            """)
-            stats["at_facility_created"] = result[0]["created"] if result else 0
-            logger.info(
-                "Created %d AT_FACILITY relationships for CodeChunks",
-                stats["at_facility_created"],
-            )
+            """,
+            log_msg="Created %d AT_FACILITY relationships for CodeChunks",
+            batch_size=5000,
+        )
 
         # 3. Create FROM_FILE relationships
-        result = client.query("""
-            MATCH (ce:CodeExample)
-            WHERE ce.source_file IS NOT NULL AND ce.facility_id IS NOT NULL
-            AND NOT (ce)-[:FROM_FILE]->()
-            MATCH (cf:CodeFile {path: ce.source_file})
-            WHERE cf.facility_id = ce.facility_id
-            RETURN count(ce) AS pending
-        """)
-        pending = result[0]["pending"] if result else 0
-        stats["from_file_pending"] = pending
-
-        if not dry_run and pending > 0:
-            result = client.query("""
+        _run_migration_step(
+            client,
+            key="from_file",
+            stats=stats,
+            dry_run=dry_run,
+            count_query="""
                 MATCH (ce:CodeExample)
                 WHERE ce.source_file IS NOT NULL AND ce.facility_id IS NOT NULL
+                AND NOT (ce)-[:FROM_FILE]->()
+                MATCH (cf:CodeFile {path: ce.source_file})
+                WHERE cf.facility_id = ce.facility_id
+                RETURN count(ce) AS pending
+            """,
+            apply_query="""
+                MATCH (ce:CodeExample)
+                WHERE ce.source_file IS NOT NULL AND ce.facility_id IS NOT NULL
+                AND NOT (ce)-[:FROM_FILE]->()
+                WITH ce LIMIT $batch_size
                 MATCH (cf:CodeFile {path: ce.source_file})
                 WHERE cf.facility_id = ce.facility_id
                 MERGE (ce)-[:FROM_FILE]->(cf)
                 RETURN count(*) AS created
-            """)
-            stats["from_file_created"] = result[0]["created"] if result else 0
-            logger.info(
-                "Created %d FROM_FILE relationships",
-                stats["from_file_created"],
-            )
+            """,
+            log_msg="Created %d FROM_FILE relationships",
+            batch_size=5000,
+        )
 
         # 4. Create PRODUCED from CodeFile to CodeExample
-        result = client.query("""
-            MATCH (ce:CodeExample)-[:FROM_FILE]->(cf:CodeFile)
-            WHERE NOT (cf)-[:PRODUCED]->(ce)
-            RETURN count(*) AS pending
-        """)
-        pending = result[0]["pending"] if result else 0
-        stats["produced_pending"] = pending
-
-        if not dry_run and pending > 0:
-            result = client.query("""
+        _run_migration_step(
+            client,
+            key="produced",
+            stats=stats,
+            dry_run=dry_run,
+            count_query="""
+                MATCH (ce:CodeExample)-[:FROM_FILE]->(cf:CodeFile)
+                WHERE NOT (cf)-[:PRODUCED]->(ce)
+                RETURN count(*) AS pending
+            """,
+            apply_query="""
                 MATCH (ce:CodeExample)-[:FROM_FILE]->(cf:CodeFile)
                 MERGE (cf)-[:PRODUCED]->(ce)
                 RETURN count(*) AS created
+            """,
+            log_msg="Created %d PRODUCED relationships",
+        )
+
+        # 5. Fix TreeNode → DataNode label (add new, remove old)
+        _run_migration_step(
+            client,
+            key="treenode_relabel",
+            stats=stats,
+            dry_run=dry_run,
+            count_query="""
+                MATCH (n) WHERE 'TreeNode' IN labels(n)
+                AND NOT 'DataNode' IN labels(n)
+                RETURN count(n) AS pending
+            """,
+            apply_query="""
+                MATCH (n) WHERE 'TreeNode' IN labels(n)
+                WITH n LIMIT $batch_size
+                SET n:DataNode
+                REMOVE n:TreeNode
+                RETURN count(n) AS created
+            """,
+            log_msg="Relabeled %d TreeNode → DataNode nodes",
+            batch_size=10000,
+        )
+
+        # 6. Fix TreeNodePattern → DataNodePattern label (add new, remove old)
+        _run_migration_step(
+            client,
+            key="treenodepattern_relabel",
+            stats=stats,
+            dry_run=dry_run,
+            count_query="""
+                MATCH (n) WHERE 'TreeNodePattern' IN labels(n)
+                RETURN count(n) AS pending
+            """,
+            apply_query="""
+                MATCH (n) WHERE 'TreeNodePattern' IN labels(n)
+                SET n:DataNodePattern
+                REMOVE n:TreeNodePattern
+                RETURN count(n) AS created
+            """,
+            log_msg="Relabeled %d TreeNodePattern → DataNodePattern nodes",
+        )
+
+        # 7. Fix TreeModelVersion → StructuralEpoch label (add new, remove old)
+        _run_migration_step(
+            client,
+            key="treemodelversion_relabel",
+            stats=stats,
+            dry_run=dry_run,
+            count_query="""
+                MATCH (n) WHERE 'TreeModelVersion' IN labels(n)
+                RETURN count(n) AS pending
+            """,
+            apply_query="""
+                MATCH (n) WHERE 'TreeModelVersion' IN labels(n)
+                SET n:StructuralEpoch
+                REMOVE n:TreeModelVersion
+                RETURN count(n) AS created
+            """,
+            log_msg="Relabeled %d TreeModelVersion → StructuralEpoch nodes",
+        )
+
+        # 8. Create IN_DATA_SOURCE from tree_name property
+        #    DataNode nodes have tree_name → DataSource.name
+        #    Processes per-tree to avoid label scan on potentially corrupted
+        #    DataSource index entries (OOM recovery artifact).
+        pending_trees = client.query("""
+            MATCH (n:DataNode)
+            WHERE n.tree_name IS NOT NULL AND n.facility_id IS NOT NULL
+            AND NOT (n)-[:IN_DATA_SOURCE]->()
+            RETURN DISTINCT n.tree_name AS name, n.facility_id AS fid,
+                   count(n) AS cnt
+        """)
+        total_pending = sum(r["cnt"] for r in pending_trees) if pending_trees else 0
+        stats["in_data_source_pending"] = total_pending
+
+        if not dry_run and total_pending > 0:
+            total_created = 0
+            for tree in pending_trees:
+                name, fid = tree["name"], tree["fid"]
+                # Find or create DataSource node (param-bound avoids label scan)
+                ds = client.query(
+                    "MATCH (ds:DataSource) WHERE ds.name = $name "
+                    "AND ds.facility_id = $fid RETURN elementId(ds) AS eid",
+                    name=name,
+                    fid=fid,
+                )
+                if not ds:
+                    ds = client.query(
+                        "CREATE (ds:DataSource {id: $fid + ':' + $name, "
+                        "name: $name, facility_id: $fid}) "
+                        "RETURN elementId(ds) AS eid",
+                        name=name,
+                        fid=fid,
+                    )
+                ds_eid = ds[0]["eid"]
+                # Batch-create relationships using elementId lookup
+                while True:
+                    result = client.query(
+                        "MATCH (n:DataNode) "
+                        "WHERE n.tree_name = $name AND n.facility_id = $fid "
+                        "AND NOT (n)-[:IN_DATA_SOURCE]->() "
+                        "WITH n LIMIT 5000 "
+                        "MATCH (ds) WHERE elementId(ds) = $ds_eid "
+                        "CREATE (n)-[:IN_DATA_SOURCE]->(ds) "
+                        "RETURN count(*) AS created",
+                        name=name,
+                        fid=fid,
+                        ds_eid=ds_eid,
+                    )
+                    batch = result[0]["created"] if result else 0
+                    total_created += batch
+                    if batch == 0:
+                        break
+            stats["in_data_source_created"] = total_created
+            logger.info("Created %d IN_DATA_SOURCE relationships", total_created)
+
+        # 9. Migrate IN_TREE → IN_DATA_SOURCE relationships
+        _run_migration_step(
+            client,
+            key="in_tree_migrate",
+            stats=stats,
+            dry_run=dry_run,
+            count_query="""
+                MATCH ()-[r]->() WHERE type(r) = 'IN_TREE'
+                RETURN count(r) AS pending
+            """,
+            apply_query="""
+                MATCH (a)-[r]->(b) WHERE type(r) = 'IN_TREE'
+                WITH a, r, b LIMIT $batch_size
+                MERGE (a)-[:IN_DATA_SOURCE]->(b)
+                DELETE r
+                RETURN count(*) AS created
+            """,
+            log_msg="Migrated %d IN_TREE → IN_DATA_SOURCE relationships",
+            batch_size=5000,
+        )
+
+        # 10. Migrate RESOLVES_TO_TREE_NODE → RESOLVES_TO_NODE relationships
+        _run_migration_step(
+            client,
+            key="resolves_migrate",
+            stats=stats,
+            dry_run=dry_run,
+            count_query="""
+                MATCH ()-[r]->() WHERE type(r) = 'RESOLVES_TO_TREE_NODE'
+                RETURN count(r) AS pending
+            """,
+            apply_query="""
+                MATCH (a)-[r]->(b) WHERE type(r) = 'RESOLVES_TO_TREE_NODE'
+                WITH a, r, b LIMIT $batch_size
+                MERGE (a)-[:RESOLVES_TO_NODE]->(b)
+                DELETE r
+                RETURN count(*) AS created
+            """,
+            log_msg="Migrated %d RESOLVES_TO_TREE_NODE → RESOLVES_TO_NODE relationships",
+            batch_size=5000,
+        )
+
+        # 11. Remove legacy MDSplusTree nodes (data already in DataSource)
+        _run_migration_step(
+            client,
+            key="mdsplustree_cleanup",
+            stats=stats,
+            dry_run=dry_run,
+            count_query="""
+                MATCH (t) WHERE 'MDSplusTree' IN labels(t)
+                RETURN count(t) AS pending
+            """,
+            apply_query="""
+                MATCH (t) WHERE 'MDSplusTree' IN labels(t)
+                DETACH DELETE t
+                RETURN count(t) AS created
+            """,
+            log_msg="Removed %d legacy MDSplusTree nodes",
+        )
+
+        # 12. Fix FacilitySignal non-enum status values
+        #    Schema enum: discovered, enriched, checked, skipped, failed
+        #    'scored'/'triaged' without descriptions → discovered
+        #    'ingested' → enriched
+        result = client.query("""
+            MATCH (fs:FacilitySignal)
+            WHERE fs.status IN ['scored', 'triaged', 'ingested']
+            RETURN fs.status AS status, count(fs) AS cnt
+        """)
+        pending = sum(r["cnt"] for r in result) if result else 0
+        stats["signal_status_pending"] = pending
+
+        if not dry_run and pending > 0:
+            # scored/triaged without description → discovered
+            client.query("""
+                MATCH (fs:FacilitySignal)
+                WHERE fs.status IN ['scored', 'triaged']
+                AND fs.description IS NULL
+                SET fs.status = 'discovered'
             """)
-            stats["produced_created"] = result[0]["created"] if result else 0
+            # triaged with description → enriched
+            client.query("""
+                MATCH (fs:FacilitySignal)
+                WHERE fs.status = 'triaged'
+                AND fs.description IS NOT NULL
+                SET fs.status = 'enriched'
+            """)
+            # ingested → enriched
+            client.query("""
+                MATCH (fs:FacilitySignal)
+                WHERE fs.status = 'ingested'
+                SET fs.status = 'enriched'
+            """)
+            result = client.query("""
+                MATCH (fs:FacilitySignal)
+                WHERE fs.status IN ['scored', 'triaged', 'ingested']
+                RETURN count(fs) AS remaining
+            """)
+            remaining = result[0]["remaining"] if result else 0
+            stats["signal_status_created"] = pending - remaining
             logger.info(
-                "Created %d PRODUCED relationships",
-                stats["produced_created"],
+                "Fixed %d FacilitySignal non-enum status values",
+                stats["signal_status_created"],
             )
 
-        # 5. Fix TreeNode → DataNode label (add DataNode label to TreeNode nodes)
+        # 13. Set null status on FacilitySignals with valid facility_id
         result = client.query("""
-            MATCH (n:TreeNode)
-            WHERE NOT n:DataNode
-            RETURN count(n) AS pending
+            MATCH (fs:FacilitySignal)
+            WHERE fs.status IS NULL AND fs.id IS NOT NULL
+            RETURN count(fs) AS pending
         """)
         pending = result[0]["pending"] if result else 0
-        stats["treenode_relabel_pending"] = pending
+        stats["signal_null_status_pending"] = pending
+
+        if not dry_run and pending > 0:
+            client.query("""
+                MATCH (fs:FacilitySignal)
+                WHERE fs.status IS NULL AND fs.id IS NOT NULL
+                SET fs.status = 'discovered'
+            """)
+            stats["signal_null_status_created"] = pending
+            logger.info(
+                "Set status='discovered' on %d FacilitySignals with null status",
+                pending,
+            )
+
+        # 14. Remove ghost FacilitySignal nodes (null id, no properties)
+        result = client.query("""
+            MATCH (fs:FacilitySignal)
+            WHERE fs.id IS NULL
+            AND NOT (fs)-[]-()
+            RETURN count(fs) AS pending
+        """)
+        pending = result[0]["pending"] if result else 0
+        stats["ghost_signal_pending"] = pending
 
         if not dry_run and pending > 0:
             result = client.query("""
-                MATCH (n:TreeNode)
-                WHERE NOT n:DataNode
-                SET n:DataNode
-                RETURN count(n) AS relabeled
+                MATCH (fs:FacilitySignal)
+                WHERE fs.id IS NULL
+                AND NOT (fs)-[]-()
+                DELETE fs
+                RETURN count(fs) AS created
             """)
-            stats["treenode_relabeled"] = result[0]["relabeled"] if result else 0
+            stats["ghost_signal_created"] = result[0]["created"] if result else 0
             logger.info(
-                "Added DataNode label to %d TreeNode nodes",
-                stats["treenode_relabeled"],
+                "Removed %d ghost FacilitySignal nodes",
+                stats["ghost_signal_created"],
             )
+
+        # 15. Migrate SOURCE_NODE → HAS_DATA_SOURCE_NODE
+        _run_migration_step(
+            client,
+            key="source_node_migrate",
+            stats=stats,
+            dry_run=dry_run,
+            count_query="""
+                MATCH ()-[r]->() WHERE type(r) = 'SOURCE_NODE'
+                RETURN count(r) AS pending
+            """,
+            apply_query="""
+                MATCH (a)-[r]->(b) WHERE type(r) = 'SOURCE_NODE'
+                WITH a, r, b LIMIT $batch_size
+                MERGE (a)-[:HAS_DATA_SOURCE_NODE]->(b)
+                DELETE r
+                RETURN count(*) AS created
+            """,
+            log_msg="Migrated %d SOURCE_NODE → HAS_DATA_SOURCE_NODE relationships",
+            batch_size=5000,
+        )
+
+        # 16. Remove undeclared SAME_GEOMETRY relationships
+        _run_migration_step(
+            client,
+            key="same_geometry_cleanup",
+            stats=stats,
+            dry_run=dry_run,
+            count_query="""
+                MATCH ()-[r:SAME_GEOMETRY]->()
+                RETURN count(r) AS pending
+            """,
+            apply_query="""
+                MATCH ()-[r:SAME_GEOMETRY]->()
+                DELETE r
+                RETURN count(*) AS created
+            """,
+            log_msg="Removed %d SAME_GEOMETRY relationships",
+        )
+
+        # 17. Remove undeclared ACCESSES_GEOMETRY relationships
+        _run_migration_step(
+            client,
+            key="accesses_geometry_cleanup",
+            stats=stats,
+            dry_run=dry_run,
+            count_query="""
+                MATCH ()-[r:ACCESSES_GEOMETRY]->()
+                RETURN count(r) AS pending
+            """,
+            apply_query="""
+                MATCH ()-[r:ACCESSES_GEOMETRY]->()
+                DELETE r
+                RETURN count(*) AS created
+            """,
+            log_msg="Removed %d ACCESSES_GEOMETRY relationships",
+        )
+
+        # 18. Remove deprecated _node_content, _node_type from CodeChunks
+        _run_migration_step(
+            client,
+            key="deprecated_props",
+            stats=stats,
+            dry_run=dry_run,
+            count_query="""
+                MATCH (cc:CodeChunk)
+                WHERE cc._node_content IS NOT NULL OR cc._node_type IS NOT NULL
+                RETURN count(cc) AS pending
+            """,
+            apply_query="""
+                MATCH (cc:CodeChunk)
+                WHERE cc._node_content IS NOT NULL OR cc._node_type IS NOT NULL
+                WITH cc LIMIT $batch_size
+                REMOVE cc._node_content, cc._node_type
+                RETURN count(cc) AS created
+            """,
+            log_msg="Cleaned %d CodeChunks with deprecated _node_* properties",
+            batch_size=5000,
+        )
 
     return stats
 
 
 __all__ = [
     "link_chunks_to_imas_paths",
-    "link_chunks_to_tree_nodes",
+    "link_chunks_to_data_nodes",
     "link_example_mdsplus_paths",
     "link_examples_to_facility",
     "migrate_schema_relationships",

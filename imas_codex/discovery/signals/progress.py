@@ -54,7 +54,7 @@ class ScanItem:
     signal_id: str
     data_source_name: str | None = None
     data_source_path: str | None = None
-    signals_in_tree: int = 0  # Count of signals discovered in current tree
+    signals_in_source: int = 0  # Count of signals discovered in current source
     # Epoch detection progress
     epoch_phase: str | None = None  # "coarse", "refine", "build"
     epoch_current_shot: int | None = None
@@ -418,8 +418,8 @@ class DataProgressDisplay(BaseProgressDisplay):
                 scan_text = f"seeding {path}"
                 if scan.data_source_name:
                     scan_desc = f"tree={scan.data_source_name}"
-                if scan.signals_in_tree > 0:
-                    scan_desc += f"  {scan.signals_in_tree:,} versions"
+                if scan.signals_in_source > 0:
+                    scan_desc += f"  {scan.signals_in_source:,} versions"
         elif scan_processing and self.state.current_tree:
             scan_text = f"tree={self.state.current_tree}"
 
@@ -584,7 +584,7 @@ class DataProgressDisplay(BaseProgressDisplay):
                 signal_id=item.get("signal_id", ""),
                 data_source_name=item.get("data_source_name"),
                 data_source_path=item.get("data_source_path"),
-                signals_in_tree=item.get("signals_in_tree", 0),
+                signals_in_source=item.get("signals_in_source", 0),
                 epoch_phase=epoch_progress.get("phase"),
                 epoch_current_shot=epoch_progress.get("current_shot"),
                 epoch_shots_scanned=epoch_progress.get("shots_scanned", 0),
@@ -671,7 +671,7 @@ class DataProgressDisplay(BaseProgressDisplay):
                     "signal_id": r.get("id", ""),
                     "data_source_name": r.get("data_source_name"),
                     "data_source_path": r.get("data_source_path"),
-                    "signals_in_tree": tree_counts.get(
+                    "signals_in_source": tree_counts.get(
                         r.get("data_source_name", ""), 0
                     ),
                     "epoch_progress": r.get("epoch_progress"),  # Include epoch progress
@@ -705,7 +705,7 @@ class DataProgressDisplay(BaseProgressDisplay):
                     "id": r.get("id", ""),
                     "data_source_name": r.get("data_source_name"),
                     "version": r.get("version"),
-                    "node_count": r.get("signals_in_tree", 0),
+                    "node_count": r.get("signals_in_source", 0),
                 }
                 for r in results
             ]
@@ -734,7 +734,7 @@ class DataProgressDisplay(BaseProgressDisplay):
             items = [
                 {
                     "data_source_name": r.get("data_source_name", ""),
-                    "signals_promoted": r.get("signals_in_tree", 0),
+                    "signals_promoted": r.get("signals_in_source", 0),
                     "units_count": r.get("units_count", 0),
                 }
                 for r in results

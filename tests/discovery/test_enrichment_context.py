@@ -308,7 +308,7 @@ class TestEnrichWorkerTreeContext:
 class TestEnrichmentTemplateContent:
     """Verify the enrichment template includes MDSplus context docs."""
 
-    def test_template_has_tree_node_docs(self):
+    def test_template_has_data_node_docs(self):
         """Template documents parent_node, siblings, tdi, applicability."""
         import pathlib
 

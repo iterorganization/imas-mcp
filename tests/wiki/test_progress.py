@@ -15,7 +15,7 @@ class TestWikiIngestionStats:
         assert stats.pages_scraped == 0
         assert stats.pages_failed == 0
         assert stats.chunks_created == 0
-        assert stats.tree_nodes_linked == 0
+        assert stats.data_nodes_linked == 0
         assert stats.imas_paths_linked == 0
         assert stats.conventions_found == 0
         assert stats.units_found == 0
@@ -101,10 +101,10 @@ class TestWikiProgressMonitor:
         """Monitor should track page scrape events."""
         monitor = WikiProgressMonitor(use_rich=False)
         monitor.start(total_pages=5)
-        monitor.update_scrape("Test Page", chunks=5, tree_nodes=3, imas_paths=2)
+        monitor.update_scrape("Test Page", chunks=5, data_nodes=3, imas_paths=2)
         assert monitor.stats.pages_scraped == 1
         assert monitor.stats.chunks_created == 5
-        assert monitor.stats.tree_nodes_linked == 3
+        assert monitor.stats.data_nodes_linked == 3
         assert monitor.stats.imas_paths_linked == 2
 
     def test_update_scrape_failed(self):

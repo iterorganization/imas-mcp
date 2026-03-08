@@ -30,8 +30,8 @@ from .chunkers import chunk_code, chunk_text
 from .extractors.ids import extract_ids_references
 from .extractors.mdsplus import extract_mdsplus_paths
 from .graph import (
+    link_chunks_to_data_nodes,
     link_chunks_to_imas_paths,
-    link_chunks_to_tree_nodes,
     link_example_mdsplus_paths,
     link_examples_to_facility,
 )
@@ -284,7 +284,7 @@ async def ingest_files(
         encoder: Optional shared Encoder instance (avoids loading model per call)
 
     Returns:
-        Dict with counts: files, chunks, ids_found, mdsplus_paths, skipped, tree_nodes_linked
+        Dict with counts: files, chunks, ids_found, mdsplus_paths, skipped, data_nodes_linked
     """
     stats = {
         "files": 0,
@@ -292,7 +292,7 @@ async def ingest_files(
         "ids_found": 0,
         "mdsplus_paths": 0,
         "skipped": 0,
-        "tree_nodes_linked": 0,
+        "data_nodes_linked": 0,
     }
 
     def report(current: int, total: int, message: str) -> None:
@@ -556,7 +556,7 @@ async def ingest_files(
 
                 for example_id in chunk_example_ids:
                     linked = link_example_mdsplus_paths(graph_client, example_id)
-                    stats["tree_nodes_linked"] += linked
+                    stats["data_nodes_linked"] += linked
 
             processed_files += len(batch_files)
             stats["files"] = processed_files
@@ -566,14 +566,14 @@ async def ingest_files(
 
     with GraphClient() as graph_client:
         link_chunks_to_imas_paths(graph_client)
-        link_chunks_to_tree_nodes(graph_client)
+        link_chunks_to_data_nodes(graph_client)
         link_examples_to_facility(graph_client)
 
     report(
         total_to_process,
         total_to_process,
         f"Completed: {stats['files']} files, {stats['chunks']} chunks, "
-        f"{stats['skipped']} skipped, {stats['tree_nodes_linked']} tree nodes linked",
+        f"{stats['skipped']} skipped, {stats['data_nodes_linked']} data nodes linked",
     )
     return stats
 

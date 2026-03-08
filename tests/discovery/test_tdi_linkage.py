@@ -8,7 +8,7 @@ import pytest
 
 from imas_codex.discovery.mdsplus.tdi_linkage import (
     _extract_build_paths,
-    link_tdi_to_tree_nodes,
+    link_tdi_to_data_nodes,
     update_signal_accessors,
 )
 
@@ -59,8 +59,8 @@ class TestExtractBuildPaths:
         assert paths == ["TOP.KAPPA"]
 
 
-class TestLinkTdiToTreeNodes:
-    """Test link_tdi_to_tree_nodes graph operation."""
+class TestLinkTdiToDataNodes:
+    """Test link_tdi_to_data_nodes graph operation."""
 
     @patch("imas_codex.discovery.mdsplus.tdi_linkage.GraphClient")
     def test_creates_resolves_to_edges(self, mock_gc_cls):
@@ -82,7 +82,7 @@ class TestLinkTdiToTreeNodes:
             [{"linked": 3}],
         ]
 
-        result = link_tdi_to_tree_nodes("tcv")
+        result = link_tdi_to_data_nodes("tcv")
 
         assert result == 3
         assert mock_gc.query.call_count == 2
@@ -95,7 +95,7 @@ class TestLinkTdiToTreeNodes:
 
         mock_gc.query.return_value = []
 
-        result = link_tdi_to_tree_nodes("tcv")
+        result = link_tdi_to_data_nodes("tcv")
 
         assert result == 0
 
@@ -116,7 +116,7 @@ class TestLinkTdiToTreeNodes:
             ],
         ]
 
-        result = link_tdi_to_tree_nodes("tcv")
+        result = link_tdi_to_data_nodes("tcv")
         assert result == 0
 
 

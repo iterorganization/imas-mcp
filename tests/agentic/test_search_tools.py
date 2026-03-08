@@ -119,7 +119,7 @@ _SIGNAL_VECTOR_RESULTS = [
     {"id": "tcv:magnetics/bpol", "score": 0.85},
 ]
 
-_TREE_NODE_RESULTS = [
+_DATA_NODE_RESULTS = [
     {
         "id": "tcv:\\RESULTS::I_P",
         "path": "\\RESULTS::I_P",
@@ -210,7 +210,7 @@ class TestSearchSignals:
                     _SIGNAL_ENRICHMENT_IP,
                     _SIGNAL_ENRICHMENT_BPOL,
                 ],
-                "data_node_desc_embedding": _TREE_NODE_RESULTS,
+                "data_node_desc_embedding": _DATA_NODE_RESULTS,
             }
         )
 
@@ -263,8 +263,8 @@ class TestSearchSignals:
         else:
             pytest.fail("No vector search call found")
 
-    def test_no_tree_nodes_section_omitted(self, mock_gc, mock_encoder):
-        """When tree node search returns empty, section is omitted."""
+    def test_no_data_nodes_section_omitted(self, mock_gc, mock_encoder):
+        """When data node search returns empty, section is omitted."""
         mock_gc.query.side_effect = _route_query(
             {
                 "facility_signal_desc_embedding": [
@@ -295,7 +295,7 @@ class TestSearchSignals:
             gc=mock_gc,
             encoder=mock_encoder,
         )
-        assert "Related Tree Nodes" not in result
+        assert "Related Data Nodes" not in result
 
     def test_embedding_unavailable(self, mock_gc):
         """When encoder raises, return helpful error message."""
@@ -426,9 +426,9 @@ class TestFormatSignalsReport:
         assert "Data access" in result
         assert "IMAS mapping" in result
 
-    def test_tree_nodes_section(self):
-        """Tree nodes appear in Related Tree Nodes section."""
-        tree_nodes = [
+    def test_data_nodes_section(self):
+        """Data nodes appear in Related Data Nodes section."""
+        data_nodes = [
             {
                 "id": "tcv:\\RESULTS::I_P",
                 "path": "\\RESULTS::I_P",
@@ -438,8 +438,8 @@ class TestFormatSignalsReport:
                 "score": 0.95,
             }
         ]
-        result = format_signals_report([], tree_nodes, {})
-        assert "Related Tree Nodes" in result
+        result = format_signals_report([], data_nodes, {})
+        assert "Related Data Nodes" in result
         assert "\\RESULTS::I_P" in result
 
     def test_long_access_template_rendered_fully(self):
@@ -568,7 +568,7 @@ class TestSearchDocs:
                 "page_title": "Fishbone instabilities",
                 "page_url": "https://wiki.jet.efda.org/fishbone",
                 "linked_signals": ["jet:mhd/fishbone_amplitude"],
-                "linked_tree_nodes": [],
+                "linked_data_nodes": [],
                 "imas_refs": ["mhd_linear.time_slice[:].toroidal_mode[:].n_tor"],
             },
             {
@@ -578,7 +578,7 @@ class TestSearchDocs:
                 "page_title": "Fishbone instabilities",
                 "page_url": "https://wiki.jet.efda.org/fishbone",
                 "linked_signals": [],
-                "linked_tree_nodes": [],
+                "linked_data_nodes": [],
                 "imas_refs": [],
             },
         ]
@@ -614,7 +614,7 @@ class TestSearchDocs:
                 "page_title": "Same Page",
                 "page_url": "http://wiki/same",
                 "linked_signals": [],
-                "linked_tree_nodes": [],
+                "linked_data_nodes": [],
                 "imas_refs": [],
             },
             {
@@ -624,7 +624,7 @@ class TestSearchDocs:
                 "page_title": "Same Page",
                 "page_url": "http://wiki/same",
                 "linked_signals": [],
-                "linked_tree_nodes": [],
+                "linked_data_nodes": [],
                 "imas_refs": [],
             },
         ]
@@ -652,7 +652,7 @@ class TestSearchDocs:
                 "page_title": "Magnetics",
                 "page_url": None,
                 "linked_signals": ["tcv:magnetics/ip"],
-                "linked_tree_nodes": ["\\RESULTS::I_P"],
+                "linked_data_nodes": ["\\RESULTS::I_P"],
                 "imas_refs": ["magnetics.ip.0d[:].value"],
             },
         ]
@@ -695,7 +695,7 @@ class TestSearchDocs:
                         "page_title": "Fishbone",
                         "page_url": None,
                         "linked_signals": [],
-                        "linked_tree_nodes": [],
+                        "linked_data_nodes": [],
                         "imas_refs": [],
                     }
                 ],
@@ -1445,7 +1445,7 @@ class TestDocsFetchHints:
                 "page_title": "Diagnostics",
                 "page_url": "https://wiki.example.com",
                 "linked_signals": [],
-                "linked_tree_nodes": [],
+                "linked_data_nodes": [],
                 "imas_refs": [],
             },
         ]

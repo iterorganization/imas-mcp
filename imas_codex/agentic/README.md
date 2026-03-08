@@ -39,7 +39,7 @@ The `python()` REPL includes rich pre-loaded utilities:
 **Facility:**
 - `get_facility(facility)` - Comprehensive facility info + graph state
 - `get_exploration_targets(facility, limit)` - Prioritized work items
-- `get_tree_structure(tree, prefix, limit)` - TreeNode hierarchy
+- `get_tree_structure(tree, prefix, limit)` - DataNode hierarchy
 
 **Code Search:**
 - `search_code(query, top_k, facility, min_score)` - Semantic code search
@@ -60,7 +60,7 @@ imas-codex agent run "Describe what \RESULTS::ASTRA is used for"
 # Use a specific agent type
 imas-codex agent run "Find IMAS paths for electron temperature" --type mapping
 
-# Batch enrich TreeNode paths
+# Batch enrich DataNode paths
 imas-codex agent enrich "\RESULTS::IBS" "\RESULTS::ASTRA"
 ```
 
@@ -92,7 +92,7 @@ The `python()` tool is the primary interface. Examples:
 
 ```python
 # Graph query
-python("paths = query('MATCH (t:TreeNode) RETURN t.path LIMIT 5')")
+python("paths = query('MATCH (t:DataNode) RETURN t.path LIMIT 5')")
 
 # Semantic search on code
 python("hits = semantic_search('plasma current', 'code_chunk_embedding', 3)")
@@ -112,7 +112,7 @@ python("print(x * 2)")  # prints 84
 
 # Complex multi-step workflow
 python("""
-paths = query('MATCH (t:TreeNode {tree_name: \"results\"}) RETURN t.path LIMIT 10')
+paths = query('MATCH (t:DataNode {tree_name: \"results\"}) RETURN t.path LIMIT 10')
 for p in paths:
     print(p['t.path'])
 """)
@@ -133,7 +133,7 @@ Available for `semantic_search()`:
 
 | Agent | Use Case | System Prompt Focus |
 |-------|----------|---------------------|
-| **Enrichment** | TreeNode metadata generation | Physics accuracy, TCV-specific knowledge |
+| **Enrichment** | DataNode metadata generation | Physics accuracy, TCV-specific knowledge |
 | **Mapping** | IMAS ↔ MDSplus discovery | Semantic equivalence, unit compatibility |
 | **Exploration** | Facility exploration | Systematic discovery, graph persistence |
 

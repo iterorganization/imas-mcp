@@ -53,7 +53,7 @@ class PageIngestionStats(TypedDict):
     """Statistics from ingesting a single wiki page."""
 
     chunks: int
-    tree_nodes_linked: int
+    data_nodes_linked: int
     imas_paths_linked: int
     conventions: int
     units: int
@@ -261,9 +261,9 @@ def link_chunks_to_entities(facility_id: str) -> dict[str, int]:
         facility_id: Facility to process
 
     Returns:
-        Dict with counts: {tree_nodes_linked, imas_paths_linked, ppf_signals_linked}
+        Dict with counts: {data_nodes_linked, imas_paths_linked, ppf_signals_linked}
     """
-    stats = {"tree_nodes_linked": 0, "imas_paths_linked": 0, "ppf_signals_linked": 0}
+    stats = {"data_nodes_linked": 0, "imas_paths_linked": 0, "ppf_signals_linked": 0}
 
     with GraphClient() as gc:
         # Link to DataNodes via MDSplus paths
@@ -283,7 +283,7 @@ def link_chunks_to_entities(facility_id: str) -> dict[str, int]:
             facility_id=facility_id,
         )
         if result:
-            stats["tree_nodes_linked"] = result[0]["linked"]
+            stats["data_nodes_linked"] = result[0]["linked"]
 
         # Link to IMASPath nodes via IMAS DD paths
         result = gc.query(
@@ -842,7 +842,7 @@ class WikiIngestionPipeline:
                 (which can produce mismatches for non-MediaWiki sites).
 
         Returns:
-            Stats dict: {chunks, tree_nodes_linked, imas_paths_linked, conventions,
+            Stats dict: {chunks, data_nodes_linked, imas_paths_linked, conventions,
                         content_preview, mdsplus_paths}
         """
         import asyncio
@@ -855,7 +855,7 @@ class WikiIngestionPipeline:
 
         stats: PageIngestionStats = {
             "chunks": 0,
-            "tree_nodes_linked": 0,
+            "data_nodes_linked": 0,
             "imas_paths_linked": 0,
             "conventions": 0,
             "units": 0,
@@ -1016,7 +1016,7 @@ class WikiIngestionPipeline:
                     page_id=page_id,
                 )
                 if result and result[0]["linked"]:
-                    stats["tree_nodes_linked"] = result[0]["linked"]
+                    stats["data_nodes_linked"] = result[0]["linked"]
 
             # Create SignConvention nodes from page conventions (batch)
             if page.conventions:
@@ -1059,7 +1059,7 @@ class WikiIngestionPipeline:
                 SET p.link_count = $links
                 """,
                 page_id=page_id,
-                links=stats["tree_nodes_linked"] + stats["imas_paths_linked"],
+                links=stats["data_nodes_linked"] + stats["imas_paths_linked"],
             )
 
         return stats
@@ -1088,7 +1088,7 @@ class WikiIngestionPipeline:
             "pages": 0,
             "pages_failed": 0,
             "chunks": 0,
-            "tree_nodes_linked": 0,
+            "data_nodes_linked": 0,
             "imas_paths_linked": 0,
             "conventions": 0,
             "units": 0,
@@ -1134,7 +1134,7 @@ class WikiIngestionPipeline:
                     # Aggregate stats
                     total_stats["pages"] += 1
                     total_stats["chunks"] += page_stats["chunks"]
-                    total_stats["tree_nodes_linked"] += page_stats["tree_nodes_linked"]
+                    total_stats["data_nodes_linked"] += page_stats["data_nodes_linked"]
                     total_stats["imas_paths_linked"] += page_stats["imas_paths_linked"]
                     total_stats["conventions"] += page_stats["conventions"]
                     total_stats["units"] += page_stats["units"]
@@ -1143,7 +1143,7 @@ class WikiIngestionPipeline:
                     monitor.update_scrape(
                         page_name,
                         chunks=page_stats["chunks"],
-                        tree_nodes=page_stats["tree_nodes_linked"],
+                        data_nodes=page_stats["data_nodes_linked"],
                         imas_paths=page_stats["imas_paths_linked"],
                         conventions=page_stats["conventions"],
                         units=page_stats["units"],
@@ -1205,7 +1205,7 @@ class WikiIngestionPipeline:
                 "pages": 0,
                 "pages_failed": 0,
                 "chunks": 0,
-                "tree_nodes_linked": 0,
+                "data_nodes_linked": 0,
                 "imas_paths_linked": 0,
                 "conventions": 0,
                 "units": 0,
@@ -1294,11 +1294,11 @@ def get_wiki_stats(facility_id: str) -> dict:
             OPTIONAL MATCH (wc)-[:DOCUMENTS]->(t:DataNode)
             OPTIONAL MATCH (wc)-[:MENTIONS_IMAS]->(ip:IMASPath)
             WITH wp, count(DISTINCT wc) AS chunks,
-                 count(DISTINCT t) AS tree_nodes,
+                 count(DISTINCT t) AS data_nodes,
                  count(DISTINCT ip) AS imas_paths
             RETURN count(wp) AS pages,
                    sum(chunks) AS total_chunks,
-                   sum(tree_nodes) AS tree_nodes_linked,
+                   sum(data_nodes) AS data_nodes_linked,
                    sum(imas_paths) AS imas_paths_linked
             """,
             facility_id=facility_id,
@@ -1308,10 +1308,10 @@ def get_wiki_stats(facility_id: str) -> dict:
             return {
                 "pages": result[0]["pages"],
                 "chunks": result[0]["total_chunks"],
-                "tree_nodes_linked": result[0]["tree_nodes_linked"],
+                "data_nodes_linked": result[0]["data_nodes_linked"],
                 "imas_paths_linked": result[0]["imas_paths_linked"],
             }
-        return {"pages": 0, "chunks": 0, "tree_nodes_linked": 0, "imas_paths_linked": 0}
+        return {"pages": 0, "chunks": 0, "data_nodes_linked": 0, "imas_paths_linked": 0}
 
 
 def clear_facility_wiki(facility: str, batch_size: int = 1000) -> dict:

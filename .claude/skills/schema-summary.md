@@ -12,7 +12,7 @@ For the full schema (53 node types), see `agents/schema-reference.md` or call `g
 | Facility | id, name, machine | Root node per facility (tcv, jet, iter, jt-60sa) |
 | FacilitySignal | id, physics_domain, accessor, status | Signal with access info |
 | DataAccess | id, method_type, data_template, time_template | Code generation template |
-| TreeNode | path, tree_name, node_type, description | MDSplus tree node |
+| DataNode | path, tree_name, node_type, description | MDSplus tree node |
 | TDIFunction | id, name, supported_quantities | TDI accessor function |
 | IMASPath | id (DD path), description, units | IMAS Data Dictionary path |
 | IMASMapping | id, source_path, target_path, driver, status | Facility→IMAS mapping |
@@ -56,7 +56,7 @@ ORDER BY score DESC
 
 ### Wiki chunks for a path
 ```cypher
-MATCH (wc:WikiChunk)-[:DOCUMENTS]->(t:TreeNode)
+MATCH (wc:WikiChunk)-[:DOCUMENTS]->(t:DataNode)
 WHERE t.path CONTAINS $path
 MATCH (wp:WikiPage)-[:HAS_CHUNK]->(wc)
 RETURN wp.title AS page_title, wc.text AS text
@@ -92,7 +92,7 @@ ORDER BY score DESC
 | facility_signal_desc_embedding | FacilitySignal | Signal description |
 | facility_path_desc_embedding | FacilityPath | Path description |
 | imas_path_embedding | IMASPath | DD path description |
-| tree_node_desc_embedding | TreeNode | Tree node description |
+| data_node_desc_embedding | DataNode | Data node description |
 | wiki_artifact_desc_embedding | WikiArtifact | Artifact description |
 | cluster_embedding | IMASSemanticCluster | Cluster content |
 
@@ -103,9 +103,9 @@ ORDER BY score DESC
 | FacilitySignal | DATA_ACCESS | DataAccess |
 | FacilitySignal | MAPS_TO_IMAS | IMASPath |
 | FacilitySignal | AT_FACILITY | Facility |
-| TreeNode | AT_FACILITY | Facility |
+| DataNode | AT_FACILITY | Facility |
 | IMASMapping | AT_FACILITY | Facility |
-| IMASMapping | MAPS_TO_SOURCE | TreeNode / FacilitySignal |
+| IMASMapping | MAPS_TO_SOURCE | DataNode / FacilitySignal |
 | IMASMapping | MAPS_TO_TARGET | IMASPath |
 | IMASMapping | HAS_EVIDENCE | MappingEvidence |
 | WikiChunk | HAS_CHUNK ← | WikiPage |

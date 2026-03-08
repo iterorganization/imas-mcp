@@ -175,7 +175,7 @@ class TestDisplayItems:
         assert item.signal_id == "tcv:magnetics/bpol_probe/flux"
         assert item.data_source_name is None
         assert item.data_source_path is None
-        assert item.signals_in_tree == 0
+        assert item.signals_in_source == 0
         assert item.epoch_phase is None
 
     def test_scan_item_with_epoch(self):
@@ -472,7 +472,7 @@ class TestDataProgressDisplay:
             signal_id="tcv:magnetics/ip",
             data_source_name="magnetics",
             data_source_path="\\MAGNETICS::IP",
-            signals_in_tree=150,
+            signals_in_source=150,
         )
         section = display._build_pipeline_section()
         text = section.plain

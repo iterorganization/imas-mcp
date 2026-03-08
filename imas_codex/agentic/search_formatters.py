@@ -17,24 +17,24 @@ from typing import Any
 
 def format_signals_report(
     signals: list[dict[str, Any]],
-    tree_nodes: list[dict[str, Any]],
+    data_nodes: list[dict[str, Any]],
     scores: dict[str, float],
 ) -> str:
     """Format signal search results into a readable report.
 
     Handles deduplicated access methods (collected into arrays by
     ``_enrich_signals``), interpolates template placeholders with
-    actual signal properties, and filters noisy tree nodes.
+    actual signal properties, and filters noisy data nodes.
 
     Args:
         signals: Enriched signal records with ``access_methods`` arrays.
-        tree_nodes: Tree node results from vector search.
+        data_nodes: Data node results from vector search.
         scores: Map of signal ID → similarity score.
 
     Returns:
         Formatted text report.
     """
-    if not signals and not tree_nodes:
+    if not signals and not data_nodes:
         return "No signals found."
 
     parts: list[str] = []
@@ -122,25 +122,25 @@ def format_signals_report(
                         if imas_unit:
                             parts.append(f"    Unit: {imas_unit}")
 
-            # Tree node section
+            # Data node section
             tree_path = sig.get("tree_path")
             data_source_name = sig.get("data_source_name")
             if tree_path:
                 parts.append(
-                    f"\n  **Tree node**: {tree_path}"
-                    + (f" (tree: {data_source_name})" if data_source_name else "")
+                    f"\n  **Data node**: {tree_path}"
+                    + (f" (source: {data_source_name})" if data_source_name else "")
                 )
 
             parts.append("")  # blank line between signals
 
-    if tree_nodes:
-        # Filter out noisy STATIC tree nodes and low-score results
-        filtered_tree_nodes = _filter_tree_nodes(tree_nodes, signals)
-        if filtered_tree_nodes:
+    if data_nodes:
+        # Filter out noisy STATIC data nodes and low-score results
+        filtered_data_nodes = _filter_data_nodes(data_nodes, signals)
+        if filtered_data_nodes:
             parts.append(
-                f"\n## Related Tree Nodes ({len(filtered_tree_nodes)} matches)"
+                f"\n## Related Data Nodes ({len(filtered_data_nodes)} matches)"
             )
-            for tn in filtered_tree_nodes:
+            for tn in filtered_data_nodes:
                 path = tn.get("path", "?")
                 desc = tn.get("description") or ""
                 tree = tn.get("data_source_name") or ""
@@ -180,14 +180,14 @@ def _interpolate_template(template: str, sig: dict[str, Any]) -> str:
     return template
 
 
-def _filter_tree_nodes(
-    tree_nodes: list[dict[str, Any]],
+def _filter_data_nodes(
+    data_nodes: list[dict[str, Any]],
     signals: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Filter tree nodes to remove noise.
+    """Filter data nodes to remove noise.
 
-    - Excludes STATIC tree nodes (calibration/geometry data)
-    - Only keeps tree nodes that are connected to matched signals
+    - Excludes STATIC data nodes (calibration/geometry data)
+    - Only keeps data nodes that are connected to matched signals
       or have high relevance scores (>= 0.92)
     """
     # Collect tree paths already shown in signal results
@@ -196,12 +196,12 @@ def _filter_tree_nodes(
     }
 
     filtered = []
-    for tn in tree_nodes:
+    for tn in data_nodes:
         path = tn.get("path", "")
-        tree_name = (tn.get("data_source_name") or "").upper()
+        source_name = (tn.get("data_source_name") or "").upper()
 
-        # Skip STATIC tree nodes (calibration/geometry noise)
-        if "STATIC" in path.upper() or "STATIC" in tree_name:
+        # Skip STATIC data nodes (calibration/geometry noise)
+        if "STATIC" in path.upper() or "STATIC" in source_name:
             continue
 
         # Skip nodes already shown in signal results
@@ -285,9 +285,9 @@ def format_docs_report(
                 if imas_refs:
                     parts.append(f"  IMAS: {', '.join(imas_refs)}")
 
-                linked_tree_nodes = chunk.get("linked_tree_nodes") or []
-                if linked_tree_nodes:
-                    parts.append(f"  Tree nodes: {', '.join(linked_tree_nodes)}")
+                linked_data_nodes = chunk.get("linked_data_nodes") or []
+                if linked_data_nodes:
+                    parts.append(f"  Data nodes: {', '.join(linked_data_nodes)}")
 
                 parts.append("")
 

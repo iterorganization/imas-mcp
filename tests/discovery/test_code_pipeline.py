@@ -702,7 +702,7 @@ class TestSignalPrioritization:
         query = """
         MATCH (dr:DataReference)-[:RESOLVES_TO_NODE]->(tn:DataNode)
         WHERE tn.facility_id = $facility
-        RETURN count(dr) AS refs, count(DISTINCT tn.id) AS tree_nodes
+        RETURN count(dr) AS refs, count(DISTINCT tn.id) AS data_nodes
         """
         assert "RESOLVES_TO_NODE" in query
         assert "DataReference" in query

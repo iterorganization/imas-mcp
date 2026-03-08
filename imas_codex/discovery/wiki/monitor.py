@@ -25,7 +25,7 @@ class WikiIngestionStats:
     pages_scraped: int = 0
     pages_failed: int = 0
     chunks_created: int = 0
-    tree_nodes_linked: int = 0
+    data_nodes_linked: int = 0
     imas_paths_linked: int = 0
     conventions_found: int = 0
     units_found: int = 0
@@ -59,7 +59,7 @@ class WikiIngestionStats:
             "pages_scraped": self.pages_scraped,
             "pages_failed": self.pages_failed,
             "chunks_created": self.chunks_created,
-            "tree_nodes_linked": self.tree_nodes_linked,
+            "data_nodes_linked": self.data_nodes_linked,
             "imas_paths_linked": self.imas_paths_linked,
             "conventions_found": self.conventions_found,
             "units_found": self.units_found,
@@ -161,7 +161,7 @@ class WikiProgressMonitor:
         self,
         page_name: str,
         chunks: int = 0,
-        tree_nodes: int = 0,
+        data_nodes: int = 0,
         imas_paths: int = 0,
         conventions: int = 0,
         units: int = 0,
@@ -174,7 +174,7 @@ class WikiProgressMonitor:
         Args:
             page_name: Name of the page just processed
             chunks: Number of chunks created from this page
-            tree_nodes: Number of DataNode links created
+            data_nodes: Number of DataNode links created
             imas_paths: Number of IMASPath links created
             conventions: Number of conventions found
             units: Number of units found
@@ -191,7 +191,7 @@ class WikiProgressMonitor:
         else:
             self.stats.pages_scraped += 1
             self.stats.chunks_created += chunks
-            self.stats.tree_nodes_linked += tree_nodes
+            self.stats.data_nodes_linked += data_nodes
             self.stats.imas_paths_linked += imas_paths
             self.stats.conventions_found += conventions
             self.stats.units_found += units
@@ -214,7 +214,7 @@ class WikiProgressMonitor:
                     self.stats.pages_total,
                     page_name,
                     chunks,
-                    tree_nodes + imas_paths,
+                    data_nodes + imas_paths,
                 )
 
     def finish(self) -> WikiIngestionStats:
@@ -241,7 +241,7 @@ class WikiProgressMonitor:
             )
             summary.add_row("Pages failed:", f"[red]{self.stats.pages_failed}[/red]")
             summary.add_row("Chunks created:", str(self.stats.chunks_created))
-            summary.add_row("DataNodes linked:", str(self.stats.tree_nodes_linked))
+            summary.add_row("DataNodes linked:", str(self.stats.data_nodes_linked))
             summary.add_row("IMAS paths linked:", str(self.stats.imas_paths_linked))
             summary.add_row("Conventions found:", str(self.stats.conventions_found))
             summary.add_row("Time:", f"{self.stats.elapsed_seconds:.1f}s")
@@ -251,7 +251,7 @@ class WikiProgressMonitor:
                 "Wiki ingestion complete: %d pages, %d chunks, %d links",
                 self.stats.pages_scraped,
                 self.stats.chunks_created,
-                self.stats.tree_nodes_linked + self.stats.imas_paths_linked,
+                self.stats.data_nodes_linked + self.stats.imas_paths_linked,
             )
 
         return self.stats
@@ -269,7 +269,7 @@ class WikiProgressMonitor:
         stats_table.add_column(justify="right")
         stats_table.add_row("Chunks:", str(self.stats.chunks_created))
         stats_table.add_row(
-            "DataNodes:", f"[cyan]{self.stats.tree_nodes_linked}[/cyan]"
+            "DataNodes:", f"[cyan]{self.stats.data_nodes_linked}[/cyan]"
         )
         stats_table.add_row(
             "IMAS paths:", f"[cyan]{self.stats.imas_paths_linked}[/cyan]"

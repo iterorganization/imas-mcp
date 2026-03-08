@@ -61,7 +61,7 @@ FACILITY_CONFIG = {
 LEAF_NODES_PER_VERSION = 25
 
 
-def _make_tree_nodes(data_source_name: str, version: int) -> dict:
+def _make_data_nodes(data_source_name: str, version: int) -> dict:
     """Build a mock extraction result with realistic DataNode structure."""
     nodes = {}
     for i in range(LEAF_NODES_PER_VERSION):
@@ -496,7 +496,7 @@ class TestExtractWorker:
         async def mock_extract(
             *, facility, data_source_name, shot, timeout=600, node_usages=None
         ):
-            return _make_tree_nodes(data_source_name, shot)
+            return _make_data_nodes(data_source_name, shot)
 
         state.facility_config = FACILITY_CONFIG
         state.initial_version_counts = {
@@ -585,7 +585,7 @@ class TestPromoteWorker:
         ):
             # Suppress TDI linkage import
             with patch(
-                "imas_codex.discovery.mdsplus.tdi_linkage.link_tdi_to_tree_nodes",
+                "imas_codex.discovery.mdsplus.tdi_linkage.link_tdi_to_data_nodes",
                 return_value=0,
                 create=True,
             ):
@@ -658,7 +658,7 @@ class TestPipelineE2E:
         async def mock_extract(
             *, facility, data_source_name, shot, timeout=600, node_usages=None
         ):
-            return _make_tree_nodes(data_source_name, shot)
+            return _make_data_nodes(data_source_name, shot)
 
         async def mock_extract_units(
             facility, data_source_name, version, timeout=600, batch_size=500
@@ -745,7 +745,7 @@ class TestPipelineE2E:
                 side_effect=mock_extract_units,
             ),
             "link_tdi": patch(
-                "imas_codex.discovery.mdsplus.tdi_linkage.link_tdi_to_tree_nodes",
+                "imas_codex.discovery.mdsplus.tdi_linkage.link_tdi_to_data_nodes",
                 return_value=0,
                 create=True,
             ),

@@ -3,7 +3,7 @@
 Ingest MDSplus tree structure from a remote facility into the knowledge graph.
 
 This script connects to a facility via SSH, introspects MDSplus trees using
-a reference shot, and batch-ingests TreeNode data into Neo4j.
+a reference shot, and batch-ingests DataNode data into Neo4j.
 
 For large trees (>1000 nodes), this script is more efficient than LLM-driven
 ingestion because it:
@@ -112,7 +112,7 @@ result = []
 for node in nodes:
     try:
         usage = str(node.usage)
-        # Map MDSplus usage to our TreeNodeType enum
+        # Map MDSplus usage to our DataNodeType enum
         usage_map = {{
             "STRUCTURE": "STRUCTURE",
             "SIGNAL": "SIGNAL",
@@ -219,7 +219,7 @@ def ingest_tree_nodes(
             client.query(
                 """
                 UNWIND $batch AS item
-                MERGE (n:TreeNode {path: item.path})
+                MERGE (n:DataNode {path: item.path})
                 SET n += item
                 WITH n, item
                 MATCH (f:Facility {id: item.facility_id})
@@ -230,28 +230,28 @@ def ingest_tree_nodes(
             processed += len(batch)
             logger.info(f"Ingested {processed}/{len(prepared)} nodes")
 
-        # Create IN_TREE relationships (MERGE ensures MDSplusTree exists)
+        # Create IN_DATA_SOURCE relationships (MERGE ensures DataSource exists)
         client.query(
             """
-            MATCH (n:TreeNode {tree_name: $tree_name})
+            MATCH (n:DataNode {data_source_name: $tree_name})
             WITH n
             MATCH (f:Facility {id: n.facility_id})
-            MERGE (t:MDSplusTree {name: $tree_name})
-            ON CREATE SET t.facility_id = n.facility_id
-            MERGE (t)-[:AT_FACILITY]->(f)
-            MERGE (n)-[:IN_TREE]->(t)
+            MERGE (ds:DataSource {name: $tree_name})
+            ON CREATE SET ds.facility_id = n.facility_id
+            MERGE (ds)-[:AT_FACILITY]->(f)
+            MERGE (n)-[:IN_DATA_SOURCE]->(ds)
             """,
             tree_name=tree_name,
         )
 
-        # Update MDSplusTree stats
+        # Update DataSource stats
         client.query(
             """
-            MATCH (t:MDSplusTree {name: $tree_name})
-            SET t.node_count_ingested = $count,
-                t.ingestion_status = 'ingested',
-                t.reference_shot = $shot,
-                t.last_ingested = datetime()
+            MATCH (ds:DataSource {name: $tree_name})
+            SET ds.node_count_ingested = $count,
+                ds.ingestion_status = 'ingested',
+                ds.reference_shot = $shot,
+                ds.last_ingested = datetime()
             """,
             tree_name=tree_name,
             count=len(prepared),

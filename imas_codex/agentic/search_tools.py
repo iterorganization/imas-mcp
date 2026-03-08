@@ -115,18 +115,18 @@ def _search_signals(
         )[:k]
 
         if not signal_ids:
-            # Fall back to tree node search only
-            tree_results = _vector_search_tree_nodes(gc, embedding, facility, k)
-            return format_signals_report([], tree_results, {})
+            # Fall back to data node search only
+            data_node_results = _vector_search_data_nodes(gc, embedding, facility, k)
+            return format_signals_report([], data_node_results, {})
 
         # Step 2: Enrich with graph traversals
         enriched = _enrich_signals(gc, signal_ids)
 
-        # Step 3: Tree node search (secondary index)
-        tree_results = _vector_search_tree_nodes(gc, embedding, facility, k)
+        # Step 3: Data node search (secondary index)
+        data_node_results = _vector_search_data_nodes(gc, embedding, facility, k)
 
         # Step 4: Format
-        return format_signals_report(enriched, tree_results, scores)
+        return format_signals_report(enriched, data_node_results, scores)
 
     except ServiceUnavailable:
         return NEO4J_NOT_RUNNING_MSG
@@ -247,7 +247,7 @@ def _enrich_signals(
     return gc.query(cypher, signal_ids=signal_ids)
 
 
-def _vector_search_tree_nodes(
+def _vector_search_data_nodes(
     gc: GraphClient,
     embedding: list[float],
     facility: str,
@@ -393,7 +393,7 @@ def _enrich_wiki_chunks(
         RETURN c.id AS id, c.text AS text, c.section AS section,
                p.id AS page_id, p.title AS page_title, p.url AS page_url,
                collect(DISTINCT sig.id) AS linked_signals,
-               collect(DISTINCT tn.path) AS linked_tree_nodes,
+               collect(DISTINCT tn.path) AS linked_data_nodes,
                collect(DISTINCT ip.id) AS imas_refs
     """
     return gc.query(cypher, chunk_ids=chunk_ids)

@@ -107,7 +107,7 @@ scan_worker ─────► enrich_worker ─────► check_worker
 ```
 
 **Critical dependency**: check_worker only claims signals with `epoch_id IS NOT NULL`. This ensures:
-- We have a valid `TreeModelVersion.first_shot` for the MDSplus query
+- We have a valid `StructuralEpoch.first_shot` for the MDSplus query
 - The signal is known to exist in that shot range
 - Epoch detection must run before check can proceed
 
@@ -177,7 +177,7 @@ For a fresh TCV run (`discover signals tcv --seed`):
 Phase 1: Epoch Detection
 - Scanning results tree shot range [1000, 80000]
 - Binary search finds version boundaries
-- Creating TreeModelVersion nodes with added/removed paths
+- Creating StructuralEpoch nodes with added/removed paths
 
 Phase 2: Signal Creation  
 - Creating FacilitySignal nodes from each epoch's added_paths
@@ -217,13 +217,13 @@ Summary:
     tree_name: "results",
     node_path: "\\results::ip",
     status: "checked",
-    epoch_id: "tcv:results:v3",  // Links to TreeModelVersion
+    epoch_id: "tcv:results:v3",  // Links to StructuralEpoch
     discovered_at: datetime,
     enriched_at: datetime,
     checked_at: datetime
 })
 
-(:TreeModelVersion {
+(:StructuralEpoch {
     id: "tcv:results:v3",
     facility_id: "tcv",
     tree_name: "results",
@@ -272,5 +272,5 @@ discover clear --domain signals tcv
 
 This removes:
 - All FacilitySignal nodes for the facility
-- All TreeModelVersion nodes for the facility
+- All StructuralEpoch nodes for the facility
 - All INTRODUCED_IN/REMOVED_IN/CHECKED_WITH relationships

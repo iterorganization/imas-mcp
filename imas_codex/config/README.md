@@ -108,7 +108,7 @@ config/facilities/
 
 | Data Type | Schema Property | Purpose |
 |-----------|-----------------|---------|
-| MDSplus tree names | `MDSplusTree.name` | Data discovery |
+| MDSplus tree names | `DataSource.name` | Data discovery |
 | Diagnostic names | `Diagnostic.name` | Data discovery |
 | Analysis code names | `AnalysisCode.name` | Code discovery |
 | Code versions | `AnalysisCode.version` | Reproducibility |
@@ -235,7 +235,7 @@ ssh tcv "which python3; python3 --version; pip list | head -10"
 | Analysis codes (name, version, type) | Graph | `ingest_nodes("AnalysisCode", [...])` |
 | Directory paths for exploration | Graph | `ingest_nodes("FacilityPath", [...])` |
 | Diagnostics | Graph | `ingest_nodes("Diagnostic", [...])` |
-| MDSplus trees | Graph | `ingest_nodes("MDSplusTree", [...])` |
+| MDSplus trees | Graph | `ingest_nodes("DataSource", [...])` |
 | TDI functions | Graph | `ingest_nodes("TDIFunction", [...])` |
 | OS/kernel versions | Infrastructure | `update_infrastructure(...)` |
 | Tool availability | Infrastructure | `update_infrastructure(...)` |
