@@ -1631,24 +1631,32 @@ def _persist_pf_coil_turns_nodes(
             gc.create_nodes("DataNode", data_nodes, id_field="path", batch_size=50)
             stats["coil_entries"] = len(data_nodes)
 
-        # 3. Cross-reference to device_xml PF coils by name
-        gc.query(
+        # 3. Cross-reference to JEC2020 PF circuits by name prefix.
+        # cturns names encode circuit identity: P2* → circuit 2 (PFX),
+        # P3* → circuit 3 (SHAPE), PF4* → circuit 5 (P4).
+        circuit_map = [
+            {"prefix": "P2", "circuit_id": f"{facility}:jec2020:pf_circuit:2"},
+            {"prefix": "P3", "circuit_id": f"{facility}:jec2020:pf_circuit:3"},
+            {"prefix": "PF4", "circuit_id": f"{facility}:jec2020:pf_circuit:5"},
+        ]
+        result = gc.query(
             """
+            UNWIND $mappings AS m
             MATCH (ct:DataNode)
-            WHERE ct.data_source_name = $ct_source AND ct.facility_id = $facility
-            MATCH (dx:DataNode)
-            WHERE dx.data_source_name = 'device_xml'
-              AND dx.facility_id = $facility
-              AND dx.system = 'PF'
-            WITH ct, dx,
-                 split(ct.path, ':') AS ct_parts,
-                 split(dx.path, ':') AS dx_parts
-            WHERE last(ct_parts) = last(dx_parts)
-            MERGE (ct)-[:SAME_COMPONENT]->(dx)
+            WHERE ct.data_source_name = $ct_source
+              AND ct.facility_id = $facility
+            WITH ct, m, split(ct.path, ':')[-1] AS coil_name
+            WHERE coil_name STARTS WITH m.prefix
+            MATCH (circ:DataNode {path: m.circuit_id})
+            MERGE (ct)-[:SAME_COMPONENT]->(circ)
+            RETURN count(*) AS refs_created
             """,
+            mappings=circuit_map,
             ct_source=source_name,
             facility=facility,
         )
+        if result:
+            stats["cross_references"] = result[0].get("refs_created", 0)
 
     return stats
 
