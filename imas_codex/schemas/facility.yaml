@@ -64,6 +64,8 @@ enums:
         description: CSC Allas object storage
       xml:
         description: XML-based structured data (e.g., EFIT device geometry files)
+      config_file:
+        description: Plain text configuration files (sensor configs, mappings, tables)
 
   ToolStatus:
     description: Availability status of a command-line tool
@@ -1126,6 +1128,8 @@ classes:
       clone_count:
         description: Number of clones found across facility paths
         range: integer
+      vcs_type:
+        description: Version control system type (git, svn, hg, bzr)
       # Ingestion status
       should_ingest_via_github:
         description: If true, use GitHub API instead of facility SSH
@@ -1311,6 +1315,15 @@ classes:
       tdi_function_count:
         description: Number of TDI functions accessing this data source
         range: integer
+      calibration_epoch_count:
+        description: Number of calibration epochs for this data source
+        range: integer
+      first_calibration_shot:
+        description: First shot with calibration data
+        range: integer
+      last_calibration_shot:
+        description: Last shot with calibration data
+        range: integer
       last_ingested:
         description: When data source structure was last ingested
         range: datetime
@@ -1390,6 +1403,16 @@ classes:
         range: StructuralEpoch
         annotations:
           relationship_type: HAS_PREDECESSOR
+      fingerprint:
+        description: Hash fingerprint for identifying structural epoch content
+      tree_name:
+        description: MDSplus tree name for this structural epoch
+      units_count:
+        description: Total number of units in this epoch
+        range: integer
+      units_extracted:
+        description: Number of units extracted from nodes in this epoch
+        range: integer
       status:
         description: >-
           Lifecycle status for this structural epoch.
@@ -1442,10 +1465,14 @@ classes:
       - LLMOperation
     class_uri: facility:DataNode
     attributes:
+      id:
+        description: Composite identifier for graph queries (e.g., facility:tree:path)
       path:
         identifier: true
         description: Full node path (e.g., "\\RESULTS::LIUQE:PSI")
         required: true
+      tree_name:
+        description: MDSplus tree name containing this node
       data_source_name:
         description: Parent data source name
         required: true
@@ -2073,6 +2100,18 @@ classes:
       enriched_at:
         description: Timestamp when LLM enrichment (description, domain) was completed
         range: datetime
+      enrichment_source:
+        description: Source of enrichment (llm_agent, manual, wiki, mdsplus)
+      node_path:
+        description: Path within the data source for this signal
+      pattern_representative_id:
+        description: ID of representative pattern for grouped signals
+      pattern_template:
+        description: Template pattern for generating accessor expressions
+      source_node:
+        description: "[DEPRECATED] Old name for data_source_node. Retained for backward compatibility."
+      tree_name:
+        description: MDSplus tree name for this signal
       skip_reason:
         description: Why this signal was skipped during enrichment or access checking
 
@@ -2108,6 +2147,12 @@ classes:
           relationship_type: AT_FACILITY
       name:
         description: Human-readable name (e.g., "MDSplus TDI Local", "IMAS IDS Access")
+      description:
+        description: Human-readable description of this access method
+      template_python:
+        description: Python code template for data access
+      template_matlab:
+        description: MATLAB code template for data access
       method_type:
         description: >-
           Data system type. Used for discovery automation.
@@ -2754,11 +2799,27 @@ classes:
           Used as a popularity signal to prioritize ingestion.
         range: integer
       # Worker coordination
+      claim_token:
+        description: UUID token for atomic work claiming between parallel workers
       claimed_at:
         description: >-
           Timestamp when a worker claimed this file for processing.
           Stale claims (>5min) are reclaimed by orphan recovery.
         range: datetime
+      evidence_linked:
+        description: Whether evidence node has been linked to this file
+        range: boolean
+      file_category:
+        description: "[DEPRECATED] Category of file (use node types instead)"
+        range: FileCategory
+      ingested_at:
+        description: When file content was ingested
+        range: datetime
+      preview_text:
+        description: Extracted text preview for scoring context
+      score_documentation:
+        description: Score for documentation value (0.0-1.0)
+        range: float
       skip_reason:
         description: One-line reason why this file was skipped during triage or scoring
       # Processing metadata
@@ -2944,6 +3005,9 @@ classes:
         range: datetime
       defer_reason:
         description: Why this document was deferred (e.g., size limit, OCR required)
+      score:
+        description: Legacy relevance score (0.0-1.0)
+        range: float
 
   CodeChunk:
     description: >-
@@ -2992,6 +3056,18 @@ classes:
       ref_count:
         description: Count of DataReference nodes linked to this chunk
         range: integer
+      _node_content:
+        description: Internal node content for graph processing
+      _node_type:
+        description: Internal node type label for graph processing
+      mdsplus_paths:
+        description: MDSplus tree paths found in this code chunk
+        multivalued: true
+      mdsplus_ref_count:
+        description: Count of MDSplus path references in this chunk
+        range: integer
+      ref_doc_id:
+        description: Reference to parent document ID for provenance
       data_references:
         description: DataReference nodes extracted from this code chunk
         multivalued: true
