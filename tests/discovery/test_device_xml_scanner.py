@@ -1817,12 +1817,12 @@ class TestParseJEC2020Script:
         xml = b"""<?xml version="1.0"?>
 <ironBoundaries>
   <ironBoundary material2Id="1" materialId="3">
-    <knotSet basisFunctionCount="3"
-             boundaryCoordsR="6.512, 4.952, 3.392"
-             boundaryCoordsZ="4.45, 4.45, 4.45"
-             initialPermeabilities="852.82, 724.86, 887.43"
-             segmentLengths="1.56, 1.56, 1.56"
-             boundaryLength="4.68"/>
+    <knotSet basisFunctionCount="3"/>
+    <observationPoints initialPermeabilities="852.82, 724.86, 887.43"/>
+    <geometry boundaryCoordsR="6.512, 4.952, 3.392"
+              boundaryCoordsZ="4.45, 4.45, 4.45"
+              segmentLengths="1.56, 1.56, 1.56"
+              boundaryLength="4.68"/>
   </ironBoundary>
 </ironBoundaries>"""
         result = mod.parse_iron_boundaries(xml)
@@ -1836,6 +1836,15 @@ class TestParseJEC2020Script:
         mod = self._load_module()
         xml = b"""<?xml version="1.0"?>
 <limiter rValues="2.0, 2.5, 3.0" zValues="1.0, 0.5, -0.5"/>"""
+        result = mod.parse_limiter(xml)
+        assert result["r"] == [2.0, 2.5, 3.0]
+        assert result["z"] == [1.0, 0.5, -0.5]
+
+    def test_parse_limiter_whitespace_separated(self):
+        """Parse limiter XML with whitespace-separated R,Z arrays."""
+        mod = self._load_module()
+        xml = b"""<?xml version="1.0"?>
+<limiter name="JET first wall" rValues="2.0  2.5  3.0" zValues="1.0  0.5  -0.5"/>"""
         result = mod.parse_limiter(xml)
         assert result["r"] == [2.0, 2.5, 3.0]
         assert result["z"] == [1.0, 0.5, -0.5]

@@ -1367,12 +1367,24 @@ classes:
       removed_subtrees:
         description: Top-level subtrees removed in this version
         multivalued: true
+      description:
+        description: >-
+          Human-readable description of this structural epoch.
+          E.g., "Baseline — 71 pick-ups, DMSS=91, Mk2HD limiter" or
+          "Pre-divertor carbon wall + belt limiter (1983-1991)".
       wall_configuration:
         description: >-
           Type of plasma-facing component configuration (limiter or divertor).
           Facility-generic field for tokamaks that transitioned between
           limiter and divertor operation across their lifetime.
         range: WallConfiguration
+      uses_limiter:
+        description: >-
+          Limiter contour DataNode used by this structural epoch.
+          Links epoch to the specific first-wall geometry in effect.
+        range: DataNode
+        annotations:
+          relationship_type: USES_LIMITER
       predecessor:
         description: Previous structure version
         range: StructuralEpoch
@@ -1488,6 +1500,15 @@ classes:
           Null for root nodes (tree level).
           Example: \\RESULTS::LIUQE:PSI -> \\RESULTS::LIUQE
         range: string
+      file_source:
+        description: >-
+          Origin of the file that provided this node's data.
+          E.g., "flush" for SCAL/FLUSH database, "git" for git repo,
+          "filesystem" for direct file read.
+      file_path:
+        description: >-
+          Path to the source file on disk or in git.
+          Provenance chain: links the graph node back to the raw data.
       # Applicability range ("super tree" concept)
       first_shot:
         description: >-

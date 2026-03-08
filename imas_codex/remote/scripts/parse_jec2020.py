@@ -51,6 +51,13 @@ import sys
 import xml.etree.ElementTree as ET
 
 
+def _parse_float_list(s: str) -> list:
+    """Parse a string of floats separated by commas or whitespace."""
+    if "," in s:
+        return [float(v.strip()) for v in s.split(",") if v.strip()]
+    return [float(v) for v in s.split() if v]
+
+
 def parse_magnetics(xml_bytes: bytes) -> dict:
     """Parse magnetics.xml: probes and flux loops with dual data sources.
 
@@ -187,17 +194,28 @@ def parse_pf_systems(xml_bytes: bytes) -> dict:
     return {"coils": coils, "circuits": circuits}
 
 
+def _get_attr(parent, child, attr):
+    """Get attribute from child element, falling back to parent."""
+    if child is not None:
+        val = child.get(attr, "")
+        if val:
+            return val
+    return parent.get(attr, "")
+
+
 def parse_iron_boundaries(xml_bytes: bytes) -> dict:
     """Parse ironBoundaries3.xml: iron core boundary segments.
 
-    Single ironBoundary element with knotSet containing comma-separated arrays.
+    Structure: <ironBoundaries> → <ironBoundary> with children:
+      - <knotSet>: basisFunctionCount, spline knot parameters
+      - <observationPoints>: initialPermeabilities
+      - <geometry>: boundaryCoordsR, boundaryCoordsZ, segmentLengths, boundaryLength
     """
     root = ET.fromstring(xml_bytes)
     result: dict = {}
 
     boundary = root.find(".//ironBoundary")
     if boundary is None:
-        # Try direct root as ironBoundary
         if root.tag == "ironBoundary":
             boundary = root
         else:
@@ -206,33 +224,47 @@ def parse_iron_boundaries(xml_bytes: bytes) -> dict:
     result["material_id"] = boundary.get("materialId", "")
     result["material2_id"] = boundary.get("material2Id", "")
 
-    knot_set = boundary.find("knotSet")
-    if knot_set is None:
-        knot_set = boundary  # attributes may be on root
+    # Geometry element has R,Z coordinates, segment lengths, boundary length
+    geom = boundary.find("geometry")
 
+    # Coordinates and segment data from <geometry>
     for attr, key in [
         ("boundaryCoordsR", "r"),
         ("boundaryCoordsZ", "z"),
-        ("initialPermeabilities", "permeabilities"),
         ("segmentLengths", "segment_lengths"),
     ]:
-        val = knot_set.get(attr, "")
+        val = _get_attr(boundary, geom, attr)
         if val:
             try:
-                result[key] = [float(v.strip()) for v in val.split(",") if v.strip()]
+                result[key] = _parse_float_list(val)
             except ValueError:
                 result[key] = val
 
-    for attr, key in [
-        ("basisFunctionCount", "n_segments"),
-        ("boundaryLength", "boundary_length"),
-    ]:
-        val = knot_set.get(attr, "")
-        if val:
-            try:
-                result[key] = float(val)
-            except ValueError:
-                result[key] = val
+    # boundaryLength from <geometry>
+    bl = _get_attr(boundary, geom, "boundaryLength")
+    if bl:
+        try:
+            result["boundary_length"] = float(bl)
+        except ValueError:
+            result["boundary_length"] = bl
+
+    # Permeabilities from <observationPoints>
+    obs = boundary.find("observationPoints")
+    perm_val = _get_attr(boundary, obs, "initialPermeabilities")
+    if perm_val:
+        try:
+            result["permeabilities"] = _parse_float_list(perm_val)
+        except ValueError:
+            result["permeabilities"] = perm_val
+
+    # Segment count from <knotSet>
+    knot_set = boundary.find("knotSet")
+    bfc = _get_attr(boundary, knot_set, "basisFunctionCount")
+    if bfc:
+        try:
+            result["n_segments"] = float(bfc)
+        except ValueError:
+            result["n_segments"] = bfc
 
     return result
 
@@ -240,7 +272,8 @@ def parse_iron_boundaries(xml_bytes: bytes) -> dict:
 def parse_limiter(xml_bytes: bytes) -> dict:
     """Parse limiter.xml: ILW first wall contour at T=200°C.
 
-    The XML has rValues and zValues attributes with comma-separated floats.
+    The XML has rValues and zValues attributes. Values may be comma-separated
+    or whitespace-separated depending on the file version.
     """
     root = ET.fromstring(xml_bytes)
 
@@ -264,8 +297,8 @@ def parse_limiter(xml_bytes: bytes) -> dict:
         return {"error": "No rValues/zValues attributes found"}
 
     try:
-        r_vals = [float(v.strip()) for v in r_str.split(",") if v.strip()]
-        z_vals = [float(v.strip()) for v in z_str.split(",") if v.strip()]
+        r_vals = _parse_float_list(r_str)
+        z_vals = _parse_float_list(z_str)
     except ValueError as e:
         return {"error": f"Failed to parse coordinates: {e}"}
 
