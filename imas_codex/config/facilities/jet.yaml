@@ -140,30 +140,37 @@ data_systems:
     # the same device XML and limiter, changing only snap_file and Green's.
     versions:
       # Pre-EFIT++ epochs — no device XMLs, limiter contour geometry only.
-      # Shot ranges from limiter_list and known JET operational history.
+      # Shot ranges from /usr/local/data/flush/limiter_list.dat (SCAL/FLUSH
+      # database — the authoritative source for JET wall geometry history).
       - version: limiter_era
         first_shot: 1
-        last_shot: 26087
+        last_shot: 28791
         description: "Pre-divertor carbon wall + belt limiter (1983-1991)"
-        uses_limiter: Mk2A
+        uses_limiter: Limiter
         wall_configuration: limiter
-      - version: mk1_mk2a
-        first_shot: 33643
-        last_shot: 44414
-        description: "Mark I + Mark IIA divertor (1994-1998)"
+      - version: mk1_era
+        first_shot: 28792
+        last_shot: 35778
+        description: "Mark I divertor — JET's first divertor (1994-1995)"
+        uses_limiter: Mk1
+        wall_configuration: divertor
+      - version: mk2a_era
+        first_shot: 35779
+        last_shot: 45155
+        description: "Mark IIA Gas Box divertor (1996-1998)"
         uses_limiter: Mk2A
         wall_configuration: divertor
       - version: mk2gb_era
-        first_shot: 44415
-        last_shot: 54351
+        first_shot: 45156
+        last_shot: 54549
         description: "Mark II Gas Box divertor (1999-2001)"
         uses_limiter: Mk2GB
         wall_configuration: divertor
-      - version: mk2gb_ns_era
-        first_shot: 54352
+      - version: mk2gb_sr_era
+        first_shot: 54550
         last_shot: 63445
-        description: "Mark IIGB-NS divertor, no septum (2002-2005)"
-        uses_limiter: Mk2GB-NS
+        description: "Mark IIGB septum removed (2002-2005)"
+        uses_limiter: Mk2GB-SR
         wall_configuration: divertor
       - version: mk2hd_pre
         first_shot: 63446
@@ -339,65 +346,84 @@ data_systems:
         parameters: [COILS, TURNS_RATIO]
       - symbol: LIM
         name: Limiter contour
-        description: "First wall R,Z contour — 5 versions: Mk2A (shots 1-44414), Mk2GB, Mk2GB-NS, Mk2HD, Mk2ILW"
+        description: "First wall R,Z contour — 7 versions: Limiter (pre-divertor, shots 1-28791), Mk1, Mk2A, Mk2GB, Mk2GB-SR, Mk2HD, Mk2ILW"
         parameters: [R, Z]
     # Limiter contour versions (independent of device XML structural epochs).
     # Each entry is a first-wall geometry that was physically installed.
     # The R,Z contour files define the plasma-facing boundary shape.
     #
     # Sources:
+    #   - SCAL/FLUSH database: /usr/local/data/flush/ (authoritative history)
+    #     Includes all 7 eras from pre-divertor to ILW. Shot ranges taken from
+    #     /usr/local/data/flush/limiter_list.dat — the definitive mapping.
+    #   - EFIT legacy: /home/chain1/input/efit/Limiters/ (4 files: mk2a, mk2gb, mk2gb_ns, mk2hd)
     #   - Git repo: /home/chain1/git/efit_f90.git (3 files: mk2gb_ns_cc, mk2hd_cc, mk2ilw_cc)
-    #   - Frozen chain1 efit: /home/chain1/input/efit/Limiters/ (4 files: mk2a, mk2gb, mk2gb_ns, mk2hd)
-    #   - Frozen chain1 efit_f90: /home/chain1/input/efit_f90/Limiters/ (3 files: mk2gb_ns_cc, mk2hd_cc, mk2ilw_cc)
-    #   - Authoritative shot-to-file mapping: /home/chain1/input/efit/limiter_list
-    #     1-44414 → mk2a, 44415-54351 → mk2gb, 54352-63445 → mk2gb_ns, 63446-99999 → mk2hd
+    #   - EFIT limiter_list: /home/chain1/input/efit/limiter_list
+    #     Only covers Mk2A→Mk2HD (retroactively maps all pre-Mk2GB shots to mk2a).
     #
-    # The mk2a file has 3 segments: 108 R,Z points (main contour used by
-    # EFIT) + 12 auxiliary points + 5 auxiliary points. EFIT's Fortran
-    # subroutine load_local_limiter() reads ONLY segment 0 (108 points);
-    # segments 1 and 2 are never used by the equilibrium solver.
-    # The file covers ALL shots 1-44414 (limiter_list), spanning the
-    # pre-divertor, Mk1, and Mk2A hardware eras. No separate pre-divertor
-    # contour file exists — EFIT retroactively applies mk2a to old shots.
-    #
-    # JEC2020 limiter.xml provides a separate high-resolution (248+ pt) ILW
-    # contour at T=200°C, valid from shot 79951. See static_sources below.
+    # The FLUSH files are 2-column (R,Z) plain-text format, one segment each.
+    # EFIT files are 3-column (R,Z,segment) with up to 3 segments;
+    # parse_limiter_file() handles both formats transparently.
     limiter_dir: /home/chain1/input/efit/Limiters
+    flush_dir: /usr/local/data/flush
     limiter_versions:
-      - name: Mk2A
+      - name: Limiter
         first_shot: 1
-        last_shot: 44414
+        last_shot: 28791
         description: >-
-          Primary EFIT limiter contour for shots 1-44414 (108 R,Z points).
-          First segment of limiter.mk2a. Covers the pre-divertor limiter era
-          (1983-1991), Mk1 divertor (1994-1995), and Mk2A Gas Box (1996-1998).
-          No distinct pre-divertor contour file exists — EFIT retroactively
-          applied this contour to all pre-Mk2GB shots via limiter_list.
-        file: limiter.mk2a
-        source_dir: /home/chain1/input/efit/Limiters
-        n_points: 108
+          Pre-divertor JET first wall — large symmetric limiter contour
+          (102 R,Z points, R∈[1.73, 4.15], Z∈[-2.07, 2.07]).
+          Carbon wall + belt limiter configuration (1983-1991).
+          File "L91NEW" in /usr/local/data/flush/.
+        file: L91NEW
+        source_dir: /usr/local/data/flush
+        n_points: 102
+      - name: Mk1
+        first_shot: 28792
+        last_shot: 35778
+        description: >-
+          Mark I divertor — JET's first divertor (78 R,Z points,
+          R∈[1.81, 3.90], Z∈[-1.78, 2.02]). Installed 1994.
+          File "mark1" in /usr/local/data/flush/.
+        file: mark1
+        source_dir: /usr/local/data/flush
+        n_points: 78
+      - name: Mk2A
+        first_shot: 35779
+        last_shot: 45155
+        description: >-
+          Mark IIA Gas Box divertor (110 R,Z points). Installed 1996.
+          FLUSH file "mark2ap". Also available as limiter.mk2a in EFIT
+          Limiters (3-segment format, 108 pts in segment 0).
+        file: mark2ap
+        source_dir: /usr/local/data/flush
+        n_points: 110
       - name: Mk2GB
-        first_shot: 44415
-        last_shot: 54351
-        description: "Mark 2 Gas Box (2002). 193-line contour file."
-        file: limiter.mk2gb
-        source_dir: /home/chain1/input/efit/Limiters
-      - name: Mk2GB-NS
-        first_shot: 54352
+        first_shot: 45156
+        last_shot: 54549
+        description: "Mark 2 Gas Box (1999). 142 R,Z points."
+        file: mark2gb
+        source_dir: /usr/local/data/flush
+        n_points: 142
+      - name: Mk2GB-SR
+        first_shot: 54550
         last_shot: 63445
-        description: "Mark 2 Gas Box with new septum (2006). 220-line contour file."
-        file: limiter.mk2gb_ns
-        source_dir: /home/chain1/input/efit/Limiters
+        description: "Mark 2 Gas Box septum removed (2002). 126 R,Z points."
+        file: mark2gb-sr
+        source_dir: /usr/local/data/flush
+        n_points: 126
       - name: Mk2HD
         first_shot: 63446
         last_shot: 79853
-        description: "Mark 2 High Delta divertor (2008). 117-line contour file."
-        file: limiter.mk2hd
-        source_dir: /home/chain1/input/efit/Limiters
+        description: "Mark 2 High Delta divertor (2005). 115 R,Z points."
+        file: mark2hd
+        source_dir: /usr/local/data/flush
+        n_points: 115
       - name: Mk2ILW
         first_shot: 79854
-        description: "ITER-Like Wall — beryllium/tungsten (2011-2023)"
-        file: Limiters/limiter.mk2ilw_cc
+        description: "ITER-Like Wall — beryllium/tungsten (2011-2023). 251 R,Z points."
+        file: mark2ilw
+        source_dir: /usr/local/data/flush
         n_points: 251
 
   # Static file-based data sources for machine description.
