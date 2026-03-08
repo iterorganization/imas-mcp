@@ -244,6 +244,10 @@ def _persist_graph_nodes(
             }
             if vc.get("wall_configuration"):
                 rec["wall_configuration"] = vc["wall_configuration"]
+            # Store uses_limiter as property for dual property+relationship model
+            lim_name = vc.get("uses_limiter")
+            if lim_name:
+                rec["uses_limiter"] = f"{facility}:device_xml:limiter:{lim_name}"
             epoch_records.append(rec)
 
         if epoch_records:
@@ -259,6 +263,7 @@ def _persist_graph_nodes(
                     se.description = rec.description,
                     se.status = rec.status
                 SET se.wall_configuration = rec.wall_configuration
+                SET se.uses_limiter = rec.uses_limiter
                 WITH se, rec
                 MATCH (f:Facility {id: rec.facility_id})
                 MERGE (se)-[:AT_FACILITY]->(f)

@@ -151,7 +151,7 @@ def query_iron_boundary() -> dict | None:
             gc.query(
                 """
                 MATCH (dn:DataNode)
-                WHERE dn.facility_id = 'jet' AND dn.system = 'IC'
+                WHERE dn.facility_id = 'jet' AND dn.system = 'FE'
                 RETURN dn.r_contour AS r, dn.z_contour AS z,
                        dn.permeabilities AS permeabilities
                 """

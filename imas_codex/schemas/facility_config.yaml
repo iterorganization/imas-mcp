@@ -1272,6 +1272,11 @@ classes:
         description: >-
           Filesystem directory containing limiter contour files.
           Fallback source when files are not in the git repository.
+      flush_dir:
+        description: >-
+          Directory containing SCAL/FLUSH wall geometry files.
+          Used for pre-EFIT era limiter contours that are not in the git repo.
+          E.g., /usr/local/data/flush on JET.
 
   DeviceXMLVersion:
     description: >-
@@ -1292,8 +1297,9 @@ classes:
       description:
         description: What changed in this version
       device_xml:
-        description: Git path to device XML file (relative to input_prefix)
-        required: true
+        description: >-
+          Git path to device XML file (relative to input_prefix).
+          Optional for pre-EFIT epochs that have only limiter geometry.
       device_ppfs:
         description: Git path to PPF routing namelist
       limiter:
@@ -1302,6 +1308,15 @@ classes:
         description: Git path to Green's function directory
       snap_file:
         description: Git path to EFITSNAP probe enable/disable mask
+      uses_limiter:
+        description: >-
+          Name of the LimiterVersion used by this epoch.
+          For pre-EFIT epochs without device_xml, this is the only
+          geometry reference.
+      wall_configuration:
+        description: >-
+          Type of plasma-facing component configuration (limiter or divertor).
+          Matches WallConfiguration enum values.
 
   LimiterVersion:
     description: >-
