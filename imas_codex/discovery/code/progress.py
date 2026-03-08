@@ -89,6 +89,7 @@ class EnrichItem:
     pattern_categories: dict[str, int] = field(
         default_factory=dict
     )  # per-category match counts
+    preview_snippet: str = ""  # first meaningful line of file content
 
 
 @dataclass
@@ -390,7 +391,7 @@ class FileProgressDisplay(BaseProgressDisplay):
                 if triage.description:
                     triage_desc = clean_text(triage.description)
 
-        # ENRICH activity — line count + pattern categories
+        # ENRICH activity — line count + pattern categories + preview
         enrich_text = ""
         enrich_desc = ""
         if enrich:
@@ -410,6 +411,8 @@ class FileProgressDisplay(BaseProgressDisplay):
                 desc_parts.append(" ".join(cat_strs))
             elif enrich.patterns > 0:
                 desc_parts.append(f"{enrich.patterns} patterns")
+            if enrich.preview_snippet:
+                desc_parts.append(enrich.preview_snippet)
             enrich_desc = "  ".join(desc_parts)
 
         # SCORE activity — score + category + description
@@ -726,6 +729,7 @@ class FileProgressDisplay(BaseProgressDisplay):
                     patterns=r.get("patterns", 0),
                     line_count=r.get("line_count", 0),
                     pattern_categories=r.get("pattern_categories", {}),
+                    preview_snippet=r.get("preview_snippet", ""),
                 )
                 for r in results
             ]

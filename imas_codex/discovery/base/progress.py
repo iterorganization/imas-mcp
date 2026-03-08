@@ -150,7 +150,9 @@ def format_rate(rate: float) -> str:
         return f"{rate / 1_000:.1f}K/s"
     if rate >= 10:
         return f"{rate:.0f}/s"
-    return f"{rate:.1f}/s"
+    if rate >= 1:
+        return f"{rate:.1f}/s"
+    return f"{rate:.2f}/s"
 
 
 # =============================================================================
@@ -1445,12 +1447,14 @@ def build_resource_section(
                 section.append("  ", style="dim")
             section.append(f"{label}={value}", style=style)
 
-        # Pending work
+        # Pending work — on a new line, left-aligned with stats content
         if config.pending:
             active = [(label, count) for label, count in config.pending if count > 0]
             if active:
                 parts = [f"{label}:{count}" for label, count in active]
-                section.append(f"  pending=[{' '.join(parts)}]", style="cyan dim")
+                section.append("\n")
+                section.append(" " * LABEL_WIDTH)
+                section.append(f"pending=[{' '.join(parts)}]", style="cyan dim")
 
     return section
 
