@@ -2,16 +2,22 @@
 
 Each test class covers one search_* MCP tool. Tests mock the GraphClient
 and Encoder to avoid requiring a running Neo4j/embedding server.
+
+Uses a query routing helper to dispatch gc.query mock results based on
+Cypher query content, making tests resilient to changes in call ordering
+or the addition of new query stages (text search, hybrid merge, etc.).
 """
 
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 from neo4j.exceptions import ServiceUnavailable
 
 from imas_codex.agentic.search_formatters import (
+    _interpolate_template,
     format_code_report,
     format_docs_report,
     format_fetch_report,
@@ -27,6 +33,143 @@ from imas_codex.agentic.search_tools import (
 )
 
 # ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _route_query(routes: dict[str, list[dict[str, Any]]]) -> Any:
+    """Create a gc.query side_effect that dispatches by Cypher content.
+
+    The first matching pattern wins; unmatched queries return [].
+    Pattern matching is simple substring (``pattern in cypher``).
+    """
+
+    def handler(cypher: str, **kwargs: Any) -> list[dict[str, Any]]:
+        for pattern, result in routes.items():
+            if pattern in cypher:
+                return result
+        return []
+
+    return handler
+
+
+# ---------------------------------------------------------------------------
+# Canned mock data
+# ---------------------------------------------------------------------------
+
+# Signals — uses new access_methods array format
+_SIGNAL_ENRICHMENT_IP = {
+    "id": "tcv:magnetics/ip",
+    "name": "ip",
+    "description": "Plasma current",
+    "physics_domain": "magnetics",
+    "unit": "A",
+    "checked": True,
+    "example_shot": 84000,
+    "node_path": "\\RESULTS::I_P",
+    "accessor": "MDSplus",
+    "tree_name": "tcv_shot",
+    "diagnostic_name": "magnetics",
+    "diagnostic_category": "magnetics",
+    "tree_path": "\\RESULTS::I_P",
+    "data_source_name": "tcv_shot",
+    "access_methods": [
+        {
+            "access_template": "t = MDSplus.Tree('tcv_shot', shot)\nnode = t.getNode('\\\\results::i_p')",
+            "access_type": "mdsplus",
+            "imports_template": "import MDSplus",
+            "connection_template": None,
+            "imas_path": "magnetics.ip.0d[:].value",
+            "imas_docs": "Plasma current positive sign",
+            "imas_unit": "A",
+        }
+    ],
+}
+
+_SIGNAL_ENRICHMENT_BPOL = {
+    "id": "tcv:magnetics/bpol",
+    "name": "bpol",
+    "description": "Poloidal magnetic field",
+    "physics_domain": "magnetics",
+    "unit": "T",
+    "checked": False,
+    "example_shot": None,
+    "node_path": None,
+    "accessor": None,
+    "tree_name": None,
+    "diagnostic_name": "magnetics",
+    "diagnostic_category": "magnetics",
+    "tree_path": None,
+    "data_source_name": None,
+    "access_methods": [
+        {
+            "access_template": None,
+            "access_type": None,
+            "imports_template": None,
+            "connection_template": None,
+            "imas_path": None,
+            "imas_docs": None,
+            "imas_unit": None,
+        }
+    ],
+}
+
+_SIGNAL_VECTOR_RESULTS = [
+    {"id": "tcv:magnetics/ip", "score": 0.92},
+    {"id": "tcv:magnetics/bpol", "score": 0.85},
+]
+
+_TREE_NODE_RESULTS = [
+    {
+        "id": "tcv:\\RESULTS::I_P",
+        "path": "\\RESULTS::I_P",
+        "data_source_name": "tcv_shot",
+        "description": "Plasma current",
+        "unit": "A",
+    }
+]
+
+# IMAS — new enrichment format with lifecycle_status, structure_reference, etc.
+_IMAS_ENRICHMENT_TEMP = {
+    "id": "core_profiles.profiles_1d[:].electrons.temperature",
+    "name": "temperature",
+    "ids": "core_profiles",
+    "documentation": "Electron temperature profile",
+    "data_type": "FLT_1D",
+    "ndim": 1,
+    "node_type": "leaf",
+    "physics_domain": "core_transport",
+    "cocos_label_transformation": None,
+    "lifecycle_status": "active",
+    "lifecycle_version": None,
+    "structure_reference": None,
+    "unit": "eV",
+    "clusters": ["Electron Temperature Profiles"],
+    "coordinates": ["core_profiles.profiles_1d[:].grid.rho_tor_norm"],
+    "introduced_in": "3.0.0",
+}
+
+_IMAS_ENRICHMENT_IP = {
+    "id": "magnetics.ip.0d[:].value",
+    "name": "value",
+    "ids": "magnetics",
+    "documentation": "Plasma current",
+    "data_type": "FLT_0D",
+    "ndim": 0,
+    "node_type": "leaf",
+    "physics_domain": "magnetics",
+    "cocos_label_transformation": "ip_like",
+    "lifecycle_status": "active",
+    "lifecycle_version": None,
+    "structure_reference": None,
+    "unit": "A",
+    "clusters": [],
+    "coordinates": [],
+    "introduced_in": "3.0.0",
+}
+
+
+# ---------------------------------------------------------------------------
 # search_signals
 # ---------------------------------------------------------------------------
 
@@ -36,9 +179,9 @@ class TestSearchSignals:
 
     @pytest.fixture()
     def mock_gc(self):
-        """GraphClient mock that returns canned data."""
+        """GraphClient mock with default empty routing."""
         gc = MagicMock()
-        gc.query = MagicMock(return_value=[])
+        gc.query = MagicMock(side_effect=_route_query({}))
         return gc
 
     @pytest.fixture()
@@ -49,8 +192,7 @@ class TestSearchSignals:
         return enc
 
     def test_empty_results(self, mock_gc, mock_encoder):
-        """Empty vector + enrichment results produce a descriptive message."""
-        mock_gc.query.side_effect = [[], []]  # vector search, tree node search
+        """Empty vector + text + tree results produce a descriptive message."""
         result = _search_signals(
             query="plasma current",
             facility="tcv",
@@ -61,65 +203,16 @@ class TestSearchSignals:
 
     def test_signal_results_formatted(self, mock_gc, mock_encoder):
         """Signal results are formatted into a readable report."""
-        # First call: vector search returns signal IDs + scores
-        vector_results = [
-            {"id": "tcv:magnetics/ip", "score": 0.92},
-            {"id": "tcv:magnetics/bpol", "score": 0.85},
-        ]
-        # Second call: enrichment query returns full details
-        enrichment_results = [
+        mock_gc.query.side_effect = _route_query(
             {
-                "id": "tcv:magnetics/ip",
-                "name": "ip",
-                "description": "Plasma current",
-                "physics_domain": "magnetics",
-                "unit": "A",
-                "checked": True,
-                "example_shot": 84000,
-                "diagnostic_name": "magnetics",
-                "diagnostic_category": "magnetics",
-                "access_template": "t = MDSplus.Tree('tcv_shot', shot)\nnode = t.getNode('\\\\results::i_p')",
-                "access_type": "mdsplus",
-                "imports_template": "import MDSplus",
-                "connection_template": None,
-                "tree_path": "\\RESULTS::I_P",
-                "data_source_name": "tcv_shot",
-                "imas_path": "magnetics.ip.0d[:].value",
-                "imas_docs": "Plasma current positive sign",
-                "imas_unit": "A",
-            },
-            {
-                "id": "tcv:magnetics/bpol",
-                "name": "bpol",
-                "description": "Poloidal magnetic field",
-                "physics_domain": "magnetics",
-                "unit": "T",
-                "checked": False,
-                "example_shot": None,
-                "diagnostic_name": "magnetics",
-                "diagnostic_category": "magnetics",
-                "access_template": None,
-                "access_type": None,
-                "imports_template": None,
-                "connection_template": None,
-                "tree_path": None,
-                "data_source_name": None,
-                "imas_path": None,
-                "imas_docs": None,
-                "imas_unit": None,
-            },
-        ]
-        # Third call: tree node vector search
-        tree_results = [
-            {
-                "id": "tcv:\\RESULTS::I_P",
-                "path": "\\RESULTS::I_P",
-                "data_source_name": "tcv_shot",
-                "description": "Plasma current",
-                "unit": "A",
+                "facility_signal_desc_embedding": _SIGNAL_VECTOR_RESULTS,
+                "UNWIND $signal_ids": [
+                    _SIGNAL_ENRICHMENT_IP,
+                    _SIGNAL_ENRICHMENT_BPOL,
+                ],
+                "data_node_desc_embedding": _TREE_NODE_RESULTS,
             }
-        ]
-        mock_gc.query.side_effect = [vector_results, enrichment_results, tree_results]
+        )
 
         result = _search_signals(
             query="plasma current",
@@ -132,10 +225,11 @@ class TestSearchSignals:
         assert "tcv:magnetics/ip" in result
         assert "Plasma current" in result
         assert "magnetics" in result
+        # New access_methods format: access template shown
+        assert "Data access" in result
 
     def test_diagnostic_filter_passed(self, mock_gc, mock_encoder):
-        """diagnostic parameter is passed to the vector search query."""
-        mock_gc.query.side_effect = [[], []]  # vector search, tree nodes
+        """diagnostic parameter is included in the vector search query."""
         _search_signals(
             query="current",
             facility="tcv",
@@ -143,14 +237,17 @@ class TestSearchSignals:
             gc=mock_gc,
             encoder=mock_encoder,
         )
-        # Check first call (vector search) includes diagnostic filter
-        first_call = mock_gc.query.call_args_list[0]
-        cypher = first_call[0][0]
-        assert "diagnostic" in cypher
+        # Find the vector search call (facility_signal_desc_embedding)
+        for call in mock_gc.query.call_args_list:
+            cypher = call[0][0]
+            if "facility_signal_desc_embedding" in cypher:
+                assert "diagnostic" in cypher
+                break
+        else:
+            pytest.fail("No vector search call found")
 
     def test_physics_domain_filter_passed(self, mock_gc, mock_encoder):
-        """physics_domain parameter is passed to the vector search query."""
-        mock_gc.query.side_effect = [[], []]  # vector search, tree nodes
+        """physics_domain parameter is included in the vector search query."""
         _search_signals(
             query="current",
             facility="tcv",
@@ -158,36 +255,39 @@ class TestSearchSignals:
             gc=mock_gc,
             encoder=mock_encoder,
         )
-        first_call = mock_gc.query.call_args_list[0]
-        cypher = first_call[0][0]
-        assert "physics_domain" in cypher
+        for call in mock_gc.query.call_args_list:
+            cypher = call[0][0]
+            if "facility_signal_desc_embedding" in cypher:
+                assert "physics_domain" in cypher
+                break
+        else:
+            pytest.fail("No vector search call found")
 
     def test_no_tree_nodes_section_omitted(self, mock_gc, mock_encoder):
         """When tree node search returns empty, section is omitted."""
-        vector_results = [{"id": "tcv:magnetics/ip", "score": 0.92}]
-        enrichment_results = [
+        mock_gc.query.side_effect = _route_query(
             {
-                "id": "tcv:magnetics/ip",
-                "name": "ip",
-                "description": "Plasma current",
-                "physics_domain": "magnetics",
-                "unit": "A",
-                "checked": True,
-                "example_shot": 84000,
-                "diagnostic_name": "magnetics",
-                "diagnostic_category": None,
-                "access_template": None,
-                "access_type": None,
-                "imports_template": None,
-                "connection_template": None,
-                "tree_path": None,
-                "data_source_name": None,
-                "imas_path": None,
-                "imas_docs": None,
-                "imas_unit": None,
-            },
-        ]
-        mock_gc.query.side_effect = [vector_results, enrichment_results, []]
+                "facility_signal_desc_embedding": [
+                    {"id": "tcv:magnetics/ip", "score": 0.92}
+                ],
+                "UNWIND $signal_ids": [
+                    {
+                        **_SIGNAL_ENRICHMENT_IP,
+                        "access_methods": [
+                            {
+                                "access_template": None,
+                                "access_type": None,
+                                "imports_template": None,
+                                "connection_template": None,
+                                "imas_path": None,
+                                "imas_docs": None,
+                                "imas_unit": None,
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
 
         result = _search_signals(
             query="plasma current",
@@ -214,8 +314,6 @@ class TestSearchSignals:
 
     def test_neo4j_unavailable(self, mock_encoder):
         """When Neo4j is down, return helpful error message."""
-        from neo4j.exceptions import ServiceUnavailable
-
         bad_gc = MagicMock()
         bad_gc.query.side_effect = ServiceUnavailable("Connection refused")
 
@@ -226,6 +324,46 @@ class TestSearchSignals:
             encoder=mock_encoder,
         )
         assert "not running" in result.lower() or "neo4j" in result.lower()
+
+    def test_hybrid_text_boost(self, mock_gc, mock_encoder):
+        """Signals found by both vector and text search get boosted."""
+        mock_gc.query.side_effect = _route_query(
+            {
+                "facility_signal_desc_embedding": [
+                    {"id": "tcv:magnetics/ip", "score": 0.80}
+                ],
+                "s.name) CONTAINS": [{"id": "tcv:magnetics/ip", "score": 0.6}],
+                "UNWIND $signal_ids": [_SIGNAL_ENRICHMENT_IP],
+            }
+        )
+
+        result = _search_signals(
+            query="ip",
+            facility="tcv",
+            gc=mock_gc,
+            encoder=mock_encoder,
+        )
+        assert "tcv:magnetics/ip" in result
+        # The boosted score should be different from the raw vector score
+        assert "0.80" not in result  # Score should be modified by boost
+
+    def test_text_only_result(self, mock_gc, mock_encoder):
+        """Signal found only by text search (not vector) is included."""
+        mock_gc.query.side_effect = _route_query(
+            {
+                # No vector results
+                "s.name) CONTAINS": [{"id": "tcv:magnetics/ip", "score": 0.6}],
+                "UNWIND $signal_ids": [_SIGNAL_ENRICHMENT_IP],
+            }
+        )
+
+        result = _search_signals(
+            query="ip",
+            facility="tcv",
+            gc=mock_gc,
+            encoder=mock_encoder,
+        )
+        assert "tcv:magnetics/ip" in result
 
 
 # ---------------------------------------------------------------------------
@@ -242,7 +380,22 @@ class TestFormatSignalsReport:
         assert "No signals found" in result
 
     def test_basic_signal_formatting(self):
-        """A single signal is formatted with all sections."""
+        """A single signal with access_methods is formatted with all sections."""
+        signals = [_SIGNAL_ENRICHMENT_IP]
+        scores = {"tcv:magnetics/ip": 0.92}
+
+        result = format_signals_report(signals, [], scores)
+
+        assert "tcv:magnetics/ip" in result
+        assert "0.92" in result
+        assert "Plasma current" in result
+        assert "magnetics" in result
+        assert "Data access" in result
+        assert "IMAS mapping" in result
+        assert "Tree node" in result
+
+    def test_legacy_flat_format_backward_compat(self):
+        """Legacy flat access format still works (backward compat)."""
         signals = [
             {
                 "id": "tcv:magnetics/ip",
@@ -270,12 +423,8 @@ class TestFormatSignalsReport:
         result = format_signals_report(signals, [], scores)
 
         assert "tcv:magnetics/ip" in result
-        assert "0.92" in result
-        assert "Plasma current" in result
-        assert "magnetics" in result
         assert "Data access" in result
         assert "IMAS mapping" in result
-        assert "Tree node" in result
 
     def test_tree_nodes_section(self):
         """Tree nodes appear in Related Tree Nodes section."""
@@ -286,6 +435,7 @@ class TestFormatSignalsReport:
                 "data_source_name": "tcv_shot",
                 "description": "Plasma current",
                 "unit": "A",
+                "score": 0.95,
             }
         ]
         result = format_signals_report([], tree_nodes, {})
@@ -306,20 +456,72 @@ class TestFormatSignalsReport:
                 "example_shot": None,
                 "diagnostic_name": None,
                 "diagnostic_category": None,
-                "access_template": long_template,
-                "access_type": "mdsplus",
-                "imports_template": None,
-                "connection_template": None,
+                "node_path": None,
+                "accessor": None,
+                "tree_name": None,
                 "tree_path": None,
                 "data_source_name": None,
-                "imas_path": None,
-                "imas_docs": None,
-                "imas_unit": None,
+                "access_methods": [
+                    {
+                        "access_template": long_template,
+                        "access_type": "mdsplus",
+                        "imports_template": None,
+                        "connection_template": None,
+                        "imas_path": None,
+                        "imas_docs": None,
+                        "imas_unit": None,
+                    }
+                ],
             }
         ]
         result = format_signals_report(signals, [], {"tcv:test/sig": 0.5})
         # Full template should be present — no truncation
         assert long_template.strip() in result
+
+    def test_multiple_access_methods(self):
+        """Multiple access methods per signal are all rendered."""
+        signals = [
+            {
+                "id": "tcv:magnetics/ip",
+                "name": "ip",
+                "description": "Plasma current",
+                "physics_domain": "magnetics",
+                "unit": "A",
+                "checked": True,
+                "example_shot": 84000,
+                "diagnostic_name": "magnetics",
+                "diagnostic_category": None,
+                "node_path": None,
+                "accessor": None,
+                "tree_name": None,
+                "tree_path": None,
+                "data_source_name": None,
+                "access_methods": [
+                    {
+                        "access_template": "tree.getNode('\\\\ip').data()",
+                        "access_type": "mdsplus",
+                        "imports_template": "import MDSplus",
+                        "connection_template": None,
+                        "imas_path": "magnetics.ip.0d[:].value",
+                        "imas_docs": None,
+                        "imas_unit": None,
+                    },
+                    {
+                        "access_template": "imas_entry.get('magnetics/ip')",
+                        "access_type": "imas",
+                        "imports_template": "import imas",
+                        "connection_template": None,
+                        "imas_path": "magnetics.ip.0d[:].value",
+                        "imas_docs": None,
+                        "imas_unit": None,
+                    },
+                ],
+            }
+        ]
+        result = format_signals_report(signals, [], {"tcv:magnetics/ip": 0.9})
+        # Both access methods should be shown
+        assert "mdsplus" in result
+        assert "imas" in result
 
 
 # ---------------------------------------------------------------------------
@@ -333,7 +535,7 @@ class TestSearchDocs:
     @pytest.fixture()
     def mock_gc(self):
         gc = MagicMock()
-        gc.query = MagicMock(return_value=[])
+        gc.query = MagicMock(side_effect=_route_query({}))
         return gc
 
     @pytest.fixture()
@@ -344,8 +546,6 @@ class TestSearchDocs:
 
     def test_empty_results(self, mock_gc, mock_encoder):
         """Empty results produce a descriptive message."""
-        # wiki chunks, documents, images — all return empty
-        mock_gc.query.side_effect = [[], [], []]
         result = _search_docs(
             query="equilibrium",
             facility="tcv",
@@ -382,8 +582,12 @@ class TestSearchDocs:
                 "imas_refs": [],
             },
         ]
-        # Calls: wiki chunks vector, document vector, image vector, enrichment
-        mock_gc.query.side_effect = [chunk_vector, [], [], enrichment]
+        mock_gc.query.side_effect = _route_query(
+            {
+                "wiki_chunk_embedding": chunk_vector,
+                "WikiChunk {id: cid}": enrichment,
+            }
+        )
 
         result = _search_docs(
             query="fishbone instabilities",
@@ -424,7 +628,12 @@ class TestSearchDocs:
                 "imas_refs": [],
             },
         ]
-        mock_gc.query.side_effect = [chunk_vector, [], [], enrichment]
+        mock_gc.query.side_effect = _route_query(
+            {
+                "wiki_chunk_embedding": chunk_vector,
+                "WikiChunk {id: cid}": enrichment,
+            }
+        )
 
         result = _search_docs(
             query="test", facility="tcv", gc=mock_gc, encoder=mock_encoder
@@ -447,7 +656,12 @@ class TestSearchDocs:
                 "imas_refs": ["magnetics.ip.0d[:].value"],
             },
         ]
-        mock_gc.query.side_effect = [chunk_vector, [], [], enrichment]
+        mock_gc.query.side_effect = _route_query(
+            {
+                "wiki_chunk_embedding": chunk_vector,
+                "WikiChunk {id: cid}": enrichment,
+            }
+        )
 
         result = _search_docs(
             query="plasma current", facility="tcv", gc=mock_gc, encoder=mock_encoder
@@ -466,6 +680,33 @@ class TestSearchDocs:
             query="test", facility="tcv", gc=mock_gc, encoder=bad_encoder
         )
         assert "Embedding" in result or "unavailable" in result.lower()
+
+    def test_hybrid_text_boost(self, mock_gc, mock_encoder):
+        """Wiki chunks found by both vector and text search get boosted."""
+        mock_gc.query.side_effect = _route_query(
+            {
+                "wiki_chunk_embedding": [{"id": "c1", "score": 0.70}],
+                "c.text) CONTAINS": [{"id": "c1", "score": 0.5}],
+                "WikiChunk {id: cid}": [
+                    {
+                        "id": "c1",
+                        "text": "Fishbone content",
+                        "section": "Overview",
+                        "page_title": "Fishbone",
+                        "page_url": None,
+                        "linked_signals": [],
+                        "linked_tree_nodes": [],
+                        "imas_refs": [],
+                    }
+                ],
+            }
+        )
+        result = _search_docs(
+            query="fishbone", facility="jet", gc=mock_gc, encoder=mock_encoder
+        )
+        assert "Fishbone" in result
+        # Score should be boosted from 0.70
+        assert "0.70" not in result
 
 
 class TestFormatDocsReport:
@@ -502,7 +743,7 @@ class TestSearchCode:
     @pytest.fixture()
     def mock_gc(self):
         gc = MagicMock()
-        gc.query = MagicMock(return_value=[])
+        gc.query = MagicMock(side_effect=_route_query({}))
         return gc
 
     @pytest.fixture()
@@ -513,7 +754,6 @@ class TestSearchCode:
 
     def test_empty_results(self, mock_gc, mock_encoder):
         """Empty results produce a descriptive message."""
-        mock_gc.query.side_effect = [[]]
         result = _search_code(
             query="equilibrium reconstruction",
             facility="tcv",
@@ -531,6 +771,7 @@ class TestSearchCode:
                 "text": "def read_equilibrium(shot):\n    tree = MDSplus.Tree('tcv_shot', shot)\n    psi = tree.getNode('\\\\results::psi').data()",
                 "function_name": "read_equilibrium",
                 "source_file": "/home/codes/liuqe/liuqe_reader.py",
+                "source_file_id": "tcv:/home/codes/liuqe/liuqe_reader.py",
                 "facility_id": "tcv",
                 "data_refs": [
                     {
@@ -545,7 +786,12 @@ class TestSearchCode:
                 "dir_description": "LIUQE equilibrium reconstruction code",
             },
         ]
-        mock_gc.query.side_effect = [vector_results, enrichment]
+        mock_gc.query.side_effect = _route_query(
+            {
+                "code_chunk_embedding": vector_results,
+                "CodeChunk {id: cid}": enrichment,
+            }
+        )
 
         result = _search_code(
             query="equilibrium",
@@ -559,28 +805,34 @@ class TestSearchCode:
         assert "Data references" in result
 
     def test_facility_filter(self, mock_gc, mock_encoder):
-        """facility parameter filters code chunks."""
-        mock_gc.query.side_effect = [[]]
+        """facility parameter filters code chunks via CodeExample."""
         _search_code(
             query="test",
             facility="tcv",
             gc=mock_gc,
             encoder=mock_encoder,
         )
-        first_call = mock_gc.query.call_args_list[0]
-        cypher = first_call[0][0]
-        assert "facility" in cypher.lower()
+        # Find the vector search call (code_chunk_embedding)
+        for call in mock_gc.query.call_args_list:
+            cypher = call[0][0]
+            if "code_chunk_embedding" in cypher:
+                assert "facility" in cypher.lower()
+                break
+        else:
+            pytest.fail("No vector search call found")
 
     def test_no_facility_filter(self, mock_gc, mock_encoder):
-        """Without facility, no facility filter in query."""
-        mock_gc.query.side_effect = [[]]
+        """Without facility, no facility filter in vector query."""
         _search_code(
             query="test",
             gc=mock_gc,
             encoder=mock_encoder,
         )
-        first_call = mock_gc.query.call_args_list[0]
-        assert "facility" not in first_call[1]  # kwargs
+        for call in mock_gc.query.call_args_list:
+            cypher = call[0][0]
+            if "code_chunk_embedding" in cypher:
+                assert "facility" not in call[1]  # kwargs
+                break
 
     def test_embedding_unavailable(self, mock_gc):
         """When encoder is unavailable, return helpful message."""
@@ -591,6 +843,39 @@ class TestSearchCode:
 
         result = _search_code(query="test", gc=mock_gc, encoder=bad_encoder)
         assert "Embedding" in result or "unavailable" in result.lower()
+
+    def test_hybrid_text_boost(self, mock_gc, mock_encoder):
+        """Code chunks found by both vector and text search get boosted."""
+        enrichment = [
+            {
+                "id": "chunk:1",
+                "text": "def solve(): pass",
+                "function_name": "solve",
+                "source_file": "/code/solver.py",
+                "source_file_id": "tcv:/code/solver.py",
+                "facility_id": "tcv",
+                "data_refs": [],
+                "directory": "/code",
+                "dir_description": None,
+            }
+        ]
+        mock_gc.query.side_effect = _route_query(
+            {
+                "code_chunk_embedding": [{"id": "chunk:1", "score": 0.75}],
+                "cc.text) CONTAINS": [{"id": "chunk:1", "score": 0.5}],
+                "CodeChunk {id: cid}": enrichment,
+            }
+        )
+
+        result = _search_code(
+            query="solve",
+            facility="tcv",
+            gc=mock_gc,
+            encoder=mock_encoder,
+        )
+        assert "solve" in result
+        # Boosted score, not raw vector score
+        assert "0.75" not in result
 
 
 class TestFormatCodeReport:
@@ -608,6 +893,7 @@ class TestFormatCodeReport:
                 "text": "tree.getNode('psi').data()",
                 "function_name": "read_psi",
                 "source_file": "/code/reader.py",
+                "source_file_id": "tcv:/code/reader.py",
                 "facility_id": "tcv",
                 "data_refs": [
                     {
@@ -634,12 +920,16 @@ class TestFormatCodeReport:
 
 
 class TestSearchImas:
-    """Unit tests for search_imas tool."""
+    """Unit tests for search_imas tool.
+
+    Uses query routing because _text_search_imas_paths_by_query makes
+    a variable number of sub-queries depending on the query words.
+    """
 
     @pytest.fixture()
     def mock_gc(self):
         gc = MagicMock()
-        gc.query = MagicMock(return_value=[])
+        gc.query = MagicMock(side_effect=_route_query({}))
         return gc
 
     @pytest.fixture()
@@ -649,9 +939,7 @@ class TestSearchImas:
         return enc
 
     def test_empty_results(self, mock_gc, mock_encoder):
-        """Empty vector results produce a descriptive message."""
-        # path vector search returns empty, cluster search returns empty
-        mock_gc.query.side_effect = [[], []]
+        """Empty vector + text + cluster results produce a descriptive message."""
         result = _search_imas(
             query="electron temperature",
             gc=mock_gc,
@@ -662,7 +950,10 @@ class TestSearchImas:
     def test_path_results_formatted(self, mock_gc, mock_encoder):
         """Path results are enriched and formatted into a report."""
         path_vector = [
-            {"id": "core_profiles.profiles_1d[:].electrons.temperature", "score": 0.95},
+            {
+                "id": "core_profiles.profiles_1d[:].electrons.temperature",
+                "score": 0.95,
+            },
         ]
         cluster_vector = [
             {
@@ -674,23 +965,13 @@ class TestSearchImas:
                 "score": 0.88,
             },
         ]
-        enrichment = [
+        mock_gc.query.side_effect = _route_query(
             {
-                "id": "core_profiles.profiles_1d[:].electrons.temperature",
-                "name": "temperature",
-                "ids": "core_profiles",
-                "documentation": "Electron temperature profile",
-                "data_type": "FLT_1D",
-                "physics_domain": "core_transport",
-                "cocos_label_transformation": None,
-                "unit": "eV",
-                "clusters": ["Electron Temperature Profiles"],
-                "coordinates": ["core_profiles.profiles_1d[:].grid.rho_tor_norm"],
-                "introduced_in": "3.0.0",
-            },
-        ]
-        # Calls: path vector, cluster vector, enrichment
-        mock_gc.query.side_effect = [path_vector, cluster_vector, enrichment]
+                "imas_path_embedding": path_vector,
+                "cluster_description_embedding": cluster_vector,
+                "UNWIND $path_ids": [_IMAS_ENRICHMENT_TEMP],
+            }
+        )
 
         result = _search_imas(
             query="electron temperature",
@@ -705,37 +986,24 @@ class TestSearchImas:
 
     def test_ids_filter_passed(self, mock_gc, mock_encoder):
         """ids_filter parameter is passed to the vector search query."""
-        mock_gc.query.side_effect = [[], []]
         _search_imas(
             query="temperature",
             ids_filter="core_profiles",
             gc=mock_gc,
             encoder=mock_encoder,
         )
-        first_call = mock_gc.query.call_args_list[0]
-        cypher = first_call[0][0]
-        assert "ids_filter" in cypher or "ids" in cypher
+        for call in mock_gc.query.call_args_list:
+            cypher = call[0][0]
+            if "imas_path_embedding" in cypher:
+                assert "ids_filter" in cypher or "ids" in cypher
+                break
+        else:
+            pytest.fail("No vector search call found")
 
     def test_facility_crossrefs(self, mock_gc, mock_encoder):
         """Facility cross-references are fetched and formatted."""
         path_vector = [
             {"id": "magnetics.ip.0d[:].value", "score": 0.92},
-        ]
-        cluster_vector = []
-        enrichment = [
-            {
-                "id": "magnetics.ip.0d[:].value",
-                "name": "value",
-                "ids": "magnetics",
-                "documentation": "Plasma current",
-                "data_type": "FLT_0D",
-                "physics_domain": "magnetics",
-                "cocos_label_transformation": "ip_like",
-                "unit": "A",
-                "clusters": [],
-                "coordinates": [],
-                "introduced_in": "3.0.0",
-            },
         ]
         crossrefs = [
             {
@@ -745,8 +1013,13 @@ class TestSearchImas:
                 "code_files": ["/home/codes/ip_analysis.py"],
             },
         ]
-        # Calls: path vector, cluster vector, enrichment, facility crossrefs
-        mock_gc.query.side_effect = [path_vector, cluster_vector, enrichment, crossrefs]
+        mock_gc.query.side_effect = _route_query(
+            {
+                "imas_path_embedding": path_vector,
+                "RESOLVES_TO_IMAS_PATH": crossrefs,
+                "UNWIND $path_ids": [_IMAS_ENRICHMENT_IP],
+            }
+        )
 
         result = _search_imas(
             query="plasma current",
@@ -764,22 +1037,6 @@ class TestSearchImas:
         path_vector = [
             {"id": "magnetics.ip.0d[:].value", "score": 0.92},
         ]
-        cluster_vector = []
-        enrichment = [
-            {
-                "id": "magnetics.ip.0d[:].value",
-                "name": "value",
-                "ids": "magnetics",
-                "documentation": "Plasma current",
-                "data_type": "FLT_0D",
-                "physics_domain": "magnetics",
-                "cocos_label_transformation": None,
-                "unit": "A",
-                "clusters": [],
-                "coordinates": [],
-                "introduced_in": "3.0.0",
-            },
-        ]
         version_ctx = [
             {
                 "id": "magnetics.ip.0d[:].value",
@@ -793,13 +1050,13 @@ class TestSearchImas:
                 ],
             },
         ]
-        # Calls: path vector, cluster vector, enrichment, version context
-        mock_gc.query.side_effect = [
-            path_vector,
-            cluster_vector,
-            enrichment,
-            version_ctx,
-        ]
+        mock_gc.query.side_effect = _route_query(
+            {
+                "imas_path_embedding": path_vector,
+                "IMASPathChange": version_ctx,
+                "UNWIND $path_ids": [_IMAS_ENRICHMENT_IP],
+            }
+        )
 
         result = _search_imas(
             query="plasma current",
@@ -823,13 +1080,32 @@ class TestSearchImas:
 
     def test_neo4j_unavailable(self, mock_encoder):
         """When Neo4j is down, return helpful error message."""
-        from neo4j.exceptions import ServiceUnavailable
-
         bad_gc = MagicMock()
         bad_gc.query.side_effect = ServiceUnavailable("Connection refused")
 
         result = _search_imas(query="test", gc=bad_gc, encoder=mock_encoder)
         assert "not running" in result.lower() or "neo4j" in result.lower()
+
+    def test_hybrid_text_imas(self, mock_gc, mock_encoder):
+        """IMAS paths found by both vector and text search get boosted."""
+        mock_gc.query.side_effect = _route_query(
+            {
+                "imas_path_embedding": [
+                    {"id": "magnetics.ip.0d[:].value", "score": 0.80}
+                ],
+                "documentation) CONTAINS": [
+                    {"id": "magnetics.ip.0d[:].value", "score": 0.7}
+                ],
+                "UNWIND $path_ids": [_IMAS_ENRICHMENT_IP],
+            }
+        )
+
+        result = _search_imas(
+            query="plasma current",
+            gc=mock_gc,
+            encoder=mock_encoder,
+        )
+        assert "magnetics.ip.0d[:].value" in result
 
 
 class TestFormatImasReport:
@@ -841,22 +1117,8 @@ class TestFormatImasReport:
         assert "No IMAS paths found" in result
 
     def test_path_formatting(self):
-        """A single IMAS path is formatted with metadata."""
-        paths = [
-            {
-                "id": "core_profiles.profiles_1d[:].electrons.temperature",
-                "name": "temperature",
-                "ids": "core_profiles",
-                "documentation": "Electron temperature as function of rho_tor_norm",
-                "data_type": "FLT_1D",
-                "physics_domain": "core_transport",
-                "cocos_label_transformation": None,
-                "unit": "eV",
-                "clusters": ["Electron Temperature Profiles"],
-                "coordinates": ["core_profiles.profiles_1d[:].grid.rho_tor_norm"],
-                "introduced_in": "3.0.0",
-            },
-        ]
+        """A single IMAS path is formatted with all metadata."""
+        paths = [_IMAS_ENRICHMENT_TEMP]
         scores = {"core_profiles.profiles_1d[:].electrons.temperature": 0.95}
 
         result = format_imas_report(paths, [], {}, {}, scores)
@@ -867,6 +1129,41 @@ class TestFormatImasReport:
         assert "core_transport" in result
         assert "Electron Temperature Profiles" in result
         assert "3.0.0" in result
+
+    def test_lifecycle_status_shown(self):
+        """Non-active lifecycle status is displayed."""
+        paths = [
+            {
+                **_IMAS_ENRICHMENT_IP,
+                "lifecycle_status": "obsolescent",
+            }
+        ]
+        scores = {"magnetics.ip.0d[:].value": 0.9}
+
+        result = format_imas_report(paths, [], {}, {}, scores)
+        assert "obsolescent" in result
+
+    def test_active_lifecycle_status_hidden(self):
+        """Active lifecycle status is NOT displayed (default state)."""
+        paths = [_IMAS_ENRICHMENT_IP]
+        scores = {"magnetics.ip.0d[:].value": 0.9}
+
+        result = format_imas_report(paths, [], {}, {}, scores)
+        assert "Lifecycle" not in result
+
+    def test_structure_reference_shown(self):
+        """Structure reference URL is displayed when present."""
+        paths = [
+            {
+                **_IMAS_ENRICHMENT_IP,
+                "structure_reference": "https://imas.io/docs/magnetics/ip",
+            }
+        ]
+        scores = {"magnetics.ip.0d[:].value": 0.9}
+
+        result = format_imas_report(paths, [], {}, {}, scores)
+        assert "Structure" in result
+        assert "https://imas.io/docs/magnetics/ip" in result
 
     def test_cluster_formatting(self):
         """Clusters appear in Related Clusters section."""
@@ -891,23 +1188,36 @@ class TestFormatImasReport:
         assert "Plasma Current Measurements" in result
         assert "magnetics" in result
 
-    def test_facility_xrefs_shown(self):
-        """Facility cross-references appear in path output."""
-        paths = [
+    def test_cluster_deduplication(self):
+        """Duplicate clusters by label are deduplicated."""
+        clusters = [
             {
-                "id": "magnetics.ip.0d[:].value",
-                "name": "value",
-                "ids": "magnetics",
-                "documentation": "Plasma current",
-                "data_type": "FLT_0D",
-                "physics_domain": None,
-                "cocos_label_transformation": None,
-                "unit": "A",
-                "clusters": [],
-                "coordinates": [],
-                "introduced_in": None,
+                "id": "cluster:a",
+                "label": "Electron Temp",
+                "scope": "core_profiles",
+                "path_count": 5,
+                "sample_paths": [],
+                "score": 0.9,
+            },
+            {
+                "id": "cluster:b",
+                "label": "Electron Temp",
+                "scope": "global",
+                "path_count": 3,
+                "sample_paths": [],
+                "score": 0.85,
             },
         ]
+        scores = {"cluster:a": 0.9, "cluster:b": 0.85}
+
+        result = format_imas_report([], clusters, {}, {}, scores)
+        # Label should appear only once in the "Related Clusters" section
+        cluster_section = result.split("## Related Clusters")[1]
+        assert cluster_section.count('"Electron Temp"') == 1
+
+    def test_facility_xrefs_shown(self):
+        """Facility cross-references appear in path output."""
+        paths = [_IMAS_ENRICHMENT_IP]
         xrefs = {
             "magnetics.ip.0d[:].value": {
                 "id": "magnetics.ip.0d[:].value",
@@ -936,7 +1246,7 @@ class TestFetch:
     @pytest.fixture()
     def mock_gc(self):
         gc = MagicMock()
-        gc.query = MagicMock(return_value=[])
+        gc.query = MagicMock(side_effect=_route_query({}))
         return gc
 
     def test_wiki_page_fetch(self, mock_gc):
@@ -965,8 +1275,7 @@ class TestFetch:
                 "imas_paths": ["equilibrium.time_slice[:].global_quantities.ip"],
             },
         ]
-        # WikiPage query returns chunks; others return empty
-        mock_gc.query.side_effect = [wiki_chunks, [], [], []]
+        mock_gc.query.side_effect = _route_query({"WikiPage": wiki_chunks})
 
         result = _fetch("tcv:Equilibrium", gc=mock_gc)
 
@@ -992,8 +1301,7 @@ class TestFetch:
                 "imas_paths": None,
             },
         ]
-        # WikiPage empty, document empty, code returns chunks
-        mock_gc.query.side_effect = [[], [], code_chunks, []]
+        mock_gc.query.side_effect = _route_query({"CodeFile": code_chunks})
 
         result = _fetch("tcv:/home/codes/liuqe.py", gc=mock_gc)
 
@@ -1018,8 +1326,7 @@ class TestFetch:
                 "parent_pages": ["Magnetics Overview"],
             },
         ]
-        # WikiPage, document, code all empty; image returns results
-        mock_gc.query.side_effect = [[], [], [], image_results]
+        mock_gc.query.side_effect = _route_query({"(img:Image)": image_results})
 
         result = _fetch("tcv:topo.png", gc=mock_gc)
 
@@ -1031,8 +1338,6 @@ class TestFetch:
 
     def test_no_match(self, mock_gc):
         """No matches returns guidance message."""
-        mock_gc.query.side_effect = [[], [], [], []]
-
         result = _fetch("nonexistent", gc=mock_gc)
 
         assert "No resource found" in result
@@ -1182,3 +1487,180 @@ class TestCodeFetchHints:
         scores = {"tcv:liuqe:chunk_0": 0.85}
         result = format_code_report(code_results, scores)
         assert "fetch('tcv:/codes/liuqe.py')" in result
+
+
+# ---------------------------------------------------------------------------
+# Template interpolation
+# ---------------------------------------------------------------------------
+
+
+class TestInterpolateTemplate:
+    """Tests for _interpolate_template in the formatter."""
+
+    def test_node_path_substitution(self):
+        sig = {"node_path": "\\RESULTS::I_P", "accessor": None, "tree_name": None}
+        result = _interpolate_template("getNode('{node_path}')", sig)
+        assert result == "getNode('\\RESULTS::I_P')"
+
+    def test_accessor_substitution(self):
+        sig = {"node_path": None, "accessor": "MDSplus", "tree_name": None}
+        result = _interpolate_template("Use {accessor} library", sig)
+        assert result == "Use MDSplus library"
+
+    def test_data_source_from_tree_name(self):
+        sig = {
+            "node_path": None,
+            "accessor": None,
+            "tree_name": "tcv_shot",
+            "data_source_name": None,
+        }
+        result = _interpolate_template("Tree('{data_source}', shot)", sig)
+        assert result == "Tree('tcv_shot', shot)"
+
+    def test_data_source_from_data_source_name(self):
+        sig = {
+            "node_path": None,
+            "accessor": None,
+            "tree_name": None,
+            "data_source_name": "tcv_shot",
+        }
+        result = _interpolate_template("Tree('{data_source}', shot)", sig)
+        assert result == "Tree('tcv_shot', shot)"
+
+    def test_shot_placeholder_preserved(self):
+        """The {shot} placeholder should NOT be substituted."""
+        sig = {"node_path": None, "accessor": None, "tree_name": None}
+        result = _interpolate_template("Tree('tree', {shot})", sig)
+        assert result == "Tree('tree', {shot})"
+
+    def test_missing_values_kept(self):
+        """Placeholders with no matching data are kept as-is."""
+        sig = {"node_path": None, "accessor": None, "tree_name": None}
+        result = _interpolate_template("{node_path}", sig)
+        assert result == "{node_path}"
+
+    def test_multiple_substitutions(self):
+        """Multiple placeholders are all substituted."""
+        sig = {
+            "node_path": "\\IP",
+            "accessor": "MDSplus",
+            "tree_name": "tcv_shot",
+        }
+        template = (
+            "t = {accessor}.Tree('{data_source}', shot)\nn = t.getNode('{node_path}')"
+        )
+        result = _interpolate_template(template, sig)
+        assert "MDSplus.Tree('tcv_shot', shot)" in result
+        assert "t.getNode('\\IP')" in result
+
+
+# ---------------------------------------------------------------------------
+# Schema guard: ensure search functions use correct property names
+# ---------------------------------------------------------------------------
+
+
+class TestSchemaGuard:
+    """Tests that search queries reference correct schema properties.
+
+    These tests verify that the Cypher queries generated by search tools
+    match the actual graph schema, catching schema drift early.
+    """
+
+    @pytest.fixture()
+    def mock_gc(self):
+        gc = MagicMock()
+        gc.query = MagicMock(side_effect=_route_query({}))
+        return gc
+
+    @pytest.fixture()
+    def mock_encoder(self):
+        enc = MagicMock()
+        enc.embed_texts = MagicMock(return_value=[[0.1] * 1024])
+        return enc
+
+    def test_signal_enrichment_uses_access_methods(self, mock_gc, mock_encoder):
+        """Signal enrichment aggregates DataAccess into access_methods."""
+        mock_gc.query.side_effect = _route_query(
+            {
+                "facility_signal_desc_embedding": [{"id": "tcv:test/s", "score": 0.9}],
+            }
+        )
+        _search_signals(query="test", facility="tcv", gc=mock_gc, encoder=mock_encoder)
+        # Find the enrichment call
+        for call in mock_gc.query.call_args_list:
+            cypher = call[0][0]
+            if "UNWIND $signal_ids" in cypher:
+                # Should use collect(DISTINCT { ... }) AS access_methods
+                assert "access_methods" in cypher
+                # Should traverse DataAccess → IMASPath
+                assert "DATA_ACCESS" in cypher
+                assert "MAPS_TO_IMAS" in cypher
+                break
+
+    def test_code_enrichment_uses_code_example(self, mock_gc, mock_encoder):
+        """Code enrichment traverses CodeChunk → CodeExample → CodeFile."""
+        mock_gc.query.side_effect = _route_query(
+            {
+                "code_chunk_embedding": [{"id": "cc:1", "score": 0.9}],
+            }
+        )
+        _search_code(query="test", facility="tcv", gc=mock_gc, encoder=mock_encoder)
+        for call in mock_gc.query.call_args_list:
+            cypher = call[0][0]
+            if "CodeChunk {id: cid}" in cypher:
+                # Must use CodeExample traversal (CodeChunk has no facility_id)
+                assert "CODE_EXAMPLE_ID" in cypher
+                assert "CodeExample" in cypher
+                # Data refs via CodeChunk, not CodeFile
+                assert "CONTAINS_REF" in cypher
+                break
+
+    def test_code_vector_uses_code_example_for_facility(self, mock_gc, mock_encoder):
+        """Code vector search filters facility via CodeExample, not CodeChunk."""
+        _search_code(query="test", facility="tcv", gc=mock_gc, encoder=mock_encoder)
+        for call in mock_gc.query.call_args_list:
+            cypher = call[0][0]
+            if "code_chunk_embedding" in cypher:
+                assert "CodeExample" in cypher
+                assert "ce.facility_id" in cypher
+                break
+        else:
+            pytest.fail("No code vector search call found")
+
+    def test_imas_enrichment_includes_lifecycle_fields(self, mock_gc, mock_encoder):
+        """IMAS enrichment returns lifecycle_status and structure_reference."""
+        mock_gc.query.side_effect = _route_query(
+            {
+                "imas_path_embedding": [
+                    {"id": "magnetics.ip.0d[:].value", "score": 0.9}
+                ],
+            }
+        )
+        _search_imas(query="ip", gc=mock_gc, encoder=mock_encoder)
+        for call in mock_gc.query.call_args_list:
+            cypher = call[0][0]
+            if "UNWIND $path_ids" in cypher:
+                assert "lifecycle_status" in cypher
+                assert "structure_reference" in cypher or "path_doc" in cypher
+                break
+
+    def test_facility_crossrefs_uses_code_chunk(self, mock_gc, mock_encoder):
+        """Facility crossrefs use CodeChunk → DataReference, not CodeFile."""
+        mock_gc.query.side_effect = _route_query(
+            {
+                "imas_path_embedding": [
+                    {"id": "magnetics.ip.0d[:].value", "score": 0.9}
+                ],
+                "UNWIND $path_ids": [_IMAS_ENRICHMENT_IP],
+            }
+        )
+        _search_imas(query="ip", facility="tcv", gc=mock_gc, encoder=mock_encoder)
+        for call in mock_gc.query.call_args_list:
+            cypher = call[0][0]
+            if "RESOLVES_TO_IMAS_PATH" in cypher:
+                # Must traverse CodeChunk → CONTAINS_REF → DataReference
+                assert "CodeChunk" in cypher
+                assert "CONTAINS_REF" in cypher
+                # Facility filter via CodeExample
+                assert "CodeExample" in cypher
+                break

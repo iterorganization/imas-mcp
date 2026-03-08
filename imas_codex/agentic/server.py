@@ -1836,12 +1836,12 @@ class AgentsServer:
             facility: str,
             diagnostic: str | None = None,
             physics_domain: str | None = None,
-            k: int = 10,
+            k: int = 20,
         ) -> str:
             """Search facility signals with full graph enrichment.
 
-            Performs semantic search on signal descriptions, then enriches
-            results with data access templates, IMAS mappings, diagnostic
+            Performs hybrid search (vector + keyword) on signal descriptions,
+            then enriches with data access templates, IMAS mappings, diagnostic
             context, and related tree nodes.
 
             Use this for: "How do I access [quantity] at [facility]?"
@@ -1851,7 +1851,7 @@ class AgentsServer:
                 facility: Facility id (required, e.g. "tcv", "jet")
                 diagnostic: Optional diagnostic filter (e.g. "magnetics")
                 physics_domain: Optional physics domain filter
-                k: Number of results (default 10)
+                k: Number of results (default 20)
 
             Returns:
                 Formatted report with signals, data access, IMAS mappings,
@@ -1869,20 +1869,20 @@ class AgentsServer:
         def search_docs(
             query: str,
             facility: str,
-            k: int = 10,
+            k: int = 15,
         ) -> str:
             """Search documentation (wiki, documents, images) with cross-links.
 
-            Performs semantic search across wiki content, linked documents,
-            and images, enriched with cross-references to signals, tree nodes,
-            and IMAS paths.
+            Performs hybrid search (vector + keyword) across wiki content,
+            linked documents, and images, enriched with cross-references to
+            signals, tree nodes, and IMAS paths.
 
             Use this for: "What does the knowledge base say about [topic] at [facility]?"
 
             Args:
                 query: Natural language search text (e.g. "fishbone instabilities")
                 facility: Facility id (required, e.g. "tcv", "jet")
-                k: Results per index (default 10)
+                k: Results per index (default 15)
 
             Returns:
                 Formatted report with wiki documentation grouped by page,
@@ -1894,20 +1894,20 @@ class AgentsServer:
         def search_code(
             query: str,
             facility: str | None = None,
-            k: int = 5,
+            k: int = 10,
         ) -> str:
             """Search ingested code with data reference enrichment.
 
-            Performs semantic search on code chunks, enriched with MDSplus
-            paths, TDI function calls, IMAS path references, and directory
-            context.
+            Performs hybrid search (vector + keyword) on code chunks,
+            enriched with MDSplus paths, TDI function calls, IMAS path
+            references, and directory context.
 
             Use this for: "Show me code that does [task] at [facility]"
 
             Args:
                 query: Natural language search text (e.g. "equilibrium reconstruction")
                 facility: Optional facility filter (e.g. "tcv")
-                k: Number of results (default 5)
+                k: Number of results (default 10)
 
             Returns:
                 Formatted report with code examples, data references,
@@ -1921,13 +1921,14 @@ class AgentsServer:
             ids_filter: str | None = None,
             facility: str | None = None,
             include_version_context: bool = False,
-            k: int = 10,
+            k: int = 20,
         ) -> str:
             """Search IMAS Data Dictionary with cross-domain enrichment.
 
-            Performs semantic search across IMAS path and cluster embeddings,
-            enriched with cluster membership, coordinate context, units,
-            and optional facility cross-references and version history.
+            Performs hybrid search (vector + keyword) across IMAS path and
+            cluster embeddings, enriched with cluster membership, coordinate
+            context, units, and optional facility cross-references and
+            version history.
 
             Use this for: "What IMAS paths represent [concept]?"
 
@@ -1936,7 +1937,7 @@ class AgentsServer:
                 ids_filter: Optional IDS name filter (e.g. "core_profiles")
                 facility: Optional facility for cross-references (e.g. "tcv")
                 include_version_context: Include DD version change history
-                k: Number of results (default 10)
+                k: Number of results (default 20)
 
             Returns:
                 Formatted report with IMAS paths, clusters, facility

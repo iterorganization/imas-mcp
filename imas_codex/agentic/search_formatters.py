@@ -22,8 +22,12 @@ def format_signals_report(
 ) -> str:
     """Format signal search results into a readable report.
 
+    Handles deduplicated access methods (collected into arrays by
+    ``_enrich_signals``), interpolates template placeholders with
+    actual signal properties, and filters noisy tree nodes.
+
     Args:
-        signals: Enriched signal records from the enrichment query.
+        signals: Enriched signal records with ``access_methods`` arrays.
         tree_nodes: Tree node results from vector search.
         scores: Map of signal ID → similarity score.
 
@@ -67,29 +71,56 @@ def format_signals_report(
             if meta_parts:
                 parts.append("  " + " | ".join(meta_parts))
 
-            # Data access section
-            access_template = sig.get("access_template")
-            access_type = sig.get("access_type")
-            if access_template:
-                parts.append(f"\n  **Data access** ({access_type or 'unknown'}):")
-                imports = sig.get("imports_template")
-                if imports:
-                    parts.append(f"    {imports}")
-                connection = sig.get("connection_template")
-                if connection:
-                    parts.append(f"    {connection}")
-                parts.append(f"    {access_template}")
+            # Data access section — handles multiple access methods
+            access_methods = sig.get("access_methods") or []
+            # Filter out empty/null access methods from OPTIONAL MATCH
+            access_methods = [
+                am
+                for am in access_methods
+                if isinstance(am, dict) and am.get("access_template")
+            ]
 
-            # IMAS mapping section
-            imas_path = sig.get("imas_path")
-            if imas_path:
-                parts.append(f"\n  **IMAS mapping**: {imas_path}")
-                imas_docs = sig.get("imas_docs")
-                if imas_docs:
-                    parts.append(f'    "{imas_docs}"')
-                imas_unit = sig.get("imas_unit")
-                if imas_unit:
-                    parts.append(f"    Unit: {imas_unit}")
+            # Also support legacy single-access format for backward compat
+            if not access_methods and sig.get("access_template"):
+                access_methods = [
+                    {
+                        "access_template": sig["access_template"],
+                        "access_type": sig.get("access_type"),
+                        "imports_template": sig.get("imports_template"),
+                        "connection_template": sig.get("connection_template"),
+                        "imas_path": sig.get("imas_path"),
+                        "imas_docs": sig.get("imas_docs"),
+                        "imas_unit": sig.get("imas_unit"),
+                    }
+                ]
+
+            if access_methods:
+                for am in access_methods:
+                    access_type = am.get("access_type") or "unknown"
+                    template = am.get("access_template") or ""
+
+                    # Interpolate template placeholders with signal properties
+                    template = _interpolate_template(template, sig)
+
+                    parts.append(f"\n  **Data access** ({access_type}):")
+                    imports = am.get("imports_template")
+                    if imports:
+                        parts.append(f"    {imports}")
+                    connection = am.get("connection_template")
+                    if connection:
+                        parts.append(f"    {connection}")
+                    parts.append(f"    {template}")
+
+                    # IMAS mapping from this access method
+                    imas_path = am.get("imas_path")
+                    if imas_path:
+                        parts.append(f"\n  **IMAS mapping**: {imas_path}")
+                        imas_docs = am.get("imas_docs")
+                        if imas_docs:
+                            parts.append(f'    "{imas_docs}"')
+                        imas_unit = am.get("imas_unit")
+                        if imas_unit:
+                            parts.append(f"    Unit: {imas_unit}")
 
             # Tree node section
             tree_path = sig.get("tree_path")
@@ -103,24 +134,88 @@ def format_signals_report(
             parts.append("")  # blank line between signals
 
     if tree_nodes:
-        parts.append(f"\n## Related Tree Nodes ({len(tree_nodes)} matches)")
-        for tn in tree_nodes:
-            path = tn.get("path", "?")
-            desc = tn.get("description") or ""
-            tree = tn.get("data_source_name") or ""
-            unit = tn.get("unit") or ""
-            meta = []
-            if tree:
-                meta.append(f"tree: {tree}")
-            if unit:
-                meta.append(f"unit: {unit}")
-            meta_str = f" ({', '.join(meta)})" if meta else ""
-            line = f"  {path}{meta_str}"
-            if desc:
-                line += f" — {desc}"
-            parts.append(line)
+        # Filter out noisy STATIC tree nodes and low-score results
+        filtered_tree_nodes = _filter_tree_nodes(tree_nodes, signals)
+        if filtered_tree_nodes:
+            parts.append(
+                f"\n## Related Tree Nodes ({len(filtered_tree_nodes)} matches)"
+            )
+            for tn in filtered_tree_nodes:
+                path = tn.get("path", "?")
+                desc = tn.get("description") or ""
+                tree = tn.get("data_source_name") or ""
+                tn_unit = tn.get("unit") or ""
+                score = tn.get("score")
+                meta = []
+                if tree:
+                    meta.append(f"tree: {tree}")
+                if tn_unit:
+                    meta.append(f"unit: {tn_unit}")
+                if score is not None:
+                    meta.append(f"score: {score:.2f}")
+                meta_str = f" ({', '.join(meta)})" if meta else ""
+                line = f"  {path}{meta_str}"
+                if desc:
+                    line += f" — {desc}"
+                parts.append(line)
 
     return "\n".join(parts)
+
+
+def _interpolate_template(template: str, sig: dict[str, Any]) -> str:
+    """Interpolate known placeholders in data access templates.
+
+    Substitutes ``{node_path}``, ``{accessor}``, ``{data_source}``
+    from signal properties. Keeps ``{shot}`` as a user-parameterized
+    placeholder since it's session-specific.
+    """
+    substitutions = {
+        "node_path": sig.get("node_path") or sig.get("tree_path"),
+        "accessor": sig.get("accessor"),
+        "data_source": sig.get("tree_name") or sig.get("data_source_name"),
+    }
+    for key, val in substitutions.items():
+        if val:
+            template = template.replace(f"{{{key}}}", str(val))
+    return template
+
+
+def _filter_tree_nodes(
+    tree_nodes: list[dict[str, Any]],
+    signals: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Filter tree nodes to remove noise.
+
+    - Excludes STATIC tree nodes (calibration/geometry data)
+    - Only keeps tree nodes that are connected to matched signals
+      or have high relevance scores (>= 0.92)
+    """
+    # Collect tree paths already shown in signal results
+    signal_tree_paths = {
+        sig.get("tree_path") for sig in signals if sig.get("tree_path")
+    }
+
+    filtered = []
+    for tn in tree_nodes:
+        path = tn.get("path", "")
+        tree_name = (tn.get("data_source_name") or "").upper()
+
+        # Skip STATIC tree nodes (calibration/geometry noise)
+        if "STATIC" in path.upper() or "STATIC" in tree_name:
+            continue
+
+        # Skip nodes already shown in signal results
+        if path in signal_tree_paths:
+            continue
+
+        # Keep only high-score nodes
+        score = tn.get("score")
+        if score is not None and score < 0.92:
+            continue
+
+        filtered.append(tn)
+
+    return filtered
 
 
 # ---------------------------------------------------------------------------
@@ -371,6 +466,14 @@ def format_imas_report(
             if cocos:
                 parts.append(f"  COCOS: {cocos}")
 
+            lifecycle = p.get("lifecycle_status")
+            if lifecycle and lifecycle != "active":
+                parts.append(f"  Lifecycle: {lifecycle}")
+
+            structure_ref = p.get("structure_reference")
+            if structure_ref:
+                parts.append(f"  Structure: {structure_ref}")
+
             # Facility cross-references
             xref = facility_xrefs.get(pid, {})
             if any(
@@ -406,20 +509,45 @@ def format_imas_report(
             parts.append("")
 
     if clusters:
-        parts.append(f"\n## Related Clusters ({len(clusters)} matches)")
+        # Deduplicate clusters by label (same cluster can appear with
+        # different scopes: ids, global, domain)
+        deduped: dict[str, dict[str, Any]] = {}
         for cl in clusters:
             label = cl.get("label") or cl.get("id", "?")
-            score = scores.get(cl.get("id", ""))
+            if label not in deduped:
+                deduped[label] = {
+                    "label": label,
+                    "id": cl.get("id", ""),
+                    "scopes": [],
+                    "path_count": cl.get("path_count"),
+                    "sample_paths": cl.get("sample_paths") or [],
+                    "score": scores.get(cl.get("id", "")),
+                }
+            scope = cl.get("scope")
+            if scope and scope not in deduped[label]["scopes"]:
+                deduped[label]["scopes"].append(scope)
+            # Keep highest score
+            cl_score = scores.get(cl.get("id", ""))
+            if cl_score and (
+                deduped[label]["score"] is None or cl_score > deduped[label]["score"]
+            ):
+                deduped[label]["score"] = cl_score
+
+        unique_clusters = list(deduped.values())
+        parts.append(f"\n## Related Clusters ({len(unique_clusters)} matches)")
+        for cl in unique_clusters:
+            label = cl["label"]
+            score = cl.get("score")
             score_str = f" (score: {score:.2f})" if score is not None else ""
             parts.append(f'  "{label}"{score_str}')
-            scope = cl.get("scope")
+            scopes = cl.get("scopes") or []
             path_count = cl.get("path_count")
-            if scope or path_count:
-                meta = []
-                if scope:
-                    meta.append(f"Scope: {scope}")
-                if path_count:
-                    meta.append(f"{path_count} paths")
+            meta = []
+            if scopes:
+                meta.append(f"Scope: {', '.join(scopes)}")
+            if path_count:
+                meta.append(f"{path_count} paths")
+            if meta:
                 parts.append(f"    {' | '.join(meta)}")
             sample = cl.get("sample_paths") or []
             if sample:
