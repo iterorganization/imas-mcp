@@ -23,7 +23,7 @@ from .extractors.mdsplus import (
     extract_mdsplus_paths,
     normalize_mdsplus_path,
 )
-from .graph import link_chunks_to_imas_paths, link_chunks_to_tree_nodes
+from .graph import link_chunks_to_data_nodes, link_chunks_to_imas_paths
 from .pipeline import ingest_files
 from .queue import (
     get_pending_files,
@@ -53,7 +53,7 @@ __all__ = [
     "get_queue_stats",
     "ingest_files",
     "link_chunks_to_imas_paths",
-    "link_chunks_to_tree_nodes",
+    "link_chunks_to_data_nodes",
     "normalize_mdsplus_path",
     "queue_source_files",
     "search_code_chunks",

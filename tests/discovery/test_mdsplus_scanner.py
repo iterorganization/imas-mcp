@@ -14,7 +14,7 @@ from imas_codex.discovery.signals.scanners.mdsplus import MDSplusScanner
 
 # Patch targets — imports are inside scan() method body
 _RTD = "imas_codex.discovery.mdsplus.pipeline.run_tree_discovery"
-_TDI = "imas_codex.discovery.mdsplus.tdi_linkage.link_tdi_to_tree_nodes"
+_TDI = "imas_codex.discovery.mdsplus.tdi_linkage.link_tdi_to_data_nodes"
 
 
 @pytest.fixture

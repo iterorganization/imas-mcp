@@ -7,7 +7,7 @@ How agents discover, propose, validate, and persist IMAS mappings.
 IMASMapping nodes carry the full status lifecycle — no separate proposal node.
 
 ```
-FacilitySignal/TreeNode → IMASMapping(proposed) → MappingEvidence → IMASMapping(validated)
+FacilitySignal/DataNode → IMASMapping(proposed) → MappingEvidence → IMASMapping(validated)
 ```
 
 ### 1. Signal Selection

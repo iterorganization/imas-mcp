@@ -127,7 +127,7 @@ When `parent_node` and `siblings` are provided:
   under a LIUQE parent → all equilibrium outputs)
 
 When `tdi_function` and `tdi_source` are provided per-signal:
-- This is a TDI function that resolves to the signal's TreeNode
+- This is a TDI function that resolves to the signal's DataNode
 - The TDI source code shows how the quantity is accessed programmatically
 - Use it exactly like group-level TDI context (analysis code, sign conventions)
 

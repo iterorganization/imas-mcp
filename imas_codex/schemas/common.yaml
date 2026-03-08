@@ -95,6 +95,8 @@ enums:
         description: Error during processing (check error, terminal_reason)
       stale:
         description: Path may have changed, needs re-discovery
+      enriched:
+        description: Path explored and enriched with additional metadata
       excluded:
         description: Alias or symlink path excluded in favor of canonical path
 
@@ -160,6 +162,8 @@ enums:
         description: Ingestion failed (check error property)
       stale:
         description: Source may have changed, needs re-fetch
+      enriched:
+        description: Source file enriched with additional metadata
 
   AgentRunStatus:
     description: >-
@@ -490,6 +494,8 @@ enums:
         description: User pages, personal notes, sandboxes
       other:
         description: Uncategorized content
+      empty:
+        description: Empty or placeholder content with no substantive value
 
 # =============================================================================
 # Classes

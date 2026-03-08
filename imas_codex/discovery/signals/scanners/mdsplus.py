@@ -85,7 +85,7 @@ class MDSplusScanner:
     ) -> ScanResult:
         """Tree-based scan: walk MDSplus trees via SSH (TCV, JT-60SA)."""
         from imas_codex.discovery.mdsplus.pipeline import run_tree_discovery
-        from imas_codex.discovery.mdsplus.tdi_linkage import link_tdi_to_tree_nodes
+        from imas_codex.discovery.mdsplus.tdi_linkage import link_tdi_to_data_nodes
 
         connection_tree = config.get("connection_tree")
         ref_shot = reference_shot or config.get("reference_shot")
@@ -162,7 +162,7 @@ class MDSplusScanner:
         # Run TDI linkage after all trees are processed
         tdi_links = 0
         try:
-            tdi_links = link_tdi_to_tree_nodes(facility)
+            tdi_links = link_tdi_to_data_nodes(facility)
             if tdi_links:
                 logger.info("TDI linkage: created %d edges", tdi_links)
         except Exception as e:

@@ -236,7 +236,7 @@ class TestFindCode:
         assert "facility_id" in cypher
 
 
-class TestFindTreeNodes:
+class TestFindDataNodes:
     """Test find_data_nodes domain query."""
 
     def test_returns_list(self, mock_gc, mock_embed):

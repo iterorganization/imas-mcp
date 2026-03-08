@@ -256,6 +256,8 @@ enums:
         description: IDL (Interactive Data Language)
       tdi:
         description: TDI (Tree Data Interface) expressions
+      c:
+        description: C source code
       cpp:
         description: C++ source code
       julia:
@@ -325,8 +327,12 @@ enums:
         description: Generated/cached files (__pycache__, .venv, node_modules)
       system:
         description: OS/infrastructure directories (/var, /tmp, /opt/modules)
+      software_project:
+        description: Self-contained software project with build/packaging infrastructure
       empty_directory:
         description: Empty directory with no files or subdirectories
+      empty:
+        description: Empty directory (alias for empty_directory)
 
   DiscoveryStatus:
     description: >-
@@ -370,6 +376,10 @@ enums:
           A parameter accepted by an accessor function (e.g., tcv_eq("PSI")).
           Not a physical data path but a logical data accessor name.
           Links to DataNode via accessor_function relationship.
+      static_tree_extraction:
+        description: >-
+          Extracted from static (versioned) MDSplus tree structure.
+          Nodes discovered via structural epoch enumeration.
       manual:
         description: Manually created during exploration or testing
 
@@ -484,6 +494,10 @@ enums:
         description: HTTP Basic authentication (username/password)
       session:
         description: Session-based auth (login form, cookies)
+      keycloak:
+        description: Keycloak SSO authentication
+      tequila:
+        description: Tequila (EPFL/SPC) authentication
 
   ImageStatus:
     description: >-
@@ -1277,6 +1291,8 @@ classes:
         identifier: true
         description: Data source name (e.g., "tcv_shot", "results", "device_xml")
         required: true
+      id:
+        description: Composite key as facility:name (e.g., "tcv:results")
       facility_id:
         description: Parent facility ID
         required: true
@@ -1398,6 +1414,13 @@ classes:
         range: DataNode
         annotations:
           relationship_type: USES_LIMITER
+      uses_greens:
+        description: >-
+          Green's function table DataNode used by this structural epoch.
+          Links epoch to Green's table versions by shot overlap.
+        range: DataNode
+        annotations:
+          relationship_type: USES_GREENS
       predecessor:
         description: Previous structure version
         range: StructuralEpoch
@@ -1647,6 +1670,14 @@ classes:
         range: DataNodePattern
         annotations:
           relationship_type: FOLLOWS_PATTERN
+      same_sensor:
+        description: >-
+          Another DataNode representing the same physical sensor
+          in a different data source. Cross-references sensors
+          matched by R,Z proximity across data sources.
+        range: DataNode
+        annotations:
+          relationship_type: SAME_SENSOR
 
   DataNodePattern:
     description: >-
@@ -1700,6 +1731,8 @@ classes:
           Lifecycle status: pending until enriched, then enriched.
           Propagated to all followers on enrichment.
         range: EnrichmentStatus
+      tree_name:
+        description: MDSplus tree name containing this pattern
 
   TDIFunction:
     description: >-
@@ -2278,6 +2311,13 @@ classes:
           Complete working Python code example using this method.
           Should be copy-pasteable with only {shot} substitution.
           Useful for agent prompts and documentation.
+      accesses_geometry:
+        description: >-
+          Geometry DataNode accessed via this data access method.
+          Links to machine geometry data used for spatial calibration.
+        range: DataNode
+        annotations:
+          relationship_type: ACCESSES_GEOMETRY
 
   # Relationship class for signal access checks
   AccessCheck:
@@ -3056,10 +3096,6 @@ classes:
       ref_count:
         description: Count of DataReference nodes linked to this chunk
         range: integer
-      _node_content:
-        description: Internal node content for graph processing
-      _node_type:
-        description: Internal node type label for graph processing
       mdsplus_paths:
         description: MDSplus tree paths found in this code chunk
         multivalued: true

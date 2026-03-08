@@ -153,7 +153,7 @@ def ingest_run(
     console.print(f"  Chunks created:  {stats['chunks']}")
     console.print(f"  IDS references:  {stats['ids_found']}")
     console.print(f"  MDSplus paths:   {stats['mdsplus_paths']}")
-    console.print(f"  DataNodes linked: {stats['tree_nodes_linked']}")
+    console.print(f"  DataNodes linked: {stats['data_nodes_linked']}")
     console.print(f"  Skipped:         {stats['skipped']}")
 
 
@@ -398,11 +398,24 @@ def ingest_migrate(dry_run: bool) -> None:
 
     \b
     Migrations:
-      1. CODE_EXAMPLE_ID: CodeChunk → CodeExample
-      2. AT_FACILITY:     CodeChunk → Facility
-      3. FROM_FILE:       CodeExample → CodeFile
-      4. PRODUCED:        CodeFile → CodeExample
-      5. TreeNode label:  Add DataNode label to legacy TreeNode nodes
+      1.  CODE_EXAMPLE_ID:   CodeChunk → CodeExample
+      2.  AT_FACILITY:       CodeChunk → Facility
+      3.  FROM_FILE:         CodeExample → CodeFile
+      4.  PRODUCED:          CodeFile → CodeExample
+      5.  TreeNode → DataNode: Relabel + remove old label
+      6.  TreeNodePattern → DataNodePattern: Relabel + remove old label
+      7.  TreeModelVersion → StructuralEpoch: Relabel + remove old label
+      8.  IN_DATA_SOURCE:    DataNode → DataSource (from tree_name)
+      9.  IN_TREE → IN_DATA_SOURCE: Migrate legacy relationships
+      10. RESOLVES_TO_TREE_NODE → RESOLVES_TO_NODE: Migrate legacy rels
+      11. MDSplusTree cleanup: Remove legacy nodes
+      12. Signal status:     Map non-enum statuses to valid values
+      13. Signal null status: Set discovered on null-status signals
+      14. Ghost cleanup:     Remove empty FacilitySignal nodes
+      15. SOURCE_NODE → HAS_DATA_SOURCE_NODE: Migrate legacy rels
+      16. SAME_GEOMETRY cleanup: Remove undeclared rels
+      17. ACCESSES_GEOMETRY cleanup: Remove undeclared rels
+      18. Deprecated props: Remove _node_content, _node_type
     """
     from imas_codex.ingestion.graph import migrate_schema_relationships
 
@@ -426,6 +439,19 @@ def ingest_migrate(dry_run: bool) -> None:
         ("FROM_FILE", "from_file"),
         ("PRODUCED", "produced"),
         ("TreeNode → DataNode", "treenode_relabel"),
+        ("TreeNodePattern → DataNodePattern", "treenodepattern_relabel"),
+        ("TreeModelVersion → StructuralEpoch", "treemodelversion_relabel"),
+        ("IN_DATA_SOURCE", "in_data_source"),
+        ("IN_TREE → IN_DATA_SOURCE", "in_tree_migrate"),
+        ("RESOLVES_TO_TREE_NODE → RESOLVES_TO_NODE", "resolves_migrate"),
+        ("MDSplusTree cleanup", "mdsplustree_cleanup"),
+        ("Signal status fix", "signal_status"),
+        ("Signal null status", "signal_null_status"),
+        ("Ghost signal cleanup", "ghost_signal"),
+        ("SOURCE_NODE → HAS_DATA_SOURCE_NODE", "source_node_migrate"),
+        ("SAME_GEOMETRY cleanup", "same_geometry_cleanup"),
+        ("ACCESSES_GEOMETRY cleanup", "accesses_geometry_cleanup"),
+        ("Deprecated _node_* props", "deprecated_props"),
     ]
 
     for label, key in migrations:
