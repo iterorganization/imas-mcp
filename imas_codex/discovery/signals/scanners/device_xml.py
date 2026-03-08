@@ -1187,6 +1187,582 @@ def _persist_mcfg_nodes(
 
 
 # =========================================================================
+# =========================================================================
+# Magnetics PPF Sensor Configuration Ingestion
+# =========================================================================
+
+# Map magnetics sensor types to IMAS IDS paths
+MAGNETICS_SENSOR_IDS_MAP: dict[str, str] = {
+    "BPOL": "magnetics.bpol_probe",
+    "FLUX": "magnetics.flux_loop",
+    "SADX": "magnetics.flux_loop",
+    "BSAD": "magnetics.flux_loop",
+    "TPC": "magnetics.bpol_probe",
+    "TNC": "magnetics.bpol_probe",
+    "PC": "magnetics.bpol_probe",
+    "TS": "magnetics.flux_loop",
+    "TSFL": "magnetics.flux_loop",
+    "TSRR": "magnetics.flux_loop",
+    "IC": "magnetics.bpol_probe",
+    "UPC": "magnetics.bpol_probe",
+    "UNC": "magnetics.bpol_probe",
+    "DVC": "magnetics.diamagnetic_flux",
+    "ITOR": "magnetics.ip",
+    "IPLA": "magnetics.ip",
+    "XTOR": "magnetics.bpol_probe",
+    "XPOL": "magnetics.bpol_probe",
+    "XNOR": "magnetics.bpol_probe",
+    "VL": "magnetics.flux_loop",
+    "IEXR": "magnetics.ip",
+}
+
+# System code for magnetics config sensors
+MAGNETICS_SYSTEM_MAP: dict[str, str] = {
+    "BPOL": "MP",
+    "FLUX": "FL",
+    "SADX": "FL",
+    "BSAD": "FL",
+    "TPC": "MP",
+    "TNC": "MP",
+    "PC": "MP",
+    "TS": "FL",
+    "TSFL": "FL",
+    "TSRR": "FL",
+    "IC": "MP",
+    "UPC": "MP",
+    "UNC": "MP",
+    "DVC": "DV",
+    "ITOR": "IT",
+    "IPLA": "IP",
+    "XTOR": "MP",
+    "XPOL": "MP",
+    "XNOR": "MP",
+    "VL": "FL",
+    "IEXR": "IP",
+}
+
+
+def _build_magnetics_config_data_access(facility: str, config_dir: str) -> DataAccess:
+    """Build DataAccess node for magnetics config file access."""
+    return DataAccess(
+        id=f"{facility}:magnetics_config:file",
+        facility_id=facility,
+        name="JET Magnetics Sensor Configuration",
+        method_type="magnetics_config",
+        library="text",
+        access_type="local",
+        data_source=config_dir,
+        imports_template="# Plain text config files — no library needed",
+        connection_template=f"# Config files at {config_dir}/",
+        data_template=(
+            "# Parse indexr for shot→config mapping\n"
+            "# Each config file defines sensors with JPF, PPF, R, Z, angle"
+        ),
+        full_example=(
+            "# Magnetics sensor config file format:\n"
+            "# Line 1: 'JPF_ADDRESS' 'PPF_SIGNAL INDEX'  idx cal1 cal2 R Z angle\n"
+            "# Line 2: gain1 gain2 gain3 weight gain4 flag1 flag2 gain5 flag3\n"
+            "#\n"
+            f"# Index: {config_dir}/indexr\n"
+            "# Maps shot ranges to config files (e.g., shots 1-27968 → limves)\n"
+            "#\n"
+            "# Each config file defines the complete set of magnetic sensors\n"
+            "# available for a range of JET pulses."
+        ),
+    )
+
+
+def _persist_magnetics_config_nodes(
+    facility: str,
+    source_config: dict[str, Any],
+    parsed: dict[str, Any],
+) -> dict[str, int]:
+    """Persist magnetics config sensor data into the graph.
+
+    Creates DataSource, StructuralEpoch (per config epoch), DataNode
+    (per sensor per epoch), and FacilitySignal (deduplicated across epochs).
+    Shot-range boundaries come from the indexr file.
+    """
+    source_name = source_config.get("name", "magnetics_config")
+    base_dir = source_config.get("base_dir", "")
+    data_access_id = f"{facility}:magnetics_config:file"
+
+    stats: dict[str, int] = {
+        "epochs": 0,
+        "data_nodes": 0,
+        "signals": 0,
+    }
+
+    index_entries = parsed.get("index", [])
+    configs = parsed.get("configs", {})
+
+    if not index_entries:
+        logger.warning("magnetics_config: no index entries parsed")
+        return stats
+
+    # Deduplicate signals across all config epochs
+    all_signals: dict[str, FacilitySignal] = {}
+
+    with GraphClient() as gc:
+        # 1. Create DataSource
+        gc.query(
+            """
+            MERGE (ds:DataSource {name: $name})
+            ON CREATE SET
+                ds.facility_id = $facility,
+                ds.source_type = $source_type,
+                ds.source_format = 'text',
+                ds.description = $description,
+                ds.shot_dependent = false
+            WITH ds
+            MATCH (f:Facility {id: $facility})
+            MERGE (ds)-[:AT_FACILITY]->(f)
+            """,
+            name=source_name,
+            facility=facility,
+            source_type=DataSourceType.config_file.value,
+            description=(
+                "JET magnetics PPF sensor configuration: shot-range to sensor "
+                "set mapping with JPF addresses, PPF signals, geometry (R, Z, "
+                f"angle), and calibration. Files at {base_dir}."
+            ),
+        )
+
+        # 2. Create StructuralEpoch nodes for each config epoch
+        epoch_records = []
+        for i, entry in enumerate(index_entries):
+            config_name = entry["config_file"]
+            epoch_id = f"{facility}:magnetics_config:{config_name}"
+
+            config_data = configs.get(config_name, {})
+            total_sensors = config_data.get("total_sensors", 0)
+            sensor_types = list(config_data.get("sensor_counts", {}).keys())
+
+            rec = {
+                "id": epoch_id,
+                "facility_id": facility,
+                "data_source_name": source_name,
+                "version": i + 1,
+                "first_shot": entry["first_shot"],
+                "last_shot": entry["last_shot"],
+                "description": (
+                    f"Magnetics config '{config_name}': "
+                    f"{total_sensors} sensors ({', '.join(sensor_types[:5])}...), "
+                    f"shots {entry['first_shot']}–{entry['last_shot']}"
+                ),
+                "status": IngestionStatus.ingested.value,
+            }
+            epoch_records.append(rec)
+
+        if epoch_records:
+            gc.query(
+                """
+                UNWIND $records AS rec
+                MERGE (se:StructuralEpoch {id: rec.id})
+                SET se.facility_id = rec.facility_id,
+                    se.data_source_name = rec.data_source_name,
+                    se.version = rec.version,
+                    se.first_shot = rec.first_shot,
+                    se.last_shot = rec.last_shot,
+                    se.description = rec.description,
+                    se.status = rec.status
+                WITH se, rec
+                MATCH (f:Facility {id: rec.facility_id})
+                MERGE (se)-[:AT_FACILITY]->(f)
+                WITH se, rec
+                MERGE (ds:DataSource {name: rec.data_source_name})
+                MERGE (se)-[:IN_DATA_SOURCE]->(ds)
+                """,
+                records=epoch_records,
+            )
+            stats["epochs"] = len(epoch_records)
+
+        # 3. Create DataNode per sensor per config epoch
+        for entry in index_entries:
+            config_name = entry["config_file"]
+            config_data = configs.get(config_name, {})
+            if "error" in config_data or not config_data.get("sensors"):
+                continue
+
+            epoch_id = f"{facility}:magnetics_config:{config_name}"
+            file_path = config_data.get("file_path", f"{base_dir}/{config_name}")
+            data_nodes: list[dict] = []
+
+            for sensor in config_data["sensors"]:
+                sensor_type = sensor.get("sensor_type", "")
+                ppf_signal = sensor.get("ppf_signal", "")
+                ppf_index = sensor.get("ppf_index", 0)
+                jpf_address = sensor.get("jpf_address", "")
+
+                # Node path: unique per sensor per config epoch
+                node_path = (
+                    f"{facility}:magnetics_config:{config_name}:"
+                    f"{sensor_type}:{ppf_index}"
+                )
+
+                system = MAGNETICS_SYSTEM_MAP.get(sensor_type, "MP")
+
+                desc_parts = [
+                    f"{sensor_type} sensor #{ppf_index}",
+                    f"JPF={jpf_address}",
+                    f"PPF={ppf_signal}/{ppf_index}",
+                ]
+                if sensor.get("r"):
+                    desc_parts.append(f"R={sensor['r']:.4f}m")
+                if sensor.get("z"):
+                    desc_parts.append(f"Z={sensor['z']:.4f}m")
+
+                dn: dict[str, Any] = {
+                    "path": node_path,
+                    "data_source_name": source_name,
+                    "facility_id": facility,
+                    "node_type": DataNodeType.NUMERIC.value,
+                    "source": DataNodeSource.introspection.value,
+                    "system": system,
+                    "first_shot": entry["first_shot"],
+                    "last_shot": entry["last_shot"],
+                    "description": ", ".join(desc_parts),
+                    "introduced_version": epoch_id,
+                    "file_source": "filesystem",
+                    "file_path": file_path,
+                    "sensor_type": sensor_type,
+                    "jpf_address": jpf_address,
+                    "ppf_signal": ppf_signal,
+                    "ppf_index": ppf_index,
+                }
+
+                # Geometry
+                for field in ("r", "z", "angle"):
+                    val = sensor.get(field)
+                    if val is not None:
+                        dn[field] = val
+
+                # Calibration
+                for field in ("cal1", "cal2"):
+                    val = sensor.get(field)
+                    if val is not None:
+                        dn[field] = val
+
+                # Gains
+                for field in ("gain1", "gain2", "gain3", "gain4", "gain5", "weight"):
+                    val = sensor.get(field)
+                    if val is not None:
+                        dn[field] = val
+
+                data_nodes.append(dn)
+
+                # Create FacilitySignal (deduplicated across epochs by sensor identity)
+                sig_id = (
+                    f"{facility}:magnetic_field_diagnostics/"
+                    f"magnetics_config_{sensor_type}_{ppf_index}"
+                )
+                if sig_id not in all_signals:
+                    all_signals[sig_id] = FacilitySignal(
+                        id=sig_id,
+                        facility_id=facility,
+                        status=FacilitySignalStatus.discovered,
+                        physics_domain="magnetic_field_diagnostics",
+                        name=f"Magnetics {sensor_type} #{ppf_index} ({jpf_address})",
+                        accessor=f"magnetics_config:{sensor_type}/{ppf_index}",
+                        data_access=data_access_id,
+                        data_source_name=source_name,
+                        data_source_path=f"{sensor_type}/{ppf_index}",
+                        data_source_node=node_path,
+                        units="T" if sensor_type in ("BPOL", "TPC", "TNC") else "Wb",
+                        description=(
+                            f"Magnetics sensor {sensor_type} #{ppf_index}: "
+                            f"JPF={jpf_address}, PPF={ppf_signal}/{ppf_index}"
+                        ),
+                        discovery_source="magnetics_config",
+                    )
+
+            # Batch create DataNodes
+            if data_nodes:
+                gc.create_nodes("DataNode", data_nodes, id_field="path", batch_size=200)
+                stats["data_nodes"] += len(data_nodes)
+
+                # Create INTRODUCED_IN relationships
+                intro_records = [
+                    {"path": dn["path"], "epoch_id": epoch_id} for dn in data_nodes
+                ]
+                gc.query(
+                    """
+                    UNWIND $records AS rec
+                    MATCH (dn:DataNode {path: rec.path})
+                    MATCH (se:StructuralEpoch {id: rec.epoch_id})
+                    MERGE (dn)-[:INTRODUCED_IN]->(se)
+                    """,
+                    records=intro_records,
+                )
+
+        # 4. Persist signals
+        if all_signals:
+            signal_dicts = [
+                s.model_dump(exclude_none=True) for s in all_signals.values()
+            ]
+            gc.create_nodes(
+                "FacilitySignal", signal_dicts, id_field="id", batch_size=100
+            )
+            stats["signals"] = len(signal_dicts)
+
+        # 5. Persist DataAccess
+        da = _build_magnetics_config_data_access(facility, base_dir)
+        gc.create_nodes("DataAccess", [da.model_dump(exclude_none=True)], id_field="id")
+
+        # 6. Cross-reference magnetics_config sensors ↔ JEC2020 probes by R,Z
+        # Only for the latest config epoch (2002_01) which overlaps with JEC2020
+        gc.query(
+            """
+            MATCH (mc:DataNode)
+            WHERE mc.data_source_name = $mc_source
+              AND mc.facility_id = $facility
+              AND mc.sensor_type = 'BPOL'
+            MATCH (jec:DataNode)
+            WHERE jec.data_source_name = $jec_source
+              AND jec.facility_id = $facility
+              AND jec.system = 'MP'
+              AND abs(mc.r - jec.r) < 0.01
+              AND abs(mc.z - jec.z) < 0.01
+            MERGE (mc)-[:SAME_SENSOR]->(jec)
+            """,
+            mc_source=source_name,
+            jec_source="jec2020_geometry",
+            facility=facility,
+        )
+
+        # 7. Cross-reference magnetics_config ↔ device_xml probes by R,Z
+        gc.query(
+            """
+            MATCH (mc:DataNode)
+            WHERE mc.data_source_name = $mc_source
+              AND mc.facility_id = $facility
+              AND mc.sensor_type = 'BPOL'
+            MATCH (dx:DataNode)
+            WHERE dx.data_source_name = 'device_xml'
+              AND dx.facility_id = $facility
+              AND dx.system = 'MP'
+              AND abs(mc.r - dx.r) < 0.01
+              AND abs(mc.z - dx.z) < 0.01
+            MERGE (mc)-[:SAME_SENSOR]->(dx)
+            """,
+            mc_source=source_name,
+            facility=facility,
+        )
+
+    return stats
+
+
+# =========================================================================
+# PF Coil Circuit Turns Ingestion
+# =========================================================================
+
+
+def _persist_pf_coil_turns_nodes(
+    facility: str,
+    source_config: dict[str, Any],
+    parsed: dict[str, Any],
+) -> dict[str, int]:
+    """Persist PF coil circuit turns data into the graph.
+
+    Creates DataSource and DataNode records for PF coil turns ratios,
+    and links them to existing device_xml PF coil/circuit DataNodes.
+    """
+    source_name = source_config.get("name", "pf_coil_turns")
+    base_dir = source_config.get("base_dir", "")
+
+    stats: dict[str, int] = {
+        "coil_entries": 0,
+        "cross_references": 0,
+    }
+
+    coils = parsed.get("coils", [])
+    if not coils:
+        return stats
+
+    with GraphClient() as gc:
+        # 1. Create DataSource
+        gc.query(
+            """
+            MERGE (ds:DataSource {name: $name})
+            ON CREATE SET
+                ds.facility_id = $facility,
+                ds.source_type = $source_type,
+                ds.source_format = 'text',
+                ds.description = $description,
+                ds.shot_dependent = false
+            WITH ds
+            MATCH (f:Facility {id: $facility})
+            MERGE (ds)-[:AT_FACILITY]->(f)
+            """,
+            name=source_name,
+            facility=facility,
+            source_type=DataSourceType.config_file.value,
+            description=(
+                "PF coil circuit turns ratios — maps PF coil names to turns "
+                f"counts and circuit assignments. File at {base_dir}/cturns."
+            ),
+        )
+
+        # 2. Create DataNode per coil entry
+        data_nodes: list[dict] = []
+        for coil in coils:
+            coil_name = coil.get("name", "")
+            node_path = f"{facility}:pf_coil_turns:{coil_name}"
+
+            dn: dict[str, Any] = {
+                "path": node_path,
+                "data_source_name": source_name,
+                "facility_id": facility,
+                "node_type": DataNodeType.NUMERIC.value,
+                "source": DataNodeSource.introspection.value,
+                "system": "PF",
+                "file_source": "filesystem",
+                "file_path": f"{base_dir}/cturns",
+                "description": (f"PF coil {coil_name}: {coil.get('turns', '?')} turns"),
+            }
+            for field in ("turns", "circuit", "polarity", "resistance"):
+                val = coil.get(field)
+                if val is not None:
+                    dn[field] = val
+
+            data_nodes.append(dn)
+
+        if data_nodes:
+            gc.create_nodes("DataNode", data_nodes, id_field="path", batch_size=50)
+            stats["coil_entries"] = len(data_nodes)
+
+        # 3. Cross-reference to device_xml PF coils by name
+        gc.query(
+            """
+            MATCH (ct:DataNode)
+            WHERE ct.data_source_name = $ct_source AND ct.facility_id = $facility
+            MATCH (dx:DataNode)
+            WHERE dx.data_source_name = 'device_xml'
+              AND dx.facility_id = $facility
+              AND dx.system = 'PF'
+            WITH ct, dx,
+                 split(ct.path, ':') AS ct_parts,
+                 split(dx.path, ':') AS dx_parts
+            WHERE last(ct_parts) = last(dx_parts)
+            MERGE (ct)-[:SAME_COMPONENT]->(dx)
+            """,
+            ct_source=source_name,
+            facility=facility,
+        )
+
+    return stats
+
+
+# =========================================================================
+# Greens Table Version Mapping Ingestion
+# =========================================================================
+
+
+def _persist_greens_table_nodes(
+    facility: str,
+    source_config: dict[str, Any],
+    parsed: dict[str, Any],
+) -> dict[str, int]:
+    """Persist Greens table version-to-shot mapping.
+
+    Creates DataSource and DataNode records for each Green's table version,
+    linking shot ranges to specific pre-computed Green's function tables
+    used by EFIT equilibrium reconstruction.
+    """
+    source_name = source_config.get("name", "greens_table")
+    base_dir = source_config.get("base_dir", "")
+
+    stats: dict[str, int] = {
+        "versions": 0,
+    }
+
+    entries = parsed.get("entries", [])
+    if not entries:
+        return stats
+
+    with GraphClient() as gc:
+        # 1. Create DataSource
+        gc.query(
+            """
+            MERGE (ds:DataSource {name: $name})
+            ON CREATE SET
+                ds.facility_id = $facility,
+                ds.source_type = $source_type,
+                ds.source_format = 'text',
+                ds.description = $description,
+                ds.shot_dependent = false
+            WITH ds
+            MATCH (f:Facility {id: $facility})
+            MERGE (ds)-[:AT_FACILITY]->(f)
+            """,
+            name=source_name,
+            facility=facility,
+            source_type=DataSourceType.config_file.value,
+            description=(
+                "Green's function table version-to-shot mapping for EFIT. "
+                "Each version is a precomputed table of Green's functions "
+                "for the magnetic equilibrium solve. "
+                f"Index at {base_dir}/green_list."
+            ),
+        )
+
+        # 2. Create DataNode per Greens table version
+        data_nodes: list[dict] = []
+        for entry in entries:
+            version_name = entry.get("version", "")
+            node_path = f"{facility}:greens_table:{version_name}"
+
+            dn: dict[str, Any] = {
+                "path": node_path,
+                "data_source_name": source_name,
+                "facility_id": facility,
+                "node_type": DataNodeType.NUMERIC.value,
+                "source": DataNodeSource.introspection.value,
+                "system": "GR",
+                "first_shot": entry.get("first_shot"),
+                "last_shot": entry.get("last_shot"),
+                "file_source": "filesystem",
+                "file_path": f"{base_dir}/green_list",
+            }
+            if entry.get("greens_dir"):
+                dn["greens_dir"] = entry["greens_dir"]
+                dn["description"] = (
+                    f"Greens table '{version_name}': shots "
+                    f"{entry.get('first_shot', '?')}–{entry.get('last_shot', '?')}, "
+                    f"dir={entry['greens_dir']}"
+                )
+            else:
+                dn["description"] = (
+                    f"Greens table '{version_name}': shots "
+                    f"{entry.get('first_shot', '?')}–{entry.get('last_shot', '?')}"
+                )
+
+            data_nodes.append(dn)
+
+        if data_nodes:
+            gc.create_nodes("DataNode", data_nodes, id_field="path", batch_size=50)
+            stats["versions"] = len(data_nodes)
+
+        # 3. Link Greens table versions to StructuralEpoch nodes by shot overlap
+        gc.query(
+            """
+            MATCH (gt:DataNode)
+            WHERE gt.data_source_name = $gt_source AND gt.facility_id = $facility
+            MATCH (se:StructuralEpoch)
+            WHERE se.facility_id = $facility
+              AND se.data_source_name = 'device_xml'
+              AND se.first_shot >= gt.first_shot
+              AND (gt.last_shot IS NULL OR se.first_shot <= gt.last_shot)
+            MERGE (se)-[:USES_GREENS]->(gt)
+            """,
+            gt_source=source_name,
+            facility=facility,
+        )
+
+    return stats
+
+
+# =========================================================================
 # PPF Static Geometry Signal Ingestion
 # =========================================================================
 
@@ -1446,6 +2022,21 @@ class DeviceXMLScanner:
         if ppf_stats:
             stats["ppf_static"] = ppf_stats
 
+        # Process magnetics PPF sensor configuration if configured
+        mc_stats = await self._scan_magnetics_config(facility, ssh_host, config)
+        if mc_stats:
+            stats["magnetics_config"] = mc_stats
+
+        # Process PF coil circuit turns if configured
+        ct_stats = await self._scan_pf_coil_turns(facility, ssh_host, config)
+        if ct_stats:
+            stats["pf_coil_turns"] = ct_stats
+
+        # Process Greens table version mapping if configured
+        gt_stats = await self._scan_greens_table(facility, ssh_host, config)
+        if gt_stats:
+            stats["greens_table"] = gt_stats
+
         return ScanResult(
             signals=[],  # Signals written directly to graph
             data_access=data_access,
@@ -1638,6 +2229,197 @@ class DeviceXMLScanner:
         )
 
         return ppf_stats
+
+    async def _scan_magnetics_config(
+        self,
+        facility: str,
+        ssh_host: str,
+        config: dict[str, Any],
+    ) -> dict[str, int] | None:
+        """Scan magnetics PPF sensor configuration files.
+
+        Looks for a static_sources entry named 'magnetics_config' and
+        processes the indexr + individual config files to extract sensor
+        definitions for all JET operational epochs.
+        """
+        from imas_codex.discovery.base.facility import get_facility
+
+        facility_config = get_facility(facility)
+        static_sources = facility_config.get("data_systems", {}).get(
+            "static_sources", []
+        )
+
+        mc_config = None
+        for source in static_sources:
+            if isinstance(source, dict) and source.get("name") == "magnetics_config":
+                mc_config = source
+                break
+
+        if not mc_config:
+            return None
+
+        base_dir = mc_config.get("base_dir", "")
+        index_file = mc_config.get("index_file", "")
+        if not base_dir:
+            return None
+
+        logger.info(
+            "device_xml scanner: processing magnetics config from %s",
+            base_dir,
+        )
+
+        script_input = {
+            "config_dir": base_dir,
+            "index_file": index_file,
+        }
+
+        try:
+            output = run_python_script(
+                "parse_magnetics_config.py",
+                script_input,
+                ssh_host=ssh_host,
+                timeout=120,
+            )
+            parsed = json.loads(output.strip().split("\n")[-1])
+        except Exception as e:
+            logger.error("Magnetics config parse failed for %s: %s", facility, e)
+            return {"error": str(e)}
+
+        mc_stats = _persist_magnetics_config_nodes(facility, mc_config, parsed)
+
+        logger.info(
+            "Magnetics config scanner %s: %d epochs, %d data nodes, %d signals",
+            facility,
+            mc_stats.get("epochs", 0),
+            mc_stats.get("data_nodes", 0),
+            mc_stats.get("signals", 0),
+        )
+
+        return mc_stats
+
+    async def _scan_pf_coil_turns(
+        self,
+        facility: str,
+        ssh_host: str,
+        config: dict[str, Any],
+    ) -> dict[str, int] | None:
+        """Scan PF coil circuit turns file.
+
+        Looks for a static_sources entry named 'pf_coil_turns' and
+        processes the cturns file.
+        """
+        from imas_codex.discovery.base.facility import get_facility
+
+        facility_config = get_facility(facility)
+        static_sources = facility_config.get("data_systems", {}).get(
+            "static_sources", []
+        )
+
+        ct_config = None
+        for source in static_sources:
+            if isinstance(source, dict) and source.get("name") == "pf_coil_turns":
+                ct_config = source
+                break
+
+        if not ct_config:
+            return None
+
+        base_dir = ct_config.get("base_dir", "")
+        if not base_dir:
+            return None
+
+        logger.info(
+            "device_xml scanner: processing PF coil turns from %s",
+            base_dir,
+        )
+
+        script_input = {
+            "base_dir": base_dir,
+        }
+
+        try:
+            output = run_python_script(
+                "parse_pf_coil_turns.py",
+                script_input,
+                ssh_host=ssh_host,
+                timeout=60,
+            )
+            parsed = json.loads(output.strip().split("\n")[-1])
+        except Exception as e:
+            logger.error("PF coil turns parse failed for %s: %s", facility, e)
+            return {"error": str(e)}
+
+        ct_stats = _persist_pf_coil_turns_nodes(facility, ct_config, parsed)
+
+        logger.info(
+            "PF coil turns scanner %s: %d coil entries",
+            facility,
+            ct_stats.get("coil_entries", 0),
+        )
+
+        return ct_stats
+
+    async def _scan_greens_table(
+        self,
+        facility: str,
+        ssh_host: str,
+        config: dict[str, Any],
+    ) -> dict[str, int] | None:
+        """Scan Greens table version-to-shot mapping.
+
+        Looks for a static_sources entry named 'greens_table' and
+        processes the green_list file.
+        """
+        from imas_codex.discovery.base.facility import get_facility
+
+        facility_config = get_facility(facility)
+        static_sources = facility_config.get("data_systems", {}).get(
+            "static_sources", []
+        )
+
+        gt_config = None
+        for source in static_sources:
+            if isinstance(source, dict) and source.get("name") == "greens_table":
+                gt_config = source
+                break
+
+        if not gt_config:
+            return None
+
+        base_dir = gt_config.get("base_dir", "")
+        if not base_dir:
+            return None
+
+        logger.info(
+            "device_xml scanner: processing Greens table from %s",
+            base_dir,
+        )
+
+        script_input = {
+            "base_dir": base_dir,
+        }
+
+        try:
+            output = run_python_script(
+                "parse_greens_table.py",
+                script_input,
+                ssh_host=ssh_host,
+                timeout=60,
+            )
+            parsed = json.loads(output.strip().split("\n")[-1])
+        except Exception as e:
+            logger.error("Greens table parse failed for %s: %s", facility, e)
+            return {"error": str(e)}
+
+        gt_stats = _persist_greens_table_nodes(facility, gt_config, parsed)
+
+        logger.info(
+            "Greens table scanner %s: %d versions",
+            facility,
+            gt_stats.get("versions", 0),
+        )
+
+        return gt_stats
 
     async def check(
         self,

@@ -492,6 +492,45 @@ data_systems:
           description: 77 calibration epoch entries (pulse 54283–93563)
           expected_count: 77
 
+    # Magnetics PPF sensor configuration — maps shot ranges to sensor sets.
+    # Each config file defines which magnetic sensors are active for a
+    # range of pulses, with JPF addresses, PPF signal names, geometry
+    # (R, Z, angle), and calibration factors. The indexr file provides
+    # the shot-range → config-file mapping. Covers the full operational
+    # history from shot 1 (1983) through shot 90538 (pre-final EFIT++ era).
+    - name: magnetics_config
+      description: Magnetics sensor configuration per epoch (JPF→PPF mapping, geometry, calibration)
+      format: text
+      base_dir: /home/chain1/input/magn/config
+      index_file: /home/chain1/input/magn/config/indexr
+      files:
+        - path: indexr
+          role: index
+          description: Shot-range to config file mapping (12 entries covering shots 1–90538)
+          expected_count: 12
+
+    # PF coil circuit turns — defines turns ratios for PF coil circuits.
+    # Used by equilibrium codes to compute coil currents from circuit currents.
+    - name: pf_coil_turns
+      description: PF coil circuit-to-turns mapping for current calculations
+      format: text
+      base_dir: /home/chain1/input/pfcu
+      files:
+        - path: cturns
+          role: coil_turns
+          description: PF coil turns ratios per circuit
+
+    # Greens table version-to-shot mapping — maps shot ranges to precomputed
+    # Green's function tables used by EFIT for the magnetic equilibrium solve.
+    - name: greens_table
+      description: Green's function table version-to-shot mapping for EFIT
+      format: text
+      base_dir: /home/chain1/input/efit
+      files:
+        - path: green_list
+          role: greens_index
+          description: Shot-range to Green's table version mapping
+
 
 # Data access patterns discovered during facility exploration.
 data_access_patterns:

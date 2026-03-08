@@ -865,6 +865,12 @@ classes:
         description: >-
           Root filesystem directory containing the files. File paths
           are resolved relative to this directory.
+      index_file:
+        description: >-
+          Path to the index file that maps shot ranges to configuration
+          files within this source. Used by sources like magnetics_config
+          and greens_table where a master index maps shot ranges to
+          versioned data files.
       git_repo:
         description: >-
           Path to git repository containing the files (bare or working tree).
