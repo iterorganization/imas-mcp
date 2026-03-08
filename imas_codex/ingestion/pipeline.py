@@ -46,7 +46,7 @@ ProgressCallback = Callable[[int, int, str], None]
 # Maximum number of chunk texts to embed in a single call.
 # Prevents CUDA OOM on large batches — each chunk can be up to 10KB.
 # With 1024-dim embeddings, 32 chunks ≈ 320KB text → ~1 GiB GPU memory.
-MAX_CHUNKS_PER_EMBED = 32
+MAX_CHUNKS_PER_EMBED = 16
 
 
 def _embed_chunks_safe(

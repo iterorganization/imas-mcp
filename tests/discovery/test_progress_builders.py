@@ -32,7 +32,7 @@ class TestFormatRate:
     """Tests for adaptive rate formatting."""
 
     def test_small_rate(self):
-        assert format_rate(0.5) == "0.5/s"
+        assert format_rate(0.5) == "0.50/s"
 
     def test_single_digit(self):
         assert format_rate(3.7) == "3.7/s"
@@ -53,7 +53,7 @@ class TestFormatRate:
         assert format_rate(2_500_000.0) == "2M/s"
 
     def test_zero(self):
-        assert format_rate(0.0) == "0.0/s"
+        assert format_rate(0.0) == "0.00/s"
 
     def test_boundary_ten(self):
         assert format_rate(10.0) == "10/s"

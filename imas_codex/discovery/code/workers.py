@@ -629,7 +629,7 @@ def _mark_file_failed(file_id: str, error: str) -> None:
 async def code_worker(
     state: FileDiscoveryState,
     on_progress: Callable | None = None,
-    batch_size: int = 50,
+    batch_size: int = 10,
 ) -> None:
     """Code worker: Fetch, chunk, embed, and link code files.
 
@@ -639,6 +639,10 @@ async def code_worker(
 
     Creates a single shared Encoder instance to avoid loading the
     embedding model multiple times on the same GPU.
+
+    Uses small claim batches (default 10) so progress is reported
+    frequently — this keeps the streamer display flowing and the
+    rate calculation accurate.
     """
     import time as _time
 
@@ -711,6 +715,7 @@ async def code_worker(
             state.code_stats.record_batch(batch_total)
 
             if on_progress:
+                avg_chunks = chunks_count // max(ingested_count, 1)
                 on_progress(
                     f"ingested {ingested_count}, {chunks_count} chunks",
                     state.code_stats,
@@ -719,7 +724,7 @@ async def code_worker(
                             "path": f["path"],
                             "language": f.get("language", ""),
                             "score": f.get("score_composite"),
-                            "chunks": chunks_count // max(ingested_count, 1),
+                            "chunks": avg_chunks,
                             "file_type": "code",
                         }
                         for f in files
@@ -818,7 +823,7 @@ async def enrich_worker(
             await asyncio.to_thread(release_file_enrich_claims, batch_ids)
 
             if on_progress:
-                # Stream enriched files with line count + pattern categories
+                # Stream enriched files with line count + pattern categories + preview
                 enrich_results = []
                 for r in results:
                     cats = r.get("pattern_categories", {})
@@ -828,12 +833,24 @@ async def enrich_worker(
                         if cats
                         else []
                     )
+                    # Extract a meaningful preview snippet (first non-blank, non-comment line)
+                    preview = r.get("preview_text", "")
+                    snippet = ""
+                    if preview:
+                        for line in preview.splitlines():
+                            stripped = line.strip()
+                            if stripped and not stripped.startswith(
+                                ("#", "//", "/*", "*", "!", "C ", "c ")
+                            ):
+                                snippet = stripped[:80]
+                                break
                     enrich_results.append(
                         {
                             "path": r["path"],
                             "patterns": r.get("total_pattern_matches", 0),
                             "line_count": r.get("line_count", 0),
                             "pattern_categories": dict(top_cats),
+                            "preview_snippet": snippet,
                         }
                     )
                 on_progress(
