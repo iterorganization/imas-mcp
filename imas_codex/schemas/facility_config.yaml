@@ -1308,6 +1308,11 @@ classes:
         description: Git path to Green's function directory
       snap_file:
         description: Git path to EFITSNAP probe enable/disable mask
+      pf_configuration:
+        description: >-
+          PF coil geometry configuration identifier for this epoch.
+          E.g., "DMSS=091", "DMSS=105". Tracks poloidal field coil
+          transitions. Pre-divertor epochs have null (no PF coils).
       uses_limiter:
         description: >-
           Name of the LimiterVersion used by this epoch.

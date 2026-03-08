@@ -1405,6 +1405,32 @@ classes:
       discovery_date:
         description: When this epoch was discovered
         range: datetime
+      probes_enabled:
+        description: >-
+          Probe identifiers enabled in this epoch (from EFITSNAP mask).
+          E.g., ["BPME(1)", "BPME(2)", ...]. Tracks diagnostic
+          availability evolution across machine configurations.
+        multivalued: true
+      probes_disabled:
+        description: >-
+          Probe identifiers disabled in this epoch (from EFITSNAP mask).
+          E.g., ["BPME(42)", "FLME(3)"]. Records which sensors were
+          broken or removed during this hardware configuration.
+        multivalued: true
+      pf_configuration:
+        description: >-
+          PF coil configuration identifier for this epoch.
+          E.g., "DMSS=091" or "DMSS=105". Tracks transitions in
+          poloidal field coil geometry. Pre-divertor epochs have
+          no PF coils (null).
+      device_xml_path:
+        description: >-
+          Git path to the device XML file used for this epoch
+          (provenance). E.g., "Devices/device_p89440.xml".
+      snap_file_path:
+        description: >-
+          Git path to the EFITSNAP file used for this epoch
+          (provenance). E.g., "Snap_files/EFITSNAP/efitsnap_p89440_bound0".
 
   DataNode:
     description: >-

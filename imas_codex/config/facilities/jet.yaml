@@ -148,36 +148,42 @@ data_systems:
         description: "Pre-divertor carbon wall + belt limiter (1983-1991)"
         uses_limiter: Limiter
         wall_configuration: limiter
+        # No divertor PF coils — limiter-only configuration
       - version: mk1_era
         first_shot: 28792
         last_shot: 35778
         description: "Mark I divertor — JET's first divertor (1994-1995)"
         uses_limiter: Mk1
         wall_configuration: divertor
+        pf_configuration: pre-EFIT
       - version: mk2a_era
         first_shot: 35779
         last_shot: 45155
         description: "Mark IIA Gas Box divertor (1996-1998)"
         uses_limiter: Mk2A
         wall_configuration: divertor
+        pf_configuration: pre-EFIT
       - version: mk2gb_era
         first_shot: 45156
         last_shot: 54549
         description: "Mark II Gas Box divertor (1999-2001)"
         uses_limiter: Mk2GB
         wall_configuration: divertor
+        pf_configuration: pre-EFIT
       - version: mk2gb_sr_era
         first_shot: 54550
         last_shot: 63445
         description: "Mark IIGB septum removed (2002-2005)"
         uses_limiter: Mk2GB-SR
         wall_configuration: divertor
+        pf_configuration: pre-EFIT
       - version: mk2hd_pre
         first_shot: 63446
         last_shot: 68612
         description: "Mark II High Delta pre-EFIT++ (2005-2006)"
         uses_limiter: Mk2HD
         wall_configuration: divertor
+        pf_configuration: pre-EFIT
       # EFIT++ epochs — full device XML + limiter + coils + probes.
       - version: p68613
         first_shot: 68613
@@ -189,6 +195,7 @@ data_systems:
         greens: Greens/DMSS_091_T_200C/
         snap_file: Snap_files/EFITSNAP/efitsnap_p68613_bound0
         wall_configuration: divertor
+        pf_configuration: DMSS=091
       - version: p74387
         first_shot: 74387
         last_shot: 78167
@@ -199,6 +206,7 @@ data_systems:
         greens: Greens/DMSS_091_T_200C/
         snap_file: Snap_files/EFITSNAP/efitsnap_p74387_bound0
         wall_configuration: divertor
+        pf_configuration: DMSS=091
       - version: p78168
         first_shot: 78168
         last_shot: 78358
@@ -209,6 +217,7 @@ data_systems:
         greens: Greens/DMSS_091_T_200C/
         snap_file: Snap_files/EFITSNAP/efitsnap_p78168_bound0
         wall_configuration: divertor
+        pf_configuration: DMSS=091
       - version: p78359
         first_shot: 78359
         last_shot: 78460
@@ -219,6 +228,7 @@ data_systems:
         greens: Greens/DMSS_105_T_200C/
         snap_file: Snap_files/EFITSNAP/efitsnap_p78359_bound0
         wall_configuration: divertor
+        pf_configuration: DMSS=105
       - version: p78461
         first_shot: 78461
         last_shot: 79853
@@ -229,6 +239,7 @@ data_systems:
         greens: Greens/DMSS_091_T_200C/
         snap_file: Snap_files/EFITSNAP/efitsnap_p78168_bound0
         wall_configuration: divertor
+        pf_configuration: DMSS=091
       - version: p79854
         first_shot: 79854
         last_shot: 81133
@@ -239,6 +250,7 @@ data_systems:
         greens: Greens/DMSS_105_T_200C/
         snap_file: Snap_files/EFITSNAP/efitsnap_p79854_bound0
         wall_configuration: divertor
+        pf_configuration: DMSS=105
       - version: p81134
         first_shot: 81134
         last_shot: 87026
@@ -249,6 +261,7 @@ data_systems:
         greens: Greens/DMSS_105_T_200C/
         snap_file: Snap_files/EFITSNAP/efitsnap_p81134_bound0
         wall_configuration: divertor
+        pf_configuration: DMSS=105
       - version: p87027
         first_shot: 87027
         last_shot: 87721
@@ -259,6 +272,7 @@ data_systems:
         greens: Greens/DMSS_105_T_200C/
         snap_file: Snap_files/EFITSNAP/efitsnap_p87027_bound0
         wall_configuration: divertor
+        pf_configuration: DMSS=105
       - version: p87722
         first_shot: 87722
         last_shot: 88367
@@ -269,6 +283,7 @@ data_systems:
         greens: Greens/DMSS_105_T_200C_P803A/
         snap_file: Snap_files/EFITSNAP/efitsnap_p87722_bound0
         wall_configuration: divertor
+        pf_configuration: DMSS=105
       - version: p88368
         first_shot: 88368
         last_shot: 89430
@@ -279,6 +294,7 @@ data_systems:
         greens: Greens/DMSS_105_T_200C_UP4E4/
         snap_file: Snap_files/EFITSNAP/efitsnap_p88368_bound0
         wall_configuration: divertor
+        pf_configuration: DMSS=105
       - version: p89431
         first_shot: 89431
         last_shot: 89439
@@ -289,6 +305,7 @@ data_systems:
         greens: Greens/DMSS_105_T_200C_UP4E4/
         snap_file: Snap_files/EFITSNAP/efitsnap_p81134_bound0
         wall_configuration: divertor
+        pf_configuration: DMSS=105
       - version: p89440
         first_shot: 89440
         last_shot: 90539
@@ -299,6 +316,7 @@ data_systems:
         greens: Greens/DMSS_105_T_200C_P802A/
         snap_file: Snap_files/EFITSNAP/efitsnap_p89440_bound0
         wall_configuration: divertor
+        pf_configuration: DMSS=105
       - version: p90540
         first_shot: 90540
         last_shot: 90625
@@ -309,6 +327,7 @@ data_systems:
         greens: Greens/DMSS_105_T_200C_P802A/
         snap_file: Snap_files/EFITSNAP/efitsnap_p90540_bound0
         wall_configuration: divertor
+        pf_configuration: DMSS=105
       - version: p90626
         first_shot: 90626
         description: "I802+I803 failed, disabled — FINAL config through end of JET"
@@ -318,6 +337,7 @@ data_systems:
         greens: Greens/DMSS_105_T_200C_P802A/
         snap_file: Snap_files/EFITSNAP/efitsnap_p90626_bound0
         wall_configuration: divertor
+        pf_configuration: DMSS=105
     # Systems extracted from device XMLs — analogous to TCV static tree systems
     systems:
       - symbol: PF

@@ -248,6 +248,27 @@ def _persist_graph_nodes(
             lim_name = vc.get("uses_limiter")
             if lim_name:
                 rec["uses_limiter"] = f"{facility}:device_xml:limiter:{lim_name}"
+
+            # Provenance: record source file paths
+            if vc.get("device_xml"):
+                rec["device_xml_path"] = vc["device_xml"]
+            if vc.get("snap_file"):
+                rec["snap_file_path"] = vc["snap_file"]
+
+            # PF configuration tracking
+            if vc.get("pf_configuration"):
+                rec["pf_configuration"] = vc["pf_configuration"]
+
+            # Probe enable/disable from snap file parsing
+            parsed = parsed_versions.get(version)
+            if parsed and "error" not in parsed:
+                enabled = parsed.get("enabled_probes", [])
+                disabled = parsed.get("disabled_probes", [])
+                if enabled:
+                    rec["probes_enabled"] = enabled
+                if disabled:
+                    rec["probes_disabled"] = disabled
+
             epoch_records.append(rec)
 
         if epoch_records:
@@ -264,6 +285,11 @@ def _persist_graph_nodes(
                     se.status = rec.status
                 SET se.wall_configuration = rec.wall_configuration
                 SET se.uses_limiter = rec.uses_limiter
+                SET se.device_xml_path = rec.device_xml_path
+                SET se.snap_file_path = rec.snap_file_path
+                SET se.pf_configuration = rec.pf_configuration
+                SET se.probes_enabled = rec.probes_enabled
+                SET se.probes_disabled = rec.probes_disabled
                 WITH se, rec
                 MATCH (f:Facility {id: rec.facility_id})
                 MERGE (se)-[:AT_FACILITY]->(f)
@@ -335,6 +361,8 @@ def _persist_graph_nodes(
                         "introduced_version": epoch_id,
                         "system": meta.get("system", ""),
                         "first_shot": vc.get("first_shot"),
+                        "file_source": "git",
+                        "file_path": xml_file,
                     }
                     if vc.get("last_shot"):
                         dn["last_shot"] = vc["last_shot"]
@@ -657,6 +685,8 @@ def _persist_jec2020_nodes(
                     "system": JEC2020_SYSTEM_MAP["magnetics_probe"],
                     "first_shot": reference_shot,
                     "description": ", ".join(desc_parts),
+                    "file_source": "filesystem",
+                    "file_path": f"{base_dir}/magnetics.xml",
                 }
                 if p.get("rCentre") is not None:
                     dn["r"] = p["rCentre"]
@@ -721,6 +751,8 @@ def _persist_jec2020_nodes(
                     "system": JEC2020_SYSTEM_MAP["magnetics_flux"],
                     "first_shot": reference_shot,
                     "description": f"Flux loop {fid}: {fl.get('description', '')}",
+                    "file_source": "filesystem",
+                    "file_path": f"{base_dir}/magnetics.xml",
                 }
                 if fl.get("rCentre") is not None:
                     dn["r"] = fl["rCentre"]
@@ -774,6 +806,8 @@ def _persist_jec2020_nodes(
                     "system": JEC2020_SYSTEM_MAP["pf_coils"],
                     "first_shot": reference_shot,
                     "description": f"PF coil {cid} ({cname})",
+                    "file_source": "filesystem",
+                    "file_path": f"{base_dir}/pfSystems.xml",
                 }
                 # Single-value geometry
                 for attr in (
@@ -834,6 +868,8 @@ def _persist_jec2020_nodes(
                     "system": JEC2020_SYSTEM_MAP["pf_circuits"],
                     "first_shot": reference_shot,
                     "description": f"PF circuit {cid} ({cname})",
+                    "file_source": "filesystem",
+                    "file_path": f"{base_dir}/pfSystems.xml",
                 }
                 if circ.get("coil_ids"):
                     dn["coil_ids"] = circ["coil_ids"]
@@ -880,6 +916,8 @@ def _persist_jec2020_nodes(
                     "source": DataNodeSource.introspection.value,
                     "system": JEC2020_SYSTEM_MAP["iron_core"],
                     "first_shot": reference_shot,
+                    "file_source": "filesystem",
+                    "file_path": f"{base_dir}/ironBoundaries3.xml",
                     "description": (
                         f"Iron core boundary: {len(r_vals)} segments, "
                         f"length={iron_data.get('boundary_length', '?')}m"
@@ -931,6 +969,8 @@ def _persist_jec2020_nodes(
                     "source": DataNodeSource.introspection.value,
                     "system": JEC2020_SYSTEM_MAP["limiter"],
                     "first_shot": reference_shot,
+                    "file_source": "filesystem",
+                    "file_path": f"{base_dir}/limiter.xml",
                     "description": (
                         f"JEC2020 ILW first wall contour at T=200°C: "
                         f"{len(r_vals)} R,Z points"
