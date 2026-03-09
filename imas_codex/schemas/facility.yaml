@@ -233,6 +233,16 @@ enums:
       budget_exhausted:
         description: Session stopped because cost limit was reached
 
+  IDSRecipeStatus:
+    description: Status lifecycle for IDS assembly recipes
+    permissible_values:
+      draft:
+        description: Recipe is being developed, not ready for use
+      active:
+        description: Recipe is validated and ready for assembly
+      deprecated:
+        description: Recipe has been superseded by a newer version
+
   PopulationType:
     description: How tree nodes are populated with data
     permissible_values:
@@ -679,8 +689,11 @@ classes:
       Higher priority roots are processed first during seeding.
     class_uri: facility:DiscoveryRoot
     attributes:
-      path:
+      id:
         identifier: true
+        description: Composite key as facility:path (e.g., "tcv:/home/codes")
+        required: true
+      path:
         description: Absolute filesystem path to seed
         required: true
       category:
@@ -1271,8 +1284,11 @@ classes:
     description: An MDSplus data server (internal name only, no IP)
     class_uri: facility:MDSplusServer
     attributes:
-      hostname:
+      id:
         identifier: true
+        description: Composite key as facility:hostname (e.g., "tcv:tcvdata")
+        required: true
+      hostname:
         description: Server name (e.g., "tcvdata", not IP address)
         required: true
       facility_id:
@@ -1293,12 +1309,13 @@ classes:
       Examples: MDSplus tree, XML archive, HDF5 store, IMAS IDS.
     class_uri: facility:DataSource
     attributes:
-      name:
+      id:
         identifier: true
+        description: Composite key as facility:name (e.g., "tcv:results")
+        required: true
+      name:
         description: Data source name (e.g., "tcv_shot", "results", "device_xml")
         required: true
-      id:
-        description: Composite key as facility:name (e.g., "tcv:results")
       facility_id:
         description: Parent facility ID
         required: true
@@ -1497,9 +1514,10 @@ classes:
         value: "data_node_text:description,canonical_path"
     attributes:
       id:
-        description: Composite identifier for graph queries (e.g., facility:tree:path)
-      path:
         identifier: true
+        description: Composite identifier (e.g., "tcv:results:\\RESULTS::LIUQE:PSI")
+        required: true
+      path:
         description: Full node path (e.g., "\\RESULTS::LIUQE:PSI")
         required: true
       data_source_name:
@@ -1873,8 +1891,11 @@ classes:
       consistent grouping and wiki cross-referencing.
     class_uri: facility:Diagnostic
     attributes:
-      name:
+      id:
         identifier: true
+        description: Composite key as facility:name (e.g., "tcv:thomson_scattering")
+        required: true
+      name:
         description: >-
           Canonical lowercase diagnostic name (e.g., "thomson_scattering",
           "cxrs", "bolometer"). Used as grouping key across case variants.
@@ -2391,8 +2412,11 @@ classes:
     mixins:
       - COCOSMixin
     attributes:
-      name:
+      id:
         identifier: true
+        description: Composite key as facility:name (e.g., "tcv:LIUQE")
+        required: true
+      name:
         description: Code name (e.g., "LIUQE", "ASTRA", "TORAY")
         required: true
       facility_id:
@@ -2498,6 +2522,23 @@ classes:
           IMAS DD v4.x, 11 for DD v3.x. When cocos_source != cocos_target,
           the transformation must include COCOS conversion factors.
         range: integer
+
+      # Executable transform
+      transform_code:
+        description: >-
+          Python expression to transform source value to target value.
+          Evaluated with 'value' as input variable. Access to math, numpy,
+          and imas_codex.cocos/units functions.
+          Simple: "value" (identity), "value * 1e-3" (scale), "-value" (sign flip).
+          Complex: "transform_equilibrium(value, cocos_in=2, cocos_out=17)".
+          The metadata fields (units_in/out, cocos_source/target, scale) document
+          what the transform does; this field is the executable implementation.
+      source_property:
+        description: >-
+          Name of the property on the source DataNode to extract.
+          E.g., "r", "z", "dr", "dz", "turnsperelement", "description".
+          When source DataNode has multiple properties, this identifies
+          which one this mapping applies to.
       
       # Validation and provenance
       validated:
@@ -2566,6 +2607,60 @@ classes:
       created_at:
         description: When this evidence was created
         range: datetime
+
+  IDSRecipe:
+    description: >-
+      Structural assembly recipe for composing an IMAS IDS from graph data.
+      Defines how DataNodes group into array-of-structures entries and links
+      to IMASMapping nodes for field-level transformations.
+      Example Cypher: MATCH (r:IDSRecipe {facility_id: 'jet', ids_name: 'pf_active'})
+                      -[:INCLUDES_MAPPING]->(m:IMASMapping)-[:TARGET_PATH]->(ip:IMASPath)
+                      RETURN r.id, m.id, ip.id
+    class_uri: facility:IDSRecipe
+    attributes:
+      id:
+        identifier: true
+        description: Composite key, e.g. "jet:pf_active"
+        required: true
+      facility_id:
+        description: Parent facility ID
+        required: true
+        range: Facility
+        annotations:
+          relationship_type: AT_FACILITY
+      ids_name:
+        description: IMAS IDS name (e.g., "pf_active", "magnetics")
+        required: true
+      dd_version:
+        description: IMAS DD version this recipe targets (e.g., "4.1.1")
+        required: true
+      status:
+        description: Recipe lifecycle status
+        range: IDSRecipeStatus
+        required: true
+      provider:
+        description: Provider string for ids_properties.provider
+      assembly_config:
+        description: >-
+          Structural assembly rules (JSON). Defines how DataNodes group into
+          array-of-structures entries, how array properties fan out, and how
+          multiple sources merge. Field transformations come from IMASMapping nodes.
+      includes_mapping:
+        description: IMASMapping nodes used by this recipe
+        range: IMASMapping
+        multivalued: true
+        inlined: false
+        annotations:
+          relationship_type: INCLUDES_MAPPING
+      uses_source:
+        description: DataSource nodes this recipe reads from
+        range: DataSource
+        multivalued: true
+        inlined: false
+        annotations:
+          relationship_type: USES_SOURCE
+      description:
+        description: Human-readable description of this recipe
 
   AgentSession:
     description: >-
