@@ -2015,10 +2015,10 @@ class TestMCFGPersist:
         assert hall_dns[0]["jpf_name"] == "DA/C2-HX01"
         assert hall_dns[0]["system"] == "MP"
 
-    def test_persist_creates_same_sensor_crossref(self):
-        """SAME_SENSOR relationships link MCFG → JEC2020 by R,Z proximity."""
+    def test_persist_creates_matches_sensor_crossref(self):
+        """MATCHES_SENSOR relationships link MCFG → JEC2020 by R,Z proximity."""
         _, _, queries = self._run_persist()
-        xref_queries = [(q, kw) for q, kw in queries if "SAME_SENSOR" in q]
+        xref_queries = [(q, kw) for q, kw in queries if "MATCHES_SENSOR" in q]
         assert len(xref_queries) == 1
         # Verify it matches on R,Z tolerance < 0.001m
         assert "abs(mcfg.r - jec.r) < 0.001" in xref_queries[0][0]

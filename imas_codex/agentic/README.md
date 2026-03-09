@@ -112,7 +112,7 @@ python("print(x * 2)")  # prints 84
 
 # Complex multi-step workflow
 python("""
-paths = query('MATCH (t:DataNode {tree_name: \"results\"}) RETURN t.path LIMIT 10')
+paths = query('MATCH (t:DataNode {data_source_name: \"results\"}) RETURN t.path LIMIT 10')
 for p in paths:
     print(p['t.path'])
 """)

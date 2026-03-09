@@ -245,7 +245,7 @@ def _update_facility_path_status(
         SET p.status = 'explored',
             p.last_ingested_at = datetime(),
             p.files_ingested = coalesce(p.files_ingested, 0) + 1
-        MERGE (p)-[:PRODUCED]->(e)
+        MERGE (p)-[:HAS_EXAMPLE]->(e)
         """,
         facility=facility,
         source_file=source_file,
@@ -524,12 +524,12 @@ async def ingest_files(
                         graph_client, facility, meta["source_file"], example_id
                     )
 
-                    # Link CodeFile → PRODUCED → CodeExample
+                    # Link CodeFile → HAS_EXAMPLE → CodeExample
                     graph_client.query(
                         """
                         MATCH (cf:CodeFile {id: $cf_id})
                         MATCH (ce:CodeExample {id: $ce_id})
-                        MERGE (cf)-[:PRODUCED]->(ce)
+                        MERGE (cf)-[:HAS_EXAMPLE]->(ce)
                         """,
                         cf_id=from_file_id,
                         ce_id=example_id,

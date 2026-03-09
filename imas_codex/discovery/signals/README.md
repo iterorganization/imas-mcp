@@ -214,7 +214,7 @@ Summary:
     physics_domain: "magnetics",
     name: "IP",
     accessor: "data(\\results::ip)",
-    tree_name: "results",
+    data_source_name: "results",
     node_path: "\\results::ip",
     status: "checked",
     epoch_id: "tcv:results:v3",  // Links to StructuralEpoch
@@ -226,7 +226,7 @@ Summary:
 (:StructuralEpoch {
     id: "tcv:results:v3",
     facility_id: "tcv",
-    tree_name: "results",
+    data_source_name: "results",
     version: 3,
     first_shot: 45000,
     last_shot: 79999,

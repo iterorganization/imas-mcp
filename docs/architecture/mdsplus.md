@@ -37,7 +37,7 @@ Each DataNode has:
 (:DataNode {
     id: "tcv:results:\\RESULTS::PSI",
     path: "\\RESULTS::PSI",
-    tree_name: "results",
+    data_source_name: "results",
     facility_id: "tcv",
     parent_path: "\\RESULTS",
     units: "Wb",
@@ -90,7 +90,7 @@ RETURN n.path, n.units
 
 ```cypher
 -- What nodes existed at shot 50000?
-MATCH (n:DataNode {tree_name: "results", facility_id: "tcv"})
+MATCH (n:DataNode {data_source_name: "results", facility_id: "tcv"})
 WHERE n.first_shot <= 50000 
   AND (n.last_shot IS NULL OR n.last_shot > 50000)
 RETURN n.path, n.description

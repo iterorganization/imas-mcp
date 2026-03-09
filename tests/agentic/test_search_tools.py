@@ -68,7 +68,6 @@ _SIGNAL_ENRICHMENT_IP = {
     "example_shot": 84000,
     "node_path": "\\RESULTS::I_P",
     "accessor": "MDSplus",
-    "tree_name": "tcv_shot",
     "diagnostic_name": "magnetics",
     "diagnostic_category": "magnetics",
     "tree_path": "\\RESULTS::I_P",
@@ -96,7 +95,6 @@ _SIGNAL_ENRICHMENT_BPOL = {
     "example_shot": None,
     "node_path": None,
     "accessor": None,
-    "tree_name": None,
     "diagnostic_name": "magnetics",
     "diagnostic_category": "magnetics",
     "tree_path": None,
@@ -392,7 +390,7 @@ class TestFormatSignalsReport:
         assert "magnetics" in result
         assert "Data access" in result
         assert "IMAS mapping" in result
-        assert "Tree node" in result
+        assert "Data node" in result
 
     def test_legacy_flat_format_backward_compat(self):
         """Legacy flat access format still works (backward compat)."""
@@ -458,7 +456,6 @@ class TestFormatSignalsReport:
                 "diagnostic_category": None,
                 "node_path": None,
                 "accessor": None,
-                "tree_name": None,
                 "tree_path": None,
                 "data_source_name": None,
                 "access_methods": [
@@ -493,7 +490,6 @@ class TestFormatSignalsReport:
                 "diagnostic_category": None,
                 "node_path": None,
                 "accessor": None,
-                "tree_name": None,
                 "tree_path": None,
                 "data_source_name": None,
                 "access_methods": [
@@ -1498,21 +1494,24 @@ class TestInterpolateTemplate:
     """Tests for _interpolate_template in the formatter."""
 
     def test_node_path_substitution(self):
-        sig = {"node_path": "\\RESULTS::I_P", "accessor": None, "tree_name": None}
+        sig = {
+            "node_path": "\\RESULTS::I_P",
+            "accessor": None,
+            "data_source_name": None,
+        }
         result = _interpolate_template("getNode('{node_path}')", sig)
         assert result == "getNode('\\RESULTS::I_P')"
 
     def test_accessor_substitution(self):
-        sig = {"node_path": None, "accessor": "MDSplus", "tree_name": None}
+        sig = {"node_path": None, "accessor": "MDSplus", "data_source_name": None}
         result = _interpolate_template("Use {accessor} library", sig)
         assert result == "Use MDSplus library"
 
-    def test_data_source_from_tree_name(self):
+    def test_data_source_from_data_source_name_primary(self):
         sig = {
             "node_path": None,
             "accessor": None,
-            "tree_name": "tcv_shot",
-            "data_source_name": None,
+            "data_source_name": "tcv_shot",
         }
         result = _interpolate_template("Tree('{data_source}', shot)", sig)
         assert result == "Tree('tcv_shot', shot)"
@@ -1521,7 +1520,6 @@ class TestInterpolateTemplate:
         sig = {
             "node_path": None,
             "accessor": None,
-            "tree_name": None,
             "data_source_name": "tcv_shot",
         }
         result = _interpolate_template("Tree('{data_source}', shot)", sig)
@@ -1529,13 +1527,13 @@ class TestInterpolateTemplate:
 
     def test_shot_placeholder_preserved(self):
         """The {shot} placeholder should NOT be substituted."""
-        sig = {"node_path": None, "accessor": None, "tree_name": None}
+        sig = {"node_path": None, "accessor": None, "data_source_name": None}
         result = _interpolate_template("Tree('tree', {shot})", sig)
         assert result == "Tree('tree', {shot})"
 
     def test_missing_values_kept(self):
         """Placeholders with no matching data are kept as-is."""
-        sig = {"node_path": None, "accessor": None, "tree_name": None}
+        sig = {"node_path": None, "accessor": None, "data_source_name": None}
         result = _interpolate_template("{node_path}", sig)
         assert result == "{node_path}"
 
@@ -1544,7 +1542,7 @@ class TestInterpolateTemplate:
         sig = {
             "node_path": "\\IP",
             "accessor": "MDSplus",
-            "tree_name": "tcv_shot",
+            "data_source_name": "tcv_shot",
         }
         template = (
             "t = {accessor}.Tree('{data_source}', shot)\nn = t.getNode('{node_path}')"

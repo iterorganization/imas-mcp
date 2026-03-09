@@ -142,7 +142,13 @@ class TestConstraints:
 
 
 class TestRequiredFields:
-    """Verify required fields are populated on all nodes."""
+    """Verify required fields are populated on all nodes.
+
+    Lifecycle note: fields populated by pipeline stages after node creation
+    (e.g. enrichment, scoring) should NOT be marked ``required: true`` in
+    the LinkML schema.  Instead, make them optional and validate completeness
+    via status-scoped queries (e.g. only check enriched nodes for physics_domain).
+    """
 
     def test_required_fields_present(self, graph_client, schema, graph_labels):
         """Required fields must not be null on any node."""
