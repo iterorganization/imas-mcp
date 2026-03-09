@@ -2776,6 +2776,13 @@ classes:
       ingested_at:
         description: Timestamp when this was ingested
         range: datetime
+      embedding:
+        description: Vector embedding of description for semantic search
+        multivalued: true
+        range: float
+      embedded_at:
+        description: When the embedding was last computed
+        range: datetime
 
   SourceFile:
     deprecated: >-
