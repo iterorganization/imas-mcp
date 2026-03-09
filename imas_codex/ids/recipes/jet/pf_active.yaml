@@ -1,0 +1,87 @@
+# JET pf_active IDS recipe
+#
+# Assembles a complete pf_active IDS from DataNode graph data.
+# Data sources: device_xml (PF coils + circuits), jec2020_geometry (names)
+#
+# Usage:
+#   imas-codex ids export jet pf_active --epoch p68613
+
+ids_name: pf_active
+facility_id: jet
+dd_version: "4.1.1"
+provider: "imas-codex/jet-device-xml"
+
+static:
+  ids_properties.homogeneous_time: 0
+  ids_properties.comment: >-
+    JET PF active coil system assembled from EFIT++ device XML geometry
+    and JEC2020 reference data by imas-codex.
+
+# Struct-array assemblies: each key maps to a top-level struct array in the IDS
+arrays:
+  coil:
+    # Each DataNode = one coil. Properties r[], z[], dr[], dz[] are arrays
+    # that define the elements within that coil.
+    source:
+      query: |
+        MATCH (d:DataNode {
+          facility_id: $facility,
+          data_source_name: 'device_xml',
+          system: 'PF'
+        })
+        WHERE d.introduced_version = $epoch_id
+        RETURN d.path AS path,
+               d.r AS r, d.z AS z,
+               d.dr AS dr, d.dz AS dz,
+               d.turnsperelement AS turnsperelement,
+               d.description AS description
+        ORDER BY toInteger(split(d.path, ':')[4])
+      index_field: path  # Extract array index from path suffix
+
+    # Enrichment: jec2020 provides human-readable coil names
+    enrichment:
+      query: |
+        MATCH (d:DataNode {
+          facility_id: $facility,
+          data_source_name: 'jec2020_geometry',
+          system: 'PF'
+        })
+        RETURN d.path AS path,
+               d.description AS name,
+               d.turnCount AS turn_count
+        ORDER BY toInteger(split(d.path, ':')[3])
+      match_by: coil_index  # Match by coil index extracted from path
+
+    # Field mappings: graph property -> IDS path (relative to each coil)
+    fields:
+      name: name  # from enrichment, fallback to device_xml description
+
+    # Elements: create array-of-structures from array properties
+    elements:
+      # Each coil has r[], z[], dr[], dz[] arrays -> one element per entry
+      geometry_type: 2  # rectangle
+      fields:
+        geometry.rectangle.r: r
+        geometry.rectangle.z: z
+        geometry.rectangle.width: dr
+        geometry.rectangle.height: dz
+        turns_with_sign: turnsperelement  # scalar applied to all elements
+
+  circuit:
+    source:
+      query: |
+        MATCH (d:DataNode {
+          facility_id: $facility,
+          data_source_name: 'device_xml',
+          system: 'CI'
+        })
+        WHERE d.introduced_version = $epoch_id
+        RETURN d.path AS path,
+               d.description AS description,
+               d.coil_connect AS coil_connect,
+               d.supply_connect AS supply_connect
+        ORDER BY toInteger(split(d.path, ':')[4])
+      index_field: path
+
+    fields:
+      name: description

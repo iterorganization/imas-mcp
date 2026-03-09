@@ -233,6 +233,18 @@ enums:
       budget_exhausted:
         description: Session stopped because cost limit was reached
 
+  IDSRecipeStatus:
+    description: Lifecycle status for IDS assembly recipes
+    permissible_values:
+      draft:
+        description: Recipe is being developed, may have incomplete field mappings
+      complete:
+        description: Recipe covers all available fields, ready for export
+      validated:
+        description: Exported IDS has been validated against reference data
+      stale:
+        description: Underlying graph data has changed, recipe needs update
+
   PopulationType:
     description: How tree nodes are populated with data
     permissible_values:
@@ -2429,6 +2441,98 @@ classes:
       supersedes:
         description: Previous version of this code it replaces
         range: AnalysisCode
+
+# =============================================================================
+# IDS Assembly Classes
+# =============================================================================
+
+  IDSRecipe:
+    description: >-
+      A recipe for assembling a complete IMAS IDS from facility graph data.
+      Each recipe targets one IDS for one facility and links to the data
+      sources that contribute and the DD paths that are covered.
+
+      The assembly logic is defined in YAML recipe files under
+      imas_codex/mappings/ids_recipes/. The graph node tracks metadata
+      and completeness for discovery and export workflows.
+
+      Query patterns:
+        # What IDSs can we produce?
+        MATCH (r:IDSRecipe {facility_id: 'jet'})
+        RETURN r.ids_name, r.completeness, r.status
+
+        # Which sources contribute to pf_active?
+        MATCH (r:IDSRecipe {id: 'jet:pf_active'})-[:USES_SOURCE]->(ds:DataSource)
+        RETURN ds.name, ds.source_type
+
+        # Which DD paths are covered?
+        MATCH (r:IDSRecipe {id: 'jet:pf_active'})-[:COVERS]->(ip:IMASPath)
+        RETURN ip.id, ip.documentation
+    class_uri: facility:IDSRecipe
+    attributes:
+      id:
+        identifier: true
+        description: "Composite key: facility:ids_name (e.g., 'jet:pf_active')"
+        required: true
+      facility_id:
+        description: Parent facility
+        required: true
+        range: Facility
+        annotations:
+          relationship_type: AT_FACILITY
+      ids_name:
+        description: "IMAS IDS name (e.g., 'pf_active', 'magnetics', 'wall')"
+        required: true
+      dd_version:
+        description: Target DD version for this recipe
+        required: true
+      status:
+        description: Recipe lifecycle status
+        range: IDSRecipeStatus
+        required: true
+      completeness:
+        description: >-
+          Fraction of required IDS fields covered by this recipe (0.0-1.0).
+          Computed by comparing covered IMASPaths against total required paths.
+        range: float
+      description:
+        description: Human-readable description of what this recipe produces
+      provider:
+        description: "Provider string written to ids_properties.provider"
+      recipe_file:
+        description: "Path to YAML recipe file relative to mappings/ids_recipes/"
+      epoch_count:
+        description: Number of structural epochs this recipe covers
+        range: integer
+      first_epoch_shot:
+        description: First shot number covered by this recipe
+        range: integer
+      last_epoch_shot:
+        description: Last shot covered (null = current)
+        range: integer
+      uses_source:
+        description: DataSources contributing data to this recipe
+        range: DataSource
+        multivalued: true
+        inlined: false
+        annotations:
+          relationship_type: USES_SOURCE
+      covers:
+        description: IMASPaths populated by this recipe
+        range: IMASPath
+        multivalued: true
+        inlined: false
+        annotations:
+          relationship_type: COVERS
+      created_at:
+        description: When this recipe was created
+        range: datetime
+      updated_at:
+        description: When this recipe was last updated
+        range: datetime
+      last_exported_at:
+        description: When an IDS was last exported from this recipe
+        range: datetime
 
 # =============================================================================
 # IMAS Mapping Classes
