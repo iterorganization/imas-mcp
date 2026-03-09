@@ -94,7 +94,7 @@ def query_jec2020_limiter() -> dict | None:
         results = list(
             gc.query(
                 """
-                MATCH (dn:DataNode {path: 'jet:jec2020:limiter'})
+                MATCH (dn:DataNode {id: 'jet:jec2020:limiter'})
                 RETURN dn.r_contour AS r, dn.z_contour AS z, dn.n_points AS n_points
                 """
             )

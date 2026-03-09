@@ -570,8 +570,8 @@ def migrate_schema_relationships(
                 name, fid = tree["name"], tree["fid"]
                 # Find or create DataSource node (param-bound avoids label scan)
                 ds = client.query(
-                    "MATCH (ds:DataSource) WHERE ds.name = $name "
-                    "AND ds.facility_id = $fid RETURN elementId(ds) AS eid",
+                    "MATCH (ds:DataSource {id: $fid + ':' + $name}) "
+                    "RETURN elementId(ds) AS eid",
                     name=name,
                     fid=fid,
                 )

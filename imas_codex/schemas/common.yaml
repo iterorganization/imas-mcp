@@ -715,9 +715,12 @@ classes:
       enabling queries like "find all paths (IMAS or facility) using Weber".
     class_uri: common:Unit
     attributes:
-      symbol:
+      id:
         identifier: true
         description: Unit symbol (e.g., "Wb", "m.s^-1", "eV", "A")
+        required: true
+      symbol:
+        description: Unit symbol, same as id
         required: true
       name:
         description: Human-readable name (e.g., "Weber", "meters per second")

@@ -200,6 +200,7 @@ def ingest_tree_nodes(
         path = node["path"]
         prepared.append(
             {
+                "id": f"{facility_id}:{tree_name}:{path}",
                 "path": path,
                 "data_source_name": tree_name,
                 "facility_id": facility_id,
@@ -219,7 +220,7 @@ def ingest_tree_nodes(
             client.query(
                 """
                 UNWIND $batch AS item
-                MERGE (n:DataNode {path: item.path})
+                MERGE (n:DataNode {id: item.id})
                 SET n += item
                 WITH n, item
                 MATCH (f:Facility {id: item.facility_id})
@@ -236,8 +237,8 @@ def ingest_tree_nodes(
             MATCH (n:DataNode {data_source_name: $tree_name})
             WITH n
             MATCH (f:Facility {id: n.facility_id})
-            MERGE (ds:DataSource {name: $tree_name})
-            ON CREATE SET ds.facility_id = n.facility_id
+            MERGE (ds:DataSource {id: n.facility_id + ':' + $tree_name})
+            ON CREATE SET ds.facility_id = n.facility_id, ds.name = $tree_name
             MERGE (ds)-[:AT_FACILITY]->(f)
             MERGE (n)-[:IN_DATA_SOURCE]->(ds)
             """,
@@ -247,13 +248,14 @@ def ingest_tree_nodes(
         # Update DataSource stats
         client.query(
             """
-            MATCH (ds:DataSource {name: $tree_name})
+            MATCH (ds:DataSource {id: $facility_id + ':' + $tree_name})
             SET ds.node_count_ingested = $count,
                 ds.ingestion_status = 'ingested',
                 ds.reference_shot = $shot,
                 ds.last_ingested = datetime()
             """,
             tree_name=tree_name,
+            facility_id=facility_id,
             count=len(prepared),
             shot=shot,
         )

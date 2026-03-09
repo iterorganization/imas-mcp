@@ -206,8 +206,9 @@ def _persist_graph_nodes(
         # 1. Create DataSource
         gc.query(
             """
-            MERGE (ds:DataSource {name: $name})
+            MERGE (ds:DataSource {id: $facility + ':' + $name})
             ON CREATE SET
+                ds.name = $name,
                 ds.facility_id = $facility,
                 ds.source_type = $source_type,
                 ds.source_format = $source_format,
@@ -294,7 +295,7 @@ def _persist_graph_nodes(
                 MATCH (f:Facility {id: rec.facility_id})
                 MERGE (se)-[:AT_FACILITY]->(f)
                 WITH se, rec
-                MERGE (ds:DataSource {name: rec.data_source_name})
+                MERGE (ds:DataSource {id: rec.facility_id + ':' + rec.data_source_name})
                 MERGE (se)-[:IN_DATA_SOURCE]->(ds)
                 """,
                 records=epoch_records,
@@ -409,17 +410,19 @@ def _persist_graph_nodes(
 
             # Batch create DataNodes
             if data_nodes:
-                gc.create_nodes("DataNode", data_nodes, id_field="path", batch_size=100)
+                for dn in data_nodes:
+                    dn["id"] = dn["path"]
+                gc.create_nodes("DataNode", data_nodes, batch_size=100)
                 stats["data_nodes"] += len(data_nodes)
 
                 # Create INTRODUCED_IN relationships (DataNode → StructuralEpoch)
                 intro_records = [
-                    {"path": dn["path"], "epoch_id": epoch_id} for dn in data_nodes
+                    {"id": dn["id"], "epoch_id": epoch_id} for dn in data_nodes
                 ]
                 gc.query(
                     """
                     UNWIND $records AS rec
-                    MATCH (dn:DataNode {path: rec.path})
+                    MATCH (dn:DataNode {id: rec.id})
                     MATCH (se:StructuralEpoch {id: rec.epoch_id})
                     MERGE (dn)-[:INTRODUCED_IN]->(se)
                     """,
@@ -498,7 +501,9 @@ def _persist_graph_nodes(
                 )
 
         if limiter_nodes:
-            gc.create_nodes("DataNode", limiter_nodes, id_field="path", batch_size=50)
+            for dn in limiter_nodes:
+                dn["id"] = dn["path"]
+            gc.create_nodes("DataNode", limiter_nodes, batch_size=50)
             stats["limiter_nodes"] = len(limiter_nodes)
 
         # 4b. Create USES_LIMITER relationships (StructuralEpoch → limiter DataNode)
@@ -538,7 +543,7 @@ def _persist_graph_nodes(
                 """
                 UNWIND $records AS rec
                 MATCH (se:StructuralEpoch {id: rec.epoch_id})
-                MATCH (dn:DataNode {path: rec.limiter_path})
+                MATCH (dn:DataNode {id: rec.limiter_path})
                 MERGE (se)-[:USES_LIMITER]->(dn)
                 """,
                 records=uses_limiter_records,
@@ -549,14 +554,12 @@ def _persist_graph_nodes(
             signal_dicts = [
                 s.model_dump(exclude_none=True) for s in all_signals.values()
             ]
-            gc.create_nodes(
-                "FacilitySignal", signal_dicts, id_field="id", batch_size=100
-            )
+            gc.create_nodes("FacilitySignal", signal_dicts, batch_size=100)
             stats["signals"] = len(signal_dicts)
 
         # 6. Persist DataAccess node
         da = _build_data_access(facility, config)
-        gc.create_nodes("DataAccess", [da.model_dump(exclude_none=True)], id_field="id")
+        gc.create_nodes("DataAccess", [da.model_dump(exclude_none=True)])
 
     return stats
 
@@ -642,8 +645,9 @@ def _persist_jec2020_nodes(
         # 1. Create DataSource
         gc.query(
             """
-            MERGE (ds:DataSource {name: $name})
+            MERGE (ds:DataSource {id: $facility + ':' + $name})
             ON CREATE SET
+                ds.name = $name,
                 ds.facility_id = $facility,
                 ds.source_type = $source_type,
                 ds.source_format = $source_format,
@@ -731,7 +735,9 @@ def _persist_jec2020_nodes(
                         discovery_source="jec2020_xml",
                     )
 
-            gc.create_nodes("DataNode", probe_nodes, id_field="path", batch_size=100)
+            for dn in probe_nodes:
+                dn["id"] = dn["path"]
+            gc.create_nodes("DataNode", probe_nodes, batch_size=100)
             stats["probes"] = len(probe_nodes)
 
         # 3. Flux loops
@@ -784,7 +790,9 @@ def _persist_jec2020_nodes(
                         discovery_source="jec2020_xml",
                     )
 
-            gc.create_nodes("DataNode", loop_nodes, id_field="path", batch_size=100)
+            for dn in loop_nodes:
+                dn["id"] = dn["path"]
+            gc.create_nodes("DataNode", loop_nodes, batch_size=100)
             stats["flux_loops"] = len(loop_nodes)
 
         # 4. PF coils
@@ -847,7 +855,9 @@ def _persist_jec2020_nodes(
                         discovery_source="jec2020_xml",
                     )
 
-            gc.create_nodes("DataNode", coil_nodes, id_field="path", batch_size=100)
+            for dn in coil_nodes:
+                dn["id"] = dn["path"]
+            gc.create_nodes("DataNode", coil_nodes, batch_size=100)
             stats["pf_coils"] = len(coil_nodes)
 
         # 5. PF circuits
@@ -876,7 +886,9 @@ def _persist_jec2020_nodes(
 
                 circuit_nodes.append(dn)
 
-            gc.create_nodes("DataNode", circuit_nodes, id_field="path", batch_size=50)
+            for dn in circuit_nodes:
+                dn["id"] = dn["path"]
+            gc.create_nodes("DataNode", circuit_nodes, batch_size=50)
             stats["pf_circuits"] = len(circuit_nodes)
 
             # Create COIL_IN_CIRCUIT relationships
@@ -895,8 +907,8 @@ def _persist_jec2020_nodes(
                 gc.query(
                     """
                     UNWIND $records AS rec
-                    MATCH (circuit:DataNode {path: rec.circuit_path})
-                    MATCH (coil:DataNode {path: rec.coil_path})
+                    MATCH (circuit:DataNode {id: rec.circuit_path})
+                    MATCH (coil:DataNode {id: rec.coil_path})
                     MERGE (coil)-[:IN_CIRCUIT]->(circuit)
                     """,
                     records=coil_circuit_records,
@@ -933,7 +945,8 @@ def _persist_jec2020_nodes(
                 if iron_data.get("boundary_length"):
                     iron_node["boundary_length"] = iron_data["boundary_length"]
 
-                gc.create_nodes("DataNode", [iron_node], id_field="path")
+                iron_node["id"] = iron_node["path"]
+                gc.create_nodes("DataNode", [iron_node])
                 stats["iron_segments"] = len(r_vals)
 
                 sig_id = f"{facility}:magnetic_field_diagnostics/jec2020_iron_boundary"
@@ -979,7 +992,8 @@ def _persist_jec2020_nodes(
                     "z_contour": z_vals,
                     "n_points": len(r_vals),
                 }
-                gc.create_nodes("DataNode", [limiter_node], id_field="path")
+                limiter_node["id"] = limiter_node["path"]
+                gc.create_nodes("DataNode", [limiter_node])
                 stats["limiter_points"] = len(r_vals)
 
                 sig_id = f"{facility}:magnetic_field_diagnostics/jec2020_limiter"
@@ -1004,8 +1018,8 @@ def _persist_jec2020_nodes(
                 # Create SAME_GEOMETRY link to device_xml limiter if it exists
                 gc.query(
                     """
-                    MATCH (jec:DataNode {path: $jec_path})
-                    MATCH (dx:DataNode {path: $dx_path})
+                    MATCH (jec:DataNode {id: $jec_path})
+                    MATCH (dx:DataNode {id: $dx_path})
                     MERGE (jec)-[:SAME_GEOMETRY]->(dx)
                     """,
                     jec_path=f"{facility}:jec2020:limiter",
@@ -1017,13 +1031,11 @@ def _persist_jec2020_nodes(
             signal_dicts = [
                 s.model_dump(exclude_none=True) for s in all_signals.values()
             ]
-            gc.create_nodes(
-                "FacilitySignal", signal_dicts, id_field="id", batch_size=100
-            )
+            gc.create_nodes("FacilitySignal", signal_dicts, batch_size=100)
 
         # 9. Persist DataAccess
         da = _build_jec2020_data_access(facility, base_dir)
-        gc.create_nodes("DataAccess", [da.model_dump(exclude_none=True)], id_field="id")
+        gc.create_nodes("DataAccess", [da.model_dump(exclude_none=True)])
 
     stats["signals"] = len(all_signals)
     return stats
@@ -1057,8 +1069,9 @@ def _persist_mcfg_nodes(
         # 1. Create DataSource
         gc.query(
             """
-            MERGE (ds:DataSource {name: $name})
+            MERGE (ds:DataSource {id: $facility + ':' + $name})
             ON CREATE SET
+                ds.name = $name,
                 ds.facility_id = $facility,
                 ds.source_type = $source_type,
                 ds.source_format = $source_format,
@@ -1112,7 +1125,9 @@ def _persist_mcfg_nodes(
 
                 coil_nodes.append(dn)
 
-            gc.create_nodes("DataNode", coil_nodes, id_field="path", batch_size=100)
+            for dn in coil_nodes:
+                dn["id"] = dn["path"]
+            gc.create_nodes("DataNode", coil_nodes, batch_size=100)
             stats["coil_sensors"] = len(coil_nodes)
 
         # 3. Hall probes
@@ -1143,7 +1158,9 @@ def _persist_mcfg_nodes(
                 }
                 hall_nodes.append(dn)
 
-            gc.create_nodes("DataNode", hall_nodes, id_field="path", batch_size=50)
+            for dn in hall_nodes:
+                dn["id"] = dn["path"]
+            gc.create_nodes("DataNode", hall_nodes, batch_size=50)
             stats["hall_probes"] = len(hall_nodes)
 
         # 4. Cross-reference MCFG ↔ JEC2020 sensors by R,Z proximity
@@ -1171,12 +1188,13 @@ def _persist_mcfg_nodes(
             # Store epoch count on DataSource
             gc.query(
                 """
-                MATCH (ds:DataSource {name: $name})
+                MATCH (ds:DataSource {id: $facility + ':' + $name})
                 SET ds.calibration_epoch_count = $count,
                     ds.first_calibration_shot = $first_shot,
                     ds.last_calibration_shot = $last_shot
                 """,
                 name=source_name,
+                facility=facility,
                 count=len(cal_epochs),
                 first_shot=cal_epochs[0]["first_shot"],
                 last_shot=cal_epochs[-1]["first_shot"],
@@ -1307,8 +1325,9 @@ def _persist_magnetics_config_nodes(
         # 1. Create DataSource
         gc.query(
             """
-            MERGE (ds:DataSource {name: $name})
+            MERGE (ds:DataSource {id: $facility + ':' + $name})
             ON CREATE SET
+                ds.name = $name,
                 ds.facility_id = $facility,
                 ds.source_type = $source_type,
                 ds.source_format = 'text',
@@ -1370,7 +1389,7 @@ def _persist_magnetics_config_nodes(
                 MATCH (f:Facility {id: rec.facility_id})
                 MERGE (se)-[:AT_FACILITY]->(f)
                 WITH se, rec
-                MERGE (ds:DataSource {name: rec.data_source_name})
+                MERGE (ds:DataSource {id: rec.facility_id + ':' + rec.data_source_name})
                 MERGE (se)-[:IN_DATA_SOURCE]->(ds)
                 """,
                 records=epoch_records,
@@ -1478,17 +1497,19 @@ def _persist_magnetics_config_nodes(
 
             # Batch create DataNodes
             if data_nodes:
-                gc.create_nodes("DataNode", data_nodes, id_field="path", batch_size=200)
+                for dn in data_nodes:
+                    dn["id"] = dn["path"]
+                gc.create_nodes("DataNode", data_nodes, batch_size=200)
                 stats["data_nodes"] += len(data_nodes)
 
                 # Create INTRODUCED_IN relationships
                 intro_records = [
-                    {"path": dn["path"], "epoch_id": epoch_id} for dn in data_nodes
+                    {"id": dn["id"], "epoch_id": epoch_id} for dn in data_nodes
                 ]
                 gc.query(
                     """
                     UNWIND $records AS rec
-                    MATCH (dn:DataNode {path: rec.path})
+                    MATCH (dn:DataNode {id: rec.id})
                     MATCH (se:StructuralEpoch {id: rec.epoch_id})
                     MERGE (dn)-[:INTRODUCED_IN]->(se)
                     """,
@@ -1500,14 +1521,12 @@ def _persist_magnetics_config_nodes(
             signal_dicts = [
                 s.model_dump(exclude_none=True) for s in all_signals.values()
             ]
-            gc.create_nodes(
-                "FacilitySignal", signal_dicts, id_field="id", batch_size=100
-            )
+            gc.create_nodes("FacilitySignal", signal_dicts, batch_size=100)
             stats["signals"] = len(signal_dicts)
 
         # 5. Persist DataAccess
         da = _build_magnetics_config_data_access(facility, base_dir)
-        gc.create_nodes("DataAccess", [da.model_dump(exclude_none=True)], id_field="id")
+        gc.create_nodes("DataAccess", [da.model_dump(exclude_none=True)])
 
         # 6. Cross-reference magnetics_config sensors ↔ JEC2020 probes by R,Z
         # Only for the latest config epoch (2002_01) which overlaps with JEC2020
@@ -1583,8 +1602,9 @@ def _persist_pf_coil_turns_nodes(
         # 1. Create DataSource
         gc.query(
             """
-            MERGE (ds:DataSource {name: $name})
+            MERGE (ds:DataSource {id: $facility + ':' + $name})
             ON CREATE SET
+                ds.name = $name,
                 ds.facility_id = $facility,
                 ds.source_type = $source_type,
                 ds.source_format = 'text',
@@ -1628,7 +1648,9 @@ def _persist_pf_coil_turns_nodes(
             data_nodes.append(dn)
 
         if data_nodes:
-            gc.create_nodes("DataNode", data_nodes, id_field="path", batch_size=50)
+            for dn in data_nodes:
+                dn["id"] = dn["path"]
+            gc.create_nodes("DataNode", data_nodes, batch_size=50)
             stats["coil_entries"] = len(data_nodes)
 
         # 3. Cross-reference to JEC2020 PF circuits by name prefix.
@@ -1647,7 +1669,7 @@ def _persist_pf_coil_turns_nodes(
               AND ct.facility_id = $facility
             WITH ct, m, split(ct.path, ':')[-1] AS coil_name
             WHERE coil_name STARTS WITH m.prefix
-            MATCH (circ:DataNode {path: m.circuit_id})
+            MATCH (circ:DataNode {id: m.circuit_id})
             MERGE (ct)-[:SAME_COMPONENT]->(circ)
             RETURN count(*) AS refs_created
             """,
@@ -1692,8 +1714,9 @@ def _persist_greens_table_nodes(
         # 1. Create DataSource
         gc.query(
             """
-            MERGE (ds:DataSource {name: $name})
+            MERGE (ds:DataSource {id: $facility + ':' + $name})
             ON CREATE SET
+                ds.name = $name,
                 ds.facility_id = $facility,
                 ds.source_type = $source_type,
                 ds.source_format = 'text',
@@ -1748,7 +1771,9 @@ def _persist_greens_table_nodes(
             data_nodes.append(dn)
 
         if data_nodes:
-            gc.create_nodes("DataNode", data_nodes, id_field="path", batch_size=50)
+            for dn in data_nodes:
+                dn["id"] = dn["path"]
+            gc.create_nodes("DataNode", data_nodes, batch_size=50)
             stats["versions"] = len(data_nodes)
 
         # 3. Link Greens table versions to StructuralEpoch nodes by shot overlap
@@ -1810,8 +1835,9 @@ def _persist_ppf_static_nodes(
         # 1. Create ppf_static DataSource
         gc.query(
             """
-            MERGE (ds:DataSource {name: $name})
+            MERGE (ds:DataSource {id: $facility + ':' + $name})
             ON CREATE SET
+                ds.name = $name,
                 ds.facility_id = $facility,
                 ds.source_type = $source_type,
                 ds.source_format = 'ppf',
@@ -1858,7 +1884,7 @@ def _persist_ppf_static_nodes(
             )
             da_nodes.append(da.model_dump())
 
-        gc.create_nodes("DataAccess", da_nodes, id_field="id", batch_size=50)
+        gc.create_nodes("DataAccess", da_nodes, batch_size=50)
         stats["data_access_nodes"] = len(da_nodes)
 
         # 3. Create ACCESSES_GEOMETRY cross-references to device_xml DataNodes
@@ -1870,7 +1896,7 @@ def _persist_ppf_static_nodes(
                 gc.query(
                     """
                     MATCH (da:DataAccess {id: $da_id})
-                    MATCH (dn:DataNode {path: $dx_path})
+                    MATCH (dn:DataNode {id: $dx_path})
                     MERGE (da)-[:ACCESSES_GEOMETRY]->(dn)
                     """,
                     da_id=da_id,
@@ -2506,7 +2532,7 @@ class DeviceXMLScanner:
                 # Check DataNode exists and has geometry values
                 rows = gc.query(
                     """
-                    MATCH (dn:DataNode {path: $path})
+                    MATCH (dn:DataNode {id: $path})
                     RETURN dn.r AS r, dn.z AS z, dn.path AS path
                     """,
                     path=dn_path,
