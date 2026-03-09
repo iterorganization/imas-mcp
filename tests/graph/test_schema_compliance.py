@@ -144,14 +144,35 @@ class TestConstraints:
 class TestRequiredFields:
     """Verify required fields are populated on all nodes.
 
-    Lifecycle note: fields populated by pipeline stages after node creation
-    (e.g. enrichment, scoring) should NOT be marked ``required: true`` in
-    the LinkML schema.  Instead, make them optional and validate completeness
-    via status-scoped queries (e.g. only check enriched nodes for physics_domain).
+    Lifecycle-aware: fields annotated with ``required_after: <status>``
+    are only checked on nodes that have reached that status or a later
+    terminal state.  This allows nodes in transient states (e.g.
+    ``discovered`` signals awaiting enrichment) to exist without the
+    field, while still enforcing the constraint on terminal nodes.
     """
 
+    # Map status enums to their lifecycle ordering.
+    # Statuses at or after the required_after value are "terminal enough".
+    _STATUS_ORDER: dict[str, list[str]] = {
+        "FacilitySignalStatus": [
+            "discovered",
+            "enriched",
+            "checked",
+            "skipped",
+            "failed",
+        ],
+    }
+
+    def _terminal_statuses(self, enum_name: str, after: str) -> list[str]:
+        """Return statuses at or after *after* in the lifecycle."""
+        order = self._STATUS_ORDER.get(enum_name)
+        if not order or after not in order:
+            return []
+        idx = order.index(after)
+        return order[idx:]
+
     def test_required_fields_present(self, graph_client, schema, graph_labels):
-        """Required fields must not be null on any node."""
+        """Required fields must not be null on any node (lifecycle-aware)."""
         violations = []
         for label in sorted(graph_labels):
             if label.startswith("_"):
@@ -163,19 +184,35 @@ class TestRequiredFields:
             if not required:
                 continue
 
+            slots = schema.get_all_slots(label)
+            # Determine the status enum for this label (if any)
+            status_slot = slots.get("status", {})
+            status_enum = status_slot.get("type") if status_slot else None
+
             for field_name in required:
+                slot_info = slots.get(field_name, {})
                 # Skip relationship fields (stored as edges, not properties)
-                slot_info = schema.get_all_slots(label).get(field_name, {})
                 if slot_info.get("relationship"):
                     continue
 
+                # Lifecycle scoping: only check nodes past the required_after status
+                required_after = slot_info.get("required_after")
+                status_filter = ""
+                if required_after and status_enum:
+                    terminal = self._terminal_statuses(status_enum, required_after)
+                    if terminal:
+                        quoted = ", ".join(f"'{s}'" for s in terminal)
+                        status_filter = f" AND n.status IN [{quoted}]"
+
                 result = graph_client.query(
-                    f"MATCH (n:{label}) WHERE n.{field_name} IS NULL "
+                    f"MATCH (n:{label}) WHERE n.{field_name} IS NULL"
+                    f"{status_filter} "
                     f"RETURN count(n) AS cnt"
                 )
                 count = result[0]["cnt"] if result else 0
                 if count > 0:
-                    violations.append(f"{label}.{field_name}: {count} null")
+                    scope = f" (status IN {terminal})" if status_filter else ""
+                    violations.append(f"{label}.{field_name}: {count} null{scope}")
 
         assert not violations, "Nodes with null required fields:\n  " + "\n  ".join(
             violations
