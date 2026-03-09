@@ -1,13 +1,21 @@
 """IDS assembly engine.
 
-Assembles complete IMAS IDS instances from facility graph data by reading
-YAML recipes that define source queries and field mappings, then querying
-the knowledge graph and populating imas-python IDS objects.
+Assembles complete IMAS IDS instances from facility graph data using two
+modes:
+
+1. **Graph-driven** (preferred): Reads IDSRecipe and IMASMapping nodes from
+   the knowledge graph. The IDSRecipe's assembly_config defines structural
+   patterns (how DataNodes group into array-of-structures entries), while
+   IMASMapping nodes define field-level transformations with executable
+   transform_code.
+
+2. **YAML recipe** (fallback): Reads a YAML recipe file with embedded Cypher
+   queries and field mappings. Used when no graph recipe exists.
 
 Architecture:
-    Recipe YAML → defines queries + field mappings (declarative)
-    Assembler   → reads recipe, queries graph, populates IDS (generic)
-    Builders    → per-IDS logic for complex transformations (specific)
+    IDSRecipe (graph) → structural assembly rules (JSON)
+    IMASMapping (graph) → field transforms with executable code
+    IDSAssembler → reads recipe, queries graph, populates IDS (generic)
 """
 
 from __future__ import annotations
@@ -19,6 +27,13 @@ from typing import Any
 import yaml
 
 from imas_codex.graph.client import GraphClient
+from imas_codex.ids.graph_ops import (
+    Recipe,
+    load_recipe,
+    select_enrichment_nodes,
+    select_nodes,
+)
+from imas_codex.ids.transforms import execute_transform, set_nested
 
 logger = logging.getLogger(__name__)
 
@@ -37,27 +52,35 @@ def _coil_index_from_path(path: str) -> int:
     return int(path.rsplit(":", 1)[-1])
 
 
-def _set_nested(obj: Any, dotted_path: str, value: Any) -> None:
-    """Set a value on an imas-python object using a dotted path.
+def _flatten_node(row: dict[str, Any]) -> dict[str, Any]:
+    """Flatten a graph query result that may wrap the node in a key.
 
-    Handles nested structures like 'geometry.rectangle.r' by traversing
-    getattr chain and setting the final attribute.
+    Graph queries returning ``RETURN d`` wrap properties in ``{"d": {...}}``.
+    This extracts the inner dict if present.
     """
-    parts = dotted_path.split(".")
-    current = obj
-    for part in parts[:-1]:
-        current = getattr(current, part)
-    setattr(current, parts[-1], value)
+    if len(row) == 1:
+        key = next(iter(row))
+        val = row[key]
+        if isinstance(val, dict):
+            return val
+    return dict(row)
 
 
 class IDSAssembler:
-    """Assembles IMAS IDS instances from graph data using YAML recipes.
+    """Assembles IMAS IDS instances from graph data.
+
+    Supports two modes:
+    - Graph-driven: Loads IDSRecipe + IMASMappings from the knowledge graph.
+    - YAML fallback: Loads a YAML recipe file with embedded queries.
+
+    Graph mode is used when an active IDSRecipe exists in the graph.
+    YAML mode is used as fallback when no graph recipe is found.
 
     Args:
         facility: Facility ID (e.g., 'jet').
         ids_name: IDS name (e.g., 'pf_active').
-        recipe_path: Optional explicit path to recipe YAML. If not given,
-            looks in recipes/{facility}/{ids_name}.yaml.
+        recipe_path: Optional explicit path to YAML recipe. If not given,
+            tries graph first, then recipes/{facility}/{ids_name}.yaml.
     """
 
     def __init__(
@@ -68,26 +91,71 @@ class IDSAssembler:
     ):
         self.facility = facility
         self.ids_name = ids_name
+        self._graph_recipe: Recipe | None = None
+        self._yaml_recipe: dict[str, Any] | None = None
 
-        if recipe_path is None:
-            recipe_path = RECIPES_DIR / facility / f"{ids_name}.yaml"
-        if not recipe_path.exists():
-            msg = f"No recipe found at {recipe_path}"
+        if recipe_path is not None:
+            # Explicit YAML path: use YAML mode
+            self._load_yaml_recipe(recipe_path)
+        else:
+            # Try graph first, fall back to YAML
+            try:
+                with GraphClient() as gc:
+                    self._graph_recipe = load_recipe(facility, ids_name, gc)
+            except Exception:
+                logger.debug("Graph recipe lookup failed, trying YAML", exc_info=True)
+
+            if self._graph_recipe is None:
+                yaml_path = RECIPES_DIR / facility / f"{ids_name}.yaml"
+                if yaml_path.exists():
+                    self._load_yaml_recipe(yaml_path)
+                else:
+                    msg = (
+                        f"No recipe found for {facility}/{ids_name} "
+                        f"(checked graph and {yaml_path})"
+                    )
+                    raise FileNotFoundError(msg)
+
+    def _load_yaml_recipe(self, path: Path) -> None:
+        if not path.exists():
+            msg = f"No recipe found at {path}"
             raise FileNotFoundError(msg)
+        self._yaml_recipe = yaml.safe_load(path.read_text())
+        self._validate_yaml_recipe()
 
-        self.recipe: dict[str, Any] = yaml.safe_load(recipe_path.read_text())
-        self._validate_recipe()
+    @property
+    def dd_version(self) -> str:
+        if self._graph_recipe:
+            return self._graph_recipe.dd_version
+        return self._yaml_recipe["dd_version"]
 
-    def _validate_recipe(self) -> None:
-        """Basic validation of recipe structure."""
+    @property
+    def recipe(self) -> dict[str, Any]:
+        """Access the raw YAML recipe dict (for backward compatibility)."""
+        if self._yaml_recipe is not None:
+            return self._yaml_recipe
+        # Synthesize a dict from graph recipe for compatibility
+        r = self._graph_recipe
+        return {
+            "ids_name": r.ids_name,
+            "facility_id": r.facility_id,
+            "dd_version": r.dd_version,
+            "provider": r.provider,
+        }
+
+    def _validate_yaml_recipe(self) -> None:
+        """Basic validation of YAML recipe structure."""
         required = {"ids_name", "facility_id", "dd_version"}
-        missing = required - set(self.recipe)
+        missing = required - set(self._yaml_recipe)
         if missing:
             msg = f"Recipe missing required fields: {missing}"
             raise ValueError(msg)
 
     def assemble(self, epoch: str) -> Any:
         """Build an IDS instance for the given epoch.
+
+        Dispatches to graph-driven or YAML-driven assembly based on
+        which recipe source is available.
 
         Args:
             epoch: Epoch version string (e.g., 'p68613' or full
@@ -96,6 +164,186 @@ class IDSAssembler:
         Returns:
             Populated imas-python IDSToplevel object.
         """
+        if self._graph_recipe is not None:
+            return self._assemble_from_graph(epoch)
+        return self._assemble_from_yaml(epoch)
+
+    # ------------------------------------------------------------------
+    # Graph-driven assembly
+    # ------------------------------------------------------------------
+
+    def _assemble_from_graph(self, epoch: str) -> Any:
+        """Assemble IDS using IDSRecipe and IMASMappings from graph."""
+        import imas
+
+        recipe = self._graph_recipe
+        epoch_id = _resolve_epoch_id(self.facility, epoch)
+
+        factory = imas.IDSFactory(recipe.dd_version)
+        ids = factory.new(self.ids_name)
+
+        # Set static properties from assembly_config
+        for key, value in recipe.assembly_config.get("static", {}).items():
+            set_nested(ids, key, value)
+
+        if recipe.provider:
+            ids.ids_properties.provider = str(recipe.provider)
+
+        # Build each structural section
+        with GraphClient() as gc:
+            for section_name, section_config in recipe.assembly_config.items():
+                if section_name == "static":
+                    continue
+                self._build_graph_section(
+                    ids, section_name, section_config, epoch_id, recipe, gc
+                )
+
+        return ids
+
+    def _build_graph_section(
+        self,
+        ids: Any,
+        section_name: str,
+        section_config: dict[str, Any],
+        epoch_id: str,
+        recipe: Recipe,
+        gc: GraphClient,
+    ) -> None:
+        """Build one struct-array section from graph data."""
+        nodes = select_nodes(self.facility, section_config, epoch_id, gc)
+        if not nodes:
+            logger.warning(
+                "No data for %s.%s epoch=%s", self.ids_name, section_name, epoch_id
+            )
+            return
+
+        # Flatten returned nodes (handle {d: {...}} wrapping)
+        flat_nodes = [_flatten_node(n) for n in nodes]
+
+        # Load enrichment if configured
+        enrichment: dict[int, dict[str, Any]] = {}
+        for enrich_def in section_config.get("enrichment", []):
+            enrichment.update(select_enrichment_nodes(self.facility, enrich_def, gc))
+
+        # Get mappings relevant to this section's target IDS path
+        section_mappings = [
+            m
+            for m in recipe.mappings
+            if m.target_imas_path.startswith(f"{self.ids_name}/{section_name}")
+        ]
+
+        struct_array = getattr(ids, section_name)
+        structure = section_config.get("structure", "array_per_node")
+
+        if structure == "array_per_node":
+            struct_array.resize(len(flat_nodes))
+            for i, node_data in enumerate(flat_nodes):
+                entry = struct_array[i]
+                idx = _coil_index_from_path(
+                    node_data.get("path", node_data.get("id", ""))
+                )
+                enriched = enrichment.get(idx, {})
+                merged = {**node_data, **enriched}
+                self._apply_mappings(entry, merged, section_mappings, section_name)
+
+                # Build sub-arrays (elements) if configured
+                elements_config = section_config.get("elements")
+                if elements_config:
+                    self._build_graph_elements(
+                        entry,
+                        node_data,
+                        enriched,
+                        elements_config,
+                        section_mappings,
+                        section_name,
+                    )
+
+    def _apply_mappings(
+        self,
+        entry: Any,
+        data: dict[str, Any],
+        mappings: list,
+        section_name: str,
+    ) -> None:
+        """Apply field-level mappings to a struct entry."""
+        for mapping in mappings:
+            # Strip the IDS prefix to get the path relative to this entry
+            # e.g., "pf_active/coil/name" -> "name"
+            rel_path = mapping.target_imas_path
+            prefix = f"{self.ids_name}/{section_name}/"
+            if rel_path.startswith(prefix):
+                rel_path = rel_path[len(prefix) :]
+            else:
+                continue
+
+            # Skip element-level mappings (handled by _build_graph_elements)
+            if "/element/" in mapping.target_imas_path:
+                continue
+
+            value = data.get(mapping.source_property)
+            if value is not None:
+                value = execute_transform(value, mapping.transform_code)
+                try:
+                    set_nested(entry, rel_path, value)
+                except (AttributeError, TypeError):
+                    logger.debug("Cannot set %s on %s", rel_path, type(entry).__name__)
+
+    def _build_graph_elements(
+        self,
+        coil: Any,
+        node_data: dict[str, Any],
+        enriched: dict[str, Any],
+        elements_config: dict[str, Any],
+        section_mappings: list,
+        section_name: str,
+    ) -> None:
+        """Build element sub-arrays from array properties."""
+        geometry_type = elements_config.get("geometry_type", 2)
+
+        # Find element-level mappings
+        element_prefix = f"{self.ids_name}/{section_name}/element/"
+        element_mappings = [
+            m for m in section_mappings if m.target_imas_path.startswith(element_prefix)
+        ]
+
+        # Determine element count from array properties
+        n_elements = 0
+        merged = {**node_data, **enriched}
+        for m in element_mappings:
+            val = merged.get(m.source_property)
+            if isinstance(val, list):
+                n_elements = max(n_elements, len(val))
+
+        if n_elements == 0:
+            n_elements = 1
+
+        coil.element.resize(n_elements)
+
+        for j in range(n_elements):
+            elem = coil.element[j]
+            elem.geometry.geometry_type = geometry_type
+
+            for m in element_mappings:
+                rel_path = m.target_imas_path[len(element_prefix) :]
+                val = merged.get(m.source_property)
+                if val is None:
+                    continue
+                if isinstance(val, list):
+                    element_val = val[j]
+                else:
+                    element_val = val
+                element_val = execute_transform(element_val, m.transform_code)
+                try:
+                    set_nested(elem, rel_path, float(element_val))
+                except (AttributeError, TypeError, ValueError):
+                    logger.debug("Cannot set %s on element", rel_path)
+
+    # ------------------------------------------------------------------
+    # YAML-driven assembly (backward compatibility)
+    # ------------------------------------------------------------------
+
+    def _assemble_from_yaml(self, epoch: str) -> Any:
+        """Build an IDS instance from YAML recipe (original implementation)."""
         import imas
 
         epoch_id = _resolve_epoch_id(self.facility, epoch)
@@ -106,7 +354,7 @@ class IDSAssembler:
 
         # Set static properties
         for dotted_path, value in self.recipe.get("static", {}).items():
-            _set_nested(ids, dotted_path, value)
+            set_nested(ids, dotted_path, value)
 
         # Set provider
         if provider := self.recipe.get("provider"):
@@ -177,7 +425,7 @@ class IDSAssembler:
             for ids_field, source_field in array_def.get("fields", {}).items():
                 value = enriched.get(source_field) or row.get(source_field)
                 if value is not None:
-                    _set_nested(entry, ids_field, str(value))
+                    set_nested(entry, ids_field, str(value))
 
             # Build elements if defined
             elements_def = array_def.get("elements")
@@ -224,7 +472,7 @@ class IDSAssembler:
                 else:
                     element_val = float(val)
 
-                _set_nested(elem, ids_path, element_val)
+                set_nested(elem, ids_path, element_val)
 
     def _query_enrichment(self, enrich_def: dict[str, Any]) -> dict[int, dict]:
         """Query enrichment data and index by coil index."""

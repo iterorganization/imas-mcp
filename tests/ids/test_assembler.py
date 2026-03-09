@@ -12,9 +12,9 @@ from imas_codex.ids.assembler import (
     IDSAssembler,
     _coil_index_from_path,
     _resolve_epoch_id,
-    _set_nested,
     list_recipes,
 )
+from imas_codex.ids.transforms import set_nested
 
 # ---------------------------------------------------------------------------
 # Unit tests for helper functions
@@ -42,12 +42,12 @@ class TestCoilIndexFromPath:
 class TestSetNested:
     def test_simple_attr(self):
         obj = MagicMock()
-        _set_nested(obj, "name", "test")
+        set_nested(obj, "name", "test")
         obj.__setattr__("name", "test")
 
     def test_dotted_path(self):
         obj = MagicMock()
-        _set_nested(obj, "geometry.rectangle.r", 1.5)
+        set_nested(obj, "geometry.rectangle.r", 1.5)
         obj.geometry.rectangle.__setattr__("r", 1.5)
 
 
@@ -92,8 +92,12 @@ class TestRecipeValidation:
             IDSAssembler("jet", "pf_active", recipe_path=recipe_file)
 
     def test_missing_recipe_file(self):
-        with pytest.raises(FileNotFoundError):
-            IDSAssembler("jet", "nonexistent_ids")
+        with (
+            patch("imas_codex.ids.assembler.GraphClient"),
+            patch("imas_codex.ids.assembler.load_recipe", return_value=None),
+        ):
+            with pytest.raises(FileNotFoundError):
+                IDSAssembler("jet", "nonexistent_ids")
 
 
 class TestJetPfActiveRecipe:

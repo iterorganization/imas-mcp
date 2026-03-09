@@ -3,6 +3,11 @@
 Assembles complete IMAS IDS instances by querying the knowledge graph
 for DataNode properties and populating imas-python IDS objects.
 
+Two modes:
+  - Graph-driven: IDSRecipe + IMASMapping nodes in the graph define
+    structure and field transformations.
+  - YAML fallback: YAML recipe files with embedded Cypher queries.
+
 Usage:
     from imas_codex.ids import IDSAssembler
 
