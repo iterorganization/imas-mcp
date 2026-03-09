@@ -156,3 +156,33 @@ class TestCocosSignInTransform:
             100.0, "value * cocos_sign('b0_like', cocos_in=11, cocos_out=17)"
         )
         assert result == pytest.approx(100.0)
+
+
+class TestSetNestedArrayIndex:
+    """Test set_nested with indexed array paths like position[0].r."""
+
+    def test_simple_array_index(self):
+        class Inner:
+            r = 0.0
+            z = 0.0
+
+        class Outer:
+            position = [Inner()]
+
+        obj = Outer()
+        set_nested(obj, "position[0].r", 1.5)
+        assert obj.position[0].r == 1.5
+
+    def test_array_index_preserves_other_fields(self):
+        class Inner:
+            r = 0.0
+            z = 0.0
+
+        class Outer:
+            position = [Inner()]
+
+        obj = Outer()
+        set_nested(obj, "position[0].r", 1.5)
+        set_nested(obj, "position[0].z", 2.5)
+        assert obj.position[0].r == 1.5
+        assert obj.position[0].z == 2.5

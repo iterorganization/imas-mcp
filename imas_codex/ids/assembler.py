@@ -244,7 +244,17 @@ class IDSAssembler:
                 )
                 enriched = enrichment.get(idx, {})
                 merged = {**node_data, **enriched}
-                self._apply_mappings(entry, merged, section_mappings, section_name)
+
+                # Initialize sub-arrays if configured (e.g., flux_loop.position)
+                for sub_array_path, size in section_config.get(
+                    "init_arrays", {}
+                ).items():
+                    sub_array = getattr(entry, sub_array_path)
+                    sub_array.resize(size)
+
+                self._apply_mappings(
+                    entry, merged, section_mappings, section_name, section_config
+                )
 
                 # Build sub-arrays (elements) if configured
                 elements_config = section_config.get("elements")
@@ -264,12 +274,14 @@ class IDSAssembler:
         data: dict[str, Any],
         mappings: list,
         section_name: str,
+        section_config: dict[str, Any] | None = None,
     ) -> None:
         """Apply field-level mappings to a struct entry.
 
         Handles transform_code execution and automatic unit conversion
         when units_in != units_out.
         """
+        init_arrays = (section_config or {}).get("init_arrays", {})
         for mapping in mappings:
             # Strip the IDS prefix to get the path relative to this entry
             # e.g., "pf_active/coil/name" -> "name"
@@ -280,8 +292,18 @@ class IDSAssembler:
             else:
                 continue
 
+            # Convert IMAS path separators to Python attribute notation
+            rel_path = rel_path.replace("/", ".")
+
+            # Rewrite paths that traverse initialized arrays
+            # e.g., with init_arrays={"position": 1}, "position.r" -> "position[0].r"
+            for arr_name in init_arrays:
+                if rel_path.startswith(f"{arr_name}."):
+                    rel_path = f"{arr_name}[0].{rel_path[len(arr_name) + 1 :]}"
+                    break
+
             # Skip element-level mappings (handled by _build_graph_elements)
-            if "/element/" in mapping.target_imas_path:
+            if "element." in rel_path or rel_path.startswith("element"):
                 continue
 
             value = data.get(mapping.source_property)
@@ -336,7 +358,7 @@ class IDSAssembler:
             elem.geometry.geometry_type = geometry_type
 
             for m in element_mappings:
-                rel_path = m.target_imas_path[len(element_prefix) :]
+                rel_path = m.target_imas_path[len(element_prefix) :].replace("/", ".")
                 val = merged.get(m.source_property)
                 if val is None:
                     continue

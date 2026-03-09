@@ -235,3 +235,361 @@ def select_enrichment_nodes(
 def _index_from_path(path: str) -> int:
     """Extract the numeric index from a DataNode path suffix."""
     return int(path.rsplit(":", 1)[-1])
+
+
+# ------------------------------------------------------------------
+# Mapping definitions for each IDS
+# ------------------------------------------------------------------
+
+# Each spec: (source_property, target_imas_path, transform_code, units_in, units_out)
+MappingSpec = tuple[str, str, str, str | None, str | None]
+
+PF_ACTIVE_COIL_MAPPINGS: list[MappingSpec] = [
+    ("r", "pf_active/coil/element/geometry/rectangle/r", "value", "m", "m"),
+    ("z", "pf_active/coil/element/geometry/rectangle/z", "value", "m", "m"),
+    ("dr", "pf_active/coil/element/geometry/rectangle/width", "value", "m", "m"),
+    ("dz", "pf_active/coil/element/geometry/rectangle/height", "value", "m", "m"),
+    (
+        "turnsperelement",
+        "pf_active/coil/element/turns_with_sign",
+        "value",
+        None,
+        None,
+    ),
+    ("description", "pf_active/coil/name", "str(value)", None, None),
+]
+
+PF_ACTIVE_CIRCUIT_MAPPINGS: list[MappingSpec] = [
+    ("description", "pf_active/circuit/name", "str(value)", None, None),
+]
+
+MAGNETICS_BPOL_MAPPINGS: list[MappingSpec] = [
+    (
+        "r",
+        "magnetics/b_field_pol_probe/position/r",
+        "value",
+        "m",
+        "m",
+    ),
+    (
+        "z",
+        "magnetics/b_field_pol_probe/position/z",
+        "value",
+        "m",
+        "m",
+    ),
+    (
+        "angle",
+        "magnetics/b_field_pol_probe/poloidal_angle",
+        "math.radians(value)",
+        "deg",
+        "rad",
+    ),
+    (
+        "description",
+        "magnetics/b_field_pol_probe/name",
+        "str(value)",
+        None,
+        None,
+    ),
+]
+
+MAGNETICS_FLUX_LOOP_MAPPINGS: list[MappingSpec] = [
+    ("r", "magnetics/flux_loop/position/r", "value", "m", "m"),
+    ("z", "magnetics/flux_loop/position/z", "value", "m", "m"),
+    (
+        "dphi",
+        "magnetics/flux_loop/position/phi",
+        "math.radians(value)",
+        "deg",
+        "rad",
+    ),
+    ("description", "magnetics/flux_loop/name", "str(value)", None, None),
+]
+
+PF_PASSIVE_LOOP_MAPPINGS: list[MappingSpec] = [
+    ("r", "pf_passive/loop/element/geometry/rectangle/r", "value", "m", "m"),
+    ("z", "pf_passive/loop/element/geometry/rectangle/z", "value", "m", "m"),
+    ("dr", "pf_passive/loop/element/geometry/rectangle/width", "value", "m", "m"),
+    ("dz", "pf_passive/loop/element/geometry/rectangle/height", "value", "m", "m"),
+    ("resistance", "pf_passive/loop/resistance", "value", "ohm", "ohm"),
+    ("description", "pf_passive/loop/name", "str(value)", None, None),
+]
+
+
+def create_mappings(
+    facility: str,
+    ids_name: str,
+    section: str,
+    system: str,
+    mapping_specs: list[MappingSpec],
+    gc: GraphClient,
+) -> list[str]:
+    """Create IMASMapping nodes for a set of field mappings.
+
+    Args:
+        facility: Facility ID (e.g., 'jet').
+        ids_name: IDS name (e.g., 'pf_active').
+        section: Section name (e.g., 'coil', 'b_field_pol_probe').
+        system: System code (e.g., 'PF', 'MP').
+        mapping_specs: List of (source_property, target_path, transform_code,
+            units_in, units_out) tuples.
+        gc: Graph client instance.
+
+    Returns:
+        List of created mapping IDs.
+    """
+    mappings = []
+    for source_prop, target_path, transform, units_in, units_out in mapping_specs:
+        mapping_id = f"{facility}:{system}:{source_prop}→{target_path}"
+        mappings.append(
+            {
+                "id": mapping_id,
+                "facility_id": facility,
+                "source_property": source_prop,
+                "target_path": target_path,
+                "transform_code": transform,
+                "units_in": units_in,
+                "units_out": units_out,
+                "driver": "device_xml",
+                "status": "validated",
+                "confidence": 1.0,
+            }
+        )
+
+    gc.query(
+        """
+        UNWIND $mappings AS m
+        MERGE (mapping:IMASMapping {id: m.id})
+        SET mapping += m
+        WITH mapping, m
+        MATCH (f:Facility {id: m.facility_id})
+        MERGE (mapping)-[:AT_FACILITY]->(f)
+        WITH mapping, m
+        MATCH (ip:IMASPath {id: m.target_path})
+        MERGE (mapping)-[:TARGET_PATH]->(ip)
+        """,
+        mappings=mappings,
+    )
+
+    logger.info(
+        "Created %d IMASMapping nodes for %s.%s (%s)",
+        len(mappings),
+        ids_name,
+        section,
+        facility,
+    )
+    return [m["id"] for m in mappings]
+
+
+def create_recipe(
+    facility: str,
+    ids_name: str,
+    dd_version: str,
+    assembly_config: dict[str, Any],
+    mapping_ids: list[str],
+    gc: GraphClient,
+    *,
+    provider: str = "imas-codex",
+) -> str:
+    """Create an IDSRecipe node and link it to IMASMappings.
+
+    Args:
+        facility: Facility ID.
+        ids_name: IDS name.
+        dd_version: DD version string.
+        assembly_config: Structural assembly configuration dict.
+        mapping_ids: IDs of IMASMapping nodes to link.
+        gc: Graph client instance.
+        provider: Provider string for ids_properties.
+
+    Returns:
+        Recipe node ID.
+    """
+    recipe_id = f"{facility}:{ids_name}"
+    config_json = json.dumps(assembly_config)
+
+    gc.query(
+        """
+        MERGE (r:IDSRecipe {id: $recipe_id})
+        SET r.facility_id = $facility,
+            r.ids_name = $ids_name,
+            r.dd_version = $dd_version,
+            r.assembly_config = $config_json,
+            r.provider = $provider,
+            r.status = 'active'
+        WITH r
+        MATCH (f:Facility {id: $facility})
+        MERGE (r)-[:AT_FACILITY]->(f)
+        """,
+        recipe_id=recipe_id,
+        facility=facility,
+        ids_name=ids_name,
+        dd_version=dd_version,
+        config_json=config_json,
+        provider=provider,
+    )
+
+    # Link to mappings
+    gc.query(
+        """
+        UNWIND $mapping_ids AS mid
+        MATCH (r:IDSRecipe {id: $recipe_id})
+        MATCH (m:IMASMapping {id: mid})
+        MERGE (r)-[:INCLUDES_MAPPING]->(m)
+        """,
+        recipe_id=recipe_id,
+        mapping_ids=mapping_ids,
+    )
+
+    logger.info("Created IDSRecipe %s with %d mappings", recipe_id, len(mapping_ids))
+    return recipe_id
+
+
+# ------------------------------------------------------------------
+# Assembly config templates for each IDS
+# ------------------------------------------------------------------
+
+PF_ACTIVE_ASSEMBLY_CONFIG: dict[str, Any] = {
+    "static": {
+        "ids_properties.homogeneous_time": 0,
+        "ids_properties.comment": (
+            "JET PF active coil geometry from device descriptions. "
+            "Assembled from device_xml DataNodes by imas-codex."
+        ),
+    },
+    "coil": {
+        "source": {
+            "system": "PF",
+            "data_source": "device_xml",
+            "epoch_field": "introduced_version",
+        },
+        "structure": "array_per_node",
+        "elements": {"geometry_type": 2},
+        "enrichment": [
+            {
+                "data_source": "jec2020_geometry",
+                "system": "PF",
+                "match_by": "coil_index",
+            }
+        ],
+    },
+    "circuit": {
+        "source": {
+            "system": "CI",
+            "data_source": "device_xml",
+            "epoch_field": "introduced_version",
+        },
+        "structure": "array_per_node",
+    },
+}
+
+MAGNETICS_ASSEMBLY_CONFIG: dict[str, Any] = {
+    "static": {
+        "ids_properties.homogeneous_time": 0,
+        "ids_properties.comment": (
+            "JET magnetics diagnostic geometry from device descriptions. "
+            "Assembled from device_xml DataNodes by imas-codex."
+        ),
+    },
+    "b_field_pol_probe": {
+        "source": {
+            "system": "MP",
+            "data_source": "device_xml",
+            "epoch_field": "introduced_version",
+        },
+        "structure": "array_per_node",
+    },
+    "flux_loop": {
+        "source": {
+            "system": "FL",
+            "data_source": "device_xml",
+            "epoch_field": "introduced_version",
+        },
+        "structure": "array_per_node",
+        "init_arrays": {"position": 1},
+    },
+}
+
+PF_PASSIVE_ASSEMBLY_CONFIG: dict[str, Any] = {
+    "static": {
+        "ids_properties.homogeneous_time": 0,
+        "ids_properties.comment": (
+            "JET PF passive structure geometry from device descriptions. "
+            "Assembled from device_xml DataNodes by imas-codex."
+        ),
+    },
+    "loop": {
+        "source": {
+            "system": "PS",
+            "data_source": "device_xml",
+            "epoch_field": "introduced_version",
+        },
+        "structure": "array_per_node",
+        "elements": {"geometry_type": 2},
+    },
+}
+
+
+def seed_ids_mappings(
+    facility: str,
+    ids_name: str,
+    dd_version: str,
+    gc: GraphClient,
+) -> str:
+    """Seed IMASMapping and IDSRecipe nodes for a given IDS.
+
+    Creates all field mapping nodes and a structural recipe for the
+    specified IDS, using the canonical mapping definitions.
+
+    Args:
+        facility: Facility ID.
+        ids_name: IDS name ('pf_active', 'magnetics', 'pf_passive').
+        dd_version: DD version string.
+        gc: Graph client instance.
+
+    Returns:
+        Recipe node ID.
+
+    Raises:
+        ValueError: If ids_name is not supported.
+    """
+    configs = {
+        "pf_active": (
+            PF_ACTIVE_ASSEMBLY_CONFIG,
+            [
+                ("coil", "PF", PF_ACTIVE_COIL_MAPPINGS),
+                ("circuit", "CI", PF_ACTIVE_CIRCUIT_MAPPINGS),
+            ],
+        ),
+        "magnetics": (
+            MAGNETICS_ASSEMBLY_CONFIG,
+            [
+                ("b_field_pol_probe", "MP", MAGNETICS_BPOL_MAPPINGS),
+                ("flux_loop", "FL", MAGNETICS_FLUX_LOOP_MAPPINGS),
+            ],
+        ),
+        "pf_passive": (
+            PF_PASSIVE_ASSEMBLY_CONFIG,
+            [
+                ("loop", "PS", PF_PASSIVE_LOOP_MAPPINGS),
+            ],
+        ),
+    }
+
+    if ids_name not in configs:
+        msg = (
+            f"No mapping definitions for IDS '{ids_name}'. Supported: {sorted(configs)}"
+        )
+        raise ValueError(msg)
+
+    assembly_config, sections = configs[ids_name]
+
+    all_mapping_ids: list[str] = []
+    for section, system, specs in sections:
+        mapping_ids = create_mappings(facility, ids_name, section, system, specs, gc)
+        all_mapping_ids.extend(mapping_ids)
+
+    return create_recipe(
+        facility, ids_name, dd_version, assembly_config, all_mapping_ids, gc
+    )

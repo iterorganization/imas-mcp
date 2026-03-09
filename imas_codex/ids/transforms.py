@@ -140,10 +140,27 @@ def set_nested(obj: Any, dotted_path: str, value: Any) -> None:
     """Set a value on an imas-python object using a dotted path.
 
     Handles nested structures like 'geometry.rectangle.r' by traversing
-    getattr chain and setting the final attribute.
+    getattr chain and setting the final attribute. Also supports array
+    indexing like 'position[0].r'.
     """
-    parts = dotted_path.split(".")
+    import re
+
+    parts = re.split(r"\.", dotted_path)
     current = obj
     for part in parts[:-1]:
-        current = getattr(current, part)
-    setattr(current, parts[-1], value)
+        # Handle array indices like 'position[0]'
+        match = re.match(r"(\w+)\[(\d+)\]", part)
+        if match:
+            attr_name, idx = match.group(1), int(match.group(2))
+            current = getattr(current, attr_name)[idx]
+        else:
+            current = getattr(current, part)
+
+    # Set the final attribute, handling array index on last part
+    last = parts[-1]
+    match = re.match(r"(\w+)\[(\d+)\]", last)
+    if match:
+        attr_name, idx = match.group(1), int(match.group(2))
+        getattr(current, attr_name)[idx] = value
+    else:
+        setattr(current, last, value)
