@@ -401,11 +401,11 @@ def ingest_migrate(dry_run: bool) -> None:
       1.  CODE_EXAMPLE_ID:   CodeChunk → CodeExample
       2.  AT_FACILITY:       CodeChunk → Facility
       3.  FROM_FILE:         CodeExample → CodeFile
-      4.  PRODUCED:          CodeFile → CodeExample
+      4.  HAS_EXAMPLE:       CodeFile → CodeExample
       5.  TreeNode → DataNode: Relabel + remove old label
       6.  TreeNodePattern → DataNodePattern: Relabel + remove old label
       7.  TreeModelVersion → StructuralEpoch: Relabel + remove old label
-      8.  IN_DATA_SOURCE:    DataNode → DataSource (from tree_name)
+      8.  IN_DATA_SOURCE:    DataNode → DataSource (from data_source_name)
       9.  IN_TREE → IN_DATA_SOURCE: Migrate legacy relationships
       10. RESOLVES_TO_TREE_NODE → RESOLVES_TO_NODE: Migrate legacy rels
       11. MDSplusTree cleanup: Remove legacy nodes
@@ -437,7 +437,7 @@ def ingest_migrate(dry_run: bool) -> None:
         ("CODE_EXAMPLE_ID", "code_example_id"),
         ("AT_FACILITY (CodeChunk)", "at_facility"),
         ("FROM_FILE", "from_file"),
-        ("PRODUCED", "produced"),
+        ("HAS_EXAMPLE", "has_example"),
         ("TreeNode → DataNode", "treenode_relabel"),
         ("TreeNodePattern → DataNodePattern", "treenodepattern_relabel"),
         ("TreeModelVersion → StructuralEpoch", "treemodelversion_relabel"),

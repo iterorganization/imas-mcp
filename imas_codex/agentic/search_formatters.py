@@ -172,7 +172,7 @@ def _interpolate_template(template: str, sig: dict[str, Any]) -> str:
     substitutions = {
         "node_path": sig.get("node_path") or sig.get("tree_path"),
         "accessor": sig.get("accessor"),
-        "data_source": sig.get("tree_name") or sig.get("data_source_name"),
+        "data_source": sig.get("data_source_name"),
     }
     for key, val in substitutions.items():
         if val:

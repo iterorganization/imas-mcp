@@ -115,7 +115,7 @@ and what sign conventions or coordinate systems they use.
 
 ### MDSplus Tree Nodes
 
-Direct tree traversal signals have tree_name and node_path:
+Direct tree traversal signals have data_source_name and node_path:
 - Path structure reveals diagnostics: `\RESULTS::LIUQE:*` → equilibrium
 - Tree name reveals data organization
 

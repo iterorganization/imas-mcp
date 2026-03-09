@@ -27,7 +27,7 @@ Execute Cypher query and return results.
 **Examples:**
 ```python
 query('MATCH (f:Facility) RETURN f.id, f.name')
-query('MATCH (t:DataNode {tree_name: $tree}) RETURN t.path LIMIT 10', tree='results')
+query('MATCH (t:DataNode {data_source_name: $tree}) RETURN t.path LIMIT 10', tree='results')
 ```
 
 ### semantic_search()

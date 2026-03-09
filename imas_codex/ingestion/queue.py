@@ -217,7 +217,7 @@ def update_source_file_status(
                     sf.error = null
                 WITH sf
                 MATCH (ce:CodeExample {id: $code_example_id})
-                MERGE (sf)-[:PRODUCED]->(ce)
+                MERGE (sf)-[:HAS_EXAMPLE]->(ce)
                 """,
                 id=source_file_id,
                 status=status,

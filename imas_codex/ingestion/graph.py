@@ -360,11 +360,11 @@ def migrate_schema_relationships(
      1. CODE_EXAMPLE_ID:   CodeChunk → CodeExample
      2. AT_FACILITY:       CodeChunk → Facility
      3. FROM_FILE:         CodeExample → CodeFile
-     4. PRODUCED:          CodeFile → CodeExample
+     4. HAS_EXAMPLE:       CodeFile → CodeExample
      5. TreeNode → DataNode:  Relabel + remove old label
      6. TreeNodePattern → DataNodePattern:  Relabel + remove old label
      7. TreeModelVersion → StructuralEpoch:  Relabel + remove old label
-     8. IN_DATA_SOURCE:    DataNode → DataSource (from tree_name property)
+     8. IN_DATA_SOURCE:    DataNode → DataSource (from data_source_name)
      9. IN_TREE → IN_DATA_SOURCE:  Migrate legacy relationships
     10. RESOLVES_TO_TREE_NODE → RESOLVES_TO_NODE:  Migrate legacy relationships
     11. MDSplusTree cleanup:  Remove legacy MDSplusTree nodes
@@ -375,6 +375,12 @@ def migrate_schema_relationships(
     16. SAME_GEOMETRY cleanup:  Remove undeclared relationships
     17. ACCESSES_GEOMETRY cleanup:  Remove undeclared relationships
     18. Deprecated properties:  Remove _node_content, _node_type from CodeChunks
+    19. PRODUCED → HAS_EXAMPLE:  Migrate renamed relationships
+    20. SAME_SENSOR → MATCHES_SENSOR:  Migrate renamed relationships
+    21. tree_name cleanup:  Remove deprecated property (replaced by data_source_name)
+    22. AT_FACILITY:       CodeExample → Facility (missing edges)
+    23. Garbage CodeChunks: Remove nodes with null id or null text
+    24. Deduplicate CodeChunks: Remove duplicate nodes by id
 
     Args:
         dry_run: If True, only report counts without making changes.
@@ -465,23 +471,23 @@ def migrate_schema_relationships(
             batch_size=5000,
         )
 
-        # 4. Create PRODUCED from CodeFile to CodeExample
+        # 4. Create HAS_EXAMPLE from CodeFile to CodeExample
         _run_migration_step(
             client,
-            key="produced",
+            key="has_example",
             stats=stats,
             dry_run=dry_run,
             count_query="""
                 MATCH (ce:CodeExample)-[:FROM_FILE]->(cf:CodeFile)
-                WHERE NOT (cf)-[:PRODUCED]->(ce)
+                WHERE NOT (cf)-[:HAS_EXAMPLE]->(ce)
                 RETURN count(*) AS pending
             """,
             apply_query="""
                 MATCH (ce:CodeExample)-[:FROM_FILE]->(cf:CodeFile)
-                MERGE (cf)-[:PRODUCED]->(ce)
+                MERGE (cf)-[:HAS_EXAMPLE]->(ce)
                 RETURN count(*) AS created
             """,
-            log_msg="Created %d PRODUCED relationships",
+            log_msg="Created %d HAS_EXAMPLE relationships",
         )
 
         # 5. Fix TreeNode → DataNode label (add new, remove old)
@@ -544,15 +550,15 @@ def migrate_schema_relationships(
             log_msg="Relabeled %d TreeModelVersion → StructuralEpoch nodes",
         )
 
-        # 8. Create IN_DATA_SOURCE from tree_name property
-        #    DataNode nodes have tree_name → DataSource.name
+        # 8. Create IN_DATA_SOURCE from data_source_name property
+        #    DataNode nodes have data_source_name → DataSource.name
         #    Processes per-tree to avoid label scan on potentially corrupted
         #    DataSource index entries (OOM recovery artifact).
         pending_trees = client.query("""
             MATCH (n:DataNode)
-            WHERE n.tree_name IS NOT NULL AND n.facility_id IS NOT NULL
+            WHERE n.data_source_name IS NOT NULL AND n.facility_id IS NOT NULL
             AND NOT (n)-[:IN_DATA_SOURCE]->()
-            RETURN DISTINCT n.tree_name AS name, n.facility_id AS fid,
+            RETURN DISTINCT n.data_source_name AS name, n.facility_id AS fid,
                    count(n) AS cnt
         """)
         total_pending = sum(r["cnt"] for r in pending_trees) if pending_trees else 0
@@ -582,7 +588,7 @@ def migrate_schema_relationships(
                 while True:
                     result = client.query(
                         "MATCH (n:DataNode) "
-                        "WHERE n.tree_name = $name AND n.facility_id = $fid "
+                        "WHERE n.data_source_name = $name AND n.facility_id = $fid "
                         "AND NOT (n)-[:IN_DATA_SOURCE]->() "
                         "WITH n LIMIT 5000 "
                         "MATCH (ds) WHERE elementId(ds) = $ds_eid "
@@ -827,6 +833,139 @@ def migrate_schema_relationships(
             log_msg="Cleaned %d CodeChunks with deprecated _node_* properties",
             batch_size=5000,
         )
+
+        # 19. Migrate PRODUCED → HAS_EXAMPLE relationships
+        _run_migration_step(
+            client,
+            key="produced_migrate",
+            stats=stats,
+            dry_run=dry_run,
+            count_query="""
+                MATCH ()-[r:PRODUCED]->()
+                RETURN count(r) AS pending
+            """,
+            apply_query="""
+                MATCH (a)-[r:PRODUCED]->(b)
+                WITH a, r, b LIMIT $batch_size
+                CREATE (a)-[:HAS_EXAMPLE]->(b)
+                DELETE r
+                RETURN count(*) AS created
+            """,
+            log_msg="Migrated %d PRODUCED → HAS_EXAMPLE relationships",
+            batch_size=100,
+        )
+
+        # 20. Migrate SAME_SENSOR → MATCHES_SENSOR relationships
+        _run_migration_step(
+            client,
+            key="same_sensor_migrate",
+            stats=stats,
+            dry_run=dry_run,
+            count_query="""
+                MATCH ()-[r:SAME_SENSOR]->()
+                RETURN count(r) AS pending
+            """,
+            apply_query="""
+                MATCH (a)-[r:SAME_SENSOR]->(b)
+                WITH a, r, b LIMIT $batch_size
+                CREATE (a)-[:MATCHES_SENSOR]->(b)
+                DELETE r
+                RETURN count(*) AS created
+            """,
+            log_msg="Migrated %d SAME_SENSOR → MATCHES_SENSOR relationships",
+            batch_size=100,
+        )
+
+        # 21. Remove deprecated tree_name property (replaced by data_source_name)
+        _run_migration_step(
+            client,
+            key="tree_name_cleanup",
+            stats=stats,
+            dry_run=dry_run,
+            count_query="""
+                MATCH (n) WHERE n.tree_name IS NOT NULL
+                RETURN count(n) AS pending
+            """,
+            apply_query="""
+                MATCH (n) WHERE n.tree_name IS NOT NULL
+                WITH n LIMIT $batch_size
+                REMOVE n.tree_name
+                RETURN count(n) AS created
+            """,
+            log_msg="Removed tree_name property from %d nodes",
+            batch_size=500,
+        )
+
+        # 22. Create missing AT_FACILITY edges for CodeExample nodes
+        _run_migration_step(
+            client,
+            key="code_example_at_facility",
+            stats=stats,
+            dry_run=dry_run,
+            count_query="""
+                MATCH (ce:CodeExample)
+                WHERE ce.facility_id IS NOT NULL
+                AND NOT (ce)-[:AT_FACILITY]->(:Facility)
+                RETURN count(ce) AS pending
+            """,
+            apply_query="""
+                MATCH (ce:CodeExample)
+                WHERE ce.facility_id IS NOT NULL
+                AND NOT (ce)-[:AT_FACILITY]->(:Facility)
+                WITH ce LIMIT $batch_size
+                MATCH (f:Facility {id: ce.facility_id})
+                MERGE (ce)-[:AT_FACILITY]->(f)
+                RETURN count(*) AS created
+            """,
+            log_msg="Created %d AT_FACILITY relationships for CodeExamples",
+            batch_size=1000,
+        )
+
+        # 23. Delete garbage CodeChunk nodes (null id or null text)
+        result = client.query("""
+            MATCH (c:CodeChunk) WHERE c.id IS NULL OR c.text IS NULL
+            RETURN count(c) AS pending
+        """)
+        pending = result[0]["pending"] if result else 0
+        stats["garbage_codechunk_pending"] = pending
+
+        if not dry_run and pending > 0:
+            result = client.query("""
+                MATCH (c:CodeChunk) WHERE c.id IS NULL OR c.text IS NULL
+                DETACH DELETE c
+                RETURN count(c) AS created
+            """)
+            stats["garbage_codechunk_created"] = result[0]["created"] if result else 0
+            logger.info(
+                "Removed %d garbage CodeChunk nodes (null id/text)",
+                stats["garbage_codechunk_created"],
+            )
+
+        # 24. Deduplicate CodeChunk nodes (keep first, delete rest)
+        result = client.query("""
+            MATCH (c:CodeChunk)
+            WITH c.id AS id, collect(c) AS nodes
+            WHERE size(nodes) > 1
+            UNWIND tail(nodes) AS dup
+            RETURN count(dup) AS pending
+        """)
+        pending = result[0]["pending"] if result else 0
+        stats["dedup_codechunk_pending"] = pending
+
+        if not dry_run and pending > 0:
+            result = client.query("""
+                MATCH (c:CodeChunk)
+                WITH c.id AS id, collect(c) AS nodes
+                WHERE size(nodes) > 1
+                UNWIND tail(nodes) AS dup
+                DETACH DELETE dup
+                RETURN count(dup) AS created
+            """)
+            stats["dedup_codechunk_created"] = result[0]["created"] if result else 0
+            logger.info(
+                "Deduplicated %d CodeChunk nodes",
+                stats["dedup_codechunk_created"],
+            )
 
     return stats
 

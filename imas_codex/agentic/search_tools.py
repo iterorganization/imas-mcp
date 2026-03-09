@@ -215,7 +215,7 @@ def _enrich_signals(
     product duplication when a signal has 2+ access methods.
 
     Also returns signal properties ``node_path``, ``accessor``, and
-    ``tree_name`` for template placeholder interpolation.
+    ``data_source_name`` for template placeholder interpolation.
     """
     cypher = """
         UNWIND $signal_ids AS sid
@@ -239,7 +239,7 @@ def _enrich_signals(
                s.physics_domain AS physics_domain, s.unit AS unit,
                s.checked AS checked, s.example_shot AS example_shot,
                s.node_path AS node_path, s.accessor AS accessor,
-               s.tree_name AS tree_name,
+               s.data_source_name AS data_source_name,
                diag.name AS diagnostic_name, diag.category AS diagnostic_category,
                tn.path AS tree_path, tn.data_source_name AS data_source_name,
                access_methods
@@ -590,8 +590,8 @@ def _fetch_code_file(gc: GraphClient, resource: str) -> str | None:
 
     Tries multiple traversal strategies:
     1. CodeExample matched by source_file → HAS_CHUNK → CodeChunk
-    2. CodeFile → PRODUCED → CodeExample → HAS_CHUNK → CodeChunk
-    3. FacilityPath → PRODUCED → CodeExample → HAS_CHUNK → CodeChunk
+    2. CodeFile → HAS_EXAMPLE → CodeExample → HAS_CHUNK → CodeChunk
+    3. FacilityPath → HAS_EXAMPLE → CodeExample → HAS_CHUNK → CodeChunk
     """
     # Strategy 1: Match CodeExample by source_file path
     chunks = gc.query(
@@ -610,9 +610,9 @@ def _fetch_code_file(gc: GraphClient, resource: str) -> str | None:
     if chunks:
         return format_fetch_report(chunks)
 
-    # Strategy 2: Match via CodeFile → PRODUCED → CodeExample
+    # Strategy 2: Match via CodeFile → HAS_EXAMPLE → CodeExample
     chunks = gc.query(
-        "MATCH (cf:CodeFile)-[:PRODUCED]->(ce:CodeExample) "
+        "MATCH (cf:CodeFile)-[:HAS_EXAMPLE]->(ce:CodeExample) "
         "WHERE cf.id = $resource OR cf.path = $resource "
         "MATCH (ce)-[:HAS_CHUNK]->(cc:CodeChunk) "
         "RETURN 'code' AS source_type, "
@@ -627,9 +627,9 @@ def _fetch_code_file(gc: GraphClient, resource: str) -> str | None:
     if chunks:
         return format_fetch_report(chunks)
 
-    # Strategy 3: Match via FacilityPath → PRODUCED → CodeExample
+    # Strategy 3: Match via FacilityPath → HAS_EXAMPLE → CodeExample
     chunks = gc.query(
-        "MATCH (fp:FacilityPath)-[:PRODUCED]->(ce:CodeExample) "
+        "MATCH (fp:FacilityPath)-[:HAS_EXAMPLE]->(ce:CodeExample) "
         "WHERE fp.id = $resource OR fp.path = $resource "
         "MATCH (ce)-[:HAS_CHUNK]->(cc:CodeChunk) "
         "RETURN 'code' AS source_type, "

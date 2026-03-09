@@ -39,7 +39,7 @@ For each node, provide:
 
 ## Facility: {{ facility }}
 
-Tree: {{ tree_name }}
+Tree: {{ data_source_name }}
 
 ## Path Conventions
 

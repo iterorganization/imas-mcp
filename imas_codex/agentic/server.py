@@ -1362,7 +1362,7 @@ class AgentsServer:
 
             Special handling:
             - CodeFile: Auto-deduplicates already discovered/ingested files
-            - DataNode: Auto-creates TREE_NAME and ACCESSOR_FUNCTION relationships
+            - DataNode: Auto-creates IN_DATA_SOURCE and ACCESSOR_FUNCTION relationships
             - FacilityPath: Links to parent Facility
 
             Args:
