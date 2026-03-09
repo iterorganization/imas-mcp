@@ -8,6 +8,7 @@ render all results they receive without artificial truncation.
 
 from __future__ import annotations
 
+import hashlib
 from typing import Any
 
 # ---------------------------------------------------------------------------
@@ -97,12 +98,16 @@ def format_signals_report(
             if access_methods:
                 for am in access_methods:
                     access_type = am.get("access_type") or "unknown"
+                    method_type = am.get("method_type")
                     template = am.get("access_template") or ""
 
                     # Interpolate template placeholders with signal properties
                     template = _interpolate_template(template, sig)
 
-                    parts.append(f"\n  **Data access** ({access_type}):")
+                    label = access_type
+                    if method_type:
+                        label = f"{access_type}/{method_type}"
+                    parts.append(f"\n  **Data access** ({label}):")
                     imports = am.get("imports_template")
                     if imports:
                         parts.append(f"    {imports}")
@@ -246,6 +251,17 @@ def format_docs_report(
     parts: list[str] = []
 
     if chunks:
+        # Deduplicate chunks by text content hash
+        seen_hashes: set[str] = set()
+        unique_chunks: list[dict[str, Any]] = []
+        for chunk in chunks:
+            text = chunk.get("text", "")
+            text_hash = hashlib.sha256(text.encode()).hexdigest()[:16]
+            if text_hash not in seen_hashes:
+                seen_hashes.add(text_hash)
+                unique_chunks.append(chunk)
+        chunks = unique_chunks
+
         # Group by page
         pages: dict[str, list[dict[str, Any]]] = {}
         for chunk in chunks:
@@ -288,6 +304,10 @@ def format_docs_report(
                 linked_data_nodes = chunk.get("linked_data_nodes") or []
                 if linked_data_nodes:
                     parts.append(f"  Data nodes: {', '.join(linked_data_nodes)}")
+
+                tool_mentions = chunk.get("tool_mentions") or []
+                if tool_mentions:
+                    parts.append(f"  Tools: {', '.join(tool_mentions)}")
 
                 parts.append("")
 

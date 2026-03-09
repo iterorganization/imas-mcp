@@ -156,6 +156,13 @@ def generate_schema_context(
     for group_name, group in task_groups_raw.items():
         task_groups[group_name] = group["labels"]
 
+    # ---- Build FULLTEXT_INDEXES ----
+    fulltext_indexes: dict[str, tuple[str, list[str]]] = {}
+    for schema in [facility_schema, dd_schema]:
+        for idx_name, label, props in schema.fulltext_indexes:
+            if idx_name not in fulltext_indexes:
+                fulltext_indexes[idx_name] = (label, props)
+
     # ---- Generate Python module ----
     lines = [
         '"""Auto-generated schema context data from LinkML schemas.',
@@ -177,6 +184,9 @@ def generate_schema_context(
         "# Vector indexes: index_name -> (label, property)",
         f"VECTOR_INDEXES: dict[str, tuple[str, str]] = {_format_dict(vector_indexes)}",
         "",
+        "# Fulltext indexes: index_name -> (label, [properties])",
+        f"FULLTEXT_INDEXES: dict[str, tuple[str, list[str]]] = {_format_dict(fulltext_indexes)}",
+        "",
         "# Task groups: task_name -> list of relevant labels",
         f"TASK_GROUPS: dict[str, list[str]] = {_format_dict(task_groups)}",
         "",
@@ -187,7 +197,8 @@ def generate_schema_context(
     output_path.write_text(content)
     print(
         f"[gen-schema-context] Generated {output_path} "
-        f"({len(all_labels)} labels, {len(vector_indexes)} indexes, "
+        f"({len(all_labels)} labels, {len(vector_indexes)} vector indexes, "
+        f"{len(fulltext_indexes)} fulltext indexes, "
         f"{len(task_groups)} task groups)"
     )
     return output_path

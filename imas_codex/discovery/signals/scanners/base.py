@@ -252,6 +252,7 @@ def _auto_register() -> None:
         device_xml,
         edas,
         imas,
+        jpf,
         mdsplus,
         ppf,
         tdi,
