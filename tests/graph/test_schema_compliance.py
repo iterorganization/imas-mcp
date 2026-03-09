@@ -149,17 +149,39 @@ class TestRequiredFields:
     terminal state.  This allows nodes in transient states (e.g.
     ``discovered`` signals awaiting enrichment) to exist without the
     field, while still enforcing the constraint on terminal nodes.
+
+    The status field is auto-detected per label — usually ``status``
+    but can be ``enrichment_status`` for classes like DataNode that
+    use a separate lifecycle field.
     """
 
-    # Map status enums to their lifecycle ordering.
-    # Statuses at or after the required_after value are "terminal enough".
+    # Lifecycle ordering per status enum.  Only statuses that represent
+    # "the worker ran" are included; terminal bypasses (skipped, failed,
+    # excluded, explored) are omitted so nodes that never reached the
+    # required stage are not checked.
     _STATUS_ORDER: dict[str, list[str]] = {
         "FacilitySignalStatus": [
             "discovered",
             "enriched",
             "checked",
-            "skipped",
-            "failed",
+        ],
+        "PathStatus": [
+            "discovered",
+            "scanned",
+            "triaged",
+            "scored",
+            "enriched",
+        ],
+        "SourceFileStatus": [
+            "discovered",
+            "triaged",
+            "scored",
+            "enriched",
+            "ingested",
+        ],
+        "EnrichmentStatus": [
+            "discovered",
+            "enriched",
         ],
     }
 
@@ -170,6 +192,28 @@ class TestRequiredFields:
             return []
         idx = order.index(after)
         return order[idx:]
+
+    @staticmethod
+    def _find_status_field(
+        slots: dict[str, dict],
+    ) -> tuple[str | None, str | None]:
+        """Find the status field name and its enum type for a node label.
+
+        Checks ``status`` first, then falls back to any slot whose type
+        ends with ``Status`` (e.g. ``enrichment_status``).
+
+        Returns:
+            (field_name, enum_name) or (None, None) if no status field.
+        """
+        # Prefer the canonical 'status' slot
+        status_slot = slots.get("status")
+        if status_slot and status_slot.get("type", "").endswith("Status"):
+            return "status", status_slot["type"]
+        # Fallback: any slot whose range is a *Status enum
+        for name, info in slots.items():
+            if name != "status" and info.get("type", "").endswith("Status"):
+                return name, info["type"]
+        return None, None
 
     def test_required_fields_present(self, graph_client, schema, graph_labels):
         """Required fields must not be null on any node (lifecycle-aware)."""
@@ -185,9 +229,7 @@ class TestRequiredFields:
                 continue
 
             slots = schema.get_all_slots(label)
-            # Determine the status enum for this label (if any)
-            status_slot = slots.get("status", {})
-            status_enum = status_slot.get("type") if status_slot else None
+            status_field, status_enum = self._find_status_field(slots)
 
             for field_name in required:
                 slot_info = slots.get(field_name, {})
@@ -198,11 +240,12 @@ class TestRequiredFields:
                 # Lifecycle scoping: only check nodes past the required_after status
                 required_after = slot_info.get("required_after")
                 status_filter = ""
+                terminal: list[str] = []
                 if required_after and status_enum:
                     terminal = self._terminal_statuses(status_enum, required_after)
                     if terminal:
                         quoted = ", ".join(f"'{s}'" for s in terminal)
-                        status_filter = f" AND n.status IN [{quoted}]"
+                        status_filter = f" AND n.{status_field} IN [{quoted}]"
 
                 result = graph_client.query(
                     f"MATCH (n:{label}) WHERE n.{field_name} IS NULL"
@@ -211,7 +254,7 @@ class TestRequiredFields:
                 )
                 count = result[0]["cnt"] if result else 0
                 if count > 0:
-                    scope = f" (status IN {terminal})" if status_filter else ""
+                    scope = f" ({status_field} IN {terminal})" if status_filter else ""
                     violations.append(f"{label}.{field_name}: {count} null{scope}")
 
         assert not violations, "Nodes with null required fields:\n  " + "\n  ".join(
