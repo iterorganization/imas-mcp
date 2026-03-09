@@ -33,7 +33,7 @@ from imas_codex.ids.graph_ops import (
     select_enrichment_nodes,
     select_nodes,
 )
-from imas_codex.ids.transforms import execute_transform, set_nested
+from imas_codex.ids.transforms import convert_units, execute_transform, set_nested
 
 logger = logging.getLogger(__name__)
 
@@ -265,7 +265,11 @@ class IDSAssembler:
         mappings: list,
         section_name: str,
     ) -> None:
-        """Apply field-level mappings to a struct entry."""
+        """Apply field-level mappings to a struct entry.
+
+        Handles transform_code execution and automatic unit conversion
+        when units_in != units_out.
+        """
         for mapping in mappings:
             # Strip the IDS prefix to get the path relative to this entry
             # e.g., "pf_active/coil/name" -> "name"
@@ -283,6 +287,14 @@ class IDSAssembler:
             value = data.get(mapping.source_property)
             if value is not None:
                 value = execute_transform(value, mapping.transform_code)
+                # Auto-convert units if specified and different
+                if (
+                    mapping.units_in
+                    and mapping.units_out
+                    and mapping.units_in != mapping.units_out
+                    and isinstance(value, int | float)
+                ):
+                    value = convert_units(value, mapping.units_in, mapping.units_out)
                 try:
                     set_nested(entry, rel_path, value)
                 except (AttributeError, TypeError):
@@ -333,6 +345,14 @@ class IDSAssembler:
                 else:
                     element_val = val
                 element_val = execute_transform(element_val, m.transform_code)
+                # Auto-convert units if specified and different
+                if (
+                    m.units_in
+                    and m.units_out
+                    and m.units_in != m.units_out
+                    and isinstance(element_val, int | float)
+                ):
+                    element_val = convert_units(element_val, m.units_in, m.units_out)
                 try:
                     set_nested(elem, rel_path, float(element_val))
                 except (AttributeError, TypeError, ValueError):

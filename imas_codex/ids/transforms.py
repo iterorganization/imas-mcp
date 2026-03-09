@@ -37,6 +37,65 @@ def convert_units(value: float, from_unit: str, to_unit: str) -> float:
     return q.to(to_unit).magnitude
 
 
+def cocos_sign(label: str, *, cocos_in: int, cocos_out: int) -> int:
+    """Compute the COCOS sign/scale factor for a given label.
+
+    Uses the COCOS parameter decomposition from Sauter & Medvedev (2013)
+    to compute the transformation factor for a given cocos_label_transformation.
+
+    Supported labels:
+        ip_like:        σ_RφZ_out · σ_Bp_out / (σ_RφZ_in · σ_Bp_in)
+        b0_like:        σ_RφZ_out / σ_RφZ_in
+        tor_angle_like: σ_RφZ_out / σ_RφZ_in
+        pol_angle_like: σ_ρθφ_out / σ_ρθφ_in
+        q_like:         (σ_ρθφ_out · σ_RφZ_out) / (σ_ρθφ_in · σ_RφZ_in)
+        psi_like:       σ_Bp_out · (2π)^(1-e_Bp_out) / (σ_Bp_in · (2π)^(1-e_Bp_in))
+        dodpsi_like:    1 / psi_like
+        one_like:       1
+
+    Args:
+        label: COCOS transformation label (e.g., 'ip_like', 'b0_like').
+        cocos_in: Source COCOS convention.
+        cocos_out: Target COCOS convention.
+
+    Returns:
+        Sign factor (+1 or -1) for simple cases, or a float for psi_like
+        when e_Bp differs.
+    """
+    from imas_codex.cocos.calculator import cocos_to_parameters
+
+    if cocos_in == cocos_out:
+        return 1
+
+    p_in = cocos_to_parameters(cocos_in)
+    p_out = cocos_to_parameters(cocos_out)
+
+    if label == "one_like":
+        return 1
+    elif label == "ip_like":
+        return (p_out.sigma_r_phi_z * p_out.sigma_bp) // (
+            p_in.sigma_r_phi_z * p_in.sigma_bp
+        )
+    elif label in ("b0_like", "tor_angle_like"):
+        return p_out.sigma_r_phi_z // p_in.sigma_r_phi_z
+    elif label == "pol_angle_like":
+        return p_out.sigma_rho_theta_phi // p_in.sigma_rho_theta_phi
+    elif label == "q_like":
+        return (p_out.sigma_rho_theta_phi * p_out.sigma_r_phi_z) // (
+            p_in.sigma_rho_theta_phi * p_in.sigma_r_phi_z
+        )
+    elif label == "psi_like":
+        factor = p_out.sigma_bp / p_in.sigma_bp
+        two_pi_factor = (2 * math.pi) ** ((1 - p_out.e_bp) - (1 - p_in.e_bp))
+        return factor * two_pi_factor
+    elif label == "dodpsi_like":
+        psi = cocos_sign("psi_like", cocos_in=cocos_in, cocos_out=cocos_out)
+        return 1 / psi
+    else:
+        logger.warning("Unknown COCOS label '%s', returning 1", label)
+        return 1
+
+
 def execute_transform(value: Any, transform_code: str | None) -> Any:
     """Execute a mapping's transform_code expression.
 
@@ -69,6 +128,7 @@ def execute_transform(value: Any, transform_code: str | None) -> Any:
         "str": str,
         "len": len,
         "convert_units": convert_units,
+        "cocos_sign": cocos_sign,
     }
     if np is not None:
         context["np"] = np

@@ -51,7 +51,10 @@ class TestLoadRecipe:
                     "transform_code": "value",
                     "units_in": "m",
                     "units_out": "m",
+                    "cocos_source": None,
+                    "cocos_target": None,
                     "driver": "device_xml",
+                    "cocos_label": None,
                 }
             ],
         ]
@@ -81,7 +84,10 @@ class TestLoadMappings:
                 "transform_code": "value * 1.0",
                 "units_in": "m",
                 "units_out": "m",
+                "cocos_source": None,
+                "cocos_target": None,
                 "driver": "device_xml",
+                "cocos_label": None,
             }
         ]
         result = load_mappings("jet:pf_active", gc)
@@ -102,7 +108,10 @@ class TestLoadMappings:
                 "transform_code": None,
                 "units_in": None,
                 "units_out": None,
+                "cocos_source": None,
+                "cocos_target": None,
                 "driver": None,
+                "cocos_label": None,
             }
         ]
         result = load_mappings("jet:pf_active", gc)
@@ -110,3 +119,54 @@ class TestLoadMappings:
         assert m.source_property == "value"
         assert m.transform_code == "value"
         assert m.driver == "device_xml"
+        assert m.cocos_source is None
+        assert m.cocos_target is None
+
+    def test_cocos_warning_for_sensitive_path(self, caplog):
+        """Warn when IMAS path is COCOS-sensitive but mapping has no cocos_source."""
+        import logging
+
+        gc = MagicMock()
+        gc.query.return_value = [
+            {
+                "id": "jet:CI:current",
+                "source_property": "current",
+                "target_imas_path": "pf_active/circuit/current",
+                "transform_code": "value",
+                "units_in": "A",
+                "units_out": "A",
+                "cocos_source": None,
+                "cocos_target": None,
+                "driver": "device_xml",
+                "cocos_label": "ip_like",
+            }
+        ]
+        with caplog.at_level(logging.WARNING):
+            result = load_mappings("jet:pf_active", gc)
+        assert len(result) == 1
+        assert "COCOS-sensitive" in caplog.text
+        assert "ip_like" in caplog.text
+
+    def test_no_cocos_warning_for_non_sensitive_path(self, caplog):
+        """No warning for paths without cocos_label_transformation."""
+        import logging
+
+        gc = MagicMock()
+        gc.query.return_value = [
+            {
+                "id": "jet:PF:r",
+                "source_property": "r",
+                "target_imas_path": "pf_active/coil/element/geometry/rectangle/r",
+                "transform_code": "value",
+                "units_in": "m",
+                "units_out": "m",
+                "cocos_source": None,
+                "cocos_target": None,
+                "driver": "device_xml",
+                "cocos_label": None,
+            }
+        ]
+        with caplog.at_level(logging.WARNING):
+            result = load_mappings("jet:pf_active", gc)
+        assert len(result) == 1
+        assert "COCOS-sensitive" not in caplog.text

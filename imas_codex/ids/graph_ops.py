@@ -26,6 +26,8 @@ class FieldMapping:
     transform_code: str = "value"
     units_in: str | None = None
     units_out: str | None = None
+    cocos_source: int | None = None
+    cocos_target: int | None = None
     driver: str = "device_xml"
 
 
@@ -107,23 +109,38 @@ def load_mappings(recipe_id: str, gc: GraphClient) -> list[FieldMapping]:
                    m.transform_code AS transform_code,
                    m.units_in AS units_in,
                    m.units_out AS units_out,
-                   m.driver AS driver
+                   m.cocos_source AS cocos_source,
+                   m.cocos_target AS cocos_target,
+                   m.driver AS driver,
+                   ip.cocos_label_transformation AS cocos_label
             """,
             recipe_id=recipe_id,
         )
     )
-    return [
-        FieldMapping(
+    mappings = []
+    for row in rows:
+        mapping = FieldMapping(
             id=row["id"],
             source_property=row.get("source_property") or "value",
             target_imas_path=row["target_imas_path"],
             transform_code=row.get("transform_code") or "value",
             units_in=row.get("units_in"),
             units_out=row.get("units_out"),
+            cocos_source=row.get("cocos_source"),
+            cocos_target=row.get("cocos_target"),
             driver=row.get("driver") or "device_xml",
         )
-        for row in rows
-    ]
+        # Warn if IMAS path is COCOS-sensitive but mapping has no source COCOS
+        cocos_label = row.get("cocos_label")
+        if cocos_label and cocos_label != "one_like" and not mapping.cocos_source:
+            logger.warning(
+                "COCOS-sensitive path %s (label=%s) has no cocos_source on mapping %s",
+                mapping.target_imas_path,
+                cocos_label,
+                mapping.id,
+            )
+        mappings.append(mapping)
+    return mappings
 
 
 def select_nodes(

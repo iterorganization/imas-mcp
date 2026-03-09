@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from imas_codex.ids.transforms import convert_units, execute_transform, set_nested
+from imas_codex.ids.transforms import (
+    cocos_sign,
+    convert_units,
+    execute_transform,
+    set_nested,
+)
 
 
 class TestExecuteTransform:
@@ -76,3 +81,78 @@ class TestConvertUnits:
     def test_same_units(self):
         result = convert_units(5.0, "m", "m")
         assert result == pytest.approx(5.0)
+
+
+class TestCocosSign:
+    """Tests for cocos_sign factor computation."""
+
+    def test_same_cocos_returns_one(self):
+        assert cocos_sign("ip_like", cocos_in=17, cocos_out=17) == 1
+
+    def test_ip_like_11_to_17(self):
+        # σ_Bp flips between COCOS 11 and 17, so ip_like = -1
+        assert cocos_sign("ip_like", cocos_in=11, cocos_out=17) == -1
+
+    def test_ip_like_17_to_11(self):
+        assert cocos_sign("ip_like", cocos_in=17, cocos_out=11) == -1
+
+    def test_b0_like_11_to_17(self):
+        # σ_RφZ is the same for COCOS 11 and 17, so b0_like = +1
+        assert cocos_sign("b0_like", cocos_in=11, cocos_out=17) == 1
+
+    def test_tor_angle_like_11_to_17(self):
+        assert cocos_sign("tor_angle_like", cocos_in=11, cocos_out=17) == 1
+
+    def test_pol_angle_like_11_to_17(self):
+        assert cocos_sign("pol_angle_like", cocos_in=11, cocos_out=17) == 1
+
+    def test_q_like_11_to_17(self):
+        assert cocos_sign("q_like", cocos_in=11, cocos_out=17) == 1
+
+    def test_one_like(self):
+        assert cocos_sign("one_like", cocos_in=1, cocos_out=17) == 1
+
+    def test_psi_like_11_to_17(self):
+        # σ_Bp flips, same e_Bp → factor = -1
+        assert cocos_sign("psi_like", cocos_in=11, cocos_out=17) == -1
+
+    def test_psi_like_1_to_11(self):
+        # e_Bp changes (0→1), σ_Bp same → factor = (2π)^(0-1) = 1/(2π)
+        import math
+
+        result = cocos_sign("psi_like", cocos_in=1, cocos_out=11)
+        # 1→11: σ_Bp_out=+1, σ_Bp_in=+1, e_Bp changes 0→1
+        # factor = (σ_Bp_out/σ_Bp_in) * (2π)^((1-e_out)-(1-e_in))
+        #        = 1 * (2π)^(0-1) = 1/(2π)
+        assert result == pytest.approx(1.0 / (2 * math.pi))
+
+    def test_dodpsi_like_11_to_17(self):
+        # Inverse of psi_like(11→17) = inverse of -1 = -1
+        assert cocos_sign("dodpsi_like", cocos_in=11, cocos_out=17) == pytest.approx(
+            -1.0
+        )
+
+    def test_ip_like_2_to_17(self):
+        # COCOS 2: σ_RφZ=-1, σ_Bp=+1
+        # COCOS 17: σ_RφZ=+1, σ_Bp=-1
+        # ip_like = (+1*-1) / (-1*+1) = -1 / -1 = 1
+        assert cocos_sign("ip_like", cocos_in=2, cocos_out=17) == 1
+
+    def test_unknown_label_returns_one(self):
+        assert cocos_sign("unknown_label", cocos_in=11, cocos_out=17) == 1
+
+
+class TestCocosSignInTransform:
+    """Test cocos_sign is accessible inside execute_transform."""
+
+    def test_cocos_sign_in_transform_code(self):
+        result = execute_transform(
+            100.0, "value * cocos_sign('ip_like', cocos_in=11, cocos_out=17)"
+        )
+        assert result == pytest.approx(-100.0)
+
+    def test_cocos_sign_identity(self):
+        result = execute_transform(
+            100.0, "value * cocos_sign('b0_like', cocos_in=11, cocos_out=17)"
+        )
+        assert result == pytest.approx(100.0)
