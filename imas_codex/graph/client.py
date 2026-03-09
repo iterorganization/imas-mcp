@@ -73,6 +73,31 @@ def _get_all_vector_indexes() -> list[tuple[str, str, str]]:
 EXPECTED_VECTOR_INDEXES: list[tuple[str, str, str]] = _get_all_vector_indexes()
 
 
+def _get_all_fulltext_indexes() -> list[tuple[str, str, list[str]]]:
+    """Derive all expected fulltext indexes from LinkML schemas.
+
+    Returns list of (index_name, node_label, [property_names]) tuples.
+    """
+    from pathlib import Path
+
+    from imas_codex.graph.schema import GraphSchema
+
+    schemas_dir = Path(__file__).parent.parent / "schemas"
+
+    indexes = {}
+    for schema_file in ["facility.yaml", "imas_dd.yaml"]:
+        gs = GraphSchema(schemas_dir / schema_file)
+        for idx in gs.fulltext_indexes:
+            indexes[idx[0]] = idx
+
+    return list(indexes.values())
+
+
+EXPECTED_FULLTEXT_INDEXES: list[tuple[str, str, list[str]]] = (
+    _get_all_fulltext_indexes()
+)
+
+
 # =============================================================================
 # Relationship Types (Schema-Derived)
 # =============================================================================
@@ -341,6 +366,9 @@ class GraphClient:
         # Create vector indexes for semantic search
         self.ensure_vector_indexes()
 
+        # Create fulltext indexes for BM25 text search
+        self.ensure_fulltext_indexes()
+
     def ensure_vector_indexes(self) -> None:
         """Create vector indexes for semantic search if they don't exist.
 
@@ -383,6 +411,34 @@ class GraphClient:
                         f"Failed to create vector index {index_name} "
                         f"(may require Neo4j 5.x+): {e}"
                     )
+
+    def ensure_fulltext_indexes(self) -> None:
+        """Create fulltext indexes for BM25 text search if they don't exist.
+
+        Creates all fulltext indexes derived from LinkML schema class annotations.
+        """
+        with self.session() as sess:
+            result = sess.run(
+                "SHOW INDEXES YIELD name WHERE name IN $names RETURN name",
+                names=[idx[0] for idx in EXPECTED_FULLTEXT_INDEXES],
+            )
+            existing = {record["name"] for record in result}
+
+            for index_name, label, props in EXPECTED_FULLTEXT_INDEXES:
+                if index_name in existing:
+                    continue
+
+                props_str = ", ".join(f"n.{p}" for p in props)
+                try:
+                    sess.run(
+                        f"CREATE FULLTEXT INDEX {index_name} IF NOT EXISTS "
+                        f"FOR (n:{label}) ON EACH [{props_str}] "
+                        "OPTIONS { indexConfig: { "
+                        "`fulltext.analyzer`: 'standard-no-stop-words' } }"
+                    )
+                    logger.debug(f"Created fulltext index: {index_name}")
+                except Exception as e:
+                    logger.warning(f"Failed to create fulltext index {index_name}: {e}")
 
     def drop_all(self) -> int:
         """Delete all nodes and relationships.
@@ -484,6 +540,29 @@ class GraphClient:
         """
         if not items:
             return {"processed": 0, "relationships": {}}
+
+        # Auto-embed items with description but no embedding
+        if label in self.schema.description_embeddable_labels:
+            needs_embedding = [
+                (i, item)
+                for i, item in enumerate(items)
+                if item.get("description") and not item.get("embedding")
+            ]
+            if needs_embedding:
+                try:
+                    from imas_codex.embeddings import get_encoder
+
+                    encoder = get_encoder()
+                    texts = [item["description"] for _, item in needs_embedding]
+                    vectors = encoder.embed_texts(texts)
+                    from datetime import UTC, datetime
+
+                    now = datetime.now(UTC).isoformat()
+                    for (idx, _), vec in zip(needs_embedding, vectors, strict=True):
+                        items[idx]["embedding"] = vec.tolist()
+                        items[idx]["embedded_at"] = now
+                except Exception:
+                    logger.warning("Auto-embedding unavailable for %s, skipping", label)
 
         processed = 0
         rel_counts: dict[str, int] = {}

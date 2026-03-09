@@ -69,9 +69,9 @@ data_systems:
     setup_commands:
       - source /etc/profile.d/modules.sh
       - module load jet/1.0
-    # Diagnostic subsystem codes (32 subsystems, 2-char codes)
+    # JPF subsystem codes (32 subsystems, 2-char codes)
     # Discovered via jpfsubsystems() TDI function
-    subsystem_codes:
+    jpf_subsystems:
       - DA  # Diagnostics A
       - DB  # Diagnostics B
       - DC  # Diagnostics C
@@ -104,12 +104,53 @@ data_systems:
       - YD  # YD subsystem
       - YE  # YE subsystem
       - DJ  # DJ subsystem
+    # TDI data access functions available on the server
+    tdi_access_functions:
+      jpf: dpf("{subsystem}/{signal}", {shot})     # Raw JPF signals
+      ppf: ppf("{dda}/{dtype}", {shot})             # Processed PPF data
+      jpf_subsystems: jpfsubsystems()               # List all JPF subsystem codes
+      jpf_active: jpfincludedsubsystems({shot})     # Active subsystems for a shot
+      ppf_info: ppfsignalinfo("{dda}")               # PPF DDA metadata
 
   # IMAS data available post-migration
   imas:
     backends:
       - mdsplus
     db_name: jet
+
+  # JPF (JET Processing Facility) raw hardware diagnostic signals.
+  # Organized by 2-char subsystem code + signal name (e.g., DA/C2-IPLA).
+  # Accessed via MDSplus thin-client TDI function: dpf("subsystem/signal", shot).
+  # Config references the MDSplus server and subsystem codes from the
+  # mdsplus section above — the JPF scanner uses these at runtime.
+  jpf:
+    server: mdsplus.jet.uk
+    reference_shot: 99896
+    python_command: /common/software/micromamba/root/envs/python-3.12-minibundle/bin/python3
+    setup_commands:
+      - source /etc/profile.d/modules.sh
+      - module load jet/1.0
+    jpf_subsystems:
+      - DA  # Diagnostics A
+      - DB  # Diagnostics B
+      - DC  # Diagnostics C
+      - DD  # Diagnostics D
+      - DE  # Diagnostics E
+      - DF  # Diagnostics F
+      - DG  # Diagnostics G
+      - DH  # Diagnostics H
+      - DI  # Diagnostics I
+      - PF  # Poloidal Field
+      - TF  # Toroidal Field
+      - PL  # Plasma
+      - GS  # Gas
+      - VC  # Vacuum
+      - AH  # Additional Heating
+      - RF  # Radio Frequency
+      - CC  # Central Control
+      - LH  # Lower Hybrid
+      - MC  # Machine Control
+      - NM  # Neutron Monitoring
 
   # Machine description — geometry data for JET's tokamak components.
   # Accessed via the DeviceXMLScanner plugin (scanner_type: device_xml).
@@ -581,8 +622,6 @@ data_access_patterns:
     - "Machine description in EFIT device XMLs + chain1 files, not MDSplus"
     - "SAL REST at sal.jet.uk — not responding as of exploration (2026)"
     - "IMAS modules exist but import fails on current Python (dead end)"
-    - "TDI functions: dpf('{subsystem}/{signal}', {shot}) for JPF, ppf('{dda}/{dtype}', {shot}) for PPF"
-    - "jpfsubsystems() lists all subsystem codes, jpfincludedsubsystems({shot}) for active"
 
 # Discovery root paths for path discovery pipeline
 # These are seeded as starting points for directory scanning

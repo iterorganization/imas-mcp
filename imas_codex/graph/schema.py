@@ -223,6 +223,38 @@ class GraphSchema:
 
         return indexes
 
+    @cached_property
+    def fulltext_indexes(self) -> list[tuple[str, str, list[str]]]:
+        """Derive fulltext indexes from class-level annotations.
+
+        Returns list of (index_name, node_label, [property_names]) tuples.
+
+        Annotation format on a class:
+            fulltext_index:
+              tag: fulltext_index
+              value: "index_name:prop1,prop2"
+        """
+        indexes = []
+        for label in self.node_labels:
+            cls_def = self._view.get_class(label)
+            annotations = getattr(cls_def, "annotations", None) or {}
+            ann = (
+                annotations.get("fulltext_index")
+                if isinstance(annotations, dict)
+                else getattr(annotations, "fulltext_index", None)
+            )
+            if not ann:
+                continue
+            value = ann.value if hasattr(ann, "value") else str(ann)
+            # Parse "index_name:prop1,prop2"
+            if ":" not in value:
+                continue
+            idx_name, props_str = value.split(":", 1)
+            props = [p.strip() for p in props_str.split(",") if p.strip()]
+            if idx_name and props:
+                indexes.append((idx_name, label, props))
+        return indexes
+
     def get_identifier(self, class_name: str) -> str | None:
         """Get the identifier field for a class.
 

@@ -149,7 +149,7 @@ def _vector_search_signals(
     facility starvation when one facility dominates the index.
     """
     # Over-fetch to avoid facility starvation
-    internal_k = max(k * 20, 200)
+    internal_k = max(k * 5, 200)
     where_parts = ["s.facility_id = $facility"]
     params: dict[str, Any] = {
         "k": internal_k,
@@ -187,9 +187,25 @@ def _text_search_signals(
 ) -> list[dict[str, Any]]:
     """Text-based search on signals by name, node_path, and description.
 
-    Catches keyword matches that pure vector search misses (e.g.,
-    "ip" → ``IPLASMA``, "bpol" → ``B_POL``).
+    Uses fulltext index for BM25 scoring when available, falls back to
+    CONTAINS with hardcoded scores otherwise.
     """
+    # Try fulltext index first (BM25 scoring)
+    try:
+        cypher = """
+            CALL db.index.fulltext.queryNodes('facility_signal_text', $query)
+            YIELD node AS s, score
+            WHERE s.facility_id = $facility
+            RETURN s.id AS id, score
+            LIMIT $limit
+        """
+        results = gc.query(cypher, query=query, facility=facility, limit=k * 2)
+        if results:
+            return results
+    except Exception:
+        pass
+
+    # Fallback: CONTAINS with fixed score
     query_lower = query.lower()
     cypher = """
         MATCH (s:FacilitySignal)
@@ -229,6 +245,7 @@ def _enrich_signals(
              collect(DISTINCT {
                access_template: da.data_template,
                access_type: da.access_type,
+               method_type: da.method_type,
                imports_template: da.imports_template,
                connection_template: da.connection_template,
                imas_path: ip.id,
@@ -257,7 +274,7 @@ def _vector_search_data_nodes(
 
     Uses property-based facility filter with over-fetching.
     """
-    internal_k = max(k * 20, 200)
+    internal_k = max(k * 5, 200)
     cypher = (
         'CALL db.index.vector.queryNodes("data_node_desc_embedding", $k, $embedding) '
         "YIELD node AS n, score "
@@ -281,6 +298,7 @@ def _search_docs(
     facility: str,
     *,
     k: int = 10,
+    site: str | None = None,
     gc: GraphClient | None = None,
     encoder: Encoder | None = None,
 ) -> str:
@@ -307,7 +325,9 @@ def _search_docs(
 
     try:
         # Step 1: Vector search on wiki chunks
-        chunk_ids, scores = _vector_search_wiki_chunks(gc, embedding, facility, k)
+        chunk_ids, scores = _vector_search_wiki_chunks(
+            gc, embedding, facility, k, site=site
+        )
 
         # Step 1b: Text search for keyword matches (hybrid boost)
         text_chunks = _text_search_wiki_chunks(gc, query, facility, k)
@@ -342,6 +362,18 @@ def _search_docs(
         if chunk_ids:
             enriched_chunks = _enrich_wiki_chunks(gc, chunk_ids)
 
+            # Title-match boost: if query terms appear in page title, boost score
+            query_terms = set(query.lower().split())
+            for chunk in enriched_chunks:
+                cid = chunk.get("id", "")
+                page_title = (
+                    chunk.get("page_title") or chunk.get("page_id") or ""
+                ).lower()
+                title_terms = set(page_title.replace("_", " ").split())
+                overlap = len(query_terms & title_terms)
+                if overlap > 0 and cid in scores:
+                    scores[cid] = min(1.0, scores[cid] + 0.1 * overlap)
+
         # Step 4: Format
         return format_docs_report(enriched_chunks, document_results, scores)
 
@@ -357,22 +389,44 @@ def _vector_search_wiki_chunks(
     embedding: list[float],
     facility: str,
     k: int,
+    site: str | None = None,
 ) -> tuple[list[str], dict[str, float]]:
     """Vector search on wiki_chunk_embedding index.
 
     Uses property-based facility filter with over-fetching.
+    Optionally filters by wiki site URL substring.
     """
-    internal_k = max(k * 20, 200)
-    cypher = (
-        'CALL db.index.vector.queryNodes("wiki_chunk_embedding", $k, $embedding) '
-        "YIELD node AS c, score "
-        "WHERE c.facility_id = $facility "
-        "RETURN c.id AS id, score "
-        "ORDER BY score DESC LIMIT $limit"
-    )
-    results = gc.query(
-        cypher, k=internal_k, embedding=embedding, facility=facility, limit=k
-    )
+    internal_k = max(k * 5, 200)
+    if site:
+        cypher = (
+            'CALL db.index.vector.queryNodes("wiki_chunk_embedding", $k, $embedding) '
+            "YIELD node AS c, score "
+            "WHERE c.facility_id = $facility "
+            "WITH c, score "
+            "MATCH (p:WikiPage)-[:HAS_CHUNK]->(c) "
+            "WHERE p.wiki_site CONTAINS $site "
+            "RETURN c.id AS id, score "
+            "ORDER BY score DESC LIMIT $limit"
+        )
+        results = gc.query(
+            cypher,
+            k=internal_k,
+            embedding=embedding,
+            facility=facility,
+            site=site,
+            limit=k,
+        )
+    else:
+        cypher = (
+            'CALL db.index.vector.queryNodes("wiki_chunk_embedding", $k, $embedding) '
+            "YIELD node AS c, score "
+            "WHERE c.facility_id = $facility "
+            "RETURN c.id AS id, score "
+            "ORDER BY score DESC LIMIT $limit"
+        )
+        results = gc.query(
+            cypher, k=internal_k, embedding=embedding, facility=facility, limit=k
+        )
     ids = [r["id"] for r in results]
     scores = {r["id"]: round(r["score"], 3) for r in results}
     return ids, scores
@@ -382,7 +436,11 @@ def _enrich_wiki_chunks(
     gc: GraphClient,
     chunk_ids: list[str],
 ) -> list[dict[str, Any]]:
-    """Enrich wiki chunk IDs with page context and cross-links."""
+    """Enrich wiki chunk IDs with page context and cross-links.
+
+    Uses relationship-based traversals for cross-references, with
+    property-based fallback for metadata that hasn't been linked yet.
+    """
     cypher = """
         UNWIND $chunk_ids AS cid
         MATCH (c:WikiChunk {id: cid})
@@ -390,11 +448,19 @@ def _enrich_wiki_chunks(
         OPTIONAL MATCH (c)-[:DOCUMENTS]->(sig:FacilitySignal)
         OPTIONAL MATCH (c)-[:DOCUMENTS]->(tn:DataNode)
         OPTIONAL MATCH (c)-[:MENTIONS_IMAS]->(ip:IMASPath)
+        WITH c, p,
+             collect(DISTINCT sig.id) AS rel_signals,
+             collect(DISTINCT tn.path) AS rel_data_nodes,
+             collect(DISTINCT ip.id) AS rel_imas
         RETURN c.id AS id, c.text AS text, c.section AS section,
                p.id AS page_id, p.title AS page_title, p.url AS page_url,
-               collect(DISTINCT sig.id) AS linked_signals,
-               collect(DISTINCT tn.path) AS linked_data_nodes,
-               collect(DISTINCT ip.id) AS imas_refs
+               CASE WHEN size(rel_signals) > 0 THEN rel_signals
+                    ELSE coalesce(c.ppf_paths_mentioned, []) END AS linked_signals,
+               CASE WHEN size(rel_data_nodes) > 0 THEN rel_data_nodes
+                    ELSE coalesce(c.mdsplus_paths_mentioned, []) END AS linked_data_nodes,
+               CASE WHEN size(rel_imas) > 0 THEN rel_imas
+                    ELSE coalesce(c.imas_paths_mentioned, []) END AS imas_refs,
+               c.tool_mentions AS tool_mentions
     """
     return gc.query(cypher, chunk_ids=chunk_ids)
 
@@ -407,9 +473,25 @@ def _text_search_wiki_chunks(
 ) -> list[dict[str, Any]]:
     """Text-based search on wiki chunks by content.
 
-    Catches keyword matches that vector search misses, especially
-    for technical terms and acronyms.
+    Uses fulltext index for BM25 scoring when available, falls back to
+    CONTAINS with hardcoded scores otherwise.
     """
+    # Try fulltext index first (BM25 scoring)
+    try:
+        cypher = """
+            CALL db.index.fulltext.queryNodes('wiki_chunk_text', $query)
+            YIELD node AS c, score
+            WHERE c.facility_id = $facility
+            RETURN c.id AS id, score
+            LIMIT $limit
+        """
+        results = gc.query(cypher, query=query, facility=facility, limit=k * 2)
+        if results:
+            return results
+    except Exception:
+        pass
+
+    # Fallback: CONTAINS with fixed score
     query_lower = query.lower()
     cypher = """
         MATCH (c:WikiChunk)
@@ -433,7 +515,7 @@ def _vector_search_documents(
     """
     results: list[dict[str, Any]] = []
     scores: dict[str, float] = {}
-    internal_k = max(k * 20, 200)
+    internal_k = max(k * 5, 200)
 
     # Search documents
     try:
@@ -783,7 +865,7 @@ def _vector_search_code_chunks(
     Facility filtering uses CodeChunk's ``facility_id`` property directly.
     """
     # Over-fetch to avoid facility starvation when one facility dominates
-    internal_k = max(k * 20, 200)
+    internal_k = max(k * 5, 200)
     params: dict[str, Any] = {"k": internal_k, "embedding": embedding}
 
     if facility is not None:
@@ -853,9 +935,34 @@ def _text_search_code_chunks(
 ) -> list[dict[str, Any]]:
     """Text-based search on code chunks by content and function name.
 
-    Catches keyword matches that vector search misses (e.g.,
-    function names, import statements, specific API calls).
+    Uses fulltext index for BM25 scoring when available, falls back to
+    CONTAINS with hardcoded scores otherwise.
     """
+    # Try fulltext index first (BM25 scoring)
+    try:
+        if facility is not None:
+            cypher = """
+                CALL db.index.fulltext.queryNodes('code_chunk_text', $query)
+                YIELD node AS cc, score
+                WHERE cc.facility_id = $facility
+                RETURN cc.id AS id, score
+                LIMIT $limit
+            """
+            results = gc.query(cypher, query=query, facility=facility, limit=k * 2)
+        else:
+            cypher = """
+                CALL db.index.fulltext.queryNodes('code_chunk_text', $query)
+                YIELD node AS cc, score
+                RETURN cc.id AS id, score
+                LIMIT $limit
+            """
+            results = gc.query(cypher, query=query, limit=k * 2)
+        if results:
+            return results
+    except Exception:
+        pass
+
+    # Fallback: CONTAINS with fixed score
     query_lower = query.lower()
     params: dict[str, Any] = {"query_lower": query_lower, "limit": k * 2}
 

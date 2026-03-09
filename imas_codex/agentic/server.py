@@ -1870,6 +1870,7 @@ class AgentsServer:
             query: str,
             facility: str,
             k: int = 15,
+            site: str | None = None,
         ) -> str:
             """Search documentation (wiki, documents, images) with cross-links.
 
@@ -1883,12 +1884,13 @@ class AgentsServer:
                 query: Natural language search text (e.g. "fishbone instabilities")
                 facility: Facility id (required, e.g. "tcv", "jet")
                 k: Results per index (default 15)
+                site: Optional wiki site filter (substring match on wiki URL)
 
             Returns:
                 Formatted report with wiki documentation grouped by page,
                 cross-links to signals/IMAS paths, and related documents.
             """
-            return _search_docs(query, facility, k=k)
+            return _search_docs(query, facility, k=k, site=site)
 
         @self.mcp.tool()
         def search_code(

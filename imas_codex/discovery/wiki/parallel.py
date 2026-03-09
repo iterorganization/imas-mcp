@@ -801,6 +801,17 @@ async def run_parallel_wiki_discovery(
         cleanup=cleanup,
     )
 
+    # Post-ingestion: create cross-reference relationships from chunk metadata
+    # (DOCUMENTS → DataNode/FacilitySignal, MENTIONS_IMAS → IMASPath)
+    if state.ingest_stats.processed > 0 or state.docs_stats.processed > 0:
+        try:
+            from imas_codex.discovery.wiki.pipeline import link_chunks_to_entities
+
+            link_stats = await asyncio.to_thread(link_chunks_to_entities, facility)
+            logger.info("Cross-reference linking: %s", link_stats)
+        except Exception:
+            logger.warning("Cross-reference linking failed", exc_info=True)
+
     elapsed = time.time() - start_time
 
     return {

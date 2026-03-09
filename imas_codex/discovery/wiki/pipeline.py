@@ -909,6 +909,9 @@ class WikiIngestionPipeline:
             stats["units"] += len(entities.units)
             stats["conventions"] += len(entities.conventions)
 
+            # Content hash for deduplication (first 16 hex chars of SHA-256)
+            text_hash = hashlib.sha256(chunk_text_str.encode()).hexdigest()[:16]
+
             chunk_batch.append(
                 {
                     "id": self._generate_chunk_id(page_id, i),
@@ -917,6 +920,7 @@ class WikiIngestionPipeline:
                     "chunk_index": i,
                     "text": chunk_text_str,
                     "embedding": embeddings[i],
+                    "content_hash": text_hash,
                     **props,
                 }
             )
@@ -968,6 +972,7 @@ class WikiIngestionPipeline:
                         c.chunk_index = chunk.chunk_index,
                         c.text = chunk.text,
                         c.embedding = chunk.embedding,
+                        c.content_hash = chunk.content_hash,
                         c.mdsplus_paths_mentioned = chunk.mdsplus_paths,
                         c.imas_paths_mentioned = chunk.imas_paths,
                         c.ppf_paths_mentioned = chunk.ppf_paths,
@@ -2190,6 +2195,9 @@ class DocumentPipeline:
             entities = extractor.extract(chunk_text_str)
             props = extractor.to_chunk_properties(entities)
 
+            # Content hash for deduplication (first 16 hex chars of SHA-256)
+            text_hash = hashlib.sha256(chunk_text_str.encode()).hexdigest()[:16]
+
             chunk_batch.append(
                 {
                     "id": f"{document_id}:chunk_{i}",
@@ -2197,6 +2205,7 @@ class DocumentPipeline:
                     "facility_id": self.facility_id,
                     "text": chunk_text_str,
                     "embedding": embeddings[i],
+                    "content_hash": text_hash,
                     **props,
                 }
             )
@@ -2227,6 +2236,7 @@ class DocumentPipeline:
                         c.facility_id = chunk.facility_id,
                         c.text = chunk.text,
                         c.embedding = chunk.embedding,
+                        c.content_hash = chunk.content_hash,
                         c.mdsplus_paths_mentioned = chunk.mdsplus_paths,
                         c.imas_paths_mentioned = chunk.imas_paths,
                         c.ppf_paths_mentioned = chunk.ppf_paths,

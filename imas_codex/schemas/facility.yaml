@@ -1491,6 +1491,10 @@ classes:
       - LLMProvenance
       - LLMOperation
     class_uri: facility:DataNode
+    annotations:
+      fulltext_index:
+        tag: fulltext_index
+        value: "data_node_text:description,canonical_path"
     attributes:
       id:
         description: Composite identifier for graph queries (e.g., facility:tree:path)
@@ -1971,6 +1975,10 @@ classes:
         - accessor: extracted from data system introspection
         - DATA_ACCESS edge: linked to facility's DataAccess
     class_uri: facility:FacilitySignal
+    annotations:
+      fulltext_index:
+        tag: fulltext_index
+        value: "facility_signal_text:name,description,node_path"
     mixins:
       - DiscoveryProvenance
       - LLMOperation
@@ -3065,6 +3073,10 @@ classes:
       Contains embedding for semantic search. Data references are linked
       via DataReference nodes, not stored as arrays.
     class_uri: facility:CodeChunk
+    annotations:
+      fulltext_index:
+        tag: fulltext_index
+        value: "code_chunk_text:text,function_name"
     attributes:
       id:
         identifier: true
@@ -3555,6 +3567,10 @@ classes:
       - Query: (c)<-[:NEXT_CHUNK]-(prev) for previous chunk
       - chunk_index property for absolute positioning
     class_uri: facility:WikiChunk
+    annotations:
+      fulltext_index:
+        tag: fulltext_index
+        value: "wiki_chunk_text:text"
     attributes:
       id:
         identifier: true
@@ -3624,6 +3640,8 @@ classes:
         description: Facility-specific tool/API mentions found in this chunk (e.g., tdiExecute, ppfget)
         multivalued: true
         range: string
+      content_hash:
+        description: SHA-256 hash of text content (first 16 hex chars) for deduplication
       documents_nodes:
         description: DataNodes documented by this wiki chunk (resolved from data paths in content)
         multivalued: true
