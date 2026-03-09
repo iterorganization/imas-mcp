@@ -2993,7 +2993,7 @@ def clear_dd_graph(
     """Clear all IMAS Data Dictionary nodes from the graph.
 
     Deletes DD-specific nodes in referential-integrity order, cascading to
-    orphaned nodes. Cross-references from facility nodes (MAPS_TO_IMAS,
+    orphaned nodes. Cross-references from facility nodes (IMASMapping,
     MENTIONS_IMAS, etc.) are detached before deletion.
 
     Unit nodes are only deleted if no non-DD nodes reference them.

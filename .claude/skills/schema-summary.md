@@ -68,7 +68,8 @@ LIMIT 5
 CALL db.index.vector.queryNodes('facility_signal_desc_embedding', $k, $embedding)
 YIELD node AS signal, score
 MATCH (signal)-[:DATA_ACCESS]->(da:DataAccess)
-OPTIONAL MATCH (signal)-[:MAPS_TO_IMAS]->(imas:IMASPath)
+OPTIONAL MATCH (signal)-[:HAS_DATA_SOURCE_NODE]->(dn:DataNode)
+    <-[:SOURCE_PATH]-(m:IMASMapping)-[:TARGET_PATH]->(imas:IMASPath)
 RETURN signal.id, signal.description, da.data_template,
        collect(imas.id) AS imas_paths, score
 ORDER BY score DESC
@@ -101,7 +102,7 @@ ORDER BY score DESC
 | From | Relationship | To |
 |------|-------------|-----|
 | FacilitySignal | DATA_ACCESS | DataAccess |
-| FacilitySignal | MAPS_TO_IMAS | IMASPath |
+| FacilitySignal | HAS_DATA_SOURCE_NODE | DataNode |
 | FacilitySignal | AT_FACILITY | Facility |
 | DataNode | AT_FACILITY | Facility |
 | IMASMapping | AT_FACILITY | Facility |

@@ -21,7 +21,8 @@ ORDER BY s.name
 CALL db.index.vector.queryNodes($index, $k, $embedding)
 YIELD node AS signal, score
 MATCH (signal)-[:DATA_ACCESS]->(da:DataAccess)
-OPTIONAL MATCH (signal)-[:MAPS_TO_IMAS]->(imas:IMASPath)
+OPTIONAL MATCH (signal)-[:HAS_DATA_SOURCE_NODE]->(dn:DataNode)
+    <-[:SOURCE_PATH]-(m:IMASMapping)-[:TARGET_PATH]->(imas:IMASPath)
 RETURN signal.id, signal.description, da.data_template,
        collect(imas.id) AS imas_paths, score
 ORDER BY score DESC

@@ -239,7 +239,7 @@ def _enrich_signals(
         OPTIONAL MATCH (s)-[:BELONGS_TO_DIAGNOSTIC]->(diag:Diagnostic)
         OPTIONAL MATCH (s)-[:HAS_DATA_SOURCE_NODE]->(tn:DataNode)
         OPTIONAL MATCH (s)-[:DATA_ACCESS]->(da:DataAccess)
-        OPTIONAL MATCH (da)-[:MAPS_TO_IMAS]->(ip:IMASPath)
+        OPTIONAL MATCH (tn)<-[:SOURCE_PATH]-(m:IMASMapping)-[:TARGET_PATH]->(ip:IMASPath)
         OPTIONAL MATCH (ip)-[:HAS_UNIT]->(u:Unit)
         WITH s, diag, tn,
              collect(DISTINCT {
@@ -1510,16 +1510,17 @@ def _get_facility_crossrefs(
 
     Uses both relationship-based traversals (populated by migration/ingestion)
     and property-based fallbacks for comprehensive results:
-    - FacilitySignal: physics_domain match OR MAPS_TO_IMAS relationship
+    - FacilitySignal: physics_domain match OR IMASMapping traversal via DataNode
     - WikiChunk: MENTIONS_IMAS relationship OR imas_paths_mentioned property
     - CodeChunk: RESOLVES_TO_IMAS_PATH via DataReference OR related_ids property
     """
     cypher = """
         UNWIND $path_ids AS pid
         MATCH (ip:IMASPath {id: pid})
-        // Signals: relationship-based (MAPS_TO_IMAS) + property-based fallback
+        // Signals: IMASMapping traversal via DataNode + property-based fallback
         OPTIONAL MATCH (sig:FacilitySignal {facility_id: $facility})
-            -[:DATA_ACCESS]->(da:DataAccess)-[:MAPS_TO_IMAS]->(ip)
+            -[:HAS_DATA_SOURCE_NODE]->(dn:DataNode)
+            <-[:SOURCE_PATH]-(m:IMASMapping)-[:TARGET_PATH]->(ip)
         OPTIONAL MATCH (sig2:FacilitySignal)
         WHERE sig2.facility_id = $facility
           AND sig2.physics_domain IS NOT NULL

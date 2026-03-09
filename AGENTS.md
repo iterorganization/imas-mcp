@@ -117,7 +117,7 @@ When a slot has `range: SomeClass`, the Cypher relationship type is derived as f
 
 **Rules for new relationships:**
 - Use `relationship_type: AT_FACILITY` for all `facility_id` slots — this is the standard pattern across the entire schema.
-- Prefer verb-based names: `MAPS_TO_IMAS`, `BELONGS_TO_DIAGNOSTIC`, `DOCUMENTED_BY`.
+- Prefer verb-based names: `SOURCE_PATH`, `TARGET_PATH`, `BELONGS_TO_DIAGNOSTIC`, `DOCUMENTED_BY`.
 - If the auto-derived name is clear enough (e.g., `has_chunk` → `HAS_CHUNK`), omit the annotation.
 - All `facility_id` slots MUST have `range: Facility` and `annotations: { relationship_type: AT_FACILITY }`. No exceptions.
 
@@ -449,8 +449,9 @@ results = query("""
     CALL db.index.vector.queryNodes('facility_signal_desc_embedding', 5, $embedding)
     YIELD node AS signal, score
     MATCH (signal)-[:DATA_ACCESS]->(da:DataAccess)
-    OPTIONAL MATCH (signal)-[:MAPS_TO_IMAS]->(imas:IMASPath)
-    RETURN signal.id, signal.description, da.template_python,
+    OPTIONAL MATCH (signal)-[:HAS_DATA_SOURCE_NODE]->(dn:DataNode)
+        <-[:SOURCE_PATH]-(m:IMASMapping)-[:TARGET_PATH]->(imas:IMASPath)
+    RETURN signal.id, signal.description, da.data_template,
            collect(imas.id) AS imas_paths, score
     ORDER BY score DESC
 """, embedding=embed("electron density profile"))
@@ -461,7 +462,9 @@ results = query("""
 | From | Relationship | To |
 |------|--------------|-----|
 | FacilitySignal | DATA_ACCESS | DataAccess |
-| FacilitySignal | MAPS_TO_IMAS | IMASPath |
+| FacilitySignal | HAS_DATA_SOURCE_NODE | DataNode |
+| IMASMapping | SOURCE_PATH | DataNode |
+| IMASMapping | TARGET_PATH | IMASPath |
 | WikiChunk | HAS_CHUNK← | WikiPage |
 | FacilityPath | AT_FACILITY | Facility |
 

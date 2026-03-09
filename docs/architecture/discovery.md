@@ -453,7 +453,9 @@ CodeFile -[:AT_PATH]-> FacilityPath
 SourceFile -[:HAS_CHUNK]-> CodeChunk
 FacilitySignal -[:AT_FACILITY]-> Facility
 FacilitySignal -[:DATA_ACCESS]-> DataAccess
-FacilitySignal -[:MAPS_TO_IMAS]-> IMASPath
+FacilitySignal -[:HAS_DATA_SOURCE_NODE]-> DataNode
+IMASMapping -[:SOURCE_PATH]-> DataNode
+IMASMapping -[:TARGET_PATH]-> IMASPath
 DataNode -[:HAS_NODE]-> DataNode
 DataNode -[:IN_VERSION]-> StructuralEpoch
 ```

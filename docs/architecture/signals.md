@@ -286,7 +286,7 @@ OPTIONAL MATCH (wp)-[:HAS_CHUNK]->(wc:WikiChunk)
 // Code usage
 OPTIONAL MATCH (tn:DataNode)<-[:HAS_DATA_SOURCE_NODE]-(fs)
 // IMAS mapping
-OPTIONAL MATCH (fs)-[:MAPS_TO_IMAS]->(imas:IMASPath)
+OPTIONAL MATCH (tn)<-[:SOURCE_PATH]-(m:IMASMapping)-[:TARGET_PATH]->(imas:IMASPath)
 RETURN fs.id, fs.description,
        collect(DISTINCT wp.title) AS wiki_pages,
        collect(DISTINCT wc.text)[..3] AS wiki_excerpts,

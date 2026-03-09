@@ -590,8 +590,8 @@ def map_signals_to_imas(
 ) -> list[dict[str, Any]]:
     """Find facility signals and their IMAS path mappings.
 
-    Traverses FacilitySignal -> MAPS_TO_IMAS -> IMASPath with
-    enriched context from both sides.
+    Traverses FacilitySignal -> HAS_DATA_SOURCE_NODE -> DataNode
+    <- SOURCE_PATH - IMASMapping -> TARGET_PATH -> IMASPath.
 
     Args:
         facility: Facility id.
@@ -618,7 +618,8 @@ def map_signals_to_imas(
     cypher = (
         f"MATCH (s:FacilitySignal) WHERE {where_clause} "
         "OPTIONAL MATCH (s)-[:DATA_ACCESS]->(da:DataAccess) "
-        "OPTIONAL MATCH (da)-[:MAPS_TO_IMAS]->(ip:IMASPath) "
+        "OPTIONAL MATCH (s)-[:HAS_DATA_SOURCE_NODE]->(dn:DataNode)"
+        "<-[:SOURCE_PATH]-(m:IMASMapping)-[:TARGET_PATH]->(ip:IMASPath) "
         "RETURN s.id AS signal_id, s.name AS signal_name, "
         "s.diagnostic AS diagnostic, s.description AS signal_description, "
         "ip.id AS imas_path, ip.documentation AS imas_documentation, "
