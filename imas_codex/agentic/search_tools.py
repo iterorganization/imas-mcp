@@ -258,7 +258,7 @@ def _enrich_signals(
                s.node_path AS node_path, s.accessor AS accessor,
                s.data_source_name AS data_source_name,
                diag.name AS diagnostic_name, diag.category AS diagnostic_category,
-               tn.path AS tree_path, tn.data_source_name AS data_source_name,
+               tn.path AS tree_path, tn.data_source_name AS tree_data_source_name,
                access_methods
     """
     return gc.query(cypher, signal_ids=signal_ids)
@@ -609,6 +609,7 @@ def _fetch(
             _fetch_wiki_document,
             _fetch_code_file,
             _fetch_image,
+            _fetch_imas_path,
         ]:
             result = resolver(gc, resource)
             if result is not None:
@@ -662,9 +663,34 @@ def _fetch_wiki_document(gc: GraphClient, resource: str) -> str | None:
         "ORDER BY a.title, c.chunk_index",
         resource=resource,
     )
-    if not chunks:
+    if chunks:
+        return format_fetch_report(chunks)
+
+    # No chunks — try metadata-only for unparsed documents (PowerPoint, etc.)
+    meta = gc.query(
+        "MATCH (a:Document) "
+        "WHERE a.id = $resource OR a.url = $resource "
+        "   OR toLower(a.filename) CONTAINS toLower($resource) "
+        "   OR toLower(a.title) CONTAINS toLower($resource) "
+        "RETURN a.id AS id, a.title AS title, a.url AS url, "
+        "a.filename AS filename, a.file_type AS file_type, "
+        "a.description AS description "
+        "LIMIT 1",
+        resource=resource,
+    )
+    if not meta:
         return None
-    return format_fetch_report(chunks)
+
+    doc = meta[0]
+    parts = [f"## Document: {doc.get('title') or doc.get('filename') or 'Untitled'}"]
+    if doc.get("url"):
+        parts.append(f"URL: {doc['url']}")
+    if doc.get("file_type"):
+        parts.append(f"Type: {doc['file_type']}")
+    if doc.get("description"):
+        parts.append(f"\n{doc['description']}")
+    parts.append("\n*Content not parsed — binary or unsupported format.*")
+    return "\n".join(parts)
 
 
 def _fetch_code_file(gc: GraphClient, resource: str) -> str | None:
@@ -777,6 +803,88 @@ def _fetch_image(gc: GraphClient, resource: str) -> str | None:
         parts.append(f"\n### Diagram\n```mermaid\n{mermaid}\n```")
     if not desc and not ocr:
         parts.append(f"\nNo extracted content available. Fetch from source: {url}")
+    return "\n".join(parts)
+
+
+def _fetch_imas_path(gc: GraphClient, resource: str) -> str | None:
+    """Resolve and fetch an IMASPath by ID or partial path."""
+    results = gc.query(
+        """
+        MATCH (p:IMASPath)
+        WHERE p.id = $resource
+           OR toLower(p.id) CONTAINS toLower($resource)
+        OPTIONAL MATCH (p)-[:HAS_UNIT]->(u:Unit)
+        OPTIONAL MATCH (p)-[:IN_CLUSTER]->(cl:IMASSemanticCluster)
+        OPTIONAL MATCH (p)-[:HAS_COORDINATE]->(coord:IMASCoordinateSpec)
+        OPTIONAL MATCH (p)-[:INTRODUCED_IN]->(intro:DDVersion)
+        OPTIONAL MATCH (p)-[:DEPRECATED_IN]->(dep:DDVersion)
+        RETURN p.id AS id, p.name AS name, p.ids AS ids,
+               p.documentation AS documentation, p.data_type AS data_type,
+               p.ndim AS ndim, p.node_type AS node_type,
+               p.physics_domain AS physics_domain,
+               p.cocos_label_transformation AS cocos_label,
+               p.lifecycle_status AS lifecycle_status,
+               p.lifecycle_version AS lifecycle_version,
+               p.path_doc AS structure_reference,
+               u.symbol AS unit, u.name AS unit_name,
+               collect(DISTINCT cl.label) AS clusters,
+               collect(DISTINCT {id: coord.id, type: coord.coordinate_type}) AS coordinates,
+               intro.id AS introduced_in,
+               dep.id AS deprecated_in
+        ORDER BY size(p.id) ASC
+        LIMIT 1
+        """,
+        resource=resource,
+    )
+    if not results:
+        return None
+
+    p = results[0]
+    parts: list[str] = []
+    parts.append(f"## IMAS Path: `{p['id']}`")
+    parts.append(f"**IDS**: {p.get('ids') or 'N/A'}")
+    parts.append(f"**Name**: {p.get('name') or 'N/A'}")
+    if p.get("data_type"):
+        dtype = p["data_type"]
+        ndim = p.get("ndim")
+        parts.append(f"**Data type**: {dtype}" + (f" (ndim={ndim})" if ndim else ""))
+    if p.get("unit"):
+        unit_str = p["unit"]
+        if p.get("unit_name"):
+            unit_str += f" ({p['unit_name']})"
+        parts.append(f"**Unit**: {unit_str}")
+    if p.get("physics_domain"):
+        parts.append(f"**Physics domain**: {p['physics_domain']}")
+    if p.get("node_type"):
+        parts.append(f"**Node type**: {p['node_type']}")
+
+    doc = p.get("documentation") or ""
+    if doc:
+        parts.append(f"\n### Documentation\n{doc}")
+    if p.get("structure_reference"):
+        parts.append(f"\n**Structure reference**: {p['structure_reference']}")
+
+    if p.get("cocos_label"):
+        parts.append(f"**COCOS transformation**: {p['cocos_label']}")
+    if p.get("lifecycle_status"):
+        lc = p["lifecycle_status"]
+        if p.get("lifecycle_version"):
+            lc += f" (version {p['lifecycle_version']})"
+        parts.append(f"**Lifecycle**: {lc}")
+    if p.get("introduced_in"):
+        parts.append(f"**Introduced in**: DD {p['introduced_in']}")
+    if p.get("deprecated_in"):
+        parts.append(f"**Deprecated in**: DD {p['deprecated_in']}")
+
+    clusters = [c for c in (p.get("clusters") or []) if c]
+    if clusters:
+        parts.append("\n### Semantic Clusters\n" + ", ".join(clusters))
+
+    coords = [c for c in (p.get("coordinates") or []) if c and c.get("id")]
+    if coords:
+        coord_strs = [f"- `{c['id']}` ({c.get('type', 'N/A')})" for c in coords]
+        parts.append("\n### Coordinates\n" + "\n".join(coord_strs))
+
     return "\n".join(parts)
 
 
@@ -1028,18 +1136,19 @@ def _search_imas(
         return f"Error initializing search: {e}"
 
     try:
-        # Step 1: Hybrid search on IMAS paths (vector + text)
+        # Step 1: Vector search on IMAS path embeddings
         path_ids, scores = _vector_search_imas_paths(gc, embedding, k, ids_filter)
 
-        # Step 1b: Text search for keyword matches (old IMAS MCP pattern)
+        # Step 1b: Text search for keyword matches
         text_results = _text_search_imas_paths_by_query(gc, query, k, ids_filter)
         for r in text_results:
             pid = r["id"]
             text_score = round(r["score"], 3)
             if pid in scores:
-                # Boost paths found by both methods
-                scores[pid] = round(scores[pid] * 0.7 + text_score * 0.3 + 0.1, 3)
+                # Found in both vector + text: use max score + hybrid bonus
+                scores[pid] = round(max(scores[pid], text_score) + 0.05, 3)
             else:
+                # Text-only match: use text score directly (now competitive)
                 scores[pid] = text_score
 
         # Re-sort and limit to k
@@ -1090,16 +1199,11 @@ def _vector_search_imas_paths(
     k: int,
     ids_filter: str | None,
 ) -> tuple[list[str], dict[str, float]]:
-    """Hybrid search on IMAS paths: vector + text matching.
+    """Vector similarity search on IMAS paths.
 
-    Combines vector similarity search with text matching on path IDs and
-    documentation to catch keyword matches that pure vector search misses
-    (e.g., "plasma current" → ``equilibrium/time_slice/global_quantities/ip``).
-
-    Inspired by the old IMAS MCP server's hybrid (BM25 + semantic) search
-    which consistently outperformed pure vector search for short queries.
+    Returns raw vector results. Text search and score merging are handled
+    by the caller ``_search_imas()``.
     """
-    # Over-fetch from vector index
     internal_k = max(k * 10, 100)
     where_parts = ["NOT (p)-[:DEPRECATED_IN]->(:DDVersion)"]
     params: dict[str, Any] = {"k": internal_k, "embedding": embedding}
@@ -1110,65 +1214,25 @@ def _vector_search_imas_paths(
 
     where_clause = " AND ".join(where_parts)
 
-    # Stage 1: Vector search
     cypher = (
         'CALL db.index.vector.queryNodes("imas_path_embedding", $k, $embedding) '
         f"YIELD node AS p, score WHERE {where_clause} "
         "RETURN p.id AS id, score "
         "ORDER BY score DESC LIMIT $vector_limit"
     )
-    params["vector_limit"] = k * 3  # Get extra for merging with text results
+    params["vector_limit"] = k * 3
     vector_results = gc.query(cypher, **params)
 
-    # Stage 2: Text matching (hybrid boost from old IMAS MCP server pattern)
-    text_results = _text_search_imas_paths(gc, embedding, k, ids_filter)
-
-    # Merge: boost paths found in both vector and text searches
+    # Filter out generic metadata paths
     scores: dict[str, float] = {}
     for r in vector_results:
-        scores[r["id"]] = round(r["score"], 3)
-
-    for r in text_results:
         pid = r["id"]
-        text_score = round(r["score"], 3)
-        if pid in scores:
-            # Path found in both: boost (old server pattern: 0.7 * existing + 0.3 * new + 0.1 bonus)
-            scores[pid] = round(scores[pid] * 0.7 + text_score * 0.3 + 0.1, 3)
-        else:
-            scores[pid] = text_score
+        if not _is_generic_metadata_path(pid):
+            scores[pid] = round(r["score"], 3)
 
-    # Filter out generic metadata paths ("Verbose description" etc.)
-    scores = {
-        pid: s for pid, s in scores.items() if not _is_generic_metadata_path(gc, pid)
-    }
-
-    # Sort by score, take top k
     sorted_ids = sorted(scores, key=lambda pid: scores[pid], reverse=True)[:k]
     final_scores = {pid: scores[pid] for pid in sorted_ids}
     return sorted_ids, final_scores
-
-
-def _text_search_imas_paths(
-    gc: GraphClient,
-    embedding: list[float],  # unused but kept for API consistency
-    k: int,
-    ids_filter: str | None,
-) -> list[dict[str, Any]]:
-    """Text-based search on IMAS paths.
-
-    Matches against path IDs (normalized) and documentation text.
-    Returns results with a synthetic score for merging with vector results.
-
-    From the old IMAS MCP server: text matching catches keyword-relevant
-    paths that vector search misses, especially for short technical queries.
-    """
-    # Build the query text from the embedding context
-    # We need the original query text — pass it through params
-    # Actually we need to get the query separately; this function is called
-    # from _search_imas which has access to the query.
-    # For now, return empty — the caller (_search_imas) will invoke this
-    # with the actual query text via a separate path.
-    return []
 
 
 def _text_search_imas_paths_by_query(
@@ -1179,17 +1243,18 @@ def _text_search_imas_paths_by_query(
 ) -> list[dict[str, Any]]:
     """Text-based search on IMAS paths by query string.
 
-    Matches against path IDs (path components) and documentation text.
-    Applies leaf-node boosting (2x) from the old IMAS MCP server Whoosh
-    index pattern — leaf paths are typically more useful than structural ones.
+    Matches against path IDs, names, and documentation text. Uses
+    competitive scoring (0.85-0.95 range) so text matches aren't
+    overwhelmed by vector similarity noise from generic metadata paths.
+
+    Leaf nodes (non-structure data types) get a boost since they are
+    typically more useful than structural containers.
     """
-    # Normalize query: replace spaces with common path separators for ID matching
     query_lower = query.lower()
-    # Extract individual words for path component matching
     query_words = [w for w in query_lower.split() if len(w) > 2]
 
     where_parts = ["NOT (p)-[:DEPRECATED_IN]->(:DDVersion)"]
-    params: dict[str, Any] = {"query_lower": query_lower, "limit": k * 2}
+    params: dict[str, Any] = {"query_lower": query_lower, "limit": k * 3}
 
     if ids_filter is not None:
         where_parts.append("p.ids = $ids_filter")
@@ -1197,7 +1262,8 @@ def _text_search_imas_paths_by_query(
 
     where_base = " AND ".join(where_parts)
 
-    # Search by documentation content and path ID components
+    # Full-phrase match on documentation, path ID, or name
+    # Score by match quality and node type (leaf vs structure)
     cypher = f"""
         MATCH (p:IMASPath)
         WHERE {where_base}
@@ -1209,8 +1275,17 @@ def _text_search_imas_paths_by_query(
           AND size(coalesce(p.documentation, '')) > 10
         WITH p,
              CASE
-               WHEN p.data_type IS NOT NULL AND p.data_type <> 'structure' THEN 0.7
-               ELSE 0.4
+               WHEN toLower(p.documentation) CONTAINS $query_lower
+                    AND p.data_type IS NOT NULL AND p.data_type <> 'structure'
+                 THEN 0.95
+               WHEN toLower(p.documentation) CONTAINS $query_lower
+                 THEN 0.88
+               WHEN toLower(p.name) CONTAINS $query_lower
+                    AND p.data_type IS NOT NULL AND p.data_type <> 'structure'
+                 THEN 0.93
+               WHEN toLower(p.id) CONTAINS $query_lower
+                 THEN 0.90
+               ELSE 0.85
              END AS base_score
         RETURN p.id AS id, base_score AS score
         ORDER BY base_score DESC, size(p.id) ASC
@@ -1218,46 +1293,63 @@ def _text_search_imas_paths_by_query(
     """
     results = gc.query(cypher, **params)
 
-    # Also search for individual query words in path names (catches abbreviations like "ip")
+    # Also search individual query words in path names (catches abbreviations like "ip")
     if query_words:
         word_results = []
-        for word in query_words[:3]:  # Limit to first 3 words
+        for word in query_words[:3]:
             word_cypher = f"""
                 MATCH (p:IMASPath)
                 WHERE {where_base}
                   AND (toLower(p.name) = $word OR toLower(p.id) CONTAINS $word)
                   AND p.data_type IS NOT NULL AND p.data_type <> 'structure'
                   AND size(coalesce(p.documentation, '')) > 10
-                RETURN p.id AS id, 0.6 AS score
+                RETURN p.id AS id, 0.90 AS score
                 LIMIT 10
             """
             word_params = {**params, "word": word}
             word_results.extend(gc.query(word_cypher, **word_params))
 
-        # Deduplicate, keeping highest score
         seen = {r["id"]: r["score"] for r in results}
         for r in word_results:
             if r["id"] not in seen or r["score"] > seen[r["id"]]:
                 seen[r["id"]] = r["score"]
                 results.append(r)
 
-    # Deduplicate final results
+    # Deduplicate, filter generic paths, keep highest score
     final: dict[str, dict[str, Any]] = {}
     for r in results:
         pid = r["id"]
+        if _is_generic_metadata_path(pid):
+            continue
         if pid not in final or r["score"] > final[pid]["score"]:
             final[pid] = r
     return list(final.values())[: k * 2]
 
 
-def _is_generic_metadata_path(gc: GraphClient, path_id: str) -> bool:
-    """Check if an IMAS path has only generic metadata documentation.
+def _is_generic_metadata_path(path_id: str) -> bool:
+    """Check if an IMAS path is a generic metadata/descriptor field.
 
-    Filters out paths with documentation like "Verbose description" or
-    very short generic text that pollutes search results.
+    Filters out paths ending in /description, /name, /identifier/name etc.
+    whose documentation is typically "Verbose description" or similar
+    generic text that pollutes search results.
     """
-    # Paths are already enriched with actual documentation by _enrich_imas_paths;
-    # let the formatter handle display filtering.
+    parts = path_id.split("/")
+    if len(parts) < 3:
+        return False
+    tail = parts[-1]
+    # Direct descriptor fields
+    if tail in ("description", "name", "comment", "source", "provider"):
+        return True
+    # Nested identifier descriptors (e.g., .../identifier/description)
+    if (
+        len(parts) >= 2
+        and parts[-2] == "identifier"
+        and tail in ("description", "name")
+    ):
+        return True
+    # Type descriptor fields (e.g., .../neutral_type/description)
+    if tail == "description" and parts[-2].endswith("_type"):
+        return True
     return False
 
 
