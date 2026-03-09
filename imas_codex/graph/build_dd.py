@@ -1914,6 +1914,9 @@ def _ensure_indexes(client: GraphClient) -> None:
     # Vector indexes for semantic search
     client.ensure_vector_indexes()
 
+    # Fulltext indexes for BM25 text search
+    client.ensure_fulltext_indexes()
+
 
 def _create_unit_nodes(client: GraphClient, units: set[str]) -> None:
     """Create Unit nodes with pint-normalized symbols."""

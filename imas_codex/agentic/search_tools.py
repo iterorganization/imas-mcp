@@ -1243,12 +1243,9 @@ def _text_search_imas_paths_by_query(
 ) -> list[dict[str, Any]]:
     """Text-based search on IMAS paths by query string.
 
-    Matches against path IDs, names, and documentation text. Uses
-    competitive scoring (0.85-0.95 range) so text matches aren't
-    overwhelmed by vector similarity noise from generic metadata paths.
-
-    Leaf nodes (non-structure data types) get a boost since they are
-    typically more useful than structural containers.
+    Uses BM25 scoring via Neo4j fulltext index when available, falling
+    back to CONTAINS matching with heuristic scoring. Filters out
+    generic metadata paths (Verbose description, etc.).
     """
     query_lower = query.lower()
     query_words = [w for w in query_lower.split() if len(w) > 2]
@@ -1262,8 +1259,59 @@ def _text_search_imas_paths_by_query(
 
     where_base = " AND ".join(where_parts)
 
-    # Full-phrase match on documentation, path ID, or name
-    # Score by match quality and node type (leaf vs structure)
+    # --- Try fulltext index (BM25 scoring) ---
+    try:
+        ft_where = "WHERE NOT (p)-[:DEPRECATED_IN]->(:DDVersion)"
+        ft_params: dict[str, Any] = {"query": query, "limit": k * 3}
+        if ids_filter is not None:
+            ft_where += " AND p.ids = $ids_filter"
+            ft_params["ids_filter"] = ids_filter
+
+        ft_cypher = f"""
+            CALL db.index.fulltext.queryNodes('imas_path_text', $query)
+            YIELD node AS p, score
+            {ft_where}
+            WITH p, score
+            WHERE size(coalesce(p.documentation, '')) > 10
+            RETURN p.id AS id, score
+            LIMIT $limit
+        """
+        ft_results = gc.query(ft_cypher, **ft_params)
+        if ft_results:
+            max_score = max(r["score"] for r in ft_results)
+            normalized: list[dict[str, Any]] = []
+            for r in ft_results:
+                pid = r["id"]
+                if not _is_generic_metadata_path(pid):
+                    raw = r["score"] / max_score if max_score > 0 else 0.0
+                    normalized.append({"id": pid, "score": max(raw, 0.7)})
+
+            # Supplement with word-level matches for abbreviations
+            if query_words:
+                ft_ids = {r["id"] for r in normalized}
+                for word in query_words[:3]:
+                    word_cypher = f"""
+                        MATCH (p:IMASPath)
+                        WHERE {where_base}
+                          AND (toLower(p.name) = $word OR toLower(p.id) CONTAINS $word)
+                          AND p.data_type IS NOT NULL AND p.data_type <> 'structure'
+                          AND size(coalesce(p.documentation, '')) > 10
+                        RETURN p.id AS id, 0.90 AS score
+                        LIMIT 10
+                    """
+                    word_params = {**params, "word": word}
+                    for r in gc.query(word_cypher, **word_params):
+                        if r["id"] not in ft_ids and not _is_generic_metadata_path(
+                            r["id"]
+                        ):
+                            normalized.append(r)
+                            ft_ids.add(r["id"])
+
+            return normalized[: k * 2]
+    except Exception:
+        pass
+
+    # --- Fallback: CONTAINS matching with heuristic scoring ---
     cypher = f"""
         MATCH (p:IMASPath)
         WHERE {where_base}

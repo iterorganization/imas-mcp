@@ -391,6 +391,10 @@ classes:
       - Error fields and metadata paths are excluded from embedding
       - GGD paths are included by default (configurable)
     class_uri: imas_dd:IMASPath
+    annotations:
+      fulltext_index:
+        tag: fulltext_index
+        value: "imas_path_text:documentation,name,id"
     attributes:
       id:
         identifier: true
