@@ -475,8 +475,16 @@ async def supervised_worker(
                 restart_count = 0
                 backoff = initial_backoff
 
-            restart_count += 1
             is_infra = is_infrastructure_error(e)
+
+            # Infrastructure errors (Neo4j down, SSH unavailable) do NOT
+            # consume restart budget. They represent temporary service
+            # unavailability, not worker bugs. The worker backs off with
+            # exponential delay and retries indefinitely until the service
+            # recovers or stop is requested. Only application errors
+            # (bugs, unexpected exceptions) consume the restart budget.
+            if not is_infra:
+                restart_count += 1
 
             # Update status tracker
             if status_tracker:
@@ -485,12 +493,10 @@ async def supervised_worker(
                 status_tracker.last_error_time = time.time()
 
             if is_infra:
-                # Infrastructure error - backoff and retry
+                # Infrastructure error - backoff and retry indefinitely
                 logger.warning(
-                    "%s infrastructure error (restart %d/%d): %s. Backing off %.1fs...",
+                    "%s infrastructure error: %s. Backing off %.1fs...",
                     worker_name,
-                    restart_count,
-                    max_restarts,
                     e,
                     backoff,
                 )

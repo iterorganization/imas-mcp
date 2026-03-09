@@ -549,3 +549,69 @@ class TestSupervisedWorkerRestartReset:
 
         assert call_count == 1
         assert status.state == WorkerState.stopped
+
+    @pytest.mark.asyncio
+    async def test_infra_errors_do_not_consume_restart_budget(self):
+        """Infrastructure errors retry indefinitely without consuming restarts.
+
+        Reproduces the bug where Neo4j being temporarily down killed all
+        workers permanently (max_restarts=10 consumed in seconds).
+        """
+        from neo4j.exceptions import ServiceUnavailable
+
+        call_count = 0
+        stop = False
+
+        async def neo4j_down_then_recovers(state):
+            nonlocal call_count, stop
+            call_count += 1
+            if call_count <= 20:
+                # Neo4j is down for 20 attempts
+                raise ServiceUnavailable("Connection refused")
+            # Neo4j is back — do work and signal stop
+            stop = True
+
+        status = WorkerStatus(name="score_worker_0", group="score")
+
+        await supervised_worker(
+            neo4j_down_then_recovers,
+            "score_worker_0",
+            None,
+            lambda: stop,
+            status_tracker=status,
+            max_restarts=3,  # Only 3 app-error restarts allowed
+            initial_backoff=0.01,
+            max_backoff=0.01,
+            restart_reset_seconds=9999.0,  # No reset from stable runs
+        )
+
+        # Worker survived 20 infra errors (more than max_restarts=3)
+        assert call_count == 21
+        assert status.state == WorkerState.stopped
+
+    @pytest.mark.asyncio
+    async def test_app_errors_still_kill_after_max_restarts(self):
+        """Application errors still consume restart budget and kill worker."""
+        call_count = 0
+
+        async def app_bug(state):
+            nonlocal call_count
+            call_count += 1
+            raise ValueError("unexpected None in result")
+
+        status = WorkerStatus(name="test_worker_0", group="test")
+
+        await supervised_worker(
+            app_bug,
+            "test_worker_0",
+            None,
+            lambda: False,
+            status_tracker=status,
+            max_restarts=3,
+            initial_backoff=0.01,
+            max_backoff=0.01,
+            restart_reset_seconds=9999.0,
+        )
+
+        assert call_count == 3
+        assert status.state == WorkerState.crashed
