@@ -1400,9 +1400,6 @@ class AgentsServer:
 
             private_slots = set(schema.get_private_slots(node_type))
             model_class = schema.get_model(node_type)
-            id_field = schema.get_identifier(node_type)
-            if not id_field:
-                raise ValueError(f"No identifier field found for {node_type}")
 
             valid_items: list[dict[str, Any]] = []
             errors: list[str] = []
@@ -1414,7 +1411,7 @@ class AgentsServer:
                     props = to_cypher_props(validated)
                     valid_items.append(props)
                 except Exception as e:
-                    item_id = item.get(id_field, f"item[{i}]")
+                    item_id = item.get("id", f"item[{i}]")
                     errors.append(f"{item_id}: {e}")
                     logger.warning(f"Validation failed for {node_type} {item_id}: {e}")
 
@@ -1475,7 +1472,6 @@ class AgentsServer:
                     result = client.create_nodes(
                         label=node_type,
                         items=valid_items,
-                        id_field=id_field,
                         batch_size=batch_size,
                         create_relationships=create_facility_relationship,
                     )

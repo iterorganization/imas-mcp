@@ -489,19 +489,17 @@ class GraphClient:
         label: str,
         node_id: Any,
         props: dict[str, Any],
-        id_field: str = "id",
     ) -> None:
         """Create or update a node.
 
         Args:
             label: Node label (class name from schema)
-            node_id: Value of the identifier field
+            node_id: Value of the id field
             props: Node properties
-            id_field: Name of the identifier field (default: "id")
         """
         with self.session() as sess:
             sess.run(
-                f"MERGE (n:{label} {{{id_field}: $id}}) SET n += $props",
+                f"MERGE (n:{label} {{id: $id}}) SET n += $props",
                 id=node_id,
                 props=props,
             )
@@ -510,7 +508,6 @@ class GraphClient:
         self,
         label: str,
         items: list[dict[str, Any]],
-        id_field: str = "id",
         batch_size: int = 50,
         create_relationships: bool = True,
     ) -> dict[str, int]:
@@ -522,8 +519,7 @@ class GraphClient:
 
         Args:
             label: Node label (class name from schema)
-            items: List of property dicts, each must contain id_field
-            id_field: Name of the identifier field (default: "id")
+            items: List of property dicts, each must contain 'id'
             batch_size: Number of nodes per UNWIND batch (default: 50)
             create_relationships: If True, create edges for all schema-defined
                 relationship fields found in items. Default True.
@@ -570,7 +566,7 @@ class GraphClient:
         # Node creation query (always runs first)
         node_query = f"""
             UNWIND $batch AS item
-            MERGE (n:{label} {{{id_field}: item.{id_field}}})
+            MERGE (n:{label} {{id: item.id}})
             SET n += item
         """
 
@@ -599,7 +595,7 @@ class GraphClient:
                     # Build relationship query
                     rel_query = f"""
                         UNWIND $batch AS item
-                        MATCH (n:{label} {{{id_field}: item.{id_field}}})
+                        MATCH (n:{label} {{id: item.id}})
                         MATCH (t:{rel.to_class} {{id: item.{rel.slot_name}}})
                         MERGE (n)-[:{rel.cypher_type}]->(t)
                     """
@@ -617,8 +613,6 @@ class GraphClient:
         to_label: str,
         to_id: Any,
         rel_type: str,
-        from_id_field: str = "id",
-        to_id_field: str = "id",
         props: dict[str, Any] | None = None,
     ) -> None:
         """Create a relationship between two nodes.
@@ -629,14 +623,12 @@ class GraphClient:
             to_label: Target node label (class name from schema)
             to_id: Target node identifier value
             rel_type: Relationship type (SCREAMING_SNAKE_CASE)
-            from_id_field: Source node identifier field name
-            to_id_field: Target node identifier field name
             props: Optional relationship properties
         """
         props_clause = " SET r += $props" if props else ""
         query = (
-            f"MATCH (a:{from_label} {{{from_id_field}: $from_id}}), "
-            f"(b:{to_label} {{{to_id_field}: $to_id}}) "
+            f"MATCH (a:{from_label} {{id: $from_id}}), "
+            f"(b:{to_label} {{id: $to_id}}) "
             f"MERGE (a)-[r:{rel_type}]->(b){props_clause}"
         )
         with self.session() as sess:
@@ -691,18 +683,18 @@ class GraphClient:
     ) -> None:
         """Create MDSplusServer node and link to Facility."""
         self.ensure_facility(facility_id)
-        props = {"hostname": hostname, "facility_id": facility_id}
+        server_id = f"{facility_id}:{hostname}"
+        props = {"id": server_id, "hostname": hostname, "facility_id": facility_id}
         if role:
             props["role"] = role
         props.update({k: v for k, v in extra.items() if v is not None})
-        self.create_node("MDSplusServer", hostname, props, id_field="hostname")
+        self.create_node("MDSplusServer", server_id, props)
         self.create_relationship(
             "MDSplusServer",
-            hostname,
+            server_id,
             "Facility",
             facility_id,
             "AT_FACILITY",
-            from_id_field="hostname",
         )
 
     def create_diagnostic(
@@ -715,20 +707,20 @@ class GraphClient:
     ) -> None:
         """Create Diagnostic node and link to Facility."""
         self.ensure_facility(facility_id)
-        props = {"name": name, "facility_id": facility_id}
+        diag_id = f"{facility_id}:{name}"
+        props = {"id": diag_id, "name": name, "facility_id": facility_id}
         if category:
             props["category"] = category
         if description:
             props["description"] = description
         props.update({k: v for k, v in extra.items() if v is not None})
-        self.create_node("Diagnostic", name, props, id_field="name")
+        self.create_node("Diagnostic", diag_id, props)
         self.create_relationship(
             "Diagnostic",
-            name,
+            diag_id,
             "Facility",
             facility_id,
             "AT_FACILITY",
-            from_id_field="name",
         )
 
     def create_imas_path(
@@ -739,12 +731,12 @@ class GraphClient:
         units: str | None = None,
     ) -> None:
         """Create IMASPath node."""
-        props = {"path": path, "ids": ids}
+        props = {"id": path, "path": path, "ids": ids}
         if description:
             props["description"] = description
         if units:
             props["units"] = units
-        self.create_node("IMASPath", path, props, id_field="path")
+        self.create_node("IMASPath", path, props)
 
     # =========================================================================
     # Query Methods

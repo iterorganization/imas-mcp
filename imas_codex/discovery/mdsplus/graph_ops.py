@@ -94,8 +94,8 @@ def seed_versions(
             MATCH (f:Facility {id: rec.facility_id})
             MERGE (v)-[:AT_FACILITY]->(f)
             WITH v, rec, f
-            MERGE (t:DataSource {name: rec.data_source_name})
-            ON CREATE SET t.facility_id = rec.facility_id
+            MERGE (t:DataSource {id: rec.facility_id + ':' + rec.data_source_name})
+            ON CREATE SET t.name = rec.data_source_name, t.facility_id = rec.facility_id
             MERGE (v)-[:IN_DATA_SOURCE]->(t)
             MERGE (t)-[:AT_FACILITY]->(f)
             RETURN count(CASE WHEN v.status = 'discovered' THEN 1 END) AS seeded
@@ -135,8 +135,8 @@ def backfill_tree_relationships(facility: str) -> int:
               AND NOT (n)-[:IN_DATA_SOURCE]->(:DataSource)
             WITH n
             MATCH (f:Facility {id: $facility})
-            MERGE (t:DataSource {name: n.data_source_name})
-            ON CREATE SET t.facility_id = $facility
+            MERGE (t:DataSource {id: $facility + ':' + n.data_source_name})
+            ON CREATE SET t.name = n.data_source_name, t.facility_id = $facility
             MERGE (t)-[:AT_FACILITY]->(f)
             MERGE (n)-[:IN_DATA_SOURCE]->(t)
             RETURN count(n) AS backfilled
@@ -339,7 +339,8 @@ def merge_units_to_graph(
             """
             UNWIND $updates AS u
             MATCH (n:DataNode {id: u.id})
-            MERGE (unit:Unit {symbol: u.symbol})
+            MERGE (unit:Unit {id: u.symbol})
+            SET unit.symbol = u.symbol
             MERGE (n)-[:HAS_UNIT]->(unit)
             SET n.unit = u.symbol
             RETURN count(*) AS created

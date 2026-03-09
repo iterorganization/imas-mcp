@@ -312,9 +312,12 @@ classes:
       root containers for physics data (e.g., equilibrium, core_profiles).
     class_uri: imas_dd:IDS
     attributes:
-      name:
+      id:
         identifier: true
         description: IDS name (e.g., "equilibrium", "core_profiles")
+        required: true
+      name:
+        description: IDS name, same as id
         required: true
       description:
         description: IDS description from DD documentation
@@ -701,11 +704,15 @@ classes:
       identifier_enum metadata API.
     class_uri: imas_dd:IdentifierSchema
     attributes:
-      name:
+      id:
         identifier: true
         description: >-
           Schema name (e.g., "coordinate_identifier",
           "magnetics_probe_type_identifier")
+        required: true
+      name:
+        description: >-
+          Schema name, same as id
         required: true
       description:
         description: Schema description

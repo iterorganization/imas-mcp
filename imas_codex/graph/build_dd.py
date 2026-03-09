@@ -1645,7 +1645,7 @@ def build_dd_graph(
                     """
                     UNWIND $rels AS r
                     MATCH (path:IMASPath {id: r.id})
-                    MATCH (schema:IdentifierSchema {name: r.schema_name})
+                    MATCH (schema:IdentifierSchema {id: r.schema_name})
                     MERGE (path)-[:HAS_IDENTIFIER_SCHEMA]->(schema)
                 """,
                     rels=id_rels,
@@ -1924,13 +1924,14 @@ def _create_unit_nodes(client: GraphClient, units: set[str]) -> None:
         if not u:
             continue
         symbol = normalize_unit_symbol(u) or u
-        unit_list.append({"symbol": symbol})
+        unit_list.append({"id": symbol, "symbol": symbol})
 
     if unit_list:
         client.query(
             """
             UNWIND $units AS unit
-            MERGE (u:Unit {symbol: unit.symbol})
+            MERGE (u:Unit {id: unit.id})
+            SET u.symbol = unit.symbol
         """,
             units=unit_list,
         )
@@ -1982,6 +1983,7 @@ def _collect_identifier_schemas(paths: dict[str, dict]) -> dict[str, dict]:
             # Source from doc_identifier XML attribute
             source = info.get("doc_identifier", "")
             schemas[enum_name] = {
+                "id": enum_name,
                 "name": enum_name,
                 "options": json.dumps(
                     [
@@ -2005,8 +2007,9 @@ def _create_identifier_schema_nodes(
     client.query(
         """
         UNWIND $schemas AS s
-        MERGE (schema:IdentifierSchema {name: s.name})
-        SET schema.option_count = s.option_count,
+        MERGE (schema:IdentifierSchema {id: s.id})
+        SET schema.name = s.name,
+            schema.option_count = s.option_count,
             schema.options = s.options,
             schema.field_count = s.field_count,
             schema.source = s.source
@@ -2024,6 +2027,7 @@ def _batch_upsert_ids_nodes(
     """Batch create or update IDS nodes."""
     ids_list = [
         {
+            "id": ids_name,
             "name": ids_name,
             "description": info.get("description", ""),
             "physics_domain": info.get("physics_domain", "general"),
@@ -2044,8 +2048,9 @@ def _batch_upsert_ids_nodes(
     client.query(
         """
         UNWIND $ids_list AS ids_data
-        MERGE (ids:IDS {name: ids_data.name})
-        SET ids.description = ids_data.description,
+        MERGE (ids:IDS {id: ids_data.id})
+        SET ids.name = ids_data.name,
+            ids.description = ids_data.description,
             ids.physics_domain = ids_data.physics_domain,
             ids.path_count = ids_data.path_count,
             ids.leaf_count = ids_data.leaf_count,
@@ -2064,7 +2069,7 @@ def _batch_upsert_ids_nodes(
         client.query(
             """
             UNWIND $ids_list AS ids_data
-            MATCH (ids:IDS {name: ids_data.name})
+            MATCH (ids:IDS {id: ids_data.id})
             MATCH (v:DDVersion {id: $version})
             MERGE (ids)-[:INTRODUCED_IN]->(v)
         """,
@@ -2179,7 +2184,7 @@ def _batch_create_path_nodes(
             """
             UNWIND $paths AS p
             MATCH (path:IMASPath {id: p.id})
-            MATCH (ids:IDS {name: p.ids_name})
+            MATCH (ids:IDS {id: p.ids_name})
             MERGE (path)-[:IN_IDS]->(ids)
         """,
             paths=batch,
@@ -2214,7 +2219,7 @@ def _batch_create_path_nodes(
                 """
                 UNWIND $paths AS p
                 MATCH (path:IMASPath {id: p.id})
-                MATCH (u:Unit {symbol: p.unit})
+                MATCH (u:Unit {id: p.unit})
                 MERGE (path)-[:HAS_UNIT]->(u)
             """,
                 paths=unit_paths,
@@ -2308,7 +2313,7 @@ def _batch_create_path_nodes(
                 """
                 UNWIND $paths AS p
                 MATCH (path:IMASPath {id: p.id})
-                MATCH (schema:IdentifierSchema {name: p.identifier_enum_name})
+                MATCH (schema:IdentifierSchema {id: p.identifier_enum_name})
                 MERGE (path)-[:HAS_IDENTIFIER_SCHEMA]->(schema)
             """,
                 paths=id_schema_paths,

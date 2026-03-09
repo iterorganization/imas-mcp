@@ -15,7 +15,7 @@ Input (JSON on stdin):
     {
         "server": "mdsplus.jet.uk",
         "shot": 99896,
-        "jpf_subsystems": ["DA", "DB", ...],
+        "subsystem_codes": ["DA", "DB", ...],
         "sample_signals": [
             {"path": "da/c2-ipla", "type": "jpf"},
             {"path": "EFIT/RBND", "type": "ppf"}

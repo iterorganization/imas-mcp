@@ -248,7 +248,7 @@ class TestGraphOps:
         assert count == 3
         # Verify MERGE query was called with proper updates
         call_args = mock_gc.query.call_args
-        assert "MERGE (unit:Unit {symbol: u.symbol})" in call_args[0][0]
+        assert "MERGE (unit:Unit {id: u.symbol})" in call_args[0][0]
         assert "MERGE (n)-[:HAS_UNIT]->(unit)" in call_args[0][0]
 
     @patch("imas_codex.discovery.mdsplus.graph_ops.GraphClient")

@@ -460,6 +460,9 @@ classes:
       imas:
         description: IMAS native data configuration
         range: IMASConfig
+      jpf:
+        description: JET JPF (JET Processing Facility) raw hardware signal configuration
+        range: JPFConfig
       device_xml:
         description: Device XML configuration (EFIT-format geometry files in git)
         range: DeviceXMLConfig
@@ -736,6 +739,26 @@ classes:
           Path to the EDAS shared library (e.g., /analysis/lib/libeddb.so).
           Used for ctypes bindings in signal discovery.
 
+  JPFConfig:
+    description: >-
+      JET JPF (JET Processing Facility) raw hardware signal configuration.
+      JPF provides raw diagnostic data organized by 2-char subsystem codes.
+      Accessed via MDSplus thin-client TDI function: dpf("subsystem/signal", shot).
+    class_uri: fc:JPFConfig
+    mixins:
+      - DataSystemBase
+    attributes:
+      server:
+        description: MDSplus server hostname for thin-client JPF access
+      reference_shot:
+        description: Reference shot for JPF signal enumeration
+        range: integer
+      subsystem_codes:
+        description: >-
+          JPF diagnostic subsystem codes (two-character identifiers).
+          Used to enumerate signals per subsystem via TDI functions.
+        multivalued: true
+
   HDF5Config:
     description: HDF5 file data source configuration
     class_uri: fc:HDF5Config
@@ -839,7 +862,7 @@ classes:
       equilibrium inputs, response function matrices.
 
       Example Cypher (after ingestion):
-        MATCH (ds:DataSource {name: $source_name})-[:AT_FACILITY]->(f:Facility {id: $facility})
+        MATCH (ds:DataSource {id: $facility + ':' + $source_name})-[:AT_FACILITY]->(f:Facility {id: $facility})
         RETURN ds
     class_uri: fc:StaticSourceConfig
     mixins:

@@ -753,8 +753,8 @@ def mark_signals_enriched(
                     MATCH (s:FacilitySignal {id: sig.id})
                     WITH s, toLower(trim(sig.diagnostic)) AS diag_name
                     WHERE diag_name <> ''
-                    MERGE (d:Diagnostic {name: diag_name})
-                    ON CREATE SET d.facility_id = s.facility_id
+                    MERGE (d:Diagnostic {id: s.facility_id + ':' + diag_name})
+                    ON CREATE SET d.name = diag_name, d.facility_id = s.facility_id
                     MERGE (s)-[:BELONGS_TO_DIAGNOSTIC]->(d)
                     WITH d, s
                     MATCH (f:Facility {id: s.facility_id})
@@ -1143,8 +1143,8 @@ def propagate_pattern_enrichment(
                   AND s.status = $enriched
                 WITH s, toLower(trim($diagnostic)) AS diag_name
                 WHERE diag_name <> ''
-                MERGE (d:Diagnostic {name: diag_name})
-                ON CREATE SET d.facility_id = s.facility_id
+                MERGE (d:Diagnostic {id: s.facility_id + ':' + diag_name})
+                ON CREATE SET d.name = diag_name, d.facility_id = s.facility_id
                 MERGE (s)-[:BELONGS_TO_DIAGNOSTIC]->(d)
                 WITH d, s
                 MATCH (f:Facility {id: s.facility_id})
@@ -1298,8 +1298,8 @@ def ingest_epochs(
                 MATCH (f:Facility {id: ep.facility_id})
                 MERGE (v)-[:AT_FACILITY]->(f)
                 WITH v, ep
-                MERGE (t:DataSource {name: ep.data_source_name})
-                ON CREATE SET t.facility_id = ep.facility_id
+                MERGE (t:DataSource {id: ep.facility_id + ':' + ep.data_source_name})
+                ON CREATE SET t.name = ep.data_source_name, t.facility_id = ep.facility_id
                 MERGE (v)-[:IN_DATA_SOURCE]->(t)
                 """,
                 epochs=clean_epochs,

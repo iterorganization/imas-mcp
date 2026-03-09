@@ -361,7 +361,7 @@ class GraphListTool:
 
             # Verify IDS exists
             ids_exists = self._gc.query(
-                "MATCH (i:IDS {name: $name}) RETURN i.name",
+                "MATCH (i:IDS {id: $name}) RETURN i.name",
                 name=ids_name,
             )
             if not ids_exists:

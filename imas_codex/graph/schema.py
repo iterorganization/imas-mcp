@@ -654,25 +654,22 @@ def to_cypher_props(obj: Any, exclude: set[str] | None = None) -> dict[str, Any]
     return result
 
 
-def merge_node_query(label: str, id_field: str = "id") -> str:
+def merge_node_query(label: str) -> str:
     """Generate a MERGE query template for a node.
 
     Args:
         label: Node label (class name)
-        id_field: Name of the identifier field
 
     Returns:
         Cypher MERGE query template with $id and $props parameters.
     """
-    return f"MERGE (n:{label} {{{id_field}: $id}}) SET n += $props"
+    return f"MERGE (n:{label} {{id: $id}}) SET n += $props"
 
 
 def merge_relationship_query(
     from_label: str,
     to_label: str,
     rel_type: str,
-    from_id_field: str = "id",
-    to_id_field: str = "id",
 ) -> str:
     """Generate a MERGE query template for a relationship.
 
@@ -680,15 +677,13 @@ def merge_relationship_query(
         from_label: Source node label
         to_label: Target node label
         rel_type: Relationship type (SCREAMING_SNAKE_CASE)
-        from_id_field: Source node identifier field
-        to_id_field: Target node identifier field
 
     Returns:
         Cypher MERGE query template with $from_id and $to_id parameters.
     """
     return (
-        f"MATCH (a:{from_label} {{{from_id_field}: $from_id}}), "
-        f"(b:{to_label} {{{to_id_field}: $to_id}}) "
+        f"MATCH (a:{from_label} {{id: $from_id}}), "
+        f"(b:{to_label} {{id: $to_id}}) "
         f"MERGE (a)-[r:{rel_type}]->(b)"
     )
 

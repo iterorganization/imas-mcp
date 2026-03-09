@@ -791,8 +791,8 @@ def ingest_static_tree(
                 MATCH (f:Facility {id: epoch.facility_id})
                 MERGE (v)-[:AT_FACILITY]->(f)
                 WITH v, epoch
-                MERGE (t:DataSource {name: epoch.data_source_name})
-                ON CREATE SET t.facility_id = epoch.facility_id
+                MERGE (t:DataSource {id: epoch.facility_id + ':' + epoch.data_source_name})
+                ON CREATE SET t.name = epoch.data_source_name, t.facility_id = epoch.facility_id
                 MERGE (v)-[:IN_DATA_SOURCE]->(t)
                 """,
                 epochs=epoch_records,
@@ -928,8 +928,8 @@ def ingest_static_tree(
             client.query(
                 """
                 UNWIND $nodes AS node
-                MERGE (n:DataNode {path: node.path, facility_id: node.facility_id})
-                SET n.id = node.id,
+                MERGE (n:DataNode {id: node.id})
+                SET n.path = node.path,
                     n.data_source_name = node.data_source_name,
                     n.canonical_path = node.canonical_path,
                     n.parent_path = node.parent_path,
@@ -966,8 +966,8 @@ def ingest_static_tree(
             MATCH (f:Facility {id: $facility})
             MERGE (n)-[:AT_FACILITY]->(f)
             WITH n
-            MERGE (t:DataSource {name: $data_source_name})
-            ON CREATE SET t.facility_id = $facility
+            MERGE (t:DataSource {id: $facility + ':' + $data_source_name})
+            ON CREATE SET t.name = $data_source_name, t.facility_id = $facility
             MERGE (n)-[:IN_DATA_SOURCE]->(t)
             """,
             data_source_name=data_source_name,
@@ -1007,7 +1007,7 @@ def ingest_static_tree(
             WHERE child.data_source_name = $data_source_name AND child.facility_id = $facility
               AND child.parent_path IS NOT NULL
             WITH child
-            MATCH (parent:DataNode {path: child.parent_path, facility_id: $facility})
+            MATCH (parent:DataNode {id: $facility + ':' + $data_source_name + ':' + child.parent_path})
             WHERE parent.data_source_name = $data_source_name
             MERGE (parent)-[:HAS_NODE]->(child)
             """,
