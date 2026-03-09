@@ -2768,6 +2768,12 @@ classes:
       related_ids:
         description: IDS names this code interacts with (coarse linking)
         multivalued: true
+      has_chunks:
+        description: Code chunks extracted from this example
+        range: CodeChunk
+        multivalued: true
+        annotations:
+          relationship_type: HAS_CHUNK
       from_file:
         description: Source CodeFile that produced this CodeExample during ingestion
         range: CodeFile
