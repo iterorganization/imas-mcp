@@ -306,6 +306,14 @@ class GraphSchema:
             if slot.description:
                 info["description"] = str(slot.description)
 
+            # Lifecycle annotation: field only required after reaching a status
+            annotations = getattr(slot, "annotations", {}) or {}
+            if "required_after" in annotations:
+                ann = annotations["required_after"]
+                info["required_after"] = (
+                    str(ann.value) if hasattr(ann, "value") else str(ann)
+                )
+
             slots[slot.name] = info
         return slots
 
