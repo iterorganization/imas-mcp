@@ -4,12 +4,23 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+import pytest
+
 from imas_codex.ids.graph_ops import (
+    MAGNETICS_BPOL_MAPPINGS,
+    MAGNETICS_FLUX_LOOP_MAPPINGS,
+    PF_ACTIVE_ASSEMBLY_CONFIG,
+    PF_ACTIVE_CIRCUIT_MAPPINGS,
+    PF_ACTIVE_COIL_MAPPINGS,
+    PF_PASSIVE_LOOP_MAPPINGS,
     FieldMapping,
     Recipe,
     _index_from_path,
+    create_mappings,
+    create_recipe,
     load_mappings,
     load_recipe,
+    seed_ids_mappings,
 )
 
 
@@ -170,3 +181,115 @@ class TestLoadMappings:
             result = load_mappings("jet:pf_active", gc)
         assert len(result) == 1
         assert "COCOS-sensitive" not in caplog.text
+
+
+class TestMappingSpecs:
+    """Validate the canonical mapping definitions."""
+
+    def test_pf_active_coil_mappings_complete(self):
+        # 6 mappings: r, z, dr, dz, turnsperelement, description
+        assert len(PF_ACTIVE_COIL_MAPPINGS) == 6
+        source_props = {m[0] for m in PF_ACTIVE_COIL_MAPPINGS}
+        assert {"r", "z", "dr", "dz", "turnsperelement", "description"} == source_props
+
+    def test_pf_active_circuit_mappings(self):
+        assert len(PF_ACTIVE_CIRCUIT_MAPPINGS) == 1
+        assert PF_ACTIVE_CIRCUIT_MAPPINGS[0][0] == "description"
+
+    def test_magnetics_bpol_mappings(self):
+        assert len(MAGNETICS_BPOL_MAPPINGS) == 4
+        source_props = {m[0] for m in MAGNETICS_BPOL_MAPPINGS}
+        assert {"r", "z", "angle", "description"} == source_props
+        # angle should have deg→rad conversion
+        angle_mapping = next(m for m in MAGNETICS_BPOL_MAPPINGS if m[0] == "angle")
+        assert angle_mapping[2] == "math.radians(value)"
+        assert angle_mapping[3] == "deg"
+        assert angle_mapping[4] == "rad"
+
+    def test_magnetics_flux_loop_mappings(self):
+        assert len(MAGNETICS_FLUX_LOOP_MAPPINGS) == 4
+        source_props = {m[0] for m in MAGNETICS_FLUX_LOOP_MAPPINGS}
+        assert {"r", "z", "dphi", "description"} == source_props
+
+    def test_pf_passive_loop_mappings(self):
+        assert len(PF_PASSIVE_LOOP_MAPPINGS) == 6
+        source_props = {m[0] for m in PF_PASSIVE_LOOP_MAPPINGS}
+        assert {"r", "z", "dr", "dz", "resistance", "description"} == source_props
+
+    def test_all_target_paths_use_slash_separators(self):
+        """All target paths should use / (IMAS convention)."""
+        all_specs = (
+            PF_ACTIVE_COIL_MAPPINGS
+            + PF_ACTIVE_CIRCUIT_MAPPINGS
+            + MAGNETICS_BPOL_MAPPINGS
+            + MAGNETICS_FLUX_LOOP_MAPPINGS
+            + PF_PASSIVE_LOOP_MAPPINGS
+        )
+        for spec in all_specs:
+            target_path = spec[1]
+            assert "/" in target_path, f"{target_path} missing / separator"
+            assert "." not in target_path, f"{target_path} uses . instead of /"
+
+
+class TestAssemblyConfigs:
+    """Validate the assembly config templates."""
+
+    def test_pf_active_has_coil_and_circuit(self):
+        assert "coil" in PF_ACTIVE_ASSEMBLY_CONFIG
+        assert "circuit" in PF_ACTIVE_ASSEMBLY_CONFIG
+        assert "static" in PF_ACTIVE_ASSEMBLY_CONFIG
+        assert PF_ACTIVE_ASSEMBLY_CONFIG["coil"]["source"]["system"] == "PF"
+        assert PF_ACTIVE_ASSEMBLY_CONFIG["circuit"]["source"]["system"] == "CI"
+
+
+class TestCreateMappings:
+    def test_creates_mappings_with_correct_ids(self):
+        gc = MagicMock()
+        gc.query.return_value = []
+        specs: list[tuple[str, str, str, str | None, str | None]] = [
+            ("r", "test/section/r", "value", "m", "m"),
+            ("z", "test/section/z", "value", "m", "m"),
+        ]
+        result = create_mappings("jet", "test", "section", "PF", specs, gc)
+        assert len(result) == 2
+        assert result[0] == "jet:PF:r→test/section/r"
+        assert result[1] == "jet:PF:z→test/section/z"
+        gc.query.assert_called_once()
+
+
+class TestCreateRecipe:
+    def test_creates_recipe_with_mappings(self):
+        gc = MagicMock()
+        gc.query.return_value = []
+        config = {"coil": {"source": {"system": "PF"}}}
+        result = create_recipe("jet", "pf_active", "4.1.1", config, ["m1", "m2"], gc)
+        assert result == "jet:pf_active"
+        assert gc.query.call_count == 2  # create recipe + link mappings
+
+
+class TestSeedIdsMappings:
+    def test_unsupported_ids_raises(self):
+        gc = MagicMock()
+        with pytest.raises(ValueError, match="No mapping definitions for IDS"):
+            seed_ids_mappings("jet", "unsupported_ids", "4.1.1", gc)
+
+    def test_pf_active_creates_all_sections(self):
+        gc = MagicMock()
+        gc.query.return_value = []
+        result = seed_ids_mappings("jet", "pf_active", "4.1.1", gc)
+        assert result == "jet:pf_active"
+        # Should have called query for: coil mappings + circuit mappings +
+        # recipe creation + mappings link
+        assert gc.query.call_count == 4
+
+    def test_magnetics_creates_all_sections(self):
+        gc = MagicMock()
+        gc.query.return_value = []
+        result = seed_ids_mappings("jet", "magnetics", "4.1.1", gc)
+        assert result == "jet:magnetics"
+
+    def test_pf_passive_creates_all_sections(self):
+        gc = MagicMock()
+        gc.query.return_value = []
+        result = seed_ids_mappings("jet", "pf_passive", "4.1.1", gc)
+        assert result == "jet:pf_passive"
