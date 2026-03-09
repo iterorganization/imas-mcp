@@ -937,6 +937,17 @@ def _search_code(
                 scores[cid] = text_score
                 chunk_ids.append(cid)
 
+        # Step 1c: CodeExample-level vector search (find relevant examples by description)
+        example_chunks = _vector_search_code_examples(gc, embedding, facility, k)
+        for r in example_chunks:
+            cid = r["id"]
+            ex_score = round(r["score"], 3)
+            if cid in scores:
+                scores[cid] = round(max(scores[cid], ex_score) + 0.05, 3)
+            else:
+                scores[cid] = ex_score
+                chunk_ids.append(cid)
+
         # Re-sort and limit to k
         chunk_ids = sorted(
             set(chunk_ids), key=lambda cid: scores.get(cid, 0), reverse=True
@@ -999,6 +1010,40 @@ def _vector_search_code_chunks(
     ids = [r["id"] for r in results]
     scores = {r["id"]: round(r["score"], 3) for r in results}
     return ids, scores
+
+
+def _vector_search_code_examples(
+    gc: GraphClient,
+    embedding: list[float],
+    facility: str | None,
+    k: int,
+) -> list[dict[str, Any]]:
+    """Vector search on CodeExample descriptions, returning their chunk IDs.
+
+    Searches the code_example_desc_embedding index and traverses to child
+    CodeChunks, returning chunk IDs with scores inherited from the parent.
+    Gracefully returns empty on missing index.
+    """
+    try:
+        params: dict[str, Any] = {"k": max(k, 20), "embedding": embedding}
+        facility_filter = ""
+        if facility is not None:
+            facility_filter = "AND ce.facility_id = $facility"
+            params["facility"] = facility
+
+        cypher = f"""
+            CALL db.index.vector.queryNodes('code_example_desc_embedding', $k, $embedding)
+            YIELD node AS ce, score
+            WHERE true {facility_filter}
+            MATCH (ce)-[:HAS_CHUNK]->(cc:CodeChunk)
+            RETURN cc.id AS id, score
+            ORDER BY score DESC
+            LIMIT $limit
+        """
+        params["limit"] = k * 2
+        return gc.query(cypher, **params)
+    except Exception:
+        return []
 
 
 def _enrich_code_chunks(
