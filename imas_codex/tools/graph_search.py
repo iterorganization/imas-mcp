@@ -66,7 +66,7 @@ class GraphSearchTool:
         response_profile: str = "standard",
         ctx: Context | None = None,
     ) -> SearchPathsResult:
-        """Search IMAS paths using graph vector index."""
+        """Search IMAS paths using hybrid vector + text search."""
         is_valid, error_message = validate_query(query, "search_imas_paths")
         if not is_valid:
             return SearchPathsResult(
@@ -81,32 +81,56 @@ class GraphSearchTool:
         normalized_filter = normalize_ids_filter(ids_filter)
         embedding = self._embed_query(query)
 
-        # Build the Cypher query with optional IDS filter
+        # --- Vector search ---
         filter_clause = ""
-        params: dict[str, Any] = {"embedding": embedding, "k": min(max_results, 100)}
+        params: dict[str, Any] = {
+            "embedding": embedding,
+            "k": min(max_results * 5, 500),
+            "vector_limit": min(max_results * 3, 150),
+        }
         if normalized_filter:
-            filter_clause = "WHERE path.ids IN $ids_filter"
+            filter_clause = "AND path.ids IN $ids_filter"
             params["ids_filter"] = (
                 normalized_filter
                 if isinstance(normalized_filter, list)
                 else [normalized_filter]
             )
 
-        results = self._gc.query(
+        vector_results = self._gc.query(
             f"""
             CALL db.index.vector.queryNodes('imas_path_embedding', $k, $embedding)
             YIELD node AS path, score
+            WHERE NOT (path)-[:DEPRECATED_IN]->(:DDVersion)
             {filter_clause}
-            OPTIONAL MATCH (path)-[:HAS_UNIT]->(u:Unit)
-            RETURN path.id AS id, path.name AS name, path.ids AS ids,
-                   path.documentation AS documentation, path.data_type AS data_type,
-                   path.physics_domain AS physics_domain, u.id AS units,
-                   path.node_type AS node_type, score
+            RETURN path.id AS id, score
             ORDER BY score DESC
-            LIMIT $k
+            LIMIT $vector_limit
             """,
             **params,
         )
+
+        scores: dict[str, float] = {}
+        for r in vector_results or []:
+            pid = r["id"]
+            if not _is_generic_metadata_path(pid):
+                scores[pid] = round(r["score"], 4)
+
+        # --- Text search ---
+        text_results = _text_search_imas_paths(
+            self._gc, query, min(max_results * 3, 150), normalized_filter
+        )
+        for r in text_results:
+            pid = r["id"]
+            text_score = round(r["score"], 4)
+            if pid in scores:
+                scores[pid] = round(max(scores[pid], text_score) + 0.05, 4)
+            else:
+                scores[pid] = text_score
+
+        # Rank and limit
+        sorted_ids = sorted(scores, key=lambda pid: scores[pid], reverse=True)[
+            :max_results
+        ]
 
         mode = (
             SearchMode(search_mode)
@@ -114,9 +138,55 @@ class GraphSearchTool:
             else SearchMode.AUTO
         )
 
+        if not sorted_ids:
+            return SearchPathsResult(
+                hits=[],
+                summary={
+                    "query": query,
+                    "search_mode": str(mode),
+                    "hits_returned": 0,
+                    "ids_coverage": [],
+                },
+                query=query,
+                search_mode=mode,
+                physics_domains=[],
+            )
+
+        # --- Enrich with full metadata ---
+        enriched = self._gc.query(
+            """
+            UNWIND $path_ids AS pid
+            MATCH (path:IMASPath {id: pid})
+            OPTIONAL MATCH (path)-[:HAS_UNIT]->(u:Unit)
+            OPTIONAL MATCH (path)-[:HAS_COORDINATE]->(coord:IMASCoordinateSpec)
+            OPTIONAL MATCH (path)-[:HAS_IDENTIFIER_SCHEMA]->(ident:IdentifierSchema)
+            OPTIONAL MATCH (path)-[:INTRODUCED_IN]->(intro:DDVersion)
+            RETURN path.id AS id, path.name AS name, path.ids AS ids,
+                   path.documentation AS documentation, path.data_type AS data_type,
+                   path.physics_domain AS physics_domain, u.id AS units,
+                   path.node_type AS node_type,
+                   path.lifecycle_status AS lifecycle_status,
+                   path.lifecycle_version AS lifecycle_version,
+                   path.timebasepath AS timebase,
+                   path.path_doc AS structure_reference,
+                   path.coordinate1_same_as AS coordinate1,
+                   path.coordinate2_same_as AS coordinate2,
+                   collect(DISTINCT coord.id) AS coordinates,
+                   ident IS NOT NULL AS has_identifier_schema,
+                   intro.id AS introduced_after_version
+            """,
+            path_ids=sorted_ids,
+        )
+
+        # Index by path ID for score lookup
+        enriched_by_id = {r["id"]: r for r in enriched or []}
+
         hits = []
         physics_domains = set()
-        for rank, r in enumerate(results or [], start=1):
+        for rank, pid in enumerate(sorted_ids, start=1):
+            r = enriched_by_id.get(pid)
+            if not r:
+                continue
             hits.append(
                 SearchHit(
                     path=r["id"],
@@ -126,7 +196,16 @@ class GraphSearchTool:
                     units=r["units"] or "",
                     physics_domain=r["physics_domain"],
                     node_type=r["node_type"],
-                    score=round(r["score"], 4),
+                    coordinates=r["coordinates"] or [],
+                    lifecycle_status=r["lifecycle_status"],
+                    lifecycle_version=r["lifecycle_version"],
+                    timebase=r["timebase"],
+                    structure_reference=r["structure_reference"],
+                    coordinate1=r["coordinate1"],
+                    coordinate2=r["coordinate2"],
+                    has_identifier_schema=bool(r["has_identifier_schema"]),
+                    introduced_after_version=r["introduced_after_version"],
+                    score=scores.get(pid, 0.0),
                     rank=rank,
                     search_mode=mode,
                 )
@@ -795,6 +874,149 @@ def _normalize_paths(paths: str | list[str]) -> list[str]:
     if isinstance(paths, str):
         return [p.strip() for p in paths.replace(",", " ").split() if p.strip()]
     return list(paths)
+
+
+def _is_generic_metadata_path(path_id: str) -> bool:
+    """Check if an IMAS path is a generic metadata/descriptor field.
+
+    Filters out paths ending in /description, /name, /identifier/name etc.
+    whose documentation is typically "Verbose description" or similar
+    generic text that pollutes search results.
+    """
+    parts = path_id.split("/")
+    if len(parts) < 3:
+        return False
+    tail = parts[-1]
+    if tail in ("description", "name", "comment", "source", "provider"):
+        return True
+    if (
+        len(parts) >= 2
+        and parts[-2] == "identifier"
+        and tail in ("description", "name")
+    ):
+        return True
+    if tail == "description" and parts[-2].endswith("_type"):
+        return True
+    return False
+
+
+def _text_search_imas_paths(
+    gc: GraphClient,
+    query: str,
+    limit: int,
+    ids_filter: str | list[str] | None,
+) -> list[dict[str, Any]]:
+    """Text-based search on IMAS paths by query string.
+
+    Uses fulltext index for BM25 scoring when available, falls back to
+    CONTAINS matching. Filters out generic metadata paths.
+    """
+    query_lower = query.lower()
+    query_words = [w for w in query_lower.split() if len(w) > 2]
+
+    where_parts = ["NOT (p)-[:DEPRECATED_IN]->(:DDVersion)"]
+    params: dict[str, Any] = {"query_lower": query_lower, "limit": limit}
+
+    if ids_filter is not None:
+        filter_list = ids_filter if isinstance(ids_filter, list) else [ids_filter]
+        where_parts.append("p.ids IN $ids_filter")
+        params["ids_filter"] = filter_list
+
+    where_base = " AND ".join(where_parts)
+
+    # Try fulltext index first (BM25 scoring)
+    try:
+        ft_where = "WHERE NOT (p)-[:DEPRECATED_IN]->(:DDVersion)"
+        ft_params: dict[str, Any] = {"query": query, "limit": limit}
+        if ids_filter is not None:
+            filter_list = ids_filter if isinstance(ids_filter, list) else [ids_filter]
+            ft_where += " AND p.ids IN $ids_filter"
+            ft_params["ids_filter"] = filter_list
+
+        ft_cypher = f"""
+            CALL db.index.fulltext.queryNodes('imas_path_text', $query)
+            YIELD node AS p, score
+            {ft_where}
+            WITH p, score
+            WHERE size(coalesce(p.documentation, '')) > 10
+            RETURN p.id AS id, score
+            LIMIT $limit
+        """
+        ft_results = gc.query(ft_cypher, **ft_params)
+        if ft_results:
+            # Normalize BM25 scores to 0-1 range
+            max_score = max(r["score"] for r in ft_results) if ft_results else 1.0
+            normalized = []
+            for r in ft_results:
+                pid = r["id"]
+                if not _is_generic_metadata_path(pid):
+                    raw = r["score"] / max_score if max_score > 0 else 0.0
+                    normalized.append({"id": pid, "score": max(raw, 0.7)})
+            return normalized
+    except Exception:
+        pass
+
+    # Fallback: CONTAINS matching with scored results
+    cypher = f"""
+        MATCH (p:IMASPath)
+        WHERE {where_base}
+          AND (
+            toLower(p.documentation) CONTAINS $query_lower
+            OR toLower(p.id) CONTAINS $query_lower
+            OR toLower(p.name) CONTAINS $query_lower
+          )
+          AND size(coalesce(p.documentation, '')) > 10
+        WITH p,
+             CASE
+               WHEN toLower(p.documentation) CONTAINS $query_lower
+                    AND p.data_type IS NOT NULL AND p.data_type <> 'structure'
+                 THEN 0.95
+               WHEN toLower(p.documentation) CONTAINS $query_lower
+                 THEN 0.88
+               WHEN toLower(p.name) CONTAINS $query_lower
+                    AND p.data_type IS NOT NULL AND p.data_type <> 'structure'
+                 THEN 0.93
+               WHEN toLower(p.id) CONTAINS $query_lower
+                 THEN 0.90
+               ELSE 0.85
+             END AS base_score
+        RETURN p.id AS id, base_score AS score
+        ORDER BY base_score DESC, size(p.id) ASC
+        LIMIT $limit
+    """
+    results = gc.query(cypher, **params)
+
+    # Also search individual words for abbreviations like "ip"
+    if query_words:
+        word_results = []
+        for word in query_words[:3]:
+            word_cypher = f"""
+                MATCH (p:IMASPath)
+                WHERE {where_base}
+                  AND (toLower(p.name) = $word OR toLower(p.id) CONTAINS $word)
+                  AND p.data_type IS NOT NULL AND p.data_type <> 'structure'
+                  AND size(coalesce(p.documentation, '')) > 10
+                RETURN p.id AS id, 0.90 AS score
+                LIMIT 10
+            """
+            word_params = {**params, "word": word}
+            word_results.extend(gc.query(word_cypher, **word_params))
+
+        seen = {r["id"]: r["score"] for r in results}
+        for r in word_results:
+            if r["id"] not in seen or r["score"] > seen[r["id"]]:
+                seen[r["id"]] = r["score"]
+                results.append(r)
+
+    # Deduplicate and filter generic paths
+    final: dict[str, dict[str, Any]] = {}
+    for r in results:
+        pid = r["id"]
+        if _is_generic_metadata_path(pid):
+            continue
+        if pid not in final or r["score"] > final[pid]["score"]:
+            final[pid] = r
+    return list(final.values())
 
 
 def _classify_significance(option_count: int) -> str:
