@@ -671,7 +671,7 @@ def imas_clear(force: bool, dump_first: bool) -> None:
     IMASSemanticCluster, IMASCoordinateSpec, IdentifierSchema, and
     EmbeddingChange. Orphaned Unit nodes are also cleaned up.
 
-    Cross-references from facility nodes (MAPS_TO_IMAS, MENTIONS_IMAS) are
+    Cross-references from facility nodes (IMASMapping, MENTIONS_IMAS) are
     detached before deletion. DD-specific vector indexes are dropped.
 
     \b

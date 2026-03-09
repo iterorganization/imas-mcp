@@ -1592,7 +1592,7 @@ class TestSchemaGuard:
                 assert "access_methods" in cypher
                 # Should traverse DataAccess → IMASPath
                 assert "DATA_ACCESS" in cypher
-                assert "MAPS_TO_IMAS" in cypher
+                assert "SOURCE_PATH" in cypher
                 break
 
     def test_code_enrichment_uses_code_example(self, mock_gc, mock_encoder):
