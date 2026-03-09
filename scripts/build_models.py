@@ -461,14 +461,6 @@ Usage:
                             "compute_locations: Optional[str]",
                             "compute_locations: Optional[dict]",
                         ),
-                        (
-                            "tdi_access_functions: Optional[str]",
-                            "tdi_access_functions: Optional[dict]",
-                        ),
-                        (
-                            "missing_libraries: Optional[str]",
-                            "missing_libraries: Optional[list]",
-                        ),
                     ]
                     for old, new in type_fixes:
                         generated_code = generated_code.replace(old, new)

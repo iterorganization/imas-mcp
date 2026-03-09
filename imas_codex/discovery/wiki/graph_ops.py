@@ -185,13 +185,15 @@ def _bulk_create_wiki_pages(
                           wp.bulk_discovered = true,
                           wp.doc_source_id = page.doc_source_id,
                           wp.site_type = page.site_type,
-                          wp.auth_type = page.auth_type
+                          wp.auth_type = page.auth_type,
+                          wp.content_language = page.content_language
             ON MATCH SET wp.bulk_discovered = true,
                          wp.url = page.url,
                          wp.title = page.title,
                          wp.doc_source_id = coalesce(page.doc_source_id, wp.doc_source_id),
                          wp.site_type = coalesce(page.site_type, wp.site_type),
-                         wp.auth_type = coalesce(page.auth_type, wp.auth_type)
+                         wp.auth_type = coalesce(page.auth_type, wp.auth_type),
+                         wp.content_language = coalesce(page.content_language, wp.content_language)
             WITH wp
             MATCH (f:Facility {id: $facility})
             MERGE (wp)-[:AT_FACILITY]->(f)
@@ -783,7 +785,8 @@ def claim_pages_for_scoring(
         result = gc.query(
             """
             MATCH (wp:WikiPage {facility_id: $facility, claim_token: $token})
-            RETURN wp.id AS id, wp.title AS title, wp.url AS url
+            RETURN wp.id AS id, wp.title AS title, wp.url AS url,
+                   wp.content_language AS content_language
             """,
             facility=facility,
             token=claim_token,

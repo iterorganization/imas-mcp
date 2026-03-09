@@ -554,16 +554,12 @@ classes:
           How to connect to MDSplus: "local" (open tree files directly)
           or "thin_client" (connect to remote mdsip server).
           Determines which scanner dispatch path is used.
-      jpf_subsystems:
+      subsystem_codes:
         description: >-
-          JET-specific JPF subsystem codes (two-character identifiers).
-          Used by the MDSplus scanner to enumerate JPF diagnostic subtrees.
+          Diagnostic subsystem codes (two-character identifiers) for
+          TDI function enumeration. Used by the MDSplus thin-client
+          scanner to enumerate diagnostic subtrees via TDI functions.
         multivalued: true
-      tdi_access_functions:
-        description: >-
-          Documentary mapping of TDI function templates for data access.
-          Keys are access method names, values are function signatures.
-          Not consumed programmatically — for reference only.
 
   SourceConfig:
     description: >-
@@ -1007,11 +1003,6 @@ classes:
           E.g., ["source /etc/profile.d/mdsplus.sh"].
           Supplements per-data-system setup_commands.
         multivalued: true
-      missing_libraries:
-        description: >-
-          Known missing shared libraries that affect data access.
-          Documentary field for tracking known blockers.
-          Each entry is a map with library, impact, severity, note.
 
   PortForwardsConfig:
     description: >-
@@ -1307,11 +1298,19 @@ classes:
           Git path to device XML file (relative to input_prefix).
           Optional for pre-EFIT epochs that have only limiter geometry.
       device_ppfs:
-        description: Git path to PPF routing namelist
+        description: >-
+          Git path to PPF routing namelist. Provenance metadata recording
+          which PPF routing configuration was active for this epoch.
+          Not consumed by the scanner — used for cross-referencing
+          magnetic probe PPF/JPF signal sources.
       limiter:
         description: Git path to limiter contour file
       greens:
-        description: Git path to Green's function directory
+        description: >-
+          Git path to Green's function directory. Provenance metadata
+          recording which Green's function set was active for this epoch.
+          Not consumed by the scanner — provided for cross-referencing
+          with the GreensTable ingestion pipeline.
       snap_file:
         description: Git path to EFITSNAP probe enable/disable mask
       pf_configuration:

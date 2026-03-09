@@ -1042,7 +1042,7 @@ def _persist_mcfg_nodes(
     """Persist MCFG sensor positions and calibration data.
 
     Creates DataSource, DataNode for each sensor, and cross-references
-    to JEC2020 probe nodes via SAME_SENSOR relationships.
+    to JEC2020 probe nodes via MATCHES_SENSOR relationships.
     """
     source_name = source_config.get("name", "sensor_calibration")
     base_dir = source_config.get("base_dir", "")
@@ -1157,7 +1157,7 @@ def _persist_mcfg_nodes(
                   AND jec.system = 'MP'
                   AND abs(mcfg.r - jec.r) < 0.001
                   AND abs(mcfg.z - jec.z) < 0.001
-                MERGE (mcfg)-[:SAME_SENSOR]->(jec)
+                MERGE (mcfg)-[:MATCHES_SENSOR]->(jec)
                 """,
                 mcfg_source=source_name,
                 jec_source="jec2020_geometry",
@@ -1523,7 +1523,7 @@ def _persist_magnetics_config_nodes(
               AND jec.system = 'MP'
               AND abs(mc.r - jec.r) < 0.01
               AND abs(mc.z - jec.z) < 0.01
-            MERGE (mc)-[:SAME_SENSOR]->(jec)
+            MERGE (mc)-[:MATCHES_SENSOR]->(jec)
             """,
             mc_source=source_name,
             jec_source="jec2020_geometry",
@@ -1543,7 +1543,7 @@ def _persist_magnetics_config_nodes(
               AND dx.system = 'MP'
               AND abs(mc.r - dx.r) < 0.01
               AND abs(mc.z - dx.z) < 0.01
-            MERGE (mc)-[:SAME_SENSOR]->(dx)
+            MERGE (mc)-[:MATCHES_SENSOR]->(dx)
             """,
             mc_source=source_name,
             facility=facility,
@@ -1947,6 +1947,7 @@ class DeviceXMLScanner:
             parse_versions.append(entry)
 
         # Build limiter file list
+        default_limiter_dir = config.get("limiter_dir")
         limiter_files = []
         for lv in limiter_versions:
             if lv.get("file"):
@@ -1954,8 +1955,9 @@ class DeviceXMLScanner:
                     "name": lv["name"],
                     "file": lv["file"],
                 }
-                if lv.get("source_dir"):
-                    entry["source_dir"] = lv["source_dir"]
+                source_dir = lv.get("source_dir") or default_limiter_dir
+                if source_dir:
+                    entry["source_dir"] = source_dir
                 limiter_files.append(entry)
 
         # Run remote parse script
@@ -1989,6 +1991,21 @@ class DeviceXMLScanner:
 
         parsed_versions = result.get("versions", {})
         parsed_limiters = result.get("limiters", {})
+
+        # Validate n_points from config against parsed limiter data
+        for lv in limiter_versions:
+            name = lv.get("name", "")
+            expected_n = lv.get("n_points")
+            if expected_n and name in parsed_limiters:
+                parsed_data = parsed_limiters[name]
+                actual_n = parsed_data.get("n_points", 0)
+                if actual_n and actual_n != expected_n:
+                    logger.warning(
+                        "Limiter '%s': expected %d points, got %d",
+                        name,
+                        expected_n,
+                        actual_n,
+                    )
 
         # Check for parse errors
         errors = {

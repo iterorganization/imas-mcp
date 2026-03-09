@@ -51,6 +51,7 @@ class EDASScanner:
 
     Config (data_systems.edas):
         api_path: str - Path to EDAS API source files
+        lib_path: str - Path to libeddb.so shared library
         header_path: str - Path to C headers with signal definitions
         reference_shot: int - Shot for validation (E-prefix format)
     """
@@ -90,10 +91,27 @@ class EDASScanner:
             ssh_host,
         )
 
+        # Read paths from config
+        api_path = config.get("api_path")
+        lib_path = config.get("lib_path")
+
+        if not api_path or not lib_path:
+            logger.error(
+                "EDAS scanner: api_path and lib_path must be configured for %s",
+                facility,
+            )
+            return ScanResult(
+                stats={"error": "api_path and lib_path required in edas config"}
+            )
+
         try:
             output = await async_run_python_script(
                 "enumerate_edas.py",
-                {"ref_shot": shot_str},
+                {
+                    "ref_shot": shot_str,
+                    "api_path": api_path,
+                    "lib_path": lib_path,
+                },
                 ssh_host=ssh_host,
                 timeout=180,
                 python_command=config.get("python_command", "python3"),
@@ -121,9 +139,9 @@ class EDASScanner:
             data_source="eddb",
             connection_template=(
                 "import sys\n"
-                "sys.path.insert(0, '/analysis/src/eddb')\n"
+                f"sys.path.insert(0, '{api_path}')\n"
                 "from eddb_pwrapper import eddbWrapper\n"
-                "db = eddbWrapper('/analysis/lib/libeddb.so')\n"
+                f"db = eddbWrapper('{lib_path}')\n"
                 "db.eddbOpen()"
             ),
             data_template=(
@@ -198,9 +216,20 @@ class EDASScanner:
         from imas_codex.remote.executor import async_run_python_script
 
         ref_shot = reference_shot or config.get("reference_shot")
+        api_path = config.get("api_path")
+        lib_path = config.get("lib_path")
         if not ref_shot:
             return [
                 {"signal_id": s.id, "valid": False, "error": "no reference_shot"}
+                for s in signals
+            ]
+        if not api_path or not lib_path:
+            return [
+                {
+                    "signal_id": s.id,
+                    "valid": False,
+                    "error": "api_path/lib_path not configured",
+                }
                 for s in signals
             ]
 
@@ -223,6 +252,8 @@ class EDASScanner:
                 {
                     "signals": batch,
                     "ref_shot": shot_str,
+                    "api_path": api_path,
+                    "lib_path": lib_path,
                 },
                 ssh_host=ssh_host,
                 timeout=180,

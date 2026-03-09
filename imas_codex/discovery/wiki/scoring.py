@@ -730,6 +730,14 @@ async def _score_pages_batch(
         if url:
             lines.append(f"URL: {url}")
 
+        # Include language hint for non-English content
+        content_language = p.get("content_language")
+        if content_language and content_language != "en":
+            lines.append(
+                f"Note: Content may be in {content_language}. "
+                "Score based on technical content regardless of language."
+            )
+
     lines.append(
         "\n\nReturn results for each page in order. "
         "The response format is enforced by the schema."

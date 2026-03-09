@@ -249,6 +249,8 @@ data_access_patterns:
     - "TDI library at /usr/local/CRPP/tdi/ with subdirs: base devices python scopes tcv trees vsystem"
     - "Primary TDI physics accessors in /usr/local/CRPP/tdi/tcv/"
     - "/home/codes NFS too slow for broad search - known issue"
+    - "Missing libjmmshr_gsl.so blocks GREENS computation in static tree (greenem.fun)"
+    - "Missing libblas.so symlink (libblas.so.3 exists) blocks _matmul.fun used by staticgreen"
   # Trees that are NOT subtrees of tcv_shot and must be opened independently
   independent_trees:
     - static
@@ -256,15 +258,6 @@ data_access_patterns:
   # Environment setup required for MDSplus data access
   setup_commands:
     - "source /etc/profile.d/mdsplus.sh"
-  # Known missing shared libraries that block TDI evaluation
-  missing_libraries:
-    - library: libjmmshr_gsl.so
-      impact: "GREENS computation in static tree (greenem.fun)"
-      severity: blocks_data
-    - library: libblas.so
-      impact: "Matrix multiply (_matmul.fun) used by staticgreen"
-      severity: blocks_data
-      note: "libblas.so.3 exists at /usr/lib64/ but unversioned symlink missing"
 
 # Wiki/documentation sites
 # Direct HTTP access via Tequila SSO (EPFL authentication)

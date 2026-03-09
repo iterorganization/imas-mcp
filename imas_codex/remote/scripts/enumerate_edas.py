@@ -14,7 +14,9 @@ Usage:
 
 Input (JSON on stdin):
     {
-        "ref_shot": "E012345"
+        "ref_shot": "E012345",
+        "api_path": "/analysis/src/eddb",
+        "lib_path": "/analysis/lib/libeddb.so"
     }
 
 Output (JSON on stdout):
@@ -47,47 +49,25 @@ def main():
         sys.exit(0)
 
     ref_shot = config.get("ref_shot", "")
+    api_path = config.get("api_path", "")
+    lib_path = config.get("lib_path", "")
     if not ref_shot:
         print(json.dumps({"error": "No ref_shot specified"}))
         sys.exit(0)
+    if not api_path or not lib_path:
+        print(json.dumps({"error": "api_path and lib_path are required"}))
+        sys.exit(0)
 
-    # Import eddb_pwrapper — available on JT-60SA compute nodes
-    # Primary path: /analysis/src/eddb (eddb_pwrapper.py)
-    # The wrapper needs libeddb.so at /analysis/lib/libeddb.so
+    # Import eddb_pwrapper from configured api_path
     try:
-        sys.path.insert(0, "/analysis/src/eddb")
+        sys.path.insert(0, api_path)
         from eddb_pwrapper import eddbWrapper
     except ImportError:
-        try:
-            sys.path.insert(0, "/analysis/lib")
-            from eddb_pwrapper import eddbWrapper
-        except ImportError:
-            try:
-                sys.path.insert(
-                    0, "/analysis/src/edas2/v2.1.15/edas_share/database_api"
-                )
-                import edas_eddb_api  # noqa: F401
+        print(json.dumps({"error": f"eddb_pwrapper not available at {api_path}"}))
+        sys.exit(0)
 
-                print(
-                    json.dumps(
-                        {
-                            "error": "eddb_pwrapper not available, edas_eddb_api loaded but unsupported"
-                        }
-                    )
-                )
-                sys.exit(0)
-            except ImportError:
-                print(
-                    json.dumps(
-                        {
-                            "error": "No EDAS Python API available. Tried /analysis/src/eddb and /analysis/lib"
-                        }
-                    )
-                )
-                sys.exit(0)
-
-    # eddbWrapper Python wrapper — needs library path on JT-60SA host
-    db = eddbWrapper("/analysis/lib/libeddb.so")
+    # eddbWrapper Python wrapper — needs library path
+    db = eddbWrapper(lib_path)
     # eddbOpen returns rtn_bool — True on success
     ok = db.eddbOpen()
     if not ok:

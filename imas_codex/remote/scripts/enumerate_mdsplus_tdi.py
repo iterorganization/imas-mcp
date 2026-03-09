@@ -56,7 +56,7 @@ def main():
 
     server = config.get("server")
     shot = config.get("shot")
-    jpf_subsystems = config.get("jpf_subsystems", [])
+    subsystem_codes = config.get("subsystem_codes", [])
     sample_signals = config.get("sample_signals", [])
 
     if not server:
@@ -107,7 +107,7 @@ def main():
         all_subs = [rawstr[i : i + 2] for i in range(0, len(rawstr), 2)]
         result["all_subsystems"] = all_subs
     except Exception:
-        result["all_subsystems"] = jpf_subsystems
+        result["all_subsystems"] = subsystem_codes
 
     # Get active subsystems for this shot
     try:

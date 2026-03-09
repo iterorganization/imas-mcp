@@ -496,6 +496,7 @@ def wiki(
                 "credential_service": credential_service,
                 "access_method": access_method,
                 "doc_source_id": doc_source_id,
+                "languages": site.get("languages"),
             }
 
             if site_type == "confluence":
