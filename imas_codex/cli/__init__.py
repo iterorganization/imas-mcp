@@ -64,6 +64,7 @@ def register_commands() -> None:
     from imas_codex.cli.facilities import facilities
     from imas_codex.cli.graph_cli import graph
     from imas_codex.cli.hosts import hosts
+    from imas_codex.cli.ids import ids
     from imas_codex.cli.imas_dd import imas
     from imas_codex.cli.ingest import ingest
     from imas_codex.cli.llm_cli import llm
@@ -81,6 +82,7 @@ def register_commands() -> None:
     main.add_command(hpc)
     main.add_command(discover)
     main.add_command(embed)
+    main.add_command(ids)
     main.add_command(imas)
     main.add_command(enrich)
     main.add_command(ingest)
