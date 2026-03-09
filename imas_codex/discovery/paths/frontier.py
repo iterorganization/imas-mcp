@@ -2787,6 +2787,7 @@ def sample_enriched_paths(
                     MATCH (p:FacilityPath)
                     WHERE p.status = 'scored'
                         AND p.total_lines IS NOT NULL
+                        AND p.score_composite IS NOT NULL
                         AND {cat_def["filter"]}
                         {facility_filter}
                     RETURN p.path AS path,
@@ -2820,7 +2821,7 @@ def sample_enriched_paths(
                 {
                     "path": r["path"],
                     "facility": r["facility"],
-                    "score": round(r["score"], 2),
+                    "score": round(r["score"], 2) if r["score"] is not None else 0.0,
                     "total_lines": r["total_lines"] or 0,
                     "language_breakdown": r["language_breakdown"] or "{}",
                     "is_multiformat": r["is_multiformat"] or False,
@@ -3245,7 +3246,9 @@ def _fetch_dimension_calibration(
                     {
                         "path": r["path"],
                         "facility": r["facility"],
-                        "score": round(r["score"], 2),
+                        "score": round(r["score"], 2)
+                        if r["score"] is not None
+                        else 0.0,
                         "purpose": r["purpose"] or "unknown",
                         "description": r["description"] or "",
                     }
