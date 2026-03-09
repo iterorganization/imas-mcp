@@ -656,14 +656,21 @@ def _print_discovery_summary(
 
     for p in high_value:
         max_cat = None
-        max_score = -1.0
+        max_score = 0.0
         for cat in category_order:
             cat_score = p.get(cat) or 0.0
             if cat_score > max_score:
                 max_score = cat_score
                 max_cat = cat
-        if max_cat:
-            by_category[max_cat].append(p)
+        if max_cat is None:
+            # All dimension scores are 0 — fall back to path_purpose
+            purpose = p.get("path_purpose", "")
+            purpose_key = f"score_{purpose}"
+            if purpose_key in score_categories:
+                max_cat = purpose_key
+            else:
+                max_cat = category_order[0]
+        by_category[max_cat].append(p)
 
     console.print()
     console.print(f"[bold]High-value paths this run ({len(high_value)}):[/bold]")
@@ -681,14 +688,16 @@ def _print_discovery_summary(
             continue
 
         sorted_paths = sorted(
-            cat_paths, key=lambda p: p.get(cat_key) or 0.0, reverse=True
+            cat_paths,
+            key=lambda p: p.get(cat_key) or p.get("score") or 0.0,
+            reverse=True,
         )
 
         cat_name = score_categories[cat_key]
         console.print(f"  [bold cyan]{cat_name}[/bold cyan] ({len(sorted_paths)})")
 
         for p in sorted_paths[:3]:
-            cat_score = p.get(cat_key) or 0.0
+            cat_score = p.get(cat_key) or p.get("score") or 0.0
             path = p.get("path", "")
             description = p.get("description", "")
             should_expand = p.get("should_expand", True)
