@@ -18,7 +18,9 @@ Input (JSON on stdin):
             {"id": "jt-60sa:general/eddb_testime", "category": "EDDB", "data_name": "tesTime"},
             ...
         ],
-        "ref_shot": "E012345"
+        "ref_shot": "E012345",
+        "api_path": "/analysis/src/eddb",
+        "lib_path": "/analysis/lib/libeddb.so"
     }
 
 Output (JSON on stdout):
@@ -44,6 +46,8 @@ def main():
 
     signals = config.get("signals", [])
     ref_shot = config.get("ref_shot", "")
+    api_path = config.get("api_path", "")
+    lib_path = config.get("lib_path", "")
 
     if not ref_shot:
         print(
@@ -58,32 +62,44 @@ def main():
         )
         sys.exit(0)
 
+    if not api_path or not lib_path:
+        print(
+            json.dumps(
+                {
+                    "results": [
+                        {
+                            "id": s["id"],
+                            "success": False,
+                            "error": "api_path and lib_path are required",
+                        }
+                        for s in signals
+                    ]
+                }
+            )
+        )
+        sys.exit(0)
+
     try:
-        sys.path.insert(0, "/analysis/src/eddb")
+        sys.path.insert(0, api_path)
         from eddb_pwrapper import eddbWrapper
     except ImportError:
-        try:
-            sys.path.insert(0, "/analysis/lib")
-            from eddb_pwrapper import eddbWrapper
-        except ImportError:
-            print(
-                json.dumps(
-                    {
-                        "results": [
-                            {
-                                "id": s["id"],
-                                "success": False,
-                                "error": "eddb_pwrapper not available",
-                            }
-                            for s in signals
-                        ]
-                    }
-                )
+        print(
+            json.dumps(
+                {
+                    "results": [
+                        {
+                            "id": s["id"],
+                            "success": False,
+                            "error": f"eddb_pwrapper not available at {api_path}",
+                        }
+                        for s in signals
+                    ]
+                }
             )
-            sys.exit(0)
+        )
+        sys.exit(0)
 
-    # eddbWrapper Python wrapper — needs library path on JT-60SA host
-    db = eddbWrapper("/analysis/lib/libeddb.so")
+    db = eddbWrapper(lib_path)
     ok = db.eddbOpen()
     if not ok:
         print(

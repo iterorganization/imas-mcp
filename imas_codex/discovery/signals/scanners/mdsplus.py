@@ -51,7 +51,7 @@ class MDSplusScanner:
         setup_commands: list[str] - MDSplus environment setup
         reference_shot: int - Shot for validation/introspection
         trees: list[TreeConfig] - Tree configurations (tree-based)
-        jpf_subsystems: list[str] - JPF subsystem codes (thin_client)
+        subsystem_codes: list[str] - Diagnostic subsystem codes (thin_client)
     """
 
     scanner_type: str = "mdsplus"
@@ -254,7 +254,7 @@ class MDSplusScanner:
                 {
                     "server": server,
                     "shot": ref_shot,
-                    "jpf_subsystems": config.get("jpf_subsystems", []),
+                    "subsystem_codes": config.get("subsystem_codes", []),
                     "sample_signals": sample_signals,
                 },
                 ssh_host=ssh_host,

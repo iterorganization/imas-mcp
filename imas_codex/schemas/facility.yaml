@@ -1428,8 +1428,6 @@ classes:
           relationship_type: HAS_PREDECESSOR
       fingerprint:
         description: Hash fingerprint for identifying structural epoch content
-      tree_name:
-        description: MDSplus tree name for this structural epoch
       units_count:
         description: Total number of units in this epoch
         range: integer
@@ -1494,8 +1492,6 @@ classes:
         identifier: true
         description: Full node path (e.g., "\\RESULTS::LIUQE:PSI")
         required: true
-      tree_name:
-        description: MDSplus tree name containing this node
       data_source_name:
         description: Parent data source name
         required: true
@@ -1670,14 +1666,14 @@ classes:
         range: DataNodePattern
         annotations:
           relationship_type: FOLLOWS_PATTERN
-      same_sensor:
+      matches_sensor:
         description: >-
           Another DataNode representing the same physical sensor
           in a different data source. Cross-references sensors
           matched by R,Z proximity across data sources.
         range: DataNode
         annotations:
-          relationship_type: SAME_SENSOR
+          relationship_type: MATCHES_SENSOR
 
   DataNodePattern:
     description: >-
@@ -1731,8 +1727,7 @@ classes:
           Lifecycle status: pending until enriched, then enriched.
           Propagated to all followers on enrichment.
         range: EnrichmentStatus
-      tree_name:
-        description: MDSplus tree name containing this pattern
+
 
   TDIFunction:
     description: >-
@@ -2143,8 +2138,6 @@ classes:
         description: Template pattern for generating accessor expressions
       source_node:
         description: "[DEPRECATED] Old name for data_source_node. Retained for backward compatibility."
-      tree_name:
-        description: MDSplus tree name for this signal
       skip_reason:
         description: Why this signal was skipped during enrichment or access checking
 
@@ -2879,7 +2872,7 @@ classes:
         description: ID of created CodeExample (set when ready)
         range: CodeExample
         annotations:
-          relationship_type: PRODUCED
+          relationship_type: HAS_EXAMPLE
 
   Document:
     description: >-
@@ -3391,6 +3384,12 @@ classes:
           Authentication method for fetching this page (keycloak,
           tequila, basic, session, or null for public). Workers use this
           to resolve the correct authenticated HTTP client per-page.
+      content_language:
+        description: >-
+          Primary natural language of page content (ISO 639-1 code).
+          Used to select appropriate LLM prompts for non-English content.
+          Set from wiki site config languages field during bulk discovery.
+          E.g., "ja" for Japanese, "en" for English.
       url:
         description: Original wiki URL
         required: true

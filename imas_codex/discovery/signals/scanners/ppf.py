@@ -72,6 +72,7 @@ class PPFScanner:
         reference_pulse: int - Pulse for signal enumeration
         default_owner: str - Default PPF owner (e.g., "jetppf")
         exclude_ddas: list[str] - DDAs to skip
+        sal_endpoint: str - Reserved for future SAL REST access (currently unreachable)
     """
 
     scanner_type: str = "ppf"

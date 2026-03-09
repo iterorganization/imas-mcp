@@ -141,6 +141,7 @@ async def score_worker(
                     "url": url,
                     "preview_text": preview,
                     "fetch_error": None,
+                    "content_language": page.get("content_language"),
                 }
             except Exception as e:
                 logger.debug("Failed to fetch %s: %s", url, e)
@@ -150,6 +151,7 @@ async def score_worker(
                     "url": url,
                     "preview_text": "",
                     "fetch_error": str(e),
+                    "content_language": page.get("content_language"),
                 }
 
     while not state.should_stop_scoring():
@@ -228,6 +230,7 @@ async def score_worker(
                         "url": url,
                         "preview_text": preview,
                         "fetch_error": None if preview else "SSH batch read failed",
+                        "content_language": page.get("content_language"),
                     }
                 )
 

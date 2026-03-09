@@ -59,6 +59,7 @@ def _persist_discovered_pages(
     doc_source_id: str | None = None,
     site_type: str | None = None,
     auth_type: str | None = None,
+    languages: list[str] | None = None,
 ) -> int:
     """Persist discovered pages to graph as 'scanned' status.
 
@@ -72,6 +73,7 @@ def _persist_discovered_pages(
         doc_source_id: DocSource node ID for traceability
         site_type: Wiki platform type (mediawiki, twiki, etc.)
         auth_type: Authentication type (tequila, keycloak, etc.)
+        languages: Content languages from wiki site config (ISO 639-1)
 
     Returns:
         Number of pages created/updated
@@ -81,6 +83,10 @@ def _persist_discovered_pages(
     if not pages:
         return 0
 
+    # Determine content_language from site config languages
+    # Single language: use directly. Multiple: use first (primary).
+    content_language = languages[0] if languages else None
+
     batch_data = [
         {
             "id": canonical_page_id(page.name, facility),
@@ -89,6 +95,7 @@ def _persist_discovered_pages(
             "doc_source_id": doc_source_id,
             "site_type": site_type,
             "auth_type": auth_type,
+            "content_language": content_language,
         }
         for page in pages
     ]
@@ -122,6 +129,7 @@ def bulk_discover_pages(
     max_depth: int | None = None,
     space_key: str | None = None,
     doc_source_id: str | None = None,
+    languages: list[str] | None = None,
     on_progress: Callable | None = None,
 ) -> int:
     """Bulk discover all wiki pages for a site using the appropriate adapter.
@@ -268,6 +276,7 @@ def bulk_discover_pages(
             doc_source_id=doc_source_id,
             site_type=site_type,
             auth_type=auth_type,
+            languages=languages,
         )
     finally:
         if close_session and session is not None:
