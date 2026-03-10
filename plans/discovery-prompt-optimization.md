@@ -455,9 +455,127 @@ These 6 call sites use **no graph-backed calibration examples**. They rely entir
 
 ---
 
-## 9. Optimization Opportunities Summary
 
-### 9.1 High Impact (implement first)
+## 9. Extension Assessment: Calibration Examples for Other Call Sites
+
+Should graph-backed calibration examples (dimension_calibration) be extended to the other 6 call sites that currently have none? This section analyzes each individually.
+
+### 9.1 Task Type Analysis
+
+The call sites fall into two distinct categories that inform whether calibration examples help:
+
+| Category | Call Sites | Task | Calibration Helpful? |
+|----------|-----------|------|---------------------|
+| **Scoring** | wiki/scorer, wiki/doc-scorer, wiki/image-captioner | Assign dimension scores 0.0–1.0 | **Yes** — score calibration improves consistency |
+| **Enrichment** | signals/enrichment, static/enrichment, clusters/labeler | Generate descriptions, classify | **No** — no scores to calibrate |
+
+**Why scoring benefits from calibration:** Scoring tasks produce numeric values on a continuous scale. Without calibration examples, the LLM's interpretation of "0.5" vs "0.7" drifts across batches. Calibration examples anchor the scale.
+
+**Why enrichment doesn't need calibration:** Enrichment tasks generate text descriptions, classify into enums (physics_domain, category), and extract keywords. These are categorical outputs — the answer is either right or wrong, not on a sliding scale. The comprehensive static examples in the prompt templates (e.g., `signals/enrichment.md` has 275 lines of classification guidelines with inline examples) already provide sufficient grounding.
+
+### 9.2 Wiki Page Scoring (RECOMMENDED)
+
+**Current state:** `wiki/scorer.md` has static score ranges (0.8-1.0 = core technical, 0.6-0.8 = significant, etc.) but no graph-backed examples.
+
+**Volume:** ~100 calls per facility (2,000 pages ÷ 20/batch). System prompt is ~2,570 tokens — 100% cached already since it's static.
+
+**Recommendation: Add calibration examples from scored WikiPage nodes.**
+
+Benefits:
+- Anchors scores to real examples: "This page about Thomson scattering calibration data scored 0.85"
+- Cross-facility consistency: examples from JET inform TCV scoring
+- Low cost to add: system prompt grows by ~500-800 tokens (3 levels × 2 examples)
+
+Implementation:
+- Query WikiPage nodes with `score_composite` in target ranges
+- Use a truncated version: `{id, title, score_composite, purpose, description[:100]}`
+- 3 levels (low/medium/high) × 2 examples = 6 exemplars (~200 tokens each)
+- These would join the CalibrationExemplar system proposed in §6
+
+### 9.3 Wiki Document Scoring (RECOMMENDED)
+
+**Current state:** `wiki/document-scorer.md` has identical score ranges to wiki/scorer. No graph-backed examples.
+
+**Volume:** ~50 calls per facility (500 docs ÷ 10/batch). System prompt ~2,600 tokens — 100% cached.
+
+**Recommendation: Add calibration examples from scored WikiDocument nodes.**
+
+Same benefits as wiki page scoring. Documents are scored less frequently, so the calibration gap is less impactful, but the implementation cost is near-zero once the CalibrationExemplar infrastructure exists for wiki pages.
+
+### 9.4 Wiki Image Captioning (NOT RECOMMENDED)
+
+**Current state:** `wiki/image-captioner.md` is a VLM (vision) prompt. Scores are secondary to the captioning task.
+
+**Volume:** ~200 calls per facility (1,000 images ÷ 5/batch). But each call is dominated by image token cost, not system prompt cost.
+
+**Recommendation: Do NOT add calibration examples.**
+
+Reasons:
+- Primary task is captioning (text generation), not scoring
+- Score calibration doesn't improve caption quality
+- Image tokens dominate cost — system prompt is a small fraction
+- VLM models handle the description task well from the detailed static prompts
+- Adding text examples to a multimodal prompt may dilute the visual grounding
+
+### 9.5 Signal Enrichment (NOT RECOMMENDED)
+
+**Current state:** `signals/enrichment.md` is 275 lines with extensive inline examples (TDI, PPF, EDAS, MDSplus patterns). System prompt rendered once, reused across all batches.
+
+**Volume:** ~250 calls per facility (5,000 signals ÷ 20/batch). System prompt ~4,240 tokens — already 100% cached (no dynamic content).
+
+**Recommendation: Do NOT add calibration examples.**
+
+Reasons:
+- Enrichment task, not scoring — outputs are descriptions, physics_domain, keywords
+- The 275-line template already has comprehensive inline examples for all data access patterns
+- System prompt is already fully static → 100% cache hit rate
+- Adding graph-backed examples would introduce churn that breaks cache hits
+- No dimension scores to calibrate
+
+### 9.6 Static Tree Enrichment (NOT RECOMMENDED)
+
+**Current state:** `discovery/static-enricher.md` has static guidance for MDSplus tree node categories. System prompt varies slightly per tree name via `{{ facility }}` and `{{ data_source_name }}`.
+
+**Volume:** ~150 calls per facility (3,000 nodes ÷ 20/batch). System prompt ~1,460 tokens.
+
+**Recommendation: Do NOT add calibration examples.**
+
+Reasons:
+- Enrichment task — generates descriptions and categories for tree nodes
+- The user prompt already provides rich structural context (parent hierarchy, sibling parameters)
+- Categories are a closed set (geometry, coil, vessel, diagnostic, etc.) — not a scoring scale
+- System prompt is small and nearly static → good cache behavior already
+
+### 9.7 Cluster Labeling (NOT RECOMMENDED)
+
+**Current state:** `clusters/labeler.md` uses controlled vocabularies from LinkML schemas. System prompt ~1,875 tokens.
+
+**Volume:** Very low — typically <50 calls total across all facilities. Run once after clustering.
+
+**Recommendation: Do NOT add calibration examples.**
+
+Reasons:
+- Extremely low volume — optimization has negligible cost impact
+- Labeling task (categorical), not scoring
+- Controlled vocabularies already constrain outputs
+- One-off operation, not continuous pipeline
+
+### 9.8 Summary: Extension Decisions
+
+| Call Site | Add Calibration? | Reason |
+|-----------|-----------------|--------|
+| wiki/scorer | **Yes** | Scoring task, ~100 calls, anchors 0–1 scale |
+| wiki/doc-scorer | **Yes** | Scoring task, ~50 calls, same benefit as wiki/scorer |
+| wiki/image-captioner | No | VLM captioning task, image tokens dominate cost |
+| signals/enrichment | No | Enrichment task, already fully static prompts |
+| static/enrichment | No | Enrichment task, rich structural context in user prompt |
+| clusters/labeler | No | Labeling task, very low volume, controlled vocabularies |
+
+**Net recommendation:** Extend score example calibration to wiki page and document scoring. These are the only remaining scoring tasks without calibration, and they process ~150 calls per facility. The CalibrationExemplar infrastructure from §6 should be designed to support multiple pipelines (paths, code, wiki) from the start.
+
+## 10. Optimization Opportunities Summary
+
+### 10.1 High Impact (implement first)
 
 | Optimization | Mechanism | Estimated Savings | Accuracy Impact |
 |-------------|-----------|------------------|-----------------|
@@ -465,7 +583,7 @@ These 6 call sites use **no graph-backed calibration examples**. They rely entir
 | **Reduce triage examples to 1/level** | `per_level=1` in triage calls | ~$0.15/facility in paths, ~$0.25/facility in code | Neutral — triage is coarse |
 | **Collapse triage to 3 levels** | Merge lowest+low, medium, high+highest | Additional ~$0.10/facility | Neutral — boundary calibration preserved |
 
-### 9.2 Medium Impact
+### 10.2 Medium Impact
 
 | Optimization | Mechanism | Estimated Savings | Accuracy Impact |
 |-------------|-----------|------------------|-----------------|
@@ -473,7 +591,7 @@ These 6 call sites use **no graph-backed calibration examples**. They rely entir
 | **Add wiki calibration exemplars** | WikiScoreExemplar nodes | Improved scoring consistency | Positive |
 | **Batch size tuning** | Larger batches amortize system prompt | Fewer calls = fewer cache misses | Check quality at larger batches |
 
-### 9.3 Lower Impact / Future
+### 10.3 Lower Impact / Future
 
 | Optimization | Mechanism | Notes |
 |-------------|-----------|-------|
@@ -481,7 +599,7 @@ These 6 call sites use **no graph-backed calibration examples**. They rely entir
 | Remove `score_calibration` enriched examples | Enriched path examples in scorer | Overlaps with dimension calibration |
 | Templated output schemas | Pre-render once, inject as string | Already cached via @lru_cache providers |
 
-### 9.4 Cost Projection
+### 10.4 Cost Projection
 
 | Scenario | Input $/Facility | Output $/Facility | Total | vs Current |
 |----------|-----------------|-------------------|-------|------------|
@@ -495,7 +613,7 @@ These 6 call sites use **no graph-backed calibration examples**. They rely entir
 
 ---
 
-## 10. Implementation Plan
+## 11. Implementation Plan
 
 ### Phase 1: Quick Wins (no schema changes)
 
