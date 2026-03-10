@@ -56,18 +56,18 @@ IMASMapping ──[:USES_SIGNAL_GROUP]──▶ SignalGroup ──[:MAPS_TO_IMAS
     │                                     │
     │                              SignalNode / FacilitySignal
     │
-    └──[:ASSEMBLES_INTO {assembly props}]──▶ IMASNode (STRUCT_ARRAY root)
-                                                │
-                                           [:HAS_PARENT*]
-                                                │
-                                           IMASNode (leaf) ← same node as MAPS_TO_IMAS target
+    └──[:POPULATES {assembly props}]──▶ IMASNode (STRUCT_ARRAY root)
+                                            │
+                                       [:HAS_PARENT*]
+                                            │
+                                       IMASNode (leaf) ← same node as MAPS_TO_IMAS target
 ```
 
 Full traversal from assembly to data:
 
 ```cypher
 MATCH (m:IMASMapping {id: $mapping_id})
-      -[t:ASSEMBLES_INTO]->(root:IMASNode)
+      -[t:POPULATES]->(root:IMASNode)
 MATCH (root)<-[:HAS_PARENT*]-(leaf:IMASNode)
       <-[map:MAPS_TO_IMAS]-(sg:SignalGroup)
       <-[:MEMBER_OF]-(n:SignalNode)
@@ -103,14 +103,14 @@ different semantics:
 `HAS_X` in the schema means containment/ownership: `HAS_PARENT`, `HAS_UNIT`,
 `HAS_COORDINATE`, `HAS_NODE`. "SignalGroup HAS an IMAS mapping" misuses this —
 the relationship IS the mapping, not something the group *possesses*. Active verbs
-(`MAPS_TO`, `ASSEMBLES_INTO`, `USES`) describe what the relationship *does*.
+(`MAPS_TO`, `POPULATES`, `USES`) describe what the relationship *does*.
 
 #### Full grammar of proposed relationships
 
 | Relationship | Reads As | Grammar Pattern | Semantic Role |
 |---|---|---|---|
 | `MAPS_TO_IMAS` | "signal group maps to IMAS node" | VERB_TO_IMAS | Field-level data transformation |
-| `ASSEMBLES_INTO` | "mapping assembles data into IMAS section" | VERB_INTO | Structural assembly target |
+| `POPULATES` | "mapping populates IMAS section" | VERB | Structural assembly target |
 | `USES_SIGNAL_GROUP` | "mapping uses signal group" | VERB_NOUN | Data source composition |
 | `MEMBER_OF` | "signal node is a member of group" | NOUN_OF | Group membership |
 | `HAS_EVIDENCE` | "signal group has evidence" | HAS_X | Containment (correct usage) |
@@ -147,9 +147,9 @@ Examples:
 | SignalGroup "jet:MP:angle" | `magnetics/.../poloidal_angle` | `math.radians(value)` | deg → rad |
 | SignalNode (one-off sensor) | `magnetics/.../ip/data` | `-value` | A → A |
 
-#### ASSEMBLES_INTO (IMASMapping → IMASNode STRUCT_ARRAY)
+#### POPULATES (IMASMapping → IMASNode STRUCT_ARRAY)
 
-Assembly-level config: "this mapping assembles data into this IMAS section."
+Assembly-level config: "this mapping populates this IMAS section with data."
 Only 1–2 per IDS (one per struct-array root).
 
 | Property | Type | Purpose |
@@ -197,7 +197,7 @@ IMASNode ("pf_active/coil/element/geometry/rectangle/r", data_type=FLT_0D)  ← 
 
 2,438 STRUCT_ARRAY nodes exist in the graph. Traversal from any leaf to its struct-array
 root is `[:HAS_PARENT*]` filtering on `data_type = 'STRUCT_ARRAY'`. The assembly config
-lives on `ASSEMBLES_INTO` relationships from `IMASMapping` to these existing nodes.
+lives on `POPULATES` relationships from `IMASMapping` to these existing nodes.
 
 ### Why Relationship-Based Field Mappings?
 
@@ -246,7 +246,7 @@ No backward compatibility. All renames apply across schema, codebase, graph, tes
 | Relationship | From → To | Purpose |
 |---|---|---|
 | `MAPS_TO_IMAS` | SignalGroup/SignalNode → IMASNode | Field-level mapping with transform |
-| `ASSEMBLES_INTO` | IMASMapping → IMASNode (STRUCT_ARRAY) | Assembly section target with config |
+| `POPULATES` | IMASMapping → IMASNode (STRUCT_ARRAY) | Assembly section target with config |
 | `USES_SIGNAL_GROUP` | IMASMapping → SignalGroup | Assembly sources |
 | `MEMBER_OF` | SignalNode/FacilitySignal → SignalGroup | Group membership |
 | `HAS_EVIDENCE` | SignalGroup → MappingEvidence | Evidence for group's mapping |
@@ -486,7 +486,7 @@ Renamed from `IDSRecipe` because the field-level mapping functionality moved to
 IMASMapping:
   description: >-
     Orchestrates the assembly of an IDS for a facility. Links to SignalGroups
-    via USES_SIGNAL_GROUP and to IMAS struct-array roots via ASSEMBLES_INTO
+    via USES_SIGNAL_GROUP and to IMAS struct-array roots via POPULATES
     with assembly configuration properties.
   class_uri: facility:IMASMapping
   attributes:
@@ -526,12 +526,12 @@ IMASMapping:
       multivalued: true
       annotations:
         relationship_type: USES_SIGNAL_GROUP
-    assembles_into:
-      description: IMAS struct-array roots targeted by this mapping
+    populates:
+      description: IMAS struct-array roots populated by this mapping
       range: IMASNode
       multivalued: true
       annotations:
-        relationship_type: ASSEMBLES_INTO
+        relationship_type: POPULATES
 ```
 
 ```yaml
@@ -552,7 +552,7 @@ IMASMappingStatus:
 1. Create SignalGroup per (facility, system, source_property)
 2. Create `MAPS_TO_IMAS` from SignalGroup to target IMASNode with field properties
 3. Create IMASMapping node with `USES_SIGNAL_GROUP` → SignalGroup
-4. Create `ASSEMBLES_INTO` from IMASMapping to STRUCT_ARRAY root with assembly config
+4. Create `POPULATES` from IMASMapping to STRUCT_ARRAY root with assembly config
 
 ```cypher
 -- Step 1: Create SignalGroup
@@ -587,10 +587,10 @@ WITH r
 MATCH (f:Facility {id: $facility})
 MERGE (r)-[:AT_FACILITY]->(f)
 
--- Step 4: Assembly-level ASSEMBLES_INTO STRUCT_ARRAY root
+-- Step 4: Assembly-level POPULATES STRUCT_ARRAY root
 MATCH (r:IMASMapping {id: $mapping_id})
 MATCH (root:IMASNode {id: $struct_array_root})
-MERGE (r)-[t:ASSEMBLES_INTO]->(root)
+MERGE (r)-[t:POPULATES]->(root)
 SET t.structure = $structure,
     t.init_arrays = $init_arrays_json,
     t.elements_config = $elements_json
@@ -614,7 +614,7 @@ class IDSAssembler:
         # 2. Get section roots with assembly config
         sections = self._query("""
             MATCH (m:IMASMapping {id: $id})
-                  -[t:ASSEMBLES_INTO]->(root:IMASNode)
+                  -[t:POPULATES]->(root:IMASNode)
             RETURN root.id AS root_path,
                    t.structure AS structure,
                    t.init_arrays AS init_arrays,
@@ -660,7 +660,7 @@ class IDSAssembler:
 
 1. `uv run build-models --force` — schema compiles with new classes
 2. `uv run pytest` — all tests pass after codebase updates
-3. `ids seed jet pf_active` — creates SignalGroups + MAPS_TO_IMAS + IMASMapping + ASSEMBLES_INTO
+3. `ids seed jet pf_active` — creates SignalGroups + MAPS_TO_IMAS + IMASMapping + POPULATES
 4. Assembly produces identical IDS output as v1 architecture
 5. Migration script runs on existing graph without errors
 6. `uv run ruff check .` — no lint errors
@@ -673,9 +673,9 @@ class IDSAssembler:
 |---|----------|-----------|
 | 1 | No IMASGroup | IMAS hierarchy (IMASNode STRUCT_ARRAY + IDS + HAS_PARENT) provides grouping natively. 2,438 STRUCT_ARRAY nodes already exist. |
 | 2 | Field mappings are MAPS_TO_IMAS relationships | A mapping IS a 1:1 link. `MAPS_TO_IMAS` matches existing `REFERENCES_IMAS` and `MENTIONS_IMAS` grammar. Active verb describes what the relationship does, not what the subject contains. |
-| 3 | Active verbs over HAS_X containment | `MAPS_TO_IMAS`, `ASSEMBLES_INTO`, `USES_SIGNAL_GROUP` each describe an action. `HAS_X` is reserved for genuine containment (`HAS_EVIDENCE`, `HAS_PARENT`). This prevents semantic overloading. |
+| 3 | Active verbs over HAS_X containment | `MAPS_TO_IMAS`, `POPULATES`, `USES_SIGNAL_GROUP` each describe an action. `HAS_X` is reserved for genuine containment (`HAS_EVIDENCE`, `HAS_PARENT`). This prevents semantic overloading. |
 | 4 | IDSRecipe → IMASMapping rename | The field-level IMASMapping node is gone (→ relationship). The orchestration node is what coordinates IMAS mappings — `IMASMapping` is the natural name. |
-| 5 | MAPS_TO_IMAS, ASSEMBLES_INTO, USES_SIGNAL_GROUP | Domain-specific names are self-documenting. `MAPS_TO_IMAS` joins the `REFERENCES_IMAS`/`MENTIONS_IMAS` family. `ASSEMBLES_INTO` describes the structural action. `USES_SIGNAL_GROUP` matches existing `USES_LIMITER`/`USES_GREENS`. |
+| 5 | MAPS_TO_IMAS, POPULATES, USES_SIGNAL_GROUP | Domain-specific names are self-documenting. `MAPS_TO_IMAS` joins the `REFERENCES_IMAS`/`MENTIONS_IMAS` family. `POPULATES` describes the data-filling action — the IMAS section already exists in the DD, we fill it. `USES_SIGNAL_GROUP` matches existing `USES_LIMITER`/`USES_GREENS`. |
 | 6 | Per-property SignalGroups | Signals that map identically should be grouped by what they map (property), not just by structure. One group = one mapping. |
 | 7 | MEMBER_OF (not FOLLOWS_PATTERN) | More general. Works for both MDSplus DataNodePattern successors and FacilitySignal pattern members. |
 | 8 | Remove AgentSession | Zero code usage. Schema-only artifact of agent team workflow that was never built. |
