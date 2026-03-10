@@ -27,17 +27,17 @@ Execute Cypher query and return results.
 **Examples:**
 ```python
 query('MATCH (f:Facility) RETURN f.id, f.name')
-query('MATCH (t:DataNode {data_source_name: $tree}) RETURN t.path LIMIT 10', tree='results')
+query('MATCH (t:SignalNode {data_source_name: $tree}) RETURN t.path LIMIT 10', tree='results')
 ```
 
 ### semantic_search()
 ```python
-semantic_search(text: str, index: str = "imas_path_embedding", k: int = 5) -> list[dict[str, Any]]
+semantic_search(text: str, index: str = "imas_node_embedding", k: int = 5) -> list[dict[str, Any]]
 ```
 Vector similarity search on graph embeddings.
 
 **Available indexes:**
-- `imas_path_embedding`: IMAS Data Dictionary paths (61k)
+- `imas_node_embedding`: IMAS Data Dictionary paths (61k)
 - `code_chunk_embedding`: Code examples (8.5k chunks)
 - `wiki_chunk_embedding`: Wiki documentation (25k chunks)
 - `cluster_embedding`: Semantic clusters
@@ -141,7 +141,7 @@ Get prioritized exploration targets for a facility.
 ```python
 get_tree_structure(tree_name: str, path_prefix: str = "", limit: int = 50) -> list[dict[str, Any]]
 ```
-Get DataNode structure from the graph.
+Get SignalNode structure from the graph.
 
 ## Remote Execution
 
@@ -298,7 +298,7 @@ Get complete graph schema for Cypher query generation.
 
 **Graph (semantic data):**
 - Use: `add_to_graph()`
-- What: SourceFile, FacilityPath, DataNode, CodeExample, AnalysisCode
+- What: SourceFile, FacilityPath, SignalNode, CodeExample, AnalysisCode
 - Why: Searchable, relational, public
 
 **Private Config (infrastructure):**

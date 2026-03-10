@@ -104,10 +104,10 @@ def imas_build(
     \b
     - DDVersion nodes with version tracking (PREDECESSOR relationships)
     - IDS nodes for top-level structures (core_profiles, equilibrium, etc.)
-    - IMASPath nodes with hierarchical relationships (PARENT, IDS)
+    - IMASNode nodes with hierarchical relationships (PARENT, IDS)
     - Unit nodes with HAS_UNIT relationships
     - IMASCoordinateSpec nodes with HAS_COORDINATE relationships
-    - IMASPathChange nodes for metadata evolution between versions
+    - IMASNodeChange nodes for metadata evolution between versions
     - RENAMED_TO relationships for path migrations
     - HAS_ERROR relationships linking data paths to error fields
     - Vector embeddings for semantic search (current version only)
@@ -226,9 +226,9 @@ def imas_build(
         click.echo("\n=== Build Complete ===")
         click.echo(f"Versions processed: {stats['versions_processed']}")
         click.echo(f"IDS types: {stats['ids_created']}")
-        click.echo(f"IMASPath nodes (across all versions): {stats['paths_created']}")
+        click.echo(f"IMASNode nodes (across all versions): {stats['paths_created']}")
         click.echo(f"Unit nodes: {stats['units_created']}")
-        click.echo(f"IMASPathChange nodes: {stats['path_changes_created']}")
+        click.echo(f"IMASNodeChange nodes: {stats['path_changes_created']}")
         click.echo(
             f"Definitions changed (documentation): {stats['definitions_changed']}"
         )
@@ -300,9 +300,9 @@ def imas_status(version_filter: str | None) -> None:
         if version_filter:
             stats = gc.query(
                 """
-                MATCH (p:IMASPath)-[:INTRODUCED_IN]->(v:DDVersion {id: $version})
+                MATCH (p:IMASNode)-[:INTRODUCED_IN]->(v:DDVersion {id: $version})
                 WITH count(p) AS paths
-                OPTIONAL MATCH (p2:IMASPath)-[:INTRODUCED_IN]->(:DDVersion {id: $version})
+                OPTIONAL MATCH (p2:IMASNode)-[:INTRODUCED_IN]->(:DDVersion {id: $version})
                 WHERE p2.embedding IS NOT NULL
                 RETURN paths, count(p2) AS with_embeddings
             """,
@@ -316,15 +316,15 @@ def imas_status(version_filter: str | None) -> None:
         else:
             # Overall stats
             overall = gc.query("""
-                MATCH (p:IMASPath) WITH count(p) AS total_paths
+                MATCH (p:IMASNode) WITH count(p) AS total_paths
                 MATCH (i:IDS) WITH total_paths, count(i) AS ids_count
                 MATCH (u:Unit) WITH total_paths, ids_count, count(u) AS unit_count
                 MATCH (c:IMASCoordinateSpec) WITH total_paths, ids_count, unit_count, count(c) AS coord_count
-                MATCH (p2:IMASPath) WHERE p2.embedding IS NOT NULL
+                MATCH (p2:IMASNode) WHERE p2.embedding IS NOT NULL
                 WITH total_paths, ids_count, unit_count, coord_count, count(p2) AS with_embeddings
-                OPTIONAL MATCH (:IMASPath)-[r:HAS_UNIT]->(:Unit)
+                OPTIONAL MATCH (:IMASNode)-[r:HAS_UNIT]->(:Unit)
                 WITH total_paths, ids_count, unit_count, coord_count, with_embeddings, count(r) AS unit_rels
-                OPTIONAL MATCH (:IMASPath)-[r2:HAS_COORDINATE]->()
+                OPTIONAL MATCH (:IMASNode)-[r2:HAS_COORDINATE]->()
                 RETURN total_paths, ids_count, unit_count, coord_count, with_embeddings, unit_rels, count(r2) AS coord_rels
             """)
 
@@ -334,7 +334,7 @@ def imas_status(version_filter: str | None) -> None:
                 stats_table.add_column("Metric", style="cyan")
                 stats_table.add_column("Count", justify="right")
 
-                stats_table.add_row("IMASPath nodes", str(s["total_paths"]))
+                stats_table.add_row("IMASNode nodes", str(s["total_paths"]))
                 stats_table.add_row("IDS nodes", str(s["ids_count"]))
                 stats_table.add_row("Unit nodes", str(s["unit_count"]))
                 stats_table.add_row("IMASCoordinateSpec nodes", str(s["coord_count"]))
@@ -354,17 +354,17 @@ def imas_status(version_filter: str | None) -> None:
             if clusters and clusters[0]["count"] > 0:
                 console.print(f"\nIMASSemanticCluster nodes: {clusters[0]['count']}")
 
-            # IMASPathChange stats
+            # IMASNodeChange stats
             change_stats = gc.query("""
-                MATCH (pc:IMASPathChange)
+                MATCH (pc:IMASNodeChange)
                 WITH count(pc) AS total
-                OPTIONAL MATCH (pc2:IMASPathChange {change_type: 'documentation'})
+                OPTIONAL MATCH (pc2:IMASNodeChange {change_type: 'documentation'})
                 RETURN total, count(pc2) AS definitions_changed
             """)
             if change_stats and change_stats[0]["total"] > 0:
                 cs = change_stats[0]
                 console.print(
-                    f"IMASPathChange nodes: {cs['total']} "
+                    f"IMASNodeChange nodes: {cs['total']} "
                     f"({cs['definitions_changed']} definition changes)"
                 )
 
@@ -423,7 +423,7 @@ def imas_search(
     with GraphClient() as gc:
         results = gc.query(
             f"""
-            CALL db.index.vector.queryNodes("imas_path_embedding", $limit * 2, $embedding)
+            CALL db.index.vector.queryNodes("imas_node_embedding", $limit * 2, $embedding)
             YIELD node, score
             {where_clause}
             RETURN node.id AS path, score, node.unit AS unit, node.documentation AS doc
@@ -574,21 +574,21 @@ def _show_version_details(gc, version: str) -> None:
     stats = gc.query(
         """
         MATCH (v:DDVersion {id: $version})
-        OPTIONAL MATCH (introduced:IMASPath)-[:INTRODUCED_IN]->(v)
+        OPTIONAL MATCH (introduced:IMASNode)-[:INTRODUCED_IN]->(v)
         WITH v, count(introduced) AS paths_introduced
-        OPTIONAL MATCH (deprecated:IMASPath)-[:DEPRECATED_IN]->(v)
+        OPTIONAL MATCH (deprecated:IMASNode)-[:DEPRECATED_IN]->(v)
         WITH v, paths_introduced, count(deprecated) AS paths_deprecated
-        OPTIONAL MATCH (embedded:IMASPath)-[:INTRODUCED_IN]->(v)
+        OPTIONAL MATCH (embedded:IMASNode)-[:INTRODUCED_IN]->(v)
         WHERE embedded.embedding IS NOT NULL
         RETURN paths_introduced, paths_deprecated, count(embedded) AS paths_embedded
         """,
         version=version,
     )[0]
 
-    # Get IMASPathChange statistics
+    # Get IMASNodeChange statistics
     path_changes = gc.query(
         """
-        MATCH (pc:IMASPathChange)-[:IN_VERSION]->(v:DDVersion {id: $version})
+        MATCH (pc:IMASNodeChange)-[:IN_VERSION]->(v:DDVersion {id: $version})
         RETURN pc.change_type AS change_type, count(*) AS count
         ORDER BY count DESC
         LIMIT 10
@@ -611,7 +611,7 @@ def _show_version_details(gc, version: str) -> None:
 
     console.print(table)
 
-    # IMASPathChange statistics if any
+    # IMASNodeChange statistics if any
     if path_changes:
         pc_table = Table(title="Metadata Changes", show_header=True)
         pc_table.add_column("Change Type", style="magenta")
@@ -636,9 +636,9 @@ def _show_versions_summary(gc) -> None:
     # Count paths INTRODUCED_IN each version
     versions = gc.query("""
         MATCH (v:DDVersion)
-        OPTIONAL MATCH (p:IMASPath)-[:INTRODUCED_IN]->(v)
+        OPTIONAL MATCH (p:IMASNode)-[:INTRODUCED_IN]->(v)
         WITH v, count(p) AS introduced
-        OPTIONAL MATCH (p2:IMASPath)-[:INTRODUCED_IN]->(v) WHERE p2.embedding IS NOT NULL
+        OPTIONAL MATCH (p2:IMASNode)-[:INTRODUCED_IN]->(v) WHERE p2.embedding IS NOT NULL
         RETURN v.id AS version, v.is_current AS is_current, introduced, count(p2) AS embedded
         ORDER BY v.id
     """)
@@ -667,7 +667,7 @@ def _show_versions_summary(gc) -> None:
 def imas_clear(force: bool, dump_first: bool) -> None:
     """Delete all IMAS Data Dictionary nodes from the graph.
 
-    Removes ALL DD-specific nodes: DDVersion, IDS, IMASPath, IMASPathChange,
+    Removes ALL DD-specific nodes: DDVersion, IDS, IMASNode, IMASNodeChange,
     IMASSemanticCluster, IMASCoordinateSpec, IdentifierSchema, and
     EmbeddingChange. Orphaned Unit nodes are also cleaned up.
 
@@ -689,7 +689,7 @@ def imas_clear(force: bool, dump_first: bool) -> None:
     with GraphClient() as gc:
         # Count nodes that will be deleted
         counts = gc.query("""
-            OPTIONAL MATCH (p:IMASPath)
+            OPTIONAL MATCH (p:IMASNode)
             WITH count(p) AS paths
             OPTIONAL MATCH (v:DDVersion)
             WITH paths, count(v) AS versions
@@ -697,7 +697,7 @@ def imas_clear(force: bool, dump_first: bool) -> None:
             WITH paths, versions, count(i) AS ids
             OPTIONAL MATCH (c:IMASSemanticCluster)
             WITH paths, versions, ids, count(c) AS clusters
-            OPTIONAL MATCH (ch:IMASPathChange)
+            OPTIONAL MATCH (ch:IMASNodeChange)
             RETURN paths, versions, ids, clusters, count(ch) AS changes
         """)
 
@@ -707,13 +707,13 @@ def imas_clear(force: bool, dump_first: bool) -> None:
 
         c = counts[0]
         console.print("[bold red]This will delete:[/bold red]")
-        console.print(f"  {c['paths']:,} IMASPath nodes")
+        console.print(f"  {c['paths']:,} IMASNode nodes")
         console.print(f"  {c['versions']} DDVersion nodes")
         console.print(f"  {c['ids']} IDS nodes")
         console.print(f"  {c['clusters']:,} IMASSemanticCluster nodes")
-        console.print(f"  {c['changes']:,} IMASPathChange nodes")
+        console.print(f"  {c['changes']:,} IMASNodeChange nodes")
         console.print("  + IMASCoordinateSpec, IdentifierSchema, orphaned Units")
-        console.print("  + DD vector indexes (imas_path_embedding, cluster_embedding)")
+        console.print("  + DD vector indexes (imas_node_embedding, cluster_embedding)")
 
         if not force:
             click.confirm(
@@ -750,11 +750,11 @@ def imas_clear(force: bool, dump_first: bool) -> None:
         table.add_column("Deleted", justify="right", style="red")
 
         label_map = {
-            "paths": "IMASPath",
+            "paths": "IMASNode",
             "versions": "DDVersion",
             "ids_nodes": "IDS",
             "clusters": "IMASSemanticCluster",
-            "path_changes": "IMASPathChange",
+            "path_changes": "IMASNodeChange",
             "embedding_changes": "EmbeddingChange",
             "identifier_schemas": "IdentifierSchema",
             "coordinate_specs": "IMASCoordinateSpec",
@@ -797,7 +797,7 @@ def imas_path_history(path: str, change_type: str | None) -> None:
     with GraphClient() as gc:
         # Check the path exists
         exists = gc.query(
-            "MATCH (p:IMASPath {id: $path}) RETURN p.id AS id",
+            "MATCH (p:IMASNode {id: $path}) RETURN p.id AS id",
             path=path,
         )
         if not exists:
@@ -805,7 +805,7 @@ def imas_path_history(path: str, change_type: str | None) -> None:
             # Suggest similar paths
             suggestions = gc.query(
                 """
-                MATCH (p:IMASPath)
+                MATCH (p:IMASNode)
                 WHERE p.id CONTAINS $fragment
                 RETURN p.id AS id
                 LIMIT 5
@@ -826,7 +826,7 @@ def imas_path_history(path: str, change_type: str | None) -> None:
 
         changes = gc.query(
             f"""
-            MATCH (pc:IMASPathChange)-[:FOR_IMAS_PATH]->(p:IMASPath {{id: $path}})
+            MATCH (pc:IMASNodeChange)-[:FOR_IMAS_PATH]->(p:IMASNode {{id: $path}})
             MATCH (pc)-[:IN_VERSION]->(v:DDVersion)
             {where}
             RETURN v.id AS version, pc.change_type AS change_type,
@@ -841,7 +841,7 @@ def imas_path_history(path: str, change_type: str | None) -> None:
         # Get introduction version
         intro = gc.query(
             """
-            MATCH (p:IMASPath {id: $path})-[:INTRODUCED_IN]->(v:DDVersion)
+            MATCH (p:IMASNode {id: $path})-[:INTRODUCED_IN]->(v:DDVersion)
             RETURN v.id AS version
             """,
             path=path,
@@ -850,7 +850,7 @@ def imas_path_history(path: str, change_type: str | None) -> None:
         # Get deprecation version if any
         depr = gc.query(
             """
-            MATCH (p:IMASPath {id: $path})-[:DEPRECATED_IN]->(v:DDVersion)
+            MATCH (p:IMASNode {id: $path})-[:DEPRECATED_IN]->(v:DDVersion)
             RETURN v.id AS version
             """,
             path=path,

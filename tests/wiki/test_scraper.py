@@ -40,7 +40,7 @@ class TestMDSplusPathPattern:
         assert (match is not None) == expected
 
 
-class TestIMASPathPattern:
+class TestIMASNodePattern:
     """Tests for the IMAS path regex pattern."""
 
     @pytest.mark.parametrize(
@@ -112,7 +112,7 @@ class TestMDSplusPathExtraction:
         assert r"\RESULTS::NE_FIT:NE_PROFILE" in paths
 
 
-class TestIMASPathExtraction:
+class TestIMASNodeExtraction:
     """Tests for IMAS path extraction from text."""
 
     def test_slash_separated_path(self):

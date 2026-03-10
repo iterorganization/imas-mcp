@@ -1,6 +1,6 @@
-"""TDI-to-DataNode linkage for bidirectional context.
+"""TDI-to-SignalNode linkage for bidirectional context.
 
-Links TDI function build_path references to DataNode paths in the graph.
+Links TDI function build_path references to SignalNode paths in the graph.
 This is a graph-only operation — no SSH needed. Idempotent: safe to
 rerun after either TDI or tree discovery completes.
 """
@@ -18,12 +18,12 @@ logger = logging.getLogger(__name__)
 def link_tdi_to_data_nodes(
     facility: str,
 ) -> int:
-    """Match TDI build_path references to DataNode paths.
+    """Match TDI build_path references to SignalNode paths.
 
     For each TDIFunction with mdsplus_trees references:
     1. Look up build_path patterns in TDIFunction.source_code
-    2. Match against existing DataNode nodes by path suffix
-    3. Create RESOLVES_TO_NODE edges from TDIFunction to DataNode
+    2. Match against existing SignalNode nodes by path suffix
+    3. Create RESOLVES_TO_NODE edges from TDIFunction to SignalNode
     4. Set accessor_function on matching DataNodes
 
     Args:
@@ -68,7 +68,7 @@ def link_tdi_to_data_nodes(
                 """
                 UNWIND $paths AS bp
                 WITH bp, $func_id AS fid
-                MATCH (tn:DataNode {facility_id: $facility})
+                MATCH (tn:SignalNode {facility_id: $facility})
                 WHERE tn.path ENDS WITH bp
                 WITH tn, fid
                 MATCH (tf:TDIFunction {id: fid})
@@ -92,7 +92,7 @@ def link_tdi_to_data_nodes(
                 )
 
         logger.info(
-            "Created %d TDI→DataNode links for %s",
+            "Created %d TDI→SignalNode links for %s",
             total_linked,
             facility,
         )
@@ -104,7 +104,7 @@ def update_signal_accessors(
 ) -> int:
     """Set preferred TDI accessor on FacilitySignals with matching DataNodes.
 
-    For FacilitySignals that have a HAS_DATA_SOURCE_NODE DataNode with a linked
+    For FacilitySignals that have a HAS_DATA_SOURCE_NODE SignalNode with a linked
     TDIFunction, set the preferred_accessor to the TDI expression.
 
     Args:
@@ -117,7 +117,7 @@ def update_signal_accessors(
         result = gc.query(
             """
             MATCH (s:FacilitySignal {facility_id: $facility})
-                  -[:HAS_DATA_SOURCE_NODE]->(tn:DataNode)
+                  -[:HAS_DATA_SOURCE_NODE]->(tn:SignalNode)
                   <-[:RESOLVES_TO_NODE]-(tf:TDIFunction)
             WHERE s.preferred_accessor IS NULL
             SET s.preferred_accessor = tf.name + '("' + s.accessor + '")'
@@ -141,7 +141,7 @@ def _extract_build_paths(source_code: str) -> list[str]:
 
     Extracts the path portion after the tree qualifier (\\TREE::).
     Returns canonical uppercase path segments for matching against
-    DataNode.path.
+    SignalNode.path.
 
     Args:
         source_code: TDI .fun file content

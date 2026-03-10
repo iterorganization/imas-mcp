@@ -253,8 +253,8 @@ def link_chunks_to_entities(facility_id: str) -> dict[str, int]:
 
     Uses batched queries to link WikiChunks to graph entities based on
     the paths stored in chunk properties during ingestion:
-    - MDSplus paths → DataNode (DOCUMENTS relationship)
-    - IMAS paths → IMASPath (MENTIONS_IMAS relationship)
+    - MDSplus paths → SignalNode (DOCUMENTS relationship)
+    - IMAS paths → IMASNode (MENTIONS_IMAS relationship)
     - PPF paths → FacilitySignal (DOCUMENTS relationship)
 
     Args:
@@ -273,7 +273,7 @@ def link_chunks_to_entities(facility_id: str) -> dict[str, int]:
             WHERE c.mdsplus_paths_mentioned IS NOT NULL
                AND size(c.mdsplus_paths_mentioned) > 0
             UNWIND c.mdsplus_paths_mentioned AS mds_path
-            MATCH (t:DataNode)
+            MATCH (t:SignalNode)
             WHERE t.path = mds_path
                OR t.path ENDS WITH replace(mds_path, '\\\\', '')
                OR t.canonical_path = toUpper(mds_path)
@@ -285,14 +285,14 @@ def link_chunks_to_entities(facility_id: str) -> dict[str, int]:
         if result:
             stats["data_nodes_linked"] = result[0]["linked"]
 
-        # Link to IMASPath nodes via IMAS DD paths
+        # Link to IMASNode nodes via IMAS DD paths
         result = gc.query(
             """
             MATCH (c:WikiChunk {facility_id: $facility_id})
             WHERE c.imas_paths_mentioned IS NOT NULL
                AND size(c.imas_paths_mentioned) > 0
             UNWIND c.imas_paths_mentioned AS imas_path
-            MATCH (ip:IMASPath)
+            MATCH (ip:IMASNode)
             WHERE ip.id = imas_path
                OR ip.id STARTS WITH imas_path + '/'
             WITH c, ip
@@ -1011,7 +1011,7 @@ class WikiIngestionPipeline:
                     MATCH (c:WikiChunk {wiki_page_id: $page_id})
                     WHERE c.mdsplus_paths_mentioned IS NOT NULL
                     UNWIND c.mdsplus_paths_mentioned AS mds_path
-                    MATCH (t:DataNode)
+                    MATCH (t:SignalNode)
                     WHERE t.path = mds_path
                        OR t.path ENDS WITH replace(mds_path, '\\\\', '')
                        OR t.canonical_path = toUpper(mds_path)
@@ -1296,8 +1296,8 @@ def get_wiki_stats(facility_id: str) -> dict:
             """
             MATCH (wp:WikiPage {facility_id: $facility_id})
             OPTIONAL MATCH (wp)-[:HAS_CHUNK]->(wc:WikiChunk)
-            OPTIONAL MATCH (wc)-[:DOCUMENTS]->(t:DataNode)
-            OPTIONAL MATCH (wc)-[:MENTIONS_IMAS]->(ip:IMASPath)
+            OPTIONAL MATCH (wc)-[:DOCUMENTS]->(t:SignalNode)
+            OPTIONAL MATCH (wc)-[:MENTIONS_IMAS]->(ip:IMASNode)
             WITH wp, count(DISTINCT wc) AS chunks,
                  count(DISTINCT t) AS data_nodes,
                  count(DISTINCT ip) AS imas_paths

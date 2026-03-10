@@ -13,9 +13,9 @@ The pipelines form a **dependency graph** — some domains produce graph nodes a
 ```
                     ┌──────────────┐
                     │  IMAS DD     │  imas-codex imas build
-                    │  (foundation)│  IMASPath, clusters, embeddings
+                    │  (foundation)│  IMASNode, clusters, embeddings
                     └──────┬───────┘
-                           │ imas_path_embedding
+                           │ imas_node_embedding
                            │ cluster_label_embedding
                            ▼
     ┌──────────────┐   ┌──────────────┐   ┌──────────────┐
@@ -41,11 +41,11 @@ The pipelines form a **dependency graph** — some domains produce graph nodes a
            │                  ▲
            │ code_chunk_      │ wiki_context
            │ embedding        │ code_chunk_embedding
-           │                  │ imas_path_embedding
+           │                  │ imas_node_embedding
            └──────────────────┘
     ┌──────────────┐
     │  ENRICH      │  imas-codex enrich nodes
-    │  NODES       │  (DataNode metadata)
+    │  NODES       │  (SignalNode metadata)
     │  (agentic)   │  Uses code + graph context
     └──────────────┘
 ```
@@ -58,17 +58,17 @@ The pipelines form a **dependency graph** — some domains produce graph nodes a
 | `discover signals` (enrich) | `discover wiki` | WikiChunk nodes, `wiki_chunk_embedding` index | No wiki descriptions/units injected into signal enrichment prompts → more LLM hallucination |
 | `discover signals` (enrich) | `discover code` | `code_chunk_embedding` index | No source code usage patterns in enrichment prompts |
 | `discover documents` | `discover paths` | Scored FacilityPath nodes (≥0.5) | No paths to scan for documents/images |
-| `enrich nodes` | `discover code` + graph | CodeChunk, DataNode siblings | Less context for DataNode physics descriptions |
+| `enrich nodes` | `discover code` + graph | CodeChunk, SignalNode siblings | Less context for SignalNode physics descriptions |
 
 ## Optimal Discovery Sequence
 
 ### Phase 0: Foundation (no facility dependency)
 
 ```bash
-imas-codex imas build        # IMAS DD: IMASPath nodes, embeddings, clusters
+imas-codex imas build        # IMAS DD: IMASNode nodes, embeddings, clusters
 ```
 
-Populates IMASPath, DDVersion, Unit, IMASSemanticCluster nodes. Creates `imas_path_embedding` and `cluster_label_embedding` vector indexes used by signal enrichment.
+Populates IMASNode, DDVersion, Unit, IMASSemanticCluster nodes. Creates `imas_node_embedding` and `cluster_label_embedding` vector indexes used by signal enrichment.
 
 ### Phase 1: Independent Facility Pipelines (run in parallel)
 
@@ -77,7 +77,7 @@ These three pipelines have **no cross-dependencies** and can run simultaneously:
 ```bash
 imas-codex discover paths tcv       # Directory structure → FacilityPath nodes
 imas-codex discover wiki tcv        # Wiki pages → WikiPage, WikiChunk nodes
-imas-codex discover static tcv      # Static MDSplus trees → DataNode nodes
+imas-codex discover static tcv      # Static MDSplus trees → SignalNode nodes
 ```
 
 ### Phase 2: Dependent Pipelines (requires Phase 1)
@@ -98,14 +98,14 @@ imas-codex enrich nodes             # Benefits from code chunks in graph
 
 | Order | Command | Requires | Produces |
 |-------|---------|----------|----------|
-| 0 | `imas build` | Nothing | IMASPath, clusters, embeddings |
+| 0 | `imas build` | Nothing | IMASNode, clusters, embeddings |
 | 1a | `discover paths` | Facility config | FacilityPath (scored) |
 | 1b | `discover wiki` | Wiki URLs in config | WikiPage, WikiChunk, WikiArtifact, Image |
-| 1c | `discover static` | MDSplus static_trees config | StructuralEpoch, DataNode |
+| 1c | `discover static` | MDSplus static_trees config | StructuralEpoch, SignalNode |
 | 2a | `discover code` | Scored FacilityPaths (≥0.7) | CodeFile, SourceFile, CodeChunk |
 | 2b | `discover documents` | Scored FacilityPaths (≥0.5) | Document, Image |
 | 3a | `discover signals` | Wiki + code + IMAS (optional but improves quality) | FacilitySignal, DataAccess |
-| 3b | `enrich nodes` | DataNode + code context | Enriched DataNode descriptions |
+| 3b | `enrich nodes` | SignalNode + code context | Enriched SignalNode descriptions |
 
 ---
 
@@ -432,7 +432,7 @@ See [facility.yaml](../../imas_codex/schemas/facility.yaml) for complete schema 
 | `FacilitySignal` | `discover signals` | Classified data signal with physics domain |
 | `DataAccess` | `discover signals` | Data access method template |
 | `StructuralEpoch` | `discover static` | Static tree version metadata |
-| `DataNode` | `discover static` | MDSplus tree node with physics description |
+| `SignalNode` | `discover static` | MDSplus tree node with physics description |
 | `Document` | `discover documents` | Document file (PDF, etc.) |
 | `Evidence` | `discover paths` | LLM scoring rationale (content-addressed) |
 | `FacilityUser` | `discover paths` | User account (GECOS-parsed) |
@@ -453,11 +453,11 @@ CodeFile -[:AT_PATH]-> FacilityPath
 SourceFile -[:HAS_CHUNK]-> CodeChunk
 FacilitySignal -[:AT_FACILITY]-> Facility
 FacilitySignal -[:DATA_ACCESS]-> DataAccess
-FacilitySignal -[:HAS_DATA_SOURCE_NODE]-> DataNode
-IMASMapping -[:SOURCE_PATH]-> DataNode
-IMASMapping -[:TARGET_PATH]-> IMASPath
-DataNode -[:HAS_NODE]-> DataNode
-DataNode -[:IN_VERSION]-> StructuralEpoch
+FacilitySignal -[:HAS_DATA_SOURCE_NODE]-> SignalNode
+IMASMapping -[:SOURCE_PATH]-> SignalNode
+IMASMapping -[:TARGET_PATH]-> IMASNode
+SignalNode -[:HAS_NODE]-> SignalNode
+SignalNode -[:IN_VERSION]-> StructuralEpoch
 ```
 
 ### Vector Indexes Used by Discovery
@@ -466,7 +466,7 @@ DataNode -[:IN_VERSION]-> StructuralEpoch
 |-------|--------------|----------|
 | `wiki_chunk_embedding` | WikiChunk.embedding | Signal enrichment wiki context |
 | `code_chunk_embedding` | CodeChunk.embedding | Signal enrichment code context (defined, not yet used) |
-| `imas_path_embedding` | IMASPath.embedding | Signal enrichment IMAS suggestions (defined, not yet used) |
+| `imas_node_embedding` | IMASNode.embedding | Signal enrichment IMAS suggestions (defined, not yet used) |
 | `cluster_label_embedding` | IMASSemanticCluster.embedding | Signal enrichment cluster context (defined, not yet used) |
 | `facility_signal_desc_embedding` | FacilitySignal.description_embedding | Semantic signal search |
 

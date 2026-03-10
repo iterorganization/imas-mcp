@@ -73,7 +73,7 @@ def _search_signals(
     """Search facility signals with graph enrichment.
 
     Performs vector search on signal descriptions, enriches with
-    DataAccess, Diagnostic, DataNode, and IMASPath traversals,
+    DataAccess, Diagnostic, SignalNode, and IMASNode traversals,
     then formats the result.
     """
     try:
@@ -237,9 +237,9 @@ def _enrich_signals(
         UNWIND $signal_ids AS sid
         MATCH (s:FacilitySignal {id: sid})
         OPTIONAL MATCH (s)-[:BELONGS_TO_DIAGNOSTIC]->(diag:Diagnostic)
-        OPTIONAL MATCH (s)-[:HAS_DATA_SOURCE_NODE]->(tn:DataNode)
+        OPTIONAL MATCH (s)-[:HAS_DATA_SOURCE_NODE]->(tn:SignalNode)
         OPTIONAL MATCH (s)-[:DATA_ACCESS]->(da:DataAccess)
-        OPTIONAL MATCH (tn)<-[:SOURCE_PATH]-(m:IMASMapping)-[:TARGET_PATH]->(ip:IMASPath)
+        OPTIONAL MATCH (tn)<-[:SOURCE_PATH]-(m:IMASMapping)-[:TARGET_PATH]->(ip:IMASNode)
         OPTIONAL MATCH (ip)-[:HAS_UNIT]->(u:Unit)
         WITH s, diag, tn,
              collect(DISTINCT {
@@ -270,13 +270,13 @@ def _vector_search_data_nodes(
     facility: str,
     k: int,
 ) -> list[dict[str, Any]]:
-    """Vector search on data_node_desc_embedding index.
+    """Vector search on signal_node_desc_embedding index.
 
     Uses property-based facility filter with over-fetching.
     """
     internal_k = max(k * 5, 200)
     cypher = (
-        'CALL db.index.vector.queryNodes("data_node_desc_embedding", $k, $embedding) '
+        'CALL db.index.vector.queryNodes("signal_node_desc_embedding", $k, $embedding) '
         "YIELD node AS n, score "
         "WHERE n.facility_id = $facility "
         "RETURN n.id AS id, n.path AS path, n.data_source_name AS data_source_name, "
@@ -446,8 +446,8 @@ def _enrich_wiki_chunks(
         MATCH (c:WikiChunk {id: cid})
         OPTIONAL MATCH (p:WikiPage)-[:HAS_CHUNK]->(c)
         OPTIONAL MATCH (c)-[:DOCUMENTS]->(sig:FacilitySignal)
-        OPTIONAL MATCH (c)-[:DOCUMENTS]->(tn:DataNode)
-        OPTIONAL MATCH (c)-[:MENTIONS_IMAS]->(ip:IMASPath)
+        OPTIONAL MATCH (c)-[:DOCUMENTS]->(tn:SignalNode)
+        OPTIONAL MATCH (c)-[:MENTIONS_IMAS]->(ip:IMASNode)
         WITH c, p,
              collect(DISTINCT sig.id) AS rel_signals,
              collect(DISTINCT tn.path) AS rel_data_nodes,
@@ -807,10 +807,10 @@ def _fetch_image(gc: GraphClient, resource: str) -> str | None:
 
 
 def _fetch_imas_path(gc: GraphClient, resource: str) -> str | None:
-    """Resolve and fetch an IMASPath by ID or partial path."""
+    """Resolve and fetch an IMASNode by ID or partial path."""
     results = gc.query(
         """
-        MATCH (p:IMASPath)
+        MATCH (p:IMASNode)
         WHERE p.id = $resource
            OR toLower(p.id) CONTAINS toLower($resource)
         OPTIONAL MATCH (p)-[:HAS_UNIT]->(u:Unit)
@@ -1054,8 +1054,8 @@ def _enrich_code_chunks(
 
     Uses traversals that work with both current and migrated graph states:
     ``CodeExample -[:HAS_CHUNK]-> CodeChunk`` (inverse of schema CODE_EXAMPLE_ID)
-    ``CodeChunk -[:CONTAINS_REF]-> DataReference -[:RESOLVES_TO_NODE]-> DataNode``
-    ``DataReference -[:RESOLVES_TO_IMAS_PATH]-> IMASPath``
+    ``CodeChunk -[:CONTAINS_REF]-> DataReference -[:RESOLVES_TO_NODE]-> SignalNode``
+    ``DataReference -[:RESOLVES_TO_IMAS_PATH]-> IMASNode``
     ``CodeFile -[:IN_DIRECTORY]-> FacilityPath``
     """
     cypher = """
@@ -1066,7 +1066,7 @@ def _enrich_code_chunks(
             WHERE cf.facility_id = cc.facility_id
         OPTIONAL MATCH (cc)-[:CONTAINS_REF]->(dr:DataReference)
         OPTIONAL MATCH (dr)-[:RESOLVES_TO_NODE]->(tn)
-        OPTIONAL MATCH (dr)-[:RESOLVES_TO_IMAS_PATH]->(ip:IMASPath)
+        OPTIONAL MATCH (dr)-[:RESOLVES_TO_IMAS_PATH]->(ip:IMASNode)
         OPTIONAL MATCH (cf)-[:IN_DIRECTORY]->(fp:FacilityPath)
         RETURN cc.id AS id, cc.text AS text,
                cc.function_name AS function_name,
@@ -1260,7 +1260,7 @@ def _vector_search_imas_paths(
     where_clause = " AND ".join(where_parts)
 
     cypher = (
-        'CALL db.index.vector.queryNodes("imas_path_embedding", $k, $embedding) '
+        'CALL db.index.vector.queryNodes("imas_node_embedding", $k, $embedding) '
         f"YIELD node AS p, score WHERE {where_clause} "
         "RETURN p.id AS id, score "
         "ORDER BY score DESC LIMIT $vector_limit"
@@ -1313,7 +1313,7 @@ def _text_search_imas_paths_by_query(
             ft_params["ids_filter"] = ids_filter
 
         ft_cypher = f"""
-            CALL db.index.fulltext.queryNodes('imas_path_text', $query)
+            CALL db.index.fulltext.queryNodes('imas_node_text', $query)
             YIELD node AS p, score
             {ft_where}
             WITH p, score
@@ -1336,7 +1336,7 @@ def _text_search_imas_paths_by_query(
                 ft_ids = {r["id"] for r in normalized}
                 for word in query_words[:3]:
                     word_cypher = f"""
-                        MATCH (p:IMASPath)
+                        MATCH (p:IMASNode)
                         WHERE {where_base}
                           AND (toLower(p.name) = $word OR toLower(p.id) CONTAINS $word)
                           AND p.data_type IS NOT NULL AND p.data_type <> 'structure'
@@ -1358,7 +1358,7 @@ def _text_search_imas_paths_by_query(
 
     # --- Fallback: CONTAINS matching with heuristic scoring ---
     cypher = f"""
-        MATCH (p:IMASPath)
+        MATCH (p:IMASNode)
         WHERE {where_base}
           AND (
             toLower(p.documentation) CONTAINS $query_lower
@@ -1391,7 +1391,7 @@ def _text_search_imas_paths_by_query(
         word_results = []
         for word in query_words[:3]:
             word_cypher = f"""
-                MATCH (p:IMASPath)
+                MATCH (p:IMASNode)
                 WHERE {where_base}
                   AND (toLower(p.name) = $word OR toLower(p.id) CONTAINS $word)
                   AND p.data_type IS NOT NULL AND p.data_type <> 'structure'
@@ -1458,7 +1458,7 @@ def _enrich_imas_paths(
     """
     cypher = """
         UNWIND $path_ids AS pid
-        MATCH (p:IMASPath {id: pid})
+        MATCH (p:IMASNode {id: pid})
         OPTIONAL MATCH (p)-[:HAS_UNIT]->(u:Unit)
         OPTIONAL MATCH (p)-[:IN_CLUSTER]->(cl:IMASSemanticCluster)
         OPTIONAL MATCH (p)-[:HAS_COORDINATE]->(coord:IMASCoordinateSpec)
@@ -1510,16 +1510,16 @@ def _get_facility_crossrefs(
 
     Uses both relationship-based traversals (populated by migration/ingestion)
     and property-based fallbacks for comprehensive results:
-    - FacilitySignal: physics_domain match OR IMASMapping traversal via DataNode
+    - FacilitySignal: physics_domain match OR IMASMapping traversal via SignalNode
     - WikiChunk: MENTIONS_IMAS relationship OR imas_paths_mentioned property
     - CodeChunk: RESOLVES_TO_IMAS_PATH via DataReference OR related_ids property
     """
     cypher = """
         UNWIND $path_ids AS pid
-        MATCH (ip:IMASPath {id: pid})
-        // Signals: IMASMapping traversal via DataNode + property-based fallback
+        MATCH (ip:IMASNode {id: pid})
+        // Signals: IMASMapping traversal via SignalNode + property-based fallback
         OPTIONAL MATCH (sig:FacilitySignal {facility_id: $facility})
-            -[:HAS_DATA_SOURCE_NODE]->(dn:DataNode)
+            -[:HAS_DATA_SOURCE_NODE]->(dn:SignalNode)
             <-[:SOURCE_PATH]-(m:IMASMapping)-[:TARGET_PATH]->(ip)
         OPTIONAL MATCH (sig2:FacilitySignal)
         WHERE sig2.facility_id = $facility
@@ -1559,8 +1559,8 @@ def _get_version_context(
     """Get version change context for IMAS paths."""
     cypher = """
         UNWIND $path_ids AS pid
-        MATCH (p:IMASPath {id: pid})
-        OPTIONAL MATCH (change:IMASPathChange)-[:FOR_IMAS_PATH]->(p)
+        MATCH (p:IMASNode {id: pid})
+        OPTIONAL MATCH (change:IMASNodeChange)-[:FOR_IMAS_PATH]->(p)
         WHERE change.semantic_change_type IN
               ['sign_convention', 'coordinate_convention', 'units', 'definition_clarification']
         RETURN p.id AS id,

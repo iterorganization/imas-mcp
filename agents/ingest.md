@@ -102,7 +102,7 @@ uv run imas-codex ingest list tcv -s ingested
 - **Graph-driven**: Scouts discover files, CLI processes the queue
 - **Deduplication**: Already-ingested files are automatically skipped
 - **Interrupt-safe**: Partial ingestion can be resumed safely
-- **MDSplus linking**: Extracted paths are linked to `DataNode` entities
+- **MDSplus linking**: Extracted paths are linked to `SignalNode` entities
 
 ## Recovery from Failures
 

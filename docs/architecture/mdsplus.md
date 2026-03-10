@@ -15,7 +15,7 @@ StructuralEpoch v3 (shots 70000-82000): 11,403 nodes [+1,423 nodes]
 StructuralEpoch v4 (shots 82000-current): 11,463 nodes [+60 nodes]
 ```
 
-Each DataNode has:
+Each SignalNode has:
 - `first_shot`: When this node first appeared
 - `last_shot`: When it was removed (null = still active)
 - `introduced_version`: Link to StructuralEpoch that added it
@@ -31,10 +31,10 @@ Each DataNode has:
 })-[:AT_FACILITY]->(:Facility {id: "tcv"})
 ```
 
-### DataNode
+### SignalNode
 
 ```cypher
-(:DataNode {
+(:SignalNode {
     id: "tcv:results:\\RESULTS::PSI",
     path: "\\RESULTS::PSI",
     data_source_name: "results",
@@ -77,12 +77,12 @@ uv run imas-codex agent enrich --tree results --batch-size 50
 
 ```cypher
 // Find TDI function for a node
-MATCH (n:DataNode {path: "\\RESULTS::PSI"})
+MATCH (n:SignalNode {path: "\\RESULTS::PSI"})
 MATCH (t:TDIFunction {name: n.accessor_function})
 RETURN t.signature
 
 // Find all nodes accessible via tcv_eq
-MATCH (t:TDIFunction {name: "tcv_eq"})-[:ACCESSES]->(n:DataNode)
+MATCH (t:TDIFunction {name: "tcv_eq"})-[:ACCESSES]->(n:SignalNode)
 RETURN n.path, n.units
 ```
 
@@ -90,12 +90,12 @@ RETURN n.path, n.units
 
 ```cypher
 -- What nodes existed at shot 50000?
-MATCH (n:DataNode {data_source_name: "results", facility_id: "tcv"})
+MATCH (n:SignalNode {data_source_name: "results", facility_id: "tcv"})
 WHERE n.first_shot <= 50000 
   AND (n.last_shot IS NULL OR n.last_shot > 50000)
 RETURN n.path, n.description
 
 -- Physics domain query
-MATCH (n:DataNode {physics_domain: "equilibrium", facility_id: "tcv"})
+MATCH (n:SignalNode {physics_domain: "equilibrium", facility_id: "tcv"})
 RETURN n.path, n.description, n.units
 ```

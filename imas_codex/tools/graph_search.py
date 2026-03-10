@@ -98,7 +98,7 @@ class GraphSearchTool:
 
         vector_results = self._gc.query(
             f"""
-            CALL db.index.vector.queryNodes('imas_path_embedding', $k, $embedding)
+            CALL db.index.vector.queryNodes('imas_node_embedding', $k, $embedding)
             YIELD node AS path, score
             WHERE NOT (path)-[:DEPRECATED_IN]->(:DDVersion)
             {filter_clause}
@@ -156,7 +156,7 @@ class GraphSearchTool:
         enriched = self._gc.query(
             """
             UNWIND $path_ids AS pid
-            MATCH (path:IMASPath {id: pid})
+            MATCH (path:IMASNode {id: pid})
             OPTIONAL MATCH (path)-[:HAS_UNIT]->(u:Unit)
             OPTIONAL MATCH (path)-[:HAS_COORDINATE]->(coord:IMASCoordinateSpec)
             OPTIONAL MATCH (path)-[:HAS_IDENTIFIER_SCHEMA]->(ident:IdentifierSchema)
@@ -270,7 +270,7 @@ class GraphPathTool:
         for path in path_list:
             row = self._gc.query(
                 """
-                MATCH (p:IMASPath {id: $path})
+                MATCH (p:IMASNode {id: $path})
                 OPTIONAL MATCH (p)-[:HAS_UNIT]->(u:Unit)
                 RETURN p.id AS id, p.ids AS ids, p.data_type AS data_type,
                        u.id AS units
@@ -293,7 +293,7 @@ class GraphPathTool:
                 # Check for deprecated/renamed path
                 renamed = self._gc.query(
                     """
-                    MATCH (old:IMASPath {id: $path})-[:RENAMED_TO]->(new:IMASPath)
+                    MATCH (old:IMASNode {id: $path})-[:RENAMED_TO]->(new:IMASNode)
                     RETURN old.id AS old_path, new.id AS new_path
                     """,
                     path=path,
@@ -353,7 +353,7 @@ class GraphPathTool:
         for path in path_list:
             row = self._gc.query(
                 """
-                MATCH (p:IMASPath {id: $path})
+                MATCH (p:IMASNode {id: $path})
                 OPTIONAL MATCH (p)-[:HAS_UNIT]->(u:Unit)
                 OPTIONAL MATCH (p)-[:IN_CLUSTER]->(c:IMASSemanticCluster)
                 OPTIONAL MATCH (p)-[:HAS_COORDINATE]->(coord:IMASCoordinateSpec)
@@ -464,7 +464,7 @@ class GraphListTool:
 
             path_results = self._gc.query(
                 f"""
-                MATCH (p:IMASPath)
+                MATCH (p:IMASNode)
                 WHERE p.id STARTS WITH $prefix
                 {leaf_filter}
                 RETURN p.id AS id
@@ -478,7 +478,7 @@ class GraphListTool:
             if "/" not in prefix:
                 path_results = self._gc.query(
                     f"""
-                    MATCH (p:IMASPath)
+                    MATCH (p:IMASNode)
                     WHERE p.ids = $ids_name
                     {leaf_filter}
                     RETURN p.id AS id
@@ -550,7 +550,7 @@ class GraphOverviewTool:
         ids_results = self._gc.query(
             """
             MATCH (i:IDS)
-            OPTIONAL MATCH (i)<-[:IN_IDS]-(p:IMASPath)
+            OPTIONAL MATCH (i)<-[:IN_IDS]-(p:IMASNode)
             WITH i, count(p) AS path_count
             RETURN i.name AS name, i.description AS description,
                    i.physics_domain AS physics_domain,
@@ -683,9 +683,9 @@ class GraphClustersTool:
 
         results = self._gc.query(
             f"""
-            MATCH (p:IMASPath {{id: $path}})-[:IN_CLUSTER]->(c:IMASSemanticCluster)
+            MATCH (p:IMASNode {{id: $path}})-[:IN_CLUSTER]->(c:IMASSemanticCluster)
             {scope_filter}
-            OPTIONAL MATCH (member:IMASPath)-[:IN_CLUSTER]->(c)
+            OPTIONAL MATCH (member:IMASNode)-[:IN_CLUSTER]->(c)
             WITH c, collect(DISTINCT member.id) AS paths
             RETURN c.id AS id, c.label AS label, c.description AS description,
                    c.scope AS scope, c.cross_ids AS cross_ids,
@@ -734,7 +734,7 @@ class GraphClustersTool:
             WHERE score > 0.3
             {scope_filter}
             {ids_filter_clause}
-            OPTIONAL MATCH (member:IMASPath)-[:IN_CLUSTER]->(cluster)
+            OPTIONAL MATCH (member:IMASNode)-[:IN_CLUSTER]->(cluster)
             WITH cluster, score, collect(DISTINCT member.id) AS paths
             RETURN cluster.id AS id, cluster.label AS label,
                    cluster.description AS description,
@@ -934,7 +934,7 @@ def _text_search_imas_paths(
             ft_params["ids_filter"] = filter_list
 
         ft_cypher = f"""
-            CALL db.index.fulltext.queryNodes('imas_path_text', $query)
+            CALL db.index.fulltext.queryNodes('imas_node_text', $query)
             YIELD node AS p, score
             {ft_where}
             WITH p, score
@@ -958,7 +958,7 @@ def _text_search_imas_paths(
 
     # Fallback: CONTAINS matching with scored results
     cypher = f"""
-        MATCH (p:IMASPath)
+        MATCH (p:IMASNode)
         WHERE {where_base}
           AND (
             toLower(p.documentation) CONTAINS $query_lower
@@ -991,7 +991,7 @@ def _text_search_imas_paths(
         word_results = []
         for word in query_words[:3]:
             word_cypher = f"""
-                MATCH (p:IMASPath)
+                MATCH (p:IMASNode)
                 WHERE {where_base}
                   AND (toLower(p.name) = $word OR toLower(p.id) CONTAINS $word)
                   AND p.data_type IS NOT NULL AND p.data_type <> 'structure'

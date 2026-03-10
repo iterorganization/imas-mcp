@@ -151,7 +151,7 @@ class TestRequiredFields:
     field, while still enforcing the constraint on terminal nodes.
 
     The status field is auto-detected per label — usually ``status``
-    but can be ``enrichment_status`` for classes like DataNode that
+    but can be ``enrichment_status`` for classes like SignalNode that
     use a separate lifecycle field.
     """
 

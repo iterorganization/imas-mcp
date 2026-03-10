@@ -219,7 +219,7 @@ RETURN ac.name, ac.cocos_native, ac.cocos_determination
 
 ## Future Work
 
-**DataNode COCOS enrichment**: Facilities with COCOS stored in MDSplus nodes 
+**SignalNode COCOS enrichment**: Facilities with COCOS stored in MDSplus nodes 
 (e.g., `\RESULTS::*.COCOS`) could have their DataNodes enriched with COCOS 
 metadata. This would require facility-specific MDSplus data access.
 

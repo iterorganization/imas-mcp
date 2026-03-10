@@ -1,4 +1,4 @@
-"""Tests for TDI-to-DataNode linkage (discovery/mdsplus/tdi_linkage.py)."""
+"""Tests for TDI-to-SignalNode linkage (discovery/mdsplus/tdi_linkage.py)."""
 
 from __future__ import annotations
 

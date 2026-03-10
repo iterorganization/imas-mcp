@@ -6,7 +6,7 @@
 
 The imas-codex knowledge graph is a Neo4j-based store that unifies:
 - **Facility knowledge**: DataNodes, CodeChunks, Diagnostics, Analysis Codes, Wiki content
-- **IMAS Data Dictionary**: IMASPath nodes with version tracking and embeddings
+- **IMAS Data Dictionary**: IMASNode nodes with version tracking and embeddings
 - **Cross-facility data**: Shared IMAS mappings, semantic clusters
 
 All schema definitions live in **LinkML** (`schemas/*.yaml`) as the single source of truth.
@@ -181,8 +181,8 @@ imas-codex graph start
 ```
 imas_codex/schemas/
 ├── common.yaml      # Shared enums, PhysicsDomain
-├── facility.yaml    # Facility nodes (DataNode, CodeChunk, etc.)
-└── imas_dd.yaml     # IMAS DD nodes (IMASPath, DDVersion, etc.)
+├── facility.yaml    # Facility nodes (SignalNode, CodeChunk, etc.)
+└── imas_dd.yaml     # IMAS DD nodes (IMASNode, DDVersion, etc.)
 ```
 
 Models auto-generated during `uv sync` via build hook. Regenerate manually:
@@ -194,13 +194,13 @@ uv run build-models --force
 
 | Index | Content |
 |-------|---------|
-| `imas_path_embedding` | IMASPath nodes |
+| `imas_node_embedding` | IMASNode nodes |
 | `cluster_embedding` | IMASSemanticCluster embeddings |
 | `code_chunk_embedding` | CodeChunk nodes |
 | `wiki_chunk_embedding` | WikiChunk nodes |
 | `facility_signal_desc_embedding` | FacilitySignal descriptions |
 | `facility_path_desc_embedding` | FacilityPath descriptions |
-| `data_node_desc_embedding` | DataNode descriptions |
+| `signal_node_desc_embedding` | SignalNode descriptions |
 | `wiki_artifact_desc_embedding` | WikiArtifact descriptions |
 
 ## Docker Compose

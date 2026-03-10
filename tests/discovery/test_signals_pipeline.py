@@ -62,7 +62,7 @@ LEAF_NODES_PER_VERSION = 25
 
 
 def _make_data_nodes(data_source_name: str, version: int) -> dict:
-    """Build a mock extraction result with realistic DataNode structure."""
+    """Build a mock extraction result with realistic SignalNode structure."""
     nodes = {}
     for i in range(LEAF_NODES_PER_VERSION):
         path = f"\\{data_source_name.upper()}::TOP.NODE_{i:03d}"

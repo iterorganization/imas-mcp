@@ -878,9 +878,9 @@ async def link_worker(
 ) -> None:
     """Link worker: Propagate code evidence to FacilitySignals.
 
-    After code ingestion creates DataReference → DataNode links, this
+    After code ingestion creates DataReference → SignalNode links, this
     worker propagates evidence to FacilitySignals via the chain:
-      DataReference → RESOLVES_TO_NODE → DataNode ← HAS_DATA_SOURCE_NODE ← FacilitySignal
+      DataReference → RESOLVES_TO_NODE → SignalNode ← HAS_DATA_SOURCE_NODE ← FacilitySignal
 
     Sets code_evidence_count and has_code_evidence on matched signals.
     Runs periodically while code workers are active, then one final pass.

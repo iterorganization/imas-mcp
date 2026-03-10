@@ -2,7 +2,7 @@
 
 Provides a small hand-crafted DD graph loaded into a test Neo4j instance.
 Tests auto-skip when Neo4j is not reachable. The fixture graph contains
-a minimal but complete DD structure: DDVersion nodes, IDS, IMASPath hierarchy,
+a minimal but complete DD structure: DDVersion nodes, IDS, IMASNode hierarchy,
 units, clusters, identifier schemas, and path changes.
 """
 
@@ -326,10 +326,10 @@ def _load_fixture_graph(client) -> None:
             **ids,
         )
 
-    # Create IMASPath nodes with relationships
+    # Create IMASNode nodes with relationships
     for p in IMAS_PATHS:
         client.query(
-            "CREATE (p:IMASPath {id: $id, path: $path, ids: $ids_name, "
+            "CREATE (p:IMASNode {id: $id, path: $path, ids: $ids_name, "
             "name: $name, "
             "documentation: $documentation, data_type: $data_type, units: $units, "
             "node_type: $node_type, physics_domain: $physics_domain})",
@@ -337,7 +337,7 @@ def _load_fixture_graph(client) -> None:
         )
         # Link to IDS
         client.query(
-            "MATCH (p:IMASPath {id: $path_id}), (i:IDS {id: $ids_name}) "
+            "MATCH (p:IMASNode {id: $path_id}), (i:IDS {id: $ids_name}) "
             "CREATE (p)-[:IN_IDS]->(i)",
             path_id=p["id"],
             ids_name=p["ids_name"],
@@ -345,7 +345,7 @@ def _load_fixture_graph(client) -> None:
         # Link to introduced version
         if p.get("introduced_in"):
             client.query(
-                "MATCH (p:IMASPath {id: $path_id}), (v:DDVersion {id: $version}) "
+                "MATCH (p:IMASNode {id: $path_id}), (v:DDVersion {id: $version}) "
                 "CREATE (p)-[:INTRODUCED_IN]->(v)",
                 path_id=p["id"],
                 version=p["introduced_in"],
@@ -354,7 +354,7 @@ def _load_fixture_graph(client) -> None:
         unit_id = p.get("units")
         if unit_id and unit_id != "-":
             client.query(
-                "MATCH (p:IMASPath {id: $path_id}), (u:Unit {id: $unit_id}) "
+                "MATCH (p:IMASNode {id: $path_id}), (u:Unit {id: $unit_id}) "
                 "CREATE (p)-[:HAS_UNIT]->(u)",
                 path_id=p["id"],
                 unit_id=unit_id,
@@ -379,29 +379,29 @@ def _load_fixture_graph(client) -> None:
     ]
     for path_id, cluster_id in cluster_memberships:
         client.query(
-            "MATCH (p:IMASPath {id: $path_id}), (c:IMASSemanticCluster {id: $cluster_id}) "
+            "MATCH (p:IMASNode {id: $path_id}), (c:IMASSemanticCluster {id: $cluster_id}) "
             "CREATE (p)-[:IN_CLUSTER]->(c)",
             path_id=path_id,
             cluster_id=cluster_id,
         )
 
-    # Create IMASPathChange nodes
+    # Create IMASNodeChange nodes
     for ch in PATH_CHANGES:
         client.query(
-            "CREATE (c:IMASPathChange {id: $id, path_id: $path_id, "
+            "CREATE (c:IMASNodeChange {id: $id, path_id: $path_id, "
             "from_version: $from_version, to_version: $to_version, "
             "change_type: $change_type, description: $description})",
             **ch,
         )
         # Link to path and versions
         client.query(
-            "MATCH (c:IMASPathChange {id: $id}), (p:IMASPath {id: $path_id}) "
+            "MATCH (c:IMASNodeChange {id: $id}), (p:IMASNode {id: $path_id}) "
             "CREATE (c)-[:FOR_IMAS_PATH]->(p)",
             id=ch["id"],
             path_id=ch["path_id"],
         )
         client.query(
-            "MATCH (c:IMASPathChange {id: $id}), (v:DDVersion {id: $to}) "
+            "MATCH (c:IMASNodeChange {id: $id}), (v:DDVersion {id: $to}) "
             "CREATE (c)-[:IN_VERSION]->(v)",
             id=ch["id"],
             to=ch["to_version"],
@@ -414,9 +414,9 @@ def _load_fixture_graph(client) -> None:
             "description: $description, options: $options})",
             **ident,
         )
-        # Link to IMASPath
+        # Link to IMASNode
         client.query(
-            "MATCH (s:IdentifierSchema {id: $id}), (p:IMASPath {id: $path_id}) "
+            "MATCH (s:IdentifierSchema {id: $id}), (p:IMASNode {id: $path_id}) "
             "CREATE (p)-[:HAS_IDENTIFIER_SCHEMA]->(s)",
             id=ident["id"],
             path_id=ident["id"],
@@ -446,7 +446,7 @@ def graph_client():
 
 @pytest.fixture(scope="session")
 def fixture_paths():
-    """All fixture IMASPath data."""
+    """All fixture IMASNode data."""
     return IMAS_PATHS
 
 

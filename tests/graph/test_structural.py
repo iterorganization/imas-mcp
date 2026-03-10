@@ -28,10 +28,10 @@ class TestGraphPresence:
         assert label_counts.get("IDS", 0) >= 1, "No IDS nodes in graph"
 
     def test_imas_path_nodes_exist(self, label_counts):
-        """IMASPath nodes should exist (core of DD graph)."""
-        count = label_counts.get("IMASPath", 0)
+        """IMASNode nodes should exist (core of DD graph)."""
+        count = label_counts.get("IMASNode", 0)
         assert count >= 100, (
-            f"Only {count} IMASPath nodes (expected many more). "
+            f"Only {count} IMASNode nodes (expected many more). "
             f"DD graph may not be built."
         )
 
@@ -122,7 +122,7 @@ class TestClusterIntegrity:
 
         result = graph_client.query(
             "MATCH (c:IMASSemanticCluster) "
-            "WHERE NOT (:IMASPath)-[:IN_CLUSTER]->(c) "
+            "WHERE NOT (:IMASNode)-[:IN_CLUSTER]->(c) "
             "RETURN count(c) AS cnt"
         )
         count = result[0]["cnt"] if result else 0

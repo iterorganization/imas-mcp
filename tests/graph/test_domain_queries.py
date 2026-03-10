@@ -275,7 +275,7 @@ class TestMapSignalsToImas:
         cypher = mock_gc.query.call_args[0][0]
         assert "SOURCE_PATH" in cypher
         assert "TARGET_PATH" in cypher
-        assert "IMASPath" in cypher
+        assert "IMASNode" in cypher
 
 
 class TestFacilityOverview:

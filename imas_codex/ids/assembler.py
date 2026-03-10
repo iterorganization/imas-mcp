@@ -3,8 +3,8 @@
 Assembles complete IMAS IDS instances from facility graph data using two
 modes:
 
-1. **Graph-driven** (preferred): Reads IDSRecipe and IMASMapping nodes from
-   the knowledge graph. The IDSRecipe's assembly_config defines structural
+1. **Graph-driven** (preferred): Reads IMASMapping and IMASMapping nodes from
+   the knowledge graph. The IMASMapping's assembly_config defines structural
    patterns (how DataNodes group into array-of-structures entries), while
    IMASMapping nodes define field-level transformations with executable
    transform_code.
@@ -13,7 +13,7 @@ modes:
    queries and field mappings. Used when no graph recipe exists.
 
 Architecture:
-    IDSRecipe (graph) → structural assembly rules (JSON)
+    IMASMapping (graph) → structural assembly rules (JSON)
     IMASMapping (graph) → field transforms with executable code
     IDSAssembler → reads recipe, queries graph, populates IDS (generic)
 """
@@ -48,7 +48,7 @@ def _resolve_epoch_id(facility: str, epoch: str) -> str:
 
 
 def _coil_index_from_path(path: str) -> int:
-    """Extract the numeric coil/element index from a DataNode path suffix."""
+    """Extract the numeric coil/element index from a SignalNode path suffix."""
     return int(path.rsplit(":", 1)[-1])
 
 
@@ -70,10 +70,10 @@ class IDSAssembler:
     """Assembles IMAS IDS instances from graph data.
 
     Supports two modes:
-    - Graph-driven: Loads IDSRecipe + IMASMappings from the knowledge graph.
+    - Graph-driven: Loads IMASMapping + IMASMappings from the knowledge graph.
     - YAML fallback: Loads a YAML recipe file with embedded queries.
 
-    Graph mode is used when an active IDSRecipe exists in the graph.
+    Graph mode is used when an active IMASMapping exists in the graph.
     YAML mode is used as fallback when no graph recipe is found.
 
     Args:
@@ -173,7 +173,7 @@ class IDSAssembler:
     # ------------------------------------------------------------------
 
     def _assemble_from_graph(self, epoch: str) -> Any:
-        """Assemble IDS using IDSRecipe and IMASMappings from graph."""
+        """Assemble IDS using IMASMapping and IMASMappings from graph."""
         import imas
 
         recipe = self._graph_recipe
@@ -738,7 +738,7 @@ def list_recipes(facility: str | None = None) -> list[dict[str, str]]:
     try:
         with GraphClient() as gc:
             query = """
-                MATCH (r:IDSRecipe)
+                MATCH (r:IMASMapping)
                 WHERE r.status = 'active'
             """
             params: dict[str, str] = {}

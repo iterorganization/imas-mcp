@@ -1715,11 +1715,11 @@ def _update_env_file(env_file: Path, new_password: str) -> None:
 _IMAS_DD_LABELS = [
     "DDVersion",
     "IDS",
-    "IMASPath",
+    "IMASNode",
     "IMASCoordinateSpec",
     "IMASSemanticCluster",
     "IdentifierSchema",
-    "IMASPathChange",
+    "IMASNodeChange",
     "CoordinateRelationship",
     "ClusterMembership",
     "EmbeddingChange",
@@ -1996,7 +1996,7 @@ def _create_facility_dump(
 
                 result = session.run(
                     "MATCH (n) WHERE NOT (n)--() "
-                    "AND NOT n:IMASPath AND NOT n:DDVersion AND NOT n:Unit "
+                    "AND NOT n:IMASNode AND NOT n:DDVersion AND NOT n:Unit "
                     "AND NOT n:IMASCoordinateSpec AND NOT n:PhysicsDomain "
                     "AND NOT n:IMASSemanticCluster "
                     "AND NOT n:GraphMeta "

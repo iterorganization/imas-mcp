@@ -73,7 +73,7 @@ def get_static_tree_graph_state(
         Dict with:
           - ingested_versions: set of version ints already in graph
           - version_node_counts: {version_int: node_count} from graph
-          - total_nodes: total DataNode count for this tree
+          - total_nodes: total SignalNode count for this tree
           - enriched_nodes: count of DataNodes with descriptions
           - unenriched_paths: list of paths needing enrichment
     """
@@ -99,7 +99,7 @@ def get_static_tree_graph_state(
     # Count DataNodes and enrichment state
     node_stats = client.query(
         """
-        MATCH (n:DataNode)
+        MATCH (n:SignalNode)
         WHERE n.data_source_name = $data_source_name AND n.facility_id = $facility
         RETURN
             count(n) AS total,
@@ -119,7 +119,7 @@ def get_static_tree_graph_state(
     # Get paths that need enrichment (data-bearing nodes without descriptions)
     unenriched = client.query(
         """
-        MATCH (n:DataNode)
+        MATCH (n:SignalNode)
         WHERE n.data_source_name = $data_source_name AND n.facility_id = $facility
           AND n.node_type IN ['NUMERIC', 'SIGNAL', 'AXIS', 'TEXT']
           AND (n.description IS NULL OR n.description = '')
@@ -685,7 +685,7 @@ def ingest_static_tree(
 
     Creates:
     - StructuralEpoch nodes for each static tree version
-    - DataNode nodes with applicability ranges (first_shot/last_shot)
+    - SignalNode nodes with applicability ranges (first_shot/last_shot)
     - INTRODUCED_IN / REMOVED_IN / AT_FACILITY relationships
     - Tag metadata on DataNodes
 
@@ -845,7 +845,7 @@ def ingest_static_tree(
                 all_paths[path]["last_shot"] = prev_first_shot - 1
                 all_paths[path]["removed_version"] = epoch_id
 
-    # Build DataNode records
+    # Build SignalNode records
     #
     # Build a fullpath → normalized-tag-path lookup first. MDSplus returns
     # tag-aliased paths (e.g. \STATIC::DBRDR_A_A) for nodes whose structural
@@ -910,7 +910,7 @@ def ingest_static_tree(
         node_records.append(record)
 
     if dry_run:
-        logger.info("[DRY RUN] Would create %d DataNode records", len(node_records))
+        logger.info("[DRY RUN] Would create %d SignalNode records", len(node_records))
         # Show samples by node type
         by_type: dict[str, int] = {}
         for r in node_records:
@@ -928,7 +928,7 @@ def ingest_static_tree(
             client.query(
                 """
                 UNWIND $nodes AS node
-                MERGE (n:DataNode {id: node.id})
+                MERGE (n:SignalNode {id: node.id})
                 SET n.path = node.path,
                     n.data_source_name = node.data_source_name,
                     n.canonical_path = node.canonical_path,
@@ -960,7 +960,7 @@ def ingest_static_tree(
             on_progress(written, total_records, "creating relationships...")
         client.query(
             """
-            MATCH (n:DataNode)
+            MATCH (n:SignalNode)
             WHERE n.data_source_name = $data_source_name AND n.facility_id = $facility
             WITH n
             MATCH (f:Facility {id: $facility})
@@ -976,7 +976,7 @@ def ingest_static_tree(
 
         client.query(
             """
-            MATCH (n:DataNode)
+            MATCH (n:SignalNode)
             WHERE n.data_source_name = $data_source_name AND n.facility_id = $facility
               AND n.introduced_version IS NOT NULL
             WITH n
@@ -989,7 +989,7 @@ def ingest_static_tree(
 
         client.query(
             """
-            MATCH (n:DataNode)
+            MATCH (n:SignalNode)
             WHERE n.data_source_name = $data_source_name AND n.facility_id = $facility
               AND n.removed_version IS NOT NULL
             WITH n
@@ -1003,11 +1003,11 @@ def ingest_static_tree(
         # Parent-child relationships
         client.query(
             """
-            MATCH (child:DataNode)
+            MATCH (child:SignalNode)
             WHERE child.data_source_name = $data_source_name AND child.facility_id = $facility
               AND child.parent_path IS NOT NULL
             WITH child
-            MATCH (parent:DataNode {id: $facility + ':' + $data_source_name + ':' + child.parent_path})
+            MATCH (parent:SignalNode {id: $facility + ':' + $data_source_name + ':' + child.parent_path})
             WHERE parent.data_source_name = $data_source_name
             MERGE (parent)-[:HAS_NODE]->(child)
             """,

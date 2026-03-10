@@ -58,7 +58,7 @@ DESCRIPTION_LABELS = {
     "FacilityPath",
     "FacilitySignal",
     "Image",
-    "DataNode",
+    "SignalNode",
     "Document",
     "WikiPage",
 }

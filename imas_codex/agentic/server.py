@@ -262,7 +262,7 @@ def _init_repl() -> dict[str, Any]:
 
         Examples:
             query('MATCH (f:Facility) RETURN f.id, f.name')
-            query('MATCH (t:DataNode {data_source_name: $tree}) RETURN t.path LIMIT 10', tree='results')
+            query('MATCH (t:SignalNode {data_source_name: $tree}) RETURN t.path LIMIT 10', tree='results')
         """
         return gc.query(cypher, **params)
 
@@ -284,7 +284,7 @@ def _init_repl() -> dict[str, Any]:
 
     def semantic_search(
         text: str,
-        index: str = "imas_path_embedding",
+        index: str = "imas_node_embedding",
         k: int = 5,
         include_deprecated: bool = False,
     ) -> list[dict[str, Any]]:
@@ -295,7 +295,7 @@ def _init_repl() -> dict[str, Any]:
             index: Vector index name (use get_graph_schema() to list all)
             k: Number of results to return
             include_deprecated: If True, include deprecated IMAS paths in results.
-                Only applies to imas_path_embedding index. Default False (active only).
+                Only applies to imas_node_embedding index. Default False (active only).
 
         Returns:
             List of flat dicts with all node properties + score + labels.
@@ -315,9 +315,9 @@ def _init_repl() -> dict[str, Any]:
         if index == "code_chunk_embedding":
             return _search_code_chunks(embedding, k)
 
-        # Filter deprecated paths for imas_path_embedding unless explicitly included
+        # Filter deprecated paths for imas_node_embedding unless explicitly included
         where_clause = ""
-        if index == "imas_path_embedding" and not include_deprecated:
+        if index == "imas_node_embedding" and not include_deprecated:
             where_clause = "WHERE NOT (node)-[:DEPRECATED_IN]->(:DDVersion) "
 
         results = gc.query(
@@ -491,7 +491,7 @@ def _init_repl() -> dict[str, Any]:
             trees = gc.query(
                 """
                 MATCH (t:DataSource)-[:AT_FACILITY]->(f:Facility {id: $fid})
-                OPTIONAL MATCH (n:DataNode {data_source_name: t.name})-[:AT_FACILITY]->(f)
+                OPTIONAL MATCH (n:SignalNode {data_source_name: t.name})-[:AT_FACILITY]->(f)
                 RETURN t.name AS tree,
                        t.node_count_total AS total,
                        count(DISTINCT n) AS ingested
@@ -559,7 +559,7 @@ def _init_repl() -> dict[str, Any]:
     def get_tree_structure(
         data_source_name: str, path_prefix: str = "", limit: int = 50
     ) -> list[dict[str, Any]]:
-        """Get DataNode structure from the graph.
+        """Get SignalNode structure from the graph.
 
         Args:
             data_source_name: MDSplus tree name (e.g., 'results', 'magnetics')
@@ -572,7 +572,7 @@ def _init_repl() -> dict[str, Any]:
         if path_prefix:
             return gc.query(
                 """
-                MATCH (n:DataNode {data_source_name: $tree})
+                MATCH (n:SignalNode {data_source_name: $tree})
                 WHERE n.path STARTS WITH $prefix
                 RETURN n.path AS path, n.description AS description,
                        n.unit AS unit, n.physics_domain AS domain
@@ -586,7 +586,7 @@ def _init_repl() -> dict[str, Any]:
         else:
             return gc.query(
                 """
-                MATCH (n:DataNode {data_source_name: $tree})
+                MATCH (n:SignalNode {data_source_name: $tree})
                 RETURN n.path AS path, n.description AS description,
                        n.unit AS unit, n.physics_domain AS domain
                 ORDER BY n.path
@@ -1362,7 +1362,7 @@ class AgentsServer:
 
             Special handling:
             - CodeFile: Auto-deduplicates already discovered/ingested files
-            - DataNode: Auto-creates IN_DATA_SOURCE and ACCESSOR_FUNCTION relationships
+            - SignalNode: Auto-creates IN_DATA_SOURCE and ACCESSOR_FUNCTION relationships
             - FacilityPath: Links to parent Facility
 
             Args:

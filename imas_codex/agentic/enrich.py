@@ -1,8 +1,8 @@
 """
-DataNode metadata enrichment agent.
+SignalNode metadata enrichment agent.
 
 Provides:
-- EnrichmentResult: Result of enriching a single DataNode
+- EnrichmentResult: Result of enriching a single SignalNode
 - batch_enrich_paths: Main enrichment function for CLI
 - quick_task: Simple task runner for ad-hoc agent tasks
 """
@@ -45,7 +45,7 @@ def _get_prompt(name: str) -> str:
 
 @dataclass
 class EnrichmentResult:
-    """Result of enriching a single DataNode."""
+    """Result of enriching a single SignalNode."""
 
     path: str
     description: str | None
@@ -224,7 +224,7 @@ def _save_enrichments_to_graph(results: list[EnrichmentResult], dry_run: bool) -
                 props["error_node"] = result.error_node
 
             query = """
-                MATCH (t:DataNode {path: $path})
+                MATCH (t:SignalNode {path: $path})
                 SET t += $props
                 RETURN t.path AS path
             """
@@ -270,7 +270,7 @@ def discover_nodes_to_enrich(
     limit_clause = f"LIMIT {limit}" if limit else ""
 
     query = f"""
-        MATCH (t:DataNode)
+        MATCH (t:SignalNode)
         {where}
         OPTIONAL MATCH (t)-[:APPEARS_IN]->(c:CodeChunk)
         WITH t, count(c) > 0 AS has_context
@@ -399,7 +399,7 @@ async def _run_batch_enrichment(
 
     system_prompt = f"""You are an enrichment agent for MDSplus DataNodes.
 
-Your task is to generate physics-accurate descriptions for DataNode paths.
+Your task is to generate physics-accurate descriptions for SignalNode paths.
 You have tools to query the knowledge graph and search code examples.
 
 ## Available Tools
@@ -431,7 +431,7 @@ Paths:
 {paths_list}
 
 Steps:
-1. Query the graph: `query_neo4j("MATCH (t:DataNode) WHERE t.path CONTAINS '{parent}' RETURN t.path, t.description LIMIT 20")`
+1. Query the graph: `query_neo4j("MATCH (t:SignalNode) WHERE t.path CONTAINS '{parent}' RETURN t.path, t.description LIMIT 20")`
 2. Search code: `search_code_examples("{parent}")`
 3. Generate enrichments as JSON array for ALL {len(paths)} paths
 
@@ -493,7 +493,7 @@ async def batch_enrich_paths(
     progress_callback: ProgressCallback = None,
 ) -> list[EnrichmentResult]:
     """
-    Enrich DataNode paths using smolagents CodeAgent.
+    Enrich SignalNode paths using smolagents CodeAgent.
 
     Args:
         paths: List of MDSplus paths to enrich

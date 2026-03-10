@@ -14,11 +14,11 @@ class TestClearDdGraph:
     def _make_client(self, node_counts: dict[str, int] | None = None):
         """Create a mock GraphClient that simulates batch deletion."""
         counts = node_counts or {
-            "IMASPath": 100,
+            "IMASNode": 100,
             "DDVersion": 5,
             "IDS": 10,
             "IMASSemanticCluster": 50,
-            "IMASPathChange": 20,
+            "IMASNodeChange": 20,
             "EmbeddingChange": 0,
             "IdentifierSchema": 3,
             "IMASCoordinateSpec": 8,
@@ -79,11 +79,11 @@ class TestClearDdGraph:
         client = self._make_client(
             dict.fromkeys(
                 [
-                    "IMASPath",
+                    "IMASNode",
                     "DDVersion",
                     "IDS",
                     "IMASSemanticCluster",
-                    "IMASPathChange",
+                    "IMASNodeChange",
                     "EmbeddingChange",
                     "IdentifierSchema",
                     "IMASCoordinateSpec",
@@ -109,7 +109,7 @@ class TestClearDdGraph:
             call for call in client.query.call_args_list if "DROP INDEX" in str(call)
         ]
         drop_text = " ".join(str(c) for c in drop_calls)
-        assert "imas_path_embedding" in drop_text
+        assert "imas_node_embedding" in drop_text
         assert "cluster_embedding" in drop_text
 
     def test_clears_dd_versions(self):
@@ -127,13 +127,13 @@ class TestClearDdGraph:
         from imas_codex.graph.build_dd import clear_dd_graph
 
         # 12000 paths requires 3 batches at batch_size=5000
-        client = self._make_client({"IMASPath": 12000})
+        client = self._make_client({"IMASNode": 12000})
         # Override other types to 0
         for _label in [
             "DDVersion",
             "IDS",
             "IMASSemanticCluster",
-            "IMASPathChange",
+            "IMASNodeChange",
             "EmbeddingChange",
             "IdentifierSchema",
             "IMASCoordinateSpec",
@@ -211,7 +211,7 @@ class TestImasClearCLI:
 
         result = runner.invoke(main, ["imas", "clear", "--force"])
         assert result.exit_code == 0
-        assert "100" in result.output  # IMASPath count
+        assert "100" in result.output  # IMASNode count
         mock_clear.assert_called_once()
 
     @patch("imas_codex.graph.GraphClient")

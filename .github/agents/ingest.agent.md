@@ -20,7 +20,7 @@ You are an **ingestion agent** for processing discovered source files into the k
 - Queue discovered source files for ingestion
 - Run the ingestion pipeline
 - Monitor ingestion status and handle failures
-- Link extracted MDSplus paths to DataNode entities
+- Link extracted MDSplus paths to SignalNode entities
 
 ## Key Commands
 

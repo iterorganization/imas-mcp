@@ -45,21 +45,21 @@ class TestFixtureGraphStructure:
         assert "core_profiles" in ids_names
 
     def test_imas_paths_exist(self, graph_client):
-        """IMASPath nodes are created with expected count."""
-        result = graph_client.query("MATCH (p:IMASPath) RETURN count(p) AS c")
+        """IMASNode nodes are created with expected count."""
+        result = graph_client.query("MATCH (p:IMASNode) RETURN count(p) AS c")
         assert result[0]["c"] == 9
 
     def test_paths_linked_to_ids(self, graph_client):
-        """Every IMASPath is linked to its IDS via IN_IDS."""
+        """Every IMASNode is linked to its IDS via IN_IDS."""
         result = graph_client.query(
-            "MATCH (p:IMASPath) WHERE NOT (p)-[:IN_IDS]->(:IDS) RETURN p.id AS id"
+            "MATCH (p:IMASNode) WHERE NOT (p)-[:IN_IDS]->(:IDS) RETURN p.id AS id"
         )
         assert len(result) == 0, f"Paths not linked to IDS: {[r['id'] for r in result]}"
 
     def test_paths_linked_to_version(self, graph_client):
-        """Every IMASPath is linked to its introduction version."""
+        """Every IMASNode is linked to its introduction version."""
         result = graph_client.query(
-            "MATCH (p:IMASPath) WHERE NOT (p)-[:INTRODUCED_IN]->(:DDVersion) "
+            "MATCH (p:IMASNode) WHERE NOT (p)-[:INTRODUCED_IN]->(:DDVersion) "
             "RETURN p.id AS id"
         )
         assert len(result) == 0, (
@@ -81,7 +81,7 @@ class TestFixtureGraphStructure:
     def test_cluster_memberships(self, graph_client):
         """Paths are linked to clusters via IN_CLUSTER."""
         result = graph_client.query(
-            "MATCH (p:IMASPath)-[:IN_CLUSTER]->(c:IMASSemanticCluster) "
+            "MATCH (p:IMASNode)-[:IN_CLUSTER]->(c:IMASSemanticCluster) "
             "RETURN c.id AS cluster, count(p) AS path_count ORDER BY c.id"
         )
         counts = {r["cluster"]: r["path_count"] for r in result}
@@ -89,14 +89,14 @@ class TestFixtureGraphStructure:
         assert counts["cluster_equilibrium_boundary"] == 3
 
     def test_path_changes_exist(self, graph_client):
-        """IMASPathChange nodes are created."""
-        result = graph_client.query("MATCH (c:IMASPathChange) RETURN count(c) AS c")
+        """IMASNodeChange nodes are created."""
+        result = graph_client.query("MATCH (c:IMASNodeChange) RETURN count(c) AS c")
         assert result[0]["c"] == 1
 
     def test_path_change_linked(self, graph_client):
-        """IMASPathChange is linked to path and version."""
+        """IMASNodeChange is linked to path and version."""
         result = graph_client.query(
-            "MATCH (c:IMASPathChange)-[:FOR_IMAS_PATH]->(p:IMASPath), "
+            "MATCH (c:IMASNodeChange)-[:FOR_IMAS_PATH]->(p:IMASNode), "
             "(c)-[:IN_VERSION]->(v:DDVersion) "
             "RETURN p.id AS path, v.id AS version"
         )
@@ -107,7 +107,7 @@ class TestFixtureGraphStructure:
     def test_identifier_schemas_exist(self, graph_client):
         """IdentifierSchema nodes are created and linked."""
         result = graph_client.query(
-            "MATCH (p:IMASPath)-[:HAS_IDENTIFIER_SCHEMA]->(s:IdentifierSchema) "
+            "MATCH (p:IMASNode)-[:HAS_IDENTIFIER_SCHEMA]->(s:IdentifierSchema) "
             "RETURN p.id AS path, s.name AS name"
         )
         assert len(result) == 1
@@ -120,7 +120,7 @@ class TestFixtureGraphQueries:
     def test_paths_by_ids(self, graph_client):
         """Query paths filtered by IDS name."""
         result = graph_client.query(
-            "MATCH (p:IMASPath)-[:IN_IDS]->(i:IDS {id: $ids}) "
+            "MATCH (p:IMASNode)-[:IN_IDS]->(i:IDS {id: $ids}) "
             "RETURN p.id AS id ORDER BY p.id",
             ids="equilibrium",
         )
@@ -130,7 +130,7 @@ class TestFixtureGraphQueries:
     def test_paths_by_version(self, graph_client):
         """Query paths introduced in a specific version."""
         result = graph_client.query(
-            "MATCH (p:IMASPath)-[:INTRODUCED_IN]->(v:DDVersion {id: $version}) "
+            "MATCH (p:IMASNode)-[:INTRODUCED_IN]->(v:DDVersion {id: $version}) "
             "RETURN p.id AS id",
             version="4.0.0",
         )
@@ -155,7 +155,7 @@ class TestFixtureGraphQueries:
     def test_cluster_path_traversal(self, graph_client):
         """Traverse from cluster to paths."""
         result = graph_client.query(
-            "MATCH (c:IMASSemanticCluster {id: $cluster_id})<-[:IN_CLUSTER]-(p:IMASPath) "
+            "MATCH (c:IMASSemanticCluster {id: $cluster_id})<-[:IN_CLUSTER]-(p:IMASNode) "
             "RETURN p.id AS path ORDER BY p.id",
             cluster_id="cluster_temperature",
         )
@@ -166,7 +166,7 @@ class TestFixtureGraphQueries:
     def test_path_evolution_query(self, graph_client):
         """Query version evolution for a path."""
         result = graph_client.query(
-            "MATCH (c:IMASPathChange)-[:FOR_IMAS_PATH]->(p:IMASPath {id: $path}) "
+            "MATCH (c:IMASNodeChange)-[:FOR_IMAS_PATH]->(p:IMASNode {id: $path}) "
             "RETURN c.change_type AS change, c.from_version AS from_v, "
             "c.to_version AS to_v",
             path="core_profiles/profiles_1d/electrons/pressure",
@@ -179,7 +179,7 @@ class TestFixtureGraphQueries:
         """List all IDS with path counts."""
         result = graph_client.query(
             "MATCH (i:IDS) "
-            "OPTIONAL MATCH (p:IMASPath)-[:IN_IDS]->(i) "
+            "OPTIONAL MATCH (p:IMASNode)-[:IN_IDS]->(i) "
             "RETURN i.id AS ids_name, i.documentation AS doc, "
             "count(p) AS actual_paths ORDER BY i.id"
         )

@@ -1,6 +1,6 @@
 # JET pf_active IDS recipe
 #
-# Assembles a complete pf_active IDS from DataNode graph data.
+# Assembles a complete pf_active IDS from SignalNode graph data.
 # Data sources: device_xml (PF coils + circuits), jec2020_geometry (names)
 #
 # Usage:
@@ -20,11 +20,11 @@ static:
 # Struct-array assemblies: each key maps to a top-level struct array in the IDS
 arrays:
   coil:
-    # Each DataNode = one coil. Properties r[], z[], dr[], dz[] are arrays
+    # Each SignalNode = one coil. Properties r[], z[], dr[], dz[] are arrays
     # that define the elements within that coil.
     source:
       query: |
-        MATCH (d:DataNode {
+        MATCH (d:SignalNode {
           facility_id: $facility,
           data_source_name: 'device_xml',
           system: 'PF'
@@ -41,7 +41,7 @@ arrays:
     # Enrichment: jec2020 provides human-readable coil names
     enrichment:
       query: |
-        MATCH (d:DataNode {
+        MATCH (d:SignalNode {
           facility_id: $facility,
           data_source_name: 'jec2020_geometry',
           system: 'PF'
@@ -70,7 +70,7 @@ arrays:
   circuit:
     source:
       query: |
-        MATCH (d:DataNode {
+        MATCH (d:SignalNode {
           facility_id: $facility,
           data_source_name: 'device_xml',
           system: 'CI'

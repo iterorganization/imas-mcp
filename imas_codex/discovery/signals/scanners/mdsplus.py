@@ -36,7 +36,7 @@ class MDSplusScanner:
         Iterates over config.trees and runs the unified tree discovery
         pipeline (extract → units → promote) for each tree. After tree
         extraction, runs TDI linkage to connect TDI function build_path
-        references to DataNode nodes.
+        references to SignalNode nodes.
 
     **Thin-client** (JET):
         Connects to a remote MDSplus server via MDSplus.Connection and

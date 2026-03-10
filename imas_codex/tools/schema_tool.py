@@ -20,7 +20,7 @@ class SchemaTool:
         "relationship types with directionality, enum values, and vector indexes. "
         "Call this before composing Cypher queries with query_imas_graph() to "
         "understand available data structures. Returns node types (DDVersion, IDS, "
-        "IMASPath, Unit, IMASSemanticCluster, IMASPathChange, etc.), their properties, "
+        "IMASNode, Unit, IMASSemanticCluster, IMASNodeChange, etc.), their properties, "
         "relationships (INTRODUCED_IN, DEPRECATED_IN, IN_IDS, IN_CLUSTER, HAS_PREDECESSOR, "
         "FOR_IMAS_PATH, etc.), and semantic search indexes."
     )

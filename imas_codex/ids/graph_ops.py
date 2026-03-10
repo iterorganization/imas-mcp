@@ -1,6 +1,6 @@
 """Graph operations for IDS mapping and recipe management.
 
-Provides queries to load IMASMapping and IDSRecipe nodes from the graph,
+Provides queries to load IMASMapping and IMASMapping nodes from the graph,
 and functions to create mapping nodes for new field transformations.
 """
 
@@ -33,7 +33,7 @@ class FieldMapping:
 
 @dataclass
 class Recipe:
-    """A resolved IDSRecipe from graph data."""
+    """A resolved IMASMapping from graph data."""
 
     id: str
     facility_id: str
@@ -45,7 +45,7 @@ class Recipe:
 
 
 def load_recipe(facility: str, ids_name: str, gc: GraphClient) -> Recipe | None:
-    """Load an IDSRecipe and its linked IMASMappings from the graph.
+    """Load an IMASMapping and its linked IMASMappings from the graph.
 
     Args:
         facility: Facility ID.
@@ -58,7 +58,7 @@ def load_recipe(facility: str, ids_name: str, gc: GraphClient) -> Recipe | None:
     rows = list(
         gc.query(
             """
-            MATCH (r:IDSRecipe {facility_id: $facility, ids_name: $ids_name})
+            MATCH (r:IMASMapping {facility_id: $facility, ids_name: $ids_name})
             WHERE r.status = 'active'
             RETURN r.id AS id, r.facility_id AS facility_id,
                    r.ids_name AS ids_name, r.dd_version AS dd_version,
@@ -91,7 +91,7 @@ def load_mappings(recipe_id: str, gc: GraphClient) -> list[FieldMapping]:
     """Load IMASMappings linked to a recipe via INCLUDES_MAPPING.
 
     Args:
-        recipe_id: IDSRecipe node ID.
+        recipe_id: IMASMapping node ID.
         gc: Graph client instance.
 
     Returns:
@@ -100,9 +100,9 @@ def load_mappings(recipe_id: str, gc: GraphClient) -> list[FieldMapping]:
     rows = list(
         gc.query(
             """
-            MATCH (r:IDSRecipe {id: $recipe_id})
+            MATCH (r:IMASMapping {id: $recipe_id})
                   -[:INCLUDES_MAPPING]->(m:IMASMapping)
-                  -[:TARGET_PATH]->(ip:IMASPath)
+                  -[:TARGET_PATH]->(ip:IMASNode)
             RETURN m.id AS id,
                    m.source_property AS source_property,
                    ip.id AS target_imas_path,
@@ -161,7 +161,7 @@ def select_nodes(
         gc: Graph client instance.
 
     Returns:
-        List of DataNode property dicts.
+        List of SignalNode property dicts.
     """
     source = section_config.get("source", {})
     system = source.get("system")
@@ -175,7 +175,7 @@ def select_nodes(
             gc.query(
                 f"""
                 MATCH (se:StructuralEpoch {{id: $epoch_id}})
-                      -[:{select_via}]->(d:DataNode)
+                      -[:{select_via}]->(d:SignalNode)
                 RETURN d
                 ORDER BY d.sort_key, d.id
                 """,
@@ -186,7 +186,7 @@ def select_nodes(
     return list(
         gc.query(
             f"""
-            MATCH (d:DataNode {{
+            MATCH (d:SignalNode {{
                 facility_id: $facility,
                 data_source_name: $data_source,
                 system: $system
@@ -224,7 +224,7 @@ def select_enrichment_nodes(
     rows = list(
         gc.query(
             """
-            MATCH (d:DataNode {
+            MATCH (d:SignalNode {
                 facility_id: $facility,
                 data_source_name: $data_source,
                 system: $system
@@ -248,7 +248,7 @@ def select_enrichment_nodes(
 
 
 def _index_from_path(path: str) -> int:
-    """Extract the numeric index from a DataNode path suffix."""
+    """Extract the numeric index from a SignalNode path suffix."""
     return int(path.rsplit(":", 1)[-1])
 
 
@@ -387,7 +387,7 @@ def create_mappings(
         MATCH (f:Facility {id: m.facility_id})
         MERGE (mapping)-[:AT_FACILITY]->(f)
         WITH mapping, m
-        MATCH (ip:IMASPath {id: m.target_path})
+        MATCH (ip:IMASNode {id: m.target_path})
         MERGE (mapping)-[:TARGET_PATH]->(ip)
         """,
         mappings=mappings,
@@ -413,7 +413,7 @@ def create_recipe(
     *,
     provider: str = "imas-codex",
 ) -> str:
-    """Create an IDSRecipe node and link it to IMASMappings.
+    """Create an IMASMapping node and link it to IMASMappings.
 
     Args:
         facility: Facility ID.
@@ -432,7 +432,7 @@ def create_recipe(
 
     gc.query(
         """
-        MERGE (r:IDSRecipe {id: $recipe_id})
+        MERGE (r:IMASMapping {id: $recipe_id})
         SET r.facility_id = $facility,
             r.ids_name = $ids_name,
             r.dd_version = $dd_version,
@@ -455,7 +455,7 @@ def create_recipe(
     gc.query(
         """
         UNWIND $mapping_ids AS mid
-        MATCH (r:IDSRecipe {id: $recipe_id})
+        MATCH (r:IMASMapping {id: $recipe_id})
         MATCH (m:IMASMapping {id: mid})
         MERGE (r)-[:INCLUDES_MAPPING]->(m)
         """,
@@ -463,7 +463,7 @@ def create_recipe(
         mapping_ids=mapping_ids,
     )
 
-    logger.info("Created IDSRecipe %s with %d mappings", recipe_id, len(mapping_ids))
+    logger.info("Created IMASMapping %s with %d mappings", recipe_id, len(mapping_ids))
     return recipe_id
 
 
@@ -577,7 +577,7 @@ def seed_ids_mappings(
     dd_version: str,
     gc: GraphClient,
 ) -> str:
-    """Seed IMASMapping and IDSRecipe nodes for a given IDS.
+    """Seed IMASMapping and IMASMapping nodes for a given IDS.
 
     Creates all field mapping nodes and a structural recipe for the
     specified IDS, using the canonical mapping definitions.

@@ -11,7 +11,7 @@ checking DD-specific invariants:
 - Embedding coverage for meaningful paths
 - Cluster labels are non-empty with scope distribution
 - Unit and coordinate relationships are consistent
-- IMASPathChange nodes link correctly
+- IMASNodeChange nodes link correctly
 
 Requires a live Neo4j with a completed DD build.
 """
@@ -179,52 +179,52 @@ class TestIDSCompleteness:
 
 
 class TestPathHierarchy:
-    """Verify IMASPath hierarchy is well-formed."""
+    """Verify IMASNode hierarchy is well-formed."""
 
     def test_non_root_paths_have_parent(self, graph_client, label_counts):
-        """Every non-IDS-root IMASPath should have a HAS_PARENT relationship."""
-        if not label_counts.get("IMASPath"):
-            pytest.skip("No IMASPath nodes in graph")
+        """Every non-IDS-root IMASNode should have a HAS_PARENT relationship."""
+        if not label_counts.get("IMASNode"):
+            pytest.skip("No IMASNode nodes in graph")
 
         # Root-level paths (direct children of IDS, e.g., "equilibrium/time")
         # should have HAS_PARENT pointing to the IDS-level path.
         # Only the IDS-root path (e.g., "equilibrium") has no parent.
         # IDS-root paths have exactly one "/" segment
         result = graph_client.query(
-            "MATCH (p:IMASPath) "
-            "WHERE NOT (p)-[:HAS_PARENT]->(:IMASPath) "
+            "MATCH (p:IMASNode) "
+            "WHERE NOT (p)-[:HAS_PARENT]->(:IMASNode) "
             "AND size(split(p.id, '/')) > 2 "
             "RETURN count(p) AS cnt"
         )
         orphans = result[0]["cnt"] if result else 0
         assert orphans == 0, (
-            f"{orphans} non-root IMASPath nodes have no HAS_PARENT relationship"
+            f"{orphans} non-root IMASNode nodes have no HAS_PARENT relationship"
         )
 
     def test_no_self_referencing_parent(self, graph_client, label_counts):
-        """No IMASPath should be its own parent."""
-        if not label_counts.get("IMASPath"):
-            pytest.skip("No IMASPath nodes in graph")
+        """No IMASNode should be its own parent."""
+        if not label_counts.get("IMASNode"):
+            pytest.skip("No IMASNode nodes in graph")
 
         result = graph_client.query(
-            "MATCH (p:IMASPath)-[:HAS_PARENT]->(p) RETURN count(p) AS cnt"
+            "MATCH (p:IMASNode)-[:HAS_PARENT]->(p) RETURN count(p) AS cnt"
         )
         count = result[0]["cnt"] if result else 0
-        assert count == 0, f"{count} IMASPath nodes are their own parent"
+        assert count == 0, f"{count} IMASNode nodes are their own parent"
 
     def test_ids_property_matches_path_prefix(self, graph_client, label_counts):
         """The ids property should match the first segment of the path id."""
-        if not label_counts.get("IMASPath"):
-            pytest.skip("No IMASPath nodes in graph")
+        if not label_counts.get("IMASNode"):
+            pytest.skip("No IMASNode nodes in graph")
 
         result = graph_client.query(
-            "MATCH (p:IMASPath) "
+            "MATCH (p:IMASNode) "
             "WHERE p.ids <> split(p.id, '/')[0] "
             "RETURN count(p) AS cnt"
         )
         count = result[0]["cnt"] if result else 0
         assert count == 0, (
-            f"{count} IMASPath nodes have ids property not matching path prefix"
+            f"{count} IMASNode nodes have ids property not matching path prefix"
         )
 
 
@@ -238,12 +238,12 @@ class TestEmbeddingCompleteness:
         The remaining 'meaningful' paths should all have embeddings after
         a complete build.
         """
-        if not label_counts.get("IMASPath"):
-            pytest.skip("No IMASPath nodes in graph")
+        if not label_counts.get("IMASNode"):
+            pytest.skip("No IMASNode nodes in graph")
 
         # Check that embedded paths have embedding_text too
         result = graph_client.query(
-            "MATCH (p:IMASPath) "
+            "MATCH (p:IMASNode) "
             "WHERE p.embedding IS NOT NULL AND p.embedding_text IS NULL "
             "RETURN count(p) AS cnt"
         )
@@ -255,11 +255,11 @@ class TestEmbeddingCompleteness:
 
     def test_embedded_paths_have_hash(self, graph_client, label_counts):
         """Embedded paths should have embedding_hash for cache validation."""
-        if not label_counts.get("IMASPath"):
-            pytest.skip("No IMASPath nodes in graph")
+        if not label_counts.get("IMASNode"):
+            pytest.skip("No IMASNode nodes in graph")
 
         result = graph_client.query(
-            "MATCH (p:IMASPath) "
+            "MATCH (p:IMASNode) "
             "WHERE p.embedding IS NOT NULL AND p.embedding_hash IS NULL "
             "RETURN count(p) AS cnt"
         )
@@ -271,11 +271,11 @@ class TestEmbeddingCompleteness:
 
     def test_no_embeddings_without_embedding(self, graph_client, label_counts):
         """Paths should not have embedding_text without an actual embedding."""
-        if not label_counts.get("IMASPath"):
-            pytest.skip("No IMASPath nodes in graph")
+        if not label_counts.get("IMASNode"):
+            pytest.skip("No IMASNode nodes in graph")
 
         result = graph_client.query(
-            "MATCH (p:IMASPath) "
+            "MATCH (p:IMASNode) "
             "WHERE p.embedding IS NULL AND p.embedding_text IS NOT NULL "
             "RETURN count(p) AS cnt"
         )
@@ -292,7 +292,7 @@ class TestUnitRelationships:
             pytest.skip("No Unit nodes in graph")
 
         result = graph_client.query(
-            "MATCH (p:IMASPath)-[:HAS_UNIT]->(u:Unit) "
+            "MATCH (p:IMASNode)-[:HAS_UNIT]->(u:Unit) "
             "WHERE u.symbol IS NULL "
             "RETURN count(p) AS cnt"
         )
@@ -318,80 +318,80 @@ class TestErrorRelationships:
 
     def test_error_relationships_exist(self, graph_client, label_counts):
         """After a full build, HAS_ERROR relationships should exist."""
-        if not label_counts.get("IMASPath"):
-            pytest.skip("No IMASPath nodes in graph")
+        if not label_counts.get("IMASNode"):
+            pytest.skip("No IMASNode nodes in graph")
 
         result = graph_client.query("MATCH ()-[r:HAS_ERROR]->() RETURN count(r) AS cnt")
         count = result[0]["cnt"] if result else 0
         assert count > 0, "No HAS_ERROR relationships found after DD build"
 
     def test_error_paths_are_imas_paths(self, graph_client, label_counts):
-        """Both sides of HAS_ERROR should be IMASPath nodes."""
-        if not label_counts.get("IMASPath"):
-            pytest.skip("No IMASPath nodes in graph")
+        """Both sides of HAS_ERROR should be IMASNode nodes."""
+        if not label_counts.get("IMASNode"):
+            pytest.skip("No IMASNode nodes in graph")
 
         result = graph_client.query(
             "MATCH (data)-[r:HAS_ERROR]->(err) "
-            "WHERE NOT data:IMASPath OR NOT err:IMASPath "
+            "WHERE NOT data:IMASNode OR NOT err:IMASNode "
             "RETURN count(r) AS cnt"
         )
         count = result[0]["cnt"] if result else 0
-        assert count == 0, f"{count} HAS_ERROR relationships connect non-IMASPath nodes"
+        assert count == 0, f"{count} HAS_ERROR relationships connect non-IMASNode nodes"
 
 
-class TestIMASPathChanges:
-    """Verify IMASPathChange nodes are correctly linked."""
+class TestIMASNodeChanges:
+    """Verify IMASNodeChange nodes are correctly linked."""
 
     def test_path_changes_have_for_imas_path(self, graph_client, label_counts):
-        """Every IMASPathChange should link to an IMASPath."""
-        if not label_counts.get("IMASPathChange"):
-            pytest.skip("No IMASPathChange nodes in graph")
+        """Every IMASNodeChange should link to an IMASNode."""
+        if not label_counts.get("IMASNodeChange"):
+            pytest.skip("No IMASNodeChange nodes in graph")
 
         result = graph_client.query(
-            "MATCH (pc:IMASPathChange) "
-            "WHERE NOT (pc)-[:FOR_IMAS_PATH]->(:IMASPath) "
+            "MATCH (pc:IMASNodeChange) "
+            "WHERE NOT (pc)-[:FOR_IMAS_PATH]->(:IMASNode) "
             "RETURN count(pc) AS cnt"
         )
         count = result[0]["cnt"] if result else 0
         assert count == 0, (
-            f"{count} IMASPathChange nodes without FOR_IMAS_PATH relationship"
+            f"{count} IMASNodeChange nodes without FOR_IMAS_PATH relationship"
         )
 
     def test_path_changes_have_in_version(self, graph_client, label_counts):
-        """Every IMASPathChange should link to a DDVersion."""
-        if not label_counts.get("IMASPathChange"):
-            pytest.skip("No IMASPathChange nodes in graph")
+        """Every IMASNodeChange should link to a DDVersion."""
+        if not label_counts.get("IMASNodeChange"):
+            pytest.skip("No IMASNodeChange nodes in graph")
 
         result = graph_client.query(
-            "MATCH (pc:IMASPathChange) "
+            "MATCH (pc:IMASNodeChange) "
             "WHERE NOT (pc)-[:IN_VERSION]->(:DDVersion) "
             "RETURN count(pc) AS cnt"
         )
         count = result[0]["cnt"] if result else 0
         assert count == 0, (
-            f"{count} IMASPathChange nodes without IN_VERSION relationship"
+            f"{count} IMASNodeChange nodes without IN_VERSION relationship"
         )
 
     def test_path_changes_have_change_type(self, graph_client, label_counts):
-        """Every IMASPathChange must have a change_type."""
-        if not label_counts.get("IMASPathChange"):
-            pytest.skip("No IMASPathChange nodes in graph")
+        """Every IMASNodeChange must have a change_type."""
+        if not label_counts.get("IMASNodeChange"):
+            pytest.skip("No IMASNodeChange nodes in graph")
 
         result = graph_client.query(
-            "MATCH (pc:IMASPathChange) "
+            "MATCH (pc:IMASNodeChange) "
             "WHERE pc.change_type IS NULL "
             "RETURN count(pc) AS cnt"
         )
         count = result[0]["cnt"] if result else 0
-        assert count == 0, f"{count} IMASPathChange nodes without change_type"
+        assert count == 0, f"{count} IMASNodeChange nodes without change_type"
 
     def test_definition_changes_exist(self, graph_client, label_counts):
         """Documentation (definition) changes should be tracked across versions."""
-        if not label_counts.get("IMASPathChange"):
-            pytest.skip("No IMASPathChange nodes in graph")
+        if not label_counts.get("IMASNodeChange"):
+            pytest.skip("No IMASNodeChange nodes in graph")
 
         result = graph_client.query(
-            "MATCH (pc:IMASPathChange {change_type: 'documentation'}) "
+            "MATCH (pc:IMASNodeChange {change_type: 'documentation'}) "
             "RETURN count(pc) AS cnt"
         )
         count = result[0]["cnt"] if result else 0
@@ -401,11 +401,11 @@ class TestIMASPathChanges:
 
     def test_definition_changes_have_semantic_type(self, graph_client, label_counts):
         """Documentation changes should have semantic classification."""
-        if not label_counts.get("IMASPathChange"):
-            pytest.skip("No IMASPathChange nodes in graph")
+        if not label_counts.get("IMASNodeChange"):
+            pytest.skip("No IMASNodeChange nodes in graph")
 
         result = graph_client.query(
-            "MATCH (pc:IMASPathChange {change_type: 'documentation'}) "
+            "MATCH (pc:IMASNodeChange {change_type: 'documentation'}) "
             "WHERE pc.semantic_type IS NOT NULL "
             "RETURN count(pc) AS classified"
         )
@@ -414,8 +414,8 @@ class TestIMASPathChanges:
 
     def test_change_types_are_valid(self, graph_client, label_counts):
         """change_type should only be known metadata fields."""
-        if not label_counts.get("IMASPathChange"):
-            pytest.skip("No IMASPathChange nodes in graph")
+        if not label_counts.get("IMASNodeChange"):
+            pytest.skip("No IMASNodeChange nodes in graph")
 
         valid_types = {
             "documentation",
@@ -427,7 +427,7 @@ class TestIMASPathChanges:
             "timebasepath",
         }
         result = graph_client.query(
-            "MATCH (pc:IMASPathChange) RETURN DISTINCT pc.change_type AS change_type"
+            "MATCH (pc:IMASNodeChange) RETURN DISTINCT pc.change_type AS change_type"
         )
         actual_types = {r["change_type"] for r in result}
         invalid = actual_types - valid_types
@@ -435,12 +435,12 @@ class TestIMASPathChanges:
 
     def test_path_history_queryable(self, graph_client, label_counts):
         """A single path's full change history should be queryable by traversal."""
-        if not label_counts.get("IMASPathChange"):
-            pytest.skip("No IMASPathChange nodes in graph")
+        if not label_counts.get("IMASNodeChange"):
+            pytest.skip("No IMASNodeChange nodes in graph")
 
         # Find a path with multiple changes
         result = graph_client.query(
-            "MATCH (pc:IMASPathChange)-[:FOR_IMAS_PATH]->(p:IMASPath) "
+            "MATCH (pc:IMASNodeChange)-[:FOR_IMAS_PATH]->(p:IMASNode) "
             "WITH p, count(pc) AS changes WHERE changes >= 2 "
             "RETURN p.id AS path LIMIT 1"
         )
@@ -450,7 +450,7 @@ class TestIMASPathChanges:
 
         # Query full history for that path
         history = graph_client.query(
-            "MATCH (pc:IMASPathChange)-[:FOR_IMAS_PATH]->(p:IMASPath {id: $path}) "
+            "MATCH (pc:IMASNodeChange)-[:FOR_IMAS_PATH]->(p:IMASNode {id: $path}) "
             "MATCH (pc)-[:IN_VERSION]->(v:DDVersion) "
             "RETURN v.id AS version, pc.change_type AS change_type, "
             "       pc.old_value AS old_value, pc.new_value AS new_value "
@@ -496,7 +496,7 @@ class TestCOCOSCompleteness:
     def test_cocos_label_transformation_on_paths(self, graph_client):
         """Current-version paths with COCOS sensitivity should be labeled."""
         result = graph_client.query(
-            "MATCH (p:IMASPath) "
+            "MATCH (p:IMASNode) "
             "WHERE p.cocos_label_transformation IS NOT NULL "
             "RETURN count(p) AS cnt"
         )
@@ -507,16 +507,16 @@ class TestCOCOSCompleteness:
 
     def test_cocos_changes_tracked(self, graph_client, label_counts):
         """COCOS label changes across versions should be tracked."""
-        if not label_counts.get("IMASPathChange"):
-            pytest.skip("No IMASPathChange nodes in graph")
+        if not label_counts.get("IMASNodeChange"):
+            pytest.skip("No IMASNodeChange nodes in graph")
 
         result = graph_client.query(
-            "MATCH (c:IMASPathChange) "
+            "MATCH (c:IMASNodeChange) "
             "WHERE c.change_type = 'cocos_label_transformation' "
             "RETURN count(c) AS cnt"
         )
         assert result[0]["cnt"] > 0, (
-            "Expected IMASPathChange nodes for cocos_label_transformation"
+            "Expected IMASNodeChange nodes for cocos_label_transformation"
         )
 
 
@@ -627,7 +627,7 @@ class TestClusterLabels:
 
         result = graph_client.query(
             "MATCH (c:IMASSemanticCluster) "
-            "OPTIONAL MATCH (p:IMASPath)-[:IN_CLUSTER]->(c) "
+            "OPTIONAL MATCH (p:IMASNode)-[:IN_CLUSTER]->(c) "
             "WITH c, c.path_count AS declared, count(p) AS actual "
             "WHERE declared <> actual "
             "RETURN count(c) AS cnt, "
@@ -726,11 +726,11 @@ class TestDeprecationTracking:
 
     def test_deprecated_paths_have_version(self, graph_client, label_counts):
         """Deprecated paths should link to the version where they were deprecated."""
-        if not label_counts.get("IMASPath"):
-            pytest.skip("No IMASPath nodes in graph")
+        if not label_counts.get("IMASNode"):
+            pytest.skip("No IMASNode nodes in graph")
 
         result = graph_client.query(
-            "MATCH (p:IMASPath)-[:DEPRECATED_IN]->(v:DDVersion) "
+            "MATCH (p:IMASNode)-[:DEPRECATED_IN]->(v:DDVersion) "
             "RETURN count(DISTINCT p) AS deprecated_paths, "
             "  count(DISTINCT v) AS deprecation_versions"
         )
@@ -739,18 +739,18 @@ class TestDeprecationTracking:
             assert result[0]["deprecation_versions"] > 0
 
     def test_renamed_paths_both_exist(self, graph_client, label_counts):
-        """Both sides of RENAMED_TO should be valid IMASPath nodes."""
-        if not label_counts.get("IMASPath"):
-            pytest.skip("No IMASPath nodes in graph")
+        """Both sides of RENAMED_TO should be valid IMASNode nodes."""
+        if not label_counts.get("IMASNode"):
+            pytest.skip("No IMASNode nodes in graph")
 
         result = graph_client.query(
             "MATCH (old)-[r:RENAMED_TO]->(new) "
-            "WHERE NOT old:IMASPath OR NOT new:IMASPath "
+            "WHERE NOT old:IMASNode OR NOT new:IMASNode "
             "RETURN count(r) AS cnt"
         )
         count = result[0]["cnt"] if result else 0
         assert count == 0, (
-            f"{count} RENAMED_TO relationships connect non-IMASPath nodes"
+            f"{count} RENAMED_TO relationships connect non-IMASNode nodes"
         )
 
 
@@ -758,28 +758,28 @@ class TestCoordinateRelationships:
     """Verify coordinate relationship structure."""
 
     def test_has_coordinate_targets_are_valid(self, graph_client, label_counts):
-        """HAS_COORDINATE should point to IMASPath or IMASCoordinateSpec."""
-        if not label_counts.get("IMASPath"):
-            pytest.skip("No IMASPath nodes in graph")
+        """HAS_COORDINATE should point to IMASNode or IMASCoordinateSpec."""
+        if not label_counts.get("IMASNode"):
+            pytest.skip("No IMASNode nodes in graph")
 
         result = graph_client.query(
-            "MATCH (p:IMASPath)-[r:HAS_COORDINATE]->(target) "
-            "WHERE NOT target:IMASPath AND NOT target:IMASCoordinateSpec "
+            "MATCH (p:IMASNode)-[r:HAS_COORDINATE]->(target) "
+            "WHERE NOT target:IMASNode AND NOT target:IMASCoordinateSpec "
             "RETURN count(r) AS cnt"
         )
         count = result[0]["cnt"] if result else 0
         assert count == 0, (
             f"{count} HAS_COORDINATE relationships point to "
-            f"non-IMASPath/non-IMASCoordinateSpec nodes"
+            f"non-IMASNode/non-IMASCoordinateSpec nodes"
         )
 
     def test_coordinate_dimensions_are_positive(self, graph_client, label_counts):
         """HAS_COORDINATE dimension property should be a positive integer."""
-        if not label_counts.get("IMASPath"):
-            pytest.skip("No IMASPath nodes in graph")
+        if not label_counts.get("IMASNode"):
+            pytest.skip("No IMASNode nodes in graph")
 
         result = graph_client.query(
-            "MATCH (:IMASPath)-[r:HAS_COORDINATE]->() "
+            "MATCH (:IMASNode)-[r:HAS_COORDINATE]->() "
             "WHERE r.dimension IS NULL OR r.dimension < 1 "
             "RETURN count(r) AS cnt"
         )
@@ -856,11 +856,11 @@ class TestLifecycleMetadata:
 
     def test_field_lifecycle_status(self, graph_client, label_counts):
         """Fields with alpha/obsolescent lifecycle_status should be populated."""
-        if not label_counts.get("IMASPath"):
-            pytest.skip("No IMASPath nodes in graph")
+        if not label_counts.get("IMASNode"):
+            pytest.skip("No IMASNode nodes in graph")
 
         result = graph_client.query(
-            "MATCH (p:IMASPath) WHERE p.lifecycle_status IS NOT NULL "
+            "MATCH (p:IMASNode) WHERE p.lifecycle_status IS NOT NULL "
             "RETURN p.lifecycle_status AS status, count(p) AS cnt"
         )
         total = sum(r["cnt"] for r in result)
@@ -877,11 +877,11 @@ class TestTimebasepath:
 
     def test_timebasepath_populated(self, graph_client, label_counts):
         """Dynamic fields should have timebasepath references."""
-        if not label_counts.get("IMASPath"):
-            pytest.skip("No IMASPath nodes in graph")
+        if not label_counts.get("IMASNode"):
+            pytest.skip("No IMASNode nodes in graph")
 
         result = graph_client.query(
-            "MATCH (p:IMASPath) WHERE p.timebasepath IS NOT NULL RETURN count(p) AS cnt"
+            "MATCH (p:IMASNode) WHERE p.timebasepath IS NOT NULL RETURN count(p) AS cnt"
         )
         count = result[0]["cnt"] if result else 0
         # DD 4.1.1 has 4,520 fields with timebasepath
@@ -889,11 +889,11 @@ class TestTimebasepath:
 
     def test_timebasepath_values_reasonable(self, graph_client, label_counts):
         """Timebasepath values should be relative path references."""
-        if not label_counts.get("IMASPath"):
-            pytest.skip("No IMASPath nodes in graph")
+        if not label_counts.get("IMASNode"):
+            pytest.skip("No IMASNode nodes in graph")
 
         result = graph_client.query(
-            "MATCH (p:IMASPath) WHERE p.timebasepath IS NOT NULL "
+            "MATCH (p:IMASNode) WHERE p.timebasepath IS NOT NULL "
             "RETURN DISTINCT p.timebasepath AS tbp LIMIT 20"
         )
         for r in result:
@@ -907,11 +907,11 @@ class TestPathDoc:
 
     def test_path_doc_populated(self, graph_client, label_counts):
         """Fields with array notation should have path_doc."""
-        if not label_counts.get("IMASPath"):
-            pytest.skip("No IMASPath nodes in graph")
+        if not label_counts.get("IMASNode"):
+            pytest.skip("No IMASNode nodes in graph")
 
         result = graph_client.query(
-            "MATCH (p:IMASPath) WHERE p.path_doc IS NOT NULL RETURN count(p) AS cnt"
+            "MATCH (p:IMASNode) WHERE p.path_doc IS NOT NULL RETURN count(p) AS cnt"
         )
         count = result[0]["cnt"] if result else 0
         # DD 4.1.1 has ~38,522 fields where path_doc differs from path
@@ -923,11 +923,11 @@ class TestNBCChanges:
 
     def test_nbc_changes_populated(self, graph_client, label_counts):
         """Fields with NBC changes should have change_nbc_version."""
-        if not label_counts.get("IMASPath"):
-            pytest.skip("No IMASPath nodes in graph")
+        if not label_counts.get("IMASNode"):
+            pytest.skip("No IMASNode nodes in graph")
 
         result = graph_client.query(
-            "MATCH (p:IMASPath) WHERE p.change_nbc_version IS NOT NULL "
+            "MATCH (p:IMASNode) WHERE p.change_nbc_version IS NOT NULL "
             "RETURN count(p) AS cnt"
         )
         count = result[0]["cnt"] if result else 0
@@ -938,11 +938,11 @@ class TestNBCChanges:
 
     def test_nbc_changes_have_description(self, graph_client, label_counts):
         """Fields with NBC version should also have description."""
-        if not label_counts.get("IMASPath"):
-            pytest.skip("No IMASPath nodes in graph")
+        if not label_counts.get("IMASNode"):
+            pytest.skip("No IMASNode nodes in graph")
 
         result = graph_client.query(
-            "MATCH (p:IMASPath) "
+            "MATCH (p:IMASNode) "
             "WHERE p.change_nbc_version IS NOT NULL "
             "  AND (p.change_nbc_description IS NULL OR p.change_nbc_description = '') "
             "RETURN count(p) AS cnt"
@@ -975,11 +975,11 @@ class TestIdentifierSchemas:
 
     def test_paths_linked_to_schemas(self, graph_client, label_counts):
         """Fields with identifier_enum should link to IdentifierSchema."""
-        if not label_counts.get("IMASPath"):
-            pytest.skip("No IMASPath nodes in graph")
+        if not label_counts.get("IMASNode"):
+            pytest.skip("No IMASNode nodes in graph")
 
         result = graph_client.query(
-            "MATCH (p:IMASPath)-[:HAS_IDENTIFIER_SCHEMA]->(s:IdentifierSchema) "
+            "MATCH (p:IMASNode)-[:HAS_IDENTIFIER_SCHEMA]->(s:IdentifierSchema) "
             "RETURN count(p) AS cnt"
         )
         count = result[0]["cnt"] if result else 0
@@ -1006,11 +1006,11 @@ class TestURLMetadata:
 
     def test_url_fields_populated(self, graph_client, label_counts):
         """Fields with documentation URLs should have url property."""
-        if not label_counts.get("IMASPath"):
-            pytest.skip("No IMASPath nodes in graph")
+        if not label_counts.get("IMASNode"):
+            pytest.skip("No IMASNode nodes in graph")
 
         result = graph_client.query(
-            "MATCH (p:IMASPath) WHERE p.url IS NOT NULL RETURN count(p) AS cnt"
+            "MATCH (p:IMASNode) WHERE p.url IS NOT NULL RETURN count(p) AS cnt"
         )
         count = result[0]["cnt"] if result else 0
         # DD 4.1.1 has 618 fields with url
@@ -1050,11 +1050,11 @@ class TestCoordinateSameAs:
 
     def test_coordinate_same_as_properties_populated(self, graph_client, label_counts):
         """At least some paths should have coordinate1_same_as property."""
-        if not label_counts.get("IMASPath"):
-            pytest.skip("No IMASPath nodes in graph")
+        if not label_counts.get("IMASNode"):
+            pytest.skip("No IMASNode nodes in graph")
 
         result = graph_client.query(
-            "MATCH (p:IMASPath) "
+            "MATCH (p:IMASNode) "
             "WHERE p.coordinate1_same_as IS NOT NULL "
             "RETURN count(p) AS cnt"
         )
@@ -1065,12 +1065,12 @@ class TestCoordinateSameAs:
         )
 
     def test_coordinate_same_as_relationships_exist(self, graph_client, label_counts):
-        """COORDINATE_SAME_AS relationships should link IMASPath nodes."""
-        if not label_counts.get("IMASPath"):
-            pytest.skip("No IMASPath nodes in graph")
+        """COORDINATE_SAME_AS relationships should link IMASNode nodes."""
+        if not label_counts.get("IMASNode"):
+            pytest.skip("No IMASNode nodes in graph")
 
         result = graph_client.query(
-            "MATCH (:IMASPath)-[r:COORDINATE_SAME_AS]->(:IMASPath) "
+            "MATCH (:IMASNode)-[r:COORDINATE_SAME_AS]->(:IMASNode) "
             "RETURN count(r) AS cnt"
         )
         count = result[0]["cnt"] if result else 0
@@ -1081,8 +1081,8 @@ class TestCoordinateSameAs:
 
     def test_coordinate_same_as_dimensions_valid(self, graph_client, label_counts):
         """COORDINATE_SAME_AS dimension should be 1-6."""
-        if not label_counts.get("IMASPath"):
-            pytest.skip("No IMASPath nodes in graph")
+        if not label_counts.get("IMASNode"):
+            pytest.skip("No IMASNode nodes in graph")
 
         result = graph_client.query(
             "MATCH ()-[r:COORDINATE_SAME_AS]->() "
@@ -1097,24 +1097,24 @@ class TestCoordinateSameAs:
     def test_coordinate_same_as_targets_are_imas_paths(
         self, graph_client, label_counts
     ):
-        """COORDINATE_SAME_AS should only point to IMASPath nodes."""
-        if not label_counts.get("IMASPath"):
-            pytest.skip("No IMASPath nodes in graph")
+        """COORDINATE_SAME_AS should only point to IMASNode nodes."""
+        if not label_counts.get("IMASNode"):
+            pytest.skip("No IMASNode nodes in graph")
 
         result = graph_client.query(
-            "MATCH (:IMASPath)-[r:COORDINATE_SAME_AS]->(target) "
-            "WHERE NOT target:IMASPath "
+            "MATCH (:IMASNode)-[r:COORDINATE_SAME_AS]->(target) "
+            "WHERE NOT target:IMASNode "
             "RETURN count(r) AS cnt"
         )
         count = result[0]["cnt"] if result else 0
         assert count == 0, (
-            f"{count} COORDINATE_SAME_AS relationships point to non-IMASPath nodes"
+            f"{count} COORDINATE_SAME_AS relationships point to non-IMASNode nodes"
         )
 
     def test_higher_dimensions_have_fewer_refs(self, graph_client, label_counts):
         """Higher coordinate dimensions should have progressively fewer refs."""
-        if not label_counts.get("IMASPath"):
-            pytest.skip("No IMASPath nodes in graph")
+        if not label_counts.get("IMASNode"):
+            pytest.skip("No IMASNode nodes in graph")
 
         result = graph_client.query(
             "MATCH ()-[r:COORDINATE_SAME_AS]->() "

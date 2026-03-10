@@ -140,28 +140,28 @@ class TestIMASLinks:
     """IMAS data dictionary structural integrity."""
 
     def test_imas_paths_have_ids_link(self, graph_client, label_counts):
-        """Every IMASPath must link to an IDS node."""
-        if not label_counts.get("IMASPath"):
-            pytest.skip("No IMASPath nodes in graph")
+        """Every IMASNode must link to an IDS node."""
+        if not label_counts.get("IMASNode"):
+            pytest.skip("No IMASNode nodes in graph")
 
         result = graph_client.query(
-            "MATCH (p:IMASPath) WHERE NOT (p)-[:IN_IDS]->(:IDS) RETURN count(p) AS cnt"
+            "MATCH (p:IMASNode) WHERE NOT (p)-[:IN_IDS]->(:IDS) RETURN count(p) AS cnt"
         )
         count = result[0]["cnt"] if result else 0
-        assert count == 0, f"{count} IMASPath nodes without IDS link"
+        assert count == 0, f"{count} IMASNode nodes without IDS link"
 
     def test_imas_paths_have_dd_version(self, graph_client, label_counts):
-        """Every IMASPath must have an INTRODUCED_IN relationship to DDVersion."""
-        if not label_counts.get("IMASPath"):
-            pytest.skip("No IMASPath nodes in graph")
+        """Every IMASNode must have an INTRODUCED_IN relationship to DDVersion."""
+        if not label_counts.get("IMASNode"):
+            pytest.skip("No IMASNode nodes in graph")
 
         result = graph_client.query(
-            "MATCH (p:IMASPath) "
+            "MATCH (p:IMASNode) "
             "WHERE NOT (p)-[:INTRODUCED_IN]->(:DDVersion) "
             "RETURN count(p) AS cnt"
         )
         count = result[0]["cnt"] if result else 0
-        assert count == 0, f"{count} IMASPath nodes without INTRODUCED_IN link"
+        assert count == 0, f"{count} IMASNode nodes without INTRODUCED_IN link"
 
     def test_dd_version_chain_has_no_cycles(self, graph_client, label_counts):
         """DDVersion PREDECESSOR chain must be acyclic."""

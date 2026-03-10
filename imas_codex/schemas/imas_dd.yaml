@@ -367,7 +367,7 @@ classes:
         annotations:
           relationship_type: DEPRECATED_IN
 
-  IMASPath:
+  IMASNode:
     description: >-
       An IMAS Data Dictionary path. Represents any level from IDS root
       (e.g., "equilibrium") to leaf nodes (e.g., "equilibrium/time_slice/boundary/psi").
@@ -380,7 +380,7 @@ classes:
       primary data path without embedding redundant error field descriptions.
       
       This is the single authoritative representation of IMAS paths - code
-      references should link to existing IMASPath nodes, never create them
+      references should link to existing IMASNode nodes, never create them
       on-demand.
       
       Embedding Support:
@@ -390,11 +390,11 @@ classes:
       - Both active and deprecated data paths are embedded for evolution queries
       - Error fields and metadata paths are excluded from embedding
       - GGD paths are included by default (configurable)
-    class_uri: imas_dd:IMASPath
+    class_uri: imas_dd:IMASNode
     annotations:
       fulltext_index:
         tag: fulltext_index
-        value: "imas_path_text:documentation,name,id"
+        value: "imas_node_text:documentation,name,id"
     attributes:
       id:
         identifier: true
@@ -498,7 +498,7 @@ classes:
       # Relationships
       parent_path:
         description: Parent path in hierarchy (null for IDS-level paths)
-        range: IMASPath
+        range: IMASNode
         annotations:
           relationship_type: HAS_PARENT
       in_ids:
@@ -523,7 +523,7 @@ classes:
           relationship_type: DEPRECATED_IN
       renamed_to:
         description: Successor path if this was renamed (not just removed)
-        range: IMASPath
+        range: IMASNode
       identifier_schema:
         description: Identifier schema if this is an identifier field
         range: IdentifierSchema
@@ -537,7 +537,7 @@ classes:
           N-th array dimension is indexed by the same coordinate grid as the
           target field. Target uses DD path_doc notation with (iN) indices.
         multivalued: true
-        range: IMASPath
+        range: IMASNode
         annotations:
           relationship_type: COORDINATE_SAME_AS
       coordinate1_same_as:
@@ -585,7 +585,7 @@ classes:
           The relationship has an error_type property ("upper", "lower", or "index").
           Error fields are not embedded since they have no unique semantic content.
         multivalued: true
-        range: IMASPath
+        range: IMASNode
         annotations:
           relationship_type: HAS_ERROR
       in_cluster:
@@ -608,7 +608,7 @@ classes:
     description: >-
       An index-based coordinate specification from the IMAS Data Dictionary
       (e.g., "1...N", "1...3"). Path references are handled via
-      HAS_COORDINATE relationships to IMASPath nodes.
+      HAS_COORDINATE relationships to IMASNode nodes.
     class_uri: imas_dd:IMASCoordinateSpec
     attributes:
       id:
@@ -652,7 +652,7 @@ classes:
         range: boolean
       representative_path:
         description: Most central path (closest to cluster center)
-        range: IMASPath
+        range: IMASNode
       # Cluster embedding for semantic search
       embedding:
         description: >-
@@ -728,18 +728,18 @@ classes:
           JSON-encoded list of {index, name} for each valid option value.
           Index is the integer identifier, name is the string label.
       field_count:
-        description: Number of IMASPath fields using this identifier schema
+        description: Number of IMASNode fields using this identifier schema
         range: integer
       source:
         description: >-
           Source XML file for this identifier schema (e.g.,
           "utilities/coordinate_identifier.xml")
 
-  IMASPathChange:
+  IMASNodeChange:
     description: >-
       Records a change to path metadata between DD versions.
       Enables tracking of documentation updates, unit changes, etc.
-    class_uri: imas_dd:IMASPathChange
+    class_uri: imas_dd:IMASNodeChange
     attributes:
       id:
         identifier: true
@@ -760,7 +760,7 @@ classes:
         description: JSON array of significant keywords found in new value
       path:
         description: The path that changed
-        range: IMASPath
+        range: IMASNode
         required: true
         annotations:
           relationship_type: FOR_IMAS_PATH
@@ -774,8 +774,8 @@ classes:
   # Relationship class for coordinates (captures dimension + properties)
   CoordinateRelationship:
     description: >-
-      Represents a coordinate relationship between an IMASPath and its coordinate
-      (either another IMASPath or an IMASCoordinateSpec). Stored as relationship properties.
+      Represents a coordinate relationship between an IMASNode and its coordinate
+      (either another IMASNode or an IMASCoordinateSpec). Stored as relationship properties.
     class_uri: imas_dd:CoordinateRelationship
     attributes:
       dimension:
@@ -790,11 +790,11 @@ classes:
         range: boolean
       source_path:
         description: The path that has this coordinate
-        range: IMASPath
+        range: IMASNode
         required: true
       target_path:
         description: The coordinate path (for path references)
-        range: IMASPath
+        range: IMASNode
       target_spec:
         description: The coordinate spec (for index coordinates)
         range: IMASCoordinateSpec
@@ -802,13 +802,13 @@ classes:
   # Relationship class for cluster membership
   ClusterMembership:
     description: >-
-      Represents membership of an IMASPath in a IMASSemanticCluster.
+      Represents membership of an IMASNode in a IMASSemanticCluster.
       Distance indicates proximity to cluster center.
     class_uri: imas_dd:ClusterMembership
     attributes:
       path:
         description: The member path
-        range: IMASPath
+        range: IMASNode
         required: true
       cluster:
         description: The cluster

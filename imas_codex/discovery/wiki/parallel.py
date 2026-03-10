@@ -802,7 +802,7 @@ async def run_parallel_wiki_discovery(
     )
 
     # Post-ingestion: create cross-reference relationships from chunk metadata
-    # (DOCUMENTS → DataNode/FacilitySignal, MENTIONS_IMAS → IMASPath)
+    # (DOCUMENTS → SignalNode/FacilitySignal, MENTIONS_IMAS → IMASNode)
     if state.ingest_stats.processed > 0 or state.docs_stats.processed > 0:
         try:
             from imas_codex.discovery.wiki.pipeline import link_chunks_to_entities

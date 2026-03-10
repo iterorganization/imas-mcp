@@ -14,7 +14,7 @@ class TestSchemaToolStatic:
     def test_imas_schema_has_node_types(self):
         result = schema_for(task="imas")
         # Must include core DD node types
-        for expected in ["DDVersion", "IDS", "IMASPath", "Unit", "IMASSemanticCluster"]:
+        for expected in ["DDVersion", "IDS", "IMASNode", "Unit", "IMASSemanticCluster"]:
             assert expected in result, f"Missing {expected}"
 
     def test_imas_schema_has_relationships(self):
@@ -30,11 +30,11 @@ class TestSchemaToolStatic:
 
     def test_imas_schema_has_vector_indexes(self):
         result = schema_for(task="imas")
-        assert "imas_path_embedding" in result
+        assert "imas_node_embedding" in result
 
     def test_imas_schema_has_property_details(self):
         result = schema_for(task="imas")
-        # IMASPath should have documented properties
+        # IMASNode should have documented properties
         assert "documentation" in result
         assert "units" in result
 
@@ -59,7 +59,7 @@ class TestSchemaToolMCP:
         tool = SchemaTool()
         result = await tool.get_dd_graph_schema()
         assert isinstance(result, str)
-        assert "IMASPath" in result
+        assert "IMASNode" in result
         assert "DDVersion" in result
 
     @pytest.mark.anyio

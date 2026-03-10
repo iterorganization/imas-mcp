@@ -33,7 +33,7 @@ def enrich() -> None:
     - Code files from ingested source
 
     \b
-      imas-codex enrich nodes     Enrich DataNode metadata
+      imas-codex enrich nodes     Enrich SignalNode metadata
       imas-codex enrich run       Run a custom enrichment task
     """
     pass
@@ -148,7 +148,7 @@ def enrich_nodes(
     dry_run: bool,
     verbose: bool,
 ) -> None:
-    """Enrich DataNode metadata using CodeAgent.
+    """Enrich SignalNode metadata using CodeAgent.
 
     The agent generates Python code to gather context from the
     knowledge graph and code examples, then produces physics-accurate
@@ -442,7 +442,7 @@ def enrich_mark_stale(
 
         # Count matching nodes
         count_query = f"""
-            MATCH (t:DataNode)
+            MATCH (t:SignalNode)
             WHERE {" AND ".join(where_clauses)}
             RETURN count(t) AS count
         """
@@ -457,7 +457,7 @@ def enrich_mark_stale(
             click.echo(f"[DRY RUN] Would mark {count} nodes as stale")
             # Show sample
             sample_query = f"""
-                MATCH (t:DataNode)
+                MATCH (t:SignalNode)
                 WHERE {" AND ".join(where_clauses)}
                 RETURN t.path AS path LIMIT 10
             """
@@ -470,7 +470,7 @@ def enrich_mark_stale(
 
         # Mark as stale
         update_query = f"""
-            MATCH (t:DataNode)
+            MATCH (t:SignalNode)
             WHERE {" AND ".join(where_clauses)}
             SET t.enrichment_status = 'stale'
             RETURN count(t) AS updated

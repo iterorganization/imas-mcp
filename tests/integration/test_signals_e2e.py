@@ -134,7 +134,7 @@ def get_signal_count() -> int:
 
 def get_data_node_count() -> int:
     result = query_graph(
-        "MATCH (n:DataNode {facility_id: $f}) RETURN count(n) AS cnt",
+        "MATCH (n:SignalNode {facility_id: $f}) RETURN count(n) AS cnt",
         f=FACILITY,
     )
     return result[0]["cnt"] if result else 0
@@ -167,17 +167,17 @@ def mdsplus_data():
 
 @pytest.mark.timeout(60)
 def test_01_data_nodes_exist(mdsplus_data):
-    """E2E-1: MDSplus scan creates DataNode nodes with required properties."""
+    """E2E-1: MDSplus scan creates SignalNode nodes with required properties."""
     data_nodes = query_graph(
         """
-        MATCH (n:DataNode {facility_id: $f})
+        MATCH (n:SignalNode {facility_id: $f})
         RETURN n.path AS path, n.data_source_name AS data_source_name,
                n.facility_id AS facility_id
         LIMIT 20
         """,
         f=FACILITY,
     )
-    assert len(data_nodes) > 0, "No DataNode nodes"
+    assert len(data_nodes) > 0, "No SignalNode nodes"
     for n in data_nodes:
         assert n["path"] is not None, f"Missing path: {n}"
         assert n["data_source_name"] is not None, f"Missing data_source_name: {n}"
@@ -212,7 +212,7 @@ def test_03_source_node_edges(mdsplus_data):
     """E2E-2: FacilitySignals have HAS_DATA_SOURCE_NODE edges to DataNodes."""
     result = query_graph(
         """
-        MATCH (s:FacilitySignal {facility_id: $f})-[:HAS_DATA_SOURCE_NODE]->(n:DataNode)
+        MATCH (s:FacilitySignal {facility_id: $f})-[:HAS_DATA_SOURCE_NODE]->(n:SignalNode)
         RETURN count(s) AS cnt
         """,
         f=FACILITY,

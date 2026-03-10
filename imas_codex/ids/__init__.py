@@ -1,10 +1,10 @@
 """IDS assembly from facility graph data.
 
 Assembles complete IMAS IDS instances by querying the knowledge graph
-for DataNode properties and populating imas-python IDS objects.
+for SignalNode properties and populating imas-python IDS objects.
 
 Two modes:
-  - Graph-driven: IDSRecipe + IMASMapping nodes in the graph define
+  - Graph-driven: IMASMapping + IMASMapping nodes in the graph define
     structure and field transformations.
   - YAML fallback: YAML recipe files with embedded Cypher queries.
 

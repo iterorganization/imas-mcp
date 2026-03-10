@@ -389,7 +389,7 @@ def find_imas(
         where_clause = "WHERE " + " AND ".join(where_parts) + " "
 
     cypher = (
-        'CALL db.index.vector.queryNodes("imas_path_embedding", $k, $embedding) '
+        'CALL db.index.vector.queryNodes("imas_node_embedding", $k, $embedding) '
         f"YIELD node AS p, score {where_clause}"
         "OPTIONAL MATCH (p)-[:IN_CLUSTER]->(cl:IMASSemanticCluster) "
         "OPTIONAL MATCH (p)-[:HAS_UNIT]->(u:Unit) "
@@ -518,7 +518,7 @@ def find_data_nodes(
         where_clause = "WHERE " + " AND ".join(where_parts) + " "
 
     cypher = (
-        f"MATCH (n:DataNode) {where_clause}"
+        f"MATCH (n:SignalNode) {where_clause}"
         "RETURN n.id AS id, n.path AS path, n.data_source_name AS data_source_name, "
         "n.description AS description, n.unit AS unit, "
         "n.physics_domain AS physics_domain, n.node_type AS node_type "
@@ -563,7 +563,7 @@ def _find_data_nodes_semantic(
         where_clause = "WHERE " + " AND ".join(where_parts) + " "
 
     cypher = (
-        'CALL db.index.vector.queryNodes("data_node_desc_embedding", $k, $embedding) '
+        'CALL db.index.vector.queryNodes("signal_node_desc_embedding", $k, $embedding) '
         f"YIELD node AS n, score {where_clause}"
         "RETURN n.id AS id, n.path AS path, n.data_source_name AS data_source_name, "
         "n.description AS description, n.unit AS unit, "
@@ -590,8 +590,8 @@ def map_signals_to_imas(
 ) -> list[dict[str, Any]]:
     """Find facility signals and their IMAS path mappings.
 
-    Traverses FacilitySignal -> HAS_DATA_SOURCE_NODE -> DataNode
-    <- SOURCE_PATH - IMASMapping -> TARGET_PATH -> IMASPath.
+    Traverses FacilitySignal -> HAS_DATA_SOURCE_NODE -> SignalNode
+    <- SOURCE_PATH - IMASMapping -> TARGET_PATH -> IMASNode.
 
     Args:
         facility: Facility id.
@@ -618,8 +618,8 @@ def map_signals_to_imas(
     cypher = (
         f"MATCH (s:FacilitySignal) WHERE {where_clause} "
         "OPTIONAL MATCH (s)-[:DATA_ACCESS]->(da:DataAccess) "
-        "OPTIONAL MATCH (s)-[:HAS_DATA_SOURCE_NODE]->(dn:DataNode)"
-        "<-[:SOURCE_PATH]-(m:IMASMapping)-[:TARGET_PATH]->(ip:IMASPath) "
+        "OPTIONAL MATCH (s)-[:HAS_DATA_SOURCE_NODE]->(dn:SignalNode)"
+        "<-[:SOURCE_PATH]-(m:IMASMapping)-[:TARGET_PATH]->(ip:IMASNode) "
         "RETURN s.id AS signal_id, s.name AS signal_name, "
         "s.diagnostic AS diagnostic, s.description AS signal_description, "
         "ip.id AS imas_path, ip.documentation AS imas_documentation, "

@@ -343,7 +343,7 @@ def get_wiki_context_for_path(path: str, facility: str = "tcv") -> str:
         with GraphClient() as gc:
             result = gc.query(
                 """
-                MATCH (wc:WikiChunk)-[:DOCUMENTS]->(t:DataNode)
+                MATCH (wc:WikiChunk)-[:DOCUMENTS]->(t:SignalNode)
                 WHERE t.path CONTAINS $path OR t.canonical_path = $normalized
                 MATCH (wp:WikiPage)-[:HAS_CHUNK]->(wc)
                 RETURN wp.title AS page_title, wc.text AS text
