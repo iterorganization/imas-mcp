@@ -235,7 +235,15 @@ class IDSAssembler:
         struct_array = getattr(ids, section_name)
         structure = section_config.get("structure", "array_per_node")
 
-        if structure == "array_per_node":
+        if structure == "nested_array":
+            self._build_nested_array(
+                struct_array,
+                flat_nodes,
+                section_config,
+                section_mappings,
+                section_name,
+            )
+        elif structure == "array_per_node":
             struct_array.resize(len(flat_nodes))
             for i, node_data in enumerate(flat_nodes):
                 entry = struct_array[i]
@@ -268,6 +276,40 @@ class IDSAssembler:
                         section_name,
                     )
 
+    def _build_nested_array(
+        self,
+        parent_array: Any,
+        flat_nodes: list[dict[str, Any]],
+        section_config: dict[str, Any],
+        section_mappings: list,
+        section_name: str,
+    ) -> None:
+        """Build a nested struct-array (e.g., wall.description_2d[0].limiter.unit).
+
+        Used for IDS structures where DataNodes populate a nested array
+        within a parent container. The parent container is resized to
+        parent_size (typically 1), and the nested array is resized to
+        the number of DataNodes.
+        """
+        parent_size = section_config.get("parent_size", 1)
+        nested_path = section_config.get("nested_path", "")
+
+        parent_array.resize(parent_size)
+        container = parent_array[0]
+
+        # Navigate to the nested array
+        nested_array = container
+        for part in nested_path.split("."):
+            nested_array = getattr(nested_array, part)
+
+        nested_array.resize(len(flat_nodes))
+
+        for i, node_data in enumerate(flat_nodes):
+            entry = nested_array[i]
+            self._apply_mappings(
+                entry, node_data, section_mappings, section_name, section_config
+            )
+
     def _apply_mappings(
         self,
         entry: Any,
@@ -282,6 +324,7 @@ class IDSAssembler:
         when units_in != units_out.
         """
         init_arrays = (section_config or {}).get("init_arrays", {})
+        nested_path = (section_config or {}).get("nested_path")
         for mapping in mappings:
             # Strip the IDS prefix to get the path relative to this entry
             # e.g., "pf_active/coil/name" -> "name"
@@ -291,6 +334,15 @@ class IDSAssembler:
                 rel_path = rel_path[len(prefix) :]
             else:
                 continue
+
+            # Strip nested path prefix for nested_array structures
+            # e.g., "limiter/unit/outline/r" -> "outline/r"
+            if nested_path:
+                nested_prefix = nested_path.replace(".", "/") + "/"
+                if rel_path.startswith(nested_prefix):
+                    rel_path = rel_path[len(nested_prefix) :]
+                else:
+                    continue
 
             # Convert IMAS path separators to Python attribute notation
             rel_path = rel_path.replace("/", ".")

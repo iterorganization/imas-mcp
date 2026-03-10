@@ -13,6 +13,8 @@ from imas_codex.ids.graph_ops import (
     PF_ACTIVE_CIRCUIT_MAPPINGS,
     PF_ACTIVE_COIL_MAPPINGS,
     PF_PASSIVE_LOOP_MAPPINGS,
+    WALL_ASSEMBLY_CONFIG,
+    WALL_LIMITER_MAPPINGS,
     FieldMapping,
     Recipe,
     _index_from_path,
@@ -216,6 +218,14 @@ class TestMappingSpecs:
         source_props = {m[0] for m in PF_PASSIVE_LOOP_MAPPINGS}
         assert {"r", "z", "dr", "dz", "resistance", "description"} == source_props
 
+    def test_wall_limiter_mappings(self):
+        assert len(WALL_LIMITER_MAPPINGS) == 3
+        source_props = {m[0] for m in WALL_LIMITER_MAPPINGS}
+        assert {"r_contour", "z_contour", "description"} == source_props
+        # Contour fields should map to outline path
+        r_mapping = next(m for m in WALL_LIMITER_MAPPINGS if m[0] == "r_contour")
+        assert "outline/r" in r_mapping[1]
+
     def test_all_target_paths_use_slash_separators(self):
         """All target paths should use / (IMAS convention)."""
         all_specs = (
@@ -224,6 +234,7 @@ class TestMappingSpecs:
             + MAGNETICS_BPOL_MAPPINGS
             + MAGNETICS_FLUX_LOOP_MAPPINGS
             + PF_PASSIVE_LOOP_MAPPINGS
+            + WALL_LIMITER_MAPPINGS
         )
         for spec in all_specs:
             target_path = spec[1]
@@ -240,6 +251,14 @@ class TestAssemblyConfigs:
         assert "static" in PF_ACTIVE_ASSEMBLY_CONFIG
         assert PF_ACTIVE_ASSEMBLY_CONFIG["coil"]["source"]["system"] == "PF"
         assert PF_ACTIVE_ASSEMBLY_CONFIG["circuit"]["source"]["system"] == "CI"
+
+    def test_wall_has_nested_array_structure(self):
+        assert "description_2d" in WALL_ASSEMBLY_CONFIG
+        d2d = WALL_ASSEMBLY_CONFIG["description_2d"]
+        assert d2d["structure"] == "nested_array"
+        assert d2d["nested_path"] == "limiter.unit"
+        assert d2d["parent_size"] == 1
+        assert d2d["source"]["select_via"] == "USES_LIMITER"
 
 
 class TestCreateMappings:
@@ -293,3 +312,11 @@ class TestSeedIdsMappings:
         gc.query.return_value = []
         result = seed_ids_mappings("jet", "pf_passive", "4.1.1", gc)
         assert result == "jet:pf_passive"
+
+    def test_wall_creates_all_sections(self):
+        gc = MagicMock()
+        gc.query.return_value = []
+        result = seed_ids_mappings("jet", "wall", "4.1.1", gc)
+        assert result == "jet:wall"
+        # description_2d mappings + recipe creation + mappings link
+        assert gc.query.call_count == 3
