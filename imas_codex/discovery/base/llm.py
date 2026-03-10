@@ -289,6 +289,50 @@ def extract_cost(response: Any) -> float:
     return (input_tokens * 3 + output_tokens * 15) / 1_000_000
 
 
+def _log_cache_metrics(response: Any, model: str) -> None:
+    """Log prompt cache hit/miss metrics from LLM response usage.
+
+    Providers report cached token counts in ``usage.prompt_tokens_details``.
+    This logs at DEBUG level for post-hoc analysis of cache effectiveness
+    via the auto-rotating CLI log files.
+    """
+    usage = getattr(response, "usage", None)
+    if not usage:
+        return
+    ptd = getattr(usage, "prompt_tokens_details", None)
+    cached = getattr(ptd, "cached_tokens", 0) or 0 if ptd else 0
+    cache_write = getattr(ptd, "cache_creation_tokens", 0) or 0 if ptd else 0
+    prompt = getattr(usage, "prompt_tokens", 0) or 0
+    completion = getattr(usage, "completion_tokens", 0) or 0
+
+    if cached > 0:
+        pct = cached / prompt * 100 if prompt > 0 else 0
+        logger.debug(
+            "LLM cache HIT: %d/%d prompt tokens cached (%.0f%%), "
+            "completion=%d, model=%s",
+            cached,
+            prompt,
+            pct,
+            completion,
+            model,
+        )
+    elif cache_write > 0:
+        logger.debug(
+            "LLM cache WRITE: %d tokens written, prompt=%d, completion=%d, model=%s",
+            cache_write,
+            prompt,
+            completion,
+            model,
+        )
+    else:
+        logger.debug(
+            "LLM cache MISS: prompt=%d, completion=%d, model=%s",
+            prompt,
+            completion,
+            model,
+        )
+
+
 def _sanitize_content(content: str) -> str:
     """Sanitize LLM response content for JSON parsing.
 
@@ -423,10 +467,11 @@ def _build_kwargs(
 
     if llm_location != "local" or os.getenv("LITELLM_PROXY_URL"):
         proxy_url = get_llm_proxy_url()
-        # Proxy is an OpenAI-compatible endpoint; use openai/ prefix
-        # so LiteLLM sends raw model name to the proxy, which handles
-        # provider routing via its model_list configuration.
-        model_id = f"openai/{model}" if not model.startswith("openai/") else model
+        # Use openrouter/ prefix even through the proxy so that LiteLLM's
+        # client preserves cache_control breakpoints in message content
+        # blocks.  The openai/ prefix strips them (strict OpenAI format),
+        # which silently disables prompt caching for all providers.
+        model_id = ensure_openrouter_prefix(model)
         proxy_key = os.getenv("LITELLM_MASTER_KEY", api_key)
         kwargs: dict[str, Any] = {
             "model": model_id,
@@ -522,6 +567,7 @@ def call_llm_structured(
         try:
             response = litellm.completion(**kwargs)
             total_cost += extract_cost(response)
+            _log_cache_metrics(response, model)
 
             # Parse response content through Pydantic
             content = response.choices[0].message.content
@@ -623,6 +669,7 @@ async def acall_llm_structured(
         try:
             response = await litellm.acompletion(**kwargs)
             total_cost += extract_cost(response)
+            _log_cache_metrics(response, model)
 
             # Parse response content through Pydantic
             content = response.choices[0].message.content
@@ -727,6 +774,7 @@ def call_llm(
         try:
             response = litellm.completion(**kwargs)
             cost = extract_cost(response)
+            _log_cache_metrics(response, model)
             return response, cost
         except Exception as e:
             last_error = e
@@ -811,6 +859,7 @@ async def acall_llm(
         try:
             response = await litellm.acompletion(**kwargs)
             cost = extract_cost(response)
+            _log_cache_metrics(response, model)
             return response, cost
         except Exception as e:
             last_error = e
