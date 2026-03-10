@@ -1,6 +1,6 @@
 # IDS Mapping Architecture: From Naive Recipes to Graph-Driven Assembly
 
-Status: **Design Proposal** (v2 — incorporates pf_active lessons + review feedback)
+Status: **Implemented** (Migration Path Steps 1–7 complete)
 Supersedes: `ids-assembly.md` (Phase 1 proof-of-concept)
 
 ## What We Learned from pf_active
