@@ -64,6 +64,7 @@ async def run_parallel_code_discovery(
     num_code_workers: int = 2,
     scan_only: bool = False,
     score_only: bool = False,
+    triage_batch_size: int | None = None,
     deadline: float | None = None,
     on_scan_progress: Callable | None = None,
     on_triage_progress: Callable | None = None,
@@ -192,6 +193,9 @@ async def run_parallel_code_discovery(
             count=num_triage_workers,
             enabled=not scan_only,
             on_progress=on_triage_progress,
+            kwargs={"batch_size": triage_batch_size}
+            if triage_batch_size is not None
+            else {},
         ),
         WorkerSpec(
             "enrich",

@@ -98,6 +98,12 @@ logger = logging.getLogger(__name__)
     default=None,
     help="Maximum runtime in minutes (e.g., 10). Discovery halts when time expires.",
 )
+@click.option(
+    "--triage-batch-size",
+    type=int,
+    default=None,
+    help="Paths per triage LLM call (default: 50). Tune for cost vs quality.",
+)
 def paths(
     facility: str,
     root: tuple[str, ...],
@@ -113,6 +119,7 @@ def paths(
     enrich_threshold: float | None,
     reset_scored: bool,
     time_limit: int | None,
+    triage_batch_size: int | None,
 ) -> None:
     """Discover and score directory structure at a facility.
 
@@ -152,6 +159,7 @@ def paths(
         enrich_threshold=enrich_threshold,
         reset_scored=reset_scored,
         timeout_minutes=time_limit,
+        triage_batch_size=triage_batch_size,
     )
 
 
@@ -175,6 +183,7 @@ def _run_iterative_discovery(
     enrich_threshold: float | None = None,
     reset_scored: bool = False,
     timeout_minutes: int | None = None,
+    triage_batch_size: int | None = None,
 ) -> None:
     """Run parallel scan/triage/score discovery."""
     import time as time_module
@@ -411,6 +420,13 @@ def _run_iterative_discovery(
                 auto_enrich_threshold=enrich_threshold,
                 num_scan_workers=effective_scan_workers,
                 num_triage_workers=effective_triage_workers,
+                **(
+                    {
+                        "triage_batch_size": triage_batch_size,
+                    }
+                    if triage_batch_size is not None
+                    else {}
+                ),
                 on_scan_progress=on_scan,
                 on_expand_progress=on_expand,
                 on_triage_progress=on_triage,
