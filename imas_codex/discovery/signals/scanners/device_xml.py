@@ -2,7 +2,7 @@
 
 Parses device XML files from a git bare repo to discover machine description
 geometry: PF coils, passive structures, magnetic probes, flux loops, circuits,
-and limiter contours. Creates DataSource, StructuralEpoch, DataNode, and
+and limiter contours. Creates DataSource, StructuralEpoch, SignalNode, and
 FacilitySignal graph nodes.
 
 Config key: data_systems.device_xml
@@ -22,12 +22,12 @@ from imas_codex.discovery.signals.scanners.base import (
 from imas_codex.graph.client import GraphClient
 from imas_codex.graph.models import (
     DataAccess,
-    DataNodeSource,
-    DataNodeType,
     DataSourceType,
     FacilitySignal,
     FacilitySignalStatus,
     IngestionStatus,
+    SignalNodeSource,
+    SignalNodeType,
 )
 from imas_codex.remote.executor import run_python_script
 
@@ -174,7 +174,7 @@ def _persist_graph_nodes(
     parsed_versions: dict[str, dict],
     parsed_limiters: dict[str, dict],
 ) -> dict[str, int]:
-    """Persist DataSource, StructuralEpoch, DataNode, and FacilitySignal to graph."""
+    """Persist DataSource, StructuralEpoch, SignalNode, and FacilitySignal to graph."""
     versions_config = config.get("versions", [])
     data_access_id = f"{facility}:device_xml:git"
 
@@ -302,7 +302,7 @@ def _persist_graph_nodes(
             )
             stats["epochs"] = len(epoch_records)
 
-        # 3. Create DataNode and FacilitySignal nodes per version
+        # 3. Create SignalNode and FacilitySignal nodes per version
         for vc in versions_config:
             version = vc["version"]
             xml_file = vc.get("device_xml", "")
@@ -356,8 +356,8 @@ def _persist_graph_nodes(
                         "path": node_path,
                         "data_source_name": "device_xml",
                         "facility_id": facility,
-                        "node_type": DataNodeType.NUMERIC.value,
-                        "source": DataNodeSource.introspection.value,
+                        "node_type": SignalNodeType.NUMERIC.value,
+                        "source": SignalNodeSource.introspection.value,
                         "description": ", ".join(desc_parts),
                         "introduced_version": epoch_id,
                         "system": meta.get("system", ""),
@@ -413,17 +413,17 @@ def _persist_graph_nodes(
             if data_nodes:
                 for dn in data_nodes:
                     dn["id"] = dn["path"]
-                gc.create_nodes("DataNode", data_nodes, batch_size=100)
+                gc.create_nodes("SignalNode", data_nodes, batch_size=100)
                 stats["data_nodes"] += len(data_nodes)
 
-                # Create INTRODUCED_IN relationships (DataNode → StructuralEpoch)
+                # Create INTRODUCED_IN relationships (SignalNode → StructuralEpoch)
                 intro_records = [
                     {"id": dn["id"], "epoch_id": epoch_id} for dn in data_nodes
                 ]
                 gc.query(
                     """
                     UNWIND $records AS rec
-                    MATCH (dn:DataNode {id: rec.id})
+                    MATCH (dn:SignalNode {id: rec.id})
                     MATCH (se:StructuralEpoch {id: rec.epoch_id})
                     MERGE (dn)-[:INTRODUCED_IN]->(se)
                     """,
@@ -465,8 +465,8 @@ def _persist_graph_nodes(
                 "path": node_path,
                 "data_source_name": "device_xml",
                 "facility_id": facility,
-                "node_type": DataNodeType.NUMERIC.value,
-                "source": DataNodeSource.introspection.value,
+                "node_type": SignalNodeType.NUMERIC.value,
+                "source": SignalNodeSource.introspection.value,
                 "description": (f"First wall contour '{name}': {n_points} R,Z points"),
                 "first_shot": lv.get("first_shot"),
                 "last_shot": lv.get("last_shot"),
@@ -505,10 +505,10 @@ def _persist_graph_nodes(
         if limiter_nodes:
             for dn in limiter_nodes:
                 dn["id"] = dn["path"]
-            gc.create_nodes("DataNode", limiter_nodes, batch_size=50)
+            gc.create_nodes("SignalNode", limiter_nodes, batch_size=50)
             stats["limiter_nodes"] = len(limiter_nodes)
 
-        # 4b. Create USES_LIMITER relationships (StructuralEpoch → limiter DataNode)
+        # 4b. Create USES_LIMITER relationships (StructuralEpoch → limiter SignalNode)
         # Each config version specifies its limiter via:
         #   1. uses_limiter: explicit limiter version name (pre-EFIT++ epochs)
         #   2. limiter: file path → matched to limiter_version by basename
@@ -545,7 +545,7 @@ def _persist_graph_nodes(
                 """
                 UNWIND $records AS rec
                 MATCH (se:StructuralEpoch {id: rec.epoch_id})
-                MATCH (dn:DataNode {id: rec.limiter_path})
+                MATCH (dn:SignalNode {id: rec.limiter_path})
                 MERGE (se)-[:USES_LIMITER]->(dn)
                 """,
                 records=uses_limiter_records,
@@ -625,7 +625,7 @@ def _persist_jec2020_nodes(
 ) -> dict[str, int]:
     """Persist JEC2020 data into the graph.
 
-    Creates DataSource, DataNode, and FacilitySignal nodes for magnetics,
+    Creates DataSource, SignalNode, and FacilitySignal nodes for magnetics,
     PF systems, iron core boundaries, and high-res limiter contour.
     """
     source_name = source_config.get("name", "jec2020_geometry")
@@ -686,8 +686,8 @@ def _persist_jec2020_nodes(
                     "path": node_path,
                     "data_source_name": source_name,
                     "facility_id": facility,
-                    "node_type": DataNodeType.NUMERIC.value,
-                    "source": DataNodeSource.introspection.value,
+                    "node_type": SignalNodeType.NUMERIC.value,
+                    "source": SignalNodeSource.introspection.value,
                     "system": JEC2020_SYSTEM_MAP["magnetics_probe"],
                     "first_shot": reference_shot,
                     "description": ", ".join(desc_parts),
@@ -740,7 +740,7 @@ def _persist_jec2020_nodes(
 
             for dn in probe_nodes:
                 dn["id"] = dn["path"]
-            gc.create_nodes("DataNode", probe_nodes, batch_size=100)
+            gc.create_nodes("SignalNode", probe_nodes, batch_size=100)
             stats["probes"] = len(probe_nodes)
 
         # 3. Flux loops
@@ -755,8 +755,8 @@ def _persist_jec2020_nodes(
                     "path": node_path,
                     "data_source_name": source_name,
                     "facility_id": facility,
-                    "node_type": DataNodeType.NUMERIC.value,
-                    "source": DataNodeSource.introspection.value,
+                    "node_type": SignalNodeType.NUMERIC.value,
+                    "source": SignalNodeSource.introspection.value,
                     "system": JEC2020_SYSTEM_MAP["magnetics_flux"],
                     "first_shot": reference_shot,
                     "description": f"Flux loop {fid}: {fl.get('description', '')}",
@@ -796,7 +796,7 @@ def _persist_jec2020_nodes(
 
             for dn in loop_nodes:
                 dn["id"] = dn["path"]
-            gc.create_nodes("DataNode", loop_nodes, batch_size=100)
+            gc.create_nodes("SignalNode", loop_nodes, batch_size=100)
             stats["flux_loops"] = len(loop_nodes)
 
         # 4. PF coils
@@ -813,8 +813,8 @@ def _persist_jec2020_nodes(
                     "path": node_path,
                     "data_source_name": source_name,
                     "facility_id": facility,
-                    "node_type": DataNodeType.NUMERIC.value,
-                    "source": DataNodeSource.introspection.value,
+                    "node_type": SignalNodeType.NUMERIC.value,
+                    "source": SignalNodeSource.introspection.value,
                     "system": JEC2020_SYSTEM_MAP["pf_coils"],
                     "first_shot": reference_shot,
                     "description": f"PF coil {cid} ({cname})",
@@ -862,7 +862,7 @@ def _persist_jec2020_nodes(
 
             for dn in coil_nodes:
                 dn["id"] = dn["path"]
-            gc.create_nodes("DataNode", coil_nodes, batch_size=100)
+            gc.create_nodes("SignalNode", coil_nodes, batch_size=100)
             stats["pf_coils"] = len(coil_nodes)
 
         # 5. PF circuits
@@ -878,8 +878,8 @@ def _persist_jec2020_nodes(
                     "path": node_path,
                     "data_source_name": source_name,
                     "facility_id": facility,
-                    "node_type": DataNodeType.NUMERIC.value,
-                    "source": DataNodeSource.introspection.value,
+                    "node_type": SignalNodeType.NUMERIC.value,
+                    "source": SignalNodeSource.introspection.value,
                     "system": JEC2020_SYSTEM_MAP["pf_circuits"],
                     "first_shot": reference_shot,
                     "description": f"PF circuit {cid} ({cname})",
@@ -893,7 +893,7 @@ def _persist_jec2020_nodes(
 
             for dn in circuit_nodes:
                 dn["id"] = dn["path"]
-            gc.create_nodes("DataNode", circuit_nodes, batch_size=50)
+            gc.create_nodes("SignalNode", circuit_nodes, batch_size=50)
             stats["pf_circuits"] = len(circuit_nodes)
 
             # Create COIL_IN_CIRCUIT relationships
@@ -912,8 +912,8 @@ def _persist_jec2020_nodes(
                 gc.query(
                     """
                     UNWIND $records AS rec
-                    MATCH (circuit:DataNode {id: rec.circuit_path})
-                    MATCH (coil:DataNode {id: rec.coil_path})
+                    MATCH (circuit:SignalNode {id: rec.circuit_path})
+                    MATCH (coil:SignalNode {id: rec.coil_path})
                     MERGE (coil)-[:IN_CIRCUIT]->(circuit)
                     """,
                     records=coil_circuit_records,
@@ -929,8 +929,8 @@ def _persist_jec2020_nodes(
                     "path": f"{facility}:jec2020:iron_boundary",
                     "data_source_name": source_name,
                     "facility_id": facility,
-                    "node_type": DataNodeType.NUMERIC.value,
-                    "source": DataNodeSource.introspection.value,
+                    "node_type": SignalNodeType.NUMERIC.value,
+                    "source": SignalNodeSource.introspection.value,
                     "system": JEC2020_SYSTEM_MAP["iron_core"],
                     "first_shot": reference_shot,
                     "file_source": "filesystem",
@@ -951,7 +951,7 @@ def _persist_jec2020_nodes(
                     iron_node["boundary_length"] = iron_data["boundary_length"]
 
                 iron_node["id"] = iron_node["path"]
-                gc.create_nodes("DataNode", [iron_node])
+                gc.create_nodes("SignalNode", [iron_node])
                 stats["iron_segments"] = len(r_vals)
 
                 sig_id = f"{facility}:magnetic_field_diagnostics/jec2020_iron_boundary"
@@ -984,8 +984,8 @@ def _persist_jec2020_nodes(
                     "path": f"{facility}:jec2020:limiter",
                     "data_source_name": source_name,
                     "facility_id": facility,
-                    "node_type": DataNodeType.NUMERIC.value,
-                    "source": DataNodeSource.introspection.value,
+                    "node_type": SignalNodeType.NUMERIC.value,
+                    "source": SignalNodeSource.introspection.value,
                     "system": JEC2020_SYSTEM_MAP["limiter"],
                     "first_shot": reference_shot,
                     "file_source": "filesystem",
@@ -999,7 +999,7 @@ def _persist_jec2020_nodes(
                     "n_points": len(r_vals),
                 }
                 limiter_node["id"] = limiter_node["path"]
-                gc.create_nodes("DataNode", [limiter_node])
+                gc.create_nodes("SignalNode", [limiter_node])
                 stats["limiter_points"] = len(r_vals)
 
                 sig_id = f"{facility}:magnetic_field_diagnostics/jec2020_limiter"
@@ -1025,8 +1025,8 @@ def _persist_jec2020_nodes(
                 # Create SAME_GEOMETRY link to device_xml limiter if it exists
                 gc.query(
                     """
-                    MATCH (jec:DataNode {id: $jec_path})
-                    MATCH (dx:DataNode {id: $dx_path})
+                    MATCH (jec:SignalNode {id: $jec_path})
+                    MATCH (dx:SignalNode {id: $dx_path})
                     MERGE (jec)-[:SAME_GEOMETRY]->(dx)
                     """,
                     jec_path=f"{facility}:jec2020:limiter",
@@ -1060,7 +1060,7 @@ def _persist_mcfg_nodes(
 ) -> dict[str, int]:
     """Persist MCFG sensor positions and calibration data.
 
-    Creates DataSource, DataNode for each sensor, and cross-references
+    Creates DataSource, SignalNode for each sensor, and cross-references
     to JEC2020 probe nodes via MATCHES_SENSOR relationships.
     """
     source_name = source_config.get("name", "sensor_calibration")
@@ -1111,8 +1111,8 @@ def _persist_mcfg_nodes(
                     "path": node_path,
                     "data_source_name": source_name,
                     "facility_id": facility,
-                    "node_type": DataNodeType.NUMERIC.value,
-                    "source": DataNodeSource.introspection.value,
+                    "node_type": SignalNodeType.NUMERIC.value,
+                    "source": SignalNodeSource.introspection.value,
                     "system": "MP",
                     "r": sensor["r"],
                     "z": sensor["z"],
@@ -1134,7 +1134,7 @@ def _persist_mcfg_nodes(
 
             for dn in coil_nodes:
                 dn["id"] = dn["path"]
-            gc.create_nodes("DataNode", coil_nodes, batch_size=100)
+            gc.create_nodes("SignalNode", coil_nodes, batch_size=100)
             stats["coil_sensors"] = len(coil_nodes)
 
         # 3. Hall probes
@@ -1149,8 +1149,8 @@ def _persist_mcfg_nodes(
                     "path": node_path,
                     "data_source_name": source_name,
                     "facility_id": facility,
-                    "node_type": DataNodeType.NUMERIC.value,
-                    "source": DataNodeSource.introspection.value,
+                    "node_type": SignalNodeType.NUMERIC.value,
+                    "source": SignalNodeSource.introspection.value,
                     "system": "MP",
                     "r": sensor["r"],
                     "z": sensor["z"],
@@ -1167,16 +1167,16 @@ def _persist_mcfg_nodes(
 
             for dn in hall_nodes:
                 dn["id"] = dn["path"]
-            gc.create_nodes("DataNode", hall_nodes, batch_size=50)
+            gc.create_nodes("SignalNode", hall_nodes, batch_size=50)
             stats["hall_probes"] = len(hall_nodes)
 
         # 4. Cross-reference MCFG ↔ JEC2020 sensors by R,Z proximity
         if coils:
             gc.query(
                 """
-                MATCH (mcfg:DataNode)
+                MATCH (mcfg:SignalNode)
                 WHERE mcfg.data_source_name = $mcfg_source AND mcfg.facility_id = $facility
-                MATCH (jec:DataNode)
+                MATCH (jec:SignalNode)
                 WHERE jec.data_source_name = $jec_source AND jec.facility_id = $facility
                   AND jec.system = 'MP'
                   AND abs(mcfg.r - jec.r) < 0.001
@@ -1304,7 +1304,7 @@ def _persist_magnetics_config_nodes(
 ) -> dict[str, int]:
     """Persist magnetics config sensor data into the graph.
 
-    Creates DataSource, StructuralEpoch (per config epoch), DataNode
+    Creates DataSource, StructuralEpoch (per config epoch), SignalNode
     (per sensor per epoch), and FacilitySignal (deduplicated across epochs).
     Shot-range boundaries come from the indexr file.
     """
@@ -1403,7 +1403,7 @@ def _persist_magnetics_config_nodes(
             )
             stats["epochs"] = len(epoch_records)
 
-        # 3. Create DataNode per sensor per config epoch
+        # 3. Create SignalNode per sensor per config epoch
         for entry in index_entries:
             config_name = entry["config_file"]
             config_data = configs.get(config_name, {})
@@ -1442,8 +1442,8 @@ def _persist_magnetics_config_nodes(
                     "path": node_path,
                     "data_source_name": source_name,
                     "facility_id": facility,
-                    "node_type": DataNodeType.NUMERIC.value,
-                    "source": DataNodeSource.introspection.value,
+                    "node_type": SignalNodeType.NUMERIC.value,
+                    "source": SignalNodeSource.introspection.value,
                     "system": system,
                     "first_shot": entry["first_shot"],
                     "last_shot": entry["last_shot"],
@@ -1507,7 +1507,7 @@ def _persist_magnetics_config_nodes(
             if data_nodes:
                 for dn in data_nodes:
                     dn["id"] = dn["path"]
-                gc.create_nodes("DataNode", data_nodes, batch_size=200)
+                gc.create_nodes("SignalNode", data_nodes, batch_size=200)
                 stats["data_nodes"] += len(data_nodes)
 
                 # Create INTRODUCED_IN relationships
@@ -1517,7 +1517,7 @@ def _persist_magnetics_config_nodes(
                 gc.query(
                     """
                     UNWIND $records AS rec
-                    MATCH (dn:DataNode {id: rec.id})
+                    MATCH (dn:SignalNode {id: rec.id})
                     MATCH (se:StructuralEpoch {id: rec.epoch_id})
                     MERGE (dn)-[:INTRODUCED_IN]->(se)
                     """,
@@ -1540,11 +1540,11 @@ def _persist_magnetics_config_nodes(
         # Only for the latest config epoch (2002_01) which overlaps with JEC2020
         gc.query(
             """
-            MATCH (mc:DataNode)
+            MATCH (mc:SignalNode)
             WHERE mc.data_source_name = $mc_source
               AND mc.facility_id = $facility
               AND mc.sensor_type = 'BPOL'
-            MATCH (jec:DataNode)
+            MATCH (jec:SignalNode)
             WHERE jec.data_source_name = $jec_source
               AND jec.facility_id = $facility
               AND jec.system = 'MP'
@@ -1560,11 +1560,11 @@ def _persist_magnetics_config_nodes(
         # 7. Cross-reference magnetics_config ↔ device_xml probes by R,Z
         gc.query(
             """
-            MATCH (mc:DataNode)
+            MATCH (mc:SignalNode)
             WHERE mc.data_source_name = $mc_source
               AND mc.facility_id = $facility
               AND mc.sensor_type = 'BPOL'
-            MATCH (dx:DataNode)
+            MATCH (dx:SignalNode)
             WHERE dx.data_source_name = 'device_xml'
               AND dx.facility_id = $facility
               AND dx.system = 'MP'
@@ -1591,7 +1591,7 @@ def _persist_pf_coil_turns_nodes(
 ) -> dict[str, int]:
     """Persist PF coil circuit turns data into the graph.
 
-    Creates DataSource and DataNode records for PF coil turns ratios,
+    Creates DataSource and SignalNode records for PF coil turns ratios,
     and links them to existing device_xml PF coil/circuit DataNodes.
     """
     source_name = source_config.get("name", "pf_coil_turns")
@@ -1631,7 +1631,7 @@ def _persist_pf_coil_turns_nodes(
             ),
         )
 
-        # 2. Create DataNode per coil entry
+        # 2. Create SignalNode per coil entry
         data_nodes: list[dict] = []
         for coil in coils:
             coil_name = coil.get("name", "")
@@ -1641,8 +1641,8 @@ def _persist_pf_coil_turns_nodes(
                 "path": node_path,
                 "data_source_name": source_name,
                 "facility_id": facility,
-                "node_type": DataNodeType.NUMERIC.value,
-                "source": DataNodeSource.introspection.value,
+                "node_type": SignalNodeType.NUMERIC.value,
+                "source": SignalNodeSource.introspection.value,
                 "system": "PF",
                 "file_source": "filesystem",
                 "file_path": f"{base_dir}/cturns",
@@ -1658,7 +1658,7 @@ def _persist_pf_coil_turns_nodes(
         if data_nodes:
             for dn in data_nodes:
                 dn["id"] = dn["path"]
-            gc.create_nodes("DataNode", data_nodes, batch_size=50)
+            gc.create_nodes("SignalNode", data_nodes, batch_size=50)
             stats["coil_entries"] = len(data_nodes)
 
         # 3. Cross-reference to JEC2020 PF circuits by name prefix.
@@ -1672,12 +1672,12 @@ def _persist_pf_coil_turns_nodes(
         result = gc.query(
             """
             UNWIND $mappings AS m
-            MATCH (ct:DataNode)
+            MATCH (ct:SignalNode)
             WHERE ct.data_source_name = $ct_source
               AND ct.facility_id = $facility
             WITH ct, m, split(ct.path, ':')[-1] AS coil_name
             WHERE coil_name STARTS WITH m.prefix
-            MATCH (circ:DataNode {id: m.circuit_id})
+            MATCH (circ:SignalNode {id: m.circuit_id})
             MERGE (ct)-[:SAME_COMPONENT]->(circ)
             RETURN count(*) AS refs_created
             """,
@@ -1703,7 +1703,7 @@ def _persist_greens_table_nodes(
 ) -> dict[str, int]:
     """Persist Greens table version-to-shot mapping.
 
-    Creates DataSource and DataNode records for each Green's table version,
+    Creates DataSource and SignalNode records for each Green's table version,
     linking shot ranges to specific pre-computed Green's function tables
     used by EFIT equilibrium reconstruction.
     """
@@ -1745,7 +1745,7 @@ def _persist_greens_table_nodes(
             ),
         )
 
-        # 2. Create DataNode per Greens table version
+        # 2. Create SignalNode per Greens table version
         data_nodes: list[dict] = []
         for entry in entries:
             version_name = entry.get("version", "")
@@ -1755,8 +1755,8 @@ def _persist_greens_table_nodes(
                 "path": node_path,
                 "data_source_name": source_name,
                 "facility_id": facility,
-                "node_type": DataNodeType.NUMERIC.value,
-                "source": DataNodeSource.introspection.value,
+                "node_type": SignalNodeType.NUMERIC.value,
+                "source": SignalNodeSource.introspection.value,
                 "system": "GR",
                 "first_shot": entry.get("first_shot"),
                 "last_shot": entry.get("last_shot"),
@@ -1781,13 +1781,13 @@ def _persist_greens_table_nodes(
         if data_nodes:
             for dn in data_nodes:
                 dn["id"] = dn["path"]
-            gc.create_nodes("DataNode", data_nodes, batch_size=50)
+            gc.create_nodes("SignalNode", data_nodes, batch_size=50)
             stats["versions"] = len(data_nodes)
 
         # 3. Link Greens table versions to StructuralEpoch nodes by shot overlap
         gc.query(
             """
-            MATCH (gt:DataNode)
+            MATCH (gt:SignalNode)
             WHERE gt.data_source_name = $gt_source AND gt.facility_id = $facility
             MATCH (se:StructuralEpoch)
             WHERE se.facility_id = $facility
@@ -1807,7 +1807,7 @@ def _persist_greens_table_nodes(
 # PPF Static Geometry Signal Ingestion
 # =========================================================================
 
-# Map PPF static signals to their corresponding device_xml DataNode paths.
+# Map PPF static signals to their corresponding device_xml SignalNode paths.
 # EFIT/RLIM and EFIT/ZLIM both reference the Mk2ILW limiter contour.
 PPF_GEOMETRY_CROSSREFS: dict[str, str] = {
     "EFIT/RLIM": "jet:device_xml:limiter:Mk2ILW",
@@ -1904,7 +1904,7 @@ def _persist_ppf_static_nodes(
                 gc.query(
                     """
                     MATCH (da:DataAccess {id: $da_id})
-                    MATCH (dn:DataNode {id: $dx_path})
+                    MATCH (dn:SignalNode {id: $dx_path})
                     MERGE (da)-[:ACCESSES_GEOMETRY]->(dn)
                     """,
                     da_id=da_id,
@@ -1946,7 +1946,7 @@ class DeviceXMLScanner:
         """Discover geometry signals from device XML files.
 
         Runs parse_device_xml.py remotely to extract geometry from git,
-        then persists DataSource, StructuralEpoch, DataNode, and
+        then persists DataSource, StructuralEpoch, SignalNode, and
         FacilitySignal nodes to the graph.
         """
         git_repo = config.get("git_repo")
@@ -2520,7 +2520,7 @@ class DeviceXMLScanner:
     ) -> list[dict[str, Any]]:
         """Validate device XML signals.
 
-        For static geometry data, validation checks that the DataNode
+        For static geometry data, validation checks that the SignalNode
         has stored values (r, z, etc.) rather than querying live data.
         """
         results = []
@@ -2537,10 +2537,10 @@ class DeviceXMLScanner:
                     )
                     continue
 
-                # Check DataNode exists and has geometry values
+                # Check SignalNode exists and has geometry values
                 rows = gc.query(
                     """
-                    MATCH (dn:DataNode {id: $path})
+                    MATCH (dn:SignalNode {id: $path})
                     RETURN dn.r AS r, dn.z AS z, dn.path AS path
                     """,
                     path=dn_path,
@@ -2559,7 +2559,7 @@ class DeviceXMLScanner:
                         {
                             "signal_id": signal.id,
                             "valid": False,
-                            "error": f"DataNode not found: {dn_path}",
+                            "error": f"SignalNode not found: {dn_path}",
                         }
                     )
 

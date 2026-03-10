@@ -1,92 +1,62 @@
 # IMAS Mapping Workflow
 
-How agents discover, propose, validate, and persist IMAS mappings.
+How mappings connect facility signals to IMAS fields.
 
-## Lifecycle
+## Architecture
 
-IMASMapping nodes carry the full status lifecycle — no separate proposal node.
+Three symmetric levels:
+
+| Level | Source Side | Target Side |
+|-------|-----------|-------------|
+| Individual | `SignalNode` | `IMASNode` leaf (e.g., FLT_0D) |
+| Group | `SignalGroup` | `IMASNode` STRUCT_ARRAY |
+| Collection | `IMASMapping` | `IDS` |
+
+## Graph Structure
 
 ```
-FacilitySignal/DataNode → IMASMapping(proposed) → MappingEvidence → IMASMapping(validated)
+IMASMapping ──[:USES_SIGNAL_GROUP]──▶ SignalGroup ──[:MAPS_TO_IMAS {field props}]──▶ IMASNode
+    │                                     ▲
+    │                                [:MEMBER_OF]
+    │                                     │
+    │                              SignalNode / FacilitySignal
+    │
+    └──[:POPULATES {assembly props}]──▶ IMASNode (STRUCT_ARRAY root)
 ```
 
-### 1. Signal Selection
-Query checked FacilitySignals for the target physics domain:
+## Key Relationships
+
+| Relationship | From → To | Purpose |
+|---|---|---|
+| `MAPS_TO_IMAS` | SignalGroup/SignalNode → IMASNode | Field-level mapping with transform |
+| `POPULATES` | IMASMapping → IMASNode (STRUCT_ARRAY) | Assembly section target with config |
+| `USES_SIGNAL_GROUP` | IMASMapping → SignalGroup | Assembly sources |
+| `MEMBER_OF` | SignalNode/FacilitySignal → SignalGroup | Group membership |
+| `HAS_EVIDENCE` | SignalGroup → MappingEvidence | Evidence for group's mapping |
+
+## MAPS_TO_IMAS Properties
+
+| Property | Type | Purpose |
+|----------|------|---------|
+| `source_property` | string | Field on SignalNode to extract (e.g., "r", "z") |
+| `transform_code` | string | Python expression with `value` as input |
+| `units_in` | string | Source units |
+| `units_out` | string | Target units |
+| `status` | string | "validated" or "proposed" |
+| `confidence` | float | 0.0-1.0 |
+| `cocos_source` | integer | Source COCOS convention |
+| `cocos_target` | integer | Target COCOS convention |
+
+## Full Traversal Query
+
 ```cypher
-MATCH (s:FacilitySignal {facility_id: $facility, status: 'checked'})
-WHERE s.physics_domain = $domain
-RETURN s.id, s.name, s.accessor, s.units, s.description
-ORDER BY s.name
-```
-
-### 2. Candidate Discovery
-Use semantic search on IMAS path descriptions to find candidates:
-```python
-semantic_search("plasma current measurement", index="imas_path_embedding", k=10)
-```
-
-Cross-reference with structured DD lookup:
-```python
-search_imas("equilibrium/time_slice/global_quantities/ip")
-```
-
-### 3. Mapping Creation
-Create IMASMapping with status=proposed:
-```cypher
-MERGE (m:IMASMapping {id: $id})
-SET m.status = 'proposed',
-    m.facility_id = $facility,
-    m.source_path = $signal_id,
-    m.target_path = $imas_path,
-    m.driver = $driver,
-    m.confidence = $initial_confidence,
-    m.proposed_at = datetime()
-WITH m
-MATCH (s:FacilitySignal {id: $signal_id})
-MATCH (t:IMASPath {id: $imas_path})
-MERGE (m)-[:MAPS_TO_SOURCE]->(s)
-MERGE (m)-[:MAPS_TO_TARGET]->(t)
-```
-
-### 4. Evidence Collection
-Gather evidence from multiple sources:
-
-| Evidence Type | Source | Query |
-|---------------|--------|-------|
-| wiki_documentation | WikiChunk search | `semantic_search("signal mapping", "wiki_chunk_embedding", 5)` |
-| code_reference | CodeChunk search | `semantic_search("read plasma current", "code_chunk_embedding", 5)` |
-| data_validation | SSH to facility | Python script testing data access |
-| unit_analysis | IMAS DD + signal | Compare units_in vs units_out |
-| expert_knowledge | Agent reasoning | Domain expertise on physics equivalence |
-
-Each evidence item becomes a MappingEvidence node linked to the mapping.
-
-### 5. Validation Testing
-Write Python scripts to test the mapping against real data:
-```python
-# SSH to facility, read the signal
-data = tree.tdiExecute('tcv_eq("I_P")').data()
-time = tree.tdiExecute('dim_of(tcv_eq("I_P"))').data()
-
-# Check: units match? shape reasonable? sign correct?
-print(f"Shape: {data.shape}, Units: A, Range: [{data.min():.1f}, {data.max():.1f}]")
-```
-
-### 6. Status Progression
-- **proposed**: Initial mapping from LLM with evidence
-- **endorsed**: Multiple evidence sources agree, tests pass
-- **contested**: Conflicting evidence or failed tests
-- **validated**: Human or lead agent approved
-- **rejected**: Incorrect mapping (persisted with rejection reason)
-
-### 7. Finalization
-Update mapping status when validated:
-```cypher
-MATCH (m:IMASMapping {id: $id})
-SET m.status = 'validated',
-    m.validated = true,
-    m.validated_at = datetime(),
-    m.validated_shot = $shot
+MATCH (m:IMASMapping {id: $mapping_id})
+      -[t:POPULATES]->(root:IMASNode)
+MATCH (root)<-[:HAS_PARENT*]-(leaf:IMASNode)
+      <-[map:MAPS_TO_IMAS]-(sg:SignalGroup)
+      <-[:MEMBER_OF]-(n:SignalNode)
+WHERE (m)-[:USES_SIGNAL_GROUP]->(sg)
+RETURN leaf.id, map.source_property, map.transform_code, n.path
 ```
 
 ## Key Checks

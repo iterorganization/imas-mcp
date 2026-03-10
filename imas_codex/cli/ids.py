@@ -151,7 +151,7 @@ def ids_epochs(facility: str) -> None:
             gc.query(
                 """
                 MATCH (se:StructuralEpoch {facility_id: $facility})
-                OPTIONAL MATCH (se)<-[:INTRODUCED_IN]-(dn:DataNode)
+                OPTIONAL MATCH (se)<-[:INTRODUCED_IN]-(dn:SignalNode)
                 WITH se, count(dn) AS node_count
                 RETURN se.id AS id,
                        se.first_shot AS first_shot,
@@ -192,7 +192,7 @@ def ids_epochs(facility: str) -> None:
     help="Data dictionary version.",
 )
 def ids_seed(facility: str, ids_name: str, dd_version: str) -> None:
-    """Seed IMASMapping and IDSRecipe nodes for an IDS.
+    """Seed IMASMapping and IMASMapping nodes for an IDS.
 
     Creates canonical field mapping nodes and an assembly recipe in the
     graph for the specified facility and IDS.

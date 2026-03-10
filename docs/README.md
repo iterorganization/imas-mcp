@@ -6,11 +6,11 @@
 
 How things work - documentation for implemented systems:
 
-- [llamaindex-agents.md](architecture/llamaindex-agents.md) - LlamaIndex ReAct agents for DataNode enrichment
+- [llamaindex-agents.md](architecture/llamaindex-agents.md) - LlamaIndex ReAct agents for SignalNode enrichment
 - [cocos.md](architecture/cocos.md) - COCOS coordinate convention identification
 - [graph.md](architecture/graph.md) - Neo4j knowledge graph structure and operations
 - [imas_dd.md](architecture/imas_dd.md) - IMAS Data Dictionary MCP server
-- [mdsplus.md](architecture/mdsplus.md) - MDSplus integration and DataNode ingestion
+- [mdsplus.md](architecture/mdsplus.md) - MDSplus integration and SignalNode ingestion
 - [west-access-justification.md](architecture/west-access-justification.md) - WEST facility SSH access architecture and security
 
 ## Related

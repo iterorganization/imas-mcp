@@ -122,7 +122,7 @@ class TestGenSchemaContext:
         assert "Facility" in mod.NODE_LABEL_PROPS
         assert "FacilitySignal" in mod.NODE_LABEL_PROPS
         # DD labels too
-        assert "IMASPath" in mod.NODE_LABEL_PROPS
+        assert "IMASNode" in mod.NODE_LABEL_PROPS
 
     def test_relationships_are_tuples(self, tmp_path):
         import importlib.util
@@ -155,7 +155,7 @@ class TestGenSchemaContext:
         assert len(mod.VECTOR_INDEXES) > 0
         # Check some known indexes
         assert "wiki_chunk_embedding" in mod.VECTOR_INDEXES
-        assert "imas_path_embedding" in mod.VECTOR_INDEXES
+        assert "imas_node_embedding" in mod.VECTOR_INDEXES
 
     def test_task_groups_loaded(self, tmp_path):
         import importlib.util
@@ -213,7 +213,7 @@ class TestSchemaFor:
         assert "DataAccess" in result
         # Should NOT include unrelated labels as section headers
         assert "## WikiPage" not in result
-        assert "## IMASPath" not in result
+        assert "## IMASNode" not in result
 
     def test_schema_for_wiki_task(self):
         from imas_codex.graph.schema_context import schema_for
@@ -226,7 +226,7 @@ class TestSchemaFor:
         from imas_codex.graph.schema_context import schema_for
 
         result = schema_for(task="imas")
-        assert "IMASPath" in result
+        assert "IMASNode" in result
         assert "DDVersion" in result
 
     def test_schema_for_specific_labels(self):
@@ -244,7 +244,7 @@ class TestSchemaFor:
 
         result = schema_for(task="overview")
         assert "Facility" in result
-        assert "IMASPath" in result
+        assert "IMASNode" in result
 
     def test_schema_for_includes_vector_indexes(self):
         from imas_codex.graph.schema_context import schema_for

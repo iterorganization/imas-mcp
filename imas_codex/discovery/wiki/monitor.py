@@ -83,7 +83,7 @@ class WikiProgressMonitor:
     The monitor tracks multi-stage progress:
     - Scrape: Fetching HTML from wiki
     - Chunk: Splitting content and generating embeddings
-    - Link: Creating graph relationships to DataNodes/IMASPaths
+    - Link: Creating graph relationships to DataNodes/IMASNodes
     """
 
     def __init__(
@@ -174,8 +174,8 @@ class WikiProgressMonitor:
         Args:
             page_name: Name of the page just processed
             chunks: Number of chunks created from this page
-            data_nodes: Number of DataNode links created
-            imas_paths: Number of IMASPath links created
+            data_nodes: Number of SignalNode links created
+            imas_paths: Number of IMASNode links created
             conventions: Number of conventions found
             units: Number of units found
             failed: Whether the page failed to process

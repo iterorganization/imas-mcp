@@ -195,7 +195,7 @@ class Clusters:
         try:
             result = self.graph_client.query(
                 """
-                MATCH (p:IMASPath)
+                MATCH (p:IMASNode)
                 WITH count(p) AS total,
                      count(CASE WHEN p.embedding IS NOT NULL THEN 1 END) AS with_emb,
                      count(CASE WHEN p.is_error_field = true THEN 1 END) AS error_fields

@@ -64,7 +64,7 @@ class RelationshipExtractor:
         Args:
             config: Extraction configuration. Defaults to RelationshipExtractionConfig().
             graph_client: Optional Neo4j client. When provided, embeddings are
-                loaded directly from IMASPath nodes in the graph instead of
+                loaded directly from IMASNode nodes in the graph instead of
                 regenerating them from scratch.
         """
         self.config = config or RelationshipExtractionConfig()
@@ -737,7 +737,7 @@ class RelationshipExtractor:
         """Generate embeddings for filtered paths.
 
         Tries to load embeddings from the Neo4j graph first (where ``imas build``
-        stores them on IMASPath nodes). Falls back to the local encoder cache /
+        stores them on IMASNode nodes). Falls back to the local encoder cache /
         fresh generation only when the graph is unavailable or incomplete.
 
         Returns:
@@ -758,7 +758,7 @@ class RelationshipExtractor:
     def _load_embeddings_from_graph(
         self, filtered_paths: dict[str, dict[str, Any]]
     ) -> tuple[np.ndarray, list[str], int] | None:
-        """Load embeddings from IMASPath nodes in the Neo4j graph.
+        """Load embeddings from IMASNode nodes in the Neo4j graph.
 
         Returns None if the graph doesn't have enough coverage.
         """
@@ -774,7 +774,7 @@ class RelationshipExtractor:
                 results = self._graph_client.query(
                     """
                     UNWIND $paths AS pid
-                    MATCH (p:IMASPath {id: pid})
+                    MATCH (p:IMASNode {id: pid})
                     WHERE p.embedding IS NOT NULL
                     RETURN p.id AS id, p.embedding AS embedding
                     """,

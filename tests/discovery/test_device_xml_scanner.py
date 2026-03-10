@@ -1,7 +1,7 @@
 """E2E tests for DeviceXMLScanner — JET machine description geometry.
 
 Tests the full scan → persist → query cycle using mock SSH data.
-Validates DataSource, StructuralEpoch, DataNode, and FacilitySignal creation.
+Validates DataSource, StructuralEpoch, SignalNode, and FacilitySignal creation.
 """
 
 from __future__ import annotations
@@ -314,7 +314,7 @@ class TestPersistGraphNodes:
         assert stats["signals"] == 29
 
     def test_data_node_has_geometry_values(self):
-        """DataNode dicts include r, z, angle etc. as properties."""
+        """SignalNode dicts include r, z, angle etc. as properties."""
         created_nodes: list[list[dict]] = []
 
         with patch(
@@ -334,7 +334,7 @@ class TestPersistGraphNodes:
                 MOCK_PARSED_OUTPUT["limiters"],
             )
 
-        # Find DataNode calls (exclude FacilitySignal and DataAccess)
+        # Find SignalNode calls (exclude FacilitySignal and DataAccess)
         data_node_batches = [
             batch
             for batch in created_nodes
@@ -352,7 +352,7 @@ class TestPersistGraphNodes:
         assert dn["angle"] == -74.1
 
     def test_multi_element_coil_has_array_properties(self):
-        """Multi-element PF coil DataNode stores R/Z as float arrays."""
+        """Multi-element PF coil SignalNode stores R/Z as float arrays."""
         created_nodes: list[list[dict]] = []
 
         with patch(
@@ -387,7 +387,7 @@ class TestPersistGraphNodes:
         assert dn["z"] == [-1.457, -1.457, -1.457]
 
     def test_data_node_has_system_property(self):
-        """DataNode includes system property for domain filtering."""
+        """SignalNode includes system property for domain filtering."""
         created_nodes: list[list[dict]] = []
 
         with patch(
@@ -458,7 +458,7 @@ class TestPersistGraphNodes:
                 assert rec["epoch_id"] == "jet:device_xml:p89440"
 
     def test_limiter_node_has_contour_data(self):
-        """Limiter DataNode includes R,Z contour arrays."""
+        """Limiter SignalNode includes R,Z contour arrays."""
         created_nodes: list[list[dict]] = []
 
         with patch(
@@ -491,7 +491,7 @@ class TestScannerCheck:
 
     @pytest.mark.anyio
     async def test_check_valid_signal(self):
-        """check() returns valid for signals with DataNode data."""
+        """check() returns valid for signals with SignalNode data."""
         from imas_codex.graph.models import FacilitySignal
 
         scanner = DeviceXMLScanner()
@@ -639,7 +639,7 @@ class TestMultiVersionDedup:
         assert stats["signals"] == 3
         assert stats["epochs"] == 2
         # DataNodes should be created for BOTH epochs though
-        assert stats["data_nodes"] == 2  # One DataNode per epoch per instance
+        assert stats["data_nodes"] == 2  # One SignalNode per epoch per instance
 
 
 class TestParseDeviceXMLScript:
@@ -810,10 +810,10 @@ class TestChain1LimiterParsing:
 
 
 class TestLimiterProvenance:
-    """Test limiter DataNode provenance tracking (file_source, file_path)."""
+    """Test limiter SignalNode provenance tracking (file_source, file_path)."""
 
     def test_limiter_node_has_provenance(self):
-        """Limiter DataNode includes file_source and file_path properties."""
+        """Limiter SignalNode includes file_source and file_path properties."""
         parsed_limiters = {
             "Mk2A": {
                 "r": [1.8, 1.9, 2.0],
@@ -878,7 +878,7 @@ class TestLimiterProvenance:
 
 
 class TestUsesLimiterRelationship:
-    """Test StructuralEpoch → Limiter DataNode USES_LIMITER relationships."""
+    """Test StructuralEpoch → Limiter SignalNode USES_LIMITER relationships."""
 
     def test_uses_limiter_relationships_created(self):
         """USES_LIMITER graph queries are invoked with correct epoch/limiter pairs."""
@@ -1170,7 +1170,7 @@ class TestPreDivertorEpochs:
             stats = _persist_graph_nodes("jet", config, {}, parsed_limiters)
 
         assert stats["data_nodes"] == 0
-        # Only limiter + signal + data_access batches, no DataNode from XML
+        # Only limiter + signal + data_access batches, no SignalNode from XML
         all_dns = [dn for batch in created_nodes for dn in batch]
         xml_dns = [
             dn
@@ -1623,7 +1623,7 @@ class TestJEC2020Persist:
         assert stats["probes"] == 2
 
         probe_dns = [
-            dn for dn in nodes.get("DataNode", []) if "probe:" in dn.get("path", "")
+            dn for dn in nodes.get("SignalNode", []) if "probe:" in dn.get("path", "")
         ]
         assert len(probe_dns) == 2
 
@@ -1640,7 +1640,9 @@ class TestJEC2020Persist:
         assert stats["flux_loops"] == 1
 
         loop_dns = [
-            dn for dn in nodes.get("DataNode", []) if "flux_loop:" in dn.get("path", "")
+            dn
+            for dn in nodes.get("SignalNode", [])
+            if "flux_loop:" in dn.get("path", "")
         ]
         assert len(loop_dns) == 1
         assert loop_dns[0]["r"] == 2.0
@@ -1652,7 +1654,7 @@ class TestJEC2020Persist:
         assert stats["pf_coils"] == 2
 
         coil_dns = [
-            dn for dn in nodes.get("DataNode", []) if "pf_coil:" in dn.get("path", "")
+            dn for dn in nodes.get("SignalNode", []) if "pf_coil:" in dn.get("path", "")
         ]
         assert len(coil_dns) == 2
 
@@ -1673,7 +1675,7 @@ class TestJEC2020Persist:
 
         circuit_dns = [
             dn
-            for dn in nodes.get("DataNode", [])
+            for dn in nodes.get("SignalNode", [])
             if "pf_circuit:" in dn.get("path", "")
         ]
         assert len(circuit_dns) == 1
@@ -1683,13 +1685,13 @@ class TestJEC2020Persist:
         assert len(circuit_queries) == 1
 
     def test_persist_creates_iron_boundary(self):
-        """Iron core boundary creates DataNode with R,Z contour and permeabilities."""
+        """Iron core boundary creates SignalNode with R,Z contour and permeabilities."""
         stats, nodes, _ = self._run_persist()
         assert stats["iron_segments"] == 3
 
         iron_dns = [
             dn
-            for dn in nodes.get("DataNode", [])
+            for dn in nodes.get("SignalNode", [])
             if "iron_boundary" in dn.get("path", "")
         ]
         assert len(iron_dns) == 1
@@ -1698,13 +1700,13 @@ class TestJEC2020Persist:
         assert iron_dns[0]["boundary_length"] == 4.68
 
     def test_persist_creates_limiter(self):
-        """JEC2020 limiter creates DataNode with R,Z contour."""
+        """JEC2020 limiter creates SignalNode with R,Z contour."""
         stats, nodes, _ = self._run_persist()
         assert stats["limiter_points"] == 4
 
         lim_dns = [
             dn
-            for dn in nodes.get("DataNode", [])
+            for dn in nodes.get("SignalNode", [])
             if dn.get("path", "") == "jet:jec2020:limiter"
         ]
         assert len(lim_dns) == 1
@@ -1981,11 +1983,11 @@ class TestMCFGPersist:
         assert ds_queries[0][1]["source_format"] == "text"
 
     def test_persist_creates_coil_sensor_nodes(self):
-        """Coil sensors create DataNode with R/Z/angle/gain/error fields."""
+        """Coil sensors create SignalNode with R/Z/angle/gain/error fields."""
         _, nodes, _ = self._run_persist()
         coil_dns = [
             dn
-            for dn in nodes.get("DataNode", [])
+            for dn in nodes.get("SignalNode", [])
             if "mcfg:sensor:" in dn.get("path", "")
         ]
         assert len(coil_dns) == 2
@@ -2004,10 +2006,12 @@ class TestMCFGPersist:
         assert sensor1["facility_id"] == "jet"
 
     def test_persist_creates_hall_probe_nodes(self):
-        """Hall probes create DataNode with reduced field set."""
+        """Hall probes create SignalNode with reduced field set."""
         _, nodes, _ = self._run_persist()
         hall_dns = [
-            dn for dn in nodes.get("DataNode", []) if "mcfg:hall:" in dn.get("path", "")
+            dn
+            for dn in nodes.get("SignalNode", [])
+            if "mcfg:hall:" in dn.get("path", "")
         ]
         assert len(hall_dns) == 1
         assert hall_dns[0]["r"] == 6.2
@@ -2045,7 +2049,7 @@ class TestMCFGPersist:
         assert stats["coil_sensors"] == 0
         assert stats["hall_probes"] == 0
         assert stats["calibration_epochs"] == 0
-        assert not nodes.get("DataNode")
+        assert not nodes.get("SignalNode")
 
 
 class TestParseMCFGScript:
@@ -2455,7 +2459,7 @@ class TestPFConfigurationPersistence:
 
 
 class TestDeviceXMLProvenance:
-    """Test file_source/file_path provenance on DataNode dicts."""
+    """Test file_source/file_path provenance on SignalNode dicts."""
 
     def test_device_xml_data_node_has_provenance(self):
         """DataNodes from device XML include file_source=git and file_path."""
@@ -2478,7 +2482,7 @@ class TestDeviceXMLProvenance:
                 MOCK_PARSED_OUTPUT["limiters"],
             )
 
-        # Find DataNode calls (exclude signals and access)
+        # Find SignalNode calls (exclude signals and access)
         data_node_batches = [
             batch
             for batch in created_nodes

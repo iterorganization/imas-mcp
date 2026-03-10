@@ -1,7 +1,7 @@
 """Graph relationship creation for ingested content.
 
 Post-ingestion processing to create relationships between Chunk nodes,
-DataReference nodes, and data entities (DataNode, TDIFunction, IMASPath).
+DataReference nodes, and data entities (SignalNode, TDIFunction, IMASNode).
 
 Architecture:
     Chunk -[:CONTAINS_REF]-> DataReference -[:RESOLVES_TO_*]-> Entity
@@ -30,7 +30,7 @@ CHANNEL_SUFFIX_PATTERN = re.compile(r"[_:](?:CHANNEL_?)?\d+$", re.IGNORECASE)
 
 
 def _normalize_for_matching(raw_path: str) -> str:
-    """Normalize a path for fuzzy DataNode matching.
+    """Normalize a path for fuzzy SignalNode matching.
 
     Strips channel indices and numeric suffixes to match tree structure.
     E.g., \\ATLAS::DT196_MHD_001:CHANNEL_006 -> \\ATLAS::DT196_MHD:CHANNEL
@@ -65,7 +65,7 @@ def link_chunks_to_imas_paths(graph_client: GraphClient | None = None) -> int:
     """Create REFERENCES_IMAS relationships for chunks with IDS references.
 
     Matches CodeChunk nodes that have related_ids metadata to
-    existing IMASPath IDS root nodes (where ids field matches the IDS name).
+    existing IMASNode IDS root nodes (where ids field matches the IDS name).
 
     Args:
         graph_client: Optional GraphClient instance. If None, creates one.
@@ -77,7 +77,7 @@ def link_chunks_to_imas_paths(graph_client: GraphClient | None = None) -> int:
         MATCH (c:CodeChunk)
         WHERE c.related_ids IS NOT NULL
         UNWIND c.related_ids AS ids_name
-        MATCH (p:IMASPath)
+        MATCH (p:IMASNode)
         WHERE p.ids = ids_name AND p.id = ids_name
         MERGE (c)-[:REFERENCES_IMAS]->(p)
         RETURN count(*) AS created
@@ -121,7 +121,7 @@ def link_chunks_to_data_nodes(graph_client: GraphClient | None = None) -> int:
     1. Creates DataReference nodes (deduplicated by facility:type:hash)
     2. Creates CONTAINS_REF relationships from CodeChunk -> DataReference
     3. Computes normalized_path for fuzzy matching
-    4. Creates RESOLVES_TO_NODE relationships from DataReference -> DataNode
+    4. Creates RESOLVES_TO_NODE relationships from DataReference -> SignalNode
 
     Args:
         graph_client: Optional GraphClient instance.
@@ -192,7 +192,7 @@ def link_chunks_to_data_nodes(graph_client: GraphClient | None = None) -> int:
         resolve_to_tree = """
             MATCH (d:DataReference {ref_type: 'mdsplus_path'})
             WHERE NOT (d)-[:RESOLVES_TO_NODE]->()
-            MATCH (t:DataNode)
+            MATCH (t:SignalNode)
             WHERE t.path = d.raw_string
                OR t.path ENDS WITH substring(d.raw_string, 1)
                OR toLower(split(t.path, ':')[-1]) = toLower(split(d.raw_string, '::')[-1])
@@ -204,12 +204,12 @@ def link_chunks_to_data_nodes(graph_client: GraphClient | None = None) -> int:
         resolved_count = result[0]["resolved"] if result else 0
         logger.info("Created %d RESOLVES_TO_NODE relationships", resolved_count)
 
-        # Step 4: Create RESOLVES_TO_IMAS_PATH via DataNode → IMASMapping → IMASPath
+        # Step 4: Create RESOLVES_TO_IMAS_PATH via SignalNode → IMASMapping → IMASNode
         result = client.query("""
-            MATCH (dr:DataReference)-[:RESOLVES_TO_NODE]->(dn:DataNode)
+            MATCH (dr:DataReference)-[:RESOLVES_TO_NODE]->(dn:SignalNode)
             WHERE NOT (dr)-[:RESOLVES_TO_IMAS_PATH]->()
             MATCH (m:IMASMapping)-[:SOURCE_PATH]->(dn)
-            MATCH (m)-[:TARGET_PATH]->(ip:IMASPath)
+            MATCH (m)-[:TARGET_PATH]->(ip:IMASNode)
             MERGE (dr)-[:RESOLVES_TO_IMAS_PATH]->(ip)
             RETURN count(*) AS linked
         """)
@@ -281,7 +281,7 @@ def link_example_mdsplus_paths(
         MATCH (e:CodeExample {id: $example_id})-[:HAS_CHUNK]->(c:CodeChunk)
               -[:CONTAINS_REF]->(d:DataReference {ref_type: 'mdsplus_path'})
         WHERE NOT (d)-[:RESOLVES_TO_NODE]->()
-        MATCH (t:DataNode)
+        MATCH (t:SignalNode)
         WHERE t.path = d.raw_string
            OR t.path ENDS WITH substring(d.raw_string, 1)
            OR toLower(split(t.path, ':')[-1]) = toLower(split(d.raw_string, '::')[-1])
@@ -361,10 +361,10 @@ def migrate_schema_relationships(
      2. AT_FACILITY:       CodeChunk → Facility
      3. FROM_FILE:         CodeExample → CodeFile
      4. HAS_EXAMPLE:       CodeFile → CodeExample
-     5. TreeNode → DataNode:  Relabel + remove old label
+     5. TreeNode → SignalNode:  Relabel + remove old label
      6. TreeNodePattern → DataNodePattern:  Relabel + remove old label
      7. TreeModelVersion → StructuralEpoch:  Relabel + remove old label
-     8. IN_DATA_SOURCE:    DataNode → DataSource (from data_source_name)
+     8. IN_DATA_SOURCE:    SignalNode → DataSource (from data_source_name)
      9. IN_TREE → IN_DATA_SOURCE:  Migrate legacy relationships
     10. RESOLVES_TO_TREE_NODE → RESOLVES_TO_NODE:  Migrate legacy relationships
     11. MDSplusTree cleanup:  Remove legacy MDSplusTree nodes
@@ -499,7 +499,7 @@ def migrate_schema_relationships(
             log_msg="Created %d HAS_EXAMPLE relationships",
         )
 
-        # 5. Fix TreeNode → DataNode label (add new, remove old)
+        # 5. Fix TreeNode → SignalNode label (add new, remove old)
         _run_migration_step(
             client,
             key="treenode_relabel",
@@ -507,17 +507,17 @@ def migrate_schema_relationships(
             dry_run=dry_run,
             count_query="""
                 MATCH (n) WHERE 'TreeNode' IN labels(n)
-                AND NOT 'DataNode' IN labels(n)
+                AND NOT 'SignalNode' IN labels(n)
                 RETURN count(n) AS pending
             """,
             apply_query="""
                 MATCH (n) WHERE 'TreeNode' IN labels(n)
                 WITH n LIMIT $batch_size
-                SET n:DataNode
+                SET n:SignalNode
                 REMOVE n:TreeNode
                 RETURN count(n) AS created
             """,
-            log_msg="Relabeled %d TreeNode → DataNode nodes",
+            log_msg="Relabeled %d TreeNode → SignalNode nodes",
             batch_size=10000,
         )
 
@@ -560,11 +560,11 @@ def migrate_schema_relationships(
         )
 
         # 8. Create IN_DATA_SOURCE from data_source_name property
-        #    DataNode nodes have data_source_name → DataSource.name
+        #    SignalNode nodes have data_source_name → DataSource.name
         #    Processes per-tree to avoid label scan on potentially corrupted
         #    DataSource index entries (OOM recovery artifact).
         pending_trees = client.query("""
-            MATCH (n:DataNode)
+            MATCH (n:SignalNode)
             WHERE n.data_source_name IS NOT NULL AND n.facility_id IS NOT NULL
             AND NOT (n)-[:IN_DATA_SOURCE]->()
             RETURN DISTINCT n.data_source_name AS name, n.facility_id AS fid,
@@ -596,7 +596,7 @@ def migrate_schema_relationships(
                 # Batch-create relationships using elementId lookup
                 while True:
                     result = client.query(
-                        "MATCH (n:DataNode) "
+                        "MATCH (n:SignalNode) "
                         "WHERE n.data_source_name = $name AND n.facility_id = $fid "
                         "AND NOT (n)-[:IN_DATA_SOURCE]->() "
                         "WITH n LIMIT 5000 "
@@ -1195,9 +1195,9 @@ def migrate_schema_relationships(
                 "triage_composite",
                 "discovered",
             ),
-            # DataNode: enriched needs description → discovered
+            # SignalNode: enriched needs description → discovered
             (
-                "DataNode",
+                "SignalNode",
                 "enrichment_status",
                 "enriched",
                 "description",

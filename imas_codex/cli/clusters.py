@@ -317,7 +317,7 @@ def clusters_sync(verbose: bool, quiet: bool, dry_run: bool) -> None:
     """Sync semantic clusters to Neo4j knowledge graph.
 
     Creates/updates IMASSemanticCluster nodes and IN_CLUSTER relationships
-    linking IMASPath nodes to their clusters.
+    linking IMASNode nodes to their clusters.
 
     \b
     Examples:

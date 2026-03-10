@@ -1,7 +1,7 @@
 """Comprehensive tests for the code discovery pipeline (Phases 3-6).
 
 Phase 3: Full pipeline run — tree-sitter chunking for all languages, extraction, embedding
-Phase 4: Code evidence → signal linking via DataReference → DataNode → FacilitySignal
+Phase 4: Code evidence → signal linking via DataReference → SignalNode → FacilitySignal
 Phase 5: DataAccess template generation from code evidence
 Phase 6: Static tree routing and recheck with code-evidence shots
 
@@ -592,11 +592,11 @@ class TestCodeEvidenceLinking:
     """
 
     def test_link_resolves_data_references(self):
-        """link_code_evidence_to_signals resolves DataReference → DataNode."""
+        """link_code_evidence_to_signals resolves DataReference → SignalNode."""
         from imas_codex.discovery.code.graph_ops import link_code_evidence_to_signals
 
         mock_gc = MagicMock()
-        # Step 1: Resolve DataReference → DataNode returns resolved count
+        # Step 1: Resolve DataReference → SignalNode returns resolved count
         mock_gc.query.side_effect = [
             [{"resolved": 5}],  # Step 1: resolve refs
             [{"signals_linked": 3}],  # Step 2: propagate to signals
@@ -698,15 +698,15 @@ class TestSignalPrioritization:
         assert "ORDER BY" in query
 
     def test_evidence_chain_query(self):
-        """The evidence chain query checks DataReference → DataNode."""
+        """The evidence chain query checks DataReference → SignalNode."""
         query = """
-        MATCH (dr:DataReference)-[:RESOLVES_TO_NODE]->(tn:DataNode)
+        MATCH (dr:DataReference)-[:RESOLVES_TO_NODE]->(tn:SignalNode)
         WHERE tn.facility_id = $facility
         RETURN count(dr) AS refs, count(DISTINCT tn.id) AS data_nodes
         """
         assert "RESOLVES_TO_NODE" in query
         assert "DataReference" in query
-        assert "DataNode" in query
+        assert "SignalNode" in query
 
 
 # =============================================================================

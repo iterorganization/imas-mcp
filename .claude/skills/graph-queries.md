@@ -21,8 +21,8 @@ ORDER BY s.name
 CALL db.index.vector.queryNodes($index, $k, $embedding)
 YIELD node AS signal, score
 MATCH (signal)-[:DATA_ACCESS]->(da:DataAccess)
-OPTIONAL MATCH (signal)-[:HAS_DATA_SOURCE_NODE]->(dn:DataNode)
-    <-[:SOURCE_PATH]-(m:IMASMapping)-[:TARGET_PATH]->(imas:IMASPath)
+OPTIONAL MATCH (signal)-[:HAS_DATA_SOURCE_NODE]->(dn:SignalNode)
+    <-[:SOURCE_PATH]-(m:IMASMapping)-[:TARGET_PATH]->(imas:IMASNode)
 RETURN signal.id, signal.description, da.data_template,
        collect(imas.id) AS imas_paths, score
 ORDER BY score DESC
@@ -35,7 +35,7 @@ MERGE (m:IMASMapping {id: $id})
 SET m += $props, m.status = 'proposed', m.proposed_at = datetime()
 WITH m
 MATCH (s:FacilitySignal {id: $signal_id})
-MATCH (t:IMASPath {id: $imas_path_id})
+MATCH (t:IMASNode {id: $imas_path_id})
 MERGE (m)-[:MAPS_TO_SOURCE]->(s)
 MERGE (m)-[:MAPS_TO_TARGET]->(t)
 

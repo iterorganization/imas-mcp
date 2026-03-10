@@ -53,7 +53,7 @@ _EXAMPLE_PATTERNS: dict[str, list[str]] = {
     "imas": [
         (
             "# Search IMAS paths\n"
-            'CALL db.index.vector.queryNodes("imas_path_embedding", $k, $embedding)\n'
+            'CALL db.index.vector.queryNodes("imas_node_embedding", $k, $embedding)\n'
             "YIELD node, score\n"
             "WHERE NOT (node)-[:DEPRECATED_IN]->(:DDVersion)\n"
             "RETURN node.id, node.documentation, node.units, score\n"
@@ -61,7 +61,7 @@ _EXAMPLE_PATTERNS: dict[str, list[str]] = {
         ),
         (
             "# Get a semantic cluster and its members\n"
-            "MATCH (c:IMASSemanticCluster)<-[:IN_CLUSTER]-(p:IMASPath)\n"
+            "MATCH (c:IMASSemanticCluster)<-[:IN_CLUSTER]-(p:IMASNode)\n"
             "WHERE c.label = $label\n"
             "RETURN c.label, c.description, collect(p.id) AS paths"
         ),
@@ -79,7 +79,7 @@ _EXAMPLE_PATTERNS: dict[str, list[str]] = {
     "trees": [
         (
             "# List tree nodes for a specific tree\n"
-            "MATCH (n:DataNode {data_source_name: $tree})-[:AT_FACILITY]->(f:Facility {id: $facility})\n"
+            "MATCH (n:SignalNode {data_source_name: $tree})-[:AT_FACILITY]->(f:Facility {id: $facility})\n"
             "RETURN n.path, n.description, n.unit, n.physics_domain\n"
             "ORDER BY n.path LIMIT $limit"
         ),

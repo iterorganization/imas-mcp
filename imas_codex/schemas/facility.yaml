@@ -77,7 +77,7 @@ enums:
       restricted:
         description: Tool exists but requires special access
 
-  DataNodeType:
+  SignalNodeType:
     description: Data node classification types
     permissible_values:
       STRUCTURE:
@@ -185,24 +185,6 @@ enums:
   # EnrichmentStatus are defined in common.yaml with unified terminology.
   # See common.yaml for the design philosophy and value definitions.
 
-  MappingStatus:
-    description: >-
-      Status lifecycle for IMAS mappings. Every agent-generated mapping
-      follows proposal → consensus → mapping with full audit trail.
-      Rejected mappings are persisted with rejection reasons to prevent
-      future agents from re-proposing the same bad mapping.
-    permissible_values:
-      proposed:
-        description: Initial mapping proposal from agent team
-      endorsed:
-        description: Multiple evidence sources agree, awaiting validation
-      contested:
-        description: Conflicting evidence or failed tests, needs resolution
-      validated:
-        description: Approved by lead agent or human review
-      rejected:
-        description: Incorrect mapping (persisted with rejection reason)
-
   EvidenceType:
     description: Categories of evidence supporting or refuting a mapping proposal
     permissible_values:
@@ -221,19 +203,7 @@ enums:
       expert_knowledge:
         description: Agent reasoning based on domain expertise
 
-  AgentSessionStatus:
-    description: Status lifecycle for agent team sessions
-    permissible_values:
-      running:
-        description: Session is actively executing
-      completed:
-        description: Session finished successfully
-      failed:
-        description: Session stopped due to error
-      budget_exhausted:
-        description: Session stopped because cost limit was reached
-
-  IDSRecipeStatus:
+  IMASMappingStatus:
     description: Status lifecycle for IDS assembly recipes
     permissible_values:
       draft:
@@ -368,8 +338,8 @@ enums:
       imas_path:
         description: IMAS data dictionary path (future)
 
-  DataNodeSource:
-    description: How a DataNode was discovered and ingested
+  SignalNodeSource:
+    description: How a SignalNode was discovered and ingested
     permissible_values:
       introspection:
         description: >-
@@ -385,7 +355,7 @@ enums:
         description: >-
           A parameter accepted by an accessor function (e.g., tcv_eq("PSI")).
           Not a physical data path but a logical data accessor name.
-          Links to DataNode via accessor_function relationship.
+          Links to SignalNode via accessor_function relationship.
       static_tree_extraction:
         description: >-
           Extracted from static (versioned) MDSplus tree structure.
@@ -1434,16 +1404,16 @@ classes:
         range: WallConfiguration
       uses_limiter:
         description: >-
-          Limiter contour DataNode used by this structural epoch.
+          Limiter contour SignalNode used by this structural epoch.
           Links epoch to the specific first-wall geometry in effect.
-        range: DataNode
+        range: SignalNode
         annotations:
           relationship_type: USES_LIMITER
       uses_greens:
         description: >-
-          Green's function table DataNode used by this structural epoch.
+          Green's function table SignalNode used by this structural epoch.
           Links epoch to Green's table versions by shot overlap.
-        range: DataNode
+        range: SignalNode
         annotations:
           relationship_type: USES_GREENS
       predecessor:
@@ -1501,7 +1471,7 @@ classes:
           Git path to the EFITSNAP file used for this epoch
           (provenance). E.g., "Snap_files/EFITSNAP/efitsnap_p89440_bound0".
 
-  DataNode:
+  SignalNode:
     description: >-
       A node within a data source hierarchy. Represents a single data point
       that can be mapped to IMAS. Nodes with variants (PSI, PSI_2, PSI_3) are
@@ -1509,11 +1479,11 @@ classes:
     mixins:
       - LLMProvenance
       - LLMOperation
-    class_uri: facility:DataNode
+    class_uri: facility:SignalNode
     annotations:
       fulltext_index:
         tag: fulltext_index
-        value: "data_node_text:description,canonical_path"
+        value: "signal_node_text:description,canonical_path"
     attributes:
       id:
         identifier: true
@@ -1536,10 +1506,10 @@ classes:
           relationship_type: AT_FACILITY
       node_type:
         description: Data node classification type
-        range: DataNodeType
+        range: SignalNodeType
       source:
         description: How this node was discovered and ingested
-        range: DataNodeSource
+        range: SignalNodeSource
       canonical_path:
         description: >-
           Canonical form of the path for deduplication and matching.
@@ -1654,12 +1624,12 @@ classes:
           Parent STRUCTURE nodes link to their children via HAS_NODE.
         multivalued: true
         inlined: false
-        range: DataNode
+        range: SignalNode
         annotations:
           relationship_type: HAS_NODE
       appears_in_chunks:
         description: >-
-          CodeChunks that reference this DataNode via data references.
+          CodeChunks that reference this SignalNode via data references.
           Shortcut relationship for efficient code context queries.
         multivalued: true
         inlined: false
@@ -1672,7 +1642,7 @@ classes:
           E.g., for a data node like \\RESULTS::THOMSON:NE, links to error nodes
           like \\RESULTS::THOMSON:NE:ERROR_BAR or \\RESULTS::THOMSON:NE:ERROR_UPPER.
         multivalued: true
-        range: DataNode
+        range: SignalNode
         annotations:
           relationship_type: HAS_ERROR
       enrichment_source:
@@ -1698,24 +1668,24 @@ classes:
           pattern and propagated to all followers.
         range: DataNodePattern
         annotations:
-          relationship_type: FOLLOWS_PATTERN
+          relationship_type: MEMBER_OF
       matches_sensor:
         description: >-
-          Another DataNode representing the same physical sensor
+          Another SignalNode representing the same physical sensor
           in a different data source. Cross-references sensors
           matched by R,Z proximity across data sources.
-        range: DataNode
+        range: SignalNode
         annotations:
           relationship_type: MATCHES_SENSOR
 
   DataNodePattern:
     description: >-
-      A parameter pattern shared by indexed DataNode groups. When multiple
+      A parameter pattern shared by indexed SignalNode groups. When multiple
       STRUCTURE nodes under the same grandparent each contain children with
       identical leaf names (e.g., R, Z under W001-W830), a pattern captures
       the shared physics meaning once. Enrichment is stored on the pattern
-      and propagated to all followers via FOLLOWS_PATTERN relationships.
-    class_uri: facility:DataNodePattern
+      and propagated to all followers via MEMBER_OF relationships.
+    class_uri: facility:SignalNodePattern
     attributes:
       id:
         identifier: true
@@ -1745,9 +1715,9 @@ classes:
         range: integer
       node_type:
         description: Node type of the leaf nodes (NUMERIC or SIGNAL)
-        range: DataNodeType
+        range: SignalNodeType
       representative_path:
-        description: Path of one representative DataNode for prompt context
+        description: Path of one representative SignalNode for prompt context
       description:
         description: Physics description shared by all instances
       keywords:
@@ -1825,7 +1795,7 @@ classes:
         description: >-
           Quantity names this function accepts as first argument.
           E.g., ["I_P", "R_AXIS", "PSI_AXIS", "Q_95", ...] for tcv_eq.
-          Use DataNode.aliases for name translation (FORTRAN↔MATLAB).
+          Use SignalNode.aliases for name translation (FORTRAN↔MATLAB).
         multivalued: true
       quantity_definitions:
         description: >-
@@ -1976,9 +1946,8 @@ classes:
         - HAS_UNIT -> Unit (data units)
         - MEASURES -> StandardName (cross-facility semantic linking)
       
-      IMAS mapping: Use IMASMapping nodes (SOURCE_PATH from DataNode,
-      TARGET_PATH to IMASPath) — not a direct MAPS_TO_IMAS relationship
-      on FacilitySignal or DataAccess.
+      IMAS mapping: SignalGroups link signals via MEMBER_OF, then
+      MAPS_TO_IMAS relationships connect groups to IMASNode targets.
       
       Lifecycle relationships (data source epoch tracking):
         - INTRODUCED_IN -> StructuralEpoch (epoch when signal first appeared)
@@ -2078,9 +2047,9 @@ classes:
           E.g., "\\RESULTS::LIUQE:I_P", "\\MAGNETICS::IPL"
       data_source_node:
         description: >-
-          DataNode backing this signal (provenance link).
-          Links to the DataNode from which this signal was promoted.
-        range: DataNode
+          SignalNode backing this signal (provenance link).
+          Links to the SignalNode from which this signal was promoted.
+        range: SignalNode
         annotations:
           relationship_type: HAS_DATA_SOURCE_NODE
       tdi_function:
@@ -2174,10 +2143,6 @@ classes:
         description: Source of enrichment (llm_agent, manual, wiki, mdsplus)
       node_path:
         description: Path within the data source for this signal
-      pattern_representative_id:
-        description: ID of representative pattern for grouped signals
-      pattern_template:
-        description: Template pattern for generating accessor expressions
       source_node:
         description: "[DEPRECATED] Old name for data_source_node. Retained for backward compatibility."
       skip_reason:
@@ -2348,9 +2313,9 @@ classes:
           Useful for agent prompts and documentation.
       accesses_geometry:
         description: >-
-          Geometry DataNode accessed via this data access method.
+          Geometry SignalNode accessed via this data access method.
           Links to machine geometry data used for spatial calibration.
-        range: DataNode
+        range: SignalNode
         annotations:
           relationship_type: ACCESSES_GEOMETRY
 
@@ -2408,7 +2373,7 @@ classes:
   AnalysisCode:
     description: >-
       A physics analysis or simulation code that writes data to trees.
-      Links to the DataNode variants it produces (e.g., LIUQE writes PSI, PSI_2).
+      Links to the SignalNode variants it produces (e.g., LIUQE writes PSI, PSI_2).
       Version info tracks which shots used which code version.
     class_uri: facility:AnalysisCode
     mixins:
@@ -2460,117 +2425,11 @@ classes:
 # IMAS Mapping Classes
 # =============================================================================
 
-# NOTE: IMASPath is now defined in imas_dd.yaml as the unified representation
-# of IMAS Data Dictionary paths. Do not define it here.
-
-  IMASMapping:
-    description: >-
-      A mapping from facility-specific data to IMAS paths.
-      Contains all information needed to generate an Ambix Recipe for data pumping.
-      Data flow is one-way (facility->IMAS) but searchable from either direction.
-      
-      Extended with status lifecycle for agent team workflows:
-      proposed → endorsed/contested → validated/rejected
-    mixins:
-      - LLMProvenance
-      - LLMOperation
-    class_uri: facility:IMASMapping
-    attributes:
-      id:
-        identifier: true
-        required: true
-      source_path:
-        description: Source facility path (DataNode path or TDI function call)
-        required: true
-        range: DataNode
-      target_path:
-        description: Target IMAS path
-        required: true
-        range: IMASPath
-      facility_id:
-        description: Parent facility ID
-        required: true
-        range: Facility
-        annotations:
-          relationship_type: AT_FACILITY
-      status:
-        description: Mapping lifecycle status (for agent team workflow)
-        range: MappingStatus
-      
-      # Pump context for Ambix Recipe generation
-      driver:
-        description: Data access driver (e.g., "mdsplus", "tdi", "ppf")
-        range: DataSourceType
-        required: true
-      driver_args:
-        description: Arguments for the driver (JSON-encoded, e.g., tree name, path)
-      units_in:
-        description: Units of the source data (must be pint-compatible)
-      units_out:
-        description: Units of the target IMAS path (from IMAS DD)
-      scale:
-        description: Numeric scale factor for transformation
-        range: float
-      transformation:
-        description: Complex transformation expression if scale is insufficient
-      cocos_source:
-        description: >-
-          COCOS convention of the source data (1-18). References the COCOS
-          node for the facility signal's coordinate convention.
-        range: integer
-      cocos_target:
-        description: >-
-          COCOS convention of the target IMAS path (1-18). Typically 17 for
-          IMAS DD v4.x, 11 for DD v3.x. When cocos_source != cocos_target,
-          the transformation must include COCOS conversion factors.
-        range: integer
-
-      # Executable transform
-      transform_code:
-        description: >-
-          Python expression to transform source value to target value.
-          Evaluated with 'value' as input variable. Access to math, numpy,
-          and imas_codex.cocos/units functions.
-          Simple: "value" (identity), "value * 1e-3" (scale), "-value" (sign flip).
-          Complex: "transform_equilibrium(value, cocos_in=2, cocos_out=17)".
-          The metadata fields (units_in/out, cocos_source/target, scale) document
-          what the transform does; this field is the executable implementation.
-      source_property:
-        description: >-
-          Name of the property on the source DataNode to extract.
-          E.g., "r", "z", "dr", "dz", "turnsperelement", "description".
-          When source DataNode has multiple properties, this identifies
-          which one this mapping applies to.
-      
-      # Validation and provenance
-      validated:
-        description: Whether this mapping has been validated against real data
-        range: boolean
-      validated_shot:
-        description: Shot number used for validation
-        range: integer
-      confidence:
-        description: Confidence level of the mapping (0.0-1.0)
-        range: float
-      notes:
-        description: Mapping notes and caveats
-      # Agent team provenance
-      proposed_by:
-        description: AgentSession that proposed this mapping
-        range: AgentSession
-        annotations:
-          relationship_type: PROPOSED_BY
-      evidence:
-        description: Evidence nodes supporting this mapping
-        range: MappingEvidence
-        multivalued: true
-        inlined: false
-        annotations:
-          relationship_type: HAS_EVIDENCE
-      rejection_reason:
-        description: Why this mapping was rejected (persisted to prevent re-proposal)
-      validated_by:
-        description: AgentSession or user that validated this mapping
+# NOTE: IMASNode is now defined in imas_dd.yaml as IMASNode — the unified
+# representation of IMAS Data Dictionary paths. Do not define it here.
+# The old IMASMapping field-level node has been replaced by MAPS_TO_IMAS
+# relationships from SignalGroup/SignalNode to IMASNode.
+# The orchestration node (was IDSRecipe) is now IMASMapping — defined in Phase 3.
 
   MappingEvidence:
     description: >-
@@ -2600,139 +2459,10 @@ classes:
       source_url:
         description: URL or path to evidence source (wiki page, code file, etc.)
       source_node_id:
-        description: ID of source graph node (WikiChunk, CodeChunk, DataNode)
-      created_by:
-        description: AgentSession that created this evidence
-        range: AgentSession
-        annotations:
-          relationship_type: CREATED_BY
+        description: ID of source graph node (WikiChunk, CodeChunk, SignalNode)
       created_at:
         description: When this evidence was created
         range: datetime
-
-  IDSRecipe:
-    description: >-
-      Structural assembly recipe for composing an IMAS IDS from graph data.
-      Defines how DataNodes group into array-of-structures entries and links
-      to IMASMapping nodes for field-level transformations.
-      Example Cypher: MATCH (r:IDSRecipe {facility_id: 'jet', ids_name: 'pf_active'})
-                      -[:INCLUDES_MAPPING]->(m:IMASMapping)-[:TARGET_PATH]->(ip:IMASPath)
-                      RETURN r.id, m.id, ip.id
-    class_uri: facility:IDSRecipe
-    attributes:
-      id:
-        identifier: true
-        description: Composite key, e.g. "jet:pf_active"
-        required: true
-      facility_id:
-        description: Parent facility ID
-        required: true
-        range: Facility
-        annotations:
-          relationship_type: AT_FACILITY
-      ids_name:
-        description: IMAS IDS name (e.g., "pf_active", "magnetics")
-        required: true
-      dd_version:
-        description: IMAS DD version this recipe targets (e.g., "4.1.1")
-        required: true
-      status:
-        description: Recipe lifecycle status
-        range: IDSRecipeStatus
-        required: true
-      provider:
-        description: Provider string for ids_properties.provider
-      assembly_config:
-        description: >-
-          Structural assembly rules (JSON). Defines how DataNodes group into
-          array-of-structures entries, how array properties fan out, and how
-          multiple sources merge. Field transformations come from IMASMapping nodes.
-      includes_mapping:
-        description: IMASMapping nodes used by this recipe
-        range: IMASMapping
-        multivalued: true
-        inlined: false
-        annotations:
-          relationship_type: INCLUDES_MAPPING
-      uses_source:
-        description: DataSource nodes this recipe reads from
-        range: DataSource
-        multivalued: true
-        inlined: false
-        annotations:
-          relationship_type: USES_SOURCE
-      description:
-        description: Human-readable description of this recipe
-
-  AgentSession:
-    description: >-
-      Tracks an agent team session for cost accounting, resumability,
-      and audit trail. Each team deployment creates one AgentSession.
-      Budget fields are periodically synced from Langfuse by querying
-      traces tagged with the session ID.
-    class_uri: facility:AgentSession
-    attributes:
-      id:
-        identifier: true
-        description: Unique session ID (e.g., "tcv-mapping-equilibrium-20260213")
-        required: true
-      facility_id:
-        description: Target facility for this session
-        required: true
-        range: Facility
-        annotations:
-          relationship_type: AT_FACILITY
-      session_type:
-        description: Type of agent session (mapping, exploration, validation)
-        required: true
-      physics_domain:
-        description: Target physics domain if applicable
-        range: PhysicsDomain
-      status:
-        description: Session lifecycle status
-        range: AgentSessionStatus
-        required: true
-      started_at:
-        description: When the session started
-        range: datetime
-        required: true
-      ended_at:
-        description: When the session completed
-        range: datetime
-      # Team composition
-      team_size:
-        description: Number of agent teammates in this session
-        range: integer
-      model:
-        description: Primary LLM model used (e.g., "opus", "sonnet")
-      # Budget tracking (synced from Langfuse)
-      budget_limit_usd:
-        description: Maximum allowed cost for this session
-        range: float
-      budget_used_usd:
-        description: Actual cost incurred (periodically synced from Langfuse)
-        range: float
-      # Progress tracking
-      signals_total:
-        description: Total signals to process
-        range: integer
-      signals_processed:
-        description: Signals with proposals created
-        range: integer
-      proposals_created:
-        description: Number of MappingProposal nodes created
-        range: integer
-      proposals_validated:
-        description: Number of proposals that reached validated status
-        range: integer
-      proposals_rejected:
-        description: Number of proposals rejected
-        range: integer
-      # Langfuse correlation
-      langfuse_trace_id:
-        description: Langfuse trace ID for cost correlation
-      error_message:
-        description: Error message if session failed
 
 # =============================================================================
 # Code Examples Classes
@@ -3247,7 +2977,7 @@ classes:
         description: IMAS paths referenced in this code chunk
         multivalued: true
         inlined: false
-        range: IMASPath
+        range: IMASNode
         annotations:
           relationship_type: REFERENCES_IMAS
 
@@ -3269,7 +2999,7 @@ classes:
         description: >-
           Normalized path for fuzzy matching. Strips channel indices and
           suffixes to match data source nodes. E.g., CHANNEL_006 -> CHANNEL.
-          Used when raw_string doesn't match any DataNode exactly.
+          Used when raw_string doesn't match any SignalNode exactly.
       ref_type:
         description: Type of data reference
         required: true
@@ -3282,15 +3012,15 @@ classes:
           relationship_type: AT_FACILITY
       # Typed resolution relationships
       resolves_to_node:
-        description: DataNode this reference resolves to
-        range: DataNode
+        description: SignalNode this reference resolves to
+        range: SignalNode
         multivalued: true
       calls_tdi_function:
         description: TDI function being called (for tdi_call type)
         range: TDIFunction
       resolves_to_imas_path:
         description: IMAS path this reference resolves to (future)
-        range: IMASPath
+        range: IMASNode
         multivalued: true
 
   AgentRun:
@@ -3487,7 +3217,7 @@ classes:
       - HAS_CHUNK -> WikiChunk (created during ingest)
       - HAS_IMAGE -> Image (inline images in page HTML)
       - AT_FACILITY -> Facility
-      - MENTIONS_DATA_NODE -> DataNode (created during ingest)
+      - MENTIONS_DATA_NODE -> SignalNode (created during ingest)
       - MENTIONS_DIAGNOSTIC -> Diagnostic
       - MENTIONS_CODE -> AnalysisCode
       - MENTIONS_DOMAIN -> PhysicsDomain
@@ -3665,8 +3395,8 @@ classes:
       Relationships created during ingestion:
       - HAS_CHUNK <- WikiPage (parent page, inbound from page)
       - NEXT_CHUNK -> WikiChunk (sequential navigation to next chunk)
-      - DOCUMENTS -> DataNode (data paths documented in chunk)
-      - MENTIONS_IMAS -> IMASPath
+      - DOCUMENTS -> SignalNode (data paths documented in chunk)
+      - MENTIONS_IMAS -> IMASNode
       - MENTIONS_UNIT -> Unit
       - MENTIONS_CONVENTION -> SignConvention
       
@@ -3755,7 +3485,7 @@ classes:
         description: DataNodes documented by this wiki chunk (resolved from data paths in content)
         multivalued: true
         inlined: false
-        range: DataNode
+        range: SignalNode
         annotations:
           relationship_type: DOCUMENTS
       documents_signals:
@@ -3769,7 +3499,7 @@ classes:
         description: IMAS DD paths mentioned in this wiki chunk
         multivalued: true
         inlined: false
-        range: IMASPath
+        range: IMASNode
         annotations:
           relationship_type: MENTIONS_IMAS
 
@@ -3792,8 +3522,8 @@ classes:
       - HAS_IMAGE <- Document (standalone wiki image files)
       - HAS_IMAGE <- Document (figures extracted from PDFs/PPTX, future)
       - HAS_IMAGE <- SourceFile (code-generated plots, future)
-      - DEPICTS -> DataNode (what the image documents, future)
-      - DEPICTS -> IMASPath (IMAS concepts shown, future)
+      - DEPICTS -> SignalNode (what the image documents, future)
+      - DEPICTS -> IMASNode (IMAS concepts shown, future)
     class_uri: facility:Image
     mixins:
       - DiscoveryProvenance

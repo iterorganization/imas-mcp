@@ -549,10 +549,10 @@ def claim_signals_for_enrichment(
 def fetch_tree_context(
     signal_ids: list[str],
 ) -> dict[str, dict]:
-    """Fetch DataNode context for signals with HAS_DATA_SOURCE_NODE edges.
+    """Fetch SignalNode context for signals with HAS_DATA_SOURCE_NODE edges.
 
-    For each signal that has a HAS_DATA_SOURCE_NODE→DataNode edge, returns:
-    - tree_path: Full MDSplus path of the DataNode
+    For each signal that has a HAS_DATA_SOURCE_NODE→SignalNode edge, returns:
+    - tree_path: Full MDSplus path of the SignalNode
     - parent_path: Parent node's path (one level up)
     - sibling_paths: List of sibling node paths (same parent, same type)
     - tdi_source: TDI function source_code if linked via RESOLVES_TO_NODE
@@ -573,9 +573,9 @@ def fetch_tree_context(
             result = gc.query(
                 """
                 UNWIND $ids AS sid
-                MATCH (s:FacilitySignal {id: sid})-[:HAS_DATA_SOURCE_NODE]->(n:DataNode)
-                OPTIONAL MATCH (n)-[:CHILD_OF]->(parent:DataNode)
-                OPTIONAL MATCH (parent)<-[:CHILD_OF]-(sibling:DataNode)
+                MATCH (s:FacilitySignal {id: sid})-[:HAS_DATA_SOURCE_NODE]->(n:SignalNode)
+                OPTIONAL MATCH (n)-[:CHILD_OF]->(parent:SignalNode)
+                OPTIONAL MATCH (parent)<-[:CHILD_OF]-(sibling:SignalNode)
                 WHERE sibling.id <> n.id
                   AND sibling.node_type IN ['NUMERIC', 'SIGNAL']
                 OPTIONAL MATCH (tdi:TDIFunction)-[:RESOLVES_TO_NODE]->(n)

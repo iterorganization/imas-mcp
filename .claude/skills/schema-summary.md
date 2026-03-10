@@ -12,16 +12,15 @@ For the full schema (53 node types), see `agents/schema-reference.md` or call `g
 | Facility | id, name, machine | Root node per facility (tcv, jet, iter, jt-60sa) |
 | FacilitySignal | id, physics_domain, accessor, status | Signal with access info |
 | DataAccess | id, method_type, data_template, time_template | Code generation template |
-| DataNode | path, tree_name, node_type, description | MDSplus tree node |
+| SignalNode | path, tree_name, node_type, description | MDSplus tree node |
 | TDIFunction | id, name, supported_quantities | TDI accessor function |
-| IMASPath | id (DD path), description, units | IMAS Data Dictionary path |
-| IMASMapping | id, source_path, target_path, driver, status | Facility→IMAS mapping |
+| IMASNode | id (DD path), description, units | IMAS Data Dictionary path |
+| IMASMapping | id, facility_id, physics_domain, status | IDS mapping orchestration node |
 | MappingEvidence | id, evidence_type, content | Evidence supporting a mapping |
 | WikiPage | id, url, title, status, score | Wiki documentation page |
 | WikiChunk | id, **text**, embedding | Searchable wiki text chunk |
 | CodeChunk | id, **text**, embedding | Searchable code chunk |
 | Image | id, source_url, description, embedding | Visual resource from wiki/docs |
-| AgentSession | id, facility_id, status | Agent team session tracking |
 
 ## WikiChunk Properties (complete)
 
@@ -56,7 +55,7 @@ ORDER BY score DESC
 
 ### Wiki chunks for a path
 ```cypher
-MATCH (wc:WikiChunk)-[:DOCUMENTS]->(t:DataNode)
+MATCH (wc:WikiChunk)-[:DOCUMENTS]->(t:SignalNode)
 WHERE t.path CONTAINS $path
 MATCH (wp:WikiPage)-[:HAS_CHUNK]->(wc)
 RETURN wp.title AS page_title, wc.text AS text
@@ -68,10 +67,8 @@ LIMIT 5
 CALL db.index.vector.queryNodes('facility_signal_desc_embedding', $k, $embedding)
 YIELD node AS signal, score
 MATCH (signal)-[:DATA_ACCESS]->(da:DataAccess)
-OPTIONAL MATCH (signal)-[:HAS_DATA_SOURCE_NODE]->(dn:DataNode)
-    <-[:SOURCE_PATH]-(m:IMASMapping)-[:TARGET_PATH]->(imas:IMASPath)
-RETURN signal.id, signal.description, da.data_template,
-       collect(imas.id) AS imas_paths, score
+OPTIONAL MATCH (signal)-[:HAS_DATA_SOURCE_NODE]->(dn:SignalNode)
+RETURN signal.id, signal.description, da.data_template, score
 ORDER BY score DESC
 ```
 
@@ -92,8 +89,8 @@ ORDER BY score DESC
 | image_desc_embedding | Image | Image description/caption |
 | facility_signal_desc_embedding | FacilitySignal | Signal description |
 | facility_path_desc_embedding | FacilityPath | Path description |
-| imas_path_embedding | IMASPath | DD path description |
-| data_node_desc_embedding | DataNode | Data node description |
+| imas_node_embedding | IMASNode | DD path description |
+| signal_node_desc_embedding | SignalNode | Data node description |
 | wiki_artifact_desc_embedding | WikiArtifact | Artifact description |
 | cluster_embedding | IMASSemanticCluster | Cluster content |
 
@@ -102,13 +99,10 @@ ORDER BY score DESC
 | From | Relationship | To |
 |------|-------------|-----|
 | FacilitySignal | DATA_ACCESS | DataAccess |
-| FacilitySignal | HAS_DATA_SOURCE_NODE | DataNode |
+| FacilitySignal | HAS_DATA_SOURCE_NODE | SignalNode |
 | FacilitySignal | AT_FACILITY | Facility |
-| DataNode | AT_FACILITY | Facility |
+| SignalNode | AT_FACILITY | Facility |
 | IMASMapping | AT_FACILITY | Facility |
-| IMASMapping | MAPS_TO_SOURCE | DataNode / FacilitySignal |
-| IMASMapping | MAPS_TO_TARGET | IMASPath |
-| IMASMapping | HAS_EVIDENCE | MappingEvidence |
 | WikiChunk | HAS_CHUNK ← | WikiPage |
 | WikiChunk | NEXT_CHUNK | WikiChunk |
 | CodeChunk | HAS_CHUNK ← | CodeExample |
@@ -120,7 +114,6 @@ ORDER BY score DESC
 | FacilitySignal | discovered → enriched → checked / skipped / failed |
 | WikiPage | scanned → scored → ingested / skipped / failed |
 | IMASMapping | proposed → endorsed / contested → validated / rejected |
-| AgentSession | running → completed / failed |
 
 ## Physics Domains (PhysicsDomain enum)
 

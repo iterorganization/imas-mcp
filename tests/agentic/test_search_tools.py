@@ -208,7 +208,7 @@ class TestSearchSignals:
                     _SIGNAL_ENRICHMENT_IP,
                     _SIGNAL_ENRICHMENT_BPOL,
                 ],
-                "data_node_desc_embedding": _DATA_NODE_RESULTS,
+                "signal_node_desc_embedding": _DATA_NODE_RESULTS,
             }
         )
 
@@ -963,7 +963,7 @@ class TestSearchImas:
         ]
         mock_gc.query.side_effect = _route_query(
             {
-                "imas_path_embedding": path_vector,
+                "imas_node_embedding": path_vector,
                 "cluster_description_embedding": cluster_vector,
                 "UNWIND $path_ids": [_IMAS_ENRICHMENT_TEMP],
             }
@@ -990,7 +990,7 @@ class TestSearchImas:
         )
         for call in mock_gc.query.call_args_list:
             cypher = call[0][0]
-            if "imas_path_embedding" in cypher:
+            if "imas_node_embedding" in cypher:
                 assert "ids_filter" in cypher or "ids" in cypher
                 break
         else:
@@ -1011,7 +1011,7 @@ class TestSearchImas:
         ]
         mock_gc.query.side_effect = _route_query(
             {
-                "imas_path_embedding": path_vector,
+                "imas_node_embedding": path_vector,
                 "FacilitySignal": crossrefs,
                 "UNWIND $path_ids": [_IMAS_ENRICHMENT_IP],
             }
@@ -1048,8 +1048,8 @@ class TestSearchImas:
         ]
         mock_gc.query.side_effect = _route_query(
             {
-                "imas_path_embedding": path_vector,
-                "IMASPathChange": version_ctx,
+                "imas_node_embedding": path_vector,
+                "IMASNodeChange": version_ctx,
                 "UNWIND $path_ids": [_IMAS_ENRICHMENT_IP],
             }
         )
@@ -1086,7 +1086,7 @@ class TestSearchImas:
         """IMAS paths found by both vector and text search get boosted."""
         mock_gc.query.side_effect = _route_query(
             {
-                "imas_path_embedding": [
+                "imas_node_embedding": [
                     {"id": "magnetics.ip.0d[:].value", "score": 0.80}
                 ],
                 "documentation) CONTAINS": [
@@ -1590,7 +1590,7 @@ class TestSchemaGuard:
             if "UNWIND $signal_ids" in cypher:
                 # Should use collect(DISTINCT { ... }) AS access_methods
                 assert "access_methods" in cypher
-                # Should traverse DataAccess → IMASPath
+                # Should traverse DataAccess → IMASNode
                 assert "DATA_ACCESS" in cypher
                 assert "SOURCE_PATH" in cypher
                 break
@@ -1628,7 +1628,7 @@ class TestSchemaGuard:
         """IMAS enrichment returns lifecycle_status and structure_reference."""
         mock_gc.query.side_effect = _route_query(
             {
-                "imas_path_embedding": [
+                "imas_node_embedding": [
                     {"id": "magnetics.ip.0d[:].value", "score": 0.9}
                 ],
             }
@@ -1645,7 +1645,7 @@ class TestSchemaGuard:
         """Facility crossrefs use property-based matching, not relationship traversal."""
         mock_gc.query.side_effect = _route_query(
             {
-                "imas_path_embedding": [
+                "imas_node_embedding": [
                     {"id": "magnetics.ip.0d[:].value", "score": 0.9}
                 ],
                 "UNWIND $path_ids": [_IMAS_ENRICHMENT_IP],

@@ -46,7 +46,7 @@ class HealthEndpoint:
             dd_version = self.server.mcp.name.removeprefix("imas-data-dictionary-")
             try:
                 stats = gc.query(
-                    "MATCH (p:IMASPath) RETURN count(p) AS paths, "
+                    "MATCH (p:IMASNode) RETURN count(p) AS paths, "
                     "count(DISTINCT p.ids) AS ids_count"
                 )
                 ids_count = stats[0]["ids_count"] if stats else 0

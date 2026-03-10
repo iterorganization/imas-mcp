@@ -311,7 +311,7 @@ def _create_mock_graph_client():
 
     # DDVersion query for server name
     def _query(cypher, **kwargs):
-        # IDS nodes query for overview (match before IMASPath count check)
+        # IDS nodes query for overview (match before IMASNode count check)
         if "MATCH (i:IDS)" in cypher:
             return [
                 {
@@ -338,7 +338,7 @@ def _create_mock_graph_client():
         if "RETURN 1" in cypher:
             return [{"1": 1}]
         # Health endpoint stats query
-        if "IMASPath" in cypher and "count" in cypher.lower():
+        if "IMASNode" in cypher and "count" in cypher.lower():
             return [{"paths": 9, "ids_count": 2}]
         return []
 

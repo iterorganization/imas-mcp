@@ -10,7 +10,7 @@ wall contours) into standardised IMAS Interface Data Structures using two abstra
 layers:
 
 1. **IMASMapping nodes** — declarative field-level transformations stored in the graph
-2. **IDSRecipe nodes** — structural assembly rules that define how DataNodes group into
+2. **IMASMapping nodes** — structural assembly rules that define how DataNodes group into
    IDS array-of-structures entries
 
 Both are first-class graph nodes defined in the LinkML schema, queryable via Cypher,
@@ -19,11 +19,11 @@ and created through `seed_ids_mappings()` or the `ids seed` CLI command.
 ## Graph Model
 
 ```
-(DataNode) ←[:SOURCE_PATH]— (IMASMapping) —[:TARGET_PATH]→ (IMASPath)
+(SignalNode) ←[:SOURCE_PATH]— (IMASMapping) —[:TARGET_PATH]→ (IMASNode)
                                   ↑
                           [:INCLUDES_MAPPING]
                                   |
-                            (IDSRecipe) —[:AT_FACILITY]→ (Facility)
+                            (IMASMapping) —[:AT_FACILITY]→ (Facility)
 ```
 
 ### IMASMapping
@@ -32,7 +32,7 @@ Each mapping node encodes one field-level transformation:
 
 | Property | Purpose |
 |----------|---------|
-| `source_property` | DataNode property name (e.g., `r`, `z`, `angle`) |
+| `source_property` | SignalNode property name (e.g., `r`, `z`, `angle`) |
 | `transform_code` | Executable Python expression (e.g., `math.radians(value)`) |
 | `units_in` / `units_out` | Automatic unit conversion via pint |
 | `cocos_source` / `cocos_target` | COCOS convention for sign/scale transforms |
@@ -42,7 +42,7 @@ Each mapping node encodes one field-level transformation:
 The `transform_code` expression is evaluated with a controlled context providing
 `value` (the input), `math`, `numpy`, `cocos_sign()`, and `convert_units()`.
 
-### IDSRecipe
+### IMASMapping
 
 Each recipe node stores structural assembly configuration as a JSON blob in
 `assembly_config`. This defines:
@@ -57,7 +57,7 @@ Each recipe node stores structural assembly configuration as a JSON blob in
 
 ### Graph-Driven (preferred)
 
-Reads `IDSRecipe` + `IMASMapping` nodes from the graph. The recipe's `assembly_config`
+Reads `IMASMapping` + `IMASMapping` nodes from the graph. The recipe's `assembly_config`
 defines structural patterns; mapping nodes define field transforms with executable code.
 
 ```python
@@ -77,11 +77,11 @@ array entries:
 
 ### `array_per_node`
 
-One DataNode produces one struct-array entry. Used for coils, probes, loops.
+One SignalNode produces one struct-array entry. Used for coils, probes, loops.
 
 ```
-DataNode[0] → coil[0]
-DataNode[1] → coil[1]
+SignalNode[0] → coil[0]
+SignalNode[1] → coil[1]
 ...
 ```
 
@@ -103,8 +103,8 @@ Configuration:
 | `select_via` | Relationship-based node selection (e.g., `USES_LIMITER`) |
 
 ```
-StructuralEpoch —[:USES_LIMITER]→ DataNode[0] → unit[0]
-                                   DataNode[1] → unit[1]
+StructuralEpoch —[:USES_LIMITER]→ SignalNode[0] → unit[0]
+                                   SignalNode[1] → unit[1]
 ```
 
 ## Node Selection
@@ -116,7 +116,7 @@ DataNodes are selected per-section using two strategies:
 Matches on `system`, `data_source`, and epoch field:
 
 ```cypher
-MATCH (d:DataNode {facility_id: $f, data_source_name: $ds, system: $sys})
+MATCH (d:SignalNode {facility_id: $f, data_source_name: $ds, system: $sys})
 WHERE d.introduced_version = $epoch_id
 ```
 
@@ -126,7 +126,7 @@ Traverses a relationship from the structural epoch. Used when DataNodes lack a
 direct epoch property (e.g., limiter nodes selected via `USES_LIMITER`):
 
 ```cypher
-MATCH (se:StructuralEpoch {id: $epoch_id})-[:USES_LIMITER]->(d:DataNode)
+MATCH (se:StructuralEpoch {id: $epoch_id})-[:USES_LIMITER]->(d:SignalNode)
 ```
 
 ## COCOS Handling

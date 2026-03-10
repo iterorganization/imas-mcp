@@ -25,12 +25,12 @@ wiki:
 
 imas:
   labels:
-    - IMASPath
+    - IMASNode
     - IDS
     - IMASSemanticCluster
     - DDVersion
     - Unit
-    - IMASPathChange
+    - IMASNodeChange
     - IMASCoordinateSpec
   description: IMAS Data Dictionary paths, versions, and semantic clusters
 
@@ -46,13 +46,13 @@ facility:
     - Facility
     - FacilityPath
     - FacilitySignal
-    - DataNode
+    - SignalNode
     - Diagnostic
   description: Facility infrastructure and discovery paths
 
 data_sources:
   labels:
-    - DataNode
+    - SignalNode
     - DataSource
     - DataNodePattern
   description: Data source structure and node patterns

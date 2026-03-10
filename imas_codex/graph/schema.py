@@ -547,7 +547,7 @@ class GraphSchema:
                 )
             else:
                 # Simple constraint: just the identifier
-                # For Facility, IMASPath, and 1:1 facility mappings
+                # For Facility, IMASNode, and 1:1 facility mappings
                 statements.append(
                     f"CREATE CONSTRAINT {constraint_name} IF NOT EXISTS "
                     f"FOR (n:{label}) REQUIRE n.{id_field} IS UNIQUE"
@@ -579,7 +579,7 @@ class GraphSchema:
                     "device_inode",
                 ],  # device_inode for bind mount dedup
                 "MDSplusServer": ["role"],
-                "DataNode": ["node_type"],
+                "SignalNode": ["node_type"],
                 "Diagnostic": ["category"],
                 "AnalysisCode": ["code_type"],
                 "Tool": ["category", "available"],

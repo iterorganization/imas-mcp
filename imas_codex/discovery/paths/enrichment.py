@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 # -- Data Access Patterns (score_data_access) --
 # Facility-native data systems: MDSplus, PPF, UFile, shotfiles, UDA, EDAS
 DATA_ACCESS_PATTERNS = {
-    "mdsplus": r"(mdsconnect|mdsopen|mdsvalue|MDSplus|TdiExecute|connection\.openTree|DataNode)",
+    "mdsplus": r"(mdsconnect|mdsopen|mdsvalue|MDSplus|TdiExecute|connection\.openTree|SignalNode)",
     "ppf": r"(ppf\.read|ppfget|jet\.ppf|ppfuid|ppfgo|ppfdat)",
     "ufile": r"(ufile\.read|read_ufile|ufiles|UFILE)",
     "shotfile": r"(shotfile\.open|sfread|dd\.shotfile|kk\()",

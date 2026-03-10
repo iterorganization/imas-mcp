@@ -730,13 +730,13 @@ class GraphClient:
         description: str | None = None,
         units: str | None = None,
     ) -> None:
-        """Create IMASPath node."""
+        """Create IMASNode node."""
         props = {"id": path, "path": path, "ids": ids}
         if description:
             props["description"] = description
         if units:
             props["units"] = units
-        self.create_node("IMASPath", path, props)
+        self.create_node("IMASNode", path, props)
 
     # =========================================================================
     # Query Methods
@@ -768,7 +768,7 @@ class GraphClient:
         """Get all nodes of a type for a specific facility.
 
         Args:
-            label: Node label (e.g., "Diagnostic", "Tool", "DataNode")
+            label: Node label (e.g., "Diagnostic", "Tool", "SignalNode")
             facility_id: Facility identifier
 
         Returns:
@@ -857,7 +857,7 @@ class GraphClient:
             where_clause = "WHERE m.facility_id IN $facility_ids"
 
         query = f"""
-            MATCH (m:IMASMapping)-[:TARGET_PATH]->(imas:IMASPath)
+            MATCH (m:IMASMapping)-[:TARGET_PATH]->(imas:IMASNode)
             {where_clause}
             WITH imas, collect(DISTINCT m.facility_id) as facilities
             WHERE size(facilities) > 1

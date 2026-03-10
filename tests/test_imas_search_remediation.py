@@ -317,7 +317,7 @@ class TestGraphSearchToolHybrid:
 
         mock_gc.query.side_effect = _route_query(
             {
-                "imas_path_embedding": [
+                "imas_node_embedding": [
                     {"id": "magnetics/ip/0d/value", "score": 0.85},
                 ],
                 "db.index.fulltext.queryNodes": [
@@ -361,7 +361,7 @@ class TestGraphSearchToolHybrid:
 
         mock_gc.query.side_effect = _route_query(
             {
-                "imas_path_embedding": [],  # no vector results
+                "imas_node_embedding": [],  # no vector results
                 "db.index.fulltext.queryNodes": [
                     {"id": "magnetics/ip/0d/value", "score": 8.0},
                 ],
@@ -401,7 +401,7 @@ class TestGraphSearchToolHybrid:
 
         mock_gc.query.side_effect = _route_query(
             {
-                "imas_path_embedding": [
+                "imas_node_embedding": [
                     {"id": "equilibrium/time_slice/profiles_1d/psi", "score": 0.92},
                 ],
                 "UNWIND $path_ids": [
@@ -466,7 +466,7 @@ class TestGraphSearchToolHybrid:
 
         mock_gc.query.side_effect = _route_query(
             {
-                "imas_path_embedding": [
+                "imas_node_embedding": [
                     {"id": "equilibrium/time_slice/profiles_1d/psi", "score": 0.90},
                     {
                         "id": "equilibrium/time_slice/profiles_1d/description",
@@ -532,7 +532,7 @@ class TestGraphSearchToolHybrid:
 
         mock_gc.query.side_effect = _route_query(
             {
-                "imas_path_embedding": [
+                "imas_node_embedding": [
                     {"id": "equilibrium/time_slice/profiles_1d/psi", "score": 0.90},
                     {
                         "id": "core_profiles/profiles_1d/electrons/temperature",
@@ -618,8 +618,8 @@ class TestSearchImasHybridCodex:
 
         mock_gc.query.side_effect = _route_query(
             {
-                "imas_path_embedding": [],  # no vector results
-                "db.index.fulltext.queryNodes('imas_path_text": [
+                "imas_node_embedding": [],  # no vector results
+                "db.index.fulltext.queryNodes('imas_node_text": [
                     {"id": "magnetics.ip.0d[:].value", "score": 8.0},
                 ],
                 "UNWIND $path_ids": [
@@ -656,10 +656,10 @@ class TestSearchImasHybridCodex:
 
         mock_gc.query.side_effect = _route_query(
             {
-                "imas_path_embedding": [
+                "imas_node_embedding": [
                     {"id": "magnetics.ip.0d[:].value", "score": 0.80},
                 ],
-                "db.index.fulltext.queryNodes('imas_path_text": [
+                "db.index.fulltext.queryNodes('imas_node_text": [
                     {"id": "magnetics.ip.0d[:].value", "score": 10.0},
                 ],
                 "UNWIND $path_ids": [
@@ -696,7 +696,7 @@ class TestSearchImasHybridCodex:
 
         mock_gc.query.side_effect = _route_query(
             {
-                "imas_path_embedding": [
+                "imas_node_embedding": [
                     {"id": "magnetics.ip.0d[:].value", "score": 0.92},
                 ],
                 "UNWIND $path_ids": [

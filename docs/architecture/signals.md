@@ -153,7 +153,7 @@ MDSplus trees are extracted in three modes:
 
 After MDSplus and TDI scanners both complete, TDI linkage resolves
 `build_path()` references in TDI functions to their underlying
-`DataNode` nodes, creating `RESOLVES_TO_NODE` edges.
+`SignalNode` nodes, creating `RESOLVES_TO_NODE` edges.
 
 ---
 
@@ -164,7 +164,7 @@ After MDSplus and TDI scanners both complete, TDI linkage resolves
 | Node Type | Description |
 |-----------|-------------|
 | `FacilitySignal` | A facility-specific data signal |
-| `DataNode` | A node within an MDSplus tree |
+| `SignalNode` | A node within an MDSplus tree |
 | `StructuralEpoch` | Structural version of a tree model |
 | `DataNodePattern` | Repeated structural pattern across indexed tree components |
 | `TDIFunction` | TDI function providing high-level access abstraction |
@@ -177,18 +177,18 @@ After MDSplus and TDI scanners both complete, TDI linkage resolves
 
 | From | Relationship | To | Description |
 |------|-------------|-----|-------------|
-| FacilitySignal | `HAS_DATA_SOURCE_NODE` | DataNode | Backing data location |
+| FacilitySignal | `HAS_DATA_SOURCE_NODE` | SignalNode | Backing data location |
 | FacilitySignal | `DATA_ACCESS` | DataAccess | How to access the data |
 | FacilitySignal | `BELONGS_TO_DIAGNOSTIC` | Diagnostic | Diagnostic system |
 | FacilitySignal | `CHECKED_WITH` | DataAccess | Validation result |
 | FacilitySignal | `AT_FACILITY` | Facility | Owning facility |
-| DataNode | `HAS_NODE` | DataNode | Parent-child hierarchy |
-| DataNode | `INTRODUCED_IN` | StructuralEpoch | When node appeared |
-| DataNode | `REMOVED_IN` | StructuralEpoch | When node disappeared |
-| DataNode | `FOLLOWS_PATTERN` | DataNodePattern | Indexed pattern group |
-| DataNode | `HAS_UNIT` | Unit | Physical unit |
+| SignalNode | `HAS_NODE` | SignalNode | Parent-child hierarchy |
+| SignalNode | `INTRODUCED_IN` | StructuralEpoch | When node appeared |
+| SignalNode | `REMOVED_IN` | StructuralEpoch | When node disappeared |
+| SignalNode | `MEMBER_OF` | DataNodePattern | Indexed pattern group |
+| SignalNode | `HAS_UNIT` | Unit | Physical unit |
 | TDIFunction | `AT_FACILITY` | Facility | Owning facility |
-| TDIFunction | `RESOLVES_TO_NODE` | DataNode | Underlying data path |
+| TDIFunction | `RESOLVES_TO_NODE` | SignalNode | Underlying data path |
 | Diagnostic | `AT_FACILITY` | Facility | Owning facility |
 | StructuralEpoch | `HAS_PREDECESSOR` | StructuralEpoch | Version chain |
 
@@ -211,7 +211,7 @@ ORDER BY score DESC
 ### 2. Path Access — Navigate from Tree Path to Signal
 
 ```cypher
-MATCH (tn:DataNode {path: '\\RESULTS::LIUQE:IP', facility_id: 'tcv'})
+MATCH (tn:SignalNode {path: '\\RESULTS::LIUQE:IP', facility_id: 'tcv'})
 OPTIONAL MATCH (fs:FacilitySignal)-[:HAS_DATA_SOURCE_NODE]->(tn)
 OPTIONAL MATCH (tn)-[:HAS_UNIT]->(u:Unit)
 OPTIONAL MATCH (fs)-[:BELONGS_TO_DIAGNOSTIC]->(d:Diagnostic)
@@ -230,7 +230,7 @@ query both access methods:
 ```cypher
 MATCH (fs:FacilitySignal {facility_id: 'tcv'})
 WHERE fs.tdi_function IS NOT NULL
-MATCH (fs)-[:HAS_DATA_SOURCE_NODE]->(tn:DataNode)
+MATCH (fs)-[:HAS_DATA_SOURCE_NODE]->(tn:SignalNode)
 MATCH (fs)-[:DATA_ACCESS]->(da:DataAccess)
 RETURN fs.id, fs.accessor AS tdi_accessor,
        tn.path AS raw_path, da.method_type,
@@ -261,7 +261,7 @@ Find signals that exist at a given shot number via `StructuralEpoch`
 applicability ranges:
 
 ```cypher
-MATCH (fs:FacilitySignal {facility_id: 'tcv'})-[:HAS_DATA_SOURCE_NODE]->(tn:DataNode)
+MATCH (fs:FacilitySignal {facility_id: 'tcv'})-[:HAS_DATA_SOURCE_NODE]->(tn:SignalNode)
 MATCH (tn)-[:INTRODUCED_IN]->(v:StructuralEpoch)
 WHERE v.first_shot <= $shot
   AND (v.last_shot IS NULL OR v.last_shot >= $shot)
@@ -284,9 +284,9 @@ OPTIONAL MATCH (fs)-[:BELONGS_TO_DIAGNOSTIC]->(d:Diagnostic)
 OPTIONAL MATCH (d)-[:DOCUMENTED_BY]->(wp:WikiPage)
 OPTIONAL MATCH (wp)-[:HAS_CHUNK]->(wc:WikiChunk)
 // Code usage
-OPTIONAL MATCH (tn:DataNode)<-[:HAS_DATA_SOURCE_NODE]-(fs)
+OPTIONAL MATCH (tn:SignalNode)<-[:HAS_DATA_SOURCE_NODE]-(fs)
 // IMAS mapping
-OPTIONAL MATCH (tn)<-[:SOURCE_PATH]-(m:IMASMapping)-[:TARGET_PATH]->(imas:IMASPath)
+OPTIONAL MATCH (tn)<-[:SOURCE_PATH]-(m:IMASMapping)-[:TARGET_PATH]->(imas:IMASNode)
 RETURN fs.id, fs.description,
        collect(DISTINCT wp.title) AS wiki_pages,
        collect(DISTINCT wc.text)[..3] AS wiki_excerpts,
@@ -308,11 +308,11 @@ ORDER BY signal_count DESC
 ### 8. TDI Function Resolution
 
 From a TDI function, follow `RESOLVES_TO_NODE` edges to the
-underlying `DataNode` nodes and their signals:
+underlying `SignalNode` nodes and their signals:
 
 ```cypher
 MATCH (tdi:TDIFunction {name: 'tcv_eq', facility_id: 'tcv'})
-OPTIONAL MATCH (tdi)-[:RESOLVES_TO_NODE]->(tn:DataNode)
+OPTIONAL MATCH (tdi)-[:RESOLVES_TO_NODE]->(tn:SignalNode)
 OPTIONAL MATCH (fs:FacilitySignal)-[:HAS_DATA_SOURCE_NODE]->(tn)
 RETURN tdi.name, tdi.signature,
        collect(DISTINCT {
@@ -332,7 +332,7 @@ Signal enrichment quality improves significantly when wiki and code
 discovery have already populated the graph:
 
 ```
-1. imas dd build          → IMASPath, DDVersion, Unit
+1. imas dd build          → IMASNode, DDVersion, Unit
 2. discover wiki          → WikiPage, WikiChunk (sign conventions, COCOS)
 2. discover paths/code    → FacilityPath, SourceFile, CodeChunk
 3. discover signals       → FacilitySignal, DataAccess (benefits from above)

@@ -51,8 +51,8 @@ Env var overrides (`NEO4J_URI`, `NEO4J_USERNAME`, `NEO4J_PASSWORD`) still apply 
 All graph node types, relationships, and properties are defined in LinkML schemas — the single source of truth.
 
 **Schema files:**
-- `imas_codex/schemas/facility.yaml` - Facility graph: SourceFile, DataNode, CodeChunk, etc.
-- `imas_codex/schemas/imas_dd.yaml` - DD graph: IMASPath, DDVersion, Unit, IMASCoordinateSpec
+- `imas_codex/schemas/facility.yaml` - Facility graph: SourceFile, SignalNode, CodeChunk, etc.
+- `imas_codex/schemas/imas_dd.yaml` - DD graph: IMASNode, DDVersion, Unit, IMASCoordinateSpec
 - `imas_codex/schemas/common.yaml` - Shared: status enums, PhysicsDomain
 
 **Build pipeline:**
@@ -70,7 +70,7 @@ All graph node types, relationships, and properties are defined in LinkML schema
 Always import enums and classes from generated models. Never hardcode status values:
 
 ```python
-from imas_codex.graph.models import SourceFile, SourceFileStatus, DataNode
+from imas_codex.graph.models import SourceFile, SourceFileStatus, SignalNode
 
 sf = SourceFile(
     id="tcv:/home/codes/liuqe.py",
@@ -449,8 +449,8 @@ results = query("""
     CALL db.index.vector.queryNodes('facility_signal_desc_embedding', 5, $embedding)
     YIELD node AS signal, score
     MATCH (signal)-[:DATA_ACCESS]->(da:DataAccess)
-    OPTIONAL MATCH (signal)-[:HAS_DATA_SOURCE_NODE]->(dn:DataNode)
-        <-[:SOURCE_PATH]-(m:IMASMapping)-[:TARGET_PATH]->(imas:IMASPath)
+    OPTIONAL MATCH (signal)-[:HAS_DATA_SOURCE_NODE]->(dn:SignalNode)
+        <-[:SOURCE_PATH]-(m:IMASMapping)-[:TARGET_PATH]->(imas:IMASNode)
     RETURN signal.id, signal.description, da.data_template,
            collect(imas.id) AS imas_paths, score
     ORDER BY score DESC
@@ -462,9 +462,9 @@ results = query("""
 | From | Relationship | To |
 |------|--------------|-----|
 | FacilitySignal | DATA_ACCESS | DataAccess |
-| FacilitySignal | HAS_DATA_SOURCE_NODE | DataNode |
-| IMASMapping | SOURCE_PATH | DataNode |
-| IMASMapping | TARGET_PATH | IMASPath |
+| FacilitySignal | HAS_DATA_SOURCE_NODE | SignalNode |
+| IMASMapping | SOURCE_PATH | SignalNode |
+| IMASMapping | TARGET_PATH | IMASNode |
 | WikiChunk | HAS_CHUNK← | WikiPage |
 | FacilityPath | AT_FACILITY | Facility |
 

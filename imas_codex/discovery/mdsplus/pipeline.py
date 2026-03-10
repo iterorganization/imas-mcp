@@ -172,7 +172,7 @@ async def run_tree_discovery(
         stop_event=stop_event,
         orphan_specs=[
             OrphanRecoverySpec("StructuralEpoch"),
-            OrphanRecoverySpec("DataNode", timeout_seconds=300),
+            OrphanRecoverySpec("SignalNode", timeout_seconds=300),
         ],
         on_worker_status=on_worker_status,
     )

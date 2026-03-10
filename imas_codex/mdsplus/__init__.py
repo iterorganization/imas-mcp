@@ -3,7 +3,7 @@
 This module provides facility-agnostic tools for:
 - Tree structure discovery via remote introspection
 - Epoch boundary detection (structural versioning)
-- DataNode extraction with cross-links to versions
+- SignalNode extraction with cross-links to versions
 
 Works with any facility that uses MDSplus as a data store.
 

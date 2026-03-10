@@ -4,12 +4,12 @@ Build the IMAS Data Dictionary Knowledge Graph.
 This module provides functions to populate Neo4j with IMAS DD structure:
 - DDVersion nodes for all available DD versions
 - IDS nodes for top-level structures
-- IMASPath nodes with hierarchical relationships
+- IMASNode nodes with hierarchical relationships
 - Unit and IMASCoordinateSpec nodes
 - Version tracking (INTRODUCED_IN, DEPRECATED_IN, RENAMED_TO)
-- IMASPathChange nodes for metadata changes with semantic classification
+- IMASNodeChange nodes for metadata changes with semantic classification
 - IMASSemanticCluster nodes from existing clusters (optional)
-- Embeddings for IMASPath nodes with content-based caching
+- Embeddings for IMASNode nodes with content-based caching
 
 The graph is augmented incrementally, not rebuilt - this preserves
 links to facility data (DataNodes, IMASMappings).
@@ -53,7 +53,7 @@ def _strip_dd_indices(path: str) -> str:
     """Strip DD index notation like (itime), (i1), (:) from a path.
 
     Coordinate references and path_doc use (iN)/(itime)/(:) notation
-    for struct_array traversal. Our stored IMASPath IDs omit these.
+    for struct_array traversal. Our stored IMASNode IDs omit these.
     Stripping is always unambiguous — no DD path has name collisions
     requiring index variables for disambiguation.
     """
@@ -532,7 +532,7 @@ def get_existing_embedding_data(
         records = client.query(
             """
             UNWIND $paths AS path_id
-            MATCH (p:IMASPath {id: path_id})
+            MATCH (p:IMASNode {id: path_id})
             WHERE p.embedding_hash IS NOT NULL
             RETURN p.id AS path_id, p.embedding_hash AS hash, p.embedding_text AS text
             """,
@@ -570,7 +570,7 @@ def get_existing_embedding_hashes(
         records = client.query(
             """
             UNWIND $paths AS path_id
-            MATCH (p:IMASPath {id: path_id})
+            MATCH (p:IMASNode {id: path_id})
             WHERE p.embedding_hash IS NOT NULL
             RETURN p.id AS path_id, p.embedding_hash AS hash
             """,
@@ -590,7 +590,7 @@ def record_embedding_changes(
     """
     Record embedding content changes as relationships in the graph.
 
-    Creates HAS_EMBEDDING_CHANGE relationships linking IMASPath nodes to
+    Creates HAS_EMBEDDING_CHANGE relationships linking IMASNode nodes to
     EmbeddingChange nodes that track what changed and when.
 
     Args:
@@ -627,7 +627,7 @@ def record_embedding_changes(
     client.query(
         """
         UNWIND $changes AS c
-        MATCH (p:IMASPath {id: c.path_id})
+        MATCH (p:IMASNode {id: c.path_id})
         MERGE (p)-[r:HAS_EMBEDDING_CHANGE {
             change_type: c.change_type,
             dd_version: c.dd_version
@@ -659,7 +659,7 @@ def update_path_embeddings(
     track_changes: bool = True,
 ) -> dict[str, int]:
     """
-    Generate and store embeddings for IMASPath nodes with content-based caching.
+    Generate and store embeddings for IMASNode nodes with content-based caching.
 
     Only regenerates embeddings for paths where the content hash has changed,
     minimizing recompute on graph rebuilds. Model name is stored on DDVersion,
@@ -807,7 +807,7 @@ def update_path_embeddings(
             client.query(
                 """
                 UNWIND $batch AS b
-                MATCH (p:IMASPath {id: b.path_id})
+                MATCH (p:IMASNode {id: b.path_id})
                 SET p.embedding_text = b.embedding_text,
                     p.embedding = b.embedding,
                     p.embedding_hash = b.embedding_hash
@@ -1305,7 +1305,7 @@ def _check_graph_up_to_date(
         if include_embeddings:
             emb_result = client.query(
                 """
-                MATCH (p:IMASPath)
+                MATCH (p:IMASNode)
                 WITH count(p) AS total,
                      count(CASE WHEN p.embedding IS NOT NULL THEN 1 END) AS with_emb
                 RETURN total, with_emb
@@ -1472,7 +1472,7 @@ def build_dd_graph(
                 _create_identifier_schema_nodes(client, id_schemas)
             stats["identifier_schemas_created"] = len(id_schemas)
 
-        # Phase 2: Build graph nodes (IDS + IMASPath + relationships)
+        # Phase 2: Build graph nodes (IDS + IMASNode + relationships)
         prev_paths: dict[str, dict] = {}
 
         with monitor.phase(
@@ -1520,7 +1520,7 @@ def build_dd_graph(
             mappings = load_path_mappings(current_dd_version)
             _batch_create_renamed_to(client, mappings.get("old_to_new", {}))
 
-        # Update cocos_label_transformation on existing IMASPath nodes
+        # Update cocos_label_transformation on existing IMASNode nodes
         # Paths created in early versions lack COCOS labels added in later
         # versions (3.28.1+). Apply the latest version's labels to all nodes,
         # and clear labels on paths that lost COCOS sensitivity in DD4.
@@ -1545,7 +1545,7 @@ def build_dd_graph(
                     client.query(
                         """
                         UNWIND $paths AS p
-                        MATCH (path:IMASPath {id: p.id})
+                        MATCH (path:IMASNode {id: p.id})
                         SET path.cocos_label_transformation = p.cocos_label_transformation
                         """,
                         paths=batch,
@@ -1556,7 +1556,7 @@ def build_dd_graph(
             # (e.g., psi_like removed in DD4)
             client.query(
                 """
-                MATCH (p:IMASPath)
+                MATCH (p:IMASNode)
                 WHERE p.cocos_label_transformation IS NOT NULL
                 AND NOT p.id IN $labeled_paths
                 SET p.cocos_label_transformation = null
@@ -1609,7 +1609,7 @@ def build_dd_graph(
                     client.query(
                         """
                         UNWIND $paths AS p
-                        MATCH (path:IMASPath {id: p.id})
+                        MATCH (path:IMASNode {id: p.id})
                         SET path.lifecycle_status = p.lifecycle_status,
                             path.lifecycle_version = p.lifecycle_version,
                             path.timebasepath = p.timebasepath,
@@ -1644,7 +1644,7 @@ def build_dd_graph(
                 client.query(
                     """
                     UNWIND $rels AS r
-                    MATCH (path:IMASPath {id: r.id})
+                    MATCH (path:IMASNode {id: r.id})
                     MATCH (schema:IdentifierSchema {id: r.schema_name})
                     MERGE (path)-[:HAS_IDENTIFIER_SCHEMA]->(schema)
                 """,
@@ -1677,8 +1677,8 @@ def build_dd_graph(
                     client.query(
                         """
                         UNWIND $rels AS r
-                        MATCH (path:IMASPath {id: r.source_id})
-                        MATCH (target:IMASPath {id: r.target_id})
+                        MATCH (path:IMASNode {id: r.source_id})
+                        MATCH (target:IMASNode {id: r.target_id})
                         MERGE (path)-[rel:COORDINATE_SAME_AS]->(target)
                         SET rel.dimension = r.dimension
                     """,
@@ -1890,8 +1890,8 @@ def _ensure_indexes(client: GraphClient) -> None:
     """Ensure required indexes exist for optimal query performance."""
     logger.debug("Ensuring DD indexes exist...")
 
-    # IMASPath.id - critical for MERGE and relationship creation
-    client.query("CREATE INDEX imaspath_id IF NOT EXISTS FOR (p:IMASPath) ON (p.id)")
+    # IMASNode.id - critical for MERGE and relationship creation
+    client.query("CREATE INDEX imaspath_id IF NOT EXISTS FOR (p:IMASNode) ON (p.id)")
 
     # IDS.name - for IDS relationship lookups
     client.query("CREATE INDEX ids_name IF NOT EXISTS FOR (i:IDS) ON (i.name)")
@@ -2087,7 +2087,7 @@ def _batch_create_path_nodes(
     version: str,
     batch_size: int = 1000,
 ) -> None:
-    """Batch create IMASPath nodes with relationships.
+    """Batch create IMASNode nodes with relationships.
 
     Uses multiple batched queries to avoid memory issues with large datasets.
     """
@@ -2145,11 +2145,11 @@ def _batch_create_path_nodes(
     for i in range(0, len(path_list), batch_size):
         batch = path_list[i : i + batch_size]
 
-        # Step 1: Create IMASPath nodes
+        # Step 1: Create IMASNode nodes
         client.query(
             """
             UNWIND $paths AS p
-            MERGE (path:IMASPath {id: p.id})
+            MERGE (path:IMASNode {id: p.id})
             SET path.name = p.name,
                 path.documentation = p.documentation,
                 path.data_type = p.data_type,
@@ -2186,7 +2186,7 @@ def _batch_create_path_nodes(
         client.query(
             """
             UNWIND $paths AS p
-            MATCH (path:IMASPath {id: p.id})
+            MATCH (path:IMASNode {id: p.id})
             MATCH (ids:IDS {id: p.ids_name})
             MERGE (path)-[:IN_IDS]->(ids)
         """,
@@ -2201,8 +2201,8 @@ def _batch_create_path_nodes(
             client.query(
                 """
                 UNWIND $paths AS p
-                MATCH (path:IMASPath {id: p.id})
-                MERGE (parent:IMASPath {id: p.parent_path})
+                MATCH (path:IMASNode {id: p.id})
+                MERGE (parent:IMASNode {id: p.parent_path})
                 MERGE (path)-[:HAS_PARENT]->(parent)
             """,
                 paths=parent_paths,
@@ -2221,7 +2221,7 @@ def _batch_create_path_nodes(
             client.query(
                 """
                 UNWIND $paths AS p
-                MATCH (path:IMASPath {id: p.id})
+                MATCH (path:IMASNode {id: p.id})
                 MATCH (u:Unit {id: p.unit})
                 MERGE (path)-[:HAS_UNIT]->(u)
             """,
@@ -2229,7 +2229,7 @@ def _batch_create_path_nodes(
             )
 
         # Step 5: Create HAS_COORDINATE relationships
-        # Each coordinate links to either an IMASCoordinateSpec (e.g., "1...N") or IMASPath
+        # Each coordinate links to either an IMASCoordinateSpec (e.g., "1...N") or IMASNode
         coord_rels = []
         for p in batch:
             if not p["coordinates"]:
@@ -2251,7 +2251,7 @@ def _batch_create_path_nodes(
                 else:
                     # Path references are relative to IDS root.
                     # Strip DD index notation (itime), (i1) etc. to match
-                    # our stored IMASPath IDs which omit indices.
+                    # our stored IMASNode IDs which omit indices.
                     # Handle cross-IDS refs like "IDS:magnetics/flux_loop"
                     if coord_str.startswith("IDS:"):
                         target_path = coord_str[4:]  # strip "IDS:" prefix
@@ -2272,7 +2272,7 @@ def _batch_create_path_nodes(
             client.query(
                 """
                 UNWIND $rels AS r
-                MATCH (path:IMASPath {id: r.source_id})
+                MATCH (path:IMASNode {id: r.source_id})
                 MATCH (spec:IMASCoordinateSpec {id: r.target_id})
                 MERGE (path)-[rel:HAS_COORDINATE]->(spec)
                 SET rel.dimension = r.dimension
@@ -2280,14 +2280,14 @@ def _batch_create_path_nodes(
                 rels=spec_rels,
             )
 
-        # Create relationships to IMASPath coordinate nodes
+        # Create relationships to IMASNode coordinate nodes
         path_rels = [r for r in coord_rels if not r["is_spec"]]
         if path_rels:
             client.query(
                 """
                 UNWIND $rels AS r
-                MATCH (path:IMASPath {id: r.source_id})
-                MATCH (coord:IMASPath {id: r.target_id})
+                MATCH (path:IMASNode {id: r.source_id})
+                MATCH (coord:IMASNode {id: r.target_id})
                 MERGE (path)-[rel:HAS_COORDINATE]->(coord)
                 SET rel.dimension = r.dimension
             """,
@@ -2300,7 +2300,7 @@ def _batch_create_path_nodes(
         client.query(
             """
             UNWIND $paths AS p
-            MATCH (path:IMASPath {id: p.id})
+            MATCH (path:IMASNode {id: p.id})
             WHERE NOT EXISTS { (path)-[:INTRODUCED_IN]->(:DDVersion) }
             MATCH (v:DDVersion {id: $version})
             MERGE (path)-[:INTRODUCED_IN]->(v)
@@ -2315,7 +2315,7 @@ def _batch_create_path_nodes(
             client.query(
                 """
                 UNWIND $paths AS p
-                MATCH (path:IMASPath {id: p.id})
+                MATCH (path:IMASNode {id: p.id})
                 MATCH (schema:IdentifierSchema {id: p.identifier_enum_name})
                 MERGE (path)-[:HAS_IDENTIFIER_SCHEMA]->(schema)
             """,
@@ -2344,8 +2344,8 @@ def _batch_create_path_nodes(
             client.query(
                 """
                 UNWIND $rels AS r
-                MATCH (path:IMASPath {id: r.source_id})
-                MATCH (target:IMASPath {id: r.target_id})
+                MATCH (path:IMASNode {id: r.source_id})
+                MATCH (target:IMASNode {id: r.target_id})
                 MERGE (path)-[rel:COORDINATE_SAME_AS]->(target)
                 SET rel.dimension = r.dimension
             """,
@@ -2364,7 +2364,7 @@ def _batch_mark_paths_deprecated(
     client.query(
         """
         UNWIND $paths AS p
-        MATCH (path:IMASPath {id: p.path})
+        MATCH (path:IMASNode {id: p.path})
         MATCH (v:DDVersion {id: $version})
         MERGE (path)-[:DEPRECATED_IN]->(v)
     """,
@@ -2378,7 +2378,7 @@ def _batch_create_path_changes(
     changes: dict[str, list[dict]],
     version: str,
 ) -> int:
-    """Batch create IMASPathChange nodes for metadata changes with semantic classification."""
+    """Batch create IMASNodeChange nodes for metadata changes with semantic classification."""
     if not changes:
         return 0
 
@@ -2410,11 +2410,11 @@ def _batch_create_path_changes(
     if not change_list:
         return 0
 
-    # Create IMASPathChange nodes with semantic classification
+    # Create IMASNodeChange nodes with semantic classification
     client.query(
         """
         UNWIND $changes AS c
-        MERGE (change:IMASPathChange {id: c.id})
+        MERGE (change:IMASNodeChange {id: c.id})
         SET change.change_type = c.change_type,
             change.old_value = c.old_value,
             change.new_value = c.new_value,
@@ -2428,8 +2428,8 @@ def _batch_create_path_changes(
     client.query(
         """
         UNWIND $changes AS c
-        MATCH (change:IMASPathChange {id: c.id})
-        MATCH (p:IMASPath {id: c.path})
+        MATCH (change:IMASNodeChange {id: c.id})
+        MATCH (p:IMASNode {id: c.path})
         MATCH (v:DDVersion {id: $version})
         MERGE (change)-[:FOR_IMAS_PATH]->(p)
         MERGE (change)-[:IN_VERSION]->(v)
@@ -2456,8 +2456,8 @@ def _batch_create_renamed_to(client: GraphClient, mappings: dict[str, dict]) -> 
         client.query(
             """
             UNWIND $renames AS r
-            MATCH (old:IMASPath {id: r.old_path})
-            MATCH (new:IMASPath {id: r.new_path})
+            MATCH (old:IMASNode {id: r.old_path})
+            MATCH (new:IMASNode {id: r.new_path})
             MERGE (old)-[:RENAMED_TO]->(new)
         """,
             renames=rename_list,
@@ -2498,8 +2498,8 @@ def _batch_create_error_relationships(
         result = client.query(
             """
             UNWIND $rels AS r
-            MATCH (err:IMASPath {id: r.error_path})
-            MATCH (data:IMASPath {id: r.data_path})
+            MATCH (err:IMASNode {id: r.error_path})
+            MATCH (data:IMASNode {id: r.data_path})
             MERGE (data)-[rel:HAS_ERROR]->(err)
             SET rel.error_type = r.error_type
             RETURN count(*) as created
@@ -2524,7 +2524,7 @@ def _cleanup_stale_embeddings(client: GraphClient) -> int:
         Number of paths cleaned up
     """
     result = client.query("""
-        MATCH (p:IMASPath)-[:DEPRECATED_IN]->(:DDVersion)
+        MATCH (p:IMASNode)-[:DEPRECATED_IN]->(:DDVersion)
         WHERE p.embedding IS NOT NULL
         SET p.embedding = null,
             p.embedding_text = null,
@@ -2546,7 +2546,7 @@ def _import_clusters(
     """Build semantic clusters from graph embeddings and merge into the graph.
 
     Graph-native pipeline — no file dependencies:
-    1. Run HDBSCAN on IMASPath embeddings read directly from the graph.
+    1. Run HDBSCAN on IMASNode embeddings read directly from the graph.
     2. Compute a content hash for each cluster from its sorted member paths.
     3. MERGE cluster nodes using content hash as ID, preserving existing
        labels and descriptions on unchanged clusters.
@@ -2570,7 +2570,7 @@ def _import_clusters(
             logger.info("Loading embeddings from graph for clustering...")
             emb_result = client.query(
                 """
-                MATCH (p:IMASPath)
+                MATCH (p:IMASNode)
                 WHERE p.embedding IS NOT NULL
                 RETURN p.id AS id, p.embedding AS embedding
                 ORDER BY p.id
@@ -2698,7 +2698,7 @@ def _import_clusters(
                 client.query(
                     """
                     UNWIND $memberships AS m
-                    MATCH (p:IMASPath {id: m.path})
+                    MATCH (p:IMASNode {id: m.path})
                     MATCH (c:IMASSemanticCluster {id: m.cluster_id})
                     MERGE (p)-[:IN_CLUSTER]->(c)
                     """,
@@ -2709,7 +2709,7 @@ def _import_clusters(
             # Mean of unit vectors then L2-normalize to restore unit length
             centroid_result = client.query(
                 """
-                MATCH (p:IMASPath)-[:IN_CLUSTER]->(c:IMASSemanticCluster)
+                MATCH (p:IMASNode)-[:IN_CLUSTER]->(c:IMASSemanticCluster)
                 WHERE p.embedding IS NOT NULL
                 WITH c, collect(p.embedding) AS embeddings, count(p) AS member_count
                 WHERE member_count > 0
@@ -2999,13 +2999,13 @@ def clear_dd_graph(
     Unit nodes are only deleted if no non-DD nodes reference them.
 
     Deletion order:
-    1. EmbeddingChange (leaf, references IMASPath + DDVersion)
-    2. IMASPathChange (references IMASPath + DDVersion)
-    3. IMASSemanticCluster (references IMASPath via IN_CLUSTER)
-    4. IdentifierSchema (referenced by IMASPath)
-    5. IMASPath (bulk — the largest set)
-    6. IDS (referenced by IMASPath)
-    7. DDVersion (referenced by IMASPath, IMASPathChange)
+    1. EmbeddingChange (leaf, references IMASNode + DDVersion)
+    2. IMASNodeChange (references IMASNode + DDVersion)
+    3. IMASSemanticCluster (references IMASNode via IN_CLUSTER)
+    4. IdentifierSchema (referenced by IMASNode)
+    5. IMASNode (bulk — the largest set)
+    6. IDS (referenced by IMASNode)
+    7. DDVersion (referenced by IMASNode, IMASNodeChange)
     8. IMASCoordinateSpec (referenced by coordinate relationships)
     9. Orphaned Unit nodes (not referenced by facility nodes)
 
@@ -3022,10 +3022,10 @@ def clear_dd_graph(
     # Order matters — delete children before parents
     node_types = [
         ("EmbeddingChange", "embedding_changes"),
-        ("IMASPathChange", "path_changes"),
+        ("IMASNodeChange", "path_changes"),
         ("IMASSemanticCluster", "clusters"),
         ("IdentifierSchema", "identifier_schemas"),
-        ("IMASPath", "paths"),
+        ("IMASNode", "paths"),
         ("IDS", "ids_nodes"),
         ("DDVersion", "versions"),
         ("IMASCoordinateSpec", "coordinate_specs"),

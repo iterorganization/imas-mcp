@@ -18,7 +18,7 @@ class TestCypherReadOnlyCheck:
 
     def test_match_with_where(self):
         assert _is_read_only(
-            "MATCH (n:IMASPath) WHERE n.ids_name = 'equilibrium' RETURN n.id"
+            "MATCH (n:IMASNode) WHERE n.ids_name = 'equilibrium' RETURN n.id"
         )
 
     def test_call_procedure_allowed(self):
@@ -95,7 +95,7 @@ class TestCypherToolExecution:
     @pytest.mark.anyio
     async def test_parameterless_traversal(self, cypher_tool):
         result = await cypher_tool.query_imas_graph(
-            "MATCH (p:IMASPath)-[:IN_IDS]->(i:IDS {id: 'equilibrium'}) "
+            "MATCH (p:IMASNode)-[:IN_IDS]->(i:IDS {id: 'equilibrium'}) "
             "RETURN p.id AS path ORDER BY p.id"
         )
         assert result["row_count"] == 5
@@ -138,7 +138,7 @@ class TestCypherToolExecution:
     async def test_version_evolution_query(self, cypher_tool):
         """Test the kind of query agents would compose for version evolution."""
         result = await cypher_tool.query_imas_graph(
-            "MATCH (c:IMASPathChange)-[:FOR_IMAS_PATH]->(p:IMASPath) "
+            "MATCH (c:IMASNodeChange)-[:FOR_IMAS_PATH]->(p:IMASNode) "
             "RETURN c.change_type AS change, p.id AS path, c.to_version AS version"
         )
         assert result["row_count"] >= 1
