@@ -590,10 +590,55 @@ class IDSAssembler:
             "ids_name": self.ids_name,
             "facility": self.facility,
             "epoch": epoch_id,
-            "dd_version": self.recipe["dd_version"],
+            "dd_version": self.dd_version,
             "arrays": {},
         }
 
+        if self._graph_recipe is not None:
+            return self._summary_from_graph(stats, epoch_id)
+        return self._summary_from_yaml(stats, epoch_id)
+
+    def _summary_from_graph(
+        self, stats: dict[str, Any], epoch_id: str
+    ) -> dict[str, Any]:
+        """Build summary from graph-driven recipe."""
+        recipe = self._graph_recipe
+        with GraphClient() as gc:
+            for section_name, section_config in recipe.assembly_config.items():
+                if section_name == "static":
+                    continue
+                nodes = select_nodes(self.facility, section_config, epoch_id, gc)
+                array_stats: dict[str, Any] = {"count": len(nodes)}
+
+                # Count elements if configured
+                if section_config.get("elements") and nodes:
+                    flat = [_flatten_node(n) for n in nodes]
+                    total_elements = 0
+                    section_mappings = [
+                        m
+                        for m in recipe.mappings
+                        if m.target_imas_path.startswith(
+                            f"{self.ids_name}/{section_name}/element/"
+                        )
+                    ]
+                    for node_data in flat:
+                        for m in section_mappings:
+                            val = node_data.get(m.source_property)
+                            if isinstance(val, list):
+                                total_elements += len(val)
+                                break
+                            else:
+                                total_elements += 1
+                                break
+                    array_stats["total_elements"] = total_elements
+
+                stats["arrays"][section_name] = array_stats
+        return stats
+
+    def _summary_from_yaml(
+        self, stats: dict[str, Any], epoch_id: str
+    ) -> dict[str, Any]:
+        """Build summary from YAML recipe."""
         for array_name, array_def in self.recipe.get("arrays", {}).items():
             source_def = array_def.get("source", {})
             query = source_def.get("query", "")
@@ -627,15 +672,45 @@ class IDSAssembler:
 
 
 def list_recipes(facility: str | None = None) -> list[dict[str, str]]:
-    """List available IDS recipes.
+    """List available IDS recipes from graph and YAML files.
 
     Args:
         facility: Optional facility filter.
 
     Returns:
-        List of dicts with 'facility', 'ids_name', 'path' keys.
+        List of dicts with 'facility', 'ids_name', 'dd_version', 'source' keys.
     """
-    recipes = []
+    recipes: dict[str, dict[str, str]] = {}
+
+    # Graph recipes
+    try:
+        with GraphClient() as gc:
+            query = """
+                MATCH (r:IDSRecipe)
+                WHERE r.status = 'active'
+            """
+            params: dict[str, str] = {}
+            if facility:
+                query += " AND r.facility_id = $facility"
+                params["facility"] = facility
+            query += """
+                RETURN r.facility_id AS facility,
+                       r.ids_name AS ids_name,
+                       r.dd_version AS dd_version
+                ORDER BY r.facility_id, r.ids_name
+            """
+            for row in gc.query(query, **params):
+                key = f"{row['facility']}:{row['ids_name']}"
+                recipes[key] = {
+                    "facility": row["facility"],
+                    "ids_name": row["ids_name"],
+                    "dd_version": row.get("dd_version", ""),
+                    "source": "graph",
+                }
+    except Exception:
+        logger.debug("Graph recipe query failed", exc_info=True)
+
+    # YAML recipes (only add if not already found in graph)
     search_dirs = [RECIPES_DIR / facility] if facility else RECIPES_DIR.iterdir()
 
     for facility_dir in search_dirs:
@@ -643,12 +718,14 @@ def list_recipes(facility: str | None = None) -> list[dict[str, str]]:
             continue
         for recipe_file in sorted(facility_dir.glob("*.yaml")):
             recipe_data = yaml.safe_load(recipe_file.read_text())
-            recipes.append(
-                {
-                    "facility": recipe_data.get("facility_id", facility_dir.name),
-                    "ids_name": recipe_data.get("ids_name", recipe_file.stem),
+            fac = recipe_data.get("facility_id", facility_dir.name)
+            name = recipe_data.get("ids_name", recipe_file.stem)
+            key = f"{fac}:{name}"
+            if key not in recipes:
+                recipes[key] = {
+                    "facility": fac,
+                    "ids_name": name,
                     "dd_version": recipe_data.get("dd_version", ""),
-                    "path": str(recipe_file),
+                    "source": "yaml",
                 }
-            )
-    return recipes
+    return list(recipes.values())

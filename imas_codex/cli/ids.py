@@ -33,10 +33,13 @@ def ids_list(facility: str | None) -> None:
         click.echo("No recipes found.")
         return
 
-    click.echo(f"{'Facility':<12} {'IDS':<20} {'DD Version':<12}")
-    click.echo("-" * 44)
+    click.echo(f"{'Facility':<12} {'IDS':<20} {'DD Version':<12} {'Source':<8}")
+    click.echo("-" * 52)
     for r in recipes:
-        click.echo(f"{r['facility']:<12} {r['ids_name']:<20} {r['dd_version']:<12}")
+        click.echo(
+            f"{r['facility']:<12} {r['ids_name']:<20} "
+            f"{r['dd_version']:<12} {r.get('source', 'yaml'):<8}"
+        )
 
 
 @ids.command("show")
@@ -177,3 +180,31 @@ def ids_epochs(facility: str) -> None:
             shot_range += "+"
         desc = ep.get("description", "")[:40]
         click.echo(f"{epoch_id:<35} {shot_range:<20} {ep['node_count']:>6}  {desc}")
+
+
+@ids.command("seed")
+@click.argument("facility")
+@click.argument("ids_name")
+@click.option(
+    "--dd-version",
+    "-d",
+    default="4.1.1",
+    help="Data dictionary version.",
+)
+def ids_seed(facility: str, ids_name: str, dd_version: str) -> None:
+    """Seed IMASMapping and IDSRecipe nodes for an IDS.
+
+    Creates canonical field mapping nodes and an assembly recipe in the
+    graph for the specified facility and IDS.
+
+    Supported IDS names: pf_active, magnetics, pf_passive.
+    """
+    from imas_codex.graph.client import GraphClient
+    from imas_codex.ids.graph_ops import seed_ids_mappings
+
+    configure_cli_logging("ids", facility=facility)
+
+    with GraphClient() as gc:
+        recipe_id = seed_ids_mappings(facility, ids_name, dd_version, gc)
+
+    click.echo(f"Seeded recipe: {recipe_id}")
