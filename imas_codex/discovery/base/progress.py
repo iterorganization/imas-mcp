@@ -259,7 +259,7 @@ class StreamQueue:
     max_rate: float = 5.0  # never exceed this rate even if worker is faster
     min_display_time: float = 0.2  # minimum seconds each item stays visible
     max_size: int = 500  # larger buffer to absorb batch bursts
-    stale_timeout: float = 3.0  # seconds without adds before queue is stale
+    stale_timeout: float = 8.0  # seconds without adds before queue is stale
 
     def add(
         self,
@@ -645,8 +645,6 @@ def build_pipeline_row(config: PipelineRowConfig, bar_width: int = 40) -> Text:
     row = Text()
     # Total content width for lines 2/3 right-alignment of rate/cost
     row_width = LABEL_WIDTH + bar_width + METRICS_WIDTH
-    # Position where the progress bar visually ends — text clips here
-    bar_end = LABEL_WIDTH + bar_width
 
     if config.disabled:
         row.append(f"  {config.name}".ljust(LABEL_WIDTH), style="dim")
@@ -701,12 +699,15 @@ def build_pipeline_row(config: PipelineRowConfig, bar_width: int = 40) -> Text:
         line2.append("  ", style="dim")
         # Order: name → domain → terminal
         # Pre-compute suffix widths to clip name appropriately
+        # Reserve space for rate text + gap so the line never overflows
         suffix_width = 0
         if config.physics_domain:
             suffix_width += cell_len(config.physics_domain) + 2
         if config.terminal_label:
             suffix_width += cell_len(config.terminal_label) + 2
-        max_name = max(10, bar_end - 2 - suffix_width)
+        if rate_s:
+            suffix_width += len(rate_s) + 2
+        max_name = max(10, row_width - 2 - suffix_width)
         line2.append(clip_text(config.primary_text, max_name), style="white")
         if config.physics_domain:
             line2.append("  ", style="dim")
@@ -765,13 +766,14 @@ def build_pipeline_row(config: PipelineRowConfig, bar_width: int = 40) -> Text:
             line3.append(f"{config.score_value:.2f}", style=score_style)
             line3.append("  ", style="dim")
 
-        # Description clipped to remaining space before bar end
+        # Description clipped to remaining space, reserving room for cost
         _desc = config.description or config.description_fallback
         if _desc:
             if not line3.plain.strip():
                 line3.append("  ", style="dim")
             _style = "italic dim" if config.description else "cyan dim italic"
-            max_desc = max(10, bar_end - cell_len(line3.plain))
+            cost_reserve = (len(cost_s) + 2) if cost_s else 0
+            max_desc = max(10, row_width - cell_len(line3.plain) - cost_reserve)
             line3.append(clip_text(clean_text(_desc), max_desc), style=_style)
 
     # Right-align cost on line 3 (below rate on line 2)
@@ -1441,20 +1443,32 @@ def build_resource_section(
 
     # STATS row
     if config.stats:
+        # Content width = gauge_width + GAUGE_METRICS_WIDTH (to match gauge rows above)
+        content_width = LABEL_WIDTH + gauge_width + GAUGE_METRICS_WIDTH
         section.append(f"{'  STATS':<{LABEL_WIDTH}}", style="bold magenta")
+        stats_len = LABEL_WIDTH
         for i, (label, value, style) in enumerate(config.stats):
-            if i > 0:
-                section.append("  ", style="dim")
-            section.append(f"{label}={value}", style=style)
+            entry = f"{label}={value}"
+            sep = "  " if i > 0 else ""
+            if stats_len + len(sep) + len(entry) > content_width:
+                break
+            if sep:
+                section.append(sep, style="dim")
+            section.append(entry, style=style)
+            stats_len += len(sep) + len(entry)
 
-        # Pending work — on a new line, left-aligned with stats content
+        # Pending work — on a new line, clipped to content width
         if config.pending:
             active = [(label, count) for label, count in config.pending if count > 0]
             if active:
                 parts = [f"{label}:{count}" for label, count in active]
+                pending_text = f"pending=[{' '.join(parts)}]"
+                max_pending = content_width - LABEL_WIDTH
+                if len(pending_text) > max_pending:
+                    pending_text = pending_text[: max_pending - 1] + "]"
                 section.append("\n")
                 section.append(" " * LABEL_WIDTH)
-                section.append(f"pending=[{' '.join(parts)}]", style="cyan dim")
+                section.append(pending_text, style="cyan dim")
 
     return section
 

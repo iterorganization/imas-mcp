@@ -189,12 +189,12 @@ class ProgressState:
     triage_queue: StreamQueue = field(default_factory=StreamQueue)
     enrich_queue: StreamQueue = field(
         default_factory=lambda: StreamQueue(
-            rate=0.5, max_rate=2.5, min_display_time=0.4
+            rate=0.5, max_rate=2.5, min_display_time=0.4, stale_timeout=15.0
         )
     )
     score_queue: StreamQueue = field(
         default_factory=lambda: StreamQueue(
-            rate=0.5, max_rate=2.0, min_display_time=0.5
+            rate=0.5, max_rate=2.0, min_display_time=0.5, stale_timeout=15.0
         )
     )
 

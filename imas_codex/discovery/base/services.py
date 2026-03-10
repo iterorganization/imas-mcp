@@ -294,10 +294,11 @@ def _get_host_load() -> tuple[float, int] | None:
 
 
 def _format_load_detail(location: str, suffix: str = "") -> str:
-    """Append load indicator to a location label.
+    """Append normalized load indicator to a location label.
 
-    Shows ``location ↑load_avg`` when load per-core exceeds 0.5,
-    otherwise returns the plain location (with optional suffix).
+    Shows ``location ↑0.62`` (load per-core, clamped to 0–1) when
+    load per-core exceeds 0.5, otherwise returns the plain location
+    (with optional suffix).
     """
     load_info = _get_host_load()
     detail = f"{location}{suffix}" if suffix else location
@@ -306,7 +307,8 @@ def _format_load_detail(location: str, suffix: str = "") -> str:
     load_1min, ncpus = load_info
     load_per_core = load_1min / ncpus
     if load_per_core >= 0.5:
-        return f"{detail} ↑{load_1min:.1f}"
+        normalized = min(load_per_core, 1.0)
+        return f"{detail} ↑{normalized:.0%}"
     return detail
 
 
