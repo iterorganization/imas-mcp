@@ -47,7 +47,7 @@ def ids_list(facility: str | None) -> None:
 @click.argument("ids_name")
 @click.option("--epoch", "-e", help="Epoch to show summary for (e.g., p68613).")
 def ids_show(facility: str, ids_name: str, epoch: str | None) -> None:
-    """Show IDS recipe details and available epochs."""
+    """Show IDS mapping details and available epochs."""
     from imas_codex.ids.assembler import IDSAssembler
 
     configure_cli_logging("ids", facility=facility)
@@ -192,12 +192,13 @@ def ids_epochs(facility: str) -> None:
     help="Data dictionary version.",
 )
 def ids_seed(facility: str, ids_name: str, dd_version: str) -> None:
-    """Seed IMASMapping and IMASMapping nodes for an IDS.
+    """Seed IMASMapping and SignalGroup nodes for an IDS.
 
-    Creates canonical field mapping nodes and an assembly recipe in the
-    graph for the specified facility and IDS.
+    Creates canonical SignalGroup nodes with MAPS_TO_IMAS relationships
+    and an IMASMapping orchestration node in the graph for the specified
+    facility and IDS.
 
-    Supported IDS names: pf_active, magnetics, pf_passive.
+    Supported IDS names: pf_active, magnetics, pf_passive, wall.
     """
     from imas_codex.graph.client import GraphClient
     from imas_codex.ids.graph_ops import seed_ids_mappings
@@ -205,6 +206,6 @@ def ids_seed(facility: str, ids_name: str, dd_version: str) -> None:
     configure_cli_logging("ids", facility=facility)
 
     with GraphClient() as gc:
-        recipe_id = seed_ids_mappings(facility, ids_name, dd_version, gc)
+        mapping_id = seed_ids_mappings(facility, ids_name, dd_version, gc)
 
-    click.echo(f"Seeded recipe: {recipe_id}")
+    click.echo(f"Seeded mapping: {mapping_id}")

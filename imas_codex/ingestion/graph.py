@@ -208,8 +208,7 @@ def link_chunks_to_data_nodes(graph_client: GraphClient | None = None) -> int:
         result = client.query("""
             MATCH (dr:DataReference)-[:RESOLVES_TO_NODE]->(dn:SignalNode)
             WHERE NOT (dr)-[:RESOLVES_TO_IMAS_PATH]->()
-            MATCH (m:IMASMapping)-[:SOURCE_PATH]->(dn)
-            MATCH (m)-[:TARGET_PATH]->(ip:IMASNode)
+            MATCH (dn)-[:MEMBER_OF]->(sg:SignalGroup)-[:MAPS_TO_IMAS]->(ip:IMASNode)
             MERGE (dr)-[:RESOLVES_TO_IMAS_PATH]->(ip)
             RETURN count(*) AS linked
         """)

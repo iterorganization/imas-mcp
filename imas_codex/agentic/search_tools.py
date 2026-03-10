@@ -239,7 +239,7 @@ def _enrich_signals(
         OPTIONAL MATCH (s)-[:BELONGS_TO_DIAGNOSTIC]->(diag:Diagnostic)
         OPTIONAL MATCH (s)-[:HAS_DATA_SOURCE_NODE]->(tn:SignalNode)
         OPTIONAL MATCH (s)-[:DATA_ACCESS]->(da:DataAccess)
-        OPTIONAL MATCH (tn)<-[:SOURCE_PATH]-(m:IMASMapping)-[:TARGET_PATH]->(ip:IMASNode)
+        OPTIONAL MATCH (tn)-[:MEMBER_OF]->(sg:SignalGroup)-[:MAPS_TO_IMAS]->(ip:IMASNode)
         OPTIONAL MATCH (ip)-[:HAS_UNIT]->(u:Unit)
         WITH s, diag, tn,
              collect(DISTINCT {
@@ -1520,7 +1520,7 @@ def _get_facility_crossrefs(
         // Signals: IMASMapping traversal via SignalNode + property-based fallback
         OPTIONAL MATCH (sig:FacilitySignal {facility_id: $facility})
             -[:HAS_DATA_SOURCE_NODE]->(dn:SignalNode)
-            <-[:SOURCE_PATH]-(m:IMASMapping)-[:TARGET_PATH]->(ip)
+            -[:MEMBER_OF]->(sg:SignalGroup)-[:MAPS_TO_IMAS]->(ip)
         OPTIONAL MATCH (sig2:FacilitySignal)
         WHERE sig2.facility_id = $facility
           AND sig2.physics_domain IS NOT NULL

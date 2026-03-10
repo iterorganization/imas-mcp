@@ -116,7 +116,7 @@ class TestRecipeValidation:
     def test_missing_recipe_file(self):
         with (
             patch("imas_codex.ids.assembler.GraphClient"),
-            patch("imas_codex.ids.assembler.load_recipe", return_value=None),
+            patch("imas_codex.ids.assembler.load_mapping", return_value=None),
         ):
             with pytest.raises(FileNotFoundError):
                 IDSAssembler("jet", "nonexistent_ids")
@@ -174,28 +174,34 @@ class TestGraphDrivenSummary:
     """Test summary() with graph-driven recipes."""
 
     def test_summary_uses_graph_mode(self):
-        """When graph recipe exists, summary queries section nodes."""
-        from imas_codex.ids.graph_ops import FieldMapping, Recipe
+        """When graph mapping exists, summary queries section nodes."""
+        from imas_codex.ids.graph_ops import FieldMapping, Mapping
 
-        recipe = Recipe(
+        mapping = Mapping(
             id="jet:magnetics",
             facility_id="jet",
             ids_name="magnetics",
             dd_version="4.1.1",
             provider="imas-codex",
-            assembly_config={
-                "static": {"ids_properties.homogeneous_time": 0},
-                "b_field_pol_probe": {
-                    "source": {
-                        "system": "MP",
-                        "data_source": "device_xml",
-                    },
+            static_config={"ids_properties.homogeneous_time": 0},
+            sections=[
+                {
+                    "root_path": "magnetics/b_field_pol_probe",
                     "structure": "array_per_node",
+                    "init_arrays": "{}",
+                    "elements_config": "{}",
+                    "nested_path": None,
+                    "parent_size": None,
+                    "source_system": "MP",
+                    "source_data_source": "device_xml",
+                    "source_epoch_field": "introduced_version",
+                    "source_select_via": None,
+                    "enrichment": "[]",
                 },
-            },
-            mappings=[
+            ],
+            field_mappings=[
                 FieldMapping(
-                    id="m1",
+                    signal_group_id="jet:ids:magnetics:MP",
                     source_property="r",
                     target_imas_path="magnetics/b_field_pol_probe/position/r",
                 ),
@@ -212,7 +218,7 @@ class TestGraphDrivenSummary:
         mock_gc.__exit__ = MagicMock(return_value=False)
 
         with (
-            patch("imas_codex.ids.assembler.load_recipe", return_value=recipe),
+            patch("imas_codex.ids.assembler.load_mapping", return_value=mapping),
             patch(
                 "imas_codex.ids.assembler.GraphClient",
                 return_value=mock_gc,
