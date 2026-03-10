@@ -71,6 +71,28 @@ class TestListRecipes:
         recipes = list_recipes("nonexistent")
         assert recipes == []
 
+    def test_yaml_recipes_have_source(self):
+        recipes = list_recipes("jet")
+        for r in recipes:
+            assert "source" in r
+
+    def test_graph_recipes_override_yaml(self):
+        """Graph recipes take priority over YAML with the same key."""
+        mock_gc = MagicMock()
+        mock_gc.query.return_value = [
+            {
+                "facility": "jet",
+                "ids_name": "pf_active",
+                "dd_version": "4.1.1",
+            }
+        ]
+        mock_gc.__enter__ = MagicMock(return_value=mock_gc)
+        mock_gc.__exit__ = MagicMock(return_value=False)
+        with patch("imas_codex.ids.assembler.GraphClient", return_value=mock_gc):
+            recipes = list_recipes("jet")
+        pf = next(r for r in recipes if r["ids_name"] == "pf_active")
+        assert pf["source"] == "graph"
+
 
 class TestRecipeValidation:
     def test_valid_recipe(self, tmp_path):
@@ -146,6 +168,62 @@ class TestJetPfActiveRecipe:
     def test_circuit_definition(self, recipe):
         arrays = recipe.get("arrays", {})
         assert "circuit" in arrays
+
+
+class TestGraphDrivenSummary:
+    """Test summary() with graph-driven recipes."""
+
+    def test_summary_uses_graph_mode(self):
+        """When graph recipe exists, summary queries section nodes."""
+        from imas_codex.ids.graph_ops import FieldMapping, Recipe
+
+        recipe = Recipe(
+            id="jet:magnetics",
+            facility_id="jet",
+            ids_name="magnetics",
+            dd_version="4.1.1",
+            provider="imas-codex",
+            assembly_config={
+                "static": {"ids_properties.homogeneous_time": 0},
+                "b_field_pol_probe": {
+                    "source": {
+                        "system": "MP",
+                        "data_source": "device_xml",
+                    },
+                    "structure": "array_per_node",
+                },
+            },
+            mappings=[
+                FieldMapping(
+                    id="m1",
+                    source_property="r",
+                    target_imas_path="magnetics/b_field_pol_probe/position/r",
+                ),
+            ],
+        )
+
+        mock_gc = MagicMock()
+        mock_gc.query.return_value = [
+            {"id": "n1", "path": "mp:1"},
+            {"id": "n2", "path": "mp:2"},
+            {"id": "n3", "path": "mp:3"},
+        ]
+        mock_gc.__enter__ = MagicMock(return_value=mock_gc)
+        mock_gc.__exit__ = MagicMock(return_value=False)
+
+        with (
+            patch("imas_codex.ids.assembler.load_recipe", return_value=recipe),
+            patch(
+                "imas_codex.ids.assembler.GraphClient",
+                return_value=mock_gc,
+            ),
+        ):
+            assembler = IDSAssembler("jet", "magnetics")
+            summary = assembler.summary("p68613")
+
+        assert summary["ids_name"] == "magnetics"
+        assert summary["dd_version"] == "4.1.1"
+        assert summary["arrays"]["b_field_pol_probe"]["count"] == 3
 
 
 # ---------------------------------------------------------------------------
