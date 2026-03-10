@@ -6,7 +6,7 @@ The discovery CLI uses **10 LLM/VLM call sites** across **6 pipelines**, all rou
 
 | # | Pipeline | Stage | Prompt Template | Model | Has Calibration Examples |
 |---|----------|-------|----------------|-------|--------------------------|
-| 1 | Paths | Triage (pass 1) | `paths/triage.md` | language | Yes — 11d × 5l × 3ex |
+| 1 | Paths | Triage (pass 1) | `paths/triage.md` | language | Yes — 11d × 5l × 5ex |
 | 2 | Paths | Score (pass 2) | `paths/scorer.md` | language | Yes — 11d × 5l × 5ex + 8cat × 2ex |
 | 3 | Code | Triage (pass 1) | `code/triage.md` | language | Yes — 9d × 5l × 5ex |
 | 4 | Code | Score (pass 2) | `code/scorer.md` | language | Yes — 9d × 5l × 5ex |
@@ -283,160 +283,155 @@ All production discovery prompts exceed these thresholds. Cache is verified work
 
 ---
 
+
 ## 6. Graph-Backed Example Stabilization Design
 
-### 6.1 The Core Idea
+### 6.1 The Problem
 
-Once the graph has enough scored items, the calibration examples should **converge to a fixed set** that never changes. This turns the "Graph-dynamic" tier into effectively static content, allowing it to be cached indefinitely.
+The current `_fetch_dimension_calibration()` uses `ORDER BY rand()` to select calibration examples. Every cache refresh (every 300s) returns different random examples, which invalidates the provider-side prompt cache. The calibration data represents 52–78% of the system prompt tokens — when it changes, the entire system prompt is re-read.
 
-### 6.2 Proposed Architecture: `CalibrationExemplar` Graph Nodes
+### 6.2 Design Principle: Freeze What the Prompt Builder Needs
 
-```
-(:CalibrationExemplar {
-    id: "paths:score_data_access:0.5",    -- pipeline:dimension:target_score
-    pipeline: "paths",                     -- paths | code
-    dimension: "score_data_access",        -- score dimension name
-    target_score: 0.5,                     -- target calibration level
-    phase: "triage",                       -- triage | score
-    path: "/home/user/analysis/mds_tools/",
-    facility_id: "tcv",
-    actual_score: 0.52,                    -- the real score this item received
-    description: "MDSplus data access tools with 15 read patterns",
-    purpose: "data_access",
-    locked_at: datetime(),                 -- when this exemplar was locked
-    source_node_id: "tcv:/home/user/analysis/mds_tools/"  -- link to source
-})
-```
+No new graph node types. No schema creep. The prompt builder needs a `dict[str, dict[str, list[dict]]]` mapping `dimension → level → [{path, facility, score, purpose, description}]`. We freeze that dict directly.
 
-**ID convention:** `{pipeline}:{dimension}:{target_score}:{phase}` — ensures exactly one exemplar per slot.
+**Storage:** A JSON file per facility/pipeline/phase at `~/.local/share/imas-codex/calibration/{pipeline}_{phase}_{facility}.json`. This is the frozen calibration cache.
 
-**Target scores** (same 5 levels as current): `0.05` (lowest), `0.2` (low), `0.5` (medium), `0.8` (high), `0.95` (highest).
+**Graph linkage:** Each example in the frozen cache references a real FacilityPath or SourceFile node by its `path` and `facility_id`. The cache is populated by querying the graph and selecting the best-matching items per slot. No special properties or tags on the source nodes.
 
-### 6.3 Exemplar Selection Algorithm
+### 6.3 Selection: Closest to Target, Not Random
+
+Replace `ORDER BY rand()` with `ORDER BY abs(score - target)`:
 
 ```python
-def select_and_lock_exemplar(
-    pipeline: str,          # "paths" or "code"
-    dimension: str,         # e.g., "score_data_access"
-    target_score: float,    # e.g., 0.5
-    phase: str,             # "triage" or "score"
-    tolerance: float = 0.1,
-) -> CalibrationExemplar | None:
-    """Lock the best exemplar for a calibration slot.
-    
-    Once locked, this exemplar is used forever. The locked_at timestamp
-    prevents replacement. Only human review can unlock an exemplar.
-    
-    Selection criteria (ordered):
-    1. Score closest to target within tolerance
-    2. Prefer current facility, then cross-facility
-    3. Prefer items with descriptions (richer calibration context)
-    4. Deterministic tie-breaking (by node ID, not random)
+def _select_best_example(
+    gc: GraphClient,
+    graph_prop: str,
+    target: float,
+    tolerance: float,
+    facility: str | None,
+    status_clause: str,
+    per_level: int,
+) -> list[dict] | None:
+    """Select the best examples for a calibration slot.
+
+    Returns None if no items exist within tolerance of the target.
+    Always returns actual scores, never target scores.
     """
+    result = gc.query(f"""
+        MATCH (p:FacilityPath)
+        WHERE {status_clause}
+          AND p.{graph_prop} IS NOT NULL
+          AND abs(p.{graph_prop} - $target) <= $tolerance
+        RETURN p.path AS path,
+               p.facility_id AS facility,
+               p.{graph_prop} AS score,
+               p.path_purpose AS purpose,
+               p.description AS description
+        ORDER BY
+          CASE WHEN p.facility_id = $facility THEN 0 ELSE 1 END,
+          abs(p.{graph_prop} - $target)
+        LIMIT $limit
+    """, target=target, tolerance=tolerance, facility=facility, limit=per_level)
+
+    if not result:
+        return None  # No examples within tolerance
+
+    return [{
+        "path": r["path"],
+        "facility": r["facility"],
+        "score": round(r["score"], 2),
+        "purpose": r["purpose"] or "unknown",
+        "description": r["description"] or "",
+    } for r in result]
 ```
 
-### 6.4 Lifecycle
+Key properties:
+- **Deterministic:** Same graph state → same examples → prompt cache hits
+- **None for gaps:** If no item exists within `tolerance` of the target score, return `None` — the template already handles empty lists gracefully
+- **Actual scores:** Examples always carry their real score, even if it's far from the level target
+- **Facility preference:** Same-facility examples sort first, then cross-facility
+
+### 6.4 Frozen Cache Lifecycle
 
 ```
-Phase 1: Bootstrap (no exemplars)
-  → Falls back to current random sampling
-  → After each scoring run, check for unfilled exemplar slots
-  → Auto-lock exemplars as items at the right score levels appear
+1. First run (no cache file):
+   → Query graph with ORDER BY abs(score - target)
+   → Write results to JSON cache file
+   → Use these examples for the prompt
 
-Phase 2: Partial coverage
-  → Some dimensions/levels have locked exemplars, others use random
-  → System prompt has a stable prefix (locked) + small volatile tail (random)
-  → Partial cache hits are possible
+2. Subsequent runs (cache exists):
+   → Load from cache file (instant, no graph query)
+   → System prompt is identical across runs → 100% provider cache hits
 
-Phase 3: Full coverage (steady state)  
-  → All slots filled and locked
-  → System prompt is fully deterministic
-  → 100% prompt cache hit rate across calls
-  → Calibration section becomes effectively static
+3. After a scoring run completes:
+   → Check if any newly-scored items are closer to target than cached items
+   → If so, replace the cached entry (better example found)
+   → Log the replacement at DEBUG level
+
+4. Manual refresh:
+   → Delete the cache file → next run rebuilds from graph
+   → Or: `imas-codex calibrate refresh paths --facility tcv`
 ```
 
-### 6.5 Prompt Ordering for Maximum Cache Hits
+**Replacement rule:** An existing cached example is replaced only when a strictly better match appears (closer to target AND within tolerance). This makes the cache self-improving over time without requiring manual curation.
 
-The system prompt should be ordered:
+### 6.5 None Handling in Templates
 
+The existing `dimension-calibration.md` template iterates `{% for ex in examples %}` — an empty list produces no output naturally. For slots where `_select_best_example()` returns `None`, the level key is simply omitted from the dict:
+
+```python
+# In the frozen cache
+{
+    "score_data_access": {
+        "highest": [{"path": "...", "score": 0.92, ...}],
+        "high": [{"path": "...", "score": 0.78, ...}],
+        "medium": None,  # No examples near 0.5 yet
+        "low": [{"path": "...", "score": 0.18, ...}],
+        "lowest": [{"path": "...", "score": 0.05, ...}]
+    }
+}
 ```
-1. Template text (truly static)                    ── cacheable
-2. Schema-derived content (enums, JSON schemas)    ── cacheable  
-3. Locked calibration exemplars (graph-stable)     ── cacheable after lock
-4. Focus area (if any)                             ── per-run constant
-── cache_control breakpoint here ──
-5. Any remaining unlocked calibration (random)     ── volatile (bootstrap only)
-```
 
-This maximizes the cache prefix. Even during bootstrap, the static + schema + locked portion caches, and only the unlocked tail causes a miss.
+The prompt builder filters out `None` entries before passing to the template. No template changes needed.
 
-**Current template ordering already follows this pattern** — the `{% if dimension_calibration %}` block is at the very end of both `paths/triage.md` and `paths/scorer.md`. The design just needs the calibration data itself to be split: locked exemplars first (stable), then any random fill (volatile).
+### 6.6 Token Savings
 
-### 6.6 Implementation Requirements
+Token counts don’t change — the same number of examples appear in the prompt. The savings come from **cache hit rate**, not token reduction:
 
-1. **New LinkML class** `CalibrationExemplar` in `facility.yaml` schema
-2. **Exemplar selection CLI** `imas-codex calibrate lock paths --facility tcv` — scans graph for best candidates, locks them
-3. **Modified `sample_dimension_calibration_examples()`** — check for locked exemplars first, fill gaps with random
-4. **Modified `dimension-calibration.md` template** — render locked exemplars in a stable section, random fills separately
-5. **Exemplar review CLI** `imas-codex calibrate show` — display all locked exemplars with scores
-6. **Exemplar unlock CLI** `imas-codex calibrate unlock paths:score_data_access:0.5` — for human correction
+| Scenario | Cache Hit Rate | Effective Input Cost |
+|----------|---------------|---------------------|
+| Current (random, 300s TTL) | ~95% within epoch, 0% across | ~$0.99/facility |
+| Frozen cache (deterministic) | ~100% across all runs | ~$0.94/facility |
 
-### 6.7 Token Savings
+The real win is operational: no more score drift from random example selection, and prompts are reproducible for debugging.
 
-| Pipeline | Current Graph-Dynamic Tokens | With Full Lock | Savings/Call | Savings Rate |
-|----------|-----------------------------|----|---|---|
-| paths/triage | 6,200 | 0 (all cached) | 6,200 | 52% of system |
-| paths/scorer | 10,550 | 0 (all cached) | 10,550 | 71% of system |
-| code/triage | 7,900 | 0 (all cached) | 7,900 | 78% of system |
-| code/scorer | 7,900 | 0 (all cached) | 7,900 | 78% of system |
-
-The tokens don't disappear — they become cache hits at 50% discount (Gemini/Anthropic) or free (some providers).
-
----
-
-## 7. Triage Example Count Reduction
+## 7. Example Count Alignment
 
 ### 7.1 Current State
 
-| Stage | Examples/Dimension/Level | Total Examples in Prompt |
-|-------|--------------------------|--------------------------|
-| paths/triage | 3 | 11 × 5 × 3 = 165 |
+| Stage | per_level | Total Examples |
+|-------|-----------|---------------|
+| paths/triage | **3** | 11 × 5 × 3 = 165 |
 | paths/scorer | 5 | 11 × 5 × 5 = 275 + 16 enriched |
 | code/triage | 5 | 9 × 5 × 5 = 225 |
 | code/scorer | 5 | 9 × 5 × 5 = 225 |
 
-### 7.2 Recommendation: Reduce Triage to 1 Example/Level
+### 7.2 Recommendation: Increase paths/triage to 5
 
-Triage is a coarse filter — its purpose is to separate "worth enriching" from "skip," not precise scoring. One well-chosen exemplar per level per dimension provides sufficient calibration:
+The paths/triage pipeline is the only caller using `per_level=3`. All other pipelines (paths/scorer, code/triage, code/scorer) use `per_level=5`. Aligning paths/triage to 5 provides:
 
-| Stage | Proposed | Total Examples | Token Reduction |
-|-------|----------|---------------|-----------------|
-| paths/triage | **1**/level | 11 × 5 × 1 = 55 | **66% reduction** (~4,100 tokens saved) |
-| paths/scorer | **2**/level | 11 × 5 × 2 = 110 | **60% reduction** (~5,800 tokens saved) |
-| code/triage | **1**/level | 9 × 5 × 1 = 45 | **80% reduction** (~6,300 tokens saved) |
-| code/scorer | **2**/level | 9 × 5 × 2 = 90 | **60% reduction** (~4,700 tokens saved) |
+1. **Consistency** — same calibration density across all pipelines
+2. **Better boundary calibration** — triage decisions at the discovery threshold (~0.75) benefit from more examples
+3. **No cost concern** — the additional ~2,000 tokens per system prompt are cached after the first call
 
-**Why this is safe for triage:** 
-- Triage's false-negative penalty is low (missed paths get re-discovered in subsequent runs)
-- The seed calibration examples in the template text already provide coarse guidance
-- The dimension-calibration section is redundant with seed calibration for extreme scores (0.0–0.1. 0.9–1.0)
-- Accuracy matters most at score boundaries (around the discovery threshold ~0.75) where one exemplar per level is sufficient
+| Stage | Proposed per_level | Total Examples | Token Change |
+|-------|-------------------|---------------|--------------|
+| paths/triage | **5** | 11 × 5 × 5 = 275 | +2,070 tokens (cached) |
+| paths/scorer | 5 (unchanged) | 275 + 16 | — |
+| code/triage | 5 (unchanged) | 225 | — |
+| code/scorer | 5 (unchanged) | 225 | — |
 
-**Why scorers need 2:** The score pass produces the final score used for ingestion decisions. Two exemplars per level provide cross-facility diversity and reduce single-example bias.
-
-### 7.3 Further Reduction: Collapse Score Levels
-
-The current 5-level system (`lowest/low/medium/high/highest`) could be reduced to 3 levels for triage:
-
-| Level | Range | Purpose |
-|-------|-------|---------|
-| low | 0.0–0.25 | "Clearly skip" calibration |
-| medium | 0.4–0.6 | "Boundary" calibration |
-| high | 0.75–1.0 | "Clearly include" calibration |
-
-This would give: 11 × 3 × 1 = 33 examples for paths triage (~1,300 tokens vs current ~6,200).
-
----
+**Implementation:** Single line change in `imas_codex/discovery/paths/scorer.py` L265: `per_level=3` → `per_level=5`.
 
 ## 8. Wiki/Signals/Static/Clusters: Calibration Gap
 
@@ -573,29 +568,28 @@ Reasons:
 
 **Net recommendation:** Extend score example calibration to wiki page and document scoring. These are the only remaining scoring tasks without calibration, and they process ~150 calls per facility. The CalibrationExemplar infrastructure from §6 should be designed to support multiple pipelines (paths, code, wiki) from the start.
 
+
 ## 10. Optimization Opportunities Summary
 
 ### 10.1 High Impact (implement first)
 
 | Optimization | Mechanism | Estimated Savings | Accuracy Impact |
 |-------------|-----------|------------------|-----------------|
-| **Graph-backed exemplar locking** | CalibrationExemplar nodes, deterministic prompt | 50% input cost on cached portion (~$0.47/facility) | Positive — more consistent scores |
-| **Reduce triage examples to 1/level** | `per_level=1` in triage calls | ~$0.15/facility in paths, ~$0.25/facility in code | Neutral — triage is coarse |
-| **Collapse triage to 3 levels** | Merge lowest+low, medium, high+highest | Additional ~$0.10/facility | Neutral — boundary calibration preserved |
+| **Frozen calibration cache** | Deterministic examples, file-backed cache | ~100% prompt cache hit rate (~$0.94/facility vs $0.99) | Positive — consistent scores, reproducible |
+| **Align per_level to 5** | Increase paths/triage from 3→5 | None (small token increase, cached) | Positive — better boundary calibration |
 
 ### 10.2 Medium Impact
 
 | Optimization | Mechanism | Estimated Savings | Accuracy Impact |
 |-------------|-----------|------------------|-----------------|
-| **Prompt ordering for max cache prefix** | Move locked exemplars above focus area | Better cache reuse across focus changes | None |
-| **Add wiki calibration exemplars** | WikiScoreExemplar nodes | Improved scoring consistency | Positive |
+| **Prompt ordering for max cache prefix** | Move frozen exemplars above focus area | Better cache reuse across focus changes | None |
+| **Add wiki calibration exemplars** | Extend calibration to wiki/scorer and wiki/doc-scorer | Improved scoring consistency | Positive |
 | **Batch size tuning** | Larger batches amortize system prompt | Fewer calls = fewer cache misses | Check quality at larger batches |
 
 ### 10.3 Lower Impact / Future
 
 | Optimization | Mechanism | Notes |
 |-------------|-----------|-------|
-| Reduce scorer examples to 2/level | Currently 5/level for paths scorer | Test accuracy impact first |
 | Remove `score_calibration` enriched examples | Enriched path examples in scorer | Overlaps with dimension calibration |
 | Templated output schemas | Pre-render once, inject as string | Already cached via @lru_cache providers |
 
@@ -605,43 +599,39 @@ Reasons:
 |----------|-----------------|-------------------|-------|------------|
 | Current (no caching) | $1.88 | $1.01 | **$2.88** | baseline |
 | Current (95% cache hit) | $0.99 | $1.01 | **$2.00** | −30% |
-| Locked exemplars (100% cache) | $0.94 | $1.01 | **$1.95** | −32% |
-| Locked + triage reduction | $0.72 | $1.01 | **$1.73** | −40% |
-| Locked + triage reduction + 3 levels | $0.65 | $1.01 | **$1.66** | −42% |
+| Frozen cache (100% cache) | $0.94 | $1.01 | **$1.95** | −32% |
 
 **The biggest win comes from output cost, which is fixed regardless of caching.** Reducing batch sizes or output format complexity would have the largest marginal impact, but risks accuracy degradation.
 
----
-
 ## 11. Implementation Plan
 
-### Phase 1: Quick Wins (no schema changes)
+### Phase 1: Align per_level (no schema changes)
 
-1. Reduce `per_level` from 3→1 in `paths/triage` (currently hardcoded in `scorer.py`)
-2. Reduce `per_level` from 5→2 in `paths/scorer` and `code/scorer`
-3. Reduce `per_level` from 5→2 in `code/triage`
-4. Verify accuracy is maintained by spot-checking triage results
+1. Change `per_level=3` → `per_level=5` in `imas_codex/discovery/paths/scorer.py` L265
+2. Verify triage accuracy with the additional examples
 
-### Phase 2: Graph-Backed Stabilization
+### Phase 2: Frozen Calibration Cache
 
-1. Add `CalibrationExemplar` class to `imas_codex/schemas/facility.yaml`
-2. Implement `imas_codex/discovery/base/calibration.py`:
-   - `get_locked_exemplars(pipeline, phase)` → deterministic lookup
-   - `lock_exemplar(pipeline, dimension, target, phase)` → MERGE + lock
-   - `fill_calibration(pipeline, phase)` → locked first, random gaps second
-3. Update `sample_dimension_calibration_examples()` to call `fill_calibration()`
-4. Update `sample_code_dimension_calibration()` similarly
-5. Add CLI: `imas-codex calibrate lock paths --facility tcv`
-6. Add CLI: `imas-codex calibrate show`
-7. Split `dimension-calibration.md` template into locked and unlocked sections
+1. Create `imas_codex/discovery/base/calibration.py`:
+   - `load_frozen_calibration(pipeline, phase, facility)` → load JSON cache or return None
+   - `save_frozen_calibration(pipeline, phase, facility, data)` → write JSON cache
+   - `refresh_calibration(pipeline, phase, facility)` → query graph with `ORDER BY abs(score - target)`, save results
+   - `maybe_replace_exemplar(pipeline, phase, facility, dimension, level, candidate)` → replace if candidate is strictly closer to target
+2. Update `sample_dimension_calibration_examples()` in `frontier.py`:
+   - Try `load_frozen_calibration()` first
+   - If cache miss, query graph with deterministic ordering (not random) and save
+   - Remove in-process TTL cache (file cache replaces it)
+3. Update `sample_code_dimension_calibration()` in `code/scorer.py` similarly
+4. Add post-scoring hook in `mark_score_complete()` / `mark_triage_complete()`:
+   - After updating scores, call `maybe_replace_exemplar()` for each scored item
+   - Log replacements at DEBUG level
+5. Add CLI: `imas-codex calibrate refresh paths --facility tcv` — delete cache and rebuild from graph
 
-### Phase 3: Prompt Ordering
+### Phase 3: Prompt Ordering & Wiki Extension
 
-1. Restructure templates to place locked exemplars in a deterministic block before any volatile content
-2. Move `cache_control` breakpoint to after locked exemplars (before unlocked random fill)
-3. Verify prompt caching hit rates in production via logging
-
----
+1. Verify prompt ordering places calibration after static content for maximum cache prefix
+2. Add calibration examples to wiki/scorer and wiki/doc-scorer templates
+3. Use the same frozen cache infrastructure from Phase 2
 
 ## Appendix A: Current Prompt Caching Infrastructure
 
