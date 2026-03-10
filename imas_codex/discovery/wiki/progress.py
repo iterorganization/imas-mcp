@@ -240,27 +240,27 @@ class ProgressState:
     # Streaming queues - adaptive rate based on worker speed
     score_queue: StreamQueue = field(
         default_factory=lambda: StreamQueue(
-            rate=0.5, max_rate=2.5, min_display_time=0.4
+            rate=0.5, max_rate=2.5, min_display_time=0.4, stale_timeout=15.0
         )
     )
     ingest_queue: StreamQueue = field(
         default_factory=lambda: StreamQueue(
-            rate=0.5, max_rate=2.5, min_display_time=0.4
+            rate=0.5, max_rate=2.5, min_display_time=0.4, stale_timeout=15.0
         )
     )
     document_queue: StreamQueue = field(
         default_factory=lambda: StreamQueue(
-            rate=0.3, max_rate=1.0, min_display_time=0.5
+            rate=0.3, max_rate=1.0, min_display_time=0.5, stale_timeout=15.0
         )
     )
     document_score_queue: StreamQueue = field(
         default_factory=lambda: StreamQueue(
-            rate=0.3, max_rate=1.0, min_display_time=0.5
+            rate=0.3, max_rate=1.0, min_display_time=0.5, stale_timeout=15.0
         )
     )
     image_queue: StreamQueue = field(
         default_factory=lambda: StreamQueue(
-            rate=0.3, max_rate=1.0, min_display_time=0.5
+            rate=0.3, max_rate=1.0, min_display_time=0.5, stale_timeout=15.0
         )
     )
 
