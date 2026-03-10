@@ -359,7 +359,6 @@ uv run imas-codex ingest run tcv --dry-run         # Preview
 # Monitor
 uv run imas-codex ingest status tcv
 uv run imas-codex ingest list tcv -s failed
-uv run imas-codex ingest run tcv --retry-failed
 ```
 
 The pipeline extracts MDSplus tree paths, TDI function calls, IDS references, and import dependencies. Do not fabricate `patterns_matched` metadata.
