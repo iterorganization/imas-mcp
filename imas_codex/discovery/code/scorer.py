@@ -47,7 +47,7 @@ TRIAGE_DIMENSION_NAMES = [d.replace("score_", "triage_") for d in SCORE_DIMENSIO
 # ---------------------------------------------------------------------------
 
 _calibration_cache: dict[str, tuple[float, dict]] = {}
-_CALIBRATION_TTL_SECONDS = 60.0
+_CALIBRATION_TTL_SECONDS = 300.0  # 5 minutes — matches LLM provider ephemeral cache TTL
 
 
 def sample_code_dimension_calibration(
