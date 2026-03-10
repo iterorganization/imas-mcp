@@ -117,4 +117,8 @@ Set `should_ingest=true` when the document contains content worth embedding for 
 
 **Ingestion threshold:** Combined score >= 0.5
 
+{% if dimension_calibration %}
+{% include "schema/dimension-calibration.md" %}
+{% endif %}
+
 {% include "schema/document-scoring-output.md" %}
