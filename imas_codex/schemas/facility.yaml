@@ -213,6 +213,14 @@ enums:
       deprecated:
         description: Recipe has been superseded by a newer version
 
+  SignalGroupStatus:
+    description: Lifecycle status for signal groups that unify mapping identity
+    permissible_values:
+      discovered:
+        description: Group created from pattern detection
+      enriched:
+        description: Description and keywords populated via LLM
+
   PopulationType:
     description: How tree nodes are populated with data
     permissible_values:
@@ -1660,15 +1668,6 @@ classes:
         range: EnrichmentStatus
       enrichment_notes:
         description: Agent reasoning or notes about the enrichment
-      follows_pattern:
-        description: >-
-          Pattern this node follows for indexed repetitions.
-          When many nodes share the same leaf name under indexed parents
-          (e.g., R under W001-W830), enrichment is stored once on the
-          pattern and propagated to all followers.
-        range: DataNodePattern
-        annotations:
-          relationship_type: MEMBER_OF
       matches_sensor:
         description: >-
           Another SignalNode representing the same physical sensor
@@ -1678,18 +1677,20 @@ classes:
         annotations:
           relationship_type: MATCHES_SENSOR
 
-  DataNodePattern:
+  SignalGroup:
     description: >-
-      A parameter pattern shared by indexed SignalNode groups. When multiple
-      STRUCTURE nodes under the same grandparent each contain children with
-      identical leaf names (e.g., R, Z under W001-W830), a pattern captures
-      the shared physics meaning once. Enrichment is stored on the pattern
-      and propagated to all followers via MEMBER_OF relationships.
-    class_uri: facility:SignalNodePattern
+      Groups signal instances that will map identically to the same IMAS field.
+      Per-property grouping: "jet:PF:r" groups all PF coil R values. One group =
+      one MAPS_TO_IMAS relationship = one mapping definition.
+      Unifies DataNodePattern and FacilitySignal pattern mechanics into a
+      single grouping concept with MEMBER_OF relationships.
+    class_uri: facility:SignalGroup
     attributes:
       id:
         identifier: true
-        description: "Pattern ID: {facility}:{data_source}:{grandparent_path}:{leaf_name}"
+        description: >-
+          Composite key: "{facility}:{group_key}".
+          Examples: "jet:PF:r", "tcv:magnetics:BPOL_NNN"
         required: true
       facility_id:
         description: Parent facility ID
@@ -1697,39 +1698,49 @@ classes:
         range: Facility
         annotations:
           relationship_type: AT_FACILITY
-      data_source_name:
-        description: Parent data source name
-        required: true
-      grandparent_path:
+      group_key:
         description: >-
-          Path of the common grandparent STRUCTURE node.
-          E.g., \\MAGNETICS::TOP.W for coils W001-W830.
+          What members share — defines the mapping type.
+          Examples: "PF:r", "MP:angle", "magnetics:BPOL_NNN"
         required: true
-      leaf_name:
-        description: >-
-          Shared leaf parameter name across all indexed parents.
-          E.g., R, Z, TAU, INOM.
-        required: true
-      index_count:
-        description: Number of indexed instances following this pattern
+      member_count:
+        description: Number of SignalNode/FacilitySignal members in this group
         range: integer
-      node_type:
-        description: Node type of the leaf nodes (NUMERIC or SIGNAL)
-        range: SignalNodeType
-      representative_path:
-        description: Path of one representative SignalNode for prompt context
+      representative_id:
+        description: ID of one representative member (enriched first, propagated to others)
       description:
-        description: Physics description shared by all instances
+        description: Physics description of the group (enriched once, propagated)
       keywords:
-        description: Searchable keywords for this pattern
+        description: Physics keywords
         multivalued: true
-      category:
-        description: Physical category
-      enrichment_status:
+      physics_domain:
+        description: Physics domain classification
+        range: PhysicsDomain
+      status:
+        description: Lifecycle status
+        range: SignalGroupStatus
+        required: true
+      embedding:
+        description: Vector embedding of description for semantic search
+        multivalued: true
+        range: float
+      embedded_at:
+        description: When embedding was last computed
+        range: datetime
+      maps_to_imas:
         description: >-
-          Lifecycle status: pending until enriched, then enriched.
-          Propagated to all followers on enrichment.
-        range: EnrichmentStatus
+          IMAS node this group maps to. The mapping IS this relationship —
+          field-level mapping properties (source_property, transform_code,
+          units) are stored as relationship properties on MAPS_TO_IMAS.
+        range: IMASNode
+        annotations:
+          relationship_type: MAPS_TO_IMAS
+      has_evidence:
+        description: Evidence supporting this group's mapping claim
+        range: MappingEvidence
+        multivalued: true
+        annotations:
+          relationship_type: HAS_EVIDENCE
 
 
   TDIFunction:

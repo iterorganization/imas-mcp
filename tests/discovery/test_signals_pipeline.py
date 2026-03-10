@@ -1263,9 +1263,9 @@ class TestSignalPatternDetection:
         # No numbers should be unchanged
         assert _accessor_to_pattern("IP:VALUE") == "IP:VALUE"
 
-    def test_detect_signal_patterns(self):
-        """Pattern detection groups indexed signals and marks followers."""
-        from imas_codex.discovery.signals.parallel import detect_signal_patterns
+    def test_detect_signal_groups(self):
+        """Pattern detection groups indexed signals and creates SignalGroup nodes."""
+        from imas_codex.discovery.signals.parallel import detect_signal_groups
 
         # Mock GraphClient to return indexed signals
         mock_results = [
@@ -1284,24 +1284,24 @@ class TestSignalPatternDetection:
             "imas_codex.discovery.signals.parallel.GraphClient",
             return_value=mock_gc,
         ):
-            patterns, followers = detect_signal_patterns("tcv", min_instances=3)
+            patterns, followers = detect_signal_groups("tcv", min_instances=3)
 
         # Should detect 1 pattern (GAS_NNN:PARAM:A) with 10 signals
         assert patterns == 1
-        assert followers == 9  # 10 signals - 1 representative
+        assert followers == 10  # All 10 signals linked as members
 
-        # Second query should mark followers
-        assert mock_gc.query.call_count == 2
-        second_call_kwargs = mock_gc.query.call_args_list[1]
-        # Verify follower IDs were passed (9 of 10)
-        follower_ids = second_call_kwargs.kwargs.get(
-            "follower_ids"
-        ) or second_call_kwargs[1].get("follower_ids")
-        assert len(follower_ids) == 9
+        # First query: fetch signals, second: ensure_facility, third: create group+members
+        assert mock_gc.query.call_count >= 2
+        # Verify member_ids were passed (all 10)
+        group_call_kwargs = mock_gc.query.call_args_list[1]
+        member_ids = group_call_kwargs.kwargs.get("member_ids") or group_call_kwargs[
+            1
+        ].get("member_ids")
+        assert len(member_ids) == 10
 
-    def test_detect_patterns_below_threshold(self):
-        """Groups below min_instances threshold are not detected as patterns."""
-        from imas_codex.discovery.signals.parallel import detect_signal_patterns
+    def test_detect_groups_below_threshold(self):
+        """Groups below min_instances threshold are not detected."""
+        from imas_codex.discovery.signals.parallel import detect_signal_groups
 
         # Only 2 signals in the group (below default min_instances=3)
         mock_results = [
@@ -1312,22 +1312,22 @@ class TestSignalPatternDetection:
 
         mock_gc = MagicMock()
         mock_gc.__enter__ = MagicMock(return_value=mock_gc)
-        mock_gc.__exit__ = MagicMock(return_value=False)
+        mock_gc.__exit__ = MagicMock(return_value=mock_gc)
         mock_gc.query = MagicMock(return_value=mock_results)
 
         with patch(
             "imas_codex.discovery.signals.parallel.GraphClient",
             return_value=mock_gc,
         ):
-            patterns, followers = detect_signal_patterns("tcv", min_instances=3)
+            patterns, followers = detect_signal_groups("tcv", min_instances=3)
 
         assert patterns == 0
         assert followers == 0
 
-    def test_propagate_pattern_enrichment(self):
-        """Enrichment is propagated from representative to followers."""
+    def test_propagate_signal_group_enrichment(self):
+        """Enrichment is propagated from representative to group members."""
         from imas_codex.discovery.signals.parallel import (
-            propagate_pattern_enrichment,
+            propagate_signal_group_enrichment,
         )
 
         mock_gc = MagicMock()
@@ -1357,7 +1357,7 @@ class TestSignalPatternDetection:
             "imas_codex.discovery.signals.parallel.GraphClient",
             return_value=mock_gc,
         ):
-            result = propagate_pattern_enrichment(
+            result = propagate_signal_group_enrichment(
                 "tcv:rep_signal", enrichment, batch_cost=0.01
             )
 

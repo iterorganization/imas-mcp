@@ -301,11 +301,11 @@ Many facility signals follow **indexed patterns** — structurally identical sig
 The enrichment worker detects these patterns automatically and enriches **one representative per pattern**, then propagates the LLM-generated description to all instances. This reduces LLM calls by 10-50x for indexed trees.
 
 **How it works:**
-1. Before claiming signals, `detect_signal_patterns()` scans all `discovered` signals
+1. Before claiming signals, `detect_signal_groups()` scans all `discovered` signals
 2. Accessor paths are normalized by replacing numeric segments (2+ digits) with `NNN`
-3. Groups with ≥ 3 instances form a pattern — one signal is the representative, the rest get `pattern_representative_id` set (status stays `discovered`)
+3. Groups with ≥ 3 instances form a SignalGroup — all signals are linked via `MEMBER_OF`, one is designated as the representative (status stays `discovered`)
 4. The representative is enriched normally via the LLM
-5. `propagate_pattern_enrichment()` copies the description, physics_domain, diagnostic, keywords, etc. to all followers
+5. `propagate_signal_group_enrichment()` copies the description, physics_domain, diagnostic, keywords, etc. to all members
 
 **Pattern examples observed in TCV:**
 

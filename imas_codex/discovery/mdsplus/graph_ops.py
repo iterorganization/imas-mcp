@@ -432,17 +432,17 @@ def fetch_enrichment_context(
 MIN_PATTERN_INSTANCES = 3
 
 
-def detect_and_create_patterns(
+def detect_and_create_signal_groups(
     facility: str,
     data_source_name: str,
     min_instances: int = MIN_PATTERN_INSTANCES,
 ) -> int:
-    """Detect indexed parameter groups and create DataNodePattern nodes.
+    """Detect indexed parameter groups and create SignalGroup nodes.
 
     Scans the graph for grandparent STRUCTURE nodes whose children (also
     STRUCTURE) each contain data-bearing leaves with the same name.
     For each (grandparent, leaf_name) combination with enough instances,
-    creates a DataNodePattern and MEMBER_OF relationships.
+    creates a SignalGroup and MEMBER_OF relationships.
 
     Example: TOP.W has children W001-W830, each with leaf R.
     Pattern: grandparent=TOP.W, leaf=R, index_count=830.
@@ -485,7 +485,7 @@ def detect_and_create_patterns(
             )
             return 0
 
-        # Create DataNodePattern nodes and MEMBER_OF relationships
+        # Create SignalGroup nodes and MEMBER_OF relationships
         patterns = []
         for g in groups:
             pattern_id = (
@@ -509,7 +509,7 @@ def detect_and_create_patterns(
         result = gc.query(
             """
             UNWIND $patterns AS p
-            MERGE (pat:DataNodePattern {id: p.id})
+            MERGE (pat:SignalGroup {id: p.id})
             ON CREATE SET
                 pat.facility_id = p.facility_id,
                 pat.data_source_name = p.data_source_name,
@@ -522,7 +522,7 @@ def detect_and_create_patterns(
             MATCH (f:Facility {id: p.facility_id})
             MERGE (pat)-[:AT_FACILITY]->(f)
             WITH pat, p
-            // Link all matching leaf nodes to this pattern
+            // Link all matching leaf nodes to this group
             MATCH (gp:SignalNode {path: p.grandparent_path, facility_id: p.facility_id})
             WHERE gp.data_source_name = p.data_source_name
             MATCH (gp)-[:HAS_NODE]->(parent:SignalNode)-[:HAS_NODE]->(leaf:SignalNode)
@@ -547,13 +547,13 @@ def detect_and_create_patterns(
         return created
 
 
-def detect_and_create_member_patterns(
+def detect_and_create_member_signal_groups(
     facility: str,
     data_source_name: str,
     member_parent_types: list[str] | None = None,
     min_instances: int = MIN_PATTERN_INSTANCES,
 ) -> int:
-    """Detect member-suffix patterns and create DataNodePattern nodes.
+    """Detect member-suffix patterns and create SignalGroup nodes.
 
     MDSplus nodes often have member sub-nodes (colon-separated, e.g.
     `:PRE`, `:VAL`, `:STORE`) that share identical semantic meaning
@@ -566,9 +566,9 @@ def detect_and_create_member_patterns(
     YAML (e.g. ``["SIGNAL"]`` for TCV). If *None* or empty, this
     function is a no-op.
 
-    Unlike `detect_and_create_patterns` (which groups by grandparent →
+    Unlike `detect_and_create_signal_groups` (which groups by grandparent →
     indexed-parent → leaf), this groups globally by (leaf_name, parent
-    node_type) so a single pattern covers all instances.
+    node_type) so a single group covers all instances.
 
     Args:
         facility: Facility identifier
@@ -592,7 +592,7 @@ def detect_and_create_member_patterns(
             WHERE parent.node_type IN $parent_types
             MATCH (parent)-[:HAS_NODE]->(leaf:SignalNode)
             WHERE leaf.node_type IN $node_types
-              AND NOT EXISTS { (leaf)-[:MEMBER_OF]->(:DataNodePattern) }
+              AND NOT EXISTS { (leaf)-[:MEMBER_OF]->(:SignalGroup) }
             WITH split(leaf.path, ':')[-1] AS leaf_name,
                  parent.node_type AS parent_type,
                  count(leaf) AS instance_count,
@@ -614,7 +614,7 @@ def detect_and_create_member_patterns(
             )
             return 0
 
-        # Create patterns — keyed by facility:tree:member:parent_type:leaf_name
+        # Create groups — keyed by facility:tree:member:parent_type:leaf_name
         patterns = []
         for g in groups:
             pattern_id = f"{facility}:{data_source_name}:member:{g['parent_type']}:{g['leaf_name']}"
@@ -635,7 +635,7 @@ def detect_and_create_member_patterns(
         result = gc.query(
             """
             UNWIND $patterns AS p
-            MERGE (pat:DataNodePattern {id: p.id})
+            MERGE (pat:SignalGroup {id: p.id})
             ON CREATE SET
                 pat.facility_id = p.facility_id,
                 pat.data_source_name = p.data_source_name,
@@ -665,7 +665,7 @@ def detect_and_create_member_patterns(
         created = len(result) if result else 0
         total_linked = sum(r["linked"] for r in result) if result else 0
         logger.info(
-            "Created %d member-suffix patterns for %s:%s (%d nodes linked)",
+            "Created %d member-suffix signal groups for %s:%s (%d nodes linked)",
             created,
             facility,
             data_source_name,
@@ -675,33 +675,33 @@ def detect_and_create_member_patterns(
 
 
 # ---------------------------------------------------------------------------
-# Enrichment claiming — DataNodePattern (pattern-first enrichment)
+# Enrichment claiming — SignalGroup (group-first enrichment)
 # ---------------------------------------------------------------------------
 
 
 @retry_on_deadlock()
-def claim_patterns_for_enrichment(
+def claim_signal_groups(
     facility: str,
     data_source_name: str,
     limit: int = 20,
 ) -> list[dict[str, Any]]:
-    """Claim unenriched DataNodePatterns for LLM enrichment.
+    """Claim unenriched SignalGroups for LLM enrichment.
 
-    Returns pattern info plus one representative node's details for the
-    LLM prompt. After enriching, call mark_patterns_enriched() to
-    propagate descriptions to all followers.
+    Returns group info plus one representative node's details for the
+    LLM prompt. After enriching, call mark_signal_groups_enriched() to
+    propagate descriptions to all members.
 
     Uses claim_token + ORDER BY rand() to prevent deadlocks.
 
     Returns:
-        List of dicts with pattern id, grandparent_path, leaf_name,
+        List of dicts with group id, grandparent_path, leaf_name,
         index_count, and representative node details.
     """
     claim_token = str(uuid.uuid4())
     with GraphClient() as gc:
         gc.query(
             """
-            MATCH (p:DataNodePattern)
+            MATCH (p:SignalGroup)
             WHERE p.facility_id = $facility
               AND p.data_source_name = $data_source_name
               AND (p.description IS NULL OR p.description = '')
@@ -716,7 +716,7 @@ def claim_patterns_for_enrichment(
         )
         result = gc.query(
             """
-            MATCH (p:DataNodePattern {claim_token: $token})
+            MATCH (p:SignalGroup {claim_token: $token})
             OPTIONAL MATCH (rep:SignalNode {path: p.representative_path,
                                           facility_id: $facility})
             RETURN p.id AS id,
@@ -735,7 +735,7 @@ def claim_patterns_for_enrichment(
         return [dict(r) for r in result]
 
 
-def mark_patterns_enriched(
+def mark_signal_groups_enriched(
     pattern_ids: list[str],
     descriptions: dict[str, str],
     metadata: dict[str, dict] | None = None,
@@ -743,14 +743,14 @@ def mark_patterns_enriched(
     llm_cost: float = 0.0,
     llm_model: str | None = None,
 ) -> int:
-    """Mark patterns as enriched and propagate to all followers.
+    """Mark signal groups as enriched and propagate to all members.
 
-    Sets description/keywords/category on the DataNodePattern and
+    Sets description/keywords/category on the SignalGroup and
     copies them to every SignalNode linked via MEMBER_OF.
-    Distributes llm_cost evenly across all follower nodes.
+    Distributes llm_cost evenly across all member nodes.
 
     Returns:
-        Number of DataNodes updated (followers).
+        Number of SignalNodes updated (members).
     """
     updates = []
     for pid in pattern_ids:
@@ -773,14 +773,14 @@ def mark_patterns_enriched(
         result = gc.query(
             """
             UNWIND $updates AS u
-            MATCH (p:DataNodePattern {id: u.id})
+            MATCH (p:SignalGroup {id: u.id})
             SET p.description = u.description,
                 p.keywords = u.keywords,
                 p.category = u.category,
                 p.enrichment_status = 'enriched',
                 p.claimed_at = null
             WITH p, u
-            // Propagate to all followers
+            // Propagate to all members
             MATCH (n:SignalNode)-[:MEMBER_OF]->(p)
             SET n.description = u.description,
                 n.keywords = u.keywords,
@@ -801,7 +801,7 @@ def mark_patterns_enriched(
                 gc.query(
                     """
                     UNWIND $ids AS pid
-                    MATCH (n:SignalNode)-[:MEMBER_OF]->(:DataNodePattern {id: pid})
+                    MATCH (n:SignalNode)-[:MEMBER_OF]->(:SignalGroup {id: pid})
                     WHERE n.enrichment_status = 'enriched'
                     SET n.llm_cost = $per_node_cost,
                         n.llm_model = $llm_model,
@@ -815,15 +815,15 @@ def mark_patterns_enriched(
         return total_propagated
 
 
-def release_pattern_claims(pattern_ids: list[str]) -> int:
-    """Release claims on DataNodePatterns (on error)."""
+def release_signal_group_claims(pattern_ids: list[str]) -> int:
+    """Release claims on SignalGroups (on error)."""
     if not pattern_ids:
         return 0
     with GraphClient() as gc:
         result = gc.query(
             """
             UNWIND $ids AS pid
-            MATCH (p:DataNodePattern {id: pid})
+            MATCH (p:SignalGroup {id: pid})
             SET p.claimed_at = null
             RETURN count(p) AS released
             """,
@@ -832,12 +832,12 @@ def release_pattern_claims(pattern_ids: list[str]) -> int:
         return result[0]["released"] if result else 0
 
 
-def has_pending_pattern_work(facility: str, data_source_name: str) -> bool:
-    """Check if any DataNodePatterns need enrichment."""
+def has_pending_signal_group_work(facility: str, data_source_name: str) -> bool:
+    """Check if any SignalGroups need enrichment."""
     with GraphClient() as gc:
         result = gc.query(
             """
-            MATCH (p:DataNodePattern)
+            MATCH (p:SignalGroup)
             WHERE p.facility_id = $facility
               AND p.data_source_name = $data_source_name
               AND (p.description IS NULL OR p.description = '')
@@ -868,7 +868,7 @@ def claim_parent_for_enrichment(
     """Claim a parent node whose children need enrichment.
 
     Finds any SignalNode with un-enriched NUMERIC/SIGNAL children
-    that don't follow a DataNodePattern. Claims the parent by setting
+    that don't follow a SignalGroup. Claims the parent by setting
     claimed_at. Uses claim_token + ORDER BY rand() to prevent deadlocks.
 
     Returns:
@@ -885,7 +885,7 @@ def claim_parent_for_enrichment(
             MATCH (parent)-[:HAS_NODE]->(child:SignalNode)
             WHERE child.node_type IN $node_types
               AND (child.description IS NULL OR child.description = '')
-              AND NOT EXISTS { (child)-[:MEMBER_OF]->(:DataNodePattern) }
+              AND NOT EXISTS { (child)-[:MEMBER_OF]->(:SignalGroup) }
             WITH parent, count(child) AS unenriched
             WHERE unenriched > 0
             WITH parent ORDER BY rand() LIMIT 1
@@ -902,7 +902,7 @@ def claim_parent_for_enrichment(
             MATCH (parent)-[:HAS_NODE]->(child:SignalNode)
             WHERE child.node_type IN $node_types
               AND (child.description IS NULL OR child.description = '')
-              AND NOT EXISTS { (child)-[:MEMBER_OF]->(:DataNodePattern) }
+              AND NOT EXISTS { (child)-[:MEMBER_OF]->(:SignalGroup) }
             RETURN parent.id AS parent_id, parent.path AS parent_path,
                    parent.tags AS parent_tags,
                    collect({
@@ -940,7 +940,7 @@ def claim_orphan_nodes_for_enrichment(
             MATCH (child:SignalNode {facility_id: $facility, data_source_name: $data_source_name})
             WHERE child.node_type IN $node_types
               AND (child.description IS NULL OR child.description = '')
-              AND NOT EXISTS { (child)-[:MEMBER_OF]->(:DataNodePattern) }
+              AND NOT EXISTS { (child)-[:MEMBER_OF]->(:SignalGroup) }
               AND NOT EXISTS { (:SignalNode)-[:HAS_NODE]->(child) }
               AND child.claimed_at IS NULL
             WITH child ORDER BY rand() LIMIT $limit
@@ -1161,8 +1161,8 @@ def has_pending_extract_work(facility: str, data_source_name: str) -> bool:
 
 
 def has_pending_enrich_work(facility: str, data_source_name: str) -> bool:
-    """Check if any patterns, parent groups, or orphan nodes need enrichment."""
-    if has_pending_pattern_work(facility, data_source_name):
+    """Check if any signal groups, parent groups, or orphan nodes need enrichment."""
+    if has_pending_signal_group_work(facility, data_source_name):
         return True
     with GraphClient() as gc:
         # Check for parents with unenriched children (any parent type)
@@ -1173,7 +1173,7 @@ def has_pending_enrich_work(facility: str, data_source_name: str) -> bool:
             MATCH (parent)-[:HAS_NODE]->(child:SignalNode)
             WHERE child.node_type IN $node_types
               AND (child.description IS NULL OR child.description = '')
-              AND NOT EXISTS { (child)-[:MEMBER_OF]->(:DataNodePattern) }
+              AND NOT EXISTS { (child)-[:MEMBER_OF]->(:SignalGroup) }
             RETURN count(DISTINCT parent) > 0 AS has_work
             """,
             facility=facility,
@@ -1189,7 +1189,7 @@ def has_pending_enrich_work(facility: str, data_source_name: str) -> bool:
             MATCH (child:SignalNode {facility_id: $facility, data_source_name: $data_source_name})
             WHERE child.node_type IN $node_types
               AND (child.description IS NULL OR child.description = '')
-              AND NOT EXISTS { (child)-[:MEMBER_OF]->(:DataNodePattern) }
+              AND NOT EXISTS { (child)-[:MEMBER_OF]->(:SignalGroup) }
               AND NOT EXISTS { (:SignalNode)-[:HAS_NODE]->(child) }
             RETURN count(child) > 0 AS has_work
             """,
@@ -1234,7 +1234,7 @@ def reset_orphaned_static_claims(
         silent=silent,
     )
     pattern_reset = reset_stale_claims(
-        "DataNodePattern",
+        "SignalGroup",
         facility,
         timeout_seconds=CLAIM_TIMEOUT_SECONDS,
         silent=silent,
@@ -1388,7 +1388,7 @@ def get_static_discovery_stats(
             WITH parent
             MATCH (parent)-[:HAS_NODE]->(child:SignalNode)
             WHERE child.node_type IN $node_types
-              AND NOT EXISTS { (child)-[:MEMBER_OF]->(:DataNodePattern) }
+              AND NOT EXISTS { (child)-[:MEMBER_OF]->(:SignalGroup) }
             WITH parent,
                  count(child) AS total_children,
                  sum(CASE WHEN child.description IS NOT NULL
@@ -1420,7 +1420,7 @@ def get_static_discovery_stats(
             """
             MATCH (child:SignalNode {facility_id: $facility, data_source_name: $data_source_name})
             WHERE child.node_type IN $node_types
-              AND NOT EXISTS { (child)-[:MEMBER_OF]->(:DataNodePattern) }
+              AND NOT EXISTS { (child)-[:MEMBER_OF]->(:SignalGroup) }
               AND NOT EXISTS { (:SignalNode)-[:HAS_NODE]->(child) }
             RETURN count(child) AS total_orphans,
                    sum(CASE WHEN child.description IS NOT NULL
@@ -1442,7 +1442,7 @@ def get_static_discovery_stats(
         # Pattern stats
         pattern_result = gc.query(
             """
-            MATCH (p:DataNodePattern)
+            MATCH (p:SignalGroup)
             WHERE p.facility_id = $facility AND p.data_source_name = $data_source_name
             RETURN
                 count(p) AS total,
@@ -1493,7 +1493,7 @@ def reset_enrichment(
     """Reset all enrichment data for static tree nodes.
 
     Clears descriptions, enrichment status, LLM cost/model/timestamp,
-    keywords, and category from all SignalNode and DataNodePattern nodes.
+    keywords, and category from all SignalNode and SignalGroup nodes.
     After reset, the enrichment pipeline will re-process all nodes.
 
     Returns:
@@ -1528,10 +1528,10 @@ def reset_enrichment(
         )
         nodes_reset = node_result[0]["reset"] if node_result else 0
 
-        # Reset DataNodePattern enrichment fields
+        # Reset SignalGroup enrichment fields
         pattern_result = gc.query(
             """
-            MATCH (p:DataNodePattern {facility_id: $facility, data_source_name: $data_source_name})
+            MATCH (p:SignalGroup {facility_id: $facility, data_source_name: $data_source_name})
             WHERE p.description IS NOT NULL OR p.enrichment_status IS NOT NULL
             SET p.description = null,
                 p.enrichment_status = null,
@@ -1562,7 +1562,7 @@ def clear_facility_static(
 ) -> dict[str, int]:
     """Clear all static tree discovery data for a facility.
 
-    Deletes SignalNode nodes, DataNodePattern nodes,
+    Deletes SignalNode nodes, SignalGroup nodes,
     and their StructuralEpoch nodes in batches.
 
     Args:
@@ -1579,10 +1579,10 @@ def clear_facility_static(
     }
 
     with GraphClient() as gc:
-        # Delete DataNodePattern nodes first (they reference DataNodes)
+        # Delete SignalGroup nodes first (they reference DataNodes)
         result = gc.query(
             """
-            MATCH (p:DataNodePattern {facility_id: $facility})
+            MATCH (p:SignalGroup {facility_id: $facility})
             DETACH DELETE p
             RETURN count(p) AS deleted
             """,
