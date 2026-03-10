@@ -1,7 +1,12 @@
-"""Graph operations for IDS mapping and recipe management.
+"""Graph operations for IDS mapping and assembly.
 
-Provides queries to load IMASMapping and IMASMapping nodes from the graph,
-and functions to create mapping nodes for new field transformations.
+Provides queries to load IMASMapping nodes and their linked SignalGroups
+from the graph, and functions to seed mapping definitions.
+
+Architecture:
+    IMASMapping (orchestration) -[:USES_SIGNAL_GROUP]-> SignalGroup
+    SignalGroup -[:MAPS_TO_IMAS]-> IMASNode (field-level transform)
+    IMASMapping -[:POPULATES]-> IMASNode (struct-array root)
 """
 
 from __future__ import annotations
@@ -18,9 +23,9 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class FieldMapping:
-    """A resolved field mapping from graph data."""
+    """A resolved field mapping from a MAPS_TO_IMAS relationship."""
 
-    id: str
+    signal_group_id: str
     source_property: str
     target_imas_path: str
     transform_code: str = "value"
@@ -32,7 +37,7 @@ class FieldMapping:
 
 
 @dataclass
-class Recipe:
+class Mapping:
     """A resolved IMASMapping from graph data."""
 
     id: str
@@ -40,12 +45,13 @@ class Recipe:
     ids_name: str
     dd_version: str
     provider: str | None = None
-    assembly_config: dict[str, Any] = field(default_factory=dict)
-    mappings: list[FieldMapping] = field(default_factory=list)
+    static_config: dict[str, Any] = field(default_factory=dict)
+    sections: list[dict[str, Any]] = field(default_factory=list)
+    field_mappings: list[FieldMapping] = field(default_factory=list)
 
 
-def load_recipe(facility: str, ids_name: str, gc: GraphClient) -> Recipe | None:
-    """Load an IMASMapping and its linked IMASMappings from the graph.
+def load_mapping(facility: str, ids_name: str, gc: GraphClient) -> Mapping | None:
+    """Load an IMASMapping and its linked SignalGroups from the graph.
 
     Args:
         facility: Facility ID.
@@ -53,16 +59,16 @@ def load_recipe(facility: str, ids_name: str, gc: GraphClient) -> Recipe | None:
         gc: Graph client instance.
 
     Returns:
-        Recipe with populated mappings, or None if not found.
+        Mapping with populated field_mappings and sections, or None if not found.
     """
     rows = list(
         gc.query(
             """
-            MATCH (r:IMASMapping {facility_id: $facility, ids_name: $ids_name})
-            WHERE r.status = 'active'
-            RETURN r.id AS id, r.facility_id AS facility_id,
-                   r.ids_name AS ids_name, r.dd_version AS dd_version,
-                   r.provider AS provider, r.assembly_config AS assembly_config
+            MATCH (m:IMASMapping {facility_id: $facility, ids_name: $ids_name})
+            WHERE m.status = 'active'
+            RETURN m.id AS id, m.facility_id AS facility_id,
+                   m.ids_name AS ids_name, m.dd_version AS dd_version,
+                   m.provider AS provider, m.static_config AS static_config
             LIMIT 1
             """,
             facility=facility,
@@ -73,25 +79,58 @@ def load_recipe(facility: str, ids_name: str, gc: GraphClient) -> Recipe | None:
         return None
 
     row = rows[0]
-    config_str = row.get("assembly_config") or "{}"
-    recipe = Recipe(
+    config_str = row.get("static_config") or "{}"
+    mapping = Mapping(
         id=row["id"],
         facility_id=row["facility_id"],
         ids_name=row["ids_name"],
         dd_version=row["dd_version"],
         provider=row.get("provider"),
-        assembly_config=json.loads(config_str),
+        static_config=json.loads(config_str),
     )
 
-    recipe.mappings = load_mappings(recipe.id, gc)
-    return recipe
+    mapping.sections = load_sections(mapping.id, gc)
+    mapping.field_mappings = load_field_mappings(mapping.id, gc)
+    return mapping
 
 
-def load_mappings(recipe_id: str, gc: GraphClient) -> list[FieldMapping]:
-    """Load IMASMappings linked to a recipe via INCLUDES_MAPPING.
+def load_sections(mapping_id: str, gc: GraphClient) -> list[dict[str, Any]]:
+    """Load POPULATES relationships from an IMASMapping to struct-array roots.
 
     Args:
-        recipe_id: IMASMapping node ID.
+        mapping_id: IMASMapping node ID.
+        gc: Graph client instance.
+
+    Returns:
+        List of section dicts with root_path and assembly config properties.
+    """
+    return list(
+        gc.query(
+            """
+            MATCH (m:IMASMapping {id: $mapping_id})
+                  -[t:POPULATES]->(root:IMASNode)
+            RETURN root.id AS root_path,
+                   t.structure AS structure,
+                   t.init_arrays AS init_arrays,
+                   t.elements_config AS elements_config,
+                   t.nested_path AS nested_path,
+                   t.parent_size AS parent_size,
+                   t.source_system AS source_system,
+                   t.source_data_source AS source_data_source,
+                   t.source_epoch_field AS source_epoch_field,
+                   t.source_select_via AS source_select_via,
+                   t.enrichment AS enrichment
+            """,
+            mapping_id=mapping_id,
+        )
+    )
+
+
+def load_field_mappings(mapping_id: str, gc: GraphClient) -> list[FieldMapping]:
+    """Load field mappings via USES_SIGNAL_GROUP → MAPS_TO_IMAS traversal.
+
+    Args:
+        mapping_id: IMASMapping node ID.
         gc: Graph client instance.
 
     Returns:
@@ -100,27 +139,27 @@ def load_mappings(recipe_id: str, gc: GraphClient) -> list[FieldMapping]:
     rows = list(
         gc.query(
             """
-            MATCH (r:IMASMapping {id: $recipe_id})
-                  -[:INCLUDES_MAPPING]->(m:IMASMapping)
-                  -[:TARGET_PATH]->(ip:IMASNode)
-            RETURN m.id AS id,
-                   m.source_property AS source_property,
+            MATCH (m:IMASMapping {id: $mapping_id})
+                  -[:USES_SIGNAL_GROUP]->(sg:SignalGroup)
+                  -[map:MAPS_TO_IMAS]->(ip:IMASNode)
+            RETURN sg.id AS signal_group_id,
+                   map.source_property AS source_property,
                    ip.id AS target_imas_path,
-                   m.transform_code AS transform_code,
-                   m.units_in AS units_in,
-                   m.units_out AS units_out,
-                   m.cocos_source AS cocos_source,
-                   m.cocos_target AS cocos_target,
-                   m.driver AS driver,
+                   map.transform_code AS transform_code,
+                   map.units_in AS units_in,
+                   map.units_out AS units_out,
+                   map.cocos_source AS cocos_source,
+                   map.cocos_target AS cocos_target,
+                   map.driver AS driver,
                    ip.cocos_label_transformation AS cocos_label
             """,
-            recipe_id=recipe_id,
+            mapping_id=mapping_id,
         )
     )
     mappings = []
     for row in rows:
-        mapping = FieldMapping(
-            id=row["id"],
+        fm = FieldMapping(
+            signal_group_id=row["signal_group_id"],
             source_property=row.get("source_property") or "value",
             target_imas_path=row["target_imas_path"],
             transform_code=row.get("transform_code") or "value",
@@ -130,16 +169,15 @@ def load_mappings(recipe_id: str, gc: GraphClient) -> list[FieldMapping]:
             cocos_target=row.get("cocos_target"),
             driver=row.get("driver") or "device_xml",
         )
-        # Warn if IMAS path is COCOS-sensitive but mapping has no source COCOS
         cocos_label = row.get("cocos_label")
-        if cocos_label and cocos_label != "one_like" and not mapping.cocos_source:
+        if cocos_label and cocos_label != "one_like" and not fm.cocos_source:
             logger.warning(
                 "COCOS-sensitive path %s (label=%s) has no cocos_source on mapping %s",
-                mapping.target_imas_path,
+                fm.target_imas_path,
                 cocos_label,
-                mapping.id,
+                fm.signal_group_id,
             )
-        mappings.append(mapping)
+        mappings.append(fm)
     return mappings
 
 
@@ -163,11 +201,10 @@ def select_nodes(
     Returns:
         List of SignalNode property dicts.
     """
-    source = section_config.get("source", {})
-    system = source.get("system")
-    data_source = source.get("data_source", "device_xml")
-    epoch_field = source.get("epoch_field", "introduced_version")
-    select_via = source.get("select_via")
+    system = section_config.get("source_system")
+    data_source = section_config.get("source_data_source", "device_xml")
+    epoch_field = section_config.get("source_epoch_field", "introduced_version")
+    select_via = section_config.get("source_select_via")
 
     if select_via:
         # Relationship-based selection (e.g., USES_LIMITER from epoch)
@@ -338,15 +375,15 @@ WALL_LIMITER_MAPPINGS: list[MappingSpec] = [
 ]
 
 
-def create_mappings(
+def create_signal_group(
     facility: str,
     ids_name: str,
     section: str,
     system: str,
     mapping_specs: list[MappingSpec],
     gc: GraphClient,
-) -> list[str]:
-    """Create IMASMapping nodes for a set of field mappings.
+) -> str:
+    """Create a SignalGroup and MAPS_TO_IMAS relationships for field mappings.
 
     Args:
         facility: Facility ID (e.g., 'jet').
@@ -358,113 +395,181 @@ def create_mappings(
         gc: Graph client instance.
 
     Returns:
-        List of created mapping IDs.
+        SignalGroup ID.
     """
-    mappings = []
-    for source_prop, target_path, transform, units_in, units_out in mapping_specs:
-        mapping_id = f"{facility}:{system}:{source_prop}→{target_path}"
-        mappings.append(
-            {
-                "id": mapping_id,
-                "facility_id": facility,
-                "source_property": source_prop,
-                "target_path": target_path,
-                "transform_code": transform,
-                "units_in": units_in,
-                "units_out": units_out,
-                "driver": "device_xml",
-                "status": "validated",
-                "confidence": 1.0,
-            }
-        )
+    group_id = f"{facility}:ids:{ids_name}:{system}"
+    group_key = f"{ids_name}/{section}"
+
+    # Create SignalGroup node
+    gc.query(
+        """
+        MERGE (sg:SignalGroup {id: $group_id})
+        SET sg.facility_id = $facility,
+            sg.group_key = $group_key,
+            sg.status = 'discovered'
+        WITH sg
+        MATCH (f:Facility {id: $facility})
+        MERGE (sg)-[:AT_FACILITY]->(f)
+        """,
+        group_id=group_id,
+        facility=facility,
+        group_key=group_key,
+    )
+
+    # Create MAPS_TO_IMAS relationships
+    maps = [
+        {
+            "source_property": source_prop,
+            "target_path": target_path,
+            "transform_code": transform,
+            "units_in": units_in,
+            "units_out": units_out,
+            "driver": "device_xml",
+            "status": "validated",
+            "confidence": 1.0,
+        }
+        for source_prop, target_path, transform, units_in, units_out in mapping_specs
+    ]
 
     gc.query(
         """
-        UNWIND $mappings AS m
-        MERGE (mapping:IMASMapping {id: m.id})
-        SET mapping += m
-        WITH mapping, m
-        MATCH (f:Facility {id: m.facility_id})
-        MERGE (mapping)-[:AT_FACILITY]->(f)
-        WITH mapping, m
+        UNWIND $maps AS m
+        MATCH (sg:SignalGroup {id: $group_id})
         MATCH (ip:IMASNode {id: m.target_path})
-        MERGE (mapping)-[:TARGET_PATH]->(ip)
+        MERGE (sg)-[rel:MAPS_TO_IMAS]->(ip)
+        SET rel.source_property = m.source_property,
+            rel.transform_code = m.transform_code,
+            rel.units_in = m.units_in,
+            rel.units_out = m.units_out,
+            rel.driver = m.driver,
+            rel.status = m.status,
+            rel.confidence = m.confidence
         """,
-        mappings=mappings,
+        group_id=group_id,
+        maps=maps,
     )
 
     logger.info(
-        "Created %d IMASMapping nodes for %s.%s (%s)",
-        len(mappings),
-        ids_name,
-        section,
-        facility,
+        "Created SignalGroup %s with %d MAPS_TO_IMAS relationships",
+        group_id,
+        len(maps),
     )
-    return [m["id"] for m in mappings]
+    return group_id
 
 
-def create_recipe(
+def create_imas_mapping(
     facility: str,
     ids_name: str,
     dd_version: str,
     assembly_config: dict[str, Any],
-    mapping_ids: list[str],
+    signal_group_ids: list[str],
     gc: GraphClient,
     *,
     provider: str = "imas-codex",
 ) -> str:
-    """Create an IMASMapping node and link it to IMASMappings.
+    """Create an IMASMapping node with USES_SIGNAL_GROUP and POPULATES.
 
     Args:
         facility: Facility ID.
         ids_name: IDS name.
         dd_version: DD version string.
         assembly_config: Structural assembly configuration dict.
-        mapping_ids: IDs of IMASMapping nodes to link.
+        signal_group_ids: IDs of SignalGroup nodes to link.
         gc: Graph client instance.
         provider: Provider string for ids_properties.
 
     Returns:
-        Recipe node ID.
+        IMASMapping node ID.
     """
-    recipe_id = f"{facility}:{ids_name}"
-    config_json = json.dumps(assembly_config)
+    mapping_id = f"{facility}:{ids_name}"
+    static_config = json.dumps(assembly_config.get("static", {}))
 
     gc.query(
         """
-        MERGE (r:IMASMapping {id: $recipe_id})
-        SET r.facility_id = $facility,
-            r.ids_name = $ids_name,
-            r.dd_version = $dd_version,
-            r.assembly_config = $config_json,
-            r.provider = $provider,
-            r.status = 'active'
-        WITH r
+        MERGE (m:IMASMapping {id: $mapping_id})
+        SET m.facility_id = $facility,
+            m.ids_name = $ids_name,
+            m.dd_version = $dd_version,
+            m.static_config = $static_config,
+            m.provider = $provider,
+            m.status = 'active'
+        WITH m
         MATCH (f:Facility {id: $facility})
-        MERGE (r)-[:AT_FACILITY]->(f)
+        MERGE (m)-[:AT_FACILITY]->(f)
         """,
-        recipe_id=recipe_id,
+        mapping_id=mapping_id,
         facility=facility,
         ids_name=ids_name,
         dd_version=dd_version,
-        config_json=config_json,
+        static_config=static_config,
         provider=provider,
     )
 
-    # Link to mappings
+    # Link to SignalGroups
     gc.query(
         """
-        UNWIND $mapping_ids AS mid
-        MATCH (r:IMASMapping {id: $recipe_id})
-        MATCH (m:IMASMapping {id: mid})
-        MERGE (r)-[:INCLUDES_MAPPING]->(m)
+        UNWIND $group_ids AS gid
+        MATCH (m:IMASMapping {id: $mapping_id})
+        MATCH (sg:SignalGroup {id: gid})
+        MERGE (m)-[:USES_SIGNAL_GROUP]->(sg)
         """,
-        recipe_id=recipe_id,
-        mapping_ids=mapping_ids,
+        mapping_id=mapping_id,
+        group_ids=signal_group_ids,
     )
 
-    logger.info("Created IMASMapping %s with %d mappings", recipe_id, len(mapping_ids))
-    return recipe_id
+    # Create POPULATES relationships with assembly config per section
+    sections = []
+    for section_name, section_config in assembly_config.items():
+        if section_name == "static":
+            continue
+        source = section_config.get("source", {})
+        # Derive the IMAS struct-array root path
+        root_path = f"{ids_name}/{section_name}"
+        sections.append(
+            {
+                "root_path": root_path,
+                "structure": section_config.get("structure", "array_per_node"),
+                "init_arrays": json.dumps(section_config.get("init_arrays", {})),
+                "elements_config": json.dumps(section_config.get("elements", {})),
+                "nested_path": section_config.get("nested_path"),
+                "parent_size": section_config.get("parent_size"),
+                "source_system": source.get("system"),
+                "source_data_source": source.get("data_source", "device_xml"),
+                "source_epoch_field": source.get("epoch_field", "introduced_version"),
+                "source_select_via": source.get("select_via"),
+                "enrichment": json.dumps(section_config.get("enrichment", [])),
+            }
+        )
+
+    if sections:
+        gc.query(
+            """
+            UNWIND $sections AS s
+            MATCH (m:IMASMapping {id: $mapping_id})
+            MATCH (root:IMASNode {id: s.root_path})
+            MERGE (m)-[t:POPULATES]->(root)
+            SET t.structure = s.structure,
+                t.init_arrays = s.init_arrays,
+                t.elements_config = s.elements_config,
+                t.nested_path = s.nested_path,
+                t.parent_size = s.parent_size,
+                t.source_system = s.source_system,
+                t.source_data_source = s.source_data_source,
+                t.source_epoch_field = s.source_epoch_field,
+                t.source_select_via = s.source_select_via,
+                t.enrichment = s.enrichment
+            """,
+            mapping_id=mapping_id,
+            sections=sections,
+        )
+
+    logger.info(
+        "Created IMASMapping %s with %d signal groups, %d sections",
+        mapping_id,
+        len(signal_group_ids),
+        len(sections),
+    )
+    return mapping_id
 
 
 # ------------------------------------------------------------------
@@ -577,19 +682,20 @@ def seed_ids_mappings(
     dd_version: str,
     gc: GraphClient,
 ) -> str:
-    """Seed IMASMapping and IMASMapping nodes for a given IDS.
+    """Seed SignalGroups, MAPS_TO_IMAS relationships, and an IMASMapping.
 
-    Creates all field mapping nodes and a structural recipe for the
-    specified IDS, using the canonical mapping definitions.
+    Creates SignalGroup nodes with field-level MAPS_TO_IMAS relationships,
+    then an IMASMapping orchestration node linking them via USES_SIGNAL_GROUP
+    and POPULATES.
 
     Args:
         facility: Facility ID.
-        ids_name: IDS name ('pf_active', 'magnetics', 'pf_passive').
+        ids_name: IDS name ('pf_active', 'magnetics', 'pf_passive', 'wall').
         dd_version: DD version string.
         gc: Graph client instance.
 
     Returns:
-        Recipe node ID.
+        IMASMapping node ID.
 
     Raises:
         ValueError: If ids_name is not supported.
@@ -631,11 +737,11 @@ def seed_ids_mappings(
 
     assembly_config, sections = configs[ids_name]
 
-    all_mapping_ids: list[str] = []
+    signal_group_ids: list[str] = []
     for section, system, specs in sections:
-        mapping_ids = create_mappings(facility, ids_name, section, system, specs, gc)
-        all_mapping_ids.extend(mapping_ids)
+        group_id = create_signal_group(facility, ids_name, section, system, specs, gc)
+        signal_group_ids.append(group_id)
 
-    return create_recipe(
-        facility, ids_name, dd_version, assembly_config, all_mapping_ids, gc
+    return create_imas_mapping(
+        facility, ids_name, dd_version, assembly_config, signal_group_ids, gc
     )

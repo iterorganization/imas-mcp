@@ -2438,9 +2438,63 @@ classes:
 
 # NOTE: IMASNode is now defined in imas_dd.yaml as IMASNode — the unified
 # representation of IMAS Data Dictionary paths. Do not define it here.
-# The old IMASMapping field-level node has been replaced by MAPS_TO_IMAS
-# relationships from SignalGroup/SignalNode to IMASNode.
-# The orchestration node (was IDSRecipe) is now IMASMapping — defined in Phase 3.
+# Field-level mappings use MAPS_TO_IMAS relationships from SignalGroup to IMASNode.
+# IMASMapping is the orchestration node that coordinates assembly of a facility+IDS.
+
+  IMASMapping:
+    description: >-
+      Orchestrates the assembly of an IDS for a facility. Links to SignalGroups
+      via USES_SIGNAL_GROUP and to IMAS struct-array roots via POPULATES
+      with assembly configuration properties.
+      Example Cypher:
+        MATCH (m:IMASMapping {facility_id: 'jet', ids_name: 'pf_active'})
+              -[:USES_SIGNAL_GROUP]->(sg:SignalGroup)
+              -[:MAPS_TO_IMAS]->(ip:IMASNode)
+        RETURN m.id, sg.group_key, ip.id
+    class_uri: facility:IMASMapping
+    attributes:
+      id:
+        identifier: true
+        description: >-
+          Composite key: "{facility}:{ids_name}".
+          Examples: "jet:pf_active", "tcv:magnetics"
+        required: true
+      facility_id:
+        description: Parent facility ID
+        required: true
+        range: Facility
+        annotations:
+          relationship_type: AT_FACILITY
+      ids_name:
+        description: IMAS IDS name (e.g., "pf_active", "magnetics")
+        required: true
+      dd_version:
+        description: Data dictionary version (e.g., "4.1.1")
+      status:
+        description: Lifecycle status
+        range: IMASMappingStatus
+        required: true
+      provider:
+        description: Who created this mapping (e.g., "imas-codex")
+      static_config:
+        description: >-
+          JSON: static IDS properties (ids_properties values).
+          E.g., {"homogeneous_time": 1}
+        range: string
+      description:
+        description: Human-readable description of this IDS mapping
+      uses_signal_group:
+        description: SignalGroups used by this mapping
+        range: SignalGroup
+        multivalued: true
+        annotations:
+          relationship_type: USES_SIGNAL_GROUP
+      populates:
+        description: IMAS struct-array roots populated by this mapping
+        range: IMASNode
+        multivalued: true
+        annotations:
+          relationship_type: POPULATES
 
   MappingEvidence:
     description: >-

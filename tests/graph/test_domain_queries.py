@@ -273,8 +273,8 @@ class TestMapSignalsToImas:
     def test_includes_imas_paths(self, mock_gc, mock_embed):
         map_signals_to_imas(facility="tcv", gc=mock_gc)
         cypher = mock_gc.query.call_args[0][0]
-        assert "SOURCE_PATH" in cypher
-        assert "TARGET_PATH" in cypher
+        assert "MAPS_TO_IMAS" in cypher
+        assert "MEMBER_OF" in cypher
         assert "IMASNode" in cypher
 
 

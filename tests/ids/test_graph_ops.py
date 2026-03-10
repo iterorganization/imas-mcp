@@ -16,12 +16,13 @@ from imas_codex.ids.graph_ops import (
     WALL_ASSEMBLY_CONFIG,
     WALL_LIMITER_MAPPINGS,
     FieldMapping,
-    Recipe,
+    Mapping,
     _index_from_path,
-    create_mappings,
-    create_recipe,
-    load_mappings,
-    load_recipe,
+    create_imas_mapping,
+    create_signal_group,
+    load_field_mappings,
+    load_mapping,
+    load_sections,
     seed_ids_mappings,
 )
 
@@ -34,16 +35,18 @@ class TestIndexFromPath:
         assert _index_from_path("jet:jec2020:pf_coil:12") == 12
 
 
-class TestLoadRecipe:
+class TestLoadMapping:
     def test_returns_none_when_not_found(self):
         gc = MagicMock()
         gc.query.return_value = []
-        result = load_recipe("jet", "nonexistent", gc)
+        result = load_mapping("jet", "nonexistent", gc)
         assert result is None
 
-    def test_returns_recipe_with_mappings(self):
+    def test_returns_mapping_with_field_mappings(self):
         gc = MagicMock()
-        # First query: recipe lookup
+        # First query: mapping lookup
+        # Second query: load_sections
+        # Third query: load_field_mappings
         gc.query.side_effect = [
             [
                 {
@@ -52,13 +55,29 @@ class TestLoadRecipe:
                     "ids_name": "pf_active",
                     "dd_version": "4.1.1",
                     "provider": "imas-codex",
-                    "assembly_config": '{"coil": {}}',
+                    "static_config": "{}",
                 }
             ],
-            # Second query: mappings
+            # Sections (POPULATES)
             [
                 {
-                    "id": "jet:PF:r",
+                    "root_path": "pf_active/coil",
+                    "structure": "array_per_node",
+                    "init_arrays": "{}",
+                    "elements_config": '{"geometry_type": 2}',
+                    "nested_path": None,
+                    "parent_size": None,
+                    "source_system": "PF",
+                    "source_data_source": "device_xml",
+                    "source_epoch_field": "introduced_version",
+                    "source_select_via": None,
+                    "enrichment": "[]",
+                }
+            ],
+            # Field mappings (MAPS_TO_IMAS)
+            [
+                {
+                    "signal_group_id": "jet:ids:pf_active:PF",
                     "source_property": "r",
                     "target_imas_path": "pf_active/coil/element/geometry/rectangle/r",
                     "transform_code": "value",
@@ -71,27 +90,28 @@ class TestLoadRecipe:
                 }
             ],
         ]
-        result = load_recipe("jet", "pf_active", gc)
+        result = load_mapping("jet", "pf_active", gc)
         assert result is not None
-        assert isinstance(result, Recipe)
+        assert isinstance(result, Mapping)
         assert result.ids_name == "pf_active"
         assert result.dd_version == "4.1.1"
-        assert len(result.mappings) == 1
-        assert result.mappings[0].source_property == "r"
+        assert len(result.field_mappings) == 1
+        assert result.field_mappings[0].source_property == "r"
+        assert len(result.sections) == 1
 
 
-class TestLoadMappings:
+class TestLoadFieldMappings:
     def test_empty_result(self):
         gc = MagicMock()
         gc.query.return_value = []
-        result = load_mappings("jet:pf_active", gc)
+        result = load_field_mappings("jet:pf_active", gc)
         assert result == []
 
     def test_parses_mapping_fields(self):
         gc = MagicMock()
         gc.query.return_value = [
             {
-                "id": "jet:PF:r",
+                "signal_group_id": "jet:ids:pf_active:PF",
                 "source_property": "r",
                 "target_imas_path": "pf_active/coil/element/geometry/rectangle/r",
                 "transform_code": "value * 1.0",
@@ -103,7 +123,7 @@ class TestLoadMappings:
                 "cocos_label": None,
             }
         ]
-        result = load_mappings("jet:pf_active", gc)
+        result = load_field_mappings("jet:pf_active", gc)
         assert len(result) == 1
         m = result[0]
         assert isinstance(m, FieldMapping)
@@ -115,7 +135,7 @@ class TestLoadMappings:
         gc = MagicMock()
         gc.query.return_value = [
             {
-                "id": "m1",
+                "signal_group_id": "jet:ids:pf_active:PF",
                 "source_property": None,
                 "target_imas_path": "pf_active/coil/name",
                 "transform_code": None,
@@ -127,7 +147,7 @@ class TestLoadMappings:
                 "cocos_label": None,
             }
         ]
-        result = load_mappings("jet:pf_active", gc)
+        result = load_field_mappings("jet:pf_active", gc)
         m = result[0]
         assert m.source_property == "value"
         assert m.transform_code == "value"
@@ -142,7 +162,7 @@ class TestLoadMappings:
         gc = MagicMock()
         gc.query.return_value = [
             {
-                "id": "jet:CI:current",
+                "signal_group_id": "jet:ids:pf_active:CI",
                 "source_property": "current",
                 "target_imas_path": "pf_active/circuit/current",
                 "transform_code": "value",
@@ -155,7 +175,7 @@ class TestLoadMappings:
             }
         ]
         with caplog.at_level(logging.WARNING):
-            result = load_mappings("jet:pf_active", gc)
+            result = load_field_mappings("jet:pf_active", gc)
         assert len(result) == 1
         assert "COCOS-sensitive" in caplog.text
         assert "ip_like" in caplog.text
@@ -167,7 +187,7 @@ class TestLoadMappings:
         gc = MagicMock()
         gc.query.return_value = [
             {
-                "id": "jet:PF:r",
+                "signal_group_id": "jet:ids:pf_active:PF",
                 "source_property": "r",
                 "target_imas_path": "pf_active/coil/element/geometry/rectangle/r",
                 "transform_code": "value",
@@ -180,7 +200,7 @@ class TestLoadMappings:
             }
         ]
         with caplog.at_level(logging.WARNING):
-            result = load_mappings("jet:pf_active", gc)
+            result = load_field_mappings("jet:pf_active", gc)
         assert len(result) == 1
         assert "COCOS-sensitive" not in caplog.text
 
@@ -261,29 +281,31 @@ class TestAssemblyConfigs:
         assert d2d["source"]["select_via"] == "USES_LIMITER"
 
 
-class TestCreateMappings:
-    def test_creates_mappings_with_correct_ids(self):
+class TestCreateSignalGroup:
+    def test_creates_group_with_maps_to_imas(self):
         gc = MagicMock()
         gc.query.return_value = []
         specs: list[tuple[str, str, str, str | None, str | None]] = [
             ("r", "test/section/r", "value", "m", "m"),
             ("z", "test/section/z", "value", "m", "m"),
         ]
-        result = create_mappings("jet", "test", "section", "PF", specs, gc)
-        assert len(result) == 2
-        assert result[0] == "jet:PF:r→test/section/r"
-        assert result[1] == "jet:PF:z→test/section/z"
-        gc.query.assert_called_once()
+        result = create_signal_group("jet", "test", "section", "PF", specs, gc)
+        assert result == "jet:ids:test:PF"
+        # Called twice: create SignalGroup node + create MAPS_TO_IMAS rels
+        assert gc.query.call_count == 2
 
 
-class TestCreateRecipe:
-    def test_creates_recipe_with_mappings(self):
+class TestCreateIMASMapping:
+    def test_creates_mapping_with_signal_groups(self):
         gc = MagicMock()
         gc.query.return_value = []
         config = {"coil": {"source": {"system": "PF"}}}
-        result = create_recipe("jet", "pf_active", "4.1.1", config, ["m1", "m2"], gc)
+        result = create_imas_mapping(
+            "jet", "pf_active", "4.1.1", config, ["sg1", "sg2"], gc
+        )
         assert result == "jet:pf_active"
-        assert gc.query.call_count == 2  # create recipe + link mappings
+        # create mapping + link signal groups + create POPULATES
+        assert gc.query.call_count == 3
 
 
 class TestSeedIdsMappings:
@@ -297,9 +319,9 @@ class TestSeedIdsMappings:
         gc.query.return_value = []
         result = seed_ids_mappings("jet", "pf_active", "4.1.1", gc)
         assert result == "jet:pf_active"
-        # Should have called query for: coil mappings + circuit mappings +
-        # recipe creation + mappings link
-        assert gc.query.call_count == 4
+        # 2 signal groups (coil PF, circuit CI) x 2 queries each = 4
+        # + 3 for create_imas_mapping (create + link groups + POPULATES)
+        assert gc.query.call_count == 7
 
     def test_magnetics_creates_all_sections(self):
         gc = MagicMock()
@@ -318,5 +340,6 @@ class TestSeedIdsMappings:
         gc.query.return_value = []
         result = seed_ids_mappings("jet", "wall", "4.1.1", gc)
         assert result == "jet:wall"
-        # description_2d mappings + recipe creation + mappings link
-        assert gc.query.call_count == 3
+        # 1 signal group x 2 queries = 2
+        # + 3 for create_imas_mapping
+        assert gc.query.call_count == 5

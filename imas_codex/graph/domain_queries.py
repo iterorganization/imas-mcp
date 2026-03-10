@@ -591,7 +591,7 @@ def map_signals_to_imas(
     """Find facility signals and their IMAS path mappings.
 
     Traverses FacilitySignal -> HAS_DATA_SOURCE_NODE -> SignalNode
-    <- SOURCE_PATH - IMASMapping -> TARGET_PATH -> IMASNode.
+    -> MEMBER_OF -> SignalGroup -> MAPS_TO_IMAS -> IMASNode.
 
     Args:
         facility: Facility id.
@@ -619,7 +619,7 @@ def map_signals_to_imas(
         f"MATCH (s:FacilitySignal) WHERE {where_clause} "
         "OPTIONAL MATCH (s)-[:DATA_ACCESS]->(da:DataAccess) "
         "OPTIONAL MATCH (s)-[:HAS_DATA_SOURCE_NODE]->(dn:SignalNode)"
-        "<-[:SOURCE_PATH]-(m:IMASMapping)-[:TARGET_PATH]->(ip:IMASNode) "
+        "-[:MEMBER_OF]->(sg:SignalGroup)-[:MAPS_TO_IMAS]->(ip:IMASNode) "
         "RETURN s.id AS signal_id, s.name AS signal_name, "
         "s.diagnostic AS diagnostic, s.description AS signal_description, "
         "ip.id AS imas_path, ip.documentation AS imas_documentation, "
