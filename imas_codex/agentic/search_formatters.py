@@ -63,14 +63,58 @@ def format_signals_report(
             if domain:
                 meta_parts.append(f"Domain: {domain}")
             unit = sig.get("unit")
+            unit_symbol = sig.get("unit_symbol")
             if unit:
-                meta_parts.append(f"Unit: {unit}")
+                unit_str = unit
+                if unit_symbol and unit_symbol != unit:
+                    unit_str = f"{unit} ({unit_symbol})"
+                meta_parts.append(f"Unit: {unit_str}")
+            elif unit_symbol:
+                meta_parts.append(f"Unit: {unit_symbol}")
+            sign_conv = sig.get("sign_convention")
+            if sign_conv:
+                meta_parts.append(f"Sign: {sign_conv}")
+            cocos = sig.get("cocos")
+            if cocos is not None:
+                meta_parts.append(f"COCOS: {cocos}")
             checked = sig.get("checked")
             shot = sig.get("example_shot")
             if checked and shot:
                 meta_parts.append(f"Checked: shot {shot}")
             if meta_parts:
                 parts.append("  " + " | ".join(meta_parts))
+
+            # Extended metadata
+            keywords = sig.get("keywords")
+            if keywords:
+                kw_str = ", ".join(keywords) if isinstance(keywords, list) else keywords
+                parts.append(f"  Keywords: {kw_str}")
+            aliases = sig.get("aliases")
+            if aliases:
+                al_str = ", ".join(aliases) if isinstance(aliases, list) else aliases
+                parts.append(f"  Aliases: {al_str}")
+            analysis_code = sig.get("analysis_code")
+            if analysis_code:
+                parts.append(f"  Analysis code: {analysis_code}")
+
+            # Signal group context
+            sg_key = sig.get("signal_group_key")
+            if sg_key:
+                sg_desc = sig.get("signal_group_description") or ""
+                sg_count = sig.get("signal_group_member_count")
+                sg_line = f"  Signal group: {sg_key}"
+                if sg_count:
+                    sg_line += f" ({sg_count} members)"
+                if sg_desc:
+                    sg_line += f" — {sg_desc}"
+                parts.append(sg_line)
+
+            # Wiki cross-references
+            wiki = sig.get("wiki_mentions")
+            if wiki:
+                wiki = [w for w in wiki if w]
+                if wiki:
+                    parts.append(f"  Wiki refs: {', '.join(wiki)}")
 
             # Data access section — handles multiple access methods
             access_methods = sig.get("access_methods") or []

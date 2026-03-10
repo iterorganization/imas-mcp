@@ -241,7 +241,10 @@ def _enrich_signals(
         OPTIONAL MATCH (s)-[:DATA_ACCESS]->(da:DataAccess)
         OPTIONAL MATCH (tn)-[:MEMBER_OF]->(sg:SignalGroup)-[:MAPS_TO_IMAS]->(ip:IMASNode)
         OPTIONAL MATCH (ip)-[:HAS_UNIT]->(u:Unit)
-        WITH s, diag, tn,
+        OPTIONAL MATCH (s)-[:HAS_UNIT]->(su:Unit)
+        OPTIONAL MATCH (s)-[:MEMBER_OF]->(fsgrp:SignalGroup)
+        OPTIONAL MATCH (wc:WikiChunk)-[:DOCUMENTS]->(s)
+        WITH s, diag, tn, su, fsgrp,
              collect(DISTINCT {
                access_template: da.data_template,
                access_type: da.access_type,
@@ -251,14 +254,26 @@ def _enrich_signals(
                imas_path: ip.id,
                imas_docs: ip.documentation,
                imas_unit: u.symbol
-             }) AS access_methods
+             }) AS access_methods,
+             collect(DISTINCT wc.section) AS wiki_mentions
         RETURN s.id AS id, s.name AS name, s.description AS description,
                s.physics_domain AS physics_domain, s.unit AS unit,
+               s.keywords AS keywords, s.aliases AS aliases,
+               s.sign_convention AS sign_convention, s.cocos AS cocos,
+               s.analysis_code AS analysis_code,
+               s.tdi_function AS tdi_function, s.tdi_quantity AS tdi_quantity,
+               s.enrichment_source AS enrichment_source,
                s.checked AS checked, s.example_shot AS example_shot,
                s.node_path AS node_path, s.accessor AS accessor,
                s.data_source_name AS data_source_name,
+               su.symbol AS unit_symbol,
                diag.name AS diagnostic_name, diag.category AS diagnostic_category,
                tn.path AS tree_path, tn.data_source_name AS tree_data_source_name,
+               fsgrp.id AS signal_group_id,
+               fsgrp.group_key AS signal_group_key,
+               fsgrp.description AS signal_group_description,
+               fsgrp.member_count AS signal_group_member_count,
+               wiki_mentions,
                access_methods
     """
     return gc.query(cypher, signal_ids=signal_ids)
