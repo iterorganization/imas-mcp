@@ -83,7 +83,7 @@ class TestFetchTreeContext:
         assert "tcv_ip" in entry["tdi_source"]
 
     def test_includes_epoch_range(self):
-        """Context includes epoch range from StructuralEpochs."""
+        """Context includes epoch range from SignalEpochs."""
         mock_result = [
             {
                 "signal_id": "tcv:magnetics/top/ip",

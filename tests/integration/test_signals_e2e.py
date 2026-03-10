@@ -260,16 +260,16 @@ def test_05_at_facility_edges(mdsplus_data):
 
 @pytest.mark.timeout(60)
 def test_06_tree_model_versions(mdsplus_data):
-    """E2E-2: MDSplus scan creates StructuralEpoch for versioned trees."""
+    """E2E-2: MDSplus scan creates SignalEpoch for versioned trees."""
     versions = query_graph(
         """
-        MATCH (v:StructuralEpoch {facility_id: $f})
+        MATCH (v:SignalEpoch {facility_id: $f})
         RETURN v.data_source_name AS data_source_name, v.version AS version,
                v.facility_id AS facility_id
         """,
         f=FACILITY,
     )
-    assert len(versions) > 0, "No StructuralEpoch nodes"
+    assert len(versions) > 0, "No SignalEpoch nodes"
     for v in versions:
         assert v["data_source_name"] is not None
         assert v["facility_id"] == FACILITY
@@ -358,9 +358,9 @@ def test_11_clear_signals():
 
     tmv = query_graph(
         """
-        MATCH (v:StructuralEpoch {facility_id: $f})
+        MATCH (v:SignalEpoch {facility_id: $f})
         RETURN count(v) AS cnt
         """,
         f=FACILITY,
     )
-    assert tmv[0]["cnt"] == 0, "StructuralEpoch not cleaned up"
+    assert tmv[0]["cnt"] == 0, "SignalEpoch not cleaned up"

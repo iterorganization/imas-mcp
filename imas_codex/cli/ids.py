@@ -150,7 +150,7 @@ def ids_epochs(facility: str) -> None:
         epochs = list(
             gc.query(
                 """
-                MATCH (se:StructuralEpoch {facility_id: $facility})
+                MATCH (se:SignalEpoch {facility_id: $facility})
                 OPTIONAL MATCH (se)<-[:INTRODUCED_IN]-(dn:SignalNode)
                 WITH se, count(dn) AS node_count
                 RETURN se.id AS id,
@@ -180,32 +180,3 @@ def ids_epochs(facility: str) -> None:
             shot_range += "+"
         desc = ep.get("description", "")[:40]
         click.echo(f"{epoch_id:<35} {shot_range:<20} {ep['node_count']:>6}  {desc}")
-
-
-@ids.command("seed")
-@click.argument("facility")
-@click.argument("ids_name")
-@click.option(
-    "--dd-version",
-    "-d",
-    default="4.1.1",
-    help="Data dictionary version.",
-)
-def ids_seed(facility: str, ids_name: str, dd_version: str) -> None:
-    """Seed IMASMapping and SignalGroup nodes for an IDS.
-
-    Creates canonical SignalGroup nodes with MAPS_TO_IMAS relationships
-    and an IMASMapping orchestration node in the graph for the specified
-    facility and IDS.
-
-    Supported IDS names: pf_active, magnetics, pf_passive, wall.
-    """
-    from imas_codex.graph.client import GraphClient
-    from imas_codex.ids.graph_ops import seed_ids_mappings
-
-    configure_cli_logging("ids", facility=facility)
-
-    with GraphClient() as gc:
-        mapping_id = seed_ids_mappings(facility, ids_name, dd_version, gc)
-
-    click.echo(f"Seeded mapping: {mapping_id}")

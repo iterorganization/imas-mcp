@@ -107,7 +107,7 @@ def query_geometry(epoch: str = "p89440") -> dict:
 
         epoch_info = gc.query(
             """
-            MATCH (se:StructuralEpoch {id: $id})
+            MATCH (se:SignalEpoch {id: $id})
             RETURN se.first_shot AS first_shot,
                    se.last_shot AS last_shot,
                    se.description AS description
@@ -132,7 +132,7 @@ def get_significant_epochs() -> list[dict]:
     """
     with GraphClient() as gc:
         epochs = gc.query("""
-            MATCH (se:StructuralEpoch)
+            MATCH (se:SignalEpoch)
             WHERE se.facility_id = 'jet'
             RETURN se.id AS id,
                    se.first_shot AS first_shot,

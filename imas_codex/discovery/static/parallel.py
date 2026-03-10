@@ -1,7 +1,7 @@
 """Parallel static tree discovery engine.
 
 Main entry point for static tree discovery with async workers. Orchestrates:
-- Seed: Create StructuralEpoch nodes from facility config
+- Seed: Create SignalEpoch nodes from facility config
 - Extract: SSH extraction + immediate ingestion per version
 - Units: Batched unit extraction for NUMERIC/SIGNAL nodes
 - Enrich: LLM batch descriptions of tree nodes
@@ -70,7 +70,7 @@ async def run_parallel_static_discovery(
     """Run parallel static tree discovery with async workers.
 
     Phases:
-    1. Seed StructuralEpoch nodes from config (status=discovered)
+    1. Seed SignalEpoch nodes from config (status=discovered)
     2. Extract workers claim versions, SSH extract, ingest to graph
     3. Units worker extracts units for latest version
     4. Enrich workers claim nodes, LLM describe, persist
@@ -95,7 +95,7 @@ async def run_parallel_static_discovery(
 
     seeded = seed_versions(facility, data_source_name, ver_list, version_configs)
     logger.info(
-        "Seeded %d new StructuralEpoch nodes for %s:%s (total %d versions)",
+        "Seeded %d new SignalEpoch nodes for %s:%s (total %d versions)",
         seeded,
         facility,
         data_source_name,
@@ -185,7 +185,7 @@ async def run_parallel_static_discovery(
         workers,
         stop_event=stop_event,
         orphan_specs=[
-            OrphanRecoverySpec("StructuralEpoch"),
+            OrphanRecoverySpec("SignalEpoch"),
             OrphanRecoverySpec("SignalNode", timeout_seconds=300),
         ],
         on_worker_status=on_worker_status,
@@ -213,7 +213,7 @@ def _force_reset_versions(
         result = gc.query(
             """
             UNWIND $ids AS vid
-            MATCH (v:StructuralEpoch {id: vid})
+            MATCH (v:SignalEpoch {id: vid})
             WHERE v.status = 'ingested'
             SET v.status = 'discovered', v.claimed_at = null
             RETURN count(v) AS reset

@@ -10,7 +10,7 @@ and renders a publication-quality poloidal cross-section with layers:
   5. Iron core boundary (96 segments)
   6. Flux loop positions
   7. Passive structure elements (rectangles)
-  8. Epoch timeline (StructuralEpoch nodes with wall_configuration)
+  8. Epoch timeline (SignalEpoch nodes with wall_configuration)
 
 Usage:
     uv run python scripts/plot_jet_composite_geometry.py
@@ -55,7 +55,7 @@ def query_limiters() -> list[dict]:
                 WHERE dn.facility_id = 'jet'
                   AND dn.path STARTS WITH 'jet:device_xml:limiter:'
                   AND dn.r_contour IS NOT NULL
-                OPTIONAL MATCH (se:StructuralEpoch)-[:USES_LIMITER]->(dn)
+                OPTIONAL MATCH (se:SignalEpoch)-[:USES_LIMITER]->(dn)
                 WITH dn, collect(DISTINCT se.wall_configuration) AS wall_configs,
                      min(se.first_shot) AS epoch_first_shot
                 RETURN dn.path AS path, dn.r_contour AS r, dn.z_contour AS z,
@@ -75,7 +75,7 @@ def query_epochs() -> list[dict]:
         return list(
             gc.query(
                 """
-                MATCH (se:StructuralEpoch {data_source_name: 'device_xml'})
+                MATCH (se:SignalEpoch {data_source_name: 'device_xml'})
                 OPTIONAL MATCH (se)-[:USES_LIMITER]->(lim:DataNode)
                 RETURN se.id AS id,
                        se.first_shot AS first_shot,

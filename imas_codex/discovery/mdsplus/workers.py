@@ -1,7 +1,7 @@
 """Async workers for parallel tree discovery.
 
 Workers that process MDSplus trees through the pipeline:
-- extract_worker: Claim StructuralEpoch, SSH extract, ingest to graph
+- extract_worker: Claim SignalEpoch, SSH extract, ingest to graph
 - units_worker: Batched unit extraction for NUMERIC/SIGNAL nodes
 - promote_worker: Create FacilitySignal nodes from leaf DataNodes
 
@@ -33,9 +33,9 @@ async def extract_worker(
     on_progress: Callable | None = None,
     **_kwargs,
 ) -> None:
-    """Extract worker: claim a StructuralEpoch, SSH extract, ingest to graph.
+    """Extract worker: claim a SignalEpoch, SSH extract, ingest to graph.
 
-    Claims StructuralEpoch nodes with status=discovered, runs SSH extraction
+    Claims SignalEpoch nodes with status=discovered, runs SSH extraction
     for that version, then immediately ingests the results into the graph.
     Each version is claimed-extracted-ingested as a unit.
     """
@@ -194,7 +194,7 @@ async def units_worker(
 
     Runs batched unit extraction via SSH for NUMERIC/SIGNAL nodes,
     then creates Unit nodes and HAS_UNIT relationships in the graph.
-    Tracks completion via StructuralEpoch.units_extracted flag so
+    Tracks completion via SignalEpoch.units_extracted flag so
     re-runs are no-ops for already-processed versions.
     """
     from imas_codex.mdsplus.extraction import async_extract_units_for_version

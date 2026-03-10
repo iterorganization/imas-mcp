@@ -1,7 +1,7 @@
 """Graph operations for MDSplus tree discovery claim coordination.
 
 Provides seed, claim, mark, and query functions for the tree discovery
-pipeline. StructuralEpoch nodes use status + claimed_at for extraction
+pipeline. SignalEpoch nodes use status + claimed_at for extraction
 coordination. SignalNode enrichment uses enrichment_status.
 """
 
@@ -24,7 +24,7 @@ CLAIM_TIMEOUT_SECONDS = DEFAULT_CLAIM_TIMEOUT_SECONDS  # 300s
 
 
 # ---------------------------------------------------------------------------
-# Seed — create pending StructuralEpoch nodes from config
+# Seed — create pending SignalEpoch nodes from config
 # ---------------------------------------------------------------------------
 
 
@@ -34,7 +34,7 @@ def seed_versions(
     ver_list: list[int],
     version_config: list[dict] | None = None,
 ) -> int:
-    """Create StructuralEpoch nodes with status=discovered for each version.
+    """Create SignalEpoch nodes with status=discovered for each version.
 
     Idempotent: only creates nodes that don't already exist. Existing nodes
     are not modified (preserves status/claimed_at from prior runs).
@@ -82,7 +82,7 @@ def seed_versions(
         result = gc.query(
             """
             UNWIND $records AS rec
-            MERGE (v:StructuralEpoch {id: rec.id})
+            MERGE (v:SignalEpoch {id: rec.id})
             ON CREATE SET
                 v.facility_id = rec.facility_id,
                 v.data_source_name = rec.data_source_name,
@@ -154,7 +154,7 @@ def backfill_tree_relationships(facility: str) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Claim — atomic claim of pending StructuralEpoch for extraction
+# Claim — atomic claim of pending SignalEpoch for extraction
 # ---------------------------------------------------------------------------
 
 
@@ -163,7 +163,7 @@ def claim_version_for_extraction(
     facility: str,
     data_source_name: str,
 ) -> dict[str, Any] | None:
-    """Atomically claim a pending StructuralEpoch for extraction.
+    """Atomically claim a pending SignalEpoch for extraction.
 
     Claims an unclaimed version with status=discovered.
     Uses claim_token + ORDER BY rand() to prevent deadlocks.
@@ -175,7 +175,7 @@ def claim_version_for_extraction(
     with GraphClient() as gc:
         gc.query(
             """
-            MATCH (v:StructuralEpoch)
+            MATCH (v:SignalEpoch)
             WHERE v.facility_id = $facility
               AND v.data_source_name = $data_source_name
               AND v.status = 'discovered'
@@ -189,7 +189,7 @@ def claim_version_for_extraction(
         )
         result = gc.query(
             """
-            MATCH (v:StructuralEpoch {claim_token: $token})
+            MATCH (v:SignalEpoch {claim_token: $token})
             RETURN v.id AS id, v.version AS version,
                    v.first_shot AS first_shot
             """,
@@ -204,11 +204,11 @@ def mark_version_extracted(
     version_id: str,
     node_count: int,
 ) -> None:
-    """Mark a StructuralEpoch as extracted (status=ingested, clear claim)."""
+    """Mark a SignalEpoch as extracted (status=ingested, clear claim)."""
     with GraphClient() as gc:
         gc.query(
             """
-            MATCH (v:StructuralEpoch {id: $id})
+            MATCH (v:SignalEpoch {id: $id})
             SET v.status = 'ingested',
                 v.claimed_at = null,
                 v.node_count = $node_count,
@@ -220,11 +220,11 @@ def mark_version_extracted(
 
 
 def release_version_claim(version_id: str) -> None:
-    """Release claim on a StructuralEpoch (on error)."""
+    """Release claim on a SignalEpoch (on error)."""
     with GraphClient() as gc:
         gc.query(
             """
-            MATCH (v:StructuralEpoch {id: $id})
+            MATCH (v:SignalEpoch {id: $id})
             SET v.claimed_at = null
             """,
             id=version_id,
@@ -244,7 +244,7 @@ def has_pending_units_work(
     with GraphClient() as gc:
         result = gc.query(
             """
-            MATCH (v:StructuralEpoch)
+            MATCH (v:SignalEpoch)
             WHERE v.facility_id = $facility AND v.data_source_name = $data_source_name
               AND v.status = 'ingested'
               AND (v.units_extracted IS NULL OR v.units_extracted = false)
@@ -260,11 +260,11 @@ def mark_version_units_extracted(
     version_id: str,
     units_count: int,
 ) -> None:
-    """Mark a StructuralEpoch as having completed unit extraction."""
+    """Mark a SignalEpoch as having completed unit extraction."""
     with GraphClient() as gc:
         gc.query(
             """
-            MATCH (v:StructuralEpoch {id: $id})
+            MATCH (v:SignalEpoch {id: $id})
             SET v.units_extracted = true,
                 v.units_count = $units_count
             """,
@@ -278,7 +278,7 @@ def mark_all_versions_units_extracted(
     data_source_name: str,
     units_count: int,
 ) -> None:
-    """Mark all ingested StructuralEpochs as having completed unit extraction.
+    """Mark all ingested SignalEpochs as having completed unit extraction.
 
     Units are per-tree (shared nodes), not per-version. Marking all versions
     ensures idempotency so re-runs skip units extraction entirely.
@@ -286,7 +286,7 @@ def mark_all_versions_units_extracted(
     with GraphClient() as gc:
         gc.query(
             """
-            MATCH (v:StructuralEpoch)
+            MATCH (v:SignalEpoch)
             WHERE v.facility_id = $facility AND v.data_source_name = $data_source_name
               AND v.status = 'ingested'
             SET v.units_extracted = true,
@@ -1144,11 +1144,11 @@ def mark_orphan_nodes_enriched(
 
 
 def has_pending_extract_work(facility: str, data_source_name: str) -> bool:
-    """Check if any StructuralEpochs need extraction (discovered or claimed)."""
+    """Check if any SignalEpochs need extraction (discovered or claimed)."""
     with GraphClient() as gc:
         result = gc.query(
             """
-            MATCH (v:StructuralEpoch)
+            MATCH (v:SignalEpoch)
             WHERE v.facility_id = $facility
               AND v.data_source_name = $data_source_name
               AND v.status = 'discovered'
@@ -1222,7 +1222,7 @@ def reset_orphaned_static_claims(
 ) -> dict[str, int]:
     """Release stale claims for static tree discovery."""
     version_reset = reset_stale_claims(
-        "StructuralEpoch",
+        "SignalEpoch",
         facility,
         timeout_seconds=CLAIM_TIMEOUT_SECONDS,
         silent=silent,
@@ -1269,7 +1269,7 @@ def get_static_discovery_stats(
         # Version status counts
         ver_result = gc.query(
             """
-            MATCH (v:StructuralEpoch)
+            MATCH (v:SignalEpoch)
             WHERE v.facility_id = $facility AND v.data_source_name = $data_source_name
             RETURN v.status AS status, count(v) AS cnt,
                    sum(coalesce(v.node_count, 0)) AS nodes
@@ -1299,7 +1299,7 @@ def get_static_discovery_stats(
         # Claimed versions (in-progress extraction)
         claimed = gc.query(
             """
-            MATCH (v:StructuralEpoch)
+            MATCH (v:SignalEpoch)
             WHERE v.facility_id = $facility AND v.data_source_name = $data_source_name
               AND v.claimed_at IS NOT NULL
             RETURN count(v) AS cnt
@@ -1309,10 +1309,10 @@ def get_static_discovery_stats(
         )
         stats["versions_claimed"] = claimed[0]["cnt"] if claimed else 0
 
-        # Units extraction stats from StructuralEpoch flags
+        # Units extraction stats from SignalEpoch flags
         units_result = gc.query(
             """
-            MATCH (v:StructuralEpoch)
+            MATCH (v:SignalEpoch)
             WHERE v.facility_id = $facility AND v.data_source_name = $data_source_name
               AND v.status = 'ingested'
             RETURN
@@ -1563,7 +1563,7 @@ def clear_facility_static(
     """Clear all static tree discovery data for a facility.
 
     Deletes SignalNode nodes, SignalGroup nodes,
-    and their StructuralEpoch nodes in batches.
+    and their SignalEpoch nodes in batches.
 
     Args:
         facility: Facility ID
@@ -1607,11 +1607,11 @@ def clear_facility_static(
             if deleted < batch_size:
                 break
 
-        # Delete static StructuralEpoch nodes
+        # Delete static SignalEpoch nodes
         while True:
             result = gc.query(
                 """
-                MATCH (v:StructuralEpoch {facility_id: $facility})
+                MATCH (v:SignalEpoch {facility_id: $facility})
                 WHERE v.status IS NOT NULL
                 WITH v LIMIT $batch_size
                 DETACH DELETE v
@@ -1649,7 +1649,7 @@ def get_static_summary_stats(facility: str) -> dict[str, int]:
     with GraphClient() as gc:
         ver_result = gc.query(
             """
-            MATCH (v:StructuralEpoch {facility_id: $facility})
+            MATCH (v:SignalEpoch {facility_id: $facility})
             WHERE v.status IS NOT NULL
             RETURN v.status AS status, count(v) AS cnt,
                    sum(coalesce(v.node_count, 0)) AS nodes
@@ -1716,11 +1716,17 @@ def promote_leaf_nodes_to_signals(
         Number of FacilitySignal nodes created or updated.
     """
     da_id = f"{facility}:mdsplus:tree_tdi"
+    conn_tpl = (
+        f"import MDSplus\n"
+        f"tree = MDSplus.Tree('{data_source_name}', {{shot}}, 'readonly')"
+    )
+    data_tpl = "data = tree.getNode('{data_source_path}').data()"
 
     with GraphClient() as gc:
-        # Ensure DataAccess node exists
+        # Ensure DataAccess node exists (only if Facility exists)
         gc.query(
             """
+            MATCH (f:Facility {id: $facility})
             MERGE (da:DataAccess {id: $id})
             ON CREATE SET
                 da.facility_id = $facility,
@@ -1728,13 +1734,15 @@ def promote_leaf_nodes_to_signals(
                 da.library = 'MDSplus',
                 da.access_type = 'local',
                 da.data_source = 'mdsplus',
-                da.name = 'MDSplus tree TDI'
-            WITH da
-            MATCH (f:Facility {id: $facility})
+                da.name = 'MDSplus tree TDI',
+                da.connection_template = $conn_tpl,
+                da.data_template = $data_tpl
             MERGE (da)-[:AT_FACILITY]->(f)
             """,
             id=da_id,
             facility=facility,
+            conn_tpl=conn_tpl,
+            data_tpl=data_tpl,
         )
 
         # Count promotable leaf nodes
@@ -1834,7 +1842,7 @@ def promote_leaf_nodes_to_signals(
 
 
 def get_version_counts(facility: str) -> dict[str, int]:
-    """Get StructuralEpoch counts by status for a facility.
+    """Get SignalEpoch counts by status for a facility.
 
     Returns:
         Dict with keys: total, discovered, ingested, failed
@@ -1842,7 +1850,7 @@ def get_version_counts(facility: str) -> dict[str, int]:
     with GraphClient() as gc:
         result = gc.query(
             """
-            MATCH (v:StructuralEpoch {facility_id: $facility})
+            MATCH (v:SignalEpoch {facility_id: $facility})
             RETURN count(v) AS total,
                    sum(CASE WHEN v.status = 'discovered' THEN 1 ELSE 0 END) AS discovered,
                    sum(CASE WHEN v.status = 'ingested' THEN 1 ELSE 0 END) AS ingested,
@@ -1878,11 +1886,11 @@ def get_signal_counts(facility: str) -> dict[str, int]:
 
 
 def has_pending_extract_work_facility(facility: str) -> bool:
-    """Check if any StructuralEpochs across all trees need extraction."""
+    """Check if any SignalEpochs across all trees need extraction."""
     with GraphClient() as gc:
         result = gc.query(
             """
-            MATCH (v:StructuralEpoch {facility_id: $facility})
+            MATCH (v:SignalEpoch {facility_id: $facility})
             WHERE v.status = 'discovered'
             RETURN count(v) > 0 AS has_work
             """,
@@ -1893,7 +1901,7 @@ def has_pending_extract_work_facility(facility: str) -> bool:
 
 @retry_on_deadlock()
 def claim_version_for_extraction_facility(facility: str) -> dict | None:
-    """Claim a pending StructuralEpoch for extraction across all trees.
+    """Claim a pending SignalEpoch for extraction across all trees.
 
     Uses claim_token + ORDER BY rand() to prevent deadlocks.
     """
@@ -1902,7 +1910,7 @@ def claim_version_for_extraction_facility(facility: str) -> dict | None:
     with GraphClient() as gc:
         gc.query(
             """
-            MATCH (v:StructuralEpoch {facility_id: $facility})
+            MATCH (v:SignalEpoch {facility_id: $facility})
             WHERE v.status = 'discovered'
               AND (v.claimed_at IS NULL
                    OR v.claimed_at < datetime() - duration($cutoff))
@@ -1915,7 +1923,7 @@ def claim_version_for_extraction_facility(facility: str) -> dict | None:
         )
         result = gc.query(
             """
-            MATCH (v:StructuralEpoch {claim_token: $token})
+            MATCH (v:SignalEpoch {claim_token: $token})
             RETURN v.id AS id, v.version AS version,
                    v.first_shot AS first_shot, v.data_source_name AS data_source_name
             """,
@@ -1931,7 +1939,7 @@ def has_pending_units_work_facility(facility: str) -> bool:
     with GraphClient() as gc:
         result = gc.query(
             """
-            MATCH (v:StructuralEpoch {facility_id: $facility})
+            MATCH (v:SignalEpoch {facility_id: $facility})
             WHERE v.status = 'ingested'
               AND (v.units_extracted IS NULL OR v.units_extracted = false)
             RETURN count(v) > 0 AS has_work
@@ -1951,7 +1959,7 @@ def claim_tree_for_units(facility: str) -> dict | None:
     with GraphClient() as gc:
         result = gc.query(
             """
-            MATCH (v:StructuralEpoch {facility_id: $facility})
+            MATCH (v:SignalEpoch {facility_id: $facility})
             WHERE v.status = 'ingested'
               AND (v.units_extracted IS NULL OR v.units_extracted = false)
             WITH v.data_source_name AS data_source_name, max(v.version) AS latest_version

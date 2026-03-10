@@ -1,7 +1,7 @@
 """Parallel tree discovery engine.
 
 Main entry point for MDSplus tree discovery with async workers. Orchestrates:
-- Seed: Create StructuralEpoch nodes from config or epoch detection
+- Seed: Create SignalEpoch nodes from config or epoch detection
 - Extract: SSH extraction + immediate ingestion per version/shot
 - Units: Batched unit extraction for NUMERIC/SIGNAL nodes
 - Promote: Create FacilitySignal nodes from leaf DataNodes
@@ -69,7 +69,7 @@ async def run_tree_discovery(
     epoched MDSplus trees through a unified pipeline.
 
     Phases:
-    1. Seed StructuralEpoch nodes from config or epoch detection
+    1. Seed SignalEpoch nodes from config or epoch detection
     2. Extract workers claim versions, SSH extract, ingest to graph
     3. Units worker extracts units for latest version
     4. Promote worker creates FacilitySignal nodes from leaf DataNodes
@@ -93,7 +93,7 @@ async def run_tree_discovery(
 
     seeded = seed_versions(facility, data_source_name, ver_list, version_configs)
     logger.info(
-        "Seeded %d new StructuralEpoch nodes for %s:%s (total %d versions)",
+        "Seeded %d new SignalEpoch nodes for %s:%s (total %d versions)",
         seeded,
         facility,
         data_source_name,
@@ -171,7 +171,7 @@ async def run_tree_discovery(
         workers,
         stop_event=stop_event,
         orphan_specs=[
-            OrphanRecoverySpec("StructuralEpoch"),
+            OrphanRecoverySpec("SignalEpoch"),
             OrphanRecoverySpec("SignalNode", timeout_seconds=300),
         ],
         on_worker_status=on_worker_status,
@@ -201,7 +201,7 @@ def _force_reset_versions(
         result = gc.query(
             """
             UNWIND $ids AS vid
-            MATCH (v:StructuralEpoch {id: vid})
+            MATCH (v:SignalEpoch {id: vid})
             WHERE v.status = 'ingested'
             SET v.status = 'discovered', v.claimed_at = null
             RETURN count(v) AS reset

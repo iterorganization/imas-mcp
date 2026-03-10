@@ -2,7 +2,7 @@
 
 Parses device XML files from a git bare repo to discover machine description
 geometry: PF coils, passive structures, magnetic probes, flux loops, circuits,
-and limiter contours. Creates DataSource, StructuralEpoch, SignalNode, and
+and limiter contours. Creates DataSource, SignalEpoch, SignalNode, and
 FacilitySignal graph nodes.
 
 Config key: data_systems.device_xml
@@ -174,7 +174,7 @@ def _persist_graph_nodes(
     parsed_versions: dict[str, dict],
     parsed_limiters: dict[str, dict],
 ) -> dict[str, int]:
-    """Persist DataSource, StructuralEpoch, SignalNode, and FacilitySignal to graph."""
+    """Persist DataSource, SignalEpoch, SignalNode, and FacilitySignal to graph."""
     versions_config = config.get("versions", [])
     data_access_id = f"{facility}:device_xml:git"
 
@@ -229,7 +229,7 @@ def _persist_graph_nodes(
             ),
         )
 
-        # 2. Create StructuralEpoch nodes
+        # 2. Create SignalEpoch nodes
         epoch_records = []
         for i, vc in enumerate(versions_config):
             version = vc["version"]
@@ -276,7 +276,7 @@ def _persist_graph_nodes(
             gc.query(
                 """
                 UNWIND $records AS rec
-                MERGE (se:StructuralEpoch {id: rec.id})
+                MERGE (se:SignalEpoch {id: rec.id})
                 SET se.facility_id = rec.facility_id,
                     se.data_source_name = rec.data_source_name,
                     se.version = rec.version,
@@ -395,14 +395,13 @@ def _persist_graph_nodes(
                                 facility_id=facility,
                                 status=FacilitySignalStatus.discovered,
                                 physics_domain=meta["physics_domain"],
-                                system=meta.get("system"),
                                 name=f"{meta['label'].title()} {inst_id} {field_meta['desc']}",
                                 accessor=f"device_xml:{section}/{inst_id}/{field}",
                                 data_access=data_access_id,
                                 data_source_name="device_xml",
                                 data_source_path=f"{section}/{inst_id}/{field}",
                                 data_source_node=node_path,
-                                units=field_meta.get("unit"),
+                                unit=field_meta.get("unit"),
                                 description=(
                                     f"{field_meta['desc']} of {meta['label']} {inst_id}"
                                 ),
@@ -416,7 +415,7 @@ def _persist_graph_nodes(
                 gc.create_nodes("SignalNode", data_nodes, batch_size=100)
                 stats["data_nodes"] += len(data_nodes)
 
-                # Create INTRODUCED_IN relationships (SignalNode → StructuralEpoch)
+                # Create INTRODUCED_IN relationships (SignalNode → SignalEpoch)
                 intro_records = [
                     {"id": dn["id"], "epoch_id": epoch_id} for dn in data_nodes
                 ]
@@ -424,7 +423,7 @@ def _persist_graph_nodes(
                     """
                     UNWIND $records AS rec
                     MATCH (dn:SignalNode {id: rec.id})
-                    MATCH (se:StructuralEpoch {id: rec.epoch_id})
+                    MATCH (se:SignalEpoch {id: rec.epoch_id})
                     MERGE (dn)-[:INTRODUCED_IN]->(se)
                     """,
                     records=intro_records,
@@ -491,7 +490,6 @@ def _persist_graph_nodes(
                     facility_id=facility,
                     status=FacilitySignalStatus.discovered,
                     physics_domain="magnetic_field_diagnostics",
-                    system="LIM",
                     name=f"Limiter {name}",
                     accessor=f"device_xml:limiter/{name}",
                     data_access=data_access_id,
@@ -508,7 +506,7 @@ def _persist_graph_nodes(
             gc.create_nodes("SignalNode", limiter_nodes, batch_size=50)
             stats["limiter_nodes"] = len(limiter_nodes)
 
-        # 4b. Create USES_LIMITER relationships (StructuralEpoch → limiter SignalNode)
+        # 4b. Create USES_LIMITER relationships (SignalEpoch → limiter SignalNode)
         # Each config version specifies its limiter via:
         #   1. uses_limiter: explicit limiter version name (pre-EFIT++ epochs)
         #   2. limiter: file path → matched to limiter_version by basename
@@ -544,7 +542,7 @@ def _persist_graph_nodes(
             gc.query(
                 """
                 UNWIND $records AS rec
-                MATCH (se:StructuralEpoch {id: rec.epoch_id})
+                MATCH (se:SignalEpoch {id: rec.epoch_id})
                 MATCH (dn:SignalNode {id: rec.limiter_path})
                 MERGE (se)-[:USES_LIMITER]->(dn)
                 """,
@@ -723,7 +721,6 @@ def _persist_jec2020_nodes(
                         facility_id=facility,
                         status=FacilitySignalStatus.discovered,
                         physics_domain="magnetic_field_diagnostics",
-                        system="MP",
                         name=f"JEC2020 Probe {pid} ({p.get('description', '')})",
                         accessor=f"jec2020:probe/{pid}",
                         data_access=data_access_id,
@@ -783,7 +780,6 @@ def _persist_jec2020_nodes(
                         facility_id=facility,
                         status=FacilitySignalStatus.discovered,
                         physics_domain="magnetic_field_diagnostics",
-                        system="FL",
                         name=f"JEC2020 Flux Loop {fid}",
                         accessor=f"jec2020:flux_loop/{fid}",
                         data_access=data_access_id,
@@ -849,7 +845,6 @@ def _persist_jec2020_nodes(
                         facility_id=facility,
                         status=FacilitySignalStatus.discovered,
                         physics_domain="magnetic_field_diagnostics",
-                        system="PF",
                         name=f"JEC2020 PF Coil {cid} ({cname})",
                         accessor=f"jec2020:pf_coil/{cid}",
                         data_access=data_access_id,
@@ -960,7 +955,6 @@ def _persist_jec2020_nodes(
                     facility_id=facility,
                     status=FacilitySignalStatus.discovered,
                     physics_domain="magnetic_field_diagnostics",
-                    system="FE",
                     name="JEC2020 Iron Core Boundary",
                     accessor="jec2020:iron_boundary",
                     data_access=data_access_id,
@@ -1008,7 +1002,6 @@ def _persist_jec2020_nodes(
                     facility_id=facility,
                     status=FacilitySignalStatus.discovered,
                     physics_domain="magnetic_field_diagnostics",
-                    system="LIM",
                     name="JEC2020 ILW Limiter Contour",
                     accessor="jec2020:limiter",
                     data_access=data_access_id,
@@ -1304,7 +1297,7 @@ def _persist_magnetics_config_nodes(
 ) -> dict[str, int]:
     """Persist magnetics config sensor data into the graph.
 
-    Creates DataSource, StructuralEpoch (per config epoch), SignalNode
+    Creates DataSource, SignalEpoch (per config epoch), SignalNode
     (per sensor per epoch), and FacilitySignal (deduplicated across epochs).
     Shot-range boundaries come from the indexr file.
     """
@@ -1354,7 +1347,7 @@ def _persist_magnetics_config_nodes(
             ),
         )
 
-        # 2. Create StructuralEpoch nodes for each config epoch
+        # 2. Create SignalEpoch nodes for each config epoch
         epoch_records = []
         for i, entry in enumerate(index_entries):
             config_name = entry["config_file"]
@@ -1384,7 +1377,7 @@ def _persist_magnetics_config_nodes(
             gc.query(
                 """
                 UNWIND $records AS rec
-                MERGE (se:StructuralEpoch {id: rec.id})
+                MERGE (se:SignalEpoch {id: rec.id})
                 SET se.facility_id = rec.facility_id,
                     se.data_source_name = rec.data_source_name,
                     se.version = rec.version,
@@ -1488,14 +1481,13 @@ def _persist_magnetics_config_nodes(
                         facility_id=facility,
                         status=FacilitySignalStatus.discovered,
                         physics_domain="magnetic_field_diagnostics",
-                        system=system,
                         name=f"Magnetics {sensor_type} #{ppf_index} ({jpf_address})",
                         accessor=f"magnetics_config:{sensor_type}/{ppf_index}",
                         data_access=data_access_id,
                         data_source_name=source_name,
                         data_source_path=f"{sensor_type}/{ppf_index}",
                         data_source_node=node_path,
-                        units="T" if sensor_type in ("BPOL", "TPC", "TNC") else "Wb",
+                        unit="T" if sensor_type in ("BPOL", "TPC", "TNC") else "Wb",
                         description=(
                             f"Magnetics sensor {sensor_type} #{ppf_index}: "
                             f"JPF={jpf_address}, PPF={ppf_signal}/{ppf_index}"
@@ -1518,7 +1510,7 @@ def _persist_magnetics_config_nodes(
                     """
                     UNWIND $records AS rec
                     MATCH (dn:SignalNode {id: rec.id})
-                    MATCH (se:StructuralEpoch {id: rec.epoch_id})
+                    MATCH (se:SignalEpoch {id: rec.epoch_id})
                     MERGE (dn)-[:INTRODUCED_IN]->(se)
                     """,
                     records=intro_records,
@@ -1784,12 +1776,12 @@ def _persist_greens_table_nodes(
             gc.create_nodes("SignalNode", data_nodes, batch_size=50)
             stats["versions"] = len(data_nodes)
 
-        # 3. Link Greens table versions to StructuralEpoch nodes by shot overlap
+        # 3. Link Greens table versions to SignalEpoch nodes by shot overlap
         gc.query(
             """
             MATCH (gt:SignalNode)
             WHERE gt.data_source_name = $gt_source AND gt.facility_id = $facility
-            MATCH (se:StructuralEpoch)
+            MATCH (se:SignalEpoch)
             WHERE se.facility_id = $facility
               AND se.data_source_name = 'device_xml'
               AND se.first_shot >= gt.first_shot
@@ -1946,7 +1938,7 @@ class DeviceXMLScanner:
         """Discover geometry signals from device XML files.
 
         Runs parse_device_xml.py remotely to extract geometry from git,
-        then persists DataSource, StructuralEpoch, SignalNode, and
+        then persists DataSource, SignalEpoch, SignalNode, and
         FacilitySignal nodes to the graph.
         """
         git_repo = config.get("git_repo")

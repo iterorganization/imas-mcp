@@ -644,7 +644,7 @@ class IDSAssembler:
             return list(
                 gc.query(
                     """
-                    MATCH (se:StructuralEpoch {
+                    MATCH (se:SignalEpoch {
                         facility_id: $facility,
                         data_source_name: 'device_xml'
                     })

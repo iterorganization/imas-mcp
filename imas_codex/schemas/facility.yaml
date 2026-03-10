@@ -1350,12 +1350,12 @@ classes:
         description: Shot number used for structure introspection
         range: integer
 
-  StructuralEpoch:
+  SignalEpoch:
     description: >-
       A structural version of a data source. Captures when the
       data structure changed and what nodes were added/removed. Enables
       the "super structure" concept where each node has applicability ranges.
-    class_uri: facility:StructuralEpoch
+    class_uri: facility:SignalEpoch
     attributes:
       id:
         identifier: true
@@ -1426,7 +1426,7 @@ classes:
           relationship_type: USES_GREENS
       predecessor:
         description: Previous structure version
-        range: StructuralEpoch
+        range: SignalEpoch
         annotations:
           relationship_type: HAS_PREDECESSOR
       fingerprint:
@@ -1605,12 +1605,12 @@ classes:
         range: integer
       introduced_version:
         description: The structural epoch that introduced this node
-        range: StructuralEpoch
+        range: SignalEpoch
         annotations:
           relationship_type: INTRODUCED_IN
       removed_version:
         description: The structural epoch that removed this node (rare)
-        range: StructuralEpoch
+        range: SignalEpoch
         annotations:
           relationship_type: REMOVED_IN
       # IMAS mapping preparation fields
@@ -1668,6 +1668,14 @@ classes:
         range: EnrichmentStatus
       enrichment_notes:
         description: Agent reasoning or notes about the enrichment
+      signal_group:
+        description: >-
+          SignalGroup this node belongs to. Groups indexed signal instances
+          that share the same physics meaning (e.g., R values for coils W001-W830).
+          Enrichment is performed once on the group representative and propagated.
+        range: SignalGroup
+        annotations:
+          relationship_type: MEMBER_OF
       matches_sensor:
         description: >-
           Another SignalNode representing the same physical sensor
@@ -1961,8 +1969,8 @@ classes:
       MAPS_TO_IMAS relationships connect groups to IMASNode targets.
       
       Lifecycle relationships (data source epoch tracking):
-        - INTRODUCED_IN -> StructuralEpoch (epoch when signal first appeared)
-        - REMOVED_IN -> StructuralEpoch (epoch when signal disappeared)
+        - INTRODUCED_IN -> SignalEpoch (epoch when signal first appeared)
+        - REMOVED_IN -> SignalEpoch (epoch when signal disappeared)
         - CHECKED_WITH -> DataAccess (access check with outcome metadata)
       
       Signal discovery automation strategy:
@@ -2105,9 +2113,9 @@ classes:
       embedded_at:
         description: When the description embedding was last computed
         range: datetime
-      units:
+      unit:
         description: >-
-          Physical units of the signal data. Extracted from MDSplus node.units,
+          Physical unit of the signal data. Extracted from MDSplus node.units,
           data system metadata, or documentation.
           E.g., "A", "V", "T", "m^-3", "eV"
       sign_convention:

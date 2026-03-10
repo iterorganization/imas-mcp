@@ -77,12 +77,12 @@ def get_static_tree_graph_state(
           - enriched_nodes: count of DataNodes with descriptions
           - unenriched_paths: list of paths needing enrichment
     """
-    # Check which StructuralEpochs exist
+    # Check which SignalEpochs exist
     epoch_ids = [f"{facility}:{data_source_name}:v{v}" for v in ver_list]
     result = client.query(
         """
         UNWIND $ids AS eid
-        OPTIONAL MATCH (v:StructuralEpoch {id: eid})
+        OPTIONAL MATCH (v:SignalEpoch {id: eid})
         RETURN eid, v.version AS version, v.node_count AS node_count
         """,
         ids=epoch_ids,
@@ -684,7 +684,7 @@ def ingest_static_tree(
     """Ingest static tree data into the Neo4j graph.
 
     Creates:
-    - StructuralEpoch nodes for each static tree version
+    - SignalEpoch nodes for each static tree version
     - SignalNode nodes with applicability ranges (first_shot/last_shot)
     - INTRODUCED_IN / REMOVED_IN / AT_FACILITY relationships
     - Tag metadata on DataNodes
@@ -744,7 +744,7 @@ def ingest_static_tree(
         else:
             last_shot_map[ver] = None  # Current version — no upper bound
 
-    # Phase 1: Create StructuralEpoch nodes
+    # Phase 1: Create SignalEpoch nodes
     epoch_records = []
     for ver_str, ver_data in versions.items():
         if "error" in ver_data:
@@ -773,7 +773,7 @@ def ingest_static_tree(
     if dry_run:
         for rec in epoch_records:
             logger.info(
-                "[DRY RUN] StructuralEpoch: %s (v%d, shots %d-%s) — %s",
+                "[DRY RUN] SignalEpoch: %s (v%d, shots %d-%s) — %s",
                 rec["id"],
                 rec["version"],
                 rec["first_shot"],
@@ -785,7 +785,7 @@ def ingest_static_tree(
             client.query(
                 """
                 UNWIND $epochs AS epoch
-                MERGE (v:StructuralEpoch {id: epoch.id})
+                MERGE (v:SignalEpoch {id: epoch.id})
                 SET v += epoch
                 WITH v, epoch
                 MATCH (f:Facility {id: epoch.facility_id})
@@ -801,8 +801,8 @@ def ingest_static_tree(
             for i in range(1, len(epoch_records)):
                 client.query(
                     """
-                    MATCH (curr:StructuralEpoch {id: $curr_id})
-                    MATCH (prev:StructuralEpoch {id: $prev_id})
+                    MATCH (curr:SignalEpoch {id: $curr_id})
+                    MATCH (prev:SignalEpoch {id: $prev_id})
                     MERGE (curr)-[:HAS_PREDECESSOR]->(prev)
                     """,
                     curr_id=epoch_records[i]["id"],
@@ -980,7 +980,7 @@ def ingest_static_tree(
             WHERE n.data_source_name = $data_source_name AND n.facility_id = $facility
               AND n.introduced_version IS NOT NULL
             WITH n
-            MATCH (v:StructuralEpoch {id: n.introduced_version})
+            MATCH (v:SignalEpoch {id: n.introduced_version})
             MERGE (n)-[:INTRODUCED_IN]->(v)
             """,
             data_source_name=data_source_name,
@@ -993,7 +993,7 @@ def ingest_static_tree(
             WHERE n.data_source_name = $data_source_name AND n.facility_id = $facility
               AND n.removed_version IS NOT NULL
             WITH n
-            MATCH (v:StructuralEpoch {id: n.removed_version})
+            MATCH (v:SignalEpoch {id: n.removed_version})
             MERGE (n)-[:REMOVED_IN]->(v)
             """,
             data_source_name=data_source_name,

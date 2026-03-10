@@ -1,7 +1,7 @@
 """E2E tests for DeviceXMLScanner — JET machine description geometry.
 
 Tests the full scan → persist → query cycle using mock SSH data.
-Validates DataSource, StructuralEpoch, SignalNode, and FacilitySignal creation.
+Validates DataSource, SignalEpoch, SignalNode, and FacilitySignal creation.
 """
 
 from __future__ import annotations
@@ -878,7 +878,7 @@ class TestLimiterProvenance:
 
 
 class TestUsesLimiterRelationship:
-    """Test StructuralEpoch → Limiter SignalNode USES_LIMITER relationships."""
+    """Test SignalEpoch → Limiter SignalNode USES_LIMITER relationships."""
 
     def test_uses_limiter_relationships_created(self):
         """USES_LIMITER graph queries are invoked with correct epoch/limiter pairs."""
@@ -1050,7 +1050,7 @@ class TestPreDivertorEpochs:
     """Test pre-divertor epoch handling — epochs without device_xml."""
 
     def test_epochs_without_device_xml_create_structural_epochs(self):
-        """Pre-EFIT++ epochs are created as StructuralEpoch nodes."""
+        """Pre-EFIT++ epochs are created as SignalEpoch nodes."""
         config = {
             "git_repo": "/repo",
             "input_prefix": "JET/input",
@@ -1116,7 +1116,7 @@ class TestPreDivertorEpochs:
 
         # Find the epoch creation query
         epoch_calls = [
-            (q, kw) for q, kw in query_calls if "StructuralEpoch" in q and "UNWIND" in q
+            (q, kw) for q, kw in query_calls if "SignalEpoch" in q and "UNWIND" in q
         ]
         assert len(epoch_calls) >= 1
         records = epoch_calls[0][1]["records"]
@@ -2321,7 +2321,7 @@ class TestProbeStatusPersistence:
 
         # Find epoch creation query
         epoch_calls = [
-            (q, kw) for q, kw in query_calls if "StructuralEpoch" in q and "UNWIND" in q
+            (q, kw) for q, kw in query_calls if "SignalEpoch" in q and "UNWIND" in q
         ]
         assert len(epoch_calls) >= 1
         records = epoch_calls[0][1]["records"]
@@ -2364,7 +2364,7 @@ class TestProbeStatusPersistence:
             _persist_graph_nodes("jet", config, {}, {})
 
         epoch_calls = [
-            (q, kw) for q, kw in query_calls if "StructuralEpoch" in q and "UNWIND" in q
+            (q, kw) for q, kw in query_calls if "SignalEpoch" in q and "UNWIND" in q
         ]
         records = epoch_calls[0][1]["records"]
         epoch = records[0]
@@ -2417,7 +2417,7 @@ class TestPFConfigurationPersistence:
             _persist_graph_nodes("jet", config, parsed, {})
 
         epoch_calls = [
-            (q, kw) for q, kw in query_calls if "StructuralEpoch" in q and "UNWIND" in q
+            (q, kw) for q, kw in query_calls if "SignalEpoch" in q and "UNWIND" in q
         ]
         records = epoch_calls[0][1]["records"]
         assert records[0]["pf_configuration"] == "DMSS=091"
@@ -2452,7 +2452,7 @@ class TestPFConfigurationPersistence:
             _persist_graph_nodes("jet", config, {}, {})
 
         epoch_calls = [
-            (q, kw) for q, kw in query_calls if "StructuralEpoch" in q and "UNWIND" in q
+            (q, kw) for q, kw in query_calls if "SignalEpoch" in q and "UNWIND" in q
         ]
         records = epoch_calls[0][1]["records"]
         assert "pf_configuration" not in records[0]
@@ -2519,7 +2519,7 @@ class TestDeviceXMLProvenance:
             )
 
         epoch_calls = [
-            (q, kw) for q, kw in query_calls if "StructuralEpoch" in q and "UNWIND" in q
+            (q, kw) for q, kw in query_calls if "SignalEpoch" in q and "UNWIND" in q
         ]
         records = epoch_calls[0][1]["records"]
         epoch = records[0]

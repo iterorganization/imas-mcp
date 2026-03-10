@@ -2,7 +2,7 @@
 
 Wraps BatchDiscovery to detect structural epoch boundaries for trees
 with ``detect_epochs: true`` in their TreeConfig. Discovered epochs
-become StructuralEpoch nodes, just like pre-configured versions.
+become SignalEpoch nodes, just like pre-configured versions.
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ def detect_epochs_for_tree(
 
     Uses the batched SSH fingerprinting + binary search algorithm from
     ``BatchDiscovery`` to find shot boundaries where tree structure
-    changes. Returns epoch records ready for StructuralEpoch ingestion.
+    changes. Returns epoch records ready for SignalEpoch ingestion.
 
     Args:
         facility: Facility identifier / SSH host alias

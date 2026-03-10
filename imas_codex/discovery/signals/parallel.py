@@ -3,9 +3,9 @@ Parallel data signal discovery engine with async workers.
 
 Architecture:
 - Independent async workers, each claiming batches from the graph:
-  - seed: Seeds StructuralEpoch nodes from config (fast, exits immediately)
+  - seed: Seeds SignalEpoch nodes from config (fast, exits immediately)
   - epoch: Detects structural epochs for dynamic trees (runs independently)
-  - extract: Claims StructuralEpoch, SSH extract + ingest DataNodes
+  - extract: Claims SignalEpoch, SSH extract + ingest DataNodes
   - units: Extracts units for trees with ingested versions
   - promote: Creates FacilitySignal from leaf DataNodes
   - enrich: LLM classification of physics_domain, description generation
@@ -13,7 +13,7 @@ Architecture:
   - embed: Embeds FacilitySignal descriptions for vector search
 - Graph + claimed_at timestamp for coordination (same pattern as wiki/paths)
 - Status transitions:
-  - StructuralEpoch: discovered → ingested
+  - SignalEpoch: discovered → ingested
   - FacilitySignal: discovered → enriched → checked
 - Workers claim items by setting claimed_at, release by clearing it
 - Orphan recovery: items claimed longer than 5 min are reclaimed
@@ -373,7 +373,7 @@ def clear_facility_signals(
 ) -> dict[str, int]:
     """Clear all signal discovery data for a facility.
 
-    Deletes FacilitySignal nodes, DataAccess nodes, StructuralEpoch
+    Deletes FacilitySignal nodes, DataAccess nodes, SignalEpoch
     (epoch) nodes, and clears epoch checkpoint files. Always cascades.
 
     Args:
@@ -422,11 +422,11 @@ def clear_facility_signals(
             )
             results["data_access_deleted"] = result[0]["deleted"] if result else 0
 
-            # Delete StructuralEpoch (epoch) nodes in batches
+            # Delete SignalEpoch (epoch) nodes in batches
             while True:
                 result = gc.query(
                     """
-                    MATCH (v:StructuralEpoch {facility_id: $facility})
+                    MATCH (v:SignalEpoch {facility_id: $facility})
                     WITH v LIMIT $batch_size
                     DETACH DELETE v
                     RETURN count(v) AS deleted
@@ -582,7 +582,7 @@ def fetch_tree_context(
                 WHERE sibling.id <> n.id
                   AND sibling.node_type IN ['NUMERIC', 'SIGNAL']
                 OPTIONAL MATCH (tdi:TDIFunction)-[:RESOLVES_TO_NODE]->(n)
-                OPTIONAL MATCH (v:StructuralEpoch {
+                OPTIONAL MATCH (v:SignalEpoch {
                     facility_id: n.facility_id, data_source_name: n.data_source_name
                 })
                 WITH s.id AS signal_id,
@@ -1195,7 +1195,7 @@ def get_tree_epochs(facility: str, data_source_name: str) -> list[dict]:
         with GraphClient() as gc:
             result = gc.query(
                 """
-                MATCH (v:StructuralEpoch {facility_id: $facility, data_source_name: $tree})
+                MATCH (v:SignalEpoch {facility_id: $facility, data_source_name: $tree})
                 RETURN v.id AS id, v.version AS version,
                        v.first_shot AS first_shot, v.last_shot AS last_shot,
                        v.node_count AS node_count
@@ -1218,7 +1218,7 @@ def get_latest_epoch_shot(facility: str, data_source_name: str) -> int | None:
         with GraphClient() as gc:
             result = gc.query(
                 """
-                MATCH (v:StructuralEpoch {facility_id: $facility, data_source_name: $tree})
+                MATCH (v:SignalEpoch {facility_id: $facility, data_source_name: $tree})
                 RETURN max(v.first_shot) AS latest_shot
                 """,
                 facility=facility,
@@ -1241,7 +1241,7 @@ def ingest_epochs(
 ) -> dict[str, int]:
     """Ingest epochs with symmetric signal lifecycle tracking.
 
-    Creates StructuralEpoch nodes and FacilitySignal nodes with proper
+    Creates SignalEpoch nodes and FacilitySignal nodes with proper
     INTRODUCED_IN/REMOVED_IN relationships. Processes epochs in version order
     to maintain temporal consistency.
 
@@ -1277,7 +1277,7 @@ def ingest_epochs(
 
     try:
         with GraphClient() as gc:
-            # Phase 1: Create all StructuralEpoch nodes
+            # Phase 1: Create all SignalEpoch nodes
             clean_epochs = []
             for e in sorted_epochs:
                 clean = {
@@ -1300,7 +1300,7 @@ def ingest_epochs(
             gc.query(
                 """
                 UNWIND $epochs AS ep
-                MERGE (v:StructuralEpoch {id: ep.id})
+                MERGE (v:SignalEpoch {id: ep.id})
                 ON CREATE SET v += ep,
                               v.discovery_date = datetime()
                 ON MATCH SET v.node_count = ep.node_count,
@@ -1326,8 +1326,8 @@ def ingest_epochs(
                 """
                 UNWIND $epochs AS ep
                 WITH ep WHERE ep.predecessor IS NOT NULL
-                MATCH (v:StructuralEpoch {id: ep.id})
-                MATCH (pred:StructuralEpoch {id: ep.predecessor})
+                MATCH (v:SignalEpoch {id: ep.id})
+                MATCH (pred:SignalEpoch {id: ep.predecessor})
                 MERGE (v)-[:HAS_PREDECESSOR]->(pred)
                 """,
                 epochs=clean_epochs,
@@ -1388,7 +1388,7 @@ def ingest_epochs(
                         """
                         UNWIND $signals AS sig
                         MATCH (s:FacilitySignal {id: sig.id})
-                        MATCH (v:StructuralEpoch {id: sig.epoch_id})
+                        MATCH (v:SignalEpoch {id: sig.epoch_id})
                         MERGE (s)-[:INTRODUCED_IN]->(v)
                         RETURN count(s) AS created
                         """,
@@ -1404,8 +1404,8 @@ def ingest_epochs(
                         UNWIND $paths AS path
                         MATCH (s:FacilitySignal {facility_id: $facility_id})
                         WHERE s.data_source_path = path
-                        MATCH (v:StructuralEpoch {id: $epoch_id})
-                        WHERE NOT (s)-[:REMOVED_IN]->(:StructuralEpoch)
+                        MATCH (v:SignalEpoch {id: $epoch_id})
+                        WHERE NOT (s)-[:REMOVED_IN]->(:SignalEpoch)
                         MERGE (s)-[:REMOVED_IN]->(v)
                         RETURN count(*) AS removed
                         """,
@@ -1661,7 +1661,7 @@ def ingest_discovered_signals(signals: list[dict], *, batch_size: int = 500) -> 
     """Ingest discovered signals to graph with epoch relationships.
 
     Creates FacilitySignal nodes with AT_FACILITY and DATA_ACCESS edges.
-    Optionally creates INTRODUCED_IN relationships to StructuralEpoch
+    Optionally creates INTRODUCED_IN relationships to SignalEpoch
     epoch (if epoch_id is present).
 
     Large signal lists (e.g., 5000+ from PPF) are batched to avoid
@@ -1709,7 +1709,7 @@ def ingest_discovered_signals(signals: list[dict], *, batch_size: int = 500) -> 
                     UNWIND $signals AS sig
                     WITH sig WHERE sig.epoch_id IS NOT NULL
                     MATCH (s:FacilitySignal {id: sig.id})
-                    MATCH (v:StructuralEpoch {id: sig.epoch_id})
+                    MATCH (v:SignalEpoch {id: sig.epoch_id})
                     MERGE (s)-[:INTRODUCED_IN]->(v)
                     """,
                     signals=batch,
@@ -1743,7 +1743,7 @@ async def seed_worker(
 ) -> None:
     """Worker that seeds discovery work into the graph.
 
-    For MDSplus: creates StructuralEpoch nodes from config (fast).
+    For MDSplus: creates SignalEpoch nodes from config (fast).
     For other scanners (TDI, PPF, EDAS, wiki): runs scanner.scan() and
     ingests signals directly to graph.
 
@@ -1782,7 +1782,7 @@ async def seed_worker(
             break
 
         if scanner_type == "mdsplus":
-            # MDSplus: seed StructuralEpoch nodes for each tree
+            # MDSplus: seed SignalEpoch nodes for each tree
             mdsplus_config = data_systems.get("mdsplus", {})
             if not isinstance(mdsplus_config, dict):
                 continue
@@ -1853,25 +1853,34 @@ async def seed_worker(
             if primary_tree:
                 try:
 
-                    def _create_mdsplus_da(_facility: str) -> None:
+                    def _create_mdsplus_da(_facility: str, _primary_tree: str) -> None:
                         with GraphClient() as gc:
                             gc.query(
                                 """
+                                MATCH (f:Facility {id: $facility})
                                 MERGE (da:DataAccess {id: $id})
                                 SET da.facility_id = $facility,
                                     da.method_type = 'mdsplus',
                                     da.library = 'MDSplus',
                                     da.access_type = 'local',
-                                    da.data_source = 'mdsplus'
-                                WITH da
-                                MATCH (f:Facility {id: $facility})
+                                    da.data_source = 'mdsplus',
+                                    da.connection_template = $conn_tpl,
+                                    da.data_template = $data_tpl
                                 MERGE (da)-[:AT_FACILITY]->(f)
                                 """,
                                 id=f"{_facility}:mdsplus:tree_tdi",
                                 facility=_facility,
+                                conn_tpl=(
+                                    f"import MDSplus\n"
+                                    f"tree = MDSplus.Tree('{_primary_tree}', "
+                                    f"{{shot}}, 'readonly')"
+                                ),
+                                data_tpl="data = tree.getNode('{data_source_path}').data()",
                             )
 
-                    await asyncio.to_thread(_create_mdsplus_da, state.facility)
+                    await asyncio.to_thread(
+                        _create_mdsplus_da, state.facility, primary_tree
+                    )
                 except Exception as e:
                     logger.warning("Failed to create MDSplus DataAccess: %s", e)
 
@@ -1997,7 +2006,7 @@ async def epoch_worker(
     """Worker that detects structural epochs for dynamic MDSplus trees.
 
     Runs independently from seed — can take 15+ minutes for large trees.
-    Seeds additional StructuralEpoch nodes as epochs are detected.
+    Seeds additional SignalEpoch nodes as epochs are detected.
     """
     from imas_codex.discovery.mdsplus.epochs import detect_epochs_for_tree
     from imas_codex.discovery.mdsplus.graph_ops import seed_versions
@@ -2069,7 +2078,7 @@ async def epoch_worker(
                 epochs = await coro
 
             if epochs:
-                # Ingest epoch StructuralEpoch nodes
+                # Ingest epoch SignalEpoch nodes
                 await asyncio.to_thread(
                     ingest_epochs,
                     epochs,
@@ -2136,7 +2145,7 @@ async def mdsplus_extract_worker(
 ) -> None:
     """Worker that extracts MDSplus tree versions via SSH (facility-wide).
 
-    Claims StructuralEpoch nodes with status=discovered across ALL trees,
+    Claims SignalEpoch nodes with status=discovered across ALL trees,
     runs SSH extraction, and ingests DataNodes into the graph.
     """
     from imas_codex.discovery.mdsplus.graph_ops import (
@@ -3631,9 +3640,9 @@ async def run_parallel_data_discovery(
     """Run parallel data discovery with independent async workers.
 
     All workers start simultaneously and claim work from the graph:
-    - seed: Seeds StructuralEpoch nodes from config (exits fast)
+    - seed: Seeds SignalEpoch nodes from config (exits fast)
     - epoch: Detects structural epochs independently
-    - extract: Claims StructuralEpoch, SSH extract DataNodes
+    - extract: Claims SignalEpoch, SSH extract DataNodes
     - units: Extracts units for ingested tree versions
     - promote: Creates FacilitySignal from leaf DataNodes
     - enrich: LLM classification (claims discovered FacilitySignals)
@@ -3707,7 +3716,7 @@ async def run_parallel_data_discovery(
 
     orphan_specs = [
         OrphanRecoverySpec("FacilitySignal", timeout_seconds=CLAIM_TIMEOUT_SECONDS),
-        OrphanRecoverySpec("StructuralEpoch"),
+        OrphanRecoverySpec("SignalEpoch"),
     ]
 
     # Build worker specs
