@@ -101,6 +101,13 @@ def _base_url_params(base_url: str | None) -> dict[str, str]:
     return {"base_url": url, "base_url_alt": alt}
 
 
+_SOURCE_TYPE_NORMALIZATION: dict[str, str] = {
+    "twiki_static": "twiki",
+    "twiki_raw": "twiki",
+    "static_html": "generic_html",
+}
+
+
 def create_doc_source(
     gc: GraphClient,
     facility: str,
@@ -115,6 +122,7 @@ def create_doc_source(
     DocSource ID format: ``{facility}:{name}`` where name is the short site
     identifier (e.g. ``jet:wiki``, ``jet:efda-wiki``).
     """
+    source_type = _SOURCE_TYPE_NORMALIZATION.get(source_type, source_type)
     doc_source_id = f"{facility}:{name}"
     gc.query(
         """
