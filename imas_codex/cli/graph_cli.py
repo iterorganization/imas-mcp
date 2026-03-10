@@ -360,7 +360,11 @@ def get_registry(git_info: dict, force_registry: str | None = None) -> str:
     return "ghcr.io/iterorganization"
 
 
-def get_version_tag(git_info: dict, dev: bool = False) -> str:
+def get_version_tag(
+    git_info: dict,
+    dev: bool = False,
+    version_override: str | None = None,
+) -> str:
     """Determine version tag for push.
 
     For dev pushes, auto-increments a revision counter per base version
@@ -369,9 +373,16 @@ def get_version_tag(git_info: dict, dev: bool = False) -> str:
 
     The revision counter is tracked in the local graph manifest and
     resets when the base version changes (new commit or version bump).
+
+    Args:
+        git_info: Git metadata dict.
+        dev: Whether this is a --dev push.
+        version_override: Use this version instead of __version__
+            (e.g. after a fresh uv sync).
     """
     if dev:
-        base = __version__.replace("+", "-")
+        version = version_override or __version__
+        base = version.replace("+", "-")
         revision = _next_dev_revision(base)
         return f"{base}-r{revision}"
     if git_info["tag"]:
@@ -1011,34 +1022,31 @@ def check_graph_exists(data_dir: Path | None = None) -> bool:
     return data_path.exists() and any(data_path.iterdir())
 
 
-def _check_archive_age(archive_path: Path) -> None:
-    """Warn if archive is older than current graph. Raises ClickException."""
-    current = get_local_graph_manifest()
-    if not current or "timestamp" not in current:
-        return  # No current manifest — nothing to compare against
+def _ensure_fresh_version() -> str:
+    """Run ``uv sync`` to refresh the installed package version.
 
-    try:
-        with tarfile.open(archive_path, "r:gz") as tar:
-            for member in tar.getmembers():
-                if member.name.endswith("manifest.json"):
-                    f = tar.extractfile(member)
-                    if f:
-                        archive_manifest = json.loads(f.read())
-                        archive_ts = archive_manifest.get("timestamp")
-                        if archive_ts and archive_ts < current["timestamp"]:
-                            raise click.ClickException(
-                                f"Archive is older than current graph.\n"
-                                f"  Archive:  {archive_manifest.get('version', '?')} "
-                                f"({archive_ts})\n"
-                                f"  Current:  {current.get('version', '?')} "
-                                f"({current['timestamp']})\n"
-                                f"Use --force to load anyway."
-                            )
-                    break
-    except click.ClickException:
-        raise
-    except Exception:
-        pass  # Can't read archive manifest — skip check
+    hatch-vcs bakes the version at install time from the git state.
+    Without a sync, __version__ can be stale (wrong commit hash and
+    dev count).  Returns the refreshed version string.
+    """
+    click.echo("  Syncing package version (uv sync)...")
+    result = subprocess.run(
+        ["uv", "sync"],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    if result.returncode != 0:
+        raise click.ClickException(
+            f"uv sync failed (version would be stale):\n{result.stderr}"
+        )
+    # Re-read the freshly computed version
+    import importlib
+
+    import imas_codex
+
+    importlib.reload(imas_codex)
+    return imas_codex.__version__
 
 
 # ============================================================================
@@ -2255,10 +2263,6 @@ def graph_load(
 
     archive_path = Path(archive)
 
-    # ── Age guard: warn if loading an older archive than current graph ───
-    if not force:
-        _check_archive_age(archive_path)
-
     # ── Remote dispatch ──────────────────────────────────────────────────
     from imas_codex.graph.remote import is_remote_location
 
@@ -2492,8 +2496,12 @@ def graph_push(
     if not dev:
         require_clean_git(git_info)
 
+    # Ensure __version__ reflects current git state (hatch-vcs freezes at
+    # uv sync time — without this, the GHCR tag embeds a stale commit hash).
+    fresh_version = _ensure_fresh_version()
+
     target_registry = get_registry(git_info, registry)
-    version_tag = get_version_tag(git_info, dev)
+    version_tag = get_version_tag(git_info, dev, version_override=fresh_version)
     pkg_name = get_package_name(
         list(facilities) or None, no_imas=no_imas, imas_only=imas_only
     )
