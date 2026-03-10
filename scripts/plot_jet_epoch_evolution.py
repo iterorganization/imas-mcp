@@ -74,7 +74,7 @@ def fetch_epochs() -> list[dict]:
     with GraphClient() as gc:
         return list(
             gc.query("""
-                MATCH (se:StructuralEpoch {facility_id: 'jet', data_source_name: 'device_xml'})
+                MATCH (se:SignalEpoch {facility_id: 'jet', data_source_name: 'device_xml'})
                 RETURN se.id AS id,
                        se.first_shot AS first_shot,
                        se.last_shot AS last_shot,
@@ -94,7 +94,7 @@ def fetch_component_counts() -> dict[str, dict]:
     """Get detailed component breakdown per epoch from DataNode relationships."""
     with GraphClient() as gc:
         results = gc.query("""
-            MATCH (dn:DataNode {facility_id: 'jet'})-[:INTRODUCED_IN]->(e:StructuralEpoch)
+            MATCH (dn:DataNode {facility_id: 'jet'})-[:INTRODUCED_IN]->(e:SignalEpoch)
             WITH e,
                  count(CASE WHEN dn.path CONTAINS 'magprobe' THEN 1 END) AS magprobes,
                  count(CASE WHEN dn.path CONTAINS 'pfcoil' THEN 1 END) AS pfcoils,

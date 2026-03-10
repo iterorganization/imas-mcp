@@ -21,7 +21,7 @@ Usage::
             WorkerSpec("enrich", "enrich_phase", enrich_worker,
                        on_progress=on_enrich, enabled=do_enrich),
         ],
-        orphan_labels=["StructuralEpoch", "SignalNode"],
+        orphan_labels=["SignalEpoch", "SignalNode"],
         on_worker_status=on_worker_status,
         stop_event=stop_event,
     )

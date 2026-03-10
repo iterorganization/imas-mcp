@@ -372,7 +372,7 @@ def discover_epochs_optimized(
     if client is not None:
         existing = client.query(
             """
-            MATCH (v:StructuralEpoch {data_source_name: $tree, facility_id: $facility})
+            MATCH (v:SignalEpoch {data_source_name: $tree, facility_id: $facility})
             RETURN min(v.first_shot) as min_shot, max(v.first_shot) as max_shot,
                    count(v) as epoch_count
             """,
@@ -721,7 +721,7 @@ def refine_boundaries(
     # Get existing epochs sorted by first_shot
     result = client.query(
         """
-        MATCH (v:StructuralEpoch {facility_id: $facility, data_source_name: $tree})
+        MATCH (v:SignalEpoch {facility_id: $facility, data_source_name: $tree})
         RETURN v.id as id, v.first_shot as first_shot
         ORDER BY v.first_shot
         """,
@@ -786,7 +786,7 @@ def refine_boundaries(
             if not dry_run:
                 client.query(
                     """
-                    MATCH (v:StructuralEpoch {id: $id})
+                    MATCH (v:SignalEpoch {id: $id})
                     SET v.first_shot = $shot,
                         v.boundary_refined = true
                     """,

@@ -7,14 +7,6 @@ from unittest.mock import MagicMock
 import pytest
 
 from imas_codex.ids.graph_ops import (
-    MAGNETICS_BPOL_MAPPINGS,
-    MAGNETICS_FLUX_LOOP_MAPPINGS,
-    PF_ACTIVE_ASSEMBLY_CONFIG,
-    PF_ACTIVE_CIRCUIT_MAPPINGS,
-    PF_ACTIVE_COIL_MAPPINGS,
-    PF_PASSIVE_LOOP_MAPPINGS,
-    WALL_ASSEMBLY_CONFIG,
-    WALL_LIMITER_MAPPINGS,
     FieldMapping,
     Mapping,
     _index_from_path,
@@ -23,7 +15,6 @@ from imas_codex.ids.graph_ops import (
     load_field_mappings,
     load_mapping,
     load_sections,
-    seed_ids_mappings,
 )
 
 
@@ -205,82 +196,6 @@ class TestLoadFieldMappings:
         assert "COCOS-sensitive" not in caplog.text
 
 
-class TestMappingSpecs:
-    """Validate the canonical mapping definitions."""
-
-    def test_pf_active_coil_mappings_complete(self):
-        # 6 mappings: r, z, dr, dz, turnsperelement, description
-        assert len(PF_ACTIVE_COIL_MAPPINGS) == 6
-        source_props = {m[0] for m in PF_ACTIVE_COIL_MAPPINGS}
-        assert {"r", "z", "dr", "dz", "turnsperelement", "description"} == source_props
-
-    def test_pf_active_circuit_mappings(self):
-        assert len(PF_ACTIVE_CIRCUIT_MAPPINGS) == 1
-        assert PF_ACTIVE_CIRCUIT_MAPPINGS[0][0] == "description"
-
-    def test_magnetics_bpol_mappings(self):
-        assert len(MAGNETICS_BPOL_MAPPINGS) == 4
-        source_props = {m[0] for m in MAGNETICS_BPOL_MAPPINGS}
-        assert {"r", "z", "angle", "description"} == source_props
-        # angle should have deg→rad conversion
-        angle_mapping = next(m for m in MAGNETICS_BPOL_MAPPINGS if m[0] == "angle")
-        assert angle_mapping[2] == "math.radians(value)"
-        assert angle_mapping[3] == "deg"
-        assert angle_mapping[4] == "rad"
-
-    def test_magnetics_flux_loop_mappings(self):
-        assert len(MAGNETICS_FLUX_LOOP_MAPPINGS) == 4
-        source_props = {m[0] for m in MAGNETICS_FLUX_LOOP_MAPPINGS}
-        assert {"r", "z", "dphi", "description"} == source_props
-
-    def test_pf_passive_loop_mappings(self):
-        assert len(PF_PASSIVE_LOOP_MAPPINGS) == 6
-        source_props = {m[0] for m in PF_PASSIVE_LOOP_MAPPINGS}
-        assert {"r", "z", "dr", "dz", "resistance", "description"} == source_props
-
-    def test_wall_limiter_mappings(self):
-        assert len(WALL_LIMITER_MAPPINGS) == 3
-        source_props = {m[0] for m in WALL_LIMITER_MAPPINGS}
-        assert {"r_contour", "z_contour", "description"} == source_props
-        # Contour fields should map to outline path
-        r_mapping = next(m for m in WALL_LIMITER_MAPPINGS if m[0] == "r_contour")
-        assert "outline/r" in r_mapping[1]
-
-    def test_all_target_paths_use_slash_separators(self):
-        """All target paths should use / (IMAS convention)."""
-        all_specs = (
-            PF_ACTIVE_COIL_MAPPINGS
-            + PF_ACTIVE_CIRCUIT_MAPPINGS
-            + MAGNETICS_BPOL_MAPPINGS
-            + MAGNETICS_FLUX_LOOP_MAPPINGS
-            + PF_PASSIVE_LOOP_MAPPINGS
-            + WALL_LIMITER_MAPPINGS
-        )
-        for spec in all_specs:
-            target_path = spec[1]
-            assert "/" in target_path, f"{target_path} missing / separator"
-            assert "." not in target_path, f"{target_path} uses . instead of /"
-
-
-class TestAssemblyConfigs:
-    """Validate the assembly config templates."""
-
-    def test_pf_active_has_coil_and_circuit(self):
-        assert "coil" in PF_ACTIVE_ASSEMBLY_CONFIG
-        assert "circuit" in PF_ACTIVE_ASSEMBLY_CONFIG
-        assert "static" in PF_ACTIVE_ASSEMBLY_CONFIG
-        assert PF_ACTIVE_ASSEMBLY_CONFIG["coil"]["source"]["system"] == "PF"
-        assert PF_ACTIVE_ASSEMBLY_CONFIG["circuit"]["source"]["system"] == "CI"
-
-    def test_wall_has_nested_array_structure(self):
-        assert "description_2d" in WALL_ASSEMBLY_CONFIG
-        d2d = WALL_ASSEMBLY_CONFIG["description_2d"]
-        assert d2d["structure"] == "nested_array"
-        assert d2d["nested_path"] == "limiter.unit"
-        assert d2d["parent_size"] == 1
-        assert d2d["source"]["select_via"] == "USES_LIMITER"
-
-
 class TestCreateSignalGroup:
     def test_creates_group_with_maps_to_imas(self):
         gc = MagicMock()
@@ -306,40 +221,3 @@ class TestCreateIMASMapping:
         assert result == "jet:pf_active"
         # create mapping + link signal groups + create POPULATES
         assert gc.query.call_count == 3
-
-
-class TestSeedIdsMappings:
-    def test_unsupported_ids_raises(self):
-        gc = MagicMock()
-        with pytest.raises(ValueError, match="No mapping definitions for IDS"):
-            seed_ids_mappings("jet", "unsupported_ids", "4.1.1", gc)
-
-    def test_pf_active_creates_all_sections(self):
-        gc = MagicMock()
-        gc.query.return_value = []
-        result = seed_ids_mappings("jet", "pf_active", "4.1.1", gc)
-        assert result == "jet:pf_active"
-        # 2 signal groups (coil PF, circuit CI) x 2 queries each = 4
-        # + 3 for create_imas_mapping (create + link groups + POPULATES)
-        assert gc.query.call_count == 7
-
-    def test_magnetics_creates_all_sections(self):
-        gc = MagicMock()
-        gc.query.return_value = []
-        result = seed_ids_mappings("jet", "magnetics", "4.1.1", gc)
-        assert result == "jet:magnetics"
-
-    def test_pf_passive_creates_all_sections(self):
-        gc = MagicMock()
-        gc.query.return_value = []
-        result = seed_ids_mappings("jet", "pf_passive", "4.1.1", gc)
-        assert result == "jet:pf_passive"
-
-    def test_wall_creates_all_sections(self):
-        gc = MagicMock()
-        gc.query.return_value = []
-        result = seed_ids_mappings("jet", "wall", "4.1.1", gc)
-        assert result == "jet:wall"
-        # 1 signal group x 2 queries = 2
-        # + 3 for create_imas_mapping
-        assert gc.query.call_count == 5

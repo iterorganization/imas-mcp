@@ -262,7 +262,7 @@ class TestSeedWorker:
 
     @pytest.mark.anyio
     async def test_seed_static_versions(self):
-        """seed_worker creates StructuralEpochs from config."""
+        """seed_worker creates SignalEpochs from config."""
         from imas_codex.discovery.signals.parallel import seed_worker
 
         state = DataDiscoveryState(
