@@ -570,7 +570,7 @@ class TestVectorSearchInternals:
 - `IMASPath -[:HAS_UNIT]-> Unit` ✓
 - `IMASPath -[:IN_CLUSTER]-> IMASSemanticCluster` ✓
 - `IMASPath -[:INTRODUCED_IN]-> DDVersion` ✓
-- `DataAccess -[:MAPS_TO_IMAS]-> IMASPath` ✓
+- `DataNode <-[:SOURCE_PATH]- IMASMapping -[:TARGET_PATH]-> IMASPath` ✓
 
 ### Broken Relationships (Used in Tools but Don't Exist)
 - `CodeFile -[:HAS_CHUNK]-> CodeChunk` ✗ (should be: `FacilityPath -[:PRODUCED]-> CodeExample -[:HAS_CHUNK]-> CodeChunk`)
@@ -583,7 +583,7 @@ class TestVectorSearchInternals:
 | Tool Function | Relationship Used | Exists? | Fix Needed? |
 |---------------|-------------------|---------|-------------|
 | `_vector_search_signals` | `AT_FACILITY` | ✓ | Over-fetch k |
-| `_enrich_signals` | `DATA_ACCESS`, `BELONGS_TO_DIAGNOSTIC`, `HAS_DATA_SOURCE_NODE`, `MAPS_TO_IMAS` | Mostly ✓ | Add signal properties |
+| `_enrich_signals` | `DATA_ACCESS`, `BELONGS_TO_DIAGNOSTIC`, `HAS_DATA_SOURCE_NODE`, `SOURCE_PATH/TARGET_PATH` | Mostly ✓ | Add signal properties |
 | `_vector_search_wiki_chunks` | `AT_FACILITY` | ✓ | Over-fetch k |
 | `_enrich_wiki_chunks` | `HAS_CHUNK`, `DOCUMENTS`, `MENTIONS_IMAS` | ✓ | None |
 | `_vector_search_documents` | `AT_FACILITY` | ✓ | Fix index name |

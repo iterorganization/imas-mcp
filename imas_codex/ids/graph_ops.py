@@ -167,6 +167,21 @@ def select_nodes(
     system = source.get("system")
     data_source = source.get("data_source", "device_xml")
     epoch_field = source.get("epoch_field", "introduced_version")
+    select_via = source.get("select_via")
+
+    if select_via:
+        # Relationship-based selection (e.g., USES_LIMITER from epoch)
+        return list(
+            gc.query(
+                f"""
+                MATCH (se:StructuralEpoch {{id: $epoch_id}})
+                      -[:{select_via}]->(d:DataNode)
+                RETURN d
+                ORDER BY d.sort_key, d.id
+                """,
+                epoch_id=epoch_id,
+            )
+        )
 
     return list(
         gc.query(
@@ -314,6 +329,12 @@ PF_PASSIVE_LOOP_MAPPINGS: list[MappingSpec] = [
     ("dz", "pf_passive/loop/element/geometry/rectangle/height", "value", "m", "m"),
     ("resistance", "pf_passive/loop/resistance", "value", "ohm", "ohm"),
     ("description", "pf_passive/loop/name", "str(value)", None, None),
+]
+
+WALL_LIMITER_MAPPINGS: list[MappingSpec] = [
+    ("r_contour", "wall/description_2d/limiter/unit/outline/r", "value", "m", "m"),
+    ("z_contour", "wall/description_2d/limiter/unit/outline/z", "value", "m", "m"),
+    ("description", "wall/description_2d/limiter/unit/name", "str(value)", None, None),
 ]
 
 
@@ -530,6 +551,25 @@ PF_PASSIVE_ASSEMBLY_CONFIG: dict[str, Any] = {
     },
 }
 
+WALL_ASSEMBLY_CONFIG: dict[str, Any] = {
+    "static": {
+        "ids_properties.homogeneous_time": 0,
+        "ids_properties.comment": (
+            "JET first wall limiter contours from device descriptions. "
+            "Assembled from device_xml DataNodes by imas-codex."
+        ),
+    },
+    "description_2d": {
+        "source": {
+            "data_source": "device_xml",
+            "select_via": "USES_LIMITER",
+        },
+        "structure": "nested_array",
+        "nested_path": "limiter.unit",
+        "parent_size": 1,
+    },
+}
+
 
 def seed_ids_mappings(
     facility: str,
@@ -573,6 +613,12 @@ def seed_ids_mappings(
             PF_PASSIVE_ASSEMBLY_CONFIG,
             [
                 ("loop", "PS", PF_PASSIVE_LOOP_MAPPINGS),
+            ],
+        ),
+        "wall": (
+            WALL_ASSEMBLY_CONFIG,
+            [
+                ("description_2d", "LIM", WALL_LIMITER_MAPPINGS),
             ],
         ),
     }

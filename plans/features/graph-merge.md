@@ -19,7 +19,7 @@ source graph  ──[facility filter]──►  target graph
 
 1. **Facility-scoped nodes** — all nodes where `facility_id = <facility>` (FacilityPath, SourceFile, CodeChunk, FacilitySignal, DataNode, etc.)
 2. **Relationships** from/to those nodes
-3. **Shared DD nodes** — IMASPath, DDVersion, Unit, IMASCoordinateSpec — needed by cross-facility relationships (MAPS_TO_IMAS, etc.)
+3. **Shared DD nodes** — IMASPath, DDVersion, Unit, IMASCoordinateSpec — needed by cross-facility relationships (SOURCE_PATH, TARGET_PATH, etc.)
 4. **GraphMeta** — target's facility list is updated to include the merged facility
 
 ### What does NOT travel

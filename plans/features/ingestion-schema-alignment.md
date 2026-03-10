@@ -37,7 +37,7 @@ The LinkML schemas define the authoritative graph structure, but the ingestion p
 
 | Relationship | Where Mentioned | Schema Slot Defined? | Notes |
 |---|---|---|---|
-| `MAPS_TO_IMAS` | FacilitySignal description comment | **No** | Aspirational; `IMASMapping -[:TARGET_PATH]-> IMASPath` is the proper vehicle |
+| ~~`MAPS_TO_IMAS`~~ | FacilitySignal description comment | **No** | Removed — `IMASMapping -[:SOURCE_PATH]-> DataNode` / `-[:TARGET_PATH]-> IMASPath` is the proper vehicle |
 
 ### Entity Label Mismatch
 

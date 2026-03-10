@@ -134,7 +134,7 @@ MATCH (s:FacilitySignal {id: sid})
 OPTIONAL MATCH (s)-[:DATA_ACCESS]->(da:DataAccess)
 OPTIONAL MATCH (s)-[:BELONGS_TO_DIAGNOSTIC]->(diag:Diagnostic)
 OPTIONAL MATCH (s)-[:HAS_DATA_SOURCE_NODE]->(tn:DataNode)
-OPTIONAL MATCH (da)-[:MAPS_TO_IMAS]->(ip:IMASPath)
+OPTIONAL MATCH (tn)<-[:SOURCE_PATH]-(m:IMASMapping)-[:TARGET_PATH]->(ip:IMASPath)
 OPTIONAL MATCH (ip)-[:HAS_UNIT]->(u:Unit)
 RETURN s.id, s.name, s.description, s.physics_domain, s.unit,
        s.checked, s.example_shot,
@@ -259,8 +259,8 @@ RETURN p.id, p.name, p.ids, p.documentation, p.data_type,
 ```cypher
 UNWIND $path_ids AS pid
 MATCH (ip:IMASPath {id: pid})
-OPTIONAL MATCH (da:DataAccess)-[:MAPS_TO_IMAS]->(ip)
-OPTIONAL MATCH (sig:FacilitySignal)-[:DATA_ACCESS]->(da)
+OPTIONAL MATCH (dn:DataNode)<-[:SOURCE_PATH]-(m:IMASMapping)-[:TARGET_PATH]->(ip)
+OPTIONAL MATCH (sig:FacilitySignal)-[:HAS_DATA_SOURCE_NODE]->(dn)
 WHERE sig.facility_id = $facility
 OPTIONAL MATCH (wc:WikiChunk)-[:MENTIONS_IMAS]->(ip)
 WHERE (wc)-[:AT_FACILITY]->(:Facility {id: $facility})
