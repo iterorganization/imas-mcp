@@ -334,7 +334,11 @@ async def score_worker(
             model = get_model("language")
             logger.debug(f"score_worker {worker_id}: starting LLM scoring...")
             results, cost = await _score_pages_batch(
-                pages_with_content, model, state.focus, facility_access_patterns
+                pages_with_content,
+                model,
+                state.focus,
+                facility_access_patterns,
+                facility=state.facility,
             )
             logger.debug(
                 f"score_worker {worker_id}: LLM scored {len(results)} pages, cost=${cost:.4f}"
@@ -967,7 +971,11 @@ async def docs_score_worker(
             # Step 2: Score batch with LLM (only documents that have content)
             model = get_model("language")
             results, cost = await _score_documents_batch(
-                documents_to_score, model, state.focus, facility_access_patterns
+                documents_to_score,
+                model,
+                state.focus,
+                facility_access_patterns,
+                facility=state.facility,
             )
 
             # Add preview_text to results for persistence

@@ -118,4 +118,8 @@ Set `should_ingest=true` when the page contains content worth embedding for sear
 
 **Ingestion threshold:** Combined score >= 0.5
 
+{% if dimension_calibration %}
+{% include "schema/dimension-calibration.md" %}
+{% endif %}
+
 {% include "schema/wiki-scoring-output.md" %}

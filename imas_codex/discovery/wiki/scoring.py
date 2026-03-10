@@ -17,9 +17,149 @@ import asyncio
 import logging
 import shlex
 import subprocess
+import time
 from typing import Any
 
+from imas_codex.discovery.base.scoring import CONTENT_SCORE_DIMENSIONS
+from imas_codex.graph import GraphClient
+
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Dynamic calibration (same architecture as code/scorer.py)
+# ---------------------------------------------------------------------------
+
+_wiki_calibration_cache: dict[str, tuple[float, dict]] = {}
+_WIKI_CALIBRATION_TTL_SECONDS = (
+    300.0  # 5 minutes — matches LLM provider ephemeral cache TTL
+)
+
+
+def sample_wiki_page_calibration(
+    facility: str | None = None,
+    per_level: int = 2,
+) -> dict[str, dict[str, list[dict[str, Any]]]]:
+    """Sample calibration examples from scored WikiPage nodes.
+
+    Same pattern as code calibration: deterministic ordering,
+    facility preference, in-process TTL cache.
+
+    Returns:
+        Nested dict: dimension -> level -> list of examples.
+        Each example: path (title), facility, score, purpose, description.
+    """
+    cache_key = f"page:{facility}:{per_level}"
+    now = time.monotonic()
+
+    if cache_key in _wiki_calibration_cache:
+        cached_time, cached_data = _wiki_calibration_cache[cache_key]
+        if (now - cached_time) < _WIKI_CALIBRATION_TTL_SECONDS:
+            return cached_data
+
+    samples = _fetch_wiki_calibration("WikiPage", facility, per_level)
+    _wiki_calibration_cache[cache_key] = (now, samples)
+    return samples
+
+
+def sample_wiki_document_calibration(
+    facility: str | None = None,
+    per_level: int = 2,
+) -> dict[str, dict[str, list[dict[str, Any]]]]:
+    """Sample calibration examples from scored Document nodes.
+
+    Same pattern as page calibration but queries Document nodes.
+
+    Returns:
+        Nested dict: dimension -> level -> list of examples.
+        Each example: path (filename), facility, score, purpose, description.
+    """
+    cache_key = f"document:{facility}:{per_level}"
+    now = time.monotonic()
+
+    if cache_key in _wiki_calibration_cache:
+        cached_time, cached_data = _wiki_calibration_cache[cache_key]
+        if (now - cached_time) < _WIKI_CALIBRATION_TTL_SECONDS:
+            return cached_data
+
+    samples = _fetch_wiki_calibration("Document", facility, per_level)
+    _wiki_calibration_cache[cache_key] = (now, samples)
+    return samples
+
+
+def _fetch_wiki_calibration(
+    node_label: str,
+    facility: str | None,
+    per_level: int,
+) -> dict[str, dict[str, list[dict[str, Any]]]]:
+    """Fetch dimension calibration from WikiPage or Document nodes (uncached).
+
+    Queries scored nodes at 5 score levels per dimension using deterministic
+    ordering: same-facility preference → closest to bucket midpoint → id.
+    """
+    if node_label == "WikiPage":
+        status_clause = "n.status IN ['scored', 'ingested']"
+        title_prop = "n.title"
+        desc_prop = "n.description"
+    else:
+        status_clause = "n.status IN ['scored', 'ingested']"
+        title_prop = "n.filename"
+        desc_prop = "n.description"
+
+    buckets: list[tuple[str, float, float]] = [
+        ("lowest", 0.0, 0.15),
+        ("low", 0.10, 0.30),
+        ("medium", 0.40, 0.60),
+        ("high", 0.70, 0.90),
+        ("highest", 0.90, 1.01),
+    ]
+
+    samples: dict[str, dict[str, list[dict[str, Any]]]] = {}
+
+    with GraphClient() as gc:
+        for dim in CONTENT_SCORE_DIMENSIONS:
+            samples[dim] = {}
+
+            for level_name, min_score, max_score in buckets:
+                target = (min_score + max_score) / 2
+                result = gc.query(
+                    f"""
+                    MATCH (n:{node_label})
+                    WHERE {status_clause}
+                        AND n.{dim} >= $min_score
+                        AND n.{dim} < $max_score
+                        AND n.{dim} IS NOT NULL
+                    RETURN {title_prop} AS path,
+                           n.facility_id AS facility,
+                           n.{dim} AS score,
+                           {desc_prop} AS description
+                    ORDER BY
+                        CASE WHEN n.facility_id = $facility
+                             THEN 0 ELSE 1 END,
+                        abs(n.{dim} - $target) ASC,
+                        n.id ASC
+                    LIMIT $limit
+                    """,
+                    min_score=min_score,
+                    max_score=max_score,
+                    target=target,
+                    facility=facility or "",
+                    limit=per_level,
+                )
+
+                samples[dim][level_name] = [
+                    {
+                        "path": r["path"] or "",
+                        "facility": r["facility"],
+                        "score": round(r["score"], 2),
+                        "purpose": "wiki page"
+                        if node_label == "WikiPage"
+                        else "document",
+                        "description": r["description"] or "",
+                    }
+                    for r in result
+                ]
+
+    return samples
 
 
 # Separator used by batch SSH file reads. Chosen to be
@@ -289,6 +429,7 @@ async def _score_documents_batch(
     model: str,
     focus: str | None = None,
     data_access_patterns: dict[str, Any] | None = None,
+    facility: str | None = None,
 ) -> tuple[list[dict[str, Any]], float]:
     """Score a batch of documents using LLM with structured output.
 
@@ -319,6 +460,17 @@ async def _score_documents_batch(
         context["focus"] = focus
     if data_access_patterns:
         context["data_access_patterns"] = data_access_patterns
+
+    # Inject calibration examples from scored Document nodes
+    dimension_calibration = sample_wiki_document_calibration(
+        facility=facility, per_level=2
+    )
+    has_calibration = any(
+        any(examples for examples in levels.values())
+        for levels in dimension_calibration.values()
+    )
+    if has_calibration:
+        context["dimension_calibration"] = dimension_calibration
 
     system_prompt = render_prompt("wiki/document-scorer", context)
 
@@ -671,6 +823,7 @@ async def _score_pages_batch(
     model: str,
     focus: str | None = None,
     data_access_patterns: dict[str, Any] | None = None,
+    facility: str | None = None,
 ) -> tuple[list[dict[str, Any]], float]:
     """Score a batch of pages using LLM with structured output.
 
@@ -706,6 +859,15 @@ async def _score_pages_batch(
         context["focus"] = focus
     if data_access_patterns:
         context["data_access_patterns"] = data_access_patterns
+
+    # Inject calibration examples from scored WikiPage nodes
+    dimension_calibration = sample_wiki_page_calibration(facility=facility, per_level=2)
+    has_calibration = any(
+        any(examples for examples in levels.values())
+        for levels in dimension_calibration.values()
+    )
+    if has_calibration:
+        context["dimension_calibration"] = dimension_calibration
 
     system_prompt = render_prompt("wiki/scorer", context)
 
