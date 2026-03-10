@@ -362,7 +362,7 @@ def migrate_schema_relationships(
      3. FROM_FILE:         CodeExample → CodeFile
      4. HAS_EXAMPLE:       CodeFile → CodeExample
      5. TreeNode → SignalNode:  Relabel + remove old label
-     6. TreeNodePattern → DataNodePattern:  Relabel + remove old label
+     6. TreeNodePattern → SignalGroup:  Relabel + remove old label
      7. TreeModelVersion → StructuralEpoch:  Relabel + remove old label
      8. IN_DATA_SOURCE:    SignalNode → DataSource (from data_source_name)
      9. IN_TREE → IN_DATA_SOURCE:  Migrate legacy relationships
@@ -521,7 +521,7 @@ def migrate_schema_relationships(
             batch_size=10000,
         )
 
-        # 6. Fix TreeNodePattern → DataNodePattern label (add new, remove old)
+        # 6. Fix TreeNodePattern → SignalGroup label (add new, remove old)
         _run_migration_step(
             client,
             key="treenodepattern_relabel",
@@ -533,11 +533,11 @@ def migrate_schema_relationships(
             """,
             apply_query="""
                 MATCH (n) WHERE 'TreeNodePattern' IN labels(n)
-                SET n:DataNodePattern
+                SET n:SignalGroup
                 REMOVE n:TreeNodePattern
                 RETURN count(n) AS created
             """,
-            log_msg="Relabeled %d TreeNodePattern → DataNodePattern nodes",
+            log_msg="Relabeled %d TreeNodePattern → SignalGroup nodes",
         )
 
         # 7. Fix TreeModelVersion → StructuralEpoch label (add new, remove old)

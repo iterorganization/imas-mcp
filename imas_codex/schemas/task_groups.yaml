@@ -54,5 +54,5 @@ data_sources:
   labels:
     - SignalNode
     - DataSource
-    - DataNodePattern
-  description: Data source structure and node patterns
+    - SignalGroup
+  description: Data source structure and signal groups

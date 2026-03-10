@@ -403,7 +403,7 @@ def ingest_migrate(dry_run: bool) -> None:
       3.  FROM_FILE:         CodeExample → CodeFile
       4.  HAS_EXAMPLE:       CodeFile → CodeExample
       5.  TreeNode → SignalNode: Relabel + remove old label
-      6.  TreeNodePattern → DataNodePattern: Relabel + remove old label
+      6.  TreeNodePattern → SignalGroup: Relabel + remove old label
       7.  TreeModelVersion → StructuralEpoch: Relabel + remove old label
       8.  IN_DATA_SOURCE:    SignalNode → DataSource (from data_source_name)
       9.  IN_TREE → IN_DATA_SOURCE: Migrate legacy relationships
@@ -439,7 +439,7 @@ def ingest_migrate(dry_run: bool) -> None:
         ("FROM_FILE", "from_file"),
         ("HAS_EXAMPLE", "has_example"),
         ("TreeNode → SignalNode", "treenode_relabel"),
-        ("TreeNodePattern → DataNodePattern", "treenodepattern_relabel"),
+        ("TreeNodePattern → SignalGroup", "treenodepattern_relabel"),
         ("TreeModelVersion → StructuralEpoch", "treemodelversion_relabel"),
         ("IN_DATA_SOURCE", "in_data_source"),
         ("IN_TREE → IN_DATA_SOURCE", "in_tree_migrate"),

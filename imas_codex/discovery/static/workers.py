@@ -342,16 +342,16 @@ async def enrich_worker(
     from .graph_ops import (
         claim_orphan_nodes_for_enrichment,
         claim_parent_for_enrichment,
-        claim_patterns_for_enrichment,
-        detect_and_create_member_patterns,
-        detect_and_create_patterns,
+        claim_signal_groups,
+        detect_and_create_member_signal_groups,
+        detect_and_create_signal_groups,
         fetch_enrichment_context,
         mark_orphan_nodes_enriched,
         mark_parent_children_enriched,
-        mark_patterns_enriched,
+        mark_signal_groups_enriched,
         release_orphan_claims,
         release_parent_claim,
-        release_pattern_claims,
+        release_signal_group_claims,
     )
 
     if not state.enrich:
@@ -370,31 +370,31 @@ async def enrich_worker(
     if state.should_stop():
         return
 
-    # Detect and create patterns from indexed parameter groups
+    # Detect and create signal groups from indexed parameter groups
     if on_progress:
-        on_progress("detecting patterns", state.enrich_stats, None)
+        on_progress("detecting signal groups", state.enrich_stats, None)
 
-    patterns_created = await asyncio.to_thread(
-        detect_and_create_patterns,
+    groups_created = await asyncio.to_thread(
+        detect_and_create_signal_groups,
         state.facility,
         state.data_source_name,
     )
 
-    # Detect member-suffix patterns (:PRE, :VAL, :STORE under configured parent types)
+    # Detect member-suffix groups (:PRE, :VAL, :STORE under configured parent types)
     member_parent_types = state.tree_config.get("member_parent_types")
-    member_patterns_created = await asyncio.to_thread(
-        detect_and_create_member_patterns,
+    member_groups_created = await asyncio.to_thread(
+        detect_and_create_member_signal_groups,
         state.facility,
         state.data_source_name,
         member_parent_types=member_parent_types,
     )
-    patterns_created += member_patterns_created
+    groups_created += member_groups_created
 
-    if patterns_created and on_progress:
+    if groups_created and on_progress:
         on_progress(
-            f"found {patterns_created} patterns ({member_patterns_created} member-suffix)",
+            f"found {groups_created} signal groups ({member_groups_created} member-suffix)",
             state.enrich_stats,
-            [{"patterns_created": patterns_created}],
+            [{"groups_created": groups_created}],
         )
 
     model = get_model("language")
@@ -406,10 +406,10 @@ async def enrich_worker(
         if "description" in vc:
             version_descs[vc["version"]] = vc["description"]
 
-    # --- Phase 1: Enrich patterns (one representative per group) ---
+    # --- Phase 1: Enrich signal groups (one representative per group) ---
     while not state.should_stop() and not state.budget_exhausted:
         patterns = await asyncio.to_thread(
-            claim_patterns_for_enrichment,
+            claim_signal_groups,
             state.facility,
             state.data_source_name,
             limit=state.batch_size,
@@ -484,7 +484,7 @@ async def enrich_worker(
                         break
 
             propagated = await asyncio.to_thread(
-                mark_patterns_enriched,
+                mark_signal_groups_enriched,
                 pattern_ids,
                 descriptions,
                 metadata,
@@ -513,9 +513,9 @@ async def enrich_worker(
                 )
 
         except Exception as e:
-            logger.error("Pattern enrich batch failed: %s", e)
+            logger.error("Signal group enrich batch failed: %s", e)
             state.enrich_stats.errors += 1
-            await asyncio.to_thread(release_pattern_claims, pattern_ids)
+            await asyncio.to_thread(release_signal_group_claims, pattern_ids)
 
         await asyncio.sleep(0.1)
 
