@@ -284,126 +284,68 @@ All production discovery prompts exceed these thresholds. Cache is verified work
 ---
 
 
-## 6. Graph-Backed Example Stabilization Design
+## 6. Graph-Backed Example Stabilization
 
 ### 6.1 The Problem
 
-The current `_fetch_dimension_calibration()` uses `ORDER BY rand()` to select calibration examples. Every cache refresh (every 300s) returns different random examples, which invalidates the provider-side prompt cache. The calibration data represents 52–78% of the system prompt tokens — when it changes, the entire system prompt is re-read.
+`_fetch_dimension_calibration()` uses `ORDER BY rand()` to select examples. Every cache refresh (300s TTL) returns different random samples → system prompt changes → provider-side prompt cache misses. Calibration data is 52–78% of the system prompt.
 
-### 6.2 Design Principle: Freeze What the Prompt Builder Needs
+### 6.2 The Fix: Deterministic Query Ordering
 
-No new graph node types. No schema creep. The prompt builder needs a `dict[str, dict[str, list[dict]]]` mapping `dimension → level → [{path, facility, score, purpose, description}]`. We freeze that dict directly.
+Replace `ORDER BY rand()` with `ORDER BY abs(score - target), p.id`. Same graph state → same results → stable prompt → cache hits.
 
-**Storage:** A JSON file per facility/pipeline/phase at `~/.local/share/imas-codex/calibration/{pipeline}_{phase}_{facility}.json`. This is the frozen calibration cache.
+No new nodes; no file artifacts; no schema changes. The graph already stores everything the prompt builder needs. The in-process TTL cache (300s) prevents redundant queries. After a restart, the same deterministic query against the same graph produces identical results.
 
-**Graph linkage:** Each example in the frozen cache references a real FacilityPath or SourceFile node by its `path` and `facility_id`. The cache is populated by querying the graph and selecting the best-matching items per slot. No special properties or tags on the source nodes.
+### 6.3 Before / After
 
-### 6.3 Selection: Closest to Target, Not Random
+**Before** (current — volatile):
+```cypher
+MATCH (p:FacilityPath)
+WHERE p.status IN ['triaged', 'scored']
+  AND p.score_data_access >= 0.40
+  AND p.score_data_access < 0.60
+RETURN p.path, p.facility_id, p.score_data_access AS score, ...
+ORDER BY rand()
+LIMIT 15
+```
 
-Replace `ORDER BY rand()` with `ORDER BY abs(score - target)`:
-
-```python
-def _select_best_example(
-    gc: GraphClient,
-    graph_prop: str,
-    target: float,
-    tolerance: float,
-    facility: str | None,
-    status_clause: str,
-    per_level: int,
-) -> list[dict] | None:
-    """Select the best examples for a calibration slot.
-
-    Returns None if no items exist within tolerance of the target.
-    Always returns actual scores, never target scores.
-    """
-    result = gc.query(f"""
-        MATCH (p:FacilityPath)
-        WHERE {status_clause}
-          AND p.{graph_prop} IS NOT NULL
-          AND abs(p.{graph_prop} - $target) <= $tolerance
-        RETURN p.path AS path,
-               p.facility_id AS facility,
-               p.{graph_prop} AS score,
-               p.path_purpose AS purpose,
-               p.description AS description
-        ORDER BY
-          CASE WHEN p.facility_id = $facility THEN 0 ELSE 1 END,
-          abs(p.{graph_prop} - $target)
-        LIMIT $limit
-    """, target=target, tolerance=tolerance, facility=facility, limit=per_level)
-
-    if not result:
-        return None  # No examples within tolerance
-
-    return [{
-        "path": r["path"],
-        "facility": r["facility"],
-        "score": round(r["score"], 2),
-        "purpose": r["purpose"] or "unknown",
-        "description": r["description"] or "",
-    } for r in result]
+**After** (deterministic):
+```cypher
+MATCH (p:FacilityPath)
+WHERE p.status IN ['triaged', 'scored']
+  AND p.score_data_access >= 0.40
+  AND p.score_data_access < 0.60
+RETURN p.path, p.facility_id, p.score_data_access AS score, ...
+ORDER BY
+  CASE WHEN p.facility_id = $facility THEN 0 ELSE 1 END,
+  abs(p.score_data_access - $target) ASC,
+  p.id ASC
+LIMIT $limit
 ```
 
 Key properties:
-- **Deterministic:** Same graph state → same examples → prompt cache hits
-- **None for gaps:** If no item exists within `tolerance` of the target score, return `None` — the template already handles empty lists gracefully
-- **Actual scores:** Examples always carry their real score, even if it's far from the level target
-- **Facility preference:** Same-facility examples sort first, then cross-facility
+- **Deterministic:** tie-break on `p.id` ensures identical results for identical graph state
+- **Facility preference:** pushed into `ORDER BY` instead of Python post-filtering
+- **Self-improving:** as new items are scored, better-matching examples naturally displace weaker ones
+- **Survives restarts:** no state outside the graph — the query IS the selector
+- **None for gaps:** if no items exist within a bucket's score range, the level gets an empty list (template handles this)
 
-### 6.4 Frozen Cache Lifecycle
+### 6.4 What Changes When the Graph Changes
 
-```
-1. First run (no cache file):
-   → Query graph with ORDER BY abs(score - target)
-   → Write results to JSON cache file
-   → Use these examples for the prompt
+When a scoring run writes new scores, the next cache refresh (after TTL expiry) may return different examples — but only if a newly-scored item is a better match (closer to the bucket midpoint) than existing examples. This is the desired behavior: calibration self-improves without manual curation.
 
-2. Subsequent runs (cache exists):
-   → Load from cache file (instant, no graph query)
-   → System prompt is identical across runs → 100% provider cache hits
+Between scoring runs, the graph is static → queries are stable → prompts are identical → provider cache hits.
 
-3. After a scoring run completes:
-   → Check if any newly-scored items are closer to target than cached items
-   → If so, replace the cached entry (better example found)
-   → Log the replacement at DEBUG level
+### 6.5 Token Impact
 
-4. Manual refresh:
-   → Delete the cache file → next run rebuilds from graph
-   → Or: `imas-codex calibrate refresh paths --facility tcv`
-```
+Token counts are unchanged — the same number of examples appear in the prompt. The savings come from **cache hit rate**:
 
-**Replacement rule:** An existing cached example is replaced only when a strictly better match appears (closer to target AND within tolerance). This makes the cache self-improving over time without requiring manual curation.
+| Scenario | Provider Cache Hit Rate | Notes |
+|----------|------------------------|-------|
+| Current (`ORDER BY rand()`) | ~0% across cache refreshes | Different random sample every 300s |
+| Deterministic ordering | ~100% between scoring runs | Same query result until graph changes |
 
-### 6.5 None Handling in Templates
-
-The existing `dimension-calibration.md` template iterates `{% for ex in examples %}` — an empty list produces no output naturally. For slots where `_select_best_example()` returns `None`, the level key is simply omitted from the dict:
-
-```python
-# In the frozen cache
-{
-    "score_data_access": {
-        "highest": [{"path": "...", "score": 0.92, ...}],
-        "high": [{"path": "...", "score": 0.78, ...}],
-        "medium": None,  # No examples near 0.5 yet
-        "low": [{"path": "...", "score": 0.18, ...}],
-        "lowest": [{"path": "...", "score": 0.05, ...}]
-    }
-}
-```
-
-The prompt builder filters out `None` entries before passing to the template. No template changes needed.
-
-### 6.6 Token Savings
-
-Token counts don’t change — the same number of examples appear in the prompt. The savings come from **cache hit rate**, not token reduction:
-
-| Scenario | Cache Hit Rate | Effective Input Cost |
-|----------|---------------|---------------------|
-| Current (random, 300s TTL) | ~95% within epoch, 0% across | ~$0.99/facility |
-| Frozen cache (deterministic) | ~100% across all runs | ~$0.94/facility |
-
-The real win is operational: no more score drift from random example selection, and prompts are reproducible for debugging.
+Within a single scoring run (which doesn't write to calibration-source nodes mid-run), the prompt is stable for the entire duration — every batch sees the same calibration → every batch hits the provider cache.
 
 ## 7. Example Count Alignment
 
@@ -575,7 +517,7 @@ Reasons:
 
 | Optimization | Mechanism | Estimated Savings | Accuracy Impact |
 |-------------|-----------|------------------|-----------------|
-| **Frozen calibration cache** | Deterministic examples, file-backed cache | ~100% prompt cache hit rate (~$0.94/facility vs $0.99) | Positive — consistent scores, reproducible |
+| **Deterministic calibration queries** | Replace `ORDER BY rand()` with `ORDER BY abs(score - target), id` | ~100% prompt cache hit rate between scoring runs | Positive — consistent scores, reproducible |
 | **Align per_level to 5** | Increase paths/triage from 3→5 | None (small token increase, cached) | Positive — better boundary calibration |
 
 ### 10.2 Medium Impact
@@ -605,33 +547,21 @@ Reasons:
 
 ## 11. Implementation Plan
 
-### Phase 1: Align per_level (no schema changes)
+### Phase 1: Deterministic Calibration (core fix)
 
-1. Change `per_level=3` → `per_level=5` in `imas_codex/discovery/paths/scorer.py` L265
-2. Verify triage accuracy with the additional examples
+1. In `_fetch_dimension_calibration()` (`imas_codex/discovery/paths/frontier.py`):
+   - Replace `ORDER BY rand()` with `ORDER BY CASE WHEN p.facility_id = $facility THEN 0 ELSE 1 END, abs(p.{graph_prop} - $target) ASC, p.id ASC`
+   - Push facility preference into the query (remove Python post-filtering)
+   - Pass bucket midpoint as `$target` parameter
+   - Remove the `per_level * 3` over-fetch (no longer needed — query returns in priority order)
+2. Apply same changes to `_fetch_code_dimension_calibration()` in `imas_codex/discovery/code/scorer.py`
+3. Increase `per_level=3` → `per_level=5` in `paths/scorer.py` L265
 
-### Phase 2: Frozen Calibration Cache
+### Phase 2: Prompt Ordering & Wiki Extension
 
-1. Create `imas_codex/discovery/base/calibration.py`:
-   - `load_frozen_calibration(pipeline, phase, facility)` → load JSON cache or return None
-   - `save_frozen_calibration(pipeline, phase, facility, data)` → write JSON cache
-   - `refresh_calibration(pipeline, phase, facility)` → query graph with `ORDER BY abs(score - target)`, save results
-   - `maybe_replace_exemplar(pipeline, phase, facility, dimension, level, candidate)` → replace if candidate is strictly closer to target
-2. Update `sample_dimension_calibration_examples()` in `frontier.py`:
-   - Try `load_frozen_calibration()` first
-   - If cache miss, query graph with deterministic ordering (not random) and save
-   - Remove in-process TTL cache (file cache replaces it)
-3. Update `sample_code_dimension_calibration()` in `code/scorer.py` similarly
-4. Add post-scoring hook in `mark_score_complete()` / `mark_triage_complete()`:
-   - After updating scores, call `maybe_replace_exemplar()` for each scored item
-   - Log replacements at DEBUG level
-5. Add CLI: `imas-codex calibrate refresh paths --facility tcv` — delete cache and rebuild from graph
-
-### Phase 3: Prompt Ordering & Wiki Extension
-
-1. Verify prompt ordering places calibration after static content for maximum cache prefix
+1. Verify prompt template ordering places calibration after static content for maximum cache prefix
 2. Add calibration examples to wiki/scorer and wiki/doc-scorer templates
-3. Use the same frozen cache infrastructure from Phase 2
+3. Use the same deterministic query pattern from Phase 1
 
 ## Appendix A: Current Prompt Caching Infrastructure
 

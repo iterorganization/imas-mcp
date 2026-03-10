@@ -262,7 +262,7 @@ class DirectoryTriager:
         # phase='triage' draws from triaged peers (1st-pass dimensions).
         dimension_calibration = sample_dimension_calibration_examples(
             facility=self.facility,
-            per_level=3,
+            per_level=5,
             tolerance=0.1,
             phase="triage",
         )

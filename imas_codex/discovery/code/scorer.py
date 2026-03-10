@@ -121,6 +121,7 @@ def _fetch_code_dimension_calibration(
                     "cf.triage_description" if phase == "triage" else "cf.score_reason"
                 )
 
+                target = (min_score + max_score) / 2
                 result = gc.query(
                     f"""
                     MATCH (cf:CodeFile)
@@ -132,22 +133,19 @@ def _fetch_code_dimension_calibration(
                            cf.facility_id AS facility,
                            cf.{graph_prop} AS score,
                            {desc_prop} AS description
-                    ORDER BY rand()
+                    ORDER BY
+                        CASE WHEN cf.facility_id = $facility
+                             THEN 0 ELSE 1 END,
+                        abs(cf.{graph_prop} - $target) ASC,
+                        cf.id ASC
                     LIMIT $limit
                     """,
                     min_score=min_score,
                     max_score=max_score,
-                    limit=per_level * 3,
+                    target=target,
+                    facility=facility or "",
+                    limit=per_level,
                 )
-
-                current = [r for r in result if r["facility"] == facility]
-                other = [r for r in result if r["facility"] != facility]
-
-                chosen: list[dict[str, Any]] = []
-                for r in current[:per_level]:
-                    chosen.append(r)
-                for r in other[: per_level - len(chosen)]:
-                    chosen.append(r)
 
                 samples[dim][level_name] = [
                     {
@@ -157,7 +155,7 @@ def _fetch_code_dimension_calibration(
                         "purpose": "code file",
                         "description": r["description"] or "",
                     }
-                    for r in chosen[:per_level]
+                    for r in result
                 ]
 
     return samples

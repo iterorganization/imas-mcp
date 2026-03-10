@@ -3209,6 +3209,7 @@ def _fetch_dimension_calibration(
             samples[dim] = {}
 
             for level_name, min_score, max_score in buckets:
+                target = (min_score + max_score) / 2
                 result = gc.query(
                     f"""
                     MATCH (p:FacilityPath)
@@ -3221,26 +3222,19 @@ def _fetch_dimension_calibration(
                            p.{graph_prop} AS score,
                            p.path_purpose AS purpose,
                            p.description AS description
-                    ORDER BY rand()
+                    ORDER BY
+                        CASE WHEN p.facility_id = $facility
+                             THEN 0 ELSE 1 END,
+                        abs(p.{graph_prop} - $target) ASC,
+                        p.id ASC
                     LIMIT $limit
                     """,
                     min_score=min_score,
                     max_score=max_score,
-                    limit=per_level * 3,  # Get extras for facility preference
+                    target=target,
+                    facility=facility or "",
+                    limit=per_level,
                 )
-
-                # Prefer current facility examples, then others
-                paths: list[dict[str, Any]] = []
-                current_facility_paths = [
-                    r for r in result if r["facility"] == facility
-                ]
-                other_paths = [r for r in result if r["facility"] != facility]
-
-                # Interleave: current facility first
-                for r in current_facility_paths[:per_level]:
-                    paths.append(r)
-                for r in other_paths[: per_level - len(paths)]:
-                    paths.append(r)
 
                 samples[dim][level_name] = [
                     {
@@ -3252,7 +3246,7 @@ def _fetch_dimension_calibration(
                         "purpose": r["purpose"] or "unknown",
                         "description": r["description"] or "",
                     }
-                    for r in paths[:per_level]
+                    for r in result
                 ]
 
     return samples
