@@ -71,7 +71,7 @@ data_systems:
       - module load jet/1.0
     # JPF subsystem codes (32 subsystems, 2-char codes)
     # Discovered via jpfsubsystems() TDI function
-    jpf_subsystems:
+    subsystem_codes:
       - DA  # Diagnostics A
       - DB  # Diagnostics B
       - DC  # Diagnostics C
@@ -104,13 +104,12 @@ data_systems:
       - YD  # YD subsystem
       - YE  # YE subsystem
       - DJ  # DJ subsystem
-    # TDI data access functions available on the server
-    tdi_access_functions:
-      jpf: dpf("{subsystem}/{signal}", {shot})     # Raw JPF signals
-      ppf: ppf("{dda}/{dtype}", {shot})             # Processed PPF data
-      jpf_subsystems: jpfsubsystems()               # List all JPF subsystem codes
-      jpf_active: jpfincludedsubsystems({shot})     # Active subsystems for a shot
-      ppf_info: ppfsignalinfo("{dda}")               # PPF DDA metadata
+    # TDI data access functions (documentary only, used by scanners):
+    #   dpf("{subsystem}/{signal}", {shot})      — Raw JPF signals
+    #   ppf("{dda}/{dtype}", {shot})              — Processed PPF data
+    #   jpfsubsystems()                           — List all JPF subsystem codes
+    #   jpfincludedsubsystems({shot})             — Active subsystems for a shot
+    #   ppfsignalinfo("{dda}")                    — PPF DDA metadata
 
   # IMAS data available post-migration
   imas:
@@ -130,7 +129,7 @@ data_systems:
     setup_commands:
       - source /etc/profile.d/modules.sh
       - module load jet/1.0
-    jpf_subsystems:
+    subsystem_codes:
       - DA  # Diagnostics A
       - DB  # Diagnostics B
       - DC  # Diagnostics C
