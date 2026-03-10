@@ -381,6 +381,15 @@ def migrate_schema_relationships(
     22. AT_FACILITY:       CodeExample → Facility (missing edges)
     23. Garbage CodeChunks: Remove nodes with null id or null text
     24. Deduplicate CodeChunks: Remove duplicate nodes by id
+    25. AT_FACILITY:       WikiPage → Facility (missing edges)
+    26. AT_FACILITY:       DataAccess → Facility (missing edges)
+    27. Spurious AT_FACILITY: Remove cross-facility edges where property ≠ edge
+    28. HAS_CHUNK:         CodeExample → CodeChunk (orphan repair)
+    29. Undeclared props:  Remove _related_ids, related_ids_count from CodeChunks
+    30. DocSource twiki_raw: Normalize source_type to 'twiki'
+    31. Constraint upgrade: Simple → composite (id, facility_id) where needed
+    32. Orphan CodeChunks: Delete chunks whose parent CodeExample doesn't exist
+    33. Status rollback: Roll back status on nodes missing lifecycle-required fields
 
     Args:
         dry_run: If True, only report counts without making changes.
@@ -966,6 +975,286 @@ def migrate_schema_relationships(
                 "Deduplicated %d CodeChunk nodes",
                 stats["dedup_codechunk_created"],
             )
+
+        # 25. Create missing AT_FACILITY edges for WikiPage nodes
+        _run_migration_step(
+            client,
+            key="wiki_page_at_facility",
+            stats=stats,
+            dry_run=dry_run,
+            count_query="""
+                MATCH (w:WikiPage)
+                WHERE w.facility_id IS NOT NULL
+                AND NOT (w)-[:AT_FACILITY]->(:Facility)
+                RETURN count(w) AS pending
+            """,
+            apply_query="""
+                MATCH (w:WikiPage)
+                WHERE w.facility_id IS NOT NULL
+                AND NOT (w)-[:AT_FACILITY]->(:Facility)
+                WITH w LIMIT $batch_size
+                MATCH (f:Facility {id: w.facility_id})
+                MERGE (w)-[:AT_FACILITY]->(f)
+                RETURN count(*) AS created
+            """,
+            log_msg="Created %d AT_FACILITY relationships for WikiPages",
+            batch_size=1000,
+        )
+
+        # 26. Create missing AT_FACILITY edges for DataAccess nodes
+        _run_migration_step(
+            client,
+            key="data_access_at_facility",
+            stats=stats,
+            dry_run=dry_run,
+            count_query="""
+                MATCH (da:DataAccess)
+                WHERE da.facility_id IS NOT NULL
+                AND NOT (da)-[:AT_FACILITY]->(:Facility)
+                RETURN count(da) AS pending
+            """,
+            apply_query="""
+                MATCH (da:DataAccess)
+                WHERE da.facility_id IS NOT NULL
+                AND NOT (da)-[:AT_FACILITY]->(:Facility)
+                WITH da LIMIT $batch_size
+                MATCH (f:Facility {id: da.facility_id})
+                MERGE (da)-[:AT_FACILITY]->(f)
+                RETURN count(*) AS created
+            """,
+            log_msg="Created %d AT_FACILITY relationships for DataAccess",
+            batch_size=1000,
+        )
+
+        # 27. Remove spurious cross-facility AT_FACILITY edges
+        #     Nodes have correct facility_id property but extra edges to
+        #     wrong Facility nodes (created by buggy batch operations).
+        _run_migration_step(
+            client,
+            key="spurious_at_facility",
+            stats=stats,
+            dry_run=dry_run,
+            count_query="""
+                MATCH (n)-[r:AT_FACILITY]->(f:Facility)
+                WHERE n.facility_id IS NOT NULL AND n.facility_id <> f.id
+                RETURN count(r) AS pending
+            """,
+            apply_query="""
+                MATCH (n)-[r:AT_FACILITY]->(f:Facility)
+                WHERE n.facility_id IS NOT NULL AND n.facility_id <> f.id
+                WITH r LIMIT $batch_size
+                DELETE r
+                RETURN count(*) AS created
+            """,
+            log_msg="Removed %d spurious cross-facility AT_FACILITY edges",
+            batch_size=5000,
+        )
+
+        # 28. Create missing HAS_CHUNK edges for orphan CodeChunks
+        #     Chunks have code_example_id but no incoming HAS_CHUNK edge.
+        _run_migration_step(
+            client,
+            key="orphan_has_chunk",
+            stats=stats,
+            dry_run=dry_run,
+            count_query="""
+                MATCH (cc:CodeChunk)
+                WHERE cc.code_example_id IS NOT NULL
+                AND NOT (cc)<-[:HAS_CHUNK]-(:CodeExample)
+                MATCH (ce:CodeExample {id: cc.code_example_id})
+                RETURN count(cc) AS pending
+            """,
+            apply_query="""
+                MATCH (cc:CodeChunk)
+                WHERE cc.code_example_id IS NOT NULL
+                AND NOT (cc)<-[:HAS_CHUNK]-(:CodeExample)
+                WITH cc LIMIT $batch_size
+                MATCH (ce:CodeExample {id: cc.code_example_id})
+                MERGE (ce)-[:HAS_CHUNK]->(cc)
+                RETURN count(*) AS created
+            """,
+            log_msg="Created %d HAS_CHUNK relationships for orphan CodeChunks",
+            batch_size=5000,
+        )
+
+        # 29. Remove undeclared _related_ids and related_ids_count properties
+        _run_migration_step(
+            client,
+            key="undeclared_related_ids",
+            stats=stats,
+            dry_run=dry_run,
+            count_query="""
+                MATCH (cc:CodeChunk)
+                WHERE cc._related_ids IS NOT NULL OR cc.related_ids_count IS NOT NULL
+                RETURN count(cc) AS pending
+            """,
+            apply_query="""
+                MATCH (cc:CodeChunk)
+                WHERE cc._related_ids IS NOT NULL OR cc.related_ids_count IS NOT NULL
+                WITH cc LIMIT $batch_size
+                REMOVE cc._related_ids, cc.related_ids_count
+                RETURN count(cc) AS created
+            """,
+            log_msg="Cleaned %d CodeChunks with undeclared _related_ids properties",
+            batch_size=5000,
+        )
+
+        # 30. Normalize DocSource source_type 'twiki_raw' → 'twiki'
+        result = client.query("""
+            MATCH (d:DocSource) WHERE d.source_type = 'twiki_raw'
+            RETURN count(d) AS pending
+        """)
+        pending = result[0]["pending"] if result else 0
+        stats["twiki_raw_pending"] = pending
+
+        if not dry_run and pending > 0:
+            client.query("""
+                MATCH (d:DocSource) WHERE d.source_type = 'twiki_raw'
+                SET d.source_type = 'twiki'
+            """)
+            stats["twiki_raw_created"] = pending
+            logger.info("Normalized %d DocSource twiki_raw → twiki", pending)
+
+        # 31. Fix constraints: upgrade simple → composite (id, facility_id)
+        #     for all labels that the schema says need composite constraints
+        from imas_codex.graph.schema import GraphSchema
+
+        schema = GraphSchema()
+        constraints = client.query("""
+            SHOW CONSTRAINTS YIELD name, labelsOrTypes, properties
+            RETURN name, labelsOrTypes[0] AS label, properties
+        """)
+        constraint_map = {}
+        for c in constraints or []:
+            constraint_map[c["label"]] = (c["name"], c["properties"])
+
+        constraint_fixes = 0
+        for label in schema.node_labels:
+            if not schema.needs_composite_constraint(label):
+                continue
+            existing = constraint_map.get(label)
+            if existing and "facility_id" not in existing[1]:
+                constraint_fixes += 1
+                if not dry_run:
+                    client.query(f"DROP CONSTRAINT {existing[0]} IF EXISTS")
+                    id_field = schema.get_identifier(label)
+                    constraint_name = f"{label.lower()}_{id_field}"
+                    client.query(
+                        f"CREATE CONSTRAINT {constraint_name} IF NOT EXISTS "
+                        f"FOR (n:{label}) REQUIRE (n.{id_field}, n.facility_id) IS UNIQUE"
+                    )
+                    logger.info(
+                        "Upgraded %s constraint to composite (id, facility_id)",
+                        label,
+                    )
+        stats["constraint_upgrade_pending"] = constraint_fixes
+        if not dry_run:
+            stats["constraint_upgrade_created"] = constraint_fixes
+
+        # 32. Delete orphan CodeChunks whose parent CodeExample doesn't exist
+        _run_migration_step(
+            client,
+            key="orphan_codechunk_cleanup",
+            stats=stats,
+            dry_run=dry_run,
+            count_query="""
+                MATCH (cc:CodeChunk)
+                WHERE cc.code_example_id IS NOT NULL
+                AND NOT EXISTS { MATCH (ce:CodeExample {id: cc.code_example_id}) }
+                RETURN count(cc) AS pending
+            """,
+            apply_query="""
+                MATCH (cc:CodeChunk)
+                WHERE cc.code_example_id IS NOT NULL
+                AND NOT EXISTS { MATCH (ce:CodeExample {id: cc.code_example_id}) }
+                WITH cc LIMIT $batch_size
+                DETACH DELETE cc
+                RETURN count(cc) AS created
+            """,
+            log_msg="Deleted %d orphan CodeChunks (missing parent CodeExample)",
+            batch_size=5000,
+        )
+
+        # 33. Roll back status on nodes missing lifecycle-required fields
+        #     Nodes that advanced to a status requiring certain fields but
+        #     the fields are null — roll back so pipelines re-process them.
+        status_rollbacks = [
+            # CodeFile: scored needs score_composite → roll back to triaged
+            (
+                "CodeFile",
+                "status",
+                "scored",
+                "score_composite",
+                "triaged",
+            ),
+            # CodeFile: triaged/scored/ingested needs triage_composite → discovered
+            (
+                "CodeFile",
+                "status",
+                "triaged",
+                "triage_composite",
+                "discovered",
+            ),
+            # DataNode: enriched needs description → discovered
+            (
+                "DataNode",
+                "enrichment_status",
+                "enriched",
+                "description",
+                "discovered",
+            ),
+            # FacilityPath: triaged/scored/enriched needs description → discovered
+            (
+                "FacilityPath",
+                "status",
+                "triaged",
+                "description",
+                "discovered",
+            ),
+            # FacilityPath: scored/enriched needs score_composite → triaged
+            (
+                "FacilityPath",
+                "status",
+                "scored",
+                "score_composite",
+                "triaged",
+            ),
+        ]
+        total_rollbacks = 0
+        for (
+            label,
+            status_field,
+            from_status,
+            required_field,
+            to_status,
+        ) in status_rollbacks:
+            result = client.query(
+                f"MATCH (n:{label}) "
+                f"WHERE n.{required_field} IS NULL AND n.{status_field} = $from_status "
+                f"RETURN count(n) AS pending",
+                from_status=from_status,
+            )
+            pending = result[0]["pending"] if result else 0
+            if pending > 0 and not dry_run:
+                client.query(
+                    f"MATCH (n:{label}) "
+                    f"WHERE n.{required_field} IS NULL AND n.{status_field} = $from_status "
+                    f"SET n.{status_field} = $to_status",
+                    from_status=from_status,
+                    to_status=to_status,
+                )
+                logger.info(
+                    "Rolled back %d %s from %s→%s (null %s)",
+                    pending,
+                    label,
+                    from_status,
+                    to_status,
+                    required_field,
+                )
+            total_rollbacks += pending
+        stats["status_rollback_pending"] = total_rollbacks
+        if not dry_run:
+            stats["status_rollback_created"] = total_rollbacks
 
     return stats
 

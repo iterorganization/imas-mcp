@@ -1011,6 +1011,36 @@ def check_graph_exists(data_dir: Path | None = None) -> bool:
     return data_path.exists() and any(data_path.iterdir())
 
 
+def _check_archive_age(archive_path: Path) -> None:
+    """Warn if archive is older than current graph. Raises ClickException."""
+    current = get_local_graph_manifest()
+    if not current or "timestamp" not in current:
+        return  # No current manifest — nothing to compare against
+
+    try:
+        with tarfile.open(archive_path, "r:gz") as tar:
+            for member in tar.getmembers():
+                if member.name.endswith("manifest.json"):
+                    f = tar.extractfile(member)
+                    if f:
+                        archive_manifest = json.loads(f.read())
+                        archive_ts = archive_manifest.get("timestamp")
+                        if archive_ts and archive_ts < current["timestamp"]:
+                            raise click.ClickException(
+                                f"Archive is older than current graph.\n"
+                                f"  Archive:  {archive_manifest.get('version', '?')} "
+                                f"({archive_ts})\n"
+                                f"  Current:  {current.get('version', '?')} "
+                                f"({current['timestamp']})\n"
+                                f"Use --force to load anyway."
+                            )
+                    break
+    except click.ClickException:
+        raise
+    except Exception:
+        pass  # Can't read archive manifest — skip check
+
+
 # ============================================================================
 # Main Command Group
 # ============================================================================
@@ -2224,6 +2254,10 @@ def graph_load(
     password = password or get_graph_password()
 
     archive_path = Path(archive)
+
+    # ── Age guard: warn if loading an older archive than current graph ───
+    if not force:
+        _check_archive_age(archive_path)
 
     # ── Remote dispatch ──────────────────────────────────────────────────
     from imas_codex.graph.remote import is_remote_location
