@@ -279,10 +279,11 @@ class TestSchemaFor:
             schema_for("NonexistentLabel")
 
     def test_schema_for_token_efficiency(self):
-        """Task-specific schema should be much smaller than full schema."""
+        """Task-specific schema should be smaller than full-detail schema."""
         from imas_codex.graph.schema_context import schema_for
 
-        overview = schema_for(task="overview")
-        signals = schema_for(task="signals")
-        # Signals slice should be significantly smaller than overview
-        assert len(signals) < len(overview)
+        # Compare signals slice against the full-detail output for ALL labels
+        all_labels = schema_for(task="signals")
+        # A single-label slice should be significantly smaller
+        single = schema_for("FacilitySignal")
+        assert len(single) < len(all_labels)

@@ -272,24 +272,6 @@ enums:
         description: C++ source code
       julia:
         description: Julia source code
-      html:
-        description: HTML content
-      markdown:
-        description: Markdown content
-      text:
-        description: Plain text content
-      rst:
-        description: reStructuredText content
-      pdf:
-        description: PDF extracted content
-      notebook:
-        description: Jupyter notebook content
-      docx:
-        description: Word document content
-      pptx:
-        description: PowerPoint presentation content
-      xlsx:
-        description: Excel spreadsheet content
 
   PathType:
     description: Types of filesystem paths at a facility
@@ -452,6 +434,8 @@ enums:
         description: MediaWiki-based sites (Wikipedia, SPCwiki)
       confluence:
         description: Atlassian Confluence (REST API available)
+      twiki:
+        description: TWiki-based wiki sites
       readthedocs:
         description: ReadTheDocs hosted documentation
       github_wiki:
@@ -487,10 +471,6 @@ enums:
         description: Computational notebook (Jupyter, Mathematica)
       other:
         description: Other file types
-      documentation:
-        description: Documentation file (README, docs, etc.)
-      image:
-        description: Image file (PNG, JPG, SVG, etc.)
 
   DocumentSourceType:
     description: >-
@@ -1074,31 +1054,6 @@ classes:
         description: JSON-encoded list of key pattern categories informing score adjustment
       evidence_summary:
         description: Brief summary of pattern evidence (e.g., "15 MDSplus, 3 IMAS writes")
-      # File scan and ingestion tracking
-      last_file_scan_at:
-        description: When files in this directory were last scanned for ingestion
-        range: datetime
-      last_ingested_at:
-        description: When source files from this path were last ingested
-        range: datetime
-      rescore_reason:
-        description: Reason this path was re-scored (e.g., new files detected)
-      rescored_at:
-        description: When this path was re-scored
-        range: datetime
-      # Relationships to child content
-      source_files:
-        description: Source files contained in this directory path
-        range: SourceFile
-        multivalued: true
-        annotations:
-          relationship_type: CONTAINS
-      produced_examples:
-        description: Code examples extracted from this source path
-        range: CodeExample
-        multivalued: true
-        annotations:
-          relationship_type: PRODUCED
 
 # =============================================================================
 # Evidence Class (Linked semantic indicators, reusable across node types)
@@ -2227,8 +2182,6 @@ classes:
         description: "[DEPRECATED] Old name for data_source_node. Retained for backward compatibility."
       skip_reason:
         description: Why this signal was skipped during enrichment or access checking
-      tree_name:
-        description: MDSplus tree name containing this signal (e.g., results, magnetics)
 
   DataAccess:
     description: >-
@@ -2858,62 +2811,6 @@ classes:
         required: true
       status:
         range: SourceFileStatus
-      language:
-        description: Programming language (detected from extension)
-        range: ProgrammingLanguage
-      in_directory:
-        description: FacilityPath that contains this file
-        range: FacilityPath
-        annotations:
-          relationship_type: IN_DIRECTORY
-      discovered_at:
-        description: When this file was discovered
-        range: datetime
-      enriched_at:
-        description: When enrichment was completed
-        range: datetime
-      ingested_at:
-        description: When file content was ingested
-        range: datetime
-      is_enriched:
-        description: Whether this file has been enriched
-        range: boolean
-      interest_score:
-        description: Legacy interest score
-        range: float
-      line_count:
-        description: Number of lines in the file
-        range: integer
-      file_category:
-        description: Category of file
-        range: FileCategory
-      pattern_categories:
-        description: JSON dict of pattern category match counts
-      total_pattern_matches:
-        description: Total number of pattern matches
-        range: integer
-      score_modeling_code:
-        range: float
-      score_analysis_code:
-        range: float
-      score_operations_code:
-        range: float
-      score_data_access:
-        range: float
-      score_workflow:
-        range: float
-      score_visualization:
-        range: float
-      score_imas:
-        range: float
-      score_convention:
-        range: float
-      score_documentation:
-        range: float
-      score_reason:
-        description: Brief explanation for the assigned scores
-      skip_reason:
-        description: One-line reason why this file was skipped
 
   CodeFile:
     description: >-
@@ -3681,14 +3578,6 @@ classes:
         inlined: false
         annotations:
           relationship_type: HAS_IMAGE
-      has_artifacts:
-        description: "[DEPRECATED] Legacy wiki artifacts (use has_documents/has_images)"
-        range: WikiArtifact
-        multivalued: true
-        inlined: false
-        annotations:
-          relationship_type: HAS_ARTIFACT
-      
       # Worker coordination (same pattern as FacilityPath)
       claimed_at:
         description: >-
@@ -4052,106 +3941,3 @@ classes:
       # Error tracking
       error:
         description: Error message if status=failed
-
-  WikiArtifact:
-    deprecated: >-
-      DEPRECATED: Use Document for documents and Image for images.
-      Retained for graph compatibility during migration.
-    description: >-
-      [DEPRECATED] Wiki artifact (document or image) discovered from facility wikis.
-      Use Document or Image for new data.
-    class_uri: facility:WikiArtifact
-    attributes:
-      id:
-        identifier: true
-        required: true
-      facility_id:
-        required: true
-        range: Facility
-        annotations:
-          relationship_type: AT_FACILITY
-      url:
-        description: Source URL of the artifact
-        required: true
-      filename:
-        description: Filename of the artifact
-        required: true
-      artifact_type:
-        description: Type of artifact (image, document, etc.)
-        required: true
-      status:
-        description: Processing status
-        required: true
-      mime_type:
-        description: MIME type of the artifact
-      size_bytes:
-        description: Size of the artifact in bytes
-        range: integer
-      description:
-        description: Description of the artifact content
-      embedding:
-        description: Vector embedding of description
-        multivalued: true
-        range: float
-      embedded_at:
-        description: When the embedding was last computed
-        range: datetime
-      chunk_count:
-        description: Number of chunks extracted
-        range: integer
-      # Scoring
-      score:
-        description: Composite relevance score
-        range: float
-      score_imas_relevance:
-        range: float
-      score_code_documentation:
-        range: float
-      score_data_access:
-        range: float
-      score_data_documentation:
-        range: float
-      score_physics_content:
-        range: float
-      score_calibration:
-        range: float
-      score_cost:
-        range: float
-      reasoning:
-        description: LLM reasoning for scores
-      keywords:
-        multivalued: true
-      preview_text:
-        description: Text preview for scoring context
-      physics_domain:
-        description: Primary physics domain
-      artifact_purpose:
-        description: Purpose classification
-      should_ingest:
-        description: Whether artifact should be ingested
-        range: boolean
-      # Discovery
-      discovered_at:
-        range: datetime
-      bulk_discovered:
-        range: boolean
-      score_exempt:
-        range: boolean
-      scored_at:
-        range: datetime
-      ingested_at:
-        range: datetime
-      # Error handling
-      error:
-        description: Error message if processing failed
-      failed_at:
-        range: datetime
-      skip_reason:
-        description: Why this artifact was skipped
-      defer_reason:
-        description: Why this artifact was deferred
-      # Worker coordination
-      claim_token:
-        description: UUID token for atomic work claiming
-      claimed_at:
-        range: datetime
