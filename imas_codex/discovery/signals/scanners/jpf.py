@@ -13,7 +13,7 @@ Discovery strategy:
 Remote execution uses the shared run_python_script() infrastructure
 with scripts in imas_codex/remote/scripts/ (enumerate_jpf.py, check_jpf.py).
 
-Config key: data_systems.mdsplus.jpf_subsystems (subsystem codes list)
+Config key: data_systems.jpf.subsystem_codes (subsystem codes list)
 Facility: JET
 """
 
@@ -70,9 +70,9 @@ class JPFScanner:
     3. Create FacilitySignal per subsystem/signal with dpf() accessor
     4. Heuristic physics domain from subsystem code
 
-    Config (data_systems.mdsplus):
+    Config (data_systems.jpf):
         server: str - MDSplus server hostname
-        jpf_subsystems: list[str] - 2-char subsystem codes
+        subsystem_codes: list[str] - 2-char subsystem codes
         reference_shot: int - Shot for signal enumeration
         setup_commands: list[str] - Module loads for MDSplus
     """
@@ -93,11 +93,11 @@ class JPFScanner:
         """
         from imas_codex.remote.executor import async_run_python_script
 
-        # JPF config is nested under data_systems.mdsplus
+        # JPF config is nested under data_systems.jpf
         mdsplus_config = config
         server = mdsplus_config.get("server")
         ref_shot = reference_shot or mdsplus_config.get("reference_shot")
-        subsystems = mdsplus_config.get("jpf_subsystems", [])
+        subsystems = mdsplus_config.get("subsystem_codes", [])
 
         if not server:
             logger.warning("JPF scanner: no MDSplus server configured for %s", facility)
@@ -106,8 +106,10 @@ class JPFScanner:
             logger.warning("JPF scanner: no reference_shot configured for %s", facility)
             return ScanResult(stats={"error": "no reference_shot"})
         if not subsystems:
-            logger.warning("JPF scanner: no jpf_subsystems configured for %s", facility)
-            return ScanResult(stats={"error": "no jpf_subsystems configured"})
+            logger.warning(
+                "JPF scanner: no subsystem_codes configured for %s", facility
+            )
+            return ScanResult(stats={"error": "no subsystem_codes configured"})
 
         logger.info(
             "JPF scanner: enumerating %d subsystems on %s (shot %d)",
