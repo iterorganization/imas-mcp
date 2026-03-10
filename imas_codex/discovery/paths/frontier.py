@@ -2762,12 +2762,12 @@ def sample_enriched_paths(
         },
         "score_medium": {
             "filter": "p.score_composite >= 0.5 AND p.score_composite < 0.75",
-            "order": "rand()",
+            "order": "abs(p.score_composite - 0.625) ASC, p.id ASC",
             "desc": "Medium-scoring enriched paths (0.5-0.75)",
         },
         "score_low": {
             "filter": "p.score_composite >= 0.25 AND p.score_composite < 0.5",
-            "order": "rand()",
+            "order": "abs(p.score_composite - 0.375) ASC, p.id ASC",
             "desc": "Lower-scoring enriched paths (0.25-0.5)",
         },
     }
