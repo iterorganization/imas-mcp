@@ -90,6 +90,12 @@ logger = logging.getLogger(__name__)
     default=False,
     help="Rescan paths that were previously scanned",
 )
+@click.option(
+    "--triage-batch-size",
+    type=int,
+    default=None,
+    help="Files per triage LLM call (default: 50). Tune for cost vs quality.",
+)
 def code(
     facility: str,
     min_score: float | None,
@@ -106,6 +112,7 @@ def code(
     time_limit: int | None,
     verbose: bool,
     rescan: bool,
+    triage_batch_size: int | None,
 ) -> None:
     """Discover and ingest source code from scored facility paths.
 
@@ -272,6 +279,13 @@ def code(
                 num_code_workers=code_workers,
                 scan_only=scan_only,
                 score_only=score_only,
+                **(
+                    {
+                        "triage_batch_size": triage_batch_size,
+                    }
+                    if triage_batch_size is not None
+                    else {}
+                ),
                 deadline=deadline,
                 on_scan_progress=on_scan,
                 on_triage_progress=on_triage,
