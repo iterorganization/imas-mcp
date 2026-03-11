@@ -363,28 +363,6 @@ When a command times out, **persist the constraint immediately** via `update_inf
 - **Graph (public):** MDSplus tree names, analysis code names/versions/paths, TDI functions, diagnostic names
 - **Infrastructure (private):** Hostnames, IPs, NFS mounts, OS versions, tool availability, user directories
 
-## Ingestion
-
-```bash
-# Queue files for ingestion
-uv run imas-codex ingest queue tcv /path/a.py /path/b.py
-
-# Pipe from remote search
-ssh tcv 'rg -l "equilibrium|IMAS" /home/codes -g "*.py"' | \
-  uv run imas-codex ingest queue tcv --stdin
-
-# Process queue
-uv run imas-codex ingest run tcv
-uv run imas-codex ingest run tcv --min-score 0.7  # High-priority only
-uv run imas-codex ingest run tcv --dry-run         # Preview
-
-# Monitor
-uv run imas-codex ingest status tcv
-uv run imas-codex ingest list tcv -s failed
-```
-
-The pipeline extracts MDSplus tree paths, TDI function calls, IDS references, and import dependencies. Do not fabricate `patterns_matched` metadata.
-
 ## Graph Operations
 
 **Schema verification:** Before writing Cypher queries, verify property names against `agents/schema-reference.md` (auto-generated) or call `get_graph_schema()`. Common pitfall: WikiChunk/CodeChunk text content is stored in the `text` property.\n\n### Neo4j Management
@@ -731,7 +709,7 @@ Extended examples and edge cases for each domain: [agents/](agents/)
 |-------|---------|
 | Explore | Remote facility discovery (read-only + MCP) |
 | Develop | Code development (standard + MCP) |
-| Ingest | Code ingestion pipeline (core + MCP) |
+
 | Graph | Knowledge graph operations (core + MCP) |
 
 ## Fallback: MCP Server Not Running
@@ -739,6 +717,5 @@ Extended examples and edge cases for each domain: [agents/](agents/)
 ```bash
 uv run imas-codex graph status          # Graph operations
 uv run imas-codex graph shell           # Interactive Cypher
-uv run imas-codex ingest run tcv        # Ingestion
 uv run pytest                           # Testing
 ```

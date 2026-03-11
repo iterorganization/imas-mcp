@@ -60,20 +60,17 @@ def register_commands() -> None:
     from imas_codex.cli.credentials import credentials
     from imas_codex.cli.discover import discover
     from imas_codex.cli.embed import embed
-    from imas_codex.cli.enrich import enrich
     from imas_codex.cli.facilities import facilities
     from imas_codex.cli.graph_cli import graph
     from imas_codex.cli.hosts import hosts
     from imas_codex.cli.ids import ids
     from imas_codex.cli.imas_dd import imas
-    from imas_codex.cli.ingest import ingest
     from imas_codex.cli.llm_cli import llm
     from imas_codex.cli.map import map_cmd
     from imas_codex.cli.release import release
     from imas_codex.cli.serve import serve
     from imas_codex.cli.tools import tools
     from imas_codex.cli.tunnel import tunnel
-    from imas_codex.cli.utils import setup_age
 
     main.add_command(serve)
     main.add_command(graph)
@@ -85,14 +82,11 @@ def register_commands() -> None:
     main.add_command(embed)
     main.add_command(ids)
     main.add_command(imas)
-    main.add_command(enrich)
-    main.add_command(ingest)
     main.add_command(tools)
     main.add_command(hosts)
     main.add_command(map_cmd, "map")
     main.add_command(facilities)
     main.add_command(release)
-    main.add_command(setup_age)
     main.add_command(credentials)
 
 
