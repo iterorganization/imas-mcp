@@ -4,7 +4,7 @@ Multi-domain facility exploration and content discovery for the IMAS knowledge g
 
 ## Overview
 
-The discovery system comprises **six domain pipelines** that populate the knowledge graph with facility-specific code, documentation, data signals, and metadata. Each domain has its own CLI command under `imas-codex discover <domain>`, plus supporting commands under `imas-codex enrich` and `imas-codex imas`.
+The discovery system comprises **six domain pipelines** that populate the knowledge graph with facility-specific code, documentation, data signals, and metadata. Each domain has its own CLI command under `imas-codex discover <domain>`, plus supporting commands under `imas-codex imas dd`.
 
 The pipelines form a **dependency graph** — some domains produce graph nodes and embeddings that other domains consume as dynamic LLM prompt context. Running them in the optimal order maximizes context quality and minimizes LLM cost.
 
@@ -12,7 +12,7 @@ The pipelines form a **dependency graph** — some domains produce graph nodes a
 
 ```
                     ┌──────────────┐
-                    │  IMAS DD     │  imas-codex imas build
+                    │  IMAS DD     │  imas-codex imas dd build
                     │  (foundation)│  IMASNode, clusters, embeddings
                     └──────┬───────┘
                            │ imas_node_embedding
@@ -44,7 +44,7 @@ The pipelines form a **dependency graph** — some domains produce graph nodes a
            │                  │ imas_node_embedding
            └──────────────────┘
     ┌──────────────┐
-    │  ENRICH      │  imas-codex enrich nodes
+    │  ENRICH      │  imas-codex discover signals --enrich-only
     │  NODES       │  (SignalNode metadata)
     │  (agentic)   │  Uses code + graph context
     └──────────────┘
@@ -58,14 +58,14 @@ The pipelines form a **dependency graph** — some domains produce graph nodes a
 | `discover signals` (enrich) | `discover wiki` | WikiChunk nodes, `wiki_chunk_embedding` index | No wiki descriptions/units injected into signal enrichment prompts → more LLM hallucination |
 | `discover signals` (enrich) | `discover code` | `code_chunk_embedding` index | No source code usage patterns in enrichment prompts |
 | `discover documents` | `discover paths` | Scored FacilityPath nodes (≥0.5) | No paths to scan for documents/images |
-| `enrich nodes` | `discover code` + graph | CodeChunk, SignalNode siblings | Less context for SignalNode physics descriptions |
+| `discover signals --enrich-only` | `discover code` + graph | CodeChunk, SignalNode siblings | Less context for SignalNode physics descriptions |
 
 ## Optimal Discovery Sequence
 
 ### Phase 0: Foundation (no facility dependency)
 
 ```bash
-imas-codex imas build        # IMAS DD: IMASNode nodes, embeddings, clusters
+imas-codex imas dd build     # IMAS DD: IMASNode nodes, embeddings, clusters
 ```
 
 Populates IMASNode, DDVersion, Unit, IMASSemanticCluster nodes. Creates `imas_node_embedding` and `cluster_label_embedding` vector indexes used by signal enrichment.
@@ -91,21 +91,21 @@ imas-codex discover documents tcv   # Requires scored paths from Phase 1
 
 ```bash
 imas-codex discover signals tcv     # Benefits from wiki + code + IMAS context
-imas-codex enrich nodes             # Benefits from code chunks in graph
+imas-codex discover signals tcv --enrich-only   # Benefits from code chunks in graph
 ```
 
 ### Quick Reference
 
 | Order | Command | Requires | Produces |
 |-------|---------|----------|----------|
-| 0 | `imas build` | Nothing | IMASNode, clusters, embeddings |
+| 0 | `imas dd build` | Nothing | IMASNode, clusters, embeddings |
 | 1a | `discover paths` | Facility config | FacilityPath (scored) |
 | 1b | `discover wiki` | Wiki URLs in config | WikiPage, WikiChunk, WikiArtifact, Image |
 | 1c | `discover static` | MDSplus static_trees config | StructuralEpoch, SignalNode |
 | 2a | `discover code` | Scored FacilityPaths (≥0.7) | CodeFile, SourceFile, CodeChunk |
 | 2b | `discover documents` | Scored FacilityPaths (≥0.5) | Document, Image |
 | 3a | `discover signals` | Wiki + code + IMAS (optional but improves quality) | FacilitySignal, DataAccess |
-| 3b | `enrich nodes` | SignalNode + code context | Enriched SignalNode descriptions |
+| 3b | `discover signals --enrich-only` | SignalNode + code context | Enriched SignalNode descriptions |
 
 ---
 

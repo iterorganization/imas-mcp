@@ -1,6 +1,6 @@
 # CLI Unification: 19 → 13 Top-Level Commands
 
-Status: **Approved**
+Status: **Implemented**
 Supersedes: CLI sections in `imas-mapping-combined.md` Phase 5, `imas-mapping-pipeline.md` Phase 1c
 
 ## Summary

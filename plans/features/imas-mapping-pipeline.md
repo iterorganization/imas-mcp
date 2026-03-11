@@ -309,7 +309,10 @@ for a domain, the pipeline reports this as a prerequisite gap.
 
 ## CLI Design
 
-### Top-Level `map` CLI
+> **CLI section superseded by `cli-unification.md`.** Map commands are now under
+> `imas-codex imas map` and IDS commands under `imas-codex imas`.
+
+### `imas map` Subgroup
 
 Follows the `discover` pattern: flat namespace, `_CleanupGroup` for help formatting,
 shared infrastructure.

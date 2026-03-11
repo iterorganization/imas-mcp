@@ -187,13 +187,13 @@ with the DD unit alias registry. Common patterns:
 
 ```bash
 # Seed all mappings + recipe for an IDS
-uv run imas-codex ids seed jet pf_active --dd-version 4.1.1
+uv run imas-codex imas seed jet pf_active --dd-version 4.1.1
 
 # List available recipes (checks graph first, falls back to YAML)
-uv run imas-codex ids list
+uv run imas-codex imas list
 
 # Assemble and export
-uv run imas-codex ids export jet pf_active p68613 -o output.json
+uv run imas-codex imas export jet pf_active p68613 -o output.json
 ```
 
 ## Design Decisions

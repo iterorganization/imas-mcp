@@ -199,21 +199,21 @@ class IDSAssembler:
 
 ### CLI Integration
 
+> **CLI section superseded by `cli-unification.md`.** IDS commands are now under
+> `imas-codex imas` (not `imas-codex ids`).
+
 ```bash
 # List available IDS recipes for a facility
-imas-codex ids list jet
+imas-codex imas list jet
 
 # Show recipe details and completeness
-imas-codex ids show jet pf_active
+imas-codex imas show jet pf_active
 
 # Export IDS to HDF5
-imas-codex ids export jet pf_active --epoch p68613 --output jet_pf_active.h5
+imas-codex imas export jet pf_active --epoch p68613 --output jet_pf_active.h5
 
 # Export all machine description IDSs for an epoch
-imas-codex ids export jet --epoch p68613 --output jet_machine_desc/
-
-# Validate exported IDS against DD schema
-imas-codex ids validate jet_pf_active.h5
+imas-codex imas export jet --epoch p68613 --output jet_machine_desc/
 ```
 
 ## Graph Schema Extensions
@@ -346,10 +346,10 @@ IDSRecipeStatus:
    - Handle multi-element coils (R[], Z[], dR[], dZ[] arrays)
    - Build circuit connections from CI system DataNodes
 
-5. **Add CLI commands**
-   - `imas-codex ids list <facility>`
-   - `imas-codex ids export <facility> <ids_name> [--epoch] [--output]`
-   - `imas-codex ids show <facility> <ids_name>`
+5. **Add CLI commands** *(superseded by cli-unification.md)*
+   - `imas-codex imas list <facility>`
+   - `imas-codex imas export <facility> <ids_name> [--epoch] [--output]`
+   - `imas-codex imas show <facility> <ids_name>`
 
 ### Phase 2: Expand to related IDSs
 
