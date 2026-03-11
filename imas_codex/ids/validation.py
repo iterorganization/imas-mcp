@@ -262,3 +262,60 @@ def compute_coverage(
         mapped_paths=sorted(mapped),
         percentage=pct,
     )
+
+
+# ---------------------------------------------------------------------------
+# Signal group coverage
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class SignalCoverageReport:
+    """What fraction of enriched signal groups have IMAS bindings."""
+
+    facility: str
+    total_enriched: int = 0
+    mapped: int = 0
+    unmapped_groups: list[str] = field(default_factory=list)
+    percentage: float = 0.0
+
+
+def compute_signal_coverage(
+    facility: str,
+    *,
+    gc: GraphClient | None = None,
+) -> SignalCoverageReport:
+    """Query enriched SignalGroups and check which have MAPS_TO_IMAS bindings.
+
+    Args:
+        facility: Facility identifier (e.g. "jet").
+        gc: GraphClient instance (created if None).
+
+    Returns:
+        SignalCoverageReport with mapped/unmapped counts and percentage.
+    """
+    if gc is None:
+        gc = GraphClient()
+
+    rows = gc.query(
+        """
+        MATCH (sg:SignalGroup {facility_id: $facility, status: 'enriched'})
+        OPTIONAL MATCH (sg)-[:MAPS_TO_IMAS]->(ip:IMASNode)
+        RETURN sg.id AS id, ip IS NOT NULL AS is_mapped
+        """,
+        facility=facility,
+    )
+
+    total = len(rows)
+    mapped_ids = [r["id"] for r in rows if r["is_mapped"]]
+    unmapped_ids = sorted(r["id"] for r in rows if not r["is_mapped"])
+    n_mapped = len(mapped_ids)
+    pct = (n_mapped / total * 100) if total > 0 else 0.0
+
+    return SignalCoverageReport(
+        facility=facility,
+        total_enriched=total,
+        mapped=n_mapped,
+        unmapped_groups=unmapped_ids,
+        percentage=pct,
+    )

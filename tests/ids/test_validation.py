@@ -8,8 +8,10 @@ from imas_codex.ids.models import ValidatedFieldMapping
 from imas_codex.ids.validation import (
     BindingCheck,
     CoverageReport,
+    SignalCoverageReport,
     ValidationReport,
     compute_coverage,
+    compute_signal_coverage,
     validate_mapping,
 )
 
@@ -311,3 +313,58 @@ class TestCoverageReport:
         assert report.percentage == 0.0
         assert report.unmapped_fields == []
         assert report.mapped_paths == []
+
+
+class TestSignalCoverageReport:
+    def test_defaults(self):
+        report = SignalCoverageReport(facility="jet")
+        assert report.total_enriched == 0
+        assert report.mapped == 0
+        assert report.percentage == 0.0
+        assert report.unmapped_groups == []
+
+
+class TestComputeSignalCoverage:
+    def test_no_enriched_groups(self, mock_gc):
+        mock_gc.query.return_value = []
+        report = compute_signal_coverage("jet", gc=mock_gc)
+        assert report.total_enriched == 0
+        assert report.mapped == 0
+        assert report.percentage == 0.0
+        assert report.unmapped_groups == []
+
+    def test_all_mapped(self, mock_gc):
+        mock_gc.query.return_value = [
+            {"id": "jet:ids:pf_active:coil_1", "is_mapped": True},
+            {"id": "jet:ids:pf_active:coil_2", "is_mapped": True},
+        ]
+        report = compute_signal_coverage("jet", gc=mock_gc)
+        assert report.total_enriched == 2
+        assert report.mapped == 2
+        assert report.percentage == 100.0
+        assert report.unmapped_groups == []
+
+    def test_partial_mapped(self, mock_gc):
+        mock_gc.query.return_value = [
+            {"id": "jet:ids:pf_active:coil_1", "is_mapped": True},
+            {"id": "jet:ids:pf_active:coil_2", "is_mapped": False},
+            {"id": "jet:ids:pf_active:coil_3", "is_mapped": False},
+        ]
+        report = compute_signal_coverage("jet", gc=mock_gc)
+        assert report.total_enriched == 3
+        assert report.mapped == 1
+        assert report.percentage == pytest.approx(33.33, abs=0.1)
+        assert report.unmapped_groups == [
+            "jet:ids:pf_active:coil_2",
+            "jet:ids:pf_active:coil_3",
+        ]
+
+    def test_none_mapped(self, mock_gc):
+        mock_gc.query.return_value = [
+            {"id": "jet:ids:pf_active:coil_1", "is_mapped": False},
+        ]
+        report = compute_signal_coverage("jet", gc=mock_gc)
+        assert report.total_enriched == 1
+        assert report.mapped == 0
+        assert report.percentage == 0.0
+        assert report.unmapped_groups == ["jet:ids:pf_active:coil_1"]
