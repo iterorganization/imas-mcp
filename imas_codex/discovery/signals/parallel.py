@@ -1351,6 +1351,72 @@ def propagate_source_enrichment(
         return updated
 
 
+def extract_member_identifier(source_key: str, accessor: str) -> str:
+    """Extract the varying part of an accessor given the source pattern.
+
+    The source_key has NNN placeholders where numeric segments vary.
+    This function extracts those segments from a concrete accessor.
+
+    Examples:
+        source_key='CALIB_GAS_NNN:PROPERTIES:PARAM_NNN:LIM'
+        accessor='CALIB_GAS_010:PROPERTIES:PARAM_048:LIM'
+        → '010/048'
+
+        source_key='MAGB_NNN:BPOL'
+        accessor='MAGB_042:BPOL'
+        → '042'
+    """
+    # Find all NNN positions in the source_key
+    parts = []
+    key_segments = _PATTERN_RE.findall(source_key.replace("NNN", "999"))
+    accessor_segments = _PATTERN_RE.findall(accessor)
+
+    # The source key uses NNN → replaced with 999 for regex matching.
+    # The accessor has actual numeric values. Extract them in order.
+    nnn_count = source_key.count("NNN")
+    if nnn_count == 0:
+        return accessor
+
+    # Walk through and collect the varying numeric segments
+    key_idx = 0
+    for seg in accessor_segments:
+        if key_idx < nnn_count:
+            parts.append(seg)
+            key_idx += 1
+
+    return "/".join(parts) if len(parts) > 1 else (parts[0] if parts else accessor)
+
+
+def individualize_members(
+    source_key: str,
+    template: str,
+    members: list[dict],
+) -> list[dict]:
+    """Apply a description template to each member signal.
+
+    Uses the source_key pattern (with NNN placeholders) to extract the
+    member-specific identifier from each accessor, then formats the
+    template.
+
+    Args:
+        source_key: Pattern key with NNN placeholders.
+        template: Description template with {member_id} placeholder.
+        members: List of dicts with at minimum 'id' and 'accessor' keys.
+
+    Returns:
+        List of dicts with 'id' and 'description' keys.
+    """
+    results = []
+    for member in members:
+        member_id = extract_member_identifier(source_key, member["accessor"])
+        try:
+            description = template.format(member_id=member_id)
+        except (KeyError, IndexError):
+            description = template.replace("{member_id}", member_id)
+        results.append({"id": member["id"], "description": description})
+    return results
+
+
 # =============================================================================
 # Epoch Detection Queries
 # =============================================================================
@@ -3343,6 +3409,178 @@ async def enrich_worker(
                 on_progress("enriched batch", state.enrich_stats, enriched)
 
 
+# =============================================================================
+# Post-Propagation Individualization
+# =============================================================================
+
+
+async def individualize_source_descriptions(
+    facility: str,
+    batch_size: int = 20,
+    on_progress: Callable | None = None,
+) -> int:
+    """Generate individualized descriptions for signal source members.
+
+    After propagation copies the representative's description to all members,
+    this makes one batched LLM call per batch of sources to generate a
+    description_template with {member_id} placeholder, then applies it
+    deterministically to each member.
+
+    Sets ``enrichment_source = 'individualized'`` on updated members.
+
+    Args:
+        facility: Facility ID.
+        batch_size: Number of sources per LLM call.
+        on_progress: Optional callback.
+
+    Returns:
+        Total number of member signals individualized.
+    """
+    from imas_codex.agentic.prompt_loader import render_prompt
+    from imas_codex.discovery.base.llm import (
+        ProviderBudgetExhausted,
+        acall_llm_structured,
+    )
+    from imas_codex.discovery.signals.models import (
+        SignalSourceIndividualizationBatch,
+    )
+    from imas_codex.settings import get_model
+
+    model = get_model("language")
+    system_prompt = render_prompt("signals/individualization")
+
+    # Find enriched sources that haven't been individualized yet
+    with GraphClient() as gc:
+        sources = gc.query(
+            """
+            MATCH (sg:SignalSource {facility_id: $facility, status: 'enriched'})
+            WHERE sg.individualized IS NULL OR sg.individualized = false
+            OPTIONAL MATCH (m:FacilitySignal)-[:MEMBER_OF]->(sg)
+            WITH sg, collect({id: m.id, accessor: m.accessor}) AS members
+            WHERE size(members) > 1
+            RETURN sg.id AS source_id,
+                   sg.group_key AS group_key,
+                   sg.description AS description,
+                   sg.representative_id AS representative_id,
+                   members
+            ORDER BY sg.id
+            """,
+            facility=facility,
+        )
+
+    if not sources:
+        logger.info("No sources to individualize for %s", facility)
+        return 0
+
+    total_individualized = 0
+
+    # Process in batches
+    for batch_start in range(0, len(sources), batch_size):
+        batch = sources[batch_start : batch_start + batch_size]
+
+        # Build user prompt with source info
+        user_lines = []
+        for i, src in enumerate(batch, 1):
+            members = src["members"]
+            # Sort members for deterministic ordering
+            members.sort(key=lambda m: m.get("accessor", ""))
+            example_accessors = [
+                m["accessor"] for m in members[:3] if m.get("accessor")
+            ]
+
+            user_lines.append(f"### Source {i}")
+            user_lines.append(f"- **Description**: {src['description'] or 'N/A'}")
+            user_lines.append(f"- **Pattern**: `{src['group_key']}`")
+            user_lines.append(f"- **Member count**: {len(members)}")
+            if example_accessors:
+                user_lines.append(
+                    f"- **Example accessors**: {', '.join(f'`{a}`' for a in example_accessors)}"
+                )
+            user_lines.append("")
+
+        user_prompt = "\n".join(user_lines)
+
+        try:
+            batch_result, batch_cost, total_tokens = await acall_llm_structured(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                response_model=SignalSourceIndividualizationBatch,
+                temperature=0.3,
+            )
+        except ProviderBudgetExhausted:
+            logger.error("Budget exhausted during individualization")
+            break
+        except Exception as e:
+            logger.warning("Individualization LLM call failed: %s", e)
+            continue
+
+        # Apply templates to each source's members
+        for result in batch_result.results:
+            idx = result.source_index - 1
+            if idx < 0 or idx >= len(batch):
+                continue
+
+            src = batch[idx]
+            template = result.description_template
+            members = src["members"]
+
+            # Apply template deterministically
+            individualized = individualize_members(
+                src["group_key"], template, members
+            )
+
+            # Update graph with individualized descriptions
+            if individualized:
+                with GraphClient() as gc:
+                    for item in individualized:
+                        gc.query(
+                            """
+                            MATCH (s:FacilitySignal {id: $signal_id})
+                            SET s.description = $description,
+                                s.enrichment_source = 'individualized'
+                            """,
+                            signal_id=item["id"],
+                            description=item["description"],
+                        )
+                    # Mark source as individualized
+                    gc.query(
+                        """
+                        MATCH (sg:SignalSource {id: $source_id})
+                        SET sg.individualized = true,
+                            sg.description_template = $template,
+                            sg.variation_field = $variation_field
+                        """,
+                        source_id=src["source_id"],
+                        template=template,
+                        variation_field=result.variation_field,
+                    )
+                total_individualized += len(individualized)
+
+        logger.info(
+            "Individualized %d members from %d sources (batch %d-%d)",
+            total_individualized,
+            len(batch),
+            batch_start + 1,
+            batch_start + len(batch),
+        )
+
+        if on_progress:
+            on_progress(
+                f"individualized {total_individualized} members",
+                {"facility": facility},
+            )
+
+    logger.info(
+        "Individualization complete for %s: %d members updated",
+        facility,
+        total_individualized,
+    )
+    return total_individualized
+
+
 def _classify_check_error(error: str) -> str:
     """Classify a check error message into a category for analytics.
 
@@ -4075,6 +4313,21 @@ async def run_parallel_data_discovery(
         on_worker_status=on_worker_status,
     )
 
+    # --- Post-enrichment individualization ---
+    # After all enrichment and propagation is complete, generate individualized
+    # descriptions for signal source members using a single batched LLM call.
+    individualized = 0
+    if not discover_only:
+        try:
+            individualized = await individualize_source_descriptions(
+                facility,
+                on_progress=on_enrich_progress,
+            )
+            if individualized > 0:
+                state.enrich_stats.processed += individualized
+        except Exception as e:
+            logger.warning("Individualization failed: %s", e)
+
     elapsed = time.time() - start_time
     return {
         "scanned": state.discover_stats.processed,
@@ -4086,4 +4339,5 @@ async def run_parallel_data_discovery(
         "extract_count": state.extract_stats.processed,
         "units_count": state.units_stats.processed,
         "promote_count": state.promote_stats.processed,
+        "individualized": individualized,
     }
