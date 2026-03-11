@@ -225,7 +225,10 @@ def _step0_gather_context(
     """Step 0: Gather all context needed for the pipeline."""
     logger.info("Step 0: gathering context for %s/%s", facility, ids_name)
 
-    groups = query_signal_groups(facility, ids_name, gc=gc)
+    # Don't filter by ids_name — Step 1 assigns groups to IDS sections.
+    # Filtering here would require pre-existing MAPS_TO_IMAS relationships,
+    # creating a chicken-and-egg problem for new mappings.
+    groups = query_signal_groups(facility, gc=gc)
     subtree = fetch_imas_subtree(ids_name, gc=gc)
     semantic = search_imas_semantic(f"{facility} {ids_name}", ids_name, gc=gc, k=10)
     existing = search_existing_mappings(facility, ids_name, gc=gc)
