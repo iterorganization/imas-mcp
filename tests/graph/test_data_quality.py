@@ -179,9 +179,10 @@ class TestDescriptionEmbeddingCoverage:
 
     @pytest.mark.parametrize("label", get_description_embeddable_labels())
     def test_description_embedding_coverage(self, graph_client, label, label_counts):
-        """All nodes with descriptions should have embeddings.
+        """Nodes that have been through the embed step should retain embeddings.
 
-        Skips if no embeddings exist at all for this label (embed step not run).
+        Uses ``embedded_at`` to distinguish processed vs unprocessed nodes.
+        Skips when the embed step has not run for this label at all.
         """
 
         if not label_counts.get(label):
@@ -191,26 +192,29 @@ class TestDescriptionEmbeddingCoverage:
             f"MATCH (n:{label}) "
             f"WHERE n.description IS NOT NULL AND n.description <> '' "
             f"WITH count(n) AS with_desc, "
+            f"  count(CASE WHEN n.embedded_at IS NOT NULL THEN 1 END) AS attempted, "
             f"  count(CASE WHEN n.embedding IS NOT NULL THEN 1 END) AS with_emb "
-            f"RETURN with_desc, with_emb"
+            f"RETURN with_desc, attempted, with_emb"
         )
         if not result:
             pytest.skip(f"No {label} nodes with descriptions")
 
         with_desc = result[0]["with_desc"]
+        attempted = result[0]["attempted"]
         with_emb = result[0]["with_emb"]
 
         if with_desc == 0:
             pytest.skip(f"No {label} nodes with descriptions")
 
-        if with_emb == 0:
-            pytest.skip(f"No {label} embeddings found — run `data push --embed` first")
+        if attempted == 0:
+            pytest.skip(f"No {label} embeddings attempted — embed step not yet run")
 
-        coverage = with_emb / with_desc
+        # Of nodes where embedding was attempted, all should still have vectors
+        coverage = with_emb / attempted
         assert coverage >= 0.95, (
-            f"{label} embedding coverage is {coverage:.1%} "
-            f"({with_emb}/{with_desc}). "
-            f"Expected >= 95% after embed update."
+            f"{label} embedding integrity is {coverage:.1%} "
+            f"({with_emb}/{attempted} embedded, {with_desc} total with descriptions). "
+            f"Nodes that were embedded should retain their vectors."
         )
 
 

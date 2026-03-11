@@ -2166,6 +2166,12 @@ classes:
         description: "[DEPRECATED] Old name for data_source_node. Retained for backward compatibility."
       skip_reason:
         description: Why this signal was skipped during enrichment or access checking
+      code_evidence_count:
+        description: Number of code references that resolve to this signal
+        range: integer
+      has_code_evidence:
+        description: Whether any code references resolve to this signal
+        range: boolean
 
   DataAccess:
     description: >-
