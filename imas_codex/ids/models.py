@@ -144,6 +144,7 @@ def persist_mapping_result(
     *,
     gc: GraphClient | None = None,
     provider: str = "imas-codex",
+    status: str = "generated",
 ) -> str:
     """Write a validated mapping result to the graph.
 
@@ -153,6 +154,12 @@ def persist_mapping_result(
       - USES_SIGNAL_GROUP relationships
       - MAPS_TO_IMAS relationships on signal groups
       - MappingEvidence nodes for escalations
+
+    Args:
+        result: The validated mapping result to persist.
+        gc: GraphClient instance (created if None).
+        provider: Provider identifier.
+        status: Initial status for the mapping node.
 
     Returns:
         The IMASMapping node id.
@@ -170,7 +177,7 @@ def persist_mapping_result(
             m.ids_name = $ids_name,
             m.dd_version = $dd_version,
             m.provider = $provider,
-            m.status = 'validated'
+            m.status = $status
         WITH m
         MATCH (f:Facility {id: $facility})
         MERGE (m)-[:AT_FACILITY]->(f)
@@ -180,6 +187,7 @@ def persist_mapping_result(
         ids_name=result.ids_name,
         dd_version=result.dd_version,
         provider=provider,
+        status=status,
     )
 
     # 2. Create POPULATES relationships to section roots

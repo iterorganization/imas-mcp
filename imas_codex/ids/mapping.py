@@ -422,6 +422,7 @@ def generate_mapping(
     model: str | None = None,
     dd_version: str | None = None,
     persist: bool = True,
+    activate: bool = True,
     gc: GraphClient | None = None,
 ) -> MappingResult:
     """Generate IMAS mapping via multi-step LLM pipeline.
@@ -439,6 +440,7 @@ def generate_mapping(
         model: LLM model override (default: language tier).
         dd_version: DD version override (default: from settings).
         persist: Whether to persist results to graph.
+        activate: Whether to promote status to 'active' after persisting.
         gc: GraphClient instance (created if None).
 
     Returns:
@@ -502,9 +504,10 @@ def generate_mapping(
     mapping_id = f"{facility}:{ids_name}"
     persisted = False
     if persist:
-        mapping_id = persist_mapping_result(validated, gc=gc)
+        status = "active" if activate else "generated"
+        mapping_id = persist_mapping_result(validated, gc=gc, status=status)
         persisted = True
-        logger.info("Persisted mapping %s", mapping_id)
+        logger.info("Persisted mapping %s with status '%s'", mapping_id, status)
 
     logger.info(
         "Pipeline complete: %d bindings, %d escalations, $%.4f total",

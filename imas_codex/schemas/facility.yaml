@@ -204,16 +204,16 @@ enums:
         description: Agent reasoning based on domain expertise
 
   IMASMappingStatus:
-    description: Status lifecycle for IDS assembly recipes
+    description: Status lifecycle for IMAS mapping orchestration
     permissible_values:
-      draft:
-        description: Recipe is being developed, not ready for use
+      generated:
+        description: LLM pipeline produced field bindings, not yet verified
       validated:
-        description: Recipe has been validated by the mapping pipeline
+        description: Programmatic checks passed — signals exist, transforms execute, shapes match
       active:
-        description: Recipe is validated and ready for assembly
+        description: Validated and promoted for use by the assembler
       deprecated:
-        description: Recipe has been superseded by a newer version
+        description: Superseded by a newer version
 
   SignalGroupStatus:
     description: Lifecycle status for signal groups that unify mapping identity
