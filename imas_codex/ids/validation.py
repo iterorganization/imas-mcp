@@ -189,3 +189,76 @@ def validate_mapping(
     )
 
     return report
+
+
+# ---------------------------------------------------------------------------
+# Coverage reporting
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class CoverageReport:
+    """How much of a target IDS is covered by the current bindings."""
+
+    ids_name: str
+    total_leaf_fields: int = 0
+    mapped_fields: int = 0
+    unmapped_fields: list[str] = field(default_factory=list)
+    mapped_paths: list[str] = field(default_factory=list)
+    percentage: float = 0.0
+
+
+def compute_coverage(
+    ids_name: str,
+    bindings: list,
+    *,
+    gc: GraphClient | None = None,
+) -> CoverageReport:
+    """Compute coverage of target IDS leaf fields by mapping bindings.
+
+    Queries all data-bearing (non-STRUCTURE/STRUCT_ARRAY) fields under
+    the IDS and compares against the set of target_id values in bindings.
+
+    Args:
+        ids_name: IDS name (e.g. "pf_active").
+        bindings: List of binding objects with target_id attribute.
+        gc: GraphClient instance (created if None).
+
+    Returns:
+        CoverageReport with mapped/unmapped field counts and percentage.
+    """
+    if gc is None:
+        gc = GraphClient()
+
+    # Query all leaf fields for this IDS
+    rows = gc.query(
+        """
+        MATCH (p:IMASNode)
+        WHERE p.ids = $ids_name
+          AND NOT p.data_type IN ['STRUCTURE', 'STRUCT_ARRAY']
+        OPTIONAL MATCH (p)-[:DEPRECATED_IN]->()
+        WITH p, count(*) AS dep_count
+        WHERE dep_count = 0 OR NOT EXISTS { (p)-[:DEPRECATED_IN]->() }
+        RETURN p.id AS id
+        """,
+        ids_name=ids_name,
+    )
+
+    all_fields = {r["id"] for r in rows}
+    mapped_targets = {b.target_id for b in bindings}
+
+    mapped = all_fields & mapped_targets
+    unmapped = sorted(all_fields - mapped_targets)
+
+    total = len(all_fields)
+    n_mapped = len(mapped)
+    pct = (n_mapped / total * 100) if total > 0 else 0.0
+
+    return CoverageReport(
+        ids_name=ids_name,
+        total_leaf_fields=total,
+        mapped_fields=n_mapped,
+        unmapped_fields=unmapped,
+        mapped_paths=sorted(mapped),
+        percentage=pct,
+    )

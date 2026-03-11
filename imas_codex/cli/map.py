@@ -171,37 +171,74 @@ def map_show(facility: str, ids_name: str) -> None:
 @click.argument("facility")
 @click.argument("ids_name")
 def map_validate(facility: str, ids_name: str) -> None:
-    """Validate existing mapping paths and consistency."""
+    """Validate existing mapping paths, transforms, units, and coverage."""
     configure_cli_logging("map", facility=facility)
 
-    from imas_codex.ids.tools import check_imas_paths, search_existing_mappings
+    from imas_codex.graph.client import GraphClient
+    from imas_codex.ids.tools import search_existing_mappings
+    from imas_codex.ids.validation import compute_coverage, validate_mapping
 
-    result = search_existing_mappings(facility, ids_name)
+    gc = GraphClient()
+    result = search_existing_mappings(facility, ids_name, gc=gc)
     if not result["mapping"]:
         click.echo(f"No mapping found for {facility}/{ids_name}.")
         return
 
-    # Validate all target paths
-    target_paths = [fm["target_id"] for fm in result["bindings"]]
-    if not target_paths:
-        click.echo("No field mappings to validate.")
+    # Build lightweight binding objects from graph data
+    from imas_codex.ids.models import ValidatedFieldMapping
+
+    bindings = [ValidatedFieldMapping(**b) for b in result["bindings"]]
+    if not bindings:
+        click.echo("No bindings to validate.")
         return
 
-    validation = check_imas_paths(target_paths)
-    valid = sum(1 for v in validation if v.get("exists"))
-    invalid = sum(1 for v in validation if not v.get("exists"))
+    # Run validation
+    report = validate_mapping(bindings, gc=gc)
 
-    click.echo(f"Validated {len(target_paths)} paths:")
-    click.echo(f"  Valid: {valid}")
-    click.echo(f"  Invalid: {invalid}")
+    passed = sum(
+        1
+        for c in report.binding_checks
+        if c.source_exists
+        and c.target_exists
+        and c.transform_executes
+        and c.units_compatible
+    )
+    failed = len(report.binding_checks) - passed
 
-    for v in validation:
-        if not v.get("exists"):
-            suggestion = v.get("suggestion", "")
-            msg = f"  ✗ {v['path']}"
-            if suggestion:
-                msg += f" (renamed → {suggestion})"
-            click.echo(msg)
+    click.echo(f"Validated {len(bindings)} bindings:")
+    click.echo(f"  Passed: {passed}")
+    click.echo(f"  Failed: {failed}")
+
+    for c in report.binding_checks:
+        if c.error:
+            click.echo(f"  ✗ {c.source_id} → {c.target_id}")
+            click.echo(f"    {c.error}")
+
+    if report.duplicate_targets:
+        click.echo(f"\nDuplicate targets ({len(report.duplicate_targets)}):")
+        for dup in report.duplicate_targets:
+            sources = [b.source_id for b in bindings if b.target_id == dup]
+            click.echo(f"  {dup} ← {', '.join(sources)}")
+
+    # Coverage
+    coverage = compute_coverage(ids_name, bindings, gc=gc)
+    if coverage.total_leaf_fields > 0:
+        click.echo(
+            f"\nCoverage ({ids_name}): "
+            f"{coverage.mapped_fields}/{coverage.total_leaf_fields} "
+            f"leaf fields ({coverage.percentage:.1f}%)"
+        )
+        if coverage.mapped_paths:
+            click.echo(f"  Mapped: {', '.join(coverage.mapped_paths[:10])}")
+            if len(coverage.mapped_paths) > 10:
+                click.echo(f"    ... and {len(coverage.mapped_paths) - 10} more")
+        if coverage.unmapped_fields:
+            shown = coverage.unmapped_fields[:10]
+            click.echo(f"  Unmapped: {', '.join(shown)}")
+            if len(coverage.unmapped_fields) > 10:
+                click.echo(
+                    f"    ... and {len(coverage.unmapped_fields) - 10} more"
+                )
 
 
 @map_cmd.command("clear")
