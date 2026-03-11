@@ -338,7 +338,6 @@ class TestSearchExistingMappings:
             [
                 {
                     "source_id": "jet:pf_coils:group1",
-                    "group_key": "pf_coil_1",
                     "target_id": "pf_active/coil/element/geometry/rectangle/r",
                     "transform_expression": "value",
                     "source_units": "m",
