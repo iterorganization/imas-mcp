@@ -441,6 +441,19 @@ class TestPersistMappingResult:
         assert "MappingEvidence" in evidence_call[0][0]
         assert evidence_call[1]["severity"] == "warning"
 
+    def test_default_status_is_generated(self, mock_gc, sample_validated_result):
+        persist_mapping_result(sample_validated_result, gc=mock_gc)
+        # First call is the MERGE IMASMapping — check the status param
+        merge_call = mock_gc.query.call_args_list[0]
+        assert merge_call[1]["status"] == "generated"
+
+    def test_custom_status(self, mock_gc, sample_validated_result):
+        persist_mapping_result(
+            sample_validated_result, gc=mock_gc, status="active"
+        )
+        merge_call = mock_gc.query.call_args_list[0]
+        assert merge_call[1]["status"] == "active"
+
 
 # ---------------------------------------------------------------------------
 # Pipeline orchestrator tests
@@ -680,6 +693,14 @@ class TestMapCLI:
         runner = CliRunner()
         result = runner.invoke(map_cmd, ["clear", "--help"])
         assert result.exit_code == 0
+
+    def test_map_activate_help(self):
+        from imas_codex.cli.map import map_cmd
+
+        runner = CliRunner()
+        result = runner.invoke(map_cmd, ["activate", "--help"])
+        assert result.exit_code == 0
+        assert "active" in result.output.lower()
 
     def test_map_no_args_shows_help(self):
         from imas_codex.cli.map import map_cmd

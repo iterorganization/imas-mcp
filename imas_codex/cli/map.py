@@ -29,12 +29,18 @@ def map_cmd() -> None:
 @click.option("--model", "-m", help="Override LLM model identifier.")
 @click.option("--dd-version", help="Override Data Dictionary version.")
 @click.option("--no-persist", is_flag=True, help="Skip graph persistence.")
+@click.option(
+    "--no-activate",
+    is_flag=True,
+    help="Persist as 'generated' without promoting to 'active'.",
+)
 def map_run(
     facility: str,
     ids_name: str,
     model: str | None,
     dd_version: str | None,
     no_persist: bool,
+    no_activate: bool,
 ) -> None:
     """Run the full mapping pipeline.
 
@@ -56,6 +62,7 @@ def map_run(
             model=model,
             dd_version=dd_version,
             persist=not no_persist,
+            activate=not no_activate,
         )
     except ValueError as e:
         click.echo(f"Error: {e}", err=True)
@@ -240,3 +247,57 @@ def map_clear(facility: str, ids_name: str) -> None:
     )
 
     click.echo(f"Cleared mapping {mapping_id}.")
+
+
+@map_cmd.command("activate")
+@click.argument("facility")
+@click.argument("ids_name")
+def map_activate(facility: str, ids_name: str) -> None:
+    """Promote a mapping to active status for use by the assembler.
+
+    \b
+    Only mappings in 'generated' or 'validated' status can be activated.
+    The assembler only loads mappings with status 'active'.
+
+    \b
+    Examples:
+      imas-codex imas map activate jet pf_active
+    """
+    configure_cli_logging("map", facility=facility)
+
+    from imas_codex.graph.client import GraphClient
+
+    gc = GraphClient()
+    mapping_id = f"{facility}:{ids_name}"
+
+    rows = gc.query(
+        """
+        MATCH (m:IMASMapping {id: $id})
+        RETURN m.status AS status
+        """,
+        id=mapping_id,
+    )
+    if not rows:
+        click.echo(f"No mapping found for {mapping_id}.", err=True)
+        raise SystemExit(1)
+
+    current = rows[0].get("status")
+    if current == "active":
+        click.echo(f"Mapping {mapping_id} is already active.")
+        return
+    if current == "deprecated":
+        click.echo(
+            f"Cannot activate deprecated mapping {mapping_id}. "
+            "Generate a new mapping first.",
+            err=True,
+        )
+        raise SystemExit(1)
+
+    gc.query(
+        """
+        MATCH (m:IMASMapping {id: $id})
+        SET m.status = 'active'
+        """,
+        id=mapping_id,
+    )
+    click.echo(f"Activated mapping {mapping_id} (was '{current}').")
