@@ -1118,6 +1118,23 @@ def propagate_signal_group_enrichment(
         )
         follower_count = count_result[0]["cnt"] if count_result else 0
 
+        # Update the SignalGroup itself: status → enriched, copy description/keywords
+        gc.query(
+            """
+            MATCH (rep:FacilitySignal {id: $rep_id})
+                  -[:MEMBER_OF]->(sg:SignalGroup)
+            SET sg.status = 'enriched',
+                sg.description = $description,
+                sg.keywords = $keywords,
+                sg.physics_domain = $physics_domain,
+                sg.claimed_at = null
+            """,
+            rep_id=representative_id,
+            description=enrichment.get("description", ""),
+            keywords=enrichment.get("keywords", []),
+            physics_domain=enrichment.get("physics_domain", ""),
+        )
+
         if follower_count == 0:
             return 0
 

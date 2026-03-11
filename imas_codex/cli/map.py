@@ -1,7 +1,7 @@
 """CLI commands for IMAS mapping pipeline.
 
 Usage:
-    imas-codex map FACILITY IDS_NAME
+    imas-codex map run FACILITY IDS_NAME
     imas-codex map status FACILITY [IDS_NAME]
     imas-codex map show FACILITY IDS_NAME
     imas-codex map validate FACILITY IDS_NAME
@@ -18,41 +18,31 @@ from imas_codex.cli.logging import configure_cli_logging
 logger = logging.getLogger(__name__)
 
 
-@click.group(invoke_without_command=True)
-@click.argument("facility", required=False)
-@click.argument("ids_name", required=False)
+@click.group()
+def map_cmd() -> None:
+    """IMAS mapping pipeline commands."""
+
+
+@map_cmd.command("run")
+@click.argument("facility")
+@click.argument("ids_name")
 @click.option("--model", "-m", help="Override LLM model identifier.")
 @click.option("--dd-version", help="Override Data Dictionary version.")
 @click.option("--no-persist", is_flag=True, help="Skip graph persistence.")
-@click.pass_context
-def map_cmd(
-    ctx: click.Context,
-    facility: str | None,
-    ids_name: str | None,
+def map_run(
+    facility: str,
+    ids_name: str,
     model: str | None,
     dd_version: str | None,
     no_persist: bool,
 ) -> None:
-    """Generate IMAS mappings via LLM pipeline.
+    """Run the full mapping pipeline.
 
     \b
-    Run the full mapping pipeline:
-      imas-codex map jet pf_active
-
-    \b
-    Subcommands:
-      imas-codex map status jet           Show mapping status
-      imas-codex map show jet pf_active   Show mapping details
-      imas-codex map validate jet pf_active
-      imas-codex map clear jet pf_active
+    Examples:
+      imas-codex map run jet pf_active
+      imas-codex map run --no-persist jet pf_active
     """
-    if ctx.invoked_subcommand is not None:
-        return
-
-    if not facility or not ids_name:
-        click.echo(ctx.get_help())
-        return
-
     configure_cli_logging("map", facility=facility)
 
     from imas_codex.ids.mapping import generate_mapping
