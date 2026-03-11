@@ -365,7 +365,7 @@ def search_existing_mappings(
             """
             MATCH (m:IMASMapping {id: $id})-[:USES_SIGNAL_GROUP]->(sg:SignalGroup)
             MATCH (sg)-[r:MAPS_TO_IMAS]->(ip:IMASNode)
-            RETURN sg.id AS source_id, sg.group_key AS group_key,
+            RETURN sg.id AS source_id,
                    ip.id AS target_id, r.transform_expression AS transform_expression,
                    r.source_units AS source_units, r.target_units AS target_units,
                    r.source_property AS source_property
