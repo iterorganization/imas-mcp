@@ -359,6 +359,26 @@ def _get_all_service_jobs() -> dict[str, dict | None]:
     }
 
 
+def _get_node_state(node: str) -> tuple[str, str]:
+    """Get SLURM node state and reason.
+
+    Returns:
+        (state, reason) — e.g. ("idle", "none"), ("draining", "Duplicate jobid")
+    """
+    try:
+        out = _run_remote(
+            f'sinfo -n {node} -o "%T|%E" --noheader 2>/dev/null | head -1',
+            timeout=10,
+        )
+        line = out.strip()
+        if "|" in line:
+            parts = line.split("|", 1)
+            return parts[0].strip().lower(), parts[1].strip()
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        pass
+    return "unknown", "unable to query"
+
+
 def _submit_service_job(
     job_name: str,
     service_command: str,
@@ -373,12 +393,31 @@ def _submit_service_job(
     The job script sources ``.env``, runs optional pre-launch setup,
     then ``exec``s the service command.  SLURM manages the process
     lifecycle — ``scancel`` stops it, cgroup enforcement is automatic.
+
+    Checks node state before submission — if the target node is
+    draining/drained, raises a clear error instead of submitting
+    a job that will never start.
     """
     import base64
 
     partition = _gpu_partition()
     host = _gpu_entry()["location"]
     partition_name = partition["name"]
+
+    # Check node state before submitting
+    node_state, reason = _get_node_state(host)
+    if node_state in ("drained", "draining", "down", "down*", "drain", "drng"):
+        raise click.ClickException(
+            f"Node {host} is {node_state} (reason: {reason}).\n"
+            f"SLURM will not schedule jobs on this node.\n"
+            f"Options:\n"
+            f"  1. Ask an admin to resume the node: scontrol update NodeName={host} State=RESUME\n"
+            f"  2. Start the server directly on the node (bypassing SLURM):\n"
+            f"     ssh {host} 'cd ~/Code/imas-codex && "
+            f"CUDA_VISIBLE_DEVICES=0,1,2,3 nohup .venv/bin/imas-codex embed start -f "
+            f"--host 0.0.0.0 --port {_embed_port()} --gpus 0,1,2,3 "
+            f"--workers 4 --deploy-label {partition_name} > slurm-embed-manual.log 2>&1 &'"
+        )
 
     remote_home = _run_remote("echo $HOME", timeout=10).strip()
     services_dir_abs = f"{remote_home}/.local/share/imas-codex/services"
