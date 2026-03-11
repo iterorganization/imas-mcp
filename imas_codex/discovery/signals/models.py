@@ -10,19 +10,36 @@ Design principles:
 - LLM MUST NOT hallucinate units - if not discoverable, leave empty
 - Batch processing: multiple signals per LLM call for efficiency
 - Physics domain classification uses schema-derived enum values
+- Context quality scoring enables re-enrichment of underspecified signals
 """
 
 from __future__ import annotations
+
+from enum import Enum
 
 from pydantic import BaseModel, Field, field_validator
 
 from imas_codex.core.physics_domain import PhysicsDomain
 
 __all__ = [
+    "ContextQuality",
     "SignalEnrichmentResult",
     "SignalEnrichmentBatch",
     "UnitConfidence",
 ]
+
+
+class ContextQuality(str, Enum):
+    """How much context was available for this signal's enrichment.
+
+    Signals with 'low' context quality are marked as 'underspecified'
+    in the graph and queued for re-enrichment when better context
+    becomes available.
+    """
+
+    low = "low"
+    medium = "medium"
+    high = "high"
 
 
 class UnitConfidence(BaseModel):
@@ -119,6 +136,15 @@ class SignalEnrichmentResult(BaseModel):
         default=0.8,
         description="Confidence in the physics_domain classification (0.0-1.0). "
         "Lower if signal name is ambiguous.",
+    )
+
+    # Context quality assessment
+    context_quality: ContextQuality = Field(
+        default=ContextQuality.medium,
+        description="How much context was available to classify this signal. "
+        "'low' = only accessor/name, no source code, wiki, tree context, or code chunks. "
+        "'medium' = some context (tree path, group header, or partial wiki). "
+        "'high' = rich context (source code, wiki description, code references, siblings).",
     )
 
     # Keywords for search

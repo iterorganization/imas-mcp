@@ -291,6 +291,12 @@ enums:
         description: >-
           Access check attempted - creates CHECKED_WITH link to DataAccess.
           Query CHECKED_WITH.success to determine if the check passed or failed.
+      underspecified:
+        description: >-
+          LLM enrichment completed but with insufficient context — the description
+          may be inaccurate or hallucinated. Signals in this state need re-enrichment
+          once better context is available (e.g., TDI source code, wiki links,
+          tree context). Downstream IMAS mapping actors should not consume these.
       skipped:
         description: Filtered out (duplicate, internal node, or low value)
       failed:
