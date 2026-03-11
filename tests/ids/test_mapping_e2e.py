@@ -625,6 +625,63 @@ class TestPipelineOrchestrator:
         assert len(result.validated.bindings) == 2
         assert len(result.validated.escalations) == 1
         assert result.persisted is False
+        assert result.unassigned_groups == []
+
+    @patch("imas_codex.ids.mapping._step3_validate")
+    @patch("imas_codex.ids.mapping._step2_field_mappings")
+    @patch("imas_codex.ids.mapping._step1_assign_sections")
+    @patch("imas_codex.ids.mapping._step0_gather_context")
+    def test_generate_mapping_surfaces_unassigned_groups(
+        self,
+        mock_step0,
+        mock_step1,
+        mock_step2,
+        mock_step3,
+        mock_gc,
+        sample_groups,
+        sample_subtree,
+        sample_field_batch,
+        sample_validated_result,
+    ):
+        """Test that unassigned_groups from Step 1 are surfaced in MappingResult."""
+        from imas_codex.ids.mapping import generate_mapping
+
+        unassigned = SectionAssignmentBatch(
+            ids_name="pf_active",
+            assignments=[
+                SectionAssignment(
+                    signal_group_id="jet:pf_coils:group1",
+                    imas_section_path="pf_active/coil",
+                    confidence=0.95,
+                    reasoning="PF coil geometry maps to pf_active/coil",
+                ),
+            ],
+            unassigned_groups=["jet:pf_coils:group3", "jet:pf_coils:group4"],
+        )
+
+        mock_step0.return_value = {
+            "groups": sample_groups,
+            "subtree": sample_subtree,
+            "semantic": sample_subtree,
+            "existing": {"mapping": None, "sections": [], "bindings": []},
+            "cocos_paths": [],
+        }
+        mock_step1.return_value = unassigned
+        mock_step2.return_value = [sample_field_batch]
+        mock_step3.return_value = sample_validated_result
+
+        result = generate_mapping(
+            "jet",
+            "pf_active",
+            dd_version="4.1.1",
+            persist=False,
+            gc=mock_gc,
+        )
+
+        assert result.unassigned_groups == [
+            "jet:pf_coils:group3",
+            "jet:pf_coils:group4",
+        ]
 
     @patch("imas_codex.ids.mapping._step0_gather_context")
     def test_generate_mapping_no_groups_raises(self, mock_step0, mock_gc):
@@ -712,6 +769,7 @@ class TestMapCLI:
             validated=sample_validated_result,
             cost=PipelineCost(steps={"step1": 0.001, "step2": 0.002}),
             persisted=True,
+            unassigned_groups=["jet:pf_coils:group3"],
         )
 
         runner = CliRunner()
@@ -719,6 +777,8 @@ class TestMapCLI:
         assert result.exit_code == 0
         assert "jet:pf_active" in result.output
         assert "Bindings: 2" in result.output
+        assert "Unassigned signal groups" in result.output
+        assert "jet:pf_coils:group3" in result.output
 
     @patch("imas_codex.ids.mapping.generate_mapping")
     def test_map_run_error(self, mock_generate):

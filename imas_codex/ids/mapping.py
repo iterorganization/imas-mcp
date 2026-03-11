@@ -434,6 +434,7 @@ class MappingResult:
     validated: ValidatedMappingResult
     cost: PipelineCost
     persisted: bool = False
+    unassigned_groups: list[str] = field(default_factory=list)
 
 
 def generate_mapping(
@@ -539,4 +540,5 @@ def generate_mapping(
         validated=validated,
         cost=cost,
         persisted=persisted,
+        unassigned_groups=sections.unassigned_groups,
     )

@@ -97,6 +97,14 @@ def map_run(
         for c in result.validated.corrections:
             click.echo(f"  - {c}")
 
+    # Unassigned groups
+    if result.unassigned_groups:
+        click.echo(
+            f"\nUnassigned signal groups ({len(result.unassigned_groups)}):"
+        )
+        for gid in result.unassigned_groups:
+            click.echo(f"  - {gid}")
+
 
 @map_cmd.command("status")
 @click.argument("facility")
@@ -176,7 +184,11 @@ def map_validate(facility: str, ids_name: str) -> None:
 
     from imas_codex.graph.client import GraphClient
     from imas_codex.ids.tools import search_existing_mappings
-    from imas_codex.ids.validation import compute_coverage, validate_mapping
+    from imas_codex.ids.validation import (
+        compute_coverage,
+        compute_signal_coverage,
+        validate_mapping,
+    )
 
     gc = GraphClient()
     result = search_existing_mappings(facility, ids_name, gc=gc)
@@ -238,6 +250,22 @@ def map_validate(facility: str, ids_name: str) -> None:
             if len(coverage.unmapped_fields) > 10:
                 click.echo(
                     f"    ... and {len(coverage.unmapped_fields) - 10} more"
+                )
+
+    # Signal group coverage
+    sig_cov = compute_signal_coverage(facility, gc=gc)
+    if sig_cov.total_enriched > 0:
+        click.echo(
+            f"\nSignal groups ({facility}): "
+            f"{sig_cov.mapped}/{sig_cov.total_enriched} "
+            f"enriched groups mapped ({sig_cov.percentage:.1f}%)"
+        )
+        if sig_cov.unmapped_groups:
+            shown = sig_cov.unmapped_groups[:10]
+            click.echo(f"  Unmapped: {', '.join(shown)}")
+            if len(sig_cov.unmapped_groups) > 10:
+                click.echo(
+                    f"    ... and {len(sig_cov.unmapped_groups) - 10} more"
                 )
 
 
