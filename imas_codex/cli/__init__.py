@@ -41,7 +41,7 @@ def main(ctx: click.Context, version: bool) -> None:
       imas-codex llm start          Start LiteLLM proxy
       imas-codex tunnel start       Start SSH tunnels
       imas-codex config private     Manage private facility YAML
-      imas-codex imas build         Build/update IMAS DD graph
+      imas-codex imas dd build       Build/update IMAS DD graph
       imas-codex facilities list    List configured facilities
     """
     if version:

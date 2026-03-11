@@ -1,4 +1,4 @@
-"""IMAS Data Dictionary commands: Build, status, search, version."""
+"""IMAS commands: Data Dictionary, mappings, and IDS assembly."""
 
 from __future__ import annotations
 
@@ -15,19 +15,28 @@ console = Console()
 
 @click.group()
 def imas() -> None:
-    """Manage IMAS Data Dictionary graph.
+    """IMAS data dictionary, mappings, and IDS assembly.
 
     \b
-      imas-codex imas build             Build/update DD graph from imas-python
-      imas-codex imas status            Show DD graph statistics
-      imas-codex imas search            Semantic search for paths
-      imas-codex imas clear             Delete all DD nodes from graph
-      imas-codex imas version           Show/list DD versions
+      imas-codex imas dd build          Build/update DD graph from imas-python
+      imas-codex imas dd status         Show DD graph statistics
+      imas-codex imas dd search         Semantic search for paths
+      imas-codex imas dd clear          Delete all DD nodes from graph
+      imas-codex imas dd version        Show/list DD versions
     """
     pass
 
 
-@imas.command("build")
+@click.group("dd")
+def dd() -> None:
+    """IMAS Data Dictionary graph management."""
+    pass
+
+
+imas.add_command(dd)
+
+
+@dd.command("build")
 @click.option("-v", "--verbose", is_flag=True, help="Enable verbose logging")
 @click.option("-q", "--quiet", is_flag=True, help="Suppress all logging except errors")
 @click.option(
@@ -111,13 +120,13 @@ def imas_build(
 
     \b
     Examples:
-        imas-codex imas build                  # Build all DD versions (default)
-        imas-codex imas build --current-only   # Build current version only
-        imas-codex imas build --from-version 4.0.0  # Incremental from 4.0.0
-        imas-codex imas build --force          # Re-run pipeline (per-item hashes still apply)
-        imas-codex imas build --force --no-hash  # Full recomputation (skip all caches)
-        imas-codex imas build --dry-run -v     # Preview without writing
-        imas-codex imas build --ids-filter "core_profiles equilibrium"  # Test subset
+        imas-codex imas dd build                  # Build all DD versions (default)
+        imas-codex imas dd build --current-only   # Build current version only
+        imas-codex imas dd build --from-version 4.0.0  # Incremental from 4.0.0
+        imas-codex imas dd build --force          # Re-run pipeline (per-item hashes still apply)
+        imas-codex imas dd build --force --no-hash  # Full recomputation (skip all caches)
+        imas-codex imas dd build --dry-run -v     # Preview without writing
+        imas-codex imas dd build --ids-filter "core_profiles equilibrium"  # Test subset
     """
     # On air-gapped nodes, prevent LiteLLM import-time remote fetches
     from imas_codex.discovery.base.llm import set_litellm_offline_env
@@ -250,7 +259,7 @@ def imas_build(
         raise SystemExit(1) from e
 
 
-@imas.command("status")
+@dd.command("status")
 @click.option(
     "--version", "-v", "version_filter", help="Show details for specific version"
 )
@@ -262,8 +271,8 @@ def imas_status(version_filter: str | None) -> None:
 
     \b
     Examples:
-        imas-codex imas status             # Overall summary
-        imas-codex imas status -v 4.1.0    # Details for specific version
+        imas-codex imas dd status             # Overall summary
+        imas-codex imas dd status -v 4.1.0    # Details for specific version
     """
     from imas_codex.graph import GraphClient
 
@@ -278,7 +287,7 @@ def imas_status(version_filter: str | None) -> None:
 
         if not versions:
             console.print("[yellow]No DD versions in graph.[/yellow]")
-            console.print("Build with: imas-codex imas build")
+            console.print("Build with: imas-codex imas dd build")
             return
 
         # Version table
@@ -378,7 +387,7 @@ def imas_status(version_filter: str | None) -> None:
                 )
 
 
-@imas.command("search")
+@dd.command("search")
 @click.argument("query")
 @click.option("-n", "--limit", default=10, help="Max results (default: 10)")
 @click.option("--ids", help="Filter to specific IDS")
@@ -402,10 +411,10 @@ def imas_search(
 
     \b
     Examples:
-        imas-codex imas search "electron temperature"
-        imas-codex imas search "magnetic field boundary" --ids equilibrium
-        imas-codex imas search "plasma current" -n 20
-        imas-codex imas search "plasma current" --include-deprecated
+        imas-codex imas dd search "electron temperature"
+        imas-codex imas dd search "magnetic field boundary" --ids equilibrium
+        imas-codex imas dd search "plasma current" -n 20
+        imas-codex imas dd search "plasma current" --include-deprecated
     """
     from imas_codex.embeddings.config import EncoderConfig
     from imas_codex.embeddings.encoder import Encoder
@@ -486,7 +495,7 @@ def _resolve_version(version_spec: str) -> str:
     raise ValueError(f"No DD version matching '{version_spec}'")
 
 
-@imas.command("version")
+@dd.command("version")
 @click.argument("version", required=False)
 @click.option(
     "--available",
@@ -509,11 +518,11 @@ def imas_version(version: str | None, available: bool, list_versions: bool) -> N
 
     \b
     Examples:
-        imas-codex imas version              # Show current version details
-        imas-codex imas version 4            # Show latest 4.x version
-        imas-codex imas version 4.0.0        # Show specific version
-        imas-codex imas version --list       # List all versions in graph
-        imas-codex imas version --available  # All available versions
+        imas-codex imas dd version              # Show current version details
+        imas-codex imas dd version 4            # Show latest 4.x version
+        imas-codex imas dd version 4.0.0        # Show specific version
+        imas-codex imas dd version --list       # List all versions in graph
+        imas-codex imas dd version --available  # All available versions
     """
     if available:
         from imas_codex.graph.build_dd import get_all_dd_versions
@@ -553,7 +562,7 @@ def imas_version(version: str | None, available: bool, list_versions: bool) -> N
                 _show_version_details(gc, current[0]["version"])
             else:
                 console.print("[yellow]No current version set in graph.[/yellow]")
-                console.print("Build with: imas-codex imas build")
+                console.print("Build with: imas-codex imas dd build")
 
 
 def _show_version_details(gc, version: str) -> None:
@@ -654,7 +663,7 @@ def _show_versions_summary(gc) -> None:
 
     if not versions:
         console.print("[yellow]No versions in graph.[/yellow]")
-        console.print("Build with: imas-codex imas build")
+        console.print("Build with: imas-codex imas dd build")
         return
 
     console.print("[bold]DD versions in graph:[/bold]")
@@ -666,7 +675,7 @@ def _show_versions_summary(gc) -> None:
         )
 
 
-@imas.command("clear")
+@dd.command("clear")
 @click.option("--force", "-f", is_flag=True, help="Skip confirmation prompt")
 @click.option(
     "--dump-first",
@@ -685,9 +694,9 @@ def imas_clear(force: bool, dump_first: bool) -> None:
 
     \b
     Examples:
-      imas-codex imas clear             # Interactive confirmation
-      imas-codex imas clear --force     # Skip confirmation
-      imas-codex imas clear --dump-first  # Backup before clearing
+      imas-codex imas dd clear             # Interactive confirmation
+      imas-codex imas dd clear --force     # Skip confirmation
+      imas-codex imas dd clear --dump-first  # Backup before clearing
     """
     from imas_codex.cli.logging import configure_cli_logging
     from imas_codex.graph import GraphClient
@@ -782,7 +791,7 @@ def imas_clear(force: bool, dump_first: bool) -> None:
         console.print("[green]DD graph cleared successfully[/green]")
 
 
-@imas.command("path-history")
+@dd.command("path-history")
 @click.argument("path")
 @click.option(
     "--type",
@@ -798,8 +807,8 @@ def imas_path_history(path: str, change_type: str | None) -> None:
 
     \b
     Examples:
-        imas-codex imas path-history core_profiles/profiles_1d/electrons/temperature
-        imas-codex imas path-history equilibrium/time_slice/boundary/psi -t documentation
+        imas-codex imas dd path-history core_profiles/profiles_1d/electrons/temperature
+        imas-codex imas dd path-history equilibrium/time_slice/boundary/psi -t documentation
     """
     from imas_codex.graph import GraphClient
 
