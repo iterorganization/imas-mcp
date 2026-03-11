@@ -23,18 +23,8 @@ def imas() -> None:
       imas-codex imas search            Semantic search for paths
       imas-codex imas clear             Delete all DD nodes from graph
       imas-codex imas version           Show/list DD versions
-      imas-codex imas clusters build    Build HDBSCAN clusters
-      imas-codex imas clusters label    Generate LLM labels
-      imas-codex imas clusters sync     Sync clusters to graph
-      imas-codex imas clusters status   Cluster statistics
     """
     pass
-
-
-# Register clusters subgroup
-from imas_codex.cli.clusters import clusters  # noqa: E402
-
-imas.add_command(clusters)
 
 
 @imas.command("build")
@@ -66,6 +56,11 @@ imas.add_command(clusters)
     "--skip-clusters", is_flag=True, help="Skip importing semantic clusters into graph"
 )
 @click.option(
+    "--skip-cluster-labels",
+    is_flag=True,
+    help="Skip LLM label embedding for clusters (saves cost when labels aren't needed)",
+)
+@click.option(
     "--skip-embeddings",
     is_flag=True,
     help="Skip embedding generation for current version paths",
@@ -92,6 +87,7 @@ def imas_build(
     force: bool,
     no_hash: bool,
     skip_clusters: bool,
+    skip_cluster_labels: bool,
     skip_embeddings: bool,
     embedding_model: str,
     ids_filter: str | None,
@@ -215,6 +211,7 @@ def imas_build(
                 embedding_model=embedding_model,
                 force_embeddings=force,
                 no_hash=no_hash,
+                skip_cluster_labels=skip_cluster_labels,
             )
 
         # Report results
@@ -348,11 +345,23 @@ def imas_status(version_filter: str | None) -> None:
                 console.print(stats_table)
 
             # Cluster stats
-            clusters = gc.query(
-                "MATCH (c:IMASSemanticCluster) RETURN count(c) AS count"
-            )
-            if clusters and clusters[0]["count"] > 0:
-                console.print(f"\nIMASSemanticCluster nodes: {clusters[0]['count']}")
+            cluster_stats = gc.query("""
+                MATCH (c:IMASSemanticCluster)
+                WITH count(c) AS total
+                OPTIONAL MATCH (c2:IMASSemanticCluster)
+                WHERE c2.label IS NOT NULL
+                WITH total, count(c2) AS with_labels
+                OPTIONAL MATCH (c3:IMASSemanticCluster)
+                WHERE c3.embedding IS NOT NULL
+                RETURN total, with_labels, count(c3) AS with_embeddings
+            """)
+            if cluster_stats and cluster_stats[0]["total"] > 0:
+                cs = cluster_stats[0]
+                console.print(
+                    f"\nIMASSemanticCluster nodes: {cs['total']} "
+                    f"({cs['with_labels']} labeled, "
+                    f"{cs['with_embeddings']} with embeddings)"
+                )
 
             # IMASNodeChange stats
             change_stats = gc.query("""

@@ -1341,6 +1341,7 @@ def build_dd_graph(
     embedding_model: str | None = None,
     force_embeddings: bool = False,
     no_hash: bool = False,
+    skip_cluster_labels: bool = False,
 ) -> dict:
     """
     Build the IMAS DD graph.
@@ -1361,6 +1362,7 @@ def build_dd_graph(
         embedding_model: Embedding model name (defaults to configured model from settings)
         force_embeddings: Bypass top-level build hash check (per-item hashes still apply)
         no_hash: Skip per-item hash caching — recompute all embeddings/clusters
+        skip_cluster_labels: Skip LLM label embedding for clusters
 
     Returns:
         Statistics about the build
@@ -1739,7 +1741,11 @@ def build_dd_graph(
         if include_clusters:
             monitor.status("Importing semantic clusters...")
             cluster_count = _import_clusters(
-                client, dry_run, use_rich=use_rich, no_hash=no_hash
+                client,
+                dry_run,
+                use_rich=use_rich,
+                no_hash=no_hash,
+                skip_labels=skip_cluster_labels,
             )
             stats["clusters_created"] = cluster_count
 
@@ -2542,6 +2548,7 @@ def _import_clusters(
     dry_run: bool,
     use_rich: bool | None = None,
     no_hash: bool = False,
+    skip_labels: bool = False,
 ) -> int:
     """Build semantic clusters from graph embeddings and merge into the graph.
 
@@ -2739,12 +2746,15 @@ def _import_clusters(
             )
 
             # Step 9: Embed cluster labels and descriptions (with hash caching)
-            _embed_cluster_text(
-                client,
-                embedding_batch_size=256,
-                use_rich=use_rich,
-                no_hash=no_hash,
-            )
+            if not skip_labels:
+                _embed_cluster_text(
+                    client,
+                    embedding_batch_size=256,
+                    use_rich=use_rich,
+                    no_hash=no_hash,
+                )
+            else:
+                logger.info("Skipping cluster label embedding (--skip-cluster-labels)")
 
             # Step 10: Delete stale clusters no longer in the computation
             stale_ids = existing_ids - new_cluster_ids
