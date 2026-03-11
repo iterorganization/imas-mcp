@@ -11,6 +11,7 @@ Facility: JET (may be extended to other EFIT-based facilities)
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any
@@ -2002,7 +2003,8 @@ class DeviceXMLScanner:
         )
 
         try:
-            output = run_python_script(
+            output = await asyncio.to_thread(
+                run_python_script,
                 "parse_device_xml.py",
                 script_input,
                 ssh_host=ssh_host,
@@ -2044,8 +2046,12 @@ class DeviceXMLScanner:
 
         # Persist to graph (non-fatal — static source scans should still run)
         try:
-            stats = _persist_graph_nodes(
-                facility, config, parsed_versions, parsed_limiters
+            stats = await asyncio.to_thread(
+                _persist_graph_nodes,
+                facility,
+                config,
+                parsed_versions,
+                parsed_limiters,
             )
             stats["parse_errors"] = errors
 
@@ -2151,7 +2157,8 @@ class DeviceXMLScanner:
         }
 
         try:
-            output = run_python_script(
+            output = await asyncio.to_thread(
+                run_python_script,
                 "parse_jec2020.py",
                 script_input,
                 ssh_host=ssh_host,
@@ -2164,7 +2171,12 @@ class DeviceXMLScanner:
 
         # Persist to graph
         try:
-            jec_stats = _persist_jec2020_nodes(facility, jec2020_config, parsed)
+            jec_stats = await asyncio.to_thread(
+                _persist_jec2020_nodes,
+                facility,
+                jec2020_config,
+                parsed,
+            )
         except Exception as e:
             logger.error("JEC2020 graph persist failed for %s: %s", facility, e)
             return {"error": str(e)}
@@ -2226,7 +2238,8 @@ class DeviceXMLScanner:
         }
 
         try:
-            output = run_python_script(
+            output = await asyncio.to_thread(
+                run_python_script,
                 "parse_mcfg_sensors.py",
                 script_input,
                 ssh_host=ssh_host,
@@ -2238,7 +2251,12 @@ class DeviceXMLScanner:
             return {"error": str(e)}
 
         try:
-            mcfg_stats = _persist_mcfg_nodes(facility, mcfg_config, parsed)
+            mcfg_stats = await asyncio.to_thread(
+                _persist_mcfg_nodes,
+                facility,
+                mcfg_config,
+                parsed,
+            )
         except Exception as e:
             logger.error("MCFG graph persist failed for %s: %s", facility, e)
             return {"error": str(e)}
@@ -2285,7 +2303,11 @@ class DeviceXMLScanner:
         )
 
         try:
-            ppf_stats = _persist_ppf_static_nodes(facility, ppf_config)
+            ppf_stats = await asyncio.to_thread(
+                _persist_ppf_static_nodes,
+                facility,
+                ppf_config,
+            )
         except Exception as e:
             logger.error("PPF static graph persist failed for %s: %s", facility, e)
             return {"error": str(e)}
@@ -2343,7 +2365,8 @@ class DeviceXMLScanner:
         }
 
         try:
-            output = run_python_script(
+            output = await asyncio.to_thread(
+                run_python_script,
                 "parse_magnetics_config.py",
                 script_input,
                 ssh_host=ssh_host,
@@ -2355,7 +2378,12 @@ class DeviceXMLScanner:
             return {"error": str(e)}
 
         try:
-            mc_stats = _persist_magnetics_config_nodes(facility, mc_config, parsed)
+            mc_stats = await asyncio.to_thread(
+                _persist_magnetics_config_nodes,
+                facility,
+                mc_config,
+                parsed,
+            )
         except Exception as e:
             logger.error("Magnetics config persist failed for %s: %s", facility, e)
             return {"error": str(e)}
@@ -2411,7 +2439,8 @@ class DeviceXMLScanner:
         }
 
         try:
-            output = run_python_script(
+            output = await asyncio.to_thread(
+                run_python_script,
                 "parse_pf_coil_turns.py",
                 script_input,
                 ssh_host=ssh_host,
@@ -2423,7 +2452,12 @@ class DeviceXMLScanner:
             return {"error": str(e)}
 
         try:
-            ct_stats = _persist_pf_coil_turns_nodes(facility, ct_config, parsed)
+            ct_stats = await asyncio.to_thread(
+                _persist_pf_coil_turns_nodes,
+                facility,
+                ct_config,
+                parsed,
+            )
         except Exception as e:
             logger.error("PF coil turns persist failed for %s: %s", facility, e)
             return {"error": str(e)}
@@ -2477,7 +2511,8 @@ class DeviceXMLScanner:
         }
 
         try:
-            output = run_python_script(
+            output = await asyncio.to_thread(
+                run_python_script,
                 "parse_greens_table.py",
                 script_input,
                 ssh_host=ssh_host,
@@ -2489,7 +2524,12 @@ class DeviceXMLScanner:
             return {"error": str(e)}
 
         try:
-            gt_stats = _persist_greens_table_nodes(facility, gt_config, parsed)
+            gt_stats = await asyncio.to_thread(
+                _persist_greens_table_nodes,
+                facility,
+                gt_config,
+                parsed,
+            )
         except Exception as e:
             logger.error("Greens table persist failed for %s: %s", facility, e)
             return {"error": str(e)}

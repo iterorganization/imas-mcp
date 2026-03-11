@@ -3680,6 +3680,17 @@ async def run_parallel_data_discovery(
         with _GC() as gc:
             gc.ensure_facility(_facility)
 
+        # Detect signal groups BEFORE workers start so enrich workers
+        # won't waste LLM calls on non-representative group members.
+        groups_detected, followers_marked = detect_signal_groups(_facility)
+        if groups_detected > 0:
+            logger.info(
+                "Preflight: detected %d signal groups (%d followers) for %s",
+                groups_detected,
+                followers_marked,
+                _facility,
+            )
+
         if not _scanner_types:
             scanner_instances = get_scanners_for_facility(_facility)
             _scanner_types = [s.scanner_type for s in scanner_instances]
