@@ -683,6 +683,7 @@ def claim_signals_for_check(
                        s.data_source_path AS data_source_path,
                        s.physics_domain AS physics_domain, s.tdi_function AS tdi_function,
                        s.discovery_source AS discovery_source, s.name AS name,
+                       s.data_source_node AS data_source_node,
                        COALESCE(s.data_access, derived_data_access) AS data_access
                 """,
                 facility=facility,
@@ -3329,6 +3330,8 @@ async def check_worker(
             return "edas"
         if source == "wiki_extraction":
             return "wiki"
+        if source in ("xml_extraction", "jec2020_xml", "magnetics_config"):
+            return "device_xml"
         # Default to MDSplus/TDI batch check
         return "mdsplus"
 
@@ -3364,8 +3367,8 @@ async def check_worker(
 
         checked: list[dict] = []
 
-        # --- Scanner-based checks (PPF, EDAS) ---
-        for scanner_type in ("ppf", "edas"):
+        # --- Scanner-based checks (PPF, EDAS, device_xml) ---
+        for scanner_type in ("ppf", "edas", "device_xml"):
             group = scanner_groups.get(scanner_type, [])
             if not group:
                 continue
@@ -3386,6 +3389,7 @@ async def check_worker(
                         physics_domain=s.get("physics_domain", "general"),
                         data_access=s.get("data_access", ""),
                         data_source_name=s.get("data_source_name"),
+                        data_source_node=s.get("data_source_node"),
                     )
                     for s in group
                 ]
