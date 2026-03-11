@@ -338,9 +338,23 @@ def get_data_discovery_stats(facility: str) -> dict[str, Any]:
                 skipped=FacilitySignalStatus.skipped.value,
                 failed=FacilitySignalStatus.failed.value,
             )
-            if result:
-                return dict(result[0])
-            return {}
+            stats = dict(result[0]) if result else {}
+
+            # Signal group counts (separate query to avoid cross-product)
+            grp = gc.query(
+                """
+                MATCH (sg:SignalGroup {facility_id: $facility})
+                OPTIONAL MATCH (s:FacilitySignal)-[:MEMBER_OF]->(sg)
+                RETURN count(DISTINCT sg) AS signal_groups,
+                       count(s) AS grouped_signals
+                """,
+                facility=facility,
+            )
+            if grp:
+                stats["signal_groups"] = grp[0]["signal_groups"]
+                stats["grouped_signals"] = grp[0]["grouped_signals"]
+
+            return stats
     except Exception as e:
         logger.warning("Could not get discovery stats: %s", e)
         return {}

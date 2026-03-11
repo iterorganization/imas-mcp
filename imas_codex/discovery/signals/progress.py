@@ -133,6 +133,10 @@ class DataProgressState:
     pending_enrich: int = 0
     pending_check: int = 0
 
+    # Signal group tracking
+    signal_groups: int = 0
+    grouped_signals: int = 0
+
     # This run stats
     run_discovered: int = 0
     run_enriched: int = 0
@@ -334,6 +338,10 @@ class DataProgressDisplay(BaseProgressDisplay):
         scan_ann = " ".join(scan_ann_parts)
 
         enrich_count, enrich_ann = self._count_group_workers("enrich")
+        # Append group stats to enrich annotation
+        if self.state.signal_groups > 0:
+            grp_note = f"{self.state.signal_groups} groups"
+            enrich_ann = f"{enrich_ann} {grp_note}".strip() if enrich_ann else grp_note
         check_count, check_ann = self._count_group_workers("check")
 
         # Enrich cost
@@ -423,9 +431,15 @@ class DataProgressDisplay(BaseProgressDisplay):
         elif scan_processing and self.state.current_tree:
             scan_text = f"tree={self.state.current_tree}"
 
-        # SCAN progress: promoted signals represent final output
-        # Use promoted count as primary, with total based on extracted baseline
-        scan_completed = self.state.run_promoted
+        # SCAN progress: use graph state total_signals as ground truth
+        # (matches how paths CLI derives scan progress from graph refresh).
+        # run_promoted only tracks this-session promotes, which is 0 when
+        # running --enrich-only or when scan workers have already finished.
+        scan_completed = (
+            self.state.run_promoted
+            if self.state.run_promoted > 0
+            else self.state.total_signals
+        )
         scan_total = max(
             self.state.total_signals,
             self.state.run_promoted,
@@ -546,6 +560,8 @@ class DataProgressDisplay(BaseProgressDisplay):
             ("enriched", str(enriched), "green"),
             ("checked", str(checked), "magenta"),
         ]
+        if self.state.signal_groups > 0:
+            stats.append(("groups", str(self.state.signal_groups), "cyan"))
         if self.state.signals_failed > 0:
             stats.append(("failed", str(self.state.signals_failed), "red"))
         if self.state.signals_skipped > 0:
@@ -756,7 +772,14 @@ class DataProgressDisplay(BaseProgressDisplay):
         self.state.enrich_rate = stats.rate
         self.state._run_enrich_cost = stats.cost
 
-        if "classifying" in message.lower() or "enriching" in message.lower():
+        msg_lower = message.lower()
+        if "classifying" in msg_lower or "enriching" in msg_lower:
+            self.state.enrich_processing = True
+        elif "detected" in msg_lower and "patterns" in msg_lower:
+            # Pattern detection — not LLM processing but keep processing flag
+            pass
+        elif "propagated" in msg_lower:
+            # Propagation — processing is active
             self.state.enrich_processing = True
         else:
             self.state.enrich_processing = False
@@ -831,6 +854,10 @@ class DataProgressDisplay(BaseProgressDisplay):
         self.state.pending_enrich = pending_enrich
         self.state.pending_check = pending_check
         self.state.accumulated_cost = accumulated_cost
+        if "signal_groups" in kwargs:
+            self.state.signal_groups = kwargs["signal_groups"]
+        if "grouped_signals" in kwargs:
+            self.state.grouped_signals = kwargs["grouped_signals"]
         self._refresh()
 
     def print_summary(self) -> None:
@@ -878,6 +905,11 @@ class DataProgressDisplay(BaseProgressDisplay):
         # ENRICH stats
         summary.append("  ENRICH  ", style="bold green")
         summary.append(f"enriched={enriched:,}", style="green")
+        if self.state.signal_groups > 0:
+            summary.append(
+                f"  groups={self.state.signal_groups} ({self.state.grouped_signals:,} members)",
+                style="cyan",
+            )
         summary.append(f"  skipped={self.state.signals_skipped:,}", style="yellow")
         summary.append(f"  cost=${self.state.run_cost:.3f}", style="yellow")
         if self.state.enrich_rate:
