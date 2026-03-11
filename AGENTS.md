@@ -197,6 +197,22 @@ Slots annotated with `is_private: true` are excluded from the graph — they exi
 - **Don't skip the `description` field** — it enables semantic search via embeddings.
 - **Don't use `multivalued: true` on relationship slots** unless the relationship is genuinely many-to-many. Cardinality affects query patterns.
 
+### Schema-Driven Testing
+
+Tests in `tests/graph/` are **parametrized from the schema** — they do not hardcode node labels, relationship types, or enum values. This creates a closed loop:
+
+1. Declare types, relationships, and enums in LinkML YAML
+2. `uv run build-models --force` generates models + schema context
+3. Code writes data to the graph using generated models
+4. Schema-driven tests validate **all** graph data against schema declarations
+
+**Key test modules:**
+- `test_schema_compliance.py` — every node label, property, and enum value must be declared in the schema
+- `test_referential_integrity.py` — every relationship type must be declared as a slot with the correct `relationship_type` annotation
+- `test_data_quality.py` — embedding coverage and data consistency checks
+
+**When a schema compliance test fails, the fix is a schema addition — not a test change.** If your code creates a new relationship type (e.g., `SAME_GEOMETRY`), enum value (e.g., `validated`), or node label, declare it in the LinkML YAML first. Then rebuild models. The tests will pass automatically.
+
 ## Facility Configuration
 
 Per-facility YAML configs define discovery roots, wiki sites, data sources, and infrastructure details. Schema enforced via LinkML (`imas_codex/schemas/facility_config.yaml`).

@@ -171,6 +171,9 @@ def persist_mapping_result(
             m.dd_version = $dd_version,
             m.provider = $provider,
             m.status = 'validated'
+        WITH m
+        MATCH (f:Facility {id: $facility})
+        MERGE (m)-[:AT_FACILITY]->(f)
         """,
         id=mapping_id,
         facility=result.facility,
