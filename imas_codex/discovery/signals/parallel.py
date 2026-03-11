@@ -637,6 +637,67 @@ def fetch_tree_context(
         return {}
 
 
+def fetch_signal_code_refs(
+    signal_ids: list[str],
+) -> dict[str, list[dict]]:
+    """Fetch deterministic code references for signals via graph traversal.
+
+    Traverses: FacilitySignal →[HAS_DATA_SOURCE_NODE]→ SignalNode
+               ←[RESOLVES_TO_NODE]← DataReference ←[CONTAINS_REF]← CodeChunk
+
+    Returns code snippets that directly reference the signal's backing
+    SignalNode, providing real usage context for enrichment.
+
+    Args:
+        signal_ids: List of FacilitySignal IDs
+
+    Returns:
+        Dict mapping signal_id → list of code reference dicts
+    """
+    if not signal_ids:
+        return {}
+
+    try:
+        with GraphClient() as gc:
+            result = gc.query(
+                """
+                UNWIND $ids AS sid
+                MATCH (s:FacilitySignal {id: sid})
+                      -[:HAS_DATA_SOURCE_NODE]->(sn:SignalNode)
+                      <-[:RESOLVES_TO_NODE]-(dr:DataReference)
+                      <-[:CONTAINS_REF]-(cc:CodeChunk)
+                WITH s.id AS signal_id, cc
+                ORDER BY signal_id, cc.id
+                WITH signal_id, collect(cc)[..3] AS chunks
+                UNWIND chunks AS cc
+                RETURN signal_id,
+                       cc.text AS code,
+                       cc.language AS language,
+                       cc.source_file AS file
+                """,
+                ids=signal_ids,
+            )
+            refs: dict[str, list[dict]] = {}
+            for row in result:
+                sid = row["signal_id"]
+                if sid not in refs:
+                    refs[sid] = []
+                text = row.get("code", "")
+                if len(text) > 600:
+                    text = text[:600] + "..."
+                refs[sid].append(
+                    {
+                        "code": text,
+                        "language": row.get("language", ""),
+                        "file": row.get("file", ""),
+                    }
+                )
+            return refs
+    except Exception as e:
+        logger.warning("Could not fetch signal code refs: %s", e)
+        return {}
+
+
 @retry_on_deadlock()
 def claim_signals_for_check(
     facility: str,
@@ -2673,8 +2734,8 @@ async def enrich_worker(
         if not state.wiki_context:
             return None
 
-        # Try data_source_path (uppercase for matching)
-        data_source_path = signal.get("data_source_path")
+        # Try data_source_path first, then fall back to accessor
+        data_source_path = signal.get("data_source_path") or signal.get("accessor")
         if data_source_path:
             normalized = data_source_path.upper().lstrip("\\")
             # Try with single backslash prefix (wiki format)
@@ -2948,11 +3009,15 @@ async def enrich_worker(
         if on_progress:
             on_progress("enriching batch", state.enrich_stats)
 
-        # Fetch tree context for signals with HAS_DATA_SOURCE_NODE edges
-        tree_signal_ids = [s["id"] for s in signals if s.get("data_source_node")]
-        tree_context = {}
-        if tree_signal_ids:
-            tree_context = await asyncio.to_thread(fetch_tree_context, tree_signal_ids)
+        # Fetch tree context for signals with HAS_DATA_SOURCE_NODE edges.
+        # Send all signal IDs — the Cypher MATCH naturally filters to only
+        # signals with HAS_DATA_SOURCE_NODE edges (resilient to property gaps).
+        all_signal_ids = [s["id"] for s in signals]
+        tree_context = await asyncio.to_thread(fetch_tree_context, all_signal_ids)
+
+        # Fetch deterministic code references via graph traversal
+        # (CodeChunk → DataReference → SignalNode ← FacilitySignal)
+        code_refs = await asyncio.to_thread(fetch_signal_code_refs, all_signal_ids)
 
         # Group signals by context source for efficient prompting
         context_groups: dict[str, list[tuple[int, dict]]] = defaultdict(list)
@@ -3103,6 +3168,17 @@ async def enrich_worker(
                         user_lines.append(f"wiki_units: {wiki_ctx['units']}")
                     if wiki_ctx.get("page"):
                         user_lines.append(f"wiki_source: {wiki_ctx['page']}")
+
+                # Inject deterministic code references (graph traversal, not vector search)
+                sig_code_refs = code_refs.get(signal["id"], [])
+                if sig_code_refs:
+                    user_lines.append("\n**Direct code references:**")
+                    for ref in sig_code_refs:
+                        lang = ref.get("language", "python")
+                        fpath = ref.get("file", "unknown")
+                        user_lines.append(f"\n```{lang}  # {fpath}")
+                        user_lines.append(ref["code"])
+                        user_lines.append("```")
 
         user_prompt = "\n".join(user_lines)
 
