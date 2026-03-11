@@ -230,6 +230,19 @@ async def run_parallel_code_discovery(
         ),
     ]
 
+    # --- Embed worker ---
+    from imas_codex.discovery.base.embed_worker import embed_description_worker
+
+    workers.append(
+        WorkerSpec(
+            "embed",
+            "enrich_phase",
+            embed_description_worker,
+            group="embed",
+            kwargs={"labels": ["CodeExample"]},
+        )
+    )
+
     await run_discovery_engine(
         state,
         workers,

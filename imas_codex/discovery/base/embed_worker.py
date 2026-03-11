@@ -53,15 +53,12 @@ DEFAULT_EMBED_BATCH_SIZE = 100
 # How long to sleep when no work is found (seconds)
 IDLE_SLEEP = 3.0
 
-# Labels that use 'description' field for embedding
-DESCRIPTION_LABELS = {
-    "FacilityPath",
-    "FacilitySignal",
-    "Image",
-    "SignalNode",
-    "Document",
-    "WikiPage",
-}
+
+def _get_description_labels() -> list[str]:
+    """Derive embeddable labels from schema (nodes with description + embedding)."""
+    from imas_codex.graph.schema import get_schema
+
+    return get_schema().description_embeddable_labels
 
 
 def _fetch_unembedded(
@@ -236,7 +233,7 @@ async def embed_description_worker(
 
     worker_id = id(asyncio.current_task())
     facility = facility or getattr(state, "facility", None)
-    labels = labels or list(DESCRIPTION_LABELS)
+    labels = labels or _get_description_labels()
     stats = WorkerStats()
 
     logger.info(
