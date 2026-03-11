@@ -85,6 +85,13 @@ class TDIScanner:
                     {
                         "name": f.name,
                         "path": f.path,
+                        "description": f.description or None,
+                        "signature": f.signature,
+                        "source_code": f.source_code,
+                        "parameters": f.parameters,
+                        "mdsplus_trees": f.mdsplus_trees,
+                        "tdi_dependencies": f.tdi_dependencies,
+                        "has_shot_conditional": f.has_shot_conditional,
                         "quantity_count": len(f.quantities),
                     }
                     for f in functions
