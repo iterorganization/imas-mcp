@@ -48,15 +48,27 @@ Any existing mappings for this facility/IDS:
 For each signal property that should map to an IMAS field:
 
 1. **Identify the target field**: Match signal data to the correct IMAS path
-2. **Define transform_expression**: Python expression to transform the value
-   - Use `value` as the variable name for the source value
-   - Simple pass-through: `value`
-   - Unit conversion: handled separately via source_units/target_units
-   - Math transforms: `value * 1000`, `-value`, etc.
-3. **Specify units**: Set source_units (signal unit) and target_units (IMAS unit) when
-   conversion is needed
-4. **COCOS handling**: If the field is in the sign-flip list, set `cocos_label`
-   to the appropriate transformation type
+2. **Define transform_expression**: A Python expression that transforms the source
+   value. Use `value` as the variable name for the source value. Examples:
+   - Identity (same units, no sign flip): `value`
+   - Unit conversion: `value * 1e-3` (e.g. eV → keV)
+   - COCOS sign flip: `-value` (when COCOS conventions differ)
+   - Angle conversion: `math.radians(value)` (degrees → radians)
+   - Function call: `convert_units(value, 'mm', 'm')` (arbitrary unit conversion)
+3. **Specify units**: Set source_units (signal unit) and target_units (IMAS unit)
+4. **COCOS handling**: If the target field appears in the COCOS sign-flip list
+   above, the `transform_expression` **MUST** include sign handling — e.g.
+   `-value` or `cocos_sign('ip_like', cocos_in=2, cocos_out=11)`. Set
+   `cocos_label` to the applicable transformation type.
+
+## Transform Rules
+
+- If `source_units ≠ target_units`, the `transform_expression` **MUST** perform
+  the conversion. Use `convert_units(value, source_units, target_units)` or an
+  equivalent arithmetic expression. Do **NOT** set `transform_expression` to
+  `"value"` when the units differ.
+- If the target field is in the COCOS sign-flip paths list, the
+  `transform_expression` **MUST** include sign handling even if the units match.
 
 ## Escalation Rules
 
