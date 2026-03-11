@@ -552,30 +552,23 @@ class TestPipelineOrchestrator:
         assert len(result) == 2
         assert len(result[0].mappings) == 2
 
-    @patch("imas_codex.ids.mapping._call_llm")
-    @patch("imas_codex.ids.mapping.check_imas_paths")
+    @patch("imas_codex.ids.validation.check_imas_paths")
     def test_step3_validate(
         self,
         mock_check,
-        mock_call_llm,
         mock_gc,
         sample_section_assignment,
         sample_field_batch,
-        sample_validated_result,
     ):
-        """Test validation (Step 3)."""
-        from imas_codex.ids.mapping import PipelineCost, _step3_validate
+        """Test validation (Step 3) — now programmatic, not LLM."""
+        from imas_codex.ids.mapping import _step3_validate
 
         mock_check.return_value = [
             {"path": "pf_active/coil/element/geometry/rectangle/r", "exists": True},
             {"path": "pf_active/coil/element/geometry/rectangle/z", "exists": True},
         ]
-        mock_call_llm.return_value = sample_validated_result
-        cost = PipelineCost()
-
-        context = {
-            "existing": {"mapping": None, "sections": [], "bindings": []},
-        }
+        # Source exists query
+        mock_gc.query.return_value = [{"id": "some_group"}]
 
         result = _step3_validate(
             "jet",
@@ -583,12 +576,11 @@ class TestPipelineOrchestrator:
             "4.1.1",
             sample_section_assignment,
             [sample_field_batch],
-            context,
             gc=mock_gc,
-            cost=cost,
         )
         assert len(result.bindings) == 2
         assert result.facility == "jet"
+        assert result.dd_version == "4.1.1"
 
     @patch("imas_codex.ids.mapping._step3_validate")
     @patch("imas_codex.ids.mapping._step2_field_mappings")

@@ -3,10 +3,10 @@
 Multi-step LLM pipeline that generates field-level IMAS mappings
 from facility signal groups:
 
-  Step 0: Gather signal groups + DD context
+  Step 0: Gather signal groups + DD context (programmatic)
   Step 1: LLM assigns groups to IMAS sections
   Step 2: For each section, LLM generates field mappings
-  Step 3: LLM validates and finalises
+  Step 3: Programmatic validation (source/target existence, transforms, units)
   Persist: Write to graph
 
 Usage:
@@ -25,14 +25,15 @@ from typing import Any
 
 from imas_codex.graph.client import GraphClient
 from imas_codex.ids.models import (
+    EscalationFlag,
     FieldMappingBatch,
     SectionAssignmentBatch,
+    ValidatedFieldMapping,
     ValidatedMappingResult,
     persist_mapping_result,
 )
 from imas_codex.ids.tools import (
     analyze_units,
-    check_imas_paths,
     fetch_imas_fields,
     fetch_imas_subtree,
     get_sign_flip_paths,
@@ -355,48 +356,68 @@ def _step3_validate(
     dd_version: str,
     sections: SectionAssignmentBatch,
     field_batches: list[FieldMappingBatch],
-    context: dict[str, Any],
     *,
     gc: GraphClient,
-    model: str | None = None,
-    cost: PipelineCost,
 ) -> ValidatedMappingResult:
-    """Step 3: Validate and finalize all mappings."""
-    logger.info("Step 3: validating mappings")
+    """Step 3: Assemble and programmatically validate all mappings.
 
-    # Collect all proposed mappings
-    all_mappings = []
-    all_escalations = []
+    Replaces the former LLM self-review with concrete checks via
+    ``validate_mapping()``: source/target existence, transform execution,
+    unit compatibility, and duplicate target detection.
+    """
+    from imas_codex.ids.validation import validate_mapping
+
+    logger.info("Step 3: programmatic validation")
+
+    # Assemble bindings + escalations from Step 2 batches
+    all_bindings: list[ValidatedFieldMapping] = []
+    all_escalations: list[EscalationFlag] = []
     for batch in field_batches:
-        all_mappings.extend([m.model_dump() for m in batch.mappings])
-        all_escalations.extend([e.model_dump() for e in batch.escalations])
+        for m in batch.mappings:
+            all_bindings.append(
+                ValidatedFieldMapping(
+                    source_id=m.source_id,
+                    source_property=m.source_property,
+                    target_id=m.target_id,
+                    transform_expression=m.transform_expression,
+                    source_units=m.source_units,
+                    target_units=m.target_units,
+                    cocos_label=m.cocos_label,
+                    confidence=m.confidence,
+                )
+            )
+        all_escalations.extend(batch.escalations)
 
-    # Validate paths exist
-    target_paths = list({m["target_id"] for m in all_mappings})
-    validation_results = check_imas_paths(target_paths, gc=gc)
+    # Run programmatic validation
+    report = validate_mapping(all_bindings, gc=gc)
+    all_escalations.extend(report.escalations)
 
-    prompt = _render_prompt(
-        "validation",
+    corrections: list[str] = []
+    if report.duplicate_targets:
+        corrections.append(
+            f"Duplicate targets detected: {', '.join(report.duplicate_targets)}"
+        )
+    if not report.all_passed:
+        failed = sum(
+            1
+            for c in report.binding_checks
+            if not (
+                c.source_exists
+                and c.target_exists
+                and c.transform_executes
+                and c.units_compatible
+            )
+        )
+        corrections.append(f"{failed} binding(s) failed validation checks")
+
+    return ValidatedMappingResult(
         facility=facility,
         ids_name=ids_name,
         dd_version=dd_version,
-        proposed_mappings=json.dumps(all_mappings, indent=2, default=str),
-        validation_results=json.dumps(validation_results, indent=2, default=str),
-        existing_mappings=json.dumps(context["existing"], indent=2, default=str),
-        escalations=json.dumps(all_escalations, indent=2, default=str),
-    )
-
-    messages = [
-        {"role": "system", "content": "You are an IMAS mapping validator."},
-        {"role": "user", "content": prompt},
-    ]
-
-    return _call_llm(
-        messages,
-        ValidatedMappingResult,
-        model=model,
-        step_name="step3_validation",
-        cost=cost,
+        sections=sections.assignments,
+        bindings=all_bindings,
+        escalations=all_escalations,
+        corrections=corrections,
     )
 
 
@@ -428,10 +449,10 @@ def generate_mapping(
     """Generate IMAS mapping via multi-step LLM pipeline.
 
     Steps:
-        0. Gather signal groups + DD context
+        0. Gather signal groups + DD context (programmatic)
         1. LLM assigns groups to IMAS sections
         2. For each section, LLM generates field mappings
-        3. LLM validates and finalizes
+        3. Programmatic validation (source/target existence, transforms, units)
         4. (Optional) Persist to graph
 
     Args:
@@ -487,17 +508,14 @@ def generate_mapping(
         cost=cost,
     )
 
-    # Step 3: Validate
+    # Step 3: Programmatic validation (no LLM call)
     validated = _step3_validate(
         facility,
         ids_name,
         dd_version,
         sections,
         field_batches,
-        context,
         gc=gc,
-        model=model,
-        cost=cost,
     )
 
     # Persist

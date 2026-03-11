@@ -3,7 +3,7 @@
 Pydantic models used as structured output targets for each LLM step:
   Step 1 — SectionAssignmentBatch: assign signal groups to IMAS sections
   Step 2 — FieldMappingBatch: field-level mappings with transforms
-  Step 3 — ValidatedMappingResult: reviewed and corrected mappings
+  Step 3 — ValidatedMappingResult: programmatically validated mappings
 
 Also contains the adapter that converts ValidatedMappingResult into
 graph operations (MAPS_TO_IMAS relationships, POPULATES, IMASMapping).
