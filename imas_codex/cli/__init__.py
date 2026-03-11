@@ -68,6 +68,7 @@ def register_commands() -> None:
     from imas_codex.cli.imas_dd import imas
     from imas_codex.cli.ingest import ingest
     from imas_codex.cli.llm_cli import llm
+    from imas_codex.cli.map import map_cmd
     from imas_codex.cli.release import release
     from imas_codex.cli.serve import serve
     from imas_codex.cli.tools import tools
@@ -88,6 +89,7 @@ def register_commands() -> None:
     main.add_command(ingest)
     main.add_command(tools)
     main.add_command(hosts)
+    main.add_command(map_cmd, "map")
     main.add_command(facilities)
     main.add_command(release)
     main.add_command(setup_age)
