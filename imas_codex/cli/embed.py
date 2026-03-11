@@ -284,6 +284,20 @@ def embed_status(url: str | None, local: bool) -> None:
     except Exception:
         click.echo("Embed job: unavailable")
 
+    # Show compute node state (draining/down = jobs won't start)
+    try:
+        from imas_codex.cli.services import _get_node_state, _gpu_entry
+
+        host = _gpu_entry()["location"]
+        node_state, reason = _get_node_state(host)
+        if node_state in ("drained", "draining", "down", "down*", "drain", "drng"):
+            click.echo(
+                click.style(f"  ⚠ Node {host} is {node_state}: {reason}", fg="yellow")
+            )
+            click.echo("    SLURM will not schedule new jobs on this node.")
+    except Exception:
+        pass
+
     # Check remote server health
     if url is None:
         from imas_codex.settings import get_embed_remote_url
@@ -503,7 +517,8 @@ def embed_stop() -> None:
     """Stop the embedding server.
 
     Cancels the embed SLURM job (which stops the server process),
-    or stops the systemd service on the login node.
+    stops the systemd service, and kills any orphan embed processes
+    on the compute node (e.g. from manual nohup starts).
 
     \b
     Examples:
@@ -526,6 +541,30 @@ def embed_stop() -> None:
         click.echo("Stopped login embed service")
         stopped = True
     except subprocess.CalledProcessError:
+        pass
+
+    # Kill orphan embed processes on the compute node
+    # (handles manual nohup starts when SLURM node is draining)
+    try:
+        from imas_codex.cli.services import _gpu_entry, _run_on_node
+
+        host = _gpu_entry()["location"]
+        result = _run_on_node(
+            host,
+            'pgrep -u $USER -f "imas-codex embed start" 2>/dev/null',
+            timeout=10,
+        )
+        pids = [p.strip() for p in result.strip().split("\n") if p.strip().isdigit()]
+        if pids:
+            pid_list = " ".join(pids)
+            _run_on_node(
+                host,
+                f"kill {pid_list} 2>/dev/null || true",
+                timeout=10,
+            )
+            click.echo(f"Killed orphan embed process(es) on {host} (PIDs: {pid_list})")
+            stopped = True
+    except Exception:
         pass
 
     if not stopped:
