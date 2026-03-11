@@ -851,6 +851,18 @@ class TestPromptTemplates:
         )
         assert "pf_active/coil" in rendered
 
+    def test_field_mapping_prompt_has_transform_examples(self):
+        from imas_codex.ids.mapping import _load_prompt
+
+        prompt = _load_prompt("field_mapping")
+        # Phase 6: transform expression examples
+        assert "value * 1e-3" in prompt
+        assert "math.radians(value)" in prompt
+        assert "convert_units(value" in prompt
+        # Phase 6: unit mismatch rule
+        assert "source_units" in prompt
+        assert "MUST" in prompt
+
     def test_validation_prompt_renders(self):
         from imas_codex.ids.mapping import _render_prompt
 
