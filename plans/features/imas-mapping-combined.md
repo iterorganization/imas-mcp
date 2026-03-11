@@ -416,16 +416,17 @@ injected context. Cost tracked per step.
 
 ### 5c. CLI
 
-Create `imas_codex/cli/map.py` — top-level `map` group:
-```
-imas-codex map <facility> <ids_name>
-imas-codex map status <facility> [ids_name]
-imas-codex map show <facility> <ids_name>
-imas-codex map validate <facility> <ids_name>
-imas-codex map clear <facility> <ids_name>
-```
+> **CLI section superseded by `cli-unification.md`.** Map commands are now under
+> `imas-codex imas map` and IDS commands under `imas-codex imas`.
 
-Merge `ids` → `imas` with `dd` subgroup. Remove `ids seed`.
+Create `imas_codex/cli/map.py` — registered as `imas map` subgroup:
+```
+imas-codex imas map run <facility> <ids_name>
+imas-codex imas map status <facility> [ids_name]
+imas-codex imas map show <facility> <ids_name>
+imas-codex imas map validate <facility> <ids_name>
+imas-codex imas map clear <facility> <ids_name>
+```
 
 ### 5d. Escalation Persistence
 

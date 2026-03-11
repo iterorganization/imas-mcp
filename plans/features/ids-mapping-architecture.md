@@ -543,7 +543,7 @@ With the graph-driven architecture, adding new IDSs becomes:
 1. Create IMASMapping nodes for new field transformations (with transform_code)
 2. Create/update IDSRecipe with structural assembly config
 3. Link mappings to recipe via INCLUDES_MAPPING
-4. Run `imas-codex ids export jet magnetics --epoch p68613`
+4. Run `imas-codex imas export jet magnetics --epoch p68613`
 
 No new Python code required for each IDS — the engine is generic.
 

@@ -200,10 +200,7 @@ The graph is built on the ITER cluster (or any environment with `imas-python` in
 
 ```
 ITER cluster:
-  imas-codex imas build              → populates Neo4j with DD structure + embeddings
-  imas-codex imas clusters build     → HDBSCAN clustering from graph embeddings
-  imas-codex imas clusters label     → LLM labels for clusters
-  imas-codex imas clusters sync      → sync clusters + labels into graph
+  imas-codex imas dd build           → populates Neo4j with DD structure + embeddings + clusters
   imas-codex graph push --imas-only  → push IMAS-only dump to GHCR
 
 Docker build:
