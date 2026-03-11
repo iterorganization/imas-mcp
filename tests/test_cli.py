@@ -194,9 +194,53 @@ class TestCLISubcommands:
         result = runner.invoke(main, ["imas", "dd", "build", "--help"])
         assert result.exit_code == 0
 
+    def test_imas_map_help(self, runner):
+        """imas map subcommand exists."""
+        from imas_codex.cli import main
+
+        result = runner.invoke(main, ["imas", "map", "--help"])
+        assert result.exit_code == 0
+        assert "IMAS mapping pipeline" in result.output
+
+    def test_imas_list_help(self, runner):
+        """imas list subcommand exists."""
+        from imas_codex.cli import main
+
+        result = runner.invoke(main, ["imas", "list", "--help"])
+        assert result.exit_code == 0
+        assert "List available IDS recipes" in result.output
+
+    def test_imas_export_help(self, runner):
+        """imas export subcommand exists."""
+        from imas_codex.cli import main
+
+        result = runner.invoke(main, ["imas", "export", "--help"])
+        assert result.exit_code == 0
+
+    def test_imas_epochs_help(self, runner):
+        """imas epochs subcommand exists."""
+        from imas_codex.cli import main
+
+        result = runner.invoke(main, ["imas", "epochs", "--help"])
+        assert result.exit_code == 0
+
     def test_facilities_list_help(self, runner):
         """facilities list subcommand exists."""
         from imas_codex.cli import main
 
         result = runner.invoke(main, ["facilities", "list", "--help"])
         assert result.exit_code == 0
+
+    def test_no_top_level_ids(self, runner):
+        """ids is no longer a top-level command."""
+        from imas_codex.cli import main
+
+        result = runner.invoke(main, ["ids", "--help"])
+        assert result.exit_code != 0
+
+    def test_no_top_level_map(self, runner):
+        """map is no longer a top-level command."""
+        from imas_codex.cli import main
+
+        result = runner.invoke(main, ["map", "--help"])
+        assert result.exit_code != 0

@@ -63,10 +63,8 @@ def register_commands() -> None:
     from imas_codex.cli.facilities import facilities
     from imas_codex.cli.graph_cli import graph
     from imas_codex.cli.hosts import hosts
-    from imas_codex.cli.ids import ids
     from imas_codex.cli.imas_dd import imas
     from imas_codex.cli.llm_cli import llm
-    from imas_codex.cli.map import map_cmd
     from imas_codex.cli.release import release
     from imas_codex.cli.serve import serve
     from imas_codex.cli.tools import tools
@@ -80,11 +78,9 @@ def register_commands() -> None:
     main.add_command(hpc)
     main.add_command(discover)
     main.add_command(embed)
-    main.add_command(ids)
     main.add_command(imas)
     main.add_command(tools)
     main.add_command(hosts)
-    main.add_command(map_cmd, "map")
     main.add_command(facilities)
     main.add_command(release)
     main.add_command(credentials)
