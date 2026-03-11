@@ -92,3 +92,21 @@ def normalize_unit_symbol(raw: str) -> str | None:
     except Exception:
         logger.debug("Could not normalize unit '%s'", raw)
         return None
+
+
+def validate_unit(unit_str: str) -> str | None:
+    """Validate unit string against pint and return canonical short form.
+
+    Used as a post-enrichment validation step: if the LLM-extracted unit
+    is invalid, returns None (clear rather than store garbage). If valid,
+    returns the pint-canonical short form.
+
+    Args:
+        unit_str: Raw unit string from LLM enrichment.
+
+    Returns:
+        Canonical short-form unit string, or None if invalid.
+    """
+    if not unit_str or not unit_str.strip():
+        return None
+    return normalize_unit_symbol(unit_str.strip())
