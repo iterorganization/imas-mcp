@@ -517,8 +517,8 @@ def embed_stop() -> None:
     """Stop the embedding server.
 
     Cancels the embed SLURM job (which stops the server process),
-    stops the systemd service, and kills any orphan embed processes
-    on the compute node (e.g. from manual nohup starts).
+    stops the systemd service, and kills any rogue embed processes
+    on the compute node as a safety net.
 
     \b
     Examples:
@@ -544,7 +544,7 @@ def embed_stop() -> None:
         pass
 
     # Kill orphan embed processes on the compute node
-    # (handles manual nohup starts when SLURM node is draining)
+    # Safety net: these should not exist — all services must run via SLURM.
     try:
         from imas_codex.cli.services import _gpu_entry, _run_on_node
 
@@ -562,7 +562,13 @@ def embed_stop() -> None:
                 f"kill {pid_list} 2>/dev/null || true",
                 timeout=10,
             )
-            click.echo(f"Killed orphan embed process(es) on {host} (PIDs: {pid_list})")
+            click.echo(
+                click.style(
+                    f"⚠ Killed rogue embed process(es) on {host} (PIDs: {pid_list})\n"
+                    "  These were NOT managed by SLURM — use 'imas-codex embed start' next time.",
+                    fg="yellow",
+                )
+            )
             stopped = True
     except Exception:
         pass

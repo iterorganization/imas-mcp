@@ -668,21 +668,38 @@ Chain multiple operations in a single `python()` call to minimize round-trips.
 
 Config lives in `pyproject.toml` under `[tool.imas-codex.embedding]`. Key accessor: `get_embedding_location()` returns the facility name or `"local"`. Port derived from position in shared `locations` list: `18765 + offset`.
 
+### CRITICAL — SLURM Only
+
+**All services (embed, Neo4j) MUST run as SLURM jobs.** Never bypass SLURM with `nohup`, `ssh … &`, `screen`, `tmux`, or any other manual process management on compute nodes. SLURM provides:
+- cgroup resource isolation (GPU, memory, CPU)
+- clean lifecycle management (`scancel` = graceful stop)
+- accurate resource accounting via `squeue`/`sacct`
+- automatic cleanup on node drain/failure
+
+**Never start services directly on compute nodes via SSH.** If SLURM won't schedule (node draining/down), the fix is to get the node resumed — not to work around SLURM. Rogue processes outside SLURM cause "Duplicate jobid" errors that drain nodes for all users.
+
+### Commands
+
 ```bash
 imas-codex embed start           # Start per config (SLURM or systemd)
 imas-codex embed start -g 2      # Start with 2 GPUs
-imas-codex embed start -f        # Run in foreground (debugging)
-imas-codex embed status          # Check server health + SLURM jobs
+imas-codex embed start -f        # Foreground only (debugging, or inside SLURM batch)
+imas-codex embed status          # Health + SLURM job + node state
 imas-codex embed restart -g 8    # Restart with 8 GPUs (~18s cycle)
-imas-codex embed stop            # Stop all embed processes
+imas-codex embed stop            # Stop SLURM job + cleanup rogue processes
 imas-codex embed logs            # View SLURM logs
-imas-codex embed service install # Install systemd service
+imas-codex embed service install # Install systemd service (login node only)
 ```
 
-If embedding fails, check in order:
-1. Tunnel active: `lsof -i :18765`
-2. Service running: `ssh iter "systemctl --user status imas-codex-embed"`
-3. Server health: `curl http://localhost:18765/health`
+### Troubleshooting
+
+| Symptom | Diagnosis | Fix |
+|---------|-----------|-----|
+| `embed status` shows "⚠ Node draining" | SLURM won't schedule new jobs | Ask admin: `scontrol update NodeName=<node> State=RESUME` |
+| PENDING job never starts | Node may be draining or at resource limit | `imas-codex embed status` shows node state |
+| Server healthy but no SLURM job | Rogue process running outside SLURM | `imas-codex embed stop` kills rogues automatically |
+| Rapid FAILED jobs in `sacct` | Package/env issue on compute node | Check `imas-codex embed logs`, run `uv sync` on node |
+| Embedding calls timeout | Tunnel not active or server down | `lsof -i :18765` then `imas-codex embed status` |
 
 ## Domain Workflows
 

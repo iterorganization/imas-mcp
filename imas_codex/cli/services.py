@@ -410,13 +410,8 @@ def _submit_service_job(
         raise click.ClickException(
             f"Node {host} is {node_state} (reason: {reason}).\n"
             f"SLURM will not schedule jobs on this node.\n"
-            f"Options:\n"
-            f"  1. Ask an admin to resume the node: scontrol update NodeName={host} State=RESUME\n"
-            f"  2. Start the server directly on the node (bypassing SLURM):\n"
-            f"     ssh {host} 'cd ~/Code/imas-codex && "
-            f"CUDA_VISIBLE_DEVICES=0,1,2,3 nohup .venv/bin/imas-codex embed start -f "
-            f"--host 0.0.0.0 --port {_embed_port()} --gpus 0,1,2,3 "
-            f"--workers 4 --deploy-label {partition_name} > slurm-embed-manual.log 2>&1 &'"
+            f"Ask an admin to resume: scontrol update NodeName={host} State=RESUME\n"
+            f"Do NOT bypass SLURM with nohup/ssh — all services must run as SLURM jobs."
         )
 
     remote_home = _run_remote("echo $HOME", timeout=10).strip()
@@ -446,10 +441,7 @@ def _submit_service_job(
 
     script += f"\n{service_command}\n"
 
-    # Cancel any existing job with this name
-    _cancel_service_job(job_name)
-
-    # Stop conflicting login-node services
+    # Stop conflicting login-node services (systemd, apptainer)
     _stop_login_services(job_name)
 
     script_b64 = base64.b64encode(script.encode()).decode()
@@ -482,10 +474,22 @@ def _ensure_service_job(
     if job and job["state"] == "RUNNING":
         return job
 
-    # Cancel any PENDING job (stuck in queue)
+    # Cancel any existing job (PENDING, etc.) and wait for cleanup
     if job:
         _run_remote(f"scancel {job['job_id']}", check=False)
-        time.sleep(1)
+        # Wait for SLURM to fully process the cancellation before
+        # submitting a new job — avoids "Duplicate jobid" race
+        for _ in range(10):
+            time.sleep(1)
+            stale = _get_service_job(job_name)
+            if not stale:
+                break
+        else:
+            logger.warning(
+                "Stale %s job %s still visible after cancel — proceeding",
+                job_name,
+                job["job_id"],
+            )
 
     _submit_service_job(
         job_name,
