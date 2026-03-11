@@ -118,7 +118,7 @@ def _normalize_signal_shots(sig: dict) -> list:
     return shots
 
 
-def check_signal_group(
+def check_signal_source(
     data_source_name: str,
     shot: int,
     signals: list[dict[str, Any]],
@@ -283,7 +283,7 @@ def main() -> None:
     # Process each group
     all_results = []
     for (data_source_name, shot), group_signals in groups.items():
-        group_results = check_signal_group(
+        group_results = check_signal_source(
             data_source_name,
             shot,
             group_signals,
@@ -330,7 +330,7 @@ def main() -> None:
             pending = [s for s in group_signals if s["id"] not in succeeded]
             if not pending:
                 continue
-            group_results = check_signal_group(
+            group_results = check_signal_source(
                 data_source_name, shot, pending, timeout=timeout_per_group
             )
             for r in group_results:

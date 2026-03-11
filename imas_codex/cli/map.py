@@ -285,7 +285,7 @@ def map_clear(facility: str, ids_name: str) -> None:
     # Delete MAPS_TO_IMAS from signal groups used by this mapping
     gc.query(
         """
-        MATCH (m:IMASMapping {id: $id})-[:USES_SIGNAL_GROUP]->(sg:SignalGroup)
+        MATCH (m:IMASMapping {id: $id})-[:USES_SIGNAL_SOURCE]->(sg:SignalSource)
         MATCH (sg)-[r:MAPS_TO_IMAS]->(:IMASNode)
         DELETE r
         """,
@@ -295,7 +295,7 @@ def map_clear(facility: str, ids_name: str) -> None:
     # Delete evidence nodes
     gc.query(
         """
-        MATCH (m:IMASMapping {id: $id})-[:USES_SIGNAL_GROUP]->(sg:SignalGroup)
+        MATCH (m:IMASMapping {id: $id})-[:USES_SIGNAL_SOURCE]->(sg:SignalSource)
         MATCH (sg)-[:HAS_EVIDENCE]->(ev:MappingEvidence)
         DETACH DELETE ev
         """,

@@ -37,7 +37,7 @@ from imas_codex.ids.tools import (
     fetch_imas_fields,
     fetch_imas_subtree,
     get_sign_flip_paths,
-    query_signal_groups,
+    query_signal_sources,
     search_existing_mappings,
     search_imas_semantic,
 )
@@ -229,7 +229,7 @@ def _step0_gather_context(
     # Don't filter by ids_name — Step 1 assigns groups to IDS sections.
     # Filtering here would require pre-existing MAPS_TO_IMAS relationships,
     # creating a chicken-and-egg problem for new mappings.
-    groups = query_signal_groups(facility, gc=gc)
+    groups = query_signal_sources(facility, gc=gc)
     subtree = fetch_imas_subtree(ids_name, gc=gc)
 
     # Semantic search is supplementary — degrade gracefully if embedding
@@ -267,7 +267,7 @@ def _step1_assign_sections(
         "exploration",
         facility=facility,
         ids_name=ids_name,
-        signal_groups=_format_groups(context["groups"]),
+        signal_sources=_format_groups(context["groups"]),
         imas_subtree=_format_subtree(context["subtree"]),
         semantic_results=_format_subtree(context["semantic"]),
     )
@@ -315,7 +315,7 @@ def _step2_field_mappings(
 
         # Find the signal group details
         sg_detail = next(
-            (g for g in context["groups"] if g["id"] == assignment.signal_group_id),
+            (g for g in context["groups"] if g["id"] == assignment.source_id),
             {},
         )
 
@@ -324,7 +324,7 @@ def _step2_field_mappings(
             facility=facility,
             ids_name=ids_name,
             section_path=section_path,
-            signal_group_detail=json.dumps(sg_detail, indent=2, default=str),
+            signal_source_detail=json.dumps(sg_detail, indent=2, default=str),
             imas_fields=_format_fields(subtree_fields or fields),
             unit_analysis=_format_unit_analysis(
                 [sg_detail] if sg_detail else [], subtree_fields or fields

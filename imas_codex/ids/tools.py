@@ -265,7 +265,7 @@ def check_imas_paths(
 # ---------------------------------------------------------------------------
 
 
-def query_signal_groups(
+def query_signal_sources(
     facility: str,
     ids_name: str | None = None,
     *,
@@ -291,7 +291,7 @@ def query_signal_groups(
         params["ids_name"] = ids_name
 
     cypher = f"""
-        MATCH (sg:SignalGroup)
+        MATCH (sg:SignalSource)
         WHERE sg.facility_id = $facility
         {ids_filter}
         OPTIONAL MATCH (m)-[:MEMBER_OF]->(sg)
@@ -363,7 +363,7 @@ def search_existing_mappings(
     if mapping:
         bindings = gc.query(
             """
-            MATCH (m:IMASMapping {id: $id})-[:USES_SIGNAL_GROUP]->(sg:SignalGroup)
+            MATCH (m:IMASMapping {id: $id})-[:USES_SIGNAL_SOURCE]->(sg:SignalSource)
             MATCH (sg)-[r:MAPS_TO_IMAS]->(ip:IMASNode)
             RETURN sg.id AS source_id,
                    ip.id AS target_id, r.transform_expression AS transform_expression,

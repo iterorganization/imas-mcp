@@ -3,10 +3,10 @@
 Assembles complete IMAS IDS instances from facility graph data using two
 modes:
 
-1. **Graph-driven** (preferred): Reads IMASMapping and SignalGroup nodes from
+1. **Graph-driven** (preferred): Reads IMASMapping and SignalSource nodes from
    the knowledge graph. The IMASMapping's POPULATES relationships define
    structural patterns (how DataNodes group into array-of-structures entries),
-   while MAPS_TO_IMAS relationships on SignalGroups define field-level
+   while MAPS_TO_IMAS relationships on SignalSources define field-level
    transformations with executable transform_expression.
 
 2. **YAML recipe** (fallback): Reads a YAML recipe file with embedded Cypher
@@ -14,7 +14,7 @@ modes:
 
 Architecture:
     IMASMapping -[:POPULATES]-> IMASNode (struct-array assembly config)
-    IMASMapping -[:USES_SIGNAL_GROUP]-> SignalGroup -[:MAPS_TO_IMAS]-> IMASNode
+    IMASMapping -[:USES_SIGNAL_SOURCE]-> SignalSource -[:MAPS_TO_IMAS]-> IMASNode
     IDSAssembler → reads mapping, queries graph, populates IDS (generic)
 """
 
@@ -71,7 +71,7 @@ class IDSAssembler:
     """Assembles IMAS IDS instances from graph data.
 
     Supports two modes:
-    - Graph-driven: Loads IMASMapping + SignalGroups from the knowledge graph.
+    - Graph-driven: Loads IMASMapping + SignalSources from the knowledge graph.
     - YAML fallback: Loads a YAML recipe file with embedded queries.
 
     Graph mode is used when an active IMASMapping exists in the graph.

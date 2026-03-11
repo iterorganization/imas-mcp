@@ -432,17 +432,17 @@ def fetch_enrichment_context(
 MIN_PATTERN_INSTANCES = 3
 
 
-def detect_and_create_signal_groups(
+def detect_and_create_signal_sources(
     facility: str,
     data_source_name: str,
     min_instances: int = MIN_PATTERN_INSTANCES,
 ) -> int:
-    """Detect indexed parameter groups and create SignalGroup nodes.
+    """Detect indexed parameter groups and create SignalSource nodes.
 
     Scans the graph for grandparent STRUCTURE nodes whose children (also
     STRUCTURE) each contain data-bearing leaves with the same name.
     For each (grandparent, leaf_name) combination with enough instances,
-    creates a SignalGroup and MEMBER_OF relationships.
+    creates a SignalSource and MEMBER_OF relationships.
 
     Example: TOP.W has children W001-W830, each with leaf R.
     Pattern: grandparent=TOP.W, leaf=R, index_count=830.
@@ -485,7 +485,7 @@ def detect_and_create_signal_groups(
             )
             return 0
 
-        # Create SignalGroup nodes and MEMBER_OF relationships
+        # Create SignalSource nodes and MEMBER_OF relationships
         patterns = []
         for g in groups:
             pattern_id = (
@@ -509,7 +509,7 @@ def detect_and_create_signal_groups(
         result = gc.query(
             """
             UNWIND $patterns AS p
-            MERGE (pat:SignalGroup {id: p.id})
+            MERGE (pat:SignalSource {id: p.id})
             ON CREATE SET
                 pat.facility_id = p.facility_id,
                 pat.data_source_name = p.data_source_name,
@@ -547,13 +547,13 @@ def detect_and_create_signal_groups(
         return created
 
 
-def detect_and_create_member_signal_groups(
+def detect_and_create_member_signal_sources(
     facility: str,
     data_source_name: str,
     member_parent_types: list[str] | None = None,
     min_instances: int = MIN_PATTERN_INSTANCES,
 ) -> int:
-    """Detect member-suffix patterns and create SignalGroup nodes.
+    """Detect member-suffix patterns and create SignalSource nodes.
 
     MDSplus nodes often have member sub-nodes (colon-separated, e.g.
     `:PRE`, `:VAL`, `:STORE`) that share identical semantic meaning
@@ -566,7 +566,7 @@ def detect_and_create_member_signal_groups(
     YAML (e.g. ``["SIGNAL"]`` for TCV). If *None* or empty, this
     function is a no-op.
 
-    Unlike `detect_and_create_signal_groups` (which groups by grandparent →
+    Unlike `detect_and_create_signal_sources` (which groups by grandparent →
     indexed-parent → leaf), this groups globally by (leaf_name, parent
     node_type) so a single group covers all instances.
 
@@ -592,7 +592,7 @@ def detect_and_create_member_signal_groups(
             WHERE parent.node_type IN $parent_types
             MATCH (parent)-[:HAS_NODE]->(leaf:SignalNode)
             WHERE leaf.node_type IN $node_types
-              AND NOT EXISTS { (leaf)-[:MEMBER_OF]->(:SignalGroup) }
+              AND NOT EXISTS { (leaf)-[:MEMBER_OF]->(:SignalSource) }
             WITH split(leaf.path, ':')[-1] AS leaf_name,
                  parent.node_type AS parent_type,
                  count(leaf) AS instance_count,
@@ -635,7 +635,7 @@ def detect_and_create_member_signal_groups(
         result = gc.query(
             """
             UNWIND $patterns AS p
-            MERGE (pat:SignalGroup {id: p.id})
+            MERGE (pat:SignalSource {id: p.id})
             ON CREATE SET
                 pat.facility_id = p.facility_id,
                 pat.data_source_name = p.data_source_name,
@@ -675,20 +675,20 @@ def detect_and_create_member_signal_groups(
 
 
 # ---------------------------------------------------------------------------
-# Enrichment claiming — SignalGroup (group-first enrichment)
+# Enrichment claiming — SignalSource (group-first enrichment)
 # ---------------------------------------------------------------------------
 
 
 @retry_on_deadlock()
-def claim_signal_groups(
+def claim_signal_sources(
     facility: str,
     data_source_name: str,
     limit: int = 20,
 ) -> list[dict[str, Any]]:
-    """Claim unenriched SignalGroups for LLM enrichment.
+    """Claim unenriched SignalSources for LLM enrichment.
 
     Returns group info plus one representative node's details for the
-    LLM prompt. After enriching, call mark_signal_groups_enriched() to
+    LLM prompt. After enriching, call mark_signal_sources_enriched() to
     propagate descriptions to all members.
 
     Uses claim_token + ORDER BY rand() to prevent deadlocks.
@@ -701,7 +701,7 @@ def claim_signal_groups(
     with GraphClient() as gc:
         gc.query(
             """
-            MATCH (p:SignalGroup)
+            MATCH (p:SignalSource)
             WHERE p.facility_id = $facility
               AND p.data_source_name = $data_source_name
               AND (p.description IS NULL OR p.description = '')
@@ -716,7 +716,7 @@ def claim_signal_groups(
         )
         result = gc.query(
             """
-            MATCH (p:SignalGroup {claim_token: $token})
+            MATCH (p:SignalSource {claim_token: $token})
             OPTIONAL MATCH (rep:SignalNode {path: p.representative_path,
                                           facility_id: $facility})
             RETURN p.id AS id,
@@ -735,7 +735,7 @@ def claim_signal_groups(
         return [dict(r) for r in result]
 
 
-def mark_signal_groups_enriched(
+def mark_signal_sources_enriched(
     pattern_ids: list[str],
     descriptions: dict[str, str],
     metadata: dict[str, dict] | None = None,
@@ -745,7 +745,7 @@ def mark_signal_groups_enriched(
 ) -> int:
     """Mark signal groups as enriched and propagate to all members.
 
-    Sets description/keywords/category on the SignalGroup and
+    Sets description/keywords/category on the SignalSource and
     copies them to every SignalNode linked via MEMBER_OF.
     Distributes llm_cost evenly across all member nodes.
 
@@ -773,7 +773,7 @@ def mark_signal_groups_enriched(
         result = gc.query(
             """
             UNWIND $updates AS u
-            MATCH (p:SignalGroup {id: u.id})
+            MATCH (p:SignalSource {id: u.id})
             SET p.description = u.description,
                 p.keywords = u.keywords,
                 p.category = u.category,
@@ -801,7 +801,7 @@ def mark_signal_groups_enriched(
                 gc.query(
                     """
                     UNWIND $ids AS pid
-                    MATCH (n:SignalNode)-[:MEMBER_OF]->(:SignalGroup {id: pid})
+                    MATCH (n:SignalNode)-[:MEMBER_OF]->(:SignalSource {id: pid})
                     WHERE n.enrichment_status = 'enriched'
                     SET n.llm_cost = $per_node_cost,
                         n.llm_model = $llm_model,
@@ -815,15 +815,15 @@ def mark_signal_groups_enriched(
         return total_propagated
 
 
-def release_signal_group_claims(pattern_ids: list[str]) -> int:
-    """Release claims on SignalGroups (on error)."""
+def release_signal_source_claims(pattern_ids: list[str]) -> int:
+    """Release claims on SignalSources (on error)."""
     if not pattern_ids:
         return 0
     with GraphClient() as gc:
         result = gc.query(
             """
             UNWIND $ids AS pid
-            MATCH (p:SignalGroup {id: pid})
+            MATCH (p:SignalSource {id: pid})
             SET p.claimed_at = null
             RETURN count(p) AS released
             """,
@@ -832,12 +832,12 @@ def release_signal_group_claims(pattern_ids: list[str]) -> int:
         return result[0]["released"] if result else 0
 
 
-def has_pending_signal_group_work(facility: str, data_source_name: str) -> bool:
-    """Check if any SignalGroups need enrichment."""
+def has_pending_signal_source_work(facility: str, data_source_name: str) -> bool:
+    """Check if any SignalSources need enrichment."""
     with GraphClient() as gc:
         result = gc.query(
             """
-            MATCH (p:SignalGroup)
+            MATCH (p:SignalSource)
             WHERE p.facility_id = $facility
               AND p.data_source_name = $data_source_name
               AND (p.description IS NULL OR p.description = '')
@@ -868,7 +868,7 @@ def claim_parent_for_enrichment(
     """Claim a parent node whose children need enrichment.
 
     Finds any SignalNode with un-enriched NUMERIC/SIGNAL children
-    that don't follow a SignalGroup. Claims the parent by setting
+    that don't follow a SignalSource. Claims the parent by setting
     claimed_at. Uses claim_token + ORDER BY rand() to prevent deadlocks.
 
     Returns:
@@ -885,7 +885,7 @@ def claim_parent_for_enrichment(
             MATCH (parent)-[:HAS_NODE]->(child:SignalNode)
             WHERE child.node_type IN $node_types
               AND (child.description IS NULL OR child.description = '')
-              AND NOT EXISTS { (child)-[:MEMBER_OF]->(:SignalGroup) }
+              AND NOT EXISTS { (child)-[:MEMBER_OF]->(:SignalSource) }
             WITH parent, count(child) AS unenriched
             WHERE unenriched > 0
             WITH parent ORDER BY rand() LIMIT 1
@@ -902,7 +902,7 @@ def claim_parent_for_enrichment(
             MATCH (parent)-[:HAS_NODE]->(child:SignalNode)
             WHERE child.node_type IN $node_types
               AND (child.description IS NULL OR child.description = '')
-              AND NOT EXISTS { (child)-[:MEMBER_OF]->(:SignalGroup) }
+              AND NOT EXISTS { (child)-[:MEMBER_OF]->(:SignalSource) }
             RETURN parent.id AS parent_id, parent.path AS parent_path,
                    parent.tags AS parent_tags,
                    collect({
@@ -940,7 +940,7 @@ def claim_orphan_nodes_for_enrichment(
             MATCH (child:SignalNode {facility_id: $facility, data_source_name: $data_source_name})
             WHERE child.node_type IN $node_types
               AND (child.description IS NULL OR child.description = '')
-              AND NOT EXISTS { (child)-[:MEMBER_OF]->(:SignalGroup) }
+              AND NOT EXISTS { (child)-[:MEMBER_OF]->(:SignalSource) }
               AND NOT EXISTS { (:SignalNode)-[:HAS_NODE]->(child) }
               AND child.claimed_at IS NULL
             WITH child ORDER BY rand() LIMIT $limit
@@ -1162,7 +1162,7 @@ def has_pending_extract_work(facility: str, data_source_name: str) -> bool:
 
 def has_pending_enrich_work(facility: str, data_source_name: str) -> bool:
     """Check if any signal groups, parent groups, or orphan nodes need enrichment."""
-    if has_pending_signal_group_work(facility, data_source_name):
+    if has_pending_signal_source_work(facility, data_source_name):
         return True
     with GraphClient() as gc:
         # Check for parents with unenriched children (any parent type)
@@ -1173,7 +1173,7 @@ def has_pending_enrich_work(facility: str, data_source_name: str) -> bool:
             MATCH (parent)-[:HAS_NODE]->(child:SignalNode)
             WHERE child.node_type IN $node_types
               AND (child.description IS NULL OR child.description = '')
-              AND NOT EXISTS { (child)-[:MEMBER_OF]->(:SignalGroup) }
+              AND NOT EXISTS { (child)-[:MEMBER_OF]->(:SignalSource) }
             RETURN count(DISTINCT parent) > 0 AS has_work
             """,
             facility=facility,
@@ -1189,7 +1189,7 @@ def has_pending_enrich_work(facility: str, data_source_name: str) -> bool:
             MATCH (child:SignalNode {facility_id: $facility, data_source_name: $data_source_name})
             WHERE child.node_type IN $node_types
               AND (child.description IS NULL OR child.description = '')
-              AND NOT EXISTS { (child)-[:MEMBER_OF]->(:SignalGroup) }
+              AND NOT EXISTS { (child)-[:MEMBER_OF]->(:SignalSource) }
               AND NOT EXISTS { (:SignalNode)-[:HAS_NODE]->(child) }
             RETURN count(child) > 0 AS has_work
             """,
@@ -1234,7 +1234,7 @@ def reset_orphaned_static_claims(
         silent=silent,
     )
     pattern_reset = reset_stale_claims(
-        "SignalGroup",
+        "SignalSource",
         facility,
         timeout_seconds=CLAIM_TIMEOUT_SECONDS,
         silent=silent,
@@ -1388,7 +1388,7 @@ def get_static_discovery_stats(
             WITH parent
             MATCH (parent)-[:HAS_NODE]->(child:SignalNode)
             WHERE child.node_type IN $node_types
-              AND NOT EXISTS { (child)-[:MEMBER_OF]->(:SignalGroup) }
+              AND NOT EXISTS { (child)-[:MEMBER_OF]->(:SignalSource) }
             WITH parent,
                  count(child) AS total_children,
                  sum(CASE WHEN child.description IS NOT NULL
@@ -1420,7 +1420,7 @@ def get_static_discovery_stats(
             """
             MATCH (child:SignalNode {facility_id: $facility, data_source_name: $data_source_name})
             WHERE child.node_type IN $node_types
-              AND NOT EXISTS { (child)-[:MEMBER_OF]->(:SignalGroup) }
+              AND NOT EXISTS { (child)-[:MEMBER_OF]->(:SignalSource) }
               AND NOT EXISTS { (:SignalNode)-[:HAS_NODE]->(child) }
             RETURN count(child) AS total_orphans,
                    sum(CASE WHEN child.description IS NOT NULL
@@ -1442,7 +1442,7 @@ def get_static_discovery_stats(
         # Pattern stats
         pattern_result = gc.query(
             """
-            MATCH (p:SignalGroup)
+            MATCH (p:SignalSource)
             WHERE p.facility_id = $facility AND p.data_source_name = $data_source_name
             RETURN
                 count(p) AS total,
@@ -1493,7 +1493,7 @@ def reset_enrichment(
     """Reset all enrichment data for static tree nodes.
 
     Clears descriptions, enrichment status, LLM cost/model/timestamp,
-    keywords, and category from all SignalNode and SignalGroup nodes.
+    keywords, and category from all SignalNode and SignalSource nodes.
     After reset, the enrichment pipeline will re-process all nodes.
 
     Returns:
@@ -1528,10 +1528,10 @@ def reset_enrichment(
         )
         nodes_reset = node_result[0]["reset"] if node_result else 0
 
-        # Reset SignalGroup enrichment fields
+        # Reset SignalSource enrichment fields
         pattern_result = gc.query(
             """
-            MATCH (p:SignalGroup {facility_id: $facility, data_source_name: $data_source_name})
+            MATCH (p:SignalSource {facility_id: $facility, data_source_name: $data_source_name})
             WHERE p.description IS NOT NULL OR p.enrichment_status IS NOT NULL
             SET p.description = null,
                 p.enrichment_status = null,
@@ -1562,7 +1562,7 @@ def clear_facility_static(
 ) -> dict[str, int]:
     """Clear all static tree discovery data for a facility.
 
-    Deletes SignalNode nodes, SignalGroup nodes,
+    Deletes SignalNode nodes, SignalSource nodes,
     and their SignalEpoch nodes in batches.
 
     Args:
@@ -1579,10 +1579,10 @@ def clear_facility_static(
     }
 
     with GraphClient() as gc:
-        # Delete SignalGroup nodes first (they reference DataNodes)
+        # Delete SignalSource nodes first (they reference DataNodes)
         result = gc.query(
             """
-            MATCH (p:SignalGroup {facility_id: $facility})
+            MATCH (p:SignalSource {facility_id: $facility})
             DETACH DELETE p
             RETURN count(p) AS deleted
             """,

@@ -30,7 +30,7 @@ from imas_codex.ids.tools import (
     fetch_imas_fields,
     fetch_imas_subtree,
     get_sign_flip_paths,
-    query_signal_groups,
+    query_signal_sources,
     search_existing_mappings,
 )
 
@@ -120,13 +120,13 @@ def sample_section_assignment():
         ids_name="pf_active",
         assignments=[
             SectionAssignment(
-                signal_group_id="jet:pf_coils:group1",
+                source_id="jet:pf_coils:group1",
                 imas_section_path="pf_active/coil",
                 confidence=0.95,
                 reasoning="PF coil geometry maps to pf_active/coil",
             ),
             SectionAssignment(
-                signal_group_id="jet:pf_coils:group2",
+                source_id="jet:pf_coils:group2",
                 imas_section_path="pf_active/coil",
                 confidence=0.90,
                 reasoning="PF coil 2 geometry maps to pf_active/coil",
@@ -184,7 +184,7 @@ def sample_validated_result():
         dd_version="4.1.1",
         sections=[
             SectionAssignment(
-                signal_group_id="jet:pf_coils:group1",
+                source_id="jet:pf_coils:group1",
                 imas_section_path="pf_active/coil",
                 confidence=0.95,
                 reasoning="PF coil geometry maps to pf_active/coil",
@@ -295,16 +295,16 @@ class TestCheckImasPaths:
         assert result[0]["suggestion"] == "pf_active/coil"
 
 
-class TestQuerySignalGroups:
+class TestQuerySignalSources:
     def test_returns_groups(self, mock_gc, sample_groups):
         mock_gc.query.return_value = sample_groups
-        result = query_signal_groups("jet", gc=mock_gc)
+        result = query_signal_sources("jet", gc=mock_gc)
         assert len(result) == 2
         assert result[0]["group_key"] == "pf_coil_1"
 
     def test_filtered_by_ids(self, mock_gc, sample_groups):
         mock_gc.query.return_value = sample_groups[:1]
-        result = query_signal_groups("jet", "pf_active", gc=mock_gc)
+        result = query_signal_sources("jet", "pf_active", gc=mock_gc)
         assert len(result) == 1
 
 
@@ -424,7 +424,7 @@ class TestPersistMappingResult:
     def test_creates_mapping_node(self, mock_gc, sample_validated_result):
         persist_mapping_result(sample_validated_result, gc=mock_gc)
         # Should have called query multiple times:
-        # 1 for MERGE mapping, 1 for POPULATES, 1 for USES_SIGNAL_GROUP,
+        # 1 for MERGE mapping, 1 for POPULATES, 1 for USES_SIGNAL_SOURCE,
         # 2 for MAPS_TO_IMAS (2 fields), 1 for escalation evidence
         assert mock_gc.query.call_count == 6
 
@@ -474,7 +474,7 @@ class TestPipelineOrchestrator:
         # Patch fetch_imas_subtree to use our mock
         with (
             patch("imas_codex.ids.mapping.fetch_imas_subtree") as mock_subtree,
-            patch("imas_codex.ids.mapping.query_signal_groups") as mock_qsg,
+            patch("imas_codex.ids.mapping.query_signal_sources") as mock_qsg,
             patch("imas_codex.ids.mapping.search_existing_mappings") as mock_sem,
         ):
             mock_subtree.return_value = sample_subtree
@@ -649,7 +649,7 @@ class TestPipelineOrchestrator:
             ids_name="pf_active",
             assignments=[
                 SectionAssignment(
-                    signal_group_id="jet:pf_coils:group1",
+                    source_id="jet:pf_coils:group1",
                     imas_section_path="pf_active/coil",
                     confidence=0.95,
                     reasoning="PF coil geometry maps to pf_active/coil",
@@ -826,7 +826,7 @@ class TestPromptTemplates:
             "exploration",
             facility="jet",
             ids_name="pf_active",
-            signal_groups="- group1: PF coil 1",
+            signal_sources="- group1: PF coil 1",
             imas_subtree="pf_active/coil (STRUCT_ARRAY)",
             semantic_results="pf_active/coil — PF coil descriptions",
         )
@@ -842,7 +842,7 @@ class TestPromptTemplates:
             facility="jet",
             ids_name="pf_active",
             section_path="pf_active/coil",
-            signal_group_detail="{}",
+            signal_source_detail="{}",
             imas_fields="- pf_active/coil/element/geometry/rectangle/r (FLT_0D) [m]",
             unit_analysis="m → m: compatible",
             cocos_paths="(none)",

@@ -49,11 +49,11 @@ class ValidationReport:
 def _check_sources_exist(
     source_ids: list[str], gc: GraphClient
 ) -> dict[str, bool]:
-    """Check which source SignalGroup nodes exist in the graph."""
+    """Check which source SignalSource nodes exist in the graph."""
     result: dict[str, bool] = {}
     for sid in source_ids:
         rows = gc.query(
-            "MATCH (sg:SignalGroup {id: $id}) RETURN sg.id AS id LIMIT 1",
+            "MATCH (sg:SignalSource {id: $id}) RETURN sg.id AS id LIMIT 1",
             id=sid,
         )
         result[sid] = len(rows) > 0
@@ -102,7 +102,7 @@ def validate_mapping(
         # 1. Source exists
         check.source_exists = source_exists.get(b.source_id, False)
         if not check.source_exists:
-            errors.append(f"SignalGroup '{b.source_id}' not found in graph")
+            errors.append(f"SignalSource '{b.source_id}' not found in graph")
 
         # 2. Target exists
         target_info = target_results.get(b.target_id, {})
@@ -285,7 +285,7 @@ def compute_signal_coverage(
     *,
     gc: GraphClient | None = None,
 ) -> SignalCoverageReport:
-    """Query enriched SignalGroups and check which have MAPS_TO_IMAS bindings.
+    """Query enriched SignalSources and check which have MAPS_TO_IMAS bindings.
 
     Args:
         facility: Facility identifier (e.g. "jet").
@@ -299,7 +299,7 @@ def compute_signal_coverage(
 
     rows = gc.query(
         """
-        MATCH (sg:SignalGroup {facility_id: $facility, status: 'enriched'})
+        MATCH (sg:SignalSource {facility_id: $facility, status: 'enriched'})
         OPTIONAL MATCH (sg)-[:MAPS_TO_IMAS]->(ip:IMASNode)
         RETURN sg.id AS id, ip IS NOT NULL AS is_mapped
         """,

@@ -25,6 +25,8 @@ __all__ = [
     "ContextQuality",
     "SignalEnrichmentResult",
     "SignalEnrichmentBatch",
+    "SignalSourceEnrichmentResult",
+    "SignalSourceEnrichmentBatch",
     "UnitConfidence",
 ]
 
@@ -164,4 +166,51 @@ class SignalEnrichmentBatch(BaseModel):
 
     results: list[SignalEnrichmentResult] = Field(
         description="Enrichment results, one per input signal in the same order"
+    )
+
+
+class SignalSourceEnrichmentResult(BaseModel):
+    """LLM enrichment for a single SignalSource node.
+
+    SignalSource nodes group signals that map identically to the same IMAS field.
+    The source-level description explains what the collection represents and how
+    individual members differ from each other.
+    """
+
+    source_index: int = Field(
+        description="1-based index matching the input source order",
+        json_schema_extra={"examples": [1]},
+    )
+
+    description: str = Field(
+        description="What this collection of signals represents. "
+        "Describe the shared measurement type and how members differ."
+    )
+
+    physics_domain: PhysicsDomain = Field(
+        description="Physics domain classification for this source."
+    )
+
+    diagnostic: str = Field(
+        default="",
+        description="Diagnostic system name if identifiable.",
+    )
+
+    keywords: list[str] = Field(
+        default_factory=list,
+        description="Searchable keywords (max 5).",
+    )
+
+    member_variation: str = Field(
+        default="",
+        description="How individual members differ within the source "
+        "(e.g., 'spatial position', 'channel index', 'coil number').",
+    )
+
+
+class SignalSourceEnrichmentBatch(BaseModel):
+    """Batch of SignalSource enrichments — multiple sources per LLM call."""
+
+    results: list[SignalSourceEnrichmentResult] = Field(
+        description="Enrichment results, one per input source in the same order"
     )

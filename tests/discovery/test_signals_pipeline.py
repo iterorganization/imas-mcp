@@ -1242,30 +1242,30 @@ class TestCLISignals:
 class TestSignalPatternDetection:
     """Tests for indexed signal pattern detection and propagation."""
 
-    def test_accessor_to_pattern(self):
+    def test_accessor_to_source_key(self):
         """Numeric segments are replaced with NNN."""
-        from imas_codex.discovery.signals.parallel import _accessor_to_pattern
+        from imas_codex.discovery.signals.parallel import _accessor_to_source_key
 
         assert (
-            _accessor_to_pattern("CALIB_GAS_010:PROPERTIES:PARAM_048:LIM")
+            _accessor_to_source_key("CALIB_GAS_010:PROPERTIES:PARAM_048:LIM")
             == "CALIB_GAS_NNN:PROPERTIES:PARAM_NNN:LIM"
         )
         assert (
-            _accessor_to_pattern("WAVE_GEN_A:OUTPUT_064:OFFSET")
+            _accessor_to_source_key("WAVE_GEN_A:OUTPUT_064:OFFSET")
             == "WAVE_GEN_A:OUTPUT_NNN:OFFSET"
         )
         assert (
-            _accessor_to_pattern("TOP.INPUTS.S_DSP_003:ADC_GAIN")
+            _accessor_to_source_key("TOP.INPUTS.S_DSP_003:ADC_GAIN")
             == "TOP.INPUTS.S_DSP_NNN:ADC_GAIN"
         )
         # Single digit should NOT be replaced (min 2 digits)
-        assert _accessor_to_pattern("COIL_R:S1") == "COIL_R:S1"
+        assert _accessor_to_source_key("COIL_R:S1") == "COIL_R:S1"
         # No numbers should be unchanged
-        assert _accessor_to_pattern("IP:VALUE") == "IP:VALUE"
+        assert _accessor_to_source_key("IP:VALUE") == "IP:VALUE"
 
-    def test_detect_signal_groups(self):
-        """Pattern detection groups indexed signals and creates SignalGroup nodes."""
-        from imas_codex.discovery.signals.parallel import detect_signal_groups
+    def test_detect_signal_sources(self):
+        """Pattern detection groups indexed signals and creates SignalSource nodes."""
+        from imas_codex.discovery.signals.parallel import detect_signal_sources
 
         # Mock GraphClient to return indexed signals
         mock_results = [
@@ -1284,7 +1284,7 @@ class TestSignalPatternDetection:
             "imas_codex.discovery.signals.parallel.GraphClient",
             return_value=mock_gc,
         ):
-            patterns, followers = detect_signal_groups("tcv", min_instances=3)
+            patterns, followers = detect_signal_sources("tcv", min_instances=3)
 
         # Should detect 1 pattern (GAS_NNN:PARAM:A) with 10 signals
         assert patterns == 1
@@ -1301,7 +1301,7 @@ class TestSignalPatternDetection:
 
     def test_detect_groups_below_threshold(self):
         """Groups below min_instances threshold are not detected."""
-        from imas_codex.discovery.signals.parallel import detect_signal_groups
+        from imas_codex.discovery.signals.parallel import detect_signal_sources
 
         # Only 2 signals in the group (below default min_instances=3)
         mock_results = [
@@ -1319,27 +1319,27 @@ class TestSignalPatternDetection:
             "imas_codex.discovery.signals.parallel.GraphClient",
             return_value=mock_gc,
         ):
-            patterns, followers = detect_signal_groups("tcv", min_instances=3)
+            patterns, followers = detect_signal_sources("tcv", min_instances=3)
 
         assert patterns == 0
         assert followers == 0
 
-    def test_propagate_signal_group_enrichment(self):
+    def test_propagate_source_enrichment(self):
         """Enrichment is propagated from representative to group members."""
         from imas_codex.discovery.signals.parallel import (
-            propagate_signal_group_enrichment,
+            propagate_source_enrichment,
         )
 
         mock_gc = MagicMock()
         mock_gc.__enter__ = MagicMock(return_value=mock_gc)
         mock_gc.__exit__ = MagicMock(return_value=False)
         # First call: count discovered followers -> 5
-        # Second call: update SignalGroup node -> void
+        # Second call: update SignalSource node -> void
         # Third call: propagate discovered → enriched -> 5 updated
         mock_gc.query = MagicMock(
             side_effect=[
                 [{"cnt": 5}],
-                [],  # SignalGroup update
+                [],  # SignalSource update
                 [{"updated": 5}],
                 [],  # diagnostic creation
             ]
@@ -1359,7 +1359,7 @@ class TestSignalPatternDetection:
             "imas_codex.discovery.signals.parallel.GraphClient",
             return_value=mock_gc,
         ):
-            result = propagate_signal_group_enrichment(
+            result = propagate_source_enrichment(
                 "tcv:rep_signal", enrichment, batch_cost=0.01
             )
 

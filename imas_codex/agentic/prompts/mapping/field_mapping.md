@@ -16,7 +16,7 @@ from facility signal groups to specific IMAS fields within a structural section.
 
 This signal group has been assigned to the section above:
 
-{{ signal_group_detail }}
+{{ signal_source_detail }}
 
 ### IMAS Section Fields
 

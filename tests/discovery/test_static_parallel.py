@@ -192,7 +192,7 @@ class TestGraphOps:
         mock_gc = MagicMock()
         mock_gc_cls.return_value.__enter__ = MagicMock(return_value=mock_gc)
         mock_gc_cls.return_value.__exit__ = MagicMock(return_value=False)
-        # First call: has_pending_signal_group_work returns False
+        # First call: has_pending_signal_source_work returns False
         # Second call: parent groups query returns False
         # Third call: orphan nodes query returns False
         mock_gc.query.side_effect = [
@@ -335,9 +335,9 @@ class TestGraphOps:
     # --- Pattern tests ---
 
     @patch("imas_codex.discovery.mdsplus.graph_ops.GraphClient")
-    def test_detect_and_create_signal_groups_empty(self, mock_gc_cls):
+    def test_detect_and_create_signal_sources_empty(self, mock_gc_cls):
         from imas_codex.discovery.mdsplus.graph_ops import (
-            detect_and_create_signal_groups,
+            detect_and_create_signal_sources,
         )
 
         mock_gc = MagicMock()
@@ -345,13 +345,13 @@ class TestGraphOps:
         mock_gc_cls.return_value.__exit__ = MagicMock(return_value=False)
         mock_gc.query.return_value = []
 
-        result = detect_and_create_signal_groups("tcv", "static")
+        result = detect_and_create_signal_sources("tcv", "static")
         assert result == 0
 
     @patch("imas_codex.discovery.mdsplus.graph_ops.GraphClient")
-    def test_detect_and_create_signal_groups_finds_groups(self, mock_gc_cls):
+    def test_detect_and_create_signal_sources_finds_groups(self, mock_gc_cls):
         from imas_codex.discovery.mdsplus.graph_ops import (
-            detect_and_create_signal_groups,
+            detect_and_create_signal_sources,
         )
 
         mock_gc = MagicMock()
@@ -382,14 +382,14 @@ class TestGraphOps:
             ],
         ]
 
-        result = detect_and_create_signal_groups("tcv", "static")
+        result = detect_and_create_signal_sources("tcv", "static")
         assert result == 2
         # Verify ensure_facility was called
         mock_gc.ensure_facility.assert_called_once_with("tcv")
 
     @patch("imas_codex.discovery.mdsplus.graph_ops.GraphClient")
-    def test_claim_signal_groups(self, mock_gc_cls):
-        from imas_codex.discovery.mdsplus.graph_ops import claim_signal_groups
+    def test_claim_signal_sources(self, mock_gc_cls):
+        from imas_codex.discovery.mdsplus.graph_ops import claim_signal_sources
 
         mock_gc = MagicMock()
         mock_gc_cls.return_value.__enter__ = MagicMock(return_value=mock_gc)
@@ -408,21 +408,21 @@ class TestGraphOps:
             }
         ]
 
-        result = claim_signal_groups("tcv", "static", limit=10)
+        result = claim_signal_sources("tcv", "static", limit=10)
         assert len(result) == 1
         assert result[0]["leaf_name"] == "R"
         assert result[0]["index_count"] == 830
 
     @patch("imas_codex.discovery.mdsplus.graph_ops.GraphClient")
-    def test_mark_signal_groups_enriched_empty(self, mock_gc_cls):
-        from imas_codex.discovery.mdsplus.graph_ops import mark_signal_groups_enriched
+    def test_mark_signal_sources_enriched_empty(self, mock_gc_cls):
+        from imas_codex.discovery.mdsplus.graph_ops import mark_signal_sources_enriched
 
-        result = mark_signal_groups_enriched([], {})
+        result = mark_signal_sources_enriched([], {})
         assert result == 0
 
     @patch("imas_codex.discovery.mdsplus.graph_ops.GraphClient")
-    def test_mark_signal_groups_enriched_propagates(self, mock_gc_cls):
-        from imas_codex.discovery.mdsplus.graph_ops import mark_signal_groups_enriched
+    def test_mark_signal_sources_enriched_propagates(self, mock_gc_cls):
+        from imas_codex.discovery.mdsplus.graph_ops import mark_signal_sources_enriched
 
         mock_gc = MagicMock()
         mock_gc_cls.return_value.__enter__ = MagicMock(return_value=mock_gc)
@@ -431,7 +431,7 @@ class TestGraphOps:
             {"pattern_id": "tcv:static:\\MAGNETICS::TOP.W:R", "propagated": 830}
         ]
 
-        result = mark_signal_groups_enriched(
+        result = mark_signal_sources_enriched(
             ["tcv:static:\\MAGNETICS::TOP.W:R"],
             {"tcv:static:\\MAGNETICS::TOP.W:R": "Major radius of coil turn"},
             {
@@ -444,8 +444,8 @@ class TestGraphOps:
         assert result == 830
 
     @patch("imas_codex.discovery.mdsplus.graph_ops.GraphClient")
-    def test_mark_signal_groups_enriched_writes_cost(self, mock_gc_cls):
-        from imas_codex.discovery.mdsplus.graph_ops import mark_signal_groups_enriched
+    def test_mark_signal_sources_enriched_writes_cost(self, mock_gc_cls):
+        from imas_codex.discovery.mdsplus.graph_ops import mark_signal_sources_enriched
 
         mock_gc = MagicMock()
         mock_gc_cls.return_value.__enter__ = MagicMock(return_value=mock_gc)
@@ -457,7 +457,7 @@ class TestGraphOps:
             None,
         ]
 
-        result = mark_signal_groups_enriched(
+        result = mark_signal_sources_enriched(
             ["tcv:static:\\MAGNETICS::TOP.W:R"],
             {"tcv:static:\\MAGNETICS::TOP.W:R": "Major radius"},
             llm_cost=0.05,
@@ -468,22 +468,22 @@ class TestGraphOps:
         cost_call = mock_gc.query.call_args_list[1]
         assert "llm_cost" in cost_call[1] or "per_node_cost" in cost_call[1]
 
-    def test_release_signal_group_claims_empty(self):
-        from imas_codex.discovery.mdsplus.graph_ops import release_signal_group_claims
+    def test_release_signal_source_claims_empty(self):
+        from imas_codex.discovery.mdsplus.graph_ops import release_signal_source_claims
 
-        result = release_signal_group_claims([])
+        result = release_signal_source_claims([])
         assert result == 0
 
     @patch("imas_codex.discovery.mdsplus.graph_ops.GraphClient")
-    def test_has_pending_signal_group_work(self, mock_gc_cls):
-        from imas_codex.discovery.mdsplus.graph_ops import has_pending_signal_group_work
+    def test_has_pending_signal_source_work(self, mock_gc_cls):
+        from imas_codex.discovery.mdsplus.graph_ops import has_pending_signal_source_work
 
         mock_gc = MagicMock()
         mock_gc_cls.return_value.__enter__ = MagicMock(return_value=mock_gc)
         mock_gc_cls.return_value.__exit__ = MagicMock(return_value=False)
         mock_gc.query.return_value = [{"has_work": True}]
 
-        assert has_pending_signal_group_work("tcv", "static") is True
+        assert has_pending_signal_source_work("tcv", "static") is True
 
 
 # ===========================================================================

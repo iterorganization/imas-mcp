@@ -343,15 +343,15 @@ def get_data_discovery_stats(facility: str) -> dict[str, Any]:
             # Signal group counts (separate query to avoid cross-product)
             grp = gc.query(
                 """
-                MATCH (sg:SignalGroup {facility_id: $facility})
+                MATCH (sg:SignalSource {facility_id: $facility})
                 OPTIONAL MATCH (s:FacilitySignal)-[:MEMBER_OF]->(sg)
-                RETURN count(DISTINCT sg) AS signal_groups,
+                RETURN count(DISTINCT sg) AS signal_sources,
                        count(s) AS grouped_signals
                 """,
                 facility=facility,
             )
             if grp:
-                stats["signal_groups"] = grp[0]["signal_groups"]
+                stats["signal_sources"] = grp[0]["signal_sources"]
                 stats["grouped_signals"] = grp[0]["grouped_signals"]
 
             return stats
@@ -388,7 +388,8 @@ def clear_facility_signals(
     """Clear all signal discovery data for a facility.
 
     Deletes FacilitySignal nodes, DataAccess nodes, SignalEpoch
-    (epoch) nodes, and clears epoch checkpoint files. Always cascades.
+    (epoch) nodes, SignalSource nodes, and clears epoch checkpoint
+    files. Always cascades.
 
     Args:
         facility: Facility ID
@@ -396,12 +397,13 @@ def clear_facility_signals(
 
     Returns:
         Dict with counts: signals_deleted, data_access_deleted,
-        epochs_deleted, checkpoints_deleted
+        epochs_deleted, signal_sources_deleted, checkpoints_deleted
     """
     results = {
         "signals_deleted": 0,
         "data_access_deleted": 0,
         "epochs_deleted": 0,
+        "signal_sources_deleted": 0,
         "checkpoints_deleted": 0,
     }
 
@@ -453,6 +455,17 @@ def clear_facility_signals(
                 if deleted < batch_size:
                     break
 
+            # Delete SignalSource nodes
+            result = gc.query(
+                """
+                MATCH (ss:SignalSource {facility_id: $facility})
+                DETACH DELETE ss
+                RETURN count(ss) AS deleted
+                """,
+                facility=facility,
+            )
+            results["signal_sources_deleted"] = result[0]["deleted"] if result else 0
+
         # Clear epoch checkpoint files
         checkpoint_dir = get_checkpoint_dir()
         for checkpoint_file in checkpoint_dir.glob(f"{facility}_*_epochs.json"):
@@ -463,11 +476,12 @@ def clear_facility_signals(
                 logger.warning("Could not delete checkpoint %s: %s", checkpoint_file, e)
 
         logger.info(
-            "Cleared signals for %s: %d signals, %d data_access, %d epochs, %d checkpoints",
+            "Cleared signals for %s: %d signals, %d data_access, %d epochs, %d sources, %d checkpoints",
             facility,
             results["signals_deleted"],
             results["data_access_deleted"],
             results["epochs_deleted"],
+            results["signal_sources_deleted"],
             results["checkpoints_deleted"],
         )
         return results
@@ -528,7 +542,7 @@ def claim_signals_for_enrichment(
                 MATCH (s:FacilitySignal {facility_id: $facility})
                 WHERE s.status IN [$discovered, $underspecified]
                   AND NOT EXISTS {
-                    MATCH (s)-[:MEMBER_OF]->(sg:SignalGroup)
+                    MATCH (s)-[:MEMBER_OF]->(sg:SignalSource)
                     WHERE sg.representative_id <> s.id
                   }
                   AND (s.claimed_at IS NULL
@@ -1083,7 +1097,7 @@ def release_or_fail_after_crash(
 _PATTERN_RE = re.compile(r"\d{2,}")
 
 
-def _accessor_to_pattern(accessor: str) -> str:
+def _accessor_to_source_key(accessor: str) -> str:
     """Convert a signal accessor to its pattern template.
 
     Replaces numeric segments (2+ digits) with NNN.
@@ -1092,28 +1106,28 @@ def _accessor_to_pattern(accessor: str) -> str:
     return _PATTERN_RE.sub("NNN", accessor)
 
 
-def detect_signal_groups(
+def detect_signal_sources(
     facility: str,
     min_instances: int = 3,
 ) -> tuple[int, int]:
-    """Detect indexed signal groups and create SignalGroup nodes with MEMBER_OF.
+    """Detect indexed signal groups and create SignalSource nodes with MEMBER_OF.
 
     Scans discovered FacilitySignals for accessor patterns where numeric
     segments vary (e.g., CALIB_GAS_010:...:PARAM_048:LIM). For each
-    pattern with >= min_instances, creates a SignalGroup node and links
+    pattern with >= min_instances, creates a SignalSource node and links
     all member signals via MEMBER_OF relationships. One signal per group
-    is designated as the representative (stored on SignalGroup.representative_id).
+    is designated as the representative (stored on SignalSource.representative_id).
 
     Status stays ``discovered`` — no transient status is introduced.
     ``claim_signals_for_enrichment`` skips signals that are MEMBER_OF
-    a SignalGroup (unless they are the representative) so only
+    a SignalSource (unless they are the representative) so only
     representatives are sent to the LLM.
 
-    After the representative is enriched, ``propagate_signal_group_enrichment()``
+    After the representative is enriched, ``propagate_source_enrichment()``
     copies the LLM-generated metadata to all members and moves them
     straight to ``enriched``.
 
-    Idempotent: signals already linked to a SignalGroup via MEMBER_OF
+    Idempotent: signals already linked to a SignalSource via MEMBER_OF
     are excluded from the initial query.
 
     Args:
@@ -1129,7 +1143,7 @@ def detect_signal_groups(
             """
             MATCH (s:FacilitySignal {facility_id: $facility})
             WHERE s.status = $discovered
-              AND NOT EXISTS { (s)-[:MEMBER_OF]->(:SignalGroup) }
+              AND NOT EXISTS { (s)-[:MEMBER_OF]->(:SignalSource) }
             RETURN s.id AS id, s.accessor AS accessor
             """,
             facility=facility,
@@ -1144,7 +1158,7 @@ def detect_signal_groups(
     for r in results:
         if r["accessor"] is None:
             continue
-        pattern = _accessor_to_pattern(r["accessor"])
+        pattern = _accessor_to_source_key(r["accessor"])
         pattern_groups.setdefault(pattern, []).append(
             {"id": r["id"], "accessor": r["accessor"]}
         )
@@ -1157,7 +1171,7 @@ def detect_signal_groups(
     if not multi_groups:
         return 0, 0
 
-    # For each pattern group, create a SignalGroup and link all members via MEMBER_OF.
+    # For each pattern group, create a SignalSource and link all members via MEMBER_OF.
     total_members = 0
     with GraphClient() as gc:
         gc.ensure_facility(facility)
@@ -1169,10 +1183,10 @@ def detect_signal_groups(
             group_id = f"{facility}:{pattern}"
             member_ids = [s["id"] for s in sigs]
 
-            # Create SignalGroup and link all members
+            # Create SignalSource and link all members
             gc.query(
                 """
-                MERGE (sg:SignalGroup {id: $group_id})
+                MERGE (sg:SignalSource {id: $group_id})
                 ON CREATE SET
                     sg.facility_id = $facility,
                     sg.group_key = $pattern,
@@ -1206,7 +1220,7 @@ def detect_signal_groups(
     return groups_detected, total_members
 
 
-def propagate_signal_group_enrichment(
+def propagate_source_enrichment(
     representative_id: str,
     enrichment: dict,
     batch_cost: float = 0.0,
@@ -1215,7 +1229,7 @@ def propagate_signal_group_enrichment(
 
     After the representative signal is enriched by the LLM, this copies
     the physics_domain, description, name, diagnostic, keywords, etc.
-    to all signals that are MEMBER_OF the same SignalGroup.
+    to all signals that are MEMBER_OF the same SignalSource.
 
     Members are still ``discovered`` (no transient status).  This
     function transitions them directly to ``enriched``.
@@ -1229,11 +1243,11 @@ def propagate_signal_group_enrichment(
         Number of member signals updated
     """
     with GraphClient() as gc:
-        # Find members via MEMBER_OF → SignalGroup (excluding the representative)
+        # Find members via MEMBER_OF → SignalSource (excluding the representative)
         count_result = gc.query(
             """
             MATCH (rep:FacilitySignal {id: $rep_id})
-                  -[:MEMBER_OF]->(sg:SignalGroup)
+                  -[:MEMBER_OF]->(sg:SignalSource)
             MATCH (s:FacilitySignal)-[:MEMBER_OF]->(sg)
             WHERE s.id <> $rep_id
               AND s.status = $discovered
@@ -1244,11 +1258,11 @@ def propagate_signal_group_enrichment(
         )
         follower_count = count_result[0]["cnt"] if count_result else 0
 
-        # Update the SignalGroup itself: status → enriched, copy description/keywords
+        # Update the SignalSource itself: status → enriched, copy description/keywords
         gc.query(
             """
             MATCH (rep:FacilitySignal {id: $rep_id})
-                  -[:MEMBER_OF]->(sg:SignalGroup)
+                  -[:MEMBER_OF]->(sg:SignalSource)
             SET sg.status = 'enriched',
                 sg.description = $description,
                 sg.keywords = $keywords,
@@ -1271,7 +1285,7 @@ def propagate_signal_group_enrichment(
         result = gc.query(
             """
             MATCH (rep:FacilitySignal {id: $rep_id})
-                  -[:MEMBER_OF]->(sg:SignalGroup)
+                  -[:MEMBER_OF]->(sg:SignalSource)
             MATCH (s:FacilitySignal)-[:MEMBER_OF]->(sg)
             WHERE s.id <> $rep_id
               AND s.status = $discovered
@@ -1286,7 +1300,7 @@ def propagate_signal_group_enrichment(
                 s.llm_cost = $per_signal_cost,
                 s.enriched_at = datetime(),
                 s.claimed_at = null,
-                s.enrichment_source = 'signal_group_propagation'
+                s.enrichment_source = 'signal_source_propagation'
             RETURN count(s) AS updated
             """,
             rep_id=representative_id,
@@ -1309,7 +1323,7 @@ def propagate_signal_group_enrichment(
             gc.query(
                 """
                 MATCH (rep:FacilitySignal {id: $rep_id})
-                      -[:MEMBER_OF]->(sg:SignalGroup)
+                      -[:MEMBER_OF]->(sg:SignalSource)
                 MATCH (s:FacilitySignal)-[:MEMBER_OF]->(sg)
                 WHERE s.id <> $rep_id
                   AND s.status = $enriched
@@ -2984,7 +2998,7 @@ async def enrich_worker(
         # followers so they skip individual LLM enrichment. Once a
         # representative is enriched, its metadata is propagated.
         patterns_detected, followers_marked = await asyncio.to_thread(
-            detect_signal_groups,
+            detect_signal_sources,
             state.facility,
         )
         if patterns_detected > 0 and on_progress:
@@ -3309,7 +3323,7 @@ async def enrich_worker(
             total_propagated = 0
             for e in enriched:
                 propagated = await asyncio.to_thread(
-                    propagate_signal_group_enrichment,
+                    propagate_source_enrichment,
                     e["id"],
                     e,
                     batch_cost / len(enriched) if batch_cost > 0 else 0.0,
@@ -3885,7 +3899,7 @@ async def run_parallel_data_discovery(
 
         # Detect signal groups BEFORE workers start so enrich workers
         # won't waste LLM calls on non-representative group members.
-        groups_detected, followers_marked = detect_signal_groups(_facility)
+        groups_detected, followers_marked = detect_signal_sources(_facility)
         if groups_detected > 0:
             logger.info(
                 "Preflight: detected %d signal groups (%d followers) for %s",

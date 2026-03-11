@@ -342,16 +342,16 @@ async def enrich_worker(
     from .graph_ops import (
         claim_orphan_nodes_for_enrichment,
         claim_parent_for_enrichment,
-        claim_signal_groups,
-        detect_and_create_member_signal_groups,
-        detect_and_create_signal_groups,
+        claim_signal_sources,
+        detect_and_create_member_signal_sources,
+        detect_and_create_signal_sources,
         fetch_enrichment_context,
         mark_orphan_nodes_enriched,
         mark_parent_children_enriched,
-        mark_signal_groups_enriched,
+        mark_signal_sources_enriched,
         release_orphan_claims,
         release_parent_claim,
-        release_signal_group_claims,
+        release_signal_source_claims,
     )
 
     if not state.enrich:
@@ -375,7 +375,7 @@ async def enrich_worker(
         on_progress("detecting signal groups", state.enrich_stats, None)
 
     groups_created = await asyncio.to_thread(
-        detect_and_create_signal_groups,
+        detect_and_create_signal_sources,
         state.facility,
         state.data_source_name,
     )
@@ -383,7 +383,7 @@ async def enrich_worker(
     # Detect member-suffix groups (:PRE, :VAL, :STORE under configured parent types)
     member_parent_types = state.tree_config.get("member_parent_types")
     member_groups_created = await asyncio.to_thread(
-        detect_and_create_member_signal_groups,
+        detect_and_create_member_signal_sources,
         state.facility,
         state.data_source_name,
         member_parent_types=member_parent_types,
@@ -409,7 +409,7 @@ async def enrich_worker(
     # --- Phase 1: Enrich signal groups (one representative per group) ---
     while not state.should_stop() and not state.budget_exhausted:
         patterns = await asyncio.to_thread(
-            claim_signal_groups,
+            claim_signal_sources,
             state.facility,
             state.data_source_name,
             limit=state.batch_size,
@@ -484,7 +484,7 @@ async def enrich_worker(
                         break
 
             propagated = await asyncio.to_thread(
-                mark_signal_groups_enriched,
+                mark_signal_sources_enriched,
                 pattern_ids,
                 descriptions,
                 metadata,
@@ -515,7 +515,7 @@ async def enrich_worker(
         except Exception as e:
             logger.error("Signal group enrich batch failed: %s", e)
             state.enrich_stats.errors += 1
-            await asyncio.to_thread(release_signal_group_claims, pattern_ids)
+            await asyncio.to_thread(release_signal_source_claims, pattern_ids)
 
         await asyncio.sleep(0.1)
 
