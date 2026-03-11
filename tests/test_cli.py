@@ -145,7 +145,7 @@ class TestCLICommands:
 
         result = runner.invoke(main, ["imas", "--help"])
         assert result.exit_code == 0
-        assert "IMAS Data Dictionary" in result.output
+        assert "IMAS" in result.output
 
     def test_tools_help(self, runner):
         """tools group has help."""
@@ -187,11 +187,11 @@ class TestCLISubcommands:
         assert result.exit_code == 0
         assert "directory structure" in result.output.lower()
 
-    def test_imas_build_help(self, runner):
-        """imas build subcommand exists."""
+    def test_imas_dd_build_help(self, runner):
+        """imas dd build subcommand exists."""
         from imas_codex.cli import main
 
-        result = runner.invoke(main, ["imas", "build", "--help"])
+        result = runner.invoke(main, ["imas", "dd", "build", "--help"])
         assert result.exit_code == 0
 
     def test_facilities_list_help(self, runner):
