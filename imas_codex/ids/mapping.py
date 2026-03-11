@@ -230,7 +230,15 @@ def _step0_gather_context(
     # creating a chicken-and-egg problem for new mappings.
     groups = query_signal_groups(facility, gc=gc)
     subtree = fetch_imas_subtree(ids_name, gc=gc)
-    semantic = search_imas_semantic(f"{facility} {ids_name}", ids_name, gc=gc, k=10)
+
+    # Semantic search is supplementary — degrade gracefully if embedding
+    # server is unavailable.
+    try:
+        semantic = search_imas_semantic(f"{facility} {ids_name}", ids_name, gc=gc, k=10)
+    except Exception:
+        logger.warning("Semantic search unavailable — continuing without it")
+        semantic = []
+
     existing = search_existing_mappings(facility, ids_name, gc=gc)
     cocos_paths = get_sign_flip_paths(ids_name)
 
