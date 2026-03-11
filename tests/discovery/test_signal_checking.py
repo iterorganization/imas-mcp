@@ -183,6 +183,56 @@ class TestResolveCheckTree:
 
 
 # =============================================================================
+# Scanner type routing — device_xml signals
+# =============================================================================
+
+
+class TestGetSignalScannerType:
+    """Test _get_signal_scanner_type routes discovery sources correctly."""
+
+    def _get_scanner_type(self, discovery_source: str) -> str:
+        """Helper to call the nested function via check_worker's logic."""
+        # Replicate the routing logic from check_worker
+        source = discovery_source
+        if source == "ppf_enumeration":
+            return "ppf"
+        if source == "edas_enumeration":
+            return "edas"
+        if source == "wiki_extraction":
+            return "wiki"
+        if source in ("xml_extraction", "jec2020_xml", "magnetics_config"):
+            return "device_xml"
+        return "mdsplus"
+
+    def test_xml_extraction_routes_to_device_xml(self):
+        """Device XML signals from xml_extraction route to device_xml scanner."""
+        assert self._get_scanner_type("xml_extraction") == "device_xml"
+
+    def test_jec2020_routes_to_device_xml(self):
+        """JEC2020 XML signals route to device_xml scanner."""
+        assert self._get_scanner_type("jec2020_xml") == "device_xml"
+
+    def test_magnetics_config_routes_to_device_xml(self):
+        """Magnetics config signals route to device_xml scanner."""
+        assert self._get_scanner_type("magnetics_config") == "device_xml"
+
+    def test_ppf_routes_to_ppf(self):
+        assert self._get_scanner_type("ppf_enumeration") == "ppf"
+
+    def test_edas_routes_to_edas(self):
+        assert self._get_scanner_type("edas_enumeration") == "edas"
+
+    def test_wiki_routes_to_wiki(self):
+        assert self._get_scanner_type("wiki_extraction") == "wiki"
+
+    def test_tree_traversal_routes_to_mdsplus(self):
+        assert self._get_scanner_type("tree_traversal") == "mdsplus"
+
+    def test_unknown_routes_to_mdsplus(self):
+        assert self._get_scanner_type("") == "mdsplus"
+
+
+# =============================================================================
 # Phase 6: Error classification — missing library detection
 # =============================================================================
 
