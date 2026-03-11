@@ -207,7 +207,12 @@ def run_discovery(
                             if config.graph_refresh_fn:
                                 await config.graph_refresh_fn()
                             elif hasattr(display, "refresh_from_graph"):
-                                display.refresh_from_graph(config.facility)
+                                # Run in thread pool to avoid blocking the
+                                # event loop — sync Neo4j queries prevent
+                                # signal delivery (Ctrl+C) and display updates.
+                                await asyncio.to_thread(
+                                    display.refresh_from_graph, config.facility
+                                )
                     except asyncio.CancelledError:
                         raise
                     except Exception:
@@ -232,15 +237,19 @@ def run_discovery(
             finally:
                 refresh_task.cancel()
                 ticker_task.cancel()
+                # Bounded wait so a blocked thread (e.g. Neo4j query
+                # inside to_thread) can't prevent shutdown.
                 try:
-                    await refresh_task
+                    await asyncio.wait({refresh_task, ticker_task}, timeout=3.0)
                 except asyncio.CancelledError:
                     pass
                 try:
-                    await ticker_task
-                except asyncio.CancelledError:
+                    await asyncio.wait_for(
+                        service_monitor.__aexit__(None, None, None),
+                        timeout=3.0,
+                    )
+                except (asyncio.CancelledError, TimeoutError):
                     pass
-                await service_monitor.__aexit__(None, None, None)
 
         result = safe_asyncio_run(_run_rich())
 

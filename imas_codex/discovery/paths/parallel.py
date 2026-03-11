@@ -3279,4 +3279,8 @@ async def run_parallel_discovery(
                 ssh_pool.force_kill_all()
             else:
                 logger.info("Shutting down persistent SSH worker pool")
-                await ssh_pool.close()
+                try:
+                    await asyncio.wait_for(ssh_pool.close(), timeout=10.0)
+                except (TimeoutError, asyncio.CancelledError):
+                    logger.warning("SSH pool close timed out — force-killing workers")
+                    ssh_pool.force_kill_all()
