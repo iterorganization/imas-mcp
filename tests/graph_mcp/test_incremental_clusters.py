@@ -134,36 +134,3 @@ class TestSyncLabelsFromCacheRemoved:
         source = inspect.getsource(_import_clusters)
         # Should have a comment about labels persisting
         assert "persist" in source.lower() or "preserve" in source.lower()
-
-
-class TestClustersLabelGraphSync:
-    """Validate clusters label command writes to graph."""
-
-    def test_sync_labels_to_graph_function_exists(self):
-        """_sync_labels_to_graph helper is available."""
-        from imas_codex.cli.clusters import _sync_labels_to_graph
-
-        assert callable(_sync_labels_to_graph)
-
-    def test_sync_labels_to_graph_uses_cypher(self):
-        """Function writes labels via Cypher MATCH/SET."""
-        from imas_codex.cli.clusters import _sync_labels_to_graph
-
-        source = inspect.getsource(_sync_labels_to_graph)
-        assert "MATCH (c:IMASSemanticCluster" in source
-        assert "SET c.label" in source
-        assert "c.description" in source
-
-    def test_sync_labels_to_graph_batched(self):
-        """Labels are written in batches to avoid query size limits."""
-        from imas_codex.cli.clusters import _sync_labels_to_graph
-
-        source = inspect.getsource(_sync_labels_to_graph)
-        assert "UNWIND $batch" in source
-
-    def test_sync_labels_to_graph_handles_no_graph(self):
-        """Gracefully handles case when graph is not available."""
-        from imas_codex.cli.clusters import _sync_labels_to_graph
-
-        source = inspect.getsource(_sync_labels_to_graph)
-        assert "not available" in source.lower()

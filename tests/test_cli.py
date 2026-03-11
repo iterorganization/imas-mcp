@@ -66,12 +66,6 @@ class TestCLIImports:
 
         assert imas is not None
 
-    def test_import_clusters(self):
-        """Clusters module imports."""
-        from imas_codex.cli.clusters import clusters
-
-        assert clusters is not None
-
     def test_import_discover(self):
         """Discover module imports."""
         from imas_codex.cli.discover import discover
@@ -153,14 +147,6 @@ class TestCLICommands:
         assert result.exit_code == 0
         assert "IMAS Data Dictionary" in result.output
 
-    def test_clusters_help(self, runner):
-        """clusters group has help under imas."""
-        from imas_codex.cli import main
-
-        result = runner.invoke(main, ["imas", "clusters", "--help"])
-        assert result.exit_code == 0
-        assert "semantic clusters" in result.output.lower()
-
     def test_tools_help(self, runner):
         """tools group has help."""
         from imas_codex.cli import main
@@ -206,13 +192,6 @@ class TestCLISubcommands:
         from imas_codex.cli import main
 
         result = runner.invoke(main, ["imas", "build", "--help"])
-        assert result.exit_code == 0
-
-    def test_clusters_build_help(self, runner):
-        """clusters build subcommand exists under imas."""
-        from imas_codex.cli import main
-
-        result = runner.invoke(main, ["imas", "clusters", "build", "--help"])
         assert result.exit_code == 0
 
     def test_facilities_list_help(self, runner):
