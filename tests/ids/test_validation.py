@@ -5,7 +5,13 @@ from unittest.mock import MagicMock
 import pytest
 
 from imas_codex.ids.models import ValidatedFieldMapping
-from imas_codex.ids.validation import BindingCheck, ValidationReport, validate_mapping
+from imas_codex.ids.validation import (
+    BindingCheck,
+    CoverageReport,
+    ValidationReport,
+    compute_coverage,
+    validate_mapping,
+)
 
 
 @pytest.fixture
@@ -249,3 +255,59 @@ class TestValidationReport:
         assert report.binding_checks == []
         assert report.duplicate_targets == []
         assert report.escalations == []
+
+
+class TestComputeCoverage:
+    def test_empty_bindings(self, mock_gc):
+        mock_gc.query.return_value = [
+            {"id": "pf_active/coil/name"},
+            {"id": "pf_active/coil/element/geometry/rectangle/r"},
+        ]
+        report = compute_coverage("pf_active", [], gc=mock_gc)
+        assert report.total_leaf_fields == 2
+        assert report.mapped_fields == 0
+        assert report.percentage == 0.0
+        assert len(report.unmapped_fields) == 2
+
+    def test_partial_coverage(self, mock_gc):
+        mock_gc.query.return_value = [
+            {"id": "pf_active/coil/name"},
+            {"id": "pf_active/coil/element/geometry/rectangle/r"},
+            {"id": "pf_active/coil/element/geometry/rectangle/z"},
+        ]
+        bindings = [
+            _make_binding(target_id="pf_active/coil/name"),
+            _make_binding(
+                target_id="pf_active/coil/element/geometry/rectangle/r"
+            ),
+        ]
+        report = compute_coverage("pf_active", bindings, gc=mock_gc)
+        assert report.total_leaf_fields == 3
+        assert report.mapped_fields == 2
+        assert report.percentage == pytest.approx(66.67, abs=0.1)
+        assert "pf_active/coil/element/geometry/rectangle/z" in report.unmapped_fields
+
+    def test_full_coverage(self, mock_gc):
+        mock_gc.query.return_value = [{"id": "pf_active/coil/name"}]
+        bindings = [_make_binding(target_id="pf_active/coil/name")]
+        report = compute_coverage("pf_active", bindings, gc=mock_gc)
+        assert report.total_leaf_fields == 1
+        assert report.mapped_fields == 1
+        assert report.percentage == 100.0
+        assert report.unmapped_fields == []
+
+    def test_no_leaf_fields(self, mock_gc):
+        mock_gc.query.return_value = []
+        report = compute_coverage("pf_active", [], gc=mock_gc)
+        assert report.total_leaf_fields == 0
+        assert report.percentage == 0.0
+
+
+class TestCoverageReport:
+    def test_defaults(self):
+        report = CoverageReport(ids_name="pf_active")
+        assert report.total_leaf_fields == 0
+        assert report.mapped_fields == 0
+        assert report.percentage == 0.0
+        assert report.unmapped_fields == []
+        assert report.mapped_paths == []
