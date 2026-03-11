@@ -22,6 +22,7 @@ For each signal, provide:
 5. **analysis_code** - Analysis code name if applicable
 6. **keywords** - Searchable terms (max 5)
 7. **sign_convention** - Sign convention if explicitly stated in provided context
+8. **context_quality** - How much context was available (low/medium/high)
 
 {% include "schema/physics-domains.md" %}
 
@@ -227,6 +228,40 @@ Populate `sign_convention` **only** when explicitly stated in the provided conte
 
 Leave empty if no explicit convention is documented in the provided context.
 
+### Context Quality Assessment (CRITICAL)
+
+**You MUST assess `context_quality` for every signal.** This determines whether the
+signal description is trusted for downstream IMAS mapping. Signals marked `low` will
+be flagged as `underspecified` and queued for re-enrichment.
+
+**`high`** — Rich context available. Use when ANY of these are present:
+- TDI/PPF function source code showing what the signal computes
+- `wiki_description` from curated facility documentation
+- Source code chunks showing signal usage patterns
+- `parent_node` + `siblings` context revealing diagnostic grouping
+- `existing_description` from the data system
+
+**`medium`** — Partial context. Use when:
+- Group header provides context (e.g., `## TDI Function: tcv_eq`) but no source code
+- `data_source_path` or `data_source_name` gives structural hints
+- Relevant wiki or code chunks are available at the group level but not signal-specific
+- The signal name is self-descriptive (e.g., `HRTS/TE` clearly means Thomson electron temp)
+
+**`low`** — Minimal context. Use when ALL of these are true:
+- Only `accessor` and `name` are available (no source code, no wiki, no tree context)
+- The signal name is opaque or ambiguous (e.g., `tcv_ip`, `PARAM_048`, `VALUE`)
+- No group-level wiki or code context was provided
+- You are essentially guessing the physics meaning from the name alone
+
+**CRITICAL: When context_quality is `low`:**
+- Set `confidence` to 0.5 or lower
+- Write a **generic, conservative description** — do NOT invent specific MDSplus paths,
+  node names, or implementation details you cannot verify from the provided context
+- Prefer descriptions like "Plasma current measurement" over
+  "Total plasma current from the magnetics::iplasma node" when you don't actually
+  see the magnetics::iplasma path in any provided context
+- Do NOT hallucinate data source specifics
+
 ## Batch Processing
 
 You will receive multiple signals per request, potentially grouped by context source
@@ -246,30 +281,64 @@ Return a JSON object matching this schema:
 
 ## Examples
 
-### TDI Function Signal (TCV)
+### TDI Function Signal with Source Code (TCV) — high context
 
 Input:
 ```
 ## TDI Function: tcv_eq
+[TDI source code showing case blocks for I_P, Q_95, PSI...]
 ### Signal 1
 accessor: tcv_eq('I_P')
 name: I_P
+tdi_quantity: I_P
 ```
 
-Output: `{"signal_index": 1, "physics_domain": "equilibrium", "name": "Plasma Current", "description": "Total plasma current from LIUQE equilibrium reconstruction.", "diagnostic": "", "analysis_code": "liuqe", "units_extracted": "", "confidence": 0.95, "keywords": ["plasma current", "ip", "liuqe", "equilibrium"]}`
+Output: `{"signal_index": 1, "physics_domain": "equilibrium", "name": "Plasma Current", "description": "Total plasma current from LIUQE equilibrium reconstruction.", "diagnostic": "", "analysis_code": "liuqe", "units_extracted": "", "confidence": 0.95, "context_quality": "high", "keywords": ["plasma current", "ip", "liuqe", "equilibrium"]}`
 
-### PPF Signal (JET)
+### TDI Function Signal without Source Code (TCV) — low context
+
+Input:
+```
+## TDI Function: tcv_ip
+### Signal 2
+accessor: tcv_ip('tcv_ip')
+name: tcv_ip
+tdi_quantity: tcv_ip
+discovery_source: tdi_introspection
+```
+
+Output: `{"signal_index": 2, "physics_domain": "equilibrium", "name": "Plasma Current", "description": "Plasma current measurement via TDI function tcv_ip.", "diagnostic": "", "analysis_code": "", "units_extracted": "", "confidence": 0.5, "context_quality": "low", "keywords": ["plasma current", "ip"]}`
+
+Note: No source code, wiki, or tree context was provided — description is conservative and generic. No hallucinated MDSplus paths.
+
+### PPF Signal (JET) — high context
 
 Input:
 ```
 ## PPF DDA: HRTS
-### Signal 2
+### Signal 3
 accessor: ppfdata(99999, 'HRTS', 'TE')
 name: HRTS/TE
+discovery_source: ppf_enumeration
 wiki_description: Electron temperature profile from High Resolution Thomson Scattering
 wiki_units: eV
 ```
 
-Output: `{"signal_index": 2, "physics_domain": "particle_measurement_diagnostics", "name": "Electron Temperature (HRTS)", "description": "Electron temperature profile from High Resolution Thomson Scattering diagnostic.", "diagnostic": "thomson_scattering", "analysis_code": "", "units_extracted": "eV", "confidence": 0.95, "keywords": ["electron temperature", "thomson scattering", "hrts", "te"]}`
+Output: `{"signal_index": 3, "physics_domain": "particle_measurement_diagnostics", "name": "Electron Temperature (HRTS)", "description": "Electron temperature profile from High Resolution Thomson Scattering diagnostic.", "diagnostic": "thomson_scattering", "analysis_code": "", "units_extracted": "eV", "confidence": 0.95, "context_quality": "high", "keywords": ["electron temperature", "thomson scattering", "hrts", "te"]}`
+
+### Device XML Signal (JET) — medium context
+
+Input:
+```
+## Device XML: device_xml
+### Signal 4
+accessor: jet:pf_active:coil_1:r
+name: PF Active Coil 1 R Position
+discovery_source: xml_extraction
+data_source_name: device_xml
+data_source_path: magnetics/pf_active/coil_1/r
+```
+
+Output: `{"signal_index": 4, "physics_domain": "machine_description", "name": "PF Active Coil 1 R Position", "description": "Major radius position of PF active coil 1 from machine description XML.", "diagnostic": "", "analysis_code": "", "units_extracted": "", "confidence": 0.85, "context_quality": "medium", "keywords": ["pf coil", "major radius", "machine description", "poloidal field"]}`
 
 {% include "safety.md" %}

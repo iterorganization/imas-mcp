@@ -526,7 +526,7 @@ def claim_signals_for_enrichment(
             gc.query(
                 """
                 MATCH (s:FacilitySignal {facility_id: $facility})
-                WHERE s.status = $discovered
+                WHERE s.status IN [$discovered, $underspecified]
                   AND NOT EXISTS {
                     MATCH (s)-[:MEMBER_OF]->(sg:SignalGroup)
                     WHERE sg.representative_id <> s.id
@@ -538,6 +538,7 @@ def claim_signals_for_enrichment(
                 """,
                 facility=facility,
                 discovered=FacilitySignalStatus.discovered.value,
+                underspecified=FacilitySignalStatus.underspecified.value,
                 batch_size=batch_size,
                 cutoff=cutoff,
                 token=claim_token,
@@ -550,9 +551,11 @@ def claim_signals_for_enrichment(
                 RETURN s.id AS id, s.accessor AS accessor, s.data_source_name AS data_source_name,
                        s.data_source_path AS data_source_path, s.unit AS unit, s.name AS name,
                        s.tdi_function AS tdi_function,
+                       s.tdi_quantity AS tdi_quantity,
                        s.discovery_source AS discovery_source,
                        s.description AS description,
-                       s.data_source_node AS data_source_node
+                       s.data_source_node AS data_source_node,
+                       s.facility_id AS facility_id
                 """,
                 facility=facility,
                 token=claim_token,
@@ -748,6 +751,7 @@ def mark_signals_enriched(
                                       THEN sig.keywords ELSE s.keywords END,
                     s.sign_convention = CASE WHEN sig.sign_convention IS NOT NULL AND sig.sign_convention <> ''
                                              THEN sig.sign_convention ELSE s.sign_convention END,
+                    s.enrichment_source = 'direct',
                     s.llm_cost = $per_signal_cost,
                     s.enriched_at = datetime(),
                     s.claimed_at = null
@@ -784,6 +788,62 @@ def mark_signals_enriched(
         return len(signals)
     except Exception as e:
         logger.warning("Could not mark signals enriched: %s", e)
+        return 0
+
+
+def mark_signals_underspecified(
+    signals: list[dict],
+    batch_cost: float = 0.0,
+) -> int:
+    """Mark signals as underspecified — LLM enrichment completed but with insufficient context.
+
+    These signals received LLM processing but the model determined that the
+    available context was too limited to produce a reliable enrichment. They
+    should be re-enriched when additional context (e.g. TDI source code,
+    wiki documentation) becomes available.
+
+    Uses the same enrichment fields as mark_signals_enriched but sets status
+    to 'underspecified' instead of 'enriched'.
+
+    Args:
+        signals: List of signal enrichment results (same schema as enriched)
+        batch_cost: Total LLM cost for this batch (distributed across signals)
+    """
+    if not signals:
+        return 0
+
+    per_signal_cost = batch_cost / len(signals) if batch_cost > 0 else 0.0
+
+    try:
+        with GraphClient() as gc:
+            gc.query(
+                """
+                UNWIND $signals AS sig
+                MATCH (s:FacilitySignal {id: sig.id})
+                SET s.status = $status,
+                    s.physics_domain = sig.physics_domain,
+                    s.description = sig.description,
+                    s.name = sig.name,
+                    s.diagnostic = CASE WHEN sig.diagnostic IS NOT NULL AND sig.diagnostic <> ''
+                                        THEN sig.diagnostic ELSE s.diagnostic END,
+                    s.analysis_code = CASE WHEN sig.analysis_code IS NOT NULL AND sig.analysis_code <> ''
+                                           THEN sig.analysis_code ELSE s.analysis_code END,
+                    s.keywords = CASE WHEN sig.keywords IS NOT NULL
+                                      THEN sig.keywords ELSE s.keywords END,
+                    s.sign_convention = CASE WHEN sig.sign_convention IS NOT NULL AND sig.sign_convention <> ''
+                                             THEN sig.sign_convention ELSE s.sign_convention END,
+                    s.enrichment_source = 'direct_underspecified',
+                    s.llm_cost = $per_signal_cost,
+                    s.enriched_at = datetime(),
+                    s.claimed_at = null
+                """,
+                signals=signals,
+                status=FacilitySignalStatus.underspecified.value,
+                per_signal_cost=per_signal_cost,
+            )
+        return len(signals)
+    except Exception as e:
+        logger.warning("Could not mark signals underspecified: %s", e)
         return 0
 
 
@@ -2558,7 +2618,10 @@ async def enrich_worker(
         ProviderBudgetExhausted,
         acall_llm_structured,
     )
-    from imas_codex.discovery.signals.models import SignalEnrichmentBatch
+    from imas_codex.discovery.signals.models import (
+        ContextQuality,
+        SignalEnrichmentBatch,
+    )
     from imas_codex.settings import get_model
 
     # Get model configured for enrichment task
@@ -2992,6 +3055,10 @@ async def enrich_worker(
                 user_lines.append(f"\n### Signal {signal_index}")
                 user_lines.append(f"accessor: {signal['accessor']}")
                 user_lines.append(f"name: {signal.get('name', 'unknown')}")
+                if signal.get("tdi_quantity"):
+                    user_lines.append(f"tdi_quantity: {signal['tdi_quantity']}")
+                if signal.get("discovery_source"):
+                    user_lines.append(f"discovery_source: {signal['discovery_source']}")
                 if signal.get("unit"):
                     user_lines.append(f"units: {signal['unit']}")
                 if signal.get("data_source_name"):
@@ -3106,6 +3173,7 @@ async def enrich_worker(
 
         # Match results back to signals by index (1-based signal_index)
         enriched = []
+        underspecified = []
         matched_indices = set()
 
         for result in batch_result.results:
@@ -3114,23 +3182,36 @@ async def enrich_worker(
             if 0 <= idx < len(signals):
                 signal = signals[idx]
                 matched_indices.add(idx)
-                enriched.append(
-                    {
-                        "id": signal["id"],
-                        "physics_domain": result.physics_domain.value,
-                        "description": result.description,
-                        "name": result.name,
-                        "diagnostic": result.diagnostic,
-                        "analysis_code": result.analysis_code,
-                        "keywords": result.keywords,
-                        "sign_convention": result.sign_convention,
-                    }
-                )
+                entry = {
+                    "id": signal["id"],
+                    "physics_domain": result.physics_domain.value,
+                    "description": result.description,
+                    "name": result.name,
+                    "diagnostic": result.diagnostic,
+                    "analysis_code": result.analysis_code,
+                    "keywords": result.keywords,
+                    "sign_convention": result.sign_convention,
+                }
+                if result.context_quality == ContextQuality.low:
+                    underspecified.append(entry)
+                else:
+                    enriched.append(entry)
 
         # Release claims for unmatched signals
         for idx, signal in enumerate(signals):
             if idx not in matched_indices:
                 await asyncio.to_thread(release_signal_claim, signal["id"])
+
+        # Mark underspecified signals (low context quality)
+        if underspecified:
+            await asyncio.to_thread(
+                mark_signals_underspecified, underspecified, batch_cost
+            )
+            state.enrich_stats.processed += len(underspecified)
+            logger.info(
+                "Marked %d signals as underspecified (low context)",
+                len(underspecified),
+            )
 
         # Update graph with enrichment cost for historical tracking
         if enriched:
