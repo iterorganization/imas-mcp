@@ -208,6 +208,8 @@ enums:
     permissible_values:
       draft:
         description: Recipe is being developed, not ready for use
+      validated:
+        description: Recipe has been validated by the mapping pipeline
       active:
         description: Recipe is validated and ready for assembly
       deprecated:
@@ -1684,6 +1686,22 @@ classes:
         range: SignalNode
         annotations:
           relationship_type: MATCHES_SENSOR
+      same_geometry:
+        description: >-
+          SignalNode representing the same geometric structure
+          from a different data source or epoch.
+        multivalued: true
+        range: SignalNode
+        annotations:
+          relationship_type: SAME_GEOMETRY
+      same_component:
+        description: >-
+          SignalNode representing the same physical component
+          (e.g. individual coil turns linked to their circuit-level node).
+        multivalued: true
+        range: SignalNode
+        annotations:
+          relationship_type: SAME_COMPONENT
 
   SignalGroup:
     description: >-
