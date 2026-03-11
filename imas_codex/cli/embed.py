@@ -603,12 +603,9 @@ def embed_restart(gpus: int, workers: int | None) -> None:
         imas-codex embed restart         # Restart
         imas-codex embed restart -g 2    # Restart with 2 GPUs
     """
-    # Stop
-    _cancel_service_job(_EMBED_JOB)
-    try:
-        _run_remote("systemctl --user stop imas-codex-embed 2>/dev/null", timeout=15)
-    except subprocess.CalledProcessError:
-        pass
+    # Full stop — reuse embed_stop to cancel SLURM, systemd, AND kill rogues
+    ctx = click.get_current_context()
+    ctx.invoke(embed_stop)
     time.sleep(2)
 
     # Start
