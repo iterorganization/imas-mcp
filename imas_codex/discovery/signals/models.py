@@ -27,6 +27,8 @@ __all__ = [
     "SignalEnrichmentBatch",
     "SignalSourceEnrichmentResult",
     "SignalSourceEnrichmentBatch",
+    "SignalSourceIndividualization",
+    "SignalSourceIndividualizationBatch",
     "UnitConfidence",
 ]
 
@@ -213,4 +215,36 @@ class SignalSourceEnrichmentBatch(BaseModel):
 
     results: list[SignalSourceEnrichmentResult] = Field(
         description="Enrichment results, one per input source in the same order"
+    )
+
+
+class SignalSourceIndividualization(BaseModel):
+    """Template for individualizing member signal descriptions.
+
+    The LLM generates a description template with a {member_id} placeholder.
+    The template is then applied deterministically to each member signal
+    by extracting the varying part of the accessor.
+    """
+
+    source_index: int = Field(
+        description="1-based index matching the input source order",
+    )
+
+    description_template: str = Field(
+        description="Description template with {member_id} placeholder. "
+        "E.g., 'Poloidal magnetic field measurement from probe {member_id} "
+        "in the outboard midplane array.'",
+    )
+
+    variation_field: str = Field(
+        description="Which part of the accessor varies across members "
+        "(e.g., 'probe number', 'channel index', 'coil name')",
+    )
+
+
+class SignalSourceIndividualizationBatch(BaseModel):
+    """Batch of individualization templates — multiple sources per LLM call."""
+
+    results: list[SignalSourceIndividualization] = Field(
+        description="Individualization templates, one per input source"
     )
