@@ -63,8 +63,8 @@ class EscalationSeverity(StrEnum):
 class EscalationFlag(BaseModel):
     """Flag for a field the LLM cannot confidently map."""
 
-    signal_group_id: str
-    imas_path: str
+    source_id: str = Field(description="SignalGroup id")
+    target_id: str = Field(description="Target IMAS path")
     severity: EscalationSeverity = EscalationSeverity.WARNING
     reason: str = Field(description="Why this mapping is uncertain")
 
@@ -72,18 +72,18 @@ class EscalationFlag(BaseModel):
 class FieldMappingEntry(BaseModel):
     """Single field-level mapping with transform details."""
 
-    signal_group_id: str = Field(description="Source SignalGroup id")
+    source_id: str = Field(description="Source SignalGroup id")
     source_property: str = Field(
         default="value",
         description="Property on the source node to map (default: value)",
     )
-    target_imas_path: str = Field(description="Full IMAS path for the target field")
-    transform_code: str = Field(
+    target_id: str = Field(description="Full IMAS path for the target field")
+    transform_expression: str = Field(
         default="value",
         description="Python expression to transform the source value",
     )
-    units_in: str | None = Field(default=None, description="Source unit")
-    units_out: str | None = Field(default=None, description="Target IMAS unit")
+    source_units: str | None = Field(default=None, description="Source unit")
+    target_units: str | None = Field(default=None, description="Target IMAS unit")
     cocos_label: str | None = Field(
         default=None,
         description="COCOS transformation label (e.g. ip_like, psi_like)",
@@ -109,12 +109,12 @@ class FieldMappingBatch(BaseModel):
 class ValidatedFieldMapping(BaseModel):
     """A field mapping that has passed validation."""
 
-    signal_group_id: str
+    source_id: str
     source_property: str = "value"
-    target_imas_path: str
-    transform_code: str = "value"
-    units_in: str | None = None
-    units_out: str | None = None
+    target_id: str
+    transform_expression: str = "value"
+    source_units: str | None = None
+    target_units: str | None = None
     cocos_label: str | None = None
     confidence: float = Field(ge=0, le=1)
 
@@ -126,7 +126,7 @@ class ValidatedMappingResult(BaseModel):
     ids_name: str
     dd_version: str
     sections: list[SectionAssignment]
-    field_mappings: list[ValidatedFieldMapping]
+    bindings: list[ValidatedFieldMapping]
     escalations: list[EscalationFlag] = Field(default_factory=list)
     corrections: list[str] = Field(
         default_factory=list,
@@ -197,7 +197,7 @@ def persist_mapping_result(
         )
 
     # 3. Collect signal group IDs and create USES_SIGNAL_GROUP
-    sg_ids = {fm.signal_group_id for fm in result.field_mappings}
+    sg_ids = {fm.source_id for fm in result.bindings}
     for sg_id in sg_ids:
         gc.query(
             """
@@ -210,25 +210,25 @@ def persist_mapping_result(
         )
 
     # 4. Create MAPS_TO_IMAS relationships
-    for fm in result.field_mappings:
+    for fm in result.bindings:
         gc.query(
             """
             MATCH (sg:SignalGroup {id: $sg_id})
-            MATCH (ip:IMASNode {id: $imas_path})
+            MATCH (ip:IMASNode {id: $target_id})
             MERGE (sg)-[r:MAPS_TO_IMAS]->(ip)
             SET r.source_property = $source_property,
-                r.transform_code = $transform_code,
-                r.units_in = $units_in,
-                r.units_out = $units_out,
+                r.transform_expression = $transform_expression,
+                r.source_units = $source_units,
+                r.target_units = $target_units,
                 r.cocos_label = $cocos_label,
                 r.confidence = $confidence
             """,
-            sg_id=fm.signal_group_id,
-            imas_path=fm.target_imas_path,
+            sg_id=fm.source_id,
+            target_id=fm.target_id,
             source_property=fm.source_property,
-            transform_code=fm.transform_code,
-            units_in=fm.units_in,
-            units_out=fm.units_out,
+            transform_expression=fm.transform_expression,
+            source_units=fm.source_units,
+            target_units=fm.target_units,
             cocos_label=fm.cocos_label,
             confidence=fm.confidence,
         )
@@ -240,22 +240,22 @@ def persist_mapping_result(
             MATCH (sg:SignalGroup {id: $sg_id})
             MERGE (ev:MappingEvidence {
                 signal_group_id: $sg_id,
-                imas_path: $imas_path,
+                imas_path: $target_id,
                 type: 'escalation'
             })
             SET ev.severity = $severity,
                 ev.reason = $reason
             MERGE (sg)-[:HAS_EVIDENCE]->(ev)
             """,
-            sg_id=esc.signal_group_id,
-            imas_path=esc.imas_path,
+            sg_id=esc.source_id,
+            target_id=esc.target_id,
             severity=esc.severity.value,
             reason=esc.reason,
         )
 
     logger.info(
-        "Persisted mapping %s with %d field mappings",
+        "Persisted mapping %s with %d bindings",
         mapping_id,
-        len(result.field_mappings),
+        len(result.bindings),
     )
     return mapping_id

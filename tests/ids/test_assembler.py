@@ -199,11 +199,11 @@ class TestGraphDrivenSummary:
                     "enrichment": "[]",
                 },
             ],
-            field_mappings=[
+            bindings=[
                 FieldMapping(
-                    signal_group_id="jet:ids:magnetics:MP",
+                    source_id="jet:ids:magnetics:MP",
                     source_property="r",
-                    target_imas_path="magnetics/b_field_pol_probe/position/r",
+                    target_id="magnetics/b_field_pol_probe/position/r",
                 ),
             ],
         )

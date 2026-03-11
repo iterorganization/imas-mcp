@@ -48,12 +48,12 @@ Any existing mappings for this facility/IDS:
 For each signal property that should map to an IMAS field:
 
 1. **Identify the target field**: Match signal data to the correct IMAS path
-2. **Define transform_code**: Python expression to transform the value
+2. **Define transform_expression**: Python expression to transform the value
    - Use `value` as the variable name for the source value
    - Simple pass-through: `value`
-   - Unit conversion: handled separately via units_in/units_out
+   - Unit conversion: handled separately via source_units/target_units
    - Math transforms: `value * 1000`, `-value`, etc.
-3. **Specify units**: Set units_in (signal unit) and units_out (IMAS unit) when
+3. **Specify units**: Set source_units (signal unit) and target_units (IMAS unit) when
    conversion is needed
 4. **COCOS handling**: If the field is in the sign-flip list, set `cocos_label`
    to the appropriate transformation type

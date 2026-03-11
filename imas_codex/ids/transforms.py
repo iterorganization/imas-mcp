@@ -1,6 +1,6 @@
 """Transform execution engine for IDS field mappings.
 
-Provides safe evaluation of transform_code expressions stored on
+Provides safe evaluation of transform_expression expressions stored on
 IMASMapping nodes, with access to math, numpy, and imas_codex
 unit/COCOS utilities.
 """
@@ -96,10 +96,10 @@ def cocos_sign(label: str, *, cocos_in: int, cocos_out: int) -> int:
         return 1
 
 
-def execute_transform(value: Any, transform_code: str | None) -> Any:
-    """Execute a mapping's transform_code expression.
+def execute_transform(value: Any, transform_expression: str | None) -> Any:
+    """Execute a mapping's transform_expression.
 
-    The transform_code is a Python expression evaluated with 'value' as
+    The transform_expression is a Python expression evaluated with 'value' as
     the input variable. The expression has access to math, numpy, and
     imas_codex utility functions.
 
@@ -109,13 +109,13 @@ def execute_transform(value: Any, transform_code: str | None) -> Any:
 
     Args:
         value: Input value to transform.
-        transform_code: Python expression string. If None or "value",
+        transform_expression: Python expression string. If None or "value",
             returns the input unchanged (identity transform).
 
     Returns:
         Transformed value.
     """
-    if not transform_code or transform_code == "value":
+    if not transform_expression or transform_expression == "value":
         return value
 
     np = _get_numpy()
@@ -133,7 +133,7 @@ def execute_transform(value: Any, transform_code: str | None) -> Any:
     if np is not None:
         context["np"] = np
 
-    return eval(transform_code, {"__builtins__": {}}, context)  # noqa: S307
+    return eval(transform_expression, {"__builtins__": {}}, context)  # noqa: S307
 
 
 def set_nested(obj: Any, dotted_path: str, value: Any) -> None:

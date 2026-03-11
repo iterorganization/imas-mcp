@@ -41,10 +41,10 @@ Review each mapping for:
 1. **Path validity**: Reject mappings to non-existent IMAS paths
    - If a path was renamed, update to the new path
    - If a path doesn't exist, remove the mapping and escalate
-2. **Unit consistency**: Verify units_in and units_out are correct
+2. **Unit consistency**: Verify source_units and target_units are correct
    - Check that dimensionalities are compatible
    - Verify conversion factors make physical sense
-3. **Transform correctness**: Validate transform_code expressions
+3. **Transform correctness**: Validate transform_expression expressions
    - Ensure they produce the right type (scalar vs array)
    - Check for common errors (sign, scaling factors)
 4. **COCOS handling**: Verify cocos_label is set for sign-flip paths
@@ -58,6 +58,6 @@ Return a JSON object matching the `ValidatedMappingResult` schema:
 - `ids_name`: IDS name
 - `dd_version`: Data Dictionary version
 - `sections`: Confirmed section assignments
-- `field_mappings`: Corrected field mappings (ValidatedFieldMapping objects)
+- `bindings`: Corrected field mappings (ValidatedFieldMapping objects)
 - `escalations`: Updated escalations (resolved ones removed, new ones added)
 - `corrections`: List of correction descriptions made during validation

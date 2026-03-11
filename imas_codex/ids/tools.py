@@ -306,10 +306,10 @@ def query_signal_groups(
                member_count,
                sample_members,
                collect(DISTINCT {{
-                   imas_path: ip.id,
-                   transform: r.transform_code,
-                   units_in: r.units_in,
-                   units_out: r.units_out
+                   target_id: ip.id,
+                   transform: r.transform_expression,
+                   source_units: r.source_units,
+                   target_units: r.target_units
                }}) AS imas_mappings
         ORDER BY sg.group_key
     """
@@ -325,7 +325,7 @@ def search_existing_mappings(
     """Return existing mapping state for a facility+IDS pair.
 
     Returns a dict with ``mapping`` (IMASMapping node info or None),
-    ``sections`` (POPULATES connections), and ``field_mappings``
+    ``sections`` (POPULATES connections), and ``bindings``
     (MAPS_TO_IMAS relationships).
     """
     if gc is None:
@@ -359,15 +359,15 @@ def search_existing_mappings(
         )
 
     # Field-level mappings via signal groups
-    field_mappings: list[dict[str, Any]] = []
+    bindings: list[dict[str, Any]] = []
     if mapping:
-        field_mappings = gc.query(
+        bindings = gc.query(
             """
             MATCH (m:IMASMapping {id: $id})-[:USES_SIGNAL_GROUP]->(sg:SignalGroup)
             MATCH (sg)-[r:MAPS_TO_IMAS]->(ip:IMASNode)
-            RETURN sg.id AS signal_group_id, sg.group_key AS group_key,
-                   ip.id AS imas_path, r.transform_code AS transform_code,
-                   r.units_in AS units_in, r.units_out AS units_out,
+            RETURN sg.id AS source_id, sg.group_key AS group_key,
+                   ip.id AS target_id, r.transform_expression AS transform_expression,
+                   r.source_units AS source_units, r.target_units AS target_units,
                    r.source_property AS source_property
             """,
             id=mapping_id,
@@ -376,5 +376,5 @@ def search_existing_mappings(
     return {
         "mapping": mapping,
         "sections": sections,
-        "field_mappings": field_mappings,
+        "bindings": bindings,
     }

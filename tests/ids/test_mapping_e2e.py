@@ -144,30 +144,30 @@ def sample_field_batch():
         section_path="pf_active/coil",
         mappings=[
             FieldMappingEntry(
-                signal_group_id="jet:pf_coils:group1",
+                source_id="jet:pf_coils:group1",
                 source_property="value",
-                target_imas_path="pf_active/coil/element/geometry/rectangle/r",
-                transform_code="value",
-                units_in="m",
-                units_out="m",
+                target_id="pf_active/coil/element/geometry/rectangle/r",
+                transform_expression="value",
+                source_units="m",
+                target_units="m",
                 confidence=0.95,
                 reasoning="Direct R position mapping",
             ),
             FieldMappingEntry(
-                signal_group_id="jet:pf_coils:group1",
+                source_id="jet:pf_coils:group1",
                 source_property="value",
-                target_imas_path="pf_active/coil/element/geometry/rectangle/z",
-                transform_code="value",
-                units_in="m",
-                units_out="m",
+                target_id="pf_active/coil/element/geometry/rectangle/z",
+                transform_expression="value",
+                source_units="m",
+                target_units="m",
                 confidence=0.90,
                 reasoning="Direct Z position mapping",
             ),
         ],
         escalations=[
             EscalationFlag(
-                signal_group_id="jet:pf_coils:group2",
-                imas_path="pf_active/coil/current/data",
+                source_id="jet:pf_coils:group2",
+                target_id="pf_active/coil/current/data",
                 severity=EscalationSeverity.WARNING,
                 reason="Current signal has ambiguous units",
             ),
@@ -190,30 +190,30 @@ def sample_validated_result():
                 reasoning="PF coil geometry maps to pf_active/coil",
             ),
         ],
-        field_mappings=[
+        bindings=[
             ValidatedFieldMapping(
-                signal_group_id="jet:pf_coils:group1",
+                source_id="jet:pf_coils:group1",
                 source_property="value",
-                target_imas_path="pf_active/coil/element/geometry/rectangle/r",
-                transform_code="value",
-                units_in="m",
-                units_out="m",
+                target_id="pf_active/coil/element/geometry/rectangle/r",
+                transform_expression="value",
+                source_units="m",
+                target_units="m",
                 confidence=0.95,
             ),
             ValidatedFieldMapping(
-                signal_group_id="jet:pf_coils:group1",
+                source_id="jet:pf_coils:group1",
                 source_property="value",
-                target_imas_path="pf_active/coil/element/geometry/rectangle/z",
-                transform_code="value",
-                units_in="m",
-                units_out="m",
+                target_id="pf_active/coil/element/geometry/rectangle/z",
+                transform_expression="value",
+                source_units="m",
+                target_units="m",
                 confidence=0.90,
             ),
         ],
         escalations=[
             EscalationFlag(
-                signal_group_id="jet:pf_coils:group2",
-                imas_path="pf_active/coil/current/data",
+                source_id="jet:pf_coils:group2",
+                target_id="pf_active/coil/current/data",
                 severity=EscalationSeverity.WARNING,
                 reason="Current signal has ambiguous units",
             ),
@@ -314,7 +314,7 @@ class TestSearchExistingMappings:
         result = search_existing_mappings("jet", "pf_active", gc=mock_gc)
         assert result["mapping"] is None
         assert result["sections"] == []
-        assert result["field_mappings"] == []
+        assert result["bindings"] == []
 
     def test_existing_mapping(self, mock_gc):
         mock_gc.query.side_effect = [
@@ -337,12 +337,12 @@ class TestSearchExistingMappings:
             ],
             [
                 {
-                    "signal_group_id": "jet:pf_coils:group1",
+                    "source_id": "jet:pf_coils:group1",
                     "group_key": "pf_coil_1",
-                    "imas_path": "pf_active/coil/element/geometry/rectangle/r",
-                    "transform_code": "value",
-                    "units_in": "m",
-                    "units_out": "m",
+                    "target_id": "pf_active/coil/element/geometry/rectangle/r",
+                    "transform_expression": "value",
+                    "source_units": "m",
+                    "target_units": "m",
                     "source_property": "value",
                 }
             ],
@@ -350,7 +350,7 @@ class TestSearchExistingMappings:
         result = search_existing_mappings("jet", "pf_active", gc=mock_gc)
         assert result["mapping"]["id"] == "jet:pf_active"
         assert len(result["sections"]) == 1
-        assert len(result["field_mappings"]) == 1
+        assert len(result["bindings"]) == 1
 
 
 class TestAnalyzeUnits:
@@ -410,7 +410,7 @@ class TestValidatedMappingResult:
     def test_serialization(self, sample_validated_result):
         data = sample_validated_result.model_dump()
         restored = ValidatedMappingResult.model_validate(data)
-        assert len(restored.field_mappings) == 2
+        assert len(restored.bindings) == 2
         assert len(restored.escalations) == 1
         assert len(restored.corrections) == 1
 
@@ -470,7 +470,7 @@ class TestPipelineOrchestrator:
             mock_sem.return_value = {
                 "mapping": None,
                 "sections": [],
-                "field_mappings": [],
+                "bindings": [],
             }
 
             ctx = _step0_gather_context("jet", "pf_active", gc=mock_gc)
@@ -524,7 +524,7 @@ class TestPipelineOrchestrator:
             "groups": sample_groups,
             "subtree": sample_subtree,
             "cocos_paths": [],
-            "existing": {"mapping": None, "sections": [], "field_mappings": []},
+            "existing": {"mapping": None, "sections": [], "bindings": []},
         }
 
         result = _step2_field_mappings(
@@ -561,7 +561,7 @@ class TestPipelineOrchestrator:
         cost = PipelineCost()
 
         context = {
-            "existing": {"mapping": None, "sections": [], "field_mappings": []},
+            "existing": {"mapping": None, "sections": [], "bindings": []},
         }
 
         result = _step3_validate(
@@ -574,7 +574,7 @@ class TestPipelineOrchestrator:
             gc=mock_gc,
             cost=cost,
         )
-        assert len(result.field_mappings) == 2
+        assert len(result.bindings) == 2
         assert result.facility == "jet"
 
     @patch("imas_codex.ids.mapping._step3_validate")
@@ -601,7 +601,7 @@ class TestPipelineOrchestrator:
             "groups": sample_groups,
             "subtree": sample_subtree,
             "semantic": sample_subtree,
-            "existing": {"mapping": None, "sections": [], "field_mappings": []},
+            "existing": {"mapping": None, "sections": [], "bindings": []},
             "cocos_paths": [],
         }
         mock_step1.return_value = sample_section_assignment
@@ -617,7 +617,7 @@ class TestPipelineOrchestrator:
         )
 
         assert result.mapping_id == "jet:pf_active"
-        assert len(result.validated.field_mappings) == 2
+        assert len(result.validated.bindings) == 2
         assert len(result.validated.escalations) == 1
         assert result.persisted is False
 
@@ -630,7 +630,7 @@ class TestPipelineOrchestrator:
             "groups": [],
             "subtree": [],
             "semantic": [],
-            "existing": {"mapping": None, "sections": [], "field_mappings": []},
+            "existing": {"mapping": None, "sections": [], "bindings": []},
             "cocos_paths": [],
         }
 
@@ -705,7 +705,7 @@ class TestMapCLI:
         result = runner.invoke(map_cmd, ["run", "jet", "pf_active", "--no-persist"])
         assert result.exit_code == 0
         assert "jet:pf_active" in result.output
-        assert "Field mappings: 2" in result.output
+        assert "Bindings: 2" in result.output
 
     @patch("imas_codex.ids.mapping.generate_mapping")
     def test_map_run_error(self, mock_generate):

@@ -62,7 +62,7 @@ def map_run(
         raise SystemExit(1) from None
 
     click.echo(f"\nMapping: {result.mapping_id}")
-    click.echo(f"Field mappings: {len(result.validated.field_mappings)}")
+    click.echo(f"Bindings: {len(result.validated.bindings)}")
     click.echo(f"Escalations: {len(result.validated.escalations)}")
     click.echo(f"Persisted: {result.persisted}")
     click.echo()
@@ -80,7 +80,7 @@ def map_run(
         click.echo(f"\nEscalations ({len(result.validated.escalations)}):")
         for esc in result.validated.escalations:
             click.echo(
-                f"  [{esc.severity.value}] {esc.signal_group_id} → {esc.imas_path}"
+                f"  [{esc.severity.value}] {esc.source_id} → {esc.target_id}"
             )
             click.echo(f"    {esc.reason}")
 
@@ -116,7 +116,7 @@ def map_status(facility: str, ids_name: str | None) -> None:
         click.echo(f"Status: {m.get('status', 'unknown')}")
         click.echo(f"DD version: {m.get('dd_version', 'unknown')}")
         click.echo(f"Sections: {len(result['sections'])}")
-        click.echo(f"Field mappings: {len(result['field_mappings'])}")
+        click.echo(f"Bindings: {len(result['bindings'])}")
     else:
         # List all mappings for facility
         rows = gc.query(
@@ -175,7 +175,7 @@ def map_validate(facility: str, ids_name: str) -> None:
         return
 
     # Validate all target paths
-    target_paths = [fm["imas_path"] for fm in result["field_mappings"]]
+    target_paths = [fm["target_id"] for fm in result["bindings"]]
     if not target_paths:
         click.echo("No field mappings to validate.")
         return

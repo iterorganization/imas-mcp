@@ -33,7 +33,7 @@ class TestLoadMapping:
         result = load_mapping("jet", "nonexistent", gc)
         assert result is None
 
-    def test_returns_mapping_with_field_mappings(self):
+    def test_returns_mapping_with_bindings(self):
         gc = MagicMock()
         # First query: mapping lookup
         # Second query: load_sections
@@ -68,12 +68,12 @@ class TestLoadMapping:
             # Field mappings (MAPS_TO_IMAS)
             [
                 {
-                    "signal_group_id": "jet:ids:pf_active:PF",
+                    "source_id": "jet:ids:pf_active:PF",
                     "source_property": "r",
-                    "target_imas_path": "pf_active/coil/element/geometry/rectangle/r",
-                    "transform_code": "value",
-                    "units_in": "m",
-                    "units_out": "m",
+                    "target_id": "pf_active/coil/element/geometry/rectangle/r",
+                    "transform_expression": "value",
+                    "source_units": "m",
+                    "target_units": "m",
                     "cocos_source": None,
                     "cocos_target": None,
                     "driver": "device_xml",
@@ -86,8 +86,8 @@ class TestLoadMapping:
         assert isinstance(result, Mapping)
         assert result.ids_name == "pf_active"
         assert result.dd_version == "4.1.1"
-        assert len(result.field_mappings) == 1
-        assert result.field_mappings[0].source_property == "r"
+        assert len(result.bindings) == 1
+        assert result.bindings[0].source_property == "r"
         assert len(result.sections) == 1
 
 
@@ -102,12 +102,12 @@ class TestLoadFieldMappings:
         gc = MagicMock()
         gc.query.return_value = [
             {
-                "signal_group_id": "jet:ids:pf_active:PF",
+                "source_id": "jet:ids:pf_active:PF",
                 "source_property": "r",
-                "target_imas_path": "pf_active/coil/element/geometry/rectangle/r",
-                "transform_code": "value * 1.0",
-                "units_in": "m",
-                "units_out": "m",
+                "target_id": "pf_active/coil/element/geometry/rectangle/r",
+                "transform_expression": "value * 1.0",
+                "source_units": "m",
+                "target_units": "m",
                 "cocos_source": None,
                 "cocos_target": None,
                 "driver": "device_xml",
@@ -119,19 +119,19 @@ class TestLoadFieldMappings:
         m = result[0]
         assert isinstance(m, FieldMapping)
         assert m.source_property == "r"
-        assert m.transform_code == "value * 1.0"
-        assert m.units_in == "m"
+        assert m.transform_expression == "value * 1.0"
+        assert m.source_units == "m"
 
     def test_defaults_for_missing_fields(self):
         gc = MagicMock()
         gc.query.return_value = [
             {
-                "signal_group_id": "jet:ids:pf_active:PF",
+                "source_id": "jet:ids:pf_active:PF",
                 "source_property": None,
-                "target_imas_path": "pf_active/coil/name",
-                "transform_code": None,
-                "units_in": None,
-                "units_out": None,
+                "target_id": "pf_active/coil/name",
+                "transform_expression": None,
+                "source_units": None,
+                "target_units": None,
                 "cocos_source": None,
                 "cocos_target": None,
                 "driver": None,
@@ -141,7 +141,7 @@ class TestLoadFieldMappings:
         result = load_field_mappings("jet:pf_active", gc)
         m = result[0]
         assert m.source_property == "value"
-        assert m.transform_code == "value"
+        assert m.transform_expression == "value"
         assert m.driver == "device_xml"
         assert m.cocos_source is None
         assert m.cocos_target is None
@@ -153,12 +153,12 @@ class TestLoadFieldMappings:
         gc = MagicMock()
         gc.query.return_value = [
             {
-                "signal_group_id": "jet:ids:pf_active:CI",
+                "source_id": "jet:ids:pf_active:CI",
                 "source_property": "current",
-                "target_imas_path": "pf_active/circuit/current",
-                "transform_code": "value",
-                "units_in": "A",
-                "units_out": "A",
+                "target_id": "pf_active/circuit/current",
+                "transform_expression": "value",
+                "source_units": "A",
+                "target_units": "A",
                 "cocos_source": None,
                 "cocos_target": None,
                 "driver": "device_xml",
@@ -178,12 +178,12 @@ class TestLoadFieldMappings:
         gc = MagicMock()
         gc.query.return_value = [
             {
-                "signal_group_id": "jet:ids:pf_active:PF",
+                "source_id": "jet:ids:pf_active:PF",
                 "source_property": "r",
-                "target_imas_path": "pf_active/coil/element/geometry/rectangle/r",
-                "transform_code": "value",
-                "units_in": "m",
-                "units_out": "m",
+                "target_id": "pf_active/coil/element/geometry/rectangle/r",
+                "transform_expression": "value",
+                "source_units": "m",
+                "target_units": "m",
                 "cocos_source": None,
                 "cocos_target": None,
                 "driver": "device_xml",

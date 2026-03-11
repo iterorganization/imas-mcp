@@ -145,7 +145,7 @@ class TestCocosSign:
 class TestCocosSignInTransform:
     """Test cocos_sign is accessible inside execute_transform."""
 
-    def test_cocos_sign_in_transform_code(self):
+    def test_cocos_sign_in_transform_expression(self):
         result = execute_transform(
             100.0, "value * cocos_sign('ip_like', cocos_in=11, cocos_out=17)"
         )
