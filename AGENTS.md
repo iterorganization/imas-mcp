@@ -211,7 +211,13 @@ Tests in `tests/graph/` are **parametrized from the schema** — they do not har
 - `test_referential_integrity.py` — every relationship type must be declared as a slot with the correct `relationship_type` annotation
 - `test_data_quality.py` — embedding coverage and data consistency checks
 
-**When a schema compliance test fails, the fix is a schema addition — not a test change.** If your code creates a new relationship type (e.g., `SAME_GEOMETRY`), enum value (e.g., `validated`), or node label, declare it in the LinkML YAML first. Then rebuild models. The tests will pass automatically.
+**When a schema compliance test fails, investigate root cause before touching the schema.** A failing test means data in the graph doesn't match schema declarations. The correct response depends on *why*:
+
+1. **You are building a new capability** that genuinely requires a new relationship type, enum value, or node label → declare it in the LinkML YAML, rebuild models, then write the code that uses it. Schema first, code second.
+2. **Existing code is writing non-compliant data** (bug) → fix the code that produces the bad data, or fix the data directly in the graph. Do not expand the schema to accommodate a bug.
+3. **Stale data from a previous schema version** → migrate or remove the data. Do not re-add removed schema elements to pass tests.
+
+Do not add schema declarations solely to make tests green. The schema defines what *should* exist — tests verify the graph matches that intent.
 
 ## Facility Configuration
 
