@@ -812,6 +812,8 @@ def mark_signals_enriched(
                                       THEN sig.keywords ELSE s.keywords END,
                     s.sign_convention = CASE WHEN sig.sign_convention IS NOT NULL AND sig.sign_convention <> ''
                                              THEN sig.sign_convention ELSE s.sign_convention END,
+                    s.unit = CASE WHEN sig.unit IS NOT NULL AND sig.unit <> ''
+                                  THEN sig.unit ELSE s.unit END,
                     s.enrichment_source = 'direct',
                     s.llm_cost = $per_signal_cost,
                     s.enriched_at = datetime(),
@@ -893,6 +895,8 @@ def mark_signals_underspecified(
                                       THEN sig.keywords ELSE s.keywords END,
                     s.sign_convention = CASE WHEN sig.sign_convention IS NOT NULL AND sig.sign_convention <> ''
                                              THEN sig.sign_convention ELSE s.sign_convention END,
+                    s.unit = CASE WHEN sig.unit IS NOT NULL AND sig.unit <> ''
+                                  THEN sig.unit ELSE s.unit END,
                     s.enrichment_source = 'direct_underspecified',
                     s.llm_cost = $per_signal_cost,
                     s.enriched_at = datetime(),
@@ -3267,7 +3271,14 @@ async def enrich_worker(
                     "analysis_code": result.analysis_code,
                     "keywords": result.keywords,
                     "sign_convention": result.sign_convention,
+                    "unit": result.unit,
                 }
+                # Validate LLM-extracted unit via pint
+                if entry["unit"]:
+                    from imas_codex.units import validate_unit
+
+                    validated = validate_unit(entry["unit"])
+                    entry["unit"] = validated or ""
                 if result.context_quality == ContextQuality.low:
                     underspecified.append(entry)
                 else:

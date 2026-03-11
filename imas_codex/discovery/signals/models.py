@@ -117,9 +117,9 @@ class SignalEnrichmentResult(BaseModel):
     )
 
     # Unit handling with safety constraints
-    units_extracted: str = Field(
+    unit: str = Field(
         default="",
-        description="Units ONLY if present in the input metadata. "
+        description="Physical units ONLY if present in the input metadata. "
         "Do NOT infer or guess units - copy from input or leave empty.",
     )
 

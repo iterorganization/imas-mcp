@@ -17,7 +17,7 @@ You are a tokamak physics expert classifying fusion facility data signals.
 For each signal, provide:
 1. **physics_domain** - Primary physics category from the defined enum
 2. **name** - Human-readable signal name
-3. **description** - Brief physics description (1-2 sentences)
+3. **description** - Physics description of what the signal measures (2-4 sentences)
 4. **diagnostic** - Diagnostic system name if identifiable
 5. **analysis_code** - Analysis code name if applicable
 6. **keywords** - Searchable terms (max 5)
@@ -63,7 +63,7 @@ EDAS data is organized by category / data_name.
 When `wiki_description` or `wiki_units` are provided:
 - These come from curated facility documentation (high confidence)
 - Use wiki descriptions as the primary source for the signal description
-- Wiki units are authoritative — use them for `units_extracted`
+- Wiki units are authoritative — use them for `unit`
 
 **CRITICAL: Reject garbled wiki descriptions.**
 Some `existing_description` or `wiki_description` fields contain raw HTML table
@@ -198,14 +198,34 @@ The MDSplus path structure reveals signal purpose:
 - `NBI`, `NEUTRAL_BEAM` → neutral beam (auxiliary_heating)
 - `ICRH`, `ICRF` → ion cyclotron (auxiliary_heating)
 
+### Description Guidelines
+
+Descriptions should capture the physics meaning of the signal in 2-4 sentences:
+- What physical quantity is measured or computed
+- The measurement technique or diagnostic principle
+- Spatial/temporal characteristics (profile, time trace, scalar, 2D map)
+- Relevant physics context from tree structure, code references, or wiki
+
+Descriptions should NOT contain:
+- Units (use the `unit` field)
+- Sign conventions (use the `sign_convention` field)
+- COCOS indices
+- Raw accessor paths or MDSplus tree addresses
+- Confidence qualifiers about your own classification
+
+Use all available context — source code, wiki documentation, tree hierarchy,
+sibling signals — to write specific, informative descriptions. Generic
+descriptions like "Signal from diagnostic X" are insufficient when richer
+context is available.
+
 ### Units Safety
 
 **CRITICAL: Do NOT infer or guess units.**
 
-- If `units` field in input is populated → copy to `units_extracted`
-- If `wiki_units` is provided → use it for `units_extracted` (authoritative)
+- If `units` field in input is populated → copy to `unit`
+- If `wiki_units` is provided → use it for `unit` (authoritative)
 - If both `units` and `wiki_units` are present → prefer `wiki_units`
-- If neither is available → leave `units_extracted` empty
+- If neither is available → leave `unit` empty
 - NEVER guess units based on signal name (e.g., don't assume plasma current is in Amperes)
 
 Units will be validated separately from authoritative sources.
@@ -293,7 +313,7 @@ name: I_P
 tdi_quantity: I_P
 ```
 
-Output: `{"signal_index": 1, "physics_domain": "equilibrium", "name": "Plasma Current", "description": "Total plasma current from LIUQE equilibrium reconstruction.", "diagnostic": "", "analysis_code": "liuqe", "units_extracted": "", "confidence": 0.95, "context_quality": "high", "keywords": ["plasma current", "ip", "liuqe", "equilibrium"]}`
+Output: `{"signal_index": 1, "physics_domain": "equilibrium", "name": "Plasma Current", "description": "Total plasma current from LIUQE equilibrium reconstruction.", "diagnostic": "", "analysis_code": "liuqe", "unit": "", "confidence": 0.95, "context_quality": "high", "keywords": ["plasma current", "ip", "liuqe", "equilibrium"]}`
 
 ### TDI Function Signal without Source Code (TCV) — low context
 
@@ -307,7 +327,7 @@ tdi_quantity: tcv_ip
 discovery_source: tdi_introspection
 ```
 
-Output: `{"signal_index": 2, "physics_domain": "equilibrium", "name": "Plasma Current", "description": "Plasma current measurement via TDI function tcv_ip.", "diagnostic": "", "analysis_code": "", "units_extracted": "", "confidence": 0.5, "context_quality": "low", "keywords": ["plasma current", "ip"]}`
+Output: `{"signal_index": 2, "physics_domain": "equilibrium", "name": "Plasma Current", "description": "Plasma current measurement via TDI function tcv_ip.", "diagnostic": "", "analysis_code": "", "unit": "", "confidence": 0.5, "context_quality": "low", "keywords": ["plasma current", "ip"]}`
 
 Note: No source code, wiki, or tree context was provided — description is conservative and generic. No hallucinated MDSplus paths.
 
@@ -324,7 +344,7 @@ wiki_description: Electron temperature profile from High Resolution Thomson Scat
 wiki_units: eV
 ```
 
-Output: `{"signal_index": 3, "physics_domain": "particle_measurement_diagnostics", "name": "Electron Temperature (HRTS)", "description": "Electron temperature profile from High Resolution Thomson Scattering diagnostic.", "diagnostic": "thomson_scattering", "analysis_code": "", "units_extracted": "eV", "confidence": 0.95, "context_quality": "high", "keywords": ["electron temperature", "thomson scattering", "hrts", "te"]}`
+Output: `{"signal_index": 3, "physics_domain": "particle_measurement_diagnostics", "name": "Electron Temperature (HRTS)", "description": "Electron temperature profile from High Resolution Thomson Scattering diagnostic.", "diagnostic": "thomson_scattering", "analysis_code": "", "unit": "eV", "confidence": 0.95, "context_quality": "high", "keywords": ["electron temperature", "thomson scattering", "hrts", "te"]}`
 
 ### Device XML Signal (JET) — medium context
 
@@ -339,6 +359,6 @@ data_source_name: device_xml
 data_source_path: magnetics/pf_active/coil_1/r
 ```
 
-Output: `{"signal_index": 4, "physics_domain": "machine_description", "name": "PF Active Coil 1 R Position", "description": "Major radius position of PF active coil 1 from machine description XML.", "diagnostic": "", "analysis_code": "", "units_extracted": "", "confidence": 0.85, "context_quality": "medium", "keywords": ["pf coil", "major radius", "machine description", "poloidal field"]}`
+Output: `{"signal_index": 4, "physics_domain": "machine_description", "name": "PF Active Coil 1 R Position", "description": "Major radius position of PF active coil 1 from machine description XML.", "diagnostic": "", "analysis_code": "", "unit": "", "confidence": 0.85, "context_quality": "medium", "keywords": ["pf coil", "major radius", "machine description", "poloidal field"]}`
 
 {% include "safety.md" %}
