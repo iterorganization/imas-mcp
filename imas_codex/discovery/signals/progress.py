@@ -134,7 +134,7 @@ class DataProgressState:
     pending_check: int = 0
 
     # Signal group tracking
-    signal_groups: int = 0
+    signal_sources: int = 0
     grouped_signals: int = 0
 
     # This run stats
@@ -339,8 +339,8 @@ class DataProgressDisplay(BaseProgressDisplay):
 
         enrich_count, enrich_ann = self._count_group_workers("enrich")
         # Append group stats to enrich annotation
-        if self.state.signal_groups > 0:
-            grp_note = f"{self.state.signal_groups} groups"
+        if self.state.signal_sources > 0:
+            grp_note = f"{self.state.signal_sources} groups"
             enrich_ann = f"{enrich_ann} {grp_note}".strip() if enrich_ann else grp_note
         check_count, check_ann = self._count_group_workers("check")
 
@@ -560,8 +560,8 @@ class DataProgressDisplay(BaseProgressDisplay):
             ("enriched", str(enriched), "green"),
             ("checked", str(checked), "magenta"),
         ]
-        if self.state.signal_groups > 0:
-            stats.append(("groups", str(self.state.signal_groups), "cyan"))
+        if self.state.signal_sources > 0:
+            stats.append(("groups", str(self.state.signal_sources), "cyan"))
         if self.state.signals_failed > 0:
             stats.append(("failed", str(self.state.signals_failed), "red"))
         if self.state.signals_skipped > 0:
@@ -854,8 +854,8 @@ class DataProgressDisplay(BaseProgressDisplay):
         self.state.pending_enrich = pending_enrich
         self.state.pending_check = pending_check
         self.state.accumulated_cost = accumulated_cost
-        if "signal_groups" in kwargs:
-            self.state.signal_groups = kwargs["signal_groups"]
+        if "signal_sources" in kwargs:
+            self.state.signal_sources = kwargs["signal_sources"]
         if "grouped_signals" in kwargs:
             self.state.grouped_signals = kwargs["grouped_signals"]
         self._refresh()
@@ -905,9 +905,9 @@ class DataProgressDisplay(BaseProgressDisplay):
         # ENRICH stats
         summary.append("  ENRICH  ", style="bold green")
         summary.append(f"enriched={enriched:,}", style="green")
-        if self.state.signal_groups > 0:
+        if self.state.signal_sources > 0:
             summary.append(
-                f"  groups={self.state.signal_groups} ({self.state.grouped_signals:,} members)",
+                f"  groups={self.state.signal_sources} ({self.state.grouped_signals:,} members)",
                 style="cyan",
             )
         summary.append(f"  skipped={self.state.signals_skipped:,}", style="yellow")

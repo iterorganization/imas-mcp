@@ -17,7 +17,7 @@ The following signal groups have been discovered for this facility.
 Each group is a set of related facility signals (e.g., all signals
 from a PF coil, or all magnetic probes in a diagnostic).
 
-{{ signal_groups }}
+{{ signal_sources }}
 
 ### IDS Structure
 
@@ -47,7 +47,7 @@ it should populate. Consider:
 Return a JSON object matching the `SectionAssignmentBatch` schema:
 - `ids_name`: The IDS name
 - `assignments`: Array of `SectionAssignment` objects:
-  - `signal_group_id`: The SignalGroup node id
+  - `source_id`: The SignalSource node id
   - `imas_section_path`: Full IMAS path to the struct-array (e.g., "pf_active/coil")
   - `confidence`: 0.0–1.0 confidence in this assignment
   - `reasoning`: Brief justification (1–2 sentences)

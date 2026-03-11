@@ -288,7 +288,7 @@ def signals(
                     pending_enrich=stats.get("pending_enrich", 0),
                     pending_check=stats.get("pending_check", 0),
                     accumulated_cost=stats.get("accumulated_cost", 0.0),
-                    signal_groups=stats.get("signal_groups", 0),
+                    signal_sources=stats.get("signal_sources", 0),
                     grouped_signals=stats.get("grouped_signals", 0),
                 )
 

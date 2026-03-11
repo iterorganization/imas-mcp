@@ -9,13 +9,13 @@ Three symmetric levels:
 | Level | Source Side | Target Side |
 |-------|-----------|-------------|
 | Individual | `SignalNode` | `IMASNode` leaf (e.g., FLT_0D) |
-| Group | `SignalGroup` | `IMASNode` STRUCT_ARRAY |
+| Group | `SignalSource` | `IMASNode` STRUCT_ARRAY |
 | Collection | `IMASMapping` | `IDS` |
 
 ## Graph Structure
 
 ```
-IMASMapping ──[:USES_SIGNAL_GROUP]──▶ SignalGroup ──[:MAPS_TO_IMAS {field props}]──▶ IMASNode
+IMASMapping ──[:USES_SIGNAL_SOURCE]──▶ SignalSource ──[:MAPS_TO_IMAS {field props}]──▶ IMASNode
     │                                     ▲
     │                                [:MEMBER_OF]
     │                                     │
@@ -28,11 +28,11 @@ IMASMapping ──[:USES_SIGNAL_GROUP]──▶ SignalGroup ──[:MAPS_TO_IMAS
 
 | Relationship | From → To | Purpose |
 |---|---|---|
-| `MAPS_TO_IMAS` | SignalGroup/SignalNode → IMASNode | Field-level mapping with transform |
+| `MAPS_TO_IMAS` | SignalSource/SignalNode → IMASNode | Field-level mapping with transform |
 | `POPULATES` | IMASMapping → IMASNode (STRUCT_ARRAY) | Assembly section target with config |
-| `USES_SIGNAL_GROUP` | IMASMapping → SignalGroup | Assembly sources |
-| `MEMBER_OF` | SignalNode/FacilitySignal → SignalGroup | Group membership |
-| `HAS_EVIDENCE` | SignalGroup → MappingEvidence | Evidence for group's mapping |
+| `USES_SIGNAL_SOURCE` | IMASMapping → SignalSource | Assembly sources |
+| `MEMBER_OF` | SignalNode/FacilitySignal → SignalSource | Group membership |
+| `HAS_EVIDENCE` | SignalSource → MappingEvidence | Evidence for group's mapping |
 
 ## MAPS_TO_IMAS Properties
 
@@ -53,9 +53,9 @@ IMASMapping ──[:USES_SIGNAL_GROUP]──▶ SignalGroup ──[:MAPS_TO_IMAS
 MATCH (m:IMASMapping {id: $mapping_id})
       -[t:POPULATES]->(root:IMASNode)
 MATCH (root)<-[:HAS_PARENT*]-(leaf:IMASNode)
-      <-[map:MAPS_TO_IMAS]-(sg:SignalGroup)
+      <-[map:MAPS_TO_IMAS]-(sg:SignalSource)
       <-[:MEMBER_OF]-(n:SignalNode)
-WHERE (m)-[:USES_SIGNAL_GROUP]->(sg)
+WHERE (m)-[:USES_SIGNAL_SOURCE]->(sg)
 RETURN leaf.id, map.source_property, map.transform_code, n.path
 ```
 

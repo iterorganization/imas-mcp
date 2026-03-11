@@ -71,7 +71,7 @@ class TestValidateMapping:
         assert check.error is None
 
     def test_source_not_found(self, mock_gc):
-        # SignalGroup query returns empty
+        # SignalSource query returns empty
         mock_gc.query.return_value = []
 
         binding = _make_binding()

@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 class SectionAssignment(BaseModel):
     """Map a signal group to an IMAS structural array section."""
 
-    signal_group_id: str = Field(description="SignalGroup node id")
+    source_id: str = Field(description="SignalSource node id")
     imas_section_path: str = Field(
         description="IMAS struct-array path (e.g. pf_active/coil)"
     )
@@ -63,7 +63,7 @@ class EscalationSeverity(StrEnum):
 class EscalationFlag(BaseModel):
     """Flag for a field the LLM cannot confidently map."""
 
-    source_id: str = Field(description="SignalGroup id")
+    source_id: str = Field(description="SignalSource id")
     target_id: str = Field(description="Target IMAS path")
     severity: EscalationSeverity = EscalationSeverity.WARNING
     reason: str = Field(description="Why this mapping is uncertain")
@@ -72,7 +72,7 @@ class EscalationFlag(BaseModel):
 class FieldMappingEntry(BaseModel):
     """Single field-level mapping with transform details."""
 
-    source_id: str = Field(description="Source SignalGroup id")
+    source_id: str = Field(description="Source SignalSource id")
     source_property: str = Field(
         default="value",
         description="Property on the source node to map (default: value)",
@@ -151,7 +151,7 @@ def persist_mapping_result(
     Creates/updates:
       - IMASMapping node
       - POPULATES relationships to section roots
-      - USES_SIGNAL_GROUP relationships
+      - USES_SIGNAL_SOURCE relationships
       - MAPS_TO_IMAS relationships on signal groups
       - MappingEvidence nodes for escalations
 
@@ -204,14 +204,14 @@ def persist_mapping_result(
             confidence=section.confidence,
         )
 
-    # 3. Collect signal group IDs and create USES_SIGNAL_GROUP
+    # 3. Collect signal group IDs and create USES_SIGNAL_SOURCE
     sg_ids = {fm.source_id for fm in result.bindings}
     for sg_id in sg_ids:
         gc.query(
             """
             MATCH (m:IMASMapping {id: $mapping_id})
-            MATCH (sg:SignalGroup {id: $sg_id})
-            MERGE (m)-[:USES_SIGNAL_GROUP]->(sg)
+            MATCH (sg:SignalSource {id: $sg_id})
+            MERGE (m)-[:USES_SIGNAL_SOURCE]->(sg)
             """,
             mapping_id=mapping_id,
             sg_id=sg_id,
@@ -221,7 +221,7 @@ def persist_mapping_result(
     for fm in result.bindings:
         gc.query(
             """
-            MATCH (sg:SignalGroup {id: $sg_id})
+            MATCH (sg:SignalSource {id: $sg_id})
             MATCH (ip:IMASNode {id: $target_id})
             MERGE (sg)-[r:MAPS_TO_IMAS]->(ip)
             SET r.source_property = $source_property,
@@ -245,9 +245,9 @@ def persist_mapping_result(
     for esc in result.escalations:
         gc.query(
             """
-            MATCH (sg:SignalGroup {id: $sg_id})
+            MATCH (sg:SignalSource {id: $sg_id})
             MERGE (ev:MappingEvidence {
-                signal_group_id: $sg_id,
+                source_id: $sg_id,
                 imas_path: $target_id,
                 type: 'escalation'
             })

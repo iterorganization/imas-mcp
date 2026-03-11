@@ -11,7 +11,7 @@ from imas_codex.ids.graph_ops import (
     Mapping,
     _index_from_path,
     create_imas_mapping,
-    create_signal_group,
+    create_signal_source,
     load_field_mappings,
     load_mapping,
     load_sections,
@@ -196,7 +196,7 @@ class TestLoadFieldMappings:
         assert "COCOS-sensitive" not in caplog.text
 
 
-class TestCreateSignalGroup:
+class TestCreateSignalSource:
     def test_creates_group_with_maps_to_imas(self):
         gc = MagicMock()
         gc.query.return_value = []
@@ -204,14 +204,14 @@ class TestCreateSignalGroup:
             ("r", "test/section/r", "value", "m", "m"),
             ("z", "test/section/z", "value", "m", "m"),
         ]
-        result = create_signal_group("jet", "test", "section", "PF", specs, gc)
+        result = create_signal_source("jet", "test", "section", "PF", specs, gc)
         assert result == "jet:ids:test:PF"
-        # Called twice: create SignalGroup node + create MAPS_TO_IMAS rels
+        # Called twice: create SignalSource node + create MAPS_TO_IMAS rels
         assert gc.query.call_count == 2
 
 
 class TestCreateIMASMapping:
-    def test_creates_mapping_with_signal_groups(self):
+    def test_creates_mapping_with_signal_sources(self):
         gc = MagicMock()
         gc.query.return_value = []
         config = {"coil": {"source": {"system": "PF"}}}

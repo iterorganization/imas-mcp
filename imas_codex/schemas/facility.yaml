@@ -215,11 +215,11 @@ enums:
       deprecated:
         description: Superseded by a newer version
 
-  SignalGroupStatus:
-    description: Lifecycle status for signal groups that unify mapping identity
+  SignalSourceStatus:
+    description: Lifecycle status for signal sources that unify mapping identity
     permissible_values:
       discovered:
-        description: Group created from pattern detection
+        description: Source created from pattern detection
       enriched:
         description: Description and keywords populated via LLM
 
@@ -1670,12 +1670,12 @@ classes:
         range: EnrichmentStatus
       enrichment_notes:
         description: Agent reasoning or notes about the enrichment
-      signal_group:
+      signal_source:
         description: >-
-          SignalGroup this node belongs to. Groups indexed signal instances
+          SignalSource this node belongs to. Sources group indexed signal instances
           that share the same physics meaning (e.g., R values for coils W001-W830).
-          Enrichment is performed once on the group representative and propagated.
-        range: SignalGroup
+          Enrichment is performed once on the source representative and propagated.
+        range: SignalSource
         annotations:
           relationship_type: MEMBER_OF
       matches_sensor:
@@ -1703,14 +1703,14 @@ classes:
         annotations:
           relationship_type: SAME_COMPONENT
 
-  SignalGroup:
+  SignalSource:
     description: >-
       Groups signal instances that will map identically to the same IMAS field.
-      Per-property grouping: "jet:PF:r" groups all PF coil R values. One group =
+      Per-property grouping: "jet:PF:r" groups all PF coil R values. One source =
       one MAPS_TO_IMAS relationship = one mapping definition.
       Unifies DataNodePattern and FacilitySignal pattern mechanics into a
       single grouping concept with MEMBER_OF relationships.
-    class_uri: facility:SignalGroup
+    class_uri: facility:SignalSource
     attributes:
       id:
         identifier: true
@@ -1744,7 +1744,7 @@ classes:
         range: PhysicsDomain
       status:
         description: Lifecycle status
-        range: SignalGroupStatus
+        range: SignalSourceStatus
         required: true
       embedding:
         description: Vector embedding of description for semantic search
@@ -1983,8 +1983,8 @@ classes:
         - HAS_UNIT -> Unit (data units)
         - MEASURES -> StandardName (cross-facility semantic linking)
       
-      IMAS mapping: SignalGroups link signals via MEMBER_OF, then
-      MAPS_TO_IMAS relationships connect groups to IMASNode targets.
+      IMAS mapping: SignalSources link signals via MEMBER_OF, then
+      MAPS_TO_IMAS relationships connect sources to IMASNode targets.
       
       Lifecycle relationships (data source epoch tracking):
         - INTRODUCED_IN -> SignalEpoch (epoch when signal first appeared)
@@ -2470,19 +2470,19 @@ classes:
 
 # NOTE: IMASNode is now defined in imas_dd.yaml as IMASNode — the unified
 # representation of IMAS Data Dictionary paths. Do not define it here.
-# Field-level mappings use MAPS_TO_IMAS relationships from SignalGroup to IMASNode.
+# Field-level mappings use MAPS_TO_IMAS relationships from SignalSource to IMASNode.
 # IMASMapping is the orchestration node that coordinates assembly of a facility+IDS.
 
   IMASMapping:
     description: >-
-      Orchestrates the assembly of an IDS for a facility. Links to SignalGroups
-      via USES_SIGNAL_GROUP and to IMAS struct-array roots via POPULATES
+      Orchestrates the assembly of an IDS for a facility. Links to SignalSources
+      via USES_SIGNAL_SOURCE and to IMAS struct-array roots via POPULATES
       with assembly configuration properties.
       Example Cypher:
         MATCH (m:IMASMapping {facility_id: 'jet', ids_name: 'pf_active'})
-              -[:USES_SIGNAL_GROUP]->(sg:SignalGroup)
+              -[:USES_SIGNAL_SOURCE]->(ss:SignalSource)
               -[:MAPS_TO_IMAS]->(ip:IMASNode)
-        RETURN m.id, sg.group_key, ip.id
+        RETURN m.id, ss.group_key, ip.id
     class_uri: facility:IMASMapping
     attributes:
       id:
@@ -2515,12 +2515,12 @@ classes:
         range: string
       description:
         description: Human-readable description of this IDS mapping
-      uses_signal_group:
-        description: SignalGroups used by this mapping
-        range: SignalGroup
+      uses_signal_source:
+        description: SignalSources used by this mapping
+        range: SignalSource
         multivalued: true
         annotations:
-          relationship_type: USES_SIGNAL_GROUP
+          relationship_type: USES_SIGNAL_SOURCE
       populates:
         description: IMAS struct-array roots populated by this mapping
         range: IMASNode

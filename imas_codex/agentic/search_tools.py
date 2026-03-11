@@ -239,10 +239,10 @@ def _enrich_signals(
         OPTIONAL MATCH (s)-[:BELONGS_TO_DIAGNOSTIC]->(diag:Diagnostic)
         OPTIONAL MATCH (s)-[:HAS_DATA_SOURCE_NODE]->(tn:SignalNode)
         OPTIONAL MATCH (s)-[:DATA_ACCESS]->(da:DataAccess)
-        OPTIONAL MATCH (tn)-[:MEMBER_OF]->(sg:SignalGroup)-[:MAPS_TO_IMAS]->(ip:IMASNode)
+        OPTIONAL MATCH (tn)-[:MEMBER_OF]->(sg:SignalSource)-[:MAPS_TO_IMAS]->(ip:IMASNode)
         OPTIONAL MATCH (ip)-[:HAS_UNIT]->(u:Unit)
         OPTIONAL MATCH (s)-[:HAS_UNIT]->(su:Unit)
-        OPTIONAL MATCH (s)-[:MEMBER_OF]->(fsgrp:SignalGroup)
+        OPTIONAL MATCH (s)-[:MEMBER_OF]->(fsgrp:SignalSource)
         OPTIONAL MATCH (wc:WikiChunk)-[:DOCUMENTS]->(s)
         WITH s, diag, tn, su, fsgrp,
              collect(DISTINCT {
@@ -269,10 +269,10 @@ def _enrich_signals(
                su.symbol AS unit_symbol,
                diag.name AS diagnostic_name, diag.category AS diagnostic_category,
                tn.path AS tree_path, tn.data_source_name AS tree_data_source_name,
-               fsgrp.id AS signal_group_id,
-               fsgrp.group_key AS signal_group_key,
-               fsgrp.description AS signal_group_description,
-               fsgrp.member_count AS signal_group_member_count,
+               fsgrp.id AS signal_source_id,
+               fsgrp.group_key AS signal_source_key,
+               fsgrp.description AS signal_source_description,
+               fsgrp.member_count AS signal_source_member_count,
                wiki_mentions,
                access_methods
     """
@@ -1535,7 +1535,7 @@ def _get_facility_crossrefs(
         // Signals: IMASMapping traversal via SignalNode + property-based fallback
         OPTIONAL MATCH (sig:FacilitySignal {facility_id: $facility})
             -[:HAS_DATA_SOURCE_NODE]->(dn:SignalNode)
-            -[:MEMBER_OF]->(sg:SignalGroup)-[:MAPS_TO_IMAS]->(ip)
+            -[:MEMBER_OF]->(sg:SignalSource)-[:MAPS_TO_IMAS]->(ip)
         OPTIONAL MATCH (sig2:FacilitySignal)
         WHERE sig2.facility_id = $facility
           AND sig2.physics_domain IS NOT NULL

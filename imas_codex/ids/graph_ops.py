@@ -1,11 +1,11 @@
 """Graph operations for IDS mapping and assembly.
 
-Provides queries to load IMASMapping nodes and their linked SignalGroups
+Provides queries to load IMASMapping nodes and their linked SignalSources
 from the graph, and functions to seed mapping definitions.
 
 Architecture:
-    IMASMapping (orchestration) -[:USES_SIGNAL_GROUP]-> SignalGroup
-    SignalGroup -[:MAPS_TO_IMAS]-> IMASNode (field-level transform)
+    IMASMapping (orchestration) -[:USES_SIGNAL_SOURCE]-> SignalSource
+    SignalSource -[:MAPS_TO_IMAS]-> IMASNode (field-level transform)
     IMASMapping -[:POPULATES]-> IMASNode (struct-array root)
 """
 
@@ -51,7 +51,7 @@ class Mapping:
 
 
 def load_mapping(facility: str, ids_name: str, gc: GraphClient) -> Mapping | None:
-    """Load an IMASMapping and its linked SignalGroups from the graph.
+    """Load an IMASMapping and its linked SignalSources from the graph.
 
     Args:
         facility: Facility ID.
@@ -127,7 +127,7 @@ def load_sections(mapping_id: str, gc: GraphClient) -> list[dict[str, Any]]:
 
 
 def load_field_mappings(mapping_id: str, gc: GraphClient) -> list[FieldMapping]:
-    """Load field mappings via USES_SIGNAL_GROUP → MAPS_TO_IMAS traversal.
+    """Load field mappings via USES_SIGNAL_SOURCE → MAPS_TO_IMAS traversal.
 
     Args:
         mapping_id: IMASMapping node ID.
@@ -140,7 +140,7 @@ def load_field_mappings(mapping_id: str, gc: GraphClient) -> list[FieldMapping]:
         gc.query(
             """
             MATCH (m:IMASMapping {id: $mapping_id})
-                  -[:USES_SIGNAL_GROUP]->(sg:SignalGroup)
+                  -[:USES_SIGNAL_SOURCE]->(sg:SignalSource)
                   -[map:MAPS_TO_IMAS]->(ip:IMASNode)
             RETURN sg.id AS source_id,
                    map.source_property AS source_property,
@@ -293,7 +293,7 @@ def _index_from_path(path: str) -> int:
 MappingSpec = tuple[str, str, str, str | None, str | None]
 
 
-def create_signal_group(
+def create_signal_source(
     facility: str,
     ids_name: str,
     section: str,
@@ -301,7 +301,7 @@ def create_signal_group(
     mapping_specs: list[MappingSpec],
     gc: GraphClient,
 ) -> str:
-    """Create a SignalGroup and MAPS_TO_IMAS relationships for field mappings.
+    """Create a SignalSource and MAPS_TO_IMAS relationships for field mappings.
 
     Args:
         facility: Facility ID (e.g., 'jet').
@@ -313,15 +313,15 @@ def create_signal_group(
         gc: Graph client instance.
 
     Returns:
-        SignalGroup ID.
+        SignalSource ID.
     """
     group_id = f"{facility}:ids:{ids_name}:{system}"
     group_key = f"{ids_name}/{section}"
 
-    # Create SignalGroup node
+    # Create SignalSource node
     gc.query(
         """
-        MERGE (sg:SignalGroup {id: $group_id})
+        MERGE (sg:SignalSource {id: $group_id})
         SET sg.facility_id = $facility,
             sg.group_key = $group_key,
             sg.status = 'discovered'
@@ -352,7 +352,7 @@ def create_signal_group(
     gc.query(
         """
         UNWIND $maps AS m
-        MATCH (sg:SignalGroup {id: $group_id})
+        MATCH (sg:SignalSource {id: $group_id})
         MATCH (ip:IMASNode {id: m.target_path})
         MERGE (sg)-[rel:MAPS_TO_IMAS]->(ip)
         SET rel.source_property = m.source_property,
@@ -368,7 +368,7 @@ def create_signal_group(
     )
 
     logger.info(
-        "Created SignalGroup %s with %d MAPS_TO_IMAS relationships",
+        "Created SignalSource %s with %d MAPS_TO_IMAS relationships",
         group_id,
         len(maps),
     )
@@ -380,19 +380,19 @@ def create_imas_mapping(
     ids_name: str,
     dd_version: str,
     assembly_config: dict[str, Any],
-    signal_group_ids: list[str],
+    signal_source_ids: list[str],
     gc: GraphClient,
     *,
     provider: str = "imas-codex",
 ) -> str:
-    """Create an IMASMapping node with USES_SIGNAL_GROUP and POPULATES.
+    """Create an IMASMapping node with USES_SIGNAL_SOURCE and POPULATES.
 
     Args:
         facility: Facility ID.
         ids_name: IDS name.
         dd_version: DD version string.
         assembly_config: Structural assembly configuration dict.
-        signal_group_ids: IDs of SignalGroup nodes to link.
+        signal_source_ids: IDs of SignalSource nodes to link.
         gc: Graph client instance.
         provider: Provider string for ids_properties.
 
@@ -423,16 +423,16 @@ def create_imas_mapping(
         provider=provider,
     )
 
-    # Link to SignalGroups
+    # Link to SignalSources
     gc.query(
         """
         UNWIND $group_ids AS gid
         MATCH (m:IMASMapping {id: $mapping_id})
-        MATCH (sg:SignalGroup {id: gid})
-        MERGE (m)-[:USES_SIGNAL_GROUP]->(sg)
+        MATCH (sg:SignalSource {id: gid})
+        MERGE (m)-[:USES_SIGNAL_SOURCE]->(sg)
         """,
         mapping_id=mapping_id,
-        group_ids=signal_group_ids,
+        group_ids=signal_source_ids,
     )
 
     # Create POPULATES relationships with assembly config per section
@@ -484,7 +484,7 @@ def create_imas_mapping(
     logger.info(
         "Created IMASMapping %s with %d signal groups, %d sections",
         mapping_id,
-        len(signal_group_ids),
+        len(signal_source_ids),
         len(sections),
     )
     return mapping_id
