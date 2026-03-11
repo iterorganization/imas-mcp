@@ -54,12 +54,6 @@ class TestCLIImports:
 
         assert config is not None
 
-    def test_import_ingest(self):
-        """Ingest module imports."""
-        from imas_codex.cli.ingest import ingest
-
-        assert ingest is not None
-
     def test_import_release(self):
         """Release module imports."""
         from imas_codex.cli.release import release
@@ -78,12 +72,6 @@ class TestCLIImports:
 
         assert clusters is not None
 
-    def test_import_enrich(self):
-        """Enrich module imports."""
-        from imas_codex.cli.enrich import enrich
-
-        assert enrich is not None
-
     def test_import_discover(self):
         """Discover module imports."""
         from imas_codex.cli.discover import discover
@@ -98,14 +86,12 @@ class TestCLIImports:
             format_duration,
             format_size,
             run_async,
-            setup_age,
         )
 
         assert console is not None
         assert callable(format_size)
         assert callable(format_duration)
         assert callable(run_async)
-        assert setup_age is not None
         assert ProgressReporter is not None
 
 
@@ -175,22 +161,6 @@ class TestCLICommands:
         assert result.exit_code == 0
         assert "semantic clusters" in result.output.lower()
 
-    def test_enrich_help(self, runner):
-        """enrich group has help."""
-        from imas_codex.cli import main
-
-        result = runner.invoke(main, ["enrich", "--help"])
-        assert result.exit_code == 0
-        assert "Enrich graph" in result.output
-
-    def test_ingest_help(self, runner):
-        """ingest group has help."""
-        from imas_codex.cli import main
-
-        result = runner.invoke(main, ["ingest", "--help"])
-        assert result.exit_code == 0
-        assert "Ingest" in result.output
-
     def test_tools_help(self, runner):
         """tools group has help."""
         from imas_codex.cli import main
@@ -206,17 +176,6 @@ class TestCLICommands:
         result = runner.invoke(main, ["hosts", "--help"])
         assert result.exit_code == 0
         assert "SSH" in result.output or "host" in result.output.lower()
-
-    def test_setup_age_help(self, runner):
-        """setup-age command has help."""
-        from imas_codex.cli import main
-
-        result = runner.invoke(main, ["setup-age", "--help"])
-        assert result.exit_code == 0
-        assert (
-            "age encryption" in result.output.lower()
-            or "age key" in result.output.lower()
-        )
 
     def test_release_help(self, runner):
         """release command has help."""
