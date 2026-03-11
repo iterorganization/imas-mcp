@@ -155,15 +155,15 @@ class TestImasClearCLI:
         """imas clear has help text."""
         from imas_codex.cli import main
 
-        result = runner.invoke(main, ["imas", "clear", "--help"])
+        result = runner.invoke(main, ["imas", "dd", "clear", "--help"])
         assert result.exit_code == 0
         assert "Delete all IMAS" in result.output
 
     def test_clear_registered(self, runner):
-        """imas clear is registered in the group."""
+        """clear is registered in the dd subgroup."""
         from imas_codex.cli import main
 
-        result = runner.invoke(main, ["imas", "--help"])
+        result = runner.invoke(main, ["imas", "dd", "--help"])
         assert result.exit_code == 0
         assert "clear" in result.output
 
@@ -180,7 +180,7 @@ class TestImasClearCLI:
         ]
         mock_gc_class.return_value = mock_gc
 
-        result = runner.invoke(main, ["imas", "clear", "--force"])
+        result = runner.invoke(main, ["imas", "dd", "clear", "--force"])
         assert result.exit_code == 0
         assert "No DD nodes" in result.output
 
@@ -209,7 +209,7 @@ class TestImasClearCLI:
             "orphaned_units": 3,
         }
 
-        result = runner.invoke(main, ["imas", "clear", "--force"])
+        result = runner.invoke(main, ["imas", "dd", "clear", "--force"])
         assert result.exit_code == 0
         assert "100" in result.output  # IMASNode count
         mock_clear.assert_called_once()
@@ -227,5 +227,5 @@ class TestImasClearCLI:
         ]
         mock_gc_class.return_value = mock_gc
 
-        result = runner.invoke(main, ["imas", "clear"], input="n\n")
+        result = runner.invoke(main, ["imas", "dd", "clear"], input="n\n")
         assert result.exit_code != 0  # Aborted

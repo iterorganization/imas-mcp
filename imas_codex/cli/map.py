@@ -1,11 +1,11 @@
 """CLI commands for IMAS mapping pipeline.
 
 Usage:
-    imas-codex map run FACILITY IDS_NAME
-    imas-codex map status FACILITY [IDS_NAME]
-    imas-codex map show FACILITY IDS_NAME
-    imas-codex map validate FACILITY IDS_NAME
-    imas-codex map clear FACILITY IDS_NAME
+    imas-codex imas map run FACILITY IDS_NAME
+    imas-codex imas map status FACILITY [IDS_NAME]
+    imas-codex imas map show FACILITY IDS_NAME
+    imas-codex imas map validate FACILITY IDS_NAME
+    imas-codex imas map clear FACILITY IDS_NAME
 """
 
 import json
@@ -40,8 +40,8 @@ def map_run(
 
     \b
     Examples:
-      imas-codex map run jet pf_active
-      imas-codex map run --no-persist jet pf_active
+      imas-codex imas map run jet pf_active
+      imas-codex imas map run --no-persist jet pf_active
     """
     configure_cli_logging("map", facility=facility)
 
