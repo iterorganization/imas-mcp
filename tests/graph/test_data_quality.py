@@ -182,7 +182,7 @@ class TestDescriptionEmbeddingCoverage:
         """Nodes that have been through the embed step should retain embeddings.
 
         Uses ``embedded_at`` to distinguish processed vs unprocessed nodes.
-        Skips when the embed step has not run for this label at all.
+        Skips when no nodes exist or the embed step has not run for this label.
         """
 
         if not label_counts.get(label):
@@ -190,31 +190,26 @@ class TestDescriptionEmbeddingCoverage:
 
         result = graph_client.query(
             f"MATCH (n:{label}) "
-            f"WHERE n.description IS NOT NULL AND n.description <> '' "
-            f"WITH count(n) AS with_desc, "
-            f"  count(CASE WHEN n.embedded_at IS NOT NULL THEN 1 END) AS attempted, "
-            f"  count(CASE WHEN n.embedding IS NOT NULL THEN 1 END) AS with_emb "
-            f"RETURN with_desc, attempted, with_emb"
+            f"WHERE n.embedded_at IS NOT NULL AND n.embedding IS NULL "
+            f"RETURN count(n) AS corrupted"
         )
-        if not result:
-            pytest.skip(f"No {label} nodes with descriptions")
+        corrupted = result[0]["corrupted"] if result else 0
 
-        with_desc = result[0]["with_desc"]
-        attempted = result[0]["attempted"]
-        with_emb = result[0]["with_emb"]
+        if corrupted == 0:
+            # Check that at least some embeddings exist (embed step has run)
+            check = graph_client.query(
+                f"MATCH (n:{label}) "
+                f"WHERE n.embedded_at IS NOT NULL "
+                f"RETURN count(n) AS attempted"
+            )
+            attempted = check[0]["attempted"] if check else 0
+            if attempted == 0:
+                pytest.skip(f"No {label} embeddings attempted — embed step not yet run")
+            return  # All embedded nodes retain their vectors
 
-        if with_desc == 0:
-            pytest.skip(f"No {label} nodes with descriptions")
-
-        if attempted == 0:
-            pytest.skip(f"No {label} embeddings attempted — embed step not yet run")
-
-        # Of nodes where embedding was attempted, all should still have vectors
-        coverage = with_emb / attempted
-        assert coverage >= 0.95, (
-            f"{label} embedding integrity is {coverage:.1%} "
-            f"({with_emb}/{attempted} embedded, {with_desc} total with descriptions). "
-            f"Nodes that were embedded should retain their vectors."
+        assert corrupted == 0, (
+            f"{label} has {corrupted} nodes with embedded_at set but no embedding vector. "
+            f"Embeddings were written then lost — possible data corruption."
         )
 
 
