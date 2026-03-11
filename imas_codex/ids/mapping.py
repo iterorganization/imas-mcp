@@ -124,12 +124,12 @@ def _format_groups(groups: list[dict[str, Any]]) -> str:
         desc = g.get("description", "")
         members = g.get("member_count", 0)
         existing = g.get("imas_mappings", [])
-        mapped = [m for m in existing if m.get("imas_path")]
+        mapped = [m for m in existing if m.get("target_id")]
         line = f"- {gid} (key={key}, members={members})"
         if desc:
             line += f": {desc}"
         if mapped:
-            targets = ", ".join(m["imas_path"] for m in mapped)
+            targets = ", ".join(m["target_id"] for m in mapped)
             line += f" [already mapped → {targets}]"
         lines.append(line)
     return "\n".join(lines) if lines else "(no groups)"
@@ -372,7 +372,7 @@ def _step3_validate(
         all_escalations.extend([e.model_dump() for e in batch.escalations])
 
     # Validate paths exist
-    target_paths = list({m["target_imas_path"] for m in all_mappings})
+    target_paths = list({m["target_id"] for m in all_mappings})
     validation_results = check_imas_paths(target_paths, gc=gc)
 
     prompt = _render_prompt(
@@ -507,8 +507,8 @@ def generate_mapping(
         logger.info("Persisted mapping %s", mapping_id)
 
     logger.info(
-        "Pipeline complete: %d field mappings, %d escalations, $%.4f total",
-        len(validated.field_mappings),
+        "Pipeline complete: %d bindings, %d escalations, $%.4f total",
+        len(validated.bindings),
         len(validated.escalations),
         cost.total_usd,
     )

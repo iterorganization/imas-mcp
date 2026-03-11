@@ -25,12 +25,12 @@ logger = logging.getLogger(__name__)
 class FieldMapping:
     """A resolved field mapping from a MAPS_TO_IMAS relationship."""
 
-    signal_group_id: str
+    source_id: str
     source_property: str
-    target_imas_path: str
-    transform_code: str = "value"
-    units_in: str | None = None
-    units_out: str | None = None
+    target_id: str
+    transform_expression: str = "value"
+    source_units: str | None = None
+    target_units: str | None = None
     cocos_source: int | None = None
     cocos_target: int | None = None
     driver: str = "device_xml"
@@ -47,7 +47,7 @@ class Mapping:
     provider: str | None = None
     static_config: dict[str, Any] = field(default_factory=dict)
     sections: list[dict[str, Any]] = field(default_factory=list)
-    field_mappings: list[FieldMapping] = field(default_factory=list)
+    bindings: list[FieldMapping] = field(default_factory=list)
 
 
 def load_mapping(facility: str, ids_name: str, gc: GraphClient) -> Mapping | None:
@@ -59,7 +59,7 @@ def load_mapping(facility: str, ids_name: str, gc: GraphClient) -> Mapping | Non
         gc: Graph client instance.
 
     Returns:
-        Mapping with populated field_mappings and sections, or None if not found.
+        Mapping with populated bindings and sections, or None if not found.
     """
     rows = list(
         gc.query(
@@ -90,7 +90,7 @@ def load_mapping(facility: str, ids_name: str, gc: GraphClient) -> Mapping | Non
     )
 
     mapping.sections = load_sections(mapping.id, gc)
-    mapping.field_mappings = load_field_mappings(mapping.id, gc)
+    mapping.bindings = load_field_mappings(mapping.id, gc)
     return mapping
 
 
@@ -142,12 +142,12 @@ def load_field_mappings(mapping_id: str, gc: GraphClient) -> list[FieldMapping]:
             MATCH (m:IMASMapping {id: $mapping_id})
                   -[:USES_SIGNAL_GROUP]->(sg:SignalGroup)
                   -[map:MAPS_TO_IMAS]->(ip:IMASNode)
-            RETURN sg.id AS signal_group_id,
+            RETURN sg.id AS source_id,
                    map.source_property AS source_property,
-                   ip.id AS target_imas_path,
-                   map.transform_code AS transform_code,
-                   map.units_in AS units_in,
-                   map.units_out AS units_out,
+                   ip.id AS target_id,
+                   map.transform_expression AS transform_expression,
+                   map.source_units AS source_units,
+                   map.target_units AS target_units,
                    map.cocos_source AS cocos_source,
                    map.cocos_target AS cocos_target,
                    map.driver AS driver,
@@ -159,12 +159,12 @@ def load_field_mappings(mapping_id: str, gc: GraphClient) -> list[FieldMapping]:
     mappings = []
     for row in rows:
         fm = FieldMapping(
-            signal_group_id=row["signal_group_id"],
+            source_id=row["source_id"],
             source_property=row.get("source_property") or "value",
-            target_imas_path=row["target_imas_path"],
-            transform_code=row.get("transform_code") or "value",
-            units_in=row.get("units_in"),
-            units_out=row.get("units_out"),
+            target_id=row["target_id"],
+            transform_expression=row.get("transform_expression") or "value",
+            source_units=row.get("source_units"),
+            target_units=row.get("target_units"),
             cocos_source=row.get("cocos_source"),
             cocos_target=row.get("cocos_target"),
             driver=row.get("driver") or "device_xml",
@@ -173,9 +173,9 @@ def load_field_mappings(mapping_id: str, gc: GraphClient) -> list[FieldMapping]:
         if cocos_label and cocos_label != "one_like" and not fm.cocos_source:
             logger.warning(
                 "COCOS-sensitive path %s (label=%s) has no cocos_source on mapping %s",
-                fm.target_imas_path,
+                fm.target_id,
                 cocos_label,
-                fm.signal_group_id,
+                fm.source_id,
             )
         mappings.append(fm)
     return mappings
@@ -289,7 +289,7 @@ def _index_from_path(path: str) -> int:
     return int(path.rsplit(":", 1)[-1])
 
 
-# Each spec: (source_property, target_imas_path, transform_code, units_in, units_out)
+# Each spec: (source_property, target_id, transform_expression, source_units, target_units)
 MappingSpec = tuple[str, str, str, str | None, str | None]
 
 
@@ -308,8 +308,8 @@ def create_signal_group(
         ids_name: IDS name (e.g., 'pf_active').
         section: Section name (e.g., 'coil', 'b_field_pol_probe').
         system: System code (e.g., 'PF', 'MP').
-        mapping_specs: List of (source_property, target_path, transform_code,
-            units_in, units_out) tuples.
+        mapping_specs: List of (source_property, target_id, transform_expression,
+            source_units, target_units) tuples.
         gc: Graph client instance.
 
     Returns:
@@ -339,14 +339,14 @@ def create_signal_group(
         {
             "source_property": source_prop,
             "target_path": target_path,
-            "transform_code": transform,
-            "units_in": units_in,
-            "units_out": units_out,
+            "transform_expression": transform,
+            "source_units": source_units,
+            "target_units": target_units,
             "driver": "device_xml",
             "status": "validated",
             "confidence": 1.0,
         }
-        for source_prop, target_path, transform, units_in, units_out in mapping_specs
+        for source_prop, target_path, transform, source_units, target_units in mapping_specs
     ]
 
     gc.query(
@@ -356,9 +356,9 @@ def create_signal_group(
         MATCH (ip:IMASNode {id: m.target_path})
         MERGE (sg)-[rel:MAPS_TO_IMAS]->(ip)
         SET rel.source_property = m.source_property,
-            rel.transform_code = m.transform_code,
-            rel.units_in = m.units_in,
-            rel.units_out = m.units_out,
+            rel.transform_expression = m.transform_expression,
+            rel.source_units = m.source_units,
+            rel.target_units = m.target_units,
             rel.driver = m.driver,
             rel.status = m.status,
             rel.confidence = m.confidence

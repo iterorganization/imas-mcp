@@ -1756,7 +1756,7 @@ classes:
       maps_to_imas:
         description: >-
           IMAS node this group maps to. The mapping IS this relationship —
-          field-level mapping properties (source_property, transform_code,
+          field-level mapping properties (source_property, transform_expression,
           units) are stored as relationship properties on MAPS_TO_IMAS.
         range: IMASNode
         annotations:

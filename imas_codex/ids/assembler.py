@@ -7,7 +7,7 @@ modes:
    the knowledge graph. The IMASMapping's POPULATES relationships define
    structural patterns (how DataNodes group into array-of-structures entries),
    while MAPS_TO_IMAS relationships on SignalGroups define field-level
-   transformations with executable transform_code.
+   transformations with executable transform_expression.
 
 2. **YAML recipe** (fallback): Reads a YAML recipe file with embedded Cypher
    queries and field mappings. Used when no graph recipe exists.
@@ -233,8 +233,8 @@ class IDSAssembler:
         # Get mappings relevant to this section's target IDS path
         section_mappings = [
             m
-            for m in mapping.field_mappings
-            if m.target_imas_path.startswith(f"{self.ids_name}/{section_name}")
+            for m in mapping.bindings
+            if m.target_id.startswith(f"{self.ids_name}/{section_name}")
         ]
 
         struct_array = getattr(ids, section_name)
@@ -343,15 +343,15 @@ class IDSAssembler:
     ) -> None:
         """Apply field-level mappings to a struct entry.
 
-        Handles transform_code execution and automatic unit conversion
-        when units_in != units_out.
+        Handles transform_expression execution and automatic unit conversion
+        when source_units != target_units.
         """
         init_arrays = (section_config or {}).get("init_arrays", {})
         nested_path = (section_config or {}).get("nested_path")
         for mapping in mappings:
             # Strip the IDS prefix to get the path relative to this entry
             # e.g., "pf_active/coil/name" -> "name"
-            rel_path = mapping.target_imas_path
+            rel_path = mapping.target_id
             prefix = f"{self.ids_name}/{section_name}/"
             if rel_path.startswith(prefix):
                 rel_path = rel_path[len(prefix) :]
@@ -383,15 +383,15 @@ class IDSAssembler:
 
             value = data.get(mapping.source_property)
             if value is not None:
-                value = execute_transform(value, mapping.transform_code)
+                value = execute_transform(value, mapping.transform_expression)
                 # Auto-convert units if specified and different
                 if (
-                    mapping.units_in
-                    and mapping.units_out
-                    and mapping.units_in != mapping.units_out
+                    mapping.source_units
+                    and mapping.target_units
+                    and mapping.source_units != mapping.target_units
                     and isinstance(value, int | float)
                 ):
-                    value = convert_units(value, mapping.units_in, mapping.units_out)
+                    value = convert_units(value, mapping.source_units, mapping.target_units)
                 try:
                     set_nested(entry, rel_path, value)
                 except (AttributeError, TypeError):
@@ -412,7 +412,7 @@ class IDSAssembler:
         # Find element-level mappings
         element_prefix = f"{self.ids_name}/{section_name}/element/"
         element_mappings = [
-            m for m in section_mappings if m.target_imas_path.startswith(element_prefix)
+            m for m in section_mappings if m.target_id.startswith(element_prefix)
         ]
 
         # Determine element count from array properties
@@ -433,7 +433,7 @@ class IDSAssembler:
             elem.geometry.geometry_type = geometry_type
 
             for m in element_mappings:
-                rel_path = m.target_imas_path[len(element_prefix) :].replace("/", ".")
+                rel_path = m.target_id[len(element_prefix) :].replace("/", ".")
                 val = merged.get(m.source_property)
                 if val is None:
                     continue
@@ -441,15 +441,15 @@ class IDSAssembler:
                     element_val = val[j]
                 else:
                     element_val = val
-                element_val = execute_transform(element_val, m.transform_code)
+                element_val = execute_transform(element_val, m.transform_expression)
                 # Auto-convert units if specified and different
                 if (
-                    m.units_in
-                    and m.units_out
-                    and m.units_in != m.units_out
+                    m.source_units
+                    and m.target_units
+                    and m.source_units != m.target_units
                     and isinstance(element_val, int | float)
                 ):
-                    element_val = convert_units(element_val, m.units_in, m.units_out)
+                    element_val = convert_units(element_val, m.source_units, m.target_units)
                 try:
                     set_nested(elem, rel_path, float(element_val))
                 except (AttributeError, TypeError, ValueError):
@@ -698,8 +698,8 @@ class IDSAssembler:
                     total_elements = 0
                     section_mappings = [
                         m
-                        for m in mapping.field_mappings
-                        if m.target_imas_path.startswith(
+                        for m in mapping.bindings
+                        if m.target_id.startswith(
                             f"{self.ids_name}/{section_name}/element/"
                         )
                     ]
