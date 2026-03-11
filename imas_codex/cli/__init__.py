@@ -61,7 +61,7 @@ def register_commands() -> None:
     from imas_codex.cli.discover import discover
     from imas_codex.cli.embed import embed
     from imas_codex.cli.facilities import facilities
-    from imas_codex.cli.graph_cli import graph
+    from imas_codex.cli.graph import graph
     from imas_codex.cli.hosts import hosts
     from imas_codex.cli.imas_dd import imas
     from imas_codex.cli.llm_cli import llm

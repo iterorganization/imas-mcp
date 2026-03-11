@@ -44,7 +44,7 @@ class TestCLIImports:
 
     def test_import_graph_cli(self):
         """Graph CLI module imports."""
-        from imas_codex.cli.graph_cli import graph
+        from imas_codex.cli.graph import graph
 
         assert graph is not None
 
