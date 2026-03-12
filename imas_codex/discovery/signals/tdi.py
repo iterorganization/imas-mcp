@@ -373,6 +373,7 @@ async def discover_tdi_signals(
                 physics_domain=physics_domain,
                 accessor=accessor,
                 data_access=data_access_id,
+                data_source_name="tdi",
                 tdi_function=func.name,
                 tdi_quantity=quantity_name,
                 discovery_source="tdi_introspection",

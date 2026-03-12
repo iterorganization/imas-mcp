@@ -194,19 +194,19 @@ class TestGetSignalScannerType:
         """Helper to call the nested function via check_worker's logic."""
         # Replicate the routing logic from check_worker
         source = discovery_source
-        if source == "ppf_enumeration":
+        if source == "ppf":
             return "ppf"
-        if source == "edas_enumeration":
+        if source == "edas":
             return "edas"
-        if source == "wiki_extraction":
+        if source == "wiki":
             return "wiki"
-        if source in ("xml_extraction", "jec2020_xml", "magnetics_config"):
+        if source in ("device_xml", "jec2020_xml", "magnetics_config"):
             return "device_xml"
         return "mdsplus"
 
-    def test_xml_extraction_routes_to_device_xml(self):
-        """Device XML signals from xml_extraction route to device_xml scanner."""
-        assert self._get_scanner_type("xml_extraction") == "device_xml"
+    def test_device_xml_routes_to_device_xml(self):
+        """Device XML signals from device_xml source route to device_xml scanner."""
+        assert self._get_scanner_type("device_xml") == "device_xml"
 
     def test_jec2020_routes_to_device_xml(self):
         """JEC2020 XML signals route to device_xml scanner."""
@@ -217,13 +217,13 @@ class TestGetSignalScannerType:
         assert self._get_scanner_type("magnetics_config") == "device_xml"
 
     def test_ppf_routes_to_ppf(self):
-        assert self._get_scanner_type("ppf_enumeration") == "ppf"
+        assert self._get_scanner_type("ppf") == "ppf"
 
     def test_edas_routes_to_edas(self):
-        assert self._get_scanner_type("edas_enumeration") == "edas"
+        assert self._get_scanner_type("edas") == "edas"
 
     def test_wiki_routes_to_wiki(self):
-        assert self._get_scanner_type("wiki_extraction") == "wiki"
+        assert self._get_scanner_type("wiki") == "wiki"
 
     def test_tree_traversal_routes_to_mdsplus(self):
         assert self._get_scanner_type("tree_traversal") == "mdsplus"

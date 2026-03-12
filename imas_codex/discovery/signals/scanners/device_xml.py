@@ -406,7 +406,7 @@ def _persist_graph_nodes(
                                 description=(
                                     f"{field_meta['desc']} of {meta['label']} {inst_id}"
                                 ),
-                                discovery_source="xml_extraction",
+                                discovery_source="device_xml",
                             )
 
             # Batch create DataNodes
@@ -498,7 +498,7 @@ def _persist_graph_nodes(
                     data_source_path=f"limiter/{name}",
                     data_source_node=node_path,
                     description=f"First wall R,Z contour for {name} limiter configuration",
-                    discovery_source="xml_extraction",
+                    discovery_source="device_xml",
                 )
 
         if limiter_nodes:
