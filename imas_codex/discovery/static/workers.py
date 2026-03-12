@@ -370,9 +370,9 @@ async def enrich_worker(
     if state.should_stop():
         return
 
-    # Detect and create signal groups from indexed parameter groups
+    # Detect and create signal sources from indexed parameter groups
     if on_progress:
-        on_progress("detecting signal groups", state.enrich_stats, None)
+        on_progress("detecting signal sources", state.enrich_stats, None)
 
     groups_created = await asyncio.to_thread(
         detect_and_create_signal_sources,
@@ -392,7 +392,7 @@ async def enrich_worker(
 
     if groups_created and on_progress:
         on_progress(
-            f"found {groups_created} signal groups ({member_groups_created} member-suffix)",
+            f"found {groups_created} signal sources ({member_groups_created} member-suffix)",
             state.enrich_stats,
             [{"groups_created": groups_created}],
         )
@@ -406,7 +406,7 @@ async def enrich_worker(
         if "description" in vc:
             version_descs[vc["version"]] = vc["description"]
 
-    # --- Phase 1: Enrich signal groups (one representative per group) ---
+    # --- Phase 1: Enrich signal sources (one representative per group) ---
     while not state.should_stop() and not state.budget_exhausted:
         patterns = await asyncio.to_thread(
             claim_signal_sources,
@@ -513,7 +513,7 @@ async def enrich_worker(
                 )
 
         except Exception as e:
-            logger.error("Signal group enrich batch failed: %s", e)
+            logger.error("Signal source enrich batch failed: %s", e)
             state.enrich_stats.errors += 1
             await asyncio.to_thread(release_signal_source_claims, pattern_ids)
 

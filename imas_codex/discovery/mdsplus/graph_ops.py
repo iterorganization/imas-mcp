@@ -665,7 +665,7 @@ def detect_and_create_member_signal_sources(
         created = len(result) if result else 0
         total_linked = sum(r["linked"] for r in result) if result else 0
         logger.info(
-            "Created %d member-suffix signal groups for %s:%s (%d nodes linked)",
+            "Created %d member-suffix signal sources for %s:%s (%d nodes linked)",
             created,
             facility,
             data_source_name,
@@ -743,7 +743,7 @@ def mark_signal_sources_enriched(
     llm_cost: float = 0.0,
     llm_model: str | None = None,
 ) -> int:
-    """Mark signal groups as enriched and propagate to all members.
+    """Mark signal sources as enriched and propagate to all members.
 
     Sets description/keywords/category on the SignalSource and
     copies them to every SignalNode linked via MEMBER_OF.
@@ -1161,7 +1161,7 @@ def has_pending_extract_work(facility: str, data_source_name: str) -> bool:
 
 
 def has_pending_enrich_work(facility: str, data_source_name: str) -> bool:
-    """Check if any signal groups, parent groups, or orphan nodes need enrichment."""
+    """Check if any signal sources, parent groups, or orphan nodes need enrichment."""
     if has_pending_signal_source_work(facility, data_source_name):
         return True
     with GraphClient() as gc:

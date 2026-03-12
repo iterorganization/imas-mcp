@@ -106,10 +106,10 @@ Use this grounded context to:
 - Extract units when mentioned in wiki documentation
 
 Group-level wiki context may also appear as "Relevant wiki documentation" under
-each signal group header. This is targeted documentation about the specific
+each signal source header. This is targeted documentation about the specific
 diagnostic, analysis code, or MDSplus tree being classified.
 
-**Source code context** may appear as "Relevant source code" under signal group
+**Source code context** may appear as "Relevant source code" under signal source
 headers. These are semantically-matched code chunks from ingested facility source
 code. Use them to understand how signals are computed, what variables they map to,
 and what sign conventions or coordinate systems they use.

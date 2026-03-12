@@ -128,7 +128,7 @@ The enrich worker injects **five levels of context** into LLM prompts:
 1. **Facility wiki context** — sign conventions, COCOS definitions
    (cached per facility from `WikiChunk` nodes)
 2. **Group wiki context** — diagnostic-specific documentation
-   (per signal group from `wiki_chunk_embedding` vector search)
+   (per signal source from `wiki_chunk_embedding` vector search)
 3. **Per-signal wiki context** — exact path matches from wiki scanner
 4. **Code context** — source code usage patterns from
    `code_chunk_embedding` vector search

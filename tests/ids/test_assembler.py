@@ -155,7 +155,7 @@ class TestGraphDrivenSummary:
 
     def test_summary_uses_graph_mode(self):
         """When graph mapping exists, summary queries section nodes."""
-        from imas_codex.ids.graph_ops import FieldMapping, Mapping
+        from imas_codex.ids.graph_ops import SignalMapping, Mapping
 
         mapping = Mapping(
             id="jet:magnetics",
@@ -180,7 +180,7 @@ class TestGraphDrivenSummary:
                 },
             ],
             bindings=[
-                FieldMapping(
+                SignalMapping(
                     source_id="jet:ids:magnetics:MP",
                     source_property="r",
                     target_id="magnetics/b_field_pol_probe/position/r",

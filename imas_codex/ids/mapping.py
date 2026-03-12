@@ -29,9 +29,9 @@ from imas_codex.ids.models import (
     AssemblyBatch,
     AssemblyConfig,
     EscalationFlag,
-    FieldMappingBatch,
+    SignalMappingBatch,
     SectionAssignmentBatch,
-    ValidatedFieldMapping,
+    ValidatedSignalMapping,
     ValidatedMappingResult,
     persist_mapping_result,
 )
@@ -360,13 +360,13 @@ def map_signals(
     gc: GraphClient,
     model: str | None = None,
     cost: PipelineCost,
-) -> list[FieldMappingBatch]:
+) -> list[SignalMappingBatch]:
     """Generate signal mappings per section."""
     logger.info(
         "Generating signal mappings for %d sections", len(sections.assignments)
     )
 
-    batches: list[FieldMappingBatch] = []
+    batches: list[SignalMappingBatch] = []
 
     for assignment in sections.assignments:
         section_path = assignment.imas_section_path
@@ -378,7 +378,7 @@ def map_signals(
             ids_name, section_path.removeprefix(f"{ids_name}/"), gc=gc, leaf_only=True
         )
 
-        # Find the signal group details
+        # Find the signal source details
         sg_detail = next(
             (g for g in context["groups"] if g["id"] == assignment.source_id),
             {},
@@ -434,7 +434,7 @@ def map_signals(
 
         batch = _call_llm(
             messages,
-            FieldMappingBatch,
+            SignalMappingBatch,
             model=model,
             step_name=f"map_signals_{section_path}",
             cost=cost,
@@ -444,7 +444,7 @@ def map_signals(
     return batches
 
 
-def _format_signal_mappings(batch: FieldMappingBatch) -> str:
+def _format_signal_mappings(batch: SignalMappingBatch) -> str:
     """Format signal mappings for the assembly prompt."""
     lines: list[str] = []
     for m in batch.mappings:
@@ -484,7 +484,7 @@ def discover_assembly(
     facility: str,
     ids_name: str,
     sections: SectionAssignmentBatch,
-    signal_batches: list[FieldMappingBatch],
+    signal_batches: list[SignalMappingBatch],
     context: dict[str, Any],
     *,
     gc: GraphClient,
@@ -540,7 +540,7 @@ def validate_mappings(
     ids_name: str,
     dd_version: str,
     sections: SectionAssignmentBatch,
-    field_batches: list[FieldMappingBatch],
+    field_batches: list[SignalMappingBatch],
     *,
     gc: GraphClient,
 ) -> ValidatedMappingResult:
@@ -554,12 +554,12 @@ def validate_mappings(
     logger.info("Running programmatic validation")
 
     # Assemble bindings + escalations from Step 2 batches
-    all_bindings: list[ValidatedFieldMapping] = []
+    all_bindings: list[ValidatedSignalMapping] = []
     all_escalations: list[EscalationFlag] = []
     for batch in field_batches:
         for m in batch.mappings:
             all_bindings.append(
-                ValidatedFieldMapping(
+                ValidatedSignalMapping(
                     source_id=m.source_id,
                     source_property=m.source_property,
                     target_id=m.target_id,

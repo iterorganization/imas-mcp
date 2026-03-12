@@ -284,13 +284,13 @@ The signal enrichment worker injects **five levels of context** into each LLM ca
 | Level | Source | Vector Index | Description |
 |-------|--------|-------------|-------------|
 | **Facility wiki** | `wiki_chunk_embedding` | Semantic search | Sign conventions, coordinate systems, COCOS — cached per facility |
-| **Group wiki** | `wiki_chunk_embedding` | Semantic search | Diagnostic/tree-specific wiki content — per signal group |
+| **Group wiki** | `wiki_chunk_embedding` | Semantic search | Diagnostic/tree-specific wiki content — per signal source |
 | **Per-signal wiki** | `state.wiki_context` | Direct path match | Exact MDSplus/PPF path → description/units from wiki chunks |
-| **Code context** | `code_chunk_embedding` | Semantic search | Source code patterns, sign conventions, units — per signal group |
+| **Code context** | `code_chunk_embedding` | Semantic search | Source code patterns, sign conventions, units — per signal source |
 | **TDI source** | TDIFunction graph nodes | Direct fetch | Full TDI function source code for TCV signals |
 
 **Dynamic context injection:**
-- `_fetch_code_context()` — Queries `code_chunk_embedding` for source code patterns related to each signal group. Used to extract sign conventions, units, and implementation details.
+- `_fetch_code_context()` — Queries `code_chunk_embedding` for source code patterns related to each signal source. Used to extract sign conventions, units, and implementation details.
 
 IMAS mapping context is intentionally excluded from signal enrichment — signal description and IMAS mapping are separate concerns. Signals should be accurately described before being mapped to IMAS paths.
 

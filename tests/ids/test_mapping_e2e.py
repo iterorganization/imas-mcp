@@ -17,11 +17,11 @@ from click.testing import CliRunner
 from imas_codex.ids.models import (
     EscalationFlag,
     EscalationSeverity,
-    FieldMappingBatch,
-    FieldMappingEntry,
+    SignalMappingBatch,
+    SignalMappingEntry,
     SectionAssignment,
     SectionAssignmentBatch,
-    ValidatedFieldMapping,
+    ValidatedSignalMapping,
     ValidatedMappingResult,
     persist_mapping_result,
 )
@@ -50,7 +50,7 @@ def mock_gc():
 
 @pytest.fixture
 def sample_groups():
-    """Sample signal groups from a JET pf_active scenario."""
+    """Sample signal sources from a JET pf_active scenario."""
     return [
         {
             "id": "jet:pf_coils:group1",
@@ -156,11 +156,11 @@ def sample_section_assignment():
 @pytest.fixture
 def sample_field_batch():
     """Sample field mapping batch from Step 2."""
-    return FieldMappingBatch(
+    return SignalMappingBatch(
         ids_name="pf_active",
         section_path="pf_active/coil",
         mappings=[
-            FieldMappingEntry(
+            SignalMappingEntry(
                 source_id="jet:pf_coils:group1",
                 source_property="value",
                 target_id="pf_active/coil/element/geometry/rectangle/r",
@@ -170,7 +170,7 @@ def sample_field_batch():
                 confidence=0.95,
                 reasoning="Direct R position mapping",
             ),
-            FieldMappingEntry(
+            SignalMappingEntry(
                 source_id="jet:pf_coils:group1",
                 source_property="value",
                 target_id="pf_active/coil/element/geometry/rectangle/z",
@@ -208,7 +208,7 @@ def sample_validated_result():
             ),
         ],
         bindings=[
-            ValidatedFieldMapping(
+            ValidatedSignalMapping(
                 source_id="jet:pf_coils:group1",
                 source_property="value",
                 target_id="pf_active/coil/element/geometry/rectangle/r",
@@ -217,7 +217,7 @@ def sample_validated_result():
                 target_units="m",
                 confidence=0.95,
             ),
-            ValidatedFieldMapping(
+            ValidatedSignalMapping(
                 source_id="jet:pf_coils:group1",
                 source_property="value",
                 target_id="pf_active/coil/element/geometry/rectangle/z",
@@ -409,10 +409,10 @@ class TestSectionAssignmentBatch:
         assert restored.assignments[0].confidence == 0.95
 
 
-class TestFieldMappingBatch:
+class TestSignalMappingBatch:
     def test_serialization(self, sample_field_batch):
         data = sample_field_batch.model_dump()
-        restored = FieldMappingBatch.model_validate(data)
+        restored = SignalMappingBatch.model_validate(data)
         assert len(restored.mappings) == 2
         assert len(restored.escalations) == 1
 
@@ -805,19 +805,19 @@ class TestMapCLI:
         assert result.exit_code == 0
         assert "jet:pf_active" in result.output
         assert "Bindings: 2" in result.output
-        assert "Unassigned signal groups" in result.output
+        assert "Unassigned signal sources" in result.output
         assert "jet:pf_coils:group3" in result.output
 
     @patch("imas_codex.ids.mapping.generate_mapping")
     def test_map_run_error(self, mock_generate):
         from imas_codex.cli.map import map_cmd
 
-        mock_generate.side_effect = ValueError("No signal groups found")
+        mock_generate.side_effect = ValueError("No signal sources found")
 
         runner = CliRunner()
         result = runner.invoke(map_cmd, ["run", "jet", "pf_active", "--plain"])
         assert result.exit_code == 1
-        assert "No signal groups found" in result.output
+        assert "No signal sources found" in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -1061,18 +1061,18 @@ class TestMapSignalsMultiTarget:
         from imas_codex.ids.mapping import PipelineCost, map_signals
 
         # LLM returns batch with same source mapped to two targets
-        multi_target_batch = FieldMappingBatch(
+        multi_target_batch = SignalMappingBatch(
             ids_name="pf_active",
             section_path="pf_active/coil",
             mappings=[
-                FieldMappingEntry(
+                SignalMappingEntry(
                     source_id="jet:pf_coils:group1",
                     target_id="pf_active/coil/element/geometry/rectangle/r",
                     transform_expression="value",
                     confidence=0.95,
                     reasoning="R position",
                 ),
-                FieldMappingEntry(
+                SignalMappingEntry(
                     source_id="jet:pf_coils:group1",
                     target_id="pf_active/coil/element/geometry/rectangle/z",
                     transform_expression="value",
@@ -1189,11 +1189,11 @@ class TestValidateMappingsCatchesUnitMismatch:
                 ),
             ],
         )
-        field_batch = FieldMappingBatch(
+        field_batch = SignalMappingBatch(
             ids_name="pf_active",
             section_path="pf_active/coil",
             mappings=[
-                FieldMappingEntry(
+                SignalMappingEntry(
                     source_id="jet:pf_coils:group1",
                     target_id="pf_active/coil/element/geometry/rectangle/r",
                     transform_expression="value",
@@ -1240,11 +1240,11 @@ class TestValidateMappingsCatchesCOCOSMissing:
                 ),
             ],
         )
-        field_batch = FieldMappingBatch(
+        field_batch = SignalMappingBatch(
             ids_name="equilibrium",
             section_path="equilibrium/time_slice",
             mappings=[
-                FieldMappingEntry(
+                SignalMappingEntry(
                     source_id="jet:eq:psi_group",
                     target_id=target,
                     transform_expression="value",
@@ -1286,13 +1286,13 @@ class TestValidateSameSourceDiffTargetsOk:
         ]
         mock_gc.query.return_value = [{"id": "jet:pf_coils:group1"}]
 
-        b1 = ValidatedFieldMapping(
+        b1 = ValidatedSignalMapping(
             source_id="jet:pf_coils:group1",
             target_id="pf_active/coil/element/geometry/rectangle/r",
             transform_expression="value",
             confidence=0.9,
         )
-        b2 = ValidatedFieldMapping(
+        b2 = ValidatedSignalMapping(
             source_id="jet:pf_coils:group1",
             target_id="pf_active/coil/element/geometry/rectangle/z",
             transform_expression="value",
@@ -1389,12 +1389,12 @@ class TestAssemblyPromptRenders:
         assert "jet" in rendered
 
 
-class TestPromptsNoFieldMappingTerminology:
+class TestPromptsNoSignalMappingTerminology:
     def test_no_field_mapping_in_prompts(self):
         """No standalone 'field mapping' terminology in prompt templates.
 
-        Occurrences as part of class names (ValidatedFieldMapping,
-        FieldMappingEntry) are acceptable.
+        Occurrences as part of class names (ValidatedSignalMapping,
+        SignalMappingEntry) are acceptable.
         """
         import os
         import re

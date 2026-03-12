@@ -1,4 +1,4 @@
-"""Common signal grouping layer.
+"""Common signal sourcing layer.
 
 Provides unified functions for creating, claiming, and propagating
 SignalSource nodes. Detection algorithms stay in their respective

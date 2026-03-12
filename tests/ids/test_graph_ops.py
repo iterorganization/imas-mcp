@@ -7,12 +7,12 @@ from unittest.mock import MagicMock
 import pytest
 
 from imas_codex.ids.graph_ops import (
-    FieldMapping,
+    SignalMapping,
     Mapping,
     _index_from_path,
     create_imas_mapping,
     create_signal_source,
-    load_field_mappings,
+    load_signal_mappings,
     load_mapping,
     load_sections,
 )
@@ -37,7 +37,7 @@ class TestLoadMapping:
         gc = MagicMock()
         # First query: mapping lookup
         # Second query: load_sections
-        # Third query: load_field_mappings
+        # Third query: load_signal_mappings
         gc.query.side_effect = [
             [
                 {
@@ -91,11 +91,11 @@ class TestLoadMapping:
         assert len(result.sections) == 1
 
 
-class TestLoadFieldMappings:
+class TestLoadSignalMappings:
     def test_empty_result(self):
         gc = MagicMock()
         gc.query.return_value = []
-        result = load_field_mappings("jet:pf_active", gc)
+        result = load_signal_mappings("jet:pf_active", gc)
         assert result == []
 
     def test_parses_mapping_fields(self):
@@ -114,10 +114,10 @@ class TestLoadFieldMappings:
                 "cocos_label": None,
             }
         ]
-        result = load_field_mappings("jet:pf_active", gc)
+        result = load_signal_mappings("jet:pf_active", gc)
         assert len(result) == 1
         m = result[0]
-        assert isinstance(m, FieldMapping)
+        assert isinstance(m, SignalMapping)
         assert m.source_property == "r"
         assert m.transform_expression == "value * 1.0"
         assert m.source_units == "m"
@@ -138,7 +138,7 @@ class TestLoadFieldMappings:
                 "cocos_label": None,
             }
         ]
-        result = load_field_mappings("jet:pf_active", gc)
+        result = load_signal_mappings("jet:pf_active", gc)
         m = result[0]
         assert m.source_property == "value"
         assert m.transform_expression == "value"
@@ -166,7 +166,7 @@ class TestLoadFieldMappings:
             }
         ]
         with caplog.at_level(logging.WARNING):
-            result = load_field_mappings("jet:pf_active", gc)
+            result = load_signal_mappings("jet:pf_active", gc)
         assert len(result) == 1
         assert "COCOS-sensitive" in caplog.text
         assert "ip_like" in caplog.text
@@ -191,7 +191,7 @@ class TestLoadFieldMappings:
             }
         ]
         with caplog.at_level(logging.WARNING):
-            result = load_field_mappings("jet:pf_active", gc)
+            result = load_signal_mappings("jet:pf_active", gc)
         assert len(result) == 1
         assert "COCOS-sensitive" not in caplog.text
 
@@ -219,5 +219,5 @@ class TestCreateIMASMapping:
             "jet", "pf_active", "4.1.1", config, ["sg1", "sg2"], gc
         )
         assert result == "jet:pf_active"
-        # create mapping + link signal groups + create POPULATES
+        # create mapping + link signal sources + create POPULATES
         assert gc.query.call_count == 3

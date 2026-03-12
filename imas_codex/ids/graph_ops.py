@@ -22,8 +22,8 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class FieldMapping:
-    """A resolved field mapping from a MAPS_TO_IMAS relationship."""
+class SignalMapping:
+    """A resolved signal mapping from a MAPS_TO_IMAS relationship."""
 
     source_id: str
     source_property: str
@@ -47,7 +47,7 @@ class Mapping:
     provider: str | None = None
     static_config: dict[str, Any] = field(default_factory=dict)
     sections: list[dict[str, Any]] = field(default_factory=list)
-    bindings: list[FieldMapping] = field(default_factory=list)
+    bindings: list[SignalMapping] = field(default_factory=list)
 
 
 def load_mapping(facility: str, ids_name: str, gc: GraphClient) -> Mapping | None:
@@ -90,7 +90,7 @@ def load_mapping(facility: str, ids_name: str, gc: GraphClient) -> Mapping | Non
     )
 
     mapping.sections = load_sections(mapping.id, gc)
-    mapping.bindings = load_field_mappings(mapping.id, gc)
+    mapping.bindings = load_signal_mappings(mapping.id, gc)
     return mapping
 
 
@@ -126,15 +126,15 @@ def load_sections(mapping_id: str, gc: GraphClient) -> list[dict[str, Any]]:
     )
 
 
-def load_field_mappings(mapping_id: str, gc: GraphClient) -> list[FieldMapping]:
-    """Load field mappings via USES_SIGNAL_SOURCE → MAPS_TO_IMAS traversal.
+def load_signal_mappings(mapping_id: str, gc: GraphClient) -> list[SignalMapping]:
+    """Load signal mappings via USES_SIGNAL_SOURCE → MAPS_TO_IMAS traversal.
 
     Args:
         mapping_id: IMASMapping node ID.
         gc: Graph client instance.
 
     Returns:
-        List of resolved field mappings.
+        List of resolved signal mappings.
     """
     rows = list(
         gc.query(
@@ -158,7 +158,7 @@ def load_field_mappings(mapping_id: str, gc: GraphClient) -> list[FieldMapping]:
     )
     mappings = []
     for row in rows:
-        fm = FieldMapping(
+        fm = SignalMapping(
             source_id=row["source_id"],
             source_property=row.get("source_property") or "value",
             target_id=row["target_id"],
@@ -482,7 +482,7 @@ def create_imas_mapping(
         )
 
     logger.info(
-        "Created IMASMapping %s with %d signal groups, %d sections",
+        "Created IMASMapping %s with %d signal sources, %d sections",
         mapping_id,
         len(signal_source_ids),
         len(sections),

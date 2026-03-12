@@ -201,7 +201,7 @@ def _print_result(result) -> None:
     # Unassigned groups
     if result.unassigned_groups:
         click.echo(
-            f"\nUnassigned signal groups ({len(result.unassigned_groups)}):"
+            f"\nUnassigned signal sources ({len(result.unassigned_groups)}):"
         )
         for gid in result.unassigned_groups:
             click.echo(f"  - {gid}")
@@ -301,9 +301,9 @@ def map_validate(facility: str, ids_name: str) -> None:
         return
 
     # Build lightweight binding objects from graph data
-    from imas_codex.ids.models import ValidatedFieldMapping
+    from imas_codex.ids.models import ValidatedSignalMapping
 
-    bindings = [ValidatedFieldMapping(**b) for b in result["bindings"]]
+    bindings = [ValidatedSignalMapping(**b) for b in result["bindings"]]
     if not bindings:
         click.echo("No bindings to validate.")
         return
@@ -356,11 +356,11 @@ def map_validate(facility: str, ids_name: str) -> None:
                     f"    ... and {len(coverage.unmapped_fields) - 10} more"
                 )
 
-    # Signal group coverage
+    # Signal source coverage
     sig_cov = compute_signal_coverage(facility, gc=gc)
     if sig_cov.total_enriched > 0:
         click.echo(
-            f"\nSignal groups ({facility}): "
+            f"\nSignal sources ({facility}): "
             f"{sig_cov.mapped}/{sig_cov.total_enriched} "
             f"enriched groups mapped ({sig_cov.percentage:.1f}%)"
         )
@@ -453,7 +453,7 @@ def map_clear(facility: str, ids_name: str) -> None:
     gc = GraphClient()
     mapping_id = f"{facility}:{ids_name}"
 
-    # Delete MAPS_TO_IMAS from signal groups used by this mapping
+    # Delete MAPS_TO_IMAS from signal sources used by this mapping
     gc.query(
         """
         MATCH (m:IMASMapping {id: $id})-[:USES_SIGNAL_SOURCE]->(sg:SignalSource)

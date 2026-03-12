@@ -58,6 +58,6 @@ Return a JSON object matching the `ValidatedMappingResult` schema:
 - `ids_name`: IDS name
 - `dd_version`: Data Dictionary version
 - `sections`: Confirmed section assignments
-- `bindings`: Corrected field mappings (ValidatedFieldMapping objects)
+- `bindings`: Corrected signal mappings (ValidatedSignalMapping objects)
 - `escalations`: Updated escalations (resolved ones removed, new ones added)
 - `corrections`: List of correction descriptions made during validation
