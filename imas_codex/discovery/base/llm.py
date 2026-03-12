@@ -216,7 +216,13 @@ def suppress_litellm_noise() -> None:
     Call this once at module load time in any module that uses LiteLLM.
     """
     set_litellm_offline_env()
-    import litellm
+    try:
+        import litellm
+    except ModuleNotFoundError:
+        # litellm not installed — nothing to suppress.  This can happen
+        # when the CLI is imported outside the managed venv (e.g. bare
+        # ``python`` on WSL) and litellm is not on sys.path.
+        return
 
     # Suppress print-based diagnostic messages
     litellm.suppress_debug_info = True
