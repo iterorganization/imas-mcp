@@ -26,6 +26,7 @@ from pathlib import Path
 import click
 from rich.console import Console
 from rich.table import Table
+from rich.text import Text
 
 console = Console()
 
@@ -106,7 +107,10 @@ def _get_codex_processes_local() -> list[dict]:
         )
         if result.returncode != 0:
             return []
-        return _parse_ps_output(result.stdout)
+        procs = _parse_ps_output(result.stdout)
+        # Exclude this process and its parent (uv run wrapper)
+        self_pids = {str(os.getpid()), str(os.getppid())}
+        return [p for p in procs if p["pid"] not in self_pids]
     except Exception:
         return []
 
@@ -212,31 +216,52 @@ def _show_local_load(info: dict) -> None:
     click.echo(f"  Users: {info['users']}")
 
 
-def _show_processes(procs: list[dict]) -> None:
-    """Print imas-codex process table."""
-    if not procs:
-        click.echo("  [dim]No imas-codex processes running[/dim]\n")
-        return
+def _build_process_table(
+    procs_by_node: dict[str, list[dict]],
+    title: str = "imas-codex Processes",
+) -> Table | None:
+    """Build Rich Table for processes, optionally grouped by node."""
+    active = {n: ps for n, ps in procs_by_node.items() if ps}
+    if not active:
+        return None
 
-    table = Table(title="imas-codex Processes", show_edge=False, pad_edge=False)
+    multi = len(active) > 1
+    table = Table(title=title, show_edge=False, pad_edge=False)
+    if multi:
+        table.add_column("Node", style="cyan")
     table.add_column("PID", style="dim")
     table.add_column("CPU%", justify="right")
     table.add_column("Mem%", justify="right")
     table.add_column("RSS", justify="right", style="dim")
     table.add_column("Command")
 
-    for p in procs:
-        cpu_style = "red" if float(p["cpu"]) > 50 else ""
-        mem_style = "yellow" if float(p["mem"]) > 10 else ""
-        table.add_row(
-            p["pid"],
-            click.style(f"{p['cpu']}%", fg=cpu_style) if cpu_style else f"{p['cpu']}%",
-            click.style(f"{p['mem']}%", fg=mem_style) if mem_style else f"{p['mem']}%",
-            f"{p['rss_mb']:.0f}M",
-            p["command"],
-        )
+    first_node = True
+    for node, procs in active.items():
+        if multi and not first_node:
+            table.add_section()
+        first_node = False
+        for i, p in enumerate(procs):
+            cpu_str = f"[red]{p['cpu']}%[/red]" if float(p["cpu"]) > 50 else f"{p['cpu']}%"
+            mem_str = f"[yellow]{p['mem']}%[/yellow]" if float(p["mem"]) > 10 else f"{p['mem']}%"
+            row: list[str] = []
+            if multi:
+                row.append(node if i == 0 else "")
+            row.extend([p["pid"], cpu_str, mem_str, f"{p['rss_mb']:.0f}M", p["command"]])
+            table.add_row(*row)
 
-    console.print(table)
+    return table
+
+
+def _show_processes(
+    procs_by_node: dict[str, list[dict]],
+    title: str = "imas-codex Processes",
+) -> None:
+    """Print imas-codex processes in a Rich Table."""
+    table = _build_process_table(procs_by_node, title)
+    if table is None:
+        console.print("[dim]No imas-codex processes running[/dim]")
+    else:
+        console.print(table)
     click.echo()
 
 
@@ -360,6 +385,136 @@ def _query_node(
         }
     except Exception:
         return node, None
+
+
+# ── Survey data helpers ──────────────────────────────────────────────────
+
+
+def _gather_survey_data(
+    nodes: list[str],
+    gateway: str,
+    user: str,
+    timeout: int,
+) -> dict[str, dict | None]:
+    """Query all nodes in parallel and return results."""
+    results: dict[str, dict | None] = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(nodes)) as pool:
+        futures = {
+            pool.submit(_query_node, n, gateway, user, timeout): n
+            for n in nodes
+        }
+        for future in concurrent.futures.as_completed(futures):
+            node, info = future.result()
+            results[node] = info
+    return results
+
+
+def _build_survey_table(
+    results: dict[str, dict | None],
+    facility: str,
+    current_target: str | None,
+) -> tuple[Table, str | None, float]:
+    """Build the summary Rich Table from survey results.
+
+    Returns (table, best_node, best_load_pct).
+    """
+    table = Table(title=f"Login Nodes — {facility.upper()}")
+    table.add_column("#", style="dim", justify="right")
+    table.add_column("Node", style="cyan")
+    table.add_column("CPU Load", min_width=40)
+    table.add_column("Memory", min_width=35)
+    table.add_column("Users", justify="right")
+    table.add_column("Codex Procs", justify="right")
+
+    best_node = None
+    best_load = float("inf")
+
+    for idx, node in enumerate(sorted(results), 1):
+        info = results[node]
+        if info is None:
+            table.add_row(
+                str(idx), node, "[red]unreachable[/red]", "", "", ""
+            )
+            continue
+
+        row = _format_load_row(info)
+        cpu_pct = (
+            (info["load_1m"] / info["cpu_count"]) * 100
+            if info["cpu_count"] > 0
+            else 100
+        )
+        n_procs = len(info.get("codex_procs", []))
+
+        if cpu_pct < best_load:
+            best_load = cpu_pct
+            best_node = node
+
+        # Mark current SSH target
+        hostname = info.get("hostname", "")
+        is_current = current_target and (
+            hostname.startswith(current_target.split(".")[0])
+            or current_target.startswith(node)
+        )
+        marker = " ◀" if is_current else ""
+        node_display = f"{row[0]}{marker}"
+
+        proc_str = f"[green]{n_procs}[/green]" if n_procs > 0 else "0"
+
+        table.add_row(
+            str(idx), node_display, row[1], row[2], row[3], proc_str
+        )
+
+    return table, best_node, best_load
+
+
+def _collect_procs(results: dict[str, dict | None]) -> dict[str, list[dict]]:
+    """Collect codex processes from survey results, keyed by node."""
+    procs: dict[str, list[dict]] = {}
+    for node in sorted(results):
+        info = results[node]
+        if info is not None:
+            ps = info.get("codex_procs", [])
+            if ps:
+                procs[node] = ps
+    return procs
+
+
+def _build_survey_display(
+    results: dict[str, dict | None],
+    facility: str,
+    current_target: str | None,
+) -> tuple[list, str | None, float]:
+    """Build complete survey display as a list of Rich renderables.
+
+    Returns (renderables, best_node, best_load_pct).
+    """
+    table, best_node, best_load = _build_survey_table(
+        results, facility, current_target
+    )
+    parts: list = [table]
+
+    procs_by_node = _collect_procs(results)
+    proc_table = _build_process_table(procs_by_node)
+    if proc_table:
+        parts.append(proc_table)
+
+    if best_node:
+        parts.append(
+            Text.from_markup(
+                f"\n  Least loaded: [green bold]{best_node}[/green bold] "
+                f"({best_load:.0f}% CPU)"
+            )
+        )
+
+    if current_target:
+        parts.append(
+            Text.from_markup(
+                f"  SSH target:   {facility} → "
+                f"[cyan]{current_target}[/cyan]"
+            )
+        )
+
+    return parts, best_node, best_load
 
 
 # ── SSH config management ────────────────────────────────────────────────
@@ -491,7 +646,7 @@ def host(ctx: click.Context) -> None:
     _show_local_load(info)
     click.echo()
     procs = _get_codex_processes_local()
-    _show_processes(procs)
+    _show_processes({info["hostname"]: procs})
 
 
 @host.command("survey", hidden=True)
@@ -545,13 +700,13 @@ def host_survey(
     gateway = config.get("ssh_gateway", "sdcc-login.iter.org")
     user = config.get("ssh_user", "")
 
-    def _survey_once() -> list[tuple[str, dict | None]]:
+    def _discover_and_survey():
+        """Discover nodes, query them, display results. Return results dict."""
         click.echo(
             f"Discovering login nodes on "
             f"{click.style(facility, fg='cyan')}…"
         )
         nodes = _discover_login_nodes(ssh_host, timeout=timeout)
-
         if not nodes:
             raise click.ClickException(
                 f"Could not discover login nodes for '{facility}'. "
@@ -559,128 +714,31 @@ def host_survey(
             )
 
         click.echo(f"Found {len(nodes)} login nodes, querying…\n")
-
-        results: dict[str, dict | None] = {}
-
-        with concurrent.futures.ThreadPoolExecutor(
-            max_workers=len(nodes)
-        ) as pool:
-            futures = {
-                pool.submit(
-                    _query_node, n, gateway, user, timeout
-                ): n
-                for n in nodes
-            }
-            for future in concurrent.futures.as_completed(futures):
-                node, info = future.result()
-                results[node] = info
-
-        # Current SSH target
+        results = _gather_survey_data(nodes, gateway, user, timeout)
         current_target = _get_ssh_hostname(facility)
 
-        # Build results table
-        table = Table(title=f"Login Nodes — {facility.upper()}")
-        table.add_column("#", style="dim", justify="right")
-        table.add_column("Node", style="cyan")
-        table.add_column("CPU Load", min_width=40)
-        table.add_column("Memory", min_width=35)
-        table.add_column("Users", justify="right")
-        table.add_column("Codex Procs", justify="right")
-
-        best_node = None
-        best_load = float("inf")
-        sorted_nodes = sorted(results)
-        ordered_results = []
-
-        for idx, node in enumerate(sorted_nodes, 1):
-            info = results[node]
-            if info is None:
-                table.add_row(
-                    str(idx), node, "[red]unreachable[/red]", "", "", ""
-                )
-                ordered_results.append((node, None))
-                continue
-
-            row = _format_load_row(info)
-            cpu_pct = (
-                (info["load_1m"] / info["cpu_count"]) * 100
-                if info["cpu_count"] > 0
-                else 100
-            )
-            n_procs = len(info.get("codex_procs", []))
-
-            if cpu_pct < best_load:
-                best_load = cpu_pct
-                best_node = node
-
-            # Mark current SSH target
-            hostname = info.get("hostname", "")
-            is_current = current_target and (
-                hostname.startswith(current_target.split(".")[0])
-                or current_target.startswith(node)
-            )
-            marker = " ◀" if is_current else ""
-            node_display = f"{row[0]}{marker}"
-
-            proc_str = (
-                click.style(str(n_procs), fg="green") if n_procs > 0 else "0"
-            )
-
-            table.add_row(
-                str(idx), node_display, row[1], row[2], row[3], proc_str
-            )
-            ordered_results.append((node, info))
-
-        console.print(table)
-
-        # Show codex process details per node
-        for node, info in ordered_results:
-            if info is None:
-                continue
-            procs = info.get("codex_procs", [])
-            if procs:
-                click.echo(
-                    f"\n  {click.style(node, fg='cyan')} — "
-                    f"{len(procs)} codex process(es):"
-                )
-                for p in procs:
-                    cpu_s = click.style(f"{p['cpu']}%", fg="red") if float(p["cpu"]) > 50 else f"{p['cpu']}%"
-                    click.echo(
-                        f"    PID {p['pid']:>6}  "
-                        f"CPU {cpu_s:>5}  "
-                        f"Mem {p['mem']:>5}%  "
-                        f"RSS {p['rss_mb']:.0f}M  "
-                        f"{p['command'][:80]}"
-                    )
-
-        if best_node:
-            click.echo(
-                f"\n  Least loaded: "
-                f"{click.style(best_node, fg='green', bold=True)} "
-                f"({best_load:.0f}% CPU)"
-            )
-
-        if current_target:
-            click.echo(
-                f"  SSH target:   {facility} → "
-                f"{click.style(current_target, fg='cyan')}"
-            )
+        parts, _, _ = _build_survey_display(
+            results, facility, current_target
+        )
+        for part in parts:
+            if isinstance(part, (Table, Text)):
+                console.print(part)
         click.echo()
 
-        return ordered_results
+        return results, nodes
 
     if set_default is not None:
-        # First survey to get the node list
-        ordered = _survey_once()
+        results, nodes = _discover_and_survey()
+        sorted_nodes = sorted(results)
 
         # Resolve target
         target_fqdn = None
 
         if set_default == "auto":
-            # Auto-select: pick the least-loaded reachable node
             best = None
             best_cpu = float("inf")
-            for node, info in ordered:
+            for node in sorted_nodes:
+                info = results[node]
                 if info is None:
                     continue
                 cpu_pct = (
@@ -698,18 +756,17 @@ def host_survey(
         else:
             try:
                 idx = int(set_default)
-                if 1 <= idx <= len(ordered):
-                    node_short = ordered[idx - 1][0]
-                    target_fqdn = f"{node_short}.iter.org"
+                if 1 <= idx <= len(sorted_nodes):
+                    target_fqdn = f"{sorted_nodes[idx - 1]}.iter.org"
                 else:
                     raise click.ClickException(
-                        f"Index {idx} out of range (1-{len(ordered)})"
+                        f"Index {idx} out of range (1-{len(sorted_nodes)})"
                     )
             except ValueError:
                 candidate = set_default.strip()
                 if "." not in candidate:
                     matches = [
-                        n for n, _ in ordered if candidate in n
+                        n for n in sorted_nodes if candidate in n
                     ]
                     if len(matches) == 1:
                         target_fqdn = f"{matches[0]}.iter.org"
@@ -726,10 +783,8 @@ def host_survey(
                     target_fqdn = candidate
 
         if target_fqdn:
-            # Safety: refuse to switch to an unreachable node
             target_short = target_fqdn.split(".")[0]
-            node_info = dict(ordered)
-            if target_short in node_info and node_info[target_short] is None:
+            if target_short in results and results[target_short] is None:
                 raise click.ClickException(
                     f"Node '{target_short}' is unreachable — refusing "
                     f"to switch. Pick a reachable node."
@@ -761,16 +816,40 @@ def host_survey(
     if watch:
         import time
 
+        from rich.console import Group
+        from rich.live import Live
+
+        click.echo(
+            f"Discovering login nodes on "
+            f"{click.style(facility, fg='cyan')}…"
+        )
+        nodes = _discover_login_nodes(ssh_host, timeout=timeout)
+        if not nodes:
+            raise click.ClickException(
+                f"Could not discover login nodes for '{facility}'. "
+                f"Ensure SSH access to '{ssh_host}' is working."
+            )
+        click.echo(
+            f"Found {len(nodes)} login nodes. "
+            f"Live monitoring… (Ctrl+C to stop)\n"
+        )
+
         try:
-            while True:
-                _survey_once()
-                click.echo("Refreshing in 30s… (Ctrl+C to stop)")
-                time.sleep(30)
-                click.clear()
+            with Live(console=console, refresh_per_second=0.5) as live:
+                while True:
+                    results = _gather_survey_data(
+                        nodes, gateway, user, timeout
+                    )
+                    current_target = _get_ssh_hostname(facility)
+                    parts, _, _ = _build_survey_display(
+                        results, facility, current_target
+                    )
+                    live.update(Group(*parts))
+                    time.sleep(30)
         except KeyboardInterrupt:
             click.echo("\nStopped.")
     else:
-        _survey_once()
+        _discover_and_survey()
 
 
 @host.command("status")
@@ -897,3 +976,189 @@ def host_add(
 
     console.print(f"[green]✓[/green] Added SSH host '{name}'")
     console.print(f"[dim]Test with: ssh {name}[/dim]")
+
+
+@host.command("kill")
+@click.argument("facility")
+@click.option(
+    "--include", "-i", "include_pattern",
+    help="Only kill processes matching this regex pattern",
+)
+@click.option(
+    "--exclude", "-e", "exclude_pattern",
+    help="Exclude processes matching this regex pattern",
+)
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompt")
+@click.option(
+    "--node", "-n", "target_node",
+    help="Target specific node (index or name)",
+)
+@click.option(
+    "--signal", "-s", "sig", default="TERM",
+    help="Signal to send (default: TERM)",
+)
+@click.option("--timeout", default=10, help="SSH timeout per node")
+def host_kill(
+    facility: str,
+    include_pattern: str | None,
+    exclude_pattern: str | None,
+    yes: bool,
+    target_node: str | None,
+    sig: str,
+    timeout: int,
+) -> None:
+    """Kill imas-codex processes on remote facility nodes.
+
+    Shows matching processes first, then kills with confirmation.
+    Uses the same process detection as 'host <facility>'.
+
+    \b
+    Examples:
+        imas-codex host kill iter                        # Preview all
+        imas-codex host kill iter -y                     # Kill all
+        imas-codex host kill iter -i litellm -y          # Kill litellm
+        imas-codex host kill iter -e "neo4j|serve" -y    # Kill all except
+        imas-codex host kill iter -n 2 -y                # Kill on node #2
+        imas-codex host kill iter -i discover -s KILL    # SIGKILL discover
+    """
+    valid_signals = {
+        "TERM", "KILL", "HUP", "INT", "QUIT",
+        "USR1", "USR2", "STOP", "CONT",
+    }
+    sig = sig.upper()
+    if sig not in valid_signals:
+        raise click.ClickException(
+            f"Invalid signal: {sig}. "
+            f"Valid: {', '.join(sorted(valid_signals))}"
+        )
+
+    from imas_codex.discovery.base.facility import get_facility
+
+    config = get_facility(facility)
+    ssh_host = config.get("ssh_host")
+    if not ssh_host:
+        raise click.ClickException(
+            f"Facility '{facility}' has no ssh_host configured"
+        )
+
+    gateway = config.get("ssh_gateway", "sdcc-login.iter.org")
+    user = config.get("ssh_user", "")
+
+    click.echo(
+        f"Discovering login nodes on "
+        f"{click.style(facility, fg='cyan')}…"
+    )
+    nodes = _discover_login_nodes(ssh_host, timeout=timeout)
+    if not nodes:
+        raise click.ClickException(
+            f"Could not discover login nodes for '{facility}'."
+        )
+
+    # Filter to specific node if requested
+    if target_node:
+        try:
+            idx = int(target_node)
+            if 1 <= idx <= len(nodes):
+                nodes = [sorted(nodes)[idx - 1]]
+            else:
+                raise click.ClickException(
+                    f"Node index {idx} out of range (1-{len(nodes)})"
+                )
+        except ValueError:
+            matches = [n for n in nodes if target_node in n]
+            if len(matches) == 1:
+                nodes = matches
+            elif not matches:
+                raise click.ClickException(
+                    f"No node matching '{target_node}'"
+                )
+            else:
+                raise click.ClickException(
+                    f"Ambiguous: {', '.join(matches)}"
+                )
+
+    click.echo(f"Querying {len(nodes)} node(s)…\n")
+    results = _gather_survey_data(nodes, gateway, user, timeout)
+
+    # Compile patterns
+    include_re = (
+        re.compile(include_pattern, re.IGNORECASE)
+        if include_pattern else None
+    )
+    exclude_re = (
+        re.compile(exclude_pattern, re.IGNORECASE)
+        if exclude_pattern else None
+    )
+
+    # Filter processes
+    kill_targets: dict[str, list[dict]] = {}
+    for node in sorted(results):
+        info = results[node]
+        if info is None:
+            continue
+        procs = info.get("codex_procs", [])
+        matched = []
+        for p in procs:
+            cmd = p["command"]
+            if include_re and not include_re.search(cmd):
+                continue
+            if exclude_re and exclude_re.search(cmd):
+                continue
+            matched.append(p)
+        if matched:
+            kill_targets[node] = matched
+
+    if not kill_targets:
+        click.echo("No matching processes found.")
+        return
+
+    total = sum(len(ps) for ps in kill_targets.values())
+    _show_processes(
+        kill_targets, title=f"Processes to kill ({total} total, SIG{sig})"
+    )
+
+    if not yes:
+        click.confirm(
+            f"Kill {total} process(es) with SIG{sig}?", abort=True
+        )
+
+    # Send kill signals
+    for node, procs in kill_targets.items():
+        pids = " ".join(p["pid"] for p in procs)
+        fqdn = f"{node}.iter.org"
+        kill_cmd = f"kill -{sig} {pids} 2>/dev/null; echo done"
+
+        ssh_cmd = [
+            "ssh",
+            "-o", "BatchMode=yes",
+            "-o", f"ConnectTimeout={timeout}",
+            "-o", "StrictHostKeyChecking=accept-new",
+            "-o", "ControlMaster=no",
+            "-o", "ControlPath=none",
+            "-J", gateway,
+        ]
+        if user:
+            ssh_cmd.append(f"{user}@{fqdn}")
+        else:
+            ssh_cmd.append(fqdn)
+        ssh_cmd.append(kill_cmd)
+
+        try:
+            result = subprocess.run(
+                ssh_cmd, capture_output=True, text=True,
+                timeout=timeout + 5,
+            )
+            if result.returncode == 0:
+                click.echo(
+                    f"  {click.style('✓', fg='green')} "
+                    f"{node}: killed {len(procs)} process(es)"
+                )
+            else:
+                click.echo(
+                    f"  {click.style('✗', fg='red')} "
+                    f"{node}: {result.stderr.strip()[:60]}"
+                )
+        except Exception as e:
+            click.echo(
+                f"  {click.style('✗', fg='red')} {node}: {e}"
+            )

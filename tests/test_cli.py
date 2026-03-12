@@ -377,3 +377,74 @@ class TestHostCommand:
         result = runner.invoke(host, ["status", "--help"])
         assert result.exit_code == 0
         assert "SSH connectivity" in result.output
+
+    def test_build_process_table_single_node(self):
+        """_build_process_table renders single-node without Node column."""
+        from imas_codex.cli.host import _build_process_table
+
+        procs = {
+            "test-node": [
+                {"pid": "100", "cpu": "5.0", "mem": "2.0", "rss_mb": 50, "command": "python serve"},
+            ]
+        }
+        table = _build_process_table(procs)
+        assert table is not None
+        # Single node → no Node column: PID, CPU%, Mem%, RSS, Command = 5
+        assert len(table.columns) == 5
+
+    def test_build_process_table_multi_node(self):
+        """_build_process_table adds Node column for multiple nodes."""
+        from imas_codex.cli.host import _build_process_table
+
+        procs = {
+            "node-a": [{"pid": "1", "cpu": "1.0", "mem": "0.5", "rss_mb": 10, "command": "cmd a"}],
+            "node-b": [{"pid": "2", "cpu": "2.0", "mem": "1.0", "rss_mb": 20, "command": "cmd b"}],
+        }
+        table = _build_process_table(procs)
+        assert table is not None
+        # Multi-node → Node + PID + CPU% + Mem% + RSS + Command = 6
+        assert len(table.columns) == 6
+
+    def test_build_process_table_empty(self):
+        """_build_process_table returns None when no processes."""
+        from imas_codex.cli.host import _build_process_table
+
+        assert _build_process_table({}) is None
+        assert _build_process_table({"node": []}) is None
+
+    def test_host_kill_help(self):
+        """kill subcommand shows help."""
+        from click.testing import CliRunner
+
+        from imas_codex.cli.host import host
+
+        runner = CliRunner()
+        result = runner.invoke(host, ["kill", "--help"])
+        assert result.exit_code == 0
+        assert "--include" in result.output
+        assert "--exclude" in result.output
+        assert "--signal" in result.output
+
+    def test_build_survey_table(self):
+        """_build_survey_table builds table and finds best node."""
+        from imas_codex.cli.host import _build_survey_table
+
+        results = {
+            "node-a": {
+                "hostname": "node-a.iter.org",
+                "load_1m": 8.0, "load_5m": 7.0, "load_15m": 6.0,
+                "cpu_count": 16, "mem_total_mb": 16384, "mem_used_mb": 8192,
+                "users": 5, "codex_procs": [],
+            },
+            "node-b": {
+                "hostname": "node-b.iter.org",
+                "load_1m": 1.0, "load_5m": 0.5, "load_15m": 0.3,
+                "cpu_count": 16, "mem_total_mb": 16384, "mem_used_mb": 4096,
+                "users": 2, "codex_procs": [],
+            },
+            "node-c": None,
+        }
+        table, best_node, best_load = _build_survey_table(results, "test", None)
+        assert best_node == "node-b"
+        assert best_load < 10  # ~6.25%
+        assert len(table.columns) == 6
