@@ -330,11 +330,10 @@ def get_llm_proxy_url() -> str:
 def _get_llm_proxy_host() -> str:
     """Resolve the host where the LLM proxy runs.
 
-    For facility locations, the proxy runs on a login node.  If a
-    ``{facility}-llm`` SSH alias exists, resolves its HostName to
-    reach the correct node even when the default SSH target points
-    elsewhere.  Falls back to the current machine's hostname when
-    on-facility, or ``"127.0.0.1"`` for SSH tunnel access.
+    The LLM proxy always runs on the default SSH target node (no
+    separate alias).  Off-facility access goes through the SSH tunnel
+    at ``127.0.0.1``.  On-facility resolves to the current machine's
+    hostname.
     """
     import socket
 
@@ -359,19 +358,7 @@ def _get_llm_proxy_host() -> str:
     except Exception:
         return "127.0.0.1"
 
-    # We're on the facility — check for a dedicated LLM alias
-    llm_alias = f"{info.ssh_host}-llm"
-    try:
-        from imas_codex.cli.host import _get_ssh_hostname
-
-        llm_hostname = _get_ssh_hostname(llm_alias)
-        if llm_hostname:
-            # Strip domain suffix to get short hostname
-            return llm_hostname.split(".")[0]
-    except Exception:
-        pass
-
-    # Fall back to current machine's hostname
+    # On-facility: LLM runs on the same node we're on
     return socket.gethostname().split(".")[0]
 
 

@@ -9,16 +9,12 @@ Usage:
   imas-codex host iter --set-default 3
                                        Set iter SSH target to 3rd node
   imas-codex host iter --set-default   Auto-select least loaded node
-  imas-codex host iter --set-default 4 --set-llm 5
-                                       Default to node 4, pin LLM proxy to node 5
-  imas-codex host iter --set-llm 5     Pin LLM to node 5 without changing default
 
 Login nodes are discovered dynamically from /etc/hosts on the facility
 gateway — no individual node configuration needed.
 
-By default the ``{facility}-llm`` SSH alias follows ``--set-default``,
-so the LLM proxy moves with you when switching nodes.  Use
-``--set-llm <node>`` to pin the LLM proxy to a specific node instead.
+All services (LLM proxy, tunnels) follow the default SSH target so
+that ``--set-default`` switches everything atomically.
 """
 
 from __future__ import annotations
@@ -578,14 +574,6 @@ def _build_survey_display(
             )
         )
 
-    # Show LLM alias if configured
-    llm_alias = f"{facility}-llm"
-    llm_target = _get_ssh_hostname(llm_alias)
-    if llm_target:
-        parts.append(
-            Text.from_markup(f"  LLM target:   {llm_alias} → [cyan]{llm_target}[/cyan]")
-        )
-
     return parts, best_node, best_load
 
 
@@ -687,64 +675,32 @@ def _kill_control_sockets(*aliases: str) -> None:
             pass  # Socket may not exist or already closed
 
 
-def _ensure_ssh_alias(alias: str, parent_alias: str, hostname: str) -> bool:
-    """Create or update a derived SSH alias in ~/.ssh/config.
+def _restart_tunnel_service(facility: str) -> None:
+    """Restart the systemd tunnel service so it reconnects to the new node.
 
-    If the alias already exists, updates its HostName.
-    If not, clones the parent alias block (User, ProxyJump, etc.)
-    with the new alias name and hostname.
-
-    Returns True on success.
+    The ``imas-codex-tunnel-{facility}`` user service has
+    ``Restart=always``, so a plain ``stop_tunnel()`` is immediately
+    respawned against the *old* HostName.  We restart the unit so
+    autossh picks up the updated SSH config.
     """
-    ssh_config = Path.home() / ".ssh" / "config"
-    if not ssh_config.exists():
-        return False
-
-    # If alias already exists, just update HostName
-    existing = _get_ssh_hostname(alias)
-    if existing is not None:
-        return _set_ssh_hostname(alias, hostname)
-
-    # Clone from parent: read parent block directives
-    content = ssh_config.read_text()
-    parent_lines: list[str] = []
-    in_parent = False
-    for line in content.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("Host ") and not stripped.startswith("Host *"):
-            host_names = stripped.split()[1:]
-            if parent_alias in host_names:
-                in_parent = True
-                continue
-            elif in_parent:
-                break
-        if in_parent:
-            lower = stripped.lower()
-            # Skip hostname (we'll set our own) and directives that
-            # shouldn't be cloned (tunnels, forwards)
-            if lower.startswith("hostname "):
-                continue
-            if any(
-                lower.startswith(d)
-                for d in ("localforward", "remoteforward", "dynamicforward")
-            ):
-                continue
-            parent_lines.append(line)
-
-    if not parent_lines:
-        return False
-
-    # Build new block
-    block = f"\nHost {alias}\n"
-    block += f"  HostName {hostname}\n"
-    for line in parent_lines:
-        block += line + "\n" if not line.endswith("\n") else line
-    block += "\n"
-
-    with open(ssh_config, "a") as f:
-        f.write(block)
-    os.chmod(ssh_config, 0o600)
-    return True
+    service = f"imas-codex-tunnel-{facility}"
+    try:
+        result = subprocess.run(
+            ["systemctl", "--user", "is-active", service],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.stdout.strip() != "active":
+            return
+        subprocess.run(
+            ["systemctl", "--user", "restart", service],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except Exception:
+        pass  # systemd may not be available (e.g. container / CI)
 
 
 # ── Node migration ───────────────────────────────────────────────────────
@@ -899,69 +855,7 @@ def _migrate_from_node(
     )
 
 
-def _resolve_node_fqdn(spec: str, sorted_nodes: list[str], results: dict) -> str:
-    """Resolve a node spec (index, hostname, or FQDN) to an FQDN."""
-    try:
-        idx = int(spec)
-        if 1 <= idx <= len(sorted_nodes):
-            return f"{sorted_nodes[idx - 1]}.iter.org"
-        raise click.ClickException(f"Index {idx} out of range (1-{len(sorted_nodes)})")
-    except ValueError:
-        candidate = spec.strip()
-        if "." not in candidate:
-            matches = [n for n in sorted_nodes if candidate in n]
-            if len(matches) == 1:
-                return f"{matches[0]}.iter.org"
-            elif len(matches) > 1:
-                raise click.ClickException(
-                    f"Ambiguous hostname '{candidate}', matches: {', '.join(matches)}"
-                ) from None
-            else:
-                raise click.ClickException(f"No node matching '{candidate}'") from None
-        return candidate
 
-
-def _handle_llm_alias(
-    facility: str,
-    llm_fqdn: str,
-    results: dict,
-) -> None:
-    """Create or update the {facility}-llm SSH alias.
-
-    Args:
-        facility: Facility name (e.g. "iter").
-        llm_fqdn: Fully-qualified domain name for the LLM node.
-        results: Survey results dict (for reachability check).
-    """
-    llm_alias = f"{facility}-llm"
-
-    llm_short = llm_fqdn.split(".")[0]
-    if llm_short in results and results[llm_short] is None:
-        raise click.ClickException(
-            f"Node '{llm_short}' is unreachable — refusing "
-            f"to set as LLM host. Pick a reachable node."
-        )
-
-    existing = _get_ssh_hostname(llm_alias)
-    if existing == llm_fqdn:
-        click.echo(
-            click.style("  · ", fg="dim")
-            + f"LLM already set: {llm_alias} → "
-            + click.style(existing, fg="cyan")
-        )
-        return
-
-    if _ensure_ssh_alias(llm_alias, facility, llm_fqdn):
-        click.echo(
-            click.style("  ✓ ", fg="green")
-            + f"LLM host: {llm_alias} → "
-            + click.style(llm_fqdn, fg="cyan", bold=True)
-        )
-    else:
-        raise click.ClickException(
-            f"Could not create SSH alias '{llm_alias}'. "
-            f"Ensure a 'Host {facility}' block exists in ~/.ssh/config"
-        )
 
 
 # ── CLI ──────────────────────────────────────────────────────────────────
@@ -997,8 +891,6 @@ def host(ctx: click.Context) -> None:
       imas-codex host                    Local node load + processes
       imas-codex host iter               Survey ITER login nodes
       imas-codex host iter --set-default 3
-      imas-codex host iter --set-default 4 --set-llm 5
-      imas-codex host iter --set-llm 5   Pin LLM to specific node
       imas-codex host status             SSH connectivity check
       imas-codex host add <name>         Add SSH host entry
     """
@@ -1028,22 +920,11 @@ def host(ctx: click.Context) -> None:
         "to auto-select least loaded"
     ),
 )
-@click.option(
-    "--set-llm",
-    "llm_node",
-    default=None,
-    help=(
-        "Pin LLM proxy to a specific node (index or hostname), "
-        "decoupling it from the default SSH target. "
-        "Without this flag, the LLM alias follows --set-default."
-    ),
-)
 def host_survey(
     facility: str,
     timeout: int,
     watch: bool,
     set_default: str | None,
-    llm_node: str | None,
 ) -> None:
     """Survey login nodes on a facility with load and process info.
 
@@ -1052,22 +933,15 @@ def host_survey(
     per node.
 
     Use --set-default to update ~/.ssh/config to target a specific
-    login node for all future SSH/cx connections.  The {facility}-llm
-    alias follows automatically so the LLM proxy moves with you.
-
-    Use --set-llm to pin the LLM proxy to a different node, decoupled
-    from the default SSH target.  Useful when you want the proxy on a
-    less-loaded node.
+    login node for all future SSH/cx connections.  All services
+    (LLM proxy, tunnels) follow the default target.
 
     \b
     Examples:
         imas-codex host iter                    # Survey ITER login nodes
         imas-codex host iter --watch            # Continuous monitoring
-        imas-codex host iter --set-default 3    # Pick node #3, LLM follows
-        imas-codex host iter --set-default      # Auto-pick, LLM follows
-        imas-codex host iter --set-default 4 --set-llm 5
-                                                # Default to #4, LLM on #5
-        imas-codex host iter --set-llm 5        # Pin LLM without changing default
+        imas-codex host iter --set-default 3    # Pick node #3
+        imas-codex host iter --set-default      # Auto-pick least loaded
     """
     from imas_codex.discovery.base.facility import get_facility
 
@@ -1168,11 +1042,7 @@ def host_survey(
             else:
                 # Kill ControlMaster sockets BEFORE config update so
                 # ssh -O exit resolves to the old (current) HostName.
-                sockets_to_kill = [facility]
-                llm_alias = f"{facility}-llm"
-                if _get_ssh_hostname(llm_alias) is not None:
-                    sockets_to_kill.append(llm_alias)
-                _kill_control_sockets(*sockets_to_kill)
+                _kill_control_sockets(facility)
 
                 if not _set_ssh_hostname(facility, target_fqdn):
                     raise click.ClickException(
@@ -1187,16 +1057,12 @@ def host_survey(
                     + click.style(target_fqdn, fg="cyan", bold=True)
                 )
 
-                # Stop local tunnels — they still forward to the old node
+                # Restart tunnels — systemd service auto-reconnects
+                # to the new node; manual tunnels need stop+start.
                 from imas_codex.remote.tunnel import stop_tunnel
 
-                if stop_tunnel(facility):
-                    click.echo(
-                        click.style("  ✓ ", fg="green")
-                        + "Stopped stale tunnels (restart with "
-                        + click.style("imas-codex tunnel start", bold=True)
-                        + ")"
-                    )
+                stop_tunnel(facility)
+                _restart_tunnel_service(facility)
 
                 # Migrate: clean up processes and zellij sessions
                 # on the old node
@@ -1208,22 +1074,6 @@ def host_survey(
                         timeout,
                     )
 
-        # LLM alias: --set-llm pins to explicit node, otherwise follows default
-        if llm_node is not None:
-            llm_fqdn = _resolve_node_fqdn(llm_node, sorted_nodes, results)
-            _handle_llm_alias(facility, llm_fqdn, results)
-        elif target_fqdn:
-            # No --set-llm: LLM travels with the new default
-            _handle_llm_alias(facility, target_fqdn, results)
-
-        return
-
-    if llm_node is not None:
-        # --set-llm used without --set-default
-        results, nodes = _discover_and_survey()
-        sorted_nodes = sorted(results)
-        llm_fqdn = _resolve_node_fqdn(llm_node, sorted_nodes, results)
-        _handle_llm_alias(facility, llm_fqdn, results)
         return
 
     if watch:

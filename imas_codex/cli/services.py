@@ -295,9 +295,8 @@ def _run_remote(cmd: str, timeout: int = 30, check: bool = False) -> str:
 def _llm_ssh() -> str | None:
     """SSH host for the LLM proxy node, or None if local.
 
-    Checks for a ``{facility}-llm`` SSH alias first, falling back
-    to the default facility SSH host.  This allows the LLM proxy to
-    run on a different node than the user's default SSH target.
+    The LLM proxy runs on the default facility SSH target — no
+    separate alias.  Returns the facility SSH host or None if local.
     """
     from imas_codex.remote.locations import is_location_local, resolve_location
     from imas_codex.settings import get_llm_location
@@ -309,18 +308,6 @@ def _llm_ssh() -> str | None:
         return None
 
     info = resolve_location(location)
-    llm_alias = f"{info.ssh_host}-llm"
-
-    # Check if the LLM alias exists in SSH config
-    try:
-        from imas_codex.cli.host import _get_ssh_hostname
-
-        if _get_ssh_hostname(llm_alias) is not None:
-            return llm_alias
-    except Exception:
-        pass
-
-    # Fall back to the default facility SSH host
     return info.ssh_host
 
 
