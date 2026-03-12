@@ -28,19 +28,37 @@ def map_cmd() -> None:
 @click.argument("ids_name")
 @click.option("--model", "-m", help="Override LLM model identifier.")
 @click.option("--dd-version", help="Override Data Dictionary version.")
+@click.option(
+    "--cost-limit",
+    "-c",
+    type=float,
+    default=5.0,
+    help="Maximum LLM spend in USD (default: $5).",
+)
 @click.option("--no-persist", is_flag=True, help="Skip graph persistence.")
 @click.option(
     "--no-activate",
     is_flag=True,
     help="Persist as 'generated' without promoting to 'active'.",
 )
+@click.option(
+    "--time",
+    "time_limit",
+    type=int,
+    default=None,
+    help="Maximum runtime in minutes.",
+)
+@click.option("--plain", is_flag=True, help="Disable rich progress display.")
 def map_run(
     facility: str,
     ids_name: str,
     model: str | None,
     dd_version: str | None,
+    cost_limit: float,
     no_persist: bool,
     no_activate: bool,
+    time_limit: int | None,
+    plain: bool,
 ) -> None:
     """Run the full mapping pipeline.
 
@@ -48,26 +66,108 @@ def map_run(
     Examples:
       imas-codex imas map run jet pf_active
       imas-codex imas map run --no-persist jet pf_active
+      imas-codex imas map run --cost-limit 2.0 --time 10 jet pf_active
     """
     configure_cli_logging("map", facility=facility)
 
     from imas_codex.ids.mapping import generate_mapping
 
-    click.echo(f"Generating mapping for {facility}/{ids_name}...")
+    if plain:
+        # Plain mode — simple synchronous execution
+        click.echo(f"Generating mapping for {facility}/{ids_name}...")
+        try:
+            result = generate_mapping(
+                facility,
+                ids_name,
+                model=model,
+                dd_version=dd_version,
+                persist=not no_persist,
+                activate=not no_activate,
+            )
+        except ValueError as e:
+            click.echo(f"Error: {e}", err=True)
+            raise SystemExit(1) from None
+
+        _print_result(result)
+        return
+
+    # Rich mode — progress display via run_discovery harness
+    import asyncio
+    import time
+
+    from imas_codex.cli.discover.common import DiscoveryConfig, run_discovery
+    from imas_codex.discovery.base.facility import get_facility
+    from imas_codex.ids.progress import MappingProgressDisplay
 
     try:
-        result = generate_mapping(
-            facility,
-            ids_name,
-            model=model,
-            dd_version=dd_version,
-            persist=not no_persist,
-            activate=not no_activate,
-        )
-    except ValueError as e:
+        facility_config = get_facility(facility)
+    except Exception:
+        facility_config = {"id": facility}
+
+    display = MappingProgressDisplay(
+        facility=facility,
+        ids_name=ids_name,
+        cost_limit=cost_limit,
+        model=model,
+    )
+
+    if time_limit:
+        display.state.deadline = time.time() + time_limit * 60
+
+    config = DiscoveryConfig(
+        domain="mapping",
+        facility=facility,
+        facility_config=facility_config,
+        display=display,
+        check_graph=True,
+        check_embed=False,
+        check_ssh=False,
+    )
+
+    async def _run_mapping(stop_event, service_monitor):
+        def _sync_run():
+            return generate_mapping(
+                facility,
+                ids_name,
+                model=model,
+                dd_version=dd_version,
+                persist=not no_persist,
+                activate=not no_activate,
+            )
+
+        try:
+            result = await asyncio.to_thread(_sync_run)
+        except ValueError as e:
+            click.echo(f"\nError: {e}", err=True)
+            raise SystemExit(1) from None
+
+        # Update display state for final render
+        state = display.state
+        state.current_step = "done"
+        state.bindings_total = len(result.validated.bindings)
+        state.bindings_passed = state.bindings_total
+        state.escalations = len(result.validated.escalations)
+        state.cost = result.cost
+
+        return {"result": result}
+
+    def _on_complete(results):
+        result = results.get("result")
+        if result:
+            click.echo()
+            _print_result(result)
+
+    try:
+        run_discovery(config, _run_mapping, on_complete=_on_complete)
+    except SystemExit:
+        raise
+    except Exception as e:
         click.echo(f"Error: {e}", err=True)
         raise SystemExit(1) from None
 
+
+def _print_result(result) -> None:
+    """Print mapping result summary."""
     click.echo(f"\nMapping: {result.mapping_id}")
     click.echo(f"Bindings: {len(result.validated.bindings)}")
     click.echo(f"Escalations: {len(result.validated.escalations)}")
