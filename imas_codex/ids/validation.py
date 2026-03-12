@@ -651,7 +651,7 @@ def validate_mapping_e2e(
     ids_name: str,
     shot: int,
     *,
-    gc: "GraphClient",
+    gc: GraphClient,
     ssh_host: str | None = None,
     strategy: str = "auto",
 ) -> E2EValidationResult:
