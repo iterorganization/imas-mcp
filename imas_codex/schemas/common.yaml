@@ -723,7 +723,7 @@ classes:
     attributes:
       id:
         identifier: true
-        description: Unit symbol in pint short notation (e.g., "Wb", "m/s", "eV", "A/m**2")
+        description: Unit symbol in dot-exponential notation (e.g., "Wb", "m.s^-1", "eV", "A.m^-2")
         required: true
       symbol:
         description: Unit symbol, same as id

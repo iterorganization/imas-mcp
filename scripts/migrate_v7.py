@@ -3,8 +3,8 @@
 Migrates the live graph:
   1. Rename SignalGroup label → SignalSource
   2. Rename USES_SIGNAL_GROUP → USES_SIGNAL_SOURCE relationships
-  3. Re-normalize all Unit node IDs from UDUNITS dot-exponential (m.s^-1)
-     to pint short notation (m/s, A/m**2, kg*m/s**2)
+  3. Re-normalize all Unit node IDs to dot-exponential notation
+     (m.s^-1, A.m^-2, kg.m.s^-2)
   4. Backfill data_source_node and data_source_path properties
   5. Set enrichment_source for signals missing it
   6. Clean up legacy pattern properties
@@ -50,7 +50,7 @@ def migrate_signal_source_relationships(
 
 
 def migrate_unit_nodes(gc: GraphClient, *, dry_run: bool = False) -> None:
-    """Re-normalize Unit node IDs from UDUNITS to pint short notation.
+    """Re-normalize Unit node IDs to dot-exponential notation.
 
     For each Unit node, re-parses the symbol through pint and checks
     if the normalized form differs. If it does, merges into the new ID
@@ -67,15 +67,23 @@ def migrate_unit_nodes(gc: GraphClient, *, dry_run: bool = False) -> None:
     logger.info("  Unit nodes: %d total", len(result))
 
     renames = []
+    skipped = []
     for row in result:
         old_id = row["id"]
         new_id = normalize_unit_symbol(old_id)
         if new_id is None:
             new_id = old_id  # keep as-is if unparseable
+        # Skip empty results (e.g. V/V → dimensionless)
+        # and misidentified units (e.g. UTC → unit_error)
+        if not new_id or new_id == "unit_error":
+            skipped.append(old_id)
+            continue
         if new_id != old_id:
             renames.append({"old_id": old_id, "new_id": new_id})
 
     logger.info("  Unit nodes needing rename: %d", len(renames))
+    if skipped:
+        logger.info("  Unit nodes skipped (non-physical): %s", skipped)
     for r in renames:
         logger.info("    %s → %s", r["old_id"], r["new_id"])
 
@@ -244,7 +252,7 @@ def main() -> None:
         logger.info("\n2. USES_SIGNAL_GROUP → USES_SIGNAL_SOURCE relationships")
         migrate_signal_source_relationships(gc, dry_run=args.dry_run)
 
-        logger.info("\n3. Unit node normalization (UDUNITS → pint short)")
+        logger.info("\n3. Unit node normalization (→ dot-exponential)")
         migrate_unit_nodes(gc, dry_run=args.dry_run)
 
         logger.info("\n4. Backfill signal properties from edges")
