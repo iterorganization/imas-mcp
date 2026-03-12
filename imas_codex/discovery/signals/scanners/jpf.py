@@ -13,7 +13,7 @@ Discovery strategy:
 Remote execution uses the shared run_python_script() infrastructure
 with scripts in imas_codex/remote/scripts/ (enumerate_jpf.py, check_jpf.py).
 
-Config key: data_systems.jpf.subsystem_codes (subsystem codes list)
+Config key: data_systems.jpf.subsystems (structured subsystem definitions)
 Facility: JET
 """
 
@@ -35,34 +35,6 @@ from imas_codex.graph.models import (
 
 logger = logging.getLogger(__name__)
 
-# Physics domain hints from JPF subsystem codes
-_SUBSYSTEM_DOMAIN_HINTS: dict[str, str] = {
-    "DA": "magnetic_field_diagnostics",
-    "DB": "particle_measurement_diagnostics",
-    "DC": "electromagnetic_wave_diagnostics",
-    "DD": "radiation_measurement_diagnostics",
-    "DE": "particle_measurement_diagnostics",
-    "DF": "electromagnetic_wave_diagnostics",
-    "DG": "particle_measurement_diagnostics",
-    "DH": "electromagnetic_wave_diagnostics",
-    "DI": "radiation_measurement_diagnostics",
-    "DJ": "general",
-    "PF": "magnetic_field_diagnostics",
-    "TF": "magnetic_field_diagnostics",
-    "PL": "magnetics",
-    "GS": "plant_systems",
-    "VC": "plant_systems",
-    "AH": "auxiliary_heating",
-    "RF": "auxiliary_heating",
-    "SA": "plant_systems",
-    "SC": "plant_systems",
-    "CC": "plant_systems",
-    "LH": "auxiliary_heating",
-    "MC": "plant_systems",
-    "NM": "radiation_measurement_diagnostics",
-    "YC": "plant_systems",
-}
-
 
 class JPFScanner:
     """Discover signals from JET JPF (JET Processing Facility) system.
@@ -72,11 +44,11 @@ class JPFScanner:
     2. getdat.zadop() opens subsystem pulse file per subsystem
     3. getdat.adlnod() lists all signal nodes within each subsystem
     4. Create FacilitySignal per subsystem/signal with dpf() accessor
-    5. Heuristic physics domain from subsystem code
+    5. Physics domain from per-subsystem config in jet.yaml
 
     Config (data_systems.jpf):
         server: str - MDSplus server hostname (for data access template)
-        subsystem_codes: list[str] - 2-char subsystem codes
+        subsystems: list[JPFSubsystem] - structured subsystem definitions
         reference_shot: int - Shot for signal enumeration
         setup_commands: list[str] - Module loads for getdat
     """
@@ -97,24 +69,33 @@ class JPFScanner:
         """
         from imas_codex.remote.executor import async_run_python_script
 
-        # JPF config is nested under data_systems.jpf
         jpf_config = config
         server = jpf_config.get("server", "mdsplus.jet.uk")
         ref_shot = reference_shot or jpf_config.get("reference_shot")
-        subsystems = jpf_config.get("subsystem_codes", [])
+        subsystem_defs = jpf_config.get("subsystems", [])
+
+        # Build domain lookup from config
+        domain_lookup: dict[str, str] = {}
+        subsystem_codes: list[str] = []
+        for sub in subsystem_defs:
+            if isinstance(sub, dict):
+                code = sub["code"]
+                domain_lookup[code] = sub.get("physics_domain", "general")
+                subsystem_codes.append(code)
+            else:
+                # Backward compat: plain string codes
+                subsystem_codes.append(str(sub))
 
         if not ref_shot:
             logger.warning("JPF scanner: no reference_shot configured for %s", facility)
             return ScanResult(stats={"error": "no reference_shot"})
-        if not subsystems:
-            logger.warning(
-                "JPF scanner: no subsystem_codes configured for %s", facility
-            )
-            return ScanResult(stats={"error": "no subsystem_codes configured"})
+        if not subsystem_codes:
+            logger.warning("JPF scanner: no subsystems configured for %s", facility)
+            return ScanResult(stats={"error": "no subsystems configured"})
 
         logger.info(
             "JPF scanner: enumerating %d subsystems via getdat (shot %d)",
-            len(subsystems),
+            len(subsystem_codes),
             ref_shot,
         )
 
@@ -123,7 +104,7 @@ class JPFScanner:
                 "enumerate_jpf.py",
                 {
                     "shot": ref_shot,
-                    "subsystems": subsystems,
+                    "subsystems": subsystem_codes,
                 },
                 ssh_host=ssh_host,
                 timeout=300,
@@ -168,8 +149,8 @@ class JPFScanner:
             path = raw.get("path", "")
             description = raw.get("description", "")
 
-            # Heuristic physics domain from subsystem code
-            domain = _SUBSYSTEM_DOMAIN_HINTS.get(subsystem, "general")
+            # Physics domain from config, fallback to general
+            domain = domain_lookup.get(subsystem, "general")
 
             signal_name = f"{subsystem}/{signal}"
             signal_id = f"{facility}:{domain}/{subsystem.lower()}_{signal.lower()}"
@@ -183,6 +164,8 @@ class JPFScanner:
                 name=signal_name,
                 accessor=accessor,
                 data_access=data_access.id,
+                data_source_name="jpf",
+                data_source_path=path,
                 discovery_source="jpf",
                 example_shot=ref_shot,
                 node_path=path,
@@ -208,7 +191,7 @@ class JPFScanner:
             metadata={
                 "reference_shot": ref_shot,
                 "server": server,
-                "subsystems": subsystems,
+                "subsystems": subsystem_codes,
             },
             stats={
                 "signals_discovered": len(signals),

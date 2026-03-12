@@ -462,7 +462,15 @@ Usage:
                             "compute_locations: Optional[dict]",
                         ),
                     ]
-                    for old, new in type_fixes:
+                    # Fix class-ranged multivalued fields that gen-pydantic
+                    # flattens to list[str] instead of list[ClassName]
+                    class_range_fixes = [
+                        (
+                            "subsystems: Optional[list[str]]",
+                            "subsystems: Optional[list[JPFSubsystem | str]]",
+                        ),
+                    ]
+                    for old, new in type_fixes + class_range_fixes:
                         generated_code = generated_code.replace(old, new)
                     config_output_file.write_text(generated_code)
                     logger.info(

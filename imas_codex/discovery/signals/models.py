@@ -95,8 +95,9 @@ class SignalEnrichmentResult(BaseModel):
     )
 
     description: str = Field(
-        description="Brief physics description of what this signal measures "
-        "(1-2 sentences). Include relevant physics context."
+        description="Physics description of what this signal measures "
+        "(2-4 sentences). Include measurement technique, spatial/temporal "
+        "characteristics, and relevant physics context."
     )
 
     diagnostic: str = Field(

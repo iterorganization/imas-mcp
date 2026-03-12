@@ -172,6 +172,8 @@ class EDASScanner:
                     name=f"{cat}/{dname}",
                     accessor=accessor,
                     data_access=data_access.id,
+                    data_source_name="edas",
+                    data_source_path=f"{cat}/{dname}",
                     unit=units,
                     description=description,  # May be Japanese
                     discovery_source="edas",

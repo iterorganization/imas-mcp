@@ -173,6 +173,8 @@ class PPFScanner:
                     name=f"{dda}/{dtype}",
                     accessor=accessor,
                     data_access=data_access.id,
+                    data_source_name="ppf",
+                    data_source_path=f"{dda}/{dtype}",
                     discovery_source="ppf",
                     example_shot=ref_pulse,
                 )
