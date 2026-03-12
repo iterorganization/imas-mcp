@@ -194,7 +194,7 @@ def _parse_ps_output(ps_output: str) -> list[dict]:
 
 
 def _colored_bar(used: float, limit: float, width: int = 20) -> str:
-    """Render a colored usage bar: [████████░░░░] 40%."""
+    """Render a colored usage bar using Rich markup: [████████░░░░] 40%."""
     if limit <= 0:
         return ""
     ratio = min(used / limit, 1.0)
@@ -206,11 +206,9 @@ def _colored_bar(used: float, limit: float, width: int = 20) -> str:
         color = "yellow"
     else:
         color = "green"
-    bar = click.style("█" * filled, fg=color) + click.style(
-        "░" * empty, dim=True
-    )
-    pct = click.style(f"{ratio * 100:.0f}%", fg=color)
-    return f"[{bar}] {pct}"
+    bar = f"[{color}]{"█" * filled}[/{color}][dim]{"░" * empty}[/dim]"
+    pct = f"[{color}]{ratio * 100:.0f}%[/{color}]"
+    return f"\[{bar}] {pct}"
 
 
 def _format_load_row(info: dict) -> list[str]:
@@ -238,7 +236,7 @@ def _format_load_row(info: dict) -> list[str]:
 def _show_local_load(info: dict) -> None:
     """Print local node load in compact format."""
     hostname = info["hostname"]
-    click.echo(f"\nNode: {click.style(hostname, fg='cyan', bold=True)}")
+    console.print(f"\nNode: [cyan bold]{hostname}[/cyan bold]")
 
     cpu_count = info["cpu_count"]
     load_1m = info["load_1m"]
@@ -246,7 +244,7 @@ def _show_local_load(info: dict) -> None:
     load_15m = info["load_15m"]
 
     cpu_bar = _colored_bar(load_1m, cpu_count)
-    click.echo(
+    console.print(
         f"  CPU:  {cpu_bar}  "
         f"load {load_1m:.1f} / {load_5m:.1f} / {load_15m:.1f}  "
         f"({cpu_count} cores)"
@@ -256,12 +254,12 @@ def _show_local_load(info: dict) -> None:
     mem_used = info["mem_used_mb"]
     if mem_total > 0:
         mem_bar = _colored_bar(mem_used, mem_total)
-        click.echo(
+        console.print(
             f"  Mem:  {mem_bar}  "
             f"{mem_used / 1024:.1f} / {mem_total / 1024:.0f} GB"
         )
 
-    click.echo(f"  Users: {info['users']}")
+    console.print(f"  Users: {info['users']}")
 
 
 def _build_process_table(
