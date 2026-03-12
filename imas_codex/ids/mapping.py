@@ -1,13 +1,14 @@
-"""IMAS mapping pipeline orchestrator.
+"""IMAS signal mapping pipeline orchestrator.
 
-Multi-step LLM pipeline that generates field-level IMAS mappings
-from facility signal groups:
+Multi-step LLM pipeline that generates signal-level IMAS mappings
+from facility signal sources:
 
-  Step 0: Gather signal groups + DD context (programmatic)
-  Step 1: LLM assigns groups to IMAS sections
-  Step 2: For each section, LLM generates field mappings
-  Step 3: Programmatic validation (source/target existence, transforms, units)
-  Persist: Write to graph
+  gather_context:     Fetch signal sources + DD context (programmatic)
+  assign_sections:    LLM assigns sources to IMAS sections
+  map_signals:        For each section, LLM generates signal mappings
+  discover_assembly:  For each section, LLM discovers assembly patterns
+  validate_mappings:  Programmatic validation (source/target existence, transforms, units)
+  persist:            Write to graph
 
 Usage:
     from imas_codex.ids.mapping import generate_mapping
@@ -116,8 +117,8 @@ def _format_subtree(rows: list[dict[str, Any]]) -> str:
     return "\n".join(lines) if lines else "(no paths)"
 
 
-def _format_groups(groups: list[dict[str, Any]]) -> str:
-    """Format signal groups into a readable summary."""
+def _format_sources(groups: list[dict[str, Any]]) -> str:
+    """Format signal sources into a readable summary."""
     lines: list[str] = []
     for g in groups:
         gid = g.get("id", "")
@@ -133,7 +134,7 @@ def _format_groups(groups: list[dict[str, Any]]) -> str:
             targets = ", ".join(m["target_id"] for m in mapped)
             line += f" [already mapped → {targets}]"
         lines.append(line)
-    return "\n".join(lines) if lines else "(no groups)"
+    return "\n".join(lines) if lines else "(no sources)"
 
 
 def _format_fields(fields: list[dict[str, Any]]) -> str:
@@ -217,14 +218,14 @@ def _call_llm(
     return result
 
 
-def _step0_gather_context(
+def gather_context(
     facility: str,
     ids_name: str,
     *,
     gc: GraphClient,
 ) -> dict[str, Any]:
-    """Step 0: Gather all context needed for the pipeline."""
-    logger.info("Step 0: gathering context for %s/%s", facility, ids_name)
+    """Gather all context needed for the signal mapping pipeline."""
+    logger.info("Gathering context for %s/%s", facility, ids_name)
 
     # Don't filter by ids_name — Step 1 assigns groups to IDS sections.
     # Filtering here would require pre-existing MAPS_TO_IMAS relationships,
@@ -252,7 +253,7 @@ def _step0_gather_context(
     }
 
 
-def _step1_assign_sections(
+def assign_sections(
     facility: str,
     ids_name: str,
     context: dict[str, Any],
@@ -260,14 +261,14 @@ def _step1_assign_sections(
     model: str | None = None,
     cost: PipelineCost,
 ) -> SectionAssignmentBatch:
-    """Step 1: Assign signal groups to IMAS sections."""
-    logger.info("Step 1: assigning signal groups to IMAS sections")
+    """Assign signal sources to IMAS struct-array sections."""
+    logger.info("Assigning signal sources to IMAS sections")
 
     prompt = _render_prompt(
-        "exploration",
+        "section_assignment",
         facility=facility,
         ids_name=ids_name,
-        signal_sources=_format_groups(context["groups"]),
+        signal_sources=_format_sources(context["groups"]),
         imas_subtree=_format_subtree(context["subtree"]),
         semantic_results=_format_subtree(context["semantic"]),
     )
@@ -281,12 +282,12 @@ def _step1_assign_sections(
         messages,
         SectionAssignmentBatch,
         model=model,
-        step_name="step1_sections",
+        step_name="assign_sections",
         cost=cost,
     )
 
 
-def _step2_field_mappings(
+def map_signals(
     facility: str,
     ids_name: str,
     sections: SectionAssignmentBatch,
@@ -296,9 +297,9 @@ def _step2_field_mappings(
     model: str | None = None,
     cost: PipelineCost,
 ) -> list[FieldMappingBatch]:
-    """Step 2: Generate field mappings per section."""
+    """Generate signal mappings per section."""
     logger.info(
-        "Step 2: generating field mappings for %d sections", len(sections.assignments)
+        "Generating signal mappings for %d sections", len(sections.assignments)
     )
 
     batches: list[FieldMappingBatch] = []
@@ -320,7 +321,7 @@ def _step2_field_mappings(
         )
 
         prompt = _render_prompt(
-            "field_mapping",
+            "signal_mapping",
             facility=facility,
             ids_name=ids_name,
             section_path=section_path,
@@ -342,7 +343,7 @@ def _step2_field_mappings(
             messages,
             FieldMappingBatch,
             model=model,
-            step_name=f"step2_fields_{section_path}",
+            step_name=f"map_signals_{section_path}",
             cost=cost,
         )
         batches.append(batch)
@@ -350,7 +351,7 @@ def _step2_field_mappings(
     return batches
 
 
-def _step3_validate(
+def validate_mappings(
     facility: str,
     ids_name: str,
     dd_version: str,
@@ -359,15 +360,14 @@ def _step3_validate(
     *,
     gc: GraphClient,
 ) -> ValidatedMappingResult:
-    """Step 3: Assemble and programmatically validate all mappings.
+    """Assemble and programmatically validate all signal mappings.
 
-    Replaces the former LLM self-review with concrete checks via
-    ``validate_mapping()``: source/target existence, transform execution,
-    unit compatibility, and duplicate target detection.
+    Runs concrete checks via ``validate_mapping()``: source/target existence,
+    transform execution, unit compatibility, and duplicate target detection.
     """
     from imas_codex.ids.validation import validate_mapping
 
-    logger.info("Step 3: programmatic validation")
+    logger.info("Running programmatic validation")
 
     # Assemble bindings + escalations from Step 2 batches
     all_bindings: list[ValidatedFieldMapping] = []
@@ -447,14 +447,14 @@ def generate_mapping(
     activate: bool = True,
     gc: GraphClient | None = None,
 ) -> MappingResult:
-    """Generate IMAS mapping via multi-step LLM pipeline.
+    """Generate IMAS signal mapping via multi-step LLM pipeline.
 
     Steps:
-        0. Gather signal groups + DD context (programmatic)
-        1. LLM assigns groups to IMAS sections
-        2. For each section, LLM generates field mappings
-        3. Programmatic validation (source/target existence, transforms, units)
-        4. (Optional) Persist to graph
+        1. Gather signal sources + DD context (programmatic)
+        2. LLM assigns sources to IMAS sections
+        3. For each section, LLM generates signal mappings
+        4. Programmatic validation (source/target existence, transforms, units)
+        5. (Optional) Persist to graph
 
     Args:
         facility: Facility name (e.g., "jet").
@@ -479,27 +479,27 @@ def generate_mapping(
     cost = PipelineCost()
 
     # Step 0: Gather context
-    context = _step0_gather_context(facility, ids_name, gc=gc)
+    context = gather_context(facility, ids_name, gc=gc)
 
     if not context["groups"]:
         raise ValueError(
-            f"No signal groups found for {facility}/{ids_name}. "
+            f"No signal sources found for {facility}/{ids_name}. "
             "Run signal discovery first."
         )
 
     # Step 1: Assign sections
-    sections = _step1_assign_sections(
+    sections = assign_sections(
         facility, ids_name, context, model=model, cost=cost
     )
 
     if not sections.assignments:
         raise ValueError(
-            f"LLM could not assign any signal groups to IMAS sections "
+            f"LLM could not assign any signal sources to IMAS sections "
             f"for {facility}/{ids_name}."
         )
 
-    # Step 2: Field mappings
-    field_batches = _step2_field_mappings(
+    # Step 2: Signal mappings
+    field_batches = map_signals(
         facility,
         ids_name,
         sections,
@@ -510,7 +510,7 @@ def generate_mapping(
     )
 
     # Step 3: Programmatic validation (no LLM call)
-    validated = _step3_validate(
+    validated = validate_mappings(
         facility,
         ids_name,
         dd_version,

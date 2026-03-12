@@ -463,11 +463,11 @@ class TestPipelineOrchestrator:
     """Test the full pipeline with mocked LLM and graph."""
 
     @patch("imas_codex.ids.mapping.search_imas_semantic")
-    def test_step0_gather_context(
+    def test_gather_context(
         self, mock_semantic, mock_gc, sample_groups, sample_subtree
     ):
-        """Test context gathering (Step 0)."""
-        from imas_codex.ids.mapping import _step0_gather_context
+        """Test context gathering."""
+        from imas_codex.ids.mapping import gather_context
 
         mock_semantic.return_value = sample_subtree
 
@@ -485,17 +485,17 @@ class TestPipelineOrchestrator:
                 "bindings": [],
             }
 
-            ctx = _step0_gather_context("jet", "pf_active", gc=mock_gc)
+            ctx = gather_context("jet", "pf_active", gc=mock_gc)
 
         assert len(ctx["groups"]) == 2
         assert len(ctx["subtree"]) == 3
 
     @patch("imas_codex.ids.mapping._call_llm")
-    def test_step1_assign_sections(
+    def test_assign_sections(
         self, mock_call_llm, sample_groups, sample_subtree, sample_section_assignment
     ):
-        """Test section assignment (Step 1)."""
-        from imas_codex.ids.mapping import PipelineCost, _step1_assign_sections
+        """Test section assignment."""
+        from imas_codex.ids.mapping import PipelineCost, assign_sections
 
         mock_call_llm.return_value = sample_section_assignment
         cost = PipelineCost()
@@ -506,14 +506,14 @@ class TestPipelineOrchestrator:
             "semantic": sample_subtree,
         }
 
-        result = _step1_assign_sections("jet", "pf_active", context, cost=cost)
+        result = assign_sections("jet", "pf_active", context, cost=cost)
         assert len(result.assignments) == 2
         mock_call_llm.assert_called_once()
 
     @patch("imas_codex.ids.mapping._call_llm")
     @patch("imas_codex.ids.mapping.fetch_imas_fields")
     @patch("imas_codex.ids.mapping.fetch_imas_subtree")
-    def test_step2_field_mappings(
+    def test_map_signals(
         self,
         mock_subtree,
         mock_fields,
@@ -524,8 +524,8 @@ class TestPipelineOrchestrator:
         sample_section_assignment,
         sample_field_batch,
     ):
-        """Test field mapping generation (Step 2)."""
-        from imas_codex.ids.mapping import PipelineCost, _step2_field_mappings
+        """Test signal mapping generation."""
+        from imas_codex.ids.mapping import PipelineCost, map_signals
 
         mock_fields.return_value = sample_subtree[1:]
         mock_subtree.return_value = sample_subtree[1:]
@@ -539,7 +539,7 @@ class TestPipelineOrchestrator:
             "existing": {"mapping": None, "sections": [], "bindings": []},
         }
 
-        result = _step2_field_mappings(
+        result = map_signals(
             "jet",
             "pf_active",
             sample_section_assignment,
@@ -552,15 +552,15 @@ class TestPipelineOrchestrator:
         assert len(result[0].mappings) == 2
 
     @patch("imas_codex.ids.validation.check_imas_paths")
-    def test_step3_validate(
+    def test_validate_mappings(
         self,
         mock_check,
         mock_gc,
         sample_section_assignment,
         sample_field_batch,
     ):
-        """Test validation (Step 3) — now programmatic, not LLM."""
-        from imas_codex.ids.mapping import _step3_validate
+        """Test validation — programmatic, not LLM."""
+        from imas_codex.ids.mapping import validate_mappings
 
         mock_check.return_value = [
             {"path": "pf_active/coil/element/geometry/rectangle/r", "exists": True},
@@ -569,7 +569,7 @@ class TestPipelineOrchestrator:
         # Source exists query
         mock_gc.query.return_value = [{"id": "some_group"}]
 
-        result = _step3_validate(
+        result = validate_mappings(
             "jet",
             "pf_active",
             "4.1.1",
@@ -581,10 +581,10 @@ class TestPipelineOrchestrator:
         assert result.facility == "jet"
         assert result.dd_version == "4.1.1"
 
-    @patch("imas_codex.ids.mapping._step3_validate")
-    @patch("imas_codex.ids.mapping._step2_field_mappings")
-    @patch("imas_codex.ids.mapping._step1_assign_sections")
-    @patch("imas_codex.ids.mapping._step0_gather_context")
+    @patch("imas_codex.ids.mapping.validate_mappings")
+    @patch("imas_codex.ids.mapping.map_signals")
+    @patch("imas_codex.ids.mapping.assign_sections")
+    @patch("imas_codex.ids.mapping.gather_context")
     def test_generate_mapping_full_pipeline(
         self,
         mock_step0,
@@ -626,10 +626,10 @@ class TestPipelineOrchestrator:
         assert result.persisted is False
         assert result.unassigned_groups == []
 
-    @patch("imas_codex.ids.mapping._step3_validate")
-    @patch("imas_codex.ids.mapping._step2_field_mappings")
-    @patch("imas_codex.ids.mapping._step1_assign_sections")
-    @patch("imas_codex.ids.mapping._step0_gather_context")
+    @patch("imas_codex.ids.mapping.validate_mappings")
+    @patch("imas_codex.ids.mapping.map_signals")
+    @patch("imas_codex.ids.mapping.assign_sections")
+    @patch("imas_codex.ids.mapping.gather_context")
     def test_generate_mapping_surfaces_unassigned_groups(
         self,
         mock_step0,
@@ -682,7 +682,7 @@ class TestPipelineOrchestrator:
             "jet:pf_coils:group4",
         ]
 
-    @patch("imas_codex.ids.mapping._step0_gather_context")
+    @patch("imas_codex.ids.mapping.gather_context")
     def test_generate_mapping_no_groups_raises(self, mock_step0, mock_gc):
         """Test that empty groups raises ValueError."""
         from imas_codex.ids.mapping import generate_mapping
@@ -695,7 +695,7 @@ class TestPipelineOrchestrator:
             "cocos_paths": [],
         }
 
-        with pytest.raises(ValueError, match="No signal groups found"):
+        with pytest.raises(ValueError, match="No signal sources found"):
             generate_mapping("jet", "pf_active", dd_version="4.1.1", gc=mock_gc)
 
 
@@ -799,18 +799,18 @@ class TestMapCLI:
 class TestPromptTemplates:
     """Test that prompt templates exist and render correctly."""
 
-    def test_exploration_prompt_exists(self):
+    def test_section_assignment_prompt_exists(self):
         from imas_codex.ids.mapping import _load_prompt
 
-        prompt = _load_prompt("exploration")
-        assert "signal groups" in prompt.lower()
+        prompt = _load_prompt("section_assignment")
+        assert "signal sources" in prompt.lower()
         assert "{{ facility }}" in prompt or "facility" in prompt.lower()
 
-    def test_field_mapping_prompt_exists(self):
+    def test_signal_mapping_prompt_exists(self):
         from imas_codex.ids.mapping import _load_prompt
 
-        prompt = _load_prompt("field_mapping")
-        assert "field" in prompt.lower()
+        prompt = _load_prompt("signal_mapping")
+        assert "signal" in prompt.lower()
         assert "transform" in prompt.lower()
 
     def test_validation_prompt_exists(self):
@@ -819,11 +819,11 @@ class TestPromptTemplates:
         prompt = _load_prompt("validation")
         assert "valid" in prompt.lower()
 
-    def test_exploration_prompt_renders(self):
+    def test_section_assignment_prompt_renders(self):
         from imas_codex.ids.mapping import _render_prompt
 
         rendered = _render_prompt(
-            "exploration",
+            "section_assignment",
             facility="jet",
             ids_name="pf_active",
             signal_sources="- group1: PF coil 1",
@@ -834,11 +834,11 @@ class TestPromptTemplates:
         assert "pf_active" in rendered
         assert "group1" in rendered
 
-    def test_field_mapping_prompt_renders(self):
+    def test_signal_mapping_prompt_renders(self):
         from imas_codex.ids.mapping import _render_prompt
 
         rendered = _render_prompt(
-            "field_mapping",
+            "signal_mapping",
             facility="jet",
             ids_name="pf_active",
             section_path="pf_active/coil",
@@ -850,10 +850,10 @@ class TestPromptTemplates:
         )
         assert "pf_active/coil" in rendered
 
-    def test_field_mapping_prompt_has_transform_examples(self):
+    def test_signal_mapping_prompt_has_transform_examples(self):
         from imas_codex.ids.mapping import _load_prompt
 
-        prompt = _load_prompt("field_mapping")
+        prompt = _load_prompt("signal_mapping")
         # Phase 6: transform expression examples
         assert "value * 1e-3" in prompt
         assert "math.radians(value)" in prompt
@@ -919,10 +919,10 @@ class TestFormatHelpers:
         assert "STRUCT_ARRAY" in result
         assert "Geometric centre R" in result
 
-    def test_format_groups(self, sample_groups):
-        from imas_codex.ids.mapping import _format_groups
+    def test_format_sources(self, sample_groups):
+        from imas_codex.ids.mapping import _format_sources
 
-        result = _format_groups(sample_groups)
+        result = _format_sources(sample_groups)
         assert "pf_coil_1" in result
         assert "members=6" in result
 
@@ -936,10 +936,10 @@ class TestFormatHelpers:
     def test_format_empty(self):
         from imas_codex.ids.mapping import (
             _format_fields,
-            _format_groups,
+            _format_sources,
             _format_subtree,
         )
 
         assert _format_subtree([]) == "(no paths)"
-        assert _format_groups([]) == "(no groups)"
+        assert _format_sources([]) == "(no sources)"
         assert _format_fields([]) == "(no fields)"

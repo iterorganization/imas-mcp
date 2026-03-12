@@ -1,9 +1,9 @@
 ---
-name: exploration
-description: Step 1 — Assign signal groups to IMAS structural sections
+name: section_assignment
+description: Assign signal sources to IMAS structural sections
 ---
 
-You are an IMAS mapping expert. Your task is to assign **facility signal groups**
+You are an IMAS mapping expert. Your task is to assign **facility signal sources**
 to the correct **IMAS structural array sections** within an IDS.
 
 ## Context
@@ -11,10 +11,10 @@ to the correct **IMAS structural array sections** within an IDS.
 - **Facility**: {{ facility }}
 - **IDS**: {{ ids_name }}
 
-### Signal Groups
+### Signal Sources
 
-The following signal groups have been discovered for this facility.
-Each group is a set of related facility signals (e.g., all signals
+The following signal sources have been discovered for this facility.
+Each source is a set of related facility signals (e.g., all signals
 from a PF coil, or all magnetic probes in a diagnostic).
 
 {{ signal_sources }}
@@ -34,11 +34,11 @@ Additional context from semantic search:
 
 ## Task
 
-For each signal group, determine which IMAS structural-array section
+For each signal source, determine which IMAS structural-array section
 it should populate. Consider:
 
 1. **Physics domain**: Match signal physics to IDS section purpose
-2. **Naming patterns**: Group keys often mirror IDS section names
+2. **Naming patterns**: Source keys often mirror IDS section names
 3. **Data types**: Signal types should match expected IDS field types
 4. **Existing mappings**: Respect any partial mappings already in place
 
@@ -51,7 +51,7 @@ Return a JSON object matching the `SectionAssignmentBatch` schema:
   - `imas_section_path`: Full IMAS path to the struct-array (e.g., "pf_active/coil")
   - `confidence`: 0.0–1.0 confidence in this assignment
   - `reasoning`: Brief justification (1–2 sentences)
-- `unassigned_groups`: IDs of groups that don't fit any section
+- `unassigned_groups`: IDs of sources that don't fit any section
 
 Be precise with IMAS paths. Only assign to valid struct-array paths from the
 IDS structure shown above.
