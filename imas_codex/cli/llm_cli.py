@@ -404,6 +404,8 @@ def llm_service(action: str, port: int | None) -> None:
     service_file = service_dir / "imas-codex-llm.service"
 
     if action == "install":
+        import socket
+
         service_dir.mkdir(parents=True, exist_ok=True)
 
         uv_path = shutil.which("uv") or str(Path.home() / ".local" / "bin" / "uv")
@@ -423,9 +425,16 @@ def llm_service(action: str, port: int | None) -> None:
         log_dir = Path.home() / ".local" / "share" / "imas-codex" / "services"
         log_file = log_dir / "llm.log"
 
+        # ConditionHost= pins the service to this node — prevents
+        # NFS-shared service files from spawning redundant proxies
+        # on every login node that shares the same home directory.
+        # Use FQDN to match systemd's static hostname.
+        local_hostname = socket.getfqdn()
+
         service_content = f"""[Unit]
 Description=IMAS Codex LiteLLM Proxy
 After=network.target
+ConditionHost={local_hostname}
 
 [Service]
 Type=simple
@@ -448,7 +457,7 @@ WantedBy=default.target
         service_file.write_text(service_content)
         subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
         subprocess.run(["systemctl", "--user", "enable", "imas-codex-llm"], check=True)
-        click.echo("✓ LLM proxy service installed and enabled")
+        click.echo(f"✓ LLM proxy service installed (pinned to {local_hostname})")
         click.echo(f"  Port: {port}")
         click.echo("  Start: imas-codex llm service start")
 
@@ -527,9 +536,20 @@ def _deploy_login_llm() -> None:
     (OpenRouter, Anthropic, Google), so it must run on the login
     node which has internet access, not on a compute node.
 
-    Idempotent: no-op if already running.
+    The service unit includes ``ConditionHost=`` to pin it to a
+    single node.  On every deploy the unit file is re-written with
+    the current target hostname so the proxy follows SSH target
+    changes.  Stale instances on sibling nodes are stopped.
+
+    Idempotent: no-op if already running on the correct node.
     """
-    # Check if already running
+    # Always re-install to update ConditionHost= to the current target.
+    # This is cheap (one SSH round-trip) and ensures the unit file
+    # always matches the node we're deploying to.
+    click.echo("  Installing systemd service...")
+    _install_llm_service_remote()
+
+    # Check if already running on this node
     try:
         result = _run_remote(
             "systemctl --user is-active imas-codex-llm 2>/dev/null || true",
@@ -537,21 +557,10 @@ def _deploy_login_llm() -> None:
         )
         if "active" in result and "inactive" not in result:
             click.echo("  LLM proxy already running on login node")
+            _stop_stale_llm_instances()
             return
     except subprocess.CalledProcessError:
         pass
-
-    # Install service if not present, then start
-    try:
-        _run_remote(
-            "systemctl --user cat imas-codex-llm >/dev/null 2>&1",
-            timeout=10,
-            check=True,
-        )
-    except subprocess.CalledProcessError:
-        # Service not installed — install it remotely
-        click.echo("  Installing systemd service...")
-        _install_llm_service_remote()
 
     click.echo("  Starting LLM proxy on login node...")
     try:
@@ -567,18 +576,29 @@ def _deploy_login_llm() -> None:
         )
         raise click.ClickException(f"Failed to start LLM proxy.\n{log_tail}") from exc
 
+    _stop_stale_llm_instances()
+
 
 def _install_llm_service_remote() -> None:
-    """Install the LLM systemd user service on the remote login node via SSH."""
+    """Install the LLM systemd user service on the remote login node via SSH.
+
+    Includes ``ConditionHost=`` so the service only starts on the
+    designated node — prevents NFS-shared service files from spawning
+    redundant proxies on every login node.
+    """
     import base64
 
     port = _llm_port()
+    # Capture the static hostname (what systemd uses for ConditionHost=)
+    # so the service only starts on this specific node.
+    target_hostname = _run_remote("hostname -f", timeout=10).strip()
     # systemd doesn't expand $HOME in any directive — use %h (home dir specifier)
     _project_h = _PROJECT.replace("$HOME", "%h")
     _services_h = _SERVICES_DIR.replace("$HOME", "%h")
     service_content = f"""[Unit]
 Description=IMAS Codex LiteLLM Proxy
 After=network.target
+ConditionHost={target_hostname}
 
 [Service]
 Type=simple
@@ -608,7 +628,46 @@ WantedBy=default.target
         timeout=15,
         check=True,
     )
-    click.echo("  Service installed and enabled")
+    click.echo(f"  Service installed (pinned to {target_hostname})")
+
+
+def _stop_stale_llm_instances() -> None:
+    """Stop LLM proxy instances running on sibling login nodes.
+
+    When the service file is shared via NFS, nodes that had an active
+    user session may have started their own copy before the
+    ``ConditionHost=`` guard was added (or before the unit was
+    re-written with the current target hostname).
+
+    Discovers sibling login nodes from ``/etc/hosts`` on the target
+    node and issues ``systemctl --user stop`` on each one that isn't
+    the current host.  Failures are non-fatal — stale instances will
+    also be prevented from restarting by ``ConditionHost=``.
+    """
+    try:
+        # Discover sibling login nodes by deriving the naming prefix
+        # from the current hostname (e.g. 98dci4-srv-1006 → 98dci4-srv)
+        # and finding matches in /etc/hosts, then stop the service on each.
+        script = (
+            "this=$(hostname -s); "
+            'prefix=$(echo "$this" | sed "s/-[0-9]*$//"); '
+            'for node in $(grep "$prefix" /etc/hosts '
+            "  | awk '{print $2}' | grep -v gpu); do "
+            '  short=$(echo "$node" | cut -d. -f1); '
+            '  [ "$short" = "$this" ] && continue; '
+            "  result=$(ssh -o BatchMode=yes -o ConnectTimeout=3 "
+            '    -o StrictHostKeyChecking=no "$node" '
+            '    "systemctl --user stop imas-codex-llm 2>/dev/null '
+            '     && echo stopped || true" 2>/dev/null); '
+            '  [ "$result" = "stopped" ] && echo "  Stopped stale proxy on $short"; '
+            "done"
+        )
+        output = _run_remote(script, timeout=60)
+        if output.strip():
+            click.echo(output.strip())
+    except Exception:
+        # Non-fatal — ConditionHost= prevents restart anyway
+        pass
 
 
 @llm.command("stop")
