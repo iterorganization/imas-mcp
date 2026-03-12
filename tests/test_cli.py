@@ -42,6 +42,12 @@ class TestCLIImports:
 
         assert hosts is not None
 
+    def test_import_status(self):
+        """Status module imports."""
+        from imas_codex.cli.status import status
+
+        assert status is not None
+
     def test_import_graph_cli(self):
         """Graph CLI module imports."""
         from imas_codex.cli.graph import graph
@@ -163,6 +169,22 @@ class TestCLICommands:
         assert result.exit_code == 0
         assert "SSH" in result.output or "host" in result.output.lower()
 
+    def test_status_help(self, runner):
+        """status command has help."""
+        from imas_codex.cli import main
+
+        result = runner.invoke(main, ["status", "--help"])
+        assert result.exit_code == 0
+        assert "node" in result.output.lower()
+
+    def test_hosts_load_help(self, runner):
+        """hosts load command has help."""
+        from imas_codex.cli import main
+
+        result = runner.invoke(main, ["hosts", "load", "--help"])
+        assert result.exit_code == 0
+        assert "login node" in result.output.lower()
+
     def test_release_help(self, runner):
         """release command has help."""
         from imas_codex.cli import main
@@ -244,3 +266,56 @@ class TestCLISubcommands:
 
         result = runner.invoke(main, ["map", "--help"])
         assert result.exit_code != 0
+
+
+class TestStatusCommand:
+    """Test the status command and its helpers."""
+
+    def test_get_load_info(self):
+        """_get_load_info returns valid system info."""
+        from imas_codex.cli.status import _get_load_info
+
+        info = _get_load_info()
+        assert "hostname" in info
+        assert "load_1m" in info
+        assert "cpu_count" in info
+        assert info["cpu_count"] >= 1
+        assert info["load_1m"] >= 0
+
+    def test_colored_bar(self):
+        """_colored_bar renders a bar string."""
+        from imas_codex.cli.status import _colored_bar
+
+        bar = _colored_bar(5, 10)
+        assert "%" in bar
+
+    def test_format_load_row(self):
+        """_format_load_row produces 4-element list."""
+        from imas_codex.cli.status import _format_load_row
+
+        info = {
+            "hostname": "test-node",
+            "load_1m": 2.0,
+            "load_5m": 1.5,
+            "load_15m": 1.0,
+            "cpu_count": 8,
+            "mem_total_mb": 16384,
+            "mem_used_mb": 8192,
+            "users": 5,
+        }
+        row = _format_load_row(info)
+        assert len(row) == 4
+        assert row[0] == "test-node"
+        assert row[3] == "5"
+
+    def test_status_runs(self):
+        """status command runs successfully."""
+        from click.testing import CliRunner
+
+        from imas_codex.cli import main
+
+        runner = CliRunner()
+        result = runner.invoke(main, ["status"])
+        assert result.exit_code == 0
+        assert "Node:" in result.output
+        assert "CPU:" in result.output
