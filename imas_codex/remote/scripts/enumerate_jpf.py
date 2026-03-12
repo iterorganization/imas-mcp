@@ -1,35 +1,41 @@
 #!/usr/bin/env python3
 """Enumerate JET JPF (JET Processing Facility) subsystems and signals.
 
-This script runs on the JET host where MDSplus thin-client access is available.
-It connects to the MDSplus server and uses TDI functions to enumerate JPF
-subsystem signals.
+This script runs on the JET host where the ``getdat`` Python module is
+available (``/jet/share/lib/python/getdat.py``).  It uses the JPF pulse
+file API to enumerate every signal node within each subsystem.
+
+Key getdat functions used:
+    zadop(pulse, system=sub, type="JPF")  — returns (status, pptab, pulse)
+    adlnod(pptab, stub="{sub}/*")         — returns (status, handle, names_list, count)
+    getcom(name, pulse)                   — returns (description, length, status)
+    adcl(pptab)                           — close pulse file handle
 
 Requirements:
-- Python 3.8+ (stdlib only except MDSplus)
-- MDSplus Python bindings available on JET via module load jet/1.0
+- Python 3.8+ (stdlib only except getdat)
+- getdat module available on JET (loaded via ``module load jet/1.0``)
 
 Usage:
-    echo '{"server": "mdsplus.jet.uk", "shot": 99896, "subsystems": ["DA","DB"]}' | python3 enumerate_jpf.py
+    echo '{"shot": 99896, "subsystems": ["DA","DB"]}' | python3 enumerate_jpf.py
 
 Input (JSON on stdin):
     {
-        "server": "mdsplus.jet.uk",
         "shot": 99896,
         "subsystems": ["DA", "DB", "PF", ...],
-        "max_signals_per_subsystem": 200
+        "max_signals_per_subsystem": 0
     }
 
 Output (JSON on stdout):
     {
         "signals": [
-            {"subsystem": "DA", "signal": "C2-IPLA", "path": "da/c2-ipla"},
+            {"subsystem": "DA", "signal": "C2-IPLA", "path": "da/c2-ipla",
+             "description": "Plasma Current"},
             ...
         ],
         "shot": 99896,
         "subsystems_scanned": 5,
         "subsystems_failed": 1,
-        "errors": ["PF: connection timeout"]
+        "errors": ["PL: zadop status=6801"]
     }
 """
 
@@ -44,28 +50,20 @@ def main():
         print(json.dumps({"error": f"Invalid JSON input: {e}"}))
         sys.exit(0)
 
-    server = config.get("server")
     shot = config.get("shot")
     subsystems = config.get("subsystems", [])
-    max_per_sub = config.get("max_signals_per_subsystem", 200)
+    max_per_sub = config.get("max_signals_per_subsystem", 0)
 
-    if not server:
-        print(json.dumps({"error": "No server specified"}))
-        sys.exit(0)
     if not shot:
         print(json.dumps({"error": "No shot specified"}))
         sys.exit(0)
 
+    # Import getdat from JET shared python libs
+    sys.path.insert(0, "/jet/share/lib/python")
     try:
-        import MDSplus
+        import getdat
     except ImportError:
-        print(json.dumps({"error": "MDSplus module not available"}))
-        sys.exit(0)
-
-    try:
-        conn = MDSplus.Connection(server)
-    except Exception as e:
-        print(json.dumps({"error": f"Connection failed: {e}"}))
+        print(json.dumps({"error": "getdat module not available"}))
         sys.exit(0)
 
     results = []
@@ -73,97 +71,81 @@ def main():
     subsystems_scanned = 0
 
     for subsystem in subsystems:
-        sub_lower = subsystem.lower()
-        try:
-            # Use jpfnodes() TDI function to enumerate nodes in this subsystem
-            # jpfnodes(subsystem) returns an array of signal node names
-            try:
-                nodes_raw = conn.get(f'jpfnodes("{subsystem}")')
-                if hasattr(nodes_raw, "data"):
-                    nodes_raw = nodes_raw.data()
-                if hasattr(nodes_raw, "tolist"):
-                    nodes_raw = nodes_raw.tolist()
-            except Exception:
-                # Fallback: try listing via dpf pattern matching
-                # Some subsystems may not support jpfnodes
-                try:
-                    nodes_raw = conn.get(f'jpfnodenames("{subsystem}/*")')
-                    if hasattr(nodes_raw, "data"):
-                        nodes_raw = nodes_raw.data()
-                    if hasattr(nodes_raw, "tolist"):
-                        nodes_raw = nodes_raw.tolist()
-                except Exception:
-                    # Last resort: try reading the subsystem node list
-                    errors.append(f"{subsystem}: enumeration not supported")
-                    continue
+        sub_upper = subsystem.upper().strip()
+        sub_lower = sub_upper.lower()
 
-            if not nodes_raw:
+        try:
+            # Open the JPF pulse file for this subsystem
+            status, pptab, _pulse = getdat.zadop(shot, system=sub_upper, type="JPF")
+            if status != 0:
+                errors.append(f"{sub_upper}: zadop status={status}")
                 continue
 
-            # Decode bytes to strings if needed
-            signal_names = []
-            if isinstance(nodes_raw, (list, tuple)):
-                for node in nodes_raw:
-                    if isinstance(node, bytes):
-                        node = node.decode("utf-8", errors="replace")
+            try:
+                # Enumerate all signal nodes in this subsystem
+                # adlnod returns (status, handle, names_list, count)
+                ad_status, _handle, node_names, _count = getdat.adlnod(
+                    pptab, stub=f"{sub_upper}/*"
+                )
+
+                if ad_status != 0 or not node_names:
+                    errors.append(
+                        f"{sub_upper}: adlnod status={ad_status}, "
+                        f"nodes={len(node_names) if node_names else 0}"
+                    )
+                    continue
+
+                signal_names = []
+                for node in node_names:
                     name = str(node).strip()
                     if name:
                         signal_names.append(name)
-            elif isinstance(nodes_raw, bytes):
-                name = nodes_raw.decode("utf-8", errors="replace").strip()
-                if name:
-                    signal_names.append(name)
-            elif isinstance(nodes_raw, str):
-                signal_names.append(nodes_raw.strip())
 
-            # Limit per subsystem
-            for name in signal_names[:max_per_sub]:
-                path = f"{sub_lower}/{name.lower()}"
-                results.append(
-                    {
-                        "subsystem": subsystem,
-                        "signal": name,
+                # Apply per-subsystem limit if set (0 = unlimited)
+                if max_per_sub > 0:
+                    signal_names = signal_names[:max_per_sub]
+
+                for name in signal_names:
+                    # Node names from adlnod are like "DA/C2-IPLA"
+                    # Extract signal part after the subsystem prefix
+                    if "/" in name:
+                        signal_part = name.split("/", 1)[1]
+                    else:
+                        signal_part = name
+
+                    path = f"{sub_lower}/{signal_part.lower()}"
+
+                    # Try to get description via getcom
+                    # getcom returns (description, length, status)
+                    description = ""
+                    try:
+                        desc_text, _dlen, desc_status = getdat.getcom(name, shot)
+                        if desc_status == 0 and desc_text:
+                            description = str(desc_text).strip()
+                    except Exception:
+                        pass
+
+                    entry = {
+                        "subsystem": sub_upper,
+                        "signal": signal_part,
                         "path": path,
                     }
-                )
+                    if description:
+                        entry["description"] = description
 
-            subsystems_scanned += 1
+                    results.append(entry)
+
+                subsystems_scanned += 1
+
+            finally:
+                # Always close the pulse file handle
+                try:
+                    getdat.adcl(pptab)
+                except Exception:
+                    pass
 
         except Exception as e:
-            errors.append(f"{subsystem}: {str(e)[:200]}")
-
-    # If jpfnodes didn't work for any subsystem, try alternative approach:
-    # validate the subsystems by testing a known sample signal per subsystem
-    if subsystems_scanned == 0 and not results:
-        for subsystem in subsystems:
-            sub_lower = subsystem.lower()
-            try:
-                # Try to get active subsystem signals via jpfincludedsubsystems
-                active_subs = conn.get(f"jpfincludedsubsystems({shot})")
-                if hasattr(active_subs, "data"):
-                    active_subs = active_subs.data()
-                if hasattr(active_subs, "tolist"):
-                    active_subs = active_subs.tolist()
-
-                if isinstance(active_subs, (list, tuple)):
-                    for sub in active_subs:
-                        if isinstance(sub, bytes):
-                            sub = sub.decode("utf-8", errors="replace")
-                        sub = str(sub).strip()
-                        if sub:
-                            results.append(
-                                {
-                                    "subsystem": sub,
-                                    "signal": "*",
-                                    "path": f"{sub.lower()}/",
-                                    "enumeration_pending": True,
-                                }
-                            )
-                    subsystems_scanned = len(results)
-                break
-            except Exception as e:
-                errors.append(f"jpfincludedsubsystems: {str(e)[:200]}")
-                break
+            errors.append(f"{sub_upper}: {str(e)[:200]}")
 
     print(
         json.dumps(

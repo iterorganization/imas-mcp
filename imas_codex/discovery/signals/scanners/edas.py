@@ -174,7 +174,7 @@ class EDASScanner:
                     data_access=data_access.id,
                     unit=units,
                     description=description,  # May be Japanese
-                    discovery_source="edas_enumeration",
+                    discovery_source="edas",
                     example_shot=ref_shot,
                 )
             )
