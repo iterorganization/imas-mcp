@@ -128,9 +128,14 @@ def _format_sources(groups: list[dict[str, Any]]) -> str:
         key = g.get("group_key", "")
         desc = g.get("description", "")
         members = g.get("member_count", 0)
+        domain = g.get("physics_domain", "")
         existing = g.get("imas_mappings", [])
         mapped = [m for m in existing if m.get("target_id")]
-        line = f"- {gid} (key={key}, members={members})"
+        line = f"- {gid}"
+        if domain:
+            line += f" (domain={domain}, members={members})"
+        else:
+            line += f" (key={key}, members={members})"
         if desc:
             line += f": {desc}"
         # Enriched metadata from representative signal
@@ -154,6 +159,41 @@ def _format_sources(groups: list[dict[str, Any]]) -> str:
             line += f"\n  [already mapped → {targets}]"
         lines.append(line)
     return "\n".join(lines) if lines else "(no sources)"
+
+
+def _format_source_detail(source: dict[str, Any]) -> str:
+    """Format a single signal source as structured markdown for the prompt."""
+    parts: list[str] = []
+    sid = source.get("id", "unknown")
+    parts.append(f"**Source ID**: {sid}")
+    desc = source.get("description", "")
+    if desc:
+        parts.append(f"**Description**: {desc}")
+    rep_desc = source.get("rep_description")
+    if rep_desc and rep_desc != desc:
+        parts.append(f"**Representative Signal**: {rep_desc[:200]}")
+    domain = source.get("physics_domain")
+    if domain:
+        parts.append(f"**Physics Domain**: {domain}")
+    parts.append(f"**Units**: {source.get('rep_unit') or 'unknown'}")
+    sign = source.get("rep_sign_convention")
+    parts.append(f"**Sign Convention**: {sign or 'unknown'}")
+    cocos = source.get("rep_cocos")
+    parts.append(f"**COCOS**: {cocos or 'not set'}")
+    members = source.get("member_count", 0)
+    parts.append(f"**Members**: {members} signals")
+    key = source.get("group_key", "")
+    if key:
+        parts.append(f"**Accessor Pattern**: {key}")
+    accessors = source.get("sample_accessors")
+    if accessors:
+        parts.append(f"**Sample Accessors**: {', '.join(str(a) for a in accessors[:5])}")
+    existing = source.get("imas_mappings", [])
+    mapped = [m for m in existing if m.get("target_id")]
+    if mapped:
+        targets = ", ".join(m["target_id"] for m in mapped)
+        parts.append(f"**Existing Mappings**: {targets}")
+    return "\n".join(parts)
 
 
 def _format_fields(fields: list[dict[str, Any]]) -> str:
@@ -376,7 +416,7 @@ def map_signals(
             facility=facility,
             ids_name=ids_name,
             section_path=section_path,
-            signal_source_detail=json.dumps(sg_detail, indent=2, default=str),
+            signal_source_detail=_format_source_detail(sg_detail),
             imas_fields=_format_fields(subtree_fields or fields),
             unit_analysis=_format_unit_analysis(
                 [sg_detail] if sg_detail else [], subtree_fields or fields

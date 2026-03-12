@@ -951,7 +951,8 @@ class TestFormatHelpers:
         from imas_codex.ids.mapping import _format_sources
 
         result = _format_sources(sample_groups)
-        assert "pf_coil_1" in result
+        assert "pf_coils:group1" in result
+        assert "domain=magnetic_field_systems" in result
         assert "members=6" in result
 
     def test_format_fields(self, sample_subtree):
