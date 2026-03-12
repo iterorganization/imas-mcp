@@ -9,9 +9,16 @@ Usage:
   imas-codex host iter --set-default 3
                                        Set iter SSH target to 3rd node
   imas-codex host iter --set-default   Auto-select least loaded node
+  imas-codex host iter --set-default 4 --set-llm 5
+                                       Default to node 4, pin LLM proxy to node 5
+  imas-codex host iter --set-llm 5     Pin LLM to node 5 without changing default
 
 Login nodes are discovered dynamically from /etc/hosts on the facility
 gateway — no individual node configuration needed.
+
+By default the ``{facility}-llm`` SSH alias follows ``--set-default``,
+so the LLM proxy moves with you when switching nodes.  Use
+``--set-llm <node>`` to pin the LLM proxy to a specific node instead.
 """
 
 from __future__ import annotations
@@ -576,9 +583,7 @@ def _build_survey_display(
     llm_target = _get_ssh_hostname(llm_alias)
     if llm_target:
         parts.append(
-            Text.from_markup(
-                f"  LLM target:   {llm_alias} → [cyan]{llm_target}[/cyan]"
-            )
+            Text.from_markup(f"  LLM target:   {llm_alias} → [cyan]{llm_target}[/cyan]")
         )
 
     return parts, best_node, best_load
@@ -663,9 +668,26 @@ def _set_ssh_hostname(alias: str, new_hostname: str) -> bool:
     return True
 
 
-def _ensure_ssh_alias(
-    alias: str, parent_alias: str, hostname: str
-) -> bool:
+def _kill_control_sockets(*aliases: str) -> None:
+    """Terminate SSH ControlMaster sockets for the given aliases.
+
+    Must be called **before** updating ``~/.ssh/config`` so that
+    ``ssh -O exit`` resolves to the currently-configured (old) HostName
+    and finds the correct socket file.
+    """
+    for alias in aliases:
+        try:
+            subprocess.run(
+                ["ssh", "-O", "exit", alias],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+        except Exception:
+            pass  # Socket may not exist or already closed
+
+
+def _ensure_ssh_alias(alias: str, parent_alias: str, hostname: str) -> bool:
     """Create or update a derived SSH alias in ~/.ssh/config.
 
     If the alias already exists, updates its HostName.
@@ -877,17 +899,13 @@ def _migrate_from_node(
     )
 
 
-def _resolve_node_fqdn(
-    spec: str, sorted_nodes: list[str], results: dict
-) -> str:
+def _resolve_node_fqdn(spec: str, sorted_nodes: list[str], results: dict) -> str:
     """Resolve a node spec (index, hostname, or FQDN) to an FQDN."""
     try:
         idx = int(spec)
         if 1 <= idx <= len(sorted_nodes):
             return f"{sorted_nodes[idx - 1]}.iter.org"
-        raise click.ClickException(
-            f"Index {idx} out of range (1-{len(sorted_nodes)})"
-        )
+        raise click.ClickException(f"Index {idx} out of range (1-{len(sorted_nodes)})")
     except ValueError:
         candidate = spec.strip()
         if "." not in candidate:
@@ -896,60 +914,26 @@ def _resolve_node_fqdn(
                 return f"{matches[0]}.iter.org"
             elif len(matches) > 1:
                 raise click.ClickException(
-                    f"Ambiguous hostname '{candidate}', "
-                    f"matches: {', '.join(matches)}"
-                )
+                    f"Ambiguous hostname '{candidate}', matches: {', '.join(matches)}"
+                ) from None
             else:
-                raise click.ClickException(f"No node matching '{candidate}'")
+                raise click.ClickException(f"No node matching '{candidate}'") from None
         return candidate
 
 
 def _handle_llm_alias(
     facility: str,
-    llm_node: str,
-    new_default_fqdn: str | None,
+    llm_fqdn: str,
     results: dict,
-    sorted_nodes: list[str],
 ) -> None:
     """Create or update the {facility}-llm SSH alias.
 
     Args:
         facility: Facility name (e.g. "iter").
-        llm_node: Node spec — index, hostname, "keep", or FQDN.
-        new_default_fqdn: The new default FQDN (from --set-default), if any.
-        results: Survey results dict.
-        sorted_nodes: Sorted node short names.
+        llm_fqdn: Fully-qualified domain name for the LLM node.
+        results: Survey results dict (for reachability check).
     """
     llm_alias = f"{facility}-llm"
-
-    if llm_node == "keep":
-        # Pin LLM to the CURRENT default (before any --set-default changed it)
-        # If --set-default was used, new_default_fqdn is the NEW target;
-        # the old target is now the LLM node. But since _set_ssh_hostname
-        # already updated the alias, we need to figure out the old value.
-        # In practice "keep" means: keep LLM where it currently is.
-        existing = _get_ssh_hostname(llm_alias)
-        if existing:
-            click.echo(
-                click.style("  · ", fg="dim")
-                + f"LLM already pinned: {llm_alias} → "
-                + click.style(existing, fg="cyan")
-            )
-            return
-        # No existing LLM alias — use the previous default before switch
-        # The caller should have passed the pre-switch hostname, but
-        # since set_default already updated it, read from the survey:
-        # use the node that's currently running litellm processes.
-        current_default = _get_ssh_hostname(facility)
-        if current_default:
-            llm_fqdn = current_default
-        else:
-            raise click.ClickException(
-                "Cannot determine current LLM node. "
-                "Specify a node explicitly: --llm 5"
-            )
-    else:
-        llm_fqdn = _resolve_node_fqdn(llm_node, sorted_nodes, results)
 
     llm_short = llm_fqdn.split(".")[0]
     if llm_short in results and results[llm_short] is None:
@@ -957,6 +941,15 @@ def _handle_llm_alias(
             f"Node '{llm_short}' is unreachable — refusing "
             f"to set as LLM host. Pick a reachable node."
         )
+
+    existing = _get_ssh_hostname(llm_alias)
+    if existing == llm_fqdn:
+        click.echo(
+            click.style("  · ", fg="dim")
+            + f"LLM already set: {llm_alias} → "
+            + click.style(existing, fg="cyan")
+        )
+        return
 
     if _ensure_ssh_alias(llm_alias, facility, llm_fqdn):
         click.echo(
@@ -1004,6 +997,8 @@ def host(ctx: click.Context) -> None:
       imas-codex host                    Local node load + processes
       imas-codex host iter               Survey ITER login nodes
       imas-codex host iter --set-default 3
+      imas-codex host iter --set-default 4 --set-llm 5
+      imas-codex host iter --set-llm 5   Pin LLM to specific node
       imas-codex host status             SSH connectivity check
       imas-codex host add <name>         Add SSH host entry
     """
@@ -1034,15 +1029,13 @@ def host(ctx: click.Context) -> None:
     ),
 )
 @click.option(
-    "--llm",
+    "--set-llm",
     "llm_node",
     default=None,
-    is_flag=False,
-    flag_value="keep",
     help=(
-        "Set LLM proxy node: node index, hostname, 'keep' to pin to "
-        "current default, or omit to leave unchanged. "
-        "Creates a {facility}-llm SSH alias."
+        "Pin LLM proxy to a specific node (index or hostname), "
+        "decoupling it from the default SSH target. "
+        "Without this flag, the LLM alias follows --set-default."
     ),
 )
 def host_survey(
@@ -1059,22 +1052,22 @@ def host_survey(
     per node.
 
     Use --set-default to update ~/.ssh/config to target a specific
-    login node for all future SSH/cx connections.
+    login node for all future SSH/cx connections.  The {facility}-llm
+    alias follows automatically so the LLM proxy moves with you.
 
-    Use --llm to pin the LLM proxy to a specific node, decoupled from
-    the default SSH target.  This prevents node switches from breaking
-    the LLM proxy connection.
+    Use --set-llm to pin the LLM proxy to a different node, decoupled
+    from the default SSH target.  Useful when you want the proxy on a
+    less-loaded node.
 
     \b
     Examples:
         imas-codex host iter                    # Survey ITER login nodes
         imas-codex host iter --watch            # Continuous monitoring
-        imas-codex host iter --set-default 3    # Pick node #3
-        imas-codex host iter --set-default      # Auto-pick least loaded
-        imas-codex host iter --set-default 4 --llm 5
+        imas-codex host iter --set-default 3    # Pick node #3, LLM follows
+        imas-codex host iter --set-default      # Auto-pick, LLM follows
+        imas-codex host iter --set-default 4 --set-llm 5
                                                 # Default to #4, LLM on #5
-        imas-codex host iter --set-default 4 --llm keep
-                                                # Switch default, keep LLM where it is
+        imas-codex host iter --set-llm 5        # Pin LLM without changing default
     """
     from imas_codex.discovery.base.facility import get_facility
 
@@ -1102,7 +1095,7 @@ def host_survey(
 
         parts, _, _ = _build_survey_display(results, facility, current_target)
         for part in parts:
-            if isinstance(part, (Table, Text)):
+            if isinstance(part, Table | Text):
                 console.print(part)
         click.echo()
 
@@ -1153,9 +1146,11 @@ def host_survey(
                         raise click.ClickException(
                             f"Ambiguous hostname '{candidate}', "
                             f"matches: {', '.join(matches)}"
-                        )
+                        ) from None
                     else:
-                        raise click.ClickException(f"No node matching '{candidate}'")
+                        raise click.ClickException(
+                            f"No node matching '{candidate}'"
+                        ) from None
                 else:
                     target_fqdn = candidate
 
@@ -1170,12 +1165,39 @@ def host_survey(
             current = _get_ssh_hostname(facility)
             if current == target_fqdn:
                 click.echo(f"  Already set: {facility} → {target_fqdn}")
-            elif _set_ssh_hostname(facility, target_fqdn):
+            else:
+                # Kill ControlMaster sockets BEFORE config update so
+                # ssh -O exit resolves to the old (current) HostName.
+                sockets_to_kill = [facility]
+                llm_alias = f"{facility}-llm"
+                if _get_ssh_hostname(llm_alias) is not None:
+                    sockets_to_kill.append(llm_alias)
+                _kill_control_sockets(*sockets_to_kill)
+
+                if not _set_ssh_hostname(facility, target_fqdn):
+                    raise click.ClickException(
+                        f"Could not update SSH config for '{facility}'. "
+                        f"Ensure a 'Host {facility}' block with a HostName "
+                        f"directive exists in ~/.ssh/config"
+                    )
+
                 click.echo(
                     click.style("  ✓ ", fg="green")
                     + f"Updated: {facility} → "
                     + click.style(target_fqdn, fg="cyan", bold=True)
                 )
+
+                # Stop local tunnels — they still forward to the old node
+                from imas_codex.remote.tunnel import stop_tunnel
+
+                if stop_tunnel(facility):
+                    click.echo(
+                        click.style("  ✓ ", fg="green")
+                        + "Stopped stale tunnels (restart with "
+                        + click.style("imas-codex tunnel start", bold=True)
+                        + ")"
+                    )
+
                 # Migrate: clean up processes and zellij sessions
                 # on the old node
                 if current:
@@ -1185,26 +1207,23 @@ def host_survey(
                         user,
                         timeout,
                     )
-            else:
-                raise click.ClickException(
-                    f"Could not update SSH config for '{facility}'. "
-                    f"Ensure a 'Host {facility}' block with a HostName "
-                    f"directive exists in ~/.ssh/config"
-                )
 
-        # Handle --llm within set-default context (reuse results/sorted_nodes)
+        # LLM alias: --set-llm pins to explicit node, otherwise follows default
         if llm_node is not None:
-            _handle_llm_alias(
-                facility, llm_node, target_fqdn, results, sorted_nodes
-            )
+            llm_fqdn = _resolve_node_fqdn(llm_node, sorted_nodes, results)
+            _handle_llm_alias(facility, llm_fqdn, results)
+        elif target_fqdn:
+            # No --set-llm: LLM travels with the new default
+            _handle_llm_alias(facility, target_fqdn, results)
 
         return
 
     if llm_node is not None:
-        # --llm used without --set-default
+        # --set-llm used without --set-default
         results, nodes = _discover_and_survey()
         sorted_nodes = sorted(results)
-        _handle_llm_alias(facility, llm_node, None, results, sorted_nodes)
+        llm_fqdn = _resolve_node_fqdn(llm_node, sorted_nodes, results)
+        _handle_llm_alias(facility, llm_fqdn, results)
         return
 
     if watch:
@@ -1453,6 +1472,19 @@ def host_kill(
     gateway = config.get("ssh_gateway", "sdcc-login.iter.org")
     user = config.get("ssh_user", "")
 
+    # Parse --older-than duration to seconds
+    min_age_seconds = None
+    if older_than:
+        import re as _re
+
+        m = _re.fullmatch(r"(\d+)\s*([smhd])", older_than.strip().lower())
+        if not m:
+            raise click.ClickException(
+                f"Invalid duration '{older_than}'. Use e.g. 30m, 2h, 1d"
+            )
+        val, unit = int(m.group(1)), m.group(2)
+        min_age_seconds = val * {"s": 1, "m": 60, "h": 3600, "d": 86400}[unit]
+
     click.echo(f"Discovering login nodes on {click.style(facility, fg='cyan')}…")
     nodes = _discover_login_nodes(ssh_host, timeout=timeout)
     if not nodes:
@@ -1473,9 +1505,11 @@ def host_kill(
             if len(matches) == 1:
                 nodes = matches
             elif not matches:
-                raise click.ClickException(f"No node matching '{target_node}'")
+                raise click.ClickException(
+                    f"No node matching '{target_node}'"
+                ) from None
             else:
-                raise click.ClickException(f"Ambiguous: {', '.join(matches)}")
+                raise click.ClickException(f"Ambiguous: {', '.join(matches)}") from None
 
     click.echo(f"Querying {len(nodes)} node(s)…\n")
     results = _gather_survey_data(nodes, gateway, user, timeout)
