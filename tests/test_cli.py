@@ -163,13 +163,13 @@ class TestCLICommands:
         assert result.exit_code == 0
         assert "node" in result.output.lower() or "ssh" in result.output.lower()
 
-    def test_host_list_help(self, runner):
-        """host list command has help."""
+    def test_host_status_help(self, runner):
+        """host status command has help."""
         from imas_codex.cli import main
 
-        result = runner.invoke(main, ["host", "list", "--help"])
+        result = runner.invoke(main, ["host", "status", "--help"])
         assert result.exit_code == 0
-        assert "login node" in result.output.lower()
+        assert "ssh" in result.output.lower()
 
     def test_release_help(self, runner):
         """release command has help."""
@@ -352,3 +352,28 @@ class TestHostCommand:
             assert _get_ssh_hostname("iter") == "98dci4-srv-1005.iter.org"
             # sdcc should be untouched
             assert _get_ssh_hostname("sdcc") == "98dci4-srv-1003.iter.org"
+
+    def test_host_group_routes_facility_to_survey(self):
+        """Unknown subcommands are routed to the hidden survey command."""
+        from click.testing import CliRunner
+
+        from imas_codex.cli.host import host
+
+        runner = CliRunner()
+        # "fakefacility" isn't a real facility, but the routing should
+        # inject "survey" and Click should parse it as the survey command
+        # with facility="fakefacility". It will fail at get_facility(),
+        # but we check it doesn't fail with "No such command".
+        result = runner.invoke(host, ["fakefacility"])
+        assert "No such command" not in (result.output or "")
+
+    def test_host_status_is_subcommand(self):
+        """'status' is dispatched as a subcommand, not a facility."""
+        from click.testing import CliRunner
+
+        from imas_codex.cli.host import host
+
+        runner = CliRunner()
+        result = runner.invoke(host, ["status", "--help"])
+        assert result.exit_code == 0
+        assert "SSH connectivity" in result.output
