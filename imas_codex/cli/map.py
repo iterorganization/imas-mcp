@@ -285,8 +285,11 @@ def map_validate(facility: str, ids_name: str) -> None:
     from imas_codex.graph.client import GraphClient
     from imas_codex.ids.tools import search_existing_mappings
     from imas_codex.ids.validation import (
+        compute_assembly_coverage,
+        compute_confidence_distribution,
         compute_coverage,
         compute_signal_coverage,
+        compute_signal_source_coverage,
         validate_mapping,
     )
 
@@ -366,6 +369,73 @@ def map_validate(facility: str, ids_name: str) -> None:
             if len(sig_cov.unmapped_groups) > 10:
                 click.echo(
                     f"    ... and {len(sig_cov.unmapped_groups) - 10} more"
+                )
+
+    # Extended signal source coverage per IDS (8.1)
+    src_cov = compute_signal_source_coverage(facility, ids_name, gc=gc)
+    if src_cov.total_enriched_matching > 0:
+        click.echo(
+            f"\nSignal source coverage ({facility}/{ids_name}): "
+            f"{src_cov.mapped_to_ids}/{src_cov.total_enriched_matching} "
+            f"enriched sources mapped ({src_cov.enriched_mapped_pct:.1f}%)"
+        )
+        if src_cov.unmapped_enriched:
+            shown = src_cov.unmapped_enriched[:10]
+            click.echo(f"  Unmapped enriched: {', '.join(shown)}")
+            if len(src_cov.unmapped_enriched) > 10:
+                click.echo(
+                    f"    ... and {len(src_cov.unmapped_enriched) - 10} more"
+                )
+    if src_cov.discovered_sources > 0:
+        click.echo(
+            f"  Underspecified (discovered, not enriched): "
+            f"{src_cov.discovered_sources}"
+        )
+    if src_cov.multi_target_sources > 0:
+        click.echo(
+            f"  Multi-target sources: {src_cov.multi_target_sources}"
+        )
+
+    # Assembly coverage (8.2)
+    asm_cov = compute_assembly_coverage(facility, ids_name, gc=gc)
+    if asm_cov.total_sections > 0:
+        click.echo(
+            f"\nAssembly coverage ({ids_name}): "
+            f"{asm_cov.sections_with_config}/{asm_cov.total_sections} "
+            f"sections configured"
+        )
+        if asm_cov.sections_without_config:
+            click.echo(
+                f"  Unconfigured: {', '.join(asm_cov.sections_without_config)}"
+            )
+        click.echo(
+            f"  Patterns: {asm_cov.default_pattern_count} default "
+            f"(array_per_node), {asm_cov.custom_pattern_count} custom"
+        )
+        click.echo(
+            f"  init_arrays: {asm_cov.init_arrays_configured} configured, "
+            f"{asm_cov.init_arrays_unconfigured} unconfigured"
+        )
+
+    # Confidence distribution (8.3)
+    conf_dist = compute_confidence_distribution(bindings)
+    if conf_dist.total_bindings > 0:
+        click.echo(
+            f"\nConfidence distribution ({conf_dist.total_bindings} bindings, "
+            f"avg {conf_dist.average_confidence:.2f}):"
+        )
+        click.echo(
+            f"  High (>0.8): {conf_dist.high_count}  "
+            f"Medium (0.5-0.8): {conf_dist.medium_count}  "
+            f"Low (<0.5): {conf_dist.low_count}"
+        )
+        if conf_dist.low_bindings:
+            click.echo("  Low-confidence (review needed):")
+            for entry in conf_dist.low_bindings[:10]:
+                click.echo(f"    {entry}")
+            if len(conf_dist.low_bindings) > 10:
+                click.echo(
+                    f"    ... and {len(conf_dist.low_bindings) - 10} more"
                 )
 
 
