@@ -69,41 +69,6 @@ data_systems:
     setup_commands:
       - source /etc/profile.d/modules.sh
       - module load jet/1.0
-    # JPF subsystem codes (32 subsystems, 2-char codes)
-    # Discovered via jpfsubsystems() TDI function
-    subsystem_codes:
-      - DA  # Diagnostics A
-      - DB  # Diagnostics B
-      - DC  # Diagnostics C
-      - DD  # Diagnostics D
-      - DE  # Diagnostics E
-      - DF  # Diagnostics F
-      - DG  # Diagnostics G
-      - DH  # Diagnostics H
-      - DI  # Diagnostics I
-      - PF  # Poloidal Field
-      - TF  # Toroidal Field
-      - PL  # Plasma
-      - GS  # Gas
-      - VC  # Vacuum
-      - AH  # Additional Heating
-      - RF  # Radio Frequency
-      - CC  # Central Control
-      - LH  # Lower Hybrid
-      - MC  # Machine Control
-      - NM  # Neutron Monitoring
-      - PD  # PD subsystem
-      - PM  # PM subsystem
-      - SA  # Safety A
-      - SC  # Safety C
-      - SS  # SS subsystem
-      - TB  # TB subsystem
-      - XC  # XC subsystem
-      - XG  # XG subsystem
-      - YC  # YC subsystem
-      - YD  # YD subsystem
-      - YE  # YE subsystem
-      - DJ  # DJ subsystem
     # TDI data access functions (documentary only, used by scanners):
     #   dpf("{subsystem}/{signal}", {shot})      — Raw JPF signals
     #   ppf("{dda}/{dtype}", {shot})              — Processed PPF data
@@ -120,8 +85,7 @@ data_systems:
   # JPF (JET Processing Facility) raw hardware diagnostic signals.
   # Organized by 2-char subsystem code + signal name (e.g., DA/C2-IPLA).
   # Accessed via MDSplus thin-client TDI function: dpf("subsystem/signal", shot).
-  # Config references the MDSplus server and subsystem codes from the
-  # mdsplus section above — the JPF scanner uses these at runtime.
+  # Enumerated via getdat module: zadop() opens pulse file, adlnod() lists nodes.
   jpf:
     server: mdsplus.jet.uk
     reference_shot: 99896
@@ -129,31 +93,79 @@ data_systems:
     setup_commands:
       - source /etc/profile.d/modules.sh
       - module load jet/1.0
-    subsystem_codes:
-      - DA  # Diagnostics A — magnetics, plasma current
-      - DB  # Diagnostics B — particle measurements
-      - DC  # Diagnostics C — EM wave diagnostics
-      - DD  # Diagnostics D — radiation measurements
-      - DE  # Diagnostics E — particle measurements
-      - DF  # Diagnostics F — EM wave diagnostics
-      - DG  # Diagnostics G — particle measurements
-      - DH  # Diagnostics H — EM wave diagnostics
-      - DI  # Diagnostics I — radiation measurements
-      - DJ  # Diagnostics J
-      - PF  # Poloidal Field
-      - TF  # Toroidal Field
-      - PL  # Plasma (inactive for recent shots)
-      - GS  # Gas supply
-      - VC  # Vacuum
-      - AH  # Additional Heating
-      - RF  # Radio Frequency heating
-      - SA  # Safety A
-      - SC  # Safety C
-      - CC  # Central Control (inactive for recent shots)
-      - LH  # Lower Hybrid (inactive for recent shots)
-      - MC  # Machine Control (inactive for recent shots)
-      - NM  # Neutron Monitoring (inactive for recent shots)
-      - YC  # YC subsystem
+    subsystems:
+      - code: DA
+        description: Diagnostics A — magnetics, plasma current, flux loops
+        physics_domain: magnetic_field_diagnostics
+      - code: DB
+        description: Diagnostics B — interferometry, polarimetry
+        physics_domain: particle_measurement_diagnostics
+      - code: DC
+        description: Diagnostics C — ECE, reflectometry
+        physics_domain: electromagnetic_wave_diagnostics
+      - code: DD
+        description: Diagnostics D — bolometry, soft X-ray
+        physics_domain: radiation_measurement_diagnostics
+      - code: DE
+        description: Diagnostics E — charge exchange, beam emission
+        physics_domain: particle_measurement_diagnostics
+      - code: DF
+        description: Diagnostics F — microwave diagnostics
+        physics_domain: electromagnetic_wave_diagnostics
+      - code: DG
+        description: Diagnostics G — visible spectroscopy, Langmuir probes
+        physics_domain: particle_measurement_diagnostics
+      - code: DH
+        description: Diagnostics H — IR cameras, thermocouples
+        physics_domain: electromagnetic_wave_diagnostics
+      - code: DI
+        description: Diagnostics I — neutron diagnostics, gamma cameras
+        physics_domain: radiation_measurement_diagnostics
+      - code: DJ
+        description: Diagnostics J
+        physics_domain: general
+      - code: PF
+        description: Poloidal Field coil system
+        physics_domain: magnetic_field_diagnostics
+      - code: TF
+        description: Toroidal Field coil system
+        physics_domain: magnetic_field_diagnostics
+      - code: PL
+        description: Plasma control (inactive for recent shots)
+        physics_domain: magnetics
+      - code: GS
+        description: Gas supply and fuelling system
+        physics_domain: plant_systems
+      - code: VC
+        description: Vacuum vessel and pumping
+        physics_domain: plant_systems
+      - code: AH
+        description: Additional Heating — NBI, ICRH power systems
+        physics_domain: auxiliary_heating
+      - code: RF
+        description: Radio Frequency heating — ICRH antennas
+        physics_domain: auxiliary_heating
+      - code: SA
+        description: Safety systems A
+        physics_domain: plant_systems
+      - code: SC
+        description: Safety systems C
+        physics_domain: plant_systems
+      - code: CC
+        description: Central Control (inactive for recent shots)
+        physics_domain: plant_systems
+      - code: LH
+        description: Lower Hybrid heating (inactive for recent shots)
+        physics_domain: auxiliary_heating
+      - code: MC
+        description: Machine Control (inactive for recent shots)
+        physics_domain: plant_systems
+      - code: NM
+        description: Neutron Monitoring
+        physics_domain: radiation_measurement_diagnostics
+      - code: YC
+        description: YC subsystem
+        physics_domain: plant_systems
 
   # Machine description — geometry data for JET's tokamak components.
   # Accessed via the DeviceXMLScanner plugin (scanner_type: device_xml).

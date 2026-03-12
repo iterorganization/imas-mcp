@@ -50,6 +50,41 @@ PPF data is organized as DDA (Diagnostic Data Area) / Dtype.
 - DDA names often indicate the diagnostic or analysis code
 - The DDA name is the primary context for classification
 - Common DDAs: EFIT (equilibrium), HRTS (Thomson), KK3 (ECE), BOLO (bolometry)
+- DDA descriptions may be provided in the group header — use them for classification
+- Less common DDAs (e.g., MAGF, KS3A, CXHM) may lack descriptions — use signal
+  names, wiki context, and physics knowledge to infer the diagnostic
+
+### JPF (JET Private Facility)
+
+JPF is JET's raw data acquisition system. Data is organized by subsystem/signal.
+- Subsystems are identified by 2-letter codes (e.g., DA, DB, DC)
+- Each subsystem covers a specific diagnostic area (e.g., DA = magnetics,
+  DB = interferometry, DC = ECE)
+- JPF signals are raw, unprocessed measurements from analogue and digital
+  acquisition hardware
+- Signal names follow the pattern `SUBSYSTEM/SIGNAL_NAME`
+- Access: `dpf("SUBSYSTEM/SIGNAL", shot)` via MDSplus
+- The `existing_description` field often contains hardware-level descriptions
+  from the JPF database — use these when available
+- JPF signals complement PPF signals: JPF = raw acquisition, PPF = processed data
+
+### Device Description (device_xml)
+
+Device XML signals describe the **static physical geometry** of tokamak components.
+These are NOT time-varying plasma measurements — they are configuration data:
+- Magnetic probe positions (R, Z coordinates) and orientations (angles)
+- PF coil geometry, turns, and resistance values
+- Passive structure (wall, limiter) contour coordinates
+- Flux loop positions
+
+Key characteristics:
+- Values are versioned by **configuration epoch** — each epoch represents
+  a change to the machine (new divertor, probe added/removed, wall change,
+  software/calibration update)
+- The `epoch` field describes the specific machine configuration state
+- Different epochs have different probe counts, positions, and configurations
+- The accessor `device_xml:section/instance/field` identifies the component type,
+  instance number, and measured quantity
 
 ### EDAS (JT-60SA Experiment Data Access)
 
@@ -136,6 +171,16 @@ When `applicability` is provided:
 - Indicates the version range where this signal exists in the tree
 - Useful for understanding if a signal is legacy or current
 
+When `epoch` is provided:
+- Describes the specific configuration epoch this signal belongs to
+- Includes the epoch description (e.g., "Mark IIA Gas Box divertor"), valid shot range,
+  and any configuration metadata (wall type, calibration state)
+- Use this to understand the physical context — e.g., different epochs have different
+  numbers of magnetic probes, different divertor geometries, different wall materials
+- Epochs can represent hardware changes, software upgrades, or calibration updates
+- **Do NOT describe epoch shot numbers as "pulse" numbers** — they are epoch boundary
+  identifiers marking when the machine configuration changed
+
 ## Diagnostic Naming Convention
 
 {% include "schema/diagnostic-categories.md" %}
@@ -163,6 +208,35 @@ The category and data_name provide classification context:
 - Look at the category for diagnostic grouping
 - Use existing descriptions (including Japanese) for physics domain
 - Data names often follow MDSplus-like conventions
+
+### Using JPF Context
+
+JPF subsystem codes identify the diagnostic area:
+- `DA/*` → Diagnostics A: magnetics (Rogowski coils, saddle coils, flux loops)
+- `DB/*` → Diagnostics B: interferometry, polarimetry
+- `DC/*` → Diagnostics C: ECE, reflectometry
+- `DD/*` → Diagnostics D: bolometry, soft X-ray
+- `DE/*` → Diagnostics E: charge exchange, beam emission
+- `PF/*` → Poloidal Field coil currents and voltages
+- `TF/*` → Toroidal Field coil system
+- `GS/*` → Gas supply and fuelling
+- `AH/*` → Additional Heating (NBI, ICRH power systems)
+
+Use `existing_description` from the JPF database when available.
+
+### Using Device XML Context
+
+Device XML signals describe machine geometry, not plasma measurements:
+- `magprobes/N/r` → R coordinate of magnetic probe N
+- `magprobes/N/z` → Z coordinate of magnetic probe N
+- `magprobes/N/angle` → orientation angle of probe N
+- `pfpassive/N/r,z` → passive structure coordinates
+- `pfcoils/N/turns,resistance` → PF coil parameters
+
+Since these are geometry values, descriptions should specify:
+- What physical component (e.g., "magnetic probe", "PF coil", "flux loop")
+- What quantity (position, angle, turns, resistance)
+- The instance/probe number for identification
 
 ### Using Path Context
 

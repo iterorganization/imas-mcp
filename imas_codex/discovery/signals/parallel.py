@@ -268,27 +268,18 @@ def has_pending_work(facility: str) -> bool:
 
 
 def has_pending_enrich_work(facility: str) -> bool:
-    """Check if there are signals awaiting enrichment.
-
-    Mirrors the claim_signals_for_enrichment filter: excludes non-representative
-    members of SignalSource groups (those are handled by propagation, not LLM).
-    """
+    """Check if there are signals awaiting enrichment."""
     try:
         with GraphClient() as gc:
             result = gc.query(
                 """
                 MATCH (s:FacilitySignal {facility_id: $facility})
-                WHERE s.status IN [$discovered, $underspecified]
+                WHERE s.status = $discovered
                   AND s.claimed_at IS NULL
-                  AND NOT EXISTS {
-                    MATCH (s)-[:MEMBER_OF]->(sg:SignalSource)
-                    WHERE sg.representative_id <> s.id
-                  }
                 RETURN count(s) > 0 AS has_work
                 """,
                 facility=facility,
                 discovered=FacilitySignalStatus.discovered.value,
-                underspecified=FacilitySignalStatus.underspecified.value,
             )
             return result[0]["has_work"] if result else False
     except Exception:
@@ -1421,55 +1412,6 @@ def propagate_source_enrichment(
                 updated,
             )
 
-        return updated
-
-
-def propagate_late_followers(facility: str) -> int:
-    """Propagate enrichment to late followers whose representative is already enriched.
-
-    When scan discovers new signals after their group's representative was
-    already enriched, those followers are stuck as ``discovered`` with a
-    MEMBER_OF link but no enrichment data. This function finds such signals
-    and copies enrichment from their representative.
-
-    Returns:
-        Number of late followers updated.
-    """
-    with GraphClient() as gc:
-        result = gc.query(
-            """
-            MATCH (s:FacilitySignal {facility_id: $facility})
-                  -[:MEMBER_OF]->(sg:SignalSource)
-            WHERE s.status = $discovered
-              AND sg.representative_id <> s.id
-            MATCH (rep:FacilitySignal {id: sg.representative_id})
-            WHERE rep.status IN [$enriched, $checked]
-            SET s.status = $enriched,
-                s.physics_domain = rep.physics_domain,
-                s.description = rep.description,
-                s.name = rep.name,
-                s.diagnostic = CASE WHEN rep.diagnostic IS NOT NULL THEN rep.diagnostic ELSE s.diagnostic END,
-                s.analysis_code = CASE WHEN rep.analysis_code IS NOT NULL THEN rep.analysis_code ELSE s.analysis_code END,
-                s.keywords = rep.keywords,
-                s.sign_convention = CASE WHEN rep.sign_convention IS NOT NULL THEN rep.sign_convention ELSE s.sign_convention END,
-                s.llm_cost = 0.0,
-                s.enriched_at = datetime(),
-                s.claimed_at = null,
-                s.enrichment_source = 'late_follower_propagation'
-            RETURN count(s) AS updated
-            """,
-            facility=facility,
-            discovered=FacilitySignalStatus.discovered.value,
-            enriched=FacilitySignalStatus.enriched.value,
-            checked=FacilitySignalStatus.checked.value,
-        )
-        updated = result[0]["updated"] if result else 0
-        if updated > 0:
-            logger.info(
-                "Propagated enrichment to %d late followers for %s",
-                updated,
-                facility,
-            )
         return updated
 
 
@@ -3024,9 +2966,7 @@ async def enrich_worker(
         facility_config: dict, subsystem_code: str
     ) -> str:
         """Look up JPF subsystem description from facility config."""
-        jpf_config = (
-            facility_config.get("data_systems", {}).get("jpf", {})
-        )
+        jpf_config = facility_config.get("data_systems", {}).get("jpf", {})
         for sub in jpf_config.get("subsystems", []):
             if sub.get("code") == subsystem_code:
                 return sub.get("description", "")
@@ -3037,9 +2977,7 @@ async def enrich_worker(
 
         Falls back to well-known DDA descriptions when config has none.
         """
-        ppf_config = (
-            facility_config.get("data_systems", {}).get("ppf", {})
-        )
+        ppf_config = facility_config.get("data_systems", {}).get("ppf", {})
         dda_descs = {}
         for dda_entry in ppf_config.get("dda_descriptions", []):
             dda_descs[dda_entry["code"]] = dda_entry.get("description", "")
@@ -3175,26 +3113,19 @@ async def enrich_worker(
             query = f"{func_name} TDI function {signal_names}"
         elif group_key.startswith("ppf:"):
             dda = group_key[4:]
-            signal_names = " ".join(
-                s.get("name") or "" for _, s in indexed_signals[:5]
-            )
+            signal_names = " ".join(s.get("name") or "" for _, s in indexed_signals[:5])
             query = f"JET {dda} diagnostic {signal_names}"
         elif group_key.startswith("edas:"):
             cat = group_key[5:]
             query = f"{cat} JT-60SA diagnostic data"
         elif group_key.startswith("jpf:"):
             subsystem = group_key[4:]
-            signal_names = " ".join(
-                s.get("name") or "" for _, s in indexed_signals[:5]
-            )
+            signal_names = " ".join(s.get("name") or "" for _, s in indexed_signals[:5])
             query = f"JET JPF {subsystem} diagnostic {signal_names}"
         elif group_key == "device_xml":
-            signal_names = " ".join(
-                s.get("name") or "" for _, s in indexed_signals[:5]
-            )
+            signal_names = " ".join(s.get("name") or "" for _, s in indexed_signals[:5])
             query = (
-                f"JET machine description geometry coils probes "
-                f"sensors {signal_names}"
+                f"JET machine description geometry coils probes sensors {signal_names}"
             )
         elif group_key.startswith("tree:"):
             tree = group_key[5:]
@@ -3327,22 +3258,6 @@ async def enrich_worker(
                 state.enrich_stats,
             )
 
-        # --- Late follower propagation ---
-        # When scan discovers new signals after their group's representative
-        # was already enriched, propagate enrichment immediately so they
-        # don't block the enrich queue.
-        late_propagated = await asyncio.to_thread(
-            propagate_late_followers,
-            state.facility,
-        )
-        if late_propagated > 0:
-            state.enrich_stats.processed += late_propagated
-            if on_progress:
-                on_progress(
-                    f"propagated to {late_propagated} late followers",
-                    state.enrich_stats,
-                )
-
         # Claim batch of signals (sorted by tdi_function)
         # Batch size 50 - signals grouped by function so one source code per group
         signals = await asyncio.to_thread(
@@ -3431,9 +3346,7 @@ async def enrich_worker(
                 dda_descs = _get_dda_descriptions(state.facility_config)
                 dda_desc = dda_descs.get(dda, "")
                 if dda_desc:
-                    user_lines.append(
-                        f"JET Processed Pulse File — {dda}: {dda_desc}."
-                    )
+                    user_lines.append(f"JET Processed Pulse File — {dda}: {dda_desc}.")
                 else:
                     user_lines.append(
                         f"JET Processed Pulse File signals from "
@@ -3470,9 +3383,7 @@ async def enrich_worker(
                         f"JET JPF (JET Private Facility) signals from "
                         f"subsystem {subsystem}."
                     )
-                user_lines.append(
-                    "Access: dpf(\"SUBSYSTEM/SIGNAL\", shot) via MDSplus"
-                )
+                user_lines.append('Access: dpf("SUBSYSTEM/SIGNAL", shot) via MDSplus')
                 user_lines.append(
                     "JPF signals are raw, unprocessed diagnostic data from "
                     "JET's analogue and digital acquisition systems."
@@ -3494,9 +3405,7 @@ async def enrich_worker(
                     "a hardware state change (e.g., new divertor, probe "
                     "added/removed, wall material change)."
                 )
-                user_lines.append(
-                    "\nSignals from device description:"
-                )
+                user_lines.append("\nSignals from device description:")
 
             elif group_key.startswith("tree:"):
                 tree = group_key[5:]
@@ -3565,8 +3474,7 @@ async def enrich_worker(
                     epoch = sig_tree_ctx.get("epoch_range")
                     if epoch:
                         parts = [
-                            f"versions "
-                            f"{epoch['first_version']}-{epoch['last_version']}"
+                            f"versions {epoch['first_version']}-{epoch['last_version']}"
                         ]
                         if epoch.get("first_shot") and epoch.get("last_shot"):
                             parts.append(
@@ -3594,9 +3502,7 @@ async def enrich_worker(
                     if wc:
                         epoch_parts.append(f"wall: {wc}")
                     if epoch_parts:
-                        user_lines.append(
-                            f"hardware_epoch: {', '.join(epoch_parts)}"
-                        )
+                        user_lines.append(f"epoch: {', '.join(epoch_parts)}")
 
                 # Inject wiki context if available
                 wiki_ctx = _find_wiki_context(signal)
