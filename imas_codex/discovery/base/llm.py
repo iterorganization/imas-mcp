@@ -202,13 +202,16 @@ def set_litellm_offline_env() -> None:
 
 
 def suppress_litellm_noise() -> None:
-    """Suppress all LiteLLM diagnostic output.
+    """Suppress all LiteLLM and HuggingFace diagnostic output.
 
     LiteLLM prints "Give Feedback", "Provider List", and debug info
     directly to stdout/stderr via print() calls, bypassing Python's
     logging system. This function suppresses both:
     1. Logger-based output (via logging levels)
     2. Print-based output (via litellm.suppress_debug_info)
+
+    Also suppresses huggingface_hub/transformers/sentence_transformers
+    logging which pollutes discovery output when these are installed.
 
     Call this once at module load time in any module that uses LiteLLM.
     """
@@ -219,12 +222,24 @@ def suppress_litellm_noise() -> None:
     litellm.suppress_debug_info = True
 
     # Suppress all litellm logging to ERROR level
-    for logger_name in ("LiteLLM", "LiteLLM Proxy", "LiteLLM Router", "httpx"):
+    for logger_name in (
+        "LiteLLM",
+        "LiteLLM Proxy",
+        "LiteLLM Router",
+        "httpx",
+        "huggingface_hub",
+        "sentence_transformers",
+        "transformers",
+    ):
         level = logging.WARNING if logger_name == "httpx" else logging.ERROR
         logging.getLogger(logger_name).setLevel(level)
 
     # Environment variables for litellm internals
     os.environ.setdefault("LITELLM_LOG", "ERROR")
+    # Disable hf_xet native bindings (set early in __init__.py too,
+    # but reinforce here in case suppress_litellm_noise is called
+    # before package __init__ in some import path)
+    os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
 
 
 # ---------------------------------------------------------------------------

@@ -980,11 +980,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/a8/af/48ac8483240de756d2438c380746e7130d1c6f75802ef22f3c6d49982787/huggingface_hub-0.36.2-py3-none-any.whl", hash = "sha256:48f0c8eac16145dfce371e9d2d7772854a4f591bcb56c9cf548accf531d54270", size = 566395, upload-time = "2026-02-06T09:24:11.133Z" },
 ]
 
-[package.optional-dependencies]
-hf-xet = [
-    { name = "hf-xet" },
-]
-
 [[package]]
 name = "identify"
 version = "2.6.16"
@@ -1079,7 +1074,6 @@ dev = [
     { name = "fabric" },
     { name = "fastapi" },
     { name = "hdbscan" },
-    { name = "huggingface-hub", extra = ["hf-xet"] },
     { name = "imas-python" },
     { name = "ipykernel" },
     { name = "ipython" },
@@ -1169,7 +1163,6 @@ dev = [
     { name = "fabric", specifier = ">=3.0.0" },
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "hdbscan", specifier = ">=0.8.41" },
-    { name = "huggingface-hub", extras = ["hf-xet"], specifier = ">=0.20.0" },
     { name = "imas-python", specifier = ">=2.0.1" },
     { name = "ipykernel", specifier = ">=6.29.5" },
     { name = "ipython", specifier = ">=9.2.0" },

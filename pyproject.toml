@@ -141,7 +141,10 @@ dev = [
     "fabric>=3.0.0",
     "pykakasi>=2.3.0",
     "jellyfish>=1.2.1",
-    "huggingface_hub[hf_xet]>=0.20.0",
+    # huggingface_hub is a transitive dep of sentence-transformers/smolagents.
+    # Only the cpu/gpu extras need it directly (for model downloads).
+    # The [hf_xet] extra installs native Rust bindings that crash on some
+    # environments (ITER SDCC). HF_HUB_DISABLE_XET=1 is set in __init__.py.
 
     # --- Tree-sitter ---
     "tree-sitter>=0.25.2",
