@@ -921,6 +921,60 @@ def run_command(
     return output.strip() or "(no output)"
 
 
+# ============================================================================
+# Remote Capability Probe
+# ============================================================================
+
+
+_PROBE_SCRIPT = """\
+import json, sys
+caps = {}
+for mod in ("imas", "msgpack", "numpy", "h5py"):
+    try:
+        __import__(mod)
+        caps[mod] = True
+    except ImportError:
+        caps[mod] = False
+json.dump(caps, sys.stdout)
+"""
+
+
+def probe_remote_capabilities(ssh_host: str | None = None) -> dict[str, bool]:
+    """Probe what Python packages are available on the remote host.
+
+    Tests for: imas, msgpack, numpy, h5py.
+
+    Args:
+        ssh_host: SSH host to probe (None = local).
+
+    Returns:
+        Dict mapping package name to availability boolean.
+        On connection failure, returns all False.
+    """
+    import json as _json
+
+    try:
+        raw = run_script_via_stdin(
+            _PROBE_SCRIPT,
+            ssh_host=ssh_host,
+            timeout=30,
+            interpreter="python3",
+        )
+        # Extract JSON from output (skip any stderr lines)
+        for line in raw.splitlines():
+            line = line.strip()
+            if line.startswith("{"):
+                return _json.loads(line)
+        return _json.loads(raw)
+    except Exception:
+        logger.warning(
+            "Failed to probe remote capabilities on %s",
+            ssh_host or "localhost",
+            exc_info=True,
+        )
+        return {"imas": False, "msgpack": False, "numpy": False, "h5py": False}
+
+
 def run_script_via_stdin(
     script: str,
     ssh_host: str | None = None,

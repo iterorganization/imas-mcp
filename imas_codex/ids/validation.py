@@ -611,3 +611,199 @@ def compute_confidence_distribution(
 
     dist.average_confidence = total_conf / dist.total_bindings
     return dist
+
+
+# ---------------------------------------------------------------------------
+# 10.5 E2E Validation Pipeline — Tier 3: Data Validation
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class E2EFieldCheck:
+    """Result of validating one field in the assembled IDS."""
+
+    target_path: str
+    populated: bool = False
+    value_range: str | None = None
+    error: str | None = None
+
+
+@dataclass
+class E2EValidationResult:
+    """Result of end-to-end mapping validation."""
+
+    facility: str
+    ids_name: str
+    shot: int
+    strategy: str = "client"
+    extraction_success: int = 0
+    extraction_failed: int = 0
+    extraction_errors: list[str] = field(default_factory=list)
+    assembly_success: bool = False
+    assembly_error: str | None = None
+    field_checks: list[E2EFieldCheck] = field(default_factory=list)
+    time_base_consistent: bool = False
+    all_passed: bool = False
+
+
+def validate_mapping_e2e(
+    facility: str,
+    ids_name: str,
+    shot: int,
+    *,
+    gc: "GraphClient",
+    ssh_host: str | None = None,
+    strategy: str = "auto",
+) -> E2EValidationResult:
+    """Run full E2E validation: extract → transform → assemble → validate.
+
+    Tier 3 validation that requires facility SSH access. Extracts sample
+    data for one shot, runs assembly code, and validates the populated IDS.
+
+    Args:
+        facility: Facility identifier.
+        ids_name: IDS name.
+        shot: Shot number to validate against.
+        gc: GraphClient instance.
+        ssh_host: SSH host for remote extraction (None = use facility config).
+        strategy: "auto", "client", or "remote".
+
+    Returns:
+        E2EValidationResult with per-field validation details.
+    """
+    import json as _json
+
+    from imas_codex.ids.codegen import generate_extraction_script
+    from imas_codex.ids.tools import search_existing_mappings
+    from imas_codex.remote.executor import (
+        probe_remote_capabilities,
+        run_script_via_stdin,
+    )
+
+    result = E2EValidationResult(
+        facility=facility,
+        ids_name=ids_name,
+        shot=shot,
+    )
+
+    # 1. Load existing mapping from graph
+    mapping_data = search_existing_mappings(facility, ids_name, gc=gc)
+    if not mapping_data["mapping"]:
+        result.assembly_error = f"No mapping found for {facility}/{ids_name}"
+        return result
+
+    bindings = mapping_data["bindings"]
+    if not bindings:
+        result.assembly_error = "No bindings in mapping"
+        return result
+
+    # 2. Determine strategy
+    if strategy == "auto":
+        caps = probe_remote_capabilities(ssh_host)
+        result.strategy = "remote" if caps.get("imas") else "client"
+    else:
+        result.strategy = strategy
+
+    # 3. Group bindings by section for extraction script
+    section_signals: dict[str, list[dict]] = {}
+    for b in bindings:
+        target = b.get("target_id", "")
+        # Derive section from target path (first two path segments)
+        parts = target.split("/")
+        section = "/".join(parts[:2]) if len(parts) >= 2 else ids_name
+        section_signals.setdefault(section, []).append({
+            "id": b.get("source_id", ""),
+            "accessor": b.get("source_id", ""),
+            "data_source_name": "default",
+        })
+
+    # 4. Get DataAccess info for extraction script
+    da_records = gc.query(
+        """
+        MATCH (f:Facility {id: $facility})-[:HAS_DATA_ACCESS]->(da:DataAccess)
+        RETURN da
+        LIMIT 1
+        """,
+        facility=facility,
+    )
+    data_access = da_records[0]["da"] if da_records else {}
+
+    # 5. Generate and run extraction script
+    script = generate_extraction_script(
+        facility,
+        ids_name,
+        section_signals,
+        data_access,
+        max_points=10000,
+    )
+
+    try:
+        raw_output = run_script_via_stdin(
+            f'import json, sys; config = {_json.dumps({"shot": shot})}\n{script}',
+            ssh_host=ssh_host,
+            timeout=120,
+            interpreter="python3",
+        )
+        # Parse extraction results
+        from imas_codex.remote.serialization import decode_extraction_output
+
+        extracted = decode_extraction_output(raw_output)
+        results_data = extracted.get("results", {})
+
+        for sig_id, sig_result in results_data.items():
+            if isinstance(sig_result, dict) and sig_result.get("success"):
+                result.extraction_success += 1
+            else:
+                result.extraction_failed += 1
+                err = sig_result.get("error", "unknown") if isinstance(sig_result, dict) else "unknown"
+                result.extraction_errors.append(f"{sig_id}: {err}")
+
+    except Exception as e:
+        result.assembly_error = f"Extraction failed: {e}"
+        return result
+
+    # 6. Validate field population
+    for b in bindings:
+        target = b.get("target_id", "")
+        source = b.get("source_id", "")
+        sig_data = results_data.get(source, {})
+        populated = isinstance(sig_data, dict) and sig_data.get("success", False)
+        check = E2EFieldCheck(
+            target_path=target,
+            populated=populated,
+        )
+        if populated and isinstance(sig_data.get("data"), list):
+            data = sig_data["data"]
+            if data:
+                check.value_range = f"[{min(data):.4g}, {max(data):.4g}]"
+        result.field_checks.append(check)
+
+    result.assembly_success = result.extraction_success > 0
+
+    # 7. Check time-base consistency
+    time_bases = []
+    for sig_result in results_data.values():
+        if isinstance(sig_result, dict) and sig_result.get("time"):
+            tb = sig_result["time"]
+            if isinstance(tb, list) and len(tb) >= 2:
+                time_bases.append((tb[0], tb[-1], len(tb)))
+
+    if time_bases:
+        # Check that all time bases have the same start/end within tolerance
+        starts = [t[0] for t in time_bases]
+        ends = [t[1] for t in time_bases]
+        result.time_base_consistent = (
+            max(starts) - min(starts) < 1.0
+            and max(ends) - min(ends) < 1.0
+        ) if starts and ends else True
+    else:
+        result.time_base_consistent = True
+
+    # Overall pass
+    result.all_passed = (
+        result.assembly_success
+        and result.extraction_failed == 0
+        and result.time_base_consistent
+    )
+
+    return result

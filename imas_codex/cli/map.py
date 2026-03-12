@@ -5,6 +5,7 @@ Usage:
     imas-codex imas map status FACILITY [IDS_NAME]
     imas-codex imas map show FACILITY IDS_NAME
     imas-codex imas map validate FACILITY IDS_NAME
+    imas-codex imas map validate-e2e FACILITY IDS_NAME --shot SHOT
     imas-codex imas map clear FACILITY IDS_NAME
 """
 
@@ -536,3 +537,101 @@ def map_activate(facility: str, ids_name: str) -> None:
         id=mapping_id,
     )
     click.echo(f"Activated mapping {mapping_id} (was '{current}').")
+
+
+@map_cmd.command("validate-e2e")
+@click.argument("facility")
+@click.argument("ids_name")
+@click.option("--shot", type=int, required=True, help="Shot number to validate against.")
+@click.option(
+    "--strategy",
+    type=click.Choice(["auto", "client", "remote"]),
+    default="auto",
+    help="Execution strategy (default: auto-detect).",
+)
+@click.option("--ssh-host", default=None, help="Override SSH host for extraction.")
+def map_validate_e2e(
+    facility: str,
+    ids_name: str,
+    shot: int,
+    strategy: str,
+    ssh_host: str | None,
+) -> None:
+    """Run end-to-end validation: extract → assemble → validate.
+
+    \b
+    Extracts signal data for a single shot from the facility,
+    runs assembly, and validates the populated IDS.
+
+    \b
+    Examples:
+      imas-codex imas map validate-e2e tcv pf_active --shot 80000
+      imas-codex imas map validate-e2e jet magnetics --shot 99000 --strategy client
+    """
+    configure_cli_logging("map", facility=facility)
+
+    from imas_codex.graph.client import GraphClient
+    from imas_codex.ids.validation import validate_mapping_e2e
+
+    gc = GraphClient()
+
+    click.echo(f"E2E VALIDATION — {facility}/{ids_name} shot {shot}")
+    click.echo("━" * 50)
+
+    result = validate_mapping_e2e(
+        facility,
+        ids_name,
+        shot,
+        gc=gc,
+        ssh_host=ssh_host,
+        strategy=strategy,
+    )
+
+    # Strategy
+    click.echo(f"STRATEGY  {result.strategy}")
+    click.echo()
+
+    # Extraction
+    total = result.extraction_success + result.extraction_failed
+    click.echo(
+        f"EXTRACT   {result.extraction_success} success, "
+        f"{result.extraction_failed} failed (of {total})"
+    )
+    for err in result.extraction_errors[:10]:
+        click.echo(f"  ✗ {err}")
+    if len(result.extraction_errors) > 10:
+        click.echo(f"  ... and {len(result.extraction_errors) - 10} more")
+    click.echo()
+
+    # Assembly
+    if result.assembly_error:
+        click.echo(f"ASSEMBLE  ✗ {result.assembly_error}")
+    elif result.assembly_success:
+        click.echo("ASSEMBLE  ✓ Assembly completed")
+    else:
+        click.echo("ASSEMBLE  ✗ No data extracted")
+    click.echo()
+
+    # Field checks
+    populated = sum(1 for f in result.field_checks if f.populated)
+    click.echo(
+        f"FIELDS    {populated}/{len(result.field_checks)} populated"
+    )
+    for fc in result.field_checks:
+        if not fc.populated:
+            click.echo(f"  ✗ {fc.target_path}")
+        elif fc.value_range:
+            click.echo(f"  ✓ {fc.target_path} {fc.value_range}")
+    click.echo()
+
+    # Time bases
+    tb_mark = "✓" if result.time_base_consistent else "⚠"
+    click.echo(f"TIMEBASES {tb_mark} {'consistent' if result.time_base_consistent else 'inconsistent'}")
+    click.echo()
+
+    # Overall
+    overall = "✓ PASS" if result.all_passed else "✗ FAIL"
+    click.echo(f"RESULT    {overall}")
+
+    if not result.all_passed:
+        raise SystemExit(1)

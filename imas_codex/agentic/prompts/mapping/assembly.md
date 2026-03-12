@@ -74,6 +74,54 @@ For this section, determine:
    - `source_epoch_field`: Field linking to temporal epochs
    - `source_select_via`: Relationship-based selection (alternative to property match)
 
+## Code Generation
+
+In addition to selecting the assembly pattern, generate an imas-python
+code snippet that performs the complete assembly for this section.
+
+The code snippet should:
+1. Accept extracted signal data as a dict: `signals[signal_id] -> {"data": np.array, "time": np.array}`
+2. Apply transforms from the signal mappings (use `execute_transform()`, `convert_units()`, `cocos_sign()`)
+3. Create and populate the imas-python struct-array entries
+4. Handle array sizing, sub-array initialization, and nested paths
+
+Available functions:
+- `execute_transform(value, expr)` — evaluate transform_expression
+- `convert_units(value, from_unit, to_unit)` — pint unit conversion
+- `cocos_sign(label, cocos_in=N, cocos_out=M)` — COCOS sign factor
+- `set_nested(obj, "dotted.path", value)` — set value on imas object
+
+The code will receive:
+- `ids`: An imas-python IDSToplevel object (already created via IDSFactory)
+- `signals`: Dict mapping signal_id to extracted data
+- `mappings`: The signal mapping entries for this section
+
+Example for array_per_node (pf_active/coil):
+
+```python
+def assemble_pf_active_coil(ids, signals, mappings):
+    """Assemble pf_active coil array from mapped signals."""
+    sources = sorted(set(m.source_id for m in mappings))
+    ids.coil.resize(len(sources))
+
+    for i, source_id in enumerate(sources):
+        coil = ids.coil[i]
+        sig_data = signals.get(source_id, {})
+        source_mappings = [m for m in mappings if m.source_id == source_id]
+
+        for m in source_mappings:
+            rel_path = m.target_id.removeprefix("pf_active/coil/")
+            value = sig_data.get(m.source_property)
+            if value is not None:
+                value = execute_transform(value, m.transform_expression)
+                if m.source_units and m.target_units and m.source_units != m.target_units:
+                    value = convert_units(value, m.source_units, m.target_units)
+                set_nested(coil, rel_path.replace("/", "."), value)
+```
+
+Set `assembly_code` to the generated code snippet and `assembly_function_name`
+to the function name (e.g., `assemble_pf_active_coil`).
+
 ## Output Format
 
 Return a JSON object matching the `AssemblyConfig` schema.

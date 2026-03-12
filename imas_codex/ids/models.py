@@ -137,6 +137,14 @@ class AssemblyConfig(BaseModel):
     ordering_field: str | None = None
     reasoning: str = ""
     confidence: float = Field(default=0.8, ge=0, le=1)
+    assembly_code: str | None = Field(
+        default=None,
+        description="Generated imas-python assembly code snippet",
+    )
+    assembly_function_name: str | None = Field(
+        default=None,
+        description="Name of the assembly function in assembly_code",
+    )
 
 
 class AssemblyBatch(BaseModel):
@@ -191,6 +199,11 @@ def persist_mapping_result(
     gc: GraphClient | None = None,
     provider: str = "imas-codex",
     status: str = "generated",
+    extraction_script: str | None = None,
+    assembly_script: str | None = None,
+    validated_shot: int | None = None,
+    validated_at: str | None = None,
+    validation_strategy: str | None = None,
 ) -> str:
     """Write a validated mapping result to the graph.
 
@@ -207,6 +220,11 @@ def persist_mapping_result(
         gc: GraphClient instance (created if None).
         provider: Provider identifier.
         status: Initial status for the mapping node.
+        extraction_script: Generated extraction script code.
+        assembly_script: Generated assembly script code.
+        validated_shot: Shot used for E2E validation.
+        validated_at: ISO timestamp of E2E validation.
+        validation_strategy: Strategy used ("client" or "remote").
 
     Returns:
         The IMASMapping node id.
@@ -224,7 +242,12 @@ def persist_mapping_result(
             m.ids_name = $ids_name,
             m.dd_version = $dd_version,
             m.provider = $provider,
-            m.status = $status
+            m.status = $status,
+            m.extraction_script = $extraction_script,
+            m.assembly_script = $assembly_script,
+            m.validated_shot = $validated_shot,
+            m.validated_at = $validated_at,
+            m.validation_strategy = $validation_strategy
         WITH m
         MATCH (f:Facility {id: $facility})
         MERGE (m)-[:AT_FACILITY]->(f)
@@ -235,6 +258,11 @@ def persist_mapping_result(
         dd_version=result.dd_version,
         provider=provider,
         status=status,
+        extraction_script=extraction_script,
+        assembly_script=assembly_script,
+        validated_shot=validated_shot,
+        validated_at=validated_at,
+        validation_strategy=validation_strategy,
     )
 
     # 2. Create POPULATES relationships to section roots with assembly config
@@ -256,6 +284,8 @@ def persist_mapping_result(
                 "source_data_source": asm.source_data_source,
                 "source_epoch_field": asm.source_epoch_field,
                 "source_select_via": asm.source_select_via,
+                "assembly_code": asm.assembly_code,
+                "assembly_function_name": asm.assembly_function_name,
             }
 
         gc.query(
@@ -272,7 +302,9 @@ def persist_mapping_result(
                 r.source_system = $source_system,
                 r.source_data_source = $source_data_source,
                 r.source_epoch_field = $source_epoch_field,
-                r.source_select_via = $source_select_via
+                r.source_select_via = $source_select_via,
+                r.assembly_code = $assembly_code,
+                r.assembly_function_name = $assembly_function_name
             """,
             mapping_id=mapping_id,
             imas_path=section.imas_section_path,
@@ -286,6 +318,8 @@ def persist_mapping_result(
             source_data_source=asm_params.get("source_data_source"),
             source_epoch_field=asm_params.get("source_epoch_field"),
             source_select_via=asm_params.get("source_select_via"),
+            assembly_code=asm_params.get("assembly_code"),
+            assembly_function_name=asm_params.get("assembly_function_name"),
         )
 
     # 3. Collect signal group IDs and create USES_SIGNAL_SOURCE
