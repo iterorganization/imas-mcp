@@ -623,3 +623,67 @@ def setup_python_env(
         )
 
     return results
+
+
+# E2E extraction dependencies that should be in the remote venv
+EXTRACTION_DEPS = ["msgpack", "numpy"]
+
+
+def install_extraction_deps(
+    facility: str | None = None,
+    venv_path: str = DEFAULT_VENV_PATH,
+) -> dict:
+    """Install E2E extraction dependencies in the remote venv.
+
+    Installs msgpack and numpy (if not already present) for binary
+    data transfer and signal extraction support.
+
+    Args:
+        facility: Facility ID (None = local).
+        venv_path: Path to the venv.
+
+    Returns:
+        Dict with installation results per package.
+    """
+    results: dict = {"facility": facility or "local", "packages": {}}
+
+    for pkg in EXTRACTION_DEPS:
+        try:
+            # Check if already installed
+            check = run(
+                f"{venv_path}/bin/python -c 'import {pkg}; print({pkg}.__version__)' 2>/dev/null",
+                facility=facility,
+                timeout=10,
+            )
+            if check and "Error" not in check and "Traceback" not in check:
+                results["packages"][pkg] = {
+                    "success": True,
+                    "action": "already_installed",
+                    "version": check.strip(),
+                }
+                continue
+        except Exception:
+            pass
+
+        # Install via uv pip
+        try:
+            output = run(
+                f"uv pip install --python {venv_path}/bin/python {pkg} 2>&1",
+                facility=facility,
+                timeout=120,
+            )
+            results["packages"][pkg] = {
+                "success": True,
+                "action": "installed",
+                "output": output[:200],
+            }
+        except Exception as e:
+            results["packages"][pkg] = {
+                "success": False,
+                "error": str(e)[:200],
+            }
+
+    results["success"] = all(
+        p.get("success") for p in results["packages"].values()
+    )
+    return results
