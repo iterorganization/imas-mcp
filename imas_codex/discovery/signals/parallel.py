@@ -268,18 +268,27 @@ def has_pending_work(facility: str) -> bool:
 
 
 def has_pending_enrich_work(facility: str) -> bool:
-    """Check if there are signals awaiting enrichment."""
+    """Check if there are signals awaiting enrichment.
+
+    Mirrors the claim_signals_for_enrichment filter: excludes non-representative
+    members of SignalSource groups (those are handled by propagation, not LLM).
+    """
     try:
         with GraphClient() as gc:
             result = gc.query(
                 """
                 MATCH (s:FacilitySignal {facility_id: $facility})
-                WHERE s.status = $discovered
+                WHERE s.status IN [$discovered, $underspecified]
                   AND s.claimed_at IS NULL
+                  AND NOT EXISTS {
+                    MATCH (s)-[:MEMBER_OF]->(sg:SignalSource)
+                    WHERE sg.representative_id <> s.id
+                  }
                 RETURN count(s) > 0 AS has_work
                 """,
                 facility=facility,
                 discovered=FacilitySignalStatus.discovered.value,
+                underspecified=FacilitySignalStatus.underspecified.value,
             )
             return result[0]["has_work"] if result else False
     except Exception:
@@ -1348,6 +1357,55 @@ def propagate_source_enrichment(
                 updated,
             )
 
+        return updated
+
+
+def propagate_late_followers(facility: str) -> int:
+    """Propagate enrichment to late followers whose representative is already enriched.
+
+    When scan discovers new signals after their group's representative was
+    already enriched, those followers are stuck as ``discovered`` with a
+    MEMBER_OF link but no enrichment data. This function finds such signals
+    and copies enrichment from their representative.
+
+    Returns:
+        Number of late followers updated.
+    """
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (s:FacilitySignal {facility_id: $facility})
+                  -[:MEMBER_OF]->(sg:SignalSource)
+            WHERE s.status = $discovered
+              AND sg.representative_id <> s.id
+            MATCH (rep:FacilitySignal {id: sg.representative_id})
+            WHERE rep.status IN [$enriched, $checked]
+            SET s.status = $enriched,
+                s.physics_domain = rep.physics_domain,
+                s.description = rep.description,
+                s.name = rep.name,
+                s.diagnostic = CASE WHEN rep.diagnostic IS NOT NULL THEN rep.diagnostic ELSE s.diagnostic END,
+                s.analysis_code = CASE WHEN rep.analysis_code IS NOT NULL THEN rep.analysis_code ELSE s.analysis_code END,
+                s.keywords = rep.keywords,
+                s.sign_convention = CASE WHEN rep.sign_convention IS NOT NULL THEN rep.sign_convention ELSE s.sign_convention END,
+                s.llm_cost = 0.0,
+                s.enriched_at = datetime(),
+                s.claimed_at = null,
+                s.enrichment_source = 'late_follower_propagation'
+            RETURN count(s) AS updated
+            """,
+            facility=facility,
+            discovered=FacilitySignalStatus.discovered.value,
+            enriched=FacilitySignalStatus.enriched.value,
+            checked=FacilitySignalStatus.checked.value,
+        )
+        updated = result[0]["updated"] if result else 0
+        if updated > 0:
+            logger.info(
+                "Propagated enrichment to %d late followers for %s",
+                updated,
+                facility,
+            )
         return updated
 
 
@@ -3072,6 +3130,22 @@ async def enrich_worker(
                 f"detected {patterns_detected} patterns ({followers_marked} followers)",
                 state.enrich_stats,
             )
+
+        # --- Late follower propagation ---
+        # When scan discovers new signals after their group's representative
+        # was already enriched, propagate enrichment immediately so they
+        # don't block the enrich queue.
+        late_propagated = await asyncio.to_thread(
+            propagate_late_followers,
+            state.facility,
+        )
+        if late_propagated > 0:
+            state.enrich_stats.processed += late_propagated
+            if on_progress:
+                on_progress(
+                    f"propagated to {late_propagated} late followers",
+                    state.enrich_stats,
+                )
 
         # Claim batch of signals (sorted by tdi_function)
         # Batch size 50 - signals grouped by function so one source code per group
