@@ -3,22 +3,10 @@
 import importlib.resources
 import logging
 from functools import lru_cache
-from typing import Any
 
 import pint
 
 logger = logging.getLogger(__name__)
-
-
-# register UDUNITS unit format with pint (guard against re-import)
-def format_unit_simple(
-    unit, registry: pint.UnitRegistry, **options: dict[str, Any]
-) -> str:
-    return ".".join(u if p == 1 else f"{u}^{p}" for u, p in unit.items())
-
-
-if "U" not in pint.formatting.REGISTERED_FORMATTERS:
-    pint.register_unit_format("U")(format_unit_simple)
 
 
 # Initialize unit registry
@@ -53,8 +41,11 @@ _NON_UNIT_STRINGS = frozenset(
 def normalize_unit_symbol(raw: str) -> str | None:
     """Normalize a unit string to a canonical symbol via pint.
 
-    Returns a compact ASCII symbol for graph storage. Equivalent unit
+    Returns pint's default short notation for graph storage. Equivalent unit
     expressions (e.g., ``m.s^-1`` and ``m/s``) produce the same output.
+
+    Uses ``*`` for multiplication and ``**`` for exponentiation per pint
+    convention. Spaces around operators are stripped for compact storage.
 
     Examples:
         >>> normalize_unit_symbol("Ohm")
@@ -65,7 +56,9 @@ def normalize_unit_symbol(raw: str) -> str | None:
         'm/s'
         >>> normalize_unit_symbol("mixed")  # sentinel
         >>> normalize_unit_symbol("A/m^2")
-        'A/m^2'
+        'A/m**2'
+        >>> normalize_unit_symbol("kg.m.s^-2")
+        'kg*m/s**2'
 
     Args:
         raw: Raw unit string from MDSplus or IMAS DD.
@@ -80,12 +73,12 @@ def normalize_unit_symbol(raw: str) -> str | None:
 
     try:
         parsed = unit_registry.parse_expression(raw)
-        # ~ gives short symbols (H, m, T), then convert to ASCII
+        # ~ gives short symbols (H, m, T), then compact spacing
         compact = f"{parsed.units:~}"
         compact = (
             compact.replace("Ω", "ohm")
-            .replace(" ** ", "^")
-            .replace(" * ", ".")
+            .replace(" ** ", "**")
+            .replace(" * ", "*")
             .replace(" / ", "/")
         )
         return compact
