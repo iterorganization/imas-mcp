@@ -254,6 +254,8 @@ def _discover_login_nodes(ssh_host: str, timeout: int = 10) -> list[str]:
                 "ssh",
                 "-o", "BatchMode=yes",
                 "-o", f"ConnectTimeout={timeout}",
+                "-o", "ControlMaster=no",
+                "-o", "ControlPath=none",
                 ssh_host,
                 "grep '98dci4-srv-' /etc/hosts | awk '{print $2}'",
             ],
@@ -292,6 +294,8 @@ def _query_node(
         "-o", "BatchMode=yes",
         "-o", f"ConnectTimeout={timeout}",
         "-o", "StrictHostKeyChecking=accept-new",
+        "-o", "ControlMaster=no",
+        "-o", "ControlPath=none",
         "-J", gateway,
     ]
     if user:
