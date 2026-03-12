@@ -675,6 +675,48 @@ def _kill_control_sockets(*aliases: str) -> None:
             pass  # Socket may not exist or already closed
 
 
+def _kill_fqdn_sockets(*fqdns: str) -> None:
+    """Remove stale ControlMaster sockets for specific FQDNs.
+
+    The host survey and earlier sessions may leave ControlMaster
+    sockets keyed by FQDN (e.g. ``mcintos@98dci4-srv-1005.iter.org-22``).
+    These interfere when the ``iter`` alias is switched to point at
+    a node whose FQDN already has a stale socket — the tunnel tries
+    to mux through it and fails.
+    """
+    from pathlib import Path
+
+    socket_dir = Path.home() / ".ssh" / "sockets"
+    if not socket_dir.is_dir():
+        return
+    for fqdn in fqdns:
+        if not fqdn:
+            continue
+        for sock in socket_dir.glob(f"*@{fqdn}-*"):
+            # Try graceful ControlMaster shutdown
+            try:
+                subprocess.run(
+                    [
+                        "ssh",
+                        "-O",
+                        "exit",
+                        "-o",
+                        f"ControlPath={sock}",
+                        fqdn,
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=3,
+                )
+            except Exception:
+                pass
+            # Force-remove if still present
+            try:
+                sock.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+
 def _restart_tunnel_service(facility: str) -> None:
     """Restart the systemd tunnel service so it reconnects to the new node.
 
@@ -722,6 +764,14 @@ def _ssh_to_node(
         f"ConnectTimeout={timeout}",
         "-o",
         "StrictHostKeyChecking=accept-new",
+        # Don't create persistent ControlMaster sockets for
+        # ephemeral survey/migration commands.  Stale survey
+        # sockets interfere when the alias later resolves to
+        # the same FQDN.
+        "-o",
+        "ControlMaster=no",
+        "-o",
+        "ControlPath=none",
         "-J",
         gateway,
     ]
@@ -778,32 +828,45 @@ def _migrate_from_node(
         f"fi"
     )
 
-    try:
-        result = _ssh_to_node(fqdn, gateway, user, kill_script, timeout)
-        if result.returncode == 0:
-            output = result.stdout.strip()
-            for line in output.splitlines():
-                if line.startswith("killed:"):
-                    count = line.split(":")[1]
-                    if count != "0":
-                        click.echo(
-                            f"    {click.style('✓', fg='green')} "
-                            f"Sent SIGINT to {count} process(es)"
-                        )
-                    else:
-                        click.echo(
-                            f"    {click.style('·', fg='dim')} "
-                            f"No imas-codex processes running"
-                        )
-        else:
-            click.echo(
-                f"    {click.style('⚠', fg='yellow')} "
-                f"Could not reach {old_short} for process cleanup"
-            )
-    except (subprocess.TimeoutExpired, Exception):
+    # After killing ControlMaster sockets the gateway may need a
+    # moment to accept a fresh connection.  Retry once on failure.
+    result = None
+    for attempt in range(2):
+        try:
+            result = _ssh_to_node(fqdn, gateway, user, kill_script, timeout)
+            if result.returncode == 0:
+                break
+            if attempt == 0:
+                import time
+
+                time.sleep(2)
+        except subprocess.TimeoutExpired:
+            if attempt == 0:
+                import time
+
+                time.sleep(2)
+            continue
+
+    if result is not None and result.returncode == 0:
+        output = result.stdout.strip()
+        for line in output.splitlines():
+            if line.startswith("killed:"):
+                count = line.split(":")[1]
+                if count != "0":
+                    click.echo(
+                        f"    {click.style('✓', fg='green')} "
+                        f"Sent SIGINT to {count} process(es)"
+                    )
+                else:
+                    click.echo(
+                        f"    {click.style('·', fg='dim')} "
+                        f"No imas-codex processes running"
+                    )
+    else:
+        stderr = result.stderr.strip() if result else "timeout"
         click.echo(
             f"    {click.style('⚠', fg='yellow')} "
-            f"Timeout reaching {old_short} — processes may still be running"
+            f"Could not reach {old_short} for process cleanup: {stderr}"
         )
 
     # 2. Kill all zellij sessions on the old node
@@ -822,32 +885,48 @@ def _migrate_from_node(
         "fi"
     )
 
-    try:
-        result = _ssh_to_node(fqdn, gateway, user, zj_script, timeout)
-        if result.returncode == 0:
-            output = result.stdout.strip()
-            for line in output.splitlines():
-                if line.startswith("zj:"):
-                    val = line.split(":")[1]
-                    if val == "none":
-                        click.echo(
-                            f"    {click.style('·', fg='dim')} "
-                            f"zellij not found on {old_short}"
-                        )
-                    elif val == "0":
-                        click.echo(
-                            f"    {click.style('·', fg='dim')} "
-                            f"No zellij sessions to clean up"
-                        )
-                    else:
-                        click.echo(
-                            f"    {click.style('✓', fg='green')} "
-                            f"Deleted {val} zellij session(s)"
-                        )
-    except (subprocess.TimeoutExpired, Exception):
+    result = None
+    for attempt in range(2):
+        try:
+            result = _ssh_to_node(fqdn, gateway, user, zj_script, timeout)
+            if result.returncode == 0:
+                break
+            if attempt == 0:
+                import time
+
+                time.sleep(2)
+        except subprocess.TimeoutExpired:
+            if attempt == 0:
+                import time
+
+                time.sleep(2)
+            continue
+
+    if result is not None and result.returncode == 0:
+        output = result.stdout.strip()
+        for line in output.splitlines():
+            if line.startswith("zj:"):
+                val = line.split(":")[1]
+                if val == "none":
+                    click.echo(
+                        f"    {click.style('·', fg='dim')} "
+                        f"zellij not found on {old_short}"
+                    )
+                elif val == "0":
+                    click.echo(
+                        f"    {click.style('·', fg='dim')} "
+                        f"No zellij sessions to clean up"
+                    )
+                else:
+                    click.echo(
+                        f"    {click.style('✓', fg='green')} "
+                        f"Deleted {val} zellij session(s)"
+                    )
+    elif result is not None:
+        stderr = result.stderr.strip()
         click.echo(
             f"    {click.style('⚠', fg='yellow')} "
-            f"Could not clean up zellij sessions on {old_short}"
+            f"Could not clean up zellij sessions on {old_short}: {stderr}"
         )
 
     click.echo(
@@ -1043,6 +1122,11 @@ def host_survey(
                 # Kill ControlMaster sockets BEFORE config update so
                 # ssh -O exit resolves to the old (current) HostName.
                 _kill_control_sockets(facility)
+
+                # Also kill FQDN-based sockets (from survey or
+                # previous sessions) for old and new targets so
+                # the tunnel doesn't mux through a stale socket.
+                _kill_fqdn_sockets(current, target_fqdn)
 
                 if not _set_ssh_hostname(facility, target_fqdn):
                     raise click.ClickException(
