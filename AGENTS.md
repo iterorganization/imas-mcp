@@ -336,6 +336,19 @@ Prompts live in `imas_codex/agentic/prompts/` using Jinja2 templates with schema
 - Each prompt declares `schema_needs` in `prompt_loader.py` to load only required context
 - LLM structured output uses Pydantic models via LiteLLM `response_format`
 
+### Prompt Structure and Caching
+
+All LLM calls route through the LiteLLM proxy → OpenRouter. Use `call_llm_structured()` / `acall_llm_structured()` from `imas_codex.discovery.base.llm` for all structured output calls — never call `litellm.completion()` directly.
+
+All prompts follow a **static-first ordering** to maximize prompt cache hit rates via OpenRouter's prompt caching:
+
+1. **System prompt** (static/quasi-static): Schema definitions, enum values, classification rules, output format. These change rarely and are shared across all LLM calls of the same type. `inject_cache_control()` sets a `cache_control: {"type": "ephemeral"}` breakpoint at the end of the system message.
+2. **User prompt** (dynamic): Per-batch signal data, context chunks, and specific instructions. This varies per LLM call.
+
+The `openrouter/` prefix is required on model identifiers — it preserves `cache_control` blocks in message content. The `openai/` prefix strips them, silently disabling prompt caching.
+
+When building prompts, ensure that `{% include %}` blocks for schema definitions and static rules appear **before** dynamic Jinja2 template variables. This maximizes the cacheable prefix length.
+
 ## Exploration
 
 Before disk-intensive operations, **check facility excludes** to avoid repeating known timeouts:
