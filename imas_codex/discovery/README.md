@@ -453,7 +453,7 @@ Path scoring uses Pydantic models with LiteLLM's `response_format` for reliable 
 
 ### Schema Injection
 
-Prompts in `imas_codex/agentic/prompts/discovery/` use Jinja2 templating with dynamic
+Prompts in `imas_codex/llm/prompts/discovery/` use Jinja2 templating with dynamic
 schema injection. The scorer prompt includes:
 
 ```jinja
@@ -465,7 +465,7 @@ schema injection. The scorer prompt includes:
 Schema context is loaded lazily via `get_schema_for_prompt()`:
 
 ```python
-from imas_codex.agentic.prompt_loader import render_prompt
+from imas_codex.llm.prompt_loader import render_prompt
 
 # Only loads what the prompt needs (9 keys for scorer, 5 for refiner)
 prompt = render_prompt("paths/scorer", {"facility": "tcv", "paths": paths})
@@ -489,7 +489,7 @@ batch = DirectoryScoringBatch.model_validate_json(response.content)
 
 ### Adding New Prompts
 
-1. Create prompt in `imas_codex/agentic/prompts/` (use appropriate subdir: `paths/`, `code/`, `signals/`)
+1. Create prompt in `imas_codex/llm/prompts/` (use appropriate subdir: `paths/`, `code/`, `signals/`)
 2. Define Pydantic model in `imas_codex/discovery/paths/models.py`
 3. Add to `_DEFAULT_SCHEMA_NEEDS` in `prompt_loader.py`:
    ```python

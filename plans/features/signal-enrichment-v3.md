@@ -247,7 +247,7 @@ schema. The plural/verbose name is inconsistent with the graph property name.
 
 Update in:
 - `imas_codex/discovery/signals/models.py`: rename field `units_extracted` → `unit`
-- `imas_codex/agentic/prompts/signals/enrichment.md`: all references
+- `imas_codex/llm/prompts/signals/enrichment.md`: all references
 - `imas_codex/discovery/signals/parallel.py`: result handler field access
 
 ### 3.2 Separation of Concerns

@@ -316,7 +316,7 @@ No backward compatibility. All renames apply across schema, codebase, graph, tes
 | `imas_codex/graph/build_dd.py` | IMASPath→IMASNode |
 | `imas_codex/ids/graph_ops.py` | IDSRecipe→IMASMapping, mapping functions |
 | `imas_codex/ids/assembler.py` | Assembly refactor |
-| `imas_codex/agentic/search_tools.py` | Cross-domain query updates |
+| `imas_codex/llm/search_tools.py` | Cross-domain query updates |
 | `imas_codex/ingestion/graph.py` | SOURCE_PATH removal |
 | `imas_codex/graph/domain_queries.py` | Signal→IMAS traversal |
 | All `tests/ids/`, `tests/discovery/` | Label and relationship updates |
@@ -696,7 +696,7 @@ class IDSAssembler:
 | `imas_codex/graph/build_dd.py` | Modify | IMASPath → IMASNode label |
 | `imas_codex/discovery/mdsplus/graph_ops.py` | Modify | DataNodePattern → SignalGroup, FOLLOWS_PATTERN → MEMBER_OF |
 | `imas_codex/discovery/signals/parallel.py` | Modify | Pattern properties → MEMBER_OF relationships |
-| `imas_codex/agentic/search_tools.py` | Modify | SOURCE_PATH queries → MAPS_TO_IMAS traversal |
+| `imas_codex/llm/search_tools.py` | Modify | SOURCE_PATH queries → MAPS_TO_IMAS traversal |
 | `imas_codex/ingestion/graph.py` | Modify | SOURCE_PATH removal |
 | `imas_codex/graph/domain_queries.py` | Modify | Signal→IMAS traversal |
 | `scripts/migrate_v5.py` | Create | Graph migration script |

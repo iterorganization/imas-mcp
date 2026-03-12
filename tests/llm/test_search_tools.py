@@ -16,7 +16,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from neo4j.exceptions import ServiceUnavailable
 
-from imas_codex.agentic.search_formatters import (
+from imas_codex.llm.search_formatters import (
     _interpolate_template,
     format_code_report,
     format_docs_report,
@@ -24,7 +24,7 @@ from imas_codex.agentic.search_formatters import (
     format_imas_report,
     format_signals_report,
 )
-from imas_codex.agentic.search_tools import (
+from imas_codex.llm.search_tools import (
     _fetch,
     _search_code,
     _search_docs,
@@ -1342,7 +1342,7 @@ class TestFetch:
     def test_neo4j_not_running(self):
         """ServiceUnavailable returns descriptive message."""
         with patch(
-            "imas_codex.agentic.search_tools.GraphClient",
+            "imas_codex.llm.search_tools.GraphClient",
             side_effect=ServiceUnavailable("Connection refused"),
         ):
             result = _fetch("anything")

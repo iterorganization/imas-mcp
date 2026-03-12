@@ -645,12 +645,12 @@ async def score_images_batch(
     Returns:
         (results, cost) tuple
     """
-    from imas_codex.agentic.prompt_loader import render_prompt
     from imas_codex.discovery.base.llm import acall_llm_structured
     from imas_codex.discovery.wiki.models import (
         ImageScoreBatch,
         grounded_image_score,
     )
+    from imas_codex.llm.prompt_loader import render_prompt
 
     # Build system prompt
     context: dict[str, Any] = {}

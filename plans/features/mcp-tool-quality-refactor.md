@@ -18,7 +18,7 @@ compared to the older non-graph-backed IMAS MCP server. The graph contains rich 
 
 ### 1.1 Code Search Always Returns Empty — Schema Mismatch
 
-**File**: `imas_codex/agentic/search_tools.py` `_vector_search_code_chunks()`
+**File**: `imas_codex/llm/search_tools.py` `_vector_search_code_chunks()`
 
 **Bug**: The facility filter uses `MATCH (cf:CodeFile)-[:HAS_CHUNK]->(cc)` but this
 relationship does **not exist** in the graph.
@@ -69,7 +69,7 @@ OPTIONAL MATCH (cc)-[:CONTAINS_REF]->(dr:DataReference)  -- CONTAINS_REF is on C
 
 ### 1.2 Document Search Index Name Wrong
 
-**File**: `imas_codex/agentic/search_tools.py` `_vector_search_documents()`
+**File**: `imas_codex/llm/search_tools.py` `_vector_search_documents()`
 
 **Bug**: Uses index name `"wiki_document_desc_embedding"` but the actual index is
 `"document_desc_embedding"`.
@@ -91,7 +91,7 @@ But `search_docs()` returns "No documentation found for 'EFIT equilibrium' at je
 
 ### 1.3 Post-Filtering Causes Facility Starvation
 
-**File**: `imas_codex/agentic/search_tools.py` — all `_vector_search_*` functions
+**File**: `imas_codex/llm/search_tools.py` — all `_vector_search_*` functions
 
 **Bug**: Vector searches use `CALL db.index.vector.queryNodes(index, $k, $embedding)` to
 get the global top-k results, then **post-filter** by facility using WHERE clauses like
@@ -137,7 +137,7 @@ This applies to ALL vector search functions:
 
 ### 1.4 Fetch Tool CodeFile Traversal Broken
 
-**File**: `imas_codex/agentic/search_tools.py` `_fetch_code_file()`
+**File**: `imas_codex/llm/search_tools.py` `_fetch_code_file()`
 
 **Bug**: Uses `MATCH (cf:CodeFile)-[:PRODUCED]->(ce:CodeExample)-[:HAS_CHUNK]->(cc:CodeChunk)`
 which has the same relationship chain issue — `CodeFile-[:PRODUCED]->CodeExample` does not exist.
@@ -439,7 +439,7 @@ dropping and recreating the `facility_id` range index on FacilitySignal.
 13. **Create comprehensive test suite** for search tools:
 
 ```python
-# tests/agentic/test_search_tools.py
+# tests/llm/test_search_tools.py
 
 class TestSearchSignals:
     """Test signal search quality and correctness."""
@@ -599,10 +599,10 @@ class TestVectorSearchInternals:
 
 | File | Changes |
 |------|---------|
-| `imas_codex/agentic/search_tools.py` | Fix all vector search functions, fix index name, fix code enrichment, fix fetch |
-| `imas_codex/agentic/search_formatters.py` | Deduplicate signals, interpolate templates, deduplicate clusters |
-| `tests/agentic/test_search_tools.py` | New — regression tests for all fixes |
-| `tests/agentic/test_search_formatters.py` | New — unit tests for formatting logic |
+| `imas_codex/llm/search_tools.py` | Fix all vector search functions, fix index name, fix code enrichment, fix fetch |
+| `imas_codex/llm/search_formatters.py` | Deduplicate signals, interpolate templates, deduplicate clusters |
+| `tests/llm/test_search_tools.py` | New — regression tests for all fixes |
+| `tests/llm/test_search_formatters.py` | New — unit tests for formatting logic |
 
 ---
 

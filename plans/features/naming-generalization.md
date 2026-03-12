@@ -506,10 +506,10 @@ Based on the comprehensive audit:
 
 **Goal:** MCP tools, search, and REPL use new labels and config vocabulary.
 
-1. `agentic/search_tools.py` — Cypher queries, vector index name
-2. `agentic/server.py` — MCP tool definitions, example queries, `data_sources` → `data_systems` references
-3. `agentic/tools.py` — Cypher queries
-4. `agentic/enrich.py` — enrichment Cypher
+1. `llm/search_tools.py` — Cypher queries, vector index name
+2. `llm/server.py` — MCP tool definitions, example queries, `data_sources` → `data_systems` references
+3. `llm/tools.py` — Cypher queries
+4. `llm/enrich.py` — enrichment Cypher
 5. `graph/domain_queries.py` — `find_tree_nodes()` → `find_data_nodes()`
 6. `graph/schema_context.py` — schema examples
 7. `graph/__init__.py` — imports and `__all__`

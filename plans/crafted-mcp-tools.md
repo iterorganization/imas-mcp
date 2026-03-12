@@ -215,7 +215,7 @@ The MCP tool functions are registered in `_register_tools()` alongside the exist
 
 ### Formatter
 
-Each tool has a dedicated `_format_*` function (e.g., `_format_docs_report`, `_format_signals_report`, `_format_code_report`) that takes raw query results and produces the formatted text output. These live alongside the tool definitions in `server.py` or in a new `imas_codex/agentic/formatters.py` module if they grow large.
+Each tool has a dedicated `_format_*` function (e.g., `_format_docs_report`, `_format_signals_report`, `_format_code_report`) that takes raw query results and produces the formatted text output. These live alongside the tool definitions in `server.py` or in a new `imas_codex/llm/formatters.py` module if they grow large.
 
 The formatters should truncate text fields to keep output under ~4000 tokens per tool call. Agents can use `python()` for full text retrieval when needed.
 

@@ -237,7 +237,7 @@ def _build_triage_system_prompt(
     Triage calibration draws from the full population (all triaged+scored
     CodeFiles) using triage_* properties.
     """
-    from imas_codex.agentic.prompt_loader import render_prompt
+    from imas_codex.llm.prompt_loader import render_prompt
 
     context: dict[str, Any] = {}
     if focus:
@@ -265,7 +265,7 @@ def _build_score_system_prompt(
     Score calibration draws from the graduate cohort (scored-only
     CodeFiles) using score_* properties.
     """
-    from imas_codex.agentic.prompt_loader import render_prompt
+    from imas_codex.llm.prompt_loader import render_prompt
 
     context: dict[str, Any] = {}
     if focus:

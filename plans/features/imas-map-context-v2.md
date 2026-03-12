@@ -365,7 +365,7 @@ Signal mapping handles individual transforms. Assembly handles composition.
 
 ### 4.2 Assembly Discovery Prompt (`assembly.md`)
 
-New prompt template at `imas_codex/agentic/prompts/mapping/assembly.md`:
+New prompt template at `imas_codex/llm/prompts/mapping/assembly.md`:
 
 ```markdown
 ---
@@ -916,7 +916,7 @@ Test each renamed function in isolation:
 ```
 Phase 1 ──────────────────────────── Rename Functions & Terminology
   1.1  Rename pipeline functions      [ids/mapping.py]
-  1.2  Rename prompt templates        [agentic/prompts/mapping/]
+  1.2  Rename prompt templates        [llm/prompts/mapping/]
   1.3  Update model descriptions      [ids/models.py]
   1.4  Update cost step names         [ids/mapping.py]
   1.5  Update module docstring        [ids/mapping.py]
@@ -933,7 +933,7 @@ Phase 3 ────────────────────────
   3.3  Update validation logic        [ids/validation.py]
 
 Phase 4 ──────────────────────────── Assembly Discovery
-  4.1  Create assembly prompt         [agentic/prompts/mapping/assembly.md]
+  4.1  Create assembly prompt         [llm/prompts/mapping/assembly.md]
   4.2  Add AssemblyConfig models      [ids/models.py]
   4.3  Implement discover_assembly()  [ids/mapping.py]
   4.4  Extend persist for assembly    [ids/models.py]
@@ -971,7 +971,7 @@ Phase 10 ───────────────────────�
   10.1  Data extraction codegen       [ids/codegen.py]           — new module
   10.2  Binary transfer protocol      [remote/serialization.py]  — new module
   10.3  Assembly code generation      [ids/codegen.py]           — extend
-    └── Extend assembly.md prompt     [agentic/prompts/mapping/assembly.md]
+    └── Extend assembly.md prompt     [llm/prompts/mapping/assembly.md]
   10.4  Remote capability probe       [remote/executor.py]       — extend
   10.5  E2E validation pipeline       [ids/validation.py]        — extend
     └── Tier 2: code validation       [ids/codegen.py]
@@ -1682,7 +1682,7 @@ validation_strategy:
 10.1  Data extraction codegen     [ids/codegen.py]         — new module
 10.2  Binary transfer protocol    [remote/serialization.py] — new module
 10.3  Assembly code generation    [ids/codegen.py]          — extend
-  └── Extend assembly.md prompt  [agentic/prompts/mapping/assembly.md]
+  └── Extend assembly.md prompt  [llm/prompts/mapping/assembly.md]
 10.4  Remote capability probe     [remote/executor.py]      — extend
 10.5  E2E validation pipeline     [ids/validation.py]       — extend
   └── Tier 2: code validation     [ids/codegen.py]

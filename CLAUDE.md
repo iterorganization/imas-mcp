@@ -11,7 +11,7 @@ The `.env` file contains secrets. **NEVER** expose or commit it.
 ```
 agents/                  # Domain-specific agent workflows
 imas_codex/
-├── agentic/             # LlamaIndex agents, MCP server
+├── llm/                 # LLM prompts, MCP server
 ├── graph/               # Neo4j knowledge graph
 ├── schemas/             # LinkML schemas (source of truth)
 ├── ingestion/           # Unified ingestion pipeline

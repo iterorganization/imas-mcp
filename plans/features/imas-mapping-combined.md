@@ -374,7 +374,7 @@ properties, POPULATES relationship, IMASMapping node, MappingEvidence nodes).
 
 ### 5a. Prompt Templates
 
-Create in `imas_codex/agentic/prompts/mapping/`:
+Create in `imas_codex/llm/prompts/mapping/`:
 
 | Template | Context Injected | Task |
 |----------|-----------------|------|
@@ -485,9 +485,9 @@ Queryable: "which IDS fields still need attention?"
 | `imas_codex/ids/models.py` | 4 | Response models + adapter |
 | `imas_codex/ids/mapping.py` | 5 | Pipeline orchestrator |
 | `imas_codex/cli/map.py` | 5 | Map CLI group |
-| `imas_codex/agentic/prompts/mapping/exploration.md` | 5 | Step 1 prompt |
-| `imas_codex/agentic/prompts/mapping/field_mapping.md` | 5 | Step 2 prompt |
-| `imas_codex/agentic/prompts/mapping/validation.md` | 5 | Step 3 prompt |
+| `imas_codex/llm/prompts/mapping/exploration.md` | 5 | Step 1 prompt |
+| `imas_codex/llm/prompts/mapping/field_mapping.md` | 5 | Step 2 prompt |
+| `imas_codex/llm/prompts/mapping/validation.md` | 5 | Step 3 prompt |
 
 ### Modify
 
@@ -496,13 +496,13 @@ Queryable: "which IDS fields still need attention?"
 | `imas_codex/schemas/facility.yaml` | 1–2 | All renames, deletions, SignalGroup |
 | `imas_codex/schemas/imas_dd.yaml` | 1 | IMASPath → IMASNode |
 | ~50 Python files | 1 | Label and property renames |
-| `imas_codex/agentic/search_tools.py` | 3 | Signal enrichment quality fix |
-| `imas_codex/agentic/search_formatters.py` | 3 | Signal formatter update |
+| `imas_codex/llm/search_tools.py` | 3 | Signal enrichment quality fix |
+| `imas_codex/llm/search_formatters.py` | 3 | Signal formatter update |
 | `imas_codex/discovery/signals/parallel.py` | 2 | Common grouping layer |
 | `imas_codex/discovery/mdsplus/graph_ops.py` | 1–2 | Renames + common grouping |
 | `imas_codex/ids/graph_ops.py` | 1–2 | Remove hardcoded specs, rewrite seeding |
 | `imas_codex/ids/assembler.py` | 2 | Graph-led assembly |
-| `imas_codex/agentic/prompt_loader.py` | 5 | New schema providers |
+| `imas_codex/llm/prompt_loader.py` | 5 | New schema providers |
 | `imas_codex/cli/__init__.py` | 5 | Register map, merge ids→imas |
 
 ### Remove

@@ -2405,7 +2405,7 @@ def _score_with_llm(
     """
     import json
 
-    from imas_codex.agentic.prompt_loader import render_prompt
+    from imas_codex.llm.prompt_loader import render_prompt
     from imas_codex.discovery.paths.frontier import (
         sample_dimension_calibration_examples,
         sample_enriched_paths,
@@ -2585,7 +2585,7 @@ async def _async_score_with_llm(
     """
     import json
 
-    from imas_codex.agentic.prompt_loader import render_prompt
+    from imas_codex.llm.prompt_loader import render_prompt
     from imas_codex.discovery.paths.frontier import (
         sample_dimension_calibration_examples,
         sample_enriched_paths,

@@ -46,13 +46,13 @@ Rationale:
 
 **Cleanup task**: Remove all `MAPS_TO_IMAS` references from:
 - `imas_codex/graph/domain_queries.py` — `map_signals_to_imas()` query
-- `imas_codex/agentic/search_tools.py` — IMAS path reverse-lookup query
-- `imas_codex/agentic/server.py` — any references
+- `imas_codex/llm/search_tools.py` — IMAS path reverse-lookup query
+- `imas_codex/llm/server.py` — any references
 - `AGENTS.md` — relationship table
 - `docs/architecture/signals.md` — relationship documentation
 - `plans/features/unified-mcp-tools.md` — query examples
 - `tests/graph/test_domain_queries.py` — test assertions
-- `tests/agentic/test_search_tools.py` — test assertions
+- `tests/llm/test_search_tools.py` — test assertions
 
 Replace with queries that traverse IMASMapping nodes instead.
 
@@ -573,13 +573,13 @@ relationship. Replace with IMASMapping traversal queries.
 | File | Change |
 |------|--------|
 | `imas_codex/graph/domain_queries.py` | Rewrite `map_signals_to_imas()` to traverse IMASMapping |
-| `imas_codex/agentic/search_tools.py` | Update reverse-lookup query to use IMASMapping |
-| `imas_codex/agentic/server.py` | Remove any MAPS_TO_IMAS references |
+| `imas_codex/llm/search_tools.py` | Update reverse-lookup query to use IMASMapping |
+| `imas_codex/llm/server.py` | Remove any MAPS_TO_IMAS references |
 | `AGENTS.md` | Update relationship table |
 | `docs/architecture/signals.md` | Update documentation |
 | `plans/features/unified-mcp-tools.md` | Update query examples |
 | `tests/graph/test_domain_queries.py` | Update test assertions |
-| `tests/agentic/test_search_tools.py` | Update test assertions |
+| `tests/llm/test_search_tools.py` | Update test assertions |
 
 ### Phase 7: Mapping Discovery and Agent Workflows
 
@@ -669,7 +669,7 @@ configure IDSRecipe). No new Python code per IDS.
 | `imas_codex/ids/transforms.py` | Create | Transform execution engine + unit/COCOS helpers |
 | `imas_codex/ids/graph_ops.py` | Create | IMASMapping + IDSRecipe graph queries |
 | `imas_codex/graph/domain_queries.py` | Modify | Replace MAPS_TO_IMAS with IMASMapping traversal |
-| `imas_codex/agentic/search_tools.py` | Modify | Replace MAPS_TO_IMAS with IMASMapping traversal |
+| `imas_codex/llm/search_tools.py` | Modify | Replace MAPS_TO_IMAS with IMASMapping traversal |
 | `tests/ids/test_assembler.py` | Update | Test graph-driven assembly |
 | `tests/ids/test_transforms.py` | Create | Test transform execution + unit/COCOS |
 | Multiple docs/plans/tests | Modify | Remove MAPS_TO_IMAS ghost references |

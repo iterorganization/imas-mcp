@@ -457,7 +457,7 @@ for escalation in result.escalations:
 Three Jinja2 templates, one per pipeline step. Each uses `schema_needs` frontmatter
 for automatic schema injection.
 
-### Step 1: `imas_codex/agentic/prompts/mapping/exploration.md`
+### Step 1: `imas_codex/llm/prompts/mapping/exploration.md`
 
 Context injected:
 - Signal groups summary (group_key, member_count, physics_domain, description)
@@ -470,7 +470,7 @@ Schema providers needed:
 - `imas_dd_subtree` — formatted DD tree structure
 - `signal_groups` — signal group summary for facility + domain
 
-### Step 2: `imas_codex/agentic/prompts/mapping/field_mapping.md`
+### Step 2: `imas_codex/llm/prompts/mapping/field_mapping.md`
 
 Context injected:
 - Section assignment from Step 1
@@ -486,7 +486,7 @@ Schema providers needed:
 - `unit_analysis` — pint compatibility results
 - `cocos_analysis` — sign-flip path information
 
-### Step 3: `imas_codex/agentic/prompts/mapping/validation.md`
+### Step 3: `imas_codex/llm/prompts/mapping/validation.md`
 
 Context injected:
 - Proposed field mappings from Step 2
@@ -554,9 +554,9 @@ Schema providers needed:
   IMASMapping node, MappingEvidence)
 
 **3c. Prompt templates**
-- Create `imas_codex/agentic/prompts/mapping/exploration.md`
-- Create `imas_codex/agentic/prompts/mapping/field_mapping.md`
-- Create `imas_codex/agentic/prompts/mapping/validation.md`
+- Create `imas_codex/llm/prompts/mapping/exploration.md`
+- Create `imas_codex/llm/prompts/mapping/field_mapping.md`
+- Create `imas_codex/llm/prompts/mapping/validation.md`
 - Register schema providers in `prompt_loader.py`
 
 **3d. Pipeline orchestrator**
@@ -602,9 +602,9 @@ Schema providers needed:
 | `imas_codex/ids/models.py` | Step-specific Pydantic response models + adapter |
 | `imas_codex/ids/tools.py` | Tool functions (IMAS subtree, unit analysis, validation) |
 | `imas_codex/discovery/base/grouping.py` | Common signal grouping infrastructure |
-| `imas_codex/agentic/prompts/mapping/exploration.md` | Step 1 prompt template |
-| `imas_codex/agentic/prompts/mapping/field_mapping.md` | Step 2 prompt template |
-| `imas_codex/agentic/prompts/mapping/validation.md` | Step 3 prompt template |
+| `imas_codex/llm/prompts/mapping/exploration.md` | Step 1 prompt template |
+| `imas_codex/llm/prompts/mapping/field_mapping.md` | Step 2 prompt template |
+| `imas_codex/llm/prompts/mapping/validation.md` | Step 3 prompt template |
 
 ### Modify
 
@@ -615,7 +615,7 @@ Schema providers needed:
 | `imas_codex/ids/graph_ops.py` | Remove hardcoded specs, keep read-side utils |
 | `imas_codex/discovery/signals/parallel.py` | Refactor to use common grouping layer |
 | `imas_codex/discovery/mdsplus/graph_ops.py` | Refactor to use common grouping layer; StructuralEpoch → SignalEpoch |
-| `imas_codex/agentic/prompt_loader.py` | Register new schema providers |
+| `imas_codex/llm/prompt_loader.py` | Register new schema providers |
 | `imas_codex/units/__init__.py` | Add unit compatibility analysis function |
 | ~10 other files | StructuralEpoch → SignalEpoch references |
 

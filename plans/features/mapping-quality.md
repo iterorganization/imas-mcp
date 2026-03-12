@@ -360,7 +360,7 @@ The current prompts don't generate meaningful transform expressions because:
 
 #### Prompt Changes
 
-In `imas_codex/agentic/prompts/mapping/field_mapping.md`:
+In `imas_codex/llm/prompts/mapping/field_mapping.md`:
 
 1. Add explicit examples of transform expressions:
    ```
@@ -463,8 +463,8 @@ SET m.status = 'generated'
 | `imas_codex/ids/transforms.py` | 1 | Parameter rename `transform_code` → `transform_expression` |
 | `imas_codex/ids/mapping.py` | 2, 3, 5 | Pipeline flow: generate → validate → activate; remove LLM Step 3; surface unassigned groups |
 | `imas_codex/cli/map.py` | 1, 2, 4 | Output field names; `activate` command; coverage display |
-| `imas_codex/agentic/prompts/mapping/field_mapping.md` | 6 | Transform expression examples, COCOS connection, unit conversion requirements |
-| `imas_codex/agentic/prompts/mapping/validation.md` | 3 | Remove or repurpose (no longer an LLM step) |
+| `imas_codex/llm/prompts/mapping/field_mapping.md` | 6 | Transform expression examples, COCOS connection, unit conversion requirements |
+| `imas_codex/llm/prompts/mapping/validation.md` | 3 | Remove or repurpose (no longer an LLM step) |
 | Tests | 1–7 | Update assertions to use new field names and status values |
 
 ### Remove

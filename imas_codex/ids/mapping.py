@@ -21,7 +21,6 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
 
 from imas_codex.graph.client import GraphClient
@@ -48,8 +47,6 @@ from imas_codex.ids.tools import (
 from imas_codex.settings import get_model
 
 logger = logging.getLogger(__name__)
-
-PROMPTS_DIR = Path(__file__).resolve().parent.parent / "agentic" / "prompts" / "mapping"
 
 
 # ---------------------------------------------------------------------------
@@ -78,26 +75,11 @@ class PipelineCost:
 # ---------------------------------------------------------------------------
 
 
-def _load_prompt(name: str) -> str:
-    """Load a mapping prompt template by name."""
-    path = PROMPTS_DIR / f"{name}.md"
-    if not path.exists():
-        raise FileNotFoundError(f"Prompt template not found: {path}")
-    text = path.read_text()
-    # Strip YAML frontmatter
-    if text.startswith("---"):
-        _, _, text = text.split("---", 2)
-    return text.strip()
-
-
 def _render_prompt(name: str, **context: Any) -> str:
-    """Render a prompt template with Jinja2 substitutions."""
-    from jinja2 import BaseLoader, Environment
+    """Render a mapping prompt template with Jinja2 substitutions."""
+    from imas_codex.llm.prompt_loader import render_prompt
 
-    template_str = _load_prompt(name)
-    env = Environment(loader=BaseLoader(), autoescape=False)
-    template = env.from_string(template_str)
-    return template.render(**context)
+    return render_prompt(f"mapping/{name}", context)
 
 
 def _format_subtree(rows: list[dict[str, Any]]) -> str:

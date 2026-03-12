@@ -216,7 +216,7 @@ main.add_command(setup_age)
 ### 1f. Clean up dead imports
 
 Check if removing `enrich.py` and `ingest.py` leaves orphan code in:
-- `imas_codex/agentic/enrich.py` — `discover_nodes_to_enrich()`,
+- `imas_codex/llm/enrich.py` — `discover_nodes_to_enrich()`,
   `batch_enrich_paths()` — these may still be used by the agentic library
   itself, so keep the module but note it's no longer CLI-exposed
 - `imas_codex/ingestion/` — check if anything else imports from here
@@ -403,7 +403,7 @@ uv run imas-codex imas dd build --help           # Works
 uv run imas-codex imas dd search "electron temperature"  # Works
 uv run imas-codex map --help                     # Error: No such command
 uv run imas-codex ids --help                     # Error: No such command
-uv run pytest tests/ -x -q --ignore=tests/features --ignore=tests/graph_mcp --ignore=tests/agentic
+uv run pytest tests/ -x -q --ignore=tests/features --ignore=tests/graph_mcp --ignore=tests/llm
 ```
 
 ---
@@ -433,7 +433,7 @@ In the following files, add `Status: **Superseded by cli-unification.md**`:
 ### 5d. Final test pass
 
 ```bash
-uv run pytest tests/ -x -q --ignore=tests/features --ignore=tests/graph_mcp --ignore=tests/agentic
+uv run pytest tests/ -x -q --ignore=tests/features --ignore=tests/graph_mcp --ignore=tests/llm
 ```
 
 ---

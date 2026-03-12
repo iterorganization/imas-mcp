@@ -829,24 +829,29 @@ class TestPromptTemplates:
     """Test that prompt templates exist and render correctly."""
 
     def test_section_assignment_prompt_exists(self):
-        from imas_codex.ids.mapping import _load_prompt
+        from imas_codex.llm.prompt_loader import PROMPTS_DIR
 
-        prompt = _load_prompt("section_assignment")
-        assert "signal sources" in prompt.lower()
-        assert "{{ facility }}" in prompt or "facility" in prompt.lower()
+        path = PROMPTS_DIR / "mapping" / "section_assignment.md"
+        assert path.exists()
+        prompt = path.read_text().lower()
+        assert "signal sources" in prompt
 
     def test_signal_mapping_prompt_exists(self):
-        from imas_codex.ids.mapping import _load_prompt
+        from imas_codex.llm.prompt_loader import PROMPTS_DIR
 
-        prompt = _load_prompt("signal_mapping")
-        assert "signal" in prompt.lower()
-        assert "transform" in prompt.lower()
+        path = PROMPTS_DIR / "mapping" / "signal_mapping.md"
+        assert path.exists()
+        prompt = path.read_text().lower()
+        assert "signal" in prompt
+        assert "transform" in prompt
 
     def test_validation_prompt_exists(self):
-        from imas_codex.ids.mapping import _load_prompt
+        from imas_codex.llm.prompt_loader import PROMPTS_DIR
 
-        prompt = _load_prompt("validation")
-        assert "valid" in prompt.lower()
+        path = PROMPTS_DIR / "mapping" / "validation.md"
+        assert path.exists()
+        prompt = path.read_text().lower()
+        assert "valid" in prompt
 
     def test_section_assignment_prompt_renders(self):
         from imas_codex.ids.mapping import _render_prompt
@@ -882,9 +887,9 @@ class TestPromptTemplates:
         assert "pf_active/coil" in rendered
 
     def test_signal_mapping_prompt_has_transform_examples(self):
-        from imas_codex.ids.mapping import _load_prompt
+        from imas_codex.llm.prompt_loader import PROMPTS_DIR
 
-        prompt = _load_prompt("signal_mapping")
+        prompt = (PROMPTS_DIR / "mapping" / "signal_mapping.md").read_text()
         # Phase 6: transform expression examples
         assert "value * 1e-3" in prompt
         assert "math.radians(value)" in prompt
@@ -1399,13 +1404,9 @@ class TestPromptsNoSignalMappingTerminology:
         import os
         import re
 
-        prompts_dir = (
-            Path(__file__).resolve().parent.parent.parent
-            / "imas_codex"
-            / "agentic"
-            / "prompts"
-            / "mapping"
-        )
+        from imas_codex.llm.prompt_loader import PROMPTS_DIR
+
+        prompts_dir = PROMPTS_DIR / "mapping"
         # Match "field mapping" but not when preceded by "Validated" or
         # followed by "Entry", "Batch" (Pydantic class name contexts)
         pattern = re.compile(
@@ -1424,9 +1425,9 @@ class TestPromptsNoSignalMappingTerminology:
 class TestStaticFirstOrdering:
     def test_static_sections_before_dynamic(self):
         """Task/rules sections appear before dynamic context."""
-        from imas_codex.ids.mapping import _load_prompt
+        from imas_codex.llm.prompt_loader import PROMPTS_DIR
 
-        prompt = _load_prompt("signal_mapping")
+        prompt = (PROMPTS_DIR / "mapping" / "signal_mapping.md").read_text()
         # Static markers should appear before dynamic Jinja2 variables
         task_pos = prompt.find("Task")
         rules_pos = prompt.find("Rules")

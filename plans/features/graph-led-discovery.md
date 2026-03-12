@@ -688,7 +688,7 @@ class DiscoveryProgressDisplay:
 
 ## Prompts
 
-Store prompts in `imas_codex/agentic/prompts/` with clear naming:
+Store prompts in `imas_codex/llm/prompts/` with clear naming:
 
 ### `discovery-scorer.md`
 
@@ -864,7 +864,7 @@ Flag paths where `scanned_at < now() - DAYS` for re-scan. Low priority.
 ```
 imas_codex/discovery/models.py      # PathPurpose, DirectoryEvidence, ScoredDirectory
 imas_codex/discovery/scorer.py      # DirectoryScorer class
-imas_codex/agentic/prompts/discovery-scorer.md  # LLM prompt
+imas_codex/llm/prompts/discovery-scorer.md  # LLM prompt
 ```
 
 **Add CLI command:** `imas-codex discover score <facility>`
