@@ -215,19 +215,17 @@ def _format_load_row(info: dict) -> list[str]:
     """Format a load info dict into a table row."""
     cpu_count = info.get("cpu_count", 1)
     load_1m = info.get("load_1m", 0)
-    load_5m = info.get("load_5m", 0)
 
     cpu_bar = _colored_bar(load_1m, cpu_count)
     mem_total = info.get("mem_total_mb", 0)
     mem_used = info.get("mem_used_mb", 0)
     mem_bar = _colored_bar(mem_used, mem_total)
     mem_label = f"{mem_used / 1024:.1f}/{mem_total / 1024:.0f} GB"
-    load_str = f"{load_1m:.1f} / {load_5m:.1f} / {info.get('load_15m', 0):.1f}"
     users = str(info.get("users", 0))
 
     return [
         info.get("hostname", "unknown"),
-        f"{cpu_bar}  {load_str} ({cpu_count} cores)",
+        f"{cpu_bar}  ({cpu_count} cores)",
         f"{mem_bar}  {mem_label}",
         users,
     ]
@@ -486,10 +484,10 @@ def _build_survey_table(
     table = Table(title=f"Login Nodes — {facility.upper()}")
     table.add_column("#", style="dim", justify="right")
     table.add_column("Node", style="cyan")
-    table.add_column("CPU Load", min_width=40)
-    table.add_column("Memory", min_width=35)
+    table.add_column("CPU Load")
+    table.add_column("Memory")
     table.add_column("Users", justify="right")
-    table.add_column("Codex Procs", justify="right")
+    table.add_column("Codex", justify="right")
 
     best_node = None
     best_load = float("inf")
@@ -555,6 +553,7 @@ def _build_survey_display(
     procs_by_node = _collect_procs(results)
     proc_table = _build_process_table(procs_by_node)
     if proc_table:
+        parts.append(Text(""))  # blank line between tables
         parts.append(proc_table)
 
     if best_node:
@@ -650,6 +649,68 @@ def _set_ssh_hostname(alias: str, new_hostname: str) -> bool:
     tmp_path = ssh_config.with_suffix(".tmp")
     tmp_path.write_text("".join(new_lines))
     tmp_path.rename(ssh_config)
+    os.chmod(ssh_config, 0o600)
+    return True
+
+
+def _ensure_ssh_alias(
+    alias: str, parent_alias: str, hostname: str
+) -> bool:
+    """Create or update a derived SSH alias in ~/.ssh/config.
+
+    If the alias already exists, updates its HostName.
+    If not, clones the parent alias block (User, ProxyJump, etc.)
+    with the new alias name and hostname.
+
+    Returns True on success.
+    """
+    ssh_config = Path.home() / ".ssh" / "config"
+    if not ssh_config.exists():
+        return False
+
+    # If alias already exists, just update HostName
+    existing = _get_ssh_hostname(alias)
+    if existing is not None:
+        return _set_ssh_hostname(alias, hostname)
+
+    # Clone from parent: read parent block directives
+    content = ssh_config.read_text()
+    parent_lines: list[str] = []
+    in_parent = False
+    for line in content.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("Host ") and not stripped.startswith("Host *"):
+            host_names = stripped.split()[1:]
+            if parent_alias in host_names:
+                in_parent = True
+                continue
+            elif in_parent:
+                break
+        if in_parent:
+            lower = stripped.lower()
+            # Skip hostname (we'll set our own) and directives that
+            # shouldn't be cloned (tunnels, forwards)
+            if lower.startswith("hostname "):
+                continue
+            if any(
+                lower.startswith(d)
+                for d in ("localforward", "remoteforward", "dynamicforward")
+            ):
+                continue
+            parent_lines.append(line)
+
+    if not parent_lines:
+        return False
+
+    # Build new block
+    block = f"\nHost {alias}\n"
+    block += f"  HostName {hostname}\n"
+    for line in parent_lines:
+        block += line + "\n" if not line.endswith("\n") else line
+    block += "\n"
+
+    with open(ssh_config, "a") as f:
+        f.write(block)
     os.chmod(ssh_config, 0o600)
     return True
 
@@ -806,6 +867,100 @@ def _migrate_from_node(
     )
 
 
+def _resolve_node_fqdn(
+    spec: str, sorted_nodes: list[str], results: dict
+) -> str:
+    """Resolve a node spec (index, hostname, or FQDN) to an FQDN."""
+    try:
+        idx = int(spec)
+        if 1 <= idx <= len(sorted_nodes):
+            return f"{sorted_nodes[idx - 1]}.iter.org"
+        raise click.ClickException(
+            f"Index {idx} out of range (1-{len(sorted_nodes)})"
+        )
+    except ValueError:
+        candidate = spec.strip()
+        if "." not in candidate:
+            matches = [n for n in sorted_nodes if candidate in n]
+            if len(matches) == 1:
+                return f"{matches[0]}.iter.org"
+            elif len(matches) > 1:
+                raise click.ClickException(
+                    f"Ambiguous hostname '{candidate}', "
+                    f"matches: {', '.join(matches)}"
+                )
+            else:
+                raise click.ClickException(f"No node matching '{candidate}'")
+        return candidate
+
+
+def _handle_llm_alias(
+    facility: str,
+    llm_node: str,
+    new_default_fqdn: str | None,
+    results: dict,
+    sorted_nodes: list[str],
+) -> None:
+    """Create or update the {facility}-llm SSH alias.
+
+    Args:
+        facility: Facility name (e.g. "iter").
+        llm_node: Node spec — index, hostname, "keep", or FQDN.
+        new_default_fqdn: The new default FQDN (from --set-default), if any.
+        results: Survey results dict.
+        sorted_nodes: Sorted node short names.
+    """
+    llm_alias = f"{facility}-llm"
+
+    if llm_node == "keep":
+        # Pin LLM to the CURRENT default (before any --set-default changed it)
+        # If --set-default was used, new_default_fqdn is the NEW target;
+        # the old target is now the LLM node. But since _set_ssh_hostname
+        # already updated the alias, we need to figure out the old value.
+        # In practice "keep" means: keep LLM where it currently is.
+        existing = _get_ssh_hostname(llm_alias)
+        if existing:
+            click.echo(
+                click.style("  · ", fg="dim")
+                + f"LLM already pinned: {llm_alias} → "
+                + click.style(existing, fg="cyan")
+            )
+            return
+        # No existing LLM alias — use the previous default before switch
+        # The caller should have passed the pre-switch hostname, but
+        # since set_default already updated it, read from the survey:
+        # use the node that's currently running litellm processes.
+        current_default = _get_ssh_hostname(facility)
+        if current_default:
+            llm_fqdn = current_default
+        else:
+            raise click.ClickException(
+                "Cannot determine current LLM node. "
+                "Specify a node explicitly: --llm 5"
+            )
+    else:
+        llm_fqdn = _resolve_node_fqdn(llm_node, sorted_nodes, results)
+
+    llm_short = llm_fqdn.split(".")[0]
+    if llm_short in results and results[llm_short] is None:
+        raise click.ClickException(
+            f"Node '{llm_short}' is unreachable — refusing "
+            f"to set as LLM host. Pick a reachable node."
+        )
+
+    if _ensure_ssh_alias(llm_alias, facility, llm_fqdn):
+        click.echo(
+            click.style("  ✓ ", fg="green")
+            + f"LLM host: {llm_alias} → "
+            + click.style(llm_fqdn, fg="cyan", bold=True)
+        )
+    else:
+        raise click.ClickException(
+            f"Could not create SSH alias '{llm_alias}'. "
+            f"Ensure a 'Host {facility}' block exists in ~/.ssh/config"
+        )
+
+
 # ── CLI ──────────────────────────────────────────────────────────────────
 
 
@@ -868,11 +1023,24 @@ def host(ctx: click.Context) -> None:
         "to auto-select least loaded"
     ),
 )
+@click.option(
+    "--llm",
+    "llm_node",
+    default=None,
+    is_flag=False,
+    flag_value="keep",
+    help=(
+        "Set LLM proxy node: node index, hostname, 'keep' to pin to "
+        "current default, or omit to leave unchanged. "
+        "Creates a {facility}-llm SSH alias."
+    ),
+)
 def host_survey(
     facility: str,
     timeout: int,
     watch: bool,
     set_default: str | None,
+    llm_node: str | None,
 ) -> None:
     """Survey login nodes on a facility with load and process info.
 
@@ -883,12 +1051,20 @@ def host_survey(
     Use --set-default to update ~/.ssh/config to target a specific
     login node for all future SSH/cx connections.
 
+    Use --llm to pin the LLM proxy to a specific node, decoupled from
+    the default SSH target.  This prevents node switches from breaking
+    the LLM proxy connection.
+
     \b
     Examples:
         imas-codex host iter                    # Survey ITER login nodes
         imas-codex host iter --watch            # Continuous monitoring
         imas-codex host iter --set-default 3    # Pick node #3
         imas-codex host iter --set-default      # Auto-pick least loaded
+        imas-codex host iter --set-default 4 --llm 5
+                                                # Default to #4, LLM on #5
+        imas-codex host iter --set-default 4 --llm keep
+                                                # Switch default, keep LLM where it is
     """
     from imas_codex.discovery.base.facility import get_facility
 
@@ -1005,6 +1181,20 @@ def host_survey(
                     f"Ensure a 'Host {facility}' block with a HostName "
                     f"directive exists in ~/.ssh/config"
                 )
+
+        # Handle --llm within set-default context (reuse results/sorted_nodes)
+        if llm_node is not None:
+            _handle_llm_alias(
+                facility, llm_node, target_fqdn, results, sorted_nodes
+            )
+
+        return
+
+    if llm_node is not None:
+        # --llm used without --set-default
+        results, nodes = _discover_and_survey()
+        sorted_nodes = sorted(results)
+        _handle_llm_alias(facility, llm_node, None, results, sorted_nodes)
         return
 
     if watch:
