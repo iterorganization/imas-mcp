@@ -26,8 +26,14 @@ warnings.filterwarnings(
 # Suppress neo4j driver destructor warning
 warnings.filterwarnings("ignore", message=".*Relying on Driver's destructor.*")
 
-import importlib.metadata  # noqa: E402
 import os  # noqa: E402
+
+# Disable hf_xet native bindings — they crash on some environments (ITER SDCC)
+# with 'NoneType' object is not subscriptable errors during huggingface_hub import.
+# We use a remote embed server, so xet acceleration is never needed client-side.
+os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
+
+import importlib.metadata  # noqa: E402
 from functools import lru_cache  # noqa: E402
 from pathlib import Path  # noqa: E402
 
