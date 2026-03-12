@@ -379,3 +379,235 @@ def compute_signal_coverage(
         unmapped_groups=unmapped_ids,
         percentage=pct,
     )
+
+
+# ---------------------------------------------------------------------------
+# 8.1 Extended signal source coverage per IDS
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class SignalSourceCoverageReport:
+    """Extended signal source coverage report for a specific IDS.
+
+    Reports:
+    - Enriched sources matching the IDS physics domain that have MAPS_TO_IMAS
+    - Discovered (not enriched) sources that might benefit from enrichment
+    - Sources mapped to more than one IMAS path (multi-target)
+    """
+
+    facility: str
+    ids_name: str
+    total_enriched_matching: int = 0
+    mapped_to_ids: int = 0
+    unmapped_enriched: list[str] = field(default_factory=list)
+    discovered_sources: int = 0
+    discovered_ids: list[str] = field(default_factory=list)
+    multi_target_sources: int = 0
+    multi_target_ids: list[str] = field(default_factory=list)
+    enriched_mapped_pct: float = 0.0
+
+
+def compute_signal_source_coverage(
+    facility: str,
+    ids_name: str,
+    *,
+    gc: GraphClient | None = None,
+) -> SignalSourceCoverageReport:
+    """Compute extended signal source coverage for a facility/IDS pair.
+
+    Queries enriched signal sources with matching physics_domain, checks
+    how many have MAPS_TO_IMAS relationships to the target IDS, and
+    identifies discovered-but-not-enriched sources and multi-target sources.
+    """
+    if gc is None:
+        gc = GraphClient()
+
+    report = SignalSourceCoverageReport(facility=facility, ids_name=ids_name)
+
+    # Enriched sources with matching physics domain mapped to this IDS
+    enriched_rows = gc.query(
+        """
+        MATCH (sg:SignalSource {facility_id: $facility, status: 'enriched'})
+        WHERE sg.physics_domain IS NOT NULL
+        OPTIONAL MATCH (sg)-[:MAPS_TO_IMAS]->(ip:IMASNode {ids: $ids_name})
+        RETURN sg.id AS id, ip IS NOT NULL AS is_mapped
+        """,
+        facility=facility,
+        ids_name=ids_name,
+    )
+
+    report.total_enriched_matching = len(enriched_rows)
+    report.mapped_to_ids = sum(1 for r in enriched_rows if r["is_mapped"])
+    report.unmapped_enriched = sorted(
+        r["id"] for r in enriched_rows if not r["is_mapped"]
+    )
+    report.enriched_mapped_pct = (
+        (report.mapped_to_ids / report.total_enriched_matching * 100)
+        if report.total_enriched_matching > 0
+        else 0.0
+    )
+
+    # Discovered (not enriched) sources
+    discovered_rows = gc.query(
+        """
+        MATCH (sg:SignalSource {facility_id: $facility, status: 'discovered'})
+        RETURN sg.id AS id
+        """,
+        facility=facility,
+    )
+    report.discovered_sources = len(discovered_rows)
+    report.discovered_ids = sorted(r["id"] for r in discovered_rows)
+
+    # Multi-target sources (mapped to >1 IMAS path in this IDS)
+    multi_rows = gc.query(
+        """
+        MATCH (sg:SignalSource {facility_id: $facility})-[:MAPS_TO_IMAS]->(ip:IMASNode {ids: $ids_name})
+        WITH sg, count(DISTINCT ip) AS target_count
+        WHERE target_count > 1
+        RETURN sg.id AS id, target_count
+        """,
+        facility=facility,
+        ids_name=ids_name,
+    )
+    report.multi_target_sources = len(multi_rows)
+    report.multi_target_ids = sorted(r["id"] for r in multi_rows)
+
+    return report
+
+
+# ---------------------------------------------------------------------------
+# 8.2 Assembly coverage
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class AssemblyCoverageReport:
+    """Assembly configuration completeness for sections of a mapping."""
+
+    facility: str
+    ids_name: str
+    total_sections: int = 0
+    sections_with_config: int = 0
+    sections_without_config: list[str] = field(default_factory=list)
+    default_pattern_count: int = 0
+    custom_pattern_count: int = 0
+    init_arrays_configured: int = 0
+    init_arrays_unconfigured: int = 0
+
+
+def compute_assembly_coverage(
+    facility: str,
+    ids_name: str,
+    *,
+    gc: GraphClient | None = None,
+) -> AssemblyCoverageReport:
+    """Report assembly configuration completeness from POPULATES relationships.
+
+    Queries POPULATES relationships on the IMASMapping node and checks
+    which sections have assembly config properties vs defaults.
+    """
+    if gc is None:
+        gc = GraphClient()
+
+    report = AssemblyCoverageReport(facility=facility, ids_name=ids_name)
+
+    # Find all POPULATES relationships from the mapping
+    rows = gc.query(
+        """
+        MATCH (m:IMASMapping {facility: $facility, ids_name: $ids_name})
+              -[r:POPULATES]->(s:IMASNode)
+        RETURN s.id AS section_path,
+               r.assembly_pattern AS pattern,
+               r.init_arrays AS init_arrays
+        """,
+        facility=facility,
+        ids_name=ids_name,
+    )
+
+    # Also find sections that have bindings but no POPULATES
+    binding_rows = gc.query(
+        """
+        MATCH (m:IMASMapping {facility: $facility, ids_name: $ids_name})
+              -[:USES_SIGNAL_SOURCE]->(sg:SignalSource)
+              -[:MAPS_TO_IMAS]->(ip:IMASNode {ids: $ids_name})
+        WITH DISTINCT
+             [x IN split(ip.id, '/')[0..3] | x] AS parts
+        RETURN reduce(s = '', p IN parts | s + CASE WHEN s = '' THEN '' ELSE '/' END + p) AS section_path
+        """,
+        facility=facility,
+        ids_name=ids_name,
+    )
+
+    populated_sections = {r["section_path"] for r in rows}
+    all_sections = populated_sections | {r["section_path"] for r in binding_rows}
+    report.total_sections = len(all_sections)
+    report.sections_with_config = len(populated_sections)
+    report.sections_without_config = sorted(all_sections - populated_sections)
+
+    for r in rows:
+        pattern = r.get("pattern", "array_per_node")
+        if pattern == "array_per_node":
+            report.default_pattern_count += 1
+        else:
+            report.custom_pattern_count += 1
+
+        init = r.get("init_arrays")
+        if init:
+            report.init_arrays_configured += 1
+        else:
+            report.init_arrays_unconfigured += 1
+
+    return report
+
+
+# ---------------------------------------------------------------------------
+# 8.3 Mapping confidence distribution
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ConfidenceDistribution:
+    """Distribution of mapping confidences across bindings."""
+
+    total_bindings: int = 0
+    low_count: int = 0  # < 0.5
+    medium_count: int = 0  # 0.5 - 0.8
+    high_count: int = 0  # > 0.8
+    low_bindings: list[str] = field(default_factory=list)
+    average_confidence: float = 0.0
+
+
+def compute_confidence_distribution(
+    bindings: list,
+) -> ConfidenceDistribution:
+    """Compute the confidence distribution of mapping bindings.
+
+    Buckets:
+    - Low (<0.5): Flag for review
+    - Medium (0.5-0.8): Acceptable but could improve
+    - High (>0.8): Confident
+    """
+    dist = ConfidenceDistribution()
+    if not bindings:
+        return dist
+
+    dist.total_bindings = len(bindings)
+    total_conf = 0.0
+
+    for b in bindings:
+        conf = getattr(b, "confidence", 0.5)
+        total_conf += conf
+
+        if conf < 0.5:
+            dist.low_count += 1
+            dist.low_bindings.append(
+                f"{b.source_id} → {b.target_id} ({conf:.2f})"
+            )
+        elif conf <= 0.8:
+            dist.medium_count += 1
+        else:
+            dist.high_count += 1
+
+    dist.average_confidence = total_conf / dist.total_bindings
+    return dist
