@@ -1,0 +1,50 @@
+{
+  "results": {
+    "tcv:pf_active:coil_1:current": {
+      "success": true,
+      "data": [1200.5, 1201.3, 1199.8, 1200.1, 1200.9],
+      "time": [0.0, 0.1, 0.2, 0.3, 0.4],
+      "shape": [5],
+      "dtype": "float64"
+    },
+    "tcv:pf_active:coil_2:current": {
+      "success": true,
+      "data": [-800.2, -799.5, -800.8, -801.1, -799.9],
+      "time": [0.0, 0.1, 0.2, 0.3, 0.4],
+      "shape": [5],
+      "dtype": "float64"
+    },
+    "tcv:pf_active:coil_1:r_position": {
+      "success": true,
+      "data": [0.88],
+      "time": null,
+      "shape": [1],
+      "dtype": "float64"
+    },
+    "tcv:pf_active:coil_1:z_position": {
+      "success": true,
+      "data": [0.45],
+      "time": null,
+      "shape": [1],
+      "dtype": "float64"
+    },
+    "tcv:pf_active:coil_2:r_position": {
+      "success": true,
+      "data": [1.12],
+      "time": null,
+      "shape": [1],
+      "dtype": "float64"
+    },
+    "tcv:pf_active:coil_2:z_position": {
+      "success": true,
+      "data": [-0.35],
+      "time": null,
+      "shape": [1],
+      "dtype": "float64"
+    },
+    "tcv:pf_active:coil_3:current": {
+      "success": false,
+      "error": "TreeNNF: Node not found"
+    }
+  }
+}
