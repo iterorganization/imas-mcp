@@ -296,7 +296,9 @@ def query_signal_sources(
         {ids_filter}
         OPTIONAL MATCH (m)-[:MEMBER_OF]->(sg)
         WITH sg, count(m) AS member_count,
-             collect(DISTINCT m.id)[..5] AS sample_members
+             collect(DISTINCT m.id)[..5] AS sample_members,
+             collect(DISTINCT m.accessor)[..10] AS sample_accessors
+        OPTIONAL MATCH (rep:FacilitySignal {{id: sg.representative_id}})
         OPTIONAL MATCH (sg)-[r:MAPS_TO_IMAS]->(ip:IMASNode)
         RETURN sg.id AS id, sg.group_key AS group_key,
                sg.description AS description,
@@ -305,6 +307,11 @@ def query_signal_sources(
                sg.status AS status,
                member_count,
                sample_members,
+               sample_accessors,
+               rep.description AS rep_description,
+               rep.unit AS rep_unit,
+               rep.sign_convention AS rep_sign_convention,
+               rep.cocos AS rep_cocos,
                collect(DISTINCT {{
                    target_id: ip.id,
                    transform: r.transform_expression,
@@ -314,6 +321,32 @@ def query_signal_sources(
         ORDER BY sg.group_key
     """
     return gc.query(cypher, **params)
+
+
+def fetch_source_code_refs(
+    source_id: str,
+    *,
+    gc: GraphClient | None = None,
+    limit: int = 5,
+) -> list[dict[str, Any]]:
+    """Return code chunks showing how a signal source is read.
+
+    Follows: SignalSource → representative FacilitySignal → SignalNode
+    → CodeChunk to find actual code snippets that read the signal data.
+    """
+    if gc is None:
+        gc = GraphClient()
+
+    cypher = """
+        MATCH (sg:SignalSource {id: $source_id})
+        OPTIONAL MATCH (rep:FacilitySignal {id: sg.representative_id})
+               -[:HAS_DATA_SOURCE_NODE]->(sn:SignalNode)
+               -[:EXTRACTED_FROM]->(cc:CodeChunk)
+        RETURN cc.text AS code, cc.language AS language,
+               cc.source_file AS file
+        LIMIT $limit
+    """
+    return gc.query(cypher, source_id=source_id, limit=limit)
 
 
 def search_existing_mappings(

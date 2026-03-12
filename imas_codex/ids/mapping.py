@@ -37,6 +37,7 @@ from imas_codex.ids.tools import (
     analyze_units,
     fetch_imas_fields,
     fetch_imas_subtree,
+    fetch_source_code_refs,
     get_sign_flip_paths,
     query_signal_sources,
     search_existing_mappings,
@@ -130,9 +131,25 @@ def _format_sources(groups: list[dict[str, Any]]) -> str:
         line = f"- {gid} (key={key}, members={members})"
         if desc:
             line += f": {desc}"
+        # Enriched metadata from representative signal
+        rep_desc = g.get("rep_description")
+        if rep_desc and rep_desc != desc:
+            line += f"\n  Representative: {rep_desc[:200]}"
+        rep_unit = g.get("rep_unit")
+        if rep_unit:
+            line += f"\n  Unit: {rep_unit}"
+        rep_cocos = g.get("rep_cocos")
+        if rep_cocos:
+            line += f"\n  COCOS: {rep_cocos}"
+        rep_sign = g.get("rep_sign_convention")
+        if rep_sign:
+            line += f"\n  Sign convention: {rep_sign}"
+        accessors = g.get("sample_accessors")
+        if accessors:
+            line += f"\n  Accessors: {', '.join(str(a) for a in accessors[:5])}"
         if mapped:
             targets = ", ".join(m["target_id"] for m in mapped)
-            line += f" [already mapped → {targets}]"
+            line += f"\n  [already mapped → {targets}]"
         lines.append(line)
     return "\n".join(lines) if lines else "(no sources)"
 
@@ -161,19 +178,24 @@ def _format_fields(fields: list[dict[str, Any]]) -> str:
 def _format_unit_analysis(
     groups: list[dict[str, Any]], fields: list[dict[str, Any]]
 ) -> str:
-    """Run unit analysis between groups and IMAS fields."""
+    """Run unit analysis between signal sources and IMAS fields.
+
+    Uses the rep_unit field (dot-exp format from normalize_unit_symbol)
+    instead of extracting units from keywords.
+    """
+    from imas_codex.units import normalize_unit_symbol
+
     lines: list[str] = []
-    # Collect signal units from groups
     for g in groups:
-        signal_unit = None
-        for kw in g.get("keywords") or []:
-            if kw and kw.startswith("unit:"):
-                signal_unit = kw[5:]
+        signal_unit = g.get("rep_unit")
         if not signal_unit:
             continue
+        # Normalize to dot-exp
+        signal_unit = normalize_unit_symbol(signal_unit) or signal_unit
         for f in fields:
             imas_unit = f.get("units")
             if imas_unit:
+                imas_unit = normalize_unit_symbol(imas_unit) or imas_unit
                 result = analyze_units(signal_unit, imas_unit)
                 if result.get("compatible"):
                     factor = result.get("conversion_factor", 1.0)
@@ -320,6 +342,33 @@ def map_signals(
             {},
         )
 
+        # Fetch code references for this source
+        code_refs = fetch_source_code_refs(assignment.source_id, gc=gc)
+        code_context = ""
+        if code_refs:
+            snippets = []
+            for ref in code_refs:
+                if ref.get("code"):
+                    lang = ref.get("language", "")
+                    snippets.append(f"```{lang}\n{ref['code']}\n```")
+            if snippets:
+                code_context = "\n".join(snippets)
+
+        # Build per-source COCOS context
+        source_cocos = sg_detail.get("rep_cocos")
+        cocos_context = ""
+        if source_cocos:
+            flip_paths = [
+                p for p in context["cocos_paths"]
+                if p.startswith(section_path)
+            ]
+            cocos_context = f"Signal COCOS convention: {source_cocos}"
+            if flip_paths:
+                cocos_context += (
+                    "\nTarget IMAS paths requiring sign flip:\n"
+                    + "\n".join(f"- {p}" for p in flip_paths)
+                )
+
         prompt = _render_prompt(
             "signal_mapping",
             facility=facility,
@@ -332,6 +381,8 @@ def map_signals(
             ),
             cocos_paths="\n".join(f"- {p}" for p in context["cocos_paths"]) or "(none)",
             existing_mappings=json.dumps(context["existing"], indent=2, default=str),
+            code_references=code_context or "(no code references available)",
+            source_cocos=cocos_context or "(no COCOS context)",
         )
 
         messages = [
