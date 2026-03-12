@@ -8,6 +8,7 @@ without requiring a live Neo4j database or LLM API.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -974,3 +975,520 @@ class TestFormatHelpers:
         assert _format_subtree([]) == "(no paths)"
         assert _format_sources([]) == "(no sources)"
         assert _format_fields([]) == "(no fields)"
+
+
+# ---------------------------------------------------------------------------
+# Phase 9.1: Pipeline unit tests
+# ---------------------------------------------------------------------------
+
+
+class TestGatherContextFields:
+    """Test that gather_context returns all enriched fields."""
+
+    @patch("imas_codex.ids.mapping.search_imas_semantic")
+    def test_context_has_enriched_source_fields(
+        self, mock_semantic, mock_gc, sample_groups, sample_subtree
+    ):
+        """All expected enriched keys present in context signal sources."""
+        from imas_codex.ids.mapping import gather_context
+
+        mock_semantic.return_value = sample_subtree
+
+        with (
+            patch("imas_codex.ids.mapping.fetch_imas_subtree") as mock_subtree,
+            patch("imas_codex.ids.mapping.query_signal_sources") as mock_qsg,
+            patch("imas_codex.ids.mapping.search_existing_mappings") as mock_sem,
+        ):
+            mock_subtree.return_value = sample_subtree
+            mock_qsg.return_value = sample_groups
+            mock_sem.return_value = {
+                "mapping": None,
+                "sections": [],
+                "bindings": [],
+            }
+
+            ctx = gather_context("jet", "pf_active", gc=mock_gc)
+
+        # Check enriched fields on signal sources
+        for grp in ctx["groups"]:
+            assert "rep_unit" in grp
+            assert "rep_cocos" in grp
+            assert "physics_domain" in grp
+            assert "sample_accessors" in grp
+
+
+class TestAssignSectionsValidOutput:
+    """Test that section assignment produces valid IDS paths."""
+
+    @patch("imas_codex.ids.mapping._call_llm")
+    def test_all_paths_start_with_ids_name(
+        self, mock_call_llm, sample_groups, sample_subtree, sample_section_assignment
+    ):
+        from imas_codex.ids.mapping import PipelineCost, assign_sections
+
+        mock_call_llm.return_value = sample_section_assignment
+        cost = PipelineCost()
+
+        context = {
+            "groups": sample_groups,
+            "subtree": sample_subtree,
+            "semantic": sample_subtree,
+        }
+
+        result = assign_sections("jet", "pf_active", context, cost=cost)
+        assert isinstance(result, SectionAssignmentBatch)
+        for a in result.assignments:
+            assert a.imas_section_path.startswith("pf_active/")
+
+
+class TestMapSignalsMultiTarget:
+    """Test that map_signals supports multi-target (same source → multiple targets)."""
+
+    @patch("imas_codex.ids.mapping.fetch_source_code_refs")
+    @patch("imas_codex.ids.mapping._call_llm")
+    @patch("imas_codex.ids.mapping.fetch_imas_fields")
+    @patch("imas_codex.ids.mapping.fetch_imas_subtree")
+    def test_same_source_multiple_targets(
+        self,
+        mock_subtree,
+        mock_fields,
+        mock_call_llm,
+        mock_code_refs,
+        mock_gc,
+        sample_groups,
+        sample_subtree,
+    ):
+        from imas_codex.ids.mapping import PipelineCost, map_signals
+
+        # LLM returns batch with same source mapped to two targets
+        multi_target_batch = FieldMappingBatch(
+            ids_name="pf_active",
+            section_path="pf_active/coil",
+            mappings=[
+                FieldMappingEntry(
+                    source_id="jet:pf_coils:group1",
+                    target_id="pf_active/coil/element/geometry/rectangle/r",
+                    transform_expression="value",
+                    confidence=0.95,
+                    reasoning="R position",
+                ),
+                FieldMappingEntry(
+                    source_id="jet:pf_coils:group1",
+                    target_id="pf_active/coil/element/geometry/rectangle/z",
+                    transform_expression="value",
+                    confidence=0.90,
+                    reasoning="Z position",
+                ),
+            ],
+        )
+
+        mock_fields.return_value = sample_subtree[1:]
+        mock_subtree.return_value = sample_subtree[1:]
+        mock_call_llm.return_value = multi_target_batch
+        mock_code_refs.return_value = []
+        cost = PipelineCost()
+
+        assignment = SectionAssignmentBatch(
+            ids_name="pf_active",
+            assignments=[
+                SectionAssignment(
+                    source_id="jet:pf_coils:group1",
+                    imas_section_path="pf_active/coil",
+                    confidence=0.95,
+                    reasoning="PF coil geometry",
+                ),
+            ],
+        )
+
+        context = {
+            "groups": sample_groups,
+            "subtree": sample_subtree,
+            "cocos_paths": [],
+            "existing": {"mapping": None, "sections": [], "bindings": []},
+        }
+
+        result = map_signals(
+            "jet", "pf_active", assignment, context, gc=mock_gc, cost=cost
+        )
+
+        # Same source mapped to both targets
+        source_ids = {m.source_id for m in result[0].mappings}
+        target_ids = {m.target_id for m in result[0].mappings}
+        assert len(source_ids) == 1  # same source
+        assert len(target_ids) == 2  # different targets
+
+
+class TestDiscoverAssemblyPatterns:
+    """Test that discover_assembly returns valid AssemblyBatch."""
+
+    @patch("imas_codex.ids.mapping.fetch_imas_subtree")
+    @patch("imas_codex.ids.mapping._call_llm")
+    def test_returns_assembly_batch(
+        self,
+        mock_call_llm,
+        mock_subtree,
+        mock_gc,
+        sample_groups,
+        sample_subtree,
+        sample_section_assignment,
+        sample_field_batch,
+    ):
+        from imas_codex.ids.mapping import PipelineCost, discover_assembly
+        from imas_codex.ids.models import AssemblyConfig, AssemblyPattern
+
+        mock_subtree.return_value = sample_subtree
+        mock_call_llm.return_value = AssemblyConfig(
+            section_path="pf_active/coil",
+            pattern=AssemblyPattern.ARRAY_PER_NODE,
+            confidence=0.85,
+            reasoning="Each PF coil maps to one struct-array element",
+        )
+        cost = PipelineCost()
+
+        context = {
+            "groups": sample_groups,
+            "subtree": sample_subtree,
+        }
+
+        result = discover_assembly(
+            "jet",
+            "pf_active",
+            sample_section_assignment,
+            [sample_field_batch, sample_field_batch],
+            context,
+            gc=mock_gc,
+            cost=cost,
+        )
+
+        assert result.ids_name == "pf_active"
+        assert len(result.configs) == 2
+        for cfg in result.configs:
+            assert isinstance(cfg.pattern, AssemblyPattern)
+
+
+class TestValidateMappingsCatchesUnitMismatch:
+    """Test that validation catches identity transform with unit mismatch."""
+
+    @patch("imas_codex.ids.validation.check_imas_paths")
+    def test_identity_transform_unit_mismatch(self, mock_check, mock_gc):
+        from imas_codex.ids.mapping import validate_mappings
+
+        mock_check.return_value = [
+            {"path": "pf_active/coil/element/geometry/rectangle/r", "exists": True}
+        ]
+        mock_gc.query.return_value = [{"id": "jet:pf_coils:group1"}]
+
+        sections = SectionAssignmentBatch(
+            ids_name="pf_active",
+            assignments=[
+                SectionAssignment(
+                    source_id="jet:pf_coils:group1",
+                    imas_section_path="pf_active/coil",
+                    confidence=0.9,
+                    reasoning="test",
+                ),
+            ],
+        )
+        field_batch = FieldMappingBatch(
+            ids_name="pf_active",
+            section_path="pf_active/coil",
+            mappings=[
+                FieldMappingEntry(
+                    source_id="jet:pf_coils:group1",
+                    target_id="pf_active/coil/element/geometry/rectangle/r",
+                    transform_expression="value",
+                    source_units="mm",
+                    target_units="m",
+                    confidence=0.9,
+                    reasoning="R position",
+                ),
+            ],
+        )
+
+        with patch("imas_codex.ids.validation.analyze_units") as mock_units:
+            mock_units.return_value = {"compatible": True, "conversion_factor": 0.001}
+            result = validate_mappings(
+                "jet", "pf_active", "4.1.1", sections, [field_batch], gc=mock_gc
+            )
+
+        # Should have escalation about identity transform with different units
+        unit_escalations = [
+            e for e in result.escalations if "units differ" in e.reason.lower()
+        ]
+        assert len(unit_escalations) == 1
+
+
+class TestValidateMappingsCatchesCOCOSMissing:
+    """Test that validation catches sign-flip path without COCOS handling."""
+
+    @patch("imas_codex.ids.validation.check_imas_paths")
+    def test_sign_flip_path_no_cocos(self, mock_check, mock_gc):
+        from imas_codex.ids.mapping import validate_mappings
+
+        target = "equilibrium/time_slice/profiles_1d/psi"
+        mock_check.return_value = [{"path": target, "exists": True}]
+        mock_gc.query.return_value = [{"id": "jet:eq:psi_group"}]
+
+        sections = SectionAssignmentBatch(
+            ids_name="equilibrium",
+            assignments=[
+                SectionAssignment(
+                    source_id="jet:eq:psi_group",
+                    imas_section_path="equilibrium/time_slice",
+                    confidence=0.9,
+                    reasoning="test",
+                ),
+            ],
+        )
+        field_batch = FieldMappingBatch(
+            ids_name="equilibrium",
+            section_path="equilibrium/time_slice",
+            mappings=[
+                FieldMappingEntry(
+                    source_id="jet:eq:psi_group",
+                    target_id=target,
+                    transform_expression="value",
+                    confidence=0.85,
+                    reasoning="PSI profile",
+                ),
+            ],
+        )
+
+        # Patch get_sign_flip_paths to return our target
+        with patch("imas_codex.ids.tools.get_sign_flip_paths") as mock_flip:
+            mock_flip.return_value = [target]
+            result = validate_mappings(
+                "jet",
+                "equilibrium",
+                "4.1.1",
+                sections,
+                [field_batch],
+                gc=mock_gc,
+            )
+
+        # Should have escalation about COCOS
+        cocos_escalations = [
+            e for e in result.escalations if "cocos" in e.reason.lower()
+        ]
+        assert len(cocos_escalations) == 1
+
+
+class TestValidateSameSourceDiffTargetsOk:
+    """Test one source → multiple targets produces no warning."""
+
+    @patch("imas_codex.ids.validation.check_imas_paths")
+    def test_no_warning_for_multi_target(self, mock_check, mock_gc):
+        from imas_codex.ids.validation import validate_mapping
+
+        mock_check.return_value = [
+            {"path": "pf_active/coil/element/geometry/rectangle/r", "exists": True},
+            {"path": "pf_active/coil/element/geometry/rectangle/z", "exists": True},
+        ]
+        mock_gc.query.return_value = [{"id": "jet:pf_coils:group1"}]
+
+        b1 = ValidatedFieldMapping(
+            source_id="jet:pf_coils:group1",
+            target_id="pf_active/coil/element/geometry/rectangle/r",
+            transform_expression="value",
+            confidence=0.9,
+        )
+        b2 = ValidatedFieldMapping(
+            source_id="jet:pf_coils:group1",
+            target_id="pf_active/coil/element/geometry/rectangle/z",
+            transform_expression="value",
+            confidence=0.9,
+        )
+
+        report = validate_mapping([b1, b2], gc=mock_gc)
+        assert report.all_passed is True
+        assert report.duplicate_targets == []
+        # No warnings about same source → different targets
+        multi_src_warns = [
+            e for e in report.escalations if "Multiple sources" in e.reason
+        ]
+        assert len(multi_src_warns) == 0
+
+
+# ---------------------------------------------------------------------------
+# Phase 9.2: Integration tests (marked, require Neo4j)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+class TestIntegrationMappingPipeline:
+    """Integration tests requiring Neo4j. Skipped in normal test runs."""
+
+    def test_persist_and_load_roundtrip(self, sample_validated_result):
+        """Persist result → load → verify bindings match."""
+        from imas_codex.graph.client import GraphClient
+        from imas_codex.ids.tools import search_existing_mappings
+
+        gc = GraphClient()
+        mapping_id = persist_mapping_result(sample_validated_result, gc=gc)
+        loaded = search_existing_mappings("jet", "pf_active", gc=gc)
+        assert loaded["mapping"] is not None
+        assert len(loaded["bindings"]) == len(sample_validated_result.bindings)
+
+    def test_assembly_config_persisted_on_populates(
+        self, sample_validated_result
+    ):
+        """Assembly config properties appear on POPULATES relationships."""
+        from imas_codex.graph.client import GraphClient
+        from imas_codex.ids.models import (
+            AssemblyBatch,
+            AssemblyConfig,
+            AssemblyPattern,
+        )
+
+        gc = GraphClient()
+        assembly = AssemblyBatch(
+            ids_name="pf_active",
+            configs=[
+                AssemblyConfig(
+                    section_path="pf_active/coil",
+                    pattern=AssemblyPattern.ARRAY_PER_NODE,
+                    init_arrays={"coil": 12},
+                    reasoning="One element per coil",
+                    confidence=0.9,
+                ),
+            ],
+        )
+        persist_mapping_result(
+            sample_validated_result, assembly=assembly, gc=gc
+        )
+        rows = gc.query(
+            """
+            MATCH (m:IMASMapping {facility: 'jet', ids_name: 'pf_active'})
+                  -[r:POPULATES]->(s:IMASNode)
+            RETURN r.assembly_pattern AS pattern, r.init_arrays AS init_arrays
+            """
+        )
+        assert len(rows) > 0
+        assert rows[0]["pattern"] == "array_per_node"
+
+
+# ---------------------------------------------------------------------------
+# Phase 9.3: Prompt template tests
+# ---------------------------------------------------------------------------
+
+
+class TestAssemblyPromptRenders:
+    def test_assembly_prompt_renders_all_vars(self):
+        from imas_codex.ids.mapping import _render_prompt
+
+        rendered = _render_prompt(
+            "assembly",
+            facility="jet",
+            ids_name="pf_active",
+            section_path="pf_active/coil",
+            signal_mappings="- group1 → r (FLT_0D)",
+            imas_section_structure="pf_active/coil (STRUCT_ARRAY)",
+            source_metadata="2 groups, 6 signals",
+        )
+        assert "pf_active/coil" in rendered
+        assert "jet" in rendered
+
+
+class TestPromptsNoFieldMappingTerminology:
+    def test_no_field_mapping_in_prompts(self):
+        """No standalone 'field mapping' terminology in prompt templates.
+
+        Occurrences as part of class names (ValidatedFieldMapping,
+        FieldMappingEntry) are acceptable.
+        """
+        import os
+        import re
+
+        prompts_dir = (
+            Path(__file__).resolve().parent.parent.parent
+            / "imas_codex"
+            / "agentic"
+            / "prompts"
+            / "mapping"
+        )
+        # Match "field mapping" but not when preceded by "Validated" or
+        # followed by "Entry", "Batch" (Pydantic class name contexts)
+        pattern = re.compile(
+            r"(?<!validated)field\s+mapping(?!entry|batch|s?\s*\()",
+            re.IGNORECASE,
+        )
+        for fname in os.listdir(prompts_dir):
+            if fname.endswith(".md"):
+                content = (prompts_dir / fname).read_text()
+                matches = pattern.findall(content)
+                assert not matches, (
+                    f"Found standalone 'field mapping' in {fname}: {matches}"
+                )
+
+
+class TestStaticFirstOrdering:
+    def test_static_sections_before_dynamic(self):
+        """Task/rules sections appear before dynamic context."""
+        from imas_codex.ids.mapping import _load_prompt
+
+        prompt = _load_prompt("signal_mapping")
+        # Static markers should appear before dynamic Jinja2 variables
+        task_pos = prompt.find("Task")
+        rules_pos = prompt.find("Rules")
+        # Dynamic context markers
+        facility_pos = prompt.find("{{ facility }}")
+
+        # Task and Rules must appear before dynamic context
+        assert task_pos >= 0, "Task section not found"
+        if facility_pos >= 0:
+            assert task_pos < facility_pos
+        if rules_pos >= 0 and facility_pos >= 0:
+            assert rules_pos < facility_pos
+
+
+# ---------------------------------------------------------------------------
+# Phase 9.4: CLI tests
+# ---------------------------------------------------------------------------
+
+
+class TestMapRunCostLimit:
+    @patch("imas_codex.ids.mapping.generate_mapping")
+    def test_cost_limit_flag_accepted(self, mock_generate, sample_validated_result):
+        from imas_codex.cli.map import map_cmd
+        from imas_codex.ids.mapping import MappingResult, PipelineCost
+
+        mock_generate.return_value = MappingResult(
+            mapping_id="jet:pf_active",
+            validated=sample_validated_result,
+            cost=PipelineCost(steps={"step1": 0.001}),
+            persisted=False,
+            unassigned_groups=[],
+            assembly=None,
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(
+            map_cmd,
+            ["run", "--cost-limit", "2.0", "--no-persist", "--plain", "jet", "pf_active"],
+        )
+        assert result.exit_code == 0
+        assert "jet:pf_active" in result.output
+
+
+class TestMapRunTimeLimit:
+    @patch("imas_codex.ids.mapping.generate_mapping")
+    def test_time_flag_accepted(self, mock_generate, sample_validated_result):
+        from imas_codex.cli.map import map_cmd
+        from imas_codex.ids.mapping import MappingResult, PipelineCost
+
+        mock_generate.return_value = MappingResult(
+            mapping_id="jet:pf_active",
+            validated=sample_validated_result,
+            cost=PipelineCost(steps={"step1": 0.001}),
+            persisted=False,
+            unassigned_groups=[],
+            assembly=None,
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(
+            map_cmd,
+            ["run", "--time", "10", "--no-persist", "--plain", "jet", "pf_active"],
+        )
+        assert result.exit_code == 0
+        assert "jet:pf_active" in result.output
