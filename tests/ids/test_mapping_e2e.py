@@ -798,7 +798,9 @@ class TestMapCLI:
         )
 
         runner = CliRunner()
-        result = runner.invoke(map_cmd, ["run", "jet", "pf_active", "--no-persist"])
+        result = runner.invoke(
+            map_cmd, ["run", "jet", "pf_active", "--no-persist", "--plain"]
+        )
         assert result.exit_code == 0
         assert "jet:pf_active" in result.output
         assert "Bindings: 2" in result.output
@@ -812,7 +814,7 @@ class TestMapCLI:
         mock_generate.side_effect = ValueError("No signal groups found")
 
         runner = CliRunner()
-        result = runner.invoke(map_cmd, ["run", "jet", "pf_active"])
+        result = runner.invoke(map_cmd, ["run", "jet", "pf_active", "--plain"])
         assert result.exit_code == 1
         assert "No signal groups found" in result.output
 
