@@ -10,6 +10,8 @@ from rich.markup import escape
 from rich.panel import Panel
 from rich.text import Text
 
+from imas_codex.cli.discover.common import reset_to_option
+
 logger = logging.getLogger(__name__)
 
 
@@ -85,11 +87,13 @@ logger = logging.getLogger(__name__)
     default=None,
     help="Auto-enrich paths scoring >= threshold (default: from settings)",
 )
+@reset_to_option("paths")
 @click.option(
     "--reset-scored",
     is_flag=True,
     default=False,
-    help="Reset all scored paths so they get re-scored with current prompt",
+    hidden=True,
+    help="Deprecated: use --reset-to triaged instead.",
 )
 @click.option(
     "--time",
@@ -120,6 +124,7 @@ def paths(
     reset_scored: bool,
     time_limit: int | None,
     triage_batch_size: int | None,
+    reset_to: str | None = None,
 ) -> None:
     """Discover and score directory structure at a facility.
 
@@ -141,6 +146,11 @@ def paths(
         click.echo("Error: --scan-only and --triage-only are mutually exclusive")
         raise SystemExit(1)
 
+    # Handle deprecated --reset-scored (alias for --reset-to triaged)
+    if reset_scored and not reset_to:
+        reset_to = "triaged"
+        click.echo("Warning: --reset-scored is deprecated, use --reset-to triaged")
+
     # Convert root tuple to list or None
     root_filter = list(root) if root else None
 
@@ -157,7 +167,7 @@ def paths(
         root_filter=root_filter,
         add_roots=add_roots,
         enrich_threshold=enrich_threshold,
-        reset_scored=reset_scored,
+        reset_to=reset_to,
         timeout_minutes=time_limit,
         triage_batch_size=triage_batch_size,
     )
@@ -181,7 +191,7 @@ def _run_iterative_discovery(
     root_filter: list[str] | None = None,
     add_roots: bool = False,
     enrich_threshold: float | None = None,
-    reset_scored: bool = False,
+    reset_to: str | None = None,
     timeout_minutes: int | None = None,
     triage_batch_size: int | None = None,
 ) -> None:
@@ -230,17 +240,18 @@ def _run_iterative_discovery(
             log_print("[dim]All discovery_roots already in graph[/dim]")
         stats = get_discovery_stats(facility)
 
-    # Handle --reset-scored flag
-    if reset_scored:
-        from imas_codex.discovery.paths.frontier import reset_scored_paths
+    # Handle --reset-to flag
+    if reset_to:
+        from imas_codex.discovery.base.reset import PATH_RESET_SPECS, reset_to_status
 
-        reset_count = reset_scored_paths(facility)
+        spec = PATH_RESET_SPECS[reset_to]
+        reset_count = reset_to_status(spec, facility)
         if reset_count > 0:
             log_print(
-                f"[green]Reset {reset_count} scored path(s) for re-scoring[/green]"
+                f"[green]Reset {reset_count} path(s) to '{reset_to}' for reprocessing[/green]"
             )
         else:
-            log_print("[dim]No scored paths to reset[/dim]")
+            log_print(f"[dim]No paths to reset to '{reset_to}'[/dim]")
         stats = get_discovery_stats(facility)
 
     # Handle targeted deep dive with --root

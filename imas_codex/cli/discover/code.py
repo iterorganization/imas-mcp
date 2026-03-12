@@ -7,6 +7,8 @@ import time
 
 import click
 
+from imas_codex.cli.discover.common import reset_to_option
+
 logger = logging.getLogger(__name__)
 
 
@@ -96,6 +98,7 @@ logger = logging.getLogger(__name__)
     default=None,
     help="Files per triage LLM call (default: 50). Tune for cost vs quality.",
 )
+@reset_to_option("code")
 def code(
     facility: str,
     min_score: float | None,
@@ -113,6 +116,7 @@ def code(
     verbose: bool,
     rescan: bool,
     triage_batch_size: int | None,
+    reset_to: str | None = None,
 ) -> None:
     """Discover and ingest source code from scored facility paths.
 
@@ -172,6 +176,19 @@ def code(
         log_print(
             "[yellow]Rescan enabled — previously scanned paths will be re-processed[/yellow]"
         )
+
+    # Handle --reset-to: reset code files to a target state
+    if reset_to:
+        from imas_codex.discovery.base.reset import CODE_RESET_SPECS, reset_to_status
+
+        spec = CODE_RESET_SPECS[reset_to]
+        reset_count = reset_to_status(spec, facility)
+        if reset_count > 0:
+            log_print(
+                f"[yellow]Reset {reset_count} file(s) to '{reset_to}' for reprocessing[/yellow]"
+            )
+        else:
+            log_print(f"[dim]No files to reset to '{reset_to}'[/dim]")
 
     deadline: float | None = None
     if time_limit is not None:

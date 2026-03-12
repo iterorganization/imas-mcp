@@ -7,6 +7,8 @@ import time
 
 import click
 
+from imas_codex.cli.discover.common import reset_to_option
+
 logger = logging.getLogger(__name__)
 
 
@@ -67,6 +69,7 @@ logger = logging.getLogger(__name__)
     help="Maximum runtime in minutes",
 )
 @click.option("--verbose", "-v", is_flag=True, help="Show detailed progress")
+@reset_to_option("documents")
 def documents(
     facility: str,
     min_score: float,
@@ -79,6 +82,7 @@ def documents(
     focus: str | None,
     time_limit: int | None,
     verbose: bool,
+    reset_to: str | None = None,
 ) -> None:
     """Discover documents and images from scored facility paths.
 
@@ -122,6 +126,22 @@ def documents(
     if not ssh_host:
         log_print(f"[red]No SSH host configured for {facility}[/red]")
         raise SystemExit(1)
+
+    # Handle --reset-to: reset documents to a target state
+    if reset_to:
+        from imas_codex.discovery.base.reset import (
+            DOCUMENT_RESET_SPECS,
+            reset_to_status,
+        )
+
+        spec = DOCUMENT_RESET_SPECS[reset_to]
+        reset_count = reset_to_status(spec, facility)
+        if reset_count > 0:
+            log_print(
+                f"[yellow]Reset {reset_count} document(s) to '{reset_to}' for reprocessing[/yellow]"
+            )
+        else:
+            log_print(f"[dim]No documents to reset to '{reset_to}'[/dim]")
 
     deadline: float | None = None
     if time_limit is not None:

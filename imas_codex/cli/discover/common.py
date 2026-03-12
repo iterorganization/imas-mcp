@@ -30,6 +30,70 @@ DISCOVERY_DOMAINS = ("paths", "wiki", "signals", "code", "documents")
 
 
 # =============================================================================
+# Shared --reset-to option
+# =============================================================================
+
+# Human-readable target descriptions per domain
+_RESET_TARGET_HELP: dict[str, dict[str, str]] = {
+    "signals": {
+        "discovered": "re-enrich all enriched/checked signals",
+        "enriched": "re-check all checked signals",
+    },
+    "paths": {
+        "triaged": "re-score all scored paths",
+        "scanned": "re-triage and re-score all triaged/scored paths",
+    },
+    "wiki": {
+        "scanned": "re-score all scored/ingested pages",
+        "scored": "re-ingest all ingested pages",
+    },
+    "code": {
+        "discovered": "re-triage all triaged/scored/ingested files",
+        "triaged": "re-enrich and re-score all scored/ingested files",
+        "scored": "re-ingest all ingested files",
+    },
+    "documents": {
+        "discovered": "re-score all scored/ingested documents",
+        "scored": "re-ingest all ingested documents",
+    },
+}
+
+
+def reset_to_option(domain: str) -> Callable:
+    """Create a ``--reset-to`` Click option for a specific discovery domain.
+
+    Usage::
+
+        @click.command()
+        @reset_to_option("signals")
+        def signals(facility, reset_to, ...):
+            ...
+
+    The option accepts the valid target states for the domain and provides
+    domain-specific help text listing valid values and what they do.
+    """
+    from imas_codex.discovery.base.reset import get_valid_targets
+
+    targets = get_valid_targets(domain)
+    help_parts = _RESET_TARGET_HELP.get(domain, {})
+
+    # Build help text
+    lines = ["Reset nodes to a target state for reprocessing. Valid targets:"]
+    for t in targets:
+        desc = help_parts.get(t, "")
+        lines.append(f"  {t}: {desc}" if desc else f"  {t}")
+
+    help_text = "\n".join(lines)
+
+    return click.option(
+        "--reset-to",
+        type=click.Choice(targets, case_sensitive=False),
+        default=None,
+        help=help_text,
+    )
+
+
+# =============================================================================
 # CLI Harness — eliminates async boilerplate across all discovery commands
 # =============================================================================
 
