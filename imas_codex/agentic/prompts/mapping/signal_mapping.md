@@ -52,10 +52,10 @@ Create an escalation flag when:
 
 ## Output Format
 
-Return a JSON object matching the `FieldMappingBatch` schema:
+Return a JSON object matching the `SignalMappingBatch` schema:
 - `ids_name`: The IDS name
 - `section_path`: The section being mapped
-- `mappings`: Array of `FieldMappingEntry` objects
+- `mappings`: Array of `SignalMappingEntry` objects
 - `escalations`: Array of `EscalationFlag` objects for uncertain mappings
 
 ---

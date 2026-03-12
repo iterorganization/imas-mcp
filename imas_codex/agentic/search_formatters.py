@@ -97,12 +97,12 @@ def format_signals_report(
             if analysis_code:
                 parts.append(f"  Analysis code: {analysis_code}")
 
-            # Signal group context
+            # Signal source context
             sg_key = sig.get("signal_source_key")
             if sg_key:
                 sg_desc = sig.get("signal_source_description") or ""
                 sg_count = sig.get("signal_source_member_count")
-                sg_line = f"  Signal group: {sg_key}"
+                sg_line = f"  Signal source: {sg_key}"
                 if sg_count:
                     sg_line += f" ({sg_count} members)"
                 if sg_desc:

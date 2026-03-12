@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from imas_codex.ids.models import ValidatedFieldMapping
+from imas_codex.ids.models import ValidatedSignalMapping
 from imas_codex.ids.validation import (
     AssemblyCoverageReport,
     BindingCheck,
@@ -39,7 +39,7 @@ def _make_binding(**overrides):
         "confidence": 0.9,
     }
     defaults.update(overrides)
-    return ValidatedFieldMapping(**defaults)
+    return ValidatedSignalMapping(**defaults)
 
 
 class TestValidateMapping:

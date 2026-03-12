@@ -1,7 +1,7 @@
 """Programmatic validation for IMAS mapping bindings.
 
 Replaces LLM self-review (Step 3) with concrete checks:
-  - Source signal group exists in graph
+  - Source signal source exists in graph
   - Target IMAS path exists in graph
   - Transform expression executes without error
   - Source/target units are compatible (dimensional + identity transform check)
@@ -75,7 +75,7 @@ def validate_mapping(
     transform_expression, source_units, target_units.
 
     Args:
-        bindings: List of binding objects (ValidatedFieldMapping or similar).
+        bindings: List of binding objects (ValidatedSignalMapping or similar).
         gc: GraphClient instance (created if None).
         sign_flip_paths: IMAS paths requiring COCOS sign flips.
 
@@ -325,13 +325,13 @@ def compute_coverage(
 
 
 # ---------------------------------------------------------------------------
-# Signal group coverage
+# Signal source coverage
 # ---------------------------------------------------------------------------
 
 
 @dataclass
 class SignalCoverageReport:
-    """What fraction of enriched signal groups have IMAS bindings."""
+    """What fraction of enriched signal sources have IMAS bindings."""
 
     facility: str
     total_enriched: int = 0

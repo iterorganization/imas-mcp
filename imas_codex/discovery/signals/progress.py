@@ -133,7 +133,7 @@ class DataProgressState:
     pending_enrich: int = 0
     pending_check: int = 0
 
-    # Signal group tracking
+    # Signal source tracking
     signal_sources: int = 0
     grouped_signals: int = 0
 

@@ -349,7 +349,7 @@ def get_data_discovery_stats(facility: str) -> dict[str, Any]:
             )
             stats = dict(result[0]) if result else {}
 
-            # Signal group counts (separate query to avoid cross-product)
+            # Signal source counts (separate query to avoid cross-product)
             grp = gc.query(
                 """
                 MATCH (sg:SignalSource {facility_id: $facility})
@@ -1119,7 +1119,7 @@ def detect_signal_sources(
     facility: str,
     min_instances: int = 3,
 ) -> tuple[int, int]:
-    """Detect indexed signal groups and create SignalSource nodes with MEMBER_OF.
+    """Detect indexed signal sources and create SignalSource nodes with MEMBER_OF.
 
     Scans discovered FacilitySignals for accessor patterns where numeric
     segments vary (e.g., CALIB_GAS_010:...:PARAM_048:LIM). For each
@@ -1146,7 +1146,7 @@ def detect_signal_sources(
     Returns:
         Tuple of (groups_detected, signals_linked_as_members)
     """
-    # Fetch all discovered signal accessors not yet in a signal group
+    # Fetch all discovered signal accessors not yet in a signal source
     with GraphClient() as gc:
         results = gc.query(
             """
@@ -1221,7 +1221,7 @@ def detect_signal_sources(
 
     groups_detected = len(multi_groups)
     logger.info(
-        "Detected %d signal groups for %s: %d members",
+        "Detected %d signal sources for %s: %d members",
         groups_detected,
         facility,
         total_members,
@@ -3036,7 +3036,7 @@ async def enrich_worker(
         group_key: str,
         indexed_signals: list[tuple[int, dict]],
     ) -> list[dict[str, str]]:
-        """Fetch relevant source code chunks for a signal group.
+        """Fetch relevant source code chunks for a signal source.
 
         Uses the code_chunk_embedding vector index to find code that
         references signals in this group, providing usage patterns and
@@ -3189,7 +3189,7 @@ async def enrich_worker(
             state.facility, wiki_context_cache
         )
 
-        # Build user prompt with context from each signal group
+        # Build user prompt with context from each signal source
         user_lines = [
             f"Classify these {len(signals)} signals.\n",
             "Return results in the same order using signal_index (1-based).\n",
@@ -4209,12 +4209,12 @@ async def run_parallel_data_discovery(
         with _GC() as gc:
             gc.ensure_facility(_facility)
 
-        # Detect signal groups BEFORE workers start so enrich workers
+        # Detect signal sources BEFORE workers start so enrich workers
         # won't waste LLM calls on non-representative group members.
         groups_detected, followers_marked = detect_signal_sources(_facility)
         if groups_detected > 0:
             logger.info(
-                "Preflight: detected %d signal groups (%d followers) for %s",
+                "Preflight: detected %d signal sources (%d followers) for %s",
                 groups_detected,
                 followers_marked,
                 _facility,

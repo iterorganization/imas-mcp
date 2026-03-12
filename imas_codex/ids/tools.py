@@ -261,7 +261,7 @@ def check_imas_paths(
 
 
 # ---------------------------------------------------------------------------
-# Signal groups + existing mappings
+# Signal sources + existing mappings
 # ---------------------------------------------------------------------------
 
 
@@ -271,7 +271,7 @@ def query_signal_sources(
     *,
     gc: GraphClient | None = None,
 ) -> list[dict[str, Any]]:
-    """Return enriched signal groups for a facility, optionally filtered by IDS.
+    """Return enriched signal sources for a facility, optionally filtered by IDS.
 
     Each row contains group metadata plus member signals and any
     existing MAPS_TO_IMAS connections.
@@ -391,7 +391,7 @@ def search_existing_mappings(
             id=mapping_id,
         )
 
-    # Field-level mappings via signal groups
+    # Field-level mappings via signal sources
     bindings: list[dict[str, Any]] = []
     if mapping:
         bindings = gc.query(

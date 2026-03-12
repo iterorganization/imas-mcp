@@ -2,7 +2,7 @@
 
 Pydantic models used as structured output targets for each LLM step:
   assign_sections     — SectionAssignmentBatch: assign signal sources to IMAS sections
-  map_signals         — FieldMappingBatch: signal-level mappings with transforms
+  map_signals         — SignalMappingBatch: signal-level mappings with transforms
   discover_assembly   — AssemblyBatch: assembly patterns for struct-array population
   validate_mappings   — ValidatedMappingResult: programmatically validated mappings
 
@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 
 class SectionAssignment(BaseModel):
-    """Map a signal group to an IMAS structural array section."""
+    """Map a signal source to an IMAS structural array section."""
 
     source_id: str = Field(description="SignalSource node id")
     imas_section_path: str = Field(
@@ -47,12 +47,12 @@ class SectionAssignmentBatch(BaseModel):
     assignments: list[SectionAssignment]
     unassigned_groups: list[str] = Field(
         default_factory=list,
-        description="Signal group IDs that could not be assigned",
+        description="Signal source IDs that could not be assigned",
     )
 
 
 # ---------------------------------------------------------------------------
-# Step 2: Field-level mapping
+# Step 2: Signal-level mapping
 # ---------------------------------------------------------------------------
 
 
@@ -72,7 +72,7 @@ class EscalationFlag(BaseModel):
     reason: str = Field(description="Why this mapping is uncertain")
 
 
-class FieldMappingEntry(BaseModel):
+class SignalMappingEntry(BaseModel):
     """Single signal mapping entry with transform details."""
 
     source_id: str = Field(description="SignalSource node id")
@@ -95,12 +95,12 @@ class FieldMappingEntry(BaseModel):
     reasoning: str = Field(default="", description="Brief justification")
 
 
-class FieldMappingBatch(BaseModel):
+class SignalMappingBatch(BaseModel):
     """Batch of signal mappings from map_signals (per section)."""
 
     ids_name: str
     section_path: str = Field(description="IMAS struct-array section")
-    mappings: list[FieldMappingEntry]
+    mappings: list[SignalMappingEntry]
     escalations: list[EscalationFlag] = Field(default_factory=list)
 
 
@@ -159,8 +159,8 @@ class AssemblyBatch(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class ValidatedFieldMapping(BaseModel):
-    """A field mapping that has passed validation."""
+class ValidatedSignalMapping(BaseModel):
+    """A signal mapping that has passed validation."""
 
     source_id: str
     source_property: str = "value"
@@ -179,7 +179,7 @@ class ValidatedMappingResult(BaseModel):
     ids_name: str
     dd_version: str
     sections: list[SectionAssignment]
-    bindings: list[ValidatedFieldMapping]
+    bindings: list[ValidatedSignalMapping]
     escalations: list[EscalationFlag] = Field(default_factory=list)
     corrections: list[str] = Field(
         default_factory=list,
@@ -211,7 +211,7 @@ def persist_mapping_result(
       - IMASMapping node
       - POPULATES relationships to section roots (with assembly config)
       - USES_SIGNAL_SOURCE relationships
-      - MAPS_TO_IMAS relationships on signal groups
+      - MAPS_TO_IMAS relationships on signal sources
       - MappingEvidence nodes for escalations
 
     Args:
@@ -322,7 +322,7 @@ def persist_mapping_result(
             assembly_function_name=asm_params.get("assembly_function_name"),
         )
 
-    # 3. Collect signal group IDs and create USES_SIGNAL_SOURCE
+    # 3. Collect signal source IDs and create USES_SIGNAL_SOURCE
     sg_ids = {fm.source_id for fm in result.bindings}
     for sg_id in sg_ids:
         gc.query(
