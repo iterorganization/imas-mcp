@@ -1,9 +1,9 @@
-"""Response models for the IMAS mapping pipeline.
+"""Response models for the IMAS signal mapping pipeline.
 
 Pydantic models used as structured output targets for each LLM step:
-  Step 1 — SectionAssignmentBatch: assign signal groups to IMAS sections
-  Step 2 — FieldMappingBatch: field-level mappings with transforms
-  Step 3 — ValidatedMappingResult: programmatically validated mappings
+  assign_sections     — SectionAssignmentBatch: assign signal sources to IMAS sections
+  map_signals         — FieldMappingBatch: signal-level mappings with transforms
+  validate_mappings   — ValidatedMappingResult: programmatically validated mappings
 
 Also contains the adapter that converts ValidatedMappingResult into
 graph operations (MAPS_TO_IMAS relationships, POPULATES, IMASMapping).
@@ -61,18 +61,18 @@ class EscalationSeverity(StrEnum):
 
 
 class EscalationFlag(BaseModel):
-    """Flag for a field the LLM cannot confidently map."""
+    """Flag for a signal the LLM cannot confidently map."""
 
-    source_id: str = Field(description="SignalSource id")
+    source_id: str = Field(description="SignalSource node id")
     target_id: str = Field(description="Target IMAS path")
     severity: EscalationSeverity = EscalationSeverity.WARNING
     reason: str = Field(description="Why this mapping is uncertain")
 
 
 class FieldMappingEntry(BaseModel):
-    """Single field-level mapping with transform details."""
+    """Single signal mapping entry with transform details."""
 
-    source_id: str = Field(description="Source SignalSource id")
+    source_id: str = Field(description="SignalSource node id")
     source_property: str = Field(
         default="value",
         description="Property on the source node to map (default: value)",
@@ -93,7 +93,7 @@ class FieldMappingEntry(BaseModel):
 
 
 class FieldMappingBatch(BaseModel):
-    """Batch of field mappings from Step 2 (per section)."""
+    """Batch of signal mappings from map_signals (per section)."""
 
     ids_name: str
     section_path: str = Field(description="IMAS struct-array section")

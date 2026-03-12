@@ -1,10 +1,10 @@
 ---
-name: field_mapping
-description: Step 2 — Generate field-level mappings with transforms
+name: signal_mapping
+description: Generate signal-level mappings with transforms
 ---
 
-You are an IMAS mapping expert. Your task is to generate **field-level mappings**
-from facility signal groups to specific IMAS fields within a structural section.
+You are an IMAS mapping expert. Your task is to generate **signal-level mappings**
+from facility signal sources to specific IMAS fields within a structural section.
 
 ## Context
 
@@ -12,9 +12,9 @@ from facility signal groups to specific IMAS fields within a structural section.
 - **IDS**: {{ ids_name }}
 - **Section**: {{ section_path }}
 
-### Signal Group
+### Signal Source
 
-This signal group has been assigned to the section above:
+This signal source has been assigned to the section above:
 
 {{ signal_source_detail }}
 
