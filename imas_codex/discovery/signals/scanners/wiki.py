@@ -407,7 +407,7 @@ class WikiScanner:
                     data_source_path=path_key,
                     unit=units or None,
                     description=description or None,
-                    discovery_source="wiki_extraction",
+                    discovery_source="wiki",
                 )
             )
 

@@ -557,12 +557,6 @@ classes:
           How to connect to MDSplus: "local" (open tree files directly)
           or "thin_client" (connect to remote mdsip server).
           Determines which scanner dispatch path is used.
-      subsystem_codes:
-        description: >-
-          Diagnostic subsystem codes (two-character identifiers) for
-          TDI function enumeration. Used by the MDSplus thin-client
-          scanner to enumerate diagnostic subtrees via TDI functions.
-        multivalued: true
 
   SourceConfig:
     description: >-
@@ -739,6 +733,26 @@ classes:
           Path to the EDAS shared library (e.g., /analysis/lib/libeddb.so).
           Used for ctypes bindings in signal discovery.
 
+  JPFSubsystem:
+    description: >-
+      A JPF subsystem definition with its two-character code,
+      human-readable description, and physics domain hint for
+      signal classification.
+    class_uri: fc:JPFSubsystem
+    attributes:
+      code:
+        description: >-
+          Two-character subsystem identifier (e.g., DA, PF, AH).
+          Used in JPF signal paths: dpf("{code}/{signal}", shot).
+        identifier: true
+      description:
+        description: Human-readable subsystem description
+      physics_domain:
+        description: >-
+          Default physics domain for signals in this subsystem.
+          Used as initial classification before LLM enrichment.
+          Must be a valid PhysicsDomain enum value.
+
   JPFConfig:
     description: >-
       JET JPF (JET Processing Facility) raw hardware signal configuration.
@@ -753,11 +767,12 @@ classes:
       reference_shot:
         description: Reference shot for JPF signal enumeration
         range: integer
-      subsystem_codes:
+      subsystems:
         description: >-
-          JPF diagnostic subsystem codes (two-character identifiers).
-          Used to enumerate signals per subsystem via TDI functions.
+          JPF diagnostic subsystem definitions. Each entry provides
+          the two-character code, description, and default physics domain.
         multivalued: true
+        range: JPFSubsystem
 
   HDF5Config:
     description: HDF5 file data source configuration
