@@ -405,6 +405,79 @@ class TestEpochWorker:
         assert any("epochs detected" in msg for msg in progress_calls)
 
     @pytest.mark.anyio
+    async def test_epoch_seeds_per_subtree(self):
+        """epoch_worker seeds epoch versions per-subtree, not parent tree.
+
+        When a tree has subtrees (e.g., tcv_shot with results, magnetics),
+        epochs detected on the parent should be seeded for each subtree
+        so extraction opens the small subtree instead of the full parent.
+        """
+        from imas_codex.discovery.signals.parallel import epoch_worker
+
+        # Config with parent tree containing subtrees (like TCV)
+        config_with_subtrees = {
+            "ssh_host": SSH_HOST,
+            "data_systems": {
+                "mdsplus": {
+                    "trees": [
+                        {
+                            "source_name": "parent_tree",
+                            "subtrees": [
+                                {"source_name": "results"},
+                                {"source_name": "magnetics"},
+                            ],
+                        },
+                    ],
+                },
+            },
+        }
+
+        state = DataDiscoveryState(
+            facility=FACILITY,
+            ssh_host=SSH_HOST,
+            scanner_types=["mdsplus"],
+            cost_limit=10.0,
+            reference_shot=5000,
+        )
+        state.facility_config = config_with_subtrees
+
+        mock_epochs = [
+            {"version": 5000, "first_shot": 5000},
+            {"version": 8000, "first_shot": 8000},
+        ]
+
+        seed_calls = []
+
+        def mock_seed(facility, data_source_name, ver_list, version_configs):
+            seed_calls.append((facility, data_source_name, ver_list))
+            return len(ver_list)
+
+        with (
+            patch(
+                "imas_codex.discovery.mdsplus.epochs.detect_epochs_for_tree",
+                return_value=mock_epochs,
+            ),
+            patch(
+                "imas_codex.discovery.signals.parallel.ingest_epochs",
+            ),
+            patch(
+                "imas_codex.discovery.mdsplus.graph_ops.seed_versions",
+                side_effect=mock_seed,
+            ),
+        ):
+            await epoch_worker(state, on_progress=lambda *a, **kw: None)
+
+        assert state.epoch_phase.done
+        # Should seed per-subtree, NOT for parent_tree
+        seeded_trees = [call[1] for call in seed_calls]
+        assert "results" in seeded_trees
+        assert "magnetics" in seeded_trees
+        assert "parent_tree" not in seeded_trees
+        # Each subtree should get both epoch versions
+        for call in seed_calls:
+            assert sorted(call[2]) == [5000, 8000]
+
+    @pytest.mark.anyio
     async def test_epoch_skips_static_trees(self):
         """epoch_worker skips trees that have versions in config."""
         from imas_codex.discovery.signals.parallel import epoch_worker

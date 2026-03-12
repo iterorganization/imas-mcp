@@ -600,7 +600,7 @@ def fetch_tree_context(
     - sibling_paths: List of sibling node paths (same parent, same type)
     - tdi_source: TDI function source_code if linked via RESOLVES_TO_NODE
     - tdi_name: TDI function name
-    - epoch_range: Dict with first_shot/last_shot if versioned
+    - epoch_range: Dict with first/last version, shot ranges, descriptions
 
     Args:
         signal_ids: List of FacilitySignal IDs to fetch context for
@@ -632,9 +632,13 @@ def fetch_tree_context(
                      head(collect(DISTINCT tdi.source_code)) AS tdi_source,
                      head(collect(DISTINCT tdi.name)) AS tdi_name,
                      min(v.version) AS first_version,
-                     max(v.version) AS last_version
+                     max(v.version) AS last_version,
+                     min(v.first_shot) AS first_shot,
+                     max(v.last_shot) AS last_shot,
+                     collect(DISTINCT v.description)[..3] AS epoch_descriptions
                 RETURN signal_id, tree_path, parent_path, sibling_paths,
-                       tdi_source, tdi_name, first_version, last_version
+                       tdi_source, tdi_name, first_version, last_version,
+                       first_shot, last_shot, epoch_descriptions
                 """,
                 ids=signal_ids,
             )
@@ -652,6 +656,11 @@ def fetch_tree_context(
                     entry["epoch_range"] = {
                         "first_version": row["first_version"],
                         "last_version": row["last_version"],
+                        "first_shot": row.get("first_shot"),
+                        "last_shot": row.get("last_shot"),
+                        "epoch_descriptions": [
+                            d for d in (row.get("epoch_descriptions") or []) if d
+                        ],
                     }
                 ctx[row["signal_id"]] = entry
             return ctx
@@ -718,6 +727,61 @@ def fetch_signal_code_refs(
             return refs
     except Exception as e:
         logger.warning("Could not fetch signal code refs: %s", e)
+        return {}
+
+
+def fetch_epoch_context(
+    signal_ids: list[str],
+) -> dict[str, dict]:
+    """Fetch epoch descriptions for signals with epoch IDs in their paths.
+
+    For signals whose data_source_node or accessor contains an epoch reference
+    (e.g., 'jet:device_xml:p78461:magprobes:1'), look up the SignalEpoch node
+    to get the epoch description (e.g., 'DMSS=108 transition').
+
+    Unlike fetch_tree_context (which traverses HAS_DATA_SOURCE_NODE and gets
+    ALL epochs for a tree), this function specifically matches the INTRODUCED_IN
+    relationship from the backing SignalNode to its specific epoch.
+
+    Args:
+        signal_ids: List of FacilitySignal IDs to fetch epoch context for
+
+    Returns:
+        Dict mapping signal_id → epoch dict with description, first_shot, etc.
+    """
+    if not signal_ids:
+        return {}
+
+    try:
+        with GraphClient() as gc:
+            result = gc.query(
+                """
+                UNWIND $ids AS sid
+                MATCH (s:FacilitySignal {id: sid})-[:HAS_DATA_SOURCE_NODE]->(n:SignalNode)
+                      -[:INTRODUCED_IN]->(e:SignalEpoch)
+                RETURN s.id AS signal_id,
+                       e.id AS epoch_id,
+                       e.description AS description,
+                       e.first_shot AS first_shot,
+                       e.last_shot AS last_shot,
+                       e.wall_configuration AS wall_configuration,
+                       e.version AS version
+                """,
+                ids=signal_ids,
+            )
+            ctx = {}
+            for row in result:
+                ctx[row["signal_id"]] = {
+                    "epoch_id": row.get("epoch_id"),
+                    "epoch_description": row.get("description"),
+                    "epoch_first_shot": row.get("first_shot"),
+                    "epoch_last_shot": row.get("last_shot"),
+                    "wall_configuration": row.get("wall_configuration"),
+                    "epoch_version": row.get("version"),
+                }
+            return ctx
+    except Exception as e:
+        logger.warning("Could not fetch epoch context: %s", e)
         return {}
 
 
@@ -1426,7 +1490,6 @@ def extract_member_identifier(source_key: str, accessor: str) -> str:
     """
     # Find all NNN positions in the source_key
     parts = []
-    key_segments = _PATTERN_RE.findall(source_key.replace("NNN", "999"))
     accessor_segments = _PATTERN_RE.findall(accessor)
 
     # The source key uses NNN → replaced with 999 for regex matching.
@@ -2373,16 +2436,40 @@ async def epoch_worker(
                 epochs = await coro
 
             if epochs:
-                # Ingest epoch SignalEpoch nodes
+                # Ingest epoch SignalEpoch nodes (for the parent tree,
+                # tracking structural history)
                 await asyncio.to_thread(
                     ingest_epochs,
                     epochs,
                     data_access_id=f"{state.facility}:mdsplus:tree_tdi",
                     reference_shot=state.reference_shot,
                 )
-                # Also seed versions from detected epochs for extraction
+
+                # Seed versions for extraction.
+                # When the tree has subtrees, seed epochs PER SUBTREE
+                # so extraction opens the small subtree (e.g. "results"
+                # with ~1500 nodes) instead of the full parent tree
+                # (e.g. "tcv_shot" with 64K+ nodes including ATLAS/PCS).
                 epoch_versions = [e["version"] for e in epochs if "version" in e]
-                if epoch_versions:
+                subtrees = tree_config.get("subtrees", [])
+                if epoch_versions and subtrees:
+                    for st in subtrees:
+                        sub_name = st.get("source_name")
+                        if sub_name:
+                            await asyncio.to_thread(
+                                seed_versions,
+                                state.facility,
+                                sub_name,
+                                epoch_versions,
+                                [],
+                            )
+                    logger.info(
+                        "Seeded %d epoch versions across %d subtrees of %s",
+                        len(epoch_versions),
+                        len([s for s in subtrees if s.get("source_name")]),
+                        data_source_name,
+                    )
+                elif epoch_versions:
                     await asyncio.to_thread(
                         seed_versions,
                         state.facility,
@@ -2459,11 +2546,13 @@ async def mdsplus_extract_worker(
     mdsplus_config = data_systems.get("mdsplus", {})
     node_usages = None
     if isinstance(mdsplus_config, dict):
-        # Find node_usages from first tree config
-        for tc in mdsplus_config.get("trees", []):
-            if tc.get("node_usages"):
-                node_usages = tc["node_usages"]
-                break
+        # Check top-level mdsplus config first, then per-tree config
+        node_usages = mdsplus_config.get("node_usages")
+        if not node_usages:
+            for tc in mdsplus_config.get("trees", []):
+                if tc.get("node_usages"):
+                    node_usages = tc["node_usages"]
+                    break
 
     has_mdsplus = "mdsplus" in state.scanner_types
     if not has_mdsplus:
@@ -2541,6 +2630,22 @@ async def mdsplus_extract_worker(
                 continue
 
             node_count = ver_data.get("node_count", 0)
+
+            # Report ingestion start so the display shows activity
+            # during what can be a slow Neo4j write for large trees
+            if on_progress:
+                on_progress(
+                    f"ingesting v{version} {data_source_name} — {node_count:,} nodes",
+                    state.extract_stats,
+                    [
+                        {
+                            "id": version_id,
+                            "data_source_name": data_source_name,
+                            "data_source_path": f"v{version}",
+                            "signals_in_source": node_count,
+                        }
+                    ],
+                )
 
             merged = merge_version_results([data])
 
@@ -2908,12 +3013,71 @@ async def enrich_worker(
         # Try PPF-style matching (JET: DDA/DTYPE)
         name = signal.get("name", "")
         source = signal.get("discovery_source", "")
-        if source == "ppf_enumeration" and "/" in name:
+        if source == "ppf" and "/" in name:
             ctx = state.wiki_context.get(name.upper())
             if ctx:
                 return ctx
 
         return None
+
+    def _get_jpf_subsystem_description(
+        facility_config: dict, subsystem_code: str
+    ) -> str:
+        """Look up JPF subsystem description from facility config."""
+        jpf_config = (
+            facility_config.get("data_systems", {}).get("jpf", {})
+        )
+        for sub in jpf_config.get("subsystems", []):
+            if sub.get("code") == subsystem_code:
+                return sub.get("description", "")
+        return ""
+
+    def _get_dda_descriptions(facility_config: dict) -> dict[str, str]:
+        """Build DDA→description mapping from facility config.
+
+        Falls back to well-known DDA descriptions when config has none.
+        """
+        ppf_config = (
+            facility_config.get("data_systems", {}).get("ppf", {})
+        )
+        dda_descs = {}
+        for dda_entry in ppf_config.get("dda_descriptions", []):
+            dda_descs[dda_entry["code"]] = dda_entry.get("description", "")
+        if dda_descs:
+            return dda_descs
+
+        # Well-known JET PPF DDA descriptions as fallback
+        return {
+            "EFIT": "Equilibrium reconstruction (magnetic equilibrium)",
+            "EHTR": "Equilibrium high time resolution",
+            "MAGN": "Magnetics — plasma current, loop voltage, flux loops",
+            "HRTS": "High Resolution Thomson Scattering — Te, ne profiles",
+            "KK3": "Electron Cyclotron Emission (ECE) — Te profiles",
+            "KG1V": "Far-infrared interferometry — line-integrated density",
+            "KG1L": "Lateral interferometry — line-integrated density",
+            "KG10": "Interferometry channel 10",
+            "BOLO": "Bolometry — radiated power",
+            "BOLP": "Bolometry profiles",
+            "B5NN": "Bolometry neutron-normalized",
+            "NBI": "Neutral Beam Injection heating",
+            "ICRH": "Ion Cyclotron Resonance Heating",
+            "LHCD": "Lower Hybrid Current Drive",
+            "SXR": "Soft X-ray emission",
+            "KS3": "ECE radiometry",
+            "KS3A": "ECE radiometry (A channel)",
+            "EDG7": "Edge reflectometry",
+            "EDG8": "Edge reflectometry",
+            "GASH": "Gas supply and fuelling",
+            "CXSE": "Charge Exchange Spectroscopy — ion temperature, rotation",
+            "KAD": "ECE Michelson interferometer",
+            "MAGF": "Magnetics Far — far-field magnetic measurements",
+            "MAGS": "Magnetics Saddle — saddle coil measurements",
+            "MAGA": "Magnetics Analogue — analogue magnetic measurements",
+            "MAGG": "Magnetics — general magnetic measurements",
+            "LIDL": "LIDAR Thomson Scattering — Te, ne profiles",
+            "IDAM": "Integrated Data Access Manager",
+            "CXHM": "Charge Exchange — H-alpha monitor",
+        }
 
     def _signal_context_key(signal: dict) -> str:
         """Determine grouping key for a signal based on its discovery source."""
@@ -2926,18 +3090,27 @@ async def enrich_worker(
         source = signal.get("discovery_source", "")
         name = signal.get("name", "")
 
-        if source == "ppf_enumeration" and "/" in name:
+        if source == "ppf" and "/" in name:
             dda = name.split("/")[0]
             return f"ppf:{dda}"
 
-        if source == "edas_enumeration" and "/" in name:
+        if source == "edas" and "/" in name:
             cat = name.split("/")[0]
             return f"edas:{cat}"
 
+        # JPF signals: group by subsystem (first part of name like "DA/C1D-IPLA")
+        if source == "jpf" and "/" in name:
+            subsystem = name.split("/")[0]
+            return f"jpf:{subsystem}"
+
+        # device_xml hardware config: group by data source
+        dsn = signal.get("data_source_name")
+        if dsn == "device_xml":
+            return "device_xml"
+
         # MDSplus tree traversal: group by tree
-        tree = signal.get("data_source_name")
-        if tree:
-            return f"tree:{tree}"
+        if dsn:
+            return f"tree:{dsn}"
 
         return "_ungrouped_"
 
@@ -3002,10 +3175,27 @@ async def enrich_worker(
             query = f"{func_name} TDI function {signal_names}"
         elif group_key.startswith("ppf:"):
             dda = group_key[4:]
-            query = f"{dda} JET diagnostic processed pulse file"
+            signal_names = " ".join(
+                s.get("name") or "" for _, s in indexed_signals[:5]
+            )
+            query = f"JET {dda} diagnostic {signal_names}"
         elif group_key.startswith("edas:"):
             cat = group_key[5:]
             query = f"{cat} JT-60SA diagnostic data"
+        elif group_key.startswith("jpf:"):
+            subsystem = group_key[4:]
+            signal_names = " ".join(
+                s.get("name") or "" for _, s in indexed_signals[:5]
+            )
+            query = f"JET JPF {subsystem} diagnostic {signal_names}"
+        elif group_key == "device_xml":
+            signal_names = " ".join(
+                s.get("name") or "" for _, s in indexed_signals[:5]
+            )
+            query = (
+                f"JET machine description geometry coils probes "
+                f"sensors {signal_names}"
+            )
         elif group_key.startswith("tree:"):
             tree = group_key[5:]
             signal_names = " ".join(
@@ -3052,6 +3242,12 @@ async def enrich_worker(
         signal_names = " ".join(s.get("name") or "" for _, s in indexed_signals[:10])
         if group_key.startswith("tdi:"):
             query_text = f"{group_key[4:]} {signal_names}"
+        elif group_key.startswith("ppf:"):
+            query_text = f"JET {group_key[4:]} ppf {signal_names}"
+        elif group_key.startswith("jpf:"):
+            query_text = f"JET JPF {group_key[4:]} {signal_names}"
+        elif group_key == "device_xml":
+            query_text = f"JET geometry coils probes {signal_names}"
         elif group_key.startswith("tree:"):
             query_text = f"{group_key[5:]} MDSplus {signal_names}"
         else:
@@ -3173,6 +3369,10 @@ async def enrich_worker(
         all_signal_ids = [s["id"] for s in signals]
         tree_context = await asyncio.to_thread(fetch_tree_context, all_signal_ids)
 
+        # Fetch epoch-specific context (SignalNode→INTRODUCED_IN→SignalEpoch)
+        # for signals with versioned backing nodes (e.g., device_xml epochs)
+        epoch_context = await asyncio.to_thread(fetch_epoch_context, all_signal_ids)
+
         # Fetch deterministic code references via graph traversal
         # (CodeChunk → DataReference → SignalNode ← FacilitySignal)
         code_refs = await asyncio.to_thread(fetch_signal_code_refs, all_signal_ids)
@@ -3227,9 +3427,18 @@ async def enrich_worker(
             elif group_key.startswith("ppf:"):
                 dda = group_key[4:]
                 user_lines.append(f"\n## PPF DDA: {dda}")
-                user_lines.append(
-                    f"JET Processed Pulse File signals from diagnostic data area {dda}."
-                )
+                # Look up DDA description from config
+                dda_descs = _get_dda_descriptions(state.facility_config)
+                dda_desc = dda_descs.get(dda, "")
+                if dda_desc:
+                    user_lines.append(
+                        f"JET Processed Pulse File — {dda}: {dda_desc}."
+                    )
+                else:
+                    user_lines.append(
+                        f"JET Processed Pulse File signals from "
+                        f"diagnostic data area {dda}."
+                    )
                 user_lines.append("Access: ppfdata(pulse, dda, dtype, uid='jetppf')")
                 user_lines.append("\nSignals from this DDA:")
 
@@ -3243,6 +3452,51 @@ async def enrich_worker(
                     "Access: eddbreadTime(shot, category, data_name, t1, t2)"
                 )
                 user_lines.append("\nSignals from this category:")
+
+            elif group_key.startswith("jpf:"):
+                subsystem = group_key[4:]
+                user_lines.append(f"\n## JPF Subsystem: {subsystem}")
+                # Look up subsystem description from config
+                sub_desc = _get_jpf_subsystem_description(
+                    state.facility_config, subsystem
+                )
+                if sub_desc:
+                    user_lines.append(
+                        f"JET JPF (JET Private Facility) signals — "
+                        f"{subsystem}: {sub_desc}."
+                    )
+                else:
+                    user_lines.append(
+                        f"JET JPF (JET Private Facility) signals from "
+                        f"subsystem {subsystem}."
+                    )
+                user_lines.append(
+                    "Access: dpf(\"SUBSYSTEM/SIGNAL\", shot) via MDSplus"
+                )
+                user_lines.append(
+                    "JPF signals are raw, unprocessed diagnostic data from "
+                    "JET's analogue and digital acquisition systems."
+                )
+                user_lines.append("\nSignals from this subsystem:")
+
+            elif group_key == "device_xml":
+                user_lines.append("\n## JET Device Description (device_xml)")
+                user_lines.append(
+                    "Hardware geometry and configuration data parsed from "
+                    "JET's EFIT device XML files. These are NOT time-varying "
+                    "measurement signals — they describe the static physical "
+                    "layout (positions, angles, turns) of sensors, coils, "
+                    "and structural components."
+                )
+                user_lines.append(
+                    "Values are versioned by hardware configuration epoch. "
+                    "Each epoch (identified by first_shot boundary) represents "
+                    "a hardware state change (e.g., new divertor, probe "
+                    "added/removed, wall material change)."
+                )
+                user_lines.append(
+                    "\nSignals from device description:"
+                )
 
             elif group_key.startswith("tree:"):
                 tree = group_key[5:]
@@ -3310,9 +3564,38 @@ async def enrich_worker(
                             user_lines.append(f"tdi_source:\n```tdi\n{src}\n```")
                     epoch = sig_tree_ctx.get("epoch_range")
                     if epoch:
-                        user_lines.append(
-                            f"applicability: versions "
+                        parts = [
+                            f"versions "
                             f"{epoch['first_version']}-{epoch['last_version']}"
+                        ]
+                        if epoch.get("first_shot") and epoch.get("last_shot"):
+                            parts.append(
+                                f"shots {epoch['first_shot']}-{epoch['last_shot']}"
+                            )
+                        user_lines.append(f"applicability: {', '.join(parts)}")
+                        epoch_descs = epoch.get("epoch_descriptions", [])
+                        if epoch_descs:
+                            user_lines.append(
+                                f"epoch_info: {'; '.join(epoch_descs[:3])}"
+                            )
+
+                # Inject epoch-specific context (INTRODUCED_IN traversal)
+                sig_epoch = epoch_context.get(signal["id"])
+                if sig_epoch:
+                    desc = sig_epoch.get("epoch_description", "")
+                    fs = sig_epoch.get("epoch_first_shot")
+                    ls = sig_epoch.get("epoch_last_shot")
+                    wc = sig_epoch.get("wall_configuration", "")
+                    epoch_parts = []
+                    if desc:
+                        epoch_parts.append(desc)
+                    if fs and ls:
+                        epoch_parts.append(f"valid shots {fs}-{ls}")
+                    if wc:
+                        epoch_parts.append(f"wall: {wc}")
+                    if epoch_parts:
+                        user_lines.append(
+                            f"hardware_epoch: {', '.join(epoch_parts)}"
                         )
 
                 # Inject wiki context if available
@@ -3602,9 +3885,7 @@ async def individualize_source_descriptions(
             members = src["members"]
 
             # Apply template deterministically
-            individualized = individualize_members(
-                src["group_key"], template, members
-            )
+            individualized = individualize_members(src["group_key"], template, members)
 
             # Update graph with individualized descriptions
             if individualized:
@@ -3818,13 +4099,15 @@ async def check_worker(
     def _get_signal_scanner_type(signal: dict) -> str:
         """Determine which scanner should check this signal."""
         source = signal.get("discovery_source", "")
-        if source == "ppf_enumeration":
+        if source == "ppf":
             return "ppf"
-        if source == "edas_enumeration":
+        if source == "jpf":
+            return "jpf"
+        if source == "edas":
             return "edas"
-        if source == "wiki_extraction":
+        if source == "wiki":
             return "wiki"
-        if source in ("xml_extraction", "jec2020_xml", "magnetics_config"):
+        if source in ("device_xml", "jec2020_xml", "magnetics_config"):
             return "device_xml"
         # Default to MDSplus/TDI batch check
         return "mdsplus"
@@ -3861,8 +4144,8 @@ async def check_worker(
 
         checked: list[dict] = []
 
-        # --- Scanner-based checks (PPF, EDAS, device_xml) ---
-        for scanner_type in ("ppf", "edas", "device_xml"):
+        # --- Scanner-based checks (PPF, JPF, EDAS, device_xml) ---
+        for scanner_type in ("ppf", "jpf", "edas", "device_xml"):
             group = scanner_groups.get(scanner_type, [])
             if not group:
                 continue

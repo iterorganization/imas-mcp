@@ -130,26 +130,30 @@ data_systems:
       - source /etc/profile.d/modules.sh
       - module load jet/1.0
     subsystem_codes:
-      - DA  # Diagnostics A
-      - DB  # Diagnostics B
-      - DC  # Diagnostics C
-      - DD  # Diagnostics D
-      - DE  # Diagnostics E
-      - DF  # Diagnostics F
-      - DG  # Diagnostics G
-      - DH  # Diagnostics H
-      - DI  # Diagnostics I
+      - DA  # Diagnostics A — magnetics, plasma current
+      - DB  # Diagnostics B — particle measurements
+      - DC  # Diagnostics C — EM wave diagnostics
+      - DD  # Diagnostics D — radiation measurements
+      - DE  # Diagnostics E — particle measurements
+      - DF  # Diagnostics F — EM wave diagnostics
+      - DG  # Diagnostics G — particle measurements
+      - DH  # Diagnostics H — EM wave diagnostics
+      - DI  # Diagnostics I — radiation measurements
+      - DJ  # Diagnostics J
       - PF  # Poloidal Field
       - TF  # Toroidal Field
-      - PL  # Plasma
-      - GS  # Gas
+      - PL  # Plasma (inactive for recent shots)
+      - GS  # Gas supply
       - VC  # Vacuum
       - AH  # Additional Heating
-      - RF  # Radio Frequency
-      - CC  # Central Control
-      - LH  # Lower Hybrid
-      - MC  # Machine Control
-      - NM  # Neutron Monitoring
+      - RF  # Radio Frequency heating
+      - SA  # Safety A
+      - SC  # Safety C
+      - CC  # Central Control (inactive for recent shots)
+      - LH  # Lower Hybrid (inactive for recent shots)
+      - MC  # Machine Control (inactive for recent shots)
+      - NM  # Neutron Monitoring (inactive for recent shots)
+      - YC  # YC subsystem
 
   # Machine description — geometry data for JET's tokamak components.
   # Accessed via the DeviceXMLScanner plugin (scanner_type: device_xml).
