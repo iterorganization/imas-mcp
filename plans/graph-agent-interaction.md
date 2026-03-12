@@ -55,7 +55,7 @@ Agents interacting with the imas-codex Neo4j graph are inefficient, generating 1
 
 The project has two distinct MCP servers serving different audiences:
 
-### 1. AgentsServer (`imas_codex/agentic/server.py`) — Internal agents
+### 1. AgentsServer (`imas_codex/llm/server.py`) — Internal agents
 
 9 tools for agent-driven facility exploration and graph building:
 

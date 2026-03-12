@@ -218,7 +218,7 @@ def serve_agents(
         case _:
             logger.info(f"Using {transport} transport on {host}:{port}")
 
-    from imas_codex.agentic.server import AgentsServer
+    from imas_codex.llm.server import AgentsServer
 
     server = AgentsServer()
     server.run(

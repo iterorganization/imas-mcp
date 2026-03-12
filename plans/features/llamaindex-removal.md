@@ -52,12 +52,12 @@ Remove code that is already dead or deprecated, before touching live integration
 - Zero imports exist. Pure dead dependency.
 
 #### 0b. Remove `llama-index-llms-openrouter` dependency + deprecated files
-- **Delete** `imas_codex/agentic/llm.py` — deprecated `get_llm()` wrapping OpenRouter
-- **Delete** `imas_codex/agentic/session.py` — dead `LLMSession` / `CostTracker` (no production consumers; budget tracking reimplemented in `discovery/base/llm.py` and `embeddings/openrouter_embed.py`)
+- **Delete** `imas_codex/llm/llm.py` — deprecated `get_llm()` wrapping OpenRouter
+- **Delete** `imas_codex/llm/session.py` — dead `LLMSession` / `CostTracker` (no production consumers; budget tracking reimplemented in `discovery/base/llm.py` and `embeddings/openrouter_embed.py`)
 - **Delete** `tests/test_agentic_session.py` — tests dead code
-- **Update** `imas_codex/agentic/__init__.py`:
-  - Remove `from imas_codex.agentic.llm import get_llm`
-  - Remove `from imas_codex.agentic.session import CostTracker, LLMSession, create_session`
+- **Update** `imas_codex/llm/__init__.py`:
+  - Remove `from imas_codex.llm.llm import get_llm`
+  - Remove `from imas_codex.llm.session import CostTracker, LLMSession, create_session`
   - Remove from `__all__`: `"get_llm"`, `"CostTracker"`, `"LLMSession"`, `"create_session"`
 - **Delete** from `pyproject.toml`: `"llama-index-llms-openrouter>=0.4"`
 
@@ -66,8 +66,8 @@ Remove code that is already dead or deprecated, before touching live integration
 - Private function, zero callers outside the file.
 
 #### 0d. Migrate `get_schema_context()` caller in server.py
-- At `imas_codex/agentic/server.py` ~L1766, replace call to deprecated `get_schema_context()` with `get_schema_for_prompt()`
-- Then remove `get_schema_context()` from `imas_codex/agentic/prompt_loader.py`
+- At `imas_codex/llm/server.py` ~L1766, replace call to deprecated `get_schema_context()` with `get_schema_for_prompt()`
+- Then remove `get_schema_context()` from `imas_codex/llm/prompt_loader.py`
 
 ---
 
@@ -318,8 +318,8 @@ This is ~40 lines, replacing ~80 lines of LlamaIndex vector store wrappers. The 
 
 #### 2c. Update ChunkSearch consumers
 
-- `agentic/tools.py` ~L111: Update import to new function
-- `agentic/server.py` ~L612: Update import to new function
+- `llm/tools.py` ~L111: Update import to new function
+- `llm/server.py` ~L612: Update import to new function
 
 #### 2d. Remove `Neo4jVectorStore` dependency
 - **Delete** from `pyproject.toml`: `"llama-index-vector-stores-neo4jvector>=0.4"`
@@ -385,8 +385,8 @@ uv run pytest --cov=imas_codex
 ### Files to Delete (5)
 | File | Reason |
 |------|--------|
-| `imas_codex/agentic/llm.py` | Deprecated `get_llm()` using LlamaIndex OpenRouter |
-| `imas_codex/agentic/session.py` | Dead `LLMSession` / `CostTracker` — no production consumers |
+| `imas_codex/llm/llm.py` | Deprecated `get_llm()` using LlamaIndex OpenRouter |
+| `imas_codex/llm/session.py` | Dead `LLMSession` / `CostTracker` — no production consumers |
 | `tests/test_agentic_session.py` | Tests for dead code |
 | *(none created)* | |
 
@@ -399,10 +399,10 @@ uv run pytest --cov=imas_codex
 | File | Changes |
 |------|---------|
 | `pyproject.toml` | Remove 4 `llama-index-*` deps |
-| `imas_codex/agentic/__init__.py` | Remove dead re-exports |
-| `imas_codex/agentic/server.py` | Migrate `get_schema_context()` → `get_schema_for_prompt()` |
-| `imas_codex/agentic/tools.py` | Update ChunkSearch → direct search |
-| `imas_codex/agentic/prompt_loader.py` | Remove deprecated `get_schema_context()` |
+| `imas_codex/llm/__init__.py` | Remove dead re-exports |
+| `imas_codex/llm/server.py` | Migrate `get_schema_context()` → `get_schema_for_prompt()` |
+| `imas_codex/llm/tools.py` | Update ChunkSearch → direct search |
+| `imas_codex/llm/prompt_loader.py` | Remove deprecated `get_schema_context()` |
 | `imas_codex/ingestion/pipeline.py` | Replace LlamaIndex pipeline with direct chunking + Cypher |
 | `imas_codex/ingestion/search.py` | Replace VectorStoreIndex with direct Cypher vector search |
 | `imas_codex/ingestion/__init__.py` | Update exports |

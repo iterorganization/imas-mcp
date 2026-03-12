@@ -83,10 +83,10 @@ in the correct order for maximum cache prefix:
 4. Calibration examples (deterministic, stable per graph state)
 
 **Files to audit:**
-- [ ] `imas_codex/agentic/prompts/paths/triage.md`
-- [ ] `imas_codex/agentic/prompts/paths/scorer.md`
-- [ ] `imas_codex/agentic/prompts/code/triage.md`
-- [ ] `imas_codex/agentic/prompts/code/scorer.md`
+- [ ] `imas_codex/llm/prompts/paths/triage.md`
+- [ ] `imas_codex/llm/prompts/paths/scorer.md`
+- [ ] `imas_codex/llm/prompts/code/triage.md`
+- [ ] `imas_codex/llm/prompts/code/scorer.md`
 
 **Current state:** All 4 templates already follow the correct order —
 `{% if focus %}` block appears before `{% include "schema/dimension-calibration.md" %}`.
@@ -234,7 +234,7 @@ if has_calibration:
 ```
 
 **Files to update:**
-- [ ] `imas_codex/agentic/prompt_loader.py` — add `"dimension_calibration"` to
+- [ ] `imas_codex/llm/prompt_loader.py` — add `"dimension_calibration"` to
   the `wiki/scorer` and `wiki/document-scorer` provider lists (if needed, or
   pass directly via context)
 
@@ -249,13 +249,13 @@ if has_calibration:
 and `wiki/document-scorer.md`, after the focus/data_access_patterns sections.
 
 **Files:**
-- [ ] `imas_codex/agentic/prompts/wiki/scorer.md` — add at end:
+- [ ] `imas_codex/llm/prompts/wiki/scorer.md` — add at end:
   ```
   {% if dimension_calibration %}
   {% include "schema/dimension-calibration.md" %}
   {% endif %}
   ```
-- [ ] `imas_codex/agentic/prompts/wiki/document-scorer.md` — same addition
+- [ ] `imas_codex/llm/prompts/wiki/document-scorer.md` — same addition
 
 **Verify:**
 - [ ] Template renders without error when `dimension_calibration` is not in context
@@ -339,7 +339,7 @@ imas-codex discover paths triage tcv --batch-size 50 --limit 100
 (enriched path examples by category, 8 categories × 2 examples).
 These may provide redundant signal.
 
-**File:** `imas_codex/agentic/prompts/paths/scorer.md`
+**File:** `imas_codex/llm/prompts/paths/scorer.md`
 
 **How:**
 ```bash

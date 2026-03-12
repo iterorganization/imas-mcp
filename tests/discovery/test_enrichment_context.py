@@ -310,16 +310,9 @@ class TestEnrichmentTemplateContent:
 
     def test_template_has_data_node_docs(self):
         """Template documents parent_node, siblings, tdi, applicability."""
-        import pathlib
+        from imas_codex.llm.prompt_loader import PROMPTS_DIR
 
-        template_path = (
-            pathlib.Path(__file__).parents[2]
-            / "imas_codex"
-            / "agentic"
-            / "prompts"
-            / "signals"
-            / "enrichment.md"
-        )
+        template_path = PROMPTS_DIR / "signals" / "enrichment.md"
         content = template_path.read_text()
         assert "parent_node" in content
         assert "siblings" in content

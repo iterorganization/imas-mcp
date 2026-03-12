@@ -431,7 +431,7 @@ DROP INDEX tree_node_desc_embedding IF EXISTS
 
 ### 4.1 Wiki Chunk Deduplication in Formatters (Gap #1)
 
-**File:** `imas_codex/agentic/search_formatters.py`, `format_docs_report()` (line 226)
+**File:** `imas_codex/llm/search_formatters.py`, `format_docs_report()` (line 226)
 
 **Current behavior:** Groups chunks by page but shows all chunks including duplicates. A query about "equilibrium" may return 5 identical proposal-template chunks.
 
@@ -456,7 +456,7 @@ def format_docs_report(results: list[dict], query: str, ...) -> str:
 
 ### 4.2 Title-Match Relevance Boosting (Gap #2)
 
-**File:** `imas_codex/agentic/search_tools.py`, `_search_docs()` (line 295)
+**File:** `imas_codex/llm/search_tools.py`, `_search_docs()` (line 295)
 
 **Problem:** Searching for "PPF data access" returns wiki chunks about semantically similar but topically irrelevant content because vector similarity alone can't distinguish between "mentions PPF" and "is about PPF".
 

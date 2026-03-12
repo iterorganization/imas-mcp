@@ -69,6 +69,9 @@ if TYPE_CHECKING:
 # Pattern for include directives: {% include "filename.md" %}
 INCLUDE_PATTERN = re.compile(r'\{%\s*include\s+"([^"]+)"\s*%\}')
 
+# Canonical location of prompt templates — import this instead of hardcoding paths
+PROMPTS_DIR = Path(__file__).parent / "prompts"
+
 
 @dataclass
 class PromptDefinition:
@@ -152,7 +155,7 @@ def load_prompts(prompts_dir: Path | None = None) -> dict[str, PromptDefinition]
     Prompt names include the subdirectory path (e.g., "paths/scorer").
     """
     if prompts_dir is None:
-        prompts_dir = Path(__file__).parent / "prompts"
+        prompts_dir = PROMPTS_DIR
 
     prompts = {}
     if prompts_dir.exists():
@@ -1105,7 +1108,7 @@ def render_prompt(
         # Returns prompt with {{ facility }} replaced and schema loops expanded
     """
     if prompts_dir is None:
-        prompts_dir = Path(__file__).parent / "prompts"
+        prompts_dir = PROMPTS_DIR
 
     # Load the raw prompt (with frontmatter)
     prompts = load_prompts(prompts_dir)
@@ -1135,7 +1138,7 @@ def render_prompt(
 def get_prompt_content_hash(name: str, prompts_dir: Path | None = None) -> str:
     """Get a hash of prompt content for cache invalidation."""
     if prompts_dir is None:
-        prompts_dir = Path(__file__).parent / "prompts"
+        prompts_dir = PROMPTS_DIR
 
     prompts = load_prompts(prompts_dir)
     if name not in prompts:

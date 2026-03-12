@@ -64,11 +64,10 @@ from fastmcp import FastMCP
 from neo4j.exceptions import ServiceUnavailable
 from ruamel.yaml import YAML
 
-from imas_codex.agentic.prompt_loader import (
+from imas_codex.llm.prompt_loader import (
     PromptDefinition,
     load_prompts,
 )
-from imas_codex.agentic.tool_installer import quick_setup, setup_tools
 from imas_codex.discovery import (
     get_facility as _get_facility_config,
     get_facility_infrastructure,
@@ -1131,8 +1130,6 @@ def _init_repl() -> dict[str, Any]:
             # Additional utilities not in the API reference
             "update_metadata": update_metadata,
             "install_tools": install_tools,
-            "setup_tools": setup_tools,
-            "quick_setup": quick_setup,
             "search_code": search_code,
             "get_imas_overview": get_imas_overview,
             "cocos_sign_flip_paths": cocos_sign_flip_paths,
@@ -1731,7 +1728,7 @@ class AgentsServer:
                 print("Coverage:", ctx["coverage_by_category"])
             """
             try:
-                from imas_codex.agentic.prompt_loader import get_schema_for_prompt
+                from imas_codex.llm.prompt_loader import get_schema_for_prompt
                 from imas_codex.discovery import (
                     get_facility_infrastructure as _get_infra,
                 )
@@ -1818,7 +1815,7 @@ class AgentsServer:
         # Unified search tools — multi-index vector search + graph enrichment
         # =====================================================================
 
-        from imas_codex.agentic.search_tools import (
+        from imas_codex.llm.search_tools import (
             _fetch,
             _search_code,
             _search_docs,
@@ -1980,7 +1977,7 @@ class AgentsServer:
         Dynamic prompts (dynamic: true in frontmatter): Accept parameters
         and render with Jinja2 + schema context.
         """
-        from imas_codex.agentic.prompt_loader import render_prompt
+        from imas_codex.llm.prompt_loader import render_prompt
 
         for name, prompt_def in self._prompts.items():
             is_dynamic = prompt_def.metadata.get("dynamic", False)

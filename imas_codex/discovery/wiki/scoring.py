@@ -447,7 +447,7 @@ async def _score_documents_batch(
     Returns:
         (results, cost) tuple where cost is actual LLM cost from OpenRouter.
     """
-    from imas_codex.agentic.prompt_loader import render_prompt
+    from imas_codex.llm.prompt_loader import render_prompt
     from imas_codex.discovery.base.llm import acall_llm_structured
     from imas_codex.discovery.wiki.models import (
         DocumentScoreBatch,
@@ -846,7 +846,7 @@ async def _score_pages_batch(
     Returns:
         (results, cost) tuple where cost is actual LLM cost from OpenRouter.
     """
-    from imas_codex.agentic.prompt_loader import render_prompt
+    from imas_codex.llm.prompt_loader import render_prompt
     from imas_codex.discovery.base.llm import acall_llm_structured
     from imas_codex.discovery.wiki.models import (
         WikiScoreBatch,

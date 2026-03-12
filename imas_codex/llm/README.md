@@ -1,9 +1,9 @@
-# Agents Module
+# LLM Module
 
-The `imas_codex.agentic` module provides agent systems for facility exploration and enrichment:
+The `imas_codex.llm` module provides LLM prompt infrastructure and MCP server:
 
 1. **MCP Server** (`AgentsServer`) - REPL-first exploration via Model Context Protocol
-2. **Smolagents CodeAgents** - Autonomous agents with tool-use capabilities
+2. **Prompt Loader** - Jinja2 prompt rendering with schema injection
 
 ## Quick Start
 
@@ -67,7 +67,7 @@ imas-codex agent enrich "\RESULTS::IBS" "\RESULTS::ASTRA"
 ### Python API
 
 ```python
-from imas_codex.agentic import (
+from imas_codex.llm import (
     get_enrichment_agent,
     get_mapping_agent,
     get_exploration_agent,
@@ -142,7 +142,7 @@ Available for `semantic_search()`:
 For CodeAgents (not MCP server), use `tools.py`:
 
 ```python
-from imas_codex.agentic.tools import (
+from imas_codex.llm.tools import (
     get_exploration_tools,  # Fast startup
     get_imas_tools,         # IMAS DD tools (~30s startup)
     get_wiki_tools,         # Wiki search
@@ -172,7 +172,7 @@ OPENROUTER_API_KEY=sk-or-v1-...
 Default: `anthropic/claude-haiku-4.5` (cost-effective)
 
 ```python
-from imas_codex.agentic import create_litellm_model, MODELS
+from imas_codex.llm import create_litellm_model, MODELS
 
 # Use preset
 model = create_litellm_model(model=MODELS["gemini-pro"])
@@ -184,7 +184,7 @@ model = create_litellm_model(model="anthropic/claude-sonnet-4.5")
 ## Architecture
 
 ```
-imas_codex/agentic/
+imas_codex/llm/
 ├── __init__.py      # Public API exports
 ├── agents.py        # Smolagents CodeAgent factory
 ├── llm.py           # OpenRouter LLM configuration (legacy)

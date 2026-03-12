@@ -105,7 +105,7 @@ class ScoutSession:
 
 ### 2. Context Summarization Between Windows
 
-**New module: `imas_codex/agentic/summarizer.py`**
+**New module: `imas_codex/llm/summarizer.py`**
 
 ```python
 async def summarize_exploration_window(
@@ -219,12 +219,12 @@ class QueueFilesTool(Tool):
 ### Phase 1: Session Management (Priority: High)
 
 **Files to create:**
-- `imas_codex/agentic/scout_session.py` - Session state management
+- `imas_codex/llm/scout_session.py` - Session state management
 - `imas_codex/schemas/scout.yaml` - ScoutSession, ScoutDiscovery schemas
 
 **Files to modify:**
-- `imas_codex/agentic/explore.py` - Integrate ScoutSession
-- `imas_codex/agentic/tools.py` - Add context capture to tools
+- `imas_codex/llm/explore.py` - Integrate ScoutSession
+- `imas_codex/llm/tools.py` - Add context capture to tools
 - `imas_codex/cli.py` - Add `scout resume`, `scout status` commands
 
 **Tasks:**
@@ -236,7 +236,7 @@ class QueueFilesTool(Tool):
 ### Phase 2: Context Summarization (Priority: High)
 
 **Files to create:**
-- `imas_codex/agentic/summarizer.py` - Window summarization
+- `imas_codex/llm/summarizer.py` - Window summarization
 
 **Tasks:**
 1. [ ] Create `summarize_exploration_window()` function
@@ -247,8 +247,8 @@ class QueueFilesTool(Tool):
 ### Phase 3: Limit Awareness (Priority: Medium)
 
 **Files to modify:**
-- `imas_codex/agentic/monitor.py` - Add limit injection
-- `imas_codex/agentic/explore.py` - Use limit-aware callbacks
+- `imas_codex/llm/monitor.py` - Add limit injection
+- `imas_codex/llm/explore.py` - Use limit-aware callbacks
 
 **Tasks:**
 1. [ ] Create `create_limit_aware_callback()` function
@@ -259,7 +259,7 @@ class QueueFilesTool(Tool):
 ### Phase 4: Enhanced Persistence (Priority: Medium)
 
 **Files to modify:**
-- `imas_codex/agentic/tools.py` - Context capture
+- `imas_codex/llm/tools.py` - Context capture
 - `imas_codex/schemas/facility.yaml` - ScoutDiscovery schema
 
 **Tasks:**
@@ -298,7 +298,7 @@ imas-codex scout summarize tcv --session-id <uuid>
 ### New Python API
 
 ```python
-from imas_codex.agentic import ScoutSession, ExplorationAgent
+from imas_codex.llm import ScoutSession, ExplorationAgent
 
 # Create session with explicit windowing
 session = ScoutSession(
@@ -319,8 +319,8 @@ async with ExplorationAgent(facility="tcv", session=session) as agent:
 ## Testing Strategy
 
 ### Unit Tests
-- `tests/agentic/test_scout_session.py` - Session management
-- `tests/agentic/test_summarizer.py` - Window summarization
+- `tests/llm/test_scout_session.py` - Session management
+- `tests/llm/test_summarizer.py` - Window summarization
 
 ### Integration Tests
 - `tests/integration/test_scout_windowed.py` - Full windowed flow
@@ -364,5 +364,5 @@ async with ExplorationAgent(facility="tcv", session=session) as agent:
 
 - [agents/explore.md](../../agents/explore.md) - Explore agent guidelines
 - [agents/ingest.md](../../agents/ingest.md) - Ingestion pipeline
-- [imas_codex/agentic/explore.py](../../imas_codex/agentic/explore.py) - Current implementation
-- [imas_codex/agentic/monitor.py](../../imas_codex/agentic/monitor.py) - Cost monitoring
+- [imas_codex/llm/explore.py](../../imas_codex/llm/explore.py) - Current implementation
+- [imas_codex/llm/monitor.py](../../imas_codex/llm/monitor.py) - Cost monitoring

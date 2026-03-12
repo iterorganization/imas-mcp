@@ -336,7 +336,7 @@ Ingestion is interrupt-safe — rerun to continue. Already-ingested files are sk
 
 ## LLM Prompts
 
-Prompts live in `imas_codex/agentic/prompts/` using Jinja2 templates with schema injection.
+Prompts live in `imas_codex/llm/prompts/` using Jinja2 templates with schema injection.
 
 - Never hardcode JSON examples - use Pydantic schema injection via `get_pydantic_schema_json()`
 - Each prompt declares `schema_needs` in `prompt_loader.py` to load only required context

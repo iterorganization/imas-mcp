@@ -350,7 +350,7 @@ imas-codex discover documents tcv --scan-only    # Enumeration only
 
 ## Prompt Architecture
 
-All prompts live in `imas_codex/agentic/prompts/` as markdown files with YAML frontmatter.
+All prompts live in `imas_codex/llm/prompts/` as markdown files with YAML frontmatter.
 
 ### Prompt Categories
 

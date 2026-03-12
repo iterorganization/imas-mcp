@@ -102,7 +102,7 @@ class EmbeddingResult:
 class EmbeddingCostTracker:
     """Track embedding costs across operations with optional budget enforcement.
 
-    Similar to CostTracker in agentic/session.py but for embeddings.
+    Similar to CostTracker in llm/session.py but for embeddings.
     Uses per-token pricing model (embeddings only have input tokens).
 
     Attributes:

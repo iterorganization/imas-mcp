@@ -345,7 +345,7 @@ The embed step is shared. The fan-out queries can be issued sequentially (they'r
 ### Where Code Lives
 
 ```
-imas_codex/agentic/
+imas_codex/llm/
   server.py          — tool registration in _register_tools()
   search_tools.py    — tool implementations (search_docs, search_signals, etc.)
   search_formatters.py — _format_docs_report(), _format_signals_report(), etc.

@@ -12,7 +12,7 @@ The MDSplus unification plan (`mdsplus-unification.md`) is implemented with
 three deferred items remaining:
 
 1. `mdsplus/enrichment.py` — still consumed by `discovery/static/workers.py`
-   and `agentic/prompt_loader.py`
+   and `llm/prompt_loader.py`
 2. `remote/scripts/extract_tdi_functions.py` — still consumed by
    `discovery/signals/tdi.py`
 3. `DataNode.is_static` property — used in 30+ Cypher queries across
@@ -33,7 +33,7 @@ enrichment pipeline; delete the standalone module.
 The two consumers are:
 - `discovery/static/workers.py` → `enrich_worker` uses
   `StaticNodeBatch`, `_build_system_prompt`, `_build_user_prompt`
-- `agentic/prompt_loader.py` → `_provide_static_enrichment_schema` imports
+- `llm/prompt_loader.py` → `_provide_static_enrichment_schema` imports
   `StaticNodeBatch`, `StaticNodeResult`
 
 Steps:

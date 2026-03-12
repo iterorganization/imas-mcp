@@ -2863,7 +2863,7 @@ async def enrich_worker(
     """
     from collections import defaultdict
 
-    from imas_codex.agentic.prompt_loader import render_prompt
+    from imas_codex.llm.prompt_loader import render_prompt
     from imas_codex.discovery.base.llm import (
         ProviderBudgetExhausted,
         acall_llm_structured,
@@ -3699,7 +3699,7 @@ async def individualize_source_descriptions(
     Returns:
         Total number of member signals individualized.
     """
-    from imas_codex.agentic.prompt_loader import render_prompt
+    from imas_codex.llm.prompt_loader import render_prompt
     from imas_codex.discovery.base.llm import (
         ProviderBudgetExhausted,
         acall_llm_structured,

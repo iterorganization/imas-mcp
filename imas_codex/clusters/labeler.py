@@ -7,7 +7,7 @@ proxy routing, retry logic, and cost tracking are shared with all other
 LLM consumers.
 
 Prompts are rendered via the shared Jinja2 template system in
-``imas_codex/agentic/prompts/clusters/labeler.md``, with schema context
+``imas_codex/llm/prompts/clusters/labeler.md``, with schema context
 injected from LinkML-defined controlled vocabularies.
 """
 
@@ -72,7 +72,7 @@ class ClusterLabeler:
     inheriting LiteLLM proxy routing, retry logic, and cost tracking.
 
     Controlled vocabularies are injected into the prompt via Jinja2 templates
-    from ``imas_codex/agentic/prompts/clusters/labeler.md``.  Validation of
+    from ``imas_codex/llm/prompts/clusters/labeler.md``.  Validation of
     LLM responses still uses the vocabularies loaded here.
     """
 
@@ -104,7 +104,7 @@ class ClusterLabeler:
         Returns (system_prompt, user_prompt) matching the canonical pattern
         used by other LLM consumers (scorer, signal enricher, etc.).
         """
-        from imas_codex.agentic.prompt_loader import render_prompt
+        from imas_codex.llm.prompt_loader import render_prompt
 
         cluster_data = []
         for cluster in clusters:

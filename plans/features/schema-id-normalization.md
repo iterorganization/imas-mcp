@@ -425,7 +425,7 @@ Every MATCH/MERGE using the old natural key as lookup must be updated. This is a
 - `imas_codex/mdsplus/extraction.py`
 - `imas_codex/discovery/mdsplus/graph_ops.py`
 - `imas_codex/discovery/signals/scanners/device_xml.py`
-- `imas_codex/agentic/enrich.py`
+- `imas_codex/llm/enrich.py`
 - `scripts/ingest_mdsplus.py`
 - `scripts/plot_jet_limiter_epochs.py`
 - `scripts/plot_jet_composite_geometry.py`
