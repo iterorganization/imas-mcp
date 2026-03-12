@@ -63,6 +63,14 @@ def sample_groups():
                 "jet:device_xml:p68613:pfcoils:1:r",
                 "jet:device_xml:p68613:pfcoils:1:z",
             ],
+            "sample_accessors": [
+                "\\ppf::pfcoils:1:r",
+                "\\ppf::pfcoils:1:z",
+            ],
+            "rep_description": "PF coil 1 radial position in metres",
+            "rep_unit": "m",
+            "rep_sign_convention": None,
+            "rep_cocos": None,
             "imas_mappings": [],
         },
         {
@@ -77,6 +85,14 @@ def sample_groups():
                 "jet:device_xml:p68613:pfcoils:2:r",
                 "jet:device_xml:p68613:pfcoils:2:z",
             ],
+            "sample_accessors": [
+                "\\ppf::pfcoils:2:r",
+                "\\ppf::pfcoils:2:z",
+            ],
+            "rep_description": "PF coil 2 radial position in metres",
+            "rep_unit": "m",
+            "rep_sign_convention": None,
+            "rep_cocos": None,
             "imas_mappings": [],
         },
     ]
@@ -510,6 +526,7 @@ class TestPipelineOrchestrator:
         assert len(result.assignments) == 2
         mock_call_llm.assert_called_once()
 
+    @patch("imas_codex.ids.mapping.fetch_source_code_refs")
     @patch("imas_codex.ids.mapping._call_llm")
     @patch("imas_codex.ids.mapping.fetch_imas_fields")
     @patch("imas_codex.ids.mapping.fetch_imas_subtree")
@@ -518,6 +535,7 @@ class TestPipelineOrchestrator:
         mock_subtree,
         mock_fields,
         mock_call_llm,
+        mock_code_refs,
         mock_gc,
         sample_groups,
         sample_subtree,
@@ -530,6 +548,7 @@ class TestPipelineOrchestrator:
         mock_fields.return_value = sample_subtree[1:]
         mock_subtree.return_value = sample_subtree[1:]
         mock_call_llm.return_value = sample_field_batch
+        mock_code_refs.return_value = []
         cost = PipelineCost()
 
         context = {
@@ -847,6 +866,8 @@ class TestPromptTemplates:
             unit_analysis="m → m: compatible",
             cocos_paths="(none)",
             existing_mappings="{}",
+            code_references="(no code references available)",
+            source_cocos="(no COCOS context)",
         )
         assert "pf_active/coil" in rendered
 

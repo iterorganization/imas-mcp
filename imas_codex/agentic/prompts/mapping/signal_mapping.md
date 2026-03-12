@@ -43,6 +43,16 @@ Any existing mappings for this facility/IDS:
 
 {{ existing_mappings }}
 
+### Source COCOS Context
+
+{{ source_cocos }}
+
+### Code References
+
+Code showing how this signal is read and what transforms/units it uses:
+
+{{ code_references }}
+
 ## Task
 
 For each signal property that should map to an IMAS field:
