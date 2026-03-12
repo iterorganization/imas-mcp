@@ -60,5 +60,8 @@
   "markdown-preview-enhanced.chromePath": "/usr/bin/google-chrome",
   "chat.mcp.autostart": "never",
   "github.copilot.chat.cli.mcp.enabled": true,
-  "chat.useClaudeMdFile": false
+  "chat.useClaudeMdFile": false,
+  "git.autofetch": true,
+  "git.autofetchPeriod": 120,
+  "git.pullBeforeCheckout": true
 }

@@ -9,7 +9,6 @@ from pathlib import Path
 
 from imas_codex.graph.temp_neo4j import IMAS_DD_LABELS, write_temp_neo4j_conf
 
-
 # ============================================================================
 # IMAS_DD_LABELS
 # ============================================================================

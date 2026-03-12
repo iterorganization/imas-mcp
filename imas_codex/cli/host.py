@@ -208,7 +208,7 @@ def _colored_bar(used: float, limit: float, width: int = 20) -> str:
         color = "green"
     bar = f"[{color}]{"█" * filled}[/{color}][dim]{"░" * empty}[/dim]"
     pct = f"[{color}]{ratio * 100:.0f}%[/{color}]"
-    return f"\[{bar}] {pct}"
+    return rf"\[{bar}] {pct}"
 
 
 def _format_load_row(info: dict) -> list[str]:
