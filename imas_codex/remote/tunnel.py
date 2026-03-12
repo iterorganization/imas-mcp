@@ -465,10 +465,10 @@ def discover_compute_node(
             timeout=15,
         )
         if result.returncode == 0:
-            node = result.stdout.strip()
+            node = result.stdout.strip().splitlines()[0].strip()
             if node:
                 return node
-    except (subprocess.TimeoutExpired, OSError):
+    except (subprocess.TimeoutExpired, OSError, IndexError):
         pass
     return None
 
@@ -508,7 +508,7 @@ def discover_compute_node_local(
             timeout=5,
         )
         if result.returncode == 0:
-            node = result.stdout.strip()
+            node = result.stdout.strip().splitlines()[0].strip()
             if node:
                 logger.debug(
                     "Local squeue found service node: %s (job=%s)",
@@ -516,7 +516,7 @@ def discover_compute_node_local(
                     service_job_name,
                 )
                 return node
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError, IndexError):
         pass
     return None
 

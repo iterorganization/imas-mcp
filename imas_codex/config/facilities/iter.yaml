@@ -34,7 +34,7 @@ compute_locations:
   titan:
     scheduler: slurm
     partition: titan
-    service_job_name: imas-codex-services
+    service_job_name: codex-neo4j
 
 # Data system configuration for signal discovery
 # Used by: imas-codex discover signals iter
