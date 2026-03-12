@@ -36,17 +36,11 @@ class TestCLIImports:
 
         assert tools is not None
 
-    def test_import_hosts(self):
-        """Hosts module imports."""
-        from imas_codex.cli.hosts import hosts
+    def test_import_host(self):
+        """Host module imports."""
+        from imas_codex.cli.host import host
 
-        assert hosts is not None
-
-    def test_import_status(self):
-        """Status module imports."""
-        from imas_codex.cli.status import status
-
-        assert status is not None
+        assert host is not None
 
     def test_import_graph_cli(self):
         """Graph CLI module imports."""
@@ -161,27 +155,19 @@ class TestCLICommands:
         assert result.exit_code == 0
         assert "tools" in result.output.lower()
 
-    def test_hosts_help(self, runner):
-        """hosts group has help."""
+    def test_host_help(self, runner):
+        """host group has help."""
         from imas_codex.cli import main
 
-        result = runner.invoke(main, ["hosts", "--help"])
+        result = runner.invoke(main, ["host", "--help"])
         assert result.exit_code == 0
-        assert "SSH" in result.output or "host" in result.output.lower()
+        assert "node" in result.output.lower() or "ssh" in result.output.lower()
 
-    def test_status_help(self, runner):
-        """status command has help."""
+    def test_host_list_help(self, runner):
+        """host list command has help."""
         from imas_codex.cli import main
 
-        result = runner.invoke(main, ["status", "--help"])
-        assert result.exit_code == 0
-        assert "node" in result.output.lower()
-
-    def test_hosts_load_help(self, runner):
-        """hosts load command has help."""
-        from imas_codex.cli import main
-
-        result = runner.invoke(main, ["hosts", "load", "--help"])
+        result = runner.invoke(main, ["host", "list", "--help"])
         assert result.exit_code == 0
         assert "login node" in result.output.lower()
 
@@ -268,12 +254,12 @@ class TestCLISubcommands:
         assert result.exit_code != 0
 
 
-class TestStatusCommand:
-    """Test the status command and its helpers."""
+class TestHostCommand:
+    """Test the host command and its helpers."""
 
     def test_get_load_info(self):
         """_get_load_info returns valid system info."""
-        from imas_codex.cli.status import _get_load_info
+        from imas_codex.cli.host import _get_load_info
 
         info = _get_load_info()
         assert "hostname" in info
@@ -284,14 +270,14 @@ class TestStatusCommand:
 
     def test_colored_bar(self):
         """_colored_bar renders a bar string."""
-        from imas_codex.cli.status import _colored_bar
+        from imas_codex.cli.host import _colored_bar
 
         bar = _colored_bar(5, 10)
         assert "%" in bar
 
     def test_format_load_row(self):
         """_format_load_row produces 4-element list."""
-        from imas_codex.cli.status import _format_load_row
+        from imas_codex.cli.host import _format_load_row
 
         info = {
             "hostname": "test-node",
@@ -308,14 +294,61 @@ class TestStatusCommand:
         assert row[0] == "test-node"
         assert row[3] == "5"
 
-    def test_status_runs(self):
-        """status command runs successfully."""
+    def test_parse_ps_output(self):
+        """_parse_ps_output filters codex-related processes."""
+        from imas_codex.cli.host import _parse_ps_output
+
+        ps_text = (
+            "USER       PID %CPU %MEM    VSZ   RSS TTY      STAT START   TIME COMMAND\n"
+            "user     12345  5.2  3.1 512000 32000 ?        S    10:00   0:05 python -m imas_codex serve\n"
+            "user     12346  0.0  0.1  10000  1000 pts/0    S    10:00   0:00 bash\n"
+            "user     12347 80.0 15.0 800000 150000 ?       R    10:00   1:00 neo4j server\n"
+        )
+        procs = _parse_ps_output(ps_text)
+        assert len(procs) == 2
+        assert procs[0]["pid"] == "12345"
+        assert procs[1]["pid"] == "12347"
+
+    def test_host_runs_local(self):
+        """host command (no args) runs successfully."""
         from click.testing import CliRunner
 
         from imas_codex.cli import main
 
         runner = CliRunner()
-        result = runner.invoke(main, ["status"])
+        result = runner.invoke(main, ["host"])
         assert result.exit_code == 0
         assert "Node:" in result.output
         assert "CPU:" in result.output
+
+    def test_set_ssh_hostname_roundtrip(self, tmp_path):
+        """_set_ssh_hostname correctly modifies SSH config."""
+        from unittest.mock import patch
+
+        from imas_codex.cli.host import _get_ssh_hostname, _set_ssh_hostname
+
+        config_text = (
+            "Host iter sdcc\n"
+            "    User testuser\n"
+            "    ProxyJump gateway\n"
+            "\n"
+            "Host iter\n"
+            "    HostName 98dci4-srv-1002.iter.org\n"
+            "\n"
+            "Host sdcc\n"
+            "    HostName 98dci4-srv-1003.iter.org\n"
+        )
+        fake_ssh = tmp_path / ".ssh"
+        fake_ssh.mkdir()
+        config_file = fake_ssh / "config"
+        config_file.write_text(config_text)
+
+        with patch("imas_codex.cli.host.Path.home", return_value=tmp_path):
+            assert _get_ssh_hostname("iter") == "98dci4-srv-1002.iter.org"
+
+            ok = _set_ssh_hostname("iter", "98dci4-srv-1005.iter.org")
+            assert ok
+
+            assert _get_ssh_hostname("iter") == "98dci4-srv-1005.iter.org"
+            # sdcc should be untouched
+            assert _get_ssh_hostname("sdcc") == "98dci4-srv-1003.iter.org"

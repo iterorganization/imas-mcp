@@ -62,12 +62,11 @@ def register_commands() -> None:
     from imas_codex.cli.embed import embed
     from imas_codex.cli.facilities import facilities
     from imas_codex.cli.graph import graph
-    from imas_codex.cli.hosts import hosts
+    from imas_codex.cli.host import host
     from imas_codex.cli.imas_dd import imas
     from imas_codex.cli.llm_cli import llm
     from imas_codex.cli.release import release
     from imas_codex.cli.serve import serve
-    from imas_codex.cli.status import status
     from imas_codex.cli.tools import tools
     from imas_codex.cli.tunnel import tunnel
 
@@ -81,11 +80,10 @@ def register_commands() -> None:
     main.add_command(embed)
     main.add_command(imas)
     main.add_command(tools)
-    main.add_command(hosts)
+    main.add_command(host)
     main.add_command(facilities)
     main.add_command(release)
     main.add_command(credentials)
-    main.add_command(status)
 
 
 # Register commands at import time
