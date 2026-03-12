@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-import yaml
 
 from imas_codex.ids.assembler import (
     IDSAssembler,
@@ -58,26 +56,22 @@ class TestSetNested:
 
 class TestListRecipes:
     def test_list_all(self):
-        recipes = list_recipes()
+        mock_gc = MagicMock()
+        mock_gc.query.return_value = [
+            {
+                "facility": "jet",
+                "ids_name": "pf_active",
+                "dd_version": "4.1.1",
+            }
+        ]
+        mock_gc.__enter__ = MagicMock(return_value=mock_gc)
+        mock_gc.__exit__ = MagicMock(return_value=False)
+        with patch("imas_codex.ids.assembler.GraphClient", return_value=mock_gc):
+            recipes = list_recipes()
         assert len(recipes) >= 1
         assert any(r["ids_name"] == "pf_active" for r in recipes)
 
     def test_list_by_facility(self):
-        recipes = list_recipes("jet")
-        assert len(recipes) >= 1
-        assert all(r["facility"] == "jet" for r in recipes)
-
-    def test_list_unknown_facility(self):
-        recipes = list_recipes("nonexistent")
-        assert recipes == []
-
-    def test_yaml_recipes_have_source(self):
-        recipes = list_recipes("jet")
-        for r in recipes:
-            assert "source" in r
-
-    def test_graph_recipes_override_yaml(self):
-        """Graph recipes take priority over YAML with the same key."""
         mock_gc = MagicMock()
         mock_gc.query.return_value = [
             {
@@ -90,30 +84,39 @@ class TestListRecipes:
         mock_gc.__exit__ = MagicMock(return_value=False)
         with patch("imas_codex.ids.assembler.GraphClient", return_value=mock_gc):
             recipes = list_recipes("jet")
-        pf = next(r for r in recipes if r["ids_name"] == "pf_active")
-        assert pf["source"] == "graph"
+        assert len(recipes) >= 1
+        assert all(r["facility"] == "jet" for r in recipes)
+
+    def test_list_unknown_facility(self):
+        mock_gc = MagicMock()
+        mock_gc.query.return_value = []
+        mock_gc.__enter__ = MagicMock(return_value=mock_gc)
+        mock_gc.__exit__ = MagicMock(return_value=False)
+        with patch("imas_codex.ids.assembler.GraphClient", return_value=mock_gc):
+            recipes = list_recipes("nonexistent")
+        assert recipes == []
+
+    def test_graph_recipes_have_source(self):
+        mock_gc = MagicMock()
+        mock_gc.query.return_value = [
+            {
+                "facility": "jet",
+                "ids_name": "pf_active",
+                "dd_version": "4.1.1",
+            }
+        ]
+        mock_gc.__enter__ = MagicMock(return_value=mock_gc)
+        mock_gc.__exit__ = MagicMock(return_value=False)
+        with patch("imas_codex.ids.assembler.GraphClient", return_value=mock_gc):
+            recipes = list_recipes("jet")
+        for r in recipes:
+            assert r["source"] == "graph"
 
 
-class TestRecipeValidation:
-    def test_valid_recipe(self, tmp_path):
-        recipe = {
-            "ids_name": "pf_active",
-            "facility_id": "jet",
-            "dd_version": "4.1.1",
-        }
-        recipe_file = tmp_path / "test.yaml"
-        recipe_file.write_text(yaml.dump(recipe))
-        assembler = IDSAssembler("jet", "pf_active", recipe_path=recipe_file)
-        assert assembler.recipe["ids_name"] == "pf_active"
+class TestGraphMappingRequired:
+    """Test that IDSAssembler requires a graph mapping."""
 
-    def test_missing_required_field(self, tmp_path):
-        recipe = {"ids_name": "pf_active"}
-        recipe_file = tmp_path / "test.yaml"
-        recipe_file.write_text(yaml.dump(recipe))
-        with pytest.raises(ValueError, match="missing required fields"):
-            IDSAssembler("jet", "pf_active", recipe_path=recipe_file)
-
-    def test_missing_recipe_file(self):
+    def test_missing_mapping_raises(self):
         with (
             patch("imas_codex.ids.assembler.GraphClient"),
             patch("imas_codex.ids.assembler.load_mapping", return_value=None),
@@ -121,53 +124,30 @@ class TestRecipeValidation:
             with pytest.raises(FileNotFoundError):
                 IDSAssembler("jet", "nonexistent_ids")
 
+    def test_recipe_property(self):
+        """The recipe property returns mapping metadata."""
+        from imas_codex.ids.graph_ops import Mapping
 
-class TestJetPfActiveRecipe:
-    """Validate the JET pf_active recipe file structure."""
-
-    @pytest.fixture
-    def recipe(self):
-        recipe_path = (
-            Path(__file__).parent.parent.parent
-            / "imas_codex"
-            / "ids"
-            / "recipes"
-            / "jet"
-            / "pf_active.yaml"
+        mapping = Mapping(
+            id="jet:pf_active",
+            facility_id="jet",
+            ids_name="pf_active",
+            dd_version="4.1.1",
+            provider="imas-codex",
+            static_config={},
+            sections=[],
+            bindings=[],
         )
-        return yaml.safe_load(recipe_path.read_text())
-
-    def test_recipe_metadata(self, recipe):
-        assert recipe["ids_name"] == "pf_active"
-        assert recipe["facility_id"] == "jet"
-        assert recipe["dd_version"] == "4.1.1"
-        assert "provider" in recipe
-
-    def test_static_fields(self, recipe):
-        static = recipe.get("static", {})
-        assert "ids_properties.homogeneous_time" in static
-        assert static["ids_properties.homogeneous_time"] == 0
-
-    def test_coil_source_query(self, recipe):
-        arrays = recipe.get("arrays", {})
-        assert "coil" in arrays
-        coil = arrays["coil"]
-        assert "source" in coil
-        query = coil["source"]["query"]
-        assert "device_xml" in query
-        assert "PF" in query
-
-    def test_coil_elements(self, recipe):
-        elements = recipe["arrays"]["coil"]["elements"]
-        assert elements["geometry_type"] == 2  # rectangle
-        fields = elements["fields"]
-        assert "geometry.rectangle.r" in fields
-        assert "geometry.rectangle.z" in fields
-        assert "turns_with_sign" in fields
-
-    def test_circuit_definition(self, recipe):
-        arrays = recipe.get("arrays", {})
-        assert "circuit" in arrays
+        mock_gc = MagicMock()
+        mock_gc.__enter__ = MagicMock(return_value=mock_gc)
+        mock_gc.__exit__ = MagicMock(return_value=False)
+        with (
+            patch("imas_codex.ids.assembler.load_mapping", return_value=mapping),
+            patch("imas_codex.ids.assembler.GraphClient", return_value=mock_gc),
+        ):
+            assembler = IDSAssembler("jet", "pf_active")
+        assert assembler.recipe["ids_name"] == "pf_active"
+        assert assembler.recipe["dd_version"] == "4.1.1"
 
 
 class TestGraphDrivenSummary:

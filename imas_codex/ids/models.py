@@ -3,6 +3,7 @@
 Pydantic models used as structured output targets for each LLM step:
   assign_sections     — SectionAssignmentBatch: assign signal sources to IMAS sections
   map_signals         — FieldMappingBatch: signal-level mappings with transforms
+  discover_assembly   — AssemblyBatch: assembly patterns for struct-array population
   validate_mappings   — ValidatedMappingResult: programmatically validated mappings
 
 Also contains the adapter that converts ValidatedMappingResult into
@@ -11,8 +12,10 @@ graph operations (MAPS_TO_IMAS relationships, POPULATES, IMASMapping).
 
 from __future__ import annotations
 
+import json
 import logging
 from enum import StrEnum
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -102,6 +105,48 @@ class FieldMappingBatch(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Assembly discovery
+# ---------------------------------------------------------------------------
+
+
+class AssemblyPattern(StrEnum):
+    """How multiple signal sources compose into an IMAS struct-array."""
+
+    ARRAY_PER_NODE = "array_per_node"
+    CONCATENATE = "concatenate"
+    CONCATENATE_TRANSPOSE = "concatenate_transpose"
+    MATRIX_ASSEMBLY = "matrix_assembly"
+    NESTED_ARRAY = "nested_array"
+
+
+class AssemblyConfig(BaseModel):
+    """Assembly configuration for one IMAS struct-array section."""
+
+    section_path: str
+    pattern: AssemblyPattern = AssemblyPattern.ARRAY_PER_NODE
+    init_arrays: dict[str, int] | None = None
+    elements_config: str | None = Field(
+        default=None, description="JSON string for element structure"
+    )
+    nested_path: str | None = None
+    parent_size: int | None = None
+    source_system: str | None = None
+    source_data_source: str | None = None
+    source_epoch_field: str | None = None
+    source_select_via: str | None = None
+    ordering_field: str | None = None
+    reasoning: str = ""
+    confidence: float = Field(default=0.8, ge=0, le=1)
+
+
+class AssemblyBatch(BaseModel):
+    """Assembly configurations for all sections in an IDS."""
+
+    ids_name: str
+    configs: list[AssemblyConfig]
+
+
+# ---------------------------------------------------------------------------
 # Step 3: Validation + final result
 # ---------------------------------------------------------------------------
 
@@ -142,6 +187,7 @@ class ValidatedMappingResult(BaseModel):
 def persist_mapping_result(
     result: ValidatedMappingResult,
     *,
+    assembly: AssemblyBatch | None = None,
     gc: GraphClient | None = None,
     provider: str = "imas-codex",
     status: str = "generated",
@@ -150,13 +196,14 @@ def persist_mapping_result(
 
     Creates/updates:
       - IMASMapping node
-      - POPULATES relationships to section roots
+      - POPULATES relationships to section roots (with assembly config)
       - USES_SIGNAL_SOURCE relationships
       - MAPS_TO_IMAS relationships on signal groups
       - MappingEvidence nodes for escalations
 
     Args:
         result: The validated mapping result to persist.
+        assembly: Assembly configurations for struct-array sections.
         gc: GraphClient instance (created if None).
         provider: Provider identifier.
         status: Initial status for the mapping node.
@@ -190,18 +237,55 @@ def persist_mapping_result(
         status=status,
     )
 
-    # 2. Create POPULATES relationships to section roots
+    # 2. Create POPULATES relationships to section roots with assembly config
+    assembly_by_section: dict[str, AssemblyConfig] = {}
+    if assembly:
+        assembly_by_section = {c.section_path: c for c in assembly.configs}
+
     for section in result.sections:
+        asm = assembly_by_section.get(section.imas_section_path)
+        asm_params: dict[str, Any] = {}
+        if asm:
+            asm_params = {
+                "structure": asm.pattern.value,
+                "init_arrays": json.dumps(asm.init_arrays) if asm.init_arrays else None,
+                "elements_config": asm.elements_config,
+                "nested_path": asm.nested_path,
+                "parent_size": asm.parent_size,
+                "source_system": asm.source_system,
+                "source_data_source": asm.source_data_source,
+                "source_epoch_field": asm.source_epoch_field,
+                "source_select_via": asm.source_select_via,
+            }
+
         gc.query(
             """
             MATCH (m:IMASMapping {id: $mapping_id})
             MATCH (ip:IMASNode {id: $imas_path})
             MERGE (m)-[r:POPULATES]->(ip)
-            SET r.confidence = $confidence
+            SET r.confidence = $confidence,
+                r.structure = $structure,
+                r.init_arrays = $init_arrays,
+                r.elements_config = $elements_config,
+                r.nested_path = $nested_path,
+                r.parent_size = $parent_size,
+                r.source_system = $source_system,
+                r.source_data_source = $source_data_source,
+                r.source_epoch_field = $source_epoch_field,
+                r.source_select_via = $source_select_via
             """,
             mapping_id=mapping_id,
             imas_path=section.imas_section_path,
             confidence=section.confidence,
+            structure=asm_params.get("structure"),
+            init_arrays=asm_params.get("init_arrays"),
+            elements_config=asm_params.get("elements_config"),
+            nested_path=asm_params.get("nested_path"),
+            parent_size=asm_params.get("parent_size"),
+            source_system=asm_params.get("source_system"),
+            source_data_source=asm_params.get("source_data_source"),
+            source_epoch_field=asm_params.get("source_epoch_field"),
+            source_select_via=asm_params.get("source_select_via"),
         )
 
     # 3. Collect signal group IDs and create USES_SIGNAL_SOURCE

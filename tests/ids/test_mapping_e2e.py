@@ -601,6 +601,7 @@ class TestPipelineOrchestrator:
         assert result.dd_version == "4.1.1"
 
     @patch("imas_codex.ids.mapping.validate_mappings")
+    @patch("imas_codex.ids.mapping.discover_assembly")
     @patch("imas_codex.ids.mapping.map_signals")
     @patch("imas_codex.ids.mapping.assign_sections")
     @patch("imas_codex.ids.mapping.gather_context")
@@ -610,6 +611,7 @@ class TestPipelineOrchestrator:
         mock_step1,
         mock_step2,
         mock_step3,
+        mock_step4,
         mock_gc,
         sample_groups,
         sample_subtree,
@@ -629,7 +631,8 @@ class TestPipelineOrchestrator:
         }
         mock_step1.return_value = sample_section_assignment
         mock_step2.return_value = [sample_field_batch]
-        mock_step3.return_value = sample_validated_result
+        mock_step3.return_value = None  # No assembly patterns discovered
+        mock_step4.return_value = sample_validated_result
 
         result = generate_mapping(
             "jet",
@@ -646,6 +649,7 @@ class TestPipelineOrchestrator:
         assert result.unassigned_groups == []
 
     @patch("imas_codex.ids.mapping.validate_mappings")
+    @patch("imas_codex.ids.mapping.discover_assembly")
     @patch("imas_codex.ids.mapping.map_signals")
     @patch("imas_codex.ids.mapping.assign_sections")
     @patch("imas_codex.ids.mapping.gather_context")
@@ -655,6 +659,7 @@ class TestPipelineOrchestrator:
         mock_step1,
         mock_step2,
         mock_step3,
+        mock_step4,
         mock_gc,
         sample_groups,
         sample_subtree,
@@ -686,7 +691,8 @@ class TestPipelineOrchestrator:
         }
         mock_step1.return_value = unassigned
         mock_step2.return_value = [sample_field_batch]
-        mock_step3.return_value = sample_validated_result
+        mock_step3.return_value = None  # No assembly patterns discovered
+        mock_step4.return_value = sample_validated_result
 
         result = generate_mapping(
             "jet",
@@ -788,6 +794,7 @@ class TestMapCLI:
             cost=PipelineCost(steps={"step1": 0.001, "step2": 0.002}),
             persisted=True,
             unassigned_groups=["jet:pf_coils:group3"],
+            assembly=None,
         )
 
         runner = CliRunner()

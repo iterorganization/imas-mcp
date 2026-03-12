@@ -26,6 +26,8 @@ from typing import Any
 
 from imas_codex.graph.client import GraphClient
 from imas_codex.ids.models import (
+    AssemblyBatch,
+    AssemblyConfig,
     EscalationFlag,
     FieldMappingBatch,
     SectionAssignmentBatch,
@@ -402,6 +404,97 @@ def map_signals(
     return batches
 
 
+def _format_signal_mappings(batch: FieldMappingBatch) -> str:
+    """Format signal mappings for the assembly prompt."""
+    lines: list[str] = []
+    for m in batch.mappings:
+        line = f"- {m.source_id}.{m.source_property} → {m.target_id}"
+        if m.transform_expression != "value":
+            line += f" (transform: {m.transform_expression})"
+        if m.source_units or m.target_units:
+            line += f" [{m.source_units or '?'} → {m.target_units or '?'}]"
+        lines.append(line)
+    return "\n".join(lines) if lines else "(no mappings)"
+
+
+def _format_source_metadata(
+    assignment: Any,
+    context: dict[str, Any],
+) -> str:
+    """Format source metadata for the assembly prompt."""
+    sg = next(
+        (g for g in context["groups"] if g["id"] == assignment.source_id),
+        {},
+    )
+    if not sg:
+        return "(no source metadata)"
+    parts = [
+        f"Source: {sg.get('id', '')}",
+        f"Key: {sg.get('group_key', '')}",
+        f"Members: {sg.get('member_count', 0)}",
+        f"Domain: {sg.get('physics_domain', '')}",
+    ]
+    desc = sg.get("rep_description") or sg.get("description")
+    if desc:
+        parts.append(f"Description: {desc}")
+    return "\n".join(parts)
+
+
+def discover_assembly(
+    facility: str,
+    ids_name: str,
+    sections: SectionAssignmentBatch,
+    signal_batches: list[FieldMappingBatch],
+    context: dict[str, Any],
+    *,
+    gc: GraphClient,
+    model: str | None = None,
+    cost: PipelineCost,
+) -> AssemblyBatch:
+    """Discover assembly patterns for each section."""
+    logger.info(
+        "Discovering assembly patterns for %d sections",
+        len(sections.assignments),
+    )
+
+    configs: list[AssemblyConfig] = []
+
+    for assignment, batch in zip(sections.assignments, signal_batches):
+        section_path = assignment.imas_section_path
+
+        section_structure = fetch_imas_subtree(
+            ids_name,
+            section_path.removeprefix(f"{ids_name}/"),
+            gc=gc,
+        )
+
+        prompt = _render_prompt(
+            "assembly",
+            facility=facility,
+            ids_name=ids_name,
+            section_path=section_path,
+            signal_mappings=_format_signal_mappings(batch),
+            imas_section_structure=_format_subtree(section_structure),
+            source_metadata=_format_source_metadata(assignment, context),
+        )
+
+        messages = [
+            {"role": "system", "content": "You are an IMAS assembly expert."},
+            {"role": "user", "content": prompt},
+        ]
+
+        config = _call_llm(
+            messages,
+            AssemblyConfig,
+            model=model,
+            step_name=f"discover_assembly_{section_path}",
+            cost=cost,
+        )
+        configs.append(config)
+
+    return AssemblyBatch(ids_name=ids_name, configs=configs)
+
+
 def validate_mappings(
     facility: str,
     ids_name: str,
@@ -483,6 +576,7 @@ class MappingResult:
 
     mapping_id: str
     validated: ValidatedMappingResult
+    assembly: AssemblyBatch | None
     cost: PipelineCost
     persisted: bool = False
     unassigned_groups: list[str] = field(default_factory=list)
@@ -560,7 +654,19 @@ def generate_mapping(
         cost=cost,
     )
 
-    # Step 3: Programmatic validation (no LLM call)
+    # Step 3: Assembly discovery (LLM)
+    assembly = discover_assembly(
+        facility,
+        ids_name,
+        sections,
+        field_batches,
+        context,
+        gc=gc,
+        model=model,
+        cost=cost,
+    )
+
+    # Step 4: Programmatic validation (no LLM call)
     validated = validate_mappings(
         facility,
         ids_name,
@@ -575,7 +681,9 @@ def generate_mapping(
     persisted = False
     if persist:
         status = "active" if activate else "generated"
-        mapping_id = persist_mapping_result(validated, gc=gc, status=status)
+        mapping_id = persist_mapping_result(
+            validated, assembly=assembly, gc=gc, status=status
+        )
         persisted = True
         logger.info("Persisted mapping %s with status '%s'", mapping_id, status)
 
@@ -589,6 +697,7 @@ def generate_mapping(
     return MappingResult(
         mapping_id=mapping_id,
         validated=validated,
+        assembly=assembly,
         cost=cost,
         persisted=persisted,
         unassigned_groups=sections.unassigned_groups,
