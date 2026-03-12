@@ -71,6 +71,15 @@ For each signal property that should map to an IMAS field:
    `-value` or `cocos_sign('ip_like', cocos_in=2, cocos_out=11)`. Set
    `cocos_label` to the applicable transformation type.
 
+## Multi-Target Mapping
+
+A single signal source may map to **multiple** IMAS fields. This is expected when:
+- The same physical measurement appears in multiple IDS locations
+- Position data feeds both geometry definitions and measurement contexts
+- Derived quantities populate multiple output fields
+
+Return ALL valid mappings for each source — do not limit to one-to-one.
+
 ## Transform Rules
 
 - If `source_units ≠ target_units`, the `transform_expression` **MUST** perform

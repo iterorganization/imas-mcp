@@ -207,9 +207,9 @@ class TestValidateMapping:
 
         assert "pf_active/circuit/description" in report.duplicate_targets
         assert report.all_passed is False
-        # Should have escalation for duplicate
+        # Should have escalation for multiple sources → same target
         dup_escalations = [
-            e for e in report.escalations if "Duplicate" in e.reason
+            e for e in report.escalations if "Multiple sources" in e.reason
         ]
         assert len(dup_escalations) == 1
 

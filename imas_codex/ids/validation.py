@@ -5,13 +5,15 @@ Replaces LLM self-review (Step 3) with concrete checks:
   - Target IMAS path exists in graph
   - Transform expression executes without error
   - Source/target units are compatible
-  - No duplicate target paths (two sources → same IMAS field)
+  - Multi-target aware duplicate detection:
+    * Same source → multiple targets: allowed (no warning)
+    * Multiple sources → same target: warning (potential conflict)
+    * Same source → same target with different transforms: error
 """
 
 from __future__ import annotations
 
 import logging
-from collections import Counter
 from dataclasses import dataclass, field
 
 from imas_codex.graph.client import GraphClient
@@ -150,21 +152,52 @@ def validate_mapping(
 
         report.binding_checks.append(check)
 
-    # 5. Duplicate target detection
-    target_counts = Counter(b.target_id for b in bindings)
-    report.duplicate_targets = [
-        path for path, count in target_counts.items() if count > 1
-    ]
-    for dup in report.duplicate_targets:
-        sources = [b.source_id for b in bindings if b.target_id == dup]
-        report.escalations.append(
-            EscalationFlag(
-                source_id=sources[0],
-                target_id=dup,
-                severity=EscalationSeverity.WARNING,
-                reason=f"Duplicate target: {dup} ← {len(sources)} sources ({', '.join(sources)})",
+    # 5. Duplicate target detection (multi-target aware)
+    # Same source → multiple targets: expected (no warning)
+    # Multiple sources → same target: warning (potential conflict)
+    # Same source → same target with different transforms: error (conflicting)
+    target_to_bindings: dict[str, list] = {}
+    for b in bindings:
+        target_to_bindings.setdefault(b.target_id, []).append(b)
+
+    report.duplicate_targets = []
+    for target_id, target_bindings in target_to_bindings.items():
+        unique_sources = {b.source_id for b in target_bindings}
+        if len(unique_sources) > 1:
+            # Multiple sources → same target: warning
+            report.duplicate_targets.append(target_id)
+            source_list = sorted(unique_sources)
+            report.escalations.append(
+                EscalationFlag(
+                    source_id=source_list[0],
+                    target_id=target_id,
+                    severity=EscalationSeverity.WARNING,
+                    reason=(
+                        f"Multiple sources → same target: {target_id} ← "
+                        f"{len(source_list)} sources ({', '.join(source_list)})"
+                    ),
+                )
             )
-        )
+        elif len(target_bindings) > 1:
+            # Same source, same target — check for conflicting transforms
+            transforms = {
+                getattr(b, "transform_expression", "value")
+                for b in target_bindings
+            }
+            if len(transforms) > 1:
+                report.duplicate_targets.append(target_id)
+                report.escalations.append(
+                    EscalationFlag(
+                        source_id=target_bindings[0].source_id,
+                        target_id=target_id,
+                        severity=EscalationSeverity.ERROR,
+                        reason=(
+                            f"Conflicting transforms for same source→target: "
+                            f"{target_id} has transforms: "
+                            f"{', '.join(sorted(transforms))}"
+                        ),
+                    )
+                )
 
     report.all_passed = all(
         c.source_exists
