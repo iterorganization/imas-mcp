@@ -326,6 +326,10 @@ class DataProgressDisplay(BaseProgressDisplay):
         total = max(self.state.total_signals, 1)
         enriched = self.state.signals_enriched + self.state.signals_checked
         checked = self.state.signals_checked
+        # Enrich denominator excludes skipped signals (they never need enrichment)
+        enrich_denom = max(
+            self.state.total_signals - self.state.signals_skipped, 1
+        )
         check_denom = max(enriched, 1)
 
         # Worker counts — SCAN combines seed + extract + promote groups
@@ -338,10 +342,6 @@ class DataProgressDisplay(BaseProgressDisplay):
         scan_ann = " ".join(scan_ann_parts)
 
         enrich_count, enrich_ann = self._count_group_workers("enrich")
-        # Append group stats to enrich annotation
-        if self.state.signal_sources > 0:
-            grp_note = f"{self.state.signal_sources} groups"
-            enrich_ann = f"{enrich_ann} {grp_note}".strip() if enrich_ann else grp_note
         check_count, check_ann = self._count_group_workers("check")
 
         # Enrich cost
@@ -506,7 +506,7 @@ class DataProgressDisplay(BaseProgressDisplay):
                 name="ENRICH",
                 style="bold green",
                 completed=enriched,
-                total=total,
+                total=enrich_denom,
                 rate=self.state.enrich_rate,
                 cost=enrich_cost,
                 disabled=self.state.discover_only,
