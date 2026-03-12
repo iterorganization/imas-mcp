@@ -298,16 +298,40 @@ class TestHostCommand:
         """_parse_ps_output filters codex-related processes."""
         from imas_codex.cli.host import _parse_ps_output
 
+        # ps -eo user,pid,%cpu,%mem,vsz,rss,etimes,args
         ps_text = (
-            "USER       PID %CPU %MEM    VSZ   RSS TTY      STAT START   TIME COMMAND\n"
-            "user     12345  5.2  3.1 512000 32000 ?        S    10:00   0:05 python -m imas_codex serve\n"
-            "user     12346  0.0  0.1  10000  1000 pts/0    S    10:00   0:00 bash\n"
-            "user     12347 80.0 15.0 800000 150000 ?       R    10:00   1:00 neo4j server\n"
+            "USER       PID %CPU %MEM    VSZ   RSS ELAPSED COMMAND\n"
+            "user     12345  5.2  3.1 512000 32000    3600 python -m imas_codex serve\n"
+            "user     12346  0.0  0.1  10000  1000     120 bash\n"
+            "user     12347 80.0 15.0 800000 150000  172800 neo4j server\n"
         )
         procs = _parse_ps_output(ps_text)
         assert len(procs) == 2
         assert procs[0]["pid"] == "12345"
+        assert procs[0]["age_seconds"] == 3600
         assert procs[1]["pid"] == "12347"
+        assert procs[1]["age_seconds"] == 172800
+
+    def test_format_age(self):
+        """_format_age renders human-readable durations."""
+        from imas_codex.cli.host import _format_age
+
+        assert _format_age(30) == "30s"
+        assert _format_age(90) == "1m"
+        assert _format_age(3600) == "1h"
+        assert _format_age(3720) == "1h 2m"
+        assert _format_age(90000) == "1d 1h"
+        assert _format_age(86400) == "1d"
+
+    def test_parse_duration(self):
+        """_parse_duration converts duration strings to seconds."""
+        from imas_codex.cli.host import _parse_duration
+
+        assert _parse_duration("30s") == 30
+        assert _parse_duration("5m") == 300
+        assert _parse_duration("2h") == 7200
+        assert _parse_duration("1d") == 86400
+        assert _parse_duration("1d12h") == 129600
 
     def test_host_runs_local(self):
         """host command (no args) runs successfully."""
@@ -384,26 +408,26 @@ class TestHostCommand:
 
         procs = {
             "test-node": [
-                {"pid": "100", "cpu": "5.0", "mem": "2.0", "rss_mb": 50, "command": "python serve"},
+                {"pid": "100", "cpu": "5.0", "mem": "2.0", "rss_mb": 50, "age_seconds": 3600, "command": "python serve"},
             ]
         }
         table = _build_process_table(procs)
         assert table is not None
-        # Single node → no Node column: PID, CPU%, Mem%, RSS, Command = 5
-        assert len(table.columns) == 5
+        # Single node → no Node column: PID, CPU%, Mem%, RSS, Age, Command = 6
+        assert len(table.columns) == 6
 
     def test_build_process_table_multi_node(self):
         """_build_process_table adds Node column for multiple nodes."""
         from imas_codex.cli.host import _build_process_table
 
         procs = {
-            "node-a": [{"pid": "1", "cpu": "1.0", "mem": "0.5", "rss_mb": 10, "command": "cmd a"}],
-            "node-b": [{"pid": "2", "cpu": "2.0", "mem": "1.0", "rss_mb": 20, "command": "cmd b"}],
+            "node-a": [{"pid": "1", "cpu": "1.0", "mem": "0.5", "rss_mb": 10, "age_seconds": 60, "command": "cmd a"}],
+            "node-b": [{"pid": "2", "cpu": "2.0", "mem": "1.0", "rss_mb": 20, "age_seconds": 120, "command": "cmd b"}],
         }
         table = _build_process_table(procs)
         assert table is not None
-        # Multi-node → Node + PID + CPU% + Mem% + RSS + Command = 6
-        assert len(table.columns) == 6
+        # Multi-node → Node + PID + CPU% + Mem% + RSS + Age + Command = 7
+        assert len(table.columns) == 7
 
     def test_build_process_table_empty(self):
         """_build_process_table returns None when no processes."""
@@ -424,6 +448,7 @@ class TestHostCommand:
         assert "--include" in result.output
         assert "--exclude" in result.output
         assert "--signal" in result.output
+        assert "--older-than" in result.output
 
     def test_build_survey_table(self):
         """_build_survey_table builds table and finds best node."""

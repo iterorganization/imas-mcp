@@ -95,12 +95,55 @@ _CODEX_PATTERNS = [
 
 _CODEX_RE = re.compile("|".join(_CODEX_PATTERNS), re.IGNORECASE)
 
+# ps column spec: user pid %cpu %mem vsz rss etimes args
+_PS_CMD_LOCAL = ["ps", "-eo", "user,pid,%cpu,%mem,vsz,rss,etimes,args"]
+_PS_CMD_REMOTE = "ps -eo user,pid,%cpu,%mem,vsz,rss,etimes,args"
+
+
+def _format_age(seconds: int) -> str:
+    """Format elapsed seconds as human-readable age.
+
+    Examples: "2d 5h", "3h 12m", "45m", "30s".
+    """
+    if seconds < 60:
+        return f"{seconds}s"
+    minutes = seconds // 60
+    if minutes < 60:
+        return f"{minutes}m"
+    hours = minutes // 60
+    remaining_m = minutes % 60
+    if hours < 24:
+        return f"{hours}h {remaining_m}m" if remaining_m else f"{hours}h"
+    days = hours // 24
+    remaining_h = hours % 24
+    return f"{days}d {remaining_h}h" if remaining_h else f"{days}d"
+
+
+def _parse_duration(spec: str) -> int:
+    """Parse a duration string like '1h', '2d', '30m', '1d12h' to seconds.
+
+    Raises ValueError for invalid input.
+    """
+    pattern = re.compile(r"(\d+)\s*([smhd])", re.IGNORECASE)
+    matches = pattern.findall(spec)
+    if not matches:
+        raise ValueError(
+            f"Invalid duration: '{spec}'. "
+            f"Use combinations of <N>s, <N>m, <N>h, <N>d "
+            f"(e.g. '1h', '2d', '30m', '1d12h')"
+        )
+    multipliers = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+    total = 0
+    for value, unit in matches:
+        total += int(value) * multipliers[unit.lower()]
+    return total
+
 
 def _get_codex_processes_local() -> list[dict]:
     """Find imas-codex related processes on the local node."""
     try:
         result = subprocess.run(
-            ["ps", "aux"],
+            _PS_CMD_LOCAL,
             capture_output=True,
             text=True,
             timeout=5,
@@ -116,7 +159,7 @@ def _get_codex_processes_local() -> list[dict]:
 
 
 def _parse_ps_output(ps_output: str) -> list[dict]:
-    """Parse ps aux output and filter for codex-related processes."""
+    """Parse 'ps -eo user,pid,%cpu,%mem,vsz,rss,etimes,args' output."""
     procs = []
     lines = ps_output.strip().splitlines()
     if not lines:
@@ -125,11 +168,15 @@ def _parse_ps_output(ps_output: str) -> list[dict]:
         if not _CODEX_RE.search(line):
             continue
         # Skip the ps command itself and grep
-        if "ps aux" in line or "grep" in line:
+        if "ps -eo" in line or "ps aux" in line or "grep" in line:
             continue
-        parts = line.split(None, 10)
-        if len(parts) < 11:
+        parts = line.split(None, 7)
+        if len(parts) < 8:
             continue
+        try:
+            age_seconds = int(parts[6])
+        except (ValueError, IndexError):
+            age_seconds = 0
         procs.append({
             "user": parts[0],
             "pid": parts[1],
@@ -137,7 +184,8 @@ def _parse_ps_output(ps_output: str) -> list[dict]:
             "mem": parts[3],
             "vsz_mb": int(parts[4]) / 1024,
             "rss_mb": int(parts[5]) / 1024,
-            "command": parts[10][:120],  # Truncate long commands
+            "age_seconds": age_seconds,
+            "command": parts[7][:120],
         })
     return procs
 
@@ -233,6 +281,7 @@ def _build_process_table(
     table.add_column("CPU%", justify="right")
     table.add_column("Mem%", justify="right")
     table.add_column("RSS", justify="right", style="dim")
+    table.add_column("Age", justify="right")
     table.add_column("Command")
 
     first_node = True
@@ -243,10 +292,14 @@ def _build_process_table(
         for i, p in enumerate(procs):
             cpu_str = f"[red]{p['cpu']}%[/red]" if float(p["cpu"]) > 50 else f"{p['cpu']}%"
             mem_str = f"[yellow]{p['mem']}%[/yellow]" if float(p["mem"]) > 10 else f"{p['mem']}%"
+            age_s = p.get("age_seconds", 0)
+            age_str = _format_age(age_s)
+            if age_s > 86400:
+                age_str = f"[yellow]{age_str}[/yellow]"
             row: list[str] = []
             if multi:
                 row.append(node if i == 0 else "")
-            row.extend([p["pid"], cpu_str, mem_str, f"{p['rss_mb']:.0f}M", p["command"]])
+            row.extend([p["pid"], cpu_str, mem_str, f"{p['rss_mb']:.0f}M", age_str, p["command"]])
             table.add_row(*row)
 
     return table
@@ -337,7 +390,7 @@ def _query_node(
         "END{printf \"%d %d\\n\", t, a}' /proc/meminfo; "
         "who | wc -l; "
         "echo '---PROCS---'; "
-        "ps aux"
+        + _PS_CMD_REMOTE
     )
     ssh_cmd.append(script)
 
@@ -997,6 +1050,10 @@ def host_add(
     "--signal", "-s", "sig", default="TERM",
     help="Signal to send (default: TERM)",
 )
+@click.option(
+    "--older-than", "-o", "older_than",
+    help="Only kill processes older than this duration (e.g. 1h, 2d, 30m)",
+)
 @click.option("--timeout", default=10, help="SSH timeout per node")
 def host_kill(
     facility: str,
@@ -1005,6 +1062,7 @@ def host_kill(
     yes: bool,
     target_node: str | None,
     sig: str,
+    older_than: str | None,
     timeout: int,
 ) -> None:
     """Kill imas-codex processes on remote facility nodes.
@@ -1020,6 +1078,8 @@ def host_kill(
         imas-codex host kill iter -e "neo4j|serve" -y    # Kill all except
         imas-codex host kill iter -n 2 -y                # Kill on node #2
         imas-codex host kill iter -i discover -s KILL    # SIGKILL discover
+        imas-codex host kill iter -o 2d -y               # Kill procs >2 days old
+        imas-codex host kill iter -o 1h -e serve -y      # Kill >1h except serve
     """
     valid_signals = {
         "TERM", "KILL", "HUP", "INT", "QUIT",
@@ -1103,6 +1163,8 @@ def host_kill(
             if include_re and not include_re.search(cmd):
                 continue
             if exclude_re and exclude_re.search(cmd):
+                continue
+            if min_age_seconds and p.get("age_seconds", 0) < min_age_seconds:
                 continue
             matched.append(p)
         if matched:
