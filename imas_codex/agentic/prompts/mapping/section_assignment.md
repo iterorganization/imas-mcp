@@ -15,7 +15,8 @@ to the correct **IMAS structural array sections** within an IDS.
 
 The following signal sources have been discovered for this facility.
 Each source is a set of related facility signals (e.g., all signals
-from a PF coil, or all magnetic probes in a diagnostic).
+from a PF coil, or all magnetic probes in a diagnostic). The physics
+domain indicates the source's primary measurement category.
 
 {{ signal_sources }}
 
