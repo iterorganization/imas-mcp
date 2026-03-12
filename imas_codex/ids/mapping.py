@@ -573,7 +573,10 @@ def validate_mappings(
         all_escalations.extend(batch.escalations)
 
     # Run programmatic validation
-    report = validate_mapping(all_bindings, gc=gc)
+    from imas_codex.ids.tools import get_sign_flip_paths
+
+    flip_paths = get_sign_flip_paths(ids_name)
+    report = validate_mapping(all_bindings, gc=gc, sign_flip_paths=flip_paths)
     all_escalations.extend(report.escalations)
 
     corrections: list[str] = []

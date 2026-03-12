@@ -4,7 +4,8 @@ Replaces LLM self-review (Step 3) with concrete checks:
   - Source signal group exists in graph
   - Target IMAS path exists in graph
   - Transform expression executes without error
-  - Source/target units are compatible
+  - Source/target units are compatible (dimensional + identity transform check)
+  - COCOS sign-flip enforcement on known sign-flip paths
   - Multi-target aware duplicate detection:
     * Same source → multiple targets: allowed (no warning)
     * Multiple sources → same target: warning (potential conflict)
@@ -66,6 +67,7 @@ def validate_mapping(
     bindings: list,
     *,
     gc: GraphClient | None = None,
+    sign_flip_paths: list[str] | None = None,
 ) -> ValidationReport:
     """Run programmatic checks on a set of mapping bindings.
 
@@ -75,6 +77,7 @@ def validate_mapping(
     Args:
         bindings: List of binding objects (ValidatedFieldMapping or similar).
         gc: GraphClient instance (created if None).
+        sign_flip_paths: IMAS paths requiring COCOS sign flips.
 
     Returns:
         ValidationReport with per-binding results and aggregate status.
@@ -86,6 +89,8 @@ def validate_mapping(
     if not bindings:
         report.all_passed = True
         return report
+
+    flip_set = set(sign_flip_paths) if sign_flip_paths else set()
 
     # Deduplicate lookups
     source_ids = list({b.source_id for b in bindings})
@@ -135,9 +140,31 @@ def validate_mapping(
                 errors.append(
                     f"Units incompatible: {src_units} → {tgt_units}"
                 )
+            elif (
+                src_units
+                and tgt_units
+                and src_units != tgt_units
+                and expr == "value"
+            ):
+                # Identity transform with mismatched units — needs conversion
+                errors.append(
+                    f"Identity transform but units differ: "
+                    f"{src_units} → {tgt_units}; "
+                    f"transform_expression should include unit conversion"
+                )
         else:
             # No units specified — compatible by default
             check.units_compatible = True
+
+        # 5. COCOS sign-flip enforcement
+        if flip_set and b.target_id in flip_set:
+            cocos_label = getattr(b, "cocos_label", None)
+            if expr == "value" and not cocos_label:
+                errors.append(
+                    f"Target '{b.target_id}' requires COCOS sign handling "
+                    f"but transform_expression is identity ('value') "
+                    f"and no cocos_label is set"
+                )
 
         if errors:
             check.error = "; ".join(errors)
