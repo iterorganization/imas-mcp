@@ -292,6 +292,45 @@ def _run_remote(cmd: str, timeout: int = 30, check: bool = False) -> str:
     return run_command(cmd, ssh_host=_facility_ssh(), timeout=timeout, check=check)
 
 
+def _llm_ssh() -> str | None:
+    """SSH host for the LLM proxy node, or None if local.
+
+    Checks for a ``{facility}-llm`` SSH alias first, falling back
+    to the default facility SSH host.  This allows the LLM proxy to
+    run on a different node than the user's default SSH target.
+    """
+    from imas_codex.remote.locations import is_location_local, resolve_location
+    from imas_codex.settings import get_llm_location
+
+    location = get_llm_location()
+    if location == "local":
+        return None
+    if is_location_local(location):
+        return None
+
+    info = resolve_location(location)
+    llm_alias = f"{info.ssh_host}-llm"
+
+    # Check if the LLM alias exists in SSH config
+    try:
+        from imas_codex.cli.host import _get_ssh_hostname
+
+        if _get_ssh_hostname(llm_alias) is not None:
+            return llm_alias
+    except Exception:
+        pass
+
+    # Fall back to the default facility SSH host
+    return info.ssh_host
+
+
+def _run_llm_remote(cmd: str, timeout: int = 30, check: bool = False) -> str:
+    """Run a command on the LLM proxy node (locally if already there)."""
+    from imas_codex.remote.executor import run_command
+
+    return run_command(cmd, ssh_host=_llm_ssh(), timeout=timeout, check=check)
+
+
 def _run_on_node(node: str, cmd: str, timeout: int = 30) -> str:
     """Run a command on a compute node (via SSH from login node).
 
@@ -1121,16 +1160,24 @@ def _wait_for_health(
     check_cmd: str,
     timeout_s: int = 120,
     success_test: str | None = None,
+    ssh_host: str | None = ...,
 ) -> bool:
     """Wait for a service health check to pass. Returns True on success.
 
     Uses rich spinner when available, plain text otherwise.
+
+    Args:
+        ssh_host: SSH host override. Default (``...``) uses ``_facility_ssh()``.
     """
     from imas_codex.cli.rich_output import should_use_rich
 
     if should_use_rich():
-        return _wait_for_health_rich(label, check_cmd, timeout_s, success_test)
-    return _wait_for_health_plain(label, check_cmd, timeout_s, success_test)
+        return _wait_for_health_rich(
+            label, check_cmd, timeout_s, success_test, ssh_host
+        )
+    return _wait_for_health_plain(
+        label, check_cmd, timeout_s, success_test, ssh_host
+    )
 
 
 def _wait_for_health_rich(
@@ -1138,6 +1185,7 @@ def _wait_for_health_rich(
     check_cmd: str,
     timeout_s: int,
     success_test: str | None,
+    ssh_host: str | None = ...,
 ) -> bool:
     """Rich spinner health check."""
     from rich.console import Console
@@ -1147,6 +1195,11 @@ def _wait_for_health_rich(
         TextColumn,
         TimeElapsedColumn,
     )
+
+    from imas_codex.remote.executor import run_command
+
+    if ssh_host is ...:
+        ssh_host = _facility_ssh()
 
     console = Console()
     deadline = time.time() + timeout_s
@@ -1163,7 +1216,7 @@ def _wait_for_health_rich(
             time.sleep(5)
             remaining = max(0, int(deadline - time.time()))
             try:
-                result = _run_remote(check_cmd, timeout=10)
+                result = run_command(check_cmd, ssh_host=ssh_host, timeout=10)
                 if result and result != "(no output)":
                     if success_test is None or success_test in result:
                         progress.stop()
@@ -1185,14 +1238,20 @@ def _wait_for_health_plain(
     check_cmd: str,
     timeout_s: int,
     success_test: str | None,
+    ssh_host: str | None = ...,
 ) -> bool:
     """Plain text health check fallback."""
+    from imas_codex.remote.executor import run_command
+
+    if ssh_host is ...:
+        ssh_host = _facility_ssh()
+
     click.echo(f"  Waiting for {label}...")
     deadline = time.time() + timeout_s
     while time.time() < deadline:
         time.sleep(5)
         try:
-            result = _run_remote(check_cmd, timeout=10)
+            result = run_command(check_cmd, ssh_host=ssh_host, timeout=10)
             if result and result != "(no output)":
                 if success_test is None or success_test in result:
                     click.echo(f"  {label} healthy")
@@ -1286,22 +1345,43 @@ def _show_embed_info_on_node(node: str, port: int) -> None:
 # ── Log tailing ──────────────────────────────────────────────────────────
 
 
-def _tail_log(log_file: str, follow: bool, lines: int) -> None:
-    """Tail a log file on the remote host."""
+def _tail_log(
+    log_file: str, follow: bool, lines: int, ssh_host: str | None = ...
+) -> None:
+    """Tail a log file on the remote host.
+
+    Args:
+        log_file: Remote log file path.
+        follow: Whether to follow the log (tail -f).
+        lines: Number of lines to show.
+        ssh_host: SSH host override. Default (``...``) uses ``_facility_ssh()``.
+    """
+    from imas_codex.remote.executor import run_command
+
+    if ssh_host is ...:
+        ssh_host = _facility_ssh()
+
     # Check if file exists
     try:
-        result = _run_remote(f"test -f {log_file} && echo exists", timeout=5)
+        result = run_command(
+            f"test -f {log_file} && echo exists",
+            ssh_host=ssh_host,
+            timeout=5,
+        )
         if "exists" not in result:
             raise click.ClickException(f"Log file not found: {log_file}")
     except subprocess.CalledProcessError:
         raise click.ClickException(f"Log file not found: {log_file}") from None
 
     if follow:
-        ssh = _facility_ssh()
-        if ssh:
-            os.execvp("ssh", ["ssh", ssh, f"tail -f {log_file}"])
+        if ssh_host:
+            os.execvp("ssh", ["ssh", ssh_host, f"tail -f {log_file}"])
         else:
             os.execvp("tail", ["tail", "-f", log_file])
     else:
-        output = _run_remote(f"tail -n {lines} {log_file}", timeout=10)
+        output = run_command(
+            f"tail -n {lines} {log_file}",
+            ssh_host=ssh_host,
+            timeout=10,
+        )
         click.echo(output)

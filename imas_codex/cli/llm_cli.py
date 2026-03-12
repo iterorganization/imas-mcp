@@ -168,7 +168,7 @@ def _start_llm_foreground(
 
 def _start_llm_deploy() -> None:
     """Deploy LLM proxy via systemd and wait for health."""
-    from imas_codex.cli.services import _llm_port, _wait_for_health
+    from imas_codex.cli.services import _llm_port, _llm_ssh, _wait_for_health
 
     _deploy_login_llm()
     port = _llm_port()
@@ -176,6 +176,7 @@ def _start_llm_deploy() -> None:
         "LLM proxy",
         f"curl -sf http://localhost:{port}/",
         timeout_s=60,
+        ssh_host=_llm_ssh(),
     )
     click.echo(f"  URL: http://localhost:{port}")
 
@@ -256,13 +257,13 @@ def llm_status(url: str | None) -> None:
 def _show_llm_service_status() -> None:
     """Show systemd service status with resource usage."""
     try:
-        from imas_codex.cli.services import _colored_bar, _run_remote
+        from imas_codex.cli.services import _colored_bar, _run_llm_remote
     except ImportError:
         return
 
     try:
         # Get systemd service properties in one call
-        props = _run_remote(
+        props = _run_llm_remote(
             "systemctl --user show imas-codex-llm "
             "--property=ActiveState,SubState,MainPID,MemoryCurrent,"
             "ActiveEnterTimestamp,NRestarts 2>/dev/null || true",
@@ -300,7 +301,7 @@ def _show_llm_service_status() -> None:
     timestamp = parsed.get("ActiveEnterTimestamp", "")
     if timestamp and timestamp != "[not set]":
         try:
-            uptime_out = _run_remote(
+            uptime_out = _run_llm_remote(
                 f'echo $(( $(date +%s) - $(date -d "{timestamp}" +%s) ))',
                 timeout=5,
             )
@@ -329,7 +330,7 @@ def _show_llm_service_status() -> None:
 
     # Process CPU via ps (systemd doesn't track cumulative CPU)
     try:
-        cpu_out = _run_remote(
+        cpu_out = _run_llm_remote(
             f"ps -p {pid} -o %cpu= 2>/dev/null || true",
             timeout=5,
         )
@@ -522,7 +523,8 @@ from imas_codex.cli.services import (  # noqa: E402
     _PROJECT,
     _SERVICES_DIR,
     _llm_port,
-    _run_remote,
+    _llm_ssh,
+    _run_llm_remote,
     _tail_log,
     _wait_for_health,
 )
@@ -551,7 +553,7 @@ def _deploy_login_llm() -> None:
 
     # Check if already running on this node
     try:
-        result = _run_remote(
+        result = _run_llm_remote(
             "systemctl --user is-active imas-codex-llm 2>/dev/null || true",
             timeout=10,
         )
@@ -564,13 +566,13 @@ def _deploy_login_llm() -> None:
 
     click.echo("  Starting LLM proxy on login node...")
     try:
-        _run_remote(
+        _run_llm_remote(
             "systemctl --user start imas-codex-llm",
             timeout=15,
             check=True,
         )
     except subprocess.CalledProcessError as exc:
-        log_tail = _run_remote(
+        log_tail = _run_llm_remote(
             f"tail -20 {_SERVICES_DIR}/llm.log 2>/dev/null || true",
             timeout=10,
         )
@@ -591,7 +593,7 @@ def _install_llm_service_remote() -> None:
     port = _llm_port()
     # Capture the static hostname (what systemd uses for ConditionHost=)
     # so the service only starts on this specific node.
-    target_hostname = _run_remote("hostname -f", timeout=10).strip()
+    target_hostname = _run_llm_remote("hostname -f", timeout=10).strip()
     # systemd doesn't expand $HOME in any directive — use %h (home dir specifier)
     _project_h = _PROJECT.replace("$HOME", "%h")
     _services_h = _SERVICES_DIR.replace("$HOME", "%h")
@@ -619,7 +621,7 @@ RestartSec=10
 WantedBy=default.target
 """
     content_b64 = base64.b64encode(service_content.encode()).decode()
-    _run_remote(
+    _run_llm_remote(
         'mkdir -p "$HOME/.config/systemd/user" && '
         f'echo "{content_b64}" | base64 -d > '
         '"$HOME/.config/systemd/user/imas-codex-llm.service" && '
@@ -662,7 +664,7 @@ def _stop_stale_llm_instances() -> None:
             '  [ "$result" = "stopped" ] && echo "  Stopped stale proxy on $short"; '
             "done"
         )
-        output = _run_remote(script, timeout=60)
+        output = _run_llm_remote(script, timeout=60)
         if output.strip():
             click.echo(output.strip())
     except Exception:
@@ -679,12 +681,12 @@ def llm_stop() -> None:
         imas-codex llm stop
     """
     try:
-        result = _run_remote(
+        result = _run_llm_remote(
             "systemctl --user is-active imas-codex-llm 2>/dev/null || true",
             timeout=10,
         )
         if "active" in result and "inactive" not in result:
-            _run_remote(
+            _run_llm_remote(
                 "systemctl --user stop imas-codex-llm",
                 timeout=15,
                 check=True,
@@ -705,7 +707,7 @@ def llm_restart() -> None:
         imas-codex llm restart
     """
     try:
-        _run_remote(
+        _run_llm_remote(
             "systemctl --user restart imas-codex-llm",
             timeout=30,
             check=True,
@@ -721,6 +723,7 @@ def llm_restart() -> None:
         "LLM proxy",
         f"curl -sf http://localhost:{port}/",
         timeout_s=60,
+        ssh_host=_llm_ssh(),
     )
     click.echo(f"  URL: http://localhost:{port}")
 
@@ -740,4 +743,4 @@ def llm_logs(follow: bool, lines: int) -> None:
         imas-codex llm logs -n 100     # Last 100 lines
     """
     log_file = f"{_SERVICES_DIR}/llm.log"
-    _tail_log(log_file, follow, lines)
+    _tail_log(log_file, follow, lines, ssh_host=_llm_ssh())
