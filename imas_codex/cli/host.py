@@ -5,13 +5,10 @@ Unified command for monitoring compute node health and managing SSH jump targets
 \b
 Usage:
   imas-codex host                      Local node load + imas-codex processes
-  imas-codex host list iter            List ITER login nodes with load + processes
-  imas-codex host list iter --set-default 3
+  imas-codex host iter                 Survey ITER login nodes with load + processes
+  imas-codex host iter --set-default 3
                                        Set iter SSH target to 3rd node
-  imas-codex host list iter --set-default 98dci4-srv-1005
-                                       Set iter SSH target by hostname
-  imas-codex host status               Check SSH connectivity to all facilities
-  imas-codex host add <name>           Add SSH host entry
+  imas-codex host iter --set-default   Auto-select least loaded node
 
 Login nodes are discovered dynamically from /etc/hosts on the facility
 gateway — no individual node configuration needed.
@@ -442,18 +439,43 @@ def _set_ssh_hostname(alias: str, new_hostname: str) -> bool:
     return True
 
 
-# ── CLI commands ─────────────────────────────────────────────────────────
+# ── CLI ──────────────────────────────────────────────────────────────────
 
 
-@click.group(invoke_without_command=True)
+class _HostGroup(click.Group):
+    """Group that falls through to the survey command for unknown names.
+
+    Known subcommands (status, add) are dispatched normally.
+    Anything else is treated as a facility name and routed to the
+    hidden ``survey`` subcommand, giving us:
+
+        imas-codex host              → local load
+        imas-codex host iter         → survey ITER nodes
+        imas-codex host status       → SSH connectivity
+        imas-codex host add myhost   → add SSH entry
+    """
+
+    def parse_args(self, ctx: click.Context, args: list[str]) -> list[str]:
+        # If the first arg looks like a facility (not a known command),
+        # inject "survey" so Click routes to the survey subcommand.
+        if (
+            args
+            and args[0] not in self.commands
+            and not args[0].startswith("-")
+        ):
+            args = ["survey"] + args
+        return super().parse_args(ctx, args)
+
+
+@click.group(cls=_HostGroup, invoke_without_command=True)
 @click.pass_context
 def host(ctx: click.Context) -> None:
     """Node load monitoring and SSH target management.
 
     \b
       imas-codex host                    Local node load + processes
-      imas-codex host list iter          ITER login node survey
-      imas-codex host list iter --set-default 3
+      imas-codex host iter               Survey ITER login nodes
+      imas-codex host iter --set-default 3
       imas-codex host status             SSH connectivity check
       imas-codex host add <name>         Add SSH host entry
     """
@@ -468,8 +490,8 @@ def host(ctx: click.Context) -> None:
     _show_processes(procs)
 
 
-@host.command("list")
-@click.argument("facility", default="iter")
+@host.command("survey", hidden=True)
+@click.argument("facility")
 @click.option("--timeout", default=10, help="SSH timeout per node in seconds")
 @click.option(
     "--watch", "-w", is_flag=True, help="Repeat every 30s (Ctrl+C to stop)"
@@ -478,9 +500,14 @@ def host(ctx: click.Context) -> None:
     "--set-default",
     "set_default",
     default=None,
-    help="Set SSH target: node index (1-based) or hostname",
+    is_flag=False,
+    flag_value="auto",
+    help=(
+        "Set SSH target: node index, hostname, or omit value "
+        "to auto-select least loaded"
+    ),
 )
-def host_list(
+def host_survey(
     facility: str,
     timeout: int,
     watch: bool,
@@ -489,7 +516,7 @@ def host_list(
     """Survey login nodes on a facility with load and process info.
 
     Discovers login nodes dynamically via /etc/hosts on the facility
-    gateway. Shows CPU load, memory, users, and imas-codex processes
+    gateway.  Shows CPU load, memory, users, and imas-codex processes
     per node.
 
     Use --set-default to update ~/.ssh/config to target a specific
@@ -497,13 +524,11 @@ def host_list(
 
     \b
     Examples:
-        imas-codex host list                    # Survey ITER login nodes
-        imas-codex host list iter --watch       # Continuous monitoring
-        imas-codex host list iter --set-default 3
-        imas-codex host list iter --set-default 98dci4-srv-1005
+        imas-codex host iter                    # Survey ITER login nodes
+        imas-codex host iter --watch            # Continuous monitoring
+        imas-codex host iter --set-default 3    # Pick node #3
+        imas-codex host iter --set-default      # Auto-pick least loaded
     """
-    import time
-
     from imas_codex.discovery.base.facility import get_facility
 
     config = get_facility(facility)
@@ -644,41 +669,68 @@ def host_list(
         # First survey to get the node list
         ordered = _survey_once()
 
-        # Resolve target: could be index or hostname
+        # Resolve target
         target_fqdn = None
-        try:
-            idx = int(set_default)
-            if 1 <= idx <= len(ordered):
-                node_short = ordered[idx - 1][0]
-                target_fqdn = f"{node_short}.iter.org"
-            else:
-                raise click.ClickException(
-                    f"Index {idx} out of range (1-{len(ordered)})"
+
+        if set_default == "auto":
+            # Auto-select: pick the least-loaded reachable node
+            best = None
+            best_cpu = float("inf")
+            for node, info in ordered:
+                if info is None:
+                    continue
+                cpu_pct = (
+                    (info["load_1m"] / info["cpu_count"]) * 100
+                    if info["cpu_count"] > 0
+                    else 100
                 )
-        except ValueError:
-            # Not an integer — treat as hostname
-            candidate = set_default.strip()
-            # Accept short name or FQDN
-            if "." not in candidate:
-                # Assume it's a short name, find matching node
-                matches = [
-                    n for n, _ in ordered if candidate in n
-                ]
-                if len(matches) == 1:
-                    target_fqdn = f"{matches[0]}.iter.org"
-                elif len(matches) > 1:
-                    raise click.ClickException(
-                        f"Ambiguous hostname '{candidate}', "
-                        f"matches: {', '.join(matches)}"
-                    )
+                if cpu_pct < best_cpu:
+                    best_cpu = cpu_pct
+                    best = node
+            if best:
+                target_fqdn = f"{best}.iter.org"
+            else:
+                raise click.ClickException("No reachable nodes found")
+        else:
+            try:
+                idx = int(set_default)
+                if 1 <= idx <= len(ordered):
+                    node_short = ordered[idx - 1][0]
+                    target_fqdn = f"{node_short}.iter.org"
                 else:
                     raise click.ClickException(
-                        f"No node matching '{candidate}'"
+                        f"Index {idx} out of range (1-{len(ordered)})"
                     )
-            else:
-                target_fqdn = candidate
+            except ValueError:
+                candidate = set_default.strip()
+                if "." not in candidate:
+                    matches = [
+                        n for n, _ in ordered if candidate in n
+                    ]
+                    if len(matches) == 1:
+                        target_fqdn = f"{matches[0]}.iter.org"
+                    elif len(matches) > 1:
+                        raise click.ClickException(
+                            f"Ambiguous hostname '{candidate}', "
+                            f"matches: {', '.join(matches)}"
+                        )
+                    else:
+                        raise click.ClickException(
+                            f"No node matching '{candidate}'"
+                        )
+                else:
+                    target_fqdn = candidate
 
         if target_fqdn:
+            # Safety: refuse to switch to an unreachable node
+            target_short = target_fqdn.split(".")[0]
+            node_info = dict(ordered)
+            if target_short in node_info and node_info[target_short] is None:
+                raise click.ClickException(
+                    f"Node '{target_short}' is unreachable — refusing "
+                    f"to switch. Pick a reachable node."
+                )
+
             current = _get_ssh_hostname(facility)
             if current == target_fqdn:
                 click.echo(
@@ -690,8 +742,10 @@ def host_list(
                     + f"Updated: {facility} → "
                     + click.style(target_fqdn, fg="cyan", bold=True)
                 )
-                # Invalidate ControlMaster socket for the old connection
-                _invalidate_control_socket(facility)
+                click.echo(
+                    "  Note: existing SSH sessions continue on the "
+                    "old node until closed."
+                )
             else:
                 raise click.ClickException(
                     f"Could not update SSH config for '{facility}'. "
@@ -701,35 +755,18 @@ def host_list(
         return
 
     if watch:
+        import time
+
         try:
             while True:
                 _survey_once()
                 click.echo("Refreshing in 30s… (Ctrl+C to stop)")
-                import time
-
                 time.sleep(30)
                 click.clear()
         except KeyboardInterrupt:
             click.echo("\nStopped.")
     else:
         _survey_once()
-
-
-def _invalidate_control_socket(alias: str) -> None:
-    """Close any existing ControlMaster socket for an SSH alias.
-
-    After changing the HostName, existing multiplexed connections still
-    point to the old node. Close them so the next SSH uses the new target.
-    """
-    try:
-        subprocess.run(
-            ["ssh", "-O", "exit", alias],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-    except Exception:
-        pass
 
 
 @host.command("status")
