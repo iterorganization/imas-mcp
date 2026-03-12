@@ -966,6 +966,25 @@ Phase 9 ────────────────────────
   9.2  Integration tests              [tests/ids/test_mapping_integration.py]
   9.3  Prompt template tests          [tests/ids/test_mapping_prompts.py]
   9.4  CLI tests                      [tests/test_cli.py]
+
+Phase 10 ─────────────────────────── E2E Code Generation & Validation
+  10.1  Data extraction codegen       [ids/codegen.py]           — new module
+  10.2  Binary transfer protocol      [remote/serialization.py]  — new module
+  10.3  Assembly code generation      [ids/codegen.py]           — extend
+    └── Extend assembly.md prompt     [agentic/prompts/mapping/assembly.md]
+  10.4  Remote capability probe       [remote/executor.py]       — extend
+  10.5  E2E validation pipeline       [ids/validation.py]        — extend
+    └── Tier 2: code validation       [ids/codegen.py]
+    └── Tier 3: data validation       [ids/validation.py]
+  10.6  CLI integration               [cli/map.py]               — extend
+  10.7  Performance: decimation       [ids/codegen.py]           — built-in
+    └── Performance: caching          [ids/codegen.py]           — built-in
+  10.8  Code persistence              [ids/models.py]            — extend
+  10.9  Schema additions              [schemas/facility.yaml]    — extend
+
+Phase 11 ─────────────────────────── E2E Testing Infrastructure
+  11.1  Test fixtures                 [tests/ids/fixtures/]      — recorded data
+  11.2  E2E test cases                [tests/ids/test_e2e.py]    — new
 ```
 
 ---
@@ -981,10 +1000,13 @@ Phase 9 ────────────────────────
 | Phase 5.2 (physics domain) | Phase 3.2: physics_domain reliably set |
 | Phase 6.2 (domain check) | Phase 3.2: physics_domain on all enriched signals |
 | Phase 6.3 (COCOS) | Signal `cocos` field populated (future) |
+| Phase 10.1 (extraction) | DataAccess nodes populated (signal discovery) |
+| Phase 10.5 (E2E validation) | Signal `accessor` and `data_source_name` set |
 
 These dependencies mean phases 2+ should be implemented AFTER
-signal-enrichment-v3 Phases 1-5 are stable. Phase 1 (rename) and
-Phase 4 (assembly) can proceed independently.
+signal-enrichment-v3 Phases 1-5 are stable. Phase 1 (rename), Phase 4
+(assembly), and Phase 10.1-10.2 (codegen infrastructure) can proceed
+independently.
 
 ---
 
@@ -1062,3 +1084,650 @@ cost in the display panel. The `--cost-limit` flag checks against accumulated
 cost before each LLM call and stops the pipeline if exceeded. This mirrors the
 `WorkerStats.cost` pattern in the discover CLI but is simpler because mapping
 is sequential (not parallel workers).
+
+### Why generate actual imas-python code instead of just pattern labels?
+
+Assembly patterns (`array_per_node`, `concatenate`, etc.) cover standard cases
+but miss domain-specific nuance: reindexing by coil number, profile
+interpolation onto common grids, circuit matrix construction from per-circuit
+definitions, time-base alignment. An LLM with physics context produces
+assembly code handling these edge cases. The code is validated statically
+(ast.parse, signature check, import whitelist) before execution and tested
+against real data via E2E validation.
+
+### Why two execution strategies (client vs remote)?
+
+Remote assembly (Strategy B) is faster — no intermediate data transfer —
+but requires imas-python on the facility. Client assembly (Strategy A)
+always works since imas-python is a codex build dependency. Auto-detection
+via capability probe selects the best available strategy. The user can
+override with `--strategy client|remote` if needed.
+
+### Why msgpack for binary transfer instead of Arrow/Protobuf?
+
+msgpack is a single pure-Python package (no C dependencies), making it
+installable via `uv pip install msgpack` in any remote venv. Arrow and
+Protobuf have compiled extensions that may require system libraries not
+available on facility compute nodes. msgpack handles the primary use case
+(numpy arrays as bytes + metadata) with minimal dependencies.
+
+### Is E2E validation too heavy for a batch check?
+
+No. For a single IDS and one shot, extraction takes 1-5 seconds (one tree
+open, read N signals), assembly is sub-second, and validation is sub-second.
+The heavy part is data transfer, mitigated by msgpack binary encoding and
+decimation for time-series. A full E2E check for one IDS at one shot is
+comparable to a `discover signals check` batch — well within acceptable
+interactive CLI timescales.
+
+---
+
+## Phase 10: E2E Code Generation & Validation
+
+**Goal**: Go beyond assembly pattern assignment to generate executable
+imas-python code that performs the full extraction → transform → assembly
+pipeline. Validate mappings E2E by actually running the generated code
+against live facility data.
+
+### Motivation
+
+The current assembler (`ids/assembler.py`) works from pre-ingested static
+data stored as SignalNode properties in the graph. This covers device
+geometry (R, Z coordinates from `device_xml`) but NOT time-series
+measurements like plasma current, magnetic probe signals, or profile data.
+
+To validate that a mapping pipeline actually produces a correct IDS, we
+need to:
+1. Extract real signal data from the facility (using DataAccess templates)
+2. Apply transforms (unit conversion, COCOS sign flips, expressions)
+3. Assemble into imas-python IDS objects
+4. Validate the populated IDS against the Data Dictionary
+
+### Architecture: Two Execution Strategies
+
+```
+Strategy A: CLIENT-SIDE assembly (default)
+┌──────────────────────┐    SSH/JSON     ┌─────────────────────┐
+│ codex client         │◄───────────────►│ facility compute    │
+│                      │                 │                     │
+│ 1. generate extract  │───────────────► │ 2. run extract.py   │
+│    script from DA    │                 │    MDSplus.Tree()   │
+│    templates         │ ◄─── msgpack ── │    return arrays    │
+│ 3. decode arrays     │                 └─────────────────────┘
+│ 4. apply transforms  │
+│ 5. imas-python       │
+│    assembly          │
+│ 6. validate IDS      │
+└──────────────────────┘
+
+Strategy B: REMOTE assembly (imas-python on facility)
+┌──────────────────────┐    SSH/JSON     ┌─────────────────────┐
+│ codex client         │◄───────────────►│ facility compute    │
+│                      │                 │ (uv venv + imas)    │
+│ 1. generate full     │───────────────► │ 2. run assemble.py  │
+│    assembly script   │                 │    MDSplus → imas   │
+│                      │ ◄── HDF5/bin ── │    export IDS file  │
+│ 3. load + validate   │                 └─────────────────────┘
+│    IDS locally       │
+└──────────────────────┘
+```
+
+**Strategy selection**: Try Strategy B if imas-python is detected on the
+remote (probe via `python -c "import imas"` during SSH health check).
+Fall back to Strategy A otherwise. Strategy A is always available since
+imas-python is a build dependency of codex.
+
+### 10.1 Data Extraction Script Generation
+
+Generate a self-contained Python extraction script from DataAccess templates
+and signal mapping metadata. The script runs on the facility via SSH.
+
+**Inputs** (from graph):
+- `DataAccess` node: `imports_template`, `connection_template`, `data_template`,
+  `time_template`, `cleanup_template`, `setup_commands`
+- `FacilitySignal` nodes: `accessor`, `data_source_name`
+- Signal mappings: which signals to extract for this IDS
+
+**Generated script pattern**:
+
+```python
+#!/usr/bin/env python3
+"""Auto-generated data extraction for {facility}:{ids_name} shot {shot}."""
+import json, sys, struct
+{imports_template}
+
+config = json.load(sys.stdin)
+shot = config["shot"]
+results = {}
+
+# --- Section: {section_name} ---
+{connection_template}  # e.g., tree = MDSplus.Tree('{data_source}', shot, 'readonly')
+
+for sig in config["signals"]:
+    try:
+        {data_template}   # e.g., data = tree.tdiExecute('{accessor}').data()
+        {time_template}   # e.g., time = tree.tdiExecute('dim_of({accessor})').data()
+
+        # Serialize: shape + dtype + raw bytes (msgpack-compatible)
+        results[sig["id"]] = {
+            "success": True,
+            "data": data.tolist() if hasattr(data, 'tolist') else data,
+            "time": time.tolist() if time is not None and hasattr(time, 'tolist') else None,
+            "shape": list(data.shape) if hasattr(data, 'shape') else [1],
+            "dtype": str(data.dtype) if hasattr(data, 'dtype') else type(data).__name__,
+        }
+    except Exception as e:
+        results[sig["id"]] = {"success": False, "error": str(e)[:200]}
+
+{cleanup_template}
+
+# Output as JSON (for now — see 10.2 for binary protocol)
+json.dump({"results": results}, sys.stdout)
+```
+
+**Implementation**: `ids/codegen.py` — new module:
+
+```python
+def generate_extraction_script(
+    facility: str,
+    ids_name: str,
+    section_signals: dict[str, list[dict]],
+    data_access: dict[str, Any],
+) -> str:
+    """Generate a data extraction script from DataAccess templates.
+
+    Substitutes {accessor}, {data_source}, {shot} placeholders in
+    DataAccess templates. Returns a complete Python script string
+    that can be executed remotely via run_python_script().
+    """
+```
+
+This mirrors the existing `check_signals.py` pattern but extracts actual
+data values, not just metadata (shape/dtype).
+
+### 10.2 Binary Data Transfer Protocol
+
+**Problem**: JSON serialization of large float arrays is slow and memory-
+intensive. A single signal with 100k time points as JSON is ~2MB; as binary
+it's ~800KB. For an IDS with 50 signals, this difference is significant.
+
+**Solution**: Use msgpack with numpy array packing on the remote, decode
+on the client. msgpack is a single pure-Python package installable via
+`uv pip install msgpack` in the remote venv.
+
+**Wire format**:
+
+```python
+# Remote side (in extraction script):
+import msgpack
+import numpy as np
+
+def pack_array(arr):
+    """Pack a numpy array as msgpack ext type."""
+    if not isinstance(arr, np.ndarray):
+        return arr
+    return {
+        "__ndarray__": True,
+        "shape": list(arr.shape),
+        "dtype": str(arr.dtype),
+        "data": arr.tobytes(),
+    }
+
+# Client side (in codex):
+def unpack_array(obj):
+    """Unpack a msgpack-encoded numpy array."""
+    if isinstance(obj, dict) and obj.get("__ndarray__"):
+        return np.frombuffer(
+            obj["data"], dtype=obj["dtype"]
+        ).reshape(obj["shape"])
+    return obj
+```
+
+**Fallback**: If msgpack is not available on the remote, fall back to
+JSON with `tolist()`. The extraction script should probe for msgpack
+availability and adapt:
+
+```python
+try:
+    import msgpack
+    USE_MSGPACK = True
+except ImportError:
+    USE_MSGPACK = False
+```
+
+**Transfer**: The existing `run_python_script()` in `remote/executor.py`
+captures stdout as bytes. For msgpack, write raw bytes to stdout (not
+base64). The executor already handles binary stdout — just need to detect
+the output format (first byte: `{` = JSON, `\x80`+ = msgpack).
+
+### 10.3 LLM-Generated Assembly Code
+
+**Goal**: Generate actual imas-python code snippets that perform the
+assembly step, rather than just assigning a pattern label. The LLM sees
+the signal mappings, IMAS structure, and source metadata, and produces
+executable Python code.
+
+**Why LLM code generation for assembly?**
+
+The current `AssemblyPattern` enum (`array_per_node`, `concatenate`,
+`matrix_assembly`, etc.) covers common cases but misses nuanced assembly
+that requires domain-specific logic:
+- Reindexing signals by coil number before array assignment
+- Interpolating profile data onto a common radial grid
+- Constructing circuit connection matrices from per-circuit definitions
+- Merging overlapping probe arrays with gap handling
+- Time-base alignment across signals with different sampling rates
+
+An LLM with physics context can generate the specific assembly code,
+including edge cases that a pattern enum cannot capture.
+
+**Prompt design** — extend the `assembly.md` prompt (Phase 4) with a
+code generation section:
+
+```markdown
+## Code Generation
+
+In addition to selecting the assembly pattern, generate an imas-python
+code snippet that performs the complete assembly for this section.
+
+The code snippet should:
+1. Accept extracted signal data as a dict: `signals[signal_id] -> {"data": np.array, "time": np.array}`
+2. Apply transforms from the signal mappings (use `execute_transform()`, `convert_units()`, `cocos_sign()`)
+3. Create and populate the imas-python struct-array entries
+4. Handle array sizing, sub-array initialization, and nested paths
+
+Available functions:
+- `execute_transform(value, expr)` — evaluate transform_expression
+- `convert_units(value, from_unit, to_unit)` — pint unit conversion
+- `cocos_sign(label, cocos_in=N, cocos_out=M)` — COCOS sign factor
+- `set_nested(obj, "dotted.path", value)` — set value on imas object
+
+The code will receive:
+- `ids`: An imas-python IDSToplevel object (already created via IDSFactory)
+- `signals`: Dict mapping signal_id to extracted data
+- `mappings`: The signal mapping entries for this section
+
+Example for array_per_node (pf_active/coil):
+
+```python
+def assemble_pf_active_coil(ids, signals, mappings):
+    """Assemble pf_active coil array from mapped signals."""
+    # Group mappings by source signal
+    sources = sorted(set(m.source_id for m in mappings))
+    ids.coil.resize(len(sources))
+
+    for i, source_id in enumerate(sources):
+        coil = ids.coil[i]
+        sig_data = signals.get(source_id, {})
+        source_mappings = [m for m in mappings if m.source_id == source_id]
+
+        for m in source_mappings:
+            rel_path = m.target_id.removeprefix("pf_active/coil/")
+            value = sig_data.get(m.source_property)
+            if value is not None:
+                value = execute_transform(value, m.transform_expression)
+                if m.source_units and m.target_units and m.source_units != m.target_units:
+                    value = convert_units(value, m.source_units, m.target_units)
+                set_nested(coil, rel_path.replace("/", "."), value)
+```
+```
+
+**Model**: Assembly code generation is a complex reasoning task. Use the
+same model as signal mapping (configurable via `--model`). The code is
+validated programmatically before execution (see 10.5).
+
+**Output model** — extend `AssemblyConfig`:
+
+```python
+class AssemblyConfig(BaseModel):
+    """Assembly configuration for one IMAS struct-array section."""
+    section_path: str
+    pattern: AssemblyPattern = AssemblyPattern.ARRAY_PER_NODE
+    # ... existing fields ...
+    assembly_code: str | None = None  # Generated imas-python code snippet
+    assembly_function_name: str | None = None  # e.g., "assemble_pf_active_coil"
+```
+
+### 10.4 Remote vs Client Execution Strategy
+
+**Capability probe**: During SSH health check (already done in discover CLI),
+test for imas-python availability:
+
+```python
+async def probe_remote_capabilities(facility: str) -> dict[str, bool]:
+    """Probe what's available on the remote compute environment."""
+    script = """
+import json, sys
+caps = {}
+try:
+    import imas; caps["imas"] = True
+except ImportError:
+    caps["imas"] = False
+try:
+    import msgpack; caps["msgpack"] = True
+except ImportError:
+    caps["msgpack"] = False
+try:
+    import numpy; caps["numpy"] = True
+except ImportError:
+    caps["numpy"] = False
+json.dump(caps, sys.stdout)
+"""
+    result = await async_run_python_script(facility, script)
+    return json.loads(result.stdout)
+```
+
+**Decision matrix**:
+
+| Remote has imas? | Remote has msgpack? | Strategy |
+|-----------------|-----------------------|----------|
+| Yes | Yes | B: Full remote assembly, binary IDS transfer |
+| Yes | No | B: Full remote assembly, HDF5 IDS transfer |
+| No | Yes | A: Remote extract (binary), client assembly |
+| No | No | A: Remote extract (JSON), client assembly |
+
+**Strategy B detail**: Generate a complete assembly script that:
+1. Reads raw data from MDSplus/data system
+2. Applies all transforms
+3. Creates imas-python IDS
+4. Exports to HDF5 via `imas.DBEntry` or direct `h5py` write
+5. Outputs the file path for SCP transfer
+
+This is more efficient because no data crosses the network until the
+final assembled IDS. For large IDS with many signals, this avoids
+transferring intermediate arrays.
+
+**imas-python installation**: If Strategy B is preferred but imas-python
+is missing, offer to install it:
+
+```bash
+# In the facility's uv venv
+uv pip install imas-python
+```
+
+This is a one-time operation. The CLI could prompt:
+```
+imas-python not found on tcv. Install via uv? [y/N]
+```
+
+### 10.5 E2E Validation Pipeline
+
+**Goal**: Validate that generated mappings produce a correct IDS when
+executed against real facility data.
+
+**Validation tiers**:
+
+```
+Tier 1: Static validation (current — no data needed)
+  ├── Path existence check
+  ├── Transform expression syntax
+  ├── Unit dimensional compatibility
+  ├── COCOS sign-flip coverage
+  └── Duplicate/conflict detection
+
+Tier 2: Code validation (new — no facility access needed)
+  ├── Generated assembly code syntax check (ast.parse)
+  ├── Function signature validation
+  ├── Import resolution
+  └── Dry-run with mock signal data (numpy zeros of correct shape)
+
+Tier 3: Data validation (new — requires facility SSH)
+  ├── Extract sample data (1 shot) via extraction script
+  ├── Run assembly code with real data
+  ├── Validate populated IDS against Data Dictionary
+  ├── Check array dimensions match expectations
+  ├── Check value ranges (physics plausibility)
+  └── Check time-base consistency across signals
+```
+
+**Tier 2 implementation** — `ids/codegen.py`:
+
+```python
+def validate_assembly_code(code: str, function_name: str) -> list[str]:
+    """Validate generated assembly code without execution.
+
+    Returns list of error messages (empty = valid).
+    """
+    import ast
+
+    errors = []
+
+    # 1. Parse check
+    try:
+        tree = ast.parse(code)
+    except SyntaxError as e:
+        return [f"Syntax error: {e}"]
+
+    # 2. Find the assembly function
+    funcs = [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]
+    target = [f for f in funcs if f.name == function_name]
+    if not target:
+        errors.append(f"Function '{function_name}' not found in generated code")
+        return errors
+
+    func = target[0]
+
+    # 3. Check function signature: must accept (ids, signals, mappings)
+    args = [a.arg for a in func.args.args]
+    expected = {"ids", "signals", "mappings"}
+    if not expected.issubset(set(args)):
+        errors.append(f"Function must accept {expected}, got {args}")
+
+    # 4. Check for forbidden operations (security)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import | ast.ImportFrom):
+            module = getattr(node, 'module', '') or ''
+            names = [a.name for a in node.names]
+            allowed = {'numpy', 'np', 'math', 'imas', 'json'}
+            for name in names:
+                if name not in allowed and module not in allowed:
+                    errors.append(f"Forbidden import: {name}")
+
+    return errors
+```
+
+**Tier 3 implementation** — `ids/validation.py` extension:
+
+```python
+async def validate_mapping_e2e(
+    facility: str,
+    ids_name: str,
+    shot: int,
+    *,
+    gc: GraphClient,
+    strategy: str = "auto",
+) -> E2EValidationResult:
+    """Run full E2E validation: extract → transform → assemble → validate.
+
+    Args:
+        facility: Facility ID
+        ids_name: IDS name
+        shot: Shot number to validate against
+        gc: Graph client
+        strategy: "auto", "client", or "remote"
+
+    Returns:
+        E2EValidationResult with per-field validation details.
+    """
+```
+
+**Batched vs per-signal validation**: E2E validation can be batched —
+extract all signals for an IDS in one SSH call, assemble once, validate
+once. This is NOT too heavy for a batch check because:
+- The extraction script reads all signals for one shot in one tree open
+- Network round-trips are minimized (one SSH session)
+- Assembly is fast (imas-python struct operations are lightweight)
+- Only one shot is needed for validation (discovery_shot from DataAccess)
+
+The heavy part is the data transfer, which is why binary transfer (10.2)
+matters for performance.
+
+### 10.6 CLI Integration
+
+New subcommand for E2E validation:
+
+```
+imas-codex imas map validate-e2e FACILITY IDS_NAME --shot SHOT [--strategy auto|client|remote]
+```
+
+Progress display:
+
+```
+E2E VALIDATION — tcv/pf_active shot 80000
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PROBE     ━━━━━  Remote capabilities: imas=✗ msgpack=✓ numpy=✓
+                 Strategy: client-side assembly
+
+EXTRACT   ━━━━━  42 signals from 3 data sources                    1.2s
+                 38 success, 4 failed (TreeNNF)
+
+ASSEMBLE  ━━━━━  6 sections, 38 signals → pf_active IDS           0.3s
+                 coil[6], circuit[6], supply[4]
+
+VALIDATE  ━━━━━  IDS validation
+                 DD conformance:  ✓ all paths valid
+                 Array shapes:    ✓ coil.resize(6) matches 6 sources
+                 Value ranges:    ⚠ coil[3].element[0].geometry.rectangle.r = -0.5 (negative R?)
+                 Time bases:      ✓ consistent across sections
+                 Unit dimensions: ✓ all compatible
+```
+
+### 10.7 Performance Design
+
+Performance considerations designed in from inception:
+
+**1. Connection reuse**: All signals for one data source are extracted in
+a single tree/connection open. The extraction script groups by
+`data_source_name` internally.
+
+**2. Parallel extraction**: If an IDS requires signals from multiple data
+sources (e.g., `tcv_shot` + `results`), extraction scripts for each
+source can run in parallel via `SSHWorkerPool`.
+
+**3. Lazy transfer**: For Strategy A (client assembly), transfer only the
+signals that are actually mapped. Don't extract the entire tree.
+
+**4. Decimation**: For time-series validation, full resolution isn't
+needed. Use the `decimation_template` from DataAccess to downsample
+before transfer:
+
+```python
+# In extraction script, if decimation configured:
+max_points = config.get("max_points", 10000)
+if len(data) > max_points:
+    step = len(data) // max_points
+    data = data[::step]
+    if time is not None:
+        time = time[::step]
+```
+
+**5. Caching**: Cache extracted data for a (facility, shot) pair locally.
+Repeated validation runs against the same shot don't need re-extraction.
+Use `~/.cache/imas-codex/extractions/{facility}/{shot}/{signal_id}.npy`.
+
+**6. Streaming assembly**: For very large IDS (e.g., `core_profiles` with
+many time slices), assemble one time slice at a time rather than loading
+all data into memory. This is relevant for Strategy A only.
+
+### 10.8 Generated Code Persistence
+
+Store generated assembly code in the graph alongside the mapping:
+
+```python
+# On IMASMapping node:
+class IMASMapping:
+    # ... existing fields ...
+    extraction_script: str | None  # Generated extraction script
+    assembly_script: str | None    # Generated assembly script (Strategy B)
+    validated_shot: int | None     # Shot used for E2E validation
+    validated_at: str | None       # ISO timestamp of last E2E validation
+    validation_strategy: str | None  # "client" or "remote"
+```
+
+This makes the generated code inspectable and reproducible. The CLI
+`imas map show` command can display the generated scripts:
+
+```
+imas-codex imas map show tcv pf_active --code
+```
+
+### 10.9 Schema Additions
+
+Add to `facility.yaml`:
+
+```yaml
+# On IMASMapping class
+extraction_script:
+  description: >-
+    Generated Python script for extracting signal data from the facility.
+    Self-contained script using DataAccess templates.
+assembly_script:
+  description: >-
+    Generated Python script for imas-python assembly.
+    Contains per-section assembly functions and a main driver.
+validated_shot:
+  description: Shot number used for last E2E validation.
+  range: integer
+validated_at:
+  description: ISO timestamp of last successful E2E validation.
+validation_strategy:
+  description: >-
+    Strategy used for last E2E validation.
+    "client" = client-side assembly, "remote" = remote-side assembly.
+```
+
+### 10.10 Implementation Order for Phase 10
+
+```
+10.1  Data extraction codegen     [ids/codegen.py]         — new module
+10.2  Binary transfer protocol    [remote/serialization.py] — new module
+10.3  Assembly code generation    [ids/codegen.py]          — extend
+  └── Extend assembly.md prompt  [agentic/prompts/mapping/assembly.md]
+10.4  Remote capability probe     [remote/executor.py]      — extend
+10.5  E2E validation pipeline     [ids/validation.py]       — extend
+  └── Tier 2: code validation     [ids/codegen.py]
+  └── Tier 3: data validation     [ids/validation.py]
+10.6  CLI integration             [cli/map.py]              — extend
+10.7  Performance: decimation     [ids/codegen.py]          — built-in
+  └── Performance: caching        [ids/codegen.py]          — built-in
+10.8  Code persistence            [ids/models.py]           — extend
+10.9  Schema additions            [schemas/facility.yaml]   — extend
+```
+
+**Dependencies**: Phase 10 depends on Phases 1-4 (renamed pipeline +
+assembly discovery). Phase 10.3 extends Phase 4.2 (assembly prompt) with
+code generation. Phase 10.5 extends Phase 6 (validation improvements).
+
+---
+
+## Phase 11: End-to-End Testing Infrastructure
+
+**Goal**: Automated tests for the E2E pipeline using recorded facility data.
+
+### 11.1 Test Fixtures
+
+Record extraction results from real facility data and store as test fixtures:
+
+```
+tests/ids/fixtures/
+  tcv_pf_active_80000_extraction.json   # Recorded extraction output
+  tcv_pf_active_80000_assembly.hdf5     # Expected IDS output
+  jet_magnetics_99000_extraction.json
+```
+
+These fixtures enable testing the assembly + validation pipeline without
+SSH access to facilities.
+
+### 11.2 Test Cases
+
+| Test | What it validates |
+|------|-------------------|
+| `test_generate_extraction_script_valid_python` | Generated script passes ast.parse |
+| `test_generate_extraction_script_has_all_signals` | All mapped signals appear in script |
+| `test_validate_assembly_code_catches_syntax` | Syntax errors in generated code are caught |
+| `test_validate_assembly_code_catches_bad_imports` | Forbidden imports are rejected |
+| `test_assembly_code_executes_with_mock_data` | Generated code runs with numpy zeros |
+| `test_e2e_from_fixture` | Full pipeline from recorded data produces valid IDS |
+| `test_binary_transfer_roundtrip` | Pack → unpack preserves array data exactly |
+| `test_decimation_preserves_shape` | Decimated arrays have correct dimensions |
+| `test_strategy_selection` | Correct strategy chosen based on remote capabilities |
