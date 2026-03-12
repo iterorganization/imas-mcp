@@ -1,16 +1,13 @@
 """IDS assembly engine.
 
-Assembles complete IMAS IDS instances from facility graph data using two
-modes:
+Assembles complete IMAS IDS instances from facility graph data using
+graph-driven assembly:
 
-1. **Graph-driven** (preferred): Reads IMASMapping and SignalSource nodes from
-   the knowledge graph. The IMASMapping's POPULATES relationships define
-   structural patterns (how DataNodes group into array-of-structures entries),
-   while MAPS_TO_IMAS relationships on SignalSources define field-level
-   transformations with executable transform_expression.
-
-2. **YAML recipe** (fallback): Reads a YAML recipe file with embedded Cypher
-   queries and field mappings. Used when no graph recipe exists.
+**Graph-driven**: Reads IMASMapping and SignalSource nodes from
+the knowledge graph. The IMASMapping's POPULATES relationships define
+structural patterns (how DataNodes group into array-of-structures entries),
+while MAPS_TO_IMAS relationships on SignalSources define field-level
+transformations with executable transform_expression.
 
 Architecture:
     IMASMapping -[:POPULATES]-> IMASNode (struct-array assembly config)
@@ -25,8 +22,6 @@ import logging
 from pathlib import Path
 from typing import Any
 
-import yaml
-
 from imas_codex.graph.client import GraphClient
 from imas_codex.ids.graph_ops import (
     Mapping,
@@ -37,8 +32,6 @@ from imas_codex.ids.graph_ops import (
 from imas_codex.ids.transforms import convert_units, execute_transform, set_nested
 
 logger = logging.getLogger(__name__)
-
-RECIPES_DIR = Path(__file__).parent / "recipes"
 
 
 def _resolve_epoch_id(facility: str, epoch: str) -> str:
@@ -70,72 +63,42 @@ def _flatten_node(row: dict[str, Any]) -> dict[str, Any]:
 class IDSAssembler:
     """Assembles IMAS IDS instances from graph data.
 
-    Supports two modes:
-    - Graph-driven: Loads IMASMapping + SignalSources from the knowledge graph.
-    - YAML fallback: Loads a YAML recipe file with embedded queries.
-
-    Graph mode is used when an active IMASMapping exists in the graph.
-    YAML mode is used as fallback when no graph recipe is found.
+    Loads IMASMapping + SignalSources from the knowledge graph. Requires
+    an active IMASMapping to exist (created by ``imas map run``).
 
     Args:
         facility: Facility ID (e.g., 'jet').
         ids_name: IDS name (e.g., 'pf_active').
-        recipe_path: Optional explicit path to YAML recipe. If not given,
-            tries graph first, then recipes/{facility}/{ids_name}.yaml.
     """
 
     def __init__(
         self,
         facility: str,
         ids_name: str,
-        recipe_path: Path | None = None,
     ):
         self.facility = facility
         self.ids_name = ids_name
         self._graph_mapping: Mapping | None = None
-        self._yaml_recipe: dict[str, Any] | None = None
 
-        if recipe_path is not None:
-            # Explicit YAML path: use YAML mode
-            self._load_yaml_recipe(recipe_path)
-        else:
-            # Try graph first, fall back to YAML
-            try:
-                with GraphClient() as gc:
-                    self._graph_mapping = load_mapping(facility, ids_name, gc)
-            except Exception:
-                logger.debug("Graph mapping lookup failed, trying YAML", exc_info=True)
+        try:
+            with GraphClient() as gc:
+                self._graph_mapping = load_mapping(facility, ids_name, gc)
+        except Exception:
+            logger.debug("Graph mapping lookup failed", exc_info=True)
 
-            if self._graph_mapping is None:
-                yaml_path = RECIPES_DIR / facility / f"{ids_name}.yaml"
-                if yaml_path.exists():
-                    self._load_yaml_recipe(yaml_path)
-                else:
-                    msg = (
-                        f"No recipe found for {facility}/{ids_name} "
-                        f"(checked graph and {yaml_path})"
-                    )
-                    raise FileNotFoundError(msg)
-
-    def _load_yaml_recipe(self, path: Path) -> None:
-        if not path.exists():
-            msg = f"No recipe found at {path}"
-            raise FileNotFoundError(msg)
-        self._yaml_recipe = yaml.safe_load(path.read_text())
-        self._validate_yaml_recipe()
+        if self._graph_mapping is None:
+            raise FileNotFoundError(
+                f"No IMASMapping found for {facility}/{ids_name}. "
+                f"Run 'imas-codex imas map run {facility} {ids_name}' first."
+            )
 
     @property
     def dd_version(self) -> str:
-        if self._graph_mapping:
-            return self._graph_mapping.dd_version
-        return self._yaml_recipe["dd_version"]
+        return self._graph_mapping.dd_version
 
     @property
     def recipe(self) -> dict[str, Any]:
-        """Access the raw YAML recipe dict (for backward compatibility)."""
-        if self._yaml_recipe is not None:
-            return self._yaml_recipe
-        # Synthesize a dict from graph mapping for compatibility
+        """Access mapping metadata as a dict (for backward compatibility)."""
         m = self._graph_mapping
         return {
             "ids_name": m.ids_name,
@@ -144,19 +107,8 @@ class IDSAssembler:
             "provider": m.provider,
         }
 
-    def _validate_yaml_recipe(self) -> None:
-        """Basic validation of YAML recipe structure."""
-        required = {"ids_name", "facility_id", "dd_version"}
-        missing = required - set(self._yaml_recipe)
-        if missing:
-            msg = f"Recipe missing required fields: {missing}"
-            raise ValueError(msg)
-
     def assemble(self, epoch: str) -> Any:
         """Build an IDS instance for the given epoch.
-
-        Dispatches to graph-driven or YAML-driven assembly based on
-        which recipe source is available.
 
         Args:
             epoch: Epoch version string (e.g., 'p68613' or full
@@ -165,9 +117,7 @@ class IDSAssembler:
         Returns:
             Populated imas-python IDSToplevel object.
         """
-        if self._graph_mapping is not None:
-            return self._assemble_from_graph(epoch)
-        return self._assemble_from_yaml(epoch)
+        return self._assemble_from_graph(epoch)
 
     # ------------------------------------------------------------------
     # Graph-driven assembly
@@ -455,158 +405,6 @@ class IDSAssembler:
                 except (AttributeError, TypeError, ValueError):
                     logger.debug("Cannot set %s on element", rel_path)
 
-    # ------------------------------------------------------------------
-    # YAML-driven assembly (backward compatibility)
-    # ------------------------------------------------------------------
-
-    def _assemble_from_yaml(self, epoch: str) -> Any:
-        """Build an IDS instance from YAML recipe (original implementation)."""
-        import imas
-
-        epoch_id = _resolve_epoch_id(self.facility, epoch)
-        dd_version = self.recipe["dd_version"]
-
-        factory = imas.IDSFactory(dd_version)
-        ids = factory.new(self.ids_name)
-
-        # Set static properties
-        for dotted_path, value in self.recipe.get("static", {}).items():
-            set_nested(ids, dotted_path, value)
-
-        # Set provider
-        if provider := self.recipe.get("provider"):
-            ids.ids_properties.provider = str(provider)
-
-        # Build struct arrays
-        for array_name, array_def in self.recipe.get("arrays", {}).items():
-            self._build_array(ids, array_name, array_def, epoch_id)
-
-        return ids
-
-    def _build_array(
-        self,
-        ids: Any,
-        array_name: str,
-        array_def: dict[str, Any],
-        epoch_id: str,
-    ) -> None:
-        """Build one top-level struct-array (e.g., coil, circuit)."""
-        source_def = array_def.get("source", {})
-        query = source_def.get("query", "")
-        if not query:
-            logger.warning("No source query for array %s", array_name)
-            return
-
-        # Query graph for primary data
-        with GraphClient() as gc:
-            rows = list(
-                gc.query(
-                    query,
-                    facility=self.facility,
-                    epoch_id=epoch_id,
-                )
-            )
-
-        if not rows:
-            logger.warning(
-                "No data found for %s.%s epoch=%s", self.ids_name, array_name, epoch_id
-            )
-            return
-
-        # Query enrichment data if defined
-        enrichment_data: dict[int, dict] = {}
-        enrich_def = array_def.get("enrichment")
-        if enrich_def:
-            enrichment_data = self._query_enrichment(enrich_def)
-
-        # Resize the struct array
-        struct_array = getattr(ids, array_name)
-        struct_array.resize(len(rows))
-
-        logger.info(
-            "Building %s.%s: %d entries from graph",
-            self.ids_name,
-            array_name,
-            len(rows),
-        )
-
-        # Populate each entry
-        for i, row in enumerate(rows):
-            entry = struct_array[i]
-            coil_index = _coil_index_from_path(row.get("path", ""))
-
-            # Apply enrichment if available
-            enriched = enrichment_data.get(coil_index, {})
-
-            # Set simple fields
-            for ids_field, source_field in array_def.get("fields", {}).items():
-                value = enriched.get(source_field) or row.get(source_field)
-                if value is not None:
-                    set_nested(entry, ids_field, str(value))
-
-            # Build elements if defined
-            elements_def = array_def.get("elements")
-            if elements_def:
-                self._build_elements(entry, row, enriched, elements_def)
-
-    def _build_elements(
-        self,
-        coil: Any,
-        row: dict[str, Any],
-        enriched: dict[str, Any],
-        elements_def: dict[str, Any],
-    ) -> None:
-        """Build element sub-arrays within a coil from array properties."""
-        geometry_type = elements_def.get("geometry_type", 2)
-        field_mappings = elements_def.get("fields", {})
-
-        # Determine number of elements from the first array-valued field
-        n_elements = 0
-        for source_field in field_mappings.values():
-            val = row.get(source_field)
-            if isinstance(val, list):
-                n_elements = len(val)
-                break
-
-        if n_elements == 0:
-            # Single element from scalar values
-            n_elements = 1
-
-        coil.element.resize(n_elements)
-
-        for j in range(n_elements):
-            elem = coil.element[j]
-            elem.geometry.geometry_type = geometry_type
-
-            for ids_path, source_field in field_mappings.items():
-                val = row.get(source_field)
-                if val is None:
-                    continue
-
-                # Array property → take element j; scalar → apply to all
-                if isinstance(val, list):
-                    element_val = float(val[j])
-                else:
-                    element_val = float(val)
-
-                set_nested(elem, ids_path, element_val)
-
-    def _query_enrichment(self, enrich_def: dict[str, Any]) -> dict[int, dict]:
-        """Query enrichment data and index by coil index."""
-        query = enrich_def.get("query", "")
-        if not query:
-            return {}
-
-        with GraphClient() as gc:
-            rows = list(gc.query(query, facility=self.facility))
-
-        result: dict[int, dict] = {}
-        for row in rows:
-            path = row.get("path", "")
-            idx = _coil_index_from_path(path)
-            result[idx] = dict(row)
-        return result
-
     def export(
         self,
         output_path: Path,
@@ -669,9 +467,7 @@ class IDSAssembler:
             "arrays": {},
         }
 
-        if self._graph_mapping is not None:
-            return self._summary_from_graph(stats, epoch_id)
-        return self._summary_from_yaml(stats, epoch_id)
+        return self._summary_from_graph(stats, epoch_id)
 
     def _summary_from_graph(
         self, stats: dict[str, Any], epoch_id: str
@@ -717,44 +513,9 @@ class IDSAssembler:
                 stats["arrays"][section_name] = array_stats
         return stats
 
-    def _summary_from_yaml(
-        self, stats: dict[str, Any], epoch_id: str
-    ) -> dict[str, Any]:
-        """Build summary from YAML recipe."""
-        for array_name, array_def in self.recipe.get("arrays", {}).items():
-            source_def = array_def.get("source", {})
-            query = source_def.get("query", "")
-            if not query:
-                continue
-
-            with GraphClient() as gc:
-                rows = list(gc.query(query, facility=self.facility, epoch_id=epoch_id))
-
-            array_stats: dict[str, Any] = {"count": len(rows)}
-
-            # Count total elements if array has element definitions
-            if array_def.get("elements") and rows:
-                total_elements = 0
-                for row in rows:
-                    for source_field in (
-                        array_def["elements"].get("fields", {}).values()
-                    ):
-                        val = row.get(source_field)
-                        if isinstance(val, list):
-                            total_elements += len(val)
-                            break
-                        else:
-                            total_elements += 1
-                            break
-                array_stats["total_elements"] = total_elements
-
-            stats["arrays"][array_name] = array_stats
-
-        return stats
-
 
 def list_recipes(facility: str | None = None) -> list[dict[str, str]]:
-    """List available IDS recipes from graph and YAML files.
+    """List available IDS recipes from graph.
 
     Args:
         facility: Optional facility filter.
@@ -762,9 +523,8 @@ def list_recipes(facility: str | None = None) -> list[dict[str, str]]:
     Returns:
         List of dicts with 'facility', 'ids_name', 'dd_version', 'source' keys.
     """
-    recipes: dict[str, dict[str, str]] = {}
+    recipes: list[dict[str, str]] = []
 
-    # Graph recipes
     try:
         with GraphClient() as gc:
             query = """
@@ -782,32 +542,13 @@ def list_recipes(facility: str | None = None) -> list[dict[str, str]]:
                 ORDER BY r.facility_id, r.ids_name
             """
             for row in gc.query(query, **params):
-                key = f"{row['facility']}:{row['ids_name']}"
-                recipes[key] = {
+                recipes.append({
                     "facility": row["facility"],
                     "ids_name": row["ids_name"],
                     "dd_version": row.get("dd_version", ""),
                     "source": "graph",
-                }
+                })
     except Exception:
         logger.debug("Graph recipe query failed", exc_info=True)
 
-    # YAML recipes (only add if not already found in graph)
-    search_dirs = [RECIPES_DIR / facility] if facility else RECIPES_DIR.iterdir()
-
-    for facility_dir in search_dirs:
-        if not facility_dir.is_dir():
-            continue
-        for recipe_file in sorted(facility_dir.glob("*.yaml")):
-            recipe_data = yaml.safe_load(recipe_file.read_text())
-            fac = recipe_data.get("facility_id", facility_dir.name)
-            name = recipe_data.get("ids_name", recipe_file.stem)
-            key = f"{fac}:{name}"
-            if key not in recipes:
-                recipes[key] = {
-                    "facility": fac,
-                    "ids_name": name,
-                    "dd_version": recipe_data.get("dd_version", ""),
-                    "source": "yaml",
-                }
-    return list(recipes.values())
+    return recipes
