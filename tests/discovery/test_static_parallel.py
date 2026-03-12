@@ -476,7 +476,9 @@ class TestGraphOps:
 
     @patch("imas_codex.discovery.mdsplus.graph_ops.GraphClient")
     def test_has_pending_signal_source_work(self, mock_gc_cls):
-        from imas_codex.discovery.mdsplus.graph_ops import has_pending_signal_source_work
+        from imas_codex.discovery.mdsplus.graph_ops import (
+            has_pending_signal_source_work,
+        )
 
         mock_gc = MagicMock()
         mock_gc_cls.return_value.__enter__ = MagicMock(return_value=mock_gc)
