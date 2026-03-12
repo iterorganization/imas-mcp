@@ -9,6 +9,8 @@ import time
 import click
 from rich.markup import escape as rich_escape
 
+from imas_codex.cli.discover.common import reset_to_option
+
 logger = logging.getLogger(__name__)
 
 
@@ -73,6 +75,7 @@ logger = logging.getLogger(__name__)
     default=False,
     help="Keep image bytes in graph after VLM scoring (default: clear to save storage)",
 )
+@reset_to_option("wiki")
 def wiki(
     facility: str,
     source: str | None,
@@ -89,6 +92,7 @@ def wiki(
     rescan_documents: bool,
     time_limit: int | None,
     store_images: bool,
+    reset_to: str | None = None,
 ) -> None:
     """Discover wiki pages and build documentation graph.
 
@@ -337,6 +341,19 @@ def wiki(
     if any(reset_counts.values()):
         total_reset = sum(reset_counts.values())
         log_print(f"[dim]Reset {total_reset} orphaned pages from previous run[/dim]")
+
+    # Handle --reset-to: reset wiki pages to a target state
+    if reset_to:
+        from imas_codex.discovery.base.reset import WIKI_RESET_SPECS, reset_to_status
+
+        spec = WIKI_RESET_SPECS[reset_to]
+        reset_count = reset_to_status(spec, facility)
+        if reset_count > 0:
+            log_print(
+                f"[yellow]Reset {reset_count} page(s) to '{reset_to}' for reprocessing[/yellow]"
+            )
+        else:
+            log_print(f"[dim]No pages to reset to '{reset_to}'[/dim]")
 
     # Recover pages that were marked failed due to transient fetch failures.
     # These pages have exhausted fetch_retries but have no actual error — they

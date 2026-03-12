@@ -13,6 +13,8 @@ import time
 
 import click
 
+from imas_codex.cli.discover.common import reset_to_option
+
 logger = logging.getLogger(__name__)
 
 
@@ -87,12 +89,13 @@ logger = logging.getLogger(__name__)
     help="Re-discover signals from data sources. Signals already enriched or "
     "checked are not re-scanned — only 'discovered' signals are re-scanned.",
 )
+@reset_to_option("signals")
 @click.option(
     "--reenrich",
     is_flag=True,
     default=False,
-    help="Reset 'enriched' signals back to 'discovered' so they are re-enriched. "
-    "Scope with -s to only re-enrich signals from a specific scanner.",
+    hidden=True,
+    help="Deprecated: use --reset-to discovered instead.",
 )
 def signals(
     facility: str,
@@ -108,6 +111,7 @@ def signals(
     reference_shot: int | None,
     rescan: bool,
     reenrich: bool,
+    reset_to: str | None = None,
 ) -> None:
     """Discover signals from facility data sources.
 
@@ -122,7 +126,7 @@ def signals(
       imas-codex discover signals jet -s ppf -c 2.0
       imas-codex discover signals jt-60sa -s edas --scan-only
       imas-codex discover signals tcv -s tdi,mdsplus -f equilibrium
-      imas-codex discover signals tcv --reenrich -s tdi
+      imas-codex discover signals tcv --reset-to discovered -s tdi
     """
     # Auto-detect rich output
     from imas_codex.cli.discover.common import (
@@ -188,43 +192,31 @@ def signals(
                     reference_shot = int(ref)
                     break
 
-    # Handle --reenrich: reset enriched signals back to discovered
-    if reenrich:
-        from imas_codex.graph import GraphClient
+    # Handle --reenrich (deprecated alias for --reset-to discovered)
+    if reenrich and not reset_to:
+        reset_to = "discovered"
+        log_print(
+            "[yellow]--reenrich is deprecated, use --reset-to discovered[/yellow]"
+        )
 
-        with GraphClient() as gc:
-            # Build scanner filter if specified
-            scanner_filter = ""
-            params: dict = {"facility": facility}
-            if scanners:
-                scanner_filter = "AND s.discovery_source IN $sources"
-                params["sources"] = scanner_types
+    # Handle --reset-to: reset signals back to the target state
+    if reset_to:
+        from imas_codex.discovery.base.reset import SIGNAL_RESET_SPECS, reset_to_status
 
-            result = gc.query(
-                f"""
-                MATCH (s:FacilitySignal {{facility_id: $facility}})
-                WHERE s.status IN ['enriched', 'underspecified']
-                  {scanner_filter}
-                SET s.status = 'discovered',
-                    s.enrichment_source = null,
-                    s.enriched_at = null,
-                    s.description = null,
-                    s.physics_domain = null,
-                    s.keywords = null,
-                    s.sign_convention = null,
-                    s.diagnostic = null,
-                    s.analysis_code = null,
-                    s.embedding = null,
-                    s.embedded_at = null
-                RETURN count(s) AS reset
-                """,
-                **params,
-            )
-            reset_count = result[0]["reset"] if result else 0
-            scope = f" (scanner: {scanners})" if scanners else ""
-            log_print(
-                f"[yellow]Re-enrich: reset {reset_count} signals to discovered{scope}[/yellow]"
-            )
+        spec = SIGNAL_RESET_SPECS[reset_to]
+        extra_filter = ""
+        extra_params: dict = {}
+        if scanners:
+            extra_filter = "AND n.discovery_source IN $sources"
+            extra_params["sources"] = scanner_types
+
+        reset_count = reset_to_status(
+            spec, facility, extra_filter=extra_filter, extra_params=extra_params
+        )
+        scope = f" (scanner: {scanners})" if scanners else ""
+        log_print(
+            f"[yellow]Reset {reset_count} signals to '{reset_to}'{scope}[/yellow]"
+        )
 
     log_print(f"\n[bold]Signal Discovery: {facility}[/bold]")
     log_print(f"  Scanners: {', '.join(scanner_types)}")
@@ -240,8 +232,8 @@ def signals(
         log_print(f"  Focus: {focus}")
     if rescan:
         log_print("  Mode: rescan")
-    if reenrich:
-        log_print("  Mode: reenrich")
+    if reset_to:
+        log_print(f"  Mode: reset-to {reset_to}")
     log_print(f"  Workers: {enrich_workers} enrich, {check_workers} check")
     log_print("")
 
