@@ -334,13 +334,47 @@ Ingestion is interrupt-safe — rerun to continue. Already-ingested files are sk
 - `python()` REPL for chained processing, Cypher queries, IMAS/COCOS operations
 - Terminal for `rg`, `fd`, `git`, `uv run`; SSH for remote single commands
 
-## LLM Prompts
+## LLM Access
 
-Prompts live in `imas_codex/llm/prompts/` using Jinja2 templates with schema injection.
+All LLM interaction flows through two canonical modules. Never call `litellm.completion()` directly — the shared functions handle prompt caching flags, cost tracking, retries with exponential backoff, and structured output parsing.
 
-- Never hardcode JSON examples - use Pydantic schema injection via `get_pydantic_schema_json()`
-- Each prompt declares `schema_needs` in `prompt_loader.py` to load only required context
-- LLM structured output uses Pydantic models via LiteLLM `response_format`
+### Calling LLMs
+
+Use `call_llm_structured()` / `acall_llm_structured()` from `imas_codex.discovery.base.llm`:
+
+```python
+from imas_codex.discovery.base.llm import call_llm_structured
+
+result, cost, tokens = call_llm_structured(
+    model=get_model("language"),
+    messages=[
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ],
+    response_model=MyPydanticModel,
+)
+```
+
+These functions automatically: apply `inject_cache_control()` to system messages, retry on API/parse errors with backoff, accumulate cost across retries, and parse structured output via Pydantic `response_format`.
+
+### Rendering Prompts
+
+Use `render_prompt()` from `imas_codex.llm.prompt_loader` — never construct paths to prompt files manually:
+
+```python
+from imas_codex.llm.prompt_loader import render_prompt
+
+system_prompt = render_prompt("paths/scorer", {"facility": "tcv", "batch": batch_data})
+```
+
+For path access (e.g., in tests), import `PROMPTS_DIR` from the same module — never hardcode path segments like `"llm" / "prompts"`.
+
+### Rules
+
+- Model identifiers require the `openrouter/` prefix to preserve `cache_control` blocks
+- Use `get_model(section)` from `imas_codex.settings` for model selection — never hardcode model names
+- Pydantic schema injection via `get_pydantic_schema_json()` — never hardcode JSON examples in prompts
+- Each prompt declares `schema_needs` in frontmatter to load only required schema context
 
 ### Prompt Structure and Caching
 
