@@ -220,13 +220,13 @@ def _format_load_row(info: dict) -> list[str]:
     mem_total = info.get("mem_total_mb", 0)
     mem_used = info.get("mem_used_mb", 0)
     mem_bar = _colored_bar(mem_used, mem_total)
-    mem_label = f"{mem_used / 1024:.1f}/{mem_total / 1024:.0f} GB"
+    mem_label = f"{mem_used / 1024:.0f}/{mem_total / 1024:.0f} GB"
     users = str(info.get("users", 0))
 
     return [
         info.get("hostname", "unknown"),
-        f"{cpu_bar}  ({cpu_count} cores)",
-        f"{mem_bar}  {mem_label}",
+        f"{cpu_bar}  {cpu_count:>2} cores",
+        f"{mem_bar} {mem_label}",
         users,
     ]
 
@@ -483,9 +483,9 @@ def _build_survey_table(
     """
     table = Table(title=f"Login Nodes — {facility.upper()}")
     table.add_column("#", style="dim", justify="right")
-    table.add_column("Node", style="cyan")
-    table.add_column("CPU Load")
-    table.add_column("Memory")
+    table.add_column("Node", style="cyan", no_wrap=True)
+    table.add_column("CPU Load", no_wrap=True)
+    table.add_column("Memory", no_wrap=True)
     table.add_column("Users", justify="right")
     table.add_column("Codex", justify="right")
 
@@ -568,6 +568,16 @@ def _build_survey_display(
         parts.append(
             Text.from_markup(
                 f"  SSH target:   {facility} → [cyan]{current_target}[/cyan]"
+            )
+        )
+
+    # Show LLM alias if configured
+    llm_alias = f"{facility}-llm"
+    llm_target = _get_ssh_hostname(llm_alias)
+    if llm_target:
+        parts.append(
+            Text.from_markup(
+                f"  LLM target:   {llm_alias} → [cyan]{llm_target}[/cyan]"
             )
         )
 
