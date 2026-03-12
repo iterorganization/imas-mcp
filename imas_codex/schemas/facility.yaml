@@ -2527,6 +2527,27 @@ classes:
         multivalued: true
         annotations:
           relationship_type: POPULATES
+      extraction_script:
+        description: >-
+          Generated Python script for extracting signal data from the facility.
+          Self-contained script using DataAccess templates.
+        range: string
+      assembly_script:
+        description: >-
+          Generated Python script for imas-python assembly.
+          Contains per-section assembly functions and a main driver.
+        range: string
+      validated_shot:
+        description: Shot number used for last E2E validation.
+        range: integer
+      validated_at:
+        description: ISO timestamp of last successful E2E validation.
+        range: string
+      validation_strategy:
+        description: >-
+          Strategy used for last E2E validation.
+          "client" = client-side assembly, "remote" = remote-side assembly.
+        range: string
 
   MappingEvidence:
     description: >-
