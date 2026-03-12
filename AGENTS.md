@@ -2,6 +2,12 @@
 
 Use terminal for direct operations (`rg`, `fd`, `git`), MCP `python()` for chained processing and graph queries, `uv run` for git/tests/CLI. Conventional commits. **CRITICAL: Commit and push all changes before ending every response that modifies files.** **Never use `vscode_askQuestions` or any interactive VS Code popup/dialog tools — present all questions inline in the chat response so the user can answer them in one message.**
 
+**Git sync discipline (multi-instance workflow):** This repo is edited from multiple machines (WSL, ITER host). Always rebase to avoid divergent branches:
+1. **Session start:** `git pull --rebase origin main` before any work.
+2. **Before push:** `git pull --rebase origin main && git push origin main` — never push without pulling first.
+3. **Dirty worktree:** `rebase.autoStash` is enabled — rebase works even with uncommitted changes.
+4. **Conflict resolution:** If rebase conflicts, resolve and `git rebase --continue`. Never force-push without user approval.
+
 ## Project Philosophy
 
 Greenfield project under active development. No backwards compatibility.

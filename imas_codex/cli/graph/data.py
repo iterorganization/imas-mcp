@@ -17,14 +17,12 @@ import click
 from imas_codex import __version__
 from imas_codex.graph.ghcr import (
     get_git_info,
-    get_local_graph_manifest,
     get_package_name,
     save_local_graph_manifest,
 )
 from imas_codex.graph.neo4j_ops import (
     Neo4jOperation,
     backup_existing_data,
-    check_graph_exists,
     is_neo4j_running,
     neo4j_image,
     run_neo4j_dump as _run_neo4j_dump,
