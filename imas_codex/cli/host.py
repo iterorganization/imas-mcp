@@ -69,9 +69,7 @@ def _get_load_info() -> dict:
         info["mem_used_mb"] = 0
 
     try:
-        result = subprocess.run(
-            ["who"], capture_output=True, text=True, timeout=5
-        )
+        result = subprocess.run(["who"], capture_output=True, text=True, timeout=5)
         info["users"] = (
             len(result.stdout.strip().splitlines()) if result.stdout.strip() else 0
         )
@@ -177,16 +175,18 @@ def _parse_ps_output(ps_output: str) -> list[dict]:
             age_seconds = int(parts[6])
         except (ValueError, IndexError):
             age_seconds = 0
-        procs.append({
-            "user": parts[0],
-            "pid": parts[1],
-            "cpu": parts[2],
-            "mem": parts[3],
-            "vsz_mb": int(parts[4]) / 1024,
-            "rss_mb": int(parts[5]) / 1024,
-            "age_seconds": age_seconds,
-            "command": parts[7][:120],
-        })
+        procs.append(
+            {
+                "user": parts[0],
+                "pid": parts[1],
+                "cpu": parts[2],
+                "mem": parts[3],
+                "vsz_mb": int(parts[4]) / 1024,
+                "rss_mb": int(parts[5]) / 1024,
+                "age_seconds": age_seconds,
+                "command": parts[7][:120],
+            }
+        )
     return procs
 
 
@@ -206,7 +206,7 @@ def _colored_bar(used: float, limit: float, width: int = 20) -> str:
         color = "yellow"
     else:
         color = "green"
-    bar = f"[{color}]{"█" * filled}[/{color}][dim]{"░" * empty}[/dim]"
+    bar = f"[{color}]{'█' * filled}[/{color}][dim]{'░' * empty}[/dim]"
     pct = f"[{color}]{ratio * 100:.0f}%[/{color}]"
     return rf"\[{bar}] {pct}"
 
@@ -255,8 +255,7 @@ def _show_local_load(info: dict) -> None:
     if mem_total > 0:
         mem_bar = _colored_bar(mem_used, mem_total)
         console.print(
-            f"  Mem:  {mem_bar}  "
-            f"{mem_used / 1024:.1f} / {mem_total / 1024:.0f} GB"
+            f"  Mem:  {mem_bar}  {mem_used / 1024:.1f} / {mem_total / 1024:.0f} GB"
         )
 
     console.print(f"  Users: {info['users']}")
@@ -288,8 +287,14 @@ def _build_process_table(
             table.add_section()
         first_node = False
         for i, p in enumerate(procs):
-            cpu_str = f"[red]{p['cpu']}%[/red]" if float(p["cpu"]) > 50 else f"{p['cpu']}%"
-            mem_str = f"[yellow]{p['mem']}%[/yellow]" if float(p["mem"]) > 10 else f"{p['mem']}%"
+            cpu_str = (
+                f"[red]{p['cpu']}%[/red]" if float(p["cpu"]) > 50 else f"{p['cpu']}%"
+            )
+            mem_str = (
+                f"[yellow]{p['mem']}%[/yellow]"
+                if float(p["mem"]) > 10
+                else f"{p['mem']}%"
+            )
             age_s = p.get("age_seconds", 0)
             age_str = _format_age(age_s)
             if age_s > 86400:
@@ -297,7 +302,16 @@ def _build_process_table(
             row: list[str] = []
             if multi:
                 row.append(node if i == 0 else "")
-            row.extend([p["pid"], cpu_str, mem_str, f"{p['rss_mb']:.0f}M", age_str, p["command"]])
+            row.extend(
+                [
+                    p["pid"],
+                    cpu_str,
+                    mem_str,
+                    f"{p['rss_mb']:.0f}M",
+                    age_str,
+                    p["command"],
+                ]
+            )
             table.add_row(*row)
 
     return table
@@ -328,8 +342,10 @@ def _discover_login_nodes(ssh_host: str, timeout: int = 10) -> list[str]:
         result = subprocess.run(
             [
                 "ssh",
-                "-o", "BatchMode=yes",
-                "-o", f"ConnectTimeout={timeout}",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                f"ConnectTimeout={timeout}",
                 ssh_host,
                 "grep '98dci4-srv-' /etc/hosts | awk '{print $2}'",
             ],
@@ -365,10 +381,14 @@ def _query_node(
     fqdn = f"{node}.iter.org"
     ssh_cmd = [
         "ssh",
-        "-o", "BatchMode=yes",
-        "-o", f"ConnectTimeout={timeout}",
-        "-o", "StrictHostKeyChecking=accept-new",
-        "-J", gateway,
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        f"ConnectTimeout={timeout}",
+        "-o",
+        "StrictHostKeyChecking=accept-new",
+        "-J",
+        gateway,
     ]
     if user:
         ssh_cmd.append(f"{user}@{fqdn}")
@@ -381,10 +401,9 @@ def _query_node(
         "cat /proc/loadavg; "
         "nproc; "
         "awk '/MemTotal/{t=$2} /MemAvailable/{a=$2} "
-        "END{printf \"%d %d\\n\", t, a}' /proc/meminfo; "
+        'END{printf "%d %d\\n", t, a}\' /proc/meminfo; '
         "who | wc -l; "
-        "echo '---PROCS---'; "
-        + _PS_CMD_REMOTE
+        "echo '---PROCS---'; " + _PS_CMD_REMOTE
     )
     ssh_cmd.append(script)
 
@@ -447,8 +466,7 @@ def _gather_survey_data(
     results: dict[str, dict | None] = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=len(nodes)) as pool:
         futures = {
-            pool.submit(_query_node, n, gateway, user, timeout): n
-            for n in nodes
+            pool.submit(_query_node, n, gateway, user, timeout): n for n in nodes
         }
         for future in concurrent.futures.as_completed(futures):
             node, info = future.result()
@@ -479,9 +497,7 @@ def _build_survey_table(
     for idx, node in enumerate(sorted(results), 1):
         info = results[node]
         if info is None:
-            table.add_row(
-                str(idx), node, "[red]unreachable[/red]", "", "", ""
-            )
+            table.add_row(str(idx), node, "[red]unreachable[/red]", "", "", "")
             continue
 
         row = _format_load_row(info)
@@ -507,9 +523,7 @@ def _build_survey_table(
 
         proc_str = f"[green]{n_procs}[/green]" if n_procs > 0 else "0"
 
-        table.add_row(
-            str(idx), node_display, row[1], row[2], row[3], proc_str
-        )
+        table.add_row(str(idx), node_display, row[1], row[2], row[3], proc_str)
 
     return table, best_node, best_load
 
@@ -535,9 +549,7 @@ def _build_survey_display(
 
     Returns (renderables, best_node, best_load_pct).
     """
-    table, best_node, best_load = _build_survey_table(
-        results, facility, current_target
-    )
+    table, best_node, best_load = _build_survey_table(results, facility, current_target)
     parts: list = [table]
 
     procs_by_node = _collect_procs(results)
@@ -556,8 +568,7 @@ def _build_survey_display(
     if current_target:
         parts.append(
             Text.from_markup(
-                f"  SSH target:   {facility} → "
-                f"[cyan]{current_target}[/cyan]"
+                f"  SSH target:   {facility} → [cyan]{current_target}[/cyan]"
             )
         )
 
@@ -617,9 +628,7 @@ def _set_ssh_hostname(alias: str, new_hostname: str) -> bool:
             # We need a block where the alias appears ALONE or first
             # to avoid matching shared blocks like "Host iter sdcc"
             # The HostName should be in a standalone "Host iter" block
-            in_target_block = (
-                alias in host_names and not replaced
-            )
+            in_target_block = alias in host_names and not replaced
 
         if (
             in_target_block
@@ -645,6 +654,158 @@ def _set_ssh_hostname(alias: str, new_hostname: str) -> bool:
     return True
 
 
+# ── Node migration ───────────────────────────────────────────────────────
+
+
+def _ssh_to_node(
+    fqdn: str,
+    gateway: str,
+    user: str,
+    command: str,
+    timeout: int = 15,
+) -> subprocess.CompletedProcess:
+    """SSH to a specific node via gateway and run a command."""
+    ssh_cmd = [
+        "ssh",
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        f"ConnectTimeout={timeout}",
+        "-o",
+        "StrictHostKeyChecking=accept-new",
+        "-J",
+        gateway,
+    ]
+    if user:
+        ssh_cmd.append(f"{user}@{fqdn}")
+    else:
+        ssh_cmd.append(fqdn)
+    ssh_cmd.append(command)
+    return subprocess.run(
+        ssh_cmd,
+        capture_output=True,
+        text=True,
+        timeout=timeout + 5,
+    )
+
+
+def _migrate_from_node(
+    old_hostname: str,
+    gateway: str,
+    user: str,
+    timeout: int,
+) -> None:
+    """Kill imas-codex processes and zellij sessions on the old node.
+
+    Called automatically when ``--set-default`` switches to a different
+    node.  Sends SIGINT for graceful shutdown, then removes zellij
+    sessions so the next ``cx`` starts fresh on the new node.
+    """
+    old_short = old_hostname.split(".")[0]
+    fqdn = old_hostname if "." in old_hostname else f"{old_hostname}.iter.org"
+
+    click.echo(f"\n  Migrating from {click.style(old_short, fg='yellow')}…")
+
+    # 1. Kill imas-codex processes with SIGINT (graceful shutdown)
+    #    Build the same pattern regex used by _CODEX_PATTERNS but skip
+    #    neo4j (shared service — leave it running).
+    kill_patterns = [p for p in _CODEX_PATTERNS if p != "neo4j"]
+    pattern_re = "|".join(kill_patterns)
+    # Use pgrep + kill to avoid matching ssh/grep itself
+    kill_script = (
+        f"pids=$(pgrep -u $USER -f '{pattern_re}' 2>/dev/null || true); "
+        f'if [ -n "$pids" ]; then '
+        f'  count=$(echo "$pids" | wc -w); '
+        f"  kill -INT $pids 2>/dev/null; "
+        f"  sleep 2; "
+        # SIGTERM stragglers that didn't exit on INT
+        f"  remaining=$(pgrep -u $USER -f '{pattern_re}' 2>/dev/null || true); "
+        f'  if [ -n "$remaining" ]; then '
+        f"    kill -TERM $remaining 2>/dev/null; "
+        f"  fi; "
+        f'  echo "killed:$count"; '
+        f"else "
+        f"  echo 'killed:0'; "
+        f"fi"
+    )
+
+    try:
+        result = _ssh_to_node(fqdn, gateway, user, kill_script, timeout)
+        if result.returncode == 0:
+            output = result.stdout.strip()
+            for line in output.splitlines():
+                if line.startswith("killed:"):
+                    count = line.split(":")[1]
+                    if count != "0":
+                        click.echo(
+                            f"    {click.style('✓', fg='green')} "
+                            f"Sent SIGINT to {count} process(es)"
+                        )
+                    else:
+                        click.echo(
+                            f"    {click.style('·', fg='dim')} "
+                            f"No imas-codex processes running"
+                        )
+        else:
+            click.echo(
+                f"    {click.style('⚠', fg='yellow')} "
+                f"Could not reach {old_short} for process cleanup"
+            )
+    except (subprocess.TimeoutExpired, Exception):
+        click.echo(
+            f"    {click.style('⚠', fg='yellow')} "
+            f"Timeout reaching {old_short} — processes may still be running"
+        )
+
+    # 2. Kill all zellij sessions on the old node
+    zj_script = (
+        "if command -v zellij >/dev/null 2>&1; then "
+        "  sessions=$(zellij list-sessions -s 2>/dev/null || true); "
+        '  if [ -n "$sessions" ]; then '
+        "    zellij delete-all-sessions -y 2>/dev/null; "
+        '    count=$(echo "$sessions" | wc -l); '
+        '    echo "zj:$count"; '
+        "  else "
+        "    echo 'zj:0'; "
+        "  fi; "
+        "else "
+        "  echo 'zj:none'; "
+        "fi"
+    )
+
+    try:
+        result = _ssh_to_node(fqdn, gateway, user, zj_script, timeout)
+        if result.returncode == 0:
+            output = result.stdout.strip()
+            for line in output.splitlines():
+                if line.startswith("zj:"):
+                    val = line.split(":")[1]
+                    if val == "none":
+                        click.echo(
+                            f"    {click.style('·', fg='dim')} "
+                            f"zellij not found on {old_short}"
+                        )
+                    elif val == "0":
+                        click.echo(
+                            f"    {click.style('·', fg='dim')} "
+                            f"No zellij sessions to clean up"
+                        )
+                    else:
+                        click.echo(
+                            f"    {click.style('✓', fg='green')} "
+                            f"Deleted {val} zellij session(s)"
+                        )
+    except (subprocess.TimeoutExpired, Exception):
+        click.echo(
+            f"    {click.style('⚠', fg='yellow')} "
+            f"Could not clean up zellij sessions on {old_short}"
+        )
+
+    click.echo(
+        f"    Reconnect: {click.style('cx', fg='cyan', bold=True)} to start fresh"
+    )
+
+
 # ── CLI ──────────────────────────────────────────────────────────────────
 
 
@@ -664,11 +825,7 @@ class _HostGroup(click.Group):
     def parse_args(self, ctx: click.Context, args: list[str]) -> list[str]:
         # If the first arg looks like a facility (not a known command),
         # inject "survey" so Click routes to the survey subcommand.
-        if (
-            args
-            and args[0] not in self.commands
-            and not args[0].startswith("-")
-        ):
+        if args and args[0] not in self.commands and not args[0].startswith("-"):
             args = ["survey"] + args
         return super().parse_args(ctx, args)
 
@@ -699,9 +856,7 @@ def host(ctx: click.Context) -> None:
 @host.command("survey", hidden=True)
 @click.argument("facility")
 @click.option("--timeout", default=10, help="SSH timeout per node in seconds")
-@click.option(
-    "--watch", "-w", is_flag=True, help="Repeat every 30s (Ctrl+C to stop)"
-)
+@click.option("--watch", "-w", is_flag=True, help="Repeat every 30s (Ctrl+C to stop)")
 @click.option(
     "--set-default",
     "set_default",
@@ -740,19 +895,14 @@ def host_survey(
     config = get_facility(facility)
     ssh_host = config.get("ssh_host")
     if not ssh_host:
-        raise click.ClickException(
-            f"Facility '{facility}' has no ssh_host configured"
-        )
+        raise click.ClickException(f"Facility '{facility}' has no ssh_host configured")
 
     gateway = config.get("ssh_gateway", "sdcc-login.iter.org")
     user = config.get("ssh_user", "")
 
     def _discover_and_survey():
         """Discover nodes, query them, display results. Return results dict."""
-        click.echo(
-            f"Discovering login nodes on "
-            f"{click.style(facility, fg='cyan')}…"
-        )
+        click.echo(f"Discovering login nodes on {click.style(facility, fg='cyan')}…")
         nodes = _discover_login_nodes(ssh_host, timeout=timeout)
         if not nodes:
             raise click.ClickException(
@@ -764,9 +914,7 @@ def host_survey(
         results = _gather_survey_data(nodes, gateway, user, timeout)
         current_target = _get_ssh_hostname(facility)
 
-        parts, _, _ = _build_survey_display(
-            results, facility, current_target
-        )
+        parts, _, _ = _build_survey_display(results, facility, current_target)
         for part in parts:
             if isinstance(part, (Table, Text)):
                 console.print(part)
@@ -812,9 +960,7 @@ def host_survey(
             except ValueError:
                 candidate = set_default.strip()
                 if "." not in candidate:
-                    matches = [
-                        n for n in sorted_nodes if candidate in n
-                    ]
+                    matches = [n for n in sorted_nodes if candidate in n]
                     if len(matches) == 1:
                         target_fqdn = f"{matches[0]}.iter.org"
                     elif len(matches) > 1:
@@ -823,9 +969,7 @@ def host_survey(
                             f"matches: {', '.join(matches)}"
                         )
                     else:
-                        raise click.ClickException(
-                            f"No node matching '{candidate}'"
-                        )
+                        raise click.ClickException(f"No node matching '{candidate}'")
                 else:
                     target_fqdn = candidate
 
@@ -839,19 +983,22 @@ def host_survey(
 
             current = _get_ssh_hostname(facility)
             if current == target_fqdn:
-                click.echo(
-                    f"  Already set: {facility} → {target_fqdn}"
-                )
+                click.echo(f"  Already set: {facility} → {target_fqdn}")
             elif _set_ssh_hostname(facility, target_fqdn):
                 click.echo(
                     click.style("  ✓ ", fg="green")
                     + f"Updated: {facility} → "
                     + click.style(target_fqdn, fg="cyan", bold=True)
                 )
-                click.echo(
-                    "  Note: existing SSH sessions continue on the "
-                    "old node until closed."
-                )
+                # Migrate: clean up processes and zellij sessions
+                # on the old node
+                if current:
+                    _migrate_from_node(
+                        current,
+                        gateway,
+                        user,
+                        timeout,
+                    )
             else:
                 raise click.ClickException(
                     f"Could not update SSH config for '{facility}'. "
@@ -866,10 +1013,7 @@ def host_survey(
         from rich.console import Group
         from rich.live import Live
 
-        click.echo(
-            f"Discovering login nodes on "
-            f"{click.style(facility, fg='cyan')}…"
-        )
+        click.echo(f"Discovering login nodes on {click.style(facility, fg='cyan')}…")
         nodes = _discover_login_nodes(ssh_host, timeout=timeout)
         if not nodes:
             raise click.ClickException(
@@ -877,16 +1021,13 @@ def host_survey(
                 f"Ensure SSH access to '{ssh_host}' is working."
             )
         click.echo(
-            f"Found {len(nodes)} login nodes. "
-            f"Live monitoring… (Ctrl+C to stop)\n"
+            f"Found {len(nodes)} login nodes. Live monitoring… (Ctrl+C to stop)\n"
         )
 
         try:
             with Live(console=console, refresh_per_second=0.5) as live:
                 while True:
-                    results = _gather_survey_data(
-                        nodes, gateway, user, timeout
-                    )
+                    results = _gather_survey_data(nodes, gateway, user, timeout)
                     current_target = _get_ssh_hostname(facility)
                     parts, _, _ = _build_survey_display(
                         results, facility, current_target
@@ -935,9 +1076,12 @@ def host_status(facility: str | None, timeout: int) -> None:
             result = subprocess.run(
                 [
                     "ssh",
-                    "-o", "BatchMode=yes",
-                    "-o", f"ConnectTimeout={timeout}",
-                    "-o", "StrictHostKeyChecking=accept-new",
+                    "-o",
+                    "BatchMode=yes",
+                    "-o",
+                    f"ConnectTimeout={timeout}",
+                    "-o",
+                    "StrictHostKeyChecking=accept-new",
                     ssh_host,
                     "echo ok",
                 ],
@@ -955,9 +1099,7 @@ def host_status(facility: str | None, timeout: int) -> None:
                 )
             else:
                 error = (
-                    result.stderr.strip().split("\n")[0]
-                    if result.stderr
-                    else "Failed"
+                    result.stderr.strip().split("\n")[0] if result.stderr else "Failed"
                 )
                 table.add_row(name, f"[red]✗ {error}[/red]", "-")
 
@@ -1012,9 +1154,7 @@ def host_add(
     if ssh_config.exists():
         content = ssh_config.read_text()
         if f"Host {name}" in content or f"Host {name}\n" in content:
-            raise click.ClickException(
-                f"Host '{name}' already exists in ~/.ssh/config"
-            )
+            raise click.ClickException(f"Host '{name}' already exists in ~/.ssh/config")
 
     with open(ssh_config, "a") as f:
         f.write(entry)
@@ -1028,24 +1168,35 @@ def host_add(
 @host.command("kill")
 @click.argument("facility")
 @click.option(
-    "--include", "-i", "include_pattern",
+    "--include",
+    "-i",
+    "include_pattern",
     help="Only kill processes matching this regex pattern",
 )
 @click.option(
-    "--exclude", "-e", "exclude_pattern",
+    "--exclude",
+    "-e",
+    "exclude_pattern",
     help="Exclude processes matching this regex pattern",
 )
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompt")
 @click.option(
-    "--node", "-n", "target_node",
+    "--node",
+    "-n",
+    "target_node",
     help="Target specific node (index or name)",
 )
 @click.option(
-    "--signal", "-s", "sig", default="TERM",
+    "--signal",
+    "-s",
+    "sig",
+    default="TERM",
     help="Signal to send (default: TERM)",
 )
 @click.option(
-    "--older-than", "-o", "older_than",
+    "--older-than",
+    "-o",
+    "older_than",
     help="Only kill processes older than this duration (e.g. 1h, 2d, 30m)",
 )
 @click.option("--timeout", default=10, help="SSH timeout per node")
@@ -1076,14 +1227,20 @@ def host_kill(
         imas-codex host kill iter -o 1h -e serve -y      # Kill >1h except serve
     """
     valid_signals = {
-        "TERM", "KILL", "HUP", "INT", "QUIT",
-        "USR1", "USR2", "STOP", "CONT",
+        "TERM",
+        "KILL",
+        "HUP",
+        "INT",
+        "QUIT",
+        "USR1",
+        "USR2",
+        "STOP",
+        "CONT",
     }
     sig = sig.upper()
     if sig not in valid_signals:
         raise click.ClickException(
-            f"Invalid signal: {sig}. "
-            f"Valid: {', '.join(sorted(valid_signals))}"
+            f"Invalid signal: {sig}. Valid: {', '.join(sorted(valid_signals))}"
         )
 
     from imas_codex.discovery.base.facility import get_facility
@@ -1091,22 +1248,15 @@ def host_kill(
     config = get_facility(facility)
     ssh_host = config.get("ssh_host")
     if not ssh_host:
-        raise click.ClickException(
-            f"Facility '{facility}' has no ssh_host configured"
-        )
+        raise click.ClickException(f"Facility '{facility}' has no ssh_host configured")
 
     gateway = config.get("ssh_gateway", "sdcc-login.iter.org")
     user = config.get("ssh_user", "")
 
-    click.echo(
-        f"Discovering login nodes on "
-        f"{click.style(facility, fg='cyan')}…"
-    )
+    click.echo(f"Discovering login nodes on {click.style(facility, fg='cyan')}…")
     nodes = _discover_login_nodes(ssh_host, timeout=timeout)
     if not nodes:
-        raise click.ClickException(
-            f"Could not discover login nodes for '{facility}'."
-        )
+        raise click.ClickException(f"Could not discover login nodes for '{facility}'.")
 
     # Filter to specific node if requested
     if target_node:
@@ -1123,26 +1273,16 @@ def host_kill(
             if len(matches) == 1:
                 nodes = matches
             elif not matches:
-                raise click.ClickException(
-                    f"No node matching '{target_node}'"
-                )
+                raise click.ClickException(f"No node matching '{target_node}'")
             else:
-                raise click.ClickException(
-                    f"Ambiguous: {', '.join(matches)}"
-                )
+                raise click.ClickException(f"Ambiguous: {', '.join(matches)}")
 
     click.echo(f"Querying {len(nodes)} node(s)…\n")
     results = _gather_survey_data(nodes, gateway, user, timeout)
 
     # Compile patterns
-    include_re = (
-        re.compile(include_pattern, re.IGNORECASE)
-        if include_pattern else None
-    )
-    exclude_re = (
-        re.compile(exclude_pattern, re.IGNORECASE)
-        if exclude_pattern else None
-    )
+    include_re = re.compile(include_pattern, re.IGNORECASE) if include_pattern else None
+    exclude_re = re.compile(exclude_pattern, re.IGNORECASE) if exclude_pattern else None
 
     # Filter processes
     kill_targets: dict[str, list[dict]] = {}
@@ -1169,14 +1309,10 @@ def host_kill(
         return
 
     total = sum(len(ps) for ps in kill_targets.values())
-    _show_processes(
-        kill_targets, title=f"Processes to kill ({total} total, SIG{sig})"
-    )
+    _show_processes(kill_targets, title=f"Processes to kill ({total} total, SIG{sig})")
 
     if not yes:
-        click.confirm(
-            f"Kill {total} process(es) with SIG{sig}?", abort=True
-        )
+        click.confirm(f"Kill {total} process(es) with SIG{sig}?", abort=True)
 
     # Send kill signals
     for node, procs in kill_targets.items():
@@ -1186,10 +1322,14 @@ def host_kill(
 
         ssh_cmd = [
             "ssh",
-            "-o", "BatchMode=yes",
-            "-o", f"ConnectTimeout={timeout}",
-            "-o", "StrictHostKeyChecking=accept-new",
-            "-J", gateway,
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            f"ConnectTimeout={timeout}",
+            "-o",
+            "StrictHostKeyChecking=accept-new",
+            "-J",
+            gateway,
         ]
         if user:
             ssh_cmd.append(f"{user}@{fqdn}")
@@ -1199,7 +1339,9 @@ def host_kill(
 
         try:
             result = subprocess.run(
-                ssh_cmd, capture_output=True, text=True,
+                ssh_cmd,
+                capture_output=True,
+                text=True,
                 timeout=timeout + 5,
             )
             if result.returncode == 0:
@@ -1213,6 +1355,4 @@ def host_kill(
                     f"{node}: {result.stderr.strip()[:60]}"
                 )
         except Exception as e:
-            click.echo(
-                f"  {click.style('✗', fg='red')} {node}: {e}"
-            )
+            click.echo(f"  {click.style('✗', fg='red')} {node}: {e}")
