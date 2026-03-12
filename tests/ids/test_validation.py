@@ -6,12 +6,18 @@ import pytest
 
 from imas_codex.ids.models import ValidatedFieldMapping
 from imas_codex.ids.validation import (
+    AssemblyCoverageReport,
     BindingCheck,
+    ConfidenceDistribution,
     CoverageReport,
     SignalCoverageReport,
+    SignalSourceCoverageReport,
     ValidationReport,
+    compute_assembly_coverage,
+    compute_confidence_distribution,
     compute_coverage,
     compute_signal_coverage,
+    compute_signal_source_coverage,
     validate_mapping,
 )
 
@@ -368,3 +374,175 @@ class TestComputeSignalCoverage:
         assert report.mapped == 0
         assert report.percentage == 0.0
         assert report.unmapped_groups == ["jet:ids:pf_active:coil_1"]
+
+
+# ---------------------------------------------------------------------------
+# Phase 8: Extended coverage metrics
+# ---------------------------------------------------------------------------
+
+
+class TestSignalSourceCoverageReport:
+    def test_defaults(self):
+        report = SignalSourceCoverageReport(facility="jet", ids_name="pf_active")
+        assert report.total_enriched_matching == 0
+        assert report.mapped_to_ids == 0
+        assert report.discovered_sources == 0
+        assert report.multi_target_sources == 0
+        assert report.enriched_mapped_pct == 0.0
+
+
+class TestComputeSignalSourceCoverage:
+    def test_no_enriched_sources(self, mock_gc):
+        mock_gc.query.return_value = []
+        report = compute_signal_source_coverage("jet", "pf_active", gc=mock_gc)
+        assert report.total_enriched_matching == 0
+        assert report.enriched_mapped_pct == 0.0
+
+    def test_partial_mapped(self, mock_gc):
+        mock_gc.query.side_effect = [
+            # Enriched query
+            [
+                {"id": "jet:pf:group1", "is_mapped": True},
+                {"id": "jet:pf:group2", "is_mapped": False},
+            ],
+            # Discovered query
+            [{"id": "jet:pf:disc1"}],
+            # Multi-target query
+            [{"id": "jet:pf:group1", "target_count": 3}],
+        ]
+        report = compute_signal_source_coverage("jet", "pf_active", gc=mock_gc)
+        assert report.total_enriched_matching == 2
+        assert report.mapped_to_ids == 1
+        assert report.enriched_mapped_pct == pytest.approx(50.0)
+        assert report.unmapped_enriched == ["jet:pf:group2"]
+        assert report.discovered_sources == 1
+        assert report.multi_target_sources == 1
+
+    def test_all_mapped_no_discovered(self, mock_gc):
+        mock_gc.query.side_effect = [
+            [{"id": "jet:pf:group1", "is_mapped": True}],
+            [],  # no discovered
+            [],  # no multi-target
+        ]
+        report = compute_signal_source_coverage("jet", "pf_active", gc=mock_gc)
+        assert report.total_enriched_matching == 1
+        assert report.mapped_to_ids == 1
+        assert report.enriched_mapped_pct == 100.0
+        assert report.unmapped_enriched == []
+        assert report.discovered_sources == 0
+
+
+class TestAssemblyCoverageReport:
+    def test_defaults(self):
+        report = AssemblyCoverageReport(facility="jet", ids_name="pf_active")
+        assert report.total_sections == 0
+        assert report.sections_with_config == 0
+        assert report.default_pattern_count == 0
+        assert report.custom_pattern_count == 0
+
+
+class TestComputeAssemblyCoverage:
+    def test_no_sections(self, mock_gc):
+        mock_gc.query.side_effect = [[], []]
+        report = compute_assembly_coverage("jet", "pf_active", gc=mock_gc)
+        assert report.total_sections == 0
+
+    def test_with_config(self, mock_gc):
+        mock_gc.query.side_effect = [
+            # POPULATES query
+            [
+                {
+                    "section_path": "pf_active/coil",
+                    "pattern": "array_per_node",
+                    "init_arrays": '{"coil": 12}',
+                },
+                {
+                    "section_path": "pf_active/circuit",
+                    "pattern": "concatenate",
+                    "init_arrays": None,
+                },
+            ],
+            # Binding sections query
+            [{"section_path": "pf_active/coil"}],
+        ]
+        report = compute_assembly_coverage("jet", "pf_active", gc=mock_gc)
+        assert report.total_sections == 2
+        assert report.sections_with_config == 2
+        assert report.default_pattern_count == 1  # array_per_node
+        assert report.custom_pattern_count == 1  # concatenate
+        assert report.init_arrays_configured == 1
+        assert report.init_arrays_unconfigured == 1
+        assert report.sections_without_config == []
+
+    def test_section_without_config(self, mock_gc):
+        mock_gc.query.side_effect = [
+            # POPULATES query — only one section configured
+            [
+                {
+                    "section_path": "pf_active/coil",
+                    "pattern": "array_per_node",
+                    "init_arrays": None,
+                },
+            ],
+            # Binding sections — two sections have bindings
+            [
+                {"section_path": "pf_active/coil"},
+                {"section_path": "pf_active/supply"},
+            ],
+        ]
+        report = compute_assembly_coverage("jet", "pf_active", gc=mock_gc)
+        assert report.total_sections == 2
+        assert report.sections_with_config == 1
+        assert report.sections_without_config == ["pf_active/supply"]
+
+
+class TestConfidenceDistribution:
+    def test_defaults(self):
+        dist = ConfidenceDistribution()
+        assert dist.total_bindings == 0
+        assert dist.low_count == 0
+        assert dist.medium_count == 0
+        assert dist.high_count == 0
+        assert dist.average_confidence == 0.0
+
+
+class TestComputeConfidenceDistribution:
+    def test_empty_bindings(self):
+        dist = compute_confidence_distribution([])
+        assert dist.total_bindings == 0
+
+    def test_all_high(self):
+        bindings = [
+            _make_binding(confidence=0.95),
+            _make_binding(confidence=0.85),
+        ]
+        dist = compute_confidence_distribution(bindings)
+        assert dist.total_bindings == 2
+        assert dist.high_count == 2
+        assert dist.medium_count == 0
+        assert dist.low_count == 0
+        assert dist.average_confidence == pytest.approx(0.9)
+
+    def test_mixed_distribution(self):
+        bindings = [
+            _make_binding(confidence=0.95),  # high
+            _make_binding(confidence=0.7, target_id="pf_active/coil/name"),  # medium
+            _make_binding(confidence=0.3, target_id="pf_active/coil/current/data"),  # low
+        ]
+        dist = compute_confidence_distribution(bindings)
+        assert dist.total_bindings == 3
+        assert dist.high_count == 1
+        assert dist.medium_count == 1
+        assert dist.low_count == 1
+        assert len(dist.low_bindings) == 1
+        assert "0.30" in dist.low_bindings[0]
+
+    def test_boundary_values(self):
+        bindings = [
+            _make_binding(confidence=0.5),   # medium (0.5 inclusive)
+            _make_binding(confidence=0.8, target_id="pf_active/coil/name"),  # medium (0.8 inclusive)
+        ]
+        dist = compute_confidence_distribution(bindings)
+        assert dist.medium_count == 2
+        assert dist.low_count == 0
+        assert dist.high_count == 0
