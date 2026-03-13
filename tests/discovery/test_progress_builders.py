@@ -32,40 +32,45 @@ class TestFormatRate:
     """Tests for adaptive rate formatting."""
 
     def test_small_rate(self):
-        assert format_rate(0.5) == "0.50/s"
+        assert format_rate(0.5) == "0.50s/s"
 
     def test_single_digit(self):
-        assert format_rate(3.7) == "3.7/s"
+        assert format_rate(3.7) == "3.7s/s"
 
     def test_tens(self):
-        assert format_rate(83.4) == "83/s"
+        assert format_rate(83.4) == "83s/s"
 
     def test_hundreds(self):
-        assert format_rate(456.0) == "456/s"
+        assert format_rate(456.0) == "456s/s"
 
     def test_low_thousands(self):
-        assert format_rate(1_500.0) == "1.5K/s"
+        assert format_rate(1_500.0) == "1.5Ks/s"
 
     def test_high_thousands(self):
-        assert format_rate(84_000.0) == "84K/s"
+        assert format_rate(84_000.0) == "84Ks/s"
 
     def test_millions(self):
-        assert format_rate(2_500_000.0) == "2M/s"
+        assert format_rate(2_500_000.0) == "2Ms/s"
 
     def test_zero(self):
-        assert format_rate(0.0) == "0.00/s"
+        assert format_rate(0.0) == "0.00s/s"
 
     def test_boundary_ten(self):
-        assert format_rate(10.0) == "10/s"
+        assert format_rate(10.0) == "10s/s"
 
     def test_boundary_thousand(self):
-        assert format_rate(1_000.0) == "1.0K/s"
+        assert format_rate(1_000.0) == "1.0Ks/s"
 
     def test_boundary_ten_thousand(self):
-        assert format_rate(10_000.0) == "10K/s"
+        assert format_rate(10_000.0) == "10Ks/s"
 
     def test_boundary_million(self):
-        assert format_rate(1_000_000.0) == "1M/s"
+        assert format_rate(1_000_000.0) == "1Ms/s"
+
+    def test_custom_unit(self):
+        """Custom unit label is used in output."""
+        assert format_rate(42.0, unit="p") == "42p/s"
+        assert format_rate(1_500.0, unit="f") == "1.5Kf/s"
 
 
 # =============================================================================
@@ -422,7 +427,7 @@ class TestBuildPipelineSection:
             ),
         ]
         result = build_pipeline_section(rows, bar_width=20)
-        assert "3.7/s" in result.plain
+        assert "3.7s/s" in result.plain
 
     def test_percentage_displayed(self):
         """Percentage is shown when show_pct=True (default)."""

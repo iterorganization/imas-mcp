@@ -430,7 +430,7 @@ class TestParallelProgressDisplay:
         display.state.scan_rate = 77.1
         section = display._build_pipeline_section()
         text = section.plain
-        assert "77/s" in text
+        assert "77s/s" in text
 
     def test_resources_section_has_time(self):
         """Resources section shows TIME row."""

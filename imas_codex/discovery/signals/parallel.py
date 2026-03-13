@@ -2121,6 +2121,7 @@ async def seed_worker(
                         )
                         total_discovered += seeded
                         state.discover_stats.processed += seeded
+                        state.discover_stats.record_batch(seeded)
                         if on_progress and seeded:
                             on_progress(
                                 f"seeded {sub_name}: {seeded} versions",
@@ -2226,6 +2227,7 @@ async def seed_worker(
                 )
                 total_discovered += count
                 state.discover_stats.processed += count
+                state.discover_stats.record_batch(count)
 
                 if on_progress:
                     on_progress(
@@ -3639,6 +3641,7 @@ async def enrich_worker(
                 mark_signals_underspecified, underspecified, batch_cost
             )
             state.enrich_stats.processed += len(underspecified)
+            state.enrich_stats.record_batch(len(underspecified))
             logger.info(
                 "Marked %d signals as underspecified (low context)",
                 len(underspecified),
@@ -3648,6 +3651,7 @@ async def enrich_worker(
         if enriched:
             await asyncio.to_thread(mark_signals_enriched, enriched, batch_cost)
             state.enrich_stats.processed += len(enriched)
+            state.enrich_stats.record_batch(len(enriched))
 
             # Propagate enrichment from representative signals to pattern followers
             total_propagated = 0
@@ -3662,6 +3666,7 @@ async def enrich_worker(
 
             if total_propagated > 0:
                 state.enrich_stats.processed += total_propagated
+                state.enrich_stats.record_batch(total_propagated)
                 if on_progress:
                     on_progress(
                         f"propagated to {total_propagated} pattern followers",
@@ -4324,6 +4329,7 @@ async def check_worker(
         if checked:
             await asyncio.to_thread(mark_signals_checked, checked)
             state.check_stats.processed += len(checked)
+            state.check_stats.record_batch(len(checked))
 
             if on_progress:
                 results = [

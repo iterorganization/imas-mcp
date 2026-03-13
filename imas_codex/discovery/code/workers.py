@@ -118,6 +118,7 @@ async def scan_worker(
                         source_path_id=path_id,
                     )
                     state.scan_stats.processed += persist_result.get("discovered", 0)
+                    state.scan_stats.record_batch(persist_result.get("discovered", 0))
 
                     # Mark path as scanned with file count
                     if path_id:
