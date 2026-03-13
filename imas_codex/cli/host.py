@@ -835,9 +835,12 @@ def _migrate_from_node(
     # 1. Kill imas-codex processes with SIGINT (graceful shutdown)
     #    Build the same pattern regex used by _CODEX_PATTERNS but skip
     #    neo4j (shared service — leave it running).
+    #    Use character class trick ([i]mas-codex) so the pattern doesn't
+    #    match the bash shell running this script — pgrep -f searches
+    #    command lines and the script text contains the literal patterns.
     kill_patterns = [p for p in _CODEX_PATTERNS if p != "neo4j"]
-    pattern_re = "|".join(kill_patterns)
-    # Use pgrep + kill to avoid matching ssh/grep itself
+    escaped = [f"[{p[0]}]{p[1:]}" for p in kill_patterns]
+    pattern_re = "|".join(escaped)
     kill_script = (
         f"pids=$(pgrep -u $USER -f '{pattern_re}' 2>/dev/null || true); "
         f'if [ -n "$pids" ]; then '
@@ -985,6 +988,18 @@ class _HostGroup(click.Group):
         # inject "survey" so Click routes to the survey subcommand.
         if args and args[0] not in self.commands and not args[0].startswith("-"):
             args = ["survey"] + args
+
+        # Handle --set-default with optional value:
+        # --set-default       → --set-default auto
+        # --set-default 3     → unchanged
+        # --set-default=node  → unchanged (Click splits on =)
+        args = list(args)
+        for i, arg in enumerate(args):
+            if arg == "--set-default":
+                if i + 1 >= len(args) or args[i + 1].startswith("-"):
+                    args.insert(i + 1, "auto")
+                break
+
         return super().parse_args(ctx, args)
 
 
@@ -1019,8 +1034,6 @@ def host(ctx: click.Context) -> None:
     "--set-default",
     "set_default",
     default=None,
-    is_flag=False,
-    flag_value="auto",
     help=(
         "Set SSH target: node index, hostname, or omit value "
         "to auto-select least loaded"
