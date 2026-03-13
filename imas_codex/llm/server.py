@@ -2017,10 +2017,9 @@ class AgentsServer:
         def list_logs() -> str:
             """List available imas-codex log files with sizes and last-modified times.
 
-            Returns a formatted table of log files from
-            ~/.local/share/imas-codex/logs/ including file name, size,
-            age, and last modified timestamp. Use this to discover which
-            logs are available before reading them.
+            Returns a formatted table of log files including file name, size,
+            age, and last modified timestamp. Automatically reads from the
+            configured log location (local or remote via SSH).
 
             Returns:
                 Formatted log file listing.
@@ -2057,8 +2056,9 @@ class AgentsServer:
         ) -> str:
             """Read imas-codex log files with filtering.
 
-            Reads from ~/.local/share/imas-codex/logs/<command>_<facility>.log.
-            Supports level filtering, text search, and time-based filtering.
+            Reads <command>_<facility>.log with level, text, and time filtering.
+            Automatically reads from the configured log location (local or
+            remote via SSH based on [logs].location in pyproject.toml).
 
             Args:
                 command: CLI command name (e.g. "signals", "wiki", "paths",
@@ -2096,7 +2096,8 @@ class AgentsServer:
             """Get the most recent log entries (tail -n).
 
             Returns the last N lines from the log file, regardless of
-            level or content. Quick way to see what's happening now.
+            level or content. Automatically reads from the configured
+            log location (local or remote via SSH).
 
             Args:
                 command: CLI command name (e.g. "signals", "wiki", "paths").

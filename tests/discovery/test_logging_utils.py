@@ -152,8 +152,9 @@ def temp_log_dir(tmp_path, monkeypatch):
     log_dir = tmp_path / "logs"
     log_dir.mkdir()
 
-    # Patch LOG_DIR and get_log_dir
+    # Patch LOG_DIR and force local routing (avoid SSH to remote)
     monkeypatch.setattr("imas_codex.cli.logging.LOG_DIR", log_dir)
+    monkeypatch.setattr("imas_codex.cli.logging._get_log_ssh_host", lambda: None)
 
     # Create test log files
     signals_log = log_dir / "signals_jet.log"
@@ -201,6 +202,7 @@ class TestListLogFiles:
         empty = tmp_path / "empty_logs"
         empty.mkdir()
         monkeypatch.setattr("imas_codex.cli.logging.LOG_DIR", empty)
+        monkeypatch.setattr("imas_codex.cli.logging._get_log_ssh_host", lambda: None)
         files = list_log_files()
         assert files == []
 
