@@ -863,7 +863,7 @@ class GraphClustersTool:
         filter_list = ids_filter if isinstance(ids_filter, list) else [ids_filter]
         scope_filter = "AND c.scope = $scope" if scope else ""
         section_filter = (
-            "AND any(p IN section_paths WHERE p CONTAINS '/')"
+            "WHERE any(p IN section_paths WHERE p CONTAINS '/')"
             if section_only
             else ""
         )
