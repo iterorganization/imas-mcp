@@ -155,12 +155,16 @@ def _get_gpu_info() -> tuple[str | None, int | None]:
 
 
 def _cuda_available() -> bool:
-    """Check if CUDA is available."""
+    """Check if CUDA is available.
+
+    Catches both ImportError (torch not installed) and AttributeError
+    (corrupted torch installation missing __init__.py / cuda submodule).
+    """
     try:
         import torch
 
         return torch.cuda.is_available()
-    except ImportError:
+    except (ImportError, AttributeError):
         return False
 
 
