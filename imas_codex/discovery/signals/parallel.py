@@ -2019,7 +2019,8 @@ def ingest_discovered_signals(signals: list[dict], *, batch_size: int = 500) -> 
                     MERGE (s:FacilitySignal {id: sig.id})
                     ON CREATE SET s += sig,
                                   s.discovered_at = datetime()
-                    ON MATCH SET s.claimed_at = null
+                    ON MATCH SET s += sig,
+                                 s.claimed_at = null
                     WITH s, sig
                     MATCH (f:Facility {id: sig.facility_id})
                     MERGE (s)-[:AT_FACILITY]->(f)
