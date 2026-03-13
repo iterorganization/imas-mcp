@@ -11,6 +11,7 @@ Facility: JET (may be extended to other EFIT-based facilities)
 
 from __future__ import annotations
 
+import abc
 import asyncio
 import json
 import logging
@@ -118,6 +119,254 @@ def _make_signal_id(facility: str, section: str, instance_id: str, field: str) -
     domain = meta.get("physics_domain", "magnetic_field_diagnostics")
     name = _make_signal_name(section, instance_id, field)
     return f"{facility}:{domain}/{name}"
+
+
+# =========================================================================
+# Static Source Handler Base Class
+# =========================================================================
+
+
+class StaticSourceHandler(abc.ABC):
+    """Base class for static data source handlers within DeviceXMLScanner.
+
+    Provides shared scaffold for DataSource creation, SignalNode batch
+    persistence, FacilitySignal deduplication, and SignalEpoch creation.
+    Each handler overrides ``persist()`` to implement handler-specific
+    graph persistence logic.
+    """
+
+    source_name: str
+    """Config key (name) used to look up this source in static_sources."""
+
+    config_key: str
+    """Key in the facility config to match by name."""
+
+    remote_script: str | None = None
+    """Remote parse script filename (e.g., 'parse_jec2020.py'). None for local-only."""
+
+    timeout: int = 120
+    """SSH script timeout in seconds."""
+
+    needs_ssh: bool = True
+    """Whether this handler requires SSH execution."""
+
+    # -- Shared persistence helpers --
+
+    @staticmethod
+    def ensure_data_source(
+        gc: GraphClient,
+        facility: str,
+        name: str,
+        source_type: str,
+        source_format: str,
+        description: str,
+    ) -> None:
+        """Create or update a DataSource node with AT_FACILITY relationship."""
+        gc.query(
+            """
+            MERGE (ds:DataSource {id: $facility + ':' + $name})
+            ON CREATE SET
+                ds.name = $name,
+                ds.facility_id = $facility,
+                ds.source_type = $source_type,
+                ds.source_format = $source_format,
+                ds.description = $description,
+                ds.shot_dependent = false
+            WITH ds
+            MATCH (f:Facility {id: $facility})
+            MERGE (ds)-[:AT_FACILITY]->(f)
+            """,
+            name=name,
+            facility=facility,
+            source_type=source_type,
+            source_format=source_format,
+            description=description,
+        )
+
+    @staticmethod
+    def persist_signal_nodes(
+        gc: GraphClient,
+        nodes: list[dict],
+        batch_size: int = 100,
+    ) -> int:
+        """Batch create SignalNode records, assigning id=path."""
+        if not nodes:
+            return 0
+        for dn in nodes:
+            dn["id"] = dn["path"]
+        gc.create_nodes("SignalNode", nodes, batch_size=batch_size)
+        return len(nodes)
+
+    @staticmethod
+    def persist_facility_signals(
+        gc: GraphClient,
+        signals: dict[str, FacilitySignal],
+        batch_size: int = 100,
+    ) -> int:
+        """Batch create FacilitySignal from dedup dict."""
+        if not signals:
+            return 0
+        signal_dicts = [s.model_dump(exclude_none=True) for s in signals.values()]
+        gc.create_nodes("FacilitySignal", signal_dicts, batch_size=batch_size)
+        return len(signal_dicts)
+
+    @staticmethod
+    def persist_epochs(
+        gc: GraphClient,
+        epoch_records: list[dict],
+    ) -> int:
+        """Batch create SignalEpoch with AT_FACILITY + IN_DATA_SOURCE."""
+        if not epoch_records:
+            return 0
+        gc.query(
+            """
+            UNWIND $records AS rec
+            MERGE (se:SignalEpoch {id: rec.id})
+            SET se.facility_id = rec.facility_id,
+                se.data_source_name = rec.data_source_name,
+                se.version = rec.version,
+                se.first_shot = rec.first_shot,
+                se.last_shot = rec.last_shot,
+                se.description = rec.description,
+                se.status = rec.status
+            WITH se, rec
+            MATCH (f:Facility {id: rec.facility_id})
+            MERGE (se)-[:AT_FACILITY]->(f)
+            WITH se, rec
+            MERGE (ds:DataSource {id: rec.facility_id + ':' + rec.data_source_name})
+            MERGE (se)-[:IN_DATA_SOURCE]->(ds)
+            """,
+            records=epoch_records,
+        )
+        return len(epoch_records)
+
+    @staticmethod
+    def persist_introduced_in(
+        gc: GraphClient,
+        data_nodes: list[dict],
+        epoch_id: str,
+    ) -> None:
+        """Create INTRODUCED_IN relationships (SignalNode → SignalEpoch)."""
+        if not data_nodes:
+            return
+        intro_records = [{"id": dn["id"], "epoch_id": epoch_id} for dn in data_nodes]
+        gc.query(
+            """
+            UNWIND $records AS rec
+            MATCH (dn:SignalNode {id: rec.id})
+            MATCH (se:SignalEpoch {id: rec.epoch_id})
+            MERGE (dn)-[:INTRODUCED_IN]->(se)
+            """,
+            records=intro_records,
+        )
+
+    def lookup_config(self, facility: str) -> dict[str, Any] | None:
+        """Look up this handler's config from facility static_sources."""
+        from imas_codex.discovery.base.facility import get_facility
+
+        facility_config = get_facility(facility)
+        static_sources = facility_config.get("data_systems", {}).get(
+            "static_sources", []
+        )
+        for source in static_sources:
+            if isinstance(source, dict) and source.get("name") == self.config_key:
+                return source
+        return None
+
+    async def run(
+        self,
+        facility: str,
+        ssh_host: str,
+        config: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """Template: lookup config → run remote → persist → return stats."""
+        source_config = self.lookup_config(facility)
+        if not source_config:
+            return None
+
+        parsed = await self.fetch(facility, ssh_host, source_config)
+        if parsed is None:
+            return None
+
+        try:
+            stats = await asyncio.to_thread(
+                self.persist, facility, source_config, parsed
+            )
+        except Exception as e:
+            logger.error(
+                "%s graph persist failed for %s: %s",
+                self.source_name,
+                facility,
+                e,
+            )
+            return {"error": str(e)}
+
+        self.log_stats(facility, stats)
+        return stats
+
+    async def fetch(
+        self,
+        facility: str,
+        ssh_host: str,
+        source_config: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """Run remote parse script and return parsed JSON. Override for custom fetch."""
+        if not self.remote_script:
+            return {}
+
+        script_input = self.build_script_input(source_config)
+        if not script_input:
+            return None
+
+        logger.info(
+            "%s: processing for %s",
+            self.source_name,
+            facility,
+        )
+
+        try:
+            output = await asyncio.to_thread(
+                run_python_script,
+                self.remote_script,
+                script_input,
+                ssh_host=ssh_host,
+                timeout=self.timeout,
+            )
+            return json.loads(output.strip().split("\n")[-1])
+        except Exception as e:
+            logger.error(
+                "%s parse failed for %s: %s",
+                self.source_name,
+                facility,
+                e,
+            )
+            return None
+
+    def build_script_input(self, source_config: dict[str, Any]) -> dict[str, Any] | None:
+        """Build input dict for remote script. Override for custom inputs."""
+        base_dir = source_config.get("base_dir", "")
+        if not base_dir:
+            return None
+        return {"base_dir": base_dir}
+
+    @abc.abstractmethod
+    def persist(
+        self,
+        facility: str,
+        source_config: dict[str, Any],
+        parsed: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Handler-specific graph persistence. Must be overridden."""
+        ...
+
+    def log_stats(self, facility: str, stats: dict[str, Any]) -> None:
+        """Log handler results. Override for custom logging."""
+        logger.info(
+            "%s scanner %s: %s",
+            self.source_name,
+            facility,
+            stats,
+        )
 
 
 def _build_data_access(facility: str, config: dict[str, Any]) -> DataAccess:
@@ -621,6 +870,47 @@ def _build_jec2020_data_access(facility: str, base_dir: str) -> DataAccess:
     )
 
 
+class JEC2020Handler(StaticSourceHandler):
+    """Handler for JEC2020 EFIT++ geometry data."""
+
+    source_name = "jec2020_geometry"
+    config_key = "jec2020_geometry"
+    remote_script = "parse_jec2020.py"
+    timeout = 120
+
+    def build_script_input(
+        self, source_config: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        base_dir = source_config.get("base_dir", "")
+        files = source_config.get("files", [])
+        if not base_dir or not files:
+            return None
+        return {
+            "base_dir": base_dir,
+            "files": [{"path": f["path"], "role": f["role"]} for f in files],
+        }
+
+    def persist(
+        self,
+        facility: str,
+        source_config: dict[str, Any],
+        parsed: dict[str, Any],
+    ) -> dict[str, int]:
+        return _persist_jec2020_nodes(facility, source_config, parsed)
+
+    def log_stats(self, facility: str, stats: dict[str, Any]) -> None:
+        logger.info(
+            "JEC2020 scanner %s: %d probes, %d flux loops, %d PF coils, "
+            "%d iron segments, %d limiter points",
+            facility,
+            stats.get("probes", 0),
+            stats.get("flux_loops", 0),
+            stats.get("pf_coils", 0),
+            stats.get("iron_segments", 0),
+            stats.get("limiter_points", 0),
+        )
+
+
 def _persist_jec2020_nodes(
     facility: str,
     source_config: dict[str, Any],
@@ -1061,6 +1351,44 @@ def _persist_jec2020_nodes(
 # =========================================================================
 
 
+class MCFGHandler(StaticSourceHandler):
+    """Handler for MCFG sensor calibration data."""
+
+    source_name = "sensor_calibration"
+    config_key = "sensor_calibration"
+    remote_script = "parse_mcfg_sensors.py"
+    timeout = 120
+
+    def build_script_input(
+        self, source_config: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        base_dir = source_config.get("base_dir", "")
+        files = source_config.get("files", [])
+        if not base_dir or not files:
+            return None
+        return {
+            "base_dir": base_dir,
+            "files": [{"path": f["path"], "role": f["role"]} for f in files],
+        }
+
+    def persist(
+        self,
+        facility: str,
+        source_config: dict[str, Any],
+        parsed: dict[str, Any],
+    ) -> dict[str, int]:
+        return _persist_mcfg_nodes(facility, source_config, parsed)
+
+    def log_stats(self, facility: str, stats: dict[str, Any]) -> None:
+        logger.info(
+            "MCFG scanner %s: %d coil sensors, %d hall probes, %d calibration epochs",
+            facility,
+            stats.get("coil_sensors", 0),
+            stats.get("hall_probes", 0),
+            stats.get("calibration_epochs", 0),
+        )
+
+
 def _persist_mcfg_nodes(
     facility: str,
     source_config: dict[str, Any],
@@ -1303,6 +1631,43 @@ def _build_magnetics_config_data_access(facility: str, config_dir: str) -> DataA
             "# available for a range of JET pulses."
         ),
     )
+
+
+class MagneticsConfigHandler(StaticSourceHandler):
+    """Handler for magnetics PPF sensor configuration data."""
+
+    source_name = "magnetics_config"
+    config_key = "magnetics_config"
+    remote_script = "parse_magnetics_config.py"
+    timeout = 120
+
+    def build_script_input(
+        self, source_config: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        base_dir = source_config.get("base_dir", "")
+        if not base_dir:
+            return None
+        return {
+            "config_dir": base_dir,
+            "index_file": source_config.get("index_file", ""),
+        }
+
+    def persist(
+        self,
+        facility: str,
+        source_config: dict[str, Any],
+        parsed: dict[str, Any],
+    ) -> dict[str, int]:
+        return _persist_magnetics_config_nodes(facility, source_config, parsed)
+
+    def log_stats(self, facility: str, stats: dict[str, Any]) -> None:
+        logger.info(
+            "Magnetics config scanner %s: %d epochs, %d data nodes, %d signals",
+            facility,
+            stats.get("epochs", 0),
+            stats.get("data_nodes", 0),
+            stats.get("signals", 0),
+        )
 
 
 def _persist_magnetics_config_nodes(
@@ -1593,6 +1958,30 @@ def _persist_magnetics_config_nodes(
 # =========================================================================
 
 
+class PFCoilTurnsHandler(StaticSourceHandler):
+    """Handler for PF coil circuit turns data."""
+
+    source_name = "pf_coil_turns"
+    config_key = "pf_coil_turns"
+    remote_script = "parse_pf_coil_turns.py"
+    timeout = 60
+
+    def persist(
+        self,
+        facility: str,
+        source_config: dict[str, Any],
+        parsed: dict[str, Any],
+    ) -> dict[str, int]:
+        return _persist_pf_coil_turns_nodes(facility, source_config, parsed)
+
+    def log_stats(self, facility: str, stats: dict[str, Any]) -> None:
+        logger.info(
+            "PF coil turns scanner %s: %d coil entries",
+            facility,
+            stats.get("coil_entries", 0),
+        )
+
+
 def _persist_pf_coil_turns_nodes(
     facility: str,
     source_config: dict[str, Any],
@@ -1703,6 +2092,30 @@ def _persist_pf_coil_turns_nodes(
 # =========================================================================
 # Greens Table Version Mapping Ingestion
 # =========================================================================
+
+
+class GreensTableHandler(StaticSourceHandler):
+    """Handler for Green's table version-to-shot mapping."""
+
+    source_name = "greens_table"
+    config_key = "greens_table"
+    remote_script = "parse_greens_table.py"
+    timeout = 60
+
+    def persist(
+        self,
+        facility: str,
+        source_config: dict[str, Any],
+        parsed: dict[str, Any],
+    ) -> dict[str, int]:
+        return _persist_greens_table_nodes(facility, source_config, parsed)
+
+    def log_stats(self, facility: str, stats: dict[str, Any]) -> None:
+        logger.info(
+            "Greens table scanner %s: %d versions",
+            facility,
+            stats.get("versions", 0),
+        )
 
 
 def _persist_greens_table_nodes(
@@ -1824,6 +2237,72 @@ PPF_GEOMETRY_CROSSREFS: dict[str, str] = {
 }
 
 
+class PPFStaticHandler(StaticSourceHandler):
+    """Handler for PPF static geometry signals."""
+
+    source_name = "ppf_static"
+    config_key = "ppf_static"  # Not used — custom lookup
+    remote_script = None
+    needs_ssh = False
+
+    def lookup_config(self, facility: str) -> dict[str, Any] | None:
+        from imas_codex.discovery.base.facility import get_facility
+
+        facility_config = get_facility(facility)
+        ppf_config = facility_config.get("data_systems", {}).get("ppf", {})
+        static_signals = ppf_config.get("static_signals", [])
+        if not static_signals:
+            return None
+        has_static = any(s.get("static", False) for s in static_signals)
+        if not has_static:
+            return None
+        return ppf_config
+
+    async def run(
+        self,
+        facility: str,
+        ssh_host: str,
+        config: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        ppf_config = self.lookup_config(facility)
+        if not ppf_config:
+            return None
+
+        logger.info(
+            "device_xml scanner: processing %d PPF static signals for %s",
+            sum(1 for s in ppf_config.get("static_signals", []) if s.get("static")),
+            facility,
+        )
+
+        try:
+            stats = await asyncio.to_thread(
+                _persist_ppf_static_nodes, facility, ppf_config
+            )
+        except Exception as e:
+            logger.error("PPF static graph persist failed for %s: %s", facility, e)
+            return {"error": str(e)}
+
+        self.log_stats(facility, stats)
+        return stats
+
+    def persist(
+        self,
+        facility: str,
+        source_config: dict[str, Any],
+        parsed: dict[str, Any],
+    ) -> dict[str, int]:
+        # Not used — overridden run() handles everything
+        return _persist_ppf_static_nodes(facility, source_config)
+
+    def log_stats(self, facility: str, stats: dict[str, Any]) -> None:
+        logger.info(
+            "PPF static scanner %s: %d DataAccess nodes, %d cross-references",
+            facility,
+            stats.get("data_access_nodes", 0),
+            stats.get("cross_references", 0),
+        )
+
+
 def _persist_ppf_static_nodes(
     facility: str,
     ppf_config: dict[str, Any],
@@ -1929,8 +2408,8 @@ class DeviceXMLScanner:
 
     Reads device XML files from a bare git repo via SSH, parses geometry
     for PF coils, passive structures, magnetic probes, flux loops, and
-    limiter contours. Also processes JEC2020 static XML sources for
-    next-generation EFIT++ geometry. Creates graph nodes directly.
+    limiter contours. Also processes static source handlers for
+    next-generation geometry data. Creates graph nodes directly.
 
     Config (data_systems.device_xml):
         git_repo: str - Path to bare git repo
@@ -1938,12 +2417,19 @@ class DeviceXMLScanner:
         versions: list - Device geometry versions with pulse ranges
         limiter_versions: list - First-wall contour versions
         systems: list - Named subsystems (informational)
-
-    Also processes data_systems.static_sources entries with name
-    'jec2020_geometry' for JEC2020 XML ingestion.
     """
 
     scanner_type: str = "device_xml"
+
+    # Registered static source handlers
+    handlers: list[StaticSourceHandler] = [
+        JEC2020Handler(),
+        MCFGHandler(),
+        PPFStaticHandler(),
+        MagneticsConfigHandler(),
+        PFCoilTurnsHandler(),
+        GreensTableHandler(),
+    ]
 
     async def scan(
         self,
@@ -2086,35 +2572,11 @@ class DeviceXMLScanner:
         # Build DataAccess for return
         data_access = _build_data_access(facility, config)
 
-        # Process JEC2020 static sources if configured
-        jec2020_stats = await self._scan_jec2020(facility, ssh_host, config)
-        if jec2020_stats:
-            stats["jec2020"] = jec2020_stats
-
-        # Process MCFG sensor calibration if configured
-        mcfg_stats = await self._scan_mcfg(facility, ssh_host, config)
-        if mcfg_stats:
-            stats["mcfg"] = mcfg_stats
-
-        # Process PPF static geometry signals if configured
-        ppf_stats = await self._scan_ppf_static(facility, config)
-        if ppf_stats:
-            stats["ppf_static"] = ppf_stats
-
-        # Process magnetics PPF sensor configuration if configured
-        mc_stats = await self._scan_magnetics_config(facility, ssh_host, config)
-        if mc_stats:
-            stats["magnetics_config"] = mc_stats
-
-        # Process PF coil circuit turns if configured
-        ct_stats = await self._scan_pf_coil_turns(facility, ssh_host, config)
-        if ct_stats:
-            stats["pf_coil_turns"] = ct_stats
-
-        # Process Greens table version mapping if configured
-        gt_stats = await self._scan_greens_table(facility, ssh_host, config)
-        if gt_stats:
-            stats["greens_table"] = gt_stats
+        # Process static source handlers
+        for handler in self.handlers:
+            handler_stats = await handler.run(facility, ssh_host, config)
+            if handler_stats:
+                stats[handler.source_name] = handler_stats
 
         return ScanResult(
             signals=[],  # Signals written directly to graph
@@ -2126,437 +2588,6 @@ class DeviceXMLScanner:
             },
             stats=stats,
         )
-
-    async def _scan_jec2020(
-        self,
-        facility: str,
-        ssh_host: str,
-        config: dict[str, Any],
-    ) -> dict[str, int] | None:
-        """Scan JEC2020 static sources if configured.
-
-        Looks for a static_sources entry named 'jec2020_geometry' in the
-        facility config and processes its XML files.
-        """
-        from imas_codex.discovery.base.facility import get_facility
-
-        facility_config = get_facility(facility)
-        static_sources = facility_config.get("data_systems", {}).get(
-            "static_sources", []
-        )
-
-        # Find JEC2020 source config
-        jec2020_config = None
-        for source in static_sources:
-            if isinstance(source, dict) and source.get("name") == "jec2020_geometry":
-                jec2020_config = source
-                break
-
-        if not jec2020_config:
-            return None
-
-        base_dir = jec2020_config.get("base_dir", "")
-        files = jec2020_config.get("files", [])
-        if not base_dir or not files:
-            return None
-
-        logger.info(
-            "device_xml scanner: processing JEC2020 files from %s (%d files)",
-            base_dir,
-            len(files),
-        )
-
-        # Build script input
-        script_input = {
-            "base_dir": base_dir,
-            "files": [{"path": f["path"], "role": f["role"]} for f in files],
-        }
-
-        try:
-            output = await asyncio.to_thread(
-                run_python_script,
-                "parse_jec2020.py",
-                script_input,
-                ssh_host=ssh_host,
-                timeout=120,
-            )
-            parsed = json.loads(output.strip().split("\n")[-1])
-        except Exception as e:
-            logger.error("JEC2020 parse failed for %s: %s", facility, e)
-            return {"error": str(e)}
-
-        # Persist to graph
-        try:
-            jec_stats = await asyncio.to_thread(
-                _persist_jec2020_nodes,
-                facility,
-                jec2020_config,
-                parsed,
-            )
-        except Exception as e:
-            logger.error("JEC2020 graph persist failed for %s: %s", facility, e)
-            return {"error": str(e)}
-
-        logger.info(
-            "JEC2020 scanner %s: %d probes, %d flux loops, %d PF coils, "
-            "%d iron segments, %d limiter points",
-            facility,
-            jec_stats.get("probes", 0),
-            jec_stats.get("flux_loops", 0),
-            jec_stats.get("pf_coils", 0),
-            jec_stats.get("iron_segments", 0),
-            jec_stats.get("limiter_points", 0),
-        )
-
-        return jec_stats
-
-    async def _scan_mcfg(
-        self,
-        facility: str,
-        ssh_host: str,
-        config: dict[str, Any],
-    ) -> dict[str, int] | None:
-        """Scan MCFG sensor calibration static sources if configured.
-
-        Looks for a static_sources entry named 'sensor_calibration' in the
-        facility config and processes sensor position and calibration files.
-        """
-        from imas_codex.discovery.base.facility import get_facility
-
-        facility_config = get_facility(facility)
-        static_sources = facility_config.get("data_systems", {}).get(
-            "static_sources", []
-        )
-
-        mcfg_config = None
-        for source in static_sources:
-            if isinstance(source, dict) and source.get("name") == "sensor_calibration":
-                mcfg_config = source
-                break
-
-        if not mcfg_config:
-            return None
-
-        base_dir = mcfg_config.get("base_dir", "")
-        files = mcfg_config.get("files", [])
-        if not base_dir or not files:
-            return None
-
-        logger.info(
-            "device_xml scanner: processing MCFG sensor files from %s (%d files)",
-            base_dir,
-            len(files),
-        )
-
-        script_input = {
-            "base_dir": base_dir,
-            "files": [{"path": f["path"], "role": f["role"]} for f in files],
-        }
-
-        try:
-            output = await asyncio.to_thread(
-                run_python_script,
-                "parse_mcfg_sensors.py",
-                script_input,
-                ssh_host=ssh_host,
-                timeout=120,
-            )
-            parsed = json.loads(output.strip().split("\n")[-1])
-        except Exception as e:
-            logger.error("MCFG parse failed for %s: %s", facility, e)
-            return {"error": str(e)}
-
-        try:
-            mcfg_stats = await asyncio.to_thread(
-                _persist_mcfg_nodes,
-                facility,
-                mcfg_config,
-                parsed,
-            )
-        except Exception as e:
-            logger.error("MCFG graph persist failed for %s: %s", facility, e)
-            return {"error": str(e)}
-
-        logger.info(
-            "MCFG scanner %s: %d coil sensors, %d hall probes, %d calibration epochs",
-            facility,
-            mcfg_stats.get("coil_sensors", 0),
-            mcfg_stats.get("hall_probes", 0),
-            mcfg_stats.get("calibration_epochs", 0),
-        )
-
-        return mcfg_stats
-
-    async def _scan_ppf_static(
-        self,
-        facility: str,
-        config: dict[str, Any],
-    ) -> dict[str, int] | None:
-        """Scan PPF static geometry signals if configured.
-
-        Reads data_systems.ppf.static_signals[] from the facility config
-        and creates DataAccess nodes with ACCESSES_GEOMETRY cross-references
-        to device_xml DataNodes.
-        """
-        from imas_codex.discovery.base.facility import get_facility
-
-        facility_config = get_facility(facility)
-        ppf_config = facility_config.get("data_systems", {}).get("ppf", {})
-
-        static_signals = ppf_config.get("static_signals", [])
-        if not static_signals:
-            return None
-
-        # Only process if there are static signals
-        has_static = any(s.get("static", False) for s in static_signals)
-        if not has_static:
-            return None
-
-        logger.info(
-            "device_xml scanner: processing %d PPF static signals for %s",
-            sum(1 for s in static_signals if s.get("static")),
-            facility,
-        )
-
-        try:
-            ppf_stats = await asyncio.to_thread(
-                _persist_ppf_static_nodes,
-                facility,
-                ppf_config,
-            )
-        except Exception as e:
-            logger.error("PPF static graph persist failed for %s: %s", facility, e)
-            return {"error": str(e)}
-
-        logger.info(
-            "PPF static scanner %s: %d DataAccess nodes, %d cross-references",
-            facility,
-            ppf_stats.get("data_access_nodes", 0),
-            ppf_stats.get("cross_references", 0),
-        )
-
-        return ppf_stats
-
-    async def _scan_magnetics_config(
-        self,
-        facility: str,
-        ssh_host: str,
-        config: dict[str, Any],
-    ) -> dict[str, int] | None:
-        """Scan magnetics PPF sensor configuration files.
-
-        Looks for a static_sources entry named 'magnetics_config' and
-        processes the indexr + individual config files to extract sensor
-        definitions for all JET operational epochs.
-        """
-        from imas_codex.discovery.base.facility import get_facility
-
-        facility_config = get_facility(facility)
-        static_sources = facility_config.get("data_systems", {}).get(
-            "static_sources", []
-        )
-
-        mc_config = None
-        for source in static_sources:
-            if isinstance(source, dict) and source.get("name") == "magnetics_config":
-                mc_config = source
-                break
-
-        if not mc_config:
-            return None
-
-        base_dir = mc_config.get("base_dir", "")
-        index_file = mc_config.get("index_file", "")
-        if not base_dir:
-            return None
-
-        logger.info(
-            "device_xml scanner: processing magnetics config from %s",
-            base_dir,
-        )
-
-        script_input = {
-            "config_dir": base_dir,
-            "index_file": index_file,
-        }
-
-        try:
-            output = await asyncio.to_thread(
-                run_python_script,
-                "parse_magnetics_config.py",
-                script_input,
-                ssh_host=ssh_host,
-                timeout=120,
-            )
-            parsed = json.loads(output.strip().split("\n")[-1])
-        except Exception as e:
-            logger.error("Magnetics config parse failed for %s: %s", facility, e)
-            return {"error": str(e)}
-
-        try:
-            mc_stats = await asyncio.to_thread(
-                _persist_magnetics_config_nodes,
-                facility,
-                mc_config,
-                parsed,
-            )
-        except Exception as e:
-            logger.error("Magnetics config persist failed for %s: %s", facility, e)
-            return {"error": str(e)}
-
-        logger.info(
-            "Magnetics config scanner %s: %d epochs, %d data nodes, %d signals",
-            facility,
-            mc_stats.get("epochs", 0),
-            mc_stats.get("data_nodes", 0),
-            mc_stats.get("signals", 0),
-        )
-
-        return mc_stats
-
-    async def _scan_pf_coil_turns(
-        self,
-        facility: str,
-        ssh_host: str,
-        config: dict[str, Any],
-    ) -> dict[str, int] | None:
-        """Scan PF coil circuit turns file.
-
-        Looks for a static_sources entry named 'pf_coil_turns' and
-        processes the cturns file.
-        """
-        from imas_codex.discovery.base.facility import get_facility
-
-        facility_config = get_facility(facility)
-        static_sources = facility_config.get("data_systems", {}).get(
-            "static_sources", []
-        )
-
-        ct_config = None
-        for source in static_sources:
-            if isinstance(source, dict) and source.get("name") == "pf_coil_turns":
-                ct_config = source
-                break
-
-        if not ct_config:
-            return None
-
-        base_dir = ct_config.get("base_dir", "")
-        if not base_dir:
-            return None
-
-        logger.info(
-            "device_xml scanner: processing PF coil turns from %s",
-            base_dir,
-        )
-
-        script_input = {
-            "base_dir": base_dir,
-        }
-
-        try:
-            output = await asyncio.to_thread(
-                run_python_script,
-                "parse_pf_coil_turns.py",
-                script_input,
-                ssh_host=ssh_host,
-                timeout=60,
-            )
-            parsed = json.loads(output.strip().split("\n")[-1])
-        except Exception as e:
-            logger.error("PF coil turns parse failed for %s: %s", facility, e)
-            return {"error": str(e)}
-
-        try:
-            ct_stats = await asyncio.to_thread(
-                _persist_pf_coil_turns_nodes,
-                facility,
-                ct_config,
-                parsed,
-            )
-        except Exception as e:
-            logger.error("PF coil turns persist failed for %s: %s", facility, e)
-            return {"error": str(e)}
-
-        logger.info(
-            "PF coil turns scanner %s: %d coil entries",
-            facility,
-            ct_stats.get("coil_entries", 0),
-        )
-
-        return ct_stats
-
-    async def _scan_greens_table(
-        self,
-        facility: str,
-        ssh_host: str,
-        config: dict[str, Any],
-    ) -> dict[str, int] | None:
-        """Scan Greens table version-to-shot mapping.
-
-        Looks for a static_sources entry named 'greens_table' and
-        processes the green_list file.
-        """
-        from imas_codex.discovery.base.facility import get_facility
-
-        facility_config = get_facility(facility)
-        static_sources = facility_config.get("data_systems", {}).get(
-            "static_sources", []
-        )
-
-        gt_config = None
-        for source in static_sources:
-            if isinstance(source, dict) and source.get("name") == "greens_table":
-                gt_config = source
-                break
-
-        if not gt_config:
-            return None
-
-        base_dir = gt_config.get("base_dir", "")
-        if not base_dir:
-            return None
-
-        logger.info(
-            "device_xml scanner: processing Greens table from %s",
-            base_dir,
-        )
-
-        script_input = {
-            "base_dir": base_dir,
-        }
-
-        try:
-            output = await asyncio.to_thread(
-                run_python_script,
-                "parse_greens_table.py",
-                script_input,
-                ssh_host=ssh_host,
-                timeout=60,
-            )
-            parsed = json.loads(output.strip().split("\n")[-1])
-        except Exception as e:
-            logger.error("Greens table parse failed for %s: %s", facility, e)
-            return {"error": str(e)}
-
-        try:
-            gt_stats = await asyncio.to_thread(
-                _persist_greens_table_nodes,
-                facility,
-                gt_config,
-                parsed,
-            )
-        except Exception as e:
-            logger.error("Greens table persist failed for %s: %s", facility, e)
-            return {"error": str(e)}
-
-        logger.info(
-            "Greens table scanner %s: %d versions",
-            facility,
-            gt_stats.get("versions", 0),
-        )
-
-        return gt_stats
 
     async def check(
         self,

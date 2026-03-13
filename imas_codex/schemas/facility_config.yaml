@@ -711,6 +711,13 @@ classes:
       exclude_ddas:
         description: DDA identifiers to exclude from discovery
         multivalued: true
+      check_shots:
+        description: >-
+          Additional shot numbers to try when the primary reference_pulse
+          returns ier=210002 (data not available for shot). Spread across
+          different campaigns for coverage.
+        multivalued: true
+        range: integer
 
   EDASConfig:
     description: >-

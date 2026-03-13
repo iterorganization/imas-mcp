@@ -569,7 +569,9 @@ def claim_signals_for_enrichment(
                        s.discovery_source AS discovery_source,
                        s.description AS description,
                        s.data_source_node AS data_source_node,
-                       s.facility_id AS facility_id
+                       s.facility_id AS facility_id,
+                       s.is_static AS is_static,
+                       s.hardware_section AS hardware_section
                 """,
                 facility=facility,
                 token=claim_token,
@@ -3307,12 +3309,14 @@ async def enrich_worker(
                 state.enrich_stats,
             )
 
-        # Claim batch of signals (sorted by tdi_function)
-        # Batch size 50 - signals grouped by function so one source code per group
+        # Claim batch of signals
+        # Static/device_xml signals carry richer per-signal context (node
+        # descriptions with geometry values) so use smaller batches to
+        # avoid overloading the LLM context window.
         signals = await asyncio.to_thread(
             claim_signals_for_enrichment,
             state.facility,
-            batch_size=50,
+            batch_size=20,
         )
 
         if not signals:
@@ -3522,6 +3526,8 @@ async def enrich_worker(
                     user_lines.append(f"data_source_name: {signal['data_source_name']}")
                 if signal.get("data_source_path"):
                     user_lines.append(f"data_source_path: {signal['data_source_path']}")
+                if signal.get("is_static"):
+                    user_lines.append("is_static: true")
 
                 # Inject existing description from scanner (e.g., EDAS Japanese desc)
                 if signal.get("description"):
@@ -3571,15 +3577,28 @@ async def enrich_worker(
                     fs = sig_epoch.get("epoch_first_shot")
                     ls = sig_epoch.get("epoch_last_shot")
                     wc = sig_epoch.get("wall_configuration", "")
+                    is_static = signal.get("is_static", False)
                     epoch_parts = []
                     if desc:
                         epoch_parts.append(desc)
                     if fs and ls:
-                        epoch_parts.append(f"valid shots {fs}-{ls}")
+                        if is_static:
+                            # For static signals, frame shot range as
+                            # configuration validity, not measurement shots
+                            epoch_parts.append(
+                                f"configuration valid from shot {fs} to {ls}"
+                            )
+                        else:
+                            epoch_parts.append(f"valid shots {fs}-{ls}")
                     if wc:
                         epoch_parts.append(f"wall: {wc}")
                     if epoch_parts:
-                        user_lines.append(f"epoch: {', '.join(epoch_parts)}")
+                        if is_static:
+                            user_lines.append(
+                                f"configuration_epoch: {', '.join(epoch_parts)}"
+                            )
+                        else:
+                            user_lines.append(f"epoch: {', '.join(epoch_parts)}")
 
                 # Inject wiki context if available
                 wiki_ctx = _find_wiki_context(signal)
