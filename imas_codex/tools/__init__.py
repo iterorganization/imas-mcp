@@ -17,8 +17,10 @@ from .graph_search import (
     GraphIdentifiersTool,
     GraphListTool,
     GraphOverviewTool,
+    GraphPathContextTool,
     GraphPathTool,
     GraphSearchTool,
+    GraphStructureTool,
 )
 from .schema_tool import SchemaTool
 from .version_tool import VersionTool
@@ -47,6 +49,8 @@ class Tools(MCPProvider):
         self.overview_tool = GraphOverviewTool(graph_client)
         self.clusters_tool = GraphClustersTool(graph_client)
         self.identifiers_tool = GraphIdentifiersTool(graph_client)
+        self.path_context_tool = GraphPathContextTool(graph_client)
+        self.structure_tool = GraphStructureTool(graph_client)
         self.cypher_tool = CypherTool(graph_client)
         self.schema_tool = SchemaTool()
         self.version_tool = VersionTool(graph_client)
@@ -58,6 +62,8 @@ class Tools(MCPProvider):
             self.overview_tool,
             self.clusters_tool,
             self.identifiers_tool,
+            self.path_context_tool,
+            self.structure_tool,
             self.cypher_tool,
             self.schema_tool,
             self.version_tool,
@@ -117,6 +123,22 @@ class Tools(MCPProvider):
     async def get_imas_identifiers(self, *args, **kwargs):
         """Delegate to identifiers tool."""
         return await self.identifiers_tool.get_imas_identifiers(*args, **kwargs)
+
+    async def get_imas_path_context(self, *args, **kwargs):
+        """Delegate to path context tool."""
+        return await self.path_context_tool.get_imas_path_context(*args, **kwargs)
+
+    async def analyze_imas_structure(self, *args, **kwargs):
+        """Delegate to structure tool."""
+        return await self.structure_tool.analyze_imas_structure(*args, **kwargs)
+
+    async def export_imas_ids(self, *args, **kwargs):
+        """Delegate to structure tool."""
+        return await self.structure_tool.export_imas_ids(*args, **kwargs)
+
+    async def export_imas_domain(self, *args, **kwargs):
+        """Delegate to structure tool."""
+        return await self.structure_tool.export_imas_domain(*args, **kwargs)
 
     async def search_imas_clusters(self, *args, **kwargs):
         """Delegate to clusters tool."""

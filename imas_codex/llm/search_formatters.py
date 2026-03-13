@@ -706,3 +706,495 @@ def format_fetch_report(chunks: list[dict[str, Any]]) -> str:
             parts.append(f"IMAS paths: {', '.join(sorted(all_imas))}")
 
     return "\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# IMAS tool formatters (for promoted MCP tools)
+# ---------------------------------------------------------------------------
+
+
+def format_check_report(result: Any) -> str:
+    """Format CheckPathsResult into a readable validation report."""
+    if result.error:
+        return f"Error: {result.error}"
+
+    parts: list[str] = []
+    summary = result.summary
+    parts.append(
+        f"## Path Validation ({summary.get('total', 0)} paths: "
+        f"{summary.get('found', 0)} found, "
+        f"{summary.get('not_found', 0)} not found)\n"
+    )
+
+    for item in result.results:
+        status = "FOUND" if item.exists else "NOT FOUND"
+        parts.append(f"  {item.path}: **{status}**")
+        if item.exists:
+            meta = []
+            if item.data_type:
+                meta.append(f"Type: {item.data_type}")
+            if item.units:
+                meta.append(f"Units: {item.units}")
+            if item.ids_name:
+                meta.append(f"IDS: {item.ids_name}")
+            if meta:
+                parts.append(f"    {' | '.join(meta)}")
+        else:
+            if item.suggestion:
+                parts.append(f"    Suggestion: {item.suggestion}")
+            if item.migration:
+                parts.append(f"    Migration: {item.migration}")
+
+    return "\n".join(parts)
+
+
+def format_fetch_paths_report(result: Any) -> str:
+    """Format FetchPathsResult into a detailed path documentation report."""
+    if result.error:
+        return f"Error: {result.error}"
+
+    parts: list[str] = []
+    summary = result.summary
+    fetched = summary.get("fetched", 0)
+    not_found_count = summary.get("not_found", 0)
+    nf_str = f", {not_found_count} not found" if not_found_count else ""
+    parts.append(f"## IMAS Path Details ({fetched} fetched{nf_str})\n")
+
+    for node in result.nodes:
+        parts.append(f"### {node.path}")
+        if node.documentation:
+            parts.append(f'  "{node.documentation}"')
+
+        meta = []
+        if node.ids_name:
+            meta.append(f"IDS: {node.ids_name}")
+        if node.data_type:
+            meta.append(f"Type: {node.data_type}")
+        if node.units:
+            meta.append(f"Units: {node.units}")
+        if meta:
+            parts.append(f"  {' | '.join(meta)}")
+
+        if node.physics_domain:
+            parts.append(f"  Physics domain: {node.physics_domain}")
+        if node.coordinates:
+            parts.append(f"  Coordinates: {', '.join(node.coordinates)}")
+        if hasattr(node, "cluster_labels") and node.cluster_labels:
+            parts.append(
+                f"  Clusters: {', '.join(f'\"{c}\"' for c in node.cluster_labels)}"
+            )
+        parts.append("")
+
+    for nf in result.not_found_paths:
+        parts.append(f"  {nf.path}: NOT FOUND ({nf.reason})")
+        if nf.suggestion:
+            parts.append(f"    Suggestion: {nf.suggestion}")
+
+    for dep in result.deprecated_paths:
+        parts.append(f"  {dep.path}: DEPRECATED (since DD {dep.deprecated_in})")
+        if dep.new_path:
+            parts.append(f"    Replacement: {dep.new_path}")
+
+    return "\n".join(parts)
+
+
+def format_list_report(result: Any) -> str:
+    """Format ListPathsResult into a path listing report."""
+    parts: list[str] = []
+    summary = result.summary
+    parts.append(
+        f"## IMAS Path Listing ({summary.get('total_paths', 0)} total paths)\n"
+    )
+
+    for item in result.results:
+        if item.error:
+            parts.append(f"### {item.query}: ERROR — {item.error}")
+            continue
+
+        header = f"### {item.query} ({item.path_count} paths)"
+        if item.truncated_to:
+            header += f" — showing first {item.truncated_to}"
+        parts.append(header)
+
+        if isinstance(item.paths, list):
+            for p in item.paths:
+                parts.append(f"  {p}")
+        elif isinstance(item.paths, str):
+            parts.append(item.paths)
+        parts.append("")
+
+    return "\n".join(parts)
+
+
+def format_overview_report(result: Any) -> str:
+    """Format GetOverviewResult into an overview report."""
+    parts: list[str] = [result.content, ""]
+
+    if result.physics_domains:
+        parts.append(f"**Physics domains**: {', '.join(result.physics_domains)}")
+
+    if result.ids_statistics:
+        parts.append(f"\n### IDS Summary ({len(result.available_ids)} IDS)\n")
+        # Sort by path count descending
+        sorted_ids = sorted(
+            result.ids_statistics.items(),
+            key=lambda kv: kv[1].get("path_count", 0),
+            reverse=True,
+        )
+        for ids_name, stats in sorted_ids:
+            count = stats.get("path_count", 0)
+            desc = stats.get("description", "")
+            domain = stats.get("physics_domain", "")
+            line = f"  {ids_name} ({count} paths)"
+            if domain:
+                line += f" [{domain}]"
+            parts.append(line)
+            if desc:
+                parts.append(f"    {desc[:120]}")
+
+    if result.mcp_tools:
+        parts.append(f"\n**Available tools**: {', '.join(result.mcp_tools)}")
+
+    return "\n".join(parts)
+
+
+def format_identifiers_report(result: Any) -> str:
+    """Format GetIdentifiersResult into an identifiers report."""
+    parts: list[str] = []
+    analytics = result.analytics
+    parts.append(
+        f"## IMAS Identifier Schemas ({analytics.get('total_schemas', 0)} schemas, "
+        f"{analytics.get('enumeration_space', 0)} total options)\n"
+    )
+
+    for schema in result.schemas:
+        name = schema.get("path", "?")
+        option_count = schema.get("option_count", 0)
+        significance = schema.get("branching_significance", "")
+        desc = schema.get("description", "")
+
+        parts.append(f"### {name} ({option_count} options) [{significance}]")
+        if desc:
+            parts.append(f"  {desc}")
+
+        options = schema.get("options", [])
+        if options:
+            for opt in options[:15]:
+                if isinstance(opt, dict):
+                    parts.append(
+                        f"    {opt.get('index', '?')}: {opt.get('name', '?')}"
+                        f" — {opt.get('description', '')}"
+                    )
+                else:
+                    parts.append(f"    {opt}")
+            if len(options) > 15:
+                parts.append(f"    ... and {len(options) - 15} more")
+        parts.append("")
+
+    return "\n".join(parts)
+
+
+def format_cluster_report(result: dict[str, Any]) -> str:
+    """Format cluster search result dict into a readable report."""
+    if result.get("error"):
+        return f"Error: {result['error']}"
+
+    parts: list[str] = []
+    clusters = result.get("clusters", [])
+    query_type = result.get("query_type", "semantic")
+
+    parts.append(f"## IMAS Clusters ({result.get('clusters_found', 0)} found)\n")
+
+    for cl in clusters:
+        label = cl.get("label", "?")
+        desc = cl.get("description", "")
+        scope = cl.get("scope", "")
+        cl_type = cl.get("type", "")
+        relevance = cl.get("relevance_score")
+        similarity = cl.get("similarity", 0)
+
+        header = f"### {label}"
+        if relevance:
+            header += f" (relevance: {relevance:.2f})"
+        parts.append(header)
+
+        if desc:
+            parts.append(f"  {desc}")
+
+        meta = []
+        if scope:
+            meta.append(f"Scope: {scope}")
+        if cl_type:
+            meta.append(f"Type: {cl_type}")
+        ids_list = cl.get("ids", [])
+        if ids_list:
+            meta.append(f"IDS: {', '.join(ids_list)}")
+        if meta:
+            parts.append(f"  {' | '.join(meta)}")
+
+        paths = cl.get("paths", [])
+        if paths:
+            total = cl.get("total_paths", len(paths))
+            shown = min(len(paths), 10)
+            parts.append(f"  Paths ({shown} of {total}):")
+            for p in paths[:10]:
+                parts.append(f"    {p}")
+            if total > 10:
+                parts.append(f"    ... and {total - 10} more")
+        parts.append("")
+
+    return "\n".join(parts)
+
+
+def format_search_imas_report(result: Any, cluster_result: dict | None = None) -> str:
+    """Format SearchPathsResult + optional clusters into a combined report.
+
+    This is the typed-result version of format_imas_report(), used when
+    the Codex MCP delegates to the shared GraphSearchTool.
+    """
+    parts: list[str] = []
+
+    if result.hits:
+        parts.append(f"## IMAS Paths ({len(result.hits)} matches)\n")
+
+        for hit in result.hits:
+            score_str = f" (score: {hit.score:.2f})" if hit.score else ""
+            parts.append(f"### {hit.path}{score_str}")
+
+            if hit.documentation:
+                parts.append(f'  "{hit.documentation}"')
+
+            meta = []
+            if hit.ids_name:
+                meta.append(f"IDS: {hit.ids_name}")
+            if hit.data_type:
+                meta.append(f"Type: {hit.data_type}")
+            if hit.units:
+                meta.append(f"Unit: {hit.units}")
+            if meta:
+                parts.append(f"  {' | '.join(meta)}")
+
+            if hit.physics_domain:
+                parts.append(f"  Physics domain: {hit.physics_domain}")
+            if hit.coordinates:
+                parts.append(f"  Coordinates: {', '.join(hit.coordinates)}")
+            if hit.lifecycle_status and hit.lifecycle_status != "active":
+                parts.append(f"  Lifecycle: {hit.lifecycle_status}")
+            if hit.structure_reference:
+                parts.append(f"  Structure: {hit.structure_reference}")
+            if hit.introduced_after_version:
+                parts.append(f"  Introduced: DD {hit.introduced_after_version}")
+
+            # Facility cross-references
+            xref = hit.facility_xrefs or {}
+            if any(
+                xref.get(k) for k in ("facility_signals", "wiki_mentions", "code_files")
+            ):
+                parts.append("")
+                sigs = xref.get("facility_signals") or []
+                if sigs:
+                    parts.append(f"  Signals: {', '.join(sigs)}")
+                wiki = xref.get("wiki_mentions") or []
+                if wiki:
+                    parts.append(
+                        f"  Wiki: mentioned in {', '.join(f'\"{s}\"' for s in wiki)}"
+                    )
+                code = xref.get("code_files") or []
+                if code:
+                    parts.append(f"  Code: {', '.join(code)}")
+
+            # Version context
+            vctx = hit.version_context or {}
+            changes = vctx.get("notable_changes") or []
+            if changes:
+                parts.append(
+                    f"\n  **Version history** ({vctx.get('change_count', 0)} changes):"
+                )
+                for ch in changes:
+                    if isinstance(ch, dict):
+                        ver = ch.get("version", "?")
+                        ctype = ch.get("type", "")
+                        summary = ch.get("summary", "")
+                        parts.append(f"    DD {ver} [{ctype}]: {summary}")
+
+            parts.append("")
+
+    if cluster_result and cluster_result.get("clusters"):
+        parts.append(format_cluster_report(cluster_result))
+
+    if not parts:
+        return "No IMAS paths found."
+
+    return "\n".join(parts)
+
+
+def format_path_context_report(result: dict[str, Any]) -> str:
+    """Format get_imas_path_context result into readable text."""
+    parts: list[str] = []
+    path = result.get("path", "")
+    sections = result.get("sections", {})
+    total = result.get("total_connections", 0)
+
+    parts.append(f"## Path Context: {path}")
+    parts.append(f"Total cross-IDS connections: {total}\n")
+
+    if "cluster_siblings" in sections:
+        siblings = sections["cluster_siblings"]
+        parts.append(f"### Cluster Siblings ({len(siblings)} paths)")
+        by_cluster: dict[str, list[dict[str, Any]]] = {}
+        for s in siblings:
+            by_cluster.setdefault(s["cluster"], []).append(s)
+        for cluster, items in by_cluster.items():
+            parts.append(f"\n**{cluster}**")
+            for item in items:
+                doc = f' — {item["doc"]}' if item.get("doc") else ""
+                parts.append(f"  - `{item['path']}`{doc}")
+        parts.append("")
+
+    if "coordinate_partners" in sections:
+        partners = sections["coordinate_partners"]
+        parts.append(f"### Coordinate Partners ({len(partners)} paths)")
+        by_coord: dict[str, list[dict[str, Any]]] = {}
+        for p in partners:
+            by_coord.setdefault(p["coordinate"], []).append(p)
+        for coord, items in by_coord.items():
+            parts.append(f"\n**{coord}**")
+            for item in items:
+                dtype = f" [{item['data_type']}]" if item.get("data_type") else ""
+                parts.append(f"  - `{item['path']}`{dtype}")
+        parts.append("")
+
+    if "unit_companions" in sections:
+        companions = sections["unit_companions"]
+        parts.append(f"### Unit Companions ({len(companions)} paths)")
+        by_unit: dict[str, list[dict[str, Any]]] = {}
+        for c in companions:
+            by_unit.setdefault(c["unit"], []).append(c)
+        for unit, items in by_unit.items():
+            parts.append(f"\n**{unit}**")
+            for item in items:
+                doc = f' — {item["doc"]}' if item.get("doc") else ""
+                parts.append(f"  - `{item['path']}`{doc}")
+        parts.append("")
+
+    if "identifier_links" in sections:
+        links = sections["identifier_links"]
+        parts.append(f"### Identifier Schema Links ({len(links)} paths)")
+        by_schema: dict[str, list[dict[str, Any]]] = {}
+        for lnk in links:
+            by_schema.setdefault(lnk["schema"], []).append(lnk)
+        for schema, items in by_schema.items():
+            parts.append(f"\n**{schema}**")
+            for item in items:
+                parts.append(f"  - `{item['path']}`")
+        parts.append("")
+
+    if not sections:
+        parts.append("No cross-IDS connections found for this path.")
+
+    return "\n".join(parts)
+
+
+def format_structure_report(result: dict[str, Any]) -> str:
+    """Format analyze_imas_structure result into readable text."""
+    parts: list[str] = []
+    ids_name = result.get("ids_name", "")
+
+    parts.append(f"## IDS Structure Analysis: {ids_name}\n")
+    parts.append(f"- Total paths: {result.get('total_paths', 0)}")
+    parts.append(f"- Leaf fields: {result.get('leaf_count', 0)}")
+    parts.append(f"- Structures: {result.get('structure_count', 0)}")
+    parts.append(f"- Max depth: {result.get('max_depth', 0)}")
+    parts.append(f"- Avg depth: {result.get('avg_depth', 0)}")
+
+    domains = result.get("physics_domains", [])
+    if domains:
+        parts.append("\n### Physics Domains")
+        for d in domains:
+            parts.append(f"  - {d['domain']}: {d['count']} paths")
+
+    types = result.get("data_types", [])
+    if types:
+        parts.append("\n### Data Types")
+        for t in types:
+            parts.append(f"  - {t['type']}: {t['count']}")
+
+    arrays = result.get("array_structures", [])
+    if arrays:
+        parts.append(f"\n### Array Structures ({len(arrays)})")
+        for a in arrays[:20]:
+            coords = ", ".join(a.get("coordinates", []))
+            parts.append(f"  - `{a['path']}` → [{coords}]")
+        if len(arrays) > 20:
+            parts.append(f"  ... and {len(arrays) - 20} more")
+
+    cocos = result.get("cocos_fields", [])
+    if cocos:
+        parts.append(f"\n### COCOS-Labeled Fields ({len(cocos)})")
+        for c in cocos:
+            parts.append(f"  - `{c['path']}` ({c['label']})")
+
+    return "\n".join(parts)
+
+
+def format_export_ids_report(result: dict[str, Any]) -> str:
+    """Format export_imas_ids result into readable text."""
+    parts: list[str] = []
+    ids_name = result.get("ids_name", "")
+    path_count = result.get("path_count", 0)
+    leaf_only = result.get("leaf_only", False)
+
+    label = "leaf fields" if leaf_only else "paths"
+    parts.append(f"## IDS Export: {ids_name} ({path_count} {label})\n")
+
+    for p in result.get("paths", []):
+        path = p.get("path", "")
+        doc = p.get("documentation", "")
+        dtype = p.get("data_type", "")
+        units = p.get("units", "")
+
+        meta = []
+        if dtype:
+            meta.append(dtype)
+        if units:
+            meta.append(units)
+        meta_str = f" [{', '.join(meta)}]" if meta else ""
+
+        parts.append(f"- `{path}`{meta_str}")
+        if doc:
+            parts.append(f"  {doc}")
+
+        coords = p.get("coordinates", [])
+        if coords and any(coords):
+            parts.append(f"  Coordinates: {', '.join(c for c in coords if c)}")
+        clusters = p.get("clusters", [])
+        if clusters and any(clusters):
+            parts.append(f"  Clusters: {', '.join(c for c in clusters if c)}")
+
+    return "\n".join(parts)
+
+
+def format_export_domain_report(result: dict[str, Any]) -> str:
+    """Format export_imas_domain result into readable text."""
+    parts: list[str] = []
+    domain = result.get("domain", "")
+    total = result.get("total_paths", 0)
+    ids_count = result.get("ids_count", 0)
+
+    parts.append(f"## Physics Domain: {domain}")
+    parts.append(f"Total paths: {total} across {ids_count} IDS\n")
+
+    by_ids = result.get("by_ids", {})
+    for ids_name, paths in sorted(by_ids.items()):
+        parts.append(f"### {ids_name} ({len(paths)} paths)")
+        for p in paths:
+            path = p.get("path", "")
+            doc = p.get("documentation", "")
+            units = p.get("units", "")
+            units_str = f" [{units}]" if units else ""
+            parts.append(f"  - `{path}`{units_str}")
+            if doc:
+                parts.append(f"    {doc}")
+        parts.append("")
+
+    return "\n".join(parts)

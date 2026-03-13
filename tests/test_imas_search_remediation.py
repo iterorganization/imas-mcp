@@ -41,13 +41,10 @@ def _route_query(routes: dict[str, list[dict[str, Any]]]) -> Any:
 class TestIsGenericMetadataPath:
     """Tests for _is_generic_metadata_path() in both servers."""
 
-    @pytest.fixture(params=["dd_server", "codex_server"])
-    def filter_fn(self, request):
-        """Parametrize over both implementations."""
-        if request.param == "dd_server":
-            from imas_codex.tools.graph_search import _is_generic_metadata_path
-        else:
-            from imas_codex.llm.search_tools import _is_generic_metadata_path
+    @pytest.fixture()
+    def filter_fn(self):
+        """Single implementation in shared tools."""
+        from imas_codex.tools.graph_search import _is_generic_metadata_path
         return _is_generic_metadata_path
 
     def test_filters_description_tail(self, filter_fn):
@@ -203,6 +200,7 @@ class TestTextSearchImasPathsDDServer:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.skip(reason="_text_search_imas_paths_by_query removed; unified in GraphSearchTool")
 class TestTextSearchImasPathsCodexServer:
     """Tests for _text_search_imas_paths_by_query in search_tools.py.
 
@@ -594,6 +592,7 @@ class TestGraphSearchToolHybrid:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.skip(reason="_search_imas removed; unified in GraphSearchTool")
 class TestSearchImasHybridCodex:
     """Tests for _search_imas hybrid text+vector merge in search_tools.py.
 
