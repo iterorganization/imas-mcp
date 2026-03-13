@@ -101,6 +101,7 @@ class CheckItem:
     success: bool | None = None
     error: str | None = None
     physics_domain: str | None = None  # For display on second line
+    scanner_type: str | None = None  # Scanner name for display prefix
 
 
 # =============================================================================
@@ -462,7 +463,11 @@ class DataProgressDisplay(BaseProgressDisplay):
         enrich_domain = ""
         enrich_desc = ""
         if enrich:
+            # Strip facility prefix for facility-scoped CLI display
             enrich_text = enrich.signal_id
+            prefix = f"{self.state.facility}:"
+            if enrich_text.startswith(prefix):
+                enrich_text = enrich_text[len(prefix):]
             if enrich.physics_domain:
                 enrich_domain = enrich.physics_domain
             if enrich.description:
@@ -474,7 +479,16 @@ class DataProgressDisplay(BaseProgressDisplay):
         check_domain = ""
         check_desc = ""
         if validate:
-            check_text = validate.signal_id
+            # Strip facility prefix for facility-scoped CLI display
+            sig_display = validate.signal_id
+            prefix = f"{self.state.facility}:"
+            if sig_display.startswith(prefix):
+                sig_display = sig_display[len(prefix):]
+            # Display as "<scanner> <signal_name>" when scanner_type is known
+            if validate.scanner_type:
+                check_text = f"{validate.scanner_type} {sig_display}"
+            else:
+                check_text = sig_display
             if validate.physics_domain:
                 check_domain = validate.physics_domain
             shot_str = f"shot={validate.shot}" if validate.shot else ""
@@ -651,6 +665,7 @@ class DataProgressDisplay(BaseProgressDisplay):
                 success=item.get("success"),
                 error=item.get("error"),
                 physics_domain=item.get("physics_domain"),
+                scanner_type=item.get("scanner_type"),
             )
         elif self.state.check_queue.is_stale():
             self.state.current_check = None
@@ -824,6 +839,7 @@ class DataProgressDisplay(BaseProgressDisplay):
                     "success": r.get("success"),
                     "error": r.get("error"),
                     "physics_domain": r.get("physics_domain"),
+                    "scanner_type": r.get("scanner_type"),
                 }
                 for r in results
             ]
