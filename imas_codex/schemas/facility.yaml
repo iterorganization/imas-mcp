@@ -2108,7 +2108,6 @@ classes:
         description: >-
           DataAccess node that provides code generation templates.
           The signal's accessor is substituted into DataAccess templates.
-        required: true
         range: DataAccess
         annotations:
           relationship_type: DATA_ACCESS
