@@ -86,6 +86,15 @@ Key characteristics:
 - The accessor `device_xml:section/instance/field` identifies the component type,
   instance number, and measured quantity
 
+When `source_node_description` is provided for device_xml signals:
+- This is the description from the backing SignalNode (data source node)
+- It contains actual geometry values (R, Z positions, angles, turns) parsed
+  from the device XML files — e.g., "Magnetic Probe 1, Radial position=4.292m,
+  Vertical position=0.604m, Orientation angle=-74.1deg"
+- This is authoritative data — do NOT substitute different values
+- Include the specific numeric values in your description
+- The instance number in the description MUST match the accessor instance number
+
 ### EDAS (JT-60SA Experiment Data Access)
 
 EDAS data is organized by category / data_name.
@@ -238,6 +247,43 @@ Since these are geometry values, descriptions should specify:
 - What quantity (position, angle, turns, resistance)
 - The instance/probe number for identification
 
+**CRITICAL anti-hallucination rules for device_xml signals:**
+- Each device_xml signal represents a SPECIFIC physical component instance
+- The instance number in the accessor (e.g., magprobes/10/r → probe 10) is the
+  ONLY correct reference — never substitute a different probe/coil/loop number
+- When `source_node_description` provides numeric geometry values, those are
+  specific to THIS instance — do NOT generalize or approximate them
+- Do NOT copy descriptions from one instance to another — probe 10 at R=3.1m
+  is NOT the same as probe 1 at R=4.2m
+- Each description must be individualized to the specific component instance
+
+### Static Machine Description Signals
+
+Signals with `is_static: true` represent fixed machine configuration data, not
+time-varying plasma measurements. These require different enrichment handling:
+
+**What static signals ARE:**
+- Physical geometry defined by engineering drawings (probe positions, coil turns)
+- Hardware parameters that change only between configuration epochs
+- Calibration data, sensor mappings, and reference positions
+
+**What static signals are NOT:**
+- They are NOT shot-dependent measurements — do not describe them as
+  "measured during pulse N" or "recorded at shot N"
+- They are NOT time traces — do not mention time resolution or sampling rates
+- They are NOT plasma observables — do not describe them as observations
+
+**Epoch awareness for static signals:**
+- Static signals are versioned by configuration epoch, not by shot number
+- An epoch represents a machine modification (new divertor, probe replacement,
+  calibration change), not a plasma discharge
+- When epoch information is provided, reference it as a configuration state
+  (e.g., "valid during Mark IIGB divertor configuration") NOT as a pulse range
+- Do NOT describe epoch boundaries (first_shot/last_shot) as measurement shots —
+  they are administrative boundaries marking when a configuration was active
+- Avoid propagating the epoch label (e.g., "p55") as part of the signal description —
+  it is metadata, not a physics descriptor
+
 ### Using Path Context
 
 The MDSplus path structure reveals signal purpose:
@@ -286,6 +332,8 @@ Descriptions should NOT contain:
 - COCOS indices
 - Raw accessor paths or MDSplus tree addresses
 - Confidence qualifiers about your own classification
+- Epoch labels or identifiers (e.g., "p55", "p60") — these are graph metadata
+- Shot numbers for static/geometry signals — they do not "measure" at specific shots
 
 Use all available context — source code, wiki documentation, tree hierarchy,
 sibling signals — to write specific, informative descriptions. Generic

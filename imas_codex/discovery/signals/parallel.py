@@ -587,6 +587,7 @@ def fetch_tree_context(
 
     For each signal that has a HAS_DATA_SOURCE_NODE→SignalNode edge, returns:
     - tree_path: Full MDSplus path of the SignalNode
+    - node_description: SignalNode's own description (rich for device_xml)
     - parent_path: Parent node's path (one level up)
     - sibling_paths: List of sibling node paths (same parent, same type)
     - tdi_source: TDI function source_code if linked via RESOLVES_TO_NODE
@@ -618,6 +619,7 @@ def fetch_tree_context(
                 })
                 WITH s.id AS signal_id,
                      n.path AS tree_path,
+                     n.description AS node_description,
                      parent.path AS parent_path,
                      collect(DISTINCT sibling.path)[..10] AS sibling_paths,
                      head(collect(DISTINCT tdi.source_code)) AS tdi_source,
@@ -627,7 +629,8 @@ def fetch_tree_context(
                      min(v.first_shot) AS first_shot,
                      max(v.last_shot) AS last_shot,
                      collect(DISTINCT v.description)[..3] AS epoch_descriptions
-                RETURN signal_id, tree_path, parent_path, sibling_paths,
+                RETURN signal_id, tree_path, node_description, parent_path,
+                       sibling_paths,
                        tdi_source, tdi_name, first_version, last_version,
                        first_shot, last_shot, epoch_descriptions
                 """,
@@ -637,6 +640,7 @@ def fetch_tree_context(
             for row in result:
                 entry: dict = {
                     "tree_path": row["tree_path"],
+                    "node_description": row.get("node_description"),
                     "parent_path": row.get("parent_path"),
                     "sibling_paths": row.get("sibling_paths", []),
                 }
@@ -846,6 +850,7 @@ def claim_signals_for_check(
 def mark_signals_enriched(
     signals: list[dict],
     batch_cost: float = 0.0,
+    **kwargs: str,
 ) -> int:
     """Mark signals as enriched with LLM-generated metadata.
 
@@ -862,10 +867,12 @@ def mark_signals_enriched(
     - analysis_code: analysis code name (optional)
     - keywords: searchable keywords (optional)
     - sign_convention: sign convention description (optional)
+    - context_quality: enrichment context quality (low/medium/high)
 
     Args:
         signals: List of signal enrichment results
         batch_cost: Total LLM cost for this batch (distributed across signals)
+        **kwargs: Additional metadata (model, prompt_hash)
     """
     if not signals:
         return 0
@@ -893,7 +900,10 @@ def mark_signals_enriched(
                                              THEN sig.sign_convention ELSE s.sign_convention END,
                     s.unit = CASE WHEN sig.unit IS NOT NULL AND sig.unit <> ''
                                   THEN sig.unit ELSE s.unit END,
+                    s.context_quality = sig.context_quality,
                     s.enrichment_source = 'direct',
+                    s.enrichment_model = $model,
+                    s.enrichment_prompt_hash = $prompt_hash,
                     s.llm_cost = $per_signal_cost,
                     s.enriched_at = datetime(),
                     s.claimed_at = null
@@ -901,6 +911,8 @@ def mark_signals_enriched(
                 signals=signals,
                 enriched=FacilitySignalStatus.enriched.value,
                 per_signal_cost=per_signal_cost,
+                model=kwargs.get("model", ""),
+                prompt_hash=kwargs.get("prompt_hash", ""),
             )
 
             # Create Diagnostic nodes and BELONGS_TO_DIAGNOSTIC edges.
@@ -1362,6 +1374,7 @@ def propagate_source_enrichment(
                 s.analysis_code = CASE WHEN $analysis_code <> '' THEN $analysis_code ELSE s.analysis_code END,
                 s.keywords = $keywords,
                 s.sign_convention = CASE WHEN $sign_convention <> '' THEN $sign_convention ELSE s.sign_convention END,
+                s.context_quality = $context_quality,
                 s.llm_cost = $per_signal_cost,
                 s.enriched_at = datetime(),
                 s.claimed_at = null,
@@ -1378,6 +1391,7 @@ def propagate_source_enrichment(
             analysis_code=enrichment.get("analysis_code", ""),
             keywords=enrichment.get("keywords", []),
             sign_convention=enrichment.get("sign_convention", ""),
+            context_quality=enrichment.get("context_quality", ""),
             per_signal_cost=per_signal_cost,
         )
 
@@ -1453,31 +1467,50 @@ def extract_member_identifier(source_key: str, accessor: str) -> str:
 
 def individualize_members(
     source_key: str,
-    template: str,
+    name_template: str,
+    description_template: str,
     members: list[dict],
 ) -> list[dict]:
-    """Apply a description template to each member signal.
+    """Apply name/description templates to each member signal.
 
     Uses the source_key pattern (with NNN placeholders) to extract the
     member-specific identifier from each accessor, then formats the
-    template.
+    templates. Supports {member_id} and {node_description} placeholders.
 
     Args:
         source_key: Pattern key with NNN placeholders.
-        template: Description template with {member_id} placeholder.
-        members: List of dicts with at minimum 'id' and 'accessor' keys.
+        name_template: Name template with {member_id} placeholder.
+        description_template: Description template with {member_id} and
+            optional {node_description} placeholder.
+        members: List of dicts with 'id', 'accessor', and optional
+            'node_description' keys.
 
     Returns:
-        List of dicts with 'id' and 'description' keys.
+        List of dicts with 'id', 'name', and 'description' keys.
     """
     results = []
     for member in members:
         member_id = extract_member_identifier(source_key, member["accessor"])
+        node_desc = member.get("node_description", "")
         try:
-            description = template.format(member_id=member_id)
+            name = name_template.format(
+                member_id=member_id, node_description=node_desc
+            )
         except (KeyError, IndexError):
-            description = template.replace("{member_id}", member_id)
-        results.append({"id": member["id"], "description": description})
+            name = name_template.replace("{member_id}", member_id)
+        try:
+            description = description_template.format(
+                member_id=member_id, node_description=node_desc
+            )
+        except (KeyError, IndexError):
+            description = description_template.replace(
+                "{member_id}", member_id
+            ).replace("{node_description}", node_desc)
+        results.append({
+            "id": member["id"],
+            "name": name.strip(),
+            "description": description.strip(),
+        })
     return results
 
 
@@ -2883,6 +2916,11 @@ async def enrich_worker(
     # Render system prompt once (contains physics domains from schema)
     system_prompt = render_prompt("signals/enrichment")
 
+    # Compute prompt hash for enrichment analytics tracking
+    import hashlib
+
+    prompt_hash = hashlib.sha256(system_prompt.encode()).hexdigest()[:16]
+
     # Cache for TDI function source code
     tdi_source_cache: dict[str, str] = {}
 
@@ -3044,10 +3082,18 @@ async def enrich_worker(
             subsystem = name.split("/")[0]
             return f"jpf:{subsystem}"
 
-        # device_xml hardware config: group by data source
+        # device_xml hardware config: sub-group by section for targeted enrichment
         dsn = signal.get("data_source_name")
         if dsn == "device_xml":
-            return "device_xml"
+            dsp = signal.get("data_source_path", "")
+            if "/" in dsp:
+                section = dsp.split("/")[0]
+                return f"device_xml:{section}"
+            return "device_xml:other"
+
+        # Other static data sources scanned by device_xml scanner
+        if source in ("jec2020_xml", "magnetics_config"):
+            return f"device_xml:{source}"
 
         # MDSplus tree traversal: group by tree
         if dsn:
@@ -3393,22 +3439,44 @@ async def enrich_worker(
                 )
                 user_lines.append("\nSignals from this subsystem:")
 
-            elif group_key == "device_xml":
-                user_lines.append("\n## JET Device Description (device_xml)")
+            elif group_key.startswith("device_xml:"):
+                section = group_key.split(":")[1]
+
+                # Import section metadata for section-specific headers
+                from imas_codex.discovery.signals.scanners.device_xml import (
+                    SECTION_METADATA,
+                )
+
+                sec_meta = SECTION_METADATA.get(section, {})
+                sec_label = sec_meta.get("label", section)
+                sec_fields = sec_meta.get("fields", {})
+
+                user_lines.append(
+                    f"\n## JET Device Description: {sec_label} ({section})"
+                )
                 user_lines.append(
                     "Hardware geometry and configuration data parsed from "
                     "JET's EFIT device XML files. These are NOT time-varying "
                     "measurement signals — they describe the static physical "
-                    "layout (positions, angles, turns) of sensors, coils, "
-                    "and structural components."
+                    "layout of sensors, coils, and structural components."
                 )
+                if sec_fields:
+                    field_desc = ", ".join(
+                        f"{f} ({m['desc']}, {m['unit']})"
+                        if m.get("unit")
+                        else f"{f} ({m['desc']})"
+                        for f, m in sec_fields.items()
+                    )
+                    user_lines.append(f"Fields in this section: {field_desc}")
                 user_lines.append(
                     "Values are versioned by hardware configuration epoch. "
                     "Each epoch (identified by first_shot boundary) represents "
                     "a hardware state change (e.g., new divertor, probe "
                     "added/removed, wall material change)."
                 )
-                user_lines.append("\nSignals from device description:")
+                user_lines.append(
+                    f"\nSignals from {sec_label} section:"
+                )
 
             elif group_key.startswith("tree:"):
                 tree = group_key[5:]
@@ -3462,6 +3530,12 @@ async def enrich_worker(
                 # Inject tree context if available (HAS_DATA_SOURCE_NODE traversal)
                 sig_tree_ctx = tree_context.get(signal["id"])
                 if sig_tree_ctx:
+                    # Inject SignalNode description (rich for device_xml:
+                    # contains actual geometry values like R, Z, angle)
+                    if sig_tree_ctx.get("node_description"):
+                        user_lines.append(
+                            f"source_node_description: {sig_tree_ctx['node_description']}"
+                        )
                     if sig_tree_ctx.get("parent_path"):
                         user_lines.append(f"parent_node: {sig_tree_ctx['parent_path']}")
                     siblings = sig_tree_ctx.get("sibling_paths", [])
@@ -3618,6 +3692,7 @@ async def enrich_worker(
                     "keywords": result.keywords,
                     "sign_convention": result.sign_convention,
                     "unit": result.unit,
+                    "context_quality": result.context_quality.value,
                 }
                 # Validate LLM-extracted unit via pint
                 if entry["unit"]:
@@ -3649,7 +3724,13 @@ async def enrich_worker(
 
         # Update graph with enrichment cost for historical tracking
         if enriched:
-            await asyncio.to_thread(mark_signals_enriched, enriched, batch_cost)
+            await asyncio.to_thread(
+                mark_signals_enriched,
+                enriched,
+                batch_cost,
+                model=model,
+                prompt_hash=prompt_hash,
+            )
             state.enrich_stats.processed += len(enriched)
             state.enrich_stats.record_batch(len(enriched))
 
@@ -3683,17 +3764,114 @@ async def enrich_worker(
 # =============================================================================
 
 
+def fetch_source_member_node_descriptions(
+    source_id: str,
+    limit: int = 5,
+) -> list[dict]:
+    """Fetch sample SignalNode descriptions for group members.
+
+    Returns a sample of member signals with their backing SignalNode
+    descriptions. For device_xml signals, these contain actual geometry
+    values (R, Z, angles).
+
+    Args:
+        source_id: SignalSource ID
+        limit: Maximum number of samples to return
+
+    Returns:
+        List of dicts with accessor and node_description keys.
+    """
+    try:
+        with GraphClient() as gc:
+            result = gc.query(
+                """
+                MATCH (sg:SignalSource {id: $source_id})
+                MATCH (m:FacilitySignal)-[:MEMBER_OF]->(sg)
+                MATCH (m)-[:HAS_DATA_SOURCE_NODE]->(sn:SignalNode)
+                WHERE sn.description IS NOT NULL
+                WITH m, sn
+                ORDER BY m.accessor
+                WITH collect({
+                    accessor: m.accessor,
+                    node_description: sn.description
+                }) AS all_samples
+                // Take evenly spaced samples for diversity
+                WITH all_samples,
+                     size(all_samples) AS total
+                UNWIND range(0, size(all_samples) - 1) AS idx
+                WITH all_samples[idx] AS sample, idx, total
+                WHERE idx % CASE WHEN total > $limit
+                    THEN toInteger(ceil(toFloat(total) / $limit))
+                    ELSE 1 END = 0
+                RETURN sample.accessor AS accessor,
+                       sample.node_description AS node_description
+                LIMIT $limit
+                """,
+                source_id=source_id,
+                limit=limit,
+            )
+            return [
+                {
+                    "accessor": row["accessor"],
+                    "node_description": row["node_description"],
+                }
+                for row in result
+            ] if result else []
+    except Exception as e:
+        logger.warning(
+            "Could not fetch member node descriptions for %s: %s",
+            source_id, e,
+        )
+        return []
+
+
+def fetch_all_member_node_descriptions(source_id: str) -> dict[str, str]:
+    """Fetch ALL member SignalNode descriptions for a source.
+
+    Returns a mapping from signal ID to node description for every
+    member that has a backing SignalNode with a description.
+
+    Args:
+        source_id: SignalSource ID
+
+    Returns:
+        Dict mapping signal_id → node_description
+    """
+    try:
+        with GraphClient() as gc:
+            result = gc.query(
+                """
+                MATCH (sg:SignalSource {id: $source_id})
+                MATCH (m:FacilitySignal)-[:MEMBER_OF]->(sg)
+                MATCH (m)-[:HAS_DATA_SOURCE_NODE]->(sn:SignalNode)
+                WHERE sn.description IS NOT NULL
+                RETURN m.id AS signal_id, sn.description AS node_description
+                """,
+                source_id=source_id,
+            )
+            return {
+                row["signal_id"]: row["node_description"]
+                for row in result
+            } if result else {}
+    except Exception as e:
+        logger.warning(
+            "Could not fetch all member node descriptions for %s: %s",
+            source_id, e,
+        )
+        return {}
+
+
 async def individualize_source_descriptions(
     facility: str,
     batch_size: int = 20,
     on_progress: Callable | None = None,
 ) -> int:
-    """Generate individualized descriptions for signal source members.
+    """Generate individualized name/description for signal source members.
 
     After propagation copies the representative's description to all members,
-    this makes one batched LLM call per batch of sources to generate a
-    description_template with {member_id} placeholder, then applies it
-    deterministically to each member.
+    this generates name/description templates with {member_id} and
+    {node_description} placeholders, then applies them deterministically
+    to each member using actual SignalNode descriptions.
 
     Sets ``enrichment_source = 'individualized'`` on updated members.
 
@@ -3711,12 +3889,12 @@ async def individualize_source_descriptions(
         acall_llm_structured,
     )
     from imas_codex.discovery.signals.models import (
-        SignalSourceIndividualizationBatch,
+        SignalSourceCodeUnwindBatch,
     )
     from imas_codex.settings import get_model
 
     model = get_model("language")
-    system_prompt = render_prompt("signals/individualization")
+    system_prompt = render_prompt("signals/source_unwind")
 
     # Find enriched sources that haven't been individualized yet
     with GraphClient() as gc:
@@ -3743,15 +3921,19 @@ async def individualize_source_descriptions(
 
     total_individualized = 0
 
+    # Import section metadata for context
+    from imas_codex.discovery.signals.scanners.device_xml import SECTION_METADATA
+
     # Process in batches
     for batch_start in range(0, len(sources), batch_size):
         batch = sources[batch_start : batch_start + batch_size]
 
-        # Build user prompt with source info
+        # Build user prompt with source info + sample node descriptions
         user_lines = []
+        source_node_descs: dict[int, dict[str, str]] = {}
+
         for i, src in enumerate(batch, 1):
             members = src["members"]
-            # Sort members for deterministic ordering
             members.sort(key=lambda m: m.get("accessor", ""))
             example_accessors = [
                 m["accessor"] for m in members[:3] if m.get("accessor")
@@ -3763,8 +3945,57 @@ async def individualize_source_descriptions(
             user_lines.append(f"- **Member count**: {len(members)}")
             if example_accessors:
                 user_lines.append(
-                    f"- **Example accessors**: {', '.join(f'`{a}`' for a in example_accessors)}"
+                    f"- **Example accessors**: "
+                    f"{', '.join(f'`{a}`' for a in example_accessors)}"
                 )
+
+            # Add section metadata context if available
+            group_key = src["group_key"] or ""
+            if "device_xml:" in (example_accessors[0] if example_accessors else ""):
+                # Extract section from accessor pattern
+                parts = group_key.split("/")
+                if parts:
+                    # group_key like "device_xml:magprobes/NNN/r"
+                    # or first accessor like "device_xml:magprobes/1/r"
+                    first_accessor = example_accessors[0] if example_accessors else ""
+                    if ":" in first_accessor:
+                        path_part = first_accessor.split(":", 1)[1]
+                        section = path_part.split("/")[0]
+                        sec_meta = SECTION_METADATA.get(section, {})
+                        if sec_meta:
+                            sec_label = sec_meta.get("label", section)
+                            user_lines.append(f"- **Section**: {sec_label} ({section})")
+                            fields = sec_meta.get("fields", {})
+                            if fields:
+                                field_desc = ", ".join(
+                                    f"{f} ({m['desc']}, {m['unit']})"
+                                    if m.get("unit")
+                                    else f"{f} ({m['desc']})"
+                                    for f, m in fields.items()
+                                )
+                                user_lines.append(f"- **Fields**: {field_desc}")
+
+            # Fetch sample node descriptions for this source
+            samples = await asyncio.to_thread(
+                fetch_source_member_node_descriptions,
+                src["source_id"],
+                limit=5,
+            )
+            if samples:
+                user_lines.append("- **Sample node descriptions**:")
+                for sample in samples:
+                    user_lines.append(
+                        f"  - `{sample['accessor']}`: "
+                        f"\"{sample['node_description']}\""
+                    )
+
+            # Fetch ALL node descriptions for applying templates later
+            all_descs = await asyncio.to_thread(
+                fetch_all_member_node_descriptions,
+                src["source_id"],
+            )
+            source_node_descs[i] = all_descs
+
             user_lines.append("")
 
         user_prompt = "\n".join(user_lines)
@@ -3776,7 +4007,7 @@ async def individualize_source_descriptions(
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
-                response_model=SignalSourceIndividualizationBatch,
+                response_model=SignalSourceCodeUnwindBatch,
                 temperature=0.3,
             )
         except ProviderBudgetExhausted:
@@ -3793,35 +4024,51 @@ async def individualize_source_descriptions(
                 continue
 
             src = batch[idx]
-            template = result.description_template
             members = src["members"]
+            all_descs = source_node_descs.get(result.source_index, {})
 
-            # Apply template deterministically
-            individualized = individualize_members(src["group_key"], template, members)
+            # Enrich members with their node descriptions
+            enriched_members = []
+            for m in members:
+                enriched_members.append({
+                    "id": m["id"],
+                    "accessor": m["accessor"],
+                    "node_description": all_descs.get(m["id"], ""),
+                })
 
-            # Update graph with individualized descriptions
+            # Apply templates deterministically
+            individualized = individualize_members(
+                src["group_key"],
+                result.name_template,
+                result.description_template,
+                enriched_members,
+            )
+
+            # Update graph with individualized name + description
             if individualized:
                 with GraphClient() as gc:
-                    for item in individualized:
-                        gc.query(
-                            """
-                            MATCH (s:FacilitySignal {id: $signal_id})
-                            SET s.description = $description,
-                                s.enrichment_source = 'individualized'
-                            """,
-                            signal_id=item["id"],
-                            description=item["description"],
-                        )
+                    gc.query(
+                        """
+                        UNWIND $items AS item
+                        MATCH (s:FacilitySignal {id: item.id})
+                        SET s.name = item.name,
+                            s.description = item.description,
+                            s.enrichment_source = 'individualized'
+                        """,
+                        items=individualized,
+                    )
                     # Mark source as individualized
                     gc.query(
                         """
                         MATCH (sg:SignalSource {id: $source_id})
                         SET sg.individualized = true,
-                            sg.description_template = $template,
+                            sg.name_template = $name_template,
+                            sg.description_template = $desc_template,
                             sg.variation_field = $variation_field
                         """,
                         source_id=src["source_id"],
-                        template=template,
+                        name_template=result.name_template,
+                        desc_template=result.description_template,
                         variation_field=result.variation_field,
                     )
                 total_individualized += len(individualized)
@@ -3856,6 +4103,23 @@ def _classify_check_error(error: str) -> str:
     if not error:
         return "unknown"
     err_lower = error.lower()
+
+    # PPF-specific errors
+    if "ier=210002" in error:
+        return "not_available_for_shot"
+    if "ier=260000" in error:
+        return "invalid_sequence"
+    if "not_available_for_shot" in err_lower:
+        return "not_available_for_shot"
+
+    # Missing dependencies (infrastructure, not data)
+    if "no module named" in err_lower:
+        return "missing_dependency"
+
+    # Empty path (infrastructure bug, not data)
+    if "empty path" in err_lower:
+        return "empty_path"
+
     if "treeннф" in err_lower or "not found" in err_lower or "TreeNNF" in error:
         return "node_not_found"
     if "TreeNODATA" in error or "no data" in err_lower:
@@ -3878,7 +4142,27 @@ def _classify_check_error(error: str) -> str:
         return "permission_denied"
     if "segmentation" in err_lower or "segfault" in err_lower:
         return "segfault"
+    if "script_crash" in err_lower or "returncode" in err_lower:
+        return "script_crash"
     return "other"
+
+
+# Infrastructure errors are caused by environment/tooling bugs, not data issues.
+# Signals with these error types should be re-checked after fixing the root cause.
+INFRASTRUCTURE_CHECK_ERRORS = {
+    "missing_dependency",
+    "empty_path",
+    "timeout",
+    "connection_error",
+    "segfault",
+    "script_crash",
+    "missing_library",
+}
+
+
+def is_infrastructure_check_error(error_type: str) -> bool:
+    """Return True if the error_type indicates an infrastructure problem."""
+    return error_type in INFRASTRUCTURE_CHECK_ERRORS
 
 
 def _is_excluded_tdi_function(func_name: str, exclude_list: list[str]) -> bool:
@@ -4008,6 +4292,14 @@ async def check_worker(
     # from the same tree all land in one group, overloading MDSplus.
     BATCH_SIZE = 20
 
+    # Static data sources that should route to DeviceXMLScanner (local graph
+    # check) instead of falling through to remote MDSplus checking.
+    STATIC_DATA_SOURCES = {
+        "device_xml", "magnetics_config", "pf_coil_turns",
+        "greens_table", "jec2020_geometry", "sensor_calibration",
+        "jec2020_xml",
+    }
+
     def _get_signal_scanner_type(signal: dict) -> str:
         """Determine which scanner should check this signal."""
         source = signal.get("discovery_source", "")
@@ -4019,7 +4311,12 @@ async def check_worker(
             return "edas"
         if source == "wiki":
             return "wiki"
-        if source in ("device_xml", "jec2020_xml", "magnetics_config"):
+        if source in STATIC_DATA_SOURCES:
+            return "device_xml"
+        # Also check data_source_name for static sources that may have
+        # a different discovery_source value
+        dsn = signal.get("data_source_name", "")
+        if dsn in STATIC_DATA_SOURCES:
             return "device_xml"
         # Default to MDSplus/TDI batch check
         return "mdsplus"

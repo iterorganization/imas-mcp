@@ -231,7 +231,20 @@ class JPFScanner:
 
         batch = []
         for s in signals:
-            batch.append({"id": s.id, "path": s.node_path or s.data_source_path or ""})
+            # JPF signals use accessor as the signal identifier (e.g.,
+            # "DA/C1D-IPLA"), not node_path or data_source_path.  When those
+            # fields are empty the path falls through to "", causing 100% failure.
+            # Prefer data_source_path (raw path), then node_path, then try to
+            # extract from accessor (which wraps as dpf("path", shot)).
+            path = s.data_source_path or s.node_path or ""
+            if not path and s.accessor:
+                # Extract path from dpf("DA/C1D-IPLA", 99896) format
+                acc = s.accessor
+                if 'dpf("' in acc:
+                    path = acc.split('dpf("', 1)[1].split('"', 1)[0]
+                else:
+                    path = acc
+            batch.append({"id": s.id, "path": path})
 
         try:
             output = await async_run_python_script(

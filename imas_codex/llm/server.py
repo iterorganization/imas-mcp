@@ -1,7 +1,7 @@
 """
 Agents MCP Server - Streamlined tools for LLM-driven facility exploration.
 
-This server provides 13 MCP tools organized by purpose:
+This server provides 15 MCP tools organized by purpose:
 
 Unified Search (primary interface):
 - search_signals: Signal search with data access and IMAS enrichment
@@ -24,6 +24,11 @@ Facility Infrastructure (Private Data):
 Configuration:
 - update_facility_config: Read/update facility config (public or private)
 - get_discovery_context: Get facility discovery context
+
+Log Inspection:
+- list_logs: List available log files with sizes and timestamps
+- get_logs: Read logs with level/grep/time filtering
+- tail_logs: Get most recent log entries
 
 Advanced:
 - python: Persistent Python REPL for custom queries
@@ -1251,7 +1256,7 @@ class AgentsServer:
         self._register_prompts()
 
         logger.info(
-            f"Agents MCP server ready with 12 tools and {len(self._prompts)} prompts"
+            f"Agents MCP server ready with 15 tools and {len(self._prompts)} prompts"
         )
 
     def _register_tools(self):
@@ -1821,6 +1826,7 @@ class AgentsServer:
             _search_docs,
             _search_imas,
             _search_signals,
+            _signal_analytics,
         )
 
         @self.mcp.tool()
@@ -1829,6 +1835,9 @@ class AgentsServer:
             facility: str,
             diagnostic: str | None = None,
             physics_domain: str | None = None,
+            check_status: str | None = None,
+            error_type: str | None = None,
+            include_check_details: bool = False,
             k: int = 20,
         ) -> str:
             """Search facility signals with full graph enrichment.
@@ -1844,6 +1853,9 @@ class AgentsServer:
                 facility: Facility id (required, e.g. "tcv", "jet")
                 diagnostic: Optional diagnostic filter (e.g. "magnetics")
                 physics_domain: Optional physics domain filter
+                check_status: Filter by check outcome: "passed", "failed", or "unchecked"
+                error_type: Filter by error classification (e.g. "not_available_for_shot")
+                include_check_details: Include CHECKED_WITH relationship data in results
                 k: Number of results (default 20)
 
             Returns:
@@ -1855,8 +1867,35 @@ class AgentsServer:
                 facility,
                 diagnostic=diagnostic,
                 physics_domain=physics_domain,
+                check_status=check_status,
+                error_type=error_type,
+                include_check_details=include_check_details,
                 k=k,
             )
+
+        @self.mcp.tool()
+        def signal_analytics(
+            facility: str,
+            group_by: list[str] | None = None,
+            filters: dict[str, str] | None = None,
+        ) -> str:
+            """Aggregate signal counts by specified dimensions.
+
+            Use this for batch analytics queries like "how many signals
+            pass/fail checks?" or "signal breakdown by physics domain".
+
+            Args:
+                facility: Facility id (required, e.g. "tcv", "jet")
+                group_by: Dimensions to group by (default: ["status"]).
+                    Allowed: status, physics_domain, data_source_name,
+                    discovery_source, diagnostic, check_status, error_type
+                filters: Optional key-value filters to narrow results
+                    (e.g. {"status": "checked", "physics_domain": "magnetics"})
+
+            Returns:
+                Formatted table with counts and percentages per group.
+            """
+            return _signal_analytics(facility, group_by=group_by, filters=filters)
 
         @self.mcp.tool()
         def search_docs(
@@ -1969,6 +2008,111 @@ class AgentsServer:
                 or image description/OCR text for images.
             """
             return _fetch(resource)
+
+        # =====================================================================
+        # Log Tools (Phase 3: MCP Logs)
+        # =====================================================================
+
+        @self.mcp.tool()
+        def list_logs() -> str:
+            """List available imas-codex log files with sizes and last-modified times.
+
+            Returns a formatted table of log files from
+            ~/.local/share/imas-codex/logs/ including file name, size,
+            age, and last modified timestamp. Use this to discover which
+            logs are available before reading them.
+
+            Returns:
+                Formatted log file listing.
+            """
+            from imas_codex.cli.logging import list_log_files
+
+            files = list_log_files()
+            if not files:
+                return "No log files found in ~/.local/share/imas-codex/logs/"
+
+            lines = ["Available log files:", ""]
+            for f in files:
+                size = f["size_bytes"]
+                if size >= 1_000_000:
+                    size_str = f"{size / 1_000_000:.1f}MB"
+                elif size >= 1_000:
+                    size_str = f"{size / 1_000:.1f}KB"
+                else:
+                    size_str = f"{size}B"
+                lines.append(
+                    f"  {f['name']:<40} {size_str:>8}  "
+                    f"modified {f['modified_iso']}  ({f['age_hours']:.1f}h ago)"
+                )
+            return "\n".join(lines)
+
+        @self.mcp.tool()
+        def get_logs(
+            command: str = "signals",
+            facility: str | None = None,
+            lines: int = 100,
+            level: str = "WARNING",
+            grep: str | None = None,
+            since: str | None = None,
+        ) -> str:
+            """Read imas-codex log files with filtering.
+
+            Reads from ~/.local/share/imas-codex/logs/<command>_<facility>.log.
+            Supports level filtering, text search, and time-based filtering.
+
+            Args:
+                command: CLI command name (e.g. "signals", "wiki", "paths",
+                    "code", "documents").
+                facility: Facility ID (e.g. "jet", "tcv"). If omitted,
+                    reads <command>.log.
+                lines: Maximum number of matching lines to return (default: 100).
+                level: Minimum log level to include. One of: DEBUG, INFO,
+                    WARNING, ERROR, CRITICAL (default: WARNING).
+                grep: Case-insensitive text filter. Only lines containing
+                    this substring are returned.
+                since: Time filter. Relative: "1h", "30m", "2d".
+                    Absolute: "2024-03-13T10:00".
+
+            Returns:
+                Filtered log content. Empty if no matching lines.
+            """
+            from imas_codex.cli.logging import read_log
+
+            return read_log(
+                command=command,
+                facility=facility,
+                lines=lines,
+                level=level,
+                grep=grep,
+                since=since,
+            )
+
+        @self.mcp.tool()
+        def tail_logs(
+            command: str = "signals",
+            facility: str | None = None,
+            lines: int = 50,
+        ) -> str:
+            """Get the most recent log entries (tail -n).
+
+            Returns the last N lines from the log file, regardless of
+            level or content. Quick way to see what's happening now.
+
+            Args:
+                command: CLI command name (e.g. "signals", "wiki", "paths").
+                facility: Facility ID (e.g. "jet", "tcv").
+                lines: Number of lines from the end (default: 50).
+
+            Returns:
+                Last N lines of the log file.
+            """
+            from imas_codex.cli.logging import tail_log
+
+            return tail_log(
+                command=command,
+                facility=facility,
+                lines=lines,
+            )
 
     def _register_prompts(self):
         """Register MCP prompts from markdown files.

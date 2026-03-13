@@ -158,6 +158,9 @@ SIGNAL_RESET_SPECS: dict[str, ResetSpec] = {
             "checked",
             "checked_at",
             "check_retries",
+            "context_quality",
+            "enrichment_model",
+            "enrichment_prompt_hash",
         ],
     ),
     "enriched": ResetSpec(

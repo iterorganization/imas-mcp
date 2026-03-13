@@ -74,6 +74,12 @@ class ServiceStatus:
     consecutive_failures: int = 0
     check_latency_ms: float = 0.0
 
+    # Cumulative health stats (Phase 2.3)
+    total_checks: int = 0
+    total_failures: int = 0
+    _latency_sum: float = 0.0
+    _latency_count: int = 0
+
     @property
     def is_healthy(self) -> bool:
         return self.state in (ServiceState.healthy, ServiceState.unknown)
@@ -84,6 +90,42 @@ class ServiceStatus:
         if self.is_healthy or self.last_healthy == 0:
             return 0.0
         return time.time() - self.last_healthy
+
+    @property
+    def avg_latency_ms(self) -> float:
+        """Average check latency in milliseconds."""
+        if self._latency_count == 0:
+            return 0.0
+        return self._latency_sum / self._latency_count
+
+    @property
+    def failure_ratio(self) -> str:
+        """Failure ratio as "N/M" string (failures/total checks)."""
+        if self.total_checks == 0:
+            return "0/0"
+        return f"{self.total_failures}/{self.total_checks}"
+
+    def record_check(self, healthy: bool, latency_ms: float) -> None:
+        """Record a health check result for cumulative stats."""
+        self.total_checks += 1
+        if not healthy:
+            self.total_failures += 1
+        if healthy and latency_ms > 0:
+            self._latency_sum += latency_ms
+            self._latency_count += 1
+
+    def format_health_summary(self) -> str:
+        """Format as compact health summary for display.
+
+        Example: ``jet (avg 2.3s, fail 3/100)``
+        """
+        parts = [self.detail or self.name]
+        if self._latency_count > 0:
+            avg_s = self.avg_latency_ms / 1000
+            parts.append(f"avg {avg_s:.1f}s")
+        if self.total_failures > 0:
+            parts.append(f"fail {self.failure_ratio}")
+        return f" ({', '.join(parts[1:])})" if len(parts) > 1 else ""
 
 
 # =============================================================================
@@ -708,6 +750,7 @@ class ServiceMonitor:
                 status.last_check = time.time()
                 status.check_latency_ms = latency_ms
                 status.detail = detail
+                status.record_check(healthy, latency_ms)
 
                 if healthy:
                     if not status.is_healthy:

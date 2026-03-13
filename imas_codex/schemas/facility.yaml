@@ -2178,10 +2178,34 @@ classes:
         range: datetime
       enrichment_source:
         description: Source of enrichment (llm_agent, manual, wiki, mdsplus)
+      context_quality:
+        description: >-
+          How much context was available during LLM enrichment (low/medium/high).
+          Signals with 'low' quality are candidates for re-enrichment when
+          better context becomes available.
+      enrichment_model:
+        description: LLM model identifier used for enrichment
+      enrichment_prompt_hash:
+        description: >-
+          Hash of the system prompt version used for enrichment.
+          Enables targeted re-enrichment when prompt changes.
       node_path:
         description: Path within the data source for this signal
       source_node:
         description: "[DEPRECATED] Old name for data_source_node. Retained for backward compatibility."
+      is_static:
+        description: >-
+          Whether this signal represents static machine description data
+          (geometry, hardware configuration) vs time-varying measurement data.
+          Static signals are versioned by configuration epoch, not shot-dependent.
+        range: boolean
+      hardware_section:
+        description: >-
+          Hardware section for static machine description signals.
+          Identifies the component category (e.g., "magprobes", "pfcoils",
+          "pfpassive", "flux", "pfcircuits"). Set during scanning from
+          data_source_path structure. Used for section-specific enrichment
+          grouping and downstream mapping.
       skip_reason:
         description: Why this signal was skipped during enrichment or access checking
       code_evidence_count:
