@@ -231,7 +231,7 @@ class JPFScanner:
 
         batch = []
         for s in signals:
-            batch.append({"id": s.id, "path": s.node_path or ""})
+            batch.append({"id": s.id, "path": s.node_path or s.data_source_path or ""})
 
         try:
             output = await async_run_python_script(
