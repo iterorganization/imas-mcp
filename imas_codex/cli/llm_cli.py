@@ -530,8 +530,104 @@ from imas_codex.cli.services import (  # noqa: E402
 )
 
 
+def _systemd_user_available() -> bool:
+    """Check if systemd user bus is available on the LLM target node.
+
+    Returns False when the user manager is stuck (e.g. ``closing``
+    state after a node switch) or the D-Bus session bus cannot be
+    reached.  This typically happens on RHEL login nodes with shared
+    NFS home directories where ``pam_systemd`` couldn't start a
+    fresh ``user@.service`` for the user.
+    """
+    try:
+        result = _run_llm_remote(
+            "bash -c 'systemctl --user status 2>&1; echo EXIT:$?'",
+            timeout=10,
+        )
+        return "EXIT:0" in result
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return False
+
+
+def _deploy_login_llm_direct() -> None:
+    """Deploy LLM proxy as a direct background process (systemd fallback).
+
+    Used when the systemd user manager isn't available.  Launches the
+    proxy via ``nohup`` and writes a PID file for later management.
+    Also kills any existing proxy process to avoid port conflicts.
+    """
+    port = _llm_port()
+
+    # Kill any existing proxy process on this port
+    _run_llm_remote(
+        f"bash -c 'pid=$(lsof -ti:{port} 2>/dev/null || true); "
+        f'[ -n "$pid" ] && kill $pid 2>/dev/null; sleep 1; '
+        f"pid=$(lsof -ti:{port} 2>/dev/null || true); "
+        f'[ -n "$pid" ] && kill -9 $pid 2>/dev/null; true\'',
+        timeout=15,
+    )
+
+    # Write a launcher script to the remote, then execute it via
+    # setsid + nohup to fully detach from the SSH session.
+    # We bypass run_command() because its `timeout` wrapper prevents
+    # the SSH session from closing when backgrounding long-lived processes.
+    import base64
+
+    launcher = (
+        f"#!/bin/bash\n"
+        f"cd {_PROJECT}\n"
+        f"source {_PROJECT}/.env 2>/dev/null || true\n"
+        f"export LITELLM_CALLBACKS=langfuse\n"
+        f"mkdir -p {_SERVICES_DIR}\n"
+        f"exec $HOME/.local/bin/uv tool run "
+        f"  --with 'litellm[proxy]>=1.81.0' --with 'langfuse>=2.0.0' "
+        f"  -- litellm "
+        f"  --config {_PROJECT}/imas_codex/config/litellm_config.yaml "
+        f"  --host 0.0.0.0 --port {port} --drop_params "
+        f"  >> {_SERVICES_DIR}/llm.log 2>&1\n"
+    )
+    launcher_b64 = base64.b64encode(launcher.encode()).decode()
+    launcher_path = f"{_SERVICES_DIR}/llm-launcher.sh"
+
+    click.echo(f"  Launching LLM proxy directly (port {port})...")
+
+    # Step 1: write launcher script (uses run_command — single command, fine)
+    _run_llm_remote(
+        f"bash -c 'mkdir -p {_SERVICES_DIR} && "
+        f"echo {launcher_b64} | base64 -d > {launcher_path} && "
+        f"chmod +x {launcher_path}'",
+        timeout=15,
+    )
+
+    # Step 2: launch via setsid+nohup — bypass run_command to avoid
+    # the timeout wrapper holding the SSH session open.
+    ssh_host = _llm_ssh()
+    subprocess.run(
+        [
+            "ssh",
+            "-T",
+            ssh_host,
+            f"setsid nohup {launcher_path} </dev/null >/dev/null 2>&1 &",
+        ],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        timeout=10,
+    )
+
+    _wait_for_health(
+        "LLM proxy",
+        f"curl -sf http://localhost:{port}/",
+        timeout_s=120,
+        ssh_host=_llm_ssh(),
+    )
+    click.echo(f"  URL: http://localhost:{port}")
+
+    _stop_stale_llm_instances()
+
+
 def _deploy_login_llm() -> None:
-    """Deploy LLM proxy to login node via systemd.
+    """Deploy LLM proxy to login node via systemd (with direct fallback).
 
     Installs the systemd user service if not present, then starts it.
     The LLM proxy needs outbound HTTPS to reach API providers
@@ -543,8 +639,19 @@ def _deploy_login_llm() -> None:
     the current target hostname so the proxy follows SSH target
     changes.  Stale instances on sibling nodes are stopped.
 
+    Falls back to direct ``nohup`` launch when the systemd user
+    manager isn't available (e.g. stale ``closing`` state after a
+    node switch where ``pam_systemd`` couldn't start a fresh user
+    manager).
+
     Idempotent: no-op if already running on the correct node.
     """
+    # Check if systemd user bus is available
+    if not _systemd_user_available():
+        click.echo("  systemd user session unavailable — using direct launch")
+        _deploy_login_llm_direct()
+        return
+
     # Always re-install to update ConditionHost= to the current target.
     # This is cheap (one SSH round-trip) and ensures the unit file
     # always matches the node we're deploying to.
@@ -622,11 +729,11 @@ WantedBy=default.target
 """
     content_b64 = base64.b64encode(service_content.encode()).decode()
     _run_llm_remote(
-        'mkdir -p "$HOME/.config/systemd/user" && '
+        'bash -c \'mkdir -p "$HOME/.config/systemd/user" && '
         f'echo "{content_b64}" | base64 -d > '
         '"$HOME/.config/systemd/user/imas-codex-llm.service" && '
         "systemctl --user daemon-reload && "
-        "systemctl --user enable imas-codex-llm",
+        "systemctl --user enable imas-codex-llm'",
         timeout=15,
         check=True,
     )
@@ -642,33 +749,40 @@ def _stop_stale_llm_instances() -> None:
     re-written with the current target hostname).
 
     Discovers sibling login nodes from ``/etc/hosts`` on the target
-    node and issues ``systemctl --user stop`` on each one that isn't
-    the current host.  Failures are non-fatal — stale instances will
-    also be prevented from restarting by ``ConditionHost=``.
+    node and issues ``systemctl --user stop`` + port-based kill on
+    each one that isn't the current host.  Failures are non-fatal —
+    stale instances will also be prevented from restarting by
+    ``ConditionHost=``.
     """
+    port = _llm_port()
     try:
-        # Discover sibling login nodes by deriving the naming prefix
-        # from the current hostname (e.g. 98dci4-srv-1006 → 98dci4-srv)
-        # and finding matches in /etc/hosts, then stop the service on each.
-        script = (
-            "this=$(hostname -s); "
-            'prefix=$(echo "$this" | sed "s/-[0-9]*$//"); '
+        # Use base64-encoded script to avoid nested quoting hell.
+        # The script discovers sibling login nodes via /etc/hosts and
+        # stops both systemd services and direct processes on each.
+        import base64
+
+        inner = (
+            "this=$(hostname -s)\n"
+            'prefix=$(echo "$this" | sed "s/-[0-9]*$//")\n'
             'for node in $(grep "$prefix" /etc/hosts '
-            "  | awk '{print $2}' | grep -v gpu); do "
-            '  short=$(echo "$node" | cut -d. -f1); '
-            '  [ "$short" = "$this" ] && continue; '
+            "| awk '{print $2}' | grep -v gpu); do\n"
+            '  short=$(echo "$node" | cut -d. -f1)\n'
+            '  [ "$short" = "$this" ] && continue\n'
             "  result=$(ssh -o BatchMode=yes -o ConnectTimeout=3 "
-            '    -o StrictHostKeyChecking=no "$node" '
-            '    "systemctl --user stop imas-codex-llm 2>/dev/null '
-            '     && echo stopped || true" 2>/dev/null); '
-            '  [ "$result" = "stopped" ] && echo "  Stopped stale proxy on $short"; '
-            "done"
+            '-o StrictHostKeyChecking=no "$node" '
+            f"'systemctl --user stop imas-codex-llm 2>/dev/null; "
+            f"pid=$(lsof -ti:{port} 2>/dev/null || true); "
+            f'[ -n "$pid" ] && kill $pid 2>/dev/null; '
+            "echo stopped' 2>/dev/null)\n"
+            '  [ "$result" = "stopped" ] && echo "  Stopped stale proxy on $short"\n'
+            "done\n"
         )
+        inner_b64 = base64.b64encode(inner.encode()).decode()
+        script = f"echo {inner_b64} | base64 -d | bash"
         output = _run_llm_remote(script, timeout=60)
         if output.strip():
             click.echo(output.strip())
     except Exception:
-        # Non-fatal — ConditionHost= prevents restart anyway
         pass
 
 
@@ -680,6 +794,9 @@ def llm_stop() -> None:
     Examples:
         imas-codex llm stop
     """
+    port = _llm_port()
+
+    # Try systemd first
     try:
         result = _run_llm_remote(
             "systemctl --user is-active imas-codex-llm 2>/dev/null || true",
@@ -692,6 +809,20 @@ def llm_stop() -> None:
                 check=True,
             )
             click.echo("LLM proxy stopped")
+            return
+    except subprocess.CalledProcessError:
+        pass
+
+    # Fall back to port-based kill (for direct-launch mode)
+    try:
+        result = _run_llm_remote(
+            f"bash -c 'pid=$(lsof -ti:{port} 2>/dev/null || true); "
+            f'if [ -n "$pid" ]; then kill $pid 2>/dev/null && echo killed; '
+            f"else echo none; fi'",
+            timeout=10,
+        )
+        if "killed" in result:
+            click.echo("LLM proxy stopped (direct process)")
         else:
             click.echo("LLM proxy not running")
     except subprocess.CalledProcessError:
