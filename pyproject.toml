@@ -248,6 +248,14 @@ location = "titan"      # compute location for embed server (or "local" for in-p
 # Override: IMAS_CODEX_DISCOVERY_THRESHOLD
 threshold = 0.75
 
+[tool.imas-codex.logs]
+# Where CLI commands run and write logs.
+# MCP log tools (get_logs, list_logs, tail_logs) read from this location.
+# "local" = read from local filesystem (default)
+# "<facility>" = SSH to that host to read logs (e.g. "iter")
+# Override: IMAS_CODEX_LOG_LOCATION
+location = "iter"
+
 [tool.imas-codex.language]
 model = "google/gemini-3-flash-preview"
 batch-size = 50

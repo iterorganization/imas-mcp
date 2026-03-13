@@ -410,6 +410,24 @@ def get_discovery_threshold() -> float:
     return float(_get_section("discovery").get("threshold", 0.75))
 
 
+# ─── Log settings ──────────────────────────────────────────────────────────
+
+
+def get_log_location() -> str:
+    """Get the log location — where CLI commands run and write logs.
+
+    When set to a facility name (e.g. ``"iter"``), MCP log tools fetch
+    logs via SSH from that host's ``~/.local/share/imas-codex/logs/``.
+    ``"local"`` reads from the local filesystem (default).
+
+    Priority: IMAS_CODEX_LOG_LOCATION env → [logs].location → 'local'.
+    """
+    if env := os.getenv("IMAS_CODEX_LOG_LOCATION"):
+        return env.lower()
+    location = _get_section("logs").get("location")
+    return str(location).lower() if location else "local"
+
+
 # ─── Model accessors ───────────────────────────────────────────────────────
 # All callers should use get_model("language"), get_model("vision"), etc.
 # The embedding model is accessed via get_embedding_model() for consistency

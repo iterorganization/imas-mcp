@@ -7,6 +7,13 @@ CLI tool *and* facility under ``~/.local/share/imas-codex/logs/``.
 Also provides structured logging utilities for worker diagnostics
 and log reading functions for the MCP logs tools.
 
+Log location routing:
+    MCP log tools automatically read from the correct host.
+    ``[tool.imas-codex.logs].location`` in pyproject.toml controls where
+    logs are fetched from.  When set to a facility name (e.g. ``"iter"``),
+    log tools SSH to that host.  ``"local"`` reads from the local filesystem.
+    Override: ``IMAS_CODEX_LOG_LOCATION`` env var.
+
 Naming convention::
 
     <command>_<facility>.log   # e.g. paths_tcv.log, wiki_jet.log
@@ -18,11 +25,8 @@ Usage from any CLI command::
 
     configure_cli_logging("wiki", facility="tcv", verbose=verbose)
 
-Agents can access the logs via::
-
-    tail -f ~/.local/share/imas-codex/logs/paths_tcv.log   # Follow live
-    ls -la ~/.local/share/imas-codex/logs/                  # List all logs
-    rg ERROR ~/.local/share/imas-codex/logs/                # Search errors
+Agents can access the logs via MCP tools (get_logs, list_logs, tail_logs)
+which automatically route to local or remote based on configuration.
 """
 
 from __future__ import annotations
@@ -30,12 +34,14 @@ from __future__ import annotations
 import logging
 import os
 import re
+import time
 from datetime import datetime, timedelta, timezone
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 # Standard log directory follows XDG convention
 LOG_DIR = Path.home() / ".local" / "share" / "imas-codex" / "logs"
+REMOTE_LOG_DIR = "~/.local/share/imas-codex/logs"
 
 # Structured log format with worker/batch fields
 STRUCTURED_FORMAT = (
@@ -230,9 +236,15 @@ def log_worker_error(
 def list_log_files() -> list[dict[str, str | int | float]]:
     """List available log files with sizes and last-modified times.
 
+    Automatically routes to remote host based on ``[logs].location`` config.
+
     Returns:
         List of dicts with keys: name, path, size_bytes, modified_iso, age_hours.
     """
+    ssh_host = _get_log_ssh_host()
+    if ssh_host:
+        return _remote_list_log_files(ssh_host)
+
     log_dir = get_log_dir()
     results = []
     for path in sorted(log_dir.glob("*.log*")):
@@ -263,6 +275,8 @@ def read_log(
 ) -> str:
     """Read log file with filtering.
 
+    Automatically routes to remote host based on ``[logs].location`` config.
+
     Args:
         command: CLI command name (e.g. "signals", "wiki", "paths").
         facility: Facility ID (e.g. "jet", "tcv"). If None, uses command.log.
@@ -276,6 +290,13 @@ def read_log(
     Returns:
         Filtered log content as string. Empty string if log file not found.
     """
+    ssh_host = _get_log_ssh_host()
+    if ssh_host:
+        return _remote_read_log(
+            ssh_host, command=command, facility=facility,
+            lines=lines, level=level, grep=grep, since=since,
+        )
+
     log_file = get_log_file(command, facility=facility)
     if not log_file.exists():
         # Try with rotated backup
@@ -336,6 +357,8 @@ def tail_log(
 ) -> str:
     """Get the most recent log entries (tail -n).
 
+    Automatically routes to remote host based on ``[logs].location`` config.
+
     Returns the last ``lines`` lines from the log file, regardless of
     level or content. Efficient: reads from end of file.
 
@@ -347,6 +370,10 @@ def tail_log(
     Returns:
         Last N lines of the log file.
     """
+    ssh_host = _get_log_ssh_host()
+    if ssh_host:
+        return _remote_tail_log(ssh_host, command=command, facility=facility, lines=lines)
+
     log_file = get_log_file(command, facility=facility)
     if not log_file.exists():
         return f"Log file not found: {log_file}"
@@ -386,3 +413,181 @@ def _parse_since(since: str) -> datetime | None:
             continue
 
     return None
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Remote log routing
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def _get_log_ssh_host() -> str | None:
+    """Return the SSH host for remote log access, or None for local.
+
+    Uses ``get_log_location()`` from settings. If the location is a
+    facility name (not ``"local"``), resolves it to an SSH host via
+    ``is_local_host`` to handle on-facility vs off-facility access.
+    """
+    from imas_codex.settings import get_log_location
+
+    location = get_log_location()
+    if location == "local":
+        return None
+
+    # Check if 'location' actually points to the local machine
+    from imas_codex.remote.executor import is_local_host
+
+    if is_local_host(location):
+        return None
+
+    return location
+
+
+def _remote_log_file(command: str, facility: str | None = None) -> str:
+    """Return the remote log file path string."""
+    stem = f"{command}_{facility}" if facility else command
+    return f"{REMOTE_LOG_DIR}/{stem}.log"
+
+
+def _remote_list_log_files(ssh_host: str) -> list[dict[str, str | int | float]]:
+    """List log files on a remote host via SSH."""
+    import json
+    from imas_codex.remote.executor import run_command
+
+    # Use a Python one-liner for reliable JSON output
+    script = (
+        "import json, os, time; "
+        f"d = os.path.expanduser('{REMOTE_LOG_DIR}'); "
+        "files = []; "
+        "[files.append({'name': f, "
+        "'path': os.path.join(d, f), "
+        "'size_bytes': os.stat(os.path.join(d, f)).st_size, "
+        "'modified_epoch': os.stat(os.path.join(d, f)).st_mtime}) "
+        "for f in sorted(os.listdir(d)) "
+        "if os.path.isfile(os.path.join(d, f)) and f.endswith(('.log', '.log.1', '.log.2', '.log.3'))]; "
+        "print(json.dumps(files))"
+    )
+
+    try:
+        output = run_command(f"python3 -c {_shell_quote(script)}", ssh_host=ssh_host, timeout=15)
+        # Parse the JSON output (last line)
+        for line in reversed(output.strip().split("\n")):
+            line = line.strip()
+            if line.startswith("["):
+                raw = json.loads(line)
+                break
+        else:
+            return []
+
+        now = time.time()
+        results = []
+        for f in raw:
+            mtime = f["modified_epoch"]
+            modified = datetime.fromtimestamp(mtime, tz=timezone.utc)
+            age_hours = (now - mtime) / 3600
+            results.append({
+                "name": f["name"],
+                "path": f["path"],
+                "size_bytes": f["size_bytes"],
+                "modified_iso": modified.isoformat(),
+                "age_hours": round(age_hours, 1),
+            })
+        return results
+    except Exception as e:
+        logging.getLogger(__name__).warning("Remote log listing failed: %s", e)
+        return []
+
+
+def _remote_read_log(
+    ssh_host: str,
+    command: str = "signals",
+    facility: str | None = None,
+    lines: int = 100,
+    level: str = "WARNING",
+    grep: str | None = None,
+    since: str | None = None,
+) -> str:
+    """Read and filter log file on remote host via SSH.
+
+    Uses grep/awk on the remote side for efficiency — only matching lines
+    are transferred over the network.
+    """
+    from imas_codex.remote.executor import run_command
+
+    log_file = _remote_log_file(command, facility)
+
+    # Build a pipeline: cat | grep level | grep text | grep since | tail
+    parts = [f"cat {log_file} 2>/dev/null"]
+
+    # Level filter — use grep to match log level prefixes at or above minimum
+    level_upper = level.upper()
+    levels_above = _levels_at_or_above(level_upper)
+    if levels_above and level_upper != "DEBUG":
+        level_pattern = "|".join(levels_above)
+        parts.append(f"grep -E '({level_pattern})'")
+
+    # Since filter — use awk to compare timestamps
+    if since:
+        since_dt = _parse_since(since)
+        if since_dt:
+            since_str = since_dt.strftime("%Y-%m-%d %H:%M:%S")
+            # awk: extract timestamp, compare lexicographically
+            parts.append(
+                f"awk -v since='{since_str}' '"
+                '{ts=substr($0,1,19); if(ts >= since) print}'
+                "'"
+            )
+
+    # Text filter
+    if grep:
+        parts.append(f"grep -i {_shell_quote(grep)}")
+
+    # Take last N lines
+    parts.append(f"tail -n {lines}")
+
+    cmd = " | ".join(parts)
+
+    try:
+        output = run_command(cmd, ssh_host=ssh_host, timeout=30)
+        if "(no output)" in output and "not found" not in output.lower():
+            return ""
+        return output
+    except Exception as e:
+        return f"Error reading remote log: {e}"
+
+
+def _remote_tail_log(
+    ssh_host: str,
+    command: str = "signals",
+    facility: str | None = None,
+    lines: int = 50,
+) -> str:
+    """Tail log file on remote host via SSH."""
+    from imas_codex.remote.executor import run_command
+
+    log_file = _remote_log_file(command, facility)
+
+    try:
+        output = run_command(
+            f"tail -n {lines} {log_file} 2>/dev/null",
+            ssh_host=ssh_host,
+            timeout=15,
+        )
+        return output if output != "(no output)" else f"Log file not found: {log_file}"
+    except Exception as e:
+        return f"Error reading remote log: {e}"
+
+
+def _levels_at_or_above(level: str) -> list[str]:
+    """Return log level names at or above the given level."""
+    ordered = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+    try:
+        idx = ordered.index(level)
+        return ordered[idx:]
+    except ValueError:
+        return ordered
+
+
+def _shell_quote(s: str) -> str:
+    """Shell-quote a string for remote execution."""
+    import shlex
+    return shlex.quote(s)
