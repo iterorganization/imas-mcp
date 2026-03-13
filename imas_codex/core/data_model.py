@@ -78,6 +78,9 @@ class IdsNode(BaseModel):
     identifier_schema: IdentifierSchema | None = (
         None  # Schema information for identifier fields
     )
+    version_changes: list[dict[str, Any]] | None = (
+        None  # Notable version changes (sign_convention, units, etc.)
+    )
 
     # Additional XML attributes
     coordinate1: str | None = None

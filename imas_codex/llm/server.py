@@ -205,6 +205,41 @@ def _run_async(coro):
         return asyncio.run(coro)
 
 
+def _format_version_context_report(result: dict) -> str:
+    """Format version context result into a readable report."""
+    if result.get("error"):
+        return f"Error: {result['error']}"
+
+    paths_data = result.get("paths", {})
+    if not paths_data:
+        return "No version context found for the requested paths."
+
+    lines = [
+        f"Version Context Report: {result.get('total_paths', 0)} paths queried, "
+        f"{result.get('paths_with_changes', 0)} with changes",
+        "",
+    ]
+
+    for path_id, ctx in paths_data.items():
+        changes = ctx.get("notable_changes", [])
+        if changes:
+            lines.append(f"**{path_id}** ({len(changes)} change(s)):")
+            for c in changes:
+                version = c.get("version", "?")
+                ctype = c.get("type", "?")
+                summary = c.get("summary", "")
+                lines.append(f"  - v{version} [{ctype}]: {summary}")
+        else:
+            lines.append(f"**{path_id}**: no notable changes")
+
+    not_found = result.get("not_found", [])
+    if not_found:
+        lines.append("")
+        lines.append(f"Not found: {', '.join(not_found)}")
+
+    return "\n".join(lines)
+
+
 def _init_repl() -> dict[str, Any]:
     """Initialize the persistent REPL environment with all utilities.
 
@@ -2182,25 +2217,31 @@ class AgentsServer:
             paths: str,
             ids: str | None = None,
             dd_version: int | None = None,
+            include_version_history: bool = False,
         ) -> str:
             """Get full documentation for IMAS paths including units, coordinates, cluster membership.
 
             Returns detailed information for each path: documentation text,
             data type, units, coordinate specs, semantic cluster labels,
-            and physics domain classification.
+            physics domain classification, identifier schemas, and
+            optionally version change history.
 
             Args:
                 paths: Space or comma-delimited IMAS paths
                     (e.g., "equilibrium/time_slice/profiles_1d/psi")
                 ids: Optional IDS prefix to prepend
                 dd_version: Filter by DD major version (e.g., 3 or 4)
+                include_version_history: Include notable version changes
 
             Returns:
                 Formatted path documentation report.
             """
             tools = _get_imas_tools()
             result = _run_async(
-                tools.fetch_imas_paths(paths=paths, ids=ids, dd_version=dd_version)
+                tools.fetch_imas_paths(
+                    paths=paths, ids=ids, dd_version=dd_version,
+                    include_version_history=include_version_history,
+                )
             )
             return format_fetch_paths_report(result)
 
@@ -2286,22 +2327,25 @@ class AgentsServer:
 
         @self.mcp.tool()
         def search_imas_clusters(
-            query: str,
+            query: str | None = None,
             scope: str | None = None,
             ids_filter: str | None = None,
+            section_only: bool = False,
             dd_version: int | None = None,
         ) -> str:
             """Search semantic clusters of related IMAS data paths.
 
             Finds groups of semantically related paths across IDS
-            boundaries. Can search by natural language or find clusters
-            containing a specific path.
+            boundaries. Can search by natural language, find clusters
+            containing a specific path, or list all clusters for an IDS.
 
             Args:
                 query: Natural language description or exact IMAS path
-                    (e.g., "boundary geometry" or "equilibrium/time_slice/boundary/outline/r")
+                    (e.g., "boundary geometry" or "equilibrium/time_slice/boundary/outline/r").
+                    Optional when ids_filter is provided (listing mode).
                 scope: Filter by cluster scope: "global", "domain", or "ids"
                 ids_filter: Limit to clusters from specific IDS
+                section_only: If true, only return clusters containing structural sections
                 dd_version: Filter by DD major version (e.g., 3 or 4)
 
             Returns:
@@ -2313,6 +2357,7 @@ class AgentsServer:
                     query=query,
                     scope=scope,
                     ids_filter=ids_filter,
+                    section_only=section_only,
                     dd_version=dd_version,
                 )
             )
@@ -2434,6 +2479,28 @@ class AgentsServer:
                 )
             )
             return format_export_domain_report(result)
+
+        @self.mcp.tool()
+        def get_dd_version_context(
+            paths: str,
+        ) -> str:
+            """Get version change history for specific IMAS paths.
+
+            Returns notable changes across DD versions for each path,
+            including sign_convention, coordinate_convention, units,
+            and definition_clarification changes.
+
+            Args:
+                paths: Space or comma-delimited IMAS paths to check
+
+            Returns:
+                Formatted version context report per path.
+            """
+            tools = _get_imas_tools()
+            result = _run_async(
+                tools.get_dd_version_context(paths=paths)
+            )
+            return _format_version_context_report(result)
 
         @self.mcp.tool()
         def fetch(resource: str) -> str:

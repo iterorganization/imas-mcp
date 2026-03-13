@@ -51,6 +51,7 @@ def fetch_imas_subtree(
     gc: GraphClient | None = None,
     leaf_only: bool = False,
     max_paths: int | None = None,
+    dd_version: int | None = None,
 ) -> list[dict[str, Any]]:
     """Return IDS tree structure under *path* (or IDS root).
 
@@ -63,11 +64,15 @@ def fetch_imas_subtree(
     if gc is None:
         gc = GraphClient()
 
+    from imas_codex.tools.graph_search import _dd_version_clause
+
     prefix = f"{ids_name}/{path}" if path else ids_name
     leaf_filter = (
         "AND NOT p.data_type IN ['STRUCTURE', 'STRUCT_ARRAY']" if leaf_only else ""
     )
     limit_clause = f"LIMIT {max_paths}" if max_paths else ""
+    dd_params: dict[str, Any] = {}
+    dd_clause = _dd_version_clause("p", dd_version, dd_params)
 
     # When no slash in prefix, match by ids field
     if "/" not in prefix:
@@ -75,6 +80,7 @@ def fetch_imas_subtree(
             MATCH (p:IMASNode)
             WHERE p.ids = $ids_name
             {leaf_filter}
+            {dd_clause}
             OPTIONAL MATCH (p)-[:HAS_UNIT]->(u:Unit)
             RETURN p.id AS id, p.name AS name, p.data_type AS data_type,
                    p.node_type AS node_type, p.documentation AS documentation,
@@ -82,12 +88,13 @@ def fetch_imas_subtree(
             ORDER BY p.id
             {limit_clause}
         """
-        return gc.query(cypher, ids_name=ids_name)
+        return gc.query(cypher, ids_name=ids_name, **dd_params)
 
     cypher = f"""
         MATCH (p:IMASNode)
         WHERE p.id STARTS WITH $prefix
         {leaf_filter}
+        {dd_clause}
         OPTIONAL MATCH (p)-[:HAS_UNIT]->(u:Unit)
         RETURN p.id AS id, p.name AS name, p.data_type AS data_type,
                p.node_type AS node_type, p.documentation AS documentation,
@@ -95,7 +102,7 @@ def fetch_imas_subtree(
         ORDER BY p.id
         {limit_clause}
     """
-    return gc.query(cypher, prefix=prefix + "/")
+    return gc.query(cypher, prefix=prefix + "/", **dd_params)
 
 
 def fetch_imas_fields(
@@ -103,6 +110,7 @@ def fetch_imas_fields(
     paths: list[str],
     *,
     gc: GraphClient | None = None,
+    dd_version: int | None = None,
 ) -> list[dict[str, Any]]:
     """Return detailed field info for specific IMAS paths.
 
@@ -120,7 +128,7 @@ def fetch_imas_fields(
     ]
 
     tool = GraphPathTool(gc)
-    result = _run_async(tool.fetch_imas_paths(paths=qualified))
+    result = _run_async(tool.fetch_imas_paths(paths=qualified, dd_version=dd_version))
     if isinstance(result, ToolError):
         return []
     return result.as_dicts()
@@ -132,6 +140,7 @@ def search_imas_semantic(
     *,
     gc: GraphClient | None = None,
     k: int = 20,
+    dd_version: int | None = None,
 ) -> list[dict[str, Any]]:
     """Semantic search for IMAS paths using vector index.
 
@@ -145,7 +154,10 @@ def search_imas_semantic(
 
     tool = GraphSearchTool(gc)
     result = _run_async(
-        tool.search_imas_paths(query=query, ids_filter=ids_name, max_results=k)
+        tool.search_imas_paths(
+            query=query, ids_filter=ids_name, max_results=k,
+            dd_version=dd_version,
+        )
     )
     if isinstance(result, ToolError):
         return []
