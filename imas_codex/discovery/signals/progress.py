@@ -32,14 +32,16 @@ from imas_codex.discovery.base.progress import (
     PipelineRowConfig,
     ResourceConfig,
     StreamQueue,
+    WorkerStats,
     build_pipeline_section,
     build_resource_section,
     clean_text,
+    format_rate,
     format_time,
 )
 
 if TYPE_CHECKING:
-    from imas_codex.discovery.base.progress import WorkerStats
+    pass
 
 
 # =============================================================================
@@ -168,6 +170,11 @@ class DataProgressState:
     current_tree: str | None = None  # Currently scanning tree
     enrich_processing: bool = False
     check_processing: bool = False
+
+    # Worker stats references (for scanner status, error rates, connection timing)
+    discover_stats: WorkerStats = field(default_factory=WorkerStats)
+    extract_stats: WorkerStats = field(default_factory=WorkerStats)
+    check_stats: WorkerStats = field(default_factory=WorkerStats)
 
     # Streaming queues (extract/promote share scan_queue display slot)
     scan_queue: StreamQueue = field(
@@ -391,7 +398,9 @@ class DataProgressDisplay(BaseProgressDisplay):
             if ext.node_count > 0:
                 scan_desc = f"{ext.node_count:,} nodes"
             else:
-                scan_desc = "connecting..."
+                # Use connection timing from extract_stats if available
+                conn_status = self.state.extract_stats.format_connection_status()
+                scan_desc = conn_status or "connecting..."
         elif prom:
             scan_text = f"promoting {prom.data_source_name}"
             parts = []
@@ -502,6 +511,10 @@ class DataProgressDisplay(BaseProgressDisplay):
 
         # --- Build pipeline rows ---
 
+        # Scanner status line as description fallback for SCAN row
+        scanner_status = self.state.discover_stats.format_scanner_status()
+        scan_desc_fallback = scanner_status or ""
+
         rows = [
             PipelineRowConfig(
                 name="SCAN",
@@ -514,6 +527,7 @@ class DataProgressDisplay(BaseProgressDisplay):
                 worker_annotation=scan_ann,
                 primary_text=scan_text,
                 description=scan_desc,
+                description_fallback=scan_desc_fallback,
                 is_processing=scan_processing,
                 is_complete=scan_complete,
                 processing_label="scanning...",
@@ -583,6 +597,15 @@ class DataProgressDisplay(BaseProgressDisplay):
         if self.state.signals_skipped > 0:
             stats.append(("skipped", str(self.state.signals_skipped), "dim"))
 
+        # Scanner timing (Phase 1.3)
+        scanner_timing = self.state.discover_stats.format_scanner_timing()
+
+        # Error rate annotation (Phase 2.1) — show if check errors are notable
+        check_err_pct = self.state.check_stats.error_rate_pct
+        if check_err_pct >= 5:
+            style = self.state.check_stats.error_health_style
+            stats.append((f"err {check_err_pct:.0f}%", "", style))
+
         config = ResourceConfig(
             elapsed=self.state.elapsed,
             eta=None if self.state.discover_only else self.state.eta_seconds,
@@ -596,6 +619,7 @@ class DataProgressDisplay(BaseProgressDisplay):
                 ("enrich", self.state.pending_enrich),
                 ("check", self.state.pending_check),
             ],
+            scanner_timing=scanner_timing,
         )
         return build_resource_section(config, self.gauge_width)
 
@@ -680,8 +704,9 @@ class DataProgressDisplay(BaseProgressDisplay):
         current_tree: str | None = None,
     ) -> None:
         """Update seed/epoch worker state."""
+        self.state.discover_stats = stats
         self.state.run_discovered = stats.processed
-        self.state.discover_rate = stats.rate
+        self.state.discover_rate = stats.ema_rate or stats.active_rate
 
         if current_tree:
             self.state.current_tree = current_tree
@@ -712,7 +737,8 @@ class DataProgressDisplay(BaseProgressDisplay):
                 for r in results
             ]
             max_rate = 5.0
-            display_rate = min(stats.rate, max_rate) if stats.rate else 2.0
+            effective = stats.ema_rate or stats.active_rate
+            display_rate = min(effective, max_rate) if effective else 2.0
             self.state.scan_queue.add(items, display_rate)
 
         self._refresh()
@@ -724,8 +750,9 @@ class DataProgressDisplay(BaseProgressDisplay):
         results: list[dict] | None = None,
     ) -> None:
         """Update extract worker state."""
+        self.state.extract_stats = stats
         self.state.run_extracted = stats.processed
-        self.state.extract_rate = stats.rate
+        self.state.extract_rate = stats.ema_rate or stats.active_rate
 
         if "extracting" in message.lower() or "v" in message.lower():
             self.state.extract_processing = True
@@ -743,7 +770,8 @@ class DataProgressDisplay(BaseProgressDisplay):
                 for r in results
             ]
             max_rate = 3.0
-            display_rate = min(stats.rate, max_rate) if stats.rate else 1.0
+            effective = stats.ema_rate or stats.active_rate
+            display_rate = min(effective, max_rate) if effective else 1.0
             self.state.extract_queue.add(items, display_rate)
 
         self._refresh()
@@ -756,7 +784,7 @@ class DataProgressDisplay(BaseProgressDisplay):
     ) -> None:
         """Update units/promote worker state."""
         self.state.run_promoted = stats.processed
-        self.state.promote_rate = stats.rate
+        self.state.promote_rate = stats.ema_rate or stats.active_rate
 
         if "promoting" in message.lower() or "units" in message.lower():
             self.state.promote_processing = True
@@ -773,7 +801,8 @@ class DataProgressDisplay(BaseProgressDisplay):
                 for r in results
             ]
             max_rate = 3.0
-            display_rate = min(stats.rate, max_rate) if stats.rate else 1.0
+            effective = stats.ema_rate or stats.active_rate
+            display_rate = min(effective, max_rate) if effective else 1.0
             self.state.promote_queue.add(items, display_rate)
 
         self._refresh()
@@ -786,7 +815,7 @@ class DataProgressDisplay(BaseProgressDisplay):
     ) -> None:
         """Update enrich worker state."""
         self.state.run_enriched = stats.processed
-        self.state.enrich_rate = stats.rate
+        self.state.enrich_rate = stats.ema_rate or stats.active_rate
         self.state._run_enrich_cost = stats.cost
 
         msg_lower = message.lower()
@@ -811,7 +840,8 @@ class DataProgressDisplay(BaseProgressDisplay):
                 for r in results
             ]
             max_rate = 2.0
-            display_rate = min(stats.rate, max_rate) if stats.rate else 0.5
+            effective = stats.ema_rate or stats.active_rate
+            display_rate = min(effective, max_rate) if effective else 0.5
             self.state.enrich_queue.add(items, display_rate)
 
         self._refresh()
@@ -823,8 +853,9 @@ class DataProgressDisplay(BaseProgressDisplay):
         results: list[dict] | None = None,
     ) -> None:
         """Update validate worker state."""
+        self.state.check_stats = stats
         self.state.run_checked = stats.processed
-        self.state.check_rate = stats.rate
+        self.state.check_rate = stats.ema_rate or stats.active_rate
 
         if "testing" in message.lower() or "validating" in message.lower():
             self.state.check_processing = True
@@ -844,7 +875,8 @@ class DataProgressDisplay(BaseProgressDisplay):
                 for r in results
             ]
             max_rate = 2.0
-            display_rate = min(stats.rate, max_rate) if stats.rate else 0.5
+            effective = stats.ema_rate or stats.active_rate
+            display_rate = min(effective, max_rate) if effective else 0.5
             self.state.check_queue.add(items, display_rate)
 
         self._refresh()
@@ -902,14 +934,14 @@ class DataProgressDisplay(BaseProgressDisplay):
         summary.append("  SEED    ", style="bold blue")
         summary.append(f"seeded={self.state.run_discovered:,}", style="blue")
         if self.state.discover_rate:
-            summary.append(f"  {self.state.discover_rate:.1f}/s", style="dim")
+            summary.append(f"  {format_rate(self.state.discover_rate)}", style="dim")
         summary.append("\n")
 
         # EXTRACT stats
         summary.append("  EXTRACT ", style="bold cyan")
         summary.append(f"extracted={self.state.run_extracted:,}", style="cyan")
         if self.state.extract_rate:
-            summary.append(f"  {self.state.extract_rate:.1f}/s", style="dim")
+            summary.append(f"  {format_rate(self.state.extract_rate)}", style="dim")
         summary.append("\n")
 
         # PROMOTE stats
@@ -917,7 +949,7 @@ class DataProgressDisplay(BaseProgressDisplay):
         summary.append(f"promoted={self.state.run_promoted:,}", style="yellow")
         summary.append(f"  total={total:,}", style="dim")
         if self.state.promote_rate:
-            summary.append(f"  {self.state.promote_rate:.1f}/s", style="dim")
+            summary.append(f"  {format_rate(self.state.promote_rate)}", style="dim")
         summary.append("\n")
 
         # ENRICH stats
@@ -931,7 +963,7 @@ class DataProgressDisplay(BaseProgressDisplay):
         summary.append(f"  skipped={self.state.signals_skipped:,}", style="yellow")
         summary.append(f"  cost=${self.state.run_cost:.3f}", style="yellow")
         if self.state.enrich_rate:
-            summary.append(f"  {self.state.enrich_rate:.1f}/s", style="dim")
+            summary.append(f"  {format_rate(self.state.enrich_rate)}", style="dim")
         summary.append("\n")
 
         # CHECK stats
@@ -939,7 +971,7 @@ class DataProgressDisplay(BaseProgressDisplay):
         summary.append(f"checked={checked:,}", style="magenta")
         summary.append(f"  failed={self.state.signals_failed:,}", style="red")
         if self.state.check_rate:
-            summary.append(f"  {self.state.check_rate:.1f}/s", style="dim")
+            summary.append(f"  {format_rate(self.state.check_rate)}", style="dim")
         summary.append("\n")
 
         # USAGE stats

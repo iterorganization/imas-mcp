@@ -309,6 +309,7 @@ async def score_worker(
             ]
             await asyncio.to_thread(mark_pages_scored, state.facility, skip_results)
             state.score_stats.processed += len(empty_content)
+            state.score_stats.record_batch(len(empty_content))
 
         if not pages_with_content:
             logger.debug(
@@ -355,6 +356,7 @@ async def score_worker(
             # Run blocking Neo4j call in thread pool to avoid blocking event loop
             await asyncio.to_thread(mark_pages_scored, state.facility, results)
             state.score_stats.processed += len(results)
+            state.score_stats.record_batch(len(results))
             state.score_stats.cost += cost
 
             if on_progress:
@@ -578,11 +580,13 @@ async def ingest_worker(
             )
             await asyncio.to_thread(mark_pages_insufficient_content, empty_page_ids)
             state.ingest_stats.processed += len(empty_page_ids)
+            state.ingest_stats.record_batch(len(empty_page_ids))
             empty_page_ids.clear()
 
         # Run blocking Neo4j call in thread pool
         await asyncio.to_thread(mark_pages_ingested, state.facility, results)
         state.ingest_stats.processed += len(results)
+        state.ingest_stats.record_batch(len(results))
 
         if on_progress:
             on_progress(
@@ -797,6 +801,7 @@ async def docs_worker(
         # Run blocking Neo4j call in thread pool
         await asyncio.to_thread(mark_documents_ingested, state.facility, results)
         state.docs_stats.processed += len(results)
+        state.docs_stats.record_batch(len(results))
 
         if on_progress:
             on_progress(
@@ -989,6 +994,7 @@ async def docs_score_worker(
             # Persist scores to graph
             await asyncio.to_thread(mark_documents_scored, state.facility, results)
             state.document_score_stats.processed += len(results)
+            state.document_score_stats.record_batch(len(results))
             state.document_score_stats.cost += cost
 
             if on_progress:
@@ -1198,6 +1204,7 @@ async def image_score_worker(
                 store_images=state.store_images,
             )
             state.image_stats.processed += len(results)
+            state.image_stats.record_batch(len(results))
             state.image_stats.cost += cost
             consecutive_failures = 0
 

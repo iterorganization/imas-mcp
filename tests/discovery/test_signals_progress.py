@@ -600,8 +600,8 @@ class TestDataProgressDisplay:
         display.state.discover_rate = 83.4
         section = display._build_pipeline_section()
         text = section.plain
-        # format_rate uses adaptive units: 83.4 → "83/s"
-        assert "83/s" in text
+        # format_rate uses adaptive units: 83.4 → "83s/s"
+        assert "83s/s" in text
 
     def test_pipeline_worker_count_annotations(self):
         """Pipeline shows worker count from SupervisedWorkerGroup."""

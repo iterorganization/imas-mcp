@@ -1510,6 +1510,7 @@ async def dedup_worker(
 
             if marked > 0:
                 state.dedup_stats.processed += marked
+                state.dedup_stats.record_batch(marked)
                 results.append(
                     {
                         "repo_id": repo_id,
@@ -1783,6 +1784,7 @@ async def triage_worker(
                 None, lambda sd=skip_data: mark_triage_complete(state.facility, sd)
             )
             state.triage_stats.processed += len(empty_paths)
+            state.triage_stats.record_batch(len(empty_paths))
 
             skipped_results = [
                 {
@@ -1849,6 +1851,7 @@ async def triage_worker(
                 lambda sd=vcs_skip_data: mark_triage_complete(state.facility, sd),
             )
             state.triage_stats.processed += len(accessible_vcs_paths)
+            state.triage_stats.record_batch(len(accessible_vcs_paths))
 
             vcs_results = [
                 {

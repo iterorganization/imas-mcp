@@ -140,19 +140,25 @@ def format_count(count: int) -> str:
     return str(count)
 
 
-def format_rate(rate: float) -> str:
-    """Format items/second with adaptive units: 1.2M/s, 84K/s, 3.5/s"""
+def format_rate(rate: float, unit: str = "s") -> str:
+    """Format items/second with adaptive SI prefix: 1.2Ms/s, 84Ks/s, 3.5s/s
+
+    Args:
+        rate: Items per second.
+        unit: Base unit label (default ``"s"`` for signals). The output
+              reads as ``<value><prefix><unit>/s``, e.g. ``84Ks/s``.
+    """
     if rate >= 1_000_000:
-        return f"{rate / 1_000_000:.0f}M/s"
+        return f"{rate / 1_000_000:.0f}M{unit}/s"
     if rate >= 10_000:
-        return f"{rate / 1_000:.0f}K/s"
+        return f"{rate / 1_000:.0f}K{unit}/s"
     if rate >= 1_000:
-        return f"{rate / 1_000:.1f}K/s"
+        return f"{rate / 1_000:.1f}K{unit}/s"
     if rate >= 10:
-        return f"{rate:.0f}/s"
+        return f"{rate:.0f}{unit}/s"
     if rate >= 1:
-        return f"{rate:.1f}/s"
-    return f"{rate:.2f}/s"
+        return f"{rate:.1f}{unit}/s"
+    return f"{rate:.2f}{unit}/s"
 
 
 # =============================================================================
@@ -351,6 +357,66 @@ class StreamQueue:
 
 
 # =============================================================================
+# Scanner / Sub-task Progress
+# =============================================================================
+
+
+@dataclass
+class ScannerProgress:
+    """Progress tracking for a single scanner / sub-task within a worker.
+
+    Used by seed workers to track per-scanner status (e.g. wiki, ppf,
+    mdsplus) and by any worker that runs multiple sequential sub-tasks.
+    Reusable across all discovery domains.
+    """
+
+    name: str
+    start_time: float = field(default_factory=time.time)
+    end_time: float | None = None
+    items_discovered: int = 0
+    status: str = "pending"  # pending, running, done, failed
+    detail: str = ""  # e.g. "subsystem DA 3/26"
+    error: str | None = None
+
+    @property
+    def elapsed(self) -> float:
+        end = self.end_time or time.time()
+        return end - self.start_time
+
+    def mark_running(self, detail: str = "") -> None:
+        self.status = "running"
+        self.start_time = time.time()
+        if detail:
+            self.detail = detail
+
+    def mark_done(self, items: int = 0) -> None:
+        self.status = "done"
+        self.end_time = time.time()
+        self.items_discovered += items
+
+    def mark_failed(self, error: str) -> None:
+        self.status = "failed"
+        self.end_time = time.time()
+        self.error = error
+
+    def format_status(self) -> str:
+        """Format as compact status string for display.
+
+        Examples: ``wiki✓``, ``ppf✓ 5,204``, ``jpf: subsystem DA 3/26``
+        """
+        if self.status == "done":
+            count = f" {self.items_discovered:,}" if self.items_discovered else ""
+            return f"{self.name}✓{count}"
+        if self.status == "failed":
+            return f"{self.name}✗"
+        if self.status == "running":
+            if self.detail:
+                return f"{self.name}: {self.detail}"
+            return f"{self.name}…"
+        return self.name
+
+
+# =============================================================================
 # Worker Statistics
 # =============================================================================
 
@@ -363,6 +429,8 @@ class WorkerStats:
 
     Tracks both a lifetime average rate and an exponential moving average
     (EMA) over recent batches for smoother, more responsive rate display.
+    Also tracks rolling error rates and per-scanner progress for
+    diagnostic visibility.
     """
 
     processed: int = 0
@@ -380,6 +448,21 @@ class WorkerStats:
     # Idle time tracking (excluded from active_rate)
     _idle_total: float = 0.0  # Cumulative idle seconds
     _idle_start: float | None = None  # When current idle period began
+
+    # Rolling error rate tracking (Phase 2)
+    _error_timestamps: list[float] = field(default_factory=list)
+    _consecutive_errors: int = 0
+    _error_window: float = 60.0  # Rolling window in seconds
+
+    # Per-scanner / sub-task progress (Phase 1)
+    scanner_progress: dict[str, ScannerProgress] = field(default_factory=dict)
+
+    # Metadata for structured logging
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    # SSH/connection timing
+    _connection_start: float | None = None  # When current connection attempt began
+    _connection_host: str | None = None  # Host being connected to
 
     @property
     def elapsed(self) -> float:
@@ -472,6 +555,146 @@ class WorkerStats:
 
         self._prev_processed = self.processed
         self._prev_batch_time = now
+
+    # ── Error rate tracking ──
+
+    def record_error(self) -> None:
+        """Record an error occurrence for rolling rate calculation."""
+        now = time.time()
+        self.errors += 1
+        self._error_timestamps.append(now)
+        self._consecutive_errors += 1
+        # Prune old timestamps outside the window
+        cutoff = now - self._error_window
+        self._error_timestamps = [t for t in self._error_timestamps if t >= cutoff]
+
+    def record_success(self) -> None:
+        """Record a successful operation, resetting consecutive error count."""
+        self._consecutive_errors = 0
+
+    @property
+    def error_rate_1m(self) -> float:
+        """Errors per second over the last 60 seconds."""
+        now = time.time()
+        cutoff = now - self._error_window
+        recent = [t for t in self._error_timestamps if t >= cutoff]
+        if not recent:
+            return 0.0
+        return len(recent) / self._error_window
+
+    @property
+    def consecutive_errors(self) -> int:
+        """Number of consecutive errors without a success."""
+        return self._consecutive_errors
+
+    @property
+    def error_rate_pct(self) -> float:
+        """Error rate as a percentage of total processed items.
+
+        Returns 0.0 if no items processed. Used for color coding:
+        green (<5%), yellow (5-25%), red (>25%).
+        """
+        total = self.processed + self.errors
+        if total == 0:
+            return 0.0
+        return (self.errors / total) * 100
+
+    @property
+    def error_health_style(self) -> str:
+        """Rich style string based on error rate: green/yellow/red."""
+        pct = self.error_rate_pct
+        if pct < 5:
+            return "green"
+        if pct < 25:
+            return "yellow"
+        return "red"
+
+    # ── Scanner progress ──
+
+    def start_scanner(self, name: str, detail: str = "") -> ScannerProgress:
+        """Start tracking a scanner / sub-task.
+
+        Args:
+            name: Scanner type name (e.g. "wiki", "ppf", "mdsplus").
+            detail: Optional detail string for display.
+
+        Returns:
+            The ScannerProgress tracker for further updates.
+        """
+        sp = ScannerProgress(name=name)
+        sp.mark_running(detail)
+        self.scanner_progress[name] = sp
+        return sp
+
+    def finish_scanner(self, name: str, items: int = 0) -> None:
+        """Mark a scanner / sub-task as complete."""
+        if name in self.scanner_progress:
+            self.scanner_progress[name].mark_done(items)
+
+    def fail_scanner(self, name: str, error: str) -> None:
+        """Mark a scanner / sub-task as failed."""
+        if name in self.scanner_progress:
+            self.scanner_progress[name].mark_failed(error)
+
+    def format_scanner_status(self) -> str:
+        """Format all scanner statuses as a compact one-line summary.
+
+        Example: ``wiki✓  ppf✓ 5,204  mdsplus✓  jpf: subsystem DA 3/26  device_xml✓``
+        """
+        if not self.scanner_progress:
+            return ""
+        return "  ".join(
+            sp.format_status() for sp in self.scanner_progress.values()
+        )
+
+    def format_scanner_timing(self) -> str:
+        """Format scanner elapsed times for stats display.
+
+        Example: ``wiki:2.1s  ppf:8.4s  mdsplus:0.3s  jpf:45.2s``
+        """
+        if not self.scanner_progress:
+            return ""
+        parts = []
+        for sp in self.scanner_progress.values():
+            elapsed = sp.elapsed
+            if elapsed < 60:
+                parts.append(f"{sp.name}:{elapsed:.1f}s")
+            else:
+                parts.append(f"{sp.name}:{format_time(elapsed)}")
+        return "  ".join(parts)
+
+    # ── Connection timing ──
+
+    def mark_connecting(self, host: str | None = None) -> None:
+        """Mark the start of a connection attempt (SSH, MDSplus, etc.)."""
+        self._connection_start = time.time()
+        self._connection_host = host
+
+    def mark_connected(self) -> None:
+        """Mark a connection attempt as complete."""
+        self._connection_start = None
+        self._connection_host = None
+
+    @property
+    def connection_elapsed(self) -> float | None:
+        """Seconds since connection attempt started, or None if not connecting."""
+        if self._connection_start is None:
+            return None
+        return time.time() - self._connection_start
+
+    def format_connection_status(self) -> str:
+        """Format connection status with timing annotation.
+
+        Returns empty string if not connecting.
+        Examples: ``connecting (3.2s)``, ``connecting (45s ⚡)``
+        """
+        elapsed = self.connection_elapsed
+        if elapsed is None:
+            return ""
+        host_part = f" to {self._connection_host}" if self._connection_host else ""
+        if elapsed > 30:
+            return f"connecting{host_part} ({elapsed:.0f}s ⚡)"
+        return f"connecting{host_part} ({elapsed:.1f}s)"
 
 
 # =============================================================================
@@ -900,7 +1123,16 @@ def build_worker_status_section(
             if running > 0:
                 parts.append(f"{running} active")
             if backing_off > 0:
-                parts.append(f"{backing_off} backoff")
+                # Show max backoff remaining time across workers in this group
+                max_remaining = 0.0
+                for name, _st in workers:
+                    ws = worker_group.workers.get(name)
+                    if ws and ws.backoff_remaining > max_remaining:
+                        max_remaining = ws.backoff_remaining
+                if max_remaining > 0:
+                    parts.append(f"{backing_off} backoff ({int(max_remaining)}s)")
+                else:
+                    parts.append(f"{backing_off} backoff")
             if failed > 0:
                 parts.append(f"{failed} failed")
             section.append(f" ({', '.join(parts)})", style="dim")
@@ -991,6 +1223,12 @@ def build_servers_section(
             section.append(f"↑{load_part}", style="yellow")
         else:
             section.append(label, style=style)
+
+        # SSH health summary (Phase 2.3) — show avg latency and failure ratio
+        # for services with enough check history
+        health_summary = s.format_health_summary() if hasattr(s, "format_health_summary") else ""
+        if health_summary and s.total_checks >= 3:
+            section.append(health_summary, style="dim")
 
     return section
 
@@ -1366,6 +1604,9 @@ class ResourceConfig:
     # STATS row: pending counts as (label, count) tuples
     pending: list[tuple[str, int]] | None = None
 
+    # SCANNERS row: formatted scanner timing string
+    scanner_timing: str = ""
+
 
 def build_resource_section(
     config: ResourceConfig,
@@ -1469,6 +1710,12 @@ def build_resource_section(
                 section.append("\n")
                 section.append(" " * LABEL_WIDTH)
                 section.append(pending_text, style="cyan dim")
+
+    # SCANNERS row — per-scanner timing (Phase 1.3)
+    if config.scanner_timing:
+        section.append("\n")
+        section.append(f"{'  SCANNERS':<{LABEL_WIDTH}}", style="bold blue")
+        section.append(config.scanner_timing, style="dim")
 
     return section
 
