@@ -214,11 +214,16 @@ class PPFScanner:
         """Validate PPF signals return data for reference pulse.
 
         Uses remote/scripts/check_ppf.py via async_run_python_script().
+        If the primary shot returns ier=210002 (data not available for shot),
+        retries with additional check_shots from the config before marking
+        as not_available_for_shot.
         """
         from imas_codex.remote.executor import async_run_python_script
 
         ref_pulse = reference_shot or config.get("reference_pulse")
         default_owner = config.get("default_owner", "jetppf")
+        # Additional shots to try when ier=210002 (shot-specific absence)
+        check_shots = config.get("check_shots", [])
 
         if not ref_pulse:
             return [
@@ -235,12 +240,18 @@ class PPFScanner:
             else:
                 batch.append({"id": s.id, "dda": "", "dtype": ""})
 
-        try:
+        # Build ordered list of shots to try: primary first, then fallbacks
+        shots_to_try = [ref_pulse]
+        for shot in check_shots:
+            if shot != ref_pulse and shot not in shots_to_try:
+                shots_to_try.append(shot)
+
+        async def _run_check(pulse: int) -> dict:
             output = await async_run_python_script(
                 "check_ppf.py",
                 {
                     "signals": batch,
-                    "pulse": ref_pulse,
+                    "pulse": pulse,
                     "owner": default_owner,
                 },
                 ssh_host=ssh_host,
@@ -248,17 +259,107 @@ class PPFScanner:
                 python_command=config.get("python_command", "python3"),
                 setup_commands=config.get("setup_commands"),
             )
-            response = json.loads(output.strip().split("\n")[-1])
-            return [
-                {
-                    "signal_id": r["id"],
-                    "valid": r.get("success", False),
-                    "shape": r.get("shape"),
-                    "dtype": r.get("dtype"),
-                    "error": r.get("error"),
+            return json.loads(output.strip().split("\n")[-1])
+
+        try:
+            response = await _run_check(shots_to_try[0])
+            results_by_id: dict[str, dict] = {}
+            shot_unavail_ids: list[str] = []
+
+            for r in response.get("results", []):
+                error = r.get("error", "")
+                if r.get("success", False):
+                    results_by_id[r["id"]] = {
+                        "signal_id": r["id"],
+                        "valid": True,
+                        "shape": r.get("shape"),
+                        "dtype": r.get("dtype"),
+                        "shot": shots_to_try[0],
+                    }
+                elif "ier=210002" in error:
+                    # Shot-specific absence — candidate for retry
+                    shot_unavail_ids.append(r["id"])
+                    results_by_id[r["id"]] = {
+                        "signal_id": r["id"],
+                        "valid": False,
+                        "error": error,
+                        "checked_shots": [shots_to_try[0]],
+                    }
+                else:
+                    results_by_id[r["id"]] = {
+                        "signal_id": r["id"],
+                        "valid": False,
+                        "error": error,
+                    }
+
+            # Retry shot-unavailable signals with fallback shots
+            for fallback_shot in shots_to_try[1:]:
+                if not shot_unavail_ids:
+                    break
+
+                retry_batch = [b for b in batch if b["id"] in shot_unavail_ids]
+                try:
+                    retry_response = await async_run_python_script(
+                        "check_ppf.py",
+                        {
+                            "signals": retry_batch,
+                            "pulse": fallback_shot,
+                            "owner": default_owner,
+                        },
+                        ssh_host=ssh_host,
+                        timeout=120,
+                        python_command=config.get("python_command", "python3"),
+                        setup_commands=config.get("setup_commands"),
+                    )
+                    retry_data = json.loads(
+                        retry_response.strip().split("\n")[-1]
+                    )
+
+                    still_unavail = []
+                    for r in retry_data.get("results", []):
+                        rid = r["id"]
+                        prev = results_by_id.get(rid, {})
+                        checked = prev.get("checked_shots", [])
+                        checked.append(fallback_shot)
+
+                        if r.get("success", False):
+                            results_by_id[rid] = {
+                                "signal_id": rid,
+                                "valid": True,
+                                "shape": r.get("shape"),
+                                "dtype": r.get("dtype"),
+                                "shot": fallback_shot,
+                                "checked_shots": checked,
+                            }
+                        elif "ier=210002" in r.get("error", ""):
+                            results_by_id[rid]["checked_shots"] = checked
+                            still_unavail.append(rid)
+                        else:
+                            results_by_id[rid] = {
+                                "signal_id": rid,
+                                "valid": False,
+                                "error": r.get("error", ""),
+                                "checked_shots": checked,
+                            }
+
+                    shot_unavail_ids = still_unavail
+                except Exception as e:
+                    logger.warning(
+                        "PPF retry check for shot %d failed: %s", fallback_shot, e
+                    )
+
+            # Mark remaining unavailable signals with descriptive error
+            for rid in shot_unavail_ids:
+                prev = results_by_id.get(rid, {})
+                checked = prev.get("checked_shots", shots_to_try)
+                results_by_id[rid] = {
+                    "signal_id": rid,
+                    "valid": False,
+                    "error": f"not_available_for_shot (checked {len(checked)} shots)",
+                    "checked_shots": checked,
                 }
-                for r in response.get("results", [])
-            ]
+
+            return list(results_by_id.values())
         except Exception as e:
             logger.error("PPF check failed: %s", e)
             return [

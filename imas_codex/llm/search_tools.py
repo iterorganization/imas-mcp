@@ -66,6 +66,9 @@ def _search_signals(
     *,
     diagnostic: str | None = None,
     physics_domain: str | None = None,
+    check_status: str | None = None,
+    error_type: str | None = None,
+    include_check_details: bool = False,
     k: int = 10,
     gc: GraphClient | None = None,
     encoder: Encoder | None = None,
@@ -75,6 +78,11 @@ def _search_signals(
     Performs vector search on signal descriptions, enriches with
     DataAccess, Diagnostic, SignalNode, and IMASNode traversals,
     then formats the result.
+
+    Optional check outcome filtering:
+        check_status: "passed", "failed", or "unchecked"
+        error_type: filter by error classification (e.g. "not_available_for_shot")
+        include_check_details: include CHECKED_WITH relationship data in results
     """
     try:
         if gc is None:
@@ -114,6 +122,12 @@ def _search_signals(
             set(signal_ids), key=lambda sid: scores.get(sid, 0), reverse=True
         )[:k]
 
+        # Step 1c: Filter by check outcome if requested
+        if check_status or error_type:
+            signal_ids = _filter_by_check_outcome(
+                gc, signal_ids, check_status, error_type
+            )
+
         if not signal_ids:
             # Fall back to data node search only
             data_node_results = _vector_search_data_nodes(gc, embedding, facility, k)
@@ -121,6 +135,14 @@ def _search_signals(
 
         # Step 2: Enrich with graph traversals
         enriched = _enrich_signals(gc, signal_ids)
+
+        # Step 2b: Add check details if requested
+        if include_check_details:
+            check_details = _get_check_details(gc, signal_ids)
+            for sig in enriched:
+                sid = sig.get("id", "")
+                if sid in check_details:
+                    sig["check_details"] = check_details[sid]
 
         # Step 3: Data node search (secondary index)
         data_node_results = _vector_search_data_nodes(gc, embedding, facility, k)
@@ -133,6 +155,276 @@ def _search_signals(
     except Exception as e:
         logger.exception("search_signals failed")
         return f"Search error: {_neo4j_error_message(e)}"
+
+
+def _filter_by_check_outcome(
+    gc: GraphClient,
+    signal_ids: list[str],
+    check_status: str | None,
+    error_type: str | None,
+) -> list[str]:
+    """Filter signal IDs by check outcome via CHECKED_WITH relationship."""
+    if not signal_ids:
+        return []
+
+    if check_status == "unchecked":
+        # Return signals WITHOUT a CHECKED_WITH relationship
+        cypher = """
+            UNWIND $signal_ids AS sid
+            MATCH (s:FacilitySignal {id: sid})
+            WHERE NOT EXISTS { (s)-[:CHECKED_WITH]->() }
+            RETURN s.id AS id
+        """
+        results = gc.query(cypher, signal_ids=signal_ids)
+        return [r["id"] for r in results]
+
+    where_parts = []
+    params: dict[str, Any] = {"signal_ids": signal_ids}
+
+    if check_status == "passed":
+        where_parts.append("c.success = true")
+    elif check_status == "failed":
+        where_parts.append("c.success = false")
+
+    if error_type:
+        where_parts.append("c.error_type = $error_type")
+        params["error_type"] = error_type
+
+    where_clause = " AND ".join(where_parts) if where_parts else "true"
+
+    cypher = f"""
+        UNWIND $signal_ids AS sid
+        MATCH (s:FacilitySignal {{id: sid}})-[c:CHECKED_WITH]->()
+        WHERE {where_clause}
+        RETURN DISTINCT s.id AS id
+    """
+    results = gc.query(cypher, **params)
+    return [r["id"] for r in results]
+
+
+def _get_check_details(
+    gc: GraphClient,
+    signal_ids: list[str],
+) -> dict[str, dict[str, Any]]:
+    """Get CHECKED_WITH relationship details for signals."""
+    if not signal_ids:
+        return {}
+
+    cypher = """
+        UNWIND $signal_ids AS sid
+        MATCH (s:FacilitySignal {id: sid})-[c:CHECKED_WITH]->(da:DataAccess)
+        RETURN s.id AS id,
+               c.success AS success,
+               c.error AS error,
+               c.error_type AS error_type,
+               c.shot AS shot,
+               c.shape AS shape,
+               c.checked_at AS checked_at,
+               da.id AS data_access_id
+    """
+    results = gc.query(cypher, signal_ids=signal_ids)
+    details: dict[str, dict[str, Any]] = {}
+    for r in results:
+        details[r["id"]] = {
+            "success": r["success"],
+            "error": r.get("error"),
+            "error_type": r.get("error_type"),
+            "shot": r.get("shot"),
+            "shape": r.get("shape"),
+            "checked_at": str(r["checked_at"]) if r.get("checked_at") else None,
+            "data_access_id": r.get("data_access_id"),
+        }
+    return details
+
+
+# ---------------------------------------------------------------------------
+# signal_analytics
+# ---------------------------------------------------------------------------
+
+# Allowed grouping dimensions for signal analytics
+_ALLOWED_GROUP_BY = {
+    "status",
+    "physics_domain",
+    "data_source_name",
+    "discovery_source",
+    "diagnostic",
+    "check_status",
+    "error_type",
+}
+
+
+def _signal_analytics(
+    facility: str,
+    group_by: list[str] | None = None,
+    filters: dict[str, str] | None = None,
+    gc: GraphClient | None = None,
+) -> str:
+    """Aggregate signal counts by specified dimensions.
+
+    Replaces the need for direct Cypher for common analytics queries.
+
+    Args:
+        facility: Facility identifier (e.g. "jet", "tcv")
+        group_by: Dimensions to group by. Allowed values:
+            status, physics_domain, data_source_name, discovery_source,
+            diagnostic, check_status, error_type
+        filters: Optional key-value filters (e.g. {"status": "checked"})
+
+    Returns:
+        Formatted analytics report with counts per group.
+    """
+    if gc is None:
+        gc = GraphClient()
+
+    if not group_by:
+        group_by = ["status"]
+
+    # Validate group_by dimensions
+    invalid = set(group_by) - _ALLOWED_GROUP_BY
+    if invalid:
+        return f"Invalid group_by dimensions: {invalid}. Allowed: {sorted(_ALLOWED_GROUP_BY)}"
+
+    needs_check_join = "check_status" in group_by or "error_type" in group_by
+    filter_needs_check = filters and (
+        "check_status" in filters or "error_type" in filters
+    )
+    needs_check = needs_check_join or filter_needs_check
+
+    try:
+        if needs_check:
+            return _analytics_with_checks(gc, facility, group_by, filters)
+        return _analytics_simple(gc, facility, group_by, filters)
+    except ServiceUnavailable:
+        return NEO4J_NOT_RUNNING_MSG
+    except Exception as e:
+        logger.exception("signal_analytics failed")
+        return f"Analytics error: {_neo4j_error_message(e)}"
+
+
+def _analytics_simple(
+    gc: GraphClient,
+    facility: str,
+    group_by: list[str],
+    filters: dict[str, str] | None,
+) -> str:
+    """Signal analytics without check relationship joins."""
+    where_parts = ["s.facility_id = $facility"]
+    params: dict[str, Any] = {"facility": facility}
+
+    if filters:
+        for fkey, fval in filters.items():
+            if fkey in _ALLOWED_GROUP_BY and fkey not in ("check_status", "error_type"):
+                param_name = f"f_{fkey}"
+                where_parts.append(f"s.{fkey} = ${param_name}")
+                params[param_name] = fval
+
+    where_clause = " AND ".join(where_parts)
+    return_cols = ", ".join(f"s.{dim} AS {dim}" for dim in group_by)
+
+    cypher = f"""
+        MATCH (s:FacilitySignal)
+        WHERE {where_clause}
+        RETURN {return_cols}, count(s) AS count
+        ORDER BY count DESC
+    """
+    results = gc.query(cypher, **params)
+    return _format_analytics(group_by, results, facility)
+
+
+def _analytics_with_checks(
+    gc: GraphClient,
+    facility: str,
+    group_by: list[str],
+    filters: dict[str, str] | None,
+) -> str:
+    """Signal analytics with CHECKED_WITH relationship joins."""
+    where_parts = ["s.facility_id = $facility"]
+    params: dict[str, Any] = {"facility": facility}
+
+    if filters:
+        for fkey, fval in filters.items():
+            if fkey in ("check_status", "error_type"):
+                continue  # Handled via relationship
+            if fkey in _ALLOWED_GROUP_BY:
+                param_name = f"f_{fkey}"
+                where_parts.append(f"s.{fkey} = ${param_name}")
+                params[param_name] = fval
+
+    where_clause = " AND ".join(where_parts)
+
+    # Build return columns, mapping check_status and error_type to relationship
+    return_parts = []
+    for dim in group_by:
+        if dim == "check_status":
+            return_parts.append(
+                "CASE WHEN c IS NULL THEN 'unchecked' "
+                "WHEN c.success = true THEN 'passed' "
+                "ELSE 'failed' END AS check_status"
+            )
+        elif dim == "error_type":
+            return_parts.append("c.error_type AS error_type")
+        else:
+            return_parts.append(f"s.{dim} AS {dim}")
+
+    return_cols = ", ".join(return_parts)
+
+    # Apply check-specific filters
+    check_where = []
+    if filters and "check_status" in filters:
+        cs = filters["check_status"]
+        if cs == "passed":
+            check_where.append("c.success = true")
+        elif cs == "failed":
+            check_where.append("c.success = false")
+        elif cs == "unchecked":
+            check_where.append("c IS NULL")
+    if filters and "error_type" in filters:
+        params["f_error_type"] = filters["error_type"]
+        check_where.append("c.error_type = $f_error_type")
+
+    check_filter = (" AND " + " AND ".join(check_where)) if check_where else ""
+
+    cypher = f"""
+        MATCH (s:FacilitySignal)
+        WHERE {where_clause}
+        OPTIONAL MATCH (s)-[c:CHECKED_WITH]->()
+        WITH s, c
+        WHERE true{check_filter}
+        RETURN {return_cols}, count(DISTINCT s) AS count
+        ORDER BY count DESC
+    """
+    results = gc.query(cypher, **params)
+    return _format_analytics(group_by, results, facility)
+
+
+def _format_analytics(
+    group_by: list[str],
+    results: list[dict[str, Any]],
+    facility: str,
+) -> str:
+    """Format analytics results into a readable table."""
+    if not results:
+        return f"No signals found for facility '{facility}'."
+
+    total = sum(r["count"] for r in results)
+    parts = [f"## Signal Analytics for {facility}\n"]
+    parts.append(f"Total: {total:,} signals\n")
+
+    # Header
+    headers = group_by + ["count", "%"]
+    parts.append("| " + " | ".join(headers) + " |")
+    parts.append("| " + " | ".join("---" for _ in headers) + " |")
+
+    for r in results:
+        row = []
+        for dim in group_by:
+            row.append(str(r.get(dim, "—")))
+        count = r["count"]
+        pct = f"{count / total * 100:.1f}" if total > 0 else "0.0"
+        row.extend([str(count), pct])
+        parts.append("| " + " | ".join(row) + " |")
+
+    return "\n".join(parts)
 
 
 def _vector_search_signals(
@@ -174,8 +466,15 @@ def _vector_search_signals(
         "ORDER BY score DESC LIMIT $limit"
     )
     results = gc.query(cypher, **params)
-    ids = [r["id"] for r in results]
-    scores = {r["id"]: round(r["score"], 3) for r in results}
+    # Deduplicate: vector search can return the same signal from multiple
+    # embedding entries. Keep highest score per signal ID.
+    scores: dict[str, float] = {}
+    for r in results:
+        sid = r["id"]
+        score = round(r["score"], 3)
+        if sid not in scores or score > scores[sid]:
+            scores[sid] = score
+    ids = sorted(scores, key=lambda sid: scores[sid], reverse=True)
     return ids, scores
 
 
@@ -298,9 +597,17 @@ def _vector_search_data_nodes(
         "n.description AS description, n.unit AS unit, score "
         "ORDER BY score DESC LIMIT $limit"
     )
-    return gc.query(
+    results = gc.query(
         cypher, k=internal_k, embedding=embedding, facility=facility, limit=k
     )
+    # Deduplicate by id, keeping the highest-scoring entry
+    seen: set[str] = set()
+    deduplicated = []
+    for r in results:
+        if r["id"] not in seen:
+            seen.add(r["id"])
+            deduplicated.append(r)
+    return deduplicated
 
 
 # ---------------------------------------------------------------------------

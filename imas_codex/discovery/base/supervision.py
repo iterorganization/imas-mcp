@@ -71,6 +71,7 @@ __all__ = [
     "WorkerStatus",
     "is_infrastructure_error",
     "make_orphan_recovery_tick",
+    "make_snapshot_logger",
     "run_supervised_loop",
     "supervised_worker",
 ]
@@ -374,6 +375,13 @@ class WorkerStatus:
         """Seconds since worker started."""
         return time.time() - self.start_time
 
+    @property
+    def backoff_remaining(self) -> float:
+        """Seconds remaining in backoff period, or 0 if not in backoff."""
+        if self.state != WorkerState.backoff or self.backoff_until is None:
+            return 0.0
+        return max(0.0, self.backoff_until - time.time())
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
         return {
@@ -384,6 +392,7 @@ class WorkerStatus:
             "is_active": self.is_active,
             "last_error": self.last_error,
             "items_processed": self.items_processed,
+            "backoff_remaining": self.backoff_remaining,
         }
 
 
@@ -842,6 +851,79 @@ def make_orphan_recovery_tick(
             except Exception as e:
                 logger.debug("Orphan recovery check failed for %s: %s", spec.label, e)
         last_check = time.time()
+
+    return _tick
+
+
+def make_snapshot_logger(
+    facility: str,
+    state: Any,
+    *,
+    interval: float = 300.0,
+    count_fields: dict[str, str] | None = None,
+) -> Callable[[], None]:
+    """Create a periodic graph state snapshot logger (Phase 4.3).
+
+    Returns a callable suitable for chaining into the ``on_tick`` parameter
+    of :func:`run_supervised_loop`.  Periodically logs a summary of graph
+    counts for operational visibility in log files.
+
+    The snapshot includes counts from the state object's ``WorkerStats``
+    fields and any graph-derived totals.
+
+    Args:
+        facility: Facility ID for log context.
+        state: Discovery state object with stats fields.
+        interval: Seconds between snapshots (default: 300 = 5 min).
+        count_fields: Mapping of display_name → state_attr for counts
+            to include. Example: ``{"discovered": "total_signals",
+            "enriched": "signals_enriched"}``. If None, auto-detected
+            from common patterns.
+
+    Returns:
+        A zero-argument callable that performs time-gated snapshot logging.
+    """
+    last_snapshot = time.time()
+
+    def _tick() -> None:
+        nonlocal last_snapshot
+        if time.time() - last_snapshot < interval:
+            return
+
+        parts = [f"SNAPSHOT {facility}"]
+
+        if count_fields:
+            for label, attr in count_fields.items():
+                value = getattr(state, attr, None)
+                if value is not None:
+                    parts.append(f"{label}={value}")
+        else:
+            # Auto-detect common state fields
+            for attr, label in [
+                ("total_signals", "total"),
+                ("signals_discovered", "discovered"),
+                ("signals_enriched", "enriched"),
+                ("signals_checked", "checked"),
+                ("pending_enrich", "pending_enrich"),
+                ("pending_check", "pending_check"),
+                ("total_pages", "total"),
+                ("pages_scored", "scored"),
+                ("pages_ingested", "ingested"),
+                ("total_paths", "total"),
+                ("paths_scanned", "scanned"),
+                ("paths_scored", "scored"),
+            ]:
+                value = getattr(state, attr, None)
+                if value is not None:
+                    parts.append(f"{label}={value}")
+
+        # Cost tracking
+        total_cost = getattr(state, "total_cost", None)
+        if total_cost is not None and total_cost > 0:
+            parts.append(f"cost=${total_cost:.2f}")
+
+        logger.info(" ".join(parts))
+        last_snapshot = time.time()
 
     return _tick
 

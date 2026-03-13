@@ -407,6 +407,8 @@ def _persist_graph_nodes(
                                     f"{field_meta['desc']} of {meta['label']} {inst_id}"
                                 ),
                                 discovery_source="device_xml",
+                                is_static=True,
+                                hardware_section=section,
                             )
 
             # Batch create DataNodes
@@ -499,6 +501,8 @@ def _persist_graph_nodes(
                     data_source_node=node_path,
                     description=f"First wall R,Z contour for {name} limiter configuration",
                     discovery_source="device_xml",
+                    is_static=True,
+                    hardware_section="limiter",
                 )
 
         if limiter_nodes:
@@ -734,6 +738,8 @@ def _persist_jec2020_nodes(
                             f"JPF={p.get('jpf_signal', '')}"
                         ),
                         discovery_source="jec2020_xml",
+                        is_static=True,
+                        hardware_section="magprobes",
                     )
 
             for dn in probe_nodes:
@@ -789,6 +795,8 @@ def _persist_jec2020_nodes(
                         data_source_node=node_path,
                         description=f"Flux loop {fid}: {fl.get('description', '')}",
                         discovery_source="jec2020_xml",
+                        is_static=True,
+                        hardware_section="flux",
                     )
 
             for dn in loop_nodes:
@@ -854,6 +862,8 @@ def _persist_jec2020_nodes(
                         data_source_node=node_path,
                         description=f"PF coil {cid} ({cname})",
                         discovery_source="jec2020_xml",
+                        is_static=True,
+                        hardware_section="pfcoils",
                     )
 
             for dn in coil_nodes:
@@ -967,6 +977,8 @@ def _persist_jec2020_nodes(
                         f"with permeabilities"
                     ),
                     discovery_source="jec2020_xml",
+                    is_static=True,
+                    hardware_section="iron_core",
                 )
 
         # 7. High-res limiter
@@ -1014,6 +1026,8 @@ def _persist_jec2020_nodes(
                         f"{len(r_vals)} R,Z points"
                     ),
                     discovery_source="jec2020_xml",
+                    is_static=True,
+                    hardware_section="limiter",
                 )
 
                 # Create SAME_GEOMETRY link to device_xml limiter if it exists
@@ -1494,6 +1508,8 @@ def _persist_magnetics_config_nodes(
                             f"JPF={jpf_address}, PPF={ppf_signal}/{ppf_index}"
                         ),
                         discovery_source="magnetics_config",
+                        is_static=True,
+                        hardware_section=sensor_type.lower(),
                     )
 
             # Batch create DataNodes

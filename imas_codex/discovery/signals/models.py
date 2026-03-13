@@ -27,8 +27,8 @@ __all__ = [
     "SignalEnrichmentBatch",
     "SignalSourceEnrichmentResult",
     "SignalSourceEnrichmentBatch",
-    "SignalSourceIndividualization",
-    "SignalSourceIndividualizationBatch",
+    "SignalSourceCodeUnwind",
+    "SignalSourceCodeUnwindBatch",
     "UnitConfidence",
 ]
 
@@ -219,22 +219,29 @@ class SignalSourceEnrichmentBatch(BaseModel):
     )
 
 
-class SignalSourceIndividualization(BaseModel):
-    """Template for individualizing member signal descriptions.
+class SignalSourceCodeUnwind(BaseModel):
+    """LLM-generated Python code to individualize group member descriptions.
 
-    The LLM generates a description template with a {member_id} placeholder.
-    The template is then applied deterministically to each member signal
-    by extracting the varying part of the accessor.
+    Instead of a simple {member_id} template, the LLM generates a Python
+    function that produces physics-aware individualized descriptions using
+    actual values from SignalNode descriptions (geometry, positions, angles).
     """
 
     source_index: int = Field(
         description="1-based index matching the input source order",
     )
 
+    name_template: str = Field(
+        description="Name template with {member_id} placeholder. "
+        "E.g., 'Magnetic Probe {member_id} Radial Position'",
+    )
+
     description_template: str = Field(
-        description="Description template with {member_id} placeholder. "
-        "E.g., 'Poloidal magnetic field measurement from probe {member_id} "
-        "in the outboard midplane array.'",
+        description="Description template with {member_id} and optional "
+        "{node_description} placeholder. Use {node_description} when the "
+        "SignalNode description contains actual physics values that should "
+        "be included verbatim. "
+        "E.g., 'Radial position of magnetic probe {member_id}. {node_description}'",
     )
 
     variation_field: str = Field(
@@ -243,9 +250,9 @@ class SignalSourceIndividualization(BaseModel):
     )
 
 
-class SignalSourceIndividualizationBatch(BaseModel):
-    """Batch of individualization templates — multiple sources per LLM call."""
+class SignalSourceCodeUnwindBatch(BaseModel):
+    """Batch of code-based unwinding results — multiple sources per LLM call."""
 
-    results: list[SignalSourceIndividualization] = Field(
-        description="Individualization templates, one per input source"
+    results: list[SignalSourceCodeUnwind] = Field(
+        description="Unwinding results, one per input source"
     )

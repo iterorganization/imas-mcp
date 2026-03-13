@@ -21,6 +21,9 @@ data_systems:
     sal_endpoint: https://sal.jet.uk  # SAL REST API
     reference_pulse: 99896
     default_owner: jetppf
+    # Additional shots to try when ier=210002 (data not available for specific shot).
+    # Spread across different campaigns for coverage.
+    check_shots: [99896, 99000, 96000, 92000]
     # Python interpreter with numpy for ppf array handling
     python_command: /common/software/micromamba/root/envs/python-3.12-minibundle/bin/python3
     # Module loads for PPF library access
