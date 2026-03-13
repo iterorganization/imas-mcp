@@ -24,8 +24,7 @@
 
 | Plan | Scope | Status |
 |------|-------|--------|
-| [jet-machine-description-ingestion.md](features/jet-machine-description-ingestion.md) | Full JET geometry ingestion: device XML, limiter, JEC2020, MCFG, PPF | Phase 1 done (limiters, JEC2020, magnetics config, PF coils, Greens) |
-| [jet-legacy-machine-description.md](features/jet-legacy-machine-description.md) | Pre-EFIT++ era (shots 1–68612): legacy magnetics, sensors-200c, MCFG | Phase 1 partial (magnetics config parser exists) |
+| [jet-machine-description-completion.md](features/jet-machine-description-completion.md) | Remaining enrichments: historical sensor versions, MCFG calibration epochs, PF circuit JPF addresses | Low priority — core pipeline operational |
 
 ## Documentation Gaps
 
