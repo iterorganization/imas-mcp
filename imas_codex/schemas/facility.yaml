@@ -2036,7 +2036,6 @@ classes:
       physics_domain:
         description: Physics domain for categorizing this signal
         range: PhysicsDomain
-        required: true
         annotations:
           required_after: enriched
       name:
