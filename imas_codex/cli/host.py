@@ -816,29 +816,19 @@ def _ssh_to_node(
     )
 
 
-def _migrate_from_node(
-    old_hostname: str,
+def _kill_codex_on_node(
+    fqdn: str,
     gateway: str,
     user: str,
     timeout: int,
-) -> None:
-    """Kill imas-codex processes and zellij sessions on the old node.
+) -> str | None:
+    """Kill imas-codex processes on a single node via SSH.
 
-    Called automatically when ``--set-default`` switches to a different
-    node.  Sends SIGINT for graceful shutdown, then removes zellij
-    sessions so the next ``cx`` starts fresh on the new node.
+    Returns a status string ('killed:N' or None on failure).
     """
-    old_short = old_hostname.split(".")[0]
-    fqdn = old_hostname if "." in old_hostname else f"{old_hostname}.iter.org"
-
-    click.echo(f"\n  Migrating from {click.style(old_short, fg='yellow')}…")
-
-    # 1. Kill imas-codex processes with SIGINT (graceful shutdown)
-    #    Build the same pattern regex used by _CODEX_PATTERNS but skip
-    #    neo4j (shared service — leave it running).
-    #    Use character class trick ([i]mas-codex) so the pattern doesn't
-    #    match the bash shell running this script — pgrep -f searches
-    #    command lines and the script text contains the literal patterns.
+    # Use character class trick ([i]mas-codex) so the pattern doesn't
+    # match the bash shell running this script — pgrep -f searches
+    # command lines and the script text contains the literal patterns.
     kill_patterns = [p for p in _CODEX_PATTERNS if p != "neo4j"]
     escaped = [f"[{p[0]}]{p[1:]}" for p in kill_patterns]
     pattern_re = "|".join(escaped)
@@ -848,7 +838,6 @@ def _migrate_from_node(
         f'  count=$(echo "$pids" | wc -w); '
         f"  kill -INT $pids 2>/dev/null; "
         f"  sleep 2; "
-        # SIGTERM stragglers that didn't exit on INT
         f"  remaining=$(pgrep -u $USER -f '{pattern_re}' 2>/dev/null || true); "
         f'  if [ -n "$remaining" ]; then '
         f"    kill -TERM $remaining 2>/dev/null; "
@@ -859,14 +848,14 @@ def _migrate_from_node(
         f"fi"
     )
 
-    # After killing ControlMaster sockets the gateway may need a
-    # moment to accept a fresh connection.  Retry once on failure.
-    result = None
     for attempt in range(2):
         try:
             result = _ssh_to_node(fqdn, gateway, user, kill_script, timeout)
             if result.returncode == 0:
-                break
+                for line in result.stdout.strip().splitlines():
+                    if line.startswith("killed:"):
+                        return line
+                return "killed:0"
             if attempt == 0:
                 import time
 
@@ -876,31 +865,70 @@ def _migrate_from_node(
                 import time
 
                 time.sleep(2)
-            continue
+    return None
 
-    if result is not None and result.returncode == 0:
-        output = result.stdout.strip()
-        for line in output.splitlines():
-            if line.startswith("killed:"):
-                count = line.split(":")[1]
-                if count != "0":
-                    click.echo(
-                        f"    {click.style('✓', fg='green')} "
-                        f"Sent SIGINT to {count} process(es)"
-                    )
-                else:
-                    click.echo(
-                        f"    {click.style('·', dim=True)} "
-                        f"No imas-codex processes running"
-                    )
-    else:
-        stderr = result.stderr.strip() if result else "timeout"
-        click.echo(
-            f"    {click.style('⚠', fg='yellow')} "
-            f"Could not reach {old_short} for process cleanup: {stderr}"
-        )
+
+def _migrate_from_node(
+    old_hostname: str,
+    gateway: str,
+    user: str,
+    timeout: int,
+    results: dict[str, dict | None] | None = None,
+    target_node: str | None = None,
+) -> None:
+    """Kill imas-codex processes and zellij sessions when switching nodes.
+
+    Cleans up codex processes on ALL nodes that have them (from survey
+    ``results``), not just the old SSH target.  This handles stranded
+    processes from previous failed migrations.  The new ``target_node``
+    is excluded from process cleanup.
+
+    Zellij sessions are only cleaned on the old SSH target node.
+    """
+    old_short = old_hostname.split(".")[0]
+
+    click.echo(f"\n  Migrating from {click.style(old_short, fg='yellow')}…")
+
+    # Determine which nodes need process cleanup
+    nodes_to_clean: list[str] = []
+    if results:
+        target_short = target_node.split(".")[0] if target_node else None
+        for node, info in sorted(results.items()):
+            if info is None:
+                continue
+            if target_short and node == target_short:
+                continue
+            if info.get("codex_procs"):
+                nodes_to_clean.append(node)
+
+    # If no survey data or no stale nodes found, fall back to old node
+    if not nodes_to_clean:
+        nodes_to_clean = [old_short]
+
+    # 1. Kill imas-codex processes on all stale nodes
+    for node in nodes_to_clean:
+        fqdn = f"{node}.iter.org"
+        status = _kill_codex_on_node(fqdn, gateway, user, timeout)
+        if status:
+            count = status.split(":")[1]
+            if count != "0":
+                click.echo(
+                    f"    {click.style('✓', fg='green')} "
+                    f"Sent SIGINT to {count} process(es) on {node}"
+                )
+            else:
+                click.echo(
+                    f"    {click.style('·', dim=True)} "
+                    f"No imas-codex processes on {node}"
+                )
+        else:
+            click.echo(
+                f"    {click.style('⚠', fg='yellow')} "
+                f"Could not reach {node} for process cleanup"
+            )
 
     # 2. Kill all zellij sessions on the old node
+    old_fqdn = old_hostname if "." in old_hostname else f"{old_hostname}.iter.org"
     zj_script = (
         "if command -v zellij >/dev/null 2>&1; then "
         "  sessions=$(zellij list-sessions -s 2>/dev/null || true); "
@@ -919,7 +947,7 @@ def _migrate_from_node(
     result = None
     for attempt in range(2):
         try:
-            result = _ssh_to_node(fqdn, gateway, user, zj_script, timeout)
+            result = _ssh_to_node(old_fqdn, gateway, user, zj_script, timeout)
             if result.returncode == 0:
                 break
             if attempt == 0:
@@ -1158,6 +1186,8 @@ def host_survey(
                         gateway,
                         user,
                         timeout,
+                        results=results,
+                        target_node=target_fqdn,
                     )
 
                 # Kill ControlMaster sockets BEFORE config update so
