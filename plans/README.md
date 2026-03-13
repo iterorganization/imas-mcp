@@ -20,6 +20,12 @@
 |------|-------|--------|
 | [signal-scanner-diagnostics.md](features/signal-scanner-diagnostics.md) | Scanner progress streaming, worker health indicators, MCP log tools | ~75% — infrastructure built, needs wiring to production workers |
 
+### Scanner Architecture
+
+| Plan | Scope | Status |
+|------|-------|--------|
+| [scanner-architecture-unification.md](features/scanner-architecture-unification.md) | Extract `StaticSourceHandler` base class from device_xml scanner's 7 internal handler pairs to eliminate ~400 lines boilerplate | Medium priority — DX improvement for adding new static sources |
+
 ### JET Machine Description
 
 | Plan | Scope | Status |
