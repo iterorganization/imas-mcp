@@ -210,7 +210,7 @@ def _colored_bar(used: float, limit: float, width: int = 20) -> str:
     else:
         color = "green"
     bar = f"[{color}]{'█' * filled}[/{color}][dim]{'░' * empty}[/dim]"
-    pct = f"[{color}]{ratio * 100:.0f}%[/{color}]"
+    pct = f"[{color}]{ratio * 100:3.0f}%[/{color}]"
     return rf"\[{bar}] {pct}"
 
 
@@ -223,7 +223,7 @@ def _format_load_row(info: dict) -> list[str]:
     mem_total = info.get("mem_total_mb", 0)
     mem_used = info.get("mem_used_mb", 0)
     mem_bar = _colored_bar(mem_used, mem_total)
-    mem_label = f"{mem_used / 1024:.0f}/{mem_total / 1024:.0f} GB"
+    mem_label = f"{mem_used / 1024:>4.0f}/{mem_total / 1024:.0f} GiB"
     users = str(info.get("users", 0))
 
     return [
@@ -256,7 +256,7 @@ def _show_local_load(info: dict) -> None:
     if mem_total > 0:
         mem_bar = _colored_bar(mem_used, mem_total)
         console.print(
-            f"  Mem:  {mem_bar}  {mem_used / 1024:.1f} / {mem_total / 1024:.0f} GB"
+            f"  Mem:  {mem_bar}  {mem_used / 1024:.1f} / {mem_total / 1024:.0f} GiB"
         )
 
     console.print(f"  Users: {info['users']}")
