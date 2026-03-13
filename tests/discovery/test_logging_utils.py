@@ -19,6 +19,7 @@ from unittest.mock import patch
 import pytest
 
 from imas_codex.cli.logging import (
+    StructuredFormatter,
     WorkerLogAdapter,
     _parse_since,
     get_log_dir,
@@ -78,6 +79,98 @@ class TestWorkerLogAdapter:
 
         # Should not contain "batch="
         assert not any("batch=" in r.message for r in caplog.records)
+
+
+# =============================================================================
+# Phase 4.1b: StructuredFormatter
+# =============================================================================
+
+
+class TestStructuredFormatter:
+    """Tests for StructuredFormatter — extras-aware file log formatting."""
+
+    def test_standard_format_without_extras(self):
+        """Messages without structured extras use standard format."""
+        fmt = StructuredFormatter()
+        record = logging.LogRecord(
+            name="imas_codex.test",
+            level=logging.INFO,
+            pathname="",
+            lineno=0,
+            msg="regular message",
+            args=(),
+            exc_info=None,
+        )
+        output = fmt.format(record)
+        assert "regular message" in output
+        assert "[" not in output  # No extras bracket
+
+    def test_worker_name_in_output(self):
+        """Messages with worker_name extra include it in brackets."""
+        fmt = StructuredFormatter()
+        record = logging.LogRecord(
+            name="imas_codex.test",
+            level=logging.INFO,
+            pathname="",
+            lineno=0,
+            msg="checked 20 signals",
+            args=(),
+            exc_info=None,
+        )
+        record.worker_name = "check_worker_2"
+        output = fmt.format(record)
+        assert "[check_worker_2]" in output
+        assert "checked 20 signals" in output
+
+    def test_worker_and_batch_in_output(self):
+        """Messages with both worker and batch extras."""
+        fmt = StructuredFormatter()
+        record = logging.LogRecord(
+            name="imas_codex.test",
+            level=logging.INFO,
+            pathname="",
+            lineno=0,
+            msg="processing",
+            args=(),
+            exc_info=None,
+        )
+        record.worker_name = "enrich_worker"
+        record.batch_id = "abc123"
+        output = fmt.format(record)
+        assert "enrich_worker" in output
+        assert "batch=abc123" in output
+
+    def test_signal_id_in_output(self):
+        """Messages with signal_id extra include it."""
+        fmt = StructuredFormatter()
+        record = logging.LogRecord(
+            name="imas_codex.test",
+            level=logging.WARNING,
+            pathname="",
+            lineno=0,
+            msg="failed",
+            args=(),
+            exc_info=None,
+        )
+        record.signal_id = "jet:ip/measured"
+        output = fmt.format(record)
+        assert "signal=jet:ip/measured" in output
+
+
+class TestSupervisionReexports:
+    """Verify WorkerLogAdapter and log_worker_error are importable from supervision."""
+
+    def test_worker_log_adapter_from_supervision(self):
+        from imas_codex.discovery.base.supervision import WorkerLogAdapter as WLA
+
+        assert WLA is WorkerLogAdapter
+
+    def test_log_worker_error_from_supervision(self):
+        from imas_codex.discovery.base.supervision import (
+            log_worker_error as lwe,
+        )
+
+        assert lwe is log_worker_error
 
 
 # =============================================================================

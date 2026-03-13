@@ -7,6 +7,9 @@ Parses magnetics sensor configuration files from the MAGNW group:
 - sensors_200c_*.txt: Canonical sensor R,Z,angle positions from CATIA CAD
 - MCFG.ix: Calibration epoch index (pulse-to-config mapping)
 
+Supports multiple versioned sensor files for tracking position refinements
+over time (2005–2019).
+
 Usage:
     echo '{"base_dir": "/home/MAGNW/chain1/input", "files": [...]}' | python3 parse_mcfg_sensors.py
 
@@ -16,6 +19,10 @@ Input (JSON on stdin):
         "files": [
             {"path": "PPFcfg/sensors_200c_2019-03-11.txt", "role": "sensors"},
             {"path": "magn_ep_2019-05-14/MCFG.ix", "role": "calibration_index"}
+        ],
+        "sensor_versions": [
+            {"file": "sensors-200c-12-05-04.txt", "path": "/home/chain1/input/magn90/", "date": "2005-10-12"},
+            {"file": "sensors_200c_2019-03-11.txt", "path": "/home/MAGNW/chain1/input/PPFcfg/", "date": "2019-03-11"}
         ]
     }
 
@@ -28,7 +35,16 @@ Output (JSON on stdout):
         },
         "calibration_index": {
             "epochs": [...]
-        }
+        },
+        "sensor_versions": [
+            {
+                "date": "2005-10-12",
+                "file": "sensors-200c-12-05-04.txt",
+                "sensors": {"coils": [...], "hall_probes": [...], "other": [...]},
+                "error": null
+            },
+            ...
+        ]
     }
 """
 
@@ -203,6 +219,33 @@ def main():
             result[role] = {"error": f"File not found: {full_path}"}
         except Exception as e:
             result[role] = {"error": f"{type(e).__name__}: {str(e)[:300]}"}
+
+    # Parse versioned sensor files if provided
+    sensor_versions = config.get("sensor_versions", [])
+    if sensor_versions:
+        versions_result = []
+        for sv in sensor_versions:
+            filename = sv.get("file", "")
+            dirpath = sv.get("path", "")
+            date = sv.get("date", "")
+            full_path = os.path.join(dirpath, filename)
+
+            entry: dict = {"date": date, "file": filename}
+            try:
+                with open(full_path) as f:
+                    text = f.read()
+                entry["sensors"] = parse_sensors(text)
+                entry["error"] = None
+            except FileNotFoundError:
+                entry["sensors"] = None
+                entry["error"] = f"File not found: {full_path}"
+            except Exception as e:
+                entry["sensors"] = None
+                entry["error"] = f"{type(e).__name__}: {str(e)[:300]}"
+
+            versions_result.append(entry)
+
+        result["sensor_versions"] = versions_result
 
     print(json.dumps(result))
 

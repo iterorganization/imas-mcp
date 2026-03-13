@@ -2039,6 +2039,45 @@ class TestMCFGPersist:
         assert cal_queries[0][1]["first_shot"] == 35680
         assert cal_queries[0][1]["last_shot"] == 95350
 
+    def test_persist_creates_calibration_epoch_nodes(self):
+        """Individual CalibrationEpoch graph nodes are created for each epoch."""
+        _, _, queries = self._run_persist()
+        ce_queries = [
+            (q, kw) for q, kw in queries if "CalibrationEpoch" in q
+        ]
+        assert len(ce_queries) == 1
+        records = ce_queries[0][1]["records"]
+        assert len(records) == 2
+
+        # First epoch
+        epoch1 = records[0]
+        assert epoch1["id"] == "jet:sensor_calibration:MCFG:0001/MAGNW"
+        assert epoch1["facility_id"] == "jet"
+        assert epoch1["data_source_name"] == "jet:sensor_calibration"
+        assert epoch1["date"] == "19960127"
+        assert epoch1["first_shot"] == 35680
+        assert epoch1["config_id"] == "MCFG:0001/MAGNW"
+        assert epoch1["config_type"] == "MAGNETICS"
+        assert epoch1["user"] == "gchuyler"
+        assert epoch1["description"] == "Initial calibration"
+
+        # Second epoch
+        epoch2 = records[1]
+        assert epoch2["id"] == "jet:sensor_calibration:MCFG:0077/MAGNW"
+        assert epoch2["first_shot"] == 95350
+        assert epoch2["description"] == "Latest calibration 2019"
+
+    def test_persist_calibration_epoch_relationships(self):
+        """CalibrationEpoch nodes have AT_FACILITY and IN_DATA_SOURCE relationships."""
+        _, _, queries = self._run_persist()
+        ce_queries = [
+            (q, kw) for q, kw in queries if "CalibrationEpoch" in q
+        ]
+        assert len(ce_queries) == 1
+        cypher = ce_queries[0][0]
+        assert "AT_FACILITY" in cypher
+        assert "IN_DATA_SOURCE" in cypher
+
     def test_persist_no_sensors_returns_zeros(self):
         """Empty sensor data returns zero counts without errors."""
         parsed = {
@@ -2132,6 +2171,232 @@ $:20190314 0095350 operato  MCFG:0077/MAGNW MAGNETICS ! Latest calibration 2019
         assert len(result["coils"]) == 1
         assert len(result["hall_probes"]) == 0
         assert len(result["other"]) == 0
+
+
+# Mock data for sensor version tests
+MOCK_MCFG_CONFIG_WITH_VERSIONS = {
+    **MOCK_MCFG_CONFIG,
+    "sensor_versions": [
+        {
+            "file": "sensors-200c-12-05-04.txt",
+            "path": "/home/chain1/input/magn90/",
+            "date": "2005-10-12",
+        },
+        {
+            "file": "sensors_200c_2019-03-11.txt",
+            "path": "/home/MAGNW/chain1/input/PPFcfg/",
+            "date": "2019-03-11",
+        },
+    ],
+}
+
+MOCK_MCFG_PARSED_WITH_VERSIONS = {
+    **MOCK_MCFG_PARSED,
+    "sensor_versions": [
+        {
+            "date": "2005-10-12",
+            "file": "sensors-200c-12-05-04.txt",
+            "error": None,
+            "sensors": {
+                "coils": [
+                    {
+                        "id": 1,
+                        "r": 4.290,
+                        "z": 0.602,
+                        "angle": -74.0,
+                        "gain": 0.980,
+                        "rel_error": 0.03,
+                        "abs_error": 0.006,
+                        "jpf_name": "DA/C2-CX01",
+                    },
+                ],
+                "hall_probes": [],
+                "other": [],
+            },
+        },
+        {
+            "date": "2019-03-11",
+            "file": "sensors_200c_2019-03-11.txt",
+            "error": None,
+            "sensors": {
+                "coils": [
+                    {
+                        "id": 1,
+                        "r": 4.292,
+                        "z": 0.604,
+                        "angle": -74.1,
+                        "gain": 0.986,
+                        "rel_error": 0.02,
+                        "abs_error": 0.005,
+                        "jpf_name": "DA/C2-CX01",
+                    },
+                ],
+                "hall_probes": [
+                    {
+                        "id": 1,
+                        "r": 6.2,
+                        "z": 0.0,
+                        "gain": 1.0,
+                        "rel_error": 0.01,
+                        "abs_error": 0.001,
+                        "jpf_name": "DA/C2-HX01",
+                    },
+                ],
+                "other": [],
+            },
+        },
+    ],
+}
+
+
+class TestMCFGSensorVersions:
+    """Test versioned sensor file persistence and SUPERSEDES chains."""
+
+    def _run_persist(self, parsed=None, config=None):
+        """Run persist with mocked GraphClient for version tests."""
+        if parsed is None:
+            parsed = MOCK_MCFG_PARSED_WITH_VERSIONS
+        if config is None:
+            config = MOCK_MCFG_CONFIG_WITH_VERSIONS
+
+        created_nodes: dict[str, list[dict]] = {}
+        query_calls: list[tuple] = []
+
+        with patch(
+            "imas_codex.discovery.signals.scanners.device_xml.GraphClient"
+        ) as mock_gc_cls:
+            mock_gc = mock_gc_cls.return_value.__enter__.return_value
+
+            def capture_query(cypher, **kwargs):
+                query_calls.append((cypher, kwargs))
+                return []
+
+            mock_gc.query.side_effect = capture_query
+
+            def capture_create(label, items, **kw):
+                created_nodes.setdefault(label, []).extend(items)
+                return {"processed": len(items), "relationships": {}}
+
+            mock_gc.create_nodes.side_effect = capture_create
+
+            stats = _persist_mcfg_nodes("jet", config, parsed)
+
+        return stats, created_nodes, query_calls
+
+    def test_sensor_version_count_in_stats(self):
+        """Stats include sensor_versions count for successfully parsed versions."""
+        stats, _, _ = self._run_persist()
+        assert stats["sensor_versions"] == 2
+
+    def test_versioned_sensor_nodes_created(self):
+        """Versioned sensors create SignalNode with version_date tags."""
+        _, nodes, _ = self._run_persist()
+        version_nodes = [
+            dn
+            for dn in nodes.get("SignalNode", [])
+            if "version_date" in dn
+        ]
+        # 2005 version has 1 coil, 2019 has 1 coil + 1 hall probe = 3 total
+        assert len(version_nodes) == 3
+
+        v2005 = [n for n in version_nodes if n["version_date"] == "2005-10-12"]
+        assert len(v2005) == 1
+        assert v2005[0]["r"] == 4.290
+        assert v2005[0]["path"] == "jet:mcfg:sensor:DA/C2-CX01:v2005-10-12"
+
+        v2019 = [n for n in version_nodes if n["version_date"] == "2019-03-11"]
+        assert len(v2019) == 2
+
+    def test_versioned_data_sources_created(self):
+        """Each version creates its own DataSource node."""
+        _, _, queries = self._run_persist()
+        ds_queries = [
+            (q, kw) for q, kw in queries
+            if "MERGE (ds:DataSource" in q and "ds_id" in kw
+        ]
+        assert len(ds_queries) == 2
+        ds_ids = [q[1]["ds_id"] for q in ds_queries]
+        assert "jet:sensor_calibration:v2005-10-12" in ds_ids
+        assert "jet:sensor_calibration:v2019-03-11" in ds_ids
+
+    def test_supersedes_chain_created(self):
+        """SUPERSEDES relationship links newer → older versions."""
+        _, _, queries = self._run_persist()
+        sup_queries = [
+            (q, kw) for q, kw in queries if "SUPERSEDES" in q
+        ]
+        assert len(sup_queries) == 1
+        records = sup_queries[0][1]["records"]
+        assert len(records) == 1
+        assert records[0]["newer_id"] == "jet:sensor_calibration:v2019-03-11"
+        assert records[0]["older_id"] == "jet:sensor_calibration:v2005-10-12"
+
+    def test_no_versions_skips_version_persistence(self):
+        """Without sensor_versions in parsed data, no version nodes are created."""
+        stats, nodes, queries = self._run_persist(
+            parsed=MOCK_MCFG_PARSED, config=MOCK_MCFG_CONFIG
+        )
+        assert stats.get("sensor_versions", 0) == 0
+        version_nodes = [
+            dn for dn in nodes.get("SignalNode", [])
+            if "version_date" in dn
+        ]
+        assert len(version_nodes) == 0
+        sup_queries = [
+            (q, kw) for q, kw in queries if "SUPERSEDES" in q
+        ]
+        assert len(sup_queries) == 0
+
+    def test_failed_version_skipped(self):
+        """Versions with errors are not persisted."""
+        parsed = {
+            **MOCK_MCFG_PARSED,
+            "sensor_versions": [
+                {
+                    "date": "2005-10-12",
+                    "file": "sensors-200c-12-05-04.txt",
+                    "error": "File not found",
+                    "sensors": None,
+                },
+                {
+                    "date": "2019-03-11",
+                    "file": "sensors_200c_2019-03-11.txt",
+                    "error": None,
+                    "sensors": {"coils": [], "hall_probes": [], "other": []},
+                },
+            ],
+        }
+        stats, _, queries = self._run_persist(parsed=parsed)
+        # Only 1 version succeeded (the empty one)
+        assert stats["sensor_versions"] == 1
+        # No SUPERSEDES — need at least 2 valid versions
+        sup_queries = [
+            (q, kw) for q, kw in queries if "SUPERSEDES" in q
+        ]
+        assert len(sup_queries) == 0
+
+
+class TestMCFGHandlerInput:
+    """Test MCFGHandler.build_script_input with sensor_versions."""
+
+    def test_build_script_input_forwards_sensor_versions(self):
+        """sensor_versions from config are forwarded to script input."""
+        from imas_codex.discovery.signals.scanners.device_xml import MCFGHandler
+
+        handler = MCFGHandler()
+        result = handler.build_script_input(MOCK_MCFG_CONFIG_WITH_VERSIONS)
+        assert "sensor_versions" in result
+        assert len(result["sensor_versions"]) == 2
+        assert result["sensor_versions"][0]["file"] == "sensors-200c-12-05-04.txt"
+        assert result["sensor_versions"][0]["date"] == "2005-10-12"
+
+    def test_build_script_input_no_versions(self):
+        """Without sensor_versions, key is absent from script input."""
+        from imas_codex.discovery.signals.scanners.device_xml import MCFGHandler
+
+        handler = MCFGHandler()
+        result = handler.build_script_input(MOCK_MCFG_CONFIG)
+        assert "sensor_versions" not in result
 
 
 # ────────────────── PPF static geometry signal fixtures ──────────────────

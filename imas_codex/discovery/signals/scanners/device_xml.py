@@ -1366,10 +1366,18 @@ class MCFGHandler(StaticSourceHandler):
         files = source_config.get("files", [])
         if not base_dir or not files:
             return None
-        return {
+        script_input: dict[str, Any] = {
             "base_dir": base_dir,
             "files": [{"path": f["path"], "role": f["role"]} for f in files],
         }
+        # Forward versioned sensor files for historical tracking
+        sensor_versions = source_config.get("sensor_versions", [])
+        if sensor_versions:
+            script_input["sensor_versions"] = [
+                {"file": sv["file"], "path": sv["path"], "date": sv["date"]}
+                for sv in sensor_versions
+            ]
+        return script_input
 
     def persist(
         self,
@@ -1381,11 +1389,13 @@ class MCFGHandler(StaticSourceHandler):
 
     def log_stats(self, facility: str, stats: dict[str, Any]) -> None:
         logger.info(
-            "MCFG scanner %s: %d coil sensors, %d hall probes, %d calibration epochs",
+            "MCFG scanner %s: %d coil sensors, %d hall probes, "
+            "%d calibration epochs, %d sensor versions",
             facility,
             stats.get("coil_sensors", 0),
             stats.get("hall_probes", 0),
             stats.get("calibration_epochs", 0),
+            stats.get("sensor_versions", 0),
         )
 
 
@@ -1528,7 +1538,7 @@ def _persist_mcfg_nodes(
         cal_data = parsed.get("calibration_index", {})
         cal_epochs = cal_data.get("epochs", [])
         if cal_epochs:
-            # Store epoch count on DataSource
+            # Store aggregate epoch count on DataSource
             gc.query(
                 """
                 MATCH (ds:DataSource {id: $facility + ':' + $name})
@@ -1542,7 +1552,182 @@ def _persist_mcfg_nodes(
                 first_shot=cal_epochs[0]["first_shot"],
                 last_shot=cal_epochs[-1]["first_shot"],
             )
+
+            # Persist individual CalibrationEpoch nodes
+            epoch_nodes = []
+            for epoch in cal_epochs:
+                config_id = epoch.get("config_id", "")
+                epoch_id = f"{facility}:{source_name}:{config_id}"
+                epoch_nodes.append(
+                    {
+                        "id": epoch_id,
+                        "facility_id": facility,
+                        "data_source_name": f"{facility}:{source_name}",
+                        "date": epoch.get("date", ""),
+                        "first_shot": epoch["first_shot"],
+                        "config_id": config_id,
+                        "config_type": epoch.get("config_type", ""),
+                        "user": epoch.get("user", ""),
+                        "description": epoch.get("description", ""),
+                    }
+                )
+
+            gc.query(
+                """
+                UNWIND $records AS rec
+                MERGE (ce:CalibrationEpoch {id: rec.id})
+                SET ce.facility_id = rec.facility_id,
+                    ce.data_source_name = rec.data_source_name,
+                    ce.date = rec.date,
+                    ce.first_shot = rec.first_shot,
+                    ce.config_id = rec.config_id,
+                    ce.config_type = rec.config_type,
+                    ce.user = rec.user,
+                    ce.description = rec.description
+                WITH ce, rec
+                MATCH (f:Facility {id: rec.facility_id})
+                MERGE (ce)-[:AT_FACILITY]->(f)
+                WITH ce, rec
+                MATCH (ds:DataSource {id: rec.data_source_name})
+                MERGE (ce)-[:IN_DATA_SOURCE]->(ds)
+                """,
+                records=epoch_nodes,
+            )
             stats["calibration_epochs"] = len(cal_epochs)
+
+        # 6. Versioned sensor files — persist each version's sensors
+        # with version_date tags and create SUPERSEDES chains
+        sensor_versions = parsed.get("sensor_versions", [])
+        version_data_source_ids: list[str] = []
+        if sensor_versions:
+            for sv in sensor_versions:
+                date = sv.get("date", "")
+                filename = sv.get("file", "")
+                sensors_data = sv.get("sensors")
+                if sv.get("error") or not sensors_data:
+                    continue
+
+                version_ds_name = f"{source_name}:v{date}"
+                version_ds_id = f"{facility}:{version_ds_name}"
+                version_data_source_ids.append(version_ds_id)
+
+                # Create a DataSource for this sensor version
+                gc.query(
+                    """
+                    MERGE (ds:DataSource {id: $ds_id})
+                    ON CREATE SET
+                        ds.name = $ds_name,
+                        ds.facility_id = $facility,
+                        ds.source_type = $source_type,
+                        ds.source_format = $source_format,
+                        ds.description = $description,
+                        ds.shot_dependent = false
+                    WITH ds
+                    MATCH (f:Facility {id: $facility})
+                    MERGE (ds)-[:AT_FACILITY]->(f)
+                    """,
+                    ds_id=version_ds_id,
+                    ds_name=version_ds_name,
+                    facility=facility,
+                    source_type=DataSourceType.config_file.value,
+                    source_format="text",
+                    description=(
+                        f"MCFG sensor positions version {date} "
+                        f"from file {filename}"
+                    ),
+                )
+
+                # Persist coil sensors for this version
+                v_coils = sensors_data.get("coils", [])
+                if v_coils:
+                    v_coil_nodes: list[dict] = []
+                    for sensor in v_coils:
+                        jpf_name = sensor.get("jpf_name", "")
+                        node_path = (
+                            f"{facility}:mcfg:sensor:{jpf_name}:v{date}"
+                        )
+                        dn = {
+                            "path": node_path,
+                            "id": node_path,
+                            "data_source_name": version_ds_name,
+                            "facility_id": facility,
+                            "node_type": SignalNodeType.NUMERIC.value,
+                            "source": SignalNodeSource.introspection.value,
+                            "system": "MP",
+                            "r": sensor["r"],
+                            "z": sensor["z"],
+                            "angle": sensor.get("angle", 0.0),
+                            "gain": sensor.get("gain", 1.0),
+                            "jpf_name": jpf_name,
+                            "version_date": date,
+                            "description": (
+                                f"MCFG sensor {jpf_name} (v{date}): "
+                                f"R={sensor['r']}m, Z={sensor['z']}m"
+                            ),
+                        }
+                        v_coil_nodes.append(dn)
+
+                    gc.create_nodes(
+                        "SignalNode", v_coil_nodes, batch_size=100
+                    )
+
+                # Persist hall probes for this version
+                v_halls = sensors_data.get("hall_probes", [])
+                if v_halls:
+                    v_hall_nodes: list[dict] = []
+                    for sensor in v_halls:
+                        jpf_name = sensor.get("jpf_name", "")
+                        node_path = (
+                            f"{facility}:mcfg:hall:{jpf_name}:v{date}"
+                        )
+                        dn = {
+                            "path": node_path,
+                            "id": node_path,
+                            "data_source_name": version_ds_name,
+                            "facility_id": facility,
+                            "node_type": SignalNodeType.NUMERIC.value,
+                            "source": SignalNodeSource.introspection.value,
+                            "system": "MP",
+                            "r": sensor["r"],
+                            "z": sensor["z"],
+                            "gain": sensor.get("gain", 1.0),
+                            "jpf_name": jpf_name,
+                            "version_date": date,
+                            "description": (
+                                f"MCFG hall probe {jpf_name} (v{date}): "
+                                f"R={sensor['r']}m, Z={sensor['z']}m"
+                            ),
+                        }
+                        v_hall_nodes.append(dn)
+
+                    gc.create_nodes(
+                        "SignalNode", v_hall_nodes, batch_size=50
+                    )
+
+            stats["sensor_versions"] = len(
+                [sv for sv in sensor_versions if not sv.get("error")]
+            )
+
+        # 7. Create SUPERSEDES chain between versioned sensor DataSources
+        # (newer version supersedes older version, sorted by date)
+        if len(version_data_source_ids) >= 2:
+            supersedes_records = []
+            for i in range(1, len(version_data_source_ids)):
+                supersedes_records.append(
+                    {
+                        "newer_id": version_data_source_ids[i],
+                        "older_id": version_data_source_ids[i - 1],
+                    }
+                )
+            gc.query(
+                """
+                UNWIND $records AS rec
+                MATCH (newer:DataSource {id: rec.newer_id})
+                MATCH (older:DataSource {id: rec.older_id})
+                MERGE (newer)-[:SUPERSEDES]->(older)
+                """,
+                records=supersedes_records,
+            )
 
     return stats
 
