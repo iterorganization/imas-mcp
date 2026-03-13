@@ -543,7 +543,9 @@ def _enrich_signals(
         OPTIONAL MATCH (s)-[:HAS_UNIT]->(su:Unit)
         OPTIONAL MATCH (s)-[:MEMBER_OF]->(fsgrp:SignalSource)
         OPTIONAL MATCH (wc:WikiChunk)-[:DOCUMENTS]->(s)
-        WITH s, diag, tn, su, fsgrp,
+        WITH s, tn, su, fsgrp,
+             collect(DISTINCT diag.name) AS diagnostic_names,
+             head(collect(DISTINCT diag.category)) AS diagnostic_category,
              collect(DISTINCT {
                access_template: da.data_template,
                access_type: da.access_type,
@@ -566,7 +568,8 @@ def _enrich_signals(
                s.node_path AS node_path, s.accessor AS accessor,
                s.data_source_name AS data_source_name,
                su.symbol AS unit_symbol,
-               diag.name AS diagnostic_name, diag.category AS diagnostic_category,
+               head(diagnostic_names) AS diagnostic_name,
+               diagnostic_category,
                tn.path AS tree_path, tn.data_source_name AS tree_data_source_name,
                fsgrp.id AS signal_source_id,
                fsgrp.group_key AS signal_source_key,
