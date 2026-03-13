@@ -7,62 +7,36 @@
 
 ## Vision & Strategy
 
-### [STRATEGY.md](STRATEGY.md)
-The Federated Fusion Knowledge Graph — four-zone architecture, discovery engine,
-agile LinkML schema workflow, MCP server design. Start here.
-
-### [gpu-cluster-scoping.md](gpu-cluster-scoping.md)
-Executive proposal for ITER GPU infrastructure. Three use cases: multilingual
-embedding, local agentic LLM deployment, Fusion World Model. Business case
-for 4x H200 server.
-
-### [graph-agent-interaction.md](graph-agent-interaction.md)
-Architecture for efficient agent-graph interaction. LinkML-driven schema context
-generation, tiered `schema_for()` API, codegen-first REPL philosophy. Partially
-implemented (`schema_context_data.py`, `schema_context.py` exist).
+| Plan | Scope |
+|------|-------|
+| [STRATEGY.md](STRATEGY.md) | The Federated Fusion Knowledge Graph — four-zone architecture, discovery engine, agile LinkML schema workflow |
+| [gpu-cluster-scoping.md](gpu-cluster-scoping.md) | Executive proposal for ITER GPU infrastructure (4x H200) |
 
 ## Active Feature Plans
 
-### IMAS Mapping Pipeline (core deliverable)
-
-| Plan | Scope |
-|------|-------|
-| [imas-mapping-combined.md](features/imas-mapping-combined.md) | **Master plan** — schema redesign + LLM pipeline. Six phases |
-| [imas-map-context-v2.md](features/imas-map-context-v2.md) | Context enrichment for the mapping pipeline |
-| [mapping-quality.md](features/mapping-quality.md) | Output quality: naming, validation, coverage reporting |
-| [signal-enrichment-v3.md](features/signal-enrichment-v3.md) | Signal enrichment redesign. Blocks mapping quality |
-
-### MCP & Search Quality
-
-| Plan | Scope |
-|------|-------|
-| [unified-mcp-tools.md](features/unified-mcp-tools.md) | Consolidated design for `search_signals`/`search_docs`/`search_code`/`search_imas` |
-| [mcp-cypher-gap-rectification.md](features/mcp-cypher-gap-rectification.md) | 8 gaps between MCP tools and raw Cypher quality |
-| [ingestion-schema-alignment.md](features/ingestion-schema-alignment.md) | Schema-graph drift: missing relationships, label mismatches |
-| [schema-id-normalization.md](features/schema-id-normalization.md) | Normalize all identifier fields to `id`. Fixes 24 silent relationship failures |
-
 ### Infrastructure
 
-| Plan | Scope |
-|------|-------|
-| [discovery-unification.md](features/discovery-unification.md) | Deduplicate shared infrastructure across 5 discovery domains |
-| [signal-scanner-diagnostics.md](features/signal-scanner-diagnostics.md) | Scanner progress streaming, worker health indicators |
+| Plan | Scope | Status |
+|------|-------|--------|
+| [signal-scanner-diagnostics.md](features/signal-scanner-diagnostics.md) | Scanner progress streaming, worker health indicators, MCP log tools | ~75% — infrastructure built, needs wiring to production workers |
 
 ### JET Machine Description
 
-| Plan | Scope |
-|------|-------|
-| [jet-machine-description-ingestion.md](features/jet-machine-description-ingestion.md) | Full JET geometry ingestion: device XML, limiter, JEC2020, MCFG, PPF |
-| [jet-legacy-machine-description.md](features/jet-legacy-machine-description.md) | Pre-EFIT++ era (shots 1–68612): magnetics config files, parsed formats |
+| Plan | Scope | Status |
+|------|-------|--------|
+| [jet-machine-description-ingestion.md](features/jet-machine-description-ingestion.md) | Full JET geometry ingestion: device XML, limiter, JEC2020, MCFG, PPF | Phase 1 done (limiters, JEC2020, magnetics config, PF coils, Greens) |
+| [jet-legacy-machine-description.md](features/jet-legacy-machine-description.md) | Pre-EFIT++ era (shots 1–68612): legacy magnetics, sensors-200c, MCFG | Phase 1 partial (magnetics config parser exists) |
 
 ## Documentation Gaps
 
 These implemented systems need architecture docs in `docs/`:
 
-1. **Discovery pipeline** — 5-domain supervised worker system (paths, wiki, signals, code, documents)
-2. **Signal enrichment** — multi-phase LLM enrichment with context injection
-3. **MCP search tools** — multi-index semantic search + graph traversal pattern
-4. **Graph profiles & merge** — multi-graph management, GHCR push/pull
+1. **Discovery pipeline** — 6-domain supervised worker system with shared engine skeleton
+2. **Signal enrichment** — multi-phase LLM enrichment with deterministic context injection
+3. **IMAS mapping pipeline** — signal mapping, assembly discovery, programmatic validation
+4. **MCP search tools** — multi-index semantic search + graph enrichment pattern
+5. **Schema context system** — LinkML-driven `schema_for()` with task groups
+6. **Graph profiles & merge** — multi-graph management, GHCR push/pull
 
 ## Related Projects
 
