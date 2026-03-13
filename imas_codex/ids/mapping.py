@@ -35,6 +35,7 @@ from imas_codex.ids.models import (
     persist_mapping_result,
 )
 from imas_codex.ids.tools import (
+    _run_async,
     analyze_units,
     fetch_imas_fields,
     fetch_imas_subtree,
@@ -100,6 +101,26 @@ def _format_subtree(rows: list[dict[str, Any]]) -> str:
             line += f" — {doc[:100]}"
         lines.append(line)
     return "\n".join(lines) if lines else "(no paths)"
+
+
+def _format_section_clusters(clusters: list[dict[str, Any]]) -> str:
+    """Format section clusters for the section assignment prompt."""
+    if not clusters:
+        return "(no cluster data available)"
+    lines: list[str] = []
+    for c in clusters:
+        label = c.get("label", "")
+        desc = c.get("description", "")
+        paths = c.get("paths", [])
+        line = f"- **{label}**"
+        if desc:
+            line += f": {desc[:200]}"
+        if paths:
+            line += f"\n  Paths: {', '.join(paths[:10])}"
+            if len(paths) > 10:
+                line += f" (+{len(paths) - 10} more)"
+        lines.append(line)
+    return "\n".join(lines)
 
 
 def _format_sources(groups: list[dict[str, Any]]) -> str:
@@ -182,7 +203,7 @@ def _format_fields(fields: list[dict[str, Any]]) -> str:
     """Format IMAS field details for the field mapping prompt."""
     lines: list[str] = []
     for f in fields:
-        path = f.get("id", "")
+        path = f.get("id", "") or f.get("path", "")
         dtype = f.get("data_type", "")
         units = f.get("units", "")
         doc = f.get("documentation", "")
@@ -197,6 +218,77 @@ def _format_fields(fields: list[dict[str, Any]]) -> str:
             line += f"\n  {doc[:200]}"
         lines.append(line)
     return "\n".join(lines) if lines else "(no fields)"
+
+
+def _format_identifier_schemas(fields: list[dict[str, Any]]) -> str:
+    """Extract and format identifier schemas from field data."""
+    lines: list[str] = []
+    for f in fields:
+        schema = f.get("identifier_schema")
+        if not schema:
+            continue
+        path = f.get("id", "") or f.get("path", "")
+        if isinstance(schema, dict):
+            schema_path = schema.get("schema_path", "")
+            doc = schema.get("documentation", "")
+            options = schema.get("options", [])
+        else:
+            # Pydantic model
+            schema_path = schema.schema_path if hasattr(schema, "schema_path") else ""
+            doc = schema.documentation if hasattr(schema, "documentation") else ""
+            options = schema.options if hasattr(schema, "options") else []
+
+        line = f"- **{path}** (schema: {schema_path})"
+        if doc:
+            line += f"\n  {doc[:200]}"
+        if options:
+            opt_lines = []
+            for opt in options[:20]:
+                if isinstance(opt, dict):
+                    name = opt.get("name", "")
+                    idx = opt.get("index", "")
+                    desc = opt.get("description", "")
+                else:
+                    name = opt.name if hasattr(opt, "name") else ""
+                    idx = opt.index if hasattr(opt, "index") else ""
+                    desc = opt.description if hasattr(opt, "description") else ""
+                opt_lines.append(f"    - {idx}: {name}" + (f" — {desc}" if desc else ""))
+            line += "\n  Valid values:\n" + "\n".join(opt_lines)
+            if len(options) > 20:
+                line += f"\n    (+{len(options) - 20} more)"
+        lines.append(line)
+    return "\n".join(lines) if lines else "(no identifier schemas)"
+
+
+def _format_version_context(version_ctx: dict[str, Any]) -> str:
+    """Format version change context for the signal mapping prompt."""
+    paths_data = version_ctx.get("paths", {})
+    if not paths_data:
+        return "(no version change history)"
+    lines: list[str] = []
+    for path_id, ctx in paths_data.items():
+        changes = ctx.get("notable_changes", [])
+        if not changes:
+            continue
+        lines.append(f"- **{path_id}** ({len(changes)} change(s)):")
+        for c in changes:
+            version = c.get("version", "?")
+            ctype = c.get("type", "?")
+            summary = c.get("summary", "")
+            lines.append(f"  - v{version} [{ctype}]: {summary[:200]}")
+    return "\n".join(lines) if lines else "(no notable version changes)"
+
+
+def _format_coordinate_context(fields: list[dict[str, Any]]) -> str:
+    """Format coordinate spec data from fields for the assembly prompt."""
+    lines: list[str] = []
+    for f in fields:
+        path = f.get("id", "") or f.get("path", "")
+        coords = f.get("coordinates", [])
+        if not coords:
+            continue
+        lines.append(f"- **{path}**: coordinates = {', '.join(coords)}")
+    return "\n".join(lines) if lines else "(no coordinate spec data)"
 
 
 def _format_unit_analysis(
@@ -269,6 +361,7 @@ def gather_context(
     ids_name: str,
     *,
     gc: GraphClient,
+    dd_version: int | None = None,
 ) -> dict[str, Any]:
     """Gather all context needed for the signal mapping pipeline."""
     logger.info("Gathering context for %s/%s", facility, ids_name)
@@ -277,12 +370,15 @@ def gather_context(
     # Filtering here would require pre-existing MAPS_TO_IMAS relationships,
     # creating a chicken-and-egg problem for new mappings.
     groups = query_signal_sources(facility, gc=gc)
-    subtree = fetch_imas_subtree(ids_name, gc=gc)
+    subtree = fetch_imas_subtree(ids_name, gc=gc, dd_version=dd_version)
 
     # Semantic search is supplementary — degrade gracefully if embedding
     # server is unavailable.
     try:
-        semantic = search_imas_semantic(f"{facility} {ids_name}", ids_name, gc=gc, k=10)
+        semantic = search_imas_semantic(
+            f"{facility} {ids_name}", ids_name, gc=gc, k=10,
+            dd_version=dd_version,
+        )
     except Exception:
         logger.warning("Semantic search unavailable — continuing without it")
         semantic = []
@@ -290,12 +386,29 @@ def gather_context(
     existing = search_existing_mappings(facility, ids_name, gc=gc)
     cocos_paths = get_sign_flip_paths(ids_name)
 
+    # Fetch section clusters for the target IDS
+    section_clusters: list[dict[str, Any]] = []
+    try:
+        from imas_codex.tools.graph_search import GraphClustersTool
+
+        clusters_tool = GraphClustersTool(gc)
+        cluster_result = _run_async(
+            clusters_tool.search_imas_clusters(
+                ids_filter=ids_name, section_only=True, dd_version=dd_version,
+            )
+        )
+        section_clusters = cluster_result.get("clusters", [])
+    except Exception:
+        logger.warning("Cluster listing unavailable — continuing without it")
+
     return {
         "groups": groups,
         "subtree": subtree,
         "semantic": semantic,
         "existing": existing,
         "cocos_paths": cocos_paths,
+        "dd_version": dd_version,
+        "section_clusters": section_clusters,
     }
 
 
@@ -317,6 +430,9 @@ def assign_sections(
         signal_sources=_format_sources(context["groups"]),
         imas_subtree=_format_subtree(context["subtree"]),
         semantic_results=_format_subtree(context["semantic"]),
+        section_clusters=_format_section_clusters(
+            context.get("section_clusters", [])
+        ),
     )
 
     messages = [
@@ -349,15 +465,19 @@ def map_signals(
     )
 
     batches: list[SignalMappingBatch] = []
+    dd_ver = context.get("dd_version")
 
     for assignment in sections.assignments:
         section_path = assignment.imas_section_path
 
         # Get detailed fields for this section
-        fields = fetch_imas_fields(ids_name, [section_path], gc=gc)
+        fields = fetch_imas_fields(
+            ids_name, [section_path], gc=gc, dd_version=dd_ver,
+        )
         # Also get leaf fields under this section
         subtree_fields = fetch_imas_subtree(
-            ids_name, section_path.removeprefix(f"{ids_name}/"), gc=gc, leaf_only=True
+            ids_name, section_path.removeprefix(f"{ids_name}/"), gc=gc,
+            leaf_only=True, dd_version=dd_ver,
         )
 
         # Find the signal source details
@@ -393,15 +513,36 @@ def map_signals(
                     + "\n".join(f"- {p}" for p in flip_paths)
                 )
 
+        # Combine fields for identifier schema extraction
+        all_fields = subtree_fields or fields
+
+        # Fetch version change history for section fields
+        version_context_str = "(no version change history)"
+        try:
+            from imas_codex.tools.version_tool import VersionTool
+
+            vt = VersionTool(gc)
+            field_paths = [
+                f.get("id", "") or f.get("path", "")
+                for f in all_fields if (f.get("id") or f.get("path"))
+            ]
+            if field_paths:
+                version_ctx = _run_async(vt.get_dd_version_context(paths=field_paths))
+                version_context_str = _format_version_context(version_ctx)
+        except Exception:
+            logger.debug("Version context fetch failed — continuing without it")
+
         prompt = _render_prompt(
             "signal_mapping",
             facility=facility,
             ids_name=ids_name,
             section_path=section_path,
             signal_source_detail=_format_source_detail(sg_detail),
-            imas_fields=_format_fields(subtree_fields or fields),
+            imas_fields=_format_fields(all_fields),
+            identifier_schemas=_format_identifier_schemas(all_fields),
+            version_context=version_context_str,
             unit_analysis=_format_unit_analysis(
-                [sg_detail] if sg_detail else [], subtree_fields or fields
+                [sg_detail] if sg_detail else [], all_fields
             ),
             cocos_paths="\n".join(f"- {p}" for p in context["cocos_paths"]) or "(none)",
             existing_mappings=json.dumps(context["existing"], indent=2, default=str),
@@ -480,6 +621,7 @@ def discover_assembly(
     )
 
     configs: list[AssemblyConfig] = []
+    dd_ver = context.get("dd_version")
 
     for assignment, batch in zip(sections.assignments, signal_batches):
         section_path = assignment.imas_section_path
@@ -488,6 +630,12 @@ def discover_assembly(
             ids_name,
             section_path.removeprefix(f"{ids_name}/"),
             gc=gc,
+            dd_version=dd_ver,
+        )
+
+        # Fetch fields with identifier schema data for assembly context
+        section_fields = fetch_imas_fields(
+            ids_name, [section_path], gc=gc, dd_version=dd_ver,
         )
 
         prompt = _render_prompt(
@@ -498,6 +646,8 @@ def discover_assembly(
             signal_mappings=_format_signal_mappings(batch),
             imas_section_structure=_format_subtree(section_structure),
             source_metadata=_format_source_metadata(assignment, context),
+            identifier_schemas=_format_identifier_schemas(section_fields),
+            coordinate_context=_format_coordinate_context(section_fields),
         )
 
         messages = [
@@ -646,10 +796,18 @@ def generate_mapping(
 
         dd_version = default_dd
 
+    # Extract major version number for DD filtering queries
+    dd_major: int | None = None
+    if dd_version:
+        try:
+            dd_major = int(str(dd_version).split(".")[0])
+        except (ValueError, IndexError):
+            pass
+
     cost = PipelineCost()
 
     # Step 0: Gather context
-    context = gather_context(facility, ids_name, gc=gc)
+    context = gather_context(facility, ids_name, gc=gc, dd_version=dd_major)
 
     if not context["groups"]:
         raise ValueError(

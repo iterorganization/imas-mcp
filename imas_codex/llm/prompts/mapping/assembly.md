@@ -28,6 +28,20 @@ more IMAS fields with individual transform expressions:
 
 {{ source_metadata }}
 
+### Identifier Schemas
+
+These fields have enumerated valid values. Use these exact values when
+populating identifier/type fields in assembly code:
+
+{{ identifier_schemas }}
+
+### Coordinate Specifications
+
+Coordinate axes and dimensionality for array fields in this section.
+Use this to determine array sizing and dimension ordering:
+
+{{ coordinate_context }}
+
 ## Assembly Patterns
 
 Choose the assembly pattern that best describes how these signals compose into

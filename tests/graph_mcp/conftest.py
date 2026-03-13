@@ -262,8 +262,11 @@ PATH_CHANGES = [
         "path_id": "core_profiles/profiles_1d/electrons/pressure",
         "from_version": "3.42.0",
         "to_version": "4.0.0",
+        "version": "4.0.0",
         "change_type": "added",
+        "semantic_change_type": "units",
         "description": "New electron pressure path added in 4.0.0",
+        "summary": "New electron pressure path added in 4.0.0",
     },
 ]
 
@@ -390,7 +393,9 @@ def _load_fixture_graph(client) -> None:
         client.query(
             "CREATE (c:IMASNodeChange {id: $id, path_id: $path_id, "
             "from_version: $from_version, to_version: $to_version, "
-            "change_type: $change_type, description: $description})",
+            "version: $version, "
+            "change_type: $change_type, semantic_change_type: $semantic_change_type, "
+            "description: $description, summary: $summary})",
             **ch,
         )
         # Link to path and versions

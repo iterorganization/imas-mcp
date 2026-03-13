@@ -6,6 +6,7 @@ as the source of truth for version information.
 """
 
 import logging
+from typing import Any
 
 from imas_codex.search.decorators import mcp_tool
 
@@ -60,4 +61,67 @@ class VersionTool:
             "version_range": f"{versions[0]} - {versions[-1]}",
             "version_count": len(versions),
             "versions": versions,
+        }
+
+    @mcp_tool(
+        "Get version change history for specific IMAS paths. "
+        "Returns notable changes (sign_convention, coordinate_convention, units, "
+        "definition_clarification) across DD versions for each path. "
+        "paths (required): One or more IMAS paths to check."
+    )
+    async def get_dd_version_context(
+        self,
+        paths: str | list[str],
+    ) -> dict[str, Any]:
+        """Get version change context for IMAS paths."""
+        if isinstance(paths, str):
+            path_list = [p.strip() for p in paths.replace(",", " ").split() if p.strip()]
+        else:
+            path_list = list(paths)
+
+        if not path_list:
+            return {"error": "No paths provided.", "paths": {}}
+
+        try:
+            results = self.graph_client.query(
+                """
+                UNWIND $path_ids AS pid
+                MATCH (p:IMASNode {id: pid})
+                OPTIONAL MATCH (change:IMASNodeChange)-[:FOR_IMAS_PATH]->(p)
+                WHERE change.semantic_change_type IN
+                      ['sign_convention', 'coordinate_convention', 'units',
+                       'definition_clarification']
+                RETURN p.id AS id,
+                       count(change) AS change_count,
+                       collect({version: change.version,
+                                type: change.semantic_change_type,
+                                summary: change.summary})[..10] AS notable_changes
+                """,
+                path_ids=path_list,
+            )
+        except Exception as e:
+            return {"error": f"Failed to query version context: {e}", "paths": {}}
+
+        path_ctx: dict[str, Any] = {}
+        for r in results or []:
+            changes = [
+                c for c in (r.get("notable_changes") or [])
+                if c.get("version") is not None
+            ]
+            path_ctx[r["id"]] = {
+                "change_count": r["change_count"],
+                "notable_changes": changes,
+            }
+
+        # Report paths not found in graph
+        found = set(path_ctx.keys())
+        not_found = [p for p in path_list if p not in found]
+
+        return {
+            "paths": path_ctx,
+            "total_paths": len(path_list),
+            "paths_with_changes": sum(
+                1 for v in path_ctx.values() if v["change_count"] > 0
+            ),
+            "not_found": not_found,
         }

@@ -407,3 +407,186 @@ class TestServerGraphNative:
         assert "ids://catalog" not in registered_uris
         assert "ids://identifiers" not in registered_uris
         assert "ids://clusters" not in registered_uris
+
+
+# ── T1: fetch_imas_paths enrichment tests ────────────────────────────────
+
+
+class TestFetchImasPathsEnrichment:
+    """Tests for fetch_imas_paths with identifier schemas and version history."""
+
+    def _make_tool(self, graph_client):
+        from imas_codex.tools.graph_search import GraphPathTool
+
+        return GraphPathTool(graph_client)
+
+    @pytest.mark.asyncio
+    async def test_fetch_includes_identifier_schema(self, graph_client):
+        """Path with IdentifierSchema should populate identifier_schema."""
+        tool = self._make_tool(graph_client)
+        result = await tool.fetch_imas_paths(
+            "equilibrium/time_slice/boundary/type"
+        )
+        assert len(result.nodes) == 1
+        node = result.nodes[0]
+        assert node.identifier_schema is not None
+        assert node.identifier_schema.schema_path == "boundary_type"
+
+    @pytest.mark.asyncio
+    async def test_fetch_no_identifier_schema(self, graph_client):
+        """Path without IdentifierSchema should have None."""
+        tool = self._make_tool(graph_client)
+        result = await tool.fetch_imas_paths(
+            "equilibrium/time_slice/profiles_1d/psi"
+        )
+        node = result.nodes[0]
+        assert node.identifier_schema is None
+
+    @pytest.mark.asyncio
+    async def test_fetch_version_history_enabled(self, graph_client):
+        """include_version_history=True should populate version_changes."""
+        tool = self._make_tool(graph_client)
+        result = await tool.fetch_imas_paths(
+            "core_profiles/profiles_1d/electrons/pressure",
+            include_version_history=True,
+        )
+        assert len(result.nodes) == 1
+        node = result.nodes[0]
+        assert node.version_changes is not None
+        assert len(node.version_changes) >= 1
+        change = node.version_changes[0]
+        assert "version" in change
+        assert "type" in change
+
+    @pytest.mark.asyncio
+    async def test_fetch_version_history_disabled(self, graph_client):
+        """include_version_history=False should leave version_changes as None."""
+        tool = self._make_tool(graph_client)
+        result = await tool.fetch_imas_paths(
+            "core_profiles/profiles_1d/electrons/pressure",
+            include_version_history=False,
+        )
+        node = result.nodes[0]
+        assert node.version_changes is None
+
+    @pytest.mark.asyncio
+    async def test_fetch_version_history_no_changes(self, graph_client):
+        """Path with no IMASNodeChange should return None even with flag."""
+        tool = self._make_tool(graph_client)
+        result = await tool.fetch_imas_paths(
+            "equilibrium/time_slice/profiles_1d/psi",
+            include_version_history=True,
+        )
+        node = result.nodes[0]
+        # No changes attached to this path, so should be None
+        assert node.version_changes is None
+
+
+# ── T2: search_imas_clusters listing mode tests ──────────────────────────
+
+
+class TestSearchImaClustersListingMode:
+    """Tests for search_imas_clusters with IDS listing mode."""
+
+    def _make_tool(self, graph_client):
+        from imas_codex.tools.graph_search import GraphClustersTool
+
+        return GraphClustersTool(graph_client)
+
+    @pytest.mark.asyncio
+    async def test_list_clusters_by_ids(self, graph_client):
+        """No query + ids_filter should list all clusters for that IDS."""
+        tool = self._make_tool(graph_client)
+        result = await tool.search_imas_clusters(
+            ids_filter="equilibrium",
+        )
+        assert result["query_type"] == "ids_listing"
+        assert result["clusters_found"] >= 1
+        labels = [c["label"] for c in result["clusters"]]
+        assert "Equilibrium Boundary" in labels
+
+    @pytest.mark.asyncio
+    async def test_list_clusters_section_only(self, graph_client):
+        """section_only=True should filter to IDS-scoped clusters."""
+        tool = self._make_tool(graph_client)
+        result = await tool.search_imas_clusters(
+            ids_filter="equilibrium",
+            section_only=True,
+        )
+        assert result["query_type"] == "ids_listing"
+        assert result["section_only"] is True
+        # All returned clusters should have IDS-level paths
+        for c in result["clusters"]:
+            assert any("/" in p for p in c["paths"])
+
+    @pytest.mark.asyncio
+    async def test_list_clusters_no_ids_no_query(self, graph_client):
+        """No query and no ids_filter returns error."""
+        tool = self._make_tool(graph_client)
+        result = await tool.search_imas_clusters()
+        assert "error" in result
+
+    @pytest.mark.asyncio
+    async def test_list_clusters_includes_paths(self, graph_client):
+        """Listed clusters should include member paths."""
+        tool = self._make_tool(graph_client)
+        result = await tool.search_imas_clusters(
+            ids_filter="core_profiles",
+        )
+        assert result["clusters_found"] >= 1
+        cluster = result["clusters"][0]
+        assert len(cluster["paths"]) > 0
+
+
+# ── T3: get_dd_version_context tests ─────────────────────────────────────
+
+
+class TestGetDDVersionContext:
+    """Tests for VersionTool.get_dd_version_context."""
+
+    @pytest.fixture
+    def version_tool(self, graph_client):
+        from imas_codex.tools.version_tool import VersionTool
+
+        return VersionTool(graph_client)
+
+    @pytest.mark.anyio
+    async def test_path_with_changes(self, version_tool):
+        """Path with IMASNodeChange should return change data."""
+        result = await version_tool.get_dd_version_context(
+            "core_profiles/profiles_1d/electrons/pressure"
+        )
+        assert result["total_paths"] == 1
+        path_data = result["paths"]["core_profiles/profiles_1d/electrons/pressure"]
+        assert path_data["change_count"] >= 1
+        assert len(path_data["notable_changes"]) >= 1
+
+    @pytest.mark.anyio
+    async def test_path_without_changes(self, version_tool):
+        """Path with no changes should have 0 change_count."""
+        result = await version_tool.get_dd_version_context(
+            "equilibrium/time_slice/profiles_1d/psi"
+        )
+        path_data = result["paths"]["equilibrium/time_slice/profiles_1d/psi"]
+        assert path_data["change_count"] == 0
+        assert path_data["notable_changes"] == []
+
+    @pytest.mark.anyio
+    async def test_multiple_paths(self, version_tool):
+        result = await version_tool.get_dd_version_context([
+            "core_profiles/profiles_1d/electrons/pressure",
+            "equilibrium/time_slice/profiles_1d/psi",
+        ])
+        assert result["total_paths"] == 2
+        assert result["paths_with_changes"] == 1
+
+    @pytest.mark.anyio
+    async def test_nonexistent_path(self, version_tool):
+        result = await version_tool.get_dd_version_context("fake/path")
+        assert result["total_paths"] == 1
+        assert "fake/path" in result["not_found"]
+
+    @pytest.mark.anyio
+    async def test_empty_paths(self, version_tool):
+        result = await version_tool.get_dd_version_context("")
+        assert "error" in result

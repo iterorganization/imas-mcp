@@ -144,6 +144,10 @@ class Tools(MCPProvider):
         """Delegate to clusters tool."""
         return await self.clusters_tool.search_imas_clusters(*args, **kwargs)
 
+    async def get_dd_version_context(self, *args, **kwargs):
+        """Delegate to version tool."""
+        return await self.version_tool.get_dd_version_context(*args, **kwargs)
+
 
 __all__ = [
     "BaseTool",

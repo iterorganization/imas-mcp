@@ -408,13 +408,15 @@ class GraphPathTool:
         "Retrieve detailed IMAS path data including documentation, units, coordinates, and cluster membership. "
         "paths (required): One or more exact IMAS paths. "
         "ids: Optional IDS prefix to prepend. "
-        "dd_version: Filter by DD major version (e.g., 3 or 4). None returns all versions."
+        "dd_version: Filter by DD major version (e.g., 3 or 4). None returns all versions. "
+        "include_version_history: Include notable version changes (sign_convention, units, etc.)."
     )
     async def fetch_imas_paths(
         self,
         paths: str | list[str],
         ids: str | None = None,
         dd_version: int | None = None,
+        include_version_history: bool = False,
         ctx: Context | None = None,
     ) -> FetchPathsResult:
         """Fetch detailed path information from graph."""
@@ -433,6 +435,23 @@ class GraphPathTool:
         deprecated = []
 
         for path in path_list:
+            version_clause = ""
+            if include_version_history:
+                version_clause = """
+                OPTIONAL MATCH (change:IMASNodeChange)-[:FOR_IMAS_PATH]->(p)
+                WHERE change.semantic_change_type IN
+                      ['sign_convention', 'coordinate_convention', 'units', 'definition_clarification']
+                WITH p, u, cluster_labels, coordinates, ident,
+                     collect(DISTINCT {version: change.version,
+                                       type: change.semantic_change_type,
+                                       summary: change.summary}) AS version_changes
+                """
+            else:
+                version_clause = """
+                WITH p, u, cluster_labels, coordinates, ident,
+                     [] AS version_changes
+                """
+
             row = self._gc.query(
                 f"""
                 MATCH (p:IMASNode {{id: $path}})
@@ -440,19 +459,63 @@ class GraphPathTool:
                 OPTIONAL MATCH (p)-[:HAS_UNIT]->(u:Unit)
                 OPTIONAL MATCH (p)-[:IN_CLUSTER]->(c:IMASSemanticCluster)
                 OPTIONAL MATCH (p)-[:HAS_COORDINATE]->(coord:IMASCoordinateSpec)
+                OPTIONAL MATCH (p)-[:HAS_IDENTIFIER_SCHEMA]->(ident:IdentifierSchema)
+                WITH p, u,
+                     collect(DISTINCT c.label) AS cluster_labels,
+                     collect(DISTINCT coord.id) AS coordinates,
+                     ident
+                {version_clause}
                 RETURN p.id AS id, p.name AS name, p.ids AS ids,
                        p.documentation AS documentation, p.data_type AS data_type,
                        p.node_type AS node_type, p.physics_domain AS physics_domain,
                        p.ndim AS ndim,
                        u.id AS units,
-                       collect(DISTINCT c.label) AS cluster_labels,
-                       collect(DISTINCT coord.id) AS coordinates
+                       cluster_labels,
+                       coordinates,
+                       ident.name AS identifier_schema_name,
+                       ident.description AS identifier_schema_description,
+                       ident.options AS identifier_schema_options,
+                       version_changes
                 """,
                 path=path,
                 **dd_params,
             )
             if row and row[0]["id"]:
                 r = row[0]
+                # Build identifier schema if present
+                ident_schema = None
+                if r.get("identifier_schema_name"):
+                    options = []
+                    if r["identifier_schema_options"]:
+                        try:
+                            raw_opts = json.loads(r["identifier_schema_options"])
+                            from imas_codex.core.data_model import IdentifierOption
+                            for opt in raw_opts:
+                                if isinstance(opt, dict):
+                                    options.append(IdentifierOption(
+                                        name=opt.get("name", ""),
+                                        index=opt.get("index", 0),
+                                        description=opt.get("description", ""),
+                                    ))
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+                    from imas_codex.core.data_model import IdentifierSchema
+                    ident_schema = IdentifierSchema(
+                        schema_path=r["identifier_schema_name"],
+                        documentation=r.get("identifier_schema_description"),
+                        options=options,
+                    )
+
+                # Build version changes list
+                v_changes = None
+                if include_version_history:
+                    raw_changes = r.get("version_changes") or []
+                    # Filter out null entries from OPTIONAL MATCH
+                    v_changes = [
+                        c for c in raw_changes
+                        if c.get("version") is not None
+                    ] or None
+
                 node = IdsNode(
                     path=r["id"],
                     ids_name=r["ids"],
@@ -463,6 +526,8 @@ class GraphPathTool:
                     physics_domain=r["physics_domain"],
                     coordinates=r["coordinates"] or [],
                     cluster_labels=[cl for cl in r["cluster_labels"] if cl],
+                    identifier_schema=ident_schema,
+                    version_changes=v_changes,
                 )
                 nodes.append(node)
             else:
@@ -745,30 +810,38 @@ class GraphClustersTool:
     @handle_errors(fallback="cluster_error")
     @mcp_tool(
         "Search semantic clusters of related IMAS data paths. "
-        "query (required): Natural language description (e.g., 'boundary geometry', 'transport coefficients') "
-        "or exact IMAS path to find its cluster membership. "
+        "query: Natural language description (e.g., 'boundary geometry', 'transport coefficients') "
+        "or exact IMAS path to find its cluster membership. Optional when ids_filter is provided. "
         "scope: Filter by cluster scope - 'global', 'domain', or 'ids'. "
         "ids_filter: Limit to clusters containing paths from specific IDS. "
+        "section_only: If true, only return clusters containing structural sections. "
         "dd_version: Filter by DD major version (e.g., 3 or 4). None returns all versions."
     )
     async def search_imas_clusters(
         self,
-        query: str,
+        query: str | None = None,
         scope: Literal["global", "domain", "ids"] | None = None,
         ids_filter: str | list[str] | None = None,
+        section_only: bool = False,
         dd_version: int | None = None,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
         """Search clusters using graph vector indexes."""
-        is_valid, _ = validate_query(query, "search_imas_clusters")
-        if not is_valid:
+        normalized_filter = normalize_ids_filter(ids_filter)
+
+        # IDS listing mode: no query, ids_filter provided
+        if not query and normalized_filter:
+            return self._list_by_ids(
+                normalized_filter, scope, section_only=section_only,
+                dd_version=dd_version,
+            )
+
+        if not query:
             return {
-                "error": "Query cannot be empty.",
+                "error": "Either query or ids_filter is required.",
                 "clusters_found": 0,
                 "clusters": [],
             }
-
-        normalized_filter = normalize_ids_filter(ids_filter)
 
         # Detect query type: path lookup vs semantic search
         if "/" in query and " " not in query:
@@ -777,6 +850,56 @@ class GraphClustersTool:
         return self._search_by_text(
             query, scope, normalized_filter, dd_version=dd_version
         )
+
+    def _list_by_ids(
+        self,
+        ids_filter: str | list[str],
+        scope: str | None,
+        *,
+        section_only: bool = False,
+        dd_version: int | None = None,
+    ) -> dict[str, Any]:
+        """List all clusters for specific IDS without a search query."""
+        filter_list = ids_filter if isinstance(ids_filter, list) else [ids_filter]
+        scope_filter = "AND c.scope = $scope" if scope else ""
+        section_filter = (
+            "AND any(p IN section_paths WHERE p CONTAINS '/')"
+            if section_only
+            else ""
+        )
+        params: dict[str, Any] = {"ids_filter": filter_list}
+        if scope:
+            params["scope"] = scope
+
+        dd_clause = _dd_version_clause("p", dd_version, params)
+
+        results = self._gc.query(
+            f"""
+            MATCH (p:IMASNode)-[:IN_CLUSTER]->(c:IMASSemanticCluster)
+            WHERE p.ids IN $ids_filter
+            {dd_clause}
+            {scope_filter}
+            WITH c, collect(DISTINCT p.id) AS section_paths,
+                 collect(DISTINCT p.ids) AS ids_covered
+            {section_filter}
+            RETURN c.id AS id, c.label AS label, c.description AS description,
+                   c.scope AS scope, c.cross_ids AS cross_ids,
+                   c.ids_names AS ids_names, c.similarity_score AS similarity,
+                   section_paths AS paths
+            ORDER BY size(section_paths) DESC
+            """,
+            **params,
+        )
+
+        clusters = self._format_clusters(results or [])
+        return {
+            "query": None,
+            "query_type": "ids_listing",
+            "ids_filter": filter_list,
+            "section_only": section_only,
+            "clusters_found": len(clusters),
+            "clusters": clusters,
+        }
 
     def _search_by_path(
         self, path: str, scope: str | None, *, dd_version: int | None = None

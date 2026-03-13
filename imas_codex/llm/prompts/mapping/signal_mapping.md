@@ -95,6 +95,13 @@ units, and documentation:
 
 {{ imas_fields }}
 
+### Identifier Schemas
+
+These target fields have enumerated valid values. Use these exact values
+when populating identifier/type fields:
+
+{{ identifier_schemas }}
+
 ### Unit Analysis
 
 Unit compatibility analysis between signal and IMAS units:
@@ -106,3 +113,10 @@ Unit compatibility analysis between signal and IMAS units:
 Any existing mappings for this facility/IDS:
 
 {{ existing_mappings }}
+
+### Version History
+
+Notable changes to target fields across DD versions. Check whether your
+target DD version is before or after these changes:
+
+{{ version_context }}

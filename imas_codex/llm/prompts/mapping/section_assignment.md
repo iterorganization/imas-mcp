@@ -33,6 +33,13 @@ Additional context from semantic search:
 
 {{ semantic_results }}
 
+### Section Clusters
+
+These semantic clusters group related IDS sections by physics concept.
+Use these to understand which paths form physics-coherent groups:
+
+{{ section_clusters }}
+
 ## Task
 
 For each signal source, determine which IMAS structural-array section
