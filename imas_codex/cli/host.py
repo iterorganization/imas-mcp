@@ -8,7 +8,8 @@ Usage:
   imas-codex host iter                 Survey ITER login nodes with load + processes
   imas-codex host iter --set-default 3
                                        Set iter SSH target to 3rd node
-  imas-codex host iter --set-default   Auto-select least loaded node
+  imas-codex host iter --set-default auto
+                                       Auto-select least loaded node
 
 Login nodes are discovered dynamically from /etc/hosts on the facility
 gateway — no individual node configuration needed.
@@ -889,7 +890,7 @@ def _migrate_from_node(
                     )
                 else:
                     click.echo(
-                        f"    {click.style('·', fg='dim')} "
+                        f"    {click.style('·', dim=True)} "
                         f"No imas-codex processes running"
                     )
     else:
@@ -939,12 +940,12 @@ def _migrate_from_node(
                 val = line.split(":")[1]
                 if val == "none":
                     click.echo(
-                        f"    {click.style('·', fg='dim')} "
+                        f"    {click.style('·', dim=True)} "
                         f"zellij not found on {old_short}"
                     )
                 elif val == "0":
                     click.echo(
-                        f"    {click.style('·', fg='dim')} "
+                        f"    {click.style('·', dim=True)} "
                         f"No zellij sessions to clean up"
                     )
                 else:
@@ -988,18 +989,6 @@ class _HostGroup(click.Group):
         # inject "survey" so Click routes to the survey subcommand.
         if args and args[0] not in self.commands and not args[0].startswith("-"):
             args = ["survey"] + args
-
-        # Handle --set-default with optional value:
-        # --set-default       → --set-default auto
-        # --set-default 3     → unchanged
-        # --set-default=node  → unchanged (Click splits on =)
-        args = list(args)
-        for i, arg in enumerate(args):
-            if arg == "--set-default":
-                if i + 1 >= len(args) or args[i + 1].startswith("-"):
-                    args.insert(i + 1, "auto")
-                break
-
         return super().parse_args(ctx, args)
 
 
@@ -1035,7 +1024,7 @@ def host(ctx: click.Context) -> None:
     "set_default",
     default=None,
     help=(
-        "Set SSH target: node index, hostname, or omit value "
+        "Set SSH target: node index, hostname, or 'auto' "
         "to auto-select least loaded"
     ),
 )
@@ -1060,7 +1049,7 @@ def host_survey(
         imas-codex host iter                    # Survey ITER login nodes
         imas-codex host iter --watch            # Continuous monitoring
         imas-codex host iter --set-default 3    # Pick node #3
-        imas-codex host iter --set-default      # Auto-pick least loaded
+        imas-codex host iter --set-default auto  # Auto-pick least loaded
     """
     from imas_codex.discovery.base.facility import get_facility
 
