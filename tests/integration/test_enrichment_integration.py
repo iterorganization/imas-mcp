@@ -3,18 +3,20 @@
 These tests query the real production graph (via tunnel) to validate the
 enrichment tools (T1-T3) against actual DD data. They skip if Neo4j is
 not reachable.
+
+Connection auto-routes via GraphClient() — no NEO4J_URI override needed.
+When running off-site, the SSH tunnel is established automatically by
+resolve_neo4j() (port 17687 for the 'iter' location).
 """
 
 import pytest
 
-pytestmark = pytest.mark.graph_mcp
-
 
 def _make_graph_client():
-    """Create a GraphClient pointing at the active graph (tunnel-aware)."""
+    """Create a GraphClient using default auto-routing resolution."""
     from imas_codex.graph.client import GraphClient
 
-    return GraphClient.from_profile()
+    return GraphClient()
 
 
 @pytest.fixture(scope="module")
