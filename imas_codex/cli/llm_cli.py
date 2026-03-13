@@ -576,7 +576,9 @@ def _deploy_login_llm_direct() -> None:
     launcher = (
         f"#!/bin/bash\n"
         f"cd {_PROJECT}\n"
+        f"set -a\n"
         f"source {_PROJECT}/.env 2>/dev/null || true\n"
+        f"set +a\n"
         f"export LITELLM_CALLBACKS=langfuse\n"
         f"mkdir -p {_SERVICES_DIR}\n"
         f"exec $HOME/.local/bin/uv tool run "
