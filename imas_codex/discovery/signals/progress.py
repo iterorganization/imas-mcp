@@ -435,6 +435,9 @@ class DataProgressDisplay(BaseProgressDisplay):
         # (matches how paths CLI derives scan progress from graph refresh).
         # run_promoted only tracks this-session promotes, which is 0 when
         # running --enrich-only or when scan workers have already finished.
+        # Note: run_discovered can double-count (existing + new) since the
+        # seed worker starts from graph state then adds per-scanner counts.
+        # Use total_signals from graph refresh as the authoritative total.
         scan_completed = (
             self.state.run_promoted
             if self.state.run_promoted > 0
@@ -443,7 +446,6 @@ class DataProgressDisplay(BaseProgressDisplay):
         scan_total = max(
             self.state.total_signals,
             self.state.run_promoted,
-            self.state.run_discovered,
             1,
         )
         # Use promote rate as the representative rate (output rate)

@@ -826,6 +826,7 @@ def claim_signals_for_check(
                        s.physics_domain AS physics_domain, s.tdi_function AS tdi_function,
                        s.discovery_source AS discovery_source, s.name AS name,
                        s.data_source_node AS data_source_node,
+                       s.node_path AS node_path,
                        COALESCE(s.data_access, derived_data_access) AS data_access
                 """,
                 facility=facility,
@@ -4073,6 +4074,7 @@ async def check_worker(
                         data_access=s.get("data_access", ""),
                         data_source_name=s.get("data_source_name"),
                         data_source_node=s.get("data_source_node"),
+                        node_path=s.get("node_path") or s.get("data_source_path"),
                     )
                     for s in group
                 ]
