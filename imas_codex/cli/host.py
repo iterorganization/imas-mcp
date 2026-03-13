@@ -490,7 +490,7 @@ def _build_survey_table(
     table.add_column("CPU Load", no_wrap=True)
     table.add_column("Memory", no_wrap=True)
     table.add_column("Users", justify="right")
-    table.add_column("Codex", justify="right")
+    table.add_column("Codex", justify="left")
 
     best_node = None
     best_load = float("inf")
@@ -509,6 +509,14 @@ def _build_survey_table(
         )
         n_procs = len(info.get("codex_procs", []))
 
+        # Sum codex CPU% and express as fraction of node CPU capacity
+        codex_cpu_sum = sum(
+            float(p.get("cpu", 0)) for p in info.get("codex_procs", [])
+        )
+        # ps %cpu is per-core, node capacity = cpu_count * 100%
+        node_capacity = info["cpu_count"] * 100 if info["cpu_count"] > 0 else 100
+        codex_pct = (codex_cpu_sum / node_capacity) * 100
+
         if cpu_pct < best_load:
             best_load = cpu_pct
             best_node = node
@@ -522,7 +530,19 @@ def _build_survey_table(
         marker = " ◀" if is_current else ""
         node_display = f"{row[0]}{marker}"
 
-        proc_str = f"[green]{n_procs}[/green]" if n_procs > 0 else "0"
+        if n_procs > 0:
+            if codex_pct >= 50:
+                pct_color = "red"
+            elif codex_pct >= 20:
+                pct_color = "yellow"
+            else:
+                pct_color = "green"
+            proc_str = (
+                f"[{pct_color}]{codex_pct:>3.0f}%[/{pct_color}]  "
+                f"[green]{n_procs}[/green]"
+            )
+        else:
+            proc_str = "       0"
 
         table.add_row(str(idx), node_display, row[1], row[2], row[3], proc_str)
 
