@@ -1,58 +1,70 @@
-# Plans Index
+# Plans
 
-> Strategic and tactical planning documents for imas-codex development.
+> Strategic vision and active feature plans for imas-codex.
+>
+> **Rule:** Delete plans when implemented. The code is the documentation.
+> Completed features belong in `docs/architecture/`, not here.
 
-## Document Classification
-
-| Type | Purpose | Location |
-|------|---------|----------|
-| **Strategy** | High-level vision, architecture, multi-phase roadmaps | `STRATEGY.md` |
-| **Feature** | Tactical implementation plans for specific capabilities | `features/*.md` |
-
-## Strategic Plan
+## Vision & Strategy
 
 ### [STRATEGY.md](STRATEGY.md)
-**The Master Document** - Overall vision, four-zone architecture, and 7-phase roadmap for the Federated Fusion Knowledge Graph. Start here to understand the project.
+The Federated Fusion Knowledge Graph — four-zone architecture, discovery engine,
+agile LinkML schema workflow, MCP server design. Start here.
 
-## Feature Plans
+### [gpu-cluster-scoping.md](gpu-cluster-scoping.md)
+Executive proposal for ITER GPU infrastructure. Three use cases: multilingual
+embedding, local agentic LLM deployment, Fusion World Model. Business case
+for 4x H200 server.
 
-Tactical implementation plans for specific capabilities:
+### [graph-agent-interaction.md](graph-agent-interaction.md)
+Architecture for efficient agent-graph interaction. LinkML-driven schema context
+generation, tiered `schema_for()` API, codegen-first REPL philosophy. Partially
+implemented (`schema_context_data.py`, `schema_context.py` exist).
 
-### [features/cocos-enrichment.md](features/cocos-enrichment.md)
-COCOS graph enrichment and imas-python integration. Extends the implemented `imas_codex.cocos` module.
+## Active Feature Plans
 
-### [features/discovery-agents.md](features/discovery-agents.md)
-Discovery & ingestion pipeline with Map → Score → Ingest phases. Includes multi-facility onboarding workflow and autonomous ReAct agent architecture.
+### IMAS Mapping Pipeline (core deliverable)
 
-### [features/wiki-ingestion.md](features/wiki-ingestion.md)
-Wiki content ingestion pipeline with ReAct agent evaluation, semantic chunking, and facility-agnostic design.
+| Plan | Scope |
+|------|-------|
+| [imas-mapping-combined.md](features/imas-mapping-combined.md) | **Master plan** — schema redesign + LLM pipeline. Six phases |
+| [imas-map-context-v2.md](features/imas-map-context-v2.md) | Context enrichment for the mapping pipeline |
+| [mapping-quality.md](features/mapping-quality.md) | Output quality: naming, validation, coverage reporting |
+| [signal-enrichment-v3.md](features/signal-enrichment-v3.md) | Signal enrichment redesign. Blocks mapping quality |
 
-### [features/mcp-tool-fixes.md](features/mcp-tool-fixes.md)
-IMAS MCP tool improvements in three phases: input handling, error recovery, and description updates.
+### MCP & Search Quality
 
-### [features/path-normalization.md](features/path-normalization.md)
-DataNode path normalization and TDI function integration for deduplication and matching.
+| Plan | Scope |
+|------|-------|
+| [unified-mcp-tools.md](features/unified-mcp-tools.md) | Consolidated design for `search_signals`/`search_docs`/`search_code`/`search_imas` |
+| [mcp-cypher-gap-rectification.md](features/mcp-cypher-gap-rectification.md) | 8 gaps between MCP tools and raw Cypher quality |
+| [ingestion-schema-alignment.md](features/ingestion-schema-alignment.md) | Schema-graph drift: missing relationships, label mismatches |
+| [schema-id-normalization.md](features/schema-id-normalization.md) | Normalize all identifier fields to `id`. Fixes 24 silent relationship failures |
 
-### [features/enrichment.md](features/enrichment.md)
-DataNode LLM enrichment for metadata generation and graph relationship discovery.
+### Infrastructure
 
-### [features/wiki-scoring-redesign.md](features/wiki-scoring-redesign.md)
-Wiki scoring redesign with LLM-centric content prefetch. Replaces metric-based scoring with content-aware LLM scoring to eliminate ITER/EPFL bias and improve accuracy.
+| Plan | Scope |
+|------|-------|
+| [discovery-unification.md](features/discovery-unification.md) | Deduplicate shared infrastructure across 5 discovery domains |
+| [signal-scanner-diagnostics.md](features/signal-scanner-diagnostics.md) | Scanner progress streaming, worker health indicators |
+
+### JET Machine Description
+
+| Plan | Scope |
+|------|-------|
+| [jet-machine-description-ingestion.md](features/jet-machine-description-ingestion.md) | Full JET geometry ingestion: device XML, limiter, JEC2020, MCFG, PPF |
+| [jet-legacy-machine-description.md](features/jet-legacy-machine-description.md) | Pre-EFIT++ era (shots 1–68612): magnetics config files, parsed formats |
+
+## Documentation Gaps
+
+These implemented systems need architecture docs in `docs/`:
+
+1. **Discovery pipeline** — 5-domain supervised worker system (paths, wiki, signals, code, documents)
+2. **Signal enrichment** — multi-phase LLM enrichment with context injection
+3. **MCP search tools** — multi-index semantic search + graph traversal pattern
+4. **Graph profiles & merge** — multi-graph management, GHCR push/pull
 
 ## Related Projects
 
-- **[imas-ambix](https://github.com/iterorganization/imas-ambix)** - Universal Fusion Data Client (runtime Recipe execution)
-- **[tree-sitter-gdl](https://github.com/iterorganization/tree-sitter-gdl)** - Tree-sitter grammar for GDL/IDL parsing
-
-## Related Documentation
-
-- **[docs/architecture/](../docs/architecture/)** - How things work (implemented systems)
-
-## Document Lifecycle
-
-1. **Draft** → Initial ideas and proposals
-2. **Active** → Under implementation, updated as work progresses  
-3. **Complete** → Feature shipped, document archived to `docs/`
-4. **Superseded** → Replaced by newer plan
-
-When a plan is fully implemented, move relevant content to `docs/architecture/` or `docs/workflows/` and archive the plan.
+- **[imas-ambix](https://github.com/iterorganization/imas-ambix)** — Universal Fusion Data Client
+- **[tree-sitter-gdl](https://github.com/iterorganization/tree-sitter-gdl)** — Tree-sitter grammar for GDL/IDL
