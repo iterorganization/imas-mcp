@@ -1888,8 +1888,8 @@ classes:
         range: integer
       version_history:
         description: JSON-encoded version history [{version, from_shot, to_shot}, ...]
-      superseded_by:
-        description: Name of replacement function if deprecated
+      supersedes:
+        description: Previous version of this function it replaces
         range: TDIFunction
       # Source selection for multi-source functions
       default_source:
