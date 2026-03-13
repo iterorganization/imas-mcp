@@ -1,8 +1,8 @@
 """Fixtures for graph quality tests.
 
 All tests in this package require a live Neo4j connection. If Neo4j
-is not reachable, tests are skipped automatically at collection time
-(visible as "skipped" rather than silently deselected).
+is not reachable, tests are skipped automatically via the top-level
+conftest.py pytest_collection_modifyitems hook (visible as "skipped").
 """
 
 from pathlib import Path
@@ -13,43 +13,6 @@ from imas_codex.graph.schema import GraphSchema, get_schema
 
 # Apply graph marker to all tests in this directory
 pytestmark = pytest.mark.graph
-
-# ── Auto-skip when Neo4j is unreachable ──────────────────────────────────
-# Checked once per session, cached in module-level variable.
-
-_neo4j_available: bool | None = None
-
-
-def _check_neo4j_available() -> bool:
-    """Quick probe to see if Neo4j is reachable (cached)."""
-    global _neo4j_available
-    if _neo4j_available is not None:
-        return _neo4j_available
-    try:
-        from imas_codex.graph.client import GraphClient
-
-        client = GraphClient()
-        client.get_stats()
-        client.close()
-        _neo4j_available = True
-    except Exception:
-        _neo4j_available = False
-    return _neo4j_available
-
-
-def pytest_collection_modifyitems(config, items):  # noqa: ARG001
-    """Auto-skip all graph-marked tests when Neo4j is not reachable.
-
-    Runs the connectivity check once per session. Skipping is visible
-    in test output ('s') so users know graph tests *exist* but were not
-    executed, rather than being silently deselected.
-    """
-    if _check_neo4j_available():
-        return
-    skip_marker = pytest.mark.skip(reason="Neo4j not available")
-    for item in items:
-        if item.get_closest_marker("graph"):
-            item.add_marker(skip_marker)
 
 
 # =============================================================================

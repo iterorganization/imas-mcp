@@ -225,6 +225,8 @@ Tests in `tests/graph/` are **parametrized from the schema** — they do not har
 
 Do not add schema declarations solely to make tests green. The schema defines what *should* exist — tests verify the graph matches that intent.
 
+**Schema extensions require explicit user approval.** Never silently add properties, classes, relationships, or enum values to LinkML schemas — even when a failing graph test suggests a missing declaration. Schema compliance failures are diagnostic signals: they may indicate a code bug writing unexpected data, stale graph state, or a genuine missing declaration. Always present the proposed schema change to the user with justification and wait for confirmation before editing any `.yaml` file under `imas_codex/schemas/`.
+
 ## Facility Configuration
 
 Per-facility YAML configs define discovery roots, wiki sites, data sources, and infrastructure details. Schema enforced via LinkML (`imas_codex/schemas/facility_config.yaml`).

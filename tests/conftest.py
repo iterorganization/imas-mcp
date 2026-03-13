@@ -38,6 +38,37 @@ def pytest_configure(config):
     pass
 
 
+# ── Auto-skip graph/integration tests when Neo4j is unreachable ──────────
+_neo4j_available: bool | None = None
+
+
+def _check_neo4j() -> bool:
+    """Quick probe to see if Neo4j is reachable (cached per session)."""
+    global _neo4j_available
+    if _neo4j_available is not None:
+        return _neo4j_available
+    try:
+        from imas_codex.graph.client import GraphClient
+
+        client = GraphClient()
+        client.get_stats()
+        client.close()
+        _neo4j_available = True
+    except Exception:
+        _neo4j_available = False
+    return _neo4j_available
+
+
+def pytest_collection_modifyitems(config, items):  # noqa: ARG001
+    """Auto-skip graph/integration-marked tests when Neo4j is unreachable."""
+    if _check_neo4j():
+        return
+    skip_marker = pytest.mark.skip(reason="Neo4j not available")
+    for item in items:
+        if item.get_closest_marker("graph") or item.get_closest_marker("integration"):
+            item.add_marker(skip_marker)
+
+
 @pytest.fixture(scope="session")
 def embedding_model_name(request):
     """Get the embedding model name from command line option."""

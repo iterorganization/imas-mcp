@@ -1,8 +1,17 @@
 """Tests for unified tree extraction module (mdsplus/extraction.py)."""
 
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+_EXTRACT_TREE_SCRIPT = (
+    Path(__file__).resolve().parents[2]
+    / "imas_codex"
+    / "remote"
+    / "scripts"
+    / "extract_tree.py"
+)
 
 from imas_codex.mdsplus.extraction import (
     _compute_parent_path,
@@ -217,7 +226,7 @@ class TestExtractTreeScript:
 
         spec = importlib.util.spec_from_file_location(
             "extract_tree",
-            "/home/ITER/mcintos/Code/imas-codex/imas_codex/remote/scripts/extract_tree.py",
+            str(_EXTRACT_TREE_SCRIPT),
         )
         importlib.util.module_from_spec(spec)
         # Don't exec (needs MDSplus), just check the functions exist
@@ -230,7 +239,7 @@ class TestExtractTreeScript:
 
         spec = importlib.util.spec_from_file_location(
             "extract_tree",
-            "/home/ITER/mcintos/Code/imas-codex/imas_codex/remote/scripts/extract_tree.py",
+            str(_EXTRACT_TREE_SCRIPT),
         )
         mod = importlib.util.module_from_spec(spec)
         # Load the module (safe — functions don't import MDSplus at module level)
@@ -250,7 +259,7 @@ class TestExtractTreeScript:
 
         spec = importlib.util.spec_from_file_location(
             "extract_tree",
-            "/home/ITER/mcintos/Code/imas-codex/imas_codex/remote/scripts/extract_tree.py",
+            str(_EXTRACT_TREE_SCRIPT),
         )
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)

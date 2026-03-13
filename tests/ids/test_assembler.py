@@ -217,7 +217,20 @@ class TestGraphDrivenSummary:
 # ---------------------------------------------------------------------------
 
 
+def _has_jet_pf_active_mapping() -> bool:
+    """Check if JET pf_active mapping exists."""
+    try:
+        IDSAssembler("jet", "pf_active")
+        return True
+    except FileNotFoundError:
+        return False
+
+
 @pytest.mark.integration
+@pytest.mark.skipif(
+    not _has_jet_pf_active_mapping(),
+    reason="No IMASMapping for jet/pf_active — run 'imas-codex imas map run jet pf_active' first",
+)
 class TestAssemblerIntegration:
     """Integration tests that require a running Neo4j graph with JET data."""
 
