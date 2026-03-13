@@ -3300,10 +3300,14 @@ async def enrich_worker(
         # On each idle cycle, detect indexed signal patterns and mark
         # followers so they skip individual LLM enrichment. Once a
         # representative is enriched, its metadata is propagated.
-        patterns_detected, followers_marked = await asyncio.to_thread(
-            detect_signal_sources,
-            state.facility,
-        )
+        try:
+            patterns_detected, followers_marked = await asyncio.to_thread(
+                detect_signal_sources,
+                state.facility,
+            )
+        except Exception as e:
+            logger.warning("Pattern detection failed (non-fatal): %s", e)
+            patterns_detected, followers_marked = 0, 0
         if patterns_detected > 0 and on_progress:
             on_progress(
                 f"detected {patterns_detected} patterns ({followers_marked} followers)",
@@ -3757,13 +3761,20 @@ async def enrich_worker(
             # Propagate enrichment from representative signals to pattern followers
             total_propagated = 0
             for e in enriched:
-                propagated = await asyncio.to_thread(
-                    propagate_source_enrichment,
-                    e["id"],
-                    e,
-                    batch_cost / len(enriched) if batch_cost > 0 else 0.0,
-                )
-                total_propagated += propagated
+                try:
+                    propagated = await asyncio.to_thread(
+                        propagate_source_enrichment,
+                        e["id"],
+                        e,
+                        batch_cost / len(enriched) if batch_cost > 0 else 0.0,
+                    )
+                    total_propagated += propagated
+                except Exception as exc:
+                    logger.warning(
+                        "Propagation failed for %s (non-fatal): %s",
+                        e["id"],
+                        exc,
+                    )
 
             if total_propagated > 0:
                 state.enrich_stats.processed += total_propagated
