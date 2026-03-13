@@ -159,6 +159,10 @@ class FetchPathsResult(WithPhysics, ToolResult, IdsResult):
         default=None, description="Error message if input was invalid"
     )
 
+    def as_dicts(self) -> list[dict[str, Any]]:
+        """Return nodes as plain dicts for pipeline consumption."""
+        return [n.model_dump() for n in self.nodes]
+
 
 # ============================================================================
 # EXPORT DATA STRUCTURES
@@ -297,6 +301,10 @@ class SearchPathsResult(WithPhysics, ToolResult, SearchHits):
         default=None,
         description="Warning when search results have low relevance scores",
     )
+
+    def as_dicts(self) -> list[dict[str, Any]]:
+        """Return hits as plain dicts for pipeline consumption."""
+        return [h.model_dump() for h in self.hits]
 
 
 class GetOverviewResult(WithPhysics, ToolResult, SearchHits):
@@ -452,3 +460,7 @@ class CheckPathsResult(BaseModel):
     error: str | None = Field(
         default=None, description="Error message if input was invalid"
     )
+
+    def as_dicts(self) -> list[dict[str, Any]]:
+        """Return results as plain dicts for pipeline consumption."""
+        return [r.model_dump() for r in self.results]

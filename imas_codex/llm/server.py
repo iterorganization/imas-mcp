@@ -650,6 +650,7 @@ def _init_repl() -> dict[str, Any]:
         query_text: str,
         ids_filter: str | None = None,
         max_results: int = 10,
+        dd_version: int | None = None,
     ) -> str:
         """Search IMAS Data Dictionary using semantic search.
 
@@ -657,6 +658,7 @@ def _init_repl() -> dict[str, Any]:
             query_text: Natural language query
             ids_filter: Optional IDS name filter (space-delimited)
             max_results: Maximum results
+            dd_version: Filter by DD major version (e.g., 3 or 4)
 
         Returns:
             Formatted string with matching paths and documentation
@@ -668,6 +670,7 @@ def _init_repl() -> dict[str, Any]:
                     query=query_text,
                     ids_filter=ids_filter,
                     max_results=max_results,
+                    dd_version=dd_version,
                 )
             )
             if not result.hits:
@@ -684,29 +687,38 @@ def _init_repl() -> dict[str, Any]:
         except Exception as e:
             return f"IMAS search error: {e}"
 
-    def fetch_imas(paths: str) -> str:
+    def fetch_imas(paths: str, dd_version: int | None = None) -> str:
         """Get full documentation for IMAS paths.
 
         Args:
             paths: Space-delimited IMAS paths
+            dd_version: Filter by DD major version (e.g., 3 or 4)
 
         Returns:
             Detailed path documentation
         """
         try:
             tools = _get_imas_tools()
-            result = _run_async(tools.fetch_imas_paths(paths=paths))
+            result = _run_async(
+                tools.fetch_imas_paths(paths=paths, dd_version=dd_version)
+            )
             return str(result)
         except Exception as e:
             return f"Fetch error: {e}"
 
-    def list_imas(paths: str, leaf_only: bool = True, max_paths: int = 100) -> str:
+    def list_imas(
+        paths: str,
+        leaf_only: bool = True,
+        max_paths: int = 100,
+        dd_version: int | None = None,
+    ) -> str:
         """List data paths in IDS.
 
         Args:
             paths: Space-separated IDS names or path prefixes
             leaf_only: Only return data fields
             max_paths: Limit output size
+            dd_version: Filter by DD major version (e.g., 3 or 4)
 
         Returns:
             Tree structure in YAML format
@@ -718,43 +730,157 @@ def _init_repl() -> dict[str, Any]:
                     paths=paths,
                     leaf_only=leaf_only,
                     max_paths=max_paths,
+                    dd_version=dd_version,
                 )
             )
             return str(result)
         except Exception as e:
             return f"List error: {e}"
 
-    def check_imas(paths: str) -> str:
+    def check_imas(paths: str, dd_version: int | None = None) -> str:
         """Validate IMAS paths for existence.
 
         Args:
             paths: Space-delimited IMAS paths
+            dd_version: Filter by DD major version (e.g., 3 or 4)
 
         Returns:
             Validation results with existence status
         """
         try:
             tools = _get_imas_tools()
-            result = _run_async(tools.check_imas_paths(paths=paths))
+            result = _run_async(
+                tools.check_imas_paths(paths=paths, dd_version=dd_version)
+            )
             return str(result)
         except Exception as e:
             return f"Check error: {e}"
 
-    def get_imas_overview(query_text: str | None = None) -> str:
+    def get_imas_overview(
+        query_text: str | None = None,
+        dd_version: int | None = None,
+    ) -> str:
         """Get high-level overview of IMAS Data Dictionary.
 
         Args:
             query_text: Optional keyword filter
+            dd_version: Filter by DD major version (e.g., 3 or 4)
 
         Returns:
             Overview with IDS list, physics domains, statistics
         """
         try:
             tools = _get_imas_tools()
-            result = _run_async(tools.get_imas_overview(query=query_text))
+            result = _run_async(
+                tools.get_imas_overview(query=query_text, dd_version=dd_version)
+            )
             return str(result)
         except Exception as e:
             return f"Overview error: {e}"
+
+    def get_imas_path_context(
+        path: str,
+        relationship_types: str = "all",
+        dd_version: int | None = None,
+    ) -> str:
+        """Get cross-IDS structural context for an IMAS path.
+
+        Args:
+            path: Exact IMAS path
+            relationship_types: 'cluster', 'coordinate', 'unit', 'identifier', or 'all'
+            dd_version: Filter by DD major version (e.g., 3 or 4)
+
+        Returns:
+            Cross-IDS connections grouped by type
+        """
+        try:
+            tools = _get_imas_tools()
+            result = _run_async(
+                tools.get_imas_path_context(
+                    path=path,
+                    relationship_types=relationship_types,
+                    dd_version=dd_version,
+                )
+            )
+            return str(result)
+        except Exception as e:
+            return f"Path context error: {e}"
+
+    def analyze_imas_structure(
+        ids_name: str,
+        dd_version: int | None = None,
+    ) -> str:
+        """Analyze the hierarchical structure of an IMAS IDS.
+
+        Args:
+            ids_name: IDS name (e.g. 'equilibrium')
+            dd_version: Filter by DD major version (e.g., 3 or 4)
+
+        Returns:
+            Structural analysis with depth, types, domains
+        """
+        try:
+            tools = _get_imas_tools()
+            result = _run_async(
+                tools.analyze_imas_structure(
+                    ids_name=ids_name, dd_version=dd_version
+                )
+            )
+            return str(result)
+        except Exception as e:
+            return f"Structure analysis error: {e}"
+
+    def export_imas_ids(
+        ids_name: str,
+        leaf_only: bool = False,
+        dd_version: int | None = None,
+    ) -> str:
+        """Export full IDS structure with documentation.
+
+        Args:
+            ids_name: IDS name (e.g. 'equilibrium')
+            leaf_only: If true, return only leaf nodes
+            dd_version: Filter by DD major version (e.g., 3 or 4)
+
+        Returns:
+            Full IDS path listing
+        """
+        try:
+            tools = _get_imas_tools()
+            result = _run_async(
+                tools.export_imas_ids(
+                    ids_name=ids_name, leaf_only=leaf_only, dd_version=dd_version
+                )
+            )
+            return str(result)
+        except Exception as e:
+            return f"Export error: {e}"
+
+    def export_imas_domain(
+        domain: str,
+        ids_filter: str | None = None,
+        dd_version: int | None = None,
+    ) -> str:
+        """Export all IMAS paths in a physics domain.
+
+        Args:
+            domain: Physics domain name (e.g. 'magnetics')
+            ids_filter: Optional IDS name filter
+            dd_version: Filter by DD major version (e.g., 3 or 4)
+
+        Returns:
+            Domain export grouped by IDS
+        """
+        try:
+            tools = _get_imas_tools()
+            result = _run_async(
+                tools.export_imas_domain(
+                    domain=domain, ids_filter=ids_filter, dd_version=dd_version
+                )
+            )
+            return str(result)
+        except Exception as e:
+            return f"Domain export error: {e}"
 
     # =========================================================================
     # COCOS utilities
@@ -1066,6 +1192,11 @@ def _init_repl() -> dict[str, Any]:
                 ("fetch_imas", fetch_imas),
                 ("list_imas", list_imas),
                 ("check_imas", check_imas),
+                ("get_imas_overview", get_imas_overview),
+                ("get_imas_path_context", get_imas_path_context),
+                ("analyze_imas_structure", analyze_imas_structure),
+                ("export_imas_ids", export_imas_ids),
+                ("export_imas_domain", export_imas_domain),
             ],
         ),
         (
@@ -1824,7 +1955,6 @@ class AgentsServer:
             _fetch,
             _search_code,
             _search_docs,
-            _search_imas,
             _search_signals,
             _signal_analytics,
         )
@@ -1955,6 +2085,7 @@ class AgentsServer:
             ids_filter: str | None = None,
             facility: str | None = None,
             include_version_context: bool = False,
+            dd_version: int | None = None,
             k: int = 20,
         ) -> str:
             """Search IMAS Data Dictionary with cross-domain enrichment.
@@ -1971,19 +2102,338 @@ class AgentsServer:
                 ids_filter: Optional IDS name filter (e.g. "core_profiles")
                 facility: Optional facility for cross-references (e.g. "tcv")
                 include_version_context: Include DD version change history
+                dd_version: Filter by DD major version (e.g., 3 or 4)
                 k: Number of results (default 20)
 
             Returns:
                 Formatted report with IMAS paths, clusters, facility
                 cross-references, and version context.
             """
-            return _search_imas(
-                query,
-                ids_filter=ids_filter,
-                facility=facility,
-                include_version_context=include_version_context,
-                k=k,
+            from imas_codex.llm.search_formatters import format_search_imas_report
+
+            tools = _get_imas_tools()
+            result = _run_async(
+                tools.search_imas_paths(
+                    query=query,
+                    ids_filter=ids_filter,
+                    max_results=k,
+                    facility=facility,
+                    include_version_context=include_version_context,
+                    dd_version=dd_version,
+                )
             )
+
+            # Also search clusters for cross-domain context
+            cluster_result = None
+            try:
+                cluster_result = _run_async(
+                    tools.clusters_tool.search_imas_clusters(
+                        query=query,
+                        ids_filter=ids_filter,
+                        dd_version=dd_version,
+                    )
+                )
+            except Exception:
+                logger.debug("Cluster search failed, continuing without", exc_info=True)
+
+            return format_search_imas_report(result, cluster_result)
+
+        # =====================================================================
+        # Promoted IMAS DD tools — delegate to shared Tools via _get_imas_tools()
+        # =====================================================================
+
+        from imas_codex.llm.search_formatters import (
+            format_check_report,
+            format_cluster_report,
+            format_fetch_paths_report,
+            format_identifiers_report,
+            format_list_report,
+            format_overview_report,
+        )
+
+        @self.mcp.tool()
+        def check_imas_paths(
+            paths: str,
+            ids: str | None = None,
+            dd_version: int | None = None,
+        ) -> str:
+            """Validate IMAS paths against the Data Dictionary graph.
+
+            Checks whether exact paths exist, reports data types and units,
+            and suggests corrections for renamed or misspelled paths.
+
+            Args:
+                paths: Space or comma-delimited IMAS paths to validate
+                    (e.g., "equilibrium/time_slice/profiles_1d/psi core_profiles/profiles_1d/electrons/temperature")
+                ids: Optional IDS prefix to prepend to all paths
+                dd_version: Filter by DD major version (e.g., 3 or 4)
+
+            Returns:
+                Formatted validation report with existence status per path.
+            """
+            tools = _get_imas_tools()
+            result = _run_async(
+                tools.check_imas_paths(paths=paths, ids=ids, dd_version=dd_version)
+            )
+            return format_check_report(result)
+
+        @self.mcp.tool()
+        def fetch_imas_paths(
+            paths: str,
+            ids: str | None = None,
+            dd_version: int | None = None,
+        ) -> str:
+            """Get full documentation for IMAS paths including units, coordinates, cluster membership.
+
+            Returns detailed information for each path: documentation text,
+            data type, units, coordinate specs, semantic cluster labels,
+            and physics domain classification.
+
+            Args:
+                paths: Space or comma-delimited IMAS paths
+                    (e.g., "equilibrium/time_slice/profiles_1d/psi")
+                ids: Optional IDS prefix to prepend
+                dd_version: Filter by DD major version (e.g., 3 or 4)
+
+            Returns:
+                Formatted path documentation report.
+            """
+            tools = _get_imas_tools()
+            result = _run_async(
+                tools.fetch_imas_paths(paths=paths, ids=ids, dd_version=dd_version)
+            )
+            return format_fetch_paths_report(result)
+
+        @self.mcp.tool()
+        def list_imas_paths(
+            paths: str,
+            leaf_only: bool = False,
+            max_paths: int | None = None,
+            dd_version: int | None = None,
+        ) -> str:
+            """List data paths within an IMAS IDS or subtree.
+
+            Enumerates all paths under the given IDS name(s) or
+            path prefix(es). Use leaf_only=True to get only data
+            endpoints (excluding structures).
+
+            Args:
+                paths: Space-separated IDS names or path prefixes
+                    (e.g., "equilibrium" or "equilibrium/time_slice")
+                leaf_only: If true, return only leaf nodes (data fields)
+                max_paths: Maximum paths per query (None for all)
+                dd_version: Filter by DD major version (e.g., 3 or 4)
+
+            Returns:
+                Formatted path listing report.
+            """
+            tools = _get_imas_tools()
+            result = _run_async(
+                tools.list_imas_paths(
+                    paths=paths,
+                    leaf_only=leaf_only,
+                    max_paths=max_paths,
+                    dd_version=dd_version,
+                )
+            )
+            return format_list_report(result)
+
+        @self.mcp.tool()
+        def get_imas_overview(
+            query: str | None = None,
+            dd_version: int | None = None,
+        ) -> str:
+            """Get overview of available IMAS IDS with statistics and physics domains.
+
+            Returns a summary of all Interface Data Structures including
+            descriptions, path counts, and physics domain classifications.
+
+            Args:
+                query: Optional filter keyword (e.g., "magnetics")
+                dd_version: Filter by DD major version (e.g., 3 or 4)
+
+            Returns:
+                Formatted overview report with IDS statistics.
+            """
+            tools = _get_imas_tools()
+            result = _run_async(
+                tools.get_imas_overview(query=query, dd_version=dd_version)
+            )
+            return format_overview_report(result)
+
+        @self.mcp.tool()
+        def get_imas_identifiers(
+            query: str | None = None,
+            dd_version: int | None = None,
+        ) -> str:
+            """Browse IMAS identifier/enumeration schemas.
+
+            Returns available identifier schemas (coordinate systems,
+            grid types, probe types, etc.) with their valid options.
+
+            Args:
+                query: Optional filter (e.g., "coordinate" or "magnetics")
+                dd_version: Filter by DD major version (e.g., 3 or 4)
+
+            Returns:
+                Formatted identifiers report with schemas and options.
+            """
+            tools = _get_imas_tools()
+            result = _run_async(
+                tools.get_imas_identifiers(query=query, dd_version=dd_version)
+            )
+            return format_identifiers_report(result)
+
+        @self.mcp.tool()
+        def search_imas_clusters(
+            query: str,
+            scope: str | None = None,
+            ids_filter: str | None = None,
+            dd_version: int | None = None,
+        ) -> str:
+            """Search semantic clusters of related IMAS data paths.
+
+            Finds groups of semantically related paths across IDS
+            boundaries. Can search by natural language or find clusters
+            containing a specific path.
+
+            Args:
+                query: Natural language description or exact IMAS path
+                    (e.g., "boundary geometry" or "equilibrium/time_slice/boundary/outline/r")
+                scope: Filter by cluster scope: "global", "domain", or "ids"
+                ids_filter: Limit to clusters from specific IDS
+                dd_version: Filter by DD major version (e.g., 3 or 4)
+
+            Returns:
+                Formatted cluster report with paths and descriptions.
+            """
+            tools = _get_imas_tools()
+            result = _run_async(
+                tools.clusters_tool.search_imas_clusters(
+                    query=query,
+                    scope=scope,
+                    ids_filter=ids_filter,
+                    dd_version=dd_version,
+                )
+            )
+            return format_cluster_report(result)
+
+        from imas_codex.llm.search_formatters import (
+            format_export_domain_report,
+            format_export_ids_report,
+            format_path_context_report,
+            format_structure_report,
+        )
+
+        @self.mcp.tool()
+        def get_imas_path_context(
+            path: str,
+            relationship_types: str = "all",
+            dd_version: int | None = None,
+        ) -> str:
+            """Get structural context for an IMAS path via graph traversal.
+
+            Discovers sibling paths via shared clusters, coordinates, units,
+            and identifier schemas across IDS boundaries. Useful for
+            understanding how a path relates to other data in the dictionary.
+
+            Args:
+                path: Exact IMAS path (e.g. 'equilibrium/time_slice/profiles_1d/psi')
+                relationship_types: Filter to 'cluster', 'coordinate', 'unit',
+                    'identifier', or 'all' (default)
+                dd_version: Filter by DD major version (e.g., 3 or 4)
+
+            Returns:
+                Formatted report with cross-IDS connections grouped by type.
+            """
+            tools = _get_imas_tools()
+            result = _run_async(
+                tools.get_imas_path_context(
+                    path=path,
+                    relationship_types=relationship_types,
+                    dd_version=dd_version,
+                )
+            )
+            return format_path_context_report(result)
+
+        @self.mcp.tool()
+        def analyze_imas_structure(
+            ids_name: str,
+            dd_version: int | None = None,
+        ) -> str:
+            """Analyze the hierarchical structure of an IMAS IDS.
+
+            Returns depth metrics, leaf/structure ratio, array patterns,
+            physics domain distribution, coordinate usage, and COCOS fields.
+
+            Args:
+                ids_name: IDS name (e.g. 'equilibrium')
+                dd_version: Filter by DD major version (e.g., 3 or 4)
+
+            Returns:
+                Formatted structural analysis report.
+            """
+            tools = _get_imas_tools()
+            result = _run_async(
+                tools.analyze_imas_structure(
+                    ids_name=ids_name, dd_version=dd_version
+                )
+            )
+            return format_structure_report(result)
+
+        @self.mcp.tool()
+        def export_imas_ids(
+            ids_name: str,
+            leaf_only: bool = False,
+            dd_version: int | None = None,
+        ) -> str:
+            """Export full IDS structure with documentation, units, and types.
+
+            Returns all paths in an IDS with their complete metadata
+            including units, coordinates, clusters, and COCOS labels.
+
+            Args:
+                ids_name: IDS name (e.g. 'equilibrium')
+                leaf_only: If true, return only leaf nodes (default false)
+                dd_version: Filter by DD major version (e.g., 3 or 4)
+
+            Returns:
+                Full IDS path listing with documentation.
+            """
+            tools = _get_imas_tools()
+            result = _run_async(
+                tools.export_imas_ids(
+                    ids_name=ids_name, leaf_only=leaf_only, dd_version=dd_version
+                )
+            )
+            return format_export_ids_report(result)
+
+        @self.mcp.tool()
+        def export_imas_domain(
+            domain: str,
+            ids_filter: str | None = None,
+            dd_version: int | None = None,
+        ) -> str:
+            """Export all IMAS paths in a physics domain, grouped by IDS.
+
+            Lists every path classified under the given physics domain,
+            with documentation and units, organized by IDS.
+
+            Args:
+                domain: Physics domain name (e.g. 'magnetics', 'equilibrium')
+                ids_filter: Optional IDS name filter
+                dd_version: Filter by DD major version (e.g., 3 or 4)
+
+            Returns:
+                Domain export report grouped by IDS.
+            """
+            tools = _get_imas_tools()
+            result = _run_async(
+                tools.export_imas_domain(
+                    domain=domain, ids_filter=ids_filter, dd_version=dd_version
+                )
+            )
+            return format_export_domain_report(result)
 
         @self.mcp.tool()
         def fetch(resource: str) -> str:

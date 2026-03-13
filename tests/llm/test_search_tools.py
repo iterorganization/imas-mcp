@@ -28,7 +28,6 @@ from imas_codex.llm.search_tools import (
     _fetch,
     _search_code,
     _search_docs,
-    _search_imas,
     _search_signals,
 )
 
@@ -915,6 +914,7 @@ class TestFormatCodeReport:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.skip(reason="search_imas moved to shared GraphSearchTool; tests in tests/graph_mcp/")
 class TestSearchImas:
     """Unit tests for search_imas tool.
 
@@ -1626,6 +1626,8 @@ class TestSchemaGuard:
 
     def test_imas_enrichment_includes_lifecycle_fields(self, mock_gc, mock_encoder):
         """IMAS enrichment returns lifecycle_status and structure_reference."""
+        from imas_codex.tools.graph_search import GraphSearchTool
+
         mock_gc.query.side_effect = _route_query(
             {
                 "imas_node_embedding": [
@@ -1633,7 +1635,11 @@ class TestSchemaGuard:
                 ],
             }
         )
-        _search_imas(query="ip", gc=mock_gc, encoder=mock_encoder)
+        import asyncio
+
+        tool = GraphSearchTool(mock_gc)
+        tool._embed_query = lambda q: [0.1] * 1024
+        asyncio.run(tool.search_imas_paths(query="ip"))
         for call in mock_gc.query.call_args_list:
             cypher = call[0][0]
             if "UNWIND $path_ids" in cypher:
@@ -1643,6 +1649,8 @@ class TestSchemaGuard:
 
     def test_facility_crossrefs_uses_property_match(self, mock_gc, mock_encoder):
         """Facility crossrefs use property-based matching, not relationship traversal."""
+        from imas_codex.tools.graph_search import GraphSearchTool
+
         mock_gc.query.side_effect = _route_query(
             {
                 "imas_node_embedding": [
@@ -1651,7 +1659,11 @@ class TestSchemaGuard:
                 "UNWIND $path_ids": [_IMAS_ENRICHMENT_IP],
             }
         )
-        _search_imas(query="ip", facility="tcv", gc=mock_gc, encoder=mock_encoder)
+        import asyncio
+
+        tool = GraphSearchTool(mock_gc)
+        tool._embed_query = lambda q: [0.1] * 1024
+        asyncio.run(tool.search_imas_paths(query="ip", facility="tcv"))
         for call in mock_gc.query.call_args_list:
             cypher = call[0][0]
             if "FacilitySignal" in cypher and "WikiChunk" in cypher:

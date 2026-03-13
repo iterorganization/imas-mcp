@@ -1,18 +1,42 @@
 """Tool functions for the IMAS mapping pipeline.
 
 Plain functions (not MCP tools) that the pipeline orchestrator calls
-to gather context for the LLM at each step. Each wraps existing graph
-queries and utilities with a simple interface.
+to gather context for the LLM at each step. DD context queries delegate
+to shared Graph*Tool classes in ``imas_codex.tools.graph_search``.
+
+Functions that remain local (no shared tool equivalent):
+- query_signal_sources — facility-specific SignalSource traversal
+- fetch_source_code_refs — SignalSource→FacilitySignal→CodeChunk
+- search_existing_mappings — IMASMapping lookup
+- get_sign_flip_paths — COCOS-specific
+- analyze_units — pint-based unit compatibility
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
 from imas_codex.graph.client import GraphClient
 
 logger = logging.getLogger(__name__)
+
+
+def _run_async(coro):
+    """Run async coroutine in sync context."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop and loop.is_running():
+        import nest_asyncio
+
+        nest_asyncio.apply()
+        return loop.run_until_complete(coro)
+    else:
+        return asyncio.run(coro)
 
 
 # ---------------------------------------------------------------------------
@@ -32,6 +56,9 @@ def fetch_imas_subtree(
 
     Each row contains ``id``, ``name``, ``data_type``, ``node_type``,
     ``documentation``, ``units``.
+
+    Note: This uses direct Cypher because the shared ``GraphListTool``
+    returns only path IDs, not the full metadata this function needs.
     """
     if gc is None:
         gc = GraphClient()
@@ -79,32 +106,24 @@ def fetch_imas_fields(
 ) -> list[dict[str, Any]]:
     """Return detailed field info for specific IMAS paths.
 
-    Includes documentation, data_type, units, coordinates, ndim,
-    physics_domain, and cluster labels.
+    Delegates to ``GraphPathTool.fetch_imas_paths()``.
     """
     if gc is None:
         gc = GraphClient()
+
+    from imas_codex.models.error_models import ToolError
+    from imas_codex.tools.graph_search import GraphPathTool
 
     # Qualify paths with ids prefix if missing
     qualified = [
         p if p.startswith(f"{ids_name}/") else f"{ids_name}/{p}" for p in paths
     ]
 
-    cypher = """
-        UNWIND $paths AS pid
-        MATCH (p:IMASNode {id: pid})
-        OPTIONAL MATCH (p)-[:HAS_UNIT]->(u:Unit)
-        OPTIONAL MATCH (p)-[:IN_CLUSTER]->(c:IMASSemanticCluster)
-        OPTIONAL MATCH (p)-[:HAS_COORDINATE]->(coord:IMASCoordinateSpec)
-        RETURN p.id AS id, p.name AS name, p.ids AS ids,
-               p.documentation AS documentation, p.data_type AS data_type,
-               p.node_type AS node_type, p.ndim AS ndim,
-               p.physics_domain AS physics_domain,
-               u.symbol AS units,
-               collect(DISTINCT c.label) AS cluster_labels,
-               collect(DISTINCT coord.id) AS coordinates
-    """
-    return gc.query(cypher, paths=qualified)
+    tool = GraphPathTool(gc)
+    result = _run_async(tool.fetch_imas_paths(paths=qualified))
+    if isinstance(result, ToolError):
+        return []
+    return result.as_dicts()
 
 
 def search_imas_semantic(
@@ -116,42 +135,31 @@ def search_imas_semantic(
 ) -> list[dict[str, Any]]:
     """Semantic search for IMAS paths using vector index.
 
-    Returns paths ranked by embedding similarity, optionally filtered
-    to a specific IDS.
+    Delegates to ``GraphSearchTool.search_imas_paths()``.
     """
     if gc is None:
         gc = GraphClient()
 
-    from imas_codex.embeddings.config import EncoderConfig
-    from imas_codex.embeddings.encoder import Encoder
+    from imas_codex.models.error_models import ToolError
+    from imas_codex.tools.graph_search import GraphSearchTool
 
-    encoder = Encoder(EncoderConfig())
-    result = encoder.embed_texts([query])[0]
-    embedding = result.tolist() if hasattr(result, "tolist") else list(result)
-
-    filter_clause = ""
-    params: dict[str, Any] = {
-        "embedding": embedding,
-        "k": min(k * 5, 500),
-        "limit": k,
-    }
-    if ids_name:
-        filter_clause = "AND path.ids = $ids_name"
-        params["ids_name"] = ids_name
-
-    cypher = f"""
-        CALL db.index.vector.queryNodes('imas_node_embedding', $k, $embedding)
-        YIELD node AS path, score
-        WHERE NOT (path)-[:DEPRECATED_IN]->(:DDVersion)
-        {filter_clause}
-        OPTIONAL MATCH (path)-[:HAS_UNIT]->(u:Unit)
-        RETURN path.id AS id, path.documentation AS documentation,
-               path.data_type AS data_type, path.node_type AS node_type,
-               u.symbol AS units, score
-        ORDER BY score DESC
-        LIMIT $limit
-    """
-    return gc.query(cypher, **params)
+    tool = GraphSearchTool(gc)
+    result = _run_async(
+        tool.search_imas_paths(query=query, ids_filter=ids_name, max_results=k)
+    )
+    if isinstance(result, ToolError):
+        return []
+    return [
+        {
+            "id": h.path,
+            "documentation": h.documentation,
+            "data_type": h.data_type,
+            "node_type": h.node_type,
+            "units": h.units,
+            "score": h.score,
+        }
+        for h in result.hits
+    ]
 
 
 # ---------------------------------------------------------------------------

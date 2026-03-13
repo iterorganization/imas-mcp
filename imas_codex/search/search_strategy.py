@@ -144,6 +144,16 @@ class SearchHit(SearchBase):
         default=None, description="Version associated with lifecycle status"
     )
 
+    # Cross-reference enrichments (populated when facility/version context requested)
+    facility_xrefs: dict[str, Any] | None = Field(
+        default=None,
+        description="Facility cross-references: signals, wiki mentions, code files",
+    )
+    version_context: dict[str, Any] | None = Field(
+        default=None,
+        description="DD version change history for this path",
+    )
+
 
 class SearchMatch(SearchBase):
     """Internal search result with document reference for search processing."""
