@@ -650,11 +650,28 @@ async def code_worker(
     from imas_codex.embeddings.encoder import Encoder
     from imas_codex.ingestion.pipeline import ingest_files
 
+    logger.info(
+        "code_worker started (facility=%s, batch_size=%d, "
+        "scan_only=%s, score_only=%s)",
+        state.facility,
+        batch_size,
+        state.scan_only,
+        state.score_only,
+    )
+
     # Create encoder once for this worker — avoid per-batch GPU model loading.
     encoder = Encoder()
+    idle_log_interval = 10  # log every Nth consecutive idle poll
+    consecutive_idle = 0
+    batches_processed = 0
 
     while not state.should_stop():
         if state.scan_only or state.score_only:
+            logger.info(
+                "code_worker exiting: scan_only=%s, score_only=%s",
+                state.scan_only,
+                state.score_only,
+            )
             break
 
         # Claim code files for ingestion (wrapped in try/except to survive
@@ -671,14 +688,32 @@ async def code_worker(
             continue
 
         if not files:
+            consecutive_idle += 1
             state.code_phase.record_idle()
             if state.code_phase.done:
+                logger.info(
+                    "code_worker exiting: phase done after %d batches "
+                    "(%d files processed, %d errors)",
+                    batches_processed,
+                    state.code_stats.processed,
+                    state.code_stats.errors,
+                )
                 break
+            if consecutive_idle == 1 or consecutive_idle % idle_log_interval == 0:
+                logger.info(
+                    "code_worker idle (poll #%d, phase.idle=%s, "
+                    "score_phase.done=%s, processed=%d)",
+                    consecutive_idle,
+                    state.code_phase.idle,
+                    state.score_phase.done,
+                    state.code_stats.processed,
+                )
             if on_progress:
                 on_progress("idle", state.code_stats, None)
             await asyncio.sleep(3.0)
             continue
 
+        consecutive_idle = 0
         state.code_phase.record_activity(len(files))
 
         if on_progress:
@@ -686,6 +721,16 @@ async def code_worker(
 
         remote_paths = [f["path"] for f in files]
         all_ids = [f["id"] for f in files]
+        scores = [f.get("score_composite", 0) for f in files]
+
+        logger.info(
+            "code_worker claimed %d files (scores %.2f–%.2f): %s",
+            len(files),
+            min(scores),
+            max(scores),
+            ", ".join(f["path"].rsplit("/", 1)[-1] for f in files[:3])
+            + ("..." if len(files) > 3 else ""),
+        )
 
         batch_start = _time.monotonic()
 
@@ -711,9 +756,20 @@ async def code_worker(
                 await asyncio.to_thread(_mark_files_ingested, all_ids)
 
             batch_total = ingested_count + skipped_count
+            batches_processed += 1
             state.code_stats.processed += batch_total
             state.code_stats.last_batch_time = batch_elapsed
             state.code_stats.record_batch(batch_total)
+
+            logger.info(
+                "code_worker batch #%d: ingested=%d skipped=%d "
+                "chunks=%d elapsed=%.1fs",
+                batches_processed,
+                ingested_count,
+                skipped_count,
+                chunks_count,
+                batch_elapsed,
+            )
 
             if on_progress:
                 avg_chunks = chunks_count // max(ingested_count, 1)
@@ -733,13 +789,25 @@ async def code_worker(
                 )
 
         except Exception as e:
-            logger.error("Code ingestion batch failed: %s", e)
+            logger.error(
+                "Code ingestion batch failed (%d files): %s", len(files), e
+            )
             state.code_stats.errors += 1
             # Mark individual files as failed
             for f in files:
                 await asyncio.to_thread(_mark_file_failed, f["id"], str(e)[:200])
 
         await asyncio.sleep(0.1)
+
+    logger.info(
+        "code_worker stopped (facility=%s, batches=%d, "
+        "processed=%d, errors=%d, should_stop=%s)",
+        state.facility,
+        batches_processed,
+        state.code_stats.processed,
+        state.code_stats.errors,
+        state.should_stop(),
+    )
 
 
 # ============================================================================
