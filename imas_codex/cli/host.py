@@ -518,9 +518,7 @@ def _build_survey_table(
         n_procs = len(info.get("codex_procs", []))
 
         # Sum codex CPU% and express as fraction of node CPU capacity
-        codex_cpu_sum = sum(
-            float(p.get("cpu", 0)) for p in info.get("codex_procs", [])
-        )
+        codex_cpu_sum = sum(float(p.get("cpu", 0)) for p in info.get("codex_procs", []))
         # ps %cpu is per-core, node capacity = cpu_count * 100%
         node_capacity = info["cpu_count"] * 100 if info["cpu_count"] > 0 else 100
         codex_pct = (codex_cpu_sum / node_capacity) * 100
@@ -546,8 +544,7 @@ def _build_survey_table(
             else:
                 pct_color = "green"
             proc_str = (
-                f"[{pct_color}]{codex_pct:.0f}%[/{pct_color}] "
-                f"[green]{n_procs}[/green]"
+                f"[{pct_color}]{codex_pct:.0f}%[/{pct_color}] [green]{n_procs}[/green]"
             )
         else:
             proc_str = "0"
@@ -993,7 +990,28 @@ def _migrate_from_node(
     )
 
 
+def _redeploy_llm_proxy() -> None:
+    """Redeploy the LLM proxy systemd service on the new SSH target node.
 
+    The LLM proxy's systemd unit has ``ConditionHost=`` pinned to a
+    specific FQDN.  After ``--set-default`` changes the SSH target,
+    the unit file must be re-written with the new hostname so the
+    proxy starts on the correct node.
+
+    Non-fatal: if redeployment fails the node switch still succeeds
+    and the user can manually ``imas-codex llm start`` later.
+    """
+    try:
+        from imas_codex.cli.llm_cli import _deploy_login_llm
+
+        click.echo("\n  Redeploying LLM proxy on new node…")
+        _deploy_login_llm()
+    except Exception as exc:
+        click.echo(
+            click.style("  ⚠ ", fg="yellow")
+            + f"LLM proxy redeploy failed: {exc}\n"
+            + "    Start manually: imas-codex llm start"
+        )
 
 
 # ── CLI ──────────────────────────────────────────────────────────────────
@@ -1052,8 +1070,7 @@ def host(ctx: click.Context) -> None:
     "set_default",
     default=None,
     help=(
-        "Set SSH target: node index, hostname, or 'auto' "
-        "to auto-select least loaded"
+        "Set SSH target: node index, hostname, or 'auto' to auto-select least loaded"
     ),
 )
 def host_survey(
@@ -1218,6 +1235,12 @@ def host_survey(
 
                 stop_tunnel(facility)
                 _restart_tunnel_service(facility)
+
+                # Redeploy LLM proxy on the new node — the systemd
+                # unit has ConditionHost= pinned to the old node,
+                # so it won't start until we re-install it with the
+                # new hostname.
+                _redeploy_llm_proxy()
 
         return
 
