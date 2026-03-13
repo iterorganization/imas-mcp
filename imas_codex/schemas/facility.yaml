@@ -1351,6 +1351,58 @@ classes:
       reference_shot:
         description: Shot number used for structure introspection
         range: integer
+      supersedes:
+        description: >-
+          Previous version of this data source it replaces. Used to track
+          sensor file version chains (e.g., 2019 supersedes 2015 supersedes 2005).
+        range: DataSource
+
+  CalibrationEpoch:
+    description: >-
+      An individual calibration change event for a data source.
+      Examples: gain corrections, probe replacements, TF compensation
+      updates. Parsed from MCFG.ix calibration index files. Enables
+      shot-to-epoch lookups for data quality provenance.
+    class_uri: facility:CalibrationEpoch
+    attributes:
+      id:
+        identifier: true
+        description: >-
+          Composite key as facility:source:config_id
+          (e.g., "jet:sensor_calibration:MCFG:0044/MAGNW")
+        required: true
+      facility_id:
+        description: Parent facility ID
+        required: true
+        range: Facility
+        annotations:
+          relationship_type: AT_FACILITY
+      data_source_name:
+        description: Parent data source name
+        required: true
+        range: DataSource
+        annotations:
+          relationship_type: IN_DATA_SOURCE
+      date:
+        description: >-
+          Date of the calibration change (YYYYMMDD format from MCFG.ix)
+        required: true
+      first_shot:
+        description: First shot where this calibration configuration was active
+        required: true
+        range: integer
+      config_id:
+        description: >-
+          Configuration identifier from MCFG.ix
+          (e.g., "MCFG:0044/MAGNW")
+      config_type:
+        description: >-
+          Type of calibration: MCFG (gain/offset), MCAL (calibration),
+          MOFF (offset correction), MTFC (TF compensation)
+      user:
+        description: User who made the calibration change
+      description:
+        description: Free-text description of the calibration change
 
   SignalEpoch:
     description: >-
@@ -1445,6 +1497,8 @@ classes:
           Workers claim versions by setting claimed_at, not by changing status.
         range: IngestionStatus
         ifabsent: "discovered"
+      claim_token:
+        description: UUID token for atomic work claiming between parallel workers
       claimed_at:
         description: >-
           Timestamp when a worker claimed this version for extraction.
@@ -1753,6 +1807,21 @@ classes:
       embedded_at:
         description: When embedding was last computed
         range: datetime
+      members_described:
+        description: Whether members have individualized (unique) descriptions
+        range: boolean
+      member_name_pattern:
+        description: >-
+          Name template with {member_id} placeholder for generating individual
+          member names. E.g., 'Magnetic Probe {member_id} Radial Position'
+      member_description_pattern:
+        description: >-
+          Description template with {member_id} and optional {node_description}
+          placeholder. E.g., 'Radial position of magnetic probe {member_id}'
+      member_variation:
+        description: >-
+          What varies across group members (e.g., 'probe number',
+          'channel index', 'coil name')
       maps_to_imas:
         description: >-
           IMAS node this group maps to. The mapping IS this relationship —
@@ -2022,11 +2091,16 @@ classes:
         description: Discovery workflow status
         range: FacilitySignalStatus
         ifabsent: "discovered"
+      claim_token:
+        description: UUID token for atomic work claiming between parallel workers
       claimed_at:
         description: >-
           Timestamp when a worker claimed this signal for processing.
           Used for distributed worker coordination. Stale claims (>5min) are reclaimed.
         range: datetime
+      check_retries:
+        description: Number of access check retry attempts for this signal
+        range: integer
       facility_id:
         description: Parent facility
         required: true
@@ -2836,6 +2910,9 @@ classes:
           Higher values indicate widely-copied, battle-tested code.
           Used as a popularity signal to prioritize ingestion.
         range: integer
+      score_cost:
+        description: LLM cost in USD for scoring this file
+        range: float
       # Worker coordination
       claim_token:
         description: UUID token for atomic work claiming between parallel workers

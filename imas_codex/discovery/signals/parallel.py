@@ -42,6 +42,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from imas_codex.cli.logging import WorkerLogAdapter, log_worker_error
 from imas_codex.discovery.base.claims import retry_on_deadlock
 from imas_codex.discovery.base.engine import WorkerSpec, run_discovery_engine
 from imas_codex.discovery.base.progress import WorkerStats
@@ -2511,6 +2512,8 @@ async def mdsplus_extract_worker(
     Claims SignalEpoch nodes with status=discovered across ALL trees,
     runs SSH extraction, and ingests DataNodes into the graph.
     """
+    wlog = WorkerLogAdapter(logger, worker_name="extract_worker")
+
     from imas_codex.discovery.mdsplus.graph_ops import (
         claim_version_for_extraction_facility,
         mark_version_extracted,
@@ -2600,7 +2603,7 @@ async def mdsplus_extract_worker(
 
             ver_data = data.get("versions", {}).get(str(version), {})
             if "error" in ver_data:
-                logger.warning(
+                wlog.warning(
                     "Extraction error for v%d %s: %s",
                     version,
                     data_source_name,
@@ -2658,19 +2661,22 @@ async def mdsplus_extract_worker(
 
         except Exception as e:
             ssh_retry_count += 1
-            logger.warning(
-                "Extract v%d %s failed (%d/%d): %s",
-                version,
-                data_source_name,
-                ssh_retry_count,
-                max_ssh_retries,
-                e,
+            log_worker_error(
+                wlog,
+                worker_name="extract_worker",
+                signal_id=version_id,
+                error=e,
+                error_type="infrastructure",
+                retry_count=ssh_retry_count,
+                max_retries=max_ssh_retries,
             )
             state.extract_stats.errors += 1
             await asyncio.to_thread(release_version_claim, version_id)
 
             if ssh_retry_count >= max_ssh_retries:
-                logger.error("SSH failed after %d attempts — stopping", max_ssh_retries)
+                wlog.error(
+                    "SSH failed after %d attempts — stopping", max_ssh_retries
+                )
                 state.extract_phase.mark_done()
                 break
 
@@ -2900,6 +2906,8 @@ async def enrich_worker(
     Uses Jinja2 prompt template with schema-injected physics domains.
     Uses centralized LLM access via acall_llm_structured() from base.llm.
     """
+    wlog = WorkerLogAdapter(logger, worker_name="enrich_worker")
+
     from collections import defaultdict
 
     from imas_codex.llm.prompt_loader import render_prompt
@@ -3644,7 +3652,13 @@ async def enrich_worker(
                 temperature=0.3,
             )
         except ProviderBudgetExhausted as e:
-            logger.error("LLM provider budget exhausted — stopping enrichment: %s", e)
+            log_worker_error(
+                wlog,
+                worker_name="enrich_worker",
+                error=e,
+                error_type="infrastructure",
+                batch_id=group_key,
+            )
             for signal in signals:
                 await asyncio.to_thread(release_signal_claim, signal["id"])
             state.enrich_phase.mark_done()
@@ -3656,7 +3670,7 @@ async def enrich_worker(
             for signal in signals:
                 await asyncio.to_thread(release_signal_claim, signal["id"])
             if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
-                logger.error(
+                wlog.error(
                     "Enrichment stopped: %d consecutive batch failures. Last error: %s",
                     consecutive_failures,
                     e,
@@ -3932,7 +3946,7 @@ async def individualize_source_descriptions(
         sources = gc.query(
             """
             MATCH (sg:SignalSource {facility_id: $facility, status: 'enriched'})
-            WHERE sg.individualized IS NULL OR sg.individualized = false
+            WHERE sg.members_described IS NULL OR sg.members_described = false
             OPTIONAL MATCH (m:FacilitySignal)-[:MEMBER_OF]->(sg)
             WITH sg, collect({id: m.id, accessor: m.accessor}) AS members
             WHERE size(members) > 1
@@ -4092,15 +4106,15 @@ async def individualize_source_descriptions(
                     gc.query(
                         """
                         MATCH (sg:SignalSource {id: $source_id})
-                        SET sg.individualized = true,
-                            sg.name_template = $name_template,
-                            sg.description_template = $desc_template,
-                            sg.variation_field = $variation_field
+                        SET sg.members_described = true,
+                            sg.member_name_pattern = $name_pattern,
+                            sg.member_description_pattern = $desc_pattern,
+                            sg.member_variation = $member_variation
                         """,
                         source_id=src["source_id"],
-                        name_template=result.name_template,
-                        desc_template=result.description_template,
-                        variation_field=result.variation_field,
+                        name_pattern=result.name_template,
+                        desc_pattern=result.description_template,
+                        member_variation=result.variation_field,
                     )
                 total_individualized += len(individualized)
 
@@ -4279,6 +4293,8 @@ async def check_worker(
 
     Uses reference_shot from config for validation.
     """
+    wlog = WorkerLogAdapter(logger, worker_name="check_worker")
+
     from collections import defaultdict
 
     from imas_codex.discovery.signals.scanners.base import get_scanner
@@ -4442,11 +4458,12 @@ async def check_worker(
                     checked.append(entry)
 
             except Exception as e:
-                logger.warning(
-                    "%s check failed for %d signals: %s",
-                    scanner_type,
-                    len(group),
-                    e,
+                log_worker_error(
+                    wlog,
+                    worker_name="check_worker",
+                    error=e,
+                    error_type="infrastructure",
+                    batch_id=scanner_type,
                 )
                 for sig in group:
                     await asyncio.to_thread(
@@ -4475,7 +4492,7 @@ async def check_worker(
             batch_input = []
             for signal in mdsplus_group:
                 if not state.reference_shot:
-                    logger.warning(
+                    wlog.warning(
                         "Signal %s has no reference_shot",
                         signal["id"],
                     )
@@ -4511,7 +4528,7 @@ async def check_worker(
                     )
 
                     if not output or not output.strip():
-                        logger.warning(
+                        wlog.warning(
                             "Check script returned empty output for %d signals",
                             len(batch_input),
                         )
@@ -4527,7 +4544,7 @@ async def check_worker(
                                 break
 
                         if not json_line:
-                            logger.warning(
+                            wlog.warning(
                                 "No JSON found in check output: %s",
                                 output[:200] if output else "(empty)",
                             )
@@ -4537,7 +4554,7 @@ async def check_worker(
                             response = json.loads(json_line)
 
                             if "error" in response and not response.get("results"):
-                                logger.warning(
+                                wlog.warning(
                                     "Check script error: %s", response["error"]
                                 )
                                 for sig in batch_input:
