@@ -4043,11 +4043,13 @@ async def check_worker(
         # Route signals by scanner type
         scanner_groups: dict[str, list[dict]] = defaultdict(list)
         signal_data_access: dict[str, str | None] = {}
+        signal_scanner_type: dict[str, str] = {}
 
         for signal in signals:
             scanner_type = _get_signal_scanner_type(signal)
             scanner_groups[scanner_type].append(signal)
             signal_data_access[signal["id"]] = signal.get("data_access")
+            signal_scanner_type[signal["id"]] = scanner_type
 
         checked: list[dict] = []
 
@@ -4114,7 +4116,12 @@ async def check_worker(
                     e,
                 )
                 for sig in group:
-                    await asyncio.to_thread(release_signal_claim, sig["id"])
+                    await asyncio.to_thread(
+                        release_or_fail_after_crash,
+                        sig["id"],
+                        "infrastructure",
+                        f"{scanner_type} check failed: {str(e)[:150]}",
+                    )
 
         # --- Wiki signals: auto-pass (validated by primary scanner) ---
         wiki_group = scanner_groups.get("wiki", [])
@@ -4324,6 +4331,7 @@ async def check_worker(
                         "id": v["id"],
                         "success": v.get("success", True),
                         "shape": v.get("shape"),
+                        "scanner_type": signal_scanner_type.get(v["id"], ""),
                     }
                     for v in checked
                 ]
