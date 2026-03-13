@@ -543,6 +543,23 @@ data_systems:
           role: calibration_index
           description: 77 calibration epoch entries (pulse 54283–93563)
           expected_count: 77
+      # Historical sensor position file versions.
+      # Tracks sensor geometry refinements over 14 years (2005–2019).
+      # Each version supersedes the previous. The parser ingests all
+      # versions and creates SUPERSEDES relationships between them.
+      sensor_versions:
+        - file: sensors-200c-12-05-04.txt
+          path: /home/chain1/input/magn90/
+          date: "2005-10-12"
+        - file: sensors_200c_15-09-04_3.txt
+          path: /home/MAGNW/chain1/input/PPFcfg/
+          date: "2015-09-04"
+        - file: sensors_200c_15-10-05.txt
+          path: /home/MAGNW/chain1/input/PPFcfg/
+          date: "2015-10-05"
+        - file: sensors_200c_2019-03-11.txt
+          path: /home/MAGNW/chain1/input/PPFcfg/
+          date: "2019-03-11"
 
     # Magnetics PPF sensor configuration — maps shot ranges to sensor sets.
     # Each config file defines which magnetic sensors are active for a

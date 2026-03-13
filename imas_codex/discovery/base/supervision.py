@@ -54,6 +54,8 @@ from typing import TYPE_CHECKING, Any
 
 from neo4j.exceptions import ServiceUnavailable, SessionExpired, TransientError
 
+from imas_codex.cli.logging import WorkerLogAdapter, log_worker_error
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine
 
@@ -67,9 +69,11 @@ __all__ = [
     "OrphanRecoverySpec",
     "PipelinePhase",
     "SupervisedWorkerGroup",
+    "WorkerLogAdapter",
     "WorkerState",
     "WorkerStatus",
     "is_infrastructure_error",
+    "log_worker_error",
     "make_orphan_recovery_tick",
     "make_snapshot_logger",
     "run_supervised_loop",

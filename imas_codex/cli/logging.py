@@ -52,6 +52,48 @@ STRUCTURED_FORMAT = (
 STANDARD_FORMAT = "%(asctime)s %(levelname)-8s %(name)s: %(message)s"
 DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 
+
+class StructuredFormatter(logging.Formatter):
+    """Formatter that includes worker/batch extras when present.
+
+    Falls back to standard format for log records without structured fields.
+    Produces output like::
+
+        2026-03-13 10:15:23 INFO     imas_codex.signals [check_worker_2 batch=abc123]: checked 20 signals
+        2026-03-13 10:15:24 WARNING  imas_codex.graph: regular log message
+
+    """
+
+    def __init__(self) -> None:
+        super().__init__(STANDARD_FORMAT, datefmt=DATE_FORMAT)
+
+    def format(self, record: logging.LogRecord) -> str:
+        worker = getattr(record, "worker_name", None) or getattr(
+            record, "worker", None
+        )
+        batch = getattr(record, "batch_id", None) or getattr(
+            record, "batch", None
+        )
+        signal = getattr(record, "signal_id", None)
+
+        if worker or batch or signal:
+            parts = []
+            if worker:
+                parts.append(str(worker))
+            if batch:
+                parts.append(f"batch={batch}")
+            if signal:
+                parts.append(f"signal={signal}")
+            extra_str = " ".join(parts)
+            self._style._fmt = (
+                f"%(asctime)s %(levelname)-8s %(name)s [{extra_str}]: %(message)s"
+            )
+        else:
+            self._style._fmt = STANDARD_FORMAT
+
+        return super().format(record)
+
+
 # Log line timestamp regex for parsing
 _LOG_TIMESTAMP_RE = re.compile(
     r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s+(DEBUG|INFO|WARNING|ERROR|CRITICAL)\s+"
@@ -133,12 +175,7 @@ def configure_cli_logging(
         encoding="utf-8",
     )
     file_handler.setLevel(file_level)
-    file_handler.setFormatter(
-        logging.Formatter(
-            "%(asctime)s %(levelname)-8s %(name)s: %(message)s",
-            datefmt="%Y-%m-%d %H:%M:%S",
-        )
-    )
+    file_handler.setFormatter(StructuredFormatter())
     root_logger.addHandler(file_handler)
 
     # Ensure root logger threshold allows file handler to receive events.
