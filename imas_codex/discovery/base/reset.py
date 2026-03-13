@@ -147,6 +147,7 @@ SIGNAL_RESET_SPECS: dict[str, ResetSpec] = {
         clear_fields=[
             "enrichment_source",
             "enriched_at",
+            "name",
             "description",
             "physics_domain",
             "keywords",
@@ -162,6 +163,9 @@ SIGNAL_RESET_SPECS: dict[str, ResetSpec] = {
             "enrichment_model",
             "enrichment_prompt_hash",
         ],
+        post_cypher=(
+            "OPTIONAL MATCH (n)-[r:MEMBER_OF]->() DELETE r"
+        ),
     ),
     "enriched": ResetSpec(
         label="FacilitySignal",
