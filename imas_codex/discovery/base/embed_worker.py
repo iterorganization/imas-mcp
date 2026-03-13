@@ -53,6 +53,9 @@ DEFAULT_EMBED_BATCH_SIZE = 100
 # How long to sleep when no work is found (seconds)
 IDLE_SLEEP = 3.0
 
+# Maximum backoff when embed server is down (seconds)
+ERROR_BACKOFF_MAX = 60.0
+
 
 def _get_description_labels() -> list[str]:
     """Derive embeddable labels from schema (nodes with description + embedding)."""
@@ -261,8 +264,23 @@ async def embed_description_worker(
         )
 
     idle_count = 0
+    error_count = 0
 
     while not _should_stop():
+        # Gate on service monitor embed health if available
+        monitor = getattr(state, "service_monitor", None)
+        if monitor is not None:
+            embed_status = monitor.get_service_status("embed")
+            if embed_status and not embed_status.is_healthy:
+                logger.debug(
+                    "embed_worker %s: embed service unhealthy, waiting",
+                    worker_id,
+                )
+                if on_progress:
+                    on_progress("waiting (embed server down)", stats)
+                await asyncio.sleep(ERROR_BACKOFF_MAX)
+                continue
+
         total_fetched = 0
         total_embedded = 0
 
@@ -283,6 +301,7 @@ async def embed_description_worker(
                     e,
                 )
                 stats.errors += 1
+                error_count += 1
                 continue
 
             total_fetched += fetched
@@ -290,6 +309,7 @@ async def embed_description_worker(
 
             if embedded > 0:
                 stats.processed += embedded
+                error_count = 0  # Reset error streak on success
                 logger.debug(
                     "embed_worker %s: embedded %d/%d %s",
                     worker_id,
@@ -300,14 +320,35 @@ async def embed_description_worker(
                 if on_progress:
                     on_progress(f"embedded {embedded} {label}", stats)
 
+        # Backoff logic: distinguish idle (no work) from errors (work but
+        # embed server failing).  When items are fetched but none embedded,
+        # the embed server is down — back off exponentially.
         if total_fetched == 0:
             idle_count += 1
+            error_count = 0
             if on_progress and idle_count <= 3:
                 on_progress("idle", stats)
-            # Exponential backoff when idle, capped at IDLE_SLEEP
             await asyncio.sleep(min(IDLE_SLEEP * idle_count, 15.0))
+        elif total_embedded == 0:
+            # Fetched items but failed to embed any — server is down
+            error_count += 1
+            idle_count = 0
+            backoff = min(IDLE_SLEEP * (2**error_count), ERROR_BACKOFF_MAX)
+            logger.info(
+                "embed_worker %s: fetched %d but embedded 0 "
+                "(embed server likely down), backing off %.0fs",
+                worker_id,
+                total_fetched,
+                backoff,
+            )
+            if on_progress:
+                on_progress(
+                    f"embed failed (backing off {backoff:.0f}s)", stats
+                )
+            await asyncio.sleep(backoff)
         else:
             idle_count = 0
+            error_count = 0
 
     logger.info(
         "embed_worker %s: stopped after embedding %d descriptions",
