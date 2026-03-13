@@ -388,6 +388,13 @@ def _query_node(
         f"ConnectTimeout={timeout}",
         "-o",
         "StrictHostKeyChecking=accept-new",
+        # Don't create persistent ControlMaster sockets for
+        # ephemeral survey queries — stale sockets interfere
+        # with migration cleanup and node switching.
+        "-o",
+        "ControlMaster=no",
+        "-o",
+        "ControlPath=none",
         "-J",
         gateway,
     ]
@@ -490,7 +497,7 @@ def _build_survey_table(
     table.add_column("CPU Load", no_wrap=True)
     table.add_column("Memory", no_wrap=True)
     table.add_column("Users", justify="right")
-    table.add_column("Codex", justify="left")
+    table.add_column("Codex", justify="right")
 
     best_node = None
     best_load = float("inf")
@@ -538,11 +545,11 @@ def _build_survey_table(
             else:
                 pct_color = "green"
             proc_str = (
-                f"[{pct_color}]{codex_pct:>3.0f}%[/{pct_color}]  "
+                f"[{pct_color}]{codex_pct:.0f}%[/{pct_color}] "
                 f"[green]{n_procs}[/green]"
             )
         else:
-            proc_str = "       0"
+            proc_str = "0"
 
         table.add_row(str(idx), node_display, row[1], row[2], row[3], proc_str)
 
@@ -1139,6 +1146,18 @@ def host_survey(
             if current == target_fqdn:
                 click.echo(f"  Already set: {facility} → {target_fqdn}")
             else:
+                # Migrate FIRST — clean up processes and zellij
+                # sessions on the old node while SSH connectivity
+                # is still intact (before socket cleanup disrupts
+                # the connection path to the old node).
+                if current:
+                    _migrate_from_node(
+                        current,
+                        gateway,
+                        user,
+                        timeout,
+                    )
+
                 # Kill ControlMaster sockets BEFORE config update so
                 # ssh -O exit resolves to the old (current) HostName.
                 _kill_control_sockets(facility)
@@ -1167,16 +1186,6 @@ def host_survey(
 
                 stop_tunnel(facility)
                 _restart_tunnel_service(facility)
-
-                # Migrate: clean up processes and zellij sessions
-                # on the old node
-                if current:
-                    _migrate_from_node(
-                        current,
-                        gateway,
-                        user,
-                        timeout,
-                    )
 
         return
 
