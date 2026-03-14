@@ -8,14 +8,17 @@ Usage:
   imas-codex host iter                 Survey ITER login nodes with load + processes
   imas-codex host iter --set-default 3
                                        Set iter SSH target to 3rd node
-  imas-codex host iter --set-default auto
-                                       Auto-select least loaded node
+  imas-codex host iter --set-default   Auto-select least loaded node
+  imas-codex host iter --set-default 4 --set-llm 5
+                                       Default to node 4, pin LLM proxy to node 5
+  imas-codex host iter --set-llm 5     Pin LLM to node 5 without changing default
 
 Login nodes are discovered dynamically from /etc/hosts on the facility
 gateway — no individual node configuration needed.
 
-All services (LLM proxy, tunnels) follow the default SSH target so
-that ``--set-default`` switches everything atomically.
+By default the ``{facility}-llm`` SSH alias follows ``--set-default``,
+so the LLM proxy moves with you when switching nodes.  Use
+``--set-llm <node>`` to pin the LLM proxy to a specific node instead.
 """
 
 from __future__ import annotations
@@ -211,7 +214,7 @@ def _colored_bar(used: float, limit: float, width: int = 20) -> str:
     else:
         color = "green"
     bar = f"[{color}]{'█' * filled}[/{color}][dim]{'░' * empty}[/dim]"
-    pct = f"[{color}]{ratio * 100:3.0f}%[/{color}]"
+    pct = f"[{color}]{ratio * 100:.0f}%[/{color}]"
     return rf"\[{bar}] {pct}"
 
 
@@ -224,7 +227,7 @@ def _format_load_row(info: dict) -> list[str]:
     mem_total = info.get("mem_total_mb", 0)
     mem_used = info.get("mem_used_mb", 0)
     mem_bar = _colored_bar(mem_used, mem_total)
-    mem_label = f"{mem_used / 1024:>4.0f}/{mem_total / 1024:.0f} GiB"
+    mem_label = f"{mem_used / 1024:.0f}/{mem_total / 1024:.0f} GB"
     users = str(info.get("users", 0))
 
     return [
@@ -257,7 +260,7 @@ def _show_local_load(info: dict) -> None:
     if mem_total > 0:
         mem_bar = _colored_bar(mem_used, mem_total)
         console.print(
-            f"  Mem:  {mem_bar}  {mem_used / 1024:.1f} / {mem_total / 1024:.0f} GiB"
+            f"  Mem:  {mem_bar}  {mem_used / 1024:.1f} / {mem_total / 1024:.0f} GB"
         )
 
     console.print(f"  Users: {info['users']}")
@@ -389,13 +392,6 @@ def _query_node(
         f"ConnectTimeout={timeout}",
         "-o",
         "StrictHostKeyChecking=accept-new",
-        # Don't create persistent ControlMaster sockets for
-        # ephemeral survey queries — stale sockets interfere
-        # with migration cleanup and node switching.
-        "-o",
-        "ControlMaster=no",
-        "-o",
-        "ControlPath=none",
         "-J",
         gateway,
     ]
@@ -517,12 +513,6 @@ def _build_survey_table(
         )
         n_procs = len(info.get("codex_procs", []))
 
-        # Sum codex CPU% and express as fraction of node CPU capacity
-        codex_cpu_sum = sum(float(p.get("cpu", 0)) for p in info.get("codex_procs", []))
-        # ps %cpu is per-core, node capacity = cpu_count * 100%
-        node_capacity = info["cpu_count"] * 100 if info["cpu_count"] > 0 else 100
-        codex_pct = (codex_cpu_sum / node_capacity) * 100
-
         if cpu_pct < best_load:
             best_load = cpu_pct
             best_node = node
@@ -536,18 +526,7 @@ def _build_survey_table(
         marker = " ◀" if is_current else ""
         node_display = f"{row[0]}{marker}"
 
-        if n_procs > 0:
-            if codex_pct >= 50:
-                pct_color = "red"
-            elif codex_pct >= 20:
-                pct_color = "yellow"
-            else:
-                pct_color = "green"
-            proc_str = (
-                f"[{pct_color}]{codex_pct:.0f}%[/{pct_color}] [green]{n_procs}[/green]"
-            )
-        else:
-            proc_str = "0"
+        proc_str = f"[green]{n_procs}[/green]" if n_procs > 0 else "0"
 
         table.add_row(str(idx), node_display, row[1], row[2], row[3], proc_str)
 
@@ -597,6 +576,14 @@ def _build_survey_display(
             Text.from_markup(
                 f"  SSH target:   {facility} → [cyan]{current_target}[/cyan]"
             )
+        )
+
+    # Show LLM alias if configured
+    llm_alias = f"{facility}-llm"
+    llm_target = _get_ssh_hostname(llm_alias)
+    if llm_target:
+        parts.append(
+            Text.from_markup(f"  LLM target:   {llm_alias} → [cyan]{llm_target}[/cyan]")
         )
 
     return parts, best_node, best_load
@@ -700,74 +687,64 @@ def _kill_control_sockets(*aliases: str) -> None:
             pass  # Socket may not exist or already closed
 
 
-def _kill_fqdn_sockets(*fqdns: str) -> None:
-    """Remove stale ControlMaster sockets for specific FQDNs.
+def _ensure_ssh_alias(alias: str, parent_alias: str, hostname: str) -> bool:
+    """Create or update a derived SSH alias in ~/.ssh/config.
 
-    The host survey and earlier sessions may leave ControlMaster
-    sockets keyed by FQDN (e.g. ``mcintos@98dci4-srv-1005.iter.org-22``).
-    These interfere when the ``iter`` alias is switched to point at
-    a node whose FQDN already has a stale socket — the tunnel tries
-    to mux through it and fails.
+    If the alias already exists, updates its HostName.
+    If not, clones the parent alias block (User, ProxyJump, etc.)
+    with the new alias name and hostname.
+
+    Returns True on success.
     """
-    from pathlib import Path
+    ssh_config = Path.home() / ".ssh" / "config"
+    if not ssh_config.exists():
+        return False
 
-    socket_dir = Path.home() / ".ssh" / "sockets"
-    if not socket_dir.is_dir():
-        return
-    for fqdn in fqdns:
-        if not fqdn:
-            continue
-        for sock in socket_dir.glob(f"*@{fqdn}-*"):
-            # Try graceful ControlMaster shutdown
-            try:
-                subprocess.run(
-                    [
-                        "ssh",
-                        "-O",
-                        "exit",
-                        "-o",
-                        f"ControlPath={sock}",
-                        fqdn,
-                    ],
-                    capture_output=True,
-                    text=True,
-                    timeout=3,
-                )
-            except Exception:
-                pass
-            # Force-remove if still present
-            try:
-                sock.unlink(missing_ok=True)
-            except Exception:
-                pass
+    # If alias already exists, just update HostName
+    existing = _get_ssh_hostname(alias)
+    if existing is not None:
+        return _set_ssh_hostname(alias, hostname)
 
+    # Clone from parent: read parent block directives
+    content = ssh_config.read_text()
+    parent_lines: list[str] = []
+    in_parent = False
+    for line in content.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("Host ") and not stripped.startswith("Host *"):
+            host_names = stripped.split()[1:]
+            if parent_alias in host_names:
+                in_parent = True
+                continue
+            elif in_parent:
+                break
+        if in_parent:
+            lower = stripped.lower()
+            # Skip hostname (we'll set our own) and directives that
+            # shouldn't be cloned (tunnels, forwards)
+            if lower.startswith("hostname "):
+                continue
+            if any(
+                lower.startswith(d)
+                for d in ("localforward", "remoteforward", "dynamicforward")
+            ):
+                continue
+            parent_lines.append(line)
 
-def _restart_tunnel_service(facility: str) -> None:
-    """Restart the systemd tunnel service so it reconnects to the new node.
+    if not parent_lines:
+        return False
 
-    The ``imas-codex-tunnel-{facility}`` user service has
-    ``Restart=always``, so a plain ``stop_tunnel()`` is immediately
-    respawned against the *old* HostName.  We restart the unit so
-    autossh picks up the updated SSH config.
-    """
-    service = f"imas-codex-tunnel-{facility}"
-    try:
-        result = subprocess.run(
-            ["systemctl", "--user", "is-active", service],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        if result.stdout.strip() != "active":
-            return
-        subprocess.run(
-            ["systemctl", "--user", "restart", service],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-    except Exception:
-        pass  # systemd may not be available (e.g. container / CI)
+    # Build new block
+    block = f"\nHost {alias}\n"
+    block += f"  HostName {hostname}\n"
+    for line in parent_lines:
+        block += line + "\n" if not line.endswith("\n") else line
+    block += "\n"
+
+    with open(ssh_config, "a") as f:
+        f.write(block)
+    os.chmod(ssh_config, 0o600)
+    return True
 
 
 # ── Node migration ───────────────────────────────────────────────────────
@@ -789,14 +766,6 @@ def _ssh_to_node(
         f"ConnectTimeout={timeout}",
         "-o",
         "StrictHostKeyChecking=accept-new",
-        # Don't create persistent ControlMaster sockets for
-        # ephemeral survey/migration commands.  Stale survey
-        # sockets interfere when the alias later resolves to
-        # the same FQDN.
-        "-o",
-        "ControlMaster=no",
-        "-o",
-        "ControlPath=none",
         "-J",
         gateway,
     ]
@@ -813,28 +782,36 @@ def _ssh_to_node(
     )
 
 
-def _kill_codex_on_node(
-    fqdn: str,
+def _migrate_from_node(
+    old_hostname: str,
     gateway: str,
     user: str,
     timeout: int,
-) -> str | None:
-    """Kill imas-codex processes on a single node via SSH.
+) -> None:
+    """Kill imas-codex processes and zellij sessions on the old node.
 
-    Returns a status string ('killed:N' or None on failure).
+    Called automatically when ``--set-default`` switches to a different
+    node.  Sends SIGINT for graceful shutdown, then removes zellij
+    sessions so the next ``cx`` starts fresh on the new node.
     """
-    # Use character class trick ([i]mas-codex) so the pattern doesn't
-    # match the bash shell running this script — pgrep -f searches
-    # command lines and the script text contains the literal patterns.
+    old_short = old_hostname.split(".")[0]
+    fqdn = old_hostname if "." in old_hostname else f"{old_hostname}.iter.org"
+
+    click.echo(f"\n  Migrating from {click.style(old_short, fg='yellow')}…")
+
+    # 1. Kill imas-codex processes with SIGINT (graceful shutdown)
+    #    Build the same pattern regex used by _CODEX_PATTERNS but skip
+    #    neo4j (shared service — leave it running).
     kill_patterns = [p for p in _CODEX_PATTERNS if p != "neo4j"]
-    escaped = [f"[{p[0]}]{p[1:]}" for p in kill_patterns]
-    pattern_re = "|".join(escaped)
+    pattern_re = "|".join(kill_patterns)
+    # Use pgrep + kill to avoid matching ssh/grep itself
     kill_script = (
         f"pids=$(pgrep -u $USER -f '{pattern_re}' 2>/dev/null || true); "
         f'if [ -n "$pids" ]; then '
         f'  count=$(echo "$pids" | wc -w); '
         f"  kill -INT $pids 2>/dev/null; "
         f"  sleep 2; "
+        # SIGTERM stragglers that didn't exit on INT
         f"  remaining=$(pgrep -u $USER -f '{pattern_re}' 2>/dev/null || true); "
         f'  if [ -n "$remaining" ]; then '
         f"    kill -TERM $remaining 2>/dev/null; "
@@ -845,87 +822,35 @@ def _kill_codex_on_node(
         f"fi"
     )
 
-    for attempt in range(2):
-        try:
-            result = _ssh_to_node(fqdn, gateway, user, kill_script, timeout)
-            if result.returncode == 0:
-                for line in result.stdout.strip().splitlines():
-                    if line.startswith("killed:"):
-                        return line
-                return "killed:0"
-            if attempt == 0:
-                import time
-
-                time.sleep(2)
-        except subprocess.TimeoutExpired:
-            if attempt == 0:
-                import time
-
-                time.sleep(2)
-    return None
-
-
-def _migrate_from_node(
-    old_hostname: str,
-    gateway: str,
-    user: str,
-    timeout: int,
-    results: dict[str, dict | None] | None = None,
-    target_node: str | None = None,
-) -> None:
-    """Kill imas-codex processes and zellij sessions when switching nodes.
-
-    Cleans up codex processes on ALL nodes that have them (from survey
-    ``results``), not just the old SSH target.  This handles stranded
-    processes from previous failed migrations.  The new ``target_node``
-    is excluded from process cleanup.
-
-    Zellij sessions are only cleaned on the old SSH target node.
-    """
-    old_short = old_hostname.split(".")[0]
-
-    click.echo(f"\n  Migrating from {click.style(old_short, fg='yellow')}…")
-
-    # Determine which nodes need process cleanup
-    nodes_to_clean: list[str] = []
-    if results:
-        target_short = target_node.split(".")[0] if target_node else None
-        for node, info in sorted(results.items()):
-            if info is None:
-                continue
-            if target_short and node == target_short:
-                continue
-            if info.get("codex_procs"):
-                nodes_to_clean.append(node)
-
-    # If no survey data or no stale nodes found, fall back to old node
-    if not nodes_to_clean:
-        nodes_to_clean = [old_short]
-
-    # 1. Kill imas-codex processes on all stale nodes
-    for node in nodes_to_clean:
-        fqdn = f"{node}.iter.org"
-        status = _kill_codex_on_node(fqdn, gateway, user, timeout)
-        if status:
-            count = status.split(":")[1]
-            if count != "0":
-                click.echo(
-                    f"    {click.style('✓', fg='green')} "
-                    f"Sent SIGINT to {count} process(es) on {node}"
-                )
-            else:
-                click.echo(
-                    f"    {click.style('·', dim=True)} "
-                    f"No imas-codex processes on {node}"
-                )
+    try:
+        result = _ssh_to_node(fqdn, gateway, user, kill_script, timeout)
+        if result.returncode == 0:
+            output = result.stdout.strip()
+            for line in output.splitlines():
+                if line.startswith("killed:"):
+                    count = line.split(":")[1]
+                    if count != "0":
+                        click.echo(
+                            f"    {click.style('✓', fg='green')} "
+                            f"Sent SIGINT to {count} process(es)"
+                        )
+                    else:
+                        click.echo(
+                            f"    {click.style('·', fg='dim')} "
+                            f"No imas-codex processes running"
+                        )
         else:
             click.echo(
                 f"    {click.style('⚠', fg='yellow')} "
-                f"Could not reach {node} for process cleanup"
+                f"Could not reach {old_short} for process cleanup"
             )
+    except (subprocess.TimeoutExpired, Exception):
+        click.echo(
+            f"    {click.style('⚠', fg='yellow')} "
+            f"Timeout reaching {old_short} — processes may still be running"
+        )
 
     # 2. Kill all zellij sessions on the old node
-    old_fqdn = old_hostname if "." in old_hostname else f"{old_hostname}.iter.org"
     zj_script = (
         "if command -v zellij >/dev/null 2>&1; then "
         "  sessions=$(zellij list-sessions -s 2>/dev/null || true); "
@@ -941,48 +866,32 @@ def _migrate_from_node(
         "fi"
     )
 
-    result = None
-    for attempt in range(2):
-        try:
-            result = _ssh_to_node(old_fqdn, gateway, user, zj_script, timeout)
-            if result.returncode == 0:
-                break
-            if attempt == 0:
-                import time
-
-                time.sleep(2)
-        except subprocess.TimeoutExpired:
-            if attempt == 0:
-                import time
-
-                time.sleep(2)
-            continue
-
-    if result is not None and result.returncode == 0:
-        output = result.stdout.strip()
-        for line in output.splitlines():
-            if line.startswith("zj:"):
-                val = line.split(":")[1]
-                if val == "none":
-                    click.echo(
-                        f"    {click.style('·', dim=True)} "
-                        f"zellij not found on {old_short}"
-                    )
-                elif val == "0":
-                    click.echo(
-                        f"    {click.style('·', dim=True)} "
-                        f"No zellij sessions to clean up"
-                    )
-                else:
-                    click.echo(
-                        f"    {click.style('✓', fg='green')} "
-                        f"Deleted {val} zellij session(s)"
-                    )
-    elif result is not None:
-        stderr = result.stderr.strip()
+    try:
+        result = _ssh_to_node(fqdn, gateway, user, zj_script, timeout)
+        if result.returncode == 0:
+            output = result.stdout.strip()
+            for line in output.splitlines():
+                if line.startswith("zj:"):
+                    val = line.split(":")[1]
+                    if val == "none":
+                        click.echo(
+                            f"    {click.style('·', fg='dim')} "
+                            f"zellij not found on {old_short}"
+                        )
+                    elif val == "0":
+                        click.echo(
+                            f"    {click.style('·', fg='dim')} "
+                            f"No zellij sessions to clean up"
+                        )
+                    else:
+                        click.echo(
+                            f"    {click.style('✓', fg='green')} "
+                            f"Deleted {val} zellij session(s)"
+                        )
+    except (subprocess.TimeoutExpired, Exception):
         click.echo(
             f"    {click.style('⚠', fg='yellow')} "
-            f"Could not clean up zellij sessions on {old_short}: {stderr}"
+            f"Could not clean up zellij sessions on {old_short}"
         )
 
     click.echo(
@@ -990,27 +899,68 @@ def _migrate_from_node(
     )
 
 
-def _redeploy_llm_proxy() -> None:
-    """Redeploy the LLM proxy systemd service on the new SSH target node.
-
-    The LLM proxy's systemd unit has ``ConditionHost=`` pinned to a
-    specific FQDN.  After ``--set-default`` changes the SSH target,
-    the unit file must be re-written with the new hostname so the
-    proxy starts on the correct node.
-
-    Non-fatal: if redeployment fails the node switch still succeeds
-    and the user can manually ``imas-codex llm start`` later.
-    """
+def _resolve_node_fqdn(spec: str, sorted_nodes: list[str], results: dict) -> str:
+    """Resolve a node spec (index, hostname, or FQDN) to an FQDN."""
     try:
-        from imas_codex.cli.llm_cli import _deploy_login_llm
+        idx = int(spec)
+        if 1 <= idx <= len(sorted_nodes):
+            return f"{sorted_nodes[idx - 1]}.iter.org"
+        raise click.ClickException(f"Index {idx} out of range (1-{len(sorted_nodes)})")
+    except ValueError:
+        candidate = spec.strip()
+        if "." not in candidate:
+            matches = [n for n in sorted_nodes if candidate in n]
+            if len(matches) == 1:
+                return f"{matches[0]}.iter.org"
+            elif len(matches) > 1:
+                raise click.ClickException(
+                    f"Ambiguous hostname '{candidate}', matches: {', '.join(matches)}"
+                ) from None
+            else:
+                raise click.ClickException(f"No node matching '{candidate}'") from None
+        return candidate
 
-        click.echo("\n  Redeploying LLM proxy on new node…")
-        _deploy_login_llm()
-    except Exception as exc:
+
+def _handle_llm_alias(
+    facility: str,
+    llm_fqdn: str,
+    results: dict,
+) -> None:
+    """Create or update the {facility}-llm SSH alias.
+
+    Args:
+        facility: Facility name (e.g. "iter").
+        llm_fqdn: Fully-qualified domain name for the LLM node.
+        results: Survey results dict (for reachability check).
+    """
+    llm_alias = f"{facility}-llm"
+
+    llm_short = llm_fqdn.split(".")[0]
+    if llm_short in results and results[llm_short] is None:
+        raise click.ClickException(
+            f"Node '{llm_short}' is unreachable — refusing "
+            f"to set as LLM host. Pick a reachable node."
+        )
+
+    existing = _get_ssh_hostname(llm_alias)
+    if existing == llm_fqdn:
         click.echo(
-            click.style("  ⚠ ", fg="yellow")
-            + f"LLM proxy redeploy failed: {exc}\n"
-            + "    Start manually: imas-codex llm start"
+            click.style("  · ", fg="dim")
+            + f"LLM already set: {llm_alias} → "
+            + click.style(existing, fg="cyan")
+        )
+        return
+
+    if _ensure_ssh_alias(llm_alias, facility, llm_fqdn):
+        click.echo(
+            click.style("  ✓ ", fg="green")
+            + f"LLM host: {llm_alias} → "
+            + click.style(llm_fqdn, fg="cyan", bold=True)
+        )
+    else:
+        raise click.ClickException(
+            f"Could not create SSH alias '{llm_alias}'. "
+            f"Ensure a 'Host {facility}' block exists in ~/.ssh/config"
         )
 
 
@@ -1047,6 +997,8 @@ def host(ctx: click.Context) -> None:
       imas-codex host                    Local node load + processes
       imas-codex host iter               Survey ITER login nodes
       imas-codex host iter --set-default 3
+      imas-codex host iter --set-default 4 --set-llm 5
+      imas-codex host iter --set-llm 5   Pin LLM to specific node
       imas-codex host status             SSH connectivity check
       imas-codex host add <name>         Add SSH host entry
     """
@@ -1069,8 +1021,21 @@ def host(ctx: click.Context) -> None:
     "--set-default",
     "set_default",
     default=None,
+    is_flag=False,
+    flag_value="auto",
     help=(
-        "Set SSH target: node index, hostname, or 'auto' to auto-select least loaded"
+        "Set SSH target: node index, hostname, or omit value "
+        "to auto-select least loaded"
+    ),
+)
+@click.option(
+    "--set-llm",
+    "llm_node",
+    default=None,
+    help=(
+        "Pin LLM proxy to a specific node (index or hostname), "
+        "decoupling it from the default SSH target. "
+        "Without this flag, the LLM alias follows --set-default."
     ),
 )
 def host_survey(
@@ -1078,6 +1043,7 @@ def host_survey(
     timeout: int,
     watch: bool,
     set_default: str | None,
+    llm_node: str | None,
 ) -> None:
     """Survey login nodes on a facility with load and process info.
 
@@ -1086,15 +1052,22 @@ def host_survey(
     per node.
 
     Use --set-default to update ~/.ssh/config to target a specific
-    login node for all future SSH/cx connections.  All services
-    (LLM proxy, tunnels) follow the default target.
+    login node for all future SSH/cx connections.  The {facility}-llm
+    alias follows automatically so the LLM proxy moves with you.
+
+    Use --set-llm to pin the LLM proxy to a different node, decoupled
+    from the default SSH target.  Useful when you want the proxy on a
+    less-loaded node.
 
     \b
     Examples:
         imas-codex host iter                    # Survey ITER login nodes
         imas-codex host iter --watch            # Continuous monitoring
-        imas-codex host iter --set-default 3    # Pick node #3
-        imas-codex host iter --set-default auto  # Auto-pick least loaded
+        imas-codex host iter --set-default 3    # Pick node #3, LLM follows
+        imas-codex host iter --set-default      # Auto-pick, LLM follows
+        imas-codex host iter --set-default 4 --set-llm 5
+                                                # Default to #4, LLM on #5
+        imas-codex host iter --set-llm 5        # Pin LLM without changing default
     """
     from imas_codex.discovery.base.facility import get_facility
 
@@ -1193,28 +1166,13 @@ def host_survey(
             if current == target_fqdn:
                 click.echo(f"  Already set: {facility} → {target_fqdn}")
             else:
-                # Migrate FIRST — clean up processes and zellij
-                # sessions on the old node while SSH connectivity
-                # is still intact (before socket cleanup disrupts
-                # the connection path to the old node).
-                if current:
-                    _migrate_from_node(
-                        current,
-                        gateway,
-                        user,
-                        timeout,
-                        results=results,
-                        target_node=target_fqdn,
-                    )
-
                 # Kill ControlMaster sockets BEFORE config update so
                 # ssh -O exit resolves to the old (current) HostName.
-                _kill_control_sockets(facility)
-
-                # Also kill FQDN-based sockets (from survey or
-                # previous sessions) for old and new targets so
-                # the tunnel doesn't mux through a stale socket.
-                _kill_fqdn_sockets(current, target_fqdn)
+                sockets_to_kill = [facility]
+                llm_alias = f"{facility}-llm"
+                if _get_ssh_hostname(llm_alias) is not None:
+                    sockets_to_kill.append(llm_alias)
+                _kill_control_sockets(*sockets_to_kill)
 
                 if not _set_ssh_hostname(facility, target_fqdn):
                     raise click.ClickException(
@@ -1229,19 +1187,43 @@ def host_survey(
                     + click.style(target_fqdn, fg="cyan", bold=True)
                 )
 
-                # Restart tunnels — systemd service auto-reconnects
-                # to the new node; manual tunnels need stop+start.
+                # Stop local tunnels — they still forward to the old node
                 from imas_codex.remote.tunnel import stop_tunnel
 
-                stop_tunnel(facility)
-                _restart_tunnel_service(facility)
+                if stop_tunnel(facility):
+                    click.echo(
+                        click.style("  ✓ ", fg="green")
+                        + "Stopped stale tunnels (restart with "
+                        + click.style("imas-codex tunnel start", bold=True)
+                        + ")"
+                    )
 
-                # Redeploy LLM proxy on the new node — the systemd
-                # unit has ConditionHost= pinned to the old node,
-                # so it won't start until we re-install it with the
-                # new hostname.
-                _redeploy_llm_proxy()
+                # Migrate: clean up processes and zellij sessions
+                # on the old node
+                if current:
+                    _migrate_from_node(
+                        current,
+                        gateway,
+                        user,
+                        timeout,
+                    )
 
+        # LLM alias: --set-llm pins to explicit node, otherwise follows default
+        if llm_node is not None:
+            llm_fqdn = _resolve_node_fqdn(llm_node, sorted_nodes, results)
+            _handle_llm_alias(facility, llm_fqdn, results)
+        elif target_fqdn:
+            # No --set-llm: LLM travels with the new default
+            _handle_llm_alias(facility, target_fqdn, results)
+
+        return
+
+    if llm_node is not None:
+        # --set-llm used without --set-default
+        results, nodes = _discover_and_survey()
+        sorted_nodes = sorted(results)
+        llm_fqdn = _resolve_node_fqdn(llm_node, sorted_nodes, results)
+        _handle_llm_alias(facility, llm_fqdn, results)
         return
 
     if watch:
