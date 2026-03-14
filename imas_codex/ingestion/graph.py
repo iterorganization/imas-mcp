@@ -282,39 +282,68 @@ def link_chunks_to_data_nodes(
             logger.info("Computed normalized_path for %d refs", len(updates))
 
         # Step 3: Create RESOLVES_TO_NODE relationships
-        # Scoped: only resolve refs touched by this batch's chunks.
-        # This avoids the catastrophic O(all_refs × all_signals) fuzzy scan.
+        # Two-phase: exact match first (uses path+facility_id index),
+        # then fuzzy match for remaining (facility-scoped to avoid
+        # catastrophic O(all_refs × all_signals) cross-product).
         if scoped:
-            resolve_to_tree = """
+            # Phase 1: Exact path match (index-friendly)
+            resolve_exact = """
                 MATCH (c:CodeChunk)
                 WHERE c.code_example_id IN $example_ids
                   AND c.mdsplus_paths IS NOT NULL
                 MATCH (c)-[:CONTAINS_REF]->(d:DataReference {ref_type: 'mdsplus_path'})
                 WHERE NOT (d)-[:RESOLVES_TO_NODE]->()
                 WITH DISTINCT d
-                MATCH (t:SignalNode)
-                WHERE t.path = d.raw_string
-                   OR t.path ENDS WITH substring(d.raw_string, 1)
+                MATCH (t:SignalNode {facility_id: d.facility_id, path: d.raw_string})
+                MERGE (d)-[:RESOLVES_TO_NODE]->(t)
+                RETURN count(*) AS resolved
+            """
+            # Phase 2: Fuzzy match for remaining (facility-scoped)
+            resolve_fuzzy = """
+                MATCH (c:CodeChunk)
+                WHERE c.code_example_id IN $example_ids
+                  AND c.mdsplus_paths IS NOT NULL
+                MATCH (c)-[:CONTAINS_REF]->(d:DataReference {ref_type: 'mdsplus_path'})
+                WHERE NOT (d)-[:RESOLVES_TO_NODE]->()
+                WITH DISTINCT d
+                MATCH (t:SignalNode {facility_id: d.facility_id})
+                WHERE t.path ENDS WITH substring(d.raw_string, 1)
                    OR toLower(split(t.path, ':')[-1]) = toLower(split(d.raw_string, '::')[-1])
                    OR toUpper(t.path) = d.normalized_path
                 MERGE (d)-[:RESOLVES_TO_NODE]->(t)
                 RETURN count(*) AS resolved
             """
         else:
-            resolve_to_tree = """
+            # Phase 1: Exact path match (index-friendly)
+            resolve_exact = """
                 MATCH (d:DataReference {ref_type: 'mdsplus_path'})
                 WHERE NOT (d)-[:RESOLVES_TO_NODE]->()
-                MATCH (t:SignalNode)
-                WHERE t.path = d.raw_string
-                   OR t.path ENDS WITH substring(d.raw_string, 1)
+                WITH d
+                MATCH (t:SignalNode {facility_id: d.facility_id, path: d.raw_string})
+                MERGE (d)-[:RESOLVES_TO_NODE]->(t)
+                RETURN count(*) AS resolved
+            """
+            # Phase 2: Fuzzy match for remaining (facility-scoped)
+            resolve_fuzzy = """
+                MATCH (d:DataReference {ref_type: 'mdsplus_path'})
+                WHERE NOT (d)-[:RESOLVES_TO_NODE]->()
+                WITH d
+                MATCH (t:SignalNode {facility_id: d.facility_id})
+                WHERE t.path ENDS WITH substring(d.raw_string, 1)
                    OR toLower(split(t.path, ':')[-1]) = toLower(split(d.raw_string, '::')[-1])
                    OR toUpper(t.path) = d.normalized_path
                 MERGE (d)-[:RESOLVES_TO_NODE]->(t)
                 RETURN count(*) AS resolved
             """
-        result = client.query(resolve_to_tree, **params)
-        resolved_count = result[0]["resolved"] if result else 0
-        logger.info("Created %d RESOLVES_TO_NODE relationships", resolved_count)
+        result = client.query(resolve_exact, **params)
+        exact_count = result[0]["resolved"] if result else 0
+        result = client.query(resolve_fuzzy, **params)
+        fuzzy_count = result[0]["resolved"] if result else 0
+        resolved_count = exact_count + fuzzy_count
+        logger.info(
+            "Created %d RESOLVES_TO_NODE relationships (exact=%d, fuzzy=%d)",
+            resolved_count, exact_count, fuzzy_count,
+        )
 
         # Step 4: Create RESOLVES_TO_IMAS_PATH via SignalNode → IMASMapping → IMASNode
         if scoped:
@@ -425,15 +454,28 @@ def link_example_mdsplus_paths(
     )
     refs_created = result[0]["refs_created"] if result else 0
 
-    # Resolve to DataNodes
+    # Resolve to DataNodes (facility-scoped, two-phase)
+    # Phase 1: Exact match (uses path+facility_id index)
     graph_client.query(
         """
         MATCH (e:CodeExample {id: $example_id})-[:HAS_CHUNK]->(c:CodeChunk)
               -[:CONTAINS_REF]->(d:DataReference {ref_type: 'mdsplus_path'})
         WHERE NOT (d)-[:RESOLVES_TO_NODE]->()
-        MATCH (t:SignalNode)
-        WHERE t.path = d.raw_string
-           OR t.path ENDS WITH substring(d.raw_string, 1)
+        WITH DISTINCT d
+        MATCH (t:SignalNode {facility_id: d.facility_id, path: d.raw_string})
+        MERGE (d)-[:RESOLVES_TO_NODE]->(t)
+        """,
+        example_id=example_id,
+    )
+    # Phase 2: Fuzzy match for remaining (facility-scoped)
+    graph_client.query(
+        """
+        MATCH (e:CodeExample {id: $example_id})-[:HAS_CHUNK]->(c:CodeChunk)
+              -[:CONTAINS_REF]->(d:DataReference {ref_type: 'mdsplus_path'})
+        WHERE NOT (d)-[:RESOLVES_TO_NODE]->()
+        WITH DISTINCT d
+        MATCH (t:SignalNode {facility_id: d.facility_id})
+        WHERE t.path ENDS WITH substring(d.raw_string, 1)
            OR toLower(split(t.path, ':')[-1]) = toLower(split(d.raw_string, '::')[-1])
         MERGE (d)-[:RESOLVES_TO_NODE]->(t)
         """,

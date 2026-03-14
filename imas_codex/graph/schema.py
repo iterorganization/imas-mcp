@@ -592,7 +592,7 @@ class GraphSchema:
                 "Facility": ["ssh_host"],
                 "FacilityPath": ["id", "device_inode"],
                 "MDSplusServer": ["role"],
-                "SignalNode": ["node_type"],
+                "SignalNode": ["node_type", "path"],
                 "Diagnostic": ["category"],
                 "AnalysisCode": ["code_type"],
                 "Tool": ["category", "available"],
