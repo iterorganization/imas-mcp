@@ -3,6 +3,7 @@
 import logging
 import os
 import subprocess
+import tempfile
 import time
 
 import click
@@ -168,6 +169,25 @@ def _start_foreground(
         if workers <= 1:
             workers = len(gpus.split(","))
         logger.info(f"Multi-GPU mode: pool={gpus}, workers={workers}")
+
+        # Clean up stale lock files from previous server instances.
+        # Lock files are keyed by master PID — old ones from dead servers
+        # are harmless (flock released on process exit) but clutter /tmp.
+        import glob
+
+        my_pid = str(os.getpid())
+        for lock_file in glob.glob(
+            os.path.join(tempfile.gettempdir(), "codex-embed-gpu-*-slot-*.lock")
+        ):
+            # Only remove files NOT belonging to this instance
+            basename = os.path.basename(lock_file)
+            # Format: codex-embed-gpu-{pid}-slot-{n}.lock
+            parts = basename.split("-")
+            if len(parts) >= 5 and parts[3] != my_pid:
+                try:
+                    os.unlink(lock_file)
+                except OSError:
+                    pass
 
     if port is None:
         from imas_codex.settings import get_embed_server_port

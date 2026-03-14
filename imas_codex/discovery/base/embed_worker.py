@@ -46,8 +46,9 @@ DEFAULT_EMBED_BATCH_SIZE = 100
 
 # Default batch size for text (chunk) embeddings — smaller than
 # description batches because code chunks are up to 10 KB each.
-# Prevents CUDA OOM on large batches while keeping throughput high.
-DEFAULT_TEXT_EMBED_BATCH_SIZE = 12
+# Self-attention is O(n²) in sequence length; 6 long chunks fit
+# comfortably in P100-16GB while keeping throughput reasonable.
+DEFAULT_TEXT_EMBED_BATCH_SIZE = 6
 
 # How long to sleep when no work is found (seconds)
 IDLE_SLEEP = 3.0

@@ -967,10 +967,11 @@ def deploy_embed(gpus: int = _DEFAULT_GPUS, workers: int | None = None) -> dict:
     port = _embed_port()
 
     click.echo(f"Deploying embed server ({gpus} GPUs, {workers} workers)...")
-    # Scale CPUs and memory with worker count:
-    # - Each worker needs ~1 CPU for torch inference + 1 for parent/tracker
-    # - Each worker needs ~3 GiB RAM (Python + model weights + overhead)
-    embed_cpus = max(workers + 1, 4)
+    # Scale CPUs and memory with worker count.
+    # Each torch worker spawns ~22 threads; during model load all workers
+    # compete for CPU.  2 CPUs per worker handles startup contention +
+    # steady-state inference, plus 1 for the uvicorn parent.
+    embed_cpus = workers * 2 + 1
     embed_mem = f"{max(workers * 4, 16)}G"
     return _ensure_service_job(
         _EMBED_JOB,
