@@ -47,17 +47,9 @@ class DDBuildState(DiscoveryStateBase):
     ids_filter: set[str] | None = None
 
     # Feature flags
-    include_clusters: bool = True
-    include_embeddings: bool = True
-    include_enrichment: bool = True
-    skip_cluster_labels: bool = False
     dry_run: bool = False
     force: bool = False
     no_hash: bool = False
-
-    # Model overrides
-    embedding_model: str | None = None
-    enrichment_model: str | None = None
 
     # Shared data (extract → build/embed)
     version_data: dict[str, dict] = field(default_factory=dict)
@@ -119,7 +111,9 @@ async def extract_worker(state: DDBuildState, **_kwargs) -> None:
         from imas_codex.graph.build_dd import phase_extract
 
         version_data, all_units = phase_extract(
-            state.versions, state.ids_filter, on_progress=_on_progress,
+            state.versions,
+            state.ids_filter,
+            on_progress=_on_progress,
         )
         state.version_data = version_data
         state.all_units = all_units
@@ -165,9 +159,6 @@ async def build_worker(state: DDBuildState, **_kwargs) -> None:
             build_hash = _compute_build_hash(
                 state.versions,
                 state.ids_filter,
-                state.embedding_model,
-                state.include_clusters,
-                state.include_embeddings,
             )
             state.build_hash = build_hash
 
@@ -176,8 +167,6 @@ async def build_worker(state: DDBuildState, **_kwargs) -> None:
                     client,
                     build_hash,
                     state.versions,
-                    state.include_embeddings,
-                    state.include_clusters,
                 ):
                     wlog.info("Graph already up-to-date — skipping")
                     state.skipped = True
@@ -232,12 +221,19 @@ async def enrich_worker(state: DDBuildState, **_kwargs) -> None:
     wlog.info("Starting LLM enrichment")
 
     def _on_progress(processed: int, total: int) -> None:
+        prev = state.enrich_stats.processed
         state.enrich_stats.total = total
         state.enrich_stats.processed = processed
+        batch_size = processed - prev
+        if batch_size > 0:
+            state.enrich_stats.record_batch(batch_size)
         if processed < total:
             state.enrich_stats.status_text = f"{processed:,} / {total:,} paths"
         else:
             state.enrich_stats.status_text = ""
+
+    def _on_cost(cost: float) -> None:
+        state.enrich_stats.cost = cost
 
     def _run() -> None:
         from imas_codex.graph.build_dd import phase_enrich
@@ -246,10 +242,10 @@ async def enrich_worker(state: DDBuildState, **_kwargs) -> None:
         with GraphClient() as client:
             enrich_stats = phase_enrich(
                 client,
-                model=state.enrichment_model,
                 ids_filter=state.ids_filter,
                 force=state.no_hash,
                 on_progress=_on_progress,
+                on_cost=_on_cost,
             )
             state.stats.update(enrich_stats)
             state.enrich_stats.cost = enrich_stats.get("enrichment_cost", 0.0)
@@ -294,9 +290,7 @@ async def embed_worker(state: DDBuildState, **_kwargs) -> None:
                 client,
                 state.versions,
                 state.version_data,
-                include_enrichment=state.include_enrichment,
                 enriched_llm_count=state.stats.get("enriched_llm", 0),
-                embedding_model=state.embedding_model,
                 force=state.force,
                 no_hash=state.no_hash,
                 on_progress=_on_progress,
@@ -343,7 +337,6 @@ async def cluster_worker(state: DDBuildState, **_kwargs) -> None:
                 client,
                 dry_run=state.dry_run,
                 no_hash=state.no_hash,
-                skip_labels=state.skip_cluster_labels,
                 on_progress=_on_progress,
             )
             state.stats["clusters_created"] = cluster_count
@@ -392,21 +385,18 @@ async def run_dd_build_engine(
             "enrich_phase",
             enrich_worker,
             depends_on=["build_phase"],
-            enabled=state.include_enrichment,
         ),
         WorkerSpec(
             "embed",
             "embed_phase",
             embed_worker,
             depends_on=["build_phase", "enrich_phase"],
-            enabled=state.include_embeddings,
         ),
         WorkerSpec(
             "cluster",
             "cluster_phase",
             cluster_worker,
             depends_on=["build_phase", "enrich_phase", "embed_phase"],
-            enabled=state.include_clusters,
         ),
     ]
 

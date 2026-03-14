@@ -658,9 +658,7 @@ class WorkerStats:
         """
         if not self.scanner_progress:
             return ""
-        return "  ".join(
-            sp.format_status() for sp in self.scanner_progress.values()
-        )
+        return "  ".join(sp.format_status() for sp in self.scanner_progress.values())
 
     def format_scanner_timing(self) -> str:
         """Format scanner elapsed times for stats display.
@@ -1241,7 +1239,9 @@ def build_servers_section(
 
         # SSH health summary (Phase 2.3) — show avg latency and failure ratio
         # for services with enough check history
-        health_summary = s.format_health_summary() if hasattr(s, "format_health_summary") else ""
+        health_summary = (
+            s.format_health_summary() if hasattr(s, "format_health_summary") else ""
+        )
         if health_summary and s.total_checks >= 3:
             section.append(health_summary, style="dim")
 
@@ -1413,9 +1413,7 @@ class BaseProgressDisplay(ABC):
             for _n, s in wg.workers.items()
             if (s.group or _n.split("_worker")[0]) == group
         ]
-        return len(workers) > 0 and all(
-            s.state == WorkerState.idle for s in workers
-        )
+        return len(workers) > 0 and all(s.state == WorkerState.idle for s in workers)
 
     def update_worker_status(self, worker_group: SupervisedWorkerGroup) -> None:
         """Update worker status from supervised worker group."""
@@ -1866,11 +1864,7 @@ class DataDrivenProgressDisplay(BaseProgressDisplay):
 
             count, ann = self._count_group_workers(stage.group)
             completed = stats.processed if stats else 0
-            total = (
-                stats.total
-                if stats and stats.total > 0
-                else max(completed, 1)
-            )
+            total = stats.total if stats and stats.total > 0 else max(completed, 1)
             complete = self._worker_complete(stage.group)
             running = self._worker_running(stage.group)
             waiting = self._worker_waiting(stage.group)
@@ -1897,13 +1891,43 @@ class DataDrivenProgressDisplay(BaseProgressDisplay):
 
     def _build_resources_section(self) -> Text:
         total_cost = 0.0
+        etc = 0.0
         if self._engine_state:
-            for stats in getattr(self._engine_state, "all_stats", {}).values():
-                total_cost += stats.cost
+            for stage in self.stages:
+                stats = getattr(self._engine_state, stage.stats_attr, None)
+                if stats and stats.cost > 0:
+                    total_cost += stats.cost
+                    # ETC: project remaining cost from cost-per-item
+                    if stats.processed > 0 and stats.total > stats.processed:
+                        cost_per_item = stats.cost / stats.processed
+                        remaining = stats.total - stats.processed
+                        etc += remaining * cost_per_item
+
+        # ETA: max of remaining time across active stages
+        eta = None
+        if self._engine_state:
+            for stage in self.stages:
+                stats = getattr(self._engine_state, stage.stats_attr, None)
+                if (
+                    stats
+                    and stats.total > 0
+                    and stats.processed > 0
+                    and stats.processed < stats.total
+                ):
+                    rate = stats.ema_rate or stats.rate
+                    if rate and rate > 0:
+                        remaining = stats.total - stats.processed
+                        stage_eta = remaining / rate
+                        if eta is None or stage_eta > eta:
+                            eta = stage_eta
+
+        projected_cost = total_cost + etc if etc > 0 else None
         config = ResourceConfig(
             elapsed=self.elapsed,
+            eta=eta,
             run_cost=total_cost if total_cost > 0 else None,
-            cost_limit=self.cost_limit,
+            cost_limit=self.cost_limit if self.cost_limit > 0 else None,
+            etc=projected_cost,
             stats=self._stats_fn() if self._stats_fn else None,
         )
         return build_resource_section(config, self.gauge_width)

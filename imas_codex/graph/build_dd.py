@@ -1248,9 +1248,6 @@ def _compute_cluster_content_hash(sorted_paths: list[str]) -> str:
 def _compute_build_hash(
     versions: list[str],
     ids_filter: set[str] | None,
-    embedding_model: str | None,
-    include_clusters: bool,
-    include_embeddings: bool,
 ) -> str:
     """Compute a deterministic hash of the build parameters.
 
@@ -1263,9 +1260,6 @@ def _compute_build_hash(
         str(_BUILD_SCHEMA_VERSION),
         ",".join(sorted(versions)),
         ",".join(sorted(ids_filter)) if ids_filter else "",
-        embedding_model or "",
-        str(include_clusters),
-        str(include_embeddings),
     ]
     combined = "|".join(parts)
     return hashlib.sha256(combined.encode("utf-8")).hexdigest()[:16]
@@ -1275,16 +1269,14 @@ def _check_graph_up_to_date(
     client: GraphClient,
     build_hash: str,
     versions: list[str],
-    include_embeddings: bool,
-    include_clusters: bool,
 ) -> bool:
     """Check if the graph already contains a build matching the given hash.
 
     Validates:
     - DDVersion.build_hash on the current version matches
     - All requested versions exist
-    - Embedding coverage is complete (if embeddings were requested)
-    - Clusters exist (if clusters were requested)
+    - Embedding coverage is complete
+    - Clusters exist
 
     Returns True only when the graph is fully up-to-date.
     """
@@ -1311,27 +1303,23 @@ def _check_graph_up_to_date(
             return False
 
         # Verify embeddings are present
-        if include_embeddings:
-            emb_result = client.query(
-                """
-                MATCH (p:IMASNode)
-                WITH count(p) AS total,
-                     count(CASE WHEN p.embedding IS NOT NULL THEN 1 END) AS with_emb
-                RETURN total, with_emb
-                """
-            )
-            if emb_result:
-                row = emb_result[0]
-                if row["total"] == 0 or row["with_emb"] < row["total"] * 0.95:
-                    return False
+        emb_result = client.query(
+            """
+            MATCH (p:IMASNode)
+            WITH count(p) AS total,
+                 count(CASE WHEN p.embedding IS NOT NULL THEN 1 END) AS with_emb
+            RETURN total, with_emb
+            """
+        )
+        if emb_result:
+            row = emb_result[0]
+            if row["total"] == 0 or row["with_emb"] < row["total"] * 0.95:
+                return False
 
         # Verify clusters are present
-        if include_clusters:
-            cl_result = client.query(
-                "MATCH (c:IMASSemanticCluster) RETURN count(c) AS cnt"
-            )
-            if not cl_result or cl_result[0]["cnt"] == 0:
-                return False
+        cl_result = client.query("MATCH (c:IMASSemanticCluster) RETURN count(c) AS cnt")
+        if not cl_result or cl_result[0]["cnt"] == 0:
+            return False
 
         return True
     except Exception as e:
@@ -1625,37 +1613,48 @@ def phase_build(
 def phase_enrich(
     client: GraphClient,
     *,
-    version: str | None = None,
     model: str | None = None,
     batch_size: int = 50,
     ids_filter: set[str] | None = None,
     force: bool = False,
     on_progress: "Callable[[int, int], None] | None" = None,
+    on_cost: "Callable[[float], None] | None" = None,
 ) -> dict[str, int | float]:
     """LLM enrichment of path descriptions.
 
-    Wraps :func:`enrich_imas_paths` and returns stats suitable for
-    merging into the build stats dict.
+    Enriches ALL IMASNode paths across all DD versions, not just the
+    current version. Wraps :func:`enrich_imas_paths` and returns stats
+    suitable for merging into the build stats dict.
     """
     from imas_codex.graph.dd_enrichment import enrich_imas_paths
 
-    dd_version = version or current_dd_version
-
     enrichment_stats = enrich_imas_paths(
         client=client,
-        version=dd_version,
         model=model,
         batch_size=batch_size,
         ids_filter=ids_filter,
         use_rich=False,
         force=force,
         on_progress=on_progress,
+        on_cost=on_cost,
     )
+
+    # Enrich identifier schemas
+    from imas_codex.graph.dd_identifier_enrichment import enrich_identifier_schemas
+
+    ident_stats = enrich_identifier_schemas(
+        client,
+        model=model,
+        force=force,
+    )
+
     return {
         "enriched_llm": enrichment_stats.get("enriched_llm", 0),
         "enriched_template": enrichment_stats.get("enriched_template", 0),
         "enrichment_cached": enrichment_stats.get("enrichment_cached", 0),
-        "enrichment_cost": enrichment_stats.get("enrichment_cost", 0.0),
+        "enrichment_cost": enrichment_stats.get("enrichment_cost", 0.0)
+        + ident_stats.get("cost", 0.0),
+        "identifier_schemas_enriched": ident_stats.get("enriched", 0),
     }
 
 
@@ -1664,17 +1663,15 @@ def phase_embed(
     versions: list[str],
     version_data: dict[str, dict],
     *,
-    include_enrichment: bool = True,
     enriched_llm_count: int = 0,
-    embedding_model: str | None = None,
     force: bool = False,
     no_hash: bool = False,
     on_progress: "Callable[[int, int], None] | None" = None,
 ) -> dict[str, int]:
     """Generate vector embeddings for DD paths.
 
-    Merges version data, filters embeddable paths, optionally merges
-    enriched descriptions from the graph, then generates embeddings.
+    Merges version data, filters embeddable paths, merges enriched
+    descriptions from the graph, then generates embeddings.
 
     Returns:
         Stats dict with embedding counts.
@@ -1694,22 +1691,41 @@ def phase_embed(
             merged_paths.update(vdata["paths"])
             merged_ids_info.update(vdata["ids_info"])
 
+    # Also include graph paths not in version_data (from previous builds)
+    # so that incremental builds still embed all paths
+    existing_paths_query = """
+    MATCH (p:IMASNode)
+    WHERE p.embedding IS NULL
+    RETURN p.id AS id, p.name AS name, p.documentation AS documentation,
+           p.data_type AS data_type, p.ids AS ids, p.units AS units,
+           p.description AS description, p.keywords AS keywords,
+           p.cocos_label_transformation AS cocos_label_transformation,
+           p.physics_domain AS physics_domain,
+           p.node_type AS node_type, p.ndim AS ndim
+    """
+    for r in client.query(existing_paths_query):
+        pid = r["id"]
+        if pid not in merged_paths:
+            merged_paths[pid] = {k: v for k, v in r.items() if v is not None}
+
     # Merge enriched descriptions from graph into path data
-    if include_enrichment and enriched_llm_count > 0:
-        enriched_paths_query = """
-        MATCH (p:IMASNode)
-        WHERE p.enrichment_source = 'llm'
-        AND p.description IS NOT NULL
-        RETURN p.id AS id,
-               p.description AS description,
-               p.keywords AS keywords
-        """
-        for r in client.query(enriched_paths_query):
-            pid = r["id"]
-            if pid in merged_paths:
-                merged_paths[pid] = dict(merged_paths[pid])
-                merged_paths[pid]["description"] = r["description"]
-                merged_paths[pid]["keywords"] = r["keywords"] or []
+    # Always merge - enrichment may have run in a previous build
+    enriched_paths_query = """
+    MATCH (p:IMASNode)
+    WHERE p.description IS NOT NULL
+    RETURN p.id AS id,
+           p.description AS description,
+           p.keywords AS keywords,
+           p.enrichment_source AS enrichment_source
+    """
+    enriched_count = 0
+    for r in client.query(enriched_paths_query):
+        pid = r["id"]
+        if pid in merged_paths:
+            merged_paths[pid] = dict(merged_paths[pid])
+            merged_paths[pid]["description"] = r["description"]
+            merged_paths[pid]["keywords"] = r["keywords"] or []
+            enriched_count += 1
 
     if not merged_paths:
         return stats
@@ -1726,13 +1742,12 @@ def phase_embed(
         )
 
     # Force rebuild if enrichment produced new descriptions
-    force_for_embed = no_hash or (include_enrichment and enriched_llm_count > 0)
+    force_for_embed = no_hash or enriched_llm_count > 0 or enriched_count > 0
 
     embedding_stats = update_path_embeddings(
         client=client,
         paths_data=embeddable_paths,
         ids_info=merged_ids_info,
-        model_name=embedding_model,
         force_rebuild=force or force_for_embed,
         use_rich=False,
         dd_version=current_dd_version,
@@ -1747,6 +1762,8 @@ def phase_embed(
             len(embeddable_paths),
         )
 
+    from imas_codex.settings import get_embedding_model
+
     client.query(
         """
         MATCH (v:DDVersion {id: $version})
@@ -1755,9 +1772,16 @@ def phase_embed(
             v.embeddings_count = $count
         """,
         version=current_dd_version,
-        model=embedding_model,
+        model=get_embedding_model(),
         count=embedding_stats["total"],
     )
+
+    # Embed enriched identifier schemas
+    from imas_codex.graph.dd_identifier_enrichment import embed_identifier_schemas
+
+    ident_embed_stats = embed_identifier_schemas(client, no_hash=no_hash)
+    stats["identifier_embeddings_updated"] = ident_embed_stats["updated"]
+    stats["identifier_embeddings_cached"] = ident_embed_stats["cached"]
 
     return stats
 
@@ -1767,7 +1791,6 @@ def phase_cluster(
     *,
     dry_run: bool = False,
     no_hash: bool = False,
-    skip_labels: bool = False,
     on_progress: "Callable[[int, int], None] | None" = None,
 ) -> int:
     """Import semantic clusters.
@@ -1784,7 +1807,6 @@ def phase_cluster(
         dry_run,
         use_rich=False,
         no_hash=no_hash,
-        skip_labels=skip_labels,
         on_progress=on_progress,
     )
 
@@ -2574,7 +2596,6 @@ def _import_clusters(
     dry_run: bool,
     use_rich: bool | None = None,
     no_hash: bool = False,
-    skip_labels: bool = False,
     on_progress: "Callable[[int, int], None] | None" = None,
 ) -> int:
     """Build semantic clusters from graph embeddings and merge into the graph.
@@ -2782,16 +2803,16 @@ def _import_clusters(
                 len(clusters),
             )
 
+            # Step 8.5: Generate labels for unlabeled clusters via LLM
+            _label_unlabeled_clusters(client, batch_size=50)
+
             # Step 9: Embed cluster labels and descriptions (with hash caching)
-            if not skip_labels:
-                _embed_cluster_text(
-                    client,
-                    embedding_batch_size=256,
-                    use_rich=use_rich,
-                    no_hash=no_hash,
-                )
-            else:
-                logger.info("Skipping cluster label embedding (--skip-cluster-labels)")
+            _embed_cluster_text(
+                client,
+                embedding_batch_size=256,
+                use_rich=use_rich,
+                no_hash=no_hash,
+            )
 
             # Step 10: Delete stale clusters no longer in the computation
             stale_ids = existing_ids - new_cluster_ids
@@ -2872,6 +2893,105 @@ def _export_cluster_embeddings_npz(
         )
     except Exception as e:
         logger.warning("Failed to export cluster embeddings to .npz: %s", e)
+
+
+def _label_unlabeled_clusters(
+    client: GraphClient,
+    batch_size: int = 50,
+) -> int:
+    """Generate LLM labels for clusters that lack them.
+
+    Reads unlabeled clusters from the graph with their member paths,
+    calls ClusterLabeler in batches, and updates cluster nodes with
+    label, description, physics_concepts, and tags.
+
+    Args:
+        client: GraphClient instance
+        batch_size: Number of clusters per LLM call
+
+    Returns:
+        Number of clusters labeled
+    """
+    # Fetch unlabeled clusters with their member paths
+    unlabeled = client.query("""
+        MATCH (c:IMASSemanticCluster)
+        WHERE c.label IS NULL
+        OPTIONAL MATCH (m:IMASNode)-[:IN_CLUSTER]->(c)
+        WITH c, collect(m.id) AS paths, collect(DISTINCT m.ids) AS ids_names
+        RETURN c.id AS id, c.scope AS scope, c.cross_ids AS cross_ids,
+               paths, ids_names
+        ORDER BY c.id
+    """)
+
+    if not unlabeled:
+        logger.info("No unlabeled clusters found — skipping LLM labeling")
+        return 0
+
+    logger.info("Labeling %d unlabeled clusters via LLM...", len(unlabeled))
+
+    try:
+        from imas_codex.clusters.labeler import ClusterLabeler
+
+        labeler = ClusterLabeler()
+        labeled_count = 0
+
+        for i in range(0, len(unlabeled), batch_size):
+            batch = unlabeled[i : i + batch_size]
+
+            # Format for ClusterLabeler
+            cluster_dicts = []
+            for row in batch:
+                cluster_dicts.append(
+                    {
+                        "id": row["id"],
+                        "paths": row["paths"] or [],
+                        "ids_names": row["ids_names"] or [],
+                        "is_cross_ids": bool(row.get("cross_ids")),
+                        "scope": row.get("scope", "global"),
+                    }
+                )
+
+            labels = labeler.label_clusters(cluster_dicts, batch_size=batch_size)
+
+            # Update graph with labels
+            updates = []
+            for label in labels:
+                updates.append(
+                    {
+                        "id": label.cluster_id,
+                        "label": label.label,
+                        "description": label.description,
+                        "physics_concepts": label.physics_concepts,
+                        "tags": label.tags,
+                    }
+                )
+
+            if updates:
+                client.query(
+                    """
+                    UNWIND $updates AS u
+                    MATCH (c:IMASSemanticCluster {id: u.id})
+                    SET c.label = u.label,
+                        c.description = u.description,
+                        c.physics_concepts = u.physics_concepts,
+                        c.tags = u.tags
+                    """,
+                    updates=updates,
+                )
+                labeled_count += len(updates)
+
+            logger.info(
+                "Labeled %d/%d clusters",
+                min(i + batch_size, len(unlabeled)),
+                len(unlabeled),
+            )
+
+        logger.info("Cluster labeling complete: %d clusters labeled", labeled_count)
+        return labeled_count
+
+    except Exception as e:
+        logger.error("Error during cluster labeling: %s", e)
+        return 0
 
 
 def _embed_cluster_text(
