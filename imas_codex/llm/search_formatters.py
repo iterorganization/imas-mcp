@@ -819,7 +819,20 @@ def format_list_report(result: Any) -> str:
             header += f" — showing first {item.truncated_to}"
         parts.append(header)
 
-        if isinstance(item.paths, list):
+        if item.path_details:
+            for d in item.path_details:
+                dtype = d.get("data_type", "")
+                units = d.get("units", "")
+                doc = d.get("documentation", "")
+                line = f"  {d['id']}"
+                if dtype:
+                    line += f" ({dtype})"
+                if units:
+                    line += f" [{units}]"
+                if doc:
+                    line += f" — {doc[:100]}"
+                parts.append(line)
+        elif isinstance(item.paths, list):
             for p in item.paths:
                 parts.append(f"  {p}")
         elif isinstance(item.paths, str):

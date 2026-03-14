@@ -426,6 +426,90 @@ class TestListPathsResultItem:
 
         assert item.truncated_to == 100
 
+    def test_result_item_with_path_details(self):
+        """Result item with path_details populated."""
+        details = [
+            {
+                "id": "equilibrium/time_slice/boundary/psi",
+                "name": "psi",
+                "data_type": "FLT_1D",
+                "node_type": "leaf",
+                "documentation": "Poloidal flux",
+                "units": "Wb",
+            },
+        ]
+        item = ListPathsResultItem(
+            query="equilibrium",
+            path_count=1,
+            paths=["equilibrium/time_slice/boundary/psi"],
+            path_details=details,
+        )
+
+        assert item.path_details is not None
+        assert len(item.path_details) == 1
+        assert item.path_details[0]["data_type"] == "FLT_1D"
+        assert item.path_details[0]["units"] == "Wb"
+
+    def test_result_item_path_details_default_none(self):
+        """path_details defaults to None."""
+        item = ListPathsResultItem(
+            query="equilibrium",
+            path_count=0,
+        )
+        assert item.path_details is None
+
+
+class TestListPathsResult:
+    """Test ListPathsResult model."""
+
+    def test_as_dicts_with_details(self):
+        """as_dicts() flattens path_details across results."""
+        details_1 = [
+            {"id": "equilibrium/time", "name": "time", "data_type": "FLT_1D",
+             "node_type": "leaf", "documentation": "Time", "units": "s"},
+        ]
+        details_2 = [
+            {"id": "core_profiles/time", "name": "time", "data_type": "FLT_1D",
+             "node_type": "leaf", "documentation": "Time", "units": "s"},
+        ]
+        result = ListPathsResult(
+            format="flat",
+            results=[
+                ListPathsResultItem(query="equilibrium", path_count=1,
+                                    path_details=details_1),
+                ListPathsResultItem(query="core_profiles", path_count=1,
+                                    path_details=details_2),
+            ],
+        )
+        dicts = result.as_dicts()
+        assert len(dicts) == 2
+        assert dicts[0]["id"] == "equilibrium/time"
+        assert dicts[1]["id"] == "core_profiles/time"
+
+    def test_as_dicts_without_details(self):
+        """as_dicts() returns empty list when no path_details."""
+        result = ListPathsResult(
+            format="flat",
+            results=[
+                ListPathsResultItem(query="equilibrium", path_count=5,
+                                    paths=["a", "b", "c", "d", "e"]),
+            ],
+        )
+        assert result.as_dicts() == []
+
+    def test_as_dicts_mixed(self):
+        """as_dicts() handles mix of items with and without details."""
+        result = ListPathsResult(
+            format="flat",
+            results=[
+                ListPathsResultItem(query="equilibrium", path_count=1,
+                                    path_details=[{"id": "a"}]),
+                ListPathsResultItem(query="bad_ids", path_count=0,
+                                    error="not found"),
+            ],
+        )
+        assert len(result.as_dicts()) == 1
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
