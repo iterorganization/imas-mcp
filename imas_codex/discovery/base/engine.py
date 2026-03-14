@@ -37,6 +37,7 @@ from typing import Any
 
 from imas_codex.discovery.base.supervision import (
     OrphanRecoverySpec,
+    PipelinePhase,
     SupervisedWorkerGroup,
     make_orphan_recovery_tick,
     run_supervised_loop,
@@ -136,7 +137,7 @@ async def run_discovery_engine(
 
     # --- Step 3: Register workers ---
     worker_group = SupervisedWorkerGroup()
-    phase_tasks: dict[str, list[asyncio.Task]] = {}
+    phase_tasks: dict[PipelinePhase, list[asyncio.Task]] = {}
 
     for spec in workers:
         if not spec.enabled or spec.count == 0:
@@ -167,7 +168,7 @@ async def run_discovery_engine(
                 )
             )
             worker_group.add_task(task)
-            phase_tasks.setdefault(spec.phase_attr, []).append(task)
+            phase_tasks.setdefault(phase, []).append(task)
 
     # --- Step 4: Orphan recovery tick ---
     orphan_tick = None
