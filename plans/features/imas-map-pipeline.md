@@ -10,16 +10,46 @@
 
 ### 1.1 TCV SignalSource Status Bug
 
-**Root cause:** 192 TCV SignalSources are in `discovered` status because their representatives were `skipped` (by the `channel_element` regex in `claim_signals_for_enrichment`). When the representative is skipped, `propagate_source_enrichment()` never runs, leaving the SignalSource in `discovered`.
+**Observed symptom:** 192 TCV SignalSources are in `discovered` status because their representatives were `skipped` (by the `channel_element` regex in `claim_signals_for_enrichment`). When the representative is skipped, `propagate_source_enrichment()` never runs, leaving the SignalSource in `discovered`.
 
-**Why this happens:** The `channel_element` skip regex matches signals ending with numbered indices (e.g., `_001`, `:003`, `CHANNEL_007`). When a SignalSource group consists entirely of indexed channels (e.g., CHANNEL_001 through CHANNEL_192), the representative—chosen alphabetically, often CHANNEL_001—also matches the skip pattern.
+**Root cause analysis — Code execution order:**
 
-**Why the original fix (propagating skip) is wrong:** Representatives should NEVER be skipped, regardless of their accessor pattern. The representative exists precisely to carry enrichment for its entire group. If we skip the representative, the whole group loses its enrichment. The fact that a signal "looks like" an array element is irrelevant if it's the representative—its description applies to all members.
+1. `detect_signal_sources()` runs first (line 3317 in worker loop):
+   - Scans FacilitySignals with `status='discovered'`
+   - Groups signals by accessor pattern (e.g., `CHANNEL_NNN` → 192 members)
+   - Creates SignalSource nodes with `MEMBER_OF` relationships
+   - Picks representative (alphabetically first, e.g., `CHANNEL_001`)
 
-**Correct fix:** Exclude representatives from the channel_element skip query. Representatives must always proceed to enrichment so their metadata propagates to all group members:
+2. `claim_signals_for_enrichment()` runs second (line 3334):
+   - **FIRST**: Bulk-skips `channel_element` signals (lines 522-536) — **THIS IS THE BUG**
+   - **THEN**: Claims representatives and standalone signals (lines 539-559)
+
+The skip query marks signals as `skipped` without checking if they're part of a SignalSource group. Since grouping happens first, by the time skip runs, MEMBER_OF relationships already exist — but the skip query ignores them.
+
+**Why the conflicting mechanisms exist:**
+
+- **channel_element skip**: Designed to avoid enriching obvious array elements that are indices into a parent signal (e.g., `IP:MEASURED[001]`). These don't need individual descriptions.
+- **SignalSource grouping**: Groups signals sharing a structure pattern. The representative is enriched once, and metadata propagates to all members.
+
+Both mechanisms aim to reduce LLM calls for repetitive signals, but they conflict when:
+
+1. Signals form a pattern group (handled by SignalSource)
+2. Those same signals match the channel_element regex (incorrectly skipped)
+
+**Why the SignalSource mechanism is correct here:**
+
+When signals are grouped into a SignalSource, the grouping mechanism **already** handles them efficiently:
+
+- Only the representative is enriched (one LLM call)
+- `propagate_source_enrichment()` copies enrichment to all members
+- Non-representative members are filtered from the claim query (line 546: `WHERE sg.representative_id <> s.id`)
+
+The channel_element skip is **redundant** for grouped signals and **harmful** when it skips representatives.
+
+**Correct fix:** Exclude ALL grouped signals from the channel_element skip query. If a signal is part of a SignalSource, the grouping mechanism handles it:
 
 ```python
-# Skip channel_element signals EXCEPT those that are representatives
+# Skip channel_element signals ONLY if they're not part of a SignalSource group
 gc.query(
     """
     MATCH (s:FacilitySignal {facility_id: $facility})
@@ -30,10 +60,8 @@ gc.query(
         OR s.accessor =~ '.*CHANNEL_?\\d{2,3}:.*'
         OR s.name =~ '^\\d{2,3}$'
       )
-      // CRITICAL: Never skip representatives — they carry enrichment for their groups
-      AND NOT EXISTS {
-        MATCH (sg:SignalSource {representative_id: s.id})
-      }
+      // Grouped signals are handled by SignalSource mechanism - don't skip them
+      AND NOT EXISTS { (s)-[:MEMBER_OF]->(:SignalSource) }
     SET s.status = $skipped,
         s.skip_reason = 'channel_element',
         s.claimed_at = null
@@ -42,7 +70,15 @@ gc.query(
 )
 ```
 
-**Graph cleanup (one-time):** Fix existing SignalSources by either (a) unskipping the representative so it can be enriched, or (b) if the representative was already processed long ago, copying its enrichment to the SignalSource:
+**Why this fix is better than "exclude representatives only":**
+
+Excluding only representatives would still skip non-representative members. While those members are filtered from the claim query anyway, it's cleaner to not skip them at all:
+
+- Grouped signals should have `status='enriched'` (via propagation), not `status='skipped'`
+- Consistent status tracking — skipped means "no enrichment needed", enriched means "has enrichment"
+- The claim query already handles non-representatives via its MEMBER_OF filter
+
+**Graph cleanup (one-time):** Fix existing SignalSources by unskipping the representative:
 
 ```python
 # Unskip representatives that were incorrectly skipped
@@ -50,6 +86,12 @@ MATCH (sg:SignalSource {facility_id: $facility, status: 'discovered'})
 MATCH (rep:FacilitySignal {id: sg.representative_id, status: 'skipped', skip_reason: 'channel_element'})
 SET rep.status = 'discovered', rep.skip_reason = null
 ```
+
+After running this, the next enrichment worker iteration will:
+
+1. Claim the (now-discovered) representative
+2. Enrich it via LLM
+3. Call `propagate_source_enrichment()` to update all members and the SignalSource itself
 
 **File:** `imas_codex/discovery/signals/parallel.py`
 
@@ -62,6 +104,7 @@ SET rep.status = 'discovered', rep.skip_reason = null
 1. **Remove `unit` from `SignalEnrichmentResult`** — The LLM should not output units at all.
 
 2. **Propagate units from SignalNode → FacilitySignal via code.** After the units_worker extracts units into SignalNode, add a propagation step:
+
    ```python
    MATCH (s:FacilitySignal)-[:HAS_DATA_SOURCE_NODE]->(sn:SignalNode)
    WHERE sn.unit IS NOT NULL AND sn.unit <> ''
@@ -86,6 +129,7 @@ SET rep.status = 'discovered', rep.skip_reason = null
 JET wiki pages that describe diagnostics are already ingested as WikiPage/WikiChunk nodes. We can extract DDA descriptions from this existing data instead of re-scraping:
 
 1. **Query existing WikiChunks for DDA mentions:**
+
    ```python
    # Find WikiChunks that mention known DDAs
    MATCH (wc:WikiChunk)-[:HAS_CHUNK]-(wp:WikiPage {facility_id: 'jet'})
@@ -94,6 +138,7 @@ JET wiki pages that describe diagnostics are already ingested as WikiPage/WikiCh
    ```
 
 2. **Semantic search for DDA descriptions:**
+
    ```python
    # For each known DDA, find chunks describing it
    for dda in ["EFIT", "HRTS", "KK3", "BOLO", ...]:
@@ -112,10 +157,11 @@ JET wiki pages that describe diagnostics are already ingested as WikiPage/WikiCh
    - Queries WikiChunks using both keyword and semantic search
    - Extracts description snippets (either programmatically or with a focused LLM call)
    - Outputs YAML format for insertion into `jet.yaml`
-   
+
    This is a one-time cost of ~30 LLM calls (one per DDA) vs. re-ingesting the entire JET wiki (hundreds of pages at non-negligible cost).
 
 4. **Store in facility config:**
+
    ```yaml
    # imas_codex/config/facilities/jet.yaml
    data_systems:
@@ -149,11 +195,13 @@ JET wiki pages that describe diagnostics are already ingested as WikiPage/WikiCh
 **Key principle:** The LLM generates mappings for **SignalSource** nodes only. All member FacilitySignals inherit identical source→target mappings. The assembly worker then unwinds the source group into struct-array entries.
 
 **Current flow (problem):**
+
 ```
 gather_context → ALL 2,300 signal sources → single LLM call for triage
 ```
 
 **New flow:**
+
 ```
 For each target IDS:
   1. Physics domain filter: keep only sources whose domain matches the IDS
@@ -195,6 +243,7 @@ After physics domain filtering, use bidirectional semantic search:
 The intersection of forward + reverse matches produces high-confidence candidates.
 
 Use the backing functions from MCP tools:
+
 - `GraphSearchTool.search_imas_paths()` — hybrid vector + text search
 - `GraphClustersTool.search_imas_clusters()` — cluster-level matching
 
@@ -209,6 +258,7 @@ After the LLM maps `SignalSource:jet:device_xml:pfcoils/NNN/r` → `pf_active/co
 5. MAPS_TO_IMAS relationship is created on the SignalSource, not on individual signals
 
 **The LLM never sees individual coil instances.** It sees:
+
 ```
 Source: jet:device_xml:pfcoils/NNN/r (13 members)
   Description: Major radius position of PF coil
@@ -226,6 +276,7 @@ Target section: pf_active/coil
 The `--dd-version` flag already exists on `imas-codex imas map run`. Enhance it:
 
 1. **Default to latest available version ≥ 4.x in the graph:**
+
    ```python
    def get_latest_dd_version(gc: GraphClient, min_major: int = 4) -> str:
        result = gc.query("""
@@ -250,6 +301,7 @@ IMASMapping {id: "jet:pf_active:3.42.2", dd_version: "3.42.2"}
 ```
 
 **Change the IMASMapping ID format** to include dd_version:
+
 ```
 Current: "jet:pf_active" (only one mapping per facility+IDS)
 New:     "jet:pf_active:4.1.0" (supports multiple versions)
@@ -260,6 +312,7 @@ Update `persist_mapping_result()` to use versioned IDs. Add `dd_version` to the 
 ### 3.3 COCOS Version Awareness
 
 When mapping, query the target DD version's COCOS:
+
 ```python
 dd_cocos = query("MATCH (v:DDVersion {id: $ver}) RETURN v.cocos", ver=dd_version)
 ```
@@ -297,23 +350,23 @@ async def map_worker(state: MappingDiscoveryState, on_progress) -> None:
     """Claim unmapped sources, generate mappings, persist."""
     while not state.should_stop():
         # Claim batch of unmapped SignalSources
-        sources = claim_sources_for_mapping(state.facility, state.target_ids, 
+        sources = claim_sources_for_mapping(state.facility, state.target_ids,
                                               state.target_domains, batch_size=5)
         if not sources:
             state.map_phase.record_idle()
             await asyncio.sleep(1.0)
             continue
-        
+
         for source in sources:
             # Semantic search for target candidates
             candidates = search_target_candidates(source, state)
-            
+
             # LLM mapping call (per source, not per member)
             mapping = await generate_source_mapping(source, candidates, state)
-            
-            # Persist immediately  
+
+            # Persist immediately
             persist_source_mapping(source, mapping, state)
-            
+
         state.map_stats.processed += len(sources)
 ```
 
@@ -336,7 +389,7 @@ def claim_sources_for_mapping(facility, ids_name, domains, batch_size=5):
             WITH sg ORDER BY rand() LIMIT $batch_size
             SET sg.mapping_claimed_at = datetime(), sg.mapping_claim_token = $token
         """, ...)
-        
+
         return gc.query("""
             MATCH (sg:SignalSource {mapping_claim_token: $token})
             ...
@@ -386,6 +439,7 @@ disc_config = DiscoveryConfig(
 ### Step 0: Context Gathering (Programmatic)
 
 For the target IDS + DD version:
+
 1. `analyze_imas_structure(ids_name)` → section breakdown, field counts
 2. `export_imas_ids(ids_name)` → full tree for prompt context
 3. `get_sign_flip_paths(ids_name)` → COCOS paths
@@ -395,12 +449,14 @@ For the target IDS + DD version:
 ### Step 1: Source Claiming (Per Domain)
 
 For each physics domain matching the target IDS:
+
 1. Claim batch of unmapped SignalSources in that domain
 2. Each source carries: description, rep_unit, rep_sign_convention, rep_cocos, sample_accessors, member_count
 
 ### Step 2: Candidate Search (Per Source — Programmatic)
 
 For each claimed source:
+
 1. **Semantic search:** `search_imas_paths(source.description, ids_filter=ids_name, dd_version=dd_major)`
 2. **Cluster matching:** `search_imas_clusters(query=source.description, ids_filter=ids_name)`
 3. **Path context:** For top candidates, `fetch_imas_paths()` for full metadata
@@ -409,6 +465,7 @@ For each claimed source:
 ### Step 3: LLM Mapping (Per Source)
 
 Send to LLM:
+
 - Source metadata (description, unit, COCOS, accessor pattern, member_count)
 - Top-K candidate IMAS paths with descriptions, units, COCOS labels
 - Code references if available
@@ -423,6 +480,7 @@ Unit transforms are determined **by code** from the source unit and target unit,
 ### Step 4: Assembly (Per Section — Programmatic)
 
 After all sources in a section are mapped:
+
 1. Collect all source→target bindings for the section
 2. Determine struct-array population pattern from source group_key
 3. Generate assembly config: how member signals map to struct-array indices
@@ -436,6 +494,7 @@ Same as current: source/target existence, transform execution, unit compatibilit
 ### Step 6: Persist (Per Source)
 
 Persist immediately after validation:
+
 - Create/update `MAPS_TO_IMAS` on the SignalSource
 - Create `IMASMapping` node (versioned ID)
 - Create `POPULATES` relationships
@@ -456,6 +515,7 @@ HAS_UNIT → Unit node
 ```
 
 Add automatic propagation from SignalNode to FacilitySignal after units_worker:
+
 ```python
 MATCH (s:FacilitySignal)-[:HAS_DATA_SOURCE_NODE]->(sn:SignalNode)
 WHERE sn.unit IS NOT NULL AND sn.unit <> ''
@@ -466,6 +526,7 @@ SET s.unit = sn.unit
 ### 6.2 Unit Transform in Mapping — Code-Determined
 
 When the mapping pipeline identifies `source_unit` and `target_unit`:
+
 ```python
 transform = analyze_units(source_unit, target_unit)
 if transform["compatible"]:
@@ -482,6 +543,7 @@ The LLM does NOT determine the transform expression for units. It only identifie
 ### 7.1 Exemplar Injection
 
 When mapping `jet:pf_active` and `tcv:pf_active` is already mapped:
+
 ```python
 existing = search_existing_mappings('tcv', 'pf_active', gc=gc)
 ```
@@ -491,6 +553,7 @@ Include TCV mappings as few-shot examples in the LLM prompt for JET. Same IDS st
 ### 7.2 Mapping Transfer Heuristic
 
 If a source from facility A maps to target T, and facility B has a source with:
+
 - Same physics_domain
 - Similar description (embedding similarity > 0.8)
 - Same unit
@@ -538,26 +601,26 @@ Phase 8 (testing) → continuous
 
 ## Summary: All Recommendations Addressed
 
-| Recommendation | Plan | Phase |
-|---|---|---|
-| TCV SignalSource status bug — exclude reps from skip | Plan 2 | 1.1 |
-| Unit hallucination — remove from LLM | Plan 2 | 1.2, 6 |
-| Hardcoded DDA fallback — extract from existing wiki | Plan 2 | 1.3 |
-| Diagnostic enum enforcement | Plan 2 | 1.4 |
-| Source-level mapping (not per-member) | Plan 2 | 2 |
-| Physics domain pre-filtering | Plan 2 | 2.2 |
-| Semantic narrowing / bidirectional search | Plan 2 | 2.3 |
-| Source group unwinding | Plan 2 | 2.4 |
-| DD version flag + scoping | Plan 2 | 3 |
-| Multi-version support (epoched graph) | Plan 2 | 3.2 |
-| COCOS version awareness | Plan 2 | 3.3 |
-| COCOS label workaround | Plan 2 | 3.4 |
-| Batch claim worker loop | Plan 2 | 4 |
-| Rich progress display | Plan 2 | 4.3 |
-| Boilerplate path pruning in prompts | Plan 1 | 2.5 |
-| IMAS path LLM enrichment | Plan 1 | 2, 3 |
-| Use MCP tool backing functions | Plan 1 | 2.2; Plan 2 | 5 |
-| Cross-facility learning | Plan 2 | 7 |
-| Adaptive batch sizing (signals) | Plan 2 | 1.2 (indirect) |
-| Unit transform by code | Plan 2 | 6.2 |
-| IMAS embedding coverage increase | Plan 1 | 3.4 |
+| Recommendation                                       | Plan   | Phase          |
+| ---------------------------------------------------- | ------ | -------------- | --- |
+| TCV SignalSource status bug — exclude reps from skip | Plan 2 | 1.1            |
+| Unit hallucination — remove from LLM                 | Plan 2 | 1.2, 6         |
+| Hardcoded DDA fallback — extract from existing wiki  | Plan 2 | 1.3            |
+| Diagnostic enum enforcement                          | Plan 2 | 1.4            |
+| Source-level mapping (not per-member)                | Plan 2 | 2              |
+| Physics domain pre-filtering                         | Plan 2 | 2.2            |
+| Semantic narrowing / bidirectional search            | Plan 2 | 2.3            |
+| Source group unwinding                               | Plan 2 | 2.4            |
+| DD version flag + scoping                            | Plan 2 | 3              |
+| Multi-version support (epoched graph)                | Plan 2 | 3.2            |
+| COCOS version awareness                              | Plan 2 | 3.3            |
+| COCOS label workaround                               | Plan 2 | 3.4            |
+| Batch claim worker loop                              | Plan 2 | 4              |
+| Rich progress display                                | Plan 2 | 4.3            |
+| Boilerplate path pruning in prompts                  | Plan 1 | 2.5            |
+| IMAS path LLM enrichment                             | Plan 1 | 2, 3           |
+| Use MCP tool backing functions                       | Plan 1 | 2.2; Plan 2    | 5   |
+| Cross-facility learning                              | Plan 2 | 7              |
+| Adaptive batch sizing (signals)                      | Plan 2 | 1.2 (indirect) |
+| Unit transform by code                               | Plan 2 | 6.2            |
+| IMAS embedding coverage increase                     | Plan 1 | 3.4            |
