@@ -1,5 +1,7 @@
 """Shared utilities for MCP tool parameter handling."""
 
+from imas_codex.core.paths import strip_path_annotations
+
 
 def normalize_ids_filter(ids_filter: str | list[str] | None) -> list[str] | None:
     """Normalize ids_filter to list format.
@@ -60,13 +62,13 @@ def normalize_paths_input(paths: str | list[str]) -> list[str]:
         Normalized list of path strings (may be empty).
     """
     if isinstance(paths, list):
-        return [p.strip() for p in paths if p and p.strip()]
+        return [strip_path_annotations(p.strip()) for p in paths if p and p.strip()]
 
     if isinstance(paths, str):
         paths = paths.strip()
         if not paths:
             return []
-        return [p.strip() for p in paths.split() if p.strip()]
+        return [strip_path_annotations(p.strip()) for p in paths.split() if p.strip()]
 
     return []
 
