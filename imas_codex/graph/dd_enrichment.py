@@ -23,6 +23,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
@@ -411,7 +412,8 @@ def enrich_imas_paths(
     ids_filter: set[str] | None = None,
     use_rich: bool | None = None,
     force: bool = False,
-    on_progress: "Callable[[int, int], None] | None" = None,
+    on_progress: Callable[[int, int], None] | None = None,
+    on_cost: Callable[[float], None] | None = None,
 ) -> dict[str, Any]:
     """Enrich IMAS paths with LLM-generated descriptions.
 
@@ -593,6 +595,9 @@ def enrich_imas_paths(
                     )
                     stats["enrichment_cost"] += cost
                     stats["enrichment_tokens"] += tokens
+
+                    if on_cost:
+                        on_cost(stats["enrichment_cost"])
 
                     # Build updates from LLM results
                     updates = []

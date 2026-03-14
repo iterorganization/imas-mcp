@@ -48,6 +48,10 @@ def _build_stats(state: DDBuildState) -> list[tuple[str, str, str]]:
     if clusters:
         stats.append(("clusters", f"{clusters:,}", "cyan"))
 
+    cost = state.enrich_stats.cost
+    if cost > 0:
+        stats.append(("cost", f"${cost:.2f}", "yellow"))
+
     return stats
 
 
@@ -56,23 +60,17 @@ def create_dd_build_display(
     *,
     cost_limit: float = 0.0,
     console: Any | None = None,
-    skip_enrichment: bool = False,
-    skip_embeddings: bool = False,
-    skip_clusters: bool = False,
     mode_label: str | None = None,
 ) -> DataDrivenProgressDisplay:
     """Create a progress display for the DD build pipeline.
 
     Configures ``DataDrivenProgressDisplay`` with stages matching the
-    five sequential build phases.  Disabled stages show as "skipped".
+    five sequential build phases.
 
     Args:
         state: Live build state — used for STATS summary row.
         cost_limit: LLM cost limit (for resource gauge).
         console: Rich Console instance (auto-created if None).
-        skip_enrichment: Disable the ENRICH stage.
-        skip_embeddings: Disable the EMBED stage.
-        skip_clusters: Disable the CLUSTER stage.
         mode_label: Optional mode label for the header (e.g. "DRY RUN").
 
     Returns:
@@ -100,8 +98,6 @@ def create_dd_build_display(
             group="enrich",
             stats_attr="enrich_stats",
             phase_attr="enrich_phase",
-            disabled=skip_enrichment,
-            disabled_msg="skipped",
         ),
         StageDisplaySpec(
             name="EMBED",
@@ -109,8 +105,6 @@ def create_dd_build_display(
             group="embed",
             stats_attr="embed_stats",
             phase_attr="embed_phase",
-            disabled=skip_embeddings,
-            disabled_msg="skipped",
         ),
         StageDisplaySpec(
             name="CLUSTER",
@@ -118,8 +112,6 @@ def create_dd_build_display(
             group="cluster",
             stats_attr="cluster_stats",
             phase_attr="cluster_phase",
-            disabled=skip_clusters,
-            disabled_msg="skipped",
         ),
     ]
 
