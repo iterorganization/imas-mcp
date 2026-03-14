@@ -71,6 +71,7 @@ async def run_parallel_code_discovery(
     on_score_progress: Callable | None = None,
     on_enrich_progress: Callable | None = None,
     on_code_progress: Callable | None = None,
+    on_embed_progress: Callable | None = None,
     on_worker_status: Callable[[SupervisedWorkerGroup], None] | None = None,
     service_monitor: Any = None,
     stop_event: asyncio.Event | None = None,
@@ -106,6 +107,7 @@ async def run_parallel_code_discovery(
         on_score_progress: Callback for score worker progress
         on_enrich_progress: Callback for enrich worker progress
         on_code_progress: Callback for code worker progress
+        on_embed_progress: Callback for chunk embedding worker progress
         on_worker_status: Callback for worker status updates
         service_monitor: ServiceMonitor for health monitoring
 
@@ -256,6 +258,7 @@ async def run_parallel_code_discovery(
             "code_phase",
             embed_text_worker,
             group="embed",
+            on_progress=on_embed_progress,
             kwargs={"labels": ["CodeChunk"]},
         )
     )
@@ -406,5 +409,25 @@ def get_code_discovery_stats(facility: str) -> dict[str, int | float]:
         stats["accumulated_cost"] = (
             cost_result[0]["accumulated_cost"] or 0.0 if cost_result else 0.0
         )
+
+        # Chunk embedding stats
+        embed_result = gc.query(
+            """
+            MATCH (cc:CodeChunk)-[:AT_FACILITY]->(f:Facility {id: $facility})
+            RETURN count(cc) AS total,
+                   count(cc.embedding) AS embedded
+            """,
+            facility=facility,
+        )
+        if embed_result:
+            total_chunks = embed_result[0]["total"]
+            embedded_chunks = embed_result[0]["embedded"]
+            stats["total_chunks"] = total_chunks
+            stats["embedded_chunks"] = embedded_chunks
+            stats["pending_embed"] = total_chunks - embedded_chunks
+        else:
+            stats["total_chunks"] = 0
+            stats["embedded_chunks"] = 0
+            stats["pending_embed"] = 0
 
         return stats

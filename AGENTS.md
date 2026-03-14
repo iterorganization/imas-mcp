@@ -442,6 +442,23 @@ uv run imas-codex config secrets push iter   # Push .env to remote host
 
 Never use `DETACH DELETE` on production data without user confirmation. For re-embedding: update nodes in place, don't delete and recreate.
 
+### Graph Migrations
+
+**Run migrations as inline Cypher, never as scripts.** Migrations are one-off operations — do not create `scripts/migrate_*.py` or `scripts/repair_*.py` files. Instead, run the migration Cypher directly via `uv run imas-codex graph shell` or the MCP `python()` REPL with `query()`. This keeps the `scripts/` directory clean for reusable tooling only.
+
+```python
+# Example: backfill a new property on existing nodes
+query("""
+    MATCH (cc:CodeChunk)
+    WHERE cc.embedding IS NOT NULL AND cc.embedded_at IS NULL
+    WITH cc LIMIT 1000
+    SET cc.embedded_at = datetime()
+    RETURN count(cc) AS updated
+""")
+```
+
+For large migrations (>10K nodes), batch in a loop with `LIMIT` to avoid transaction timeouts. Always verify counts before and after.
+
 ### Neo4j Lock Files — CRITICAL
 
 Neo4j uses several lock file types. Mishandling them **causes data loss**.

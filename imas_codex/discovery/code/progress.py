@@ -103,6 +103,14 @@ class IngestItem:
     chunks: int = 0  # average chunks per file in batch
 
 
+@dataclass
+class EmbedItem:
+    """Current embedding activity for chunk nodes."""
+
+    chunk_id: str  # CodeChunk node ID (e.g. "jet:path/to/file.py:chunk_0")
+    label: str = "CodeChunk"  # node label being embedded
+
+
 # =============================================================================
 # Progress State
 # =============================================================================
@@ -142,6 +150,7 @@ class FileProgressState:
     run_skipped: int = 0
     run_enriched: int = 0
     run_code_ingested: int = 0
+    run_embedded: int = 0
     _run_triage_cost: float = 0.0
     _run_score_cost: float = 0.0
     scan_rate: float | None = None
@@ -149,9 +158,15 @@ class FileProgressState:
     score_rate: float | None = None
     enrich_rate: float | None = None
     code_rate: float | None = None
+    embed_rate: float | None = None
 
     # Accumulated facility cost (from graph)
     accumulated_cost: float = 0.0
+
+    # Embed stats (from graph)
+    total_chunks: int = 0
+    embedded_chunks: int = 0
+    pending_embed: int = 0
 
     # Current items
     current_scan: ScanItem | None = None
@@ -159,11 +174,13 @@ class FileProgressState:
     current_score: ScoreItem | None = None
     current_enrich: EnrichItem | None = None
     current_ingest: IngestItem | None = None
+    current_embed: EmbedItem | None = None
     scan_processing: bool = False
     triage_processing: bool = False
     score_processing: bool = False
     enrich_processing: bool = False
     ingest_processing: bool = False
+    embed_processing: bool = False
 
     # Streaming queues
     scan_queue: StreamQueue = field(default_factory=StreamQueue)
@@ -185,6 +202,11 @@ class FileProgressState:
     ingest_queue: StreamQueue = field(
         default_factory=lambda: StreamQueue(
             rate=0.5, max_rate=2.0, min_display_time=0.4
+        )
+    )
+    embed_queue: StreamQueue = field(
+        default_factory=lambda: StreamQueue(
+            rate=0.5, max_rate=3.0, min_display_time=0.3
         )
     )
 
@@ -450,6 +472,20 @@ class FileProgressDisplay(BaseProgressDisplay):
                 desc_parts.append(f"~{ingest.chunks} chunks")
             ingest_desc = "  ".join(desc_parts)
 
+        # EMBED activity — chunk ID
+        embed = self.state.current_embed
+        embed_count, embed_ann = self._count_group_workers("embed")
+        embed_complete = self._worker_complete("embed") and not embed
+
+        embed_total = max(
+            self.state.total_chunks, self.state.embedded_chunks + 1
+        )
+        embed_text = ""
+        embed_desc = ""
+        if embed:
+            embed_text = embed.chunk_id
+            embed_desc = embed.label
+
         # --- Build pipeline rows ---
 
         rows = [
@@ -531,6 +567,20 @@ class FileProgressDisplay(BaseProgressDisplay):
                 worker_count=ingest_count,
                 worker_annotation=ingest_ann,
             ),
+            PipelineRowConfig(
+                name="EMBED",
+                style="bold white",
+                completed=self.state.embedded_chunks,
+                total=embed_total,
+                rate=self.state.embed_rate,
+                disabled=self.state.scan_only or self.state.score_only,
+                primary_text=embed_text,
+                description=embed_desc,
+                is_processing=self.state.embed_processing,
+                is_complete=embed_complete,
+                worker_count=embed_count,
+                worker_annotation=embed_ann,
+            ),
         ]
         return build_pipeline_section(rows, self.bar_width)
 
@@ -550,6 +600,10 @@ class FileProgressDisplay(BaseProgressDisplay):
             ("scored", str(self.state.scored_count), "green"),
             ("ingested", str(self.state.ingested), "green"),
         ]
+        if self.state.embedded_chunks > 0 or self.state.pending_embed > 0:
+            stats.append(
+                ("embedded", str(self.state.embedded_chunks), "white")
+            )
         if self.state.skipped > 0:
             stats.append(("skipped", str(self.state.skipped), "yellow"))
         if self.state.failed > 0:
@@ -570,6 +624,7 @@ class FileProgressDisplay(BaseProgressDisplay):
                 ("enrich", self.state.pending_enrich),
                 ("score", self.state.pending_score),
                 ("ingest", self.state.pending_ingest),
+                ("embed", self.state.pending_embed),
             ],
         )
         return build_resource_section(config, self.gauge_width)
@@ -796,6 +851,50 @@ class FileProgressDisplay(BaseProgressDisplay):
 
         self._refresh()
 
+    def update_embed(
+        self,
+        message: str,
+        stats: WorkerStats,
+        results: list[dict] | None = None,
+    ) -> None:
+        """Update chunk embedding worker state (feeds into EMBED row)."""
+        self.state.run_embedded = stats.processed
+
+        if "idle" in message.lower() or "waiting" in message.lower():
+            self.state.embed_processing = False
+            stats.mark_idle()
+            self._refresh()
+            return
+        elif "embedded" in message.lower():
+            self.state.embed_processing = True
+            stats.mark_active()
+        elif "failed" in message.lower() or "backing off" in message.lower():
+            self.state.embed_processing = False
+            stats.mark_idle()
+        elif results:
+            self.state.embed_processing = not self.state.embed_queue.is_empty()
+            stats.mark_active()
+
+        ema = stats.ema_rate
+        if ema and ema > 0:
+            self.state.embed_rate = ema
+
+        if results:
+            items = [
+                EmbedItem(
+                    chunk_id=r.get("id", ""),
+                    label=r.get("label", "CodeChunk"),
+                )
+                for r in results
+            ]
+            self.state.embed_queue.add(
+                items,
+                stats.ema_rate,
+                last_batch_time=stats.last_batch_time,
+            )
+
+        self._refresh()
+
     def refresh_from_graph(self, facility: str) -> None:
         """Refresh totals from graph database."""
         from imas_codex.discovery.code.parallel import get_code_discovery_stats
@@ -814,6 +913,11 @@ class FileProgressDisplay(BaseProgressDisplay):
         self.state.scored_count = stats["scored"]
         self.state.enriched_count = stats["enriched_count"]
         self.state.code_files = stats["total"]
+
+        # Embed stats
+        self.state.total_chunks = stats.get("total_chunks", 0)
+        self.state.embedded_chunks = stats.get("embedded_chunks", 0)
+        self.state.pending_embed = stats.get("pending_embed", 0)
 
         # Accumulated LLM cost from graph (source of truth across runs)
         self.state.accumulated_cost = stats.get("accumulated_cost", 0.0)
@@ -868,6 +972,16 @@ class FileProgressDisplay(BaseProgressDisplay):
             self.state.ingest_queue.is_stale() and self.state.current_ingest is not None
         ):
             self.state.current_ingest = None
+            updated = True
+
+        next_embed = self.state.embed_queue.pop()
+        if next_embed:
+            self.state.current_embed = next_embed
+            updated = True
+        elif (
+            self.state.embed_queue.is_stale() and self.state.current_embed is not None
+        ):
+            self.state.current_embed = None
             updated = True
 
         if updated:
@@ -928,6 +1042,19 @@ class FileProgressDisplay(BaseProgressDisplay):
         ingest_rate = self.state.ingest_rate
         if ingest_rate:
             summary.append(f"  {ingest_rate:.1f}/s", style="dim")
+        summary.append("\n")
+
+        # EMBED stats
+        summary.append("  EMBED    ", style="bold white")
+        summary.append(
+            f"embedded={self.state.run_embedded:,}", style="white"
+        )
+        if self.state.pending_embed > 0:
+            summary.append(
+                f"  pending={self.state.pending_embed:,}", style="yellow"
+            )
+        if self.state.embed_rate:
+            summary.append(f"  {self.state.embed_rate:.1f}/s", style="dim")
         summary.append("\n")
 
         # USAGE stats

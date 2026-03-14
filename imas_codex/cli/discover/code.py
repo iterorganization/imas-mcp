@@ -251,6 +251,9 @@ def code(
             def on_enrich(msg, stats, results=None):
                 display.update_enrich(msg, stats, results)
 
+            def on_embed(msg, stats, results=None):
+                display.update_embed(msg, stats, results)
+
             def on_worker_status(worker_group):
                 display.update_worker_status(worker_group)
         else:
@@ -282,6 +285,10 @@ def code(
                 if msg != "idle":
                     file_logger.info("ENRICH: %s", msg)
 
+            def on_embed(msg, stats, results=None):
+                if msg != "idle":
+                    file_logger.info("EMBED: %s", msg)
+
             on_worker_status = None
 
         async def async_main(stop_event, service_monitor):
@@ -312,6 +319,7 @@ def code(
                 on_score_progress=on_score,
                 on_enrich_progress=on_enrich,
                 on_code_progress=on_code,
+                on_embed_progress=on_embed,
                 on_worker_status=on_worker_status,
                 stop_event=stop_event,
             )
