@@ -43,17 +43,18 @@ class IMASPathEnrichmentResult(BaseModel):
     path_index: int = Field(description="1-based index matching the input batch order")
     description: str = Field(
         description=(
-            "Physics-aware description of this IMAS path (2-4 sentences). "
-            "Explains what the quantity measures, its physical significance, "
-            "and its role in the IDS structure. Do NOT repeat units, data type, "
-            "or coordinate information already in metadata fields."
+            "Physics-aware description of this IMAS path. "
+            "Explain what the quantity measures, its physical significance, "
+            "how it relates to other quantities, and what diagnostics or "
+            "analyses produce it. "
+            "Do NOT repeat units, data type, or coordinate information."
         )
     )
     keywords: list[str] = Field(
         default_factory=list,
         max_length=5,
         description=(
-            "Searchable keywords (max 5) — physics concepts, measurement types, "
+            "Searchable keywords (up to 5) — physics concepts, measurement types, "
             "and related terms not already in the documentation"
         ),
     )
@@ -206,11 +207,29 @@ def gather_path_context(
     WHERE sibling.id <> pid
     RETURN pid AS path_id,
            parent.id AS parent_id,
-           collect(DISTINCT sibling.name)[0..10] AS siblings,
+           collect(DISTINCT sibling.name) AS siblings,
            parent.documentation AS parent_doc
     """
     sibling_results = {
         r["path_id"]: r for r in client.query(sibling_query, path_ids=path_ids)
+    }
+
+    # Query full ancestor documentation chain (parent → grandparent → ... → IDS root)
+    ancestor_query = """
+    UNWIND $path_ids AS pid
+    MATCH (p:IMASNode {id: pid})
+    OPTIONAL MATCH chain = (p)-[:HAS_PARENT*]->(ancestor:IMASNode)
+    WITH pid,
+         [node IN nodes(chain)[1..] | {
+           id: node.id,
+           name: node.name,
+           documentation: node.documentation
+         }] AS ancestors
+    RETURN pid AS path_id, ancestors
+    """
+    ancestor_results = {
+        r["path_id"]: r["ancestors"] or []
+        for r in client.query(ancestor_query, path_ids=path_ids)
     }
 
     # Query child summary for structure nodes
@@ -220,7 +239,7 @@ def gather_path_context(
     WHERE p.data_type IN ['STRUCTURE', 'STRUCT_ARRAY']
     OPTIONAL MATCH (child:IMASNode)-[:HAS_PARENT]->(p)
     RETURN pid AS path_id,
-           collect(DISTINCT child.name)[0..15] AS children
+           collect(DISTINCT child.name) AS children
     """
     children_results = {
         r["path_id"]: r["children"]
@@ -252,6 +271,7 @@ def gather_path_context(
             "ids_description": ids_info.get(ids_name, {}).get("description", ""),
             "ids_cocos": ids_info.get(ids_name, {}).get("cocos", None),
             "parent_chain": _build_parent_chain(path_id),
+            "ancestors": ancestor_results.get(path_id, []),
             "siblings": sibling_results.get(path_id, {}).get("siblings", []),
             "parent_doc": sibling_results.get(path_id, {}).get("parent_doc"),
             "children": children_results.get(path_id, []),
@@ -312,8 +332,10 @@ def build_enrichment_messages(
             "documentation": ctx.get("documentation", ""),
             "data_type": ctx.get("data_type", ""),
             "parent_chain": " / ".join(ctx.get("parent_chain", [])),
+            "ancestors": ctx.get("ancestors", []),
             "siblings": ctx.get("siblings", []),
             "children": ctx.get("children", []),
+            "parent_doc": ctx.get("parent_doc"),
             "unit": ctx.get("unit"),
             "coordinates": ctx.get("coordinates", []),
             "cluster_label": ctx.get("cluster_label"),
@@ -339,10 +361,25 @@ def build_enrichment_messages(
             user_lines.append(f"- Data type: {entry['data_type']}")
         if entry["parent_chain"]:
             user_lines.append(f"- Parent chain: {entry['parent_chain']}")
+        # Include ancestor documentation chain for hierarchy context
+        ancestors = entry.get("ancestors", [])
+        if ancestors:
+            ancestor_lines = []
+            for anc in ancestors:
+                anc_name = anc.get("name", "")
+                anc_doc = anc.get("documentation", "")
+                if anc_doc:
+                    ancestor_lines.append(f"  - {anc.get('id', anc_name)}: {anc_doc}")
+                else:
+                    ancestor_lines.append(f"  - {anc.get('id', anc_name)}")
+            user_lines.append("- Ancestor context (parent → root):")
+            user_lines.extend(ancestor_lines)
+        elif entry.get("parent_doc"):
+            user_lines.append(f"- Parent documentation: {entry['parent_doc']}")
         if entry["siblings"]:
-            user_lines.append(f"- Siblings: {', '.join(entry['siblings'][:8])}")
+            user_lines.append(f"- Siblings: {', '.join(entry['siblings'])}")
         if entry["children"]:
-            user_lines.append(f"- Children: {', '.join(entry['children'][:10])}")
+            user_lines.append(f"- Children: {', '.join(entry['children'])}")
         if entry["unit"]:
             user_lines.append(f"- Unit: {entry['unit']}")
         if entry["coordinates"]:
@@ -352,7 +389,7 @@ def build_enrichment_messages(
         if entry["cocos_label"]:
             user_lines.append(f"- COCOS label: {entry['cocos_label']}")
         if entry["ids_description"]:
-            user_lines.append(f"- IDS description: {entry['ids_description'][:200]}")
+            user_lines.append(f"- IDS description: {entry['ids_description']}")
 
     return [
         {"role": "system", "content": system_prompt},
@@ -367,7 +404,7 @@ def build_enrichment_messages(
 
 def enrich_imas_paths(
     client: GraphClient,
-    version: str,
+    version: str | None = None,
     *,
     model: str | None = None,
     batch_size: int = 50,
@@ -377,6 +414,10 @@ def enrich_imas_paths(
     on_progress: "Callable[[int, int], None] | None" = None,
 ) -> dict[str, Any]:
     """Enrich IMAS paths with LLM-generated descriptions.
+
+    Enriches ALL IMASNode paths across all DD versions, not just paths
+    introduced in a specific version. Each path node is unique in the
+    graph so there is no risk of duplicate enrichment.
 
     For each path lacking a description (or with mismatched enrichment_hash):
     1. Gather rich context (hierarchy, siblings, metadata)
@@ -389,7 +430,7 @@ def enrich_imas_paths(
 
     Args:
         client: Neo4j GraphClient
-        version: DD version to enrich (e.g., "4.0.0")
+        version: Unused, kept for API compatibility. All versions are enriched.
         model: LLM model for enrichment (defaults to language model from settings)
         batch_size: Paths per LLM call (default 50)
         ids_filter: Optional set of IDS names to filter
@@ -423,9 +464,9 @@ def enrich_imas_paths(
         filter_clause = "AND p.ids IN $ids_filter"
 
     if force:
-        # Force re-enrich all paths
+        # Force re-enrich all paths across all versions
         paths_query = f"""
-        MATCH (p:IMASNode)-[:INTRODUCED_IN]->(v:DDVersion {{id: $version}})
+        MATCH (p:IMASNode)
         WHERE 1=1 {filter_clause}
         RETURN p.id AS id, p.name AS name, p.documentation AS documentation,
                p.data_type AS data_type, p.ids AS ids,
@@ -436,7 +477,7 @@ def enrich_imas_paths(
     else:
         # Only paths lacking descriptions or with stale hashes
         paths_query = f"""
-        MATCH (p:IMASNode)-[:INTRODUCED_IN]->(v:DDVersion {{id: $version}})
+        MATCH (p:IMASNode)
         WHERE (p.description IS NULL OR p.enrichment_hash IS NULL)
         {filter_clause}
         RETURN p.id AS id, p.name AS name, p.documentation AS documentation,
@@ -446,12 +487,12 @@ def enrich_imas_paths(
         ORDER BY p.id
         """
 
-    params = {"version": version}
+    params: dict[str, Any] = {}
     if ids_filter:
         params["ids_filter"] = list(ids_filter)
 
     all_paths = list(client.query(paths_query, **params))
-    logger.info(f"Found {len(all_paths)} paths to enrich for version {version}")
+    logger.info(f"Found {len(all_paths)} paths to enrich")
 
     if not all_paths:
         return stats

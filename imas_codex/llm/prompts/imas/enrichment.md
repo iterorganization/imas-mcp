@@ -16,9 +16,9 @@ Generate rich, physics-aware descriptions for IMAS Data Dictionary paths. Each p
 
 For each path in the batch, provide:
 
-1. **description**: 2-4 sentences explaining what this quantity measures, its physical significance, and its role in the IDS structure. Focus on physics meaning, not metadata.
+1. **description**: Explain what this quantity measures, its physical significance, how it relates to other quantities in the IDS, and its role in fusion plasma analysis workflows. For leaf data fields, explain what physical measurement or computation produces this value. For structure nodes, explain what collection of data they group and why. Be specific about the physics — vague descriptions like "a field in the IDS" are unacceptable. Write as much or as little as the available context justifies — simple fields may need only a sentence, while complex quantities deserve several.
 
-2. **keywords**: Up to 5 searchable terms — physics concepts, measurement types, related terms NOT already in the documentation.
+2. **keywords**: Up to 5 searchable terms — physics concepts, measurement types, diagnostic names, analysis methods, and related terms NOT already in the documentation or path name. Think about what a physicist would search for to find this path.
 
 3. **physics_domain**: Primary physics domain ONLY if clearly different from the IDS-level domain. Use null to inherit.
 
@@ -43,8 +43,9 @@ Good descriptions answer:
 
 ### Use Hierarchy Context
 
-The parent chain and siblings reveal semantic grouping:
-- `equilibrium/time_slice/profiles_1d/psi` → psi is a 1D profile within equilibrium time slices
+Each path is provided with its ancestor documentation chain — the documentation from every parent node up to the IDS root. This is critical context because IMAS documentation is often sparse on leaf nodes but richer on parent containers. Use ancestor documentation to understand the semantic context of each field:
+
+- `equilibrium/time_slice/profiles_1d/psi` → the ancestor chain tells you this is a 1D profile within equilibrium time slices
 - Siblings `pressure`, `temperature`, `q` → related radial profile quantities
 - Children list → what this structure contains
 
@@ -66,8 +67,8 @@ Return a JSON object with a `results` array containing one entry per input path:
   "results": [
     {
       "path_index": 1,
-      "description": "Poloidal magnetic flux as a function of normalized toroidal flux coordinate. Fundamental quantity for equilibrium reconstruction that maps the nested flux surface geometry. Sign depends on COCOS convention.",
-      "keywords": ["flux surface", "equilibrium", "radial profile", "reconstruction"],
+      "description": "Poloidal magnetic flux as a function of normalized toroidal flux coordinate. This is the fundamental quantity for equilibrium reconstruction — it defines the nested flux surface geometry that organizes all radial profile data in tokamak plasmas. The psi profile is computed by Grad-Shafranov solvers (EFIT, LIUQE, NICE) from magnetics diagnostic measurements and constrains the mapping between real-space (R,Z) coordinates and flux coordinates used across transport, stability, and heating analyses. Sign convention depends on the COCOS convention in use.",
+      "keywords": ["flux surface", "Grad-Shafranov", "equilibrium reconstruction", "radial coordinate", "magnetic topology"],
       "physics_domain": null
     }
   ]
