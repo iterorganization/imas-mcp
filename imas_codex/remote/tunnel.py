@@ -23,15 +23,52 @@ Example::
 
 from __future__ import annotations
 
-import fcntl
 import logging
 import os
 import shutil
 import signal
 import socket
 import subprocess
+import sys
 import time
 from pathlib import Path
+
+# Platform-specific file locking
+if sys.platform == "win32":
+    import msvcrt
+
+    def _lock_file(fd: int) -> bool:
+        """Acquire exclusive lock on file (Windows)."""
+        try:
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+            return True
+        except OSError:
+            return False
+
+    def _unlock_file(fd: int) -> None:
+        """Release lock on file (Windows)."""
+        try:
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+        except OSError:
+            pass
+else:
+    import fcntl
+
+    def _lock_file(fd: int) -> bool:
+        """Acquire exclusive lock on file (Unix)."""
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return True
+        except OSError:
+            return False
+
+    def _unlock_file(fd: int) -> None:
+        """Release lock on file (Unix)."""
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        except OSError:
+            pass
+
 
 logger = logging.getLogger(__name__)
 
@@ -261,14 +298,12 @@ def ensure_tunnel(
     try:
         deadline = time.monotonic() + _LOCK_TIMEOUT
         while True:
-            try:
-                fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            if _lock_file(lock_fd.fileno()):
                 break
-            except OSError:
-                if time.monotonic() >= deadline:
-                    logger.warning("Timed out waiting for tunnel lock (%s)", ssh_host)
-                    return is_tunnel_active(local_port)
-                time.sleep(0.5)
+            if time.monotonic() >= deadline:
+                logger.warning("Timed out waiting for tunnel lock (%s)", ssh_host)
+                return is_tunnel_active(local_port)
+            time.sleep(0.5)
 
         # Re-check after acquiring lock — another process may have
         # started the tunnel while we were waiting.
@@ -285,10 +320,7 @@ def ensure_tunnel(
 
         return _start_tunnel_locked(port, ssh_host, local_port, timeout, remote_bind)
     finally:
-        try:
-            fcntl.flock(lock_fd, fcntl.LOCK_UN)
-        except OSError:
-            pass
+        _unlock_file(lock_fd.fileno())
         lock_fd.close()
 
 
