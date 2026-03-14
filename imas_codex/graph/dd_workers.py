@@ -235,6 +235,12 @@ async def enrich_worker(state: DDBuildState, **_kwargs) -> None:
     def _on_cost(cost: float) -> None:
         state.enrich_stats.cost = cost
 
+    def _on_items(items: list[dict], batch_time: float) -> None:
+        state.enrich_stats.stream_queue.add(
+            items,
+            last_batch_time=batch_time,
+        )
+
     def _run() -> None:
         from imas_codex.graph.build_dd import phase_enrich
         from imas_codex.graph.client import GraphClient
@@ -246,6 +252,7 @@ async def enrich_worker(state: DDBuildState, **_kwargs) -> None:
                 force=state.no_hash,
                 on_progress=_on_progress,
                 on_cost=_on_cost,
+                on_items=_on_items,
             )
             state.stats.update(enrich_stats)
             state.enrich_stats.cost = enrich_stats.get("enrichment_cost", 0.0)
@@ -281,6 +288,12 @@ async def embed_worker(state: DDBuildState, **_kwargs) -> None:
         else:
             state.embed_stats.status_text = ""
 
+    def _on_items(items: list[dict], batch_time: float) -> None:
+        state.embed_stats.stream_queue.add(
+            items,
+            last_batch_time=batch_time,
+        )
+
     def _run() -> None:
         from imas_codex.graph.build_dd import phase_embed
         from imas_codex.graph.client import GraphClient
@@ -294,6 +307,7 @@ async def embed_worker(state: DDBuildState, **_kwargs) -> None:
                 force=state.force,
                 no_hash=state.no_hash,
                 on_progress=_on_progress,
+                on_items=_on_items,
             )
             state.stats.update(embed_stats)
 
