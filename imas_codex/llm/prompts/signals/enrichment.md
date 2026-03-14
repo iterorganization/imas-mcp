@@ -107,7 +107,7 @@ EDAS data is organized by category / data_name.
 When `wiki_description` or `wiki_units` are provided:
 - These come from curated facility documentation (high confidence)
 - Use wiki descriptions as the primary source for the signal description
-- Wiki units are authoritative — use them for `unit`
+- Wiki units are authoritative — use them to inform your description
 
 **CRITICAL: Reject garbled wiki descriptions.**
 Some `existing_description` or `wiki_description` fields contain raw HTML table
@@ -132,7 +132,6 @@ When source code snippets are provided under "Relevant source code":
 - Use code patterns to infer the physics domain and diagnostic system
 - **Look for sign conventions** — code comments, variable naming (e.g., `sign_ip`, `cocos`),
   conditional sign flips, and multiplication by -1 all reveal sign conventions
-- **Look for units** — code that converts units or applies scaling factors reveals physical units
 - Note coordinate system usage (R, Z, phi, psi) and handedness conventions
 
 ### Facility Wiki Reference
@@ -147,7 +146,6 @@ Use this grounded context to:
 - Accurately describe what signals measure and their physical meaning
 - **Extract sign conventions** into the `sign_convention` field when explicitly documented
 - Identify coordinate systems and conventions used by the facility
-- Extract units when mentioned in wiki documentation
 
 Group-level wiki context may also appear as "Relevant wiki documentation" under
 each signal source header. This is targeted documentation about the specific
@@ -422,7 +420,7 @@ name: I_P
 tdi_quantity: I_P
 ```
 
-Output: `{"signal_index": 1, "physics_domain": "equilibrium", "name": "Plasma Current", "description": "Total plasma current from LIUQE equilibrium reconstruction.", "diagnostic": "", "analysis_code": "liuqe", "unit": "", "confidence": 0.95, "context_quality": "high", "keywords": ["plasma current", "ip", "liuqe", "equilibrium"]}`
+Output: `{"signal_index": 1, "physics_domain": "equilibrium", "name": "Plasma Current", "description": "Total plasma current from LIUQE equilibrium reconstruction.", "diagnostic": "", "analysis_code": "liuqe", "confidence": 0.95, "context_quality": "high", "keywords": ["plasma current", "ip", "liuqe", "equilibrium"]}`
 
 ### TDI Function Signal without Source Code (TCV) — low context
 
@@ -436,7 +434,7 @@ tdi_quantity: tcv_ip
 discovery_source: tdi_introspection
 ```
 
-Output: `{"signal_index": 2, "physics_domain": "equilibrium", "name": "Plasma Current", "description": "Plasma current measurement via TDI function tcv_ip.", "diagnostic": "", "analysis_code": "", "unit": "", "confidence": 0.5, "context_quality": "low", "keywords": ["plasma current", "ip"]}`
+Output: `{"signal_index": 2, "physics_domain": "equilibrium", "name": "Plasma Current", "description": "Plasma current measurement via TDI function tcv_ip.", "diagnostic": "", "analysis_code": "", "confidence": 0.5, "context_quality": "low", "keywords": ["plasma current", "ip"]}`
 
 Note: No source code, wiki, or tree context was provided — description is conservative and generic. No hallucinated MDSplus paths.
 
@@ -453,7 +451,7 @@ wiki_description: Electron temperature profile from High Resolution Thomson Scat
 wiki_units: eV
 ```
 
-Output: `{"signal_index": 3, "physics_domain": "particle_measurement_diagnostics", "name": "Electron Temperature (HRTS)", "description": "Electron temperature profile from High Resolution Thomson Scattering diagnostic.", "diagnostic": "thomson_scattering", "analysis_code": "", "unit": "eV", "confidence": 0.95, "context_quality": "high", "keywords": ["electron temperature", "thomson scattering", "hrts", "te"]}`
+Output: `{"signal_index": 3, "physics_domain": "particle_measurement_diagnostics", "name": "Electron Temperature (HRTS)", "description": "Electron temperature profile from High Resolution Thomson Scattering diagnostic.", "diagnostic": "thomson_scattering", "analysis_code": "", "confidence": 0.95, "context_quality": "high", "keywords": ["electron temperature", "thomson scattering", "hrts", "te"]}`
 
 ### Device XML Signal (JET) — medium context
 
@@ -468,6 +466,6 @@ data_source_name: device_xml
 data_source_path: magnetics/pf_active/coil_1/r
 ```
 
-Output: `{"signal_index": 4, "physics_domain": "machine_description", "name": "PF Active Coil 1 R Position", "description": "Major radius position of PF active coil 1 from machine description XML.", "diagnostic": "", "analysis_code": "", "unit": "", "confidence": 0.85, "context_quality": "medium", "keywords": ["pf coil", "major radius", "machine description", "poloidal field"]}`
+Output: `{"signal_index": 4, "physics_domain": "machine_description", "name": "PF Active Coil 1 R Position", "description": "Major radius position of PF active coil 1 from machine description XML.", "diagnostic": "", "analysis_code": "", "confidence": 0.85, "context_quality": "medium", "keywords": ["pf coil", "major radius", "machine description", "poloidal field"]}`
 
 {% include "safety.md" %}

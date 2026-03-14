@@ -37,6 +37,7 @@ from imas_codex.ids.models import (
 from imas_codex.ids.tools import (
     _run_async,
     analyze_units,
+    fetch_cross_facility_mappings,
     fetch_imas_fields,
     fetch_imas_subtree,
     fetch_source_code_refs,
@@ -121,6 +122,21 @@ def _format_section_clusters(clusters: list[dict[str, Any]]) -> str:
             if len(paths) > 10:
                 line += f" (+{len(paths) - 10} more)"
         lines.append(line)
+    return "\n".join(lines)
+
+
+def _format_cross_facility_mappings(rows: list[dict[str, Any]]) -> str:
+    """Format cross-facility mapping precedent for the prompt."""
+    if not rows:
+        return ""
+    by_facility: dict[str, list[str]] = {}
+    for r in rows:
+        fac = r.get("facility", "?")
+        path = r.get("target_path", "")
+        by_facility.setdefault(fac, []).append(path)
+    lines: list[str] = []
+    for fac, paths in sorted(by_facility.items()):
+        lines.append(f"- **{fac}**: {', '.join(sorted(paths))}")
     return "\n".join(lines)
 
 
@@ -424,6 +440,9 @@ def gather_context(
     existing = search_existing_mappings(facility, ids_name, gc=gc)
     cocos_paths = get_sign_flip_paths(ids_name)
 
+    # Cross-facility precedent: how other facilities mapped to this IDS
+    cross_mappings = fetch_cross_facility_mappings(ids_name, facility, gc=gc)
+
     # Fetch section clusters for the target IDS
     section_clusters: list[dict[str, Any]] = []
     try:
@@ -463,6 +482,7 @@ def gather_context(
         "semantic": semantic_hits,
         "source_candidates": source_candidates,
         "existing": existing,
+        "cross_mappings": cross_mappings,
         "cocos_paths": cocos_paths,
         "dd_version": dd_version,
         "dd_cocos": dd_cocos,
@@ -491,6 +511,9 @@ def assign_sections(
         semantic_results=_format_subtree(context["semantic"]),
         section_clusters=_format_section_clusters(
             context.get("section_clusters", [])
+        ),
+        cross_facility_mappings=_format_cross_facility_mappings(
+            context.get("cross_mappings", [])
         ),
     )
 
