@@ -184,7 +184,7 @@ def embed_batch_sync(
     facility: str | None = None,
     batch_size: int = DEFAULT_EMBED_BATCH_SIZE,
     text_field: str = "description",
-) -> tuple[int, int]:
+) -> tuple[int, int, list[str]]:
     """Synchronous single-batch embed for one label.
 
     Fetches unembedded nodes, embeds them, persists results.
@@ -196,13 +196,15 @@ def embed_batch_sync(
         text_field: Property containing text to embed
 
     Returns:
-        (fetched, embedded) counts
+        (fetched, embedded, ids) — counts and list of embedded node IDs
     """
     from imas_codex.embeddings.description import embed_descriptions_batch
 
     items = _fetch_unembedded(label, facility, batch_size, text_field=text_field)
     if not items:
-        return 0, 0
+        return 0, 0, []
+
+    node_ids = [item["id"] for item in items]
 
     # embed_descriptions_batch expects a known text_field key.
     # _fetch_unembedded returns items with 'text' key regardless of source field;
@@ -213,7 +215,7 @@ def embed_batch_sync(
     items = embed_descriptions_batch(items)
     embedded = _persist_embeddings(label, items)
 
-    return len(items), embedded
+    return len(items), embedded, node_ids
 
 
 async def embed_description_worker(
@@ -300,7 +302,7 @@ async def embed_description_worker(
                 break
 
             try:
-                fetched, embedded = await asyncio.to_thread(
+                fetched, embedded, _ids = await asyncio.to_thread(
                     embed_batch_sync, label, facility, batch_size
                 )
             except Exception as e:
@@ -431,7 +433,7 @@ async def embed_text_worker(
                 break
 
             try:
-                fetched, embedded = await asyncio.to_thread(
+                fetched, embedded, node_ids = await asyncio.to_thread(
                     embed_batch_sync, label, facility, batch_size,
                     text_field="text",
                 )
@@ -455,7 +457,13 @@ async def embed_text_worker(
                     worker_id, embedded, fetched, label,
                 )
                 if on_progress:
-                    on_progress(f"embedded {embedded} {label}", stats)
+                    results = [
+                        {"id": nid, "label": label}
+                        for nid in node_ids[:embedded]
+                    ]
+                    on_progress(
+                        f"embedded {embedded} {label}", stats, results
+                    )
 
         if total_fetched == 0:
             idle_count += 1
