@@ -198,18 +198,12 @@ async def lifespan(app: FastAPI):
 
     # Multi-worker GPU claim: each worker process picks a unique GPU
     # from the pool configured via IMAS_CODEX_GPU_POOL env var.
-    import sys as _sys
-
-    _pid = os.getpid()
-    print(f"[WORKER {_pid}] lifespan start", file=_sys.stderr, flush=True)
-
     pool_env = os.environ.get("IMAS_CODEX_GPU_POOL", "")
     if pool_env and not _gpu_pool:
         _gpu_pool.extend(int(g) for g in pool_env.split(",") if g.strip())
 
     if _gpu_pool:
         gpu_id = _claim_gpu()
-        print(f"[WORKER {_pid}] claimed gpu_id={gpu_id}", file=_sys.stderr, flush=True)
         if gpu_id is not None:
             _worker_gpu = gpu_id
             os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
@@ -217,8 +211,6 @@ async def lifespan(app: FastAPI):
     # Set BEFORE importing torch — the allocator config is read at
     # CUDA initialization time, not when we call set_per_process_memory_fraction.
     os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
-
-    print(f"[WORKER {_pid}] CUDA_VISIBLE_DEVICES={os.environ.get('CUDA_VISIBLE_DEVICES')}", file=_sys.stderr, flush=True)
 
     logger.info("Loading embedding model...")
     start = time.time()
@@ -228,12 +220,8 @@ async def lifespan(app: FastAPI):
     from imas_codex.embeddings.encoder import Encoder
     from imas_codex.settings import get_embedding_model
 
-    print(f"[WORKER {_pid}] imports done", file=_sys.stderr, flush=True)
-
     model_name = get_embedding_model()
     device = "cuda" if _cuda_available() else "cpu"
-
-    print(f"[WORKER {_pid}] device={device}, model={model_name}", file=_sys.stderr, flush=True)
 
     # Log CUDA device selection
     cuda_visible = os.environ.get("CUDA_VISIBLE_DEVICES", None)
@@ -255,10 +243,6 @@ async def lifespan(app: FastAPI):
             )
             torch.cuda.set_per_process_memory_fraction(mem_fraction)
             free_mb, total_mb = torch.cuda.mem_get_info(0)
-            print(
-                f"[WORKER {_pid}] GPU mem cap: {mem_fraction*100:.0f}% of {total_mb/1024/1024:.0f} MiB",
-                file=_sys.stderr, flush=True,
-            )
             logger.info(
                 "GPU memory cap: %.0f%% of %.0f MiB = %.0f MiB "
                 "(free: %.0f MiB, others using: %.0f MiB, dedicated=%s)",
@@ -270,10 +254,7 @@ async def lifespan(app: FastAPI):
                 is_dedicated,
             )
         except Exception as e:
-            print(f"[WORKER {_pid}] GPU mem cap FAILED: {e}", file=_sys.stderr, flush=True)
             logger.warning("Failed to set GPU memory cap: %s", e)
-
-    print(f"[WORKER {_pid}] loading encoder...", file=_sys.stderr, flush=True)
 
     config = EncoderConfig(
         model_name=model_name,
@@ -290,18 +271,13 @@ async def lifespan(app: FastAPI):
         batch_size=32,
     )
 
-    try:
-        _encoder = Encoder(config=config)
-    except Exception as e:
-        print(f"[WORKER {_pid}] Encoder load FAILED: {e}", file=_sys.stderr, flush=True)
-        raise
+    _encoder = Encoder(config=config)
     _startup_time = time.time()
     _last_request_time = time.time()
 
     # Cache GPU info once at startup to avoid blocking CUDA calls
     # in request handlers (which would block the async event loop)
     _gpu_name, _gpu_memory_mb = _get_gpu_info()
-    print(f"[WORKER {_pid}] loaded in {time.time()-start:.1f}s, gpu={_gpu_name}", file=_sys.stderr, flush=True)
     _cached_device_info = _encoder.device_info
     try:
         _cached_embedding_dim = (
