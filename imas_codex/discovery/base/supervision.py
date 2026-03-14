@@ -236,15 +236,19 @@ class PipelinePhase:
         This runs the has_work_fn synchronously and updates the cache.
         Designed to be called via ``asyncio.to_thread()`` from the
         supervision loop so the event loop is never blocked.
+
+        Does NOT reset ``_idle_count``.  Workers manage their own idle
+        state via ``record_activity()`` / ``record_idle()``.  Resetting
+        here would prevent termination when all workers have exited but
+        the graph still has pending work that no worker will process
+        (e.g., budget exhausted).  The ``phase_tasks`` force-marking in
+        ``run_supervised_loop`` handles that case instead.
         """
         if self._force_done or self._has_work_fn is None:
             return
         try:
             self._cached_has_work = self._has_work_fn()
             self._cache_time = time.time()
-            if self._cached_has_work:
-                # Graph still has work — reset idle count so workers re-poll
-                self._idle_count = 0
         except Exception as e:
             logger.debug("PipelinePhase %s: has_work_fn error: %s", self.name, e)
 
