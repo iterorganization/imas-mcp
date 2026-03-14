@@ -1481,10 +1481,14 @@ class GraphStructureTool:
 
 
 def _normalize_paths(paths: str | list[str]) -> list[str]:
-    """Normalize paths input to a flat list."""
+    """Normalize paths input to a flat list, stripping index annotations."""
+    from imas_codex.core.paths import strip_path_annotations
+
     if isinstance(paths, str):
-        return [p.strip() for p in paths.replace(",", " ").split() if p.strip()]
-    return list(paths)
+        raw = [p.strip() for p in paths.replace(",", " ").split() if p.strip()]
+    else:
+        raw = list(paths)
+    return [strip_path_annotations(p) for p in raw]
 
 
 def _is_generic_metadata_path(path_id: str) -> bool:

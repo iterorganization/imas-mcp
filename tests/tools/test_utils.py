@@ -110,6 +110,18 @@ class TestNormalizePathsInput:
         result = normalize_paths_input("path/one   path/two")
         assert result == ["path/one", "path/two"]
 
+    def test_strips_paren_annotations(self):
+        """Test that parenthesized DD annotations are stripped."""
+        result = normalize_paths_input(
+            "flux_loop(i1)/flux/data(:) time_slice(itime)/psi"
+        )
+        assert result == ["flux_loop/flux/data", "time_slice/psi"]
+
+    def test_strips_bracket_annotations(self):
+        """Test that bracket annotations are stripped."""
+        result = normalize_paths_input(["time_slice[1]/profiles_1d[:]/psi"])
+        assert result == ["time_slice/profiles_1d/psi"]
+
 
 class TestValidateQuery:
     """Tests for validate_query function."""

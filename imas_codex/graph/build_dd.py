@@ -25,6 +25,7 @@ import hashlib
 import json
 import logging
 import re
+from collections.abc import Callable
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -33,6 +34,7 @@ import numpy as np
 
 from imas_codex import dd_version as current_dd_version
 from imas_codex.core.exclusions import ExclusionChecker
+from imas_codex.core.paths import strip_path_annotations
 from imas_codex.core.physics_categorization import physics_categorizer
 from imas_codex.core.progress_monitor import (
     create_progress_monitor,
@@ -45,18 +47,8 @@ logger = logging.getLogger(__name__)
 # etc.) to invalidate the build hash and force re-extraction on next --force.
 _BUILD_SCHEMA_VERSION = 2
 
-_DD_INDEX_RE = re.compile(r"\([^)]*\)")
-
-
-def _strip_dd_indices(path: str) -> str:
-    """Strip DD index notation like (itime), (i1), (:) from a path.
-
-    Coordinate references and path_doc use (iN)/(itime)/(:) notation
-    for struct_array traversal. Our stored IMASNode IDs omit these.
-    Stripping is always unambiguous — no DD path has name collisions
-    requiring index variables for disambiguation.
-    """
-    return _DD_INDEX_RE.sub("", path)
+# Alias for backward-compat within this module
+_strip_dd_indices = strip_path_annotations
 
 
 @contextmanager
@@ -1492,9 +1484,7 @@ def phase_build(
             label = info.get("cocos_label_transformation")
             if label:
                 latest_labeled.add(path)
-                cocos_updates.append(
-                    {"id": path, "cocos_label_transformation": label}
-                )
+                cocos_updates.append({"id": path, "cocos_label_transformation": label})
         if cocos_updates:
             for i in range(0, len(cocos_updates), 1000):
                 batch = cocos_updates[i : i + 1000]
