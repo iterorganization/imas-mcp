@@ -56,11 +56,47 @@ IDLE_SLEEP = 3.0
 # Maximum backoff when embed server is down (seconds)
 ERROR_BACKOFF_MAX = 60.0
 
-# Maximum text length (chars) to send to the embedding model.
-# Qwen3-Embedding-0.6B supports 32K tokens but self-attention is O(n²)
-# in sequence length — long texts exhaust GPU VRAM.  8192 chars ≈ 2K
-# tokens which is well within budget for a P100-16GB even in batches.
-MAX_EMBED_TEXT_CHARS = 8192
+# Target text length (chars) for embedding.  Qwen3-Embedding-0.6B supports
+# 32K tokens (~100K chars) but self-attention is O(n²) in sequence length —
+# long texts exhaust GPU VRAM.  4000 chars ≈ 1K tokens which is safe for
+# P100-16GB batches of 6 chunks.  Oversized chunks are split at this boundary.
+TARGET_EMBED_TEXT_CHARS = 4000
+
+
+def _split_oversized_text(text: str, max_chars: int = TARGET_EMBED_TEXT_CHARS) -> list[str]:
+    """Split oversized text into embeddable segments.
+
+    Splits on newline boundaries to preserve code structure. Each segment
+    is embedded separately and the results are averaged.
+
+    Args:
+        text: Text that may exceed max_chars
+        max_chars: Maximum chars per segment
+
+    Returns:
+        List of text segments, each <= max_chars
+    """
+    if len(text) <= max_chars:
+        return [text]
+
+    segments: list[str] = []
+    lines = text.split("\n")
+    current_segment: list[str] = []
+    current_len = 0
+
+    for line in lines:
+        line_len = len(line) + 1  # +1 for newline
+        if current_len + line_len > max_chars and current_segment:
+            segments.append("\n".join(current_segment))
+            current_segment = []
+            current_len = 0
+        current_segment.append(line)
+        current_len += line_len
+
+    if current_segment:
+        segments.append("\n".join(current_segment))
+
+    return segments
 
 
 def _get_description_labels() -> list[str]:
@@ -195,7 +231,8 @@ def embed_batch_sync(
 ) -> tuple[int, int, list[str]]:
     """Synchronous single-batch embed for one label.
 
-    Fetches unembedded nodes, embeds them, persists results.
+    Fetches unembedded nodes, embeds them, persists results.  Oversized
+    texts are split into segments and their embeddings are averaged.
 
     Args:
         label: Node label to process
@@ -206,6 +243,8 @@ def embed_batch_sync(
     Returns:
         (fetched, embedded, ids) — counts and list of embedded node IDs
     """
+    import numpy as np
+
     from imas_codex.embeddings.description import embed_descriptions_batch
 
     items = _fetch_unembedded(label, facility, batch_size, text_field=text_field)
@@ -214,17 +253,54 @@ def embed_batch_sync(
 
     node_ids = [item["id"] for item in items]
 
-    # embed_descriptions_batch expects a known text_field key.
-    # _fetch_unembedded returns items with 'text' key regardless of source field;
-    # rename to match the batch embedder's expected field.
-    for item in items:
-        text = item.pop("text")
-        # Truncate long texts to avoid CUDA OOM — self-attention is O(n²)
-        if len(text) > MAX_EMBED_TEXT_CHARS:
-            text = text[:MAX_EMBED_TEXT_CHARS]
-        item["description"] = text
+    # Split oversized texts into segments for embedding.
+    # Track segment -> item mapping for averaging later.
+    segments: list[dict[str, Any]] = []
+    segment_to_item: list[int] = []  # segment index -> item index
 
-    items = embed_descriptions_batch(items)
+    for i, item in enumerate(items):
+        text = item.pop("text")
+        text_segments = _split_oversized_text(text)
+        if len(text_segments) > 1:
+            logger.debug(
+                "Split oversized %s %s (%d chars) into %d segments",
+                label,
+                item["id"],
+                len(text),
+                len(text_segments),
+            )
+        for seg in text_segments:
+            segments.append({"id": f"{item['id']}:seg{len(segments)}", "description": seg})
+            segment_to_item.append(i)
+
+    # Embed all segments
+    segments = embed_descriptions_batch(segments)
+
+    # Average embeddings for items with multiple segments
+    for i, item in enumerate(items):
+        item_segments = [
+            segments[j]
+            for j in range(len(segments))
+            if segment_to_item[j] == i
+        ]
+        embeddings = [
+            seg["embedding"]
+            for seg in item_segments
+            if seg.get("embedding") is not None
+        ]
+        if embeddings:
+            if len(embeddings) == 1:
+                item["embedding"] = embeddings[0]
+            else:
+                # Average and normalize
+                avg = np.mean(embeddings, axis=0)
+                norm = np.linalg.norm(avg)
+                if norm > 0:
+                    avg = avg / norm
+                item["embedding"] = avg.tolist()
+        else:
+            item["embedding"] = None
+
     embedded = _persist_embeddings(label, items)
 
     # Batch failed (e.g. CUDA OOM) — fall back to one-at-a-time
@@ -235,10 +311,28 @@ def embed_batch_sync(
             label,
         )
         for item in items:
-            single = embed_descriptions_batch([item])
-            _persist_embeddings(label, single)
-            if single[0].get("embedding") is not None:
-                embedded += 1
+            if item.get("embedding") is not None:
+                continue
+            # Re-fetch and retry single item
+            single_items = _fetch_unembedded(label, facility, 1, text_field=text_field)
+            if single_items:
+                single_item = single_items[0]
+                text = single_item.pop("text")
+                text_segments = _split_oversized_text(text)
+                seg_items = [{"id": f"seg{j}", "description": seg} for j, seg in enumerate(text_segments)]
+                seg_items = embed_descriptions_batch(seg_items)
+                embeddings = [s["embedding"] for s in seg_items if s.get("embedding")]
+                if embeddings:
+                    if len(embeddings) == 1:
+                        single_item["embedding"] = embeddings[0]
+                    else:
+                        avg = np.mean(embeddings, axis=0)
+                        norm = np.linalg.norm(avg)
+                        if norm > 0:
+                            avg = avg / norm
+                        single_item["embedding"] = avg.tolist()
+                    _persist_embeddings(label, [single_item])
+                    embedded += 1
 
     return len(items), embedded, node_ids
 
