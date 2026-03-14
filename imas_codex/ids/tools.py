@@ -290,19 +290,29 @@ def query_signal_sources(
     ids_name: str | None = None,
     *,
     gc: GraphClient | None = None,
+    physics_domains: list[str] | None = None,
+    status_filter: str = "enriched",
 ) -> list[dict[str, Any]]:
     """Return enriched signal sources for a facility, optionally filtered by IDS.
 
     Each row contains group metadata plus member signals and any
     existing MAPS_TO_IMAS connections.
+
+    Args:
+        facility: Facility identifier.
+        ids_name: Optional IDS name to filter by existing mappings.
+        gc: GraphClient instance.
+        physics_domains: Optional list of physics domains to filter by.
+        status_filter: Status to filter by (default: 'enriched').
     """
     if gc is None:
         gc = GraphClient()
 
-    ids_filter = ""
+    filters: list[str] = []
     params: dict[str, Any] = {"facility": facility}
+
     if ids_name:
-        ids_filter = (
+        filters.append(
             "AND EXISTS { "
             "  MATCH (sg)-[:MAPS_TO_IMAS]->(ip:IMASNode) "
             "  WHERE ip.ids = $ids_name "
@@ -310,10 +320,20 @@ def query_signal_sources(
         )
         params["ids_name"] = ids_name
 
+    if physics_domains:
+        filters.append("AND sg.physics_domain IN $domains")
+        params["domains"] = physics_domains
+
+    if status_filter:
+        filters.append("AND sg.status = $status_filter")
+        params["status_filter"] = status_filter
+
+    filter_clause = "\n        ".join(filters)
+
     cypher = f"""
         MATCH (sg:SignalSource)
         WHERE sg.facility_id = $facility
-        {ids_filter}
+        {filter_clause}
         OPTIONAL MATCH (m)-[:MEMBER_OF]->(sg)
         WITH sg, count(m) AS member_count,
              collect(DISTINCT m.id)[..5] AS sample_members,
@@ -341,6 +361,38 @@ def query_signal_sources(
         ORDER BY sg.group_key
     """
     return gc.query(cypher, **params)
+
+
+def query_ids_physics_domains(
+    ids_name: str,
+    *,
+    gc: GraphClient | None = None,
+    dd_version: int | None = None,
+) -> list[str]:
+    """Return distinct physics domains for an IDS from IMASNode paths.
+
+    Uses physics_domain field on IMASNode to find which domains
+    the target IDS covers. This enables filtering signal sources
+    to only those matching the target IDS physics.
+    """
+    if gc is None:
+        gc = GraphClient()
+
+    from imas_codex.tools.graph_search import _dd_version_clause
+
+    dd_params: dict[str, Any] = {}
+    dd_clause = _dd_version_clause("p", dd_version, dd_params)
+
+    cypher = f"""
+        MATCH (p:IMASNode)
+        WHERE p.ids = $ids_name
+          AND p.physics_domain IS NOT NULL
+          AND p.physics_domain <> ''
+        {dd_clause}
+        RETURN DISTINCT p.physics_domain AS domain
+    """
+    rows = gc.query(cypher, ids_name=ids_name, **dd_params)
+    return [r["domain"] for r in rows if r.get("domain")]
 
 
 def fetch_source_code_refs(
