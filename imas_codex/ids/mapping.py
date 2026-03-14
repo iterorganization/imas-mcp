@@ -41,6 +41,7 @@ from imas_codex.ids.tools import (
     fetch_imas_subtree,
     fetch_source_code_refs,
     get_sign_flip_paths,
+    query_ids_physics_domains,
     query_signal_sources,
     search_existing_mappings,
     search_imas_semantic,
@@ -363,25 +364,62 @@ def gather_context(
     gc: GraphClient,
     dd_version: int | None = None,
 ) -> dict[str, Any]:
-    """Gather all context needed for the signal mapping pipeline."""
+    """Gather all context needed for the signal mapping pipeline.
+
+    Uses physics domain scoping to dramatically reduce the candidate set:
+    1. Query physics domains for the target IDS
+    2. Filter signal sources to matching domains
+    3. Semantic narrowing within domain for candidate ranking
+    """
     logger.info("Gathering context for %s/%s", facility, ids_name)
 
-    # Don't filter by ids_name — Step 1 assigns groups to IDS sections.
-    # Filtering here would require pre-existing MAPS_TO_IMAS relationships,
-    # creating a chicken-and-egg problem for new mappings.
-    groups = query_signal_sources(facility, gc=gc)
+    # Step 1: Get physics domains for the target IDS
+    target_domains = query_ids_physics_domains(ids_name, gc=gc, dd_version=dd_version)
+    logger.info("Target IDS %s has domains: %s", ids_name, target_domains)
+
+    # Step 2: Query signal sources filtered by physics domain
+    # If we have target domains, filter to matching sources (dramatic reduction).
+    # Fall back to all enriched sources if no domains found.
+    if target_domains:
+        groups = query_signal_sources(
+            facility, gc=gc, physics_domains=target_domains, status_filter="enriched",
+        )
+        logger.info(
+            "Domain-filtered sources: %d (from domains %s)",
+            len(groups), target_domains,
+        )
+    else:
+        groups = query_signal_sources(facility, gc=gc, status_filter="enriched")
+        logger.info("No domain filter — using all %d enriched sources", len(groups))
+
     subtree = fetch_imas_subtree(ids_name, gc=gc, dd_version=dd_version)
 
-    # Semantic search is supplementary — degrade gracefully if embedding
-    # server is unavailable.
+    # Step 3: Semantic narrowing — bidirectional search
+    # Forward: IDS description → signal source embeddings
+    # Reverse: source descriptions → IMAS path embeddings
+    semantic_hits: list[dict[str, Any]] = []
     try:
-        semantic = search_imas_semantic(
-            f"{facility} {ids_name}", ids_name, gc=gc, k=10,
+        semantic_hits = search_imas_semantic(
+            f"{facility} {ids_name}", ids_name, gc=gc, k=20,
             dd_version=dd_version,
         )
     except Exception:
         logger.warning("Semantic search unavailable — continuing without it")
-        semantic = []
+
+    # Per-source semantic narrowing: for each source with a description,
+    # search for matching IMAS paths
+    source_candidates: dict[str, list[dict[str, Any]]] = {}
+    for g in groups:
+        desc = g.get("rep_description") or g.get("description")
+        if desc:
+            try:
+                candidates = search_imas_semantic(
+                    desc, ids_name, gc=gc, k=10, dd_version=dd_version,
+                )
+                if candidates:
+                    source_candidates[g["id"]] = candidates
+            except Exception:
+                pass
 
     existing = search_existing_mappings(facility, ids_name, gc=gc)
     cocos_paths = get_sign_flip_paths(ids_name)
@@ -404,11 +442,13 @@ def gather_context(
     return {
         "groups": groups,
         "subtree": subtree,
-        "semantic": semantic,
+        "semantic": semantic_hits,
+        "source_candidates": source_candidates,
         "existing": existing,
         "cocos_paths": cocos_paths,
         "dd_version": dd_version,
         "section_clusters": section_clusters,
+        "target_domains": target_domains,
     }
 
 
@@ -532,6 +572,19 @@ def map_signals(
         except Exception:
             logger.debug("Version context fetch failed — continuing without it")
 
+        # Per-source semantic candidates
+        source_id = assignment.source_id
+        source_semantic = context.get("source_candidates", {}).get(source_id, [])
+        semantic_context = ""
+        if source_semantic:
+            semantic_lines = []
+            for sc in source_semantic[:10]:
+                path = sc.get("id", "")
+                score = sc.get("score", 0)
+                doc = sc.get("documentation", "")
+                semantic_lines.append(f"  - {path} (score={score:.2f}): {doc[:100]}")
+            semantic_context = "Semantic search candidates:\n" + "\n".join(semantic_lines)
+
         prompt = _render_prompt(
             "signal_mapping",
             facility=facility,
@@ -548,6 +601,7 @@ def map_signals(
             existing_mappings=json.dumps(context["existing"], indent=2, default=str),
             code_references=code_context or "(no code references available)",
             source_cocos=cocos_context or "(no COCOS context)",
+            semantic_candidates=semantic_context or "(no semantic candidates)",
         )
 
         messages = [
