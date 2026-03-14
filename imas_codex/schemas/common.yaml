@@ -56,6 +56,8 @@ enums:
         description: Data source found in facility, awaiting node ingestion
       ingested:
         description: All known nodes added to graph
+      failed:
+        description: Extraction failed permanently (e.g. tree file not found)
       stale:
         description: Data source may have new nodes, needs re-introspection
 
