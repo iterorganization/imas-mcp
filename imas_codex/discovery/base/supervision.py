@@ -415,6 +415,7 @@ async def supervised_worker(
     state: Any,  # Domain-specific state object
     should_stop_fn: Callable[[], bool],
     *args: Any,
+    wait_phases: list[PipelinePhase] | None = None,
     status_tracker: WorkerStatus | None = None,
     max_restarts: int = DEFAULT_MAX_RESTARTS,
     initial_backoff: float = DEFAULT_INITIAL_BACKOFF,
@@ -439,6 +440,12 @@ async def supervised_worker(
         state: Shared discovery state (for stop checks)
         should_stop_fn: Function to check if worker should stop
         *args, **kwargs: Arguments passed to worker_fn
+        wait_phases: Optional list of :class:`PipelinePhase` objects
+            that must all be done before the worker starts processing.
+            The worker shows as *idle* while waiting for dependencies,
+            then transitions to *running* once all phases complete.
+            Disabled phases are marked done immediately by the engine
+            so they never block dependents.
         status_tracker: Optional WorkerStatus for live monitoring
         max_restarts: Maximum restarts before giving up
         initial_backoff: Initial backoff delay in seconds
@@ -446,6 +453,19 @@ async def supervised_worker(
         restart_reset_seconds: Seconds of successful operation before
             resetting restart counter (default: 120)
     """
+    # ── Phase 0: Wait for dependency phases ──
+    if wait_phases:
+        if status_tracker:
+            status_tracker.state = WorkerState.idle
+        for phase in wait_phases:
+            while not should_stop_fn():
+                if await phase.wait_until_done(timeout=1.0):
+                    break
+            if should_stop_fn():
+                if status_tracker:
+                    status_tracker.state = WorkerState.stopped
+                return
+
     restart_count = 0
     backoff = initial_backoff
 

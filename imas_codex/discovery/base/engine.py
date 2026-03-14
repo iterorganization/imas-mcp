@@ -78,6 +78,15 @@ class WorkerSpec:
     on_progress: Callable | None = None
     group: str | None = None
     kwargs: dict[str, Any] = field(default_factory=dict)
+    depends_on: list[str] = field(default_factory=list)
+    """Phase attrs that must complete before this worker starts.
+
+    Each entry is the name of a ``PipelinePhase`` attribute on the
+    state object (e.g. ``"extract_phase"``).  The supervised worker
+    will wait (idle) until all listed phases are done before invoking
+    the worker function.  Disabled phases are marked done immediately
+    by the engine, so they never block dependents.
+    """
 
 
 async def run_discovery_engine(
@@ -152,6 +161,11 @@ async def run_discovery_engine(
             extra_kwargs["on_progress"] = spec.on_progress
         extra_kwargs.update(spec.kwargs)
 
+        # Resolve dependency phases
+        wait_phases = None
+        if spec.depends_on:
+            wait_phases = [getattr(state, attr) for attr in spec.depends_on]
+
         for i in range(spec.count):
             suffix = f"_{i}" if spec.count > 1 else "_0"
             worker_name = f"{spec.name}_worker{suffix}"
@@ -163,6 +177,7 @@ async def run_discovery_engine(
                     worker_name,
                     state,
                     worker_stop_fn,
+                    wait_phases=wait_phases,
                     status_tracker=status,
                     **extra_kwargs,
                 )

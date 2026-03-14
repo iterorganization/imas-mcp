@@ -434,6 +434,7 @@ class WorkerStats:
     """
 
     processed: int = 0
+    total: int = 0
     errors: int = 0
     start_time: float = field(default_factory=time.time)
     last_batch_time: float = 0.0
@@ -1819,7 +1820,11 @@ class DataDrivenProgressDisplay(BaseProgressDisplay):
 
             count, ann = self._count_group_workers(stage.group)
             completed = stats.processed if stats else 0
-            total = max(completed, 1)
+            total = (
+                stats.total
+                if stats and stats.total > 0
+                else max(completed, 1)
+            )
             complete = self._worker_complete(stage.group)
 
             rows.append(
