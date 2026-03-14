@@ -61,7 +61,10 @@ def _get_client(graph_client: GraphClient | None = None) -> Iterator[GraphClient
             yield client
 
 
-def link_chunks_to_imas_paths(graph_client: GraphClient | None = None) -> int:
+def link_chunks_to_imas_paths(
+    graph_client: GraphClient | None = None,
+    example_ids: list[str] | None = None,
+) -> int:
     """Create REFERENCES_IMAS relationships for chunks with IDS references.
 
     Matches CodeChunk nodes that have related_ids metadata to
@@ -69,52 +72,86 @@ def link_chunks_to_imas_paths(graph_client: GraphClient | None = None) -> int:
 
     Args:
         graph_client: Optional GraphClient instance. If None, creates one.
+        example_ids: If provided, only process chunks belonging to these
+            CodeExample IDs. Otherwise processes all chunks (legacy mode).
 
     Returns:
         Number of relationships created
     """
-    cypher = """
-        MATCH (c:CodeChunk)
-        WHERE c.related_ids IS NOT NULL
-        UNWIND c.related_ids AS ids_name
-        MATCH (p:IMASNode)
-        WHERE p.ids = ids_name AND p.id = ids_name
-        MERGE (c)-[:REFERENCES_IMAS]->(p)
-        RETURN count(*) AS created
-    """
+    if example_ids is not None:
+        cypher = """
+            MATCH (c:CodeChunk)
+            WHERE c.code_example_id IN $example_ids
+              AND c.related_ids IS NOT NULL
+            UNWIND c.related_ids AS ids_name
+            MATCH (p:IMASNode)
+            WHERE p.ids = ids_name AND p.id = ids_name
+            MERGE (c)-[:REFERENCES_IMAS]->(p)
+            RETURN count(*) AS created
+        """
+        params = {"example_ids": example_ids}
+    else:
+        cypher = """
+            MATCH (c:CodeChunk)
+            WHERE c.related_ids IS NOT NULL
+            UNWIND c.related_ids AS ids_name
+            MATCH (p:IMASNode)
+            WHERE p.ids = ids_name AND p.id = ids_name
+            MERGE (c)-[:REFERENCES_IMAS]->(p)
+            RETURN count(*) AS created
+        """
+        params = {}
 
     with _get_client(graph_client) as client:
-        result = client.query(cypher)
+        result = client.query(cypher, **params)
         count = result[0]["created"] if result else 0
         logger.info("Created %d REFERENCES_IMAS relationships", count)
         return count
 
 
-def link_examples_to_facility(graph_client: GraphClient | None = None) -> int:
+def link_examples_to_facility(
+    graph_client: GraphClient | None = None,
+    example_ids: list[str] | None = None,
+) -> int:
     """Create AT_FACILITY relationships from CodeExample nodes.
 
     Args:
         graph_client: Optional GraphClient instance.
+        example_ids: If provided, only process these CodeExample IDs.
 
     Returns:
         Number of relationships created
     """
-    cypher = """
-        MATCH (e:CodeExample)
-        WHERE e.facility_id IS NOT NULL
-        MATCH (f:Facility {id: e.facility_id})
-        MERGE (e)-[:AT_FACILITY]->(f)
-        RETURN count(*) AS created
-    """
+    if example_ids is not None:
+        cypher = """
+            MATCH (e:CodeExample)
+            WHERE e.id IN $example_ids AND e.facility_id IS NOT NULL
+            MATCH (f:Facility {id: e.facility_id})
+            MERGE (e)-[:AT_FACILITY]->(f)
+            RETURN count(*) AS created
+        """
+        params = {"example_ids": example_ids}
+    else:
+        cypher = """
+            MATCH (e:CodeExample)
+            WHERE e.facility_id IS NOT NULL
+            MATCH (f:Facility {id: e.facility_id})
+            MERGE (e)-[:AT_FACILITY]->(f)
+            RETURN count(*) AS created
+        """
+        params = {}
 
     with _get_client(graph_client) as client:
-        result = client.query(cypher)
+        result = client.query(cypher, **params)
         count = result[0]["created"] if result else 0
         logger.info("Created %d AT_FACILITY relationships", count)
         return count
 
 
-def link_chunks_to_data_nodes(graph_client: GraphClient | None = None) -> int:
+def link_chunks_to_data_nodes(
+    graph_client: GraphClient | None = None,
+    example_ids: list[str] | None = None,
+) -> int:
     """Create DataReference nodes and link to DataNodes for MDSplus paths.
 
     For chunks with mdsplus_paths metadata:
@@ -125,54 +162,110 @@ def link_chunks_to_data_nodes(graph_client: GraphClient | None = None) -> int:
 
     Args:
         graph_client: Optional GraphClient instance.
+        example_ids: If provided, only process chunks belonging to these
+            CodeExample IDs. Otherwise processes all chunks (legacy mode).
 
     Returns:
         Number of DataReference nodes created or linked
     """
+    scoped = example_ids is not None
+
     with _get_client(graph_client) as client:
         # Step 1: Create DataReference nodes from mdsplus_paths
-        create_refs_simple = """
-            MATCH (c:CodeChunk)
-            WHERE c.mdsplus_paths IS NOT NULL
-            MATCH (c)<-[:HAS_CHUNK]-(e:CodeExample)
-            WHERE e.facility_id IS NOT NULL
-            UNWIND c.mdsplus_paths AS path
-            WITH DISTINCT e.facility_id AS facility, path
-            MERGE (d:DataReference {raw_string: path, facility_id: facility})
-            ON CREATE SET
-                d.id = facility + ':mdsplus_path:' + path,
-                d.ref_type = 'mdsplus_path'
-            WITH d, facility
-            MATCH (f:Facility {id: facility})
-            MERGE (d)-[:AT_FACILITY]->(f)
-            RETURN count(d) AS refs_created
-        """
-        result = client.query(create_refs_simple)
+        if scoped:
+            create_refs_simple = """
+                MATCH (c:CodeChunk)
+                WHERE c.code_example_id IN $example_ids
+                  AND c.mdsplus_paths IS NOT NULL
+                MATCH (c)<-[:HAS_CHUNK]-(e:CodeExample)
+                WHERE e.facility_id IS NOT NULL
+                UNWIND c.mdsplus_paths AS path
+                WITH DISTINCT e.facility_id AS facility, path
+                MERGE (d:DataReference {raw_string: path, facility_id: facility})
+                ON CREATE SET
+                    d.id = facility + ':mdsplus_path:' + path,
+                    d.ref_type = 'mdsplus_path'
+                WITH d, facility
+                MATCH (f:Facility {id: facility})
+                MERGE (d)-[:AT_FACILITY]->(f)
+                RETURN count(d) AS refs_created
+            """
+            params: dict = {"example_ids": example_ids}
+        else:
+            create_refs_simple = """
+                MATCH (c:CodeChunk)
+                WHERE c.mdsplus_paths IS NOT NULL
+                MATCH (c)<-[:HAS_CHUNK]-(e:CodeExample)
+                WHERE e.facility_id IS NOT NULL
+                UNWIND c.mdsplus_paths AS path
+                WITH DISTINCT e.facility_id AS facility, path
+                MERGE (d:DataReference {raw_string: path, facility_id: facility})
+                ON CREATE SET
+                    d.id = facility + ':mdsplus_path:' + path,
+                    d.ref_type = 'mdsplus_path'
+                WITH d, facility
+                MATCH (f:Facility {id: facility})
+                MERGE (d)-[:AT_FACILITY]->(f)
+                RETURN count(d) AS refs_created
+            """
+            params = {}
+        result = client.query(create_refs_simple, **params)
         refs_created = result[0]["refs_created"] if result else 0
         logger.info("Created/matched %d DataReference nodes", refs_created)
 
         # Step 2: Create CONTAINS_REF relationships
-        contains_ref = """
-            MATCH (c:CodeChunk)
-            WHERE c.mdsplus_paths IS NOT NULL
-            MATCH (c)<-[:HAS_CHUNK]-(e:CodeExample)
-            WHERE e.facility_id IS NOT NULL
-            UNWIND c.mdsplus_paths AS path
-            WITH c, e.facility_id AS facility, path
-            MATCH (d:DataReference {raw_string: path, facility_id: facility})
-            MERGE (c)-[:CONTAINS_REF]->(d)
-            RETURN count(*) AS contains_created
-        """
-        result = client.query(contains_ref)
+        if scoped:
+            contains_ref = """
+                MATCH (c:CodeChunk)
+                WHERE c.code_example_id IN $example_ids
+                  AND c.mdsplus_paths IS NOT NULL
+                MATCH (c)<-[:HAS_CHUNK]-(e:CodeExample)
+                WHERE e.facility_id IS NOT NULL
+                UNWIND c.mdsplus_paths AS path
+                WITH c, e.facility_id AS facility, path
+                MATCH (d:DataReference {raw_string: path, facility_id: facility})
+                MERGE (c)-[:CONTAINS_REF]->(d)
+                RETURN count(*) AS contains_created
+            """
+        else:
+            contains_ref = """
+                MATCH (c:CodeChunk)
+                WHERE c.mdsplus_paths IS NOT NULL
+                MATCH (c)<-[:HAS_CHUNK]-(e:CodeExample)
+                WHERE e.facility_id IS NOT NULL
+                UNWIND c.mdsplus_paths AS path
+                WITH c, e.facility_id AS facility, path
+                MATCH (d:DataReference {raw_string: path, facility_id: facility})
+                MERGE (c)-[:CONTAINS_REF]->(d)
+                RETURN count(*) AS contains_created
+            """
+        result = client.query(contains_ref, **params)
         contains_count = result[0]["contains_created"] if result else 0
         logger.info("Created %d CONTAINS_REF relationships", contains_count)
 
-        # Step 2.5: Compute normalized_path for fuzzy matching
-        refs_to_normalize = client.query("""
-            MATCH (d:DataReference {ref_type: 'mdsplus_path'})
-            WHERE d.normalized_path IS NULL
-            RETURN d.id AS id, d.raw_string AS raw
-        """)
+        # Step 2.5: Compute normalized_path for new refs only
+        if scoped:
+            # Only normalize refs we just created/matched
+            refs_to_normalize = client.query(
+                """
+                MATCH (c:CodeChunk)
+                WHERE c.code_example_id IN $example_ids
+                  AND c.mdsplus_paths IS NOT NULL
+                MATCH (c)<-[:HAS_CHUNK]-(e:CodeExample)
+                UNWIND c.mdsplus_paths AS path
+                WITH DISTINCT e.facility_id AS facility, path
+                MATCH (d:DataReference {raw_string: path, facility_id: facility})
+                WHERE d.normalized_path IS NULL
+                RETURN d.id AS id, d.raw_string AS raw
+                """,
+                **params,
+            )
+        else:
+            refs_to_normalize = client.query("""
+                MATCH (d:DataReference {ref_type: 'mdsplus_path'})
+                WHERE d.normalized_path IS NULL
+                RETURN d.id AS id, d.raw_string AS raw
+            """)
         if refs_to_normalize:
             updates = [
                 {"id": r["id"], "normalized": _normalize_for_matching(r["raw"])}
@@ -189,53 +282,111 @@ def link_chunks_to_data_nodes(graph_client: GraphClient | None = None) -> int:
             logger.info("Computed normalized_path for %d refs", len(updates))
 
         # Step 3: Create RESOLVES_TO_NODE relationships
-        resolve_to_tree = """
-            MATCH (d:DataReference {ref_type: 'mdsplus_path'})
-            WHERE NOT (d)-[:RESOLVES_TO_NODE]->()
-            MATCH (t:SignalNode)
-            WHERE t.path = d.raw_string
-               OR t.path ENDS WITH substring(d.raw_string, 1)
-               OR toLower(split(t.path, ':')[-1]) = toLower(split(d.raw_string, '::')[-1])
-               OR toUpper(t.path) = d.normalized_path
-            MERGE (d)-[:RESOLVES_TO_NODE]->(t)
-            RETURN count(*) AS resolved
-        """
-        result = client.query(resolve_to_tree)
+        # Scoped: only resolve refs touched by this batch's chunks.
+        # This avoids the catastrophic O(all_refs × all_signals) fuzzy scan.
+        if scoped:
+            resolve_to_tree = """
+                MATCH (c:CodeChunk)
+                WHERE c.code_example_id IN $example_ids
+                  AND c.mdsplus_paths IS NOT NULL
+                MATCH (c)-[:CONTAINS_REF]->(d:DataReference {ref_type: 'mdsplus_path'})
+                WHERE NOT (d)-[:RESOLVES_TO_NODE]->()
+                WITH DISTINCT d
+                MATCH (t:SignalNode)
+                WHERE t.path = d.raw_string
+                   OR t.path ENDS WITH substring(d.raw_string, 1)
+                   OR toLower(split(t.path, ':')[-1]) = toLower(split(d.raw_string, '::')[-1])
+                   OR toUpper(t.path) = d.normalized_path
+                MERGE (d)-[:RESOLVES_TO_NODE]->(t)
+                RETURN count(*) AS resolved
+            """
+        else:
+            resolve_to_tree = """
+                MATCH (d:DataReference {ref_type: 'mdsplus_path'})
+                WHERE NOT (d)-[:RESOLVES_TO_NODE]->()
+                MATCH (t:SignalNode)
+                WHERE t.path = d.raw_string
+                   OR t.path ENDS WITH substring(d.raw_string, 1)
+                   OR toLower(split(t.path, ':')[-1]) = toLower(split(d.raw_string, '::')[-1])
+                   OR toUpper(t.path) = d.normalized_path
+                MERGE (d)-[:RESOLVES_TO_NODE]->(t)
+                RETURN count(*) AS resolved
+            """
+        result = client.query(resolve_to_tree, **params)
         resolved_count = result[0]["resolved"] if result else 0
         logger.info("Created %d RESOLVES_TO_NODE relationships", resolved_count)
 
         # Step 4: Create RESOLVES_TO_IMAS_PATH via SignalNode → IMASMapping → IMASNode
-        result = client.query("""
-            MATCH (dr:DataReference)-[:RESOLVES_TO_NODE]->(dn:SignalNode)
-            WHERE NOT (dr)-[:RESOLVES_TO_IMAS_PATH]->()
-            MATCH (dn)-[:MEMBER_OF]->(sg:SignalSource)-[:MAPS_TO_IMAS]->(ip:IMASNode)
-            MERGE (dr)-[:RESOLVES_TO_IMAS_PATH]->(ip)
-            RETURN count(*) AS linked
-        """)
+        if scoped:
+            imas_q = """
+                MATCH (c:CodeChunk)
+                WHERE c.code_example_id IN $example_ids
+                MATCH (c)-[:CONTAINS_REF]->(dr:DataReference)-[:RESOLVES_TO_NODE]->(dn:SignalNode)
+                WHERE NOT (dr)-[:RESOLVES_TO_IMAS_PATH]->()
+                MATCH (dn)-[:MEMBER_OF]->(sg:SignalSource)-[:MAPS_TO_IMAS]->(ip:IMASNode)
+                MERGE (dr)-[:RESOLVES_TO_IMAS_PATH]->(ip)
+                RETURN count(*) AS linked
+            """
+        else:
+            imas_q = """
+                MATCH (dr:DataReference)-[:RESOLVES_TO_NODE]->(dn:SignalNode)
+                WHERE NOT (dr)-[:RESOLVES_TO_IMAS_PATH]->()
+                MATCH (dn)-[:MEMBER_OF]->(sg:SignalSource)-[:MAPS_TO_IMAS]->(ip:IMASNode)
+                MERGE (dr)-[:RESOLVES_TO_IMAS_PATH]->(ip)
+                RETURN count(*) AS linked
+            """
+        result = client.query(imas_q, **params)
         imas_linked = result[0]["linked"] if result else 0
         if imas_linked:
             logger.info("Created %d RESOLVES_TO_IMAS_PATH relationships", imas_linked)
 
         # Step 5: Create CALLS_TDI_FUNCTION for TDI call references
-        result = client.query("""
-            MATCH (dr:DataReference {ref_type: 'tdi_call'})
-            WHERE NOT (dr)-[:CALLS_TDI_FUNCTION]->()
-            MATCH (tdi:TDIFunction {facility_id: dr.facility_id})
-            WHERE tdi.name = dr.raw_string
-               OR dr.raw_string CONTAINS tdi.name
-            MERGE (dr)-[:CALLS_TDI_FUNCTION]->(tdi)
-            RETURN count(*) AS linked
-        """)
+        if scoped:
+            tdi_q = """
+                MATCH (c:CodeChunk)
+                WHERE c.code_example_id IN $example_ids
+                MATCH (c)-[:CONTAINS_REF]->(dr:DataReference {ref_type: 'tdi_call'})
+                WHERE NOT (dr)-[:CALLS_TDI_FUNCTION]->()
+                WITH DISTINCT dr
+                MATCH (tdi:TDIFunction {facility_id: dr.facility_id})
+                WHERE tdi.name = dr.raw_string
+                   OR dr.raw_string CONTAINS tdi.name
+                MERGE (dr)-[:CALLS_TDI_FUNCTION]->(tdi)
+                RETURN count(*) AS linked
+            """
+        else:
+            tdi_q = """
+                MATCH (dr:DataReference {ref_type: 'tdi_call'})
+                WHERE NOT (dr)-[:CALLS_TDI_FUNCTION]->()
+                MATCH (tdi:TDIFunction {facility_id: dr.facility_id})
+                WHERE tdi.name = dr.raw_string
+                   OR dr.raw_string CONTAINS tdi.name
+                MERGE (dr)-[:CALLS_TDI_FUNCTION]->(tdi)
+                RETURN count(*) AS linked
+            """
+        result = client.query(tdi_q, **params)
         tdi_linked = result[0]["linked"] if result else 0
         if tdi_linked:
             logger.info("Created %d CALLS_TDI_FUNCTION relationships", tdi_linked)
 
         # Update ref_count on CodeChunk nodes
-        client.query("""
-            MATCH (c:CodeChunk)-[r:CONTAINS_REF]->(d:DataReference)
-            WITH c, count(r) AS ref_count
-            SET c.ref_count = ref_count
-        """)
+        if scoped:
+            client.query(
+                """
+                MATCH (c:CodeChunk)
+                WHERE c.code_example_id IN $example_ids
+                MATCH (c)-[r:CONTAINS_REF]->(d:DataReference)
+                WITH c, count(r) AS ref_count
+                SET c.ref_count = ref_count
+                """,
+                **params,
+            )
+        else:
+            client.query("""
+                MATCH (c:CodeChunk)-[r:CONTAINS_REF]->(d:DataReference)
+                WITH c, count(r) AS ref_count
+                SET c.ref_count = ref_count
+            """)
 
         return refs_created
 
