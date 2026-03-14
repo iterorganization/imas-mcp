@@ -518,6 +518,9 @@ def claim_signals_for_enrichment(
     try:
         with GraphClient() as gc:
             # First skip channel signals in bulk so they don't clog the queue.
+            # Exclude signals that are part of a SignalSource group — the
+            # grouping mechanism handles them (representative is enriched,
+            # propagation copies to all members).
             gc.query(
                 """
                 MATCH (s:FacilitySignal {facility_id: $facility})
@@ -528,6 +531,7 @@ def claim_signals_for_enrichment(
                     OR s.accessor =~ '.*CHANNEL_?\\d{2,3}:.*'
                     OR s.name =~ '^\\d{2,3}$'
                   )
+                  AND NOT EXISTS { (s)-[:MEMBER_OF]->(:SignalSource) }
                 SET s.status = $skipped,
                     s.skip_reason = 'channel_element',
                     s.claimed_at = null
@@ -901,8 +905,6 @@ def mark_signals_enriched(
                                       THEN sig.keywords ELSE s.keywords END,
                     s.sign_convention = CASE WHEN sig.sign_convention IS NOT NULL AND sig.sign_convention <> ''
                                              THEN sig.sign_convention ELSE s.sign_convention END,
-                    s.unit = CASE WHEN sig.unit IS NOT NULL AND sig.unit <> ''
-                                  THEN sig.unit ELSE s.unit END,
                     s.context_quality = sig.context_quality,
                     s.enrichment_source = 'direct',
                     s.enrichment_model = $model,
@@ -989,8 +991,6 @@ def mark_signals_underspecified(
                                       THEN sig.keywords ELSE s.keywords END,
                     s.sign_convention = CASE WHEN sig.sign_convention IS NOT NULL AND sig.sign_convention <> ''
                                              THEN sig.sign_convention ELSE s.sign_convention END,
-                    s.unit = CASE WHEN sig.unit IS NOT NULL AND sig.unit <> ''
-                                  THEN sig.unit ELSE s.unit END,
                     s.enrichment_source = 'direct_underspecified',
                     s.llm_cost = $per_signal_cost,
                     s.enriched_at = datetime(),
@@ -1298,6 +1298,36 @@ def detect_signal_sources(
         total_members,
     )
     return groups_detected, total_members
+
+
+def propagate_units_from_signal_nodes(facility: str) -> int:
+    """Propagate units from SignalNode → FacilitySignal via HAS_DATA_SOURCE_NODE.
+
+    Units are extracted by the units_worker into SignalNode nodes. This function
+    copies those units to the FacilitySignal nodes that reference them, so units
+    are code-determined rather than LLM-generated.
+
+    Only updates FacilitySignals that have no unit set yet (empty or null).
+
+    Returns:
+        Number of FacilitySignals updated.
+    """
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (s:FacilitySignal {facility_id: $facility})
+                  -[:HAS_DATA_SOURCE_NODE]->(sn:SignalNode)
+            WHERE sn.unit IS NOT NULL AND sn.unit <> ''
+              AND (s.unit IS NULL OR s.unit = '')
+            SET s.unit = sn.unit
+            RETURN count(s) AS updated
+            """,
+            facility=facility,
+        )
+        count = result[0]["updated"] if result else 0
+        if count > 0:
+            logger.info("Propagated units from SignalNode to %d FacilitySignals", count)
+        return count
 
 
 def propagate_source_enrichment(
@@ -3029,49 +3059,12 @@ async def enrich_worker(
         return ""
 
     def _get_dda_descriptions(facility_config: dict) -> dict[str, str]:
-        """Build DDA→description mapping from facility config.
-
-        Falls back to well-known DDA descriptions when config has none.
-        """
+        """Build DDA→description mapping from facility config."""
         ppf_config = facility_config.get("data_systems", {}).get("ppf", {})
         dda_descs = {}
         for dda_entry in ppf_config.get("dda_descriptions", []):
             dda_descs[dda_entry["code"]] = dda_entry.get("description", "")
-        if dda_descs:
-            return dda_descs
-
-        # Well-known JET PPF DDA descriptions as fallback
-        return {
-            "EFIT": "Equilibrium reconstruction (magnetic equilibrium)",
-            "EHTR": "Equilibrium high time resolution",
-            "MAGN": "Magnetics — plasma current, loop voltage, flux loops",
-            "HRTS": "High Resolution Thomson Scattering — Te, ne profiles",
-            "KK3": "Electron Cyclotron Emission (ECE) — Te profiles",
-            "KG1V": "Far-infrared interferometry — line-integrated density",
-            "KG1L": "Lateral interferometry — line-integrated density",
-            "KG10": "Interferometry channel 10",
-            "BOLO": "Bolometry — radiated power",
-            "BOLP": "Bolometry profiles",
-            "B5NN": "Bolometry neutron-normalized",
-            "NBI": "Neutral Beam Injection heating",
-            "ICRH": "Ion Cyclotron Resonance Heating",
-            "LHCD": "Lower Hybrid Current Drive",
-            "SXR": "Soft X-ray emission",
-            "KS3": "ECE radiometry",
-            "KS3A": "ECE radiometry (A channel)",
-            "EDG7": "Edge reflectometry",
-            "EDG8": "Edge reflectometry",
-            "GASH": "Gas supply and fuelling",
-            "CXSE": "Charge Exchange Spectroscopy — ion temperature, rotation",
-            "KAD": "ECE Michelson interferometer",
-            "MAGF": "Magnetics Far — far-field magnetic measurements",
-            "MAGS": "Magnetics Saddle — saddle coil measurements",
-            "MAGA": "Magnetics Analogue — analogue magnetic measurements",
-            "MAGG": "Magnetics — general magnetic measurements",
-            "LIDL": "LIDAR Thomson Scattering — Te, ne profiles",
-            "IDAM": "Integrated Data Access Manager",
-            "CXHM": "Charge Exchange — H-alpha monitor",
-        }
+        return dda_descs
 
     def _signal_context_key(signal: dict) -> str:
         """Determine grouping key for a signal based on its discovery source."""
@@ -3306,6 +3299,13 @@ async def enrich_worker(
     # infinite claim/fail/release loops when LLM service is degraded.
     MAX_CONSECUTIVE_FAILURES = 3
     consecutive_failures = 0
+
+    # Propagate units from SignalNode → FacilitySignal before enrichment
+    # so signals have code-determined units (not LLM-generated).
+    try:
+        await asyncio.to_thread(propagate_units_from_signal_nodes, state.facility)
+    except Exception as e:
+        wlog.debug("Unit propagation from SignalNode failed (non-fatal): %s", e)
 
     while not state.should_stop_enriching():
         # --- Pattern detection phase ---
@@ -3729,19 +3729,12 @@ async def enrich_worker(
                     "physics_domain": result.physics_domain.value,
                     "description": result.description,
                     "name": result.name,
-                    "diagnostic": result.diagnostic,
+                    "diagnostic": result.diagnostic.value if result.diagnostic else "",
                     "analysis_code": result.analysis_code,
                     "keywords": result.keywords,
                     "sign_convention": result.sign_convention,
-                    "unit": result.unit,
                     "context_quality": result.context_quality.value,
                 }
-                # Validate LLM-extracted unit via pint
-                if entry["unit"]:
-                    from imas_codex.units import validate_unit
-
-                    validated = validate_unit(entry["unit"])
-                    entry["unit"] = validated or ""
                 if result.context_quality == ContextQuality.low:
                     underspecified.append(entry)
                 else:
