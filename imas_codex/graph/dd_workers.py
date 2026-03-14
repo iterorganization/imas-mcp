@@ -248,7 +248,7 @@ async def enrich_worker(state: DDBuildState, **_kwargs) -> None:
 
     # Set initial totals from graph so progress bar shows real denominator
     try:
-        status_counts = count_imas_nodes_by_status()
+        status_counts = await asyncio.to_thread(count_imas_nodes_by_status)
         total_nodes = status_counts.get("total", 0)
         if total_nodes > 0:
             state.enrich_stats.total = total_nodes
@@ -707,11 +707,13 @@ async def run_dd_build_engine(
             "enrich",
             "enrich_phase",
             enrich_worker,
+            depends_on=["build_phase"],
         ),
         WorkerSpec(
             "embed",
             "embed_phase",
             embed_worker,
+            depends_on=["build_phase"],
         ),
         WorkerSpec(
             "cluster",
