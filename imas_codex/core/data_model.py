@@ -66,10 +66,14 @@ class IdsNode(BaseModel):
 
     path: str
     documentation: str
+    ids_name: str | None = None  # IDS name this path belongs to
+    name: str | None = None  # Leaf name (last path component)
     units: str | None = None  # Make units optional
     coordinates: list[str] = Field(default_factory=list)
     lifecycle: str = "active"
     data_type: str | None = None
+    physics_domain: str | None = None  # Physics domain from DD or inferred from IDS
+    node_type: str | None = None  # Time-variation type (dynamic/constant/static)
     introduced_after_version: str | None = None  # Renamed from introduced_after
     lifecycle_status: str | None = None  # Added lifecycle status field
     lifecycle_version: str | None = None  # Added lifecycle version field
@@ -81,6 +85,10 @@ class IdsNode(BaseModel):
     version_changes: list[dict[str, Any]] | None = (
         None  # Notable version changes (sign_convention, units, etc.)
     )
+
+    # COCOS transformation fields
+    cocos_label_transformation: str | None = None  # e.g., "psi_like", "ip_like"
+    cocos_transformation_expression: str | None = None  # e.g., "- {psi_like}"
 
     # Additional XML attributes
     coordinate1: str | None = None

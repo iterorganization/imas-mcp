@@ -12,16 +12,43 @@
 
 **Root cause:** 192 TCV SignalSources are in `discovered` status because their representatives were `skipped` (by the `channel_element` regex in `claim_signals_for_enrichment`). When the representative is skipped, `propagate_source_enrichment()` never runs, leaving the SignalSource in `discovered`.
 
-**Fix:** In `detect_signal_sources()` or as a post-step in the enrichment worker, if ALL members of a SignalSource are `skipped`, mark the SignalSource itself as `skipped` with a reason. Add a cleanup query:
+**Why this happens:** The `channel_element` skip regex matches signals ending with numbered indices (e.g., `_001`, `:003`, `CHANNEL_007`). When a SignalSource group consists entirely of indexed channels (e.g., CHANNEL_001 through CHANNEL_192), the representative—chosen alphabetically, often CHANNEL_001—also matches the skip pattern.
+
+**Why the original fix (propagating skip) is wrong:** Representatives should NEVER be skipped, regardless of their accessor pattern. The representative exists precisely to carry enrichment for its entire group. If we skip the representative, the whole group loses its enrichment. The fact that a signal "looks like" an array element is irrelevant if it's the representative—its description applies to all members.
+
+**Correct fix:** Exclude representatives from the channel_element skip query. Representatives must always proceed to enrichment so their metadata propagates to all group members:
 
 ```python
-# Mark SignalSources as skipped when all members (including rep) are skipped
+# Skip channel_element signals EXCEPT those that are representatives
+gc.query(
+    """
+    MATCH (s:FacilitySignal {facility_id: $facility})
+    WHERE s.status = $discovered
+      AND (
+        s.accessor =~ '.*[_:]CHANNEL_?\\d{2,3}\\)?$'
+        OR s.accessor =~ '.*[_:]\\d{2,3}\\)?$'
+        OR s.accessor =~ '.*CHANNEL_?\\d{2,3}:.*'
+        OR s.name =~ '^\\d{2,3}$'
+      )
+      // CRITICAL: Never skip representatives — they carry enrichment for their groups
+      AND NOT EXISTS {
+        MATCH (sg:SignalSource {representative_id: s.id})
+      }
+    SET s.status = $skipped,
+        s.skip_reason = 'channel_element',
+        s.claimed_at = null
+    """,
+    ...
+)
+```
+
+**Graph cleanup (one-time):** Fix existing SignalSources by either (a) unskipping the representative so it can be enriched, or (b) if the representative was already processed long ago, copying its enrichment to the SignalSource:
+
+```python
+# Unskip representatives that were incorrectly skipped
 MATCH (sg:SignalSource {facility_id: $facility, status: 'discovered'})
-WHERE NOT EXISTS {
-    MATCH (m:FacilitySignal)-[:MEMBER_OF]->(sg)
-    WHERE m.status <> 'skipped'
-}
-SET sg.status = 'skipped', sg.skip_reason = 'all_members_skipped'
+MATCH (rep:FacilitySignal {id: sg.representative_id, status: 'skipped', skip_reason: 'channel_element'})
+SET rep.status = 'discovered', rep.skip_reason = null
 ```
 
 **File:** `imas_codex/discovery/signals/parallel.py`
@@ -52,11 +79,58 @@ SET sg.status = 'skipped', sg.skip_reason = 'all_members_skipped'
 
 **Problem:** `_get_dda_descriptions()` has a hardcoded fallback dict of ~30 JET DDAs. This should live in facility config.
 
-**Fix:** Move the DDA descriptions to `imas_codex/config/facilities/jet.yaml` under `data_systems.ppf.dda_descriptions`. Add the facility config schema entry if not already present. Remove the hardcoded fallback from `parallel.py` entirely — if config is empty, the LLM gets no DDA context (which is honest).
+**Fix (code):** Move the DDA descriptions to `imas_codex/config/facilities/jet.yaml` under `data_systems.ppf.dda_descriptions`. Add the facility config schema entry if not already present. Remove the hardcoded fallback from `parallel.py` entirely — if config is empty, the LLM gets no DDA context (which is honest).
 
-Additionally, scrape DDA descriptions from the JET wiki automatically during wiki discovery. DDA descriptions found in wiki can be stored as exploration notes or directly in the config.
+**Retroactive extraction from existing wiki data (avoids re-ingestion):**
 
-**Files:** `imas_codex/config/facilities/jet.yaml`, `imas_codex/discovery/signals/parallel.py`
+JET wiki pages that describe diagnostics are already ingested as WikiPage/WikiChunk nodes. We can extract DDA descriptions from this existing data instead of re-scraping:
+
+1. **Query existing WikiChunks for DDA mentions:**
+   ```python
+   # Find WikiChunks that mention known DDAs
+   MATCH (wc:WikiChunk)-[:HAS_CHUNK]-(wp:WikiPage {facility_id: 'jet'})
+   WHERE wc.content =~ '(?i).*\\b(EFIT|HRTS|KK3|BOLO|MAGN|...)\\b.*'
+   RETURN DISTINCT wp.title, wc.content, wp.url
+   ```
+
+2. **Semantic search for DDA descriptions:**
+   ```python
+   # For each known DDA, find chunks describing it
+   for dda in ["EFIT", "HRTS", "KK3", "BOLO", ...]:
+       results = semantic_search(
+           query=f"JET {dda} diagnostic description purpose measurement",
+           index="wiki_chunk_desc_embedding",
+           filter={"facility_id": "jet"},
+           top_k=5
+       )
+       # Chunks with high similarity to the DDA+description query likely contain its description
+   ```
+
+3. **One-time extraction script:**
+   Create `scripts/extract_dda_descriptions.py` that:
+   - Iterates over `_JET_KNOWN_DDAS` from `entity_extraction.py`
+   - Queries WikiChunks using both keyword and semantic search
+   - Extracts description snippets (either programmatically or with a focused LLM call)
+   - Outputs YAML format for insertion into `jet.yaml`
+   
+   This is a one-time cost of ~30 LLM calls (one per DDA) vs. re-ingesting the entire JET wiki (hundreds of pages at non-negligible cost).
+
+4. **Store in facility config:**
+   ```yaml
+   # imas_codex/config/facilities/jet.yaml
+   data_systems:
+     ppf:
+       dda_descriptions:
+         - code: EFIT
+           description: "Equilibrium reconstruction using magnetic measurements"
+         - code: HRTS
+           description: "High Resolution Thomson Scattering for Te, ne profiles"
+         # ... extracted from wiki chunks
+   ```
+
+5. **Hardcoded list updates:** Also sync `_JET_KNOWN_DDAS` in `entity_extraction.py` with the config so both stay in sync. Or better: load from config at runtime instead of hardcoding.
+
+**Files:** `imas_codex/config/facilities/jet.yaml`, `imas_codex/discovery/signals/parallel.py`, `scripts/extract_dda_descriptions.py` (new)
 
 ### 1.4 Diagnostic Name — Enforce DiagnosticCategory Constraint
 
@@ -466,9 +540,9 @@ Phase 8 (testing) → continuous
 
 | Recommendation | Plan | Phase |
 |---|---|---|
-| TCV SignalSource status bug | Plan 2 | 1.1 |
+| TCV SignalSource status bug — exclude reps from skip | Plan 2 | 1.1 |
 | Unit hallucination — remove from LLM | Plan 2 | 1.2, 6 |
-| Hardcoded DDA fallback | Plan 2 | 1.3 |
+| Hardcoded DDA fallback — extract from existing wiki | Plan 2 | 1.3 |
 | Diagnostic enum enforcement | Plan 2 | 1.4 |
 | Source-level mapping (not per-member) | Plan 2 | 2 |
 | Physics domain pre-filtering | Plan 2 | 2.2 |

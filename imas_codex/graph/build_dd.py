@@ -162,6 +162,10 @@ def generate_embedding_text(
     and measurement characteristics for better semantic clustering. Uses
     natural language formatting optimized for sentence transformer embedding.
 
+    When an LLM-generated description is available (from enrichment), it is
+    used as the primary semantic content instead of the raw documentation.
+    This produces significantly richer embeddings for semantic search.
+
     Args:
         path: Full path (e.g., "equilibrium/time_slice/profiles_1d/psi")
         path_info: Path metadata dict
@@ -201,13 +205,24 @@ def generate_embedding_text(
         if len(ids_desc) < 200:
             sentences.append(f"The {ids_readable} IDS contains {ids_desc.lower()}")
 
-    # Primary documentation
-    doc = path_info.get("documentation", "")
-    if doc:
-        doc_clean = doc.strip()
-        if doc_clean and not doc_clean.endswith("."):
-            doc_clean += "."
-        sentences.append(doc_clean)
+    # Primary semantic content: prefer LLM-enriched description over raw documentation
+    # The enriched description is physics-aware and doesn't repeat metadata
+    enriched_desc = path_info.get("description")
+    if enriched_desc:
+        # Use LLM-generated description as primary content
+        sentences.append(enriched_desc)
+        # Also include physics_summary if different enough
+        physics_summary = path_info.get("physics_summary")
+        if physics_summary and physics_summary not in enriched_desc:
+            sentences.append(physics_summary)
+    else:
+        # Fall back to raw documentation
+        doc = path_info.get("documentation", "")
+        if doc:
+            doc_clean = doc.strip()
+            if doc_clean and not doc_clean.endswith("."):
+                doc_clean += "."
+            sentences.append(doc_clean)
 
     # Units with pint-based expansion for better semantic matching
     units = path_info.get("units", "")
@@ -268,6 +283,13 @@ def generate_embedding_text(
                 sentences.append(
                     f"Indexed along the {coords_formatted} and {valid_coords[-1]} coordinates."
                 )
+
+    # Include LLM-generated keywords for better semantic search matches
+    keywords = path_info.get("keywords", [])
+    if keywords and isinstance(keywords, list):
+        valid_keywords = [k for k in keywords if k and isinstance(k, str)]
+        if valid_keywords:
+            sentences.append(f"Keywords: {', '.join(valid_keywords)}.")
 
     return " ".join(sentences)
 
@@ -1335,10 +1357,12 @@ def build_dd_graph(
     versions: list[str] | None = None,
     include_clusters: bool = False,
     include_embeddings: bool = True,
+    include_enrichment: bool = True,
     dry_run: bool = False,
     ids_filter: set[str] | None = None,
     use_rich: bool | None = None,
     embedding_model: str | None = None,
+    enrichment_model: str | None = None,
     force_embeddings: bool = False,
     no_hash: bool = False,
     skip_cluster_labels: bool = False,
@@ -1357,9 +1381,11 @@ def build_dd_graph(
         ids_filter: Optional set of IDS names to include
         include_clusters: Whether to import semantic clusters
         include_embeddings: Whether to generate path embeddings (default True)
+        include_enrichment: Whether to run LLM description enrichment (default True)
         dry_run: If True, don't write to graph
         use_rich: Force rich progress (True), logging (False), or auto (None)
         embedding_model: Embedding model name (defaults to configured model from settings)
+        enrichment_model: LLM model for enrichment (defaults to language model from settings)
         force_embeddings: Bypass top-level build hash check (per-item hashes still apply)
         no_hash: Skip per-item hash caching — recompute all embeddings/clusters
         skip_cluster_labels: Skip LLM label embedding for clusters
@@ -1390,6 +1416,10 @@ def build_dd_graph(
         "paths_filtered": 0,
         "cocos_labels_updated": 0,
         "identifier_schemas_created": 0,
+        "enriched_llm": 0,
+        "enriched_template": 0,
+        "enrichment_cached": 0,
+        "enrichment_cost": 0.0,
         "skipped": False,
     }
 
@@ -1736,6 +1766,70 @@ def build_dd_graph(
                     model=embedding_model,
                     count=embedding_stats["total"],
                 )
+
+        # Phase 3.5: LLM Enrichment (descriptions, keywords, physics_domain updates)
+        if include_enrichment and not dry_run:
+            from imas_codex.graph.dd_enrichment import enrich_imas_paths
+
+            monitor.status("Enriching paths with LLM descriptions...")
+            enrichment_stats = enrich_imas_paths(
+                client=client,
+                version=current_dd_version,
+                model=enrichment_model,
+                batch_size=50,
+                ids_filter=ids_filter,
+                use_rich=use_rich,
+                force=no_hash,
+            )
+            stats["enriched_llm"] = enrichment_stats.get("enriched_llm", 0)
+            stats["enriched_template"] = enrichment_stats.get("enriched_template", 0)
+            stats["enrichment_cached"] = enrichment_stats.get("enrichment_cached", 0)
+            stats["enrichment_cost"] = enrichment_stats.get("enrichment_cost", 0.0)
+
+            # After enrichment, regenerate embeddings for enriched paths
+            # since descriptions are now included in embedding_text
+            if stats["enriched_llm"] > 0 and include_embeddings:
+                monitor.status("Regenerating embeddings with enriched descriptions...")
+                # Query paths with new enrichment including the enrichment fields
+                enriched_paths_query = """
+                MATCH (p:IMASNode)
+                WHERE p.enrichment_source = 'llm'
+                AND p.description IS NOT NULL
+                RETURN p.id AS id,
+                       p.description AS description,
+                       p.physics_summary AS physics_summary,
+                       p.keywords AS keywords
+                """
+                enriched_data = {
+                    r["id"]: {
+                        "description": r["description"],
+                        "physics_summary": r["physics_summary"],
+                        "keywords": r["keywords"] or [],
+                    }
+                    for r in client.query(enriched_paths_query)
+                }
+                
+                # Merge enriched data into paths_to_reembed
+                paths_to_reembed = {}
+                for path_id, enrichment in enriched_data.items():
+                    if path_id in merged_paths:
+                        # Copy original data and add enrichment fields
+                        path_data = dict(merged_paths[path_id])
+                        path_data.update(enrichment)
+                        paths_to_reembed[path_id] = path_data
+
+                if paths_to_reembed:
+                    re_embedding_stats = update_path_embeddings(
+                        client=client,
+                        paths_data=paths_to_reembed,
+                        ids_info=merged_ids_info,
+                        model_name=embedding_model,
+                        force_rebuild=True,  # Force regeneration since description changed
+                        use_rich=use_rich,
+                        dd_version=current_dd_version,
+                        track_changes=False,
+                    )
+                    stats["embeddings_updated"] += re_embedding_stats.get("updated", 0)
 
         # Phase 4: Clusters
         if include_clusters:

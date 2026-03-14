@@ -227,6 +227,8 @@ class GraphSearchTool:
                    path.path_doc AS structure_reference,
                    path.coordinate1_same_as AS coordinate1,
                    path.coordinate2_same_as AS coordinate2,
+                   path.cocos_label_transformation AS cocos_label,
+                   path.cocos_transformation_expression AS cocos_expression,
                    collect(DISTINCT coord.id) AS coordinates,
                    ident IS NOT NULL AS has_identifier_schema,
                    intro.id AS introduced_after_version
@@ -271,6 +273,8 @@ class GraphSearchTool:
                     structure_reference=r["structure_reference"],
                     coordinate1=r["coordinate1"],
                     coordinate2=r["coordinate2"],
+                    cocos_label_transformation=r["cocos_label"],
+                    cocos_transformation_expression=r["cocos_expression"],
                     has_identifier_schema=bool(r["has_identifier_schema"]),
                     introduced_after_version=r["introduced_after_version"],
                     score=scores.get(pid, 0.0),
@@ -469,6 +473,8 @@ class GraphPathTool:
                        p.documentation AS documentation, p.data_type AS data_type,
                        p.node_type AS node_type, p.physics_domain AS physics_domain,
                        p.ndim AS ndim,
+                       p.cocos_label_transformation AS cocos_label,
+                       p.cocos_transformation_expression AS cocos_expression,
                        u.id AS units,
                        cluster_labels,
                        coordinates,
@@ -528,6 +534,8 @@ class GraphPathTool:
                     cluster_labels=[cl for cl in r["cluster_labels"] if cl],
                     identifier_schema=ident_schema,
                     version_changes=v_changes,
+                    cocos_label_transformation=r.get("cocos_label"),
+                    cocos_transformation_expression=r.get("cocos_expression"),
                 )
                 nodes.append(node)
             else:

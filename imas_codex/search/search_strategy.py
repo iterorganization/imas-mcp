@@ -127,6 +127,16 @@ class SearchHit(SearchBase):
         description="Whether this path is governed by an identifier schema",
     )
 
+    # COCOS transformation fields
+    cocos_label_transformation: str | None = Field(
+        default=None,
+        description="COCOS label (e.g., 'psi_like', 'ip_like') for sign transformation",
+    )
+    cocos_transformation_expression: str | None = Field(
+        default=None,
+        description="COCOS transformation expression (e.g., '- {psi_like}')",
+    )
+
     # Additional fields from raw_data
     validation_rules: dict[str, Any] | None = Field(
         default=None, description="Validation rules for this path"
