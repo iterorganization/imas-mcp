@@ -239,11 +239,22 @@ async def enrich_worker(state: DDBuildState, **_kwargs) -> None:
 
     from imas_codex.graph.dd_graph_ops import (
         claim_paths_for_enrichment,
+        count_imas_nodes_by_status,
         release_enrichment_claims,
     )
     from imas_codex.settings import get_model
 
     model = get_model("language")
+
+    # Set initial totals from graph so progress bar shows real denominator
+    try:
+        status_counts = count_imas_nodes_by_status()
+        total_nodes = status_counts.get("total", 0)
+        if total_nodes > 0:
+            state.enrich_stats.total = total_nodes
+            state.embed_stats.total = total_nodes
+    except Exception:
+        wlog.debug("Could not fetch initial node counts", exc_info=True)
 
     while not state.should_stop():
         # Claim a batch of built paths
@@ -255,6 +266,15 @@ async def enrich_worker(state: DDBuildState, **_kwargs) -> None:
 
         if not paths:
             state.enrich_phase.record_idle()
+            # Refresh totals while idle (build may still be adding nodes)
+            try:
+                status_counts = await asyncio.to_thread(count_imas_nodes_by_status)
+                total_nodes = status_counts.get("total", 0)
+                if total_nodes > 0:
+                    state.enrich_stats.total = total_nodes
+                    state.embed_stats.total = total_nodes
+            except Exception:
+                pass
             await asyncio.sleep(1.0)
             continue
 
@@ -508,7 +528,11 @@ async def _enrich_batch(
                 # Stream items for display
                 if updates:
                     stream_items = [
-                        {"primary_text": u["id"]}
+                        {
+                            "primary_text": u["id"],
+                            "physics_domain": u.get("physics_domain", ""),
+                            "description": u.get("description", ""),
+                        }
                         for u in updates
                         if u.get("enrichment_source") == "llm"
                     ]

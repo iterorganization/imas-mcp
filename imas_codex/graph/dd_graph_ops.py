@@ -259,6 +259,28 @@ def release_embedding_claims(path_ids: list[str]) -> None:
         )
 
 
+def count_imas_nodes_by_status() -> dict[str, int]:
+    """Count IMASNode nodes grouped by status.
+
+    Returns dict mapping status → count, plus a 'total' key.
+    """
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (p:IMASNode)
+            WHERE p.status IS NOT NULL
+            RETURN p.status AS status, count(p) AS cnt
+            """
+        )
+        counts: dict[str, int] = {}
+        total = 0
+        for row in result:
+            counts[row["status"]] = row["cnt"]
+            total += row["cnt"]
+        counts["total"] = total
+        return counts
+
+
 def has_pending_embedding() -> bool:
     """Check if there are enriched IMASNodes awaiting embedding."""
     cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
