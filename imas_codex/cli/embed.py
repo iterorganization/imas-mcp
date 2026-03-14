@@ -550,6 +550,8 @@ def embed_stop() -> None:
     if _cancel_service_job(_EMBED_JOB):
         click.echo("Stopped embed server (SLURM job cancelled)")
         stopped = True
+        # Wait for SLURM to fully terminate processes — scancel is async
+        time.sleep(2)
 
     # Stop systemd service
     try:
@@ -563,25 +565,26 @@ def embed_stop() -> None:
     except subprocess.CalledProcessError:
         pass
 
-    # Kill orphan embed processes on the compute node
-    # Safety net: these should not exist — all services must run via SLURM.
+    # Kill orphan embed processes on the compute node.
+    # Match both "imas-codex embed start" AND "uv run.*imas-codex embed"
+    # to catch the full process tree.  Uses SIGKILL — torch/uvicorn
+    # processes trap SIGTERM and can delay exit for seconds.
     try:
-        from imas_codex.cli.services import _gpu_entry, _run_on_node
+        from imas_codex.cli.services import _gpu_entry, _kill_embed_orphans
 
         host = _gpu_entry()["location"]
+        # Check for orphans before kill to report accurately
+        from imas_codex.cli.services import _run_on_node
+
         result = _run_on_node(
             host,
-            'pgrep -u $USER -f "imas-codex embed start" 2>/dev/null',
+            'pgrep -u $USER -f "imas-codex embed" 2>/dev/null || true',
             timeout=10,
         )
         pids = [p.strip() for p in result.strip().split("\n") if p.strip().isdigit()]
         if pids:
+            _kill_embed_orphans(host)
             pid_list = " ".join(pids)
-            _run_on_node(
-                host,
-                f"kill {pid_list} 2>/dev/null || true",
-                timeout=10,
-            )
             click.echo(
                 click.style(
                     f"⚠ Killed rogue embed process(es) on {host} (PIDs: {pid_list})\n"

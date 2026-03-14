@@ -819,6 +819,36 @@ def _kill_neo4j_on_node(node: str) -> None:
         pass
 
 
+def _kill_embed_orphans(node: str) -> None:
+    """Kill any orphaned embed server processes on the compute node.
+
+    After scancel, some processes survive because:
+    - SLURM cgroup cleanup races with process exit
+    - ``uv run`` parent isn't always in the SLURM process group
+    - torch/uvicorn workers trap SIGTERM and delay exit
+
+    Uses SIGKILL for immediate cleanup, with a verify-and-retry loop.
+    Matches both ``imas-codex embed`` and ``uv run.*imas-codex embed``
+    to catch the full process tree.
+    """
+    kill_cmd = (
+        'pids=$(pgrep -u $USER -f "imas-codex embed" 2>/dev/null)\n'
+        'if [ -n "$pids" ]; then\n'
+        '    echo "$pids" | xargs kill -9 2>/dev/null || true\n'
+        '    sleep 1\n'
+        '    # Verify\n'
+        '    survivors=$(pgrep -u $USER -f "imas-codex embed" 2>/dev/null)\n'
+        '    if [ -n "$survivors" ]; then\n'
+        '        echo "$survivors" | xargs kill -9 2>/dev/null || true\n'
+        '    fi\n'
+        'fi\n'
+    )
+    try:
+        _run_on_node(node, kill_cmd, timeout=15)
+    except subprocess.CalledProcessError:
+        pass
+
+
 def _neo4j_service_command() -> str:
     """Build the shell command to start Neo4j on a compute node.
 
@@ -963,7 +993,11 @@ def deploy_embed(gpus: int = _DEFAULT_GPUS, workers: int | None = None) -> dict:
         )
         return job
 
+    # Kill any orphaned embed processes before deploying a new job.
+    # These survive scancel when SLURM doesn't fully clean cgroups.
     host = _gpu_entry()["location"]
+    _kill_embed_orphans(host)
+
     port = _embed_port()
 
     click.echo(f"Deploying embed server ({gpus} GPUs, {workers} workers)...")
