@@ -2517,6 +2517,7 @@ async def mdsplus_extract_worker(
     from imas_codex.discovery.mdsplus.graph_ops import (
         claim_version_for_extraction_facility,
         mark_version_extracted,
+        mark_version_failed,
         release_version_claim,
     )
     from imas_codex.mdsplus.extraction import (
@@ -2603,13 +2604,16 @@ async def mdsplus_extract_worker(
 
             ver_data = data.get("versions", {}).get(str(version), {})
             if "error" in ver_data:
+                error_msg = ver_data["error"]
                 wlog.warning(
                     "Extraction error for v%d %s: %s",
                     version,
                     data_source_name,
-                    ver_data["error"][:100],
+                    error_msg[:100],
                 )
-                await asyncio.to_thread(release_version_claim, version_id)
+                await asyncio.to_thread(
+                    mark_version_failed, version_id, error_msg
+                )
                 state.extract_stats.errors += 1
                 continue
 
