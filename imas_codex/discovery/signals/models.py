@@ -20,6 +20,7 @@ from enum import Enum
 from pydantic import BaseModel, Field, field_validator
 
 from imas_codex.core.physics_domain import PhysicsDomain
+from imas_codex.graph.models import DiagnosticCategory
 
 __all__ = [
     "ContextQuality",
@@ -100,32 +101,32 @@ class SignalEnrichmentResult(BaseModel):
         "characteristics, and relevant physics context."
     )
 
-    diagnostic: str = Field(
-        default="",
-        description="Diagnostic system name if identifiable "
-        "(e.g., 'thomson_scattering', 'bolometer_array', 'interferometer'). "
-        "Use lowercase_snake_case. Leave empty if not a diagnostic signal.",
+    diagnostic: DiagnosticCategory | None = Field(
+        default=None,
+        description="Diagnostic system category if identifiable. "
+        "Use one of the defined DiagnosticCategory enum values. "
+        "Leave null if not a diagnostic signal.",
     )
 
-    @field_validator("diagnostic")
+    @field_validator("diagnostic", mode="before")
     @classmethod
-    def normalize_diagnostic(cls, v: str) -> str:
-        """Normalize diagnostic to lowercase_snake_case."""
-        if not v:
+    def normalize_diagnostic(cls, v: str | DiagnosticCategory | None) -> DiagnosticCategory | None:
+        """Normalize diagnostic input to DiagnosticCategory enum or None."""
+        if v is None or v == "":
+            return None
+        if isinstance(v, DiagnosticCategory):
             return v
-        return v.lower().replace(" ", "_").replace("-", "_")
+        # Try to match by value (lowercase_snake_case)
+        normalized = str(v).lower().replace(" ", "_").replace("-", "_")
+        try:
+            return DiagnosticCategory(normalized)
+        except ValueError:
+            return None
 
     analysis_code: str = Field(
         default="",
         description="Analysis code that produces this signal if identifiable "
         "(e.g., 'LIUQE', 'ASTRA', 'CHEASE'). Leave empty if raw diagnostic data.",
-    )
-
-    # Unit handling with safety constraints
-    unit: str = Field(
-        default="",
-        description="Physical units ONLY if present in the input metadata. "
-        "Do NOT infer or guess units - copy from input or leave empty.",
     )
 
     # Sign convention — only from code or wiki context

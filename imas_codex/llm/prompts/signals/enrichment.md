@@ -327,7 +327,6 @@ Descriptions should capture the physics meaning of the signal in 2-4 sentences:
 - Relevant physics context from tree structure, code references, or wiki
 
 Descriptions should NOT contain:
-- Units (use the `unit` field)
 - Sign conventions (use the `sign_convention` field)
 - COCOS indices
 - Raw accessor paths or MDSplus tree addresses
@@ -339,18 +338,6 @@ Use all available context — source code, wiki documentation, tree hierarchy,
 sibling signals — to write specific, informative descriptions. Generic
 descriptions like "Signal from diagnostic X" are insufficient when richer
 context is available.
-
-### Units Safety
-
-**CRITICAL: Do NOT infer or guess units.**
-
-- If `units` field in input is populated → copy to `unit`
-- If `wiki_units` is provided → use it for `unit` (authoritative)
-- If both `units` and `wiki_units` are present → prefer `wiki_units`
-- If neither is available → leave `unit` empty
-- NEVER guess units based on signal name (e.g., don't assume plasma current is in Amperes)
-
-Units will be validated separately from authoritative sources.
 
 ### Sign Convention Extraction
 

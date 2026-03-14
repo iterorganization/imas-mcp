@@ -109,8 +109,8 @@ SIGN_CONVENTION_PATTERN = re.compile(
 )
 
 # Known JET PPF DDAs for validation (reduces false positives).
-# This set can be expanded as new DDAs are encountered.
-_JET_KNOWN_DDAS = frozenset(
+# Loaded from facility config at runtime; falls back to this static set.
+_JET_KNOWN_DDAS_FALLBACK = frozenset(
     {
         "BOLO",
         "CHAIN",
@@ -141,6 +141,21 @@ _JET_KNOWN_DDAS = frozenset(
         "VIS",
     }
 )
+
+
+def _get_known_ddas(facility_id: str = "jet") -> frozenset[str]:
+    """Load known DDAs from facility config, falling back to static set."""
+    try:
+        from imas_codex.discovery.base.facility import get_facility
+
+        config = get_facility(facility_id)
+        ppf_config = config.get("data_systems", {}).get("ppf", {})
+        dda_entries = ppf_config.get("dda_descriptions", [])
+        if dda_entries:
+            return frozenset(entry["code"] for entry in dda_entries)
+    except Exception:
+        pass
+    return _JET_KNOWN_DDAS_FALLBACK
 
 
 # =============================================================================
@@ -316,7 +331,7 @@ def extract_ppf_paths(text: str) -> list[str]:
     matches = PPF_PATH_PATTERN.findall(text)
     paths = set()
     for dda, dtype in matches:
-        if dda.upper() in _JET_KNOWN_DDAS:
+        if dda.upper() in _get_known_ddas():
             paths.add(f"{dda.upper()}/{dtype.upper()}")
     return sorted(paths)
 

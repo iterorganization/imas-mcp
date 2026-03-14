@@ -58,6 +58,66 @@ data_systems:
       - name: VESL/CROS
         description: Vessel cross-section contour
         static: true
+    # DDA descriptions for enrichment prompt context
+    dda_descriptions:
+      - code: EFIT
+        description: Equilibrium reconstruction (magnetic equilibrium)
+      - code: EHTR
+        description: Equilibrium high time resolution
+      - code: MAGN
+        description: Magnetics — plasma current, loop voltage, flux loops
+      - code: HRTS
+        description: High Resolution Thomson Scattering — Te, ne profiles
+      - code: KK3
+        description: Electron Cyclotron Emission (ECE) — Te profiles
+      - code: KG1V
+        description: Far-infrared interferometry — line-integrated density
+      - code: KG1L
+        description: Lateral interferometry — line-integrated density
+      - code: KG10
+        description: Interferometry channel 10
+      - code: BOLO
+        description: Bolometry — radiated power
+      - code: BOLP
+        description: Bolometry profiles
+      - code: B5NN
+        description: Bolometry neutron-normalized
+      - code: NBI
+        description: Neutral Beam Injection heating
+      - code: ICRH
+        description: Ion Cyclotron Resonance Heating
+      - code: LHCD
+        description: Lower Hybrid Current Drive
+      - code: SXR
+        description: Soft X-ray emission
+      - code: KS3
+        description: ECE radiometry
+      - code: KS3A
+        description: ECE radiometry (A channel)
+      - code: EDG7
+        description: Edge reflectometry
+      - code: EDG8
+        description: Edge reflectometry
+      - code: GASH
+        description: Gas supply and fuelling
+      - code: CXSE
+        description: Charge Exchange Spectroscopy — ion temperature, rotation
+      - code: KAD
+        description: ECE Michelson interferometer
+      - code: MAGF
+        description: Magnetics Far — far-field magnetic measurements
+      - code: MAGS
+        description: Magnetics Saddle — saddle coil measurements
+      - code: MAGA
+        description: Magnetics Analogue — analogue magnetic measurements
+      - code: MAGG
+        description: Magnetics — general magnetic measurements
+      - code: LIDL
+        description: LIDAR Thomson Scattering — Te, ne profiles
+      - code: IDAM
+        description: Integrated Data Access Manager
+      - code: CXHM
+        description: Charge Exchange — H-alpha monitor
 
   # MDSplus thin-client access via TDI functions.
   # JET's MDSplus server does NOT use traditional tree-based access.
