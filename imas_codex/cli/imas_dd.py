@@ -78,42 +78,12 @@ imas.add_command(map_cmd, "map")
     help="Skip per-item hash caching (recompute all embeddings/clusters). Implies --force",
 )
 @click.option(
-    "--skip-clusters", is_flag=True, help="Skip importing semantic clusters into graph"
-)
-@click.option(
-    "--skip-cluster-labels",
-    is_flag=True,
-    help="Skip LLM label embedding for clusters (saves cost when labels aren't needed)",
-)
-@click.option(
-    "--skip-embeddings",
-    is_flag=True,
-    help="Skip embedding generation for current version paths",
-)
-@click.option(
-    "--embedding-model",
-    type=str,
-    default=None,
-    help="Embedding model (defaults to configured model from settings)",
-)
-@click.option(
     "--ids-filter",
     type=str,
     help="Filter to specific IDS (space-separated, for testing)",
 )
 @click.option(
     "--dry-run", is_flag=True, help="Preview changes without writing to graph"
-)
-@click.option(
-    "--skip-enrichment",
-    is_flag=True,
-    help="Skip LLM description enrichment (enrichment is ON by default)",
-)
-@click.option(
-    "--enrichment-model",
-    type=str,
-    default=None,
-    help="LLM model for enrichment (defaults to configured language model)",
 )
 def imas_build(
     verbose: bool,
@@ -122,14 +92,8 @@ def imas_build(
     from_version: str | None,
     force: bool,
     no_hash: bool,
-    skip_clusters: bool,
-    skip_cluster_labels: bool,
-    skip_embeddings: bool,
-    embedding_model: str,
     ids_filter: str | None,
     dry_run: bool,
-    skip_enrichment: bool,
-    enrichment_model: str | None,
 ) -> None:
     """Build the IMAS Data Dictionary Knowledge Graph.
 
@@ -157,7 +121,6 @@ def imas_build(
         imas-codex imas dd build --force --no-hash  # Full recomputation (skip all caches)
         imas-codex imas dd build --dry-run -v     # Preview without writing
         imas-codex imas dd build --ids-filter "core_profiles equilibrium"  # Test subset
-        imas-codex imas dd build --skip-enrichment   # Skip LLM enrichment step
     """
     # On air-gapped nodes, prevent LiteLLM import-time remote fetches
     from imas_codex.discovery.base.llm import set_litellm_offline_env
@@ -210,7 +173,7 @@ def imas_build(
         if no_hash:
             force = True
 
-        log_print(f"\n[bold]IMAS DD Build[/bold]")
+        log_print("\n[bold]IMAS DD Build[/bold]")
         log_print(f"  Versions: {len(versions)} ({versions[0]} → {versions[-1]})")
         if ids_set:
             log_print(f"  IDS filter: {sorted(ids_set)}")
@@ -228,15 +191,9 @@ def imas_build(
             cost_limit=100.0,  # DD enrichment is bounded by path count, not budget
             versions=versions,
             ids_filter=ids_set,
-            include_clusters=not skip_clusters,
-            include_embeddings=not skip_embeddings,
-            include_enrichment=not skip_enrichment,
-            skip_cluster_labels=skip_cluster_labels,
             dry_run=dry_run,
             force=force,
             no_hash=no_hash,
-            embedding_model=embedding_model,
-            enrichment_model=enrichment_model,
         )
 
         # Build display for rich mode
@@ -247,9 +204,6 @@ def imas_build(
             display = create_dd_build_display(
                 state,
                 console=console_obj,
-                skip_enrichment=skip_enrichment,
-                skip_embeddings=skip_embeddings,
-                skip_clusters=skip_clusters,
                 mode_label="DRY RUN" if dry_run else None,
             )
             display.set_engine_state(state)
@@ -260,10 +214,10 @@ def imas_build(
             facility_config={},
             display=display,
             check_graph=True,
-            check_embed=not skip_embeddings,
+            check_embed=True,
             check_ssh=False,
             check_auth=False,
-            check_model=not skip_enrichment,
+            check_model=True,
             suppress_loggers=[
                 "imas_codex.embeddings",
                 "imas_codex.graph.build_dd",
@@ -279,9 +233,7 @@ def imas_build(
             await run_dd_build_engine(
                 state,
                 stop_event=stop_event,
-                on_worker_status=(
-                    display.update_worker_status if display else None
-                ),
+                on_worker_status=(display.update_worker_status if display else None),
             )
             return state.stats
 
@@ -290,16 +242,14 @@ def imas_build(
                 return
             stats = results
             if stats.get("skipped"):
-                log_print(
-                    "\n[yellow]Build skipped (graph already up-to-date)[/yellow]"
-                )
+                log_print("\n[yellow]Build skipped (graph already up-to-date)[/yellow]")
                 return
 
         result = run_discovery(disc_config, async_main, on_complete=_on_complete)
 
         # Plain-mode summary (rich mode shows via display)
         if not use_rich and result:
-            _print_build_summary(result, skip_embeddings, skip_enrichment, skip_clusters)
+            _print_build_summary(result)
 
     except SystemExit:
         raise
@@ -311,12 +261,7 @@ def imas_build(
         raise SystemExit(1) from e
 
 
-def _print_build_summary(
-    stats: dict,
-    skip_embeddings: bool,
-    skip_enrichment: bool,
-    skip_clusters: bool,
-) -> None:
+def _print_build_summary(stats: dict) -> None:
     """Print plain-text build summary to stdout."""
     if stats.get("skipped"):
         click.echo("\n=== Build Skipped (graph already up-to-date) ===")
@@ -329,26 +274,19 @@ def _print_build_summary(
     click.echo(f"IMASNode nodes (across all versions): {stats['paths_created']}")
     click.echo(f"Unit nodes: {stats['units_created']}")
     click.echo(f"IMASNodeChange nodes: {stats['path_changes_created']}")
+    click.echo(f"Definitions changed (documentation): {stats['definitions_changed']}")
+    click.echo(f"Paths enriched (LLM): {stats.get('enriched_llm', 0)}")
+    click.echo(f"Paths enriched (template): {stats.get('enriched_template', 0)}")
+    click.echo(f"Enrichment cached: {stats.get('enrichment_cached', 0)}")
+    if stats.get("enrichment_cost", 0) > 0:
+        click.echo(f"Enrichment cost: ${stats['enrichment_cost']:.4f}")
     click.echo(
-        f"Definitions changed (documentation): {stats['definitions_changed']}"
+        f"Paths excluded from embedding (error/metadata): {stats['paths_filtered']}"
     )
-    if not skip_enrichment:
-        click.echo(f"Paths enriched (LLM): {stats.get('enriched_llm', 0)}")
-        click.echo(f"Paths enriched (template): {stats.get('enriched_template', 0)}")
-        click.echo(f"Enrichment cached: {stats.get('enrichment_cached', 0)}")
-        if stats.get("enrichment_cost", 0) > 0:
-            click.echo(f"Enrichment cost: ${stats['enrichment_cost']:.4f}")
-    if not skip_embeddings:
-        click.echo(
-            f"Paths excluded from embedding (error/metadata): "
-            f"{stats['paths_filtered']}"
-        )
-        click.echo(f"HAS_ERROR relationships: {stats['error_relationships']}")
-        click.echo(f"Embeddings updated: {stats['embeddings_updated']}")
-        click.echo(f"Embeddings cached: {stats['embeddings_cached']}")
-    if not skip_clusters:
-        click.echo(f"Cluster nodes: {stats['clusters_created']}")
-
+    click.echo(f"HAS_ERROR relationships: {stats['error_relationships']}")
+    click.echo(f"Embeddings updated: {stats['embeddings_updated']}")
+    click.echo(f"Embeddings cached: {stats['embeddings_cached']}")
+    click.echo(f"Cluster nodes: {stats['clusters_created']}")
 
 
 @dd.command("status")
