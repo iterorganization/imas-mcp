@@ -160,7 +160,10 @@ class GraphSearchTool:
 
         # --- Text search ---
         text_results = _text_search_imas_paths(
-            self._gc, query, min(max_results * 3, 150), normalized_filter,
+            self._gc,
+            query,
+            min(max_results * 3, 150),
+            normalized_filter,
             dd_version=dd_version,
         )
         for r in text_results:
@@ -229,6 +232,10 @@ class GraphSearchTool:
                    path.coordinate2_same_as AS coordinate2,
                    path.cocos_label_transformation AS cocos_label,
                    path.cocos_transformation_expression AS cocos_expression,
+                   path.description AS enriched_description,
+                   path.physics_summary AS physics_summary,
+                   path.keywords AS keywords,
+                   path.enrichment_source AS enrichment_source,
                    collect(DISTINCT coord.id) AS coordinates,
                    ident IS NOT NULL AS has_identifier_schema,
                    intro.id AS introduced_after_version
@@ -275,6 +282,10 @@ class GraphSearchTool:
                     coordinate2=r["coordinate2"],
                     cocos_label_transformation=r["cocos_label"],
                     cocos_transformation_expression=r["cocos_expression"],
+                    description=r.get("enriched_description"),
+                    physics_summary=r.get("physics_summary"),
+                    keywords=r.get("keywords"),
+                    enrichment_source=r.get("enrichment_source"),
                     has_identifier_schema=bool(r["has_identifier_schema"]),
                     introduced_after_version=r["introduced_after_version"],
                     score=scores.get(pid, 0.0),
@@ -475,6 +486,10 @@ class GraphPathTool:
                        p.ndim AS ndim,
                        p.cocos_label_transformation AS cocos_label,
                        p.cocos_transformation_expression AS cocos_expression,
+                       p.description AS enriched_description,
+                       p.physics_summary AS physics_summary,
+                       p.keywords AS keywords,
+                       p.enrichment_source AS enrichment_source,
                        u.id AS units,
                        cluster_labels,
                        coordinates,
@@ -496,16 +511,20 @@ class GraphPathTool:
                         try:
                             raw_opts = json.loads(r["identifier_schema_options"])
                             from imas_codex.core.data_model import IdentifierOption
+
                             for opt in raw_opts:
                                 if isinstance(opt, dict):
-                                    options.append(IdentifierOption(
-                                        name=opt.get("name", ""),
-                                        index=opt.get("index", 0),
-                                        description=opt.get("description", ""),
-                                    ))
+                                    options.append(
+                                        IdentifierOption(
+                                            name=opt.get("name", ""),
+                                            index=opt.get("index", 0),
+                                            description=opt.get("description", ""),
+                                        )
+                                    )
                         except (json.JSONDecodeError, TypeError):
                             pass
                     from imas_codex.core.data_model import IdentifierSchema
+
                     ident_schema = IdentifierSchema(
                         schema_path=r["identifier_schema_name"],
                         documentation=r.get("identifier_schema_description"),
@@ -518,8 +537,7 @@ class GraphPathTool:
                     raw_changes = r.get("version_changes") or []
                     # Filter out null entries from OPTIONAL MATCH
                     v_changes = [
-                        c for c in raw_changes
-                        if c.get("version") is not None
+                        c for c in raw_changes if c.get("version") is not None
                     ] or None
 
                 node = IdsNode(
@@ -536,6 +554,10 @@ class GraphPathTool:
                     version_changes=v_changes,
                     cocos_label_transformation=r.get("cocos_label"),
                     cocos_transformation_expression=r.get("cocos_expression"),
+                    description=r.get("enriched_description"),
+                    physics_summary=r.get("physics_summary"),
+                    keywords=r.get("keywords"),
+                    enrichment_source=r.get("enrichment_source"),
                 )
                 nodes.append(node)
             else:
@@ -840,7 +862,9 @@ class GraphClustersTool:
         # IDS listing mode: no query, ids_filter provided
         if not query and normalized_filter:
             return self._list_by_ids(
-                normalized_filter, scope, section_only=section_only,
+                normalized_filter,
+                scope,
+                section_only=section_only,
                 dd_version=dd_version,
             )
 
@@ -871,9 +895,7 @@ class GraphClustersTool:
         filter_list = ids_filter if isinstance(ids_filter, list) else [ids_filter]
         scope_filter = "AND c.scope = $scope" if scope else ""
         section_filter = (
-            "WHERE any(p IN section_paths WHERE p CONTAINS '/')"
-            if section_only
-            else ""
+            "WHERE any(p IN section_paths WHERE p CONTAINS '/')" if section_only else ""
         )
         params: dict[str, Any] = {"ids_filter": filter_list}
         if scope:
@@ -1317,12 +1339,10 @@ class GraphStructureTool:
                 {"type": t["data_type"], "count": t["count"]} for t in types
             ],
             "array_structures": [
-                {"path": a["path"], "coordinates": a["coordinates"]}
-                for a in arrays
+                {"path": a["path"], "coordinates": a["coordinates"]} for a in arrays
             ],
             "cocos_fields": [
-                {"path": c["path"], "label": c["cocos_label"]}
-                for c in cocos_fields
+                {"path": c["path"], "label": c["cocos_label"]} for c in cocos_fields
             ],
         }
 
