@@ -32,7 +32,6 @@ from .extractors.mdsplus import extract_mdsplus_paths
 from .graph import (
     link_chunks_to_data_nodes,
     link_chunks_to_imas_paths,
-    link_example_mdsplus_paths,
     link_examples_to_facility,
 )
 from .queue import get_pending_files, update_source_file_status
@@ -230,29 +229,6 @@ def _check_already_ingested(
     return to_ingest, list(already_ingested)
 
 
-def _update_facility_path_status(
-    graph_client: GraphClient,
-    facility: str,
-    source_file: str,
-    example_id: str,
-) -> None:
-    """Update FacilityPath status to 'explored' and link to CodeExample."""
-    graph_client.query(
-        """
-        MATCH (p:FacilityPath {facility_id: $facility})
-        WHERE $source_file STARTS WITH p.path
-        MATCH (e:CodeExample {id: $example_id})
-        SET p.status = 'explored',
-            p.last_ingested_at = datetime(),
-            p.files_ingested = coalesce(p.files_ingested, 0) + 1
-        MERGE (p)-[:HAS_EXAMPLE]->(e)
-        """,
-        facility=facility,
-        source_file=source_file,
-        example_id=example_id,
-    )
-
-
 async def ingest_files(
     facility: str,
     remote_paths: list[str] | None = None,
@@ -388,7 +364,17 @@ async def ingest_files(
         report(total_files, total_files, "No files to process")
         return stats
 
-    total_to_process = sum(len(files) for files in files_by_language.values())
+    # Flatten all files — process together regardless of language.
+    # Previous code grouped by language and ran separate chunk→embed→write
+    # cycles per group. With 10 files across 5 languages, that meant 5
+    # separate embedding calls and ~100 individual graph queries.
+    all_files: list[dict[str, Any]] = []
+    for language, file_list in files_by_language.items():
+        for file_info in file_list:
+            file_info["language"] = language
+            all_files.append(file_info)
+
+    total_to_process = len(all_files)
     stats["files"] = 0
 
     # Load encoder for embeddings (reuse shared instance if provided)
@@ -400,170 +386,216 @@ async def ingest_files(
     BATCH_SIZE = 20
 
     processed_files = 0
-    for language, file_list in files_by_language.items():
-        for batch_start in range(0, len(file_list), BATCH_SIZE):
-            batch_files = file_list[batch_start : batch_start + BATCH_SIZE]
-            batch_end = min(batch_start + BATCH_SIZE, len(file_list))
+    for batch_start in range(0, total_to_process, BATCH_SIZE):
+        batch_files = all_files[batch_start : batch_start + BATCH_SIZE]
+        batch_end = min(batch_start + BATCH_SIZE, total_to_process)
 
-            report(
-                processed_files,
-                total_to_process,
-                f"Processing {language} files {batch_start + 1}-{batch_end}/{len(file_list)}",
-            )
+        report(
+            processed_files,
+            total_to_process,
+            f"Processing files {batch_start + 1}-{batch_end}/{total_to_process}",
+        )
 
-            # Split and extract for each file in batch
-            all_chunks: list[dict[str, Any]] = []
-            chunk_example_ids: list[str] = []
+        # Split and extract for each file (language-aware per file)
+        all_chunks: list[dict[str, Any]] = []
+        chunk_example_ids: list[str] = []
 
-            for file_info in batch_files:
-                example_id = file_info["example_id"]
-                chunk_metadata = {
-                    "source_file": file_info["remote_path"],
-                    "facility_id": facility,
-                    "language": language,
-                    "code_example_id": example_id,
-                }
+        for file_info in batch_files:
+            example_id = file_info["example_id"]
+            language = file_info["language"]
+            chunk_metadata = {
+                "source_file": file_info["remote_path"],
+                "facility_id": facility,
+                "language": language,
+                "code_example_id": example_id,
+            }
 
+            try:
+                chunks = await asyncio.to_thread(
+                    _split_and_extract,
+                    file_info["content"],
+                    language,
+                    chunk_metadata,
+                )
+            except Exception:
+                logger.warning(
+                    "Failed to parse %s with tree-sitter, trying text splitter",
+                    file_info["remote_path"],
+                )
                 try:
                     chunks = await asyncio.to_thread(
                         _split_and_extract,
                         file_info["content"],
                         language,
                         chunk_metadata,
+                        use_text_splitter=True,
                     )
-                except Exception:
-                    logger.warning(
-                        "Failed to parse %s with tree-sitter, trying text splitter",
-                        file_info["remote_path"],
+                except Exception as e2:
+                    logger.error(
+                        "Failed to process %s: %s", file_info["remote_path"], e2
                     )
-                    try:
-                        chunks = await asyncio.to_thread(
-                            _split_and_extract,
-                            file_info["content"],
-                            language,
-                            chunk_metadata,
-                            use_text_splitter=True,
-                        )
-                    except Exception as e2:
-                        logger.error(
-                            "Failed to process %s: %s", file_info["remote_path"], e2
-                        )
-                        meta = file_metadata.get(example_id, {})
-                        sf_id = meta.get("_source_file_id")
-                        if sf_id:
-                            update_source_file_status(sf_id, "failed", error=str(e2))
-                        continue
-
-                # Generate chunk IDs
-                for i, chunk in enumerate(chunks):
-                    content_hash = hashlib.md5(chunk["text"].encode()).hexdigest()[:8]
-                    chunk["id"] = f"{example_id}:chunk_{i}:{content_hash}"
-
-                all_chunks.extend(chunks)
-                chunk_example_ids.append(example_id)
-
-            if not all_chunks:
-                for file_info in batch_files:
-                    meta = file_metadata.get(file_info["example_id"], {})
+                    meta = file_metadata.get(example_id, {})
                     sf_id = meta.get("_source_file_id")
                     if sf_id:
-                        update_source_file_status(sf_id, "failed", error="No chunks")
-                continue
+                        update_source_file_status(sf_id, "failed", error=str(e2))
+                    continue
 
-            # Generate embeddings in safe sub-batches (OOM-aware)
-            chunk_texts = [c["text"] for c in all_chunks]
-            try:
-                embeddings = await asyncio.to_thread(
-                    _embed_chunks_safe, encoder, chunk_texts
-                )
-                for i, chunk in enumerate(all_chunks):
-                    chunk["embedding"] = embeddings[i].tolist()
-            except Exception as e:
-                logger.error("Embedding failed for %d chunks: %s", len(chunk_texts), e)
-                for file_info in batch_files:
-                    meta = file_metadata.get(file_info["example_id"], {})
-                    sf_id = meta.get("_source_file_id")
-                    if sf_id:
-                        update_source_file_status(sf_id, "failed", error=str(e)[:200])
-                continue
+            # Generate chunk IDs
+            for i, chunk in enumerate(chunks):
+                content_hash = hashlib.md5(chunk["text"].encode()).hexdigest()[:8]
+                chunk["id"] = f"{example_id}:chunk_{i}:{content_hash}"
 
-            # Count stats
-            batch_ids_found = 0
-            batch_mdsplus_paths = 0
-            for chunk in all_chunks:
-                batch_ids_found += len(chunk.get("related_ids", []))
-                batch_mdsplus_paths += len(chunk.get("mdsplus_paths", []))
+            all_chunks.extend(chunks)
+            chunk_example_ids.append(example_id)
 
-            stats["chunks"] += len(all_chunks)
-            stats["ids_found"] += batch_ids_found
-            stats["mdsplus_paths"] += batch_mdsplus_paths
+        if not all_chunks:
+            for file_info in batch_files:
+                meta = file_metadata.get(file_info["example_id"], {})
+                sf_id = meta.get("_source_file_id")
+                if sf_id:
+                    update_source_file_status(sf_id, "failed", error="No chunks")
+            continue
 
-            # Write to graph using create_nodes() for schema-correct relationships.
-            # Order matters: CodeExample must exist before CodeChunk (for CODE_EXAMPLE_ID).
-            with GraphClient() as graph_client:
-                # Step 1: Create CodeExample nodes first (auto-creates AT_FACILITY)
-                for file_info in batch_files:
-                    example_id = file_info["example_id"]
-                    meta = file_metadata.get(example_id)
-                    if not meta:
-                        continue
+        # ONE embedding call for ALL chunks across all languages
+        chunk_texts = [c["text"] for c in all_chunks]
+        try:
+            embeddings = await asyncio.to_thread(
+                _embed_chunks_safe, encoder, chunk_texts
+            )
+            for i, chunk in enumerate(all_chunks):
+                chunk["embedding"] = embeddings[i].tolist()
+        except Exception as e:
+            logger.error("Embedding failed for %d chunks: %s", len(chunk_texts), e)
+            for file_info in batch_files:
+                meta = file_metadata.get(file_info["example_id"], {})
+                sf_id = meta.get("_source_file_id")
+                if sf_id:
+                    update_source_file_status(sf_id, "failed", error=str(e)[:200])
+            continue
 
-                    source_file_id = meta.pop("_source_file_id", None)
+        # Count stats
+        batch_ids_found = 0
+        batch_mdsplus_paths = 0
+        for chunk in all_chunks:
+            batch_ids_found += len(chunk.get("related_ids", []))
+            batch_mdsplus_paths += len(chunk.get("mdsplus_paths", []))
 
-                    # Compute from_file for the FROM_FILE relationship
-                    from_file_id = f"{facility}:{meta['source_file']}"
-                    example_props = {
-                        "id": example_id,
-                        **meta,
-                        "from_file": from_file_id,
-                    }
+        stats["chunks"] += len(all_chunks)
+        stats["ids_found"] += batch_ids_found
+        stats["mdsplus_paths"] += batch_mdsplus_paths
 
-                    graph_client.create_nodes("CodeExample", [example_props])
+        # Batched graph writes — one session for all files in the batch.
+        # Previously did N × create_nodes("CodeExample") + N × individual queries;
+        # now batches into single UNWIND calls (~6 queries vs ~5N).
+        with GraphClient() as graph_client:
+            # Step 1: Batch create CodeExample nodes (auto-creates AT_FACILITY)
+            all_example_props: list[dict[str, Any]] = []
+            source_file_map: dict[str, str] = {}
+            for file_info in batch_files:
+                example_id = file_info["example_id"]
+                if example_id not in chunk_example_ids:
+                    continue
+                meta = file_metadata.get(example_id)
+                if not meta:
+                    continue
 
-                    _update_facility_path_status(
-                        graph_client, facility, meta["source_file"], example_id
-                    )
+                source_file_id = meta.pop("_source_file_id", None)
+                if source_file_id:
+                    source_file_map[example_id] = source_file_id
 
-                    # Link CodeFile → HAS_EXAMPLE → CodeExample
-                    graph_client.query(
-                        """
-                        MATCH (cf:CodeFile {id: $cf_id})
-                        MATCH (ce:CodeExample {id: $ce_id})
-                        MERGE (cf)-[:HAS_EXAMPLE]->(ce)
-                        """,
-                        cf_id=from_file_id,
-                        ce_id=example_id,
-                    )
+                from_file_id = f"{facility}:{meta['source_file']}"
+                all_example_props.append({
+                    "id": example_id,
+                    **meta,
+                    "from_file": from_file_id,
+                })
 
-                    if source_file_id:
-                        update_source_file_status(
-                            source_file_id, "ingested", code_example_id=example_id
-                        )
+            if all_example_props:
+                graph_client.create_nodes("CodeExample", all_example_props)
 
-                # Step 2: Create CodeChunk nodes (auto-creates CODE_EXAMPLE_ID, AT_FACILITY)
-                graph_client.create_nodes("CodeChunk", all_chunks)
-
-                # Step 3: Create HAS_CHUNK (inverse traversal convenience)
+            # Step 2: Batch FacilityPath status update + HAS_EXAMPLE
+            if all_example_props:
                 graph_client.query(
                     """
-                    MATCH (c:CodeChunk)
-                    WHERE c.code_example_id IN $example_ids
-                    MATCH (e:CodeExample {id: c.code_example_id})
-                    MERGE (e)-[:HAS_CHUNK]->(c)
+                    UNWIND $items AS item
+                    MATCH (p:FacilityPath {facility_id: $facility})
+                    WHERE item.source_file STARTS WITH p.path
+                    MATCH (e:CodeExample {id: item.example_id})
+                    SET p.status = 'explored',
+                        p.last_ingested_at = datetime(),
+                        p.files_ingested = coalesce(p.files_ingested, 0) + 1
+                    MERGE (p)-[:HAS_EXAMPLE]->(e)
                     """,
-                    example_ids=chunk_example_ids,
+                    facility=facility,
+                    items=[
+                        {"source_file": ep["source_file"], "example_id": ep["id"]}
+                        for ep in all_example_props
+                    ],
                 )
 
-                for example_id in chunk_example_ids:
-                    linked = link_example_mdsplus_paths(graph_client, example_id)
-                    stats["data_nodes_linked"] += linked
+            # Step 3: Batch CodeFile → HAS_EXAMPLE
+            if all_example_props:
+                graph_client.query(
+                    """
+                    UNWIND $pairs AS pair
+                    MATCH (cf:CodeFile {id: pair.cf_id})
+                    MATCH (ce:CodeExample {id: pair.ce_id})
+                    MERGE (cf)-[:HAS_EXAMPLE]->(ce)
+                    """,
+                    pairs=[
+                        {
+                            "cf_id": f"{facility}:{ep['source_file']}",
+                            "ce_id": ep["id"],
+                        }
+                        for ep in all_example_props
+                    ],
+                )
 
-            processed_files += len(batch_files)
-            stats["files"] = processed_files
+            # Step 4: Batch CodeFile status update
+            # (replaces per-file update_source_file_status which opened N connections)
+            now = datetime.now(UTC).isoformat()
+            if source_file_map:
+                graph_client.query(
+                    """
+                    UNWIND $items AS item
+                    MATCH (sf:CodeFile {id: item.sf_id})
+                    SET sf.status = 'ingested',
+                        sf.completed_at = $now,
+                        sf.code_example_id = item.ce_id,
+                        sf.error = null
+                    """,
+                    items=[
+                        {"sf_id": sf_id, "ce_id": ex_id}
+                        for ex_id, sf_id in source_file_map.items()
+                    ],
+                    now=now,
+                )
 
-    # Final relationship linking — scoped to only the examples we just created.
-    # This avoids catastrophic O(all_refs × all_signals) global scans that
-    # previously spent 300+ seconds per batch scanning the entire graph.
+            # Step 5: Create CodeChunk nodes (auto-creates CODE_EXAMPLE_ID, AT_FACILITY)
+            graph_client.create_nodes("CodeChunk", all_chunks)
+
+            # Step 6: Create HAS_CHUNK (inverse traversal convenience)
+            graph_client.query(
+                """
+                MATCH (c:CodeChunk)
+                WHERE c.code_example_id IN $example_ids
+                MATCH (e:CodeExample {id: c.code_example_id})
+                MERGE (e)-[:HAS_CHUNK]->(c)
+                """,
+                example_ids=chunk_example_ids,
+            )
+
+            # Step 7: Link MDSplus refs to data nodes (batched, not per-example)
+            linked = link_chunks_to_data_nodes(
+                graph_client, example_ids=chunk_example_ids
+            )
+            stats["data_nodes_linked"] += linked
+
+        processed_files += len(batch_files)
+        stats["files"] = processed_files
+
+    # Final relationship linking — safety net for any relationships not
+    # created in the per-batch step above (e.g. cross-batch references).
     all_example_ids = list(file_metadata.keys())
     report(processed_files, total_to_process, "Creating final graph relationships...")
 
