@@ -214,6 +214,10 @@ async def lifespan(app: FastAPI):
             _worker_gpu = gpu_id
             os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
 
+    # Set BEFORE importing torch — the allocator config is read at
+    # CUDA initialization time, not when we call set_per_process_memory_fraction.
+    os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
     print(f"[WORKER {_pid}] CUDA_VISIBLE_DEVICES={os.environ.get('CUDA_VISIBLE_DEVICES')}", file=_sys.stderr, flush=True)
 
     logger.info("Loading embedding model...")
@@ -245,10 +249,6 @@ async def lifespan(app: FastAPI):
     if device == "cuda":
         try:
             import torch
-
-            # Enable expandable segments to reduce fragmentation
-            # (recommended by PyTorch's own OOM error message)
-            os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
             mem_fraction = float(
                 os.environ.get("IMAS_CODEX_GPU_MEMORY_FRACTION", default_fraction)
@@ -369,35 +369,53 @@ def _encode_texts_sync(
     # The pipeline already chunks to 10K chars; this catches direct API calls.
     texts = [t[:_MAX_TEXT_CHARS] if len(t) > _MAX_TEXT_CHARS else t for t in texts]
 
+    # Adaptive batch sizing: self-attention memory scales O(batch × seq²).
+    # With 10K-token texts (40K chars), batch=32 needs ~33 GiB — well over
+    # P100-16GB.  Scale batch_size down for long texts to stay within VRAM.
+    max_len = max(len(t) for t in texts) if texts else 0
+    if max_len > 20_000:
+        # Very long texts (>5K tokens): process one at a time
+        batch_size = 1
+    elif max_len > 8_000:
+        # Long texts (>2K tokens): small batches
+        batch_size = min(batch_size, 4)
+    elif max_len > 2_000:
+        # Medium texts: moderate batches
+        batch_size = min(batch_size, 16)
+
     model = _encoder.get_model()
 
-    # For small requests, encode directly
-    if len(texts) <= batch_size:
-        result = model.encode(
-            texts,
-            convert_to_numpy=True,
-            normalize_embeddings=normalize,
-            batch_size=batch_size,
-            show_progress_bar=False,
-        )
-        _release_gpu_cache()
-        return result
+    try:
+        # For small requests, encode directly
+        if len(texts) <= batch_size:
+            result = model.encode(
+                texts,
+                convert_to_numpy=True,
+                normalize_embeddings=normalize,
+                batch_size=batch_size,
+                show_progress_bar=False,
+            )
+            return result
 
-    # For larger requests, encode in sub-batches with cache release
-    results = []
-    for i in range(0, len(texts), batch_size):
-        batch = texts[i : i + batch_size]
-        embeddings = model.encode(
-            batch,
-            convert_to_numpy=True,
-            normalize_embeddings=normalize,
-            batch_size=batch_size,
-            show_progress_bar=False,
-        )
-        results.append(embeddings)
-        _release_gpu_cache()
+        # For larger requests, encode in sub-batches with cache release
+        results = []
+        for i in range(0, len(texts), batch_size):
+            batch = texts[i : i + batch_size]
+            embeddings = model.encode(
+                batch,
+                convert_to_numpy=True,
+                normalize_embeddings=normalize,
+                batch_size=batch_size,
+                show_progress_bar=False,
+            )
+            results.append(embeddings)
+            _release_gpu_cache()
 
-    return np.vstack(results)
+        return np.vstack(results)
+    finally:
+        # Always release GPU cache — critical on error paths (CUDA OOM)
+        # where partial allocations remain in PyTorch's caching allocator.
+        _release_gpu_cache()
 
 
 def _release_gpu_cache() -> None:
