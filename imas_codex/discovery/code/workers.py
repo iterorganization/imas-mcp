@@ -515,6 +515,10 @@ def _claim_code_files_for_ingestion(
     score threshold. Skips files exceeding max_line_count to avoid
     tree-sitter hangs on very large auto-generated files.
 
+    Dedup is handled *after* claiming — see ``_filter_duplicates()``.
+    Keeping the claim query simple avoids expensive correlated subqueries
+    that scale as O(candidates × ingested_hashes).
+
     Uses anti-deadlock patterns: ORDER BY rand(), claim_token two-step
     verify, and @retry_on_deadlock decorator.
     """
@@ -536,12 +540,6 @@ def _claim_code_files_for_ingestion(
               AND coalesce(sf.line_count, 0) <= $max_line_count
               AND (sf.claimed_at IS NULL
                    OR sf.claimed_at < datetime() - duration($cutoff))
-              // Hash gate: skip files whose content is already ingested
-              AND (sf.content_hash IS NULL
-                   OR NOT EXISTS {
-                     MATCH (dup:CodeFile {content_hash: sf.content_hash})
-                     WHERE dup.status = 'ingested' AND dup.id <> sf.id
-                   })
             WITH sf ORDER BY rand() LIMIT $limit
             SET sf.claimed_at = datetime(), sf.claim_token = $token
             """,
@@ -557,11 +555,76 @@ def _claim_code_files_for_ingestion(
             """
             MATCH (sf:CodeFile {claim_token: $token})
             RETURN sf.id AS id, sf.path AS path, sf.language AS language,
-                   sf.score_composite AS score_composite
+                   sf.score_composite AS score_composite,
+                   sf.content_hash AS content_hash
             """,
             token=token,
         )
         return list(result)
+
+
+def _filter_duplicates(files: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Filter out files whose content_hash is already ingested.
+
+    This is a cheap post-claim dedup check: collects the unique hashes
+    from the claimed batch, does a single ``IN $hashes`` lookup against
+    ingested CodeFiles, and returns only the files that need processing.
+
+    Files filtered out are immediately marked 'skipped' so they won't
+    be claimed again.
+
+    Returns:
+        List of files that still need ingestion.
+    """
+    from imas_codex.graph import GraphClient
+
+    # Collect hashes from the batch (skip files without a hash)
+    hashed = {f["content_hash"]: f for f in files if f.get("content_hash")}
+    if not hashed:
+        return files  # nothing to dedup
+
+    with GraphClient() as gc:
+        # Single indexed lookup: which of these hashes are already ingested?
+        result = gc.query(
+            """
+            UNWIND $hashes AS h
+            MATCH (dup:CodeFile {content_hash: h})
+            WHERE dup.status = 'ingested'
+            RETURN DISTINCT h AS hash
+            """,
+            hashes=list(hashed.keys()),
+        )
+        already_ingested = {r["hash"] for r in result}
+
+    if not already_ingested:
+        return files
+
+    # Split into keep vs skip
+    keep = []
+    skip_ids = []
+    for f in files:
+        h = f.get("content_hash")
+        if h and h in already_ingested:
+            skip_ids.append(f["id"])
+        else:
+            keep.append(f)
+
+    # Mark skipped files so they aren't reclaimed
+    if skip_ids:
+        with GraphClient() as gc:
+            gc.query(
+                """
+                UNWIND $ids AS fid
+                MATCH (sf:CodeFile {id: fid})
+                SET sf.status = 'skipped',
+                    sf.skip_reason = 'content already ingested',
+                    sf.claimed_at = null,
+                    sf.claim_token = null
+                """,
+                ids=skip_ids,
+            )
+
+    return keep
 
 
 def _mark_files_ingested(file_ids: list[str]) -> int:
@@ -711,6 +774,19 @@ async def code_worker(
             if on_progress:
                 on_progress("idle", state.code_stats, None)
             await asyncio.sleep(3.0)
+            continue
+
+        # Post-claim dedup: filter out files whose content is already ingested.
+        # This is O(batch_size) with index rather than O(candidates × ingested)
+        # in the claim query itself.
+        try:
+            files = await asyncio.to_thread(_filter_duplicates, files)
+        except Exception as e:
+            logger.warning("Dedup filter failed (proceeding with full batch): %s", e)
+
+        if not files:
+            # Entire batch was duplicates — count as activity but skip processing
+            state.code_phase.record_activity(0)
             continue
 
         consecutive_idle = 0
