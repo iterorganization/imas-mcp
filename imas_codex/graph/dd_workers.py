@@ -281,8 +281,12 @@ async def embed_worker(state: DDBuildState, **_kwargs) -> None:
     wlog.info("Starting embedding generation")
 
     def _on_progress(processed: int, total: int) -> None:
+        prev = state.embed_stats.processed
         state.embed_stats.total = total
         state.embed_stats.processed = processed
+        batch_size = processed - prev
+        if batch_size > 0:
+            state.embed_stats.record_batch(batch_size)
         if processed < total:
             state.embed_stats.status_text = f"{processed:,} / {total:,} paths"
         else:
