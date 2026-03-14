@@ -37,6 +37,7 @@ from typing import Any
 
 from imas_codex.discovery.base.supervision import (
     OrphanRecoverySpec,
+    PipelinePhase,
     SupervisedWorkerGroup,
     make_orphan_recovery_tick,
     run_supervised_loop,
