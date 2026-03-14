@@ -191,6 +191,8 @@ def _fetch_sequential(
                 continue
 
             content = result.stdout.decode("utf-8", errors="replace")
+            # Normalize line endings: CR-only (old Mac) and CRLF (Windows) → LF
+            content = content.replace("\r\n", "\n").replace("\r", "\n")
             language = detect_language(remote_path)
 
             yield remote_path, content, language
@@ -245,6 +247,8 @@ def _fetch_batch_tar(
                         continue
 
                     content = f.read().decode("utf-8", errors="replace")
+                    # Normalize line endings: CR-only (old Mac) and CRLF (Windows) → LF
+                    content = content.replace("\r\n", "\n").replace("\r", "\n")
                     language = detect_language(original_path)
 
                     yield original_path, content, language
