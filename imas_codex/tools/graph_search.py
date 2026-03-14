@@ -590,7 +590,8 @@ class GraphListTool:
         "format: Output format - 'yaml' (default), 'flat', 'json', or 'tree'. "
         "leaf_only: If true, return only leaf nodes (data endpoints, not structures). "
         "max_paths: Maximum number of paths to return per query. "
-        "dd_version: Filter by DD major version (e.g., 3 or 4). None returns all versions."
+        "dd_version: Filter by DD major version (e.g., 3 or 4). None returns all versions. "
+        "response_profile: 'minimal' (default, path IDs only) or 'standard' (includes name, data_type, node_type, documentation, units)."
     )
     async def list_imas_paths(
         self,
@@ -600,6 +601,7 @@ class GraphListTool:
         include_ids_prefix: bool = True,
         max_paths: int | None = None,
         dd_version: int | None = None,
+        response_profile: str = "minimal",
         ctx: Context | None = None,
     ) -> ListPathsResult:
         """List paths from graph."""
@@ -642,13 +644,27 @@ class GraphListTool:
             )
             limit_clause = f"LIMIT {max_paths}" if max_paths else ""
 
+            include_metadata = response_profile != "minimal"
+
+            if include_metadata:
+                return_clause = (
+                    "OPTIONAL MATCH (p)-[:HAS_UNIT]->(u:Unit)\n"
+                    "                RETURN p.id AS id, p.name AS name, "
+                    "p.data_type AS data_type,\n"
+                    "                       p.node_type AS node_type, "
+                    "p.documentation AS documentation,\n"
+                    "                       u.symbol AS units"
+                )
+            else:
+                return_clause = "RETURN p.id AS id"
+
             path_results = self._gc.query(
                 f"""
                 MATCH (p:IMASNode)
                 WHERE p.id STARTS WITH $prefix
                 {leaf_filter}
                 {dd_clause}
-                RETURN p.id AS id
+                {return_clause}
                 ORDER BY p.id
                 {limit_clause}
                 """,
@@ -664,7 +680,7 @@ class GraphListTool:
                     WHERE p.ids = $ids_name
                     {leaf_filter}
                     {dd_clause}
-                    RETURN p.id AS id
+                    {return_clause}
                     ORDER BY p.id
                     {limit_clause}
                     """,
@@ -686,12 +702,28 @@ class GraphListTool:
             else:
                 formatted = sorted(path_ids)
 
+            # Build path_details when metadata is available
+            details: list[dict[str, Any]] | None = None
+            if include_metadata and path_results:
+                details = [
+                    {
+                        "id": r["id"],
+                        "name": r.get("name"),
+                        "data_type": r.get("data_type"),
+                        "node_type": r.get("node_type"),
+                        "documentation": r.get("documentation"),
+                        "units": r.get("units"),
+                    }
+                    for r in path_results
+                ]
+
             results.append(
                 ListPathsResultItem(
                     query=query,
                     path_count=len(path_ids),
                     truncated_to=truncated,
                     paths=formatted,
+                    path_details=details,
                 )
             )
 

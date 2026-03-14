@@ -1,13 +1,14 @@
 """Tool functions for the IMAS mapping pipeline.
 
 Plain functions (not MCP tools) that the pipeline orchestrator calls
-to gather context for the LLM at each step. DD context queries delegate
-to shared Graph*Tool classes in ``imas_codex.tools.graph_search``.
+to gather context for the LLM at each step. All DD context queries
+delegate to shared Graph*Tool classes in ``imas_codex.tools.graph_search``.
 
 Functions that remain local (no shared tool equivalent):
 - query_signal_sources — facility-specific SignalSource traversal
 - fetch_source_code_refs — SignalSource→FacilitySignal→CodeChunk
 - search_existing_mappings — IMASMapping lookup
+- fetch_cross_facility_mappings — cross-facility IMASMapping precedent
 - get_sign_flip_paths — COCOS-specific
 - analyze_units — pint-based unit compatibility
 """
@@ -53,56 +54,28 @@ def fetch_imas_subtree(
     max_paths: int | None = None,
     dd_version: int | None = None,
 ) -> list[dict[str, Any]]:
-    """Return IDS tree structure under *path* (or IDS root).
+    """Return IDS tree structure with full metadata.
 
     Each row contains ``id``, ``name``, ``data_type``, ``node_type``,
     ``documentation``, ``units``.
 
-    Note: This uses direct Cypher because the shared ``GraphListTool``
-    returns only path IDs, not the full metadata this function needs.
+    Delegates to ``GraphListTool.list_imas_paths(response_profile="standard")``.
     """
     if gc is None:
         gc = GraphClient()
 
-    from imas_codex.tools.graph_search import _dd_version_clause
+    from imas_codex.tools.graph_search import GraphListTool
 
-    prefix = f"{ids_name}/{path}" if path else ids_name
-    leaf_filter = (
-        "AND NOT p.data_type IN ['STRUCTURE', 'STRUCT_ARRAY']" if leaf_only else ""
-    )
-    limit_clause = f"LIMIT {max_paths}" if max_paths else ""
-    dd_params: dict[str, Any] = {}
-    dd_clause = _dd_version_clause("p", dd_version, dd_params)
-
-    # When no slash in prefix, match by ids field
-    if "/" not in prefix:
-        cypher = f"""
-            MATCH (p:IMASNode)
-            WHERE p.ids = $ids_name
-            {leaf_filter}
-            {dd_clause}
-            OPTIONAL MATCH (p)-[:HAS_UNIT]->(u:Unit)
-            RETURN p.id AS id, p.name AS name, p.data_type AS data_type,
-                   p.node_type AS node_type, p.documentation AS documentation,
-                   u.symbol AS units
-            ORDER BY p.id
-            {limit_clause}
-        """
-        return gc.query(cypher, ids_name=ids_name, **dd_params)
-
-    cypher = f"""
-        MATCH (p:IMASNode)
-        WHERE p.id STARTS WITH $prefix
-        {leaf_filter}
-        {dd_clause}
-        OPTIONAL MATCH (p)-[:HAS_UNIT]->(u:Unit)
-        RETURN p.id AS id, p.name AS name, p.data_type AS data_type,
-               p.node_type AS node_type, p.documentation AS documentation,
-               u.symbol AS units
-        ORDER BY p.id
-        {limit_clause}
-    """
-    return gc.query(cypher, prefix=prefix + "/", **dd_params)
+    query = f"{ids_name}/{path}" if path else ids_name
+    tool = GraphListTool(gc)
+    result = _run_async(tool.list_imas_paths(
+        paths=query,
+        leaf_only=leaf_only,
+        max_paths=max_paths,
+        dd_version=dd_version,
+        response_profile="standard",
+    ))
+    return result.as_dicts()
 
 
 def fetch_imas_fields(

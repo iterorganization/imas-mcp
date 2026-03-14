@@ -399,6 +399,11 @@ class ListPathsResultItem(BaseModel):
         default=None,
         description="Formatted path listing: str (yaml/json), list[str] (list), dict (dict), or None (count)",
     )
+    path_details: list[dict[str, Any]] | None = Field(
+        default=None,
+        description="Full metadata per path (id, name, data_type, node_type, documentation, units). "
+        "Populated when response_profile='standard'.",
+    )
     error: str | None = Field(default=None, description="Error message if query failed")
 
 
@@ -417,6 +422,14 @@ class ListPathsResult(BaseModel):
     summary: dict[str, Any] = Field(
         default_factory=dict, description="Overall statistics across all queries"
     )
+
+    def as_dicts(self) -> list[dict[str, Any]]:
+        """Return flattened path details for pipeline consumption."""
+        all_details: list[dict[str, Any]] = []
+        for item in self.results:
+            if item.path_details:
+                all_details.extend(item.path_details)
+        return all_details
 
 
 # ============================================================================
