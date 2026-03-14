@@ -48,8 +48,9 @@ class TestPipelinePhase:
         # Populate the cache so done can check it
         phase.refresh_has_work()
         assert not phase.done
-        # idle_count should have been reset by refresh_has_work
-        assert phase.idle_count == 0
+        # idle_count is NOT reset by refresh_has_work — workers manage
+        # their own idle state via record_activity/record_idle
+        assert phase.idle_count == 2
 
     def test_done_with_has_work_fn_returns_false(self):
         phase = PipelinePhase("scan", has_work_fn=lambda: False, idle_threshold=2)
