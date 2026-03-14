@@ -436,20 +436,22 @@ def search_existing_mappings(
     if gc is None:
         gc = GraphClient()
 
-    mapping_id = f"{facility}:{ids_name}"
-
-    # IMASMapping node
+    # Query by facility_id + ids_name (supports versioned IDs)
     mapping_rows = gc.query(
         """
-        MATCH (m:IMASMapping {id: $id})
+        MATCH (m:IMASMapping {facility_id: $facility, ids_name: $ids_name})
         RETURN m.id AS id, m.facility_id AS facility_id,
                m.ids_name AS ids_name, m.dd_version AS dd_version,
                m.status AS status, m.provider AS provider
+        ORDER BY m.dd_version DESC
+        LIMIT 1
         """,
-        id=mapping_id,
+        facility=facility,
+        ids_name=ids_name,
     )
 
     mapping = mapping_rows[0] if mapping_rows else None
+    mapping_id = mapping["id"] if mapping else None
 
     # Sections via POPULATES
     sections: list[dict[str, Any]] = []

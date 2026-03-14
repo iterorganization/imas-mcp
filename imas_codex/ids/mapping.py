@@ -439,6 +439,24 @@ def gather_context(
     except Exception:
         logger.warning("Cluster listing unavailable — continuing without it")
 
+    # Query target DD version's COCOS convention
+    dd_cocos: int | None = None
+    try:
+        cocos_rows = gc.query(
+            """
+            MATCH (v:DDVersion)
+            WHERE v.major = $dd_major
+            RETURN v.cocos AS cocos
+            LIMIT 1
+            """,
+            dd_major=dd_version,
+        )
+        if cocos_rows and cocos_rows[0].get("cocos"):
+            dd_cocos = cocos_rows[0]["cocos"]
+            logger.info("Target DD COCOS convention: %s", dd_cocos)
+    except Exception:
+        logger.debug("Could not query DD COCOS — continuing without it")
+
     return {
         "groups": groups,
         "subtree": subtree,
@@ -447,6 +465,7 @@ def gather_context(
         "existing": existing,
         "cocos_paths": cocos_paths,
         "dd_version": dd_version,
+        "dd_cocos": dd_cocos,
         "section_clusters": section_clusters,
         "target_domains": target_domains,
     }
@@ -540,18 +559,24 @@ def map_signals(
 
         # Build per-source COCOS context
         source_cocos = sg_detail.get("rep_cocos")
+        dd_cocos = context.get("dd_cocos")
         cocos_context = ""
-        if source_cocos:
+        if source_cocos or dd_cocos:
+            parts = []
+            if source_cocos:
+                parts.append(f"Signal COCOS convention: {source_cocos}")
+            if dd_cocos:
+                parts.append(f"Target DD COCOS convention: {dd_cocos}")
             flip_paths = [
                 p for p in context["cocos_paths"]
                 if p.startswith(section_path)
             ]
-            cocos_context = f"Signal COCOS convention: {source_cocos}"
             if flip_paths:
-                cocos_context += (
-                    "\nTarget IMAS paths requiring sign flip:\n"
+                parts.append(
+                    "Target IMAS paths requiring sign flip:\n"
                     + "\n".join(f"- {p}" for p in flip_paths)
                 )
+            cocos_context = "\n".join(parts)
 
         # Combine fields for identifier schema extraction
         all_fields = subtree_fields or fields
@@ -844,6 +869,24 @@ def generate_mapping(
     """
     if gc is None:
         gc = GraphClient()
+
+    if dd_version is None:
+        # Try to find the latest DD version ≥ 4.x in the graph
+        try:
+            rows = gc.query(
+                """
+                MATCH (v:DDVersion)
+                WHERE v.major >= 4
+                RETURN v.id AS id
+                ORDER BY v.major DESC, v.minor DESC, v.patch DESC
+                LIMIT 1
+                """
+            )
+            if rows:
+                dd_version = rows[0]["id"]
+                logger.info("Auto-detected DD version from graph: %s", dd_version)
+        except Exception:
+            pass
 
     if dd_version is None:
         from imas_codex import dd_version as default_dd
