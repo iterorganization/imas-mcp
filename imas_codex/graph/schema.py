@@ -571,22 +571,88 @@ class GraphSchema:
             List of Cypher CREATE INDEX statements.
         """
         if indexes is None:
-            # Default indexes based on common query patterns
+            # Default indexes based on common query patterns.
+            #
+            # Every label that participates in claim-loop queries needs
+            # `status` + `claim_token` indexes at minimum.  Properties
+            # used in WHERE filters on large tables (>10 K nodes) are
+            # also indexed to avoid full-label scans.
+            #
+            # Generated from a full audit of all Cypher queries in the
+            # codebase — see commit message for details.
             indexes = {
+                # --- Facility & infrastructure ---
                 "Facility": ["ssh_host"],
-                "FacilityPath": [
-                    "id",
-                    "device_inode",
-                ],  # device_inode for bind mount dedup
                 "MDSplusServer": ["role"],
-                "SignalNode": ["node_type"],
                 "Diagnostic": ["category"],
                 "AnalysisCode": ["code_type"],
                 "Tool": ["category", "available"],
+                # --- Path discovery (275 K nodes) ---
+                "FacilityPath": [
+                    "id",
+                    "device_inode",
+                    "status",
+                    "claim_token",
+                ],
+                # --- Code discovery (220 K nodes) ---
                 "CodeFile": [
                     "status",
                     "content_hash",
-                ],  # claim query perf: status filter + dedup gate
+                    "claim_token",
+                ],
+                "CodeChunk": [
+                    "code_example_id",
+                ],
+                "CodeExample": [
+                    "source_file",
+                ],
+                # --- Signal discovery (55 K + 89 K nodes) ---
+                "FacilitySignal": [
+                    "status",
+                    "claim_token",
+                    "diagnostic",
+                ],
+                "SignalNode": [
+                    "node_type",
+                    "data_source_name",
+                    "claim_token",
+                ],
+                "SignalEpoch": [
+                    "status",
+                    "data_source_name",
+                    "claim_token",
+                ],
+                "SignalSource": [
+                    "status",
+                    "data_source_name",
+                    "claim_token",
+                ],
+                # --- Wiki discovery (28 K + 128 K nodes) ---
+                "WikiPage": [
+                    "status",
+                    "claim_token",
+                    "url",
+                ],
+                "WikiChunk": [
+                    "wiki_page_id",
+                ],
+                # --- Document pipeline (41 K nodes) ---
+                "Document": [
+                    "status",
+                    "claim_token",
+                    "document_type",
+                ],
+                "Image": [
+                    "status",
+                ],
+                # --- IMAS data dictionary (61 K nodes) ---
+                "IMASNode": [
+                    "ids",
+                ],
+                "IMASMapping": [
+                    "status",
+                    "ids_name",
+                ],
             }
 
         statements = []
