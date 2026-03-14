@@ -71,6 +71,21 @@ class TestNormalizeIdsFilter:
         result = normalize_ids_filter("  equilibrium magnetics  ")
         assert result == ["equilibrium", "magnetics"]
 
+    def test_json_array_string(self):
+        """Test JSON array string from MCP transport."""
+        result = normalize_ids_filter('["equilibrium", "magnetics"]')
+        assert result == ["equilibrium", "magnetics"]
+
+    def test_json_array_single(self):
+        """Test JSON array string with single element."""
+        result = normalize_ids_filter('["equilibrium"]')
+        assert result == ["equilibrium"]
+
+    def test_json_array_empty(self):
+        """Test empty JSON array returns None."""
+        result = normalize_ids_filter("[]")
+        assert result is None
+
 
 class TestNormalizePathsInput:
     """Tests for normalize_paths_input function."""
@@ -121,6 +136,18 @@ class TestNormalizePathsInput:
         """Test that bracket annotations are stripped."""
         result = normalize_paths_input(["time_slice[1]/profiles_1d[:]/psi"])
         assert result == ["time_slice/profiles_1d/psi"]
+
+    def test_json_array_string(self):
+        """Test JSON array string from MCP transport."""
+        result = normalize_paths_input(
+            '["magnetics/flux_loop/flux/data", "core_profiles/profiles_1d"]'
+        )
+        assert result == ["magnetics/flux_loop/flux/data", "core_profiles/profiles_1d"]
+
+    def test_json_array_with_annotations(self):
+        """Test JSON array containing paths with annotations."""
+        result = normalize_paths_input('["flux_loop(i1)/flux/data"]')
+        assert result == ["flux_loop/flux/data"]
 
 
 class TestValidateQuery:
