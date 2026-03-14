@@ -216,6 +216,7 @@ async def context_worker(
     One-shot worker: gathers context and marks phase done.
     """
     wlog = WorkerLogAdapter(logger, worker_name="context_worker")
+    wlog.info("Starting context gathering for %s/%s", state.facility, state.target_ids)
 
     if on_progress:
         on_progress("gathering context", state.context_stats)
@@ -233,6 +234,7 @@ async def context_worker(
         state.context = context
         state.sources_found = len(context.get("groups", []))
         state.context_stats.processed = 1
+        wlog.info("Context gathered: %d sources found", state.sources_found)
 
         if on_progress:
             on_progress(
@@ -254,6 +256,7 @@ async def assign_worker(
 ) -> None:
     """Worker that assigns signal sources to IMAS sections via LLM."""
     wlog = WorkerLogAdapter(logger, worker_name="assign_worker")
+    wlog.info("Assign worker ready, waiting for context phase")
 
     # Wait for context phase
     while not state.stop_requested:
@@ -281,6 +284,7 @@ async def assign_worker(
         state.context["sections"] = sections
         state.sections_assigned = len(sections.assignments)
         state.assign_stats.processed = state.sections_assigned
+        wlog.info("%d sections assigned, cost $%.4f", state.sections_assigned, state.cost.total_usd)
 
         if on_progress:
             on_progress(
@@ -302,6 +306,7 @@ async def map_worker(
 ) -> None:
     """Worker that generates signal mappings per section via LLM."""
     wlog = WorkerLogAdapter(logger, worker_name="map_worker")
+    wlog.info("Map worker ready, waiting for assign phase")
 
     # Wait for assign phase
     while not state.stop_requested:
@@ -341,6 +346,10 @@ async def map_worker(
         total = sum(len(b.mappings) for b in batches)
         state.bindings_total = total
         state.map_stats.processed = state.sections_mapped
+        wlog.info(
+            "%d sections mapped, %d bindings, cost $%.4f",
+            state.sections_mapped, total, state.cost.total_usd,
+        )
 
         if on_progress:
             on_progress(
@@ -362,6 +371,7 @@ async def validate_worker(
 ) -> None:
     """Worker that validates and persists mappings."""
     wlog = WorkerLogAdapter(logger, worker_name="validate_worker")
+    wlog.info("Validate worker ready, waiting for map phase")
 
     # Wait for map phase
     while not state.stop_requested:
@@ -442,6 +452,10 @@ async def validate_worker(
 
         state.context["validated"] = validated
         state.context["assembly"] = assembly
+        wlog.info(
+            "Validation complete: %d bindings passed, %d escalations, total cost $%.4f",
+            state.bindings_passed, state.escalations, state.cost.total_usd,
+        )
 
     except Exception as e:
         wlog.error("Validation/persistence failed: %s", e)
