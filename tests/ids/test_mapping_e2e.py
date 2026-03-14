@@ -447,7 +447,7 @@ class TestPersistMappingResult:
 
     def test_returns_mapping_id(self, mock_gc, sample_validated_result):
         result = persist_mapping_result(sample_validated_result, gc=mock_gc)
-        assert result == "jet:pf_active"
+        assert result == "jet:pf_active:4.1.1"
 
     def test_escalation_persisted(self, mock_gc, sample_validated_result):
         persist_mapping_result(sample_validated_result, gc=mock_gc)

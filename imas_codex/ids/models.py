@@ -14,10 +14,11 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from imas_codex.graph.client import GraphClient
 
@@ -72,6 +73,18 @@ class EscalationFlag(BaseModel):
     reason: str = Field(description="Why this mapping is uncertain")
 
 
+# Allowed identifiers in transform expressions — value variable,
+# math/numpy builtins, and imas_codex utility functions.
+_TRANSFORM_ALLOWED_NAMES: frozenset[str] = frozenset({
+    "value", "math", "np",
+    "abs", "float", "int", "str", "len",
+    "convert_units", "cocos_sign",
+    "radians", "degrees", "pi", "sqrt", "log", "log10", "exp",
+    "sin", "cos", "tan", "asin", "acos", "atan", "atan2",
+    "True", "False", "None",
+})
+
+
 class SignalMappingEntry(BaseModel):
     """Single signal mapping entry with transform details."""
 
@@ -93,6 +106,37 @@ class SignalMappingEntry(BaseModel):
     )
     confidence: float = Field(ge=0, le=1, description="Mapping confidence 0-1")
     reasoning: str = Field(default="", description="Brief justification")
+
+    @field_validator("transform_expression")
+    @classmethod
+    def validate_transform_expression(cls, v: str) -> str:
+        """Validate transform expression contains only safe constructs."""
+        if not v or v == "value":
+            return v
+
+        # Extract all identifier-like tokens from the expression
+        identifiers = set(re.findall(r"\b([a-zA-Z_]\w*)\b", v))
+        unknown = identifiers - _TRANSFORM_ALLOWED_NAMES
+        if unknown:
+            logger.warning(
+                "Transform expression contains unknown identifiers: %s "
+                "(expression: %s). Allowed: %s",
+                unknown, v, sorted(_TRANSFORM_ALLOWED_NAMES),
+            )
+
+        # Block dangerous patterns (import, exec, eval, __builtins__)
+        dangerous = re.findall(
+            r"\b(import|exec|eval|compile|__\w+__|open|getattr|setattr"
+            r"|delattr|globals|locals|vars|dir|type|super)\b",
+            v,
+        )
+        if dangerous:
+            raise ValueError(
+                f"Transform expression contains forbidden construct(s): "
+                f"{dangerous}. Expression: {v}"
+            )
+
+        return v
 
 
 class SignalMappingBatch(BaseModel):
