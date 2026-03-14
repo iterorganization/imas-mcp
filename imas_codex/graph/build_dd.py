@@ -35,7 +35,6 @@ from imas_codex import dd_version as current_dd_version
 from imas_codex.core.exclusions import ExclusionChecker
 from imas_codex.core.physics_categorization import physics_categorizer
 from imas_codex.core.progress_monitor import (
-    create_build_monitor,
     create_progress_monitor,
 )
 from imas_codex.graph.client import GraphClient
@@ -1348,6 +1347,423 @@ def _check_graph_up_to_date(
         return False
 
 
+# =============================================================================
+# Phase Functions (called by workers and by build_dd_graph orchestrator)
+# =============================================================================
+
+
+def phase_extract(
+    versions: list[str],
+    ids_filter: set[str] | None = None,
+) -> tuple[dict[str, dict], set[str]]:
+    """Extract paths from DD XML for all versions.
+
+    Pure parsing — no graph client needed.
+
+    Returns:
+        (version_data, all_units) tuple where version_data maps
+        version string to extracted data dict.
+    """
+    all_units: set[str] = set()
+    version_data: dict[str, dict] = {}
+
+    for version in versions:
+        try:
+            data = extract_paths_for_version(version, ids_filter=ids_filter)
+            version_data[version] = data
+            all_units.update(data["units"])
+        except Exception as e:
+            logger.error("Error extracting %s: %s", version, e)
+
+    return version_data, all_units
+
+
+def phase_build(
+    client: GraphClient,
+    versions: list[str],
+    version_data: dict[str, dict],
+    all_units: set[str],
+    *,
+    dry_run: bool = False,
+) -> dict[str, int]:
+    """Create graph nodes from extracted data.
+
+    Creates Unit, CoordinateSpec, IdentifierSchema nodes; IDS and
+    IMASNode nodes per version with hierarchical relationships;
+    RENAMED_TO, COCOS label, and field metadata updates.
+
+    Returns:
+        Stats dict with creation/update counts.
+    """
+    stats: dict[str, int] = {
+        "ids_created": 0,
+        "paths_created": 0,
+        "units_created": 0,
+        "path_changes_created": 0,
+        "definitions_changed": 0,
+        "cocos_labels_updated": 0,
+        "identifier_schemas_created": 0,
+    }
+
+    # Create Unit / CoordinateSpec nodes
+    if not dry_run:
+        _create_unit_nodes(client, all_units)
+    stats["units_created"] = len(all_units)
+
+    all_coord_specs: set[str] = set()
+    for ver_data in version_data.values():
+        for path_info in ver_data["paths"].values():
+            for coord_str in path_info.get("coordinates", []):
+                if coord_str and coord_str.startswith("1..."):
+                    all_coord_specs.add(coord_str)
+    if not dry_run:
+        _create_coordinate_spec_nodes(client, all_coord_specs)
+
+    # Create IdentifierSchema nodes from the latest version's enum data
+    if not dry_run and version_data:
+        latest_ver = sorted(version_data.keys())[-1]
+        latest_paths = version_data[latest_ver]["paths"]
+        id_schemas = _collect_identifier_schemas(latest_paths)
+        if id_schemas:
+            _create_identifier_schema_nodes(client, id_schemas)
+        stats["identifier_schemas_created"] = len(id_schemas)
+
+    # Per-version: IDS + IMASNode + relationships + path changes
+    prev_paths: dict[str, dict] = {}
+
+    for i, version in enumerate(versions):
+        if version not in version_data:
+            continue
+
+        data = version_data[version]
+        changes = compute_version_changes(prev_paths, data["paths"])
+
+        if not dry_run:
+            _batch_upsert_ids_nodes(client, data["ids_info"], version, i == 0)
+            stats["ids_created"] = max(stats["ids_created"], len(data["ids_info"]))
+
+            new_paths_data = {p: data["paths"][p] for p in changes["added"]}
+            _batch_create_path_nodes(client, new_paths_data, version)
+            stats["paths_created"] += len(changes["added"])
+
+            _batch_mark_paths_deprecated(client, changes["removed"], version)
+
+            change_count = _batch_create_path_changes(
+                client, changes["changed"], version
+            )
+            stats["path_changes_created"] += change_count
+
+            # Count paths with documentation (definition) changes
+            for path_changes in changes["changed"].values():
+                if any(c["field"] == "documentation" for c in path_changes):
+                    stats["definitions_changed"] += 1
+
+        prev_paths = data["paths"]
+
+    # RENAMED_TO relationships
+    if not dry_run:
+        mappings = load_path_mappings(current_dd_version)
+        _batch_create_renamed_to(client, mappings.get("old_to_new", {}))
+
+    # Update cocos_label_transformation on existing IMASNode nodes
+    if not dry_run and version_data:
+        latest_version = sorted(version_data.keys())[-1]
+        latest_data = version_data[latest_version]
+        latest_labeled = set()
+        cocos_updates = []
+        for path, info in latest_data["paths"].items():
+            label = info.get("cocos_label_transformation")
+            if label:
+                latest_labeled.add(path)
+                cocos_updates.append(
+                    {"id": path, "cocos_label_transformation": label}
+                )
+        if cocos_updates:
+            for i in range(0, len(cocos_updates), 1000):
+                batch = cocos_updates[i : i + 1000]
+                client.query(
+                    """
+                    UNWIND $paths AS p
+                    MATCH (path:IMASNode {id: p.id})
+                    SET path.cocos_label_transformation = p.cocos_label_transformation
+                    """,
+                    paths=batch,
+                )
+            stats["cocos_labels_updated"] = len(cocos_updates)
+
+        # Clear stale labels on paths that lost COCOS sensitivity
+        client.query(
+            """
+            MATCH (p:IMASNode)
+            WHERE p.cocos_label_transformation IS NOT NULL
+            AND NOT p.id IN $labeled_paths
+            SET p.cocos_label_transformation = null
+            """,
+            labeled_paths=list(latest_labeled),
+        )
+
+    # Final-pass: field-level metadata from latest version
+    if not dry_run and version_data:
+        latest_version = sorted(version_data.keys())[-1]
+        latest_paths = version_data[latest_version]["paths"]
+        meta_updates = []
+        for path, info in latest_paths.items():
+            update: dict = {"id": path}
+            has_update = False
+            for key in (
+                "lifecycle_status",
+                "lifecycle_version",
+                "timebasepath",
+                "path_doc",
+                "introduced_after_version",
+                "change_nbc_version",
+                "change_nbc_description",
+                "change_nbc_previous_name",
+                "change_nbc_previous_type",
+                "cocos_transformation_expression",
+                "alternative_coordinate1",
+                "url",
+                "coordinate1_same_as",
+                "coordinate2_same_as",
+                "coordinate3_same_as",
+                "coordinate4_same_as",
+                "coordinate5_same_as",
+                "coordinate6_same_as",
+            ):
+                val = info.get(key)
+                update[key] = val
+                if val:
+                    has_update = True
+            if has_update:
+                meta_updates.append(update)
+        if meta_updates:
+            for i in range(0, len(meta_updates), 1000):
+                batch = meta_updates[i : i + 1000]
+                client.query(
+                    """
+                    UNWIND $paths AS p
+                    MATCH (path:IMASNode {id: p.id})
+                    SET path.lifecycle_status = p.lifecycle_status,
+                        path.lifecycle_version = p.lifecycle_version,
+                        path.timebasepath = p.timebasepath,
+                        path.path_doc = p.path_doc,
+                        path.introduced_after_version = p.introduced_after_version,
+                        path.change_nbc_version = p.change_nbc_version,
+                        path.change_nbc_description = p.change_nbc_description,
+                        path.change_nbc_previous_name = p.change_nbc_previous_name,
+                        path.change_nbc_previous_type = p.change_nbc_previous_type,
+                        path.cocos_transformation_expression = p.cocos_transformation_expression,
+                        path.alternative_coordinate1 = p.alternative_coordinate1,
+                        path.url = p.url,
+                        path.coordinate1_same_as = p.coordinate1_same_as,
+                        path.coordinate2_same_as = p.coordinate2_same_as,
+                        path.coordinate3_same_as = p.coordinate3_same_as,
+                        path.coordinate4_same_as = p.coordinate4_same_as,
+                        path.coordinate5_same_as = p.coordinate5_same_as,
+                        path.coordinate6_same_as = p.coordinate6_same_as
+                    """,
+                    paths=batch,
+                )
+
+        # Create HAS_IDENTIFIER_SCHEMA relationships
+        id_rels = []
+        for path, info in latest_paths.items():
+            enum_name = info.get("identifier_enum_name")
+            if enum_name:
+                id_rels.append({"id": path, "schema_name": enum_name})
+        if id_rels:
+            client.query(
+                """
+                UNWIND $rels AS r
+                MATCH (path:IMASNode {id: r.id})
+                MATCH (schema:IdentifierSchema {id: r.schema_name})
+                MERGE (path)-[:HAS_IDENTIFIER_SCHEMA]->(schema)
+            """,
+                rels=id_rels,
+            )
+
+        # Create COORDINATE_SAME_AS relationships
+        csa_rels = []
+        for path, info in latest_paths.items():
+            ids_name = path.split("/", 1)[0]
+            for dim in range(1, 7):
+                csa_raw = info.get(f"coordinate{dim}_same_as")
+                if not csa_raw or " OR " in csa_raw:
+                    continue
+                target_path = f"{ids_name}/{_strip_dd_indices(csa_raw)}"
+                csa_rels.append(
+                    {
+                        "source_id": path,
+                        "target_id": target_path,
+                        "dimension": dim,
+                    }
+                )
+        if csa_rels:
+            for i in range(0, len(csa_rels), 1000):
+                batch = csa_rels[i : i + 1000]
+                client.query(
+                    """
+                    UNWIND $rels AS r
+                    MATCH (path:IMASNode {id: r.source_id})
+                    MATCH (target:IMASNode {id: r.target_id})
+                    MERGE (path)-[rel:COORDINATE_SAME_AS]->(target)
+                    SET rel.dimension = r.dimension
+                """,
+                    rels=batch,
+                )
+
+    return stats
+
+
+def phase_enrich(
+    client: GraphClient,
+    *,
+    version: str | None = None,
+    model: str | None = None,
+    batch_size: int = 50,
+    ids_filter: set[str] | None = None,
+    force: bool = False,
+) -> dict[str, int | float]:
+    """LLM enrichment of path descriptions.
+
+    Wraps :func:`enrich_imas_paths` and returns stats suitable for
+    merging into the build stats dict.
+    """
+    from imas_codex.graph.dd_enrichment import enrich_imas_paths
+
+    dd_version = version or current_dd_version
+
+    enrichment_stats = enrich_imas_paths(
+        client=client,
+        version=dd_version,
+        model=model,
+        batch_size=batch_size,
+        ids_filter=ids_filter,
+        use_rich=False,
+        force=force,
+    )
+    return {
+        "enriched_llm": enrichment_stats.get("enriched_llm", 0),
+        "enriched_template": enrichment_stats.get("enriched_template", 0),
+        "enrichment_cached": enrichment_stats.get("enrichment_cached", 0),
+        "enrichment_cost": enrichment_stats.get("enrichment_cost", 0.0),
+    }
+
+
+def phase_embed(
+    client: GraphClient,
+    versions: list[str],
+    version_data: dict[str, dict],
+    *,
+    include_enrichment: bool = True,
+    enriched_llm_count: int = 0,
+    embedding_model: str | None = None,
+    force: bool = False,
+    no_hash: bool = False,
+) -> dict[str, int]:
+    """Generate vector embeddings for DD paths.
+
+    Merges version data, filters embeddable paths, optionally merges
+    enriched descriptions from the graph, then generates embeddings.
+
+    Returns:
+        Stats dict with embedding counts.
+    """
+    stats: dict[str, int] = {
+        "paths_filtered": 0,
+        "error_relationships": 0,
+        "embeddings_updated": 0,
+        "embeddings_cached": 0,
+    }
+
+    merged_paths: dict[str, dict] = {}
+    merged_ids_info: dict[str, dict] = {}
+    for version in versions:
+        vdata = version_data.get(version)
+        if vdata:
+            merged_paths.update(vdata["paths"])
+            merged_ids_info.update(vdata["ids_info"])
+
+    # Merge enriched descriptions from graph into path data
+    if include_enrichment and enriched_llm_count > 0:
+        enriched_paths_query = """
+        MATCH (p:IMASNode)
+        WHERE p.enrichment_source = 'llm'
+        AND p.description IS NOT NULL
+        RETURN p.id AS id,
+               p.description AS description,
+               p.keywords AS keywords
+        """
+        for r in client.query(enriched_paths_query):
+            pid = r["id"]
+            if pid in merged_paths:
+                merged_paths[pid] = dict(merged_paths[pid])
+                merged_paths[pid]["description"] = r["description"]
+                merged_paths[pid]["keywords"] = r["keywords"] or []
+
+    if not merged_paths:
+        return stats
+
+    embeddable_paths, error_relationships = filter_embeddable_paths(merged_paths)
+    stats["paths_filtered"] = len(merged_paths) - len(embeddable_paths)
+
+    if error_relationships:
+        stats["error_relationships"] = _batch_create_error_relationships(
+            client, error_relationships
+        )
+
+    # Force rebuild if enrichment produced new descriptions
+    force_for_embed = no_hash or (include_enrichment and enriched_llm_count > 0)
+
+    embedding_stats = update_path_embeddings(
+        client=client,
+        paths_data=embeddable_paths,
+        ids_info=merged_ids_info,
+        model_name=embedding_model,
+        force_rebuild=force or force_for_embed,
+        use_rich=False,
+        dd_version=current_dd_version,
+        track_changes=True,
+    )
+    stats["embeddings_updated"] = embedding_stats["updated"]
+    stats["embeddings_cached"] = embedding_stats["cached"]
+
+    client.query(
+        """
+        MATCH (v:DDVersion {id: $version})
+        SET v.embeddings_built_at = datetime(),
+            v.embeddings_model = $model,
+            v.embeddings_count = $count
+        """,
+        version=current_dd_version,
+        model=embedding_model,
+        count=embedding_stats["total"],
+    )
+
+    return stats
+
+
+def phase_cluster(
+    client: GraphClient,
+    *,
+    dry_run: bool = False,
+    no_hash: bool = False,
+    skip_labels: bool = False,
+) -> int:
+    """Import semantic clusters.
+
+    Returns:
+        Number of cluster nodes created.
+    """
+    return _import_clusters(
+        client,
+        dry_run,
+        use_rich=False,
+        no_hash=no_hash,
+        skip_labels=skip_labels,
+    )
+
+
 def build_dd_graph(
     client: GraphClient,
     versions: list[str] | None = None,
@@ -1363,13 +1779,16 @@ def build_dd_graph(
     no_hash: bool = False,
     skip_cluster_labels: bool = False,
 ) -> dict:
-    """
-    Build the IMAS DD graph.
+    """Build the IMAS DD graph.
+
+    Orchestrates the five build phases: EXTRACT → BUILD → ENRICH →
+    EMBED → CLUSTER.  Each phase is implemented as a standalone
+    function (``phase_extract``, ``phase_build``, etc.) that can also
+    be called independently by async workers.
 
     On a second run with identical parameters the function verifies the
-    graph is already up-to-date via a build hash stored on the current ``DDVersion``
-    and returns immediately, avoiding any expensive re-extraction or
-    re-embedding.
+    graph is already up-to-date via a build hash stored on the current
+    ``DDVersion`` and returns immediately.
 
     Args:
         client: Neo4j GraphClient
@@ -1380,14 +1799,14 @@ def build_dd_graph(
         include_enrichment: Whether to run LLM description enrichment (default True)
         dry_run: If True, don't write to graph
         use_rich: Force rich progress (True), logging (False), or auto (None)
-        embedding_model: Embedding model name (defaults to configured model from settings)
-        enrichment_model: LLM model for enrichment (defaults to language model from settings)
-        force_embeddings: Bypass top-level build hash check (per-item hashes still apply)
-        no_hash: Skip per-item hash caching — recompute all embeddings/clusters
+        embedding_model: Embedding model name
+        enrichment_model: LLM model for enrichment
+        force_embeddings: Bypass top-level build hash check
+        no_hash: Skip per-item hash caching — recompute everything
         skip_cluster_labels: Skip LLM label embedding for clusters
 
     Returns:
-        Statistics about the build
+        Statistics dict about the build
     """
     all_versions = get_all_dd_versions()
 
@@ -1398,7 +1817,7 @@ def build_dd_graph(
             if v not in all_versions:
                 raise ValueError(f"Unknown DD version: {v}")
 
-    stats = {
+    stats: dict = {
         "versions_processed": 0,
         "ids_created": 0,
         "paths_created": 0,
@@ -1436,417 +1855,65 @@ def build_dd_graph(
             stats["skipped"] = True
             return stats
 
-    # --- Build with progress tracking ---
-    monitor = create_build_monitor(use_rich=use_rich, logger=logger)
+    # --- Preflight ---
+    if not dry_run:
+        _ensure_indexes(client)
+        _create_version_nodes(client, versions)
+    stats["versions_processed"] = len(versions)
 
-    with monitor.managed_build():
-        # Ensure indexes exist for performance
-        if not dry_run:
-            monitor.status("Creating indexes...")
-            _ensure_indexes(client)
+    # --- Phase 1: Extract ---
+    version_data, all_units = phase_extract(versions, ids_filter)
 
-        # Create DDVersion nodes
-        if not dry_run:
-            monitor.status(f"Creating {len(versions)} version nodes...")
-            _create_version_nodes(client, versions)
-        stats["versions_processed"] = len(versions)
+    # --- Phase 2: Build ---
+    build_stats = phase_build(
+        client, versions, version_data, all_units, dry_run=dry_run
+    )
+    stats.update(build_stats)
 
-        # Phase 1: Extract paths from all versions
-        all_units: set[str] = set()
-        version_data: dict[str, dict] = {}
+    # --- Phase 3: Enrich ---
+    if include_enrichment and not dry_run:
+        enrich_stats = phase_enrich(
+            client,
+            version=current_dd_version,
+            model=enrichment_model,
+            ids_filter=ids_filter,
+            force=no_hash,
+        )
+        stats.update(enrich_stats)
 
-        with monitor.phase(
-            "Extract paths",
-            items=versions,
-            description_template="Extracting {item}",
-            item_label="versions",
-        ) as phase:
-            for version in versions:
-                try:
-                    data = extract_paths_for_version(version, ids_filter=ids_filter)
-                    version_data[version] = data
-                    all_units.update(data["units"])
-                    phase.update(version)
-                except Exception as e:
-                    logger.error(f"Error extracting {version}: {e}")
-                    phase.update(version, error=str(e))
-            phase.set_detail(
-                f"{sum(len(d['paths']) for d in version_data.values())} paths"
-            )
+    # --- Phase 4: Embed ---
+    if include_embeddings and not dry_run:
+        embed_stats = phase_embed(
+            client,
+            versions,
+            version_data,
+            include_enrichment=include_enrichment,
+            enriched_llm_count=stats.get("enriched_llm", 0),
+            embedding_model=embedding_model,
+            force=force_embeddings,
+            no_hash=no_hash,
+        )
+        stats.update(embed_stats)
 
-        # Create Unit / CoordinateSpec nodes
-        if not dry_run:
-            monitor.status(f"Creating {len(all_units)} unit nodes...")
-            _create_unit_nodes(client, all_units)
-        stats["units_created"] = len(all_units)
+    # --- Phase 5: Cluster ---
+    if include_clusters:
+        stats["clusters_created"] = phase_cluster(
+            client,
+            dry_run=dry_run,
+            no_hash=no_hash,
+            skip_labels=skip_cluster_labels,
+        )
 
-        all_coord_specs: set[str] = set()
-        for ver_data in version_data.values():
-            for path_info in ver_data["paths"].values():
-                for coord_str in path_info.get("coordinates", []):
-                    if coord_str and coord_str.startswith("1..."):
-                        all_coord_specs.add(coord_str)
-        if not dry_run:
-            monitor.status(f"Creating {len(all_coord_specs)} coordinate spec nodes...")
-            _create_coordinate_spec_nodes(client, all_coord_specs)
-
-        # Create IdentifierSchema nodes from the latest version's enum data
-        if not dry_run and version_data:
-            latest_ver = sorted(version_data.keys())[-1]
-            latest_paths = version_data[latest_ver]["paths"]
-            id_schemas = _collect_identifier_schemas(latest_paths)
-            if id_schemas:
-                monitor.status(f"Creating {len(id_schemas)} identifier schema nodes...")
-                _create_identifier_schema_nodes(client, id_schemas)
-            stats["identifier_schemas_created"] = len(id_schemas)
-
-        # Phase 2: Build graph nodes (IDS + IMASNode + relationships)
-        prev_paths: dict[str, dict] = {}
-
-        with monitor.phase(
-            "Build graph",
-            items=versions,
-            description_template="Building {item}",
-            item_label="versions",
-        ) as phase:
-            for i, version in enumerate(versions):
-                if version not in version_data:
-                    phase.update(version, error="No data")
-                    continue
-
-                data = version_data[version]
-                changes = compute_version_changes(prev_paths, data["paths"])
-
-                if not dry_run:
-                    _batch_upsert_ids_nodes(client, data["ids_info"], version, i == 0)
-                    stats["ids_created"] = max(
-                        stats["ids_created"], len(data["ids_info"])
-                    )
-
-                    new_paths_data = {p: data["paths"][p] for p in changes["added"]}
-                    _batch_create_path_nodes(client, new_paths_data, version)
-                    stats["paths_created"] += len(changes["added"])
-
-                    _batch_mark_paths_deprecated(client, changes["removed"], version)
-
-                    change_count = _batch_create_path_changes(
-                        client, changes["changed"], version
-                    )
-                    stats["path_changes_created"] += change_count
-
-                    # Count paths with documentation (definition) changes
-                    for path_changes in changes["changed"].values():
-                        if any(c["field"] == "documentation" for c in path_changes):
-                            stats["definitions_changed"] += 1
-
-                prev_paths = data["paths"]
-                phase.update(version)
-
-        # RENAMED_TO relationships
-        if not dry_run:
-            monitor.status("Creating RENAMED_TO relationships...")
-            mappings = load_path_mappings(current_dd_version)
-            _batch_create_renamed_to(client, mappings.get("old_to_new", {}))
-
-        # Update cocos_label_transformation on existing IMASNode nodes
-        # Paths created in early versions lack COCOS labels added in later
-        # versions (3.28.1+). Apply the latest version's labels to all nodes,
-        # and clear labels on paths that lost COCOS sensitivity in DD4.
-        if not dry_run and version_data:
-            latest_version = sorted(version_data.keys())[-1]
-            latest_data = version_data[latest_version]
-            latest_labeled = set()
-            cocos_updates = []
-            for path, info in latest_data["paths"].items():
-                label = info.get("cocos_label_transformation")
-                if label:
-                    latest_labeled.add(path)
-                    cocos_updates.append(
-                        {"id": path, "cocos_label_transformation": label}
-                    )
-            if cocos_updates:
-                monitor.status(
-                    f"Updating {len(cocos_updates)} paths with COCOS labels..."
-                )
-                for i in range(0, len(cocos_updates), 1000):
-                    batch = cocos_updates[i : i + 1000]
-                    client.query(
-                        """
-                        UNWIND $paths AS p
-                        MATCH (path:IMASNode {id: p.id})
-                        SET path.cocos_label_transformation = p.cocos_label_transformation
-                        """,
-                        paths=batch,
-                    )
-                stats["cocos_labels_updated"] = len(cocos_updates)
-
-            # Clear stale labels on paths that no longer have COCOS sensitivity
-            # (e.g., psi_like removed in DD4)
-            client.query(
-                """
-                MATCH (p:IMASNode)
-                WHERE p.cocos_label_transformation IS NOT NULL
-                AND NOT p.id IN $labeled_paths
-                SET p.cocos_label_transformation = null
-                """,
-                labeled_paths=list(latest_labeled),
-            )
-
-        # Final-pass: Update field-level metadata from latest version on all
-        # existing paths. Paths created in early versions lack lifecycle,
-        # timebasepath, path_doc, NBC, and URL attributes added later.
-        if not dry_run and version_data:
-            latest_version = sorted(version_data.keys())[-1]
-            latest_paths = version_data[latest_version]["paths"]
-            meta_updates = []
-            for path, info in latest_paths.items():
-                update = {"id": path}
-                has_update = False
-                for key in (
-                    "lifecycle_status",
-                    "lifecycle_version",
-                    "timebasepath",
-                    "path_doc",
-                    "introduced_after_version",
-                    "change_nbc_version",
-                    "change_nbc_description",
-                    "change_nbc_previous_name",
-                    "change_nbc_previous_type",
-                    "cocos_transformation_expression",
-                    "alternative_coordinate1",
-                    "url",
-                    "coordinate1_same_as",
-                    "coordinate2_same_as",
-                    "coordinate3_same_as",
-                    "coordinate4_same_as",
-                    "coordinate5_same_as",
-                    "coordinate6_same_as",
-                ):
-                    val = info.get(key)
-                    update[key] = val  # null clears stale values
-                    if val:
-                        has_update = True
-                if has_update:
-                    meta_updates.append(update)
-            if meta_updates:
-                monitor.status(
-                    f"Updating {len(meta_updates)} paths with field metadata..."
-                )
-                for i in range(0, len(meta_updates), 1000):
-                    batch = meta_updates[i : i + 1000]
-                    client.query(
-                        """
-                        UNWIND $paths AS p
-                        MATCH (path:IMASNode {id: p.id})
-                        SET path.lifecycle_status = p.lifecycle_status,
-                            path.lifecycle_version = p.lifecycle_version,
-                            path.timebasepath = p.timebasepath,
-                            path.path_doc = p.path_doc,
-                            path.introduced_after_version = p.introduced_after_version,
-                            path.change_nbc_version = p.change_nbc_version,
-                            path.change_nbc_description = p.change_nbc_description,
-                            path.change_nbc_previous_name = p.change_nbc_previous_name,
-                            path.change_nbc_previous_type = p.change_nbc_previous_type,
-                            path.cocos_transformation_expression = p.cocos_transformation_expression,
-                            path.alternative_coordinate1 = p.alternative_coordinate1,
-                            path.url = p.url,
-                            path.coordinate1_same_as = p.coordinate1_same_as,
-                            path.coordinate2_same_as = p.coordinate2_same_as,
-                            path.coordinate3_same_as = p.coordinate3_same_as,
-                            path.coordinate4_same_as = p.coordinate4_same_as,
-                            path.coordinate5_same_as = p.coordinate5_same_as,
-                            path.coordinate6_same_as = p.coordinate6_same_as
-                        """,
-                        paths=batch,
-                    )
-
-            # Create HAS_IDENTIFIER_SCHEMA relationships for all paths
-            # (including those created in earlier versions)
-            id_rels = []
-            for path, info in latest_paths.items():
-                enum_name = info.get("identifier_enum_name")
-                if enum_name:
-                    id_rels.append({"id": path, "schema_name": enum_name})
-            if id_rels:
-                monitor.status(f"Linking {len(id_rels)} paths to identifier schemas...")
-                client.query(
-                    """
-                    UNWIND $rels AS r
-                    MATCH (path:IMASNode {id: r.id})
-                    MATCH (schema:IdentifierSchema {id: r.schema_name})
-                    MERGE (path)-[:HAS_IDENTIFIER_SCHEMA]->(schema)
-                """,
-                    rels=id_rels,
-                )
-
-            # Create COORDINATE_SAME_AS relationships for all paths
-            # (including those created in earlier versions)
-            csa_rels = []
-            for path, info in latest_paths.items():
-                ids_name = path.split("/", 1)[0]
-                for dim in range(1, 7):
-                    csa_raw = info.get(f"coordinate{dim}_same_as")
-                    if not csa_raw or " OR " in csa_raw:
-                        continue
-                    target_path = f"{ids_name}/{_strip_dd_indices(csa_raw)}"
-                    csa_rels.append(
-                        {
-                            "source_id": path,
-                            "target_id": target_path,
-                            "dimension": dim,
-                        }
-                    )
-            if csa_rels:
-                monitor.status(
-                    f"Linking {len(csa_rels)} COORDINATE_SAME_AS relationships..."
-                )
-                for i in range(0, len(csa_rels), 1000):
-                    batch = csa_rels[i : i + 1000]
-                    client.query(
-                        """
-                        UNWIND $rels AS r
-                        MATCH (path:IMASNode {id: r.source_id})
-                        MATCH (target:IMASNode {id: r.target_id})
-                        MERGE (path)-[rel:COORDINATE_SAME_AS]->(target)
-                        SET rel.dimension = r.dimension
-                    """,
-                        rels=batch,
-                    )
-
-        # Phase 3: Embeddings
-        if include_embeddings and not dry_run:
-            merged_paths: dict[str, dict] = {}
-            merged_ids_info: dict[str, dict] = {}
-            for version in versions:
-                vdata = version_data.get(version)
-                if vdata:
-                    merged_paths.update(vdata["paths"])
-                    merged_ids_info.update(vdata["ids_info"])
-
-            if merged_paths:
-                embeddable_paths, error_relationships = filter_embeddable_paths(
-                    merged_paths
-                )
-                stats["paths_filtered"] = len(merged_paths) - len(embeddable_paths)
-                monitor.status(
-                    f"Embedding {len(embeddable_paths)} meaningful paths "
-                    f"({stats['paths_filtered']} excluded)..."
-                )
-
-                if error_relationships:
-                    stats["error_relationships"] = _batch_create_error_relationships(
-                        client, error_relationships
-                    )
-
-                embedding_stats = update_path_embeddings(
-                    client=client,
-                    paths_data=embeddable_paths,
-                    ids_info=merged_ids_info,
-                    model_name=embedding_model,
-                    force_rebuild=no_hash,
-                    use_rich=use_rich,
-                    dd_version=current_dd_version,
-                    track_changes=True,
-                )
-                stats["embeddings_updated"] = embedding_stats["updated"]
-                stats["embeddings_cached"] = embedding_stats["cached"]
-
-                client.query(
-                    """
-                    MATCH (v:DDVersion {id: $version})
-                    SET v.embeddings_built_at = datetime(),
-                        v.embeddings_model = $model,
-                        v.embeddings_count = $count
-                    """,
-                    version=current_dd_version,
-                    model=embedding_model,
-                    count=embedding_stats["total"],
-                )
-
-        # Phase 3.5: LLM Enrichment (descriptions, keywords, physics_domain updates)
-        if include_enrichment and not dry_run:
-            from imas_codex.graph.dd_enrichment import enrich_imas_paths
-
-            monitor.status("Enriching paths with LLM descriptions...")
-            enrichment_stats = enrich_imas_paths(
-                client=client,
-                version=current_dd_version,
-                model=enrichment_model,
-                batch_size=50,
-                ids_filter=ids_filter,
-                use_rich=use_rich,
-                force=no_hash,
-            )
-            stats["enriched_llm"] = enrichment_stats.get("enriched_llm", 0)
-            stats["enriched_template"] = enrichment_stats.get("enriched_template", 0)
-            stats["enrichment_cached"] = enrichment_stats.get("enrichment_cached", 0)
-            stats["enrichment_cost"] = enrichment_stats.get("enrichment_cost", 0.0)
-
-            # After enrichment, regenerate embeddings for enriched paths
-            # since descriptions are now included in embedding_text
-            if stats["enriched_llm"] > 0 and include_embeddings:
-                monitor.status("Regenerating embeddings with enriched descriptions...")
-                # Query paths with new enrichment including the enrichment fields
-                enriched_paths_query = """
-                MATCH (p:IMASNode)
-                WHERE p.enrichment_source = 'llm'
-                AND p.description IS NOT NULL
-                RETURN p.id AS id,
-                       p.description AS description,
-                       p.keywords AS keywords
-                """
-                enriched_data = {
-                    r["id"]: {
-                        "description": r["description"],
-                        "keywords": r["keywords"] or [],
-                    }
-                    for r in client.query(enriched_paths_query)
-                }
-
-                # Merge enriched data into paths_to_reembed
-                paths_to_reembed = {}
-                for path_id, enrichment in enriched_data.items():
-                    if path_id in merged_paths:
-                        # Copy original data and add enrichment fields
-                        path_data = dict(merged_paths[path_id])
-                        path_data.update(enrichment)
-                        paths_to_reembed[path_id] = path_data
-
-                if paths_to_reembed:
-                    re_embedding_stats = update_path_embeddings(
-                        client=client,
-                        paths_data=paths_to_reembed,
-                        ids_info=merged_ids_info,
-                        model_name=embedding_model,
-                        force_rebuild=True,  # Force regeneration since description changed
-                        use_rich=use_rich,
-                        dd_version=current_dd_version,
-                        track_changes=False,
-                    )
-                    stats["embeddings_updated"] += re_embedding_stats.get("updated", 0)
-
-        # Phase 4: Clusters
-        if include_clusters:
-            monitor.status("Importing semantic clusters...")
-            cluster_count = _import_clusters(
-                client,
-                dry_run,
-                use_rich=use_rich,
-                no_hash=no_hash,
-                skip_labels=skip_cluster_labels,
-            )
-            stats["clusters_created"] = cluster_count
-
-        # Persist build hash on current DDVersion for idempotency on next run
-        if not dry_run:
-            client.query(
-                """
-                MATCH (d:DDVersion {id: $current})
-                SET d.build_hash = $hash
-                """,
-                current=current_dd_version,
-                hash=build_hash,
-            )
+    # Persist build hash for idempotency on next run
+    if not dry_run:
+        client.query(
+            """
+            MATCH (d:DDVersion {id: $current})
+            SET d.build_hash = $hash
+            """,
+            current=current_dd_version,
+            hash=build_hash,
+        )
 
     return stats
 

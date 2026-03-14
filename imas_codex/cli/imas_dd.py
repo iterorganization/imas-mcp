@@ -165,38 +165,21 @@ def imas_build(
     set_litellm_offline_env()
 
     from imas_codex import dd_version as current_dd_version
-    from imas_codex.cli.logging import configure_cli_logging
-    from imas_codex.graph.build_dd import build_dd_graph, get_all_dd_versions
-
-    # Set up file-based logging (always writes DEBUG to disk)
-    configure_cli_logging("imas_dd", verbose=verbose)
-
-    # Set up console logging
-    if quiet:
-        log_level = logging.ERROR
-    elif verbose:
-        log_level = logging.DEBUG
-    else:
-        log_level = logging.INFO
-
-    # Configure console handler (file handler already set by configure_cli_logging)
-    console_handler = logging.StreamHandler()
-    console_handler.setLevel(log_level)
-    console_handler.setFormatter(
-        logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    from imas_codex.cli.discover.common import (
+        DiscoveryConfig,
+        make_log_print,
+        run_discovery,
+        setup_logging,
+        use_rich_output,
     )
-    root_logger = logging.getLogger("imas_codex")
-    # Remove any existing console/stream handlers to avoid duplicates
-    for h in root_logger.handlers[:]:
-        if isinstance(h, logging.StreamHandler) and not isinstance(
-            h, logging.FileHandler
-        ):
-            root_logger.removeHandler(h)
-    root_logger.addHandler(console_handler)
+    from imas_codex.graph.build_dd import get_all_dd_versions
+
+    use_rich = use_rich_output()
+    console_obj = setup_logging("imas_dd", "dd", use_rich, verbose=verbose)
+    log_print = make_log_print("imas_dd", console_obj)
 
     # Suppress imas library's verbose logging
     logging.getLogger("imas").setLevel(logging.WARNING)
-    # Suppress httpx/httpcore per-request INFO logs (noisy during embedding)
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
 
@@ -217,76 +200,105 @@ def imas_build(
                 )
                 raise SystemExit(1) from e
         else:
-            # Default: all versions
             versions = available_versions
-
-        logger.debug(f"Processing {len(versions)} DD versions")
-        if len(versions) > 1:
-            logger.debug(f"Versions: {versions[0]} → {versions[-1]}")
 
         # Parse IDS filter
         ids_set: set[str] | None = None
         if ids_filter:
             ids_set = set(ids_filter.split())
-            logger.debug(f"Filtering to IDS: {sorted(ids_set)}")
 
+        if no_hash:
+            force = True
+
+        log_print(f"\n[bold]IMAS DD Build[/bold]")
+        log_print(f"  Versions: {len(versions)} ({versions[0]} → {versions[-1]})")
+        if ids_set:
+            log_print(f"  IDS filter: {sorted(ids_set)}")
         if dry_run:
-            click.echo("DRY RUN - no changes will be written to graph")
+            log_print("  Mode: dry run")
+        if force:
+            log_print("  Mode: force rebuild")
+        log_print("")
 
-        # Build graph
-        from imas_codex.graph import GraphClient
+        # Build state
+        from imas_codex.graph.dd_workers import DDBuildState, run_dd_build_engine
 
-        with GraphClient() as client:
-            # --no-hash implies --force (no point skipping hashes if top-level check stops us)
-            if no_hash:
-                force = True
-
-            stats = build_dd_graph(
-                client=client,
-                versions=versions,
-                ids_filter=ids_set,
-                include_clusters=not skip_clusters,
-                include_embeddings=not skip_embeddings,
-                include_enrichment=not skip_enrichment,
-                dry_run=dry_run,
-                embedding_model=embedding_model,
-                enrichment_model=enrichment_model,
-                force_embeddings=force,
-                no_hash=no_hash,
-                skip_cluster_labels=skip_cluster_labels,
-            )
-
-        # Report results
-        if stats.get("skipped"):
-            click.echo("\n=== Build Skipped (graph already up-to-date) ===")
-            click.echo(f"Versions verified: {stats['versions_processed']}")
-            return
-
-        click.echo("\n=== Build Complete ===")
-        click.echo(f"Versions processed: {stats['versions_processed']}")
-        click.echo(f"IDS types: {stats['ids_created']}")
-        click.echo(f"IMASNode nodes (across all versions): {stats['paths_created']}")
-        click.echo(f"Unit nodes: {stats['units_created']}")
-        click.echo(f"IMASNodeChange nodes: {stats['path_changes_created']}")
-        click.echo(
-            f"Definitions changed (documentation): {stats['definitions_changed']}"
+        state = DDBuildState(
+            facility="imas",
+            cost_limit=100.0,  # DD enrichment is bounded by path count, not budget
+            versions=versions,
+            ids_filter=ids_set,
+            include_clusters=not skip_clusters,
+            include_embeddings=not skip_embeddings,
+            include_enrichment=not skip_enrichment,
+            skip_cluster_labels=skip_cluster_labels,
+            dry_run=dry_run,
+            force=force,
+            no_hash=no_hash,
+            embedding_model=embedding_model,
+            enrichment_model=enrichment_model,
         )
-        if not skip_embeddings:
-            click.echo(
-                f"Paths excluded from embedding (error/metadata): "
-                f"{stats['paths_filtered']}"
+
+        # Build display for rich mode
+        display = None
+        if use_rich:
+            from imas_codex.graph.dd_progress import create_dd_build_display
+
+            display = create_dd_build_display(
+                console=console_obj,
+                skip_enrichment=skip_enrichment,
+                skip_embeddings=skip_embeddings,
+                skip_clusters=skip_clusters,
+                mode_label="DRY RUN" if dry_run else None,
             )
-            click.echo(f"HAS_ERROR relationships: {stats['error_relationships']}")
-            click.echo(f"Embeddings updated: {stats['embeddings_updated']}")
-            click.echo(f"Embeddings cached: {stats['embeddings_cached']}")
-        if not skip_enrichment:
-            click.echo(f"Paths enriched (LLM): {stats.get('enriched_llm', 0)}")
-            click.echo(f"Paths enriched (template): {stats.get('enriched_template', 0)}")
-            click.echo(f"Enrichment cached: {stats.get('enrichment_cached', 0)}")
-            if stats.get('enrichment_cost', 0) > 0:
-                click.echo(f"Enrichment cost: ${stats['enrichment_cost']:.4f}")
-        if not skip_clusters:
-            click.echo(f"Cluster nodes: {stats['clusters_created']}")
+            display.set_engine_state(state)
+
+        disc_config = DiscoveryConfig(
+            domain="imas_dd",
+            facility="imas",
+            facility_config={},
+            display=display,
+            check_graph=True,
+            check_embed=not skip_embeddings,
+            check_ssh=False,
+            check_auth=False,
+            check_model=not skip_enrichment,
+            suppress_loggers=[
+                "imas_codex.embeddings",
+                "imas_codex.graph.build_dd",
+                "imas_codex.graph.dd_enrichment",
+                "imas",
+            ],
+            verbose=verbose,
+        )
+
+        async def async_main(stop_event, service_monitor):
+            if service_monitor:
+                state.service_monitor = service_monitor
+            await run_dd_build_engine(
+                state,
+                stop_event=stop_event,
+                on_worker_status=(
+                    display.update_worker_status if display else None
+                ),
+            )
+            return state.stats
+
+        def _on_complete(results):
+            if not results:
+                return
+            stats = results
+            if stats.get("skipped"):
+                log_print(
+                    "\n[yellow]Build skipped (graph already up-to-date)[/yellow]"
+                )
+                return
+
+        result = run_discovery(disc_config, async_main, on_complete=_on_complete)
+
+        # Plain-mode summary (rich mode shows via display)
+        if not use_rich and result:
+            _print_build_summary(result, skip_embeddings, skip_enrichment, skip_clusters)
 
     except SystemExit:
         raise
@@ -296,6 +308,46 @@ def imas_build(
             logger.exception("Full traceback:")
         click.echo(f"Error: {e}", err=True)
         raise SystemExit(1) from e
+
+
+def _print_build_summary(
+    stats: dict,
+    skip_embeddings: bool,
+    skip_enrichment: bool,
+    skip_clusters: bool,
+) -> None:
+    """Print plain-text build summary to stdout."""
+    if stats.get("skipped"):
+        click.echo("\n=== Build Skipped (graph already up-to-date) ===")
+        click.echo(f"Versions verified: {stats['versions_processed']}")
+        return
+
+    click.echo("\n=== Build Complete ===")
+    click.echo(f"Versions processed: {stats['versions_processed']}")
+    click.echo(f"IDS types: {stats['ids_created']}")
+    click.echo(f"IMASNode nodes (across all versions): {stats['paths_created']}")
+    click.echo(f"Unit nodes: {stats['units_created']}")
+    click.echo(f"IMASNodeChange nodes: {stats['path_changes_created']}")
+    click.echo(
+        f"Definitions changed (documentation): {stats['definitions_changed']}"
+    )
+    if not skip_enrichment:
+        click.echo(f"Paths enriched (LLM): {stats.get('enriched_llm', 0)}")
+        click.echo(f"Paths enriched (template): {stats.get('enriched_template', 0)}")
+        click.echo(f"Enrichment cached: {stats.get('enrichment_cached', 0)}")
+        if stats.get("enrichment_cost", 0) > 0:
+            click.echo(f"Enrichment cost: ${stats['enrichment_cost']:.4f}")
+    if not skip_embeddings:
+        click.echo(
+            f"Paths excluded from embedding (error/metadata): "
+            f"{stats['paths_filtered']}"
+        )
+        click.echo(f"HAS_ERROR relationships: {stats['error_relationships']}")
+        click.echo(f"Embeddings updated: {stats['embeddings_updated']}")
+        click.echo(f"Embeddings cached: {stats['embeddings_cached']}")
+    if not skip_clusters:
+        click.echo(f"Cluster nodes: {stats['clusters_created']}")
+
 
 
 @dd.command("status")
