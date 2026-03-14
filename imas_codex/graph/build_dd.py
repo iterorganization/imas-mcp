@@ -1348,13 +1348,14 @@ def _check_graph_up_to_date(
 
 
 # =============================================================================
-# Phase Functions (called by workers and by build_dd_graph orchestrator)
+# Phase Functions (called by workers)
 # =============================================================================
 
 
 def phase_extract(
     versions: list[str],
     ids_filter: set[str] | None = None,
+    on_progress: "Callable[[int, int], None] | None" = None,
 ) -> tuple[dict[str, dict], set[str]]:
     """Extract paths from DD XML for all versions.
 
@@ -1366,14 +1367,20 @@ def phase_extract(
     """
     all_units: set[str] = set()
     version_data: dict[str, dict] = {}
+    total = len(versions)
 
-    for version in versions:
+    if on_progress:
+        on_progress(0, total)
+
+    for i, version in enumerate(versions):
         try:
             data = extract_paths_for_version(version, ids_filter=ids_filter)
             version_data[version] = data
             all_units.update(data["units"])
         except Exception as e:
             logger.error("Error extracting %s: %s", version, e)
+        if on_progress:
+            on_progress(i + 1, total)
 
     return version_data, all_units
 
@@ -1385,6 +1392,7 @@ def phase_build(
     all_units: set[str],
     *,
     dry_run: bool = False,
+    on_progress: "Callable[[int, int], None] | None" = None,
 ) -> dict[str, int]:
     """Create graph nodes from extracted data.
 
@@ -1430,9 +1438,15 @@ def phase_build(
 
     # Per-version: IDS + IMASNode + relationships + path changes
     prev_paths: dict[str, dict] = {}
+    total_versions = len(versions)
+
+    if on_progress:
+        on_progress(0, total_versions)
 
     for i, version in enumerate(versions):
         if version not in version_data:
+            if on_progress:
+                on_progress(i + 1, total_versions)
             continue
 
         data = version_data[version]
@@ -1459,6 +1473,9 @@ def phase_build(
                     stats["definitions_changed"] += 1
 
         prev_paths = data["paths"]
+
+        if on_progress:
+            on_progress(i + 1, total_versions)
 
     # RENAMED_TO relationships
     if not dry_run:
@@ -1623,6 +1640,7 @@ def phase_enrich(
     batch_size: int = 50,
     ids_filter: set[str] | None = None,
     force: bool = False,
+    on_progress: "Callable[[int, int], None] | None" = None,
 ) -> dict[str, int | float]:
     """LLM enrichment of path descriptions.
 
@@ -1641,6 +1659,7 @@ def phase_enrich(
         ids_filter=ids_filter,
         use_rich=False,
         force=force,
+        on_progress=on_progress,
     )
     return {
         "enriched_llm": enrichment_stats.get("enriched_llm", 0),
@@ -1660,6 +1679,7 @@ def phase_embed(
     embedding_model: str | None = None,
     force: bool = False,
     no_hash: bool = False,
+    on_progress: "Callable[[int, int], None] | None" = None,
 ) -> dict[str, int]:
     """Generate vector embeddings for DD paths.
 
@@ -1707,6 +1727,9 @@ def phase_embed(
     embeddable_paths, error_relationships = filter_embeddable_paths(merged_paths)
     stats["paths_filtered"] = len(merged_paths) - len(embeddable_paths)
 
+    if on_progress:
+        on_progress(0, len(embeddable_paths))
+
     if error_relationships:
         stats["error_relationships"] = _batch_create_error_relationships(
             client, error_relationships
@@ -1727,6 +1750,12 @@ def phase_embed(
     )
     stats["embeddings_updated"] = embedding_stats["updated"]
     stats["embeddings_cached"] = embedding_stats["cached"]
+
+    if on_progress:
+        on_progress(
+            embedding_stats["updated"] + embedding_stats["cached"],
+            len(embeddable_paths),
+        )
 
     client.query(
         """
@@ -1768,160 +1797,6 @@ def phase_cluster(
         skip_labels=skip_labels,
         on_progress=on_progress,
     )
-
-
-def build_dd_graph(
-    client: GraphClient,
-    versions: list[str] | None = None,
-    include_clusters: bool = False,
-    include_embeddings: bool = True,
-    include_enrichment: bool = True,
-    dry_run: bool = False,
-    ids_filter: set[str] | None = None,
-    use_rich: bool | None = None,
-    embedding_model: str | None = None,
-    enrichment_model: str | None = None,
-    force_embeddings: bool = False,
-    no_hash: bool = False,
-    skip_cluster_labels: bool = False,
-) -> dict:
-    """Build the IMAS DD graph.
-
-    Orchestrates the five build phases: EXTRACT → BUILD → ENRICH →
-    EMBED → CLUSTER.  Each phase is implemented as a standalone
-    function (``phase_extract``, ``phase_build``, etc.) that can also
-    be called independently by async workers.
-
-    On a second run with identical parameters the function verifies the
-    graph is already up-to-date via a build hash stored on the current
-    ``DDVersion`` and returns immediately.
-
-    Args:
-        client: Neo4j GraphClient
-        versions: List of versions to process (None = all available)
-        ids_filter: Optional set of IDS names to include
-        include_clusters: Whether to import semantic clusters
-        include_embeddings: Whether to generate path embeddings (default True)
-        include_enrichment: Whether to run LLM description enrichment (default True)
-        dry_run: If True, don't write to graph
-        use_rich: Force rich progress (True), logging (False), or auto (None)
-        embedding_model: Embedding model name
-        enrichment_model: LLM model for enrichment
-        force_embeddings: Bypass top-level build hash check
-        no_hash: Skip per-item hash caching — recompute everything
-        skip_cluster_labels: Skip LLM label embedding for clusters
-
-    Returns:
-        Statistics dict about the build
-    """
-    all_versions = get_all_dd_versions()
-
-    if versions is None:
-        versions = all_versions
-    else:
-        for v in versions:
-            if v not in all_versions:
-                raise ValueError(f"Unknown DD version: {v}")
-
-    stats: dict = {
-        "versions_processed": 0,
-        "ids_created": 0,
-        "paths_created": 0,
-        "units_created": 0,
-        "path_changes_created": 0,
-        "definitions_changed": 0,
-        "clusters_created": 0,
-        "embeddings_updated": 0,
-        "embeddings_cached": 0,
-        "error_relationships": 0,
-        "paths_filtered": 0,
-        "cocos_labels_updated": 0,
-        "identifier_schemas_created": 0,
-        "enriched_llm": 0,
-        "enriched_template": 0,
-        "enrichment_cached": 0,
-        "enrichment_cost": 0.0,
-        "skipped": False,
-    }
-
-    # --- Hash-based idempotency check ---
-    build_hash = _compute_build_hash(
-        versions, ids_filter, embedding_model, include_clusters, include_embeddings
-    )
-
-    if not dry_run and not force_embeddings:
-        if _check_graph_up_to_date(
-            client, build_hash, versions, include_embeddings, include_clusters
-        ):
-            logger.info(
-                "Graph already up-to-date (build hash %s) — skipping rebuild",
-                build_hash,
-            )
-            stats["versions_processed"] = len(versions)
-            stats["skipped"] = True
-            return stats
-
-    # --- Preflight ---
-    if not dry_run:
-        _ensure_indexes(client)
-        _create_version_nodes(client, versions)
-    stats["versions_processed"] = len(versions)
-
-    # --- Phase 1: Extract ---
-    version_data, all_units = phase_extract(versions, ids_filter)
-
-    # --- Phase 2: Build ---
-    build_stats = phase_build(
-        client, versions, version_data, all_units, dry_run=dry_run
-    )
-    stats.update(build_stats)
-
-    # --- Phase 3: Enrich ---
-    if include_enrichment and not dry_run:
-        enrich_stats = phase_enrich(
-            client,
-            version=current_dd_version,
-            model=enrichment_model,
-            ids_filter=ids_filter,
-            force=no_hash,
-        )
-        stats.update(enrich_stats)
-
-    # --- Phase 4: Embed ---
-    if include_embeddings and not dry_run:
-        embed_stats = phase_embed(
-            client,
-            versions,
-            version_data,
-            include_enrichment=include_enrichment,
-            enriched_llm_count=stats.get("enriched_llm", 0),
-            embedding_model=embedding_model,
-            force=force_embeddings,
-            no_hash=no_hash,
-        )
-        stats.update(embed_stats)
-
-    # --- Phase 5: Cluster ---
-    if include_clusters:
-        stats["clusters_created"] = phase_cluster(
-            client,
-            dry_run=dry_run,
-            no_hash=no_hash,
-            skip_labels=skip_cluster_labels,
-        )
-
-    # Persist build hash for idempotency on next run
-    if not dry_run:
-        client.query(
-            """
-            MATCH (d:DDVersion {id: $current})
-            SET d.build_hash = $hash
-            """,
-            current=current_dd_version,
-            hash=build_hash,
-        )
-
-    return stats
 
 
 def _create_version_nodes(client: GraphClient, versions: list[str]) -> None:
@@ -3158,7 +3033,11 @@ def import_semantic_clusters(
 
 # Public API exports
 __all__ = [
-    "build_dd_graph",
+    "phase_extract",
+    "phase_build",
+    "phase_enrich",
+    "phase_embed",
+    "phase_cluster",
     "clear_dd_graph",
     "get_all_dd_versions",
     "extract_paths_for_version",

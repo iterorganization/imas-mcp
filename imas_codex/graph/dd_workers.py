@@ -105,17 +105,18 @@ async def extract_worker(state: DDBuildState, **_kwargs) -> None:
     wlog = WorkerLogAdapter(logger, worker_name="extract_worker")
     wlog.info("Starting extraction for %d versions", len(state.versions))
 
-    state.extract_stats.total = len(state.versions)
+    def _on_progress(processed: int, total: int) -> None:
+        state.extract_stats.total = total
+        state.extract_stats.processed = processed
 
     def _run() -> None:
         from imas_codex.graph.build_dd import phase_extract
 
         version_data, all_units = phase_extract(
-            state.versions, state.ids_filter
+            state.versions, state.ids_filter, on_progress=_on_progress,
         )
         state.version_data = version_data
         state.all_units = all_units
-        state.extract_stats.processed = len(version_data)
 
     await asyncio.to_thread(_run)
 
@@ -135,7 +136,9 @@ async def build_worker(state: DDBuildState, **_kwargs) -> None:
     wlog = WorkerLogAdapter(logger, worker_name="build_worker")
     wlog.info("Starting graph build for %d versions", len(state.versions))
 
-    state.build_stats.total = len(state.versions)
+    def _on_progress(processed: int, total: int) -> None:
+        state.build_stats.total = total
+        state.build_stats.processed = processed
 
     def _run() -> None:
         from imas_codex.graph.build_dd import (
@@ -170,6 +173,7 @@ async def build_worker(state: DDBuildState, **_kwargs) -> None:
                     state.skipped = True
                     state.stats["skipped"] = True
                     state.stats["versions_processed"] = len(state.versions)
+                    _on_progress(len(state.versions), len(state.versions))
                     return
 
             # Preflight: indexes + version nodes
@@ -186,9 +190,9 @@ async def build_worker(state: DDBuildState, **_kwargs) -> None:
                 state.version_data,
                 state.all_units,
                 dry_run=state.dry_run,
+                on_progress=_on_progress,
             )
             state.stats.update(build_stats)
-            state.build_stats.processed = build_stats.get("paths_created", 0)
 
     await asyncio.to_thread(_run)
 
@@ -217,6 +221,10 @@ async def enrich_worker(state: DDBuildState, **_kwargs) -> None:
 
     wlog.info("Starting LLM enrichment")
 
+    def _on_progress(processed: int, total: int) -> None:
+        state.enrich_stats.total = total
+        state.enrich_stats.processed = processed
+
     def _run() -> None:
         from imas_codex.graph.build_dd import phase_enrich
         from imas_codex.graph.client import GraphClient
@@ -227,12 +235,9 @@ async def enrich_worker(state: DDBuildState, **_kwargs) -> None:
                 model=state.enrichment_model,
                 ids_filter=state.ids_filter,
                 force=state.no_hash,
+                on_progress=_on_progress,
             )
             state.stats.update(enrich_stats)
-            state.enrich_stats.processed = int(
-                enrich_stats.get("enriched_llm", 0)
-                + enrich_stats.get("enriched_template", 0)
-            )
             state.enrich_stats.cost = enrich_stats.get("enrichment_cost", 0.0)
 
     await asyncio.to_thread(_run)
@@ -258,6 +263,10 @@ async def embed_worker(state: DDBuildState, **_kwargs) -> None:
 
     wlog.info("Starting embedding generation")
 
+    def _on_progress(processed: int, total: int) -> None:
+        state.embed_stats.total = total
+        state.embed_stats.processed = processed
+
     def _run() -> None:
         from imas_codex.graph.build_dd import phase_embed
         from imas_codex.graph.client import GraphClient
@@ -272,12 +281,9 @@ async def embed_worker(state: DDBuildState, **_kwargs) -> None:
                 embedding_model=state.embedding_model,
                 force=state.force,
                 no_hash=state.no_hash,
+                on_progress=_on_progress,
             )
             state.stats.update(embed_stats)
-            state.embed_stats.processed = (
-                embed_stats.get("embeddings_updated", 0)
-                + embed_stats.get("embeddings_cached", 0)
-            )
 
     await asyncio.to_thread(_run)
 

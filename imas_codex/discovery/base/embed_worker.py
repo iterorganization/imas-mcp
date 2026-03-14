@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time as _time
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -420,6 +421,7 @@ async def embed_description_worker(
             if _should_stop():
                 break
 
+            batch_start = _time.monotonic()
             try:
                 fetched, embedded, _ids = await asyncio.to_thread(
                     embed_batch_sync, label, facility, batch_size
@@ -439,7 +441,10 @@ async def embed_description_worker(
             total_embedded += embedded
 
             if embedded > 0:
+                batch_elapsed = _time.monotonic() - batch_start
                 stats.processed += embedded
+                stats.last_batch_time = batch_elapsed
+                stats.record_batch(embedded)
                 error_count = 0  # Reset error streak on success
                 logger.debug(
                     "embed_worker %s: embedded %d/%d %s",
@@ -449,7 +454,11 @@ async def embed_description_worker(
                     label,
                 )
                 if on_progress:
-                    on_progress(f"embedded {embedded} {label}", stats)
+                    results = [
+                        {"id": nid, "label": label}
+                        for nid in _ids[:embedded]
+                    ]
+                    on_progress(f"embedded {embedded} {label}", stats, results)
 
         # Backoff logic: distinguish idle (no work) from errors (work but
         # embed server failing).  When items are fetched but none embedded,
@@ -551,6 +560,7 @@ async def embed_text_worker(
             if _should_stop():
                 break
 
+            batch_start = _time.monotonic()
             try:
                 fetched, embedded, node_ids = await asyncio.to_thread(
                     embed_batch_sync, label, facility, batch_size,
@@ -569,7 +579,10 @@ async def embed_text_worker(
             total_embedded += embedded
 
             if embedded > 0:
+                batch_elapsed = _time.monotonic() - batch_start
                 stats.processed += embedded
+                stats.last_batch_time = batch_elapsed
+                stats.record_batch(embedded)
                 error_count = 0
                 logger.debug(
                     "embed_text_worker %s: embedded %d/%d %s",
