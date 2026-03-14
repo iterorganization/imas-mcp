@@ -171,7 +171,12 @@ def link_chunks_to_data_nodes(
     scoped = example_ids is not None
 
     with _get_client(graph_client) as client:
+        import time as _time
+
+        link_times: dict[str, float] = {}
+
         # Step 1: Create DataReference nodes from mdsplus_paths
+        t_s = _time.monotonic()
         if scoped:
             create_refs_simple = """
                 MATCH (c:CodeChunk)
@@ -211,9 +216,11 @@ def link_chunks_to_data_nodes(
             params = {}
         result = client.query(create_refs_simple, **params)
         refs_created = result[0]["refs_created"] if result else 0
+        link_times["create_refs"] = _time.monotonic() - t_s
         logger.info("Created/matched %d DataReference nodes", refs_created)
 
         # Step 2: Create CONTAINS_REF relationships
+        t_s = _time.monotonic()
         if scoped:
             contains_ref = """
                 MATCH (c:CodeChunk)
@@ -234,16 +241,18 @@ def link_chunks_to_data_nodes(
                 MATCH (c)<-[:HAS_CHUNK]-(e:CodeExample)
                 WHERE e.facility_id IS NOT NULL
                 UNWIND c.mdsplus_paths AS path
-                WITH c, e.facility_id AS facility, path
+                With c, e.facility_id AS facility, path
                 MATCH (d:DataReference {raw_string: path, facility_id: facility})
                 MERGE (c)-[:CONTAINS_REF]->(d)
                 RETURN count(*) AS contains_created
             """
         result = client.query(contains_ref, **params)
         contains_count = result[0]["contains_created"] if result else 0
+        link_times["contains_ref"] = _time.monotonic() - t_s
         logger.info("Created %d CONTAINS_REF relationships", contains_count)
 
         # Step 2.5: Compute normalized_path for new refs only
+        t_s = _time.monotonic()
         if scoped:
             # Only normalize refs we just created/matched
             refs_to_normalize = client.query(
@@ -280,11 +289,13 @@ def link_chunks_to_data_nodes(
                 updates=updates,
             )
             logger.info("Computed normalized_path for %d refs", len(updates))
+        link_times["normalize"] = _time.monotonic() - t_s
 
         # Step 3: Create RESOLVES_TO_NODE relationships
         # Two-phase: exact match first (uses path+facility_id index),
         # then fuzzy match for remaining (facility-scoped to avoid
         # catastrophic O(all_refs × all_signals) cross-product).
+        t_s = _time.monotonic()
         if scoped:
             # Phase 1: Exact path match (index-friendly)
             resolve_exact = """
@@ -337,8 +348,11 @@ def link_chunks_to_data_nodes(
             """
         result = client.query(resolve_exact, **params)
         exact_count = result[0]["resolved"] if result else 0
+        link_times["resolve_exact"] = _time.monotonic() - t_s
+        t_s = _time.monotonic()
         result = client.query(resolve_fuzzy, **params)
         fuzzy_count = result[0]["resolved"] if result else 0
+        link_times["resolve_fuzzy"] = _time.monotonic() - t_s
         resolved_count = exact_count + fuzzy_count
         logger.info(
             "Created %d RESOLVES_TO_NODE relationships (exact=%d, fuzzy=%d)",
@@ -346,6 +360,7 @@ def link_chunks_to_data_nodes(
         )
 
         # Step 4: Create RESOLVES_TO_IMAS_PATH via SignalNode → IMASMapping → IMASNode
+        t_s = _time.monotonic()
         if scoped:
             imas_q = """
                 MATCH (c:CodeChunk)
@@ -366,10 +381,12 @@ def link_chunks_to_data_nodes(
             """
         result = client.query(imas_q, **params)
         imas_linked = result[0]["linked"] if result else 0
+        link_times["imas_path"] = _time.monotonic() - t_s
         if imas_linked:
             logger.info("Created %d RESOLVES_TO_IMAS_PATH relationships", imas_linked)
 
         # Step 5: Create CALLS_TDI_FUNCTION for TDI call references
+        t_s = _time.monotonic()
         if scoped:
             tdi_q = """
                 MATCH (c:CodeChunk)
@@ -395,10 +412,12 @@ def link_chunks_to_data_nodes(
             """
         result = client.query(tdi_q, **params)
         tdi_linked = result[0]["linked"] if result else 0
+        link_times["tdi_func"] = _time.monotonic() - t_s
         if tdi_linked:
             logger.info("Created %d CALLS_TDI_FUNCTION relationships", tdi_linked)
 
         # Update ref_count on CodeChunk nodes
+        t_s = _time.monotonic()
         if scoped:
             client.query(
                 """
@@ -413,9 +432,16 @@ def link_chunks_to_data_nodes(
         else:
             client.query("""
                 MATCH (c:CodeChunk)-[r:CONTAINS_REF]->(d:DataReference)
-                WITH c, count(r) AS ref_count
+                With c, count(r) AS ref_count
                 SET c.ref_count = ref_count
             """)
+        link_times["ref_count"] = _time.monotonic() - t_s
+
+        link_detail = " ".join(
+            f"{k}={v:.1f}s" for k, v in link_times.items() if v >= 0.1
+        )
+        if link_detail:
+            logger.info("link_chunks_to_data_nodes timing: [%s]", link_detail)
 
         return refs_created
 

@@ -398,6 +398,7 @@ async def ingest_files(
         # Previously did N × create_nodes("CodeExample") + N × individual queries;
         # now batches into single UNWIND calls (~6 queries vs ~5N).
         t_graph_start = _time.monotonic()
+        step_times: dict[str, float] = {}
         with GraphClient() as graph_client:
             # Step 1: Batch create CodeExample nodes (auto-creates AT_FACILITY)
             all_example_props: list[dict[str, Any]] = []
@@ -421,10 +422,13 @@ async def ingest_files(
                     "from_file": from_file_id,
                 })
 
+            t_s = _time.monotonic()
             if all_example_props:
                 graph_client.create_nodes("CodeExample", all_example_props)
+            step_times["create_examples"] = _time.monotonic() - t_s
 
             # Step 2: Batch FacilityPath status update + HAS_EXAMPLE
+            t_s = _time.monotonic()
             if all_example_props:
                 graph_client.query(
                     """
@@ -443,8 +447,10 @@ async def ingest_files(
                         for ep in all_example_props
                     ],
                 )
+            step_times["facility_path"] = _time.monotonic() - t_s
 
             # Step 3: Batch CodeFile → HAS_EXAMPLE
+            t_s = _time.monotonic()
             if all_example_props:
                 graph_client.query(
                     """
@@ -461,9 +467,11 @@ async def ingest_files(
                         for ep in all_example_props
                     ],
                 )
+            step_times["codefile_has_example"] = _time.monotonic() - t_s
 
             # Step 4: Batch CodeFile status update
             # (replaces per-file update_source_file_status which opened N connections)
+            t_s = _time.monotonic()
             now = datetime.now(UTC).isoformat()
             if source_file_map:
                 graph_client.query(
@@ -481,11 +489,15 @@ async def ingest_files(
                     ],
                     now=now,
                 )
+            step_times["codefile_status"] = _time.monotonic() - t_s
 
             # Step 5: Create CodeChunk nodes (auto-creates CODE_EXAMPLE_ID, AT_FACILITY)
+            t_s = _time.monotonic()
             graph_client.create_nodes("CodeChunk", all_chunks)
+            step_times["create_chunks"] = _time.monotonic() - t_s
 
             # Step 6: Create HAS_CHUNK (inverse traversal convenience)
+            t_s = _time.monotonic()
             graph_client.query(
                 """
                 MATCH (c:CodeChunk)
@@ -495,23 +507,30 @@ async def ingest_files(
                 """,
                 example_ids=chunk_example_ids,
             )
+            step_times["has_chunk"] = _time.monotonic() - t_s
 
             # Step 7: Link MDSplus refs to data nodes (batched, not per-example)
+            t_s = _time.monotonic()
             if batch_mdsplus_paths > 0:
                 linked = link_chunks_to_data_nodes(
                     graph_client, example_ids=chunk_example_ids
                 )
                 stats["data_nodes_linked"] += linked
+            step_times["link_data_nodes"] = _time.monotonic() - t_s
 
         t_graph_elapsed = _time.monotonic() - t_graph_start
 
+        step_detail = " ".join(
+            f"{k}={v:.1f}s" for k, v in step_times.items() if v >= 0.1
+        )
         logger.info(
-            "Batch %d-%d timing: chunk=%.1fs graph=%.1fs (%d chunks)",
+            "Batch %d-%d timing: chunk=%.1fs graph=%.1fs (%d chunks) [%s]",
             batch_start + 1,
             batch_end,
             t_chunk_elapsed,
             t_graph_elapsed,
             len(all_chunks),
+            step_detail,
         )
 
         processed_files += len(batch_files)
