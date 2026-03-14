@@ -406,8 +406,8 @@ def enrich_imas_paths(
     Returns:
         Statistics dict with enriched_llm, enriched_template, cached, cost, etc.
     """
+    from imas_codex.core.progress_monitor import create_build_monitor
     from imas_codex.discovery.base.llm import call_llm_structured
-    from imas_codex.graph.build_monitor import create_build_monitor
     from imas_codex.settings import get_model
 
     if model is None:
@@ -509,16 +509,17 @@ def enrich_imas_paths(
     # Process LLM paths in batches
     if llm_paths:
         total_batches = (len(llm_paths) + batch_size - 1) // batch_size
+        batch_items = [f"Batch {i + 1}/{total_batches}" for i in range(total_batches)]
 
         with monitor.phase(
             "Enrich paths",
-            items=list(range(total_batches)),
-            description_template="Batch {item}/{total}",
+            items=batch_items,
+            description_template="{item}",
             item_label="batches",
         ) as phase:
             for batch_idx in range(0, len(llm_paths), batch_size):
                 batch = llm_paths[batch_idx : batch_idx + batch_size]
-                batch_num = batch_idx // batch_size + 1
+                batch_num = batch_idx // batch_size
 
                 # Gather context for this batch
                 batch_contexts = gather_path_context(client, batch, ids_info)
@@ -539,7 +540,7 @@ def enrich_imas_paths(
                 stats["enrichment_cached"] += len(cached)
 
                 if not to_enrich:
-                    phase.update(batch_num)
+                    phase.update(batch_items[batch_num])
                     continue
 
                 # Build messages and call LLM
@@ -588,10 +589,10 @@ def enrich_imas_paths(
                     stats["enriched_llm"] += len(updates)
 
                 except Exception as e:
-                    logger.error(f"Error enriching batch {batch_num}: {e}")
+                    logger.error(f"Error enriching batch {batch_num + 1}: {e}")
                     # Continue with next batch
 
-                phase.update(batch_num)
+                phase.update(batch_items[batch_num])
 
     return stats
 
