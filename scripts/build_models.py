@@ -83,7 +83,7 @@ def _generate_physics_domain(
 
     try:
         code = generate_enum_code(schema_file)
-        output_file.write_text(code)
+        output_file.write_text(code, encoding="utf-8")
         logger.info(f"Generated physics domain written to {output_file}")
         click.echo(f"Generated: {output_file}")
         return 0
@@ -265,6 +265,8 @@ def build_models(
                     capture_output=True,
                     text=True,
                     check=False,
+                    encoding="utf-8",
+                    errors="replace",
                 )
 
                 if result.returncode != 0:
@@ -289,7 +291,7 @@ To regenerate:
                 generated_code = header + result.stdout
 
                 # Write output
-                output_file.write_text(generated_code)
+                output_file.write_text(generated_code, encoding="utf-8")
                 logger.info(f"Generated models written to {output_file}")
                 click.echo(f"Generated: {output_file}")
             else:
@@ -332,6 +334,8 @@ To regenerate:
                         capture_output=True,
                         text=True,
                         check=False,
+                        encoding="utf-8",
+                        errors="replace",
                     )
 
                     if result.returncode != 0:
@@ -355,7 +359,7 @@ To regenerate:
 
 '''
                     generated_code = header + result.stdout
-                    imas_output_file.write_text(generated_code)
+                    imas_output_file.write_text(generated_code, encoding="utf-8")
                     logger.info(
                         f"Generated IMAS DD models written to {imas_output_file}"
                     )
@@ -405,6 +409,8 @@ To regenerate:
                         capture_output=True,
                         text=True,
                         check=False,
+                        encoding="utf-8",
+                        errors="replace",
                     )
 
                     if result.returncode != 0:
@@ -472,7 +478,7 @@ Usage:
                     ]
                     for old, new in type_fixes + class_range_fixes:
                         generated_code = generated_code.replace(old, new)
-                    config_output_file.write_text(generated_code)
+                    config_output_file.write_text(generated_code, encoding="utf-8")
                     logger.info(
                         f"Generated facility config models written to {config_output_file}"
                     )

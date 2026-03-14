@@ -42,90 +42,48 @@ logger = logging.getLogger(__name__)
 
 
 # =============================================================================
-# Vector Index Configuration (Schema-Derived)
+# Vector Index Configuration (From Pre-Built Schema Context Data)
 # =============================================================================
 
+# Use pre-built schema context data (generated during uv sync) for indexes.
+# This avoids loading LinkML schemas at import time, which fails on Windows
+# due to symlink issues and is slower than using pre-computed data.
+try:
+    from imas_codex.graph.schema_context_data import (
+        FULLTEXT_INDEXES as _FULLTEXT_INDEXES_DATA,
+        VECTOR_INDEXES as _VECTOR_INDEXES_DATA,
+    )
 
-def _get_all_vector_indexes() -> list[tuple[str, str, str]]:
-    """Derive all expected vector indexes from LinkML schemas.
-
-    Returns list of (index_name, node_label, property_name) tuples.
-    Combines facility.yaml and imas_dd.yaml schemas, deduplicating.
-    """
-    from pathlib import Path
-
-    from imas_codex.graph.schema import GraphSchema
-
-    schemas_dir = Path(__file__).parent.parent / "schemas"
-
-    # Collect from both schemas
-    indexes = {}
-    for schema_file in ["facility.yaml", "imas_dd.yaml"]:
-        gs = GraphSchema(schemas_dir / schema_file)
-        for idx in gs.vector_indexes:
-            # Deduplicate by index name (same index may appear in both)
-            indexes[idx[0]] = idx
-
-    return list(indexes.values())
-
-
-# Cache the result (computed once at module load)
-EXPECTED_VECTOR_INDEXES: list[tuple[str, str, str]] = _get_all_vector_indexes()
-
-
-def _get_all_fulltext_indexes() -> list[tuple[str, str, list[str]]]:
-    """Derive all expected fulltext indexes from LinkML schemas.
-
-    Returns list of (index_name, node_label, [property_names]) tuples.
-    """
-    from pathlib import Path
-
-    from imas_codex.graph.schema import GraphSchema
-
-    schemas_dir = Path(__file__).parent.parent / "schemas"
-
-    indexes = {}
-    for schema_file in ["facility.yaml", "imas_dd.yaml"]:
-        gs = GraphSchema(schemas_dir / schema_file)
-        for idx in gs.fulltext_indexes:
-            indexes[idx[0]] = idx
-
-    return list(indexes.values())
-
-
-EXPECTED_FULLTEXT_INDEXES: list[tuple[str, str, list[str]]] = (
-    _get_all_fulltext_indexes()
-)
+    # Convert schema_context_data format: {name: (label, prop)} -> [(name, label, prop)]
+    EXPECTED_VECTOR_INDEXES: list[tuple[str, str, str]] = [
+        (name, label, prop) for name, (label, prop) in _VECTOR_INDEXES_DATA.items()
+    ]
+    EXPECTED_FULLTEXT_INDEXES: list[tuple[str, str, list[str]]] = [
+        (name, label, props) for name, (label, props) in _FULLTEXT_INDEXES_DATA.items()
+    ]
+except (ImportError, SyntaxError) as e:
+    # During build phase, schema_context_data.py may not exist or be corrupted.
+    # Provide empty defaults - ensureindex methods will be no-ops.
+    logger.debug(
+        f"schema_context_data.py not available ({e}) - using empty index lists. "
+        "Run 'uv run build-models --force' to regenerate."
+    )
+    EXPECTED_VECTOR_INDEXES = []
+    EXPECTED_FULLTEXT_INDEXES = []
 
 
 # =============================================================================
-# Relationship Types (Schema-Derived)
+# Relationship Types (From Pre-Built Schema Context Data)
 # =============================================================================
 
+try:
+    from imas_codex.graph.schema_context_data import RELATIONSHIPS
 
-def _get_all_relationship_types() -> set[str]:
-    """Derive all expected relationship types from LinkML schemas.
-
-    Returns a set of SCREAMING_SNAKE_CASE relationship type names.
-    Combines facility.yaml and imas_dd.yaml schemas.
-    """
-    from pathlib import Path
-
-    from imas_codex.graph.schema import GraphSchema
-
-    schemas_dir = Path(__file__).parent.parent / "schemas"
-
-    # Collect from both schemas
-    rel_types = set()
-    for schema_file in ["facility.yaml", "imas_dd.yaml"]:
-        gs = GraphSchema(schemas_dir / schema_file)
-        rel_types.update(gs.relationship_types)
-
-    return rel_types
-
-
-# Cache the result (computed once at module load)
-EXPECTED_RELATIONSHIP_TYPES: set[str] = _get_all_relationship_types()
+    # RELATIONSHIPS format: [(from_label, rel_type, to_label, cardinality), ...]
+    EXPECTED_RELATIONSHIP_TYPES: set[str] = {rel[1] for rel in RELATIONSHIPS}
+except (ImportError, SyntaxError):
+    # Fallback during build or when file is corrupted
+    EXPECTED_RELATIONSHIP_TYPES = set()
 
 
 @dataclass

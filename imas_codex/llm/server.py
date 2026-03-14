@@ -69,10 +69,6 @@ from fastmcp import FastMCP
 from neo4j.exceptions import ServiceUnavailable
 from ruamel.yaml import YAML
 
-from imas_codex.llm.prompt_loader import (
-    PromptDefinition,
-    load_prompts,
-)
 from imas_codex.discovery import (
     get_facility as _get_facility_config,
     get_facility_infrastructure,
@@ -84,6 +80,10 @@ from imas_codex.embeddings.config import EncoderConfig
 from imas_codex.embeddings.encoder import EmbeddingBackendError, Encoder
 from imas_codex.graph import GraphClient, get_schema
 from imas_codex.graph.schema import to_cypher_props
+from imas_codex.llm.prompt_loader import (
+    PromptDefinition,
+    load_prompts,
+)
 from imas_codex.remote.tools import (
     check_all_tools as _check_all_tools,
     install_all_tools as _install_all_tools,
@@ -258,7 +258,7 @@ def _init_repl() -> dict[str, Any]:
     from imas_codex.graph.query_builder import graph_search as _graph_search
     from imas_codex.graph.schema_context import schema_for as _schema_for
 
-    gc = GraphClient()
+    gc = GraphClient.from_profile()
 
     # Create encoder with lazy initialization - respects embedding-backend config
     # This will NOT load the model until actually used
@@ -857,9 +857,7 @@ def _init_repl() -> dict[str, Any]:
         try:
             tools = _get_imas_tools()
             result = _run_async(
-                tools.analyze_imas_structure(
-                    ids_name=ids_name, dd_version=dd_version
-                )
+                tools.analyze_imas_structure(ids_name=ids_name, dd_version=dd_version)
             )
             return str(result)
         except Exception as e:
@@ -1899,11 +1897,11 @@ class AgentsServer:
                 print("Coverage:", ctx["coverage_by_category"])
             """
             try:
-                from imas_codex.llm.prompt_loader import get_schema_for_prompt
                 from imas_codex.discovery import (
                     get_facility_infrastructure as _get_infra,
                 )
                 from imas_codex.graph import GraphClient
+                from imas_codex.llm.prompt_loader import get_schema_for_prompt
 
                 # Get configured roots from infrastructure
                 infra = _get_infra(facility) or {}
@@ -2239,7 +2237,9 @@ class AgentsServer:
             tools = _get_imas_tools()
             result = _run_async(
                 tools.fetch_imas_paths(
-                    paths=paths, ids=ids, dd_version=dd_version,
+                    paths=paths,
+                    ids=ids,
+                    dd_version=dd_version,
                     include_version_history=include_version_history,
                 )
             )
@@ -2420,9 +2420,7 @@ class AgentsServer:
             """
             tools = _get_imas_tools()
             result = _run_async(
-                tools.analyze_imas_structure(
-                    ids_name=ids_name, dd_version=dd_version
-                )
+                tools.analyze_imas_structure(ids_name=ids_name, dd_version=dd_version)
             )
             return format_structure_report(result)
 
@@ -2497,9 +2495,7 @@ class AgentsServer:
                 Formatted version context report per path.
             """
             tools = _get_imas_tools()
-            result = _run_async(
-                tools.get_dd_version_context(paths=paths)
-            )
+            result = _run_async(tools.get_dd_version_context(paths=paths))
             return _format_version_context_report(result)
 
         @self.mcp.tool()
