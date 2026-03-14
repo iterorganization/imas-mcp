@@ -10,7 +10,15 @@ Architecture:
 - Each phase has its own worker group for per-row display
 - Phase functions from ``build_dd`` are called directly
 
-Pipeline: EXTRACT → BUILD → ENRICH → EMBED → CLUSTER
+Pipeline::
+
+    EXTRACT → BUILD → ENRICH ──→ CLUSTER
+                  └→ EMBED ────↗
+
+Enrich and embed run concurrently after build completes.  Embed does
+an initial pass with whatever descriptions exist, then after enrich
+finishes it re-embeds any paths whose descriptions were enriched
+during the concurrent window.  Cluster requires both to complete.
 """
 
 from __future__ import annotations
@@ -268,7 +276,12 @@ async def enrich_worker(state: DDBuildState, **_kwargs) -> None:
 
 
 async def embed_worker(state: DDBuildState, **_kwargs) -> None:
-    """Generate vector embeddings for DD paths."""
+    """Generate vector embeddings for DD paths.
+
+    Runs concurrently with enrich.  After the initial embedding pass,
+    waits for enrich to complete, then re-embeds any paths whose
+    descriptions were enriched during the concurrent window.
+    """
     from imas_codex.cli.logging import WorkerLogAdapter
 
     wlog = WorkerLogAdapter(logger, worker_name="embed_worker")
@@ -278,7 +291,7 @@ async def embed_worker(state: DDBuildState, **_kwargs) -> None:
         state.embed_phase.mark_done()
         return
 
-    wlog.info("Starting embedding generation")
+    wlog.info("Starting embedding generation (concurrent with enrich)")
 
     def _on_progress(processed: int, total: int) -> None:
         prev = state.embed_stats.processed
@@ -298,6 +311,7 @@ async def embed_worker(state: DDBuildState, **_kwargs) -> None:
             last_batch_time=batch_time,
         )
 
+    # --- Pass 1: embed with whatever descriptions exist now ---
     def _run() -> None:
         from imas_codex.graph.build_dd import phase_embed
         from imas_codex.graph.client import GraphClient
@@ -307,7 +321,7 @@ async def embed_worker(state: DDBuildState, **_kwargs) -> None:
                 client,
                 state.versions,
                 state.version_data,
-                enriched_llm_count=state.stats.get("enriched_llm", 0),
+                enriched_llm_count=0,  # don't force — enrich is still running
                 force=state.force,
                 no_hash=state.no_hash,
                 on_progress=_on_progress,
@@ -318,10 +332,42 @@ async def embed_worker(state: DDBuildState, **_kwargs) -> None:
     await asyncio.to_thread(_run)
 
     wlog.info(
-        "Embedding complete: %d updated, %d cached",
+        "Initial embed pass complete: %d updated, %d cached",
         state.stats.get("embeddings_updated", 0),
         state.stats.get("embeddings_cached", 0),
     )
+
+    # --- Wait for enrich to finish, then re-embed stale paths ---
+    if not state.enrich_phase.done:
+        state.embed_stats.status_text = "waiting for enrich…"
+        while not state.should_stop():
+            if await state.enrich_phase.wait_until_done(timeout=1.0):
+                break
+        if state.should_stop():
+            state.embed_phase.mark_done()
+            return
+
+    enriched_llm = state.stats.get("enriched_llm", 0)
+    if enriched_llm > 0:
+        wlog.info(
+            "Enrich produced %d new descriptions — re-embedding stale paths",
+            enriched_llm,
+        )
+        state.embed_stats.status_text = "re-embedding stale…"
+
+        def _reembed_stale() -> int:
+            from imas_codex.graph.build_dd import phase_embed_stale
+            from imas_codex.graph.client import GraphClient
+
+            with GraphClient() as client:
+                return phase_embed_stale(client)
+
+        reembedded = await asyncio.to_thread(_reembed_stale)
+        state.stats["embeddings_reembedded"] = reembedded
+        wlog.info("Re-embedded %d stale paths", reembedded)
+    else:
+        wlog.info("No enrichment occurred — skipping re-embed pass")
+
     state.embed_phase.mark_done()
 
 
@@ -408,13 +454,13 @@ async def run_dd_build_engine(
             "embed",
             "embed_phase",
             embed_worker,
-            depends_on=["build_phase", "enrich_phase"],
+            depends_on=["build_phase"],
         ),
         WorkerSpec(
             "cluster",
             "cluster_phase",
             cluster_worker,
-            depends_on=["build_phase", "enrich_phase", "embed_phase"],
+            depends_on=["enrich_phase", "embed_phase"],
         ),
     ]
 

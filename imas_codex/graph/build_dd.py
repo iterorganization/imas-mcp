@@ -1816,6 +1816,75 @@ def phase_embed(
     return stats
 
 
+def phase_embed_stale(
+    client: GraphClient,
+    batch_size: int = 500,
+) -> int:
+    """Re-embed paths whose descriptions changed since initial embedding.
+
+    Called after enrich completes when embed ran concurrently.  Finds
+    paths where the content hash no longer matches (because enrichment
+    updated the description after the initial embed pass) and
+    regenerates their embeddings.
+
+    Returns:
+        Number of paths re-embedded.
+    """
+    from imas_codex.settings import get_embedding_model
+
+    resolved_model = get_embedding_model()
+
+    # Find paths with embeddings whose description was enriched after embedding
+    stale_query = """
+    MATCH (p:IMASNode)
+    WHERE p.embedding IS NOT NULL
+      AND p.description IS NOT NULL
+      AND p.embedding_hash IS NOT NULL
+      AND p.enrichment_source IS NOT NULL
+    RETURN p.id AS id, p.name AS name, p.documentation AS documentation,
+           p.data_type AS data_type, p.ids AS ids, p.units AS units,
+           p.description AS description, p.keywords AS keywords,
+           p.cocos_label_transformation AS cocos_label_transformation,
+           p.physics_domain AS physics_domain,
+           p.node_type AS node_type, p.ndim AS ndim,
+           p.embedding_hash AS existing_hash
+    """
+    rows = client.query(stale_query)
+    if not rows:
+        return 0
+
+    # Build path data and check which hashes are stale
+    stale_paths: dict[str, dict] = {}
+    for r in rows:
+        pid = r["id"]
+        path_info = {
+            k: v for k, v in r.items() if v is not None and k != "existing_hash"
+        }
+        text = generate_embedding_text(pid, path_info, {})
+        new_hash = compute_embedding_hash(text, resolved_model)
+        if new_hash != r["existing_hash"]:
+            stale_paths[pid] = path_info
+
+    if not stale_paths:
+        return 0
+
+    logger.info("Re-embedding %d paths with stale embeddings", len(stale_paths))
+
+    embeddable, _ = filter_embeddable_paths(stale_paths)
+    if not embeddable:
+        return 0
+
+    embedding_stats = update_path_embeddings(
+        client=client,
+        paths_data=embeddable,
+        ids_info={},
+        force_rebuild=True,
+        use_rich=False,
+        track_changes=False,
+    )
+    return embedding_stats["updated"]
+
+
 def phase_cluster(
     client: GraphClient,
     *,
