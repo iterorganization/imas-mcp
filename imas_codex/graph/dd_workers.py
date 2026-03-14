@@ -1,24 +1,28 @@
 """Async workers for the IMAS DD build pipeline.
 
-Per-phase workers using the standard discovery engine pattern with
-``depends_on`` for sequential phase coordination.
+Polling workers using the standard discovery engine pattern with
+graph-backed status tracking and ``has_work_fn`` phase wiring.
 
 Architecture:
-- Five independent workers: extract, build, enrich, embed, cluster
-- Each worker runs one phase via ``asyncio.to_thread()``
-- Sequential dependencies via ``WorkerSpec.depends_on``
-- Each phase has its own worker group for per-row display
-- Phase functions from ``build_dd`` are called directly
+- Five workers: extract, build, enrich, embed, cluster
+- extract/build run once (extract XML, write nodes with status=built)
+- enrich/embed are polling loops that claim batches from the graph
+- cluster waits until embed phase is fully done
 
-Pipeline::
+IMASNode lifecycle::
 
-    EXTRACT → BUILD → ENRICH ──→ CLUSTER
-                  └→ EMBED ────↗
+    built → enriched → embedded
 
-Enrich and embed run concurrently after build completes.  Embed does
-an initial pass with whatever descriptions exist, then after enrich
-finishes it re-embeds any paths whose descriptions were enriched
-during the concurrent window.  Cluster requires both to complete.
+Pipeline flow::
+
+    EXTRACT → BUILD ──→ ENRICH ──→ CLUSTER
+                   └──→ EMBED ──↗
+
+Build writes nodes with status=built.  As soon as the first batch
+lands, both enrich and embed workers can start claiming work.
+Enrich claims built paths, enriches them, sets status=enriched.
+Embed claims enriched paths, embeds them, sets status=embedded.
+Cluster requires all embedding to complete.
 """
 
 from __future__ import annotations
@@ -216,71 +220,83 @@ async def build_worker(state: DDBuildState, **_kwargs) -> None:
 
 
 async def enrich_worker(state: DDBuildState, **_kwargs) -> None:
-    """LLM enrichment of path descriptions."""
+    """LLM enrichment polling loop: claim built → enrich → mark enriched.
+
+    Polls the graph for IMASNodes with status=built, claims a batch,
+    enriches them with LLM-generated descriptions, then sets
+    status=enriched.  Exits when the phase is marked done by the
+    supervision loop (idle + no pending work).
+    """
     from imas_codex.cli.logging import WorkerLogAdapter
 
     wlog = WorkerLogAdapter(logger, worker_name="enrich_worker")
 
     if state.dry_run:
         wlog.info("Enrichment skipped (dry run)")
-        state.enrich_phase.mark_done()
         return
 
-    wlog.info("Starting LLM enrichment")
+    wlog.info("Starting LLM enrichment polling loop")
 
-    def _on_progress(processed: int, total: int) -> None:
-        prev = state.enrich_stats.processed
-        state.enrich_stats.total = total
-        state.enrich_stats.processed = processed
-        batch_size = processed - prev
-        if batch_size > 0:
-            state.enrich_stats.record_batch(batch_size)
-        if processed < total:
-            state.enrich_stats.status_text = f"{processed:,} / {total:,} paths"
-        else:
-            state.enrich_stats.status_text = ""
+    from imas_codex.graph.dd_graph_ops import (
+        claim_paths_for_enrichment,
+        release_enrichment_claims,
+    )
+    from imas_codex.settings import get_model
 
-    def _on_cost(cost: float) -> None:
-        state.enrich_stats.cost = cost
+    model = get_model("language")
 
-    def _on_items(items: list[dict], batch_time: float) -> None:
-        state.enrich_stats.stream_queue.add(
-            items,
-            last_batch_time=batch_time,
+    while not state.should_stop():
+        # Claim a batch of built paths
+        paths = await asyncio.to_thread(
+            claim_paths_for_enrichment,
+            50,
+            ids_filter=state.ids_filter,
         )
 
-    def _run() -> None:
-        from imas_codex.graph.build_dd import phase_enrich
-        from imas_codex.graph.client import GraphClient
+        if not paths:
+            state.enrich_phase.record_idle()
+            await asyncio.sleep(1.0)
+            continue
 
-        with GraphClient() as client:
-            enrich_stats = phase_enrich(
-                client,
-                ids_filter=state.ids_filter,
-                force=state.no_hash,
-                on_progress=_on_progress,
-                on_cost=_on_cost,
-                on_items=_on_items,
-            )
-            state.stats.update(enrich_stats)
-            state.enrich_stats.cost = enrich_stats.get("enrichment_cost", 0.0)
+        state.enrich_phase.record_activity(len(paths))
+        path_ids = [p["id"] for p in paths]
 
-    await asyncio.to_thread(_run)
+        try:
+            updates = await _enrich_batch(paths, model, state)
+
+            if updates:
+                await _batch_update_enrichments_with_graph(updates)
+                state.enrich_stats.processed += len(updates)
+                state.enrich_stats.record_batch(len(updates))
+
+                llm_count = sum(
+                    1 for u in updates if u.get("enrichment_source") == "llm"
+                )
+                template_count = len(updates) - llm_count
+                state.stats["enriched_llm"] = (
+                    state.stats.get("enriched_llm", 0) + llm_count
+                )
+                state.stats["enriched_template"] = (
+                    state.stats.get("enriched_template", 0) + template_count
+                )
+
+        except Exception:
+            wlog.exception("Error enriching batch, releasing claims")
+            await asyncio.to_thread(release_enrichment_claims, path_ids)
 
     wlog.info(
         "Enrichment complete: %d LLM, %d template",
         state.stats.get("enriched_llm", 0),
         state.stats.get("enriched_template", 0),
     )
-    state.enrich_phase.mark_done()
 
 
 async def embed_worker(state: DDBuildState, **_kwargs) -> None:
-    """Generate vector embeddings for DD paths.
+    """Embedding polling loop: claim enriched → embed → mark embedded.
 
-    Runs concurrently with enrich.  After the initial embedding pass,
-    waits for enrich to complete, then re-embeds any paths whose
-    descriptions were enriched during the concurrent window.
+    Polls the graph for IMASNodes with status=enriched, claims a batch,
+    generates embeddings, then sets status=embedded.  Exits when the
+    phase is marked done (idle + no pending work).
     """
     from imas_codex.cli.logging import WorkerLogAdapter
 
@@ -288,87 +304,50 @@ async def embed_worker(state: DDBuildState, **_kwargs) -> None:
 
     if state.dry_run:
         wlog.info("Embedding skipped (dry run)")
-        state.embed_phase.mark_done()
         return
 
-    wlog.info("Starting embedding generation (concurrent with enrich)")
+    wlog.info("Starting embedding polling loop")
 
-    def _on_progress(processed: int, total: int) -> None:
-        prev = state.embed_stats.processed
-        state.embed_stats.total = total
-        state.embed_stats.processed = processed
-        batch_size = processed - prev
-        if batch_size > 0:
-            state.embed_stats.record_batch(batch_size)
-        if processed < total:
-            state.embed_stats.status_text = f"{processed:,} / {total:,} paths"
-        else:
-            state.embed_stats.status_text = ""
-
-    def _on_items(items: list[dict], batch_time: float) -> None:
-        state.embed_stats.stream_queue.add(
-            items,
-            last_batch_time=batch_time,
-        )
-
-    # --- Pass 1: embed with whatever descriptions exist now ---
-    def _run() -> None:
-        from imas_codex.graph.build_dd import phase_embed
-        from imas_codex.graph.client import GraphClient
-
-        with GraphClient() as client:
-            embed_stats = phase_embed(
-                client,
-                state.versions,
-                state.version_data,
-                enriched_llm_count=0,  # don't force — enrich is still running
-                force=state.force,
-                no_hash=state.no_hash,
-                on_progress=_on_progress,
-                on_items=_on_items,
-            )
-            state.stats.update(embed_stats)
-
-    await asyncio.to_thread(_run)
-
-    wlog.info(
-        "Initial embed pass complete: %d updated, %d cached",
-        state.stats.get("embeddings_updated", 0),
-        state.stats.get("embeddings_cached", 0),
+    from imas_codex.graph.dd_graph_ops import (
+        claim_paths_for_embedding,
+        mark_paths_embedded,
+        release_embedding_claims,
     )
 
-    # --- Wait for enrich to finish, then re-embed stale paths ---
-    if not state.enrich_phase.done:
-        state.embed_stats.status_text = "waiting for enrich…"
-        while not state.should_stop():
-            if await state.enrich_phase.wait_until_done(timeout=1.0):
-                break
-        if state.should_stop():
-            state.embed_phase.mark_done()
-            return
-
-    enriched_llm = state.stats.get("enriched_llm", 0)
-    if enriched_llm > 0:
-        wlog.info(
-            "Enrich produced %d new descriptions — re-embedding stale paths",
-            enriched_llm,
+    while not state.should_stop():
+        # Claim a batch of enriched paths
+        paths = await asyncio.to_thread(
+            claim_paths_for_embedding,
+            500,
         )
-        state.embed_stats.status_text = "re-embedding stale…"
 
-        def _reembed_stale() -> int:
-            from imas_codex.graph.build_dd import phase_embed_stale
-            from imas_codex.graph.client import GraphClient
+        if not paths:
+            state.embed_phase.record_idle()
+            await asyncio.sleep(1.0)
+            continue
 
-            with GraphClient() as client:
-                return phase_embed_stale(client)
+        state.embed_phase.record_activity(len(paths))
+        path_ids = [p["id"] for p in paths]
 
-        reembedded = await asyncio.to_thread(_reembed_stale)
-        state.stats["embeddings_reembedded"] = reembedded
-        wlog.info("Re-embedded %d stale paths", reembedded)
-    else:
-        wlog.info("No enrichment occurred — skipping re-embed pass")
+        try:
+            embedded_ids = await _embed_batch(paths, state)
 
-    state.embed_phase.mark_done()
+            if embedded_ids:
+                await asyncio.to_thread(mark_paths_embedded, embedded_ids)
+                state.embed_stats.processed += len(embedded_ids)
+                state.embed_stats.record_batch(len(embedded_ids))
+                state.stats["embeddings_updated"] = state.stats.get(
+                    "embeddings_updated", 0
+                ) + len(embedded_ids)
+
+        except Exception:
+            wlog.exception("Error embedding batch, releasing claims")
+            await asyncio.to_thread(release_embedding_claims, path_ids)
+
+    wlog.info(
+        "Embedding complete: %d updated",
+        state.stats.get("embeddings_updated", 0),
+    )
 
 
 async def cluster_worker(state: DDBuildState, **_kwargs) -> None:
@@ -416,8 +395,244 @@ async def cluster_worker(state: DDBuildState, **_kwargs) -> None:
 
 
 # =============================================================================
-# Engine Entry Point
+# Batch Processing Helpers
 # =============================================================================
+
+
+async def _enrich_batch(
+    paths: list[dict],
+    model: str,
+    state: DDBuildState,
+) -> list[dict]:
+    """Enrich a claimed batch of IMASNode paths.
+
+    Async — uses ``acall_llm_structured`` for non-blocking LLM calls
+    and ``asyncio.to_thread`` for sync graph reads.
+
+    Returns list of update dicts ready for ``_batch_update_enrichments``.
+    """
+    import time as _time
+
+    from imas_codex.discovery.base.llm import acall_llm_structured
+    from imas_codex.graph.dd_enrichment import (
+        IMASPathEnrichmentBatch,
+        build_enrichment_messages,
+        compute_enrichment_hash,
+        gather_path_context,
+        generate_template_description,
+        is_boilerplate_path,
+    )
+
+    updates: list[dict] = []
+
+    # Separate boilerplate vs LLM paths
+    boilerplate = [p for p in paths if is_boilerplate_path(p["id"])]
+    llm_paths = [p for p in paths if not is_boilerplate_path(p["id"])]
+
+    # Template enrichment (no LLM call)
+    for path in boilerplate:
+        template = generate_template_description(path["id"], path)
+        template_hash = compute_enrichment_hash(
+            f"{path.get('documentation', '')}", "template"
+        )
+        updates.append(
+            {
+                "id": path["id"],
+                "description": template["description"],
+                "keywords": template["keywords"],
+                "enrichment_hash": template_hash,
+                "enrichment_model": "template",
+                "enrichment_source": "template",
+            }
+        )
+
+    # LLM enrichment
+    if llm_paths:
+
+        def _gather_context():
+            from imas_codex.graph.client import GraphClient
+
+            with GraphClient() as client:
+                ids_info_result = client.query(
+                    "MATCH (i:IDS) RETURN i.id AS id, i.description AS description, "
+                    "i.physics_domain AS physics_domain"
+                )
+                ids_info = {r["id"]: r for r in ids_info_result}
+                batch_contexts = gather_path_context(client, llm_paths, ids_info)
+            return ids_info, batch_contexts
+
+        ids_info, batch_contexts = await asyncio.to_thread(_gather_context)
+
+        # Check hashes — skip already-enriched (hash match)
+        to_enrich = []
+        for ctx in batch_contexts:
+            ctx_str = (
+                f"{ctx['id']}:{ctx.get('documentation', '')}:{ctx.get('siblings', [])}"
+            )
+            expected_hash = compute_enrichment_hash(ctx_str, model)
+            if not state.no_hash and ctx.get("enrichment_hash") == expected_hash:
+                continue  # Already enriched with same context
+            ctx["_expected_hash"] = expected_hash
+            to_enrich.append(ctx)
+
+        if to_enrich:
+            messages = build_enrichment_messages(to_enrich, ids_info)
+            try:
+                batch_start = _time.time()
+                result, cost, tokens = await acall_llm_structured(
+                    model=model,
+                    messages=messages,
+                    response_model=IMASPathEnrichmentBatch,
+                )
+                state.enrich_stats.cost += cost
+                batch_time = _time.time() - batch_start
+
+                for enrichment in result.results:
+                    if enrichment.path_index < 1 or enrichment.path_index > len(
+                        to_enrich
+                    ):
+                        continue
+                    ctx = to_enrich[enrichment.path_index - 1]
+                    update = {
+                        "id": ctx["id"],
+                        "description": enrichment.description,
+                        "keywords": enrichment.keywords[:5],
+                        "enrichment_hash": ctx["_expected_hash"],
+                        "enrichment_model": model,
+                        "enrichment_source": "llm",
+                    }
+                    if enrichment.physics_domain:
+                        update["physics_domain"] = enrichment.physics_domain
+                    updates.append(update)
+
+                # Stream items for display
+                if updates:
+                    stream_items = [
+                        {"primary_text": u["id"]}
+                        for u in updates
+                        if u.get("enrichment_source") == "llm"
+                    ]
+                    if stream_items:
+                        state.enrich_stats.stream_queue.add(
+                            stream_items,
+                            last_batch_time=batch_time,
+                        )
+
+            except Exception:
+                logger.exception("LLM enrichment failed for batch")
+                # Return what we have (boilerplate updates)
+
+    return updates
+
+
+async def _batch_update_enrichments_with_graph(updates: list[dict]) -> None:
+    """Write enrichment updates to graph (sets status=enriched)."""
+
+    def _write():
+        from imas_codex.graph.client import GraphClient
+        from imas_codex.graph.dd_enrichment import _batch_update_enrichments
+
+        with GraphClient() as client:
+            _batch_update_enrichments(client, updates)
+
+    await asyncio.to_thread(_write)
+
+
+async def _embed_batch(
+    paths: list[dict],
+    state: DDBuildState,
+) -> list[str]:
+    """Generate embeddings for a claimed batch of enriched IMASNode paths.
+
+    Async — uses ``asyncio.to_thread`` for CPU-bound encoding and
+    sync graph writes.
+
+    Returns list of path IDs that were successfully embedded.
+    """
+    from imas_codex.graph.build_dd import (
+        compute_embedding_hash,
+        filter_embeddable_paths,
+        generate_embedding_text,
+        generate_embeddings_batch,
+    )
+    from imas_codex.settings import get_embedding_model
+
+    resolved_model = get_embedding_model()
+
+    # Build path data dict from claimed results
+    paths_data = {}
+    for r in paths:
+        pid = r["id"]
+        paths_data[pid] = {k: v for k, v in r.items() if v is not None}
+
+    # Filter to embeddable paths (excludes STRUCTURE, error fields, etc.)
+    embeddable, _ = filter_embeddable_paths(paths_data)
+    if not embeddable:
+        return []
+
+    # Generate embedding text and hashes
+    embedding_texts = {}
+    content_hashes = {}
+    for path_id, path_info in embeddable.items():
+        text = generate_embedding_text(path_id, path_info, {})
+        embedding_texts[path_id] = text
+        content_hashes[path_id] = compute_embedding_hash(text, resolved_model)
+
+    # Skip paths where hash hasn't changed (already embedded correctly)
+    path_ids = list(embeddable.keys())
+    paths_to_embed = []
+    for pid in path_ids:
+        existing_hash = paths_data[pid].get("embedding_hash")
+        if not state.force and existing_hash == content_hashes[pid]:
+            continue  # Already embedded with same content
+        paths_to_embed.append(pid)
+
+    if not paths_to_embed:
+        return path_ids  # All cached — still mark as embedded
+
+    # Generate embeddings (CPU-bound — run in thread)
+    texts = [embedding_texts[pid] for pid in paths_to_embed]
+    embeddings = await asyncio.to_thread(
+        generate_embeddings_batch,
+        texts,
+        resolved_model,
+    )
+
+    # Store embeddings in graph (sync driver — run in thread)
+    batch_data = []
+    for i, pid in enumerate(paths_to_embed):
+        batch_data.append(
+            {
+                "path_id": pid,
+                "embedding_text": embedding_texts[pid],
+                "embedding": embeddings[i].tolist(),
+                "embedding_hash": content_hashes[pid],
+            }
+        )
+
+    def _write_embeddings():
+        from imas_codex.graph.client import GraphClient
+
+        with GraphClient() as client:
+            client.query(
+                """
+                UNWIND $batch AS b
+                MATCH (p:IMASNode {id: b.path_id})
+                SET p.embedding_text = b.embedding_text,
+                    p.embedding = b.embedding,
+                    p.embedding_hash = b.embedding_hash
+                """,
+                batch=batch_data,
+            )
+
+    await asyncio.to_thread(_write_embeddings)
+
+    # Stream items for display
+    stream_items = [{"primary_text": pid} for pid in paths_to_embed]
+    if stream_items:
+        state.embed_stats.stream_queue.add(stream_items, last_batch_time=0.0)
+
+    return path_ids
 
 
 async def run_dd_build_engine(
@@ -428,10 +643,30 @@ async def run_dd_build_engine(
 ) -> None:
     """Run the DD build pipeline as a discovery engine.
 
-    Each phase is a separate worker with ``depends_on`` declarations
-    for sequential coordination.  The display shows one row per phase,
-    with workers starting automatically when dependencies complete.
+    Uses graph-backed ``has_work_fn`` wiring so workers start as soon
+    as their upstream phase produces work — no blocking on full phase
+    completion.  Build writes nodes with ``status=built``, enrich polls
+    for built paths, embed polls for enriched paths.
+
+    Pipeline::
+
+        EXTRACT → BUILD ──→ ENRICH ──→ CLUSTER
+                       └──→ EMBED ──↗
     """
+    from imas_codex.discovery.base.engine import OrphanRecoverySpec
+    from imas_codex.graph import dd_graph_ops
+
+    # --- Wire has_work_fn for graph-backed phase completion ---
+    state.enrich_phase.set_has_work_fn(
+        lambda: (
+            dd_graph_ops.has_pending_enrichment(ids_filter=state.ids_filter)
+            or not state.build_phase.done
+        )
+    )
+    state.embed_phase.set_has_work_fn(
+        lambda: (dd_graph_ops.has_pending_embedding() or not state.enrich_phase.done)
+    )
+
     workers = [
         WorkerSpec(
             "extract",
@@ -448,13 +683,11 @@ async def run_dd_build_engine(
             "enrich",
             "enrich_phase",
             enrich_worker,
-            depends_on=["build_phase"],
         ),
         WorkerSpec(
             "embed",
             "embed_phase",
             embed_worker,
-            depends_on=["build_phase"],
         ),
         WorkerSpec(
             "cluster",
@@ -464,11 +697,16 @@ async def run_dd_build_engine(
         ),
     ]
 
+    orphan_specs = [
+        OrphanRecoverySpec("IMASNode"),
+    ]
+
     await run_discovery_engine(
         state,
         workers,
         stop_event=stop_event,
         on_worker_status=on_worker_status,
+        orphan_specs=orphan_specs,
     )
 
     # Persist build metadata to graph

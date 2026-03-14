@@ -682,7 +682,10 @@ def _batch_update_enrichments(
                 p.keywords = u.keywords,
                 p.enrichment_hash = u.enrichment_hash,
                 p.enrichment_model = u.enrichment_model,
-                p.enrichment_source = u.enrichment_source
+                p.enrichment_source = u.enrichment_source,
+                p.status = 'enriched',
+                p.claimed_at = null,
+                p.claim_token = null
             WITH p, u
             WHERE u.physics_domain IS NOT NULL
             SET p.physics_domain = u.physics_domain

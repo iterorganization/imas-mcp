@@ -823,7 +823,10 @@ def update_path_embeddings(
                 MATCH (p:IMASNode {id: b.path_id})
                 SET p.embedding_text = b.embedding_text,
                     p.embedding = b.embedding,
-                    p.embedding_hash = b.embedding_hash
+                    p.embedding_hash = b.embedding_hash,
+                    p.status = 'embedded',
+                    p.claimed_at = null,
+                    p.claim_token = null
                 """,
                 batch=batch_data,
             )
@@ -2330,7 +2333,11 @@ def _batch_create_path_nodes(
                 path.coordinate3_same_as = p.coordinate3_same_as,
                 path.coordinate4_same_as = p.coordinate4_same_as,
                 path.coordinate5_same_as = p.coordinate5_same_as,
-                path.coordinate6_same_as = p.coordinate6_same_as
+                path.coordinate6_same_as = p.coordinate6_same_as,
+                path.status = CASE
+                    WHEN path.status IS NULL THEN 'built'
+                    ELSE path.status
+                END
         """,
             paths=batch,
         )
