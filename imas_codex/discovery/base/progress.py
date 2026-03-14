@@ -461,6 +461,9 @@ class WorkerStats:
     # Metadata for structured logging
     metadata: dict[str, Any] = field(default_factory=dict)
 
+    # Current activity description (for display)
+    status_text: str = ""
+
     # SSH/connection timing
     _connection_start: float | None = None  # When current connection attempt began
     _connection_host: str | None = None  # Host being connected to
@@ -1384,6 +1387,25 @@ class BaseProgressDisplay(ABC):
             if (s.group or _n.split("_worker")[0]) == group
         )
 
+    def _worker_waiting(self, group: str) -> bool:
+        """Check if all workers in a group are idle (waiting on dependencies).
+
+        Returns True when workers exist and ALL are in idle state — meaning
+        they haven't started processing yet (blocked on ``depends_on``).
+        Returns False if any worker is running, stopped, or crashed.
+        """
+        wg = self.worker_group
+        if not wg:
+            return False
+        workers = [
+            s
+            for _n, s in wg.workers.items()
+            if (s.group or _n.split("_worker")[0]) == group
+        ]
+        return len(workers) > 0 and all(
+            s.state == WorkerState.idle for s in workers
+        )
+
     def update_worker_status(self, worker_group: SupervisedWorkerGroup) -> None:
         """Update worker status from supervised worker group."""
         self.worker_group = worker_group
@@ -1838,6 +1860,7 @@ class DataDrivenProgressDisplay(BaseProgressDisplay):
             )
             complete = self._worker_complete(stage.group)
             running = self._worker_running(stage.group)
+            waiting = self._worker_waiting(stage.group)
 
             rows.append(
                 PipelineRowConfig(
@@ -1851,8 +1874,10 @@ class DataDrivenProgressDisplay(BaseProgressDisplay):
                     disabled_msg=stage.disabled_msg,
                     worker_count=count,
                     worker_annotation=ann,
+                    primary_text=stats.status_text if stats else "",
                     is_complete=complete,
                     is_processing=running and not complete,
+                    processing_label="waiting..." if waiting else "processing...",
                 )
             )
         return build_pipeline_section(rows, self.bar_width)
