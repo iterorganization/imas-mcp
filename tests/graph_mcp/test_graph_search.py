@@ -424,9 +424,7 @@ class TestFetchImasPathsEnrichment:
     async def test_fetch_includes_identifier_schema(self, graph_client):
         """Path with IdentifierSchema should populate identifier_schema."""
         tool = self._make_tool(graph_client)
-        result = await tool.fetch_imas_paths(
-            "equilibrium/time_slice/boundary/type"
-        )
+        result = await tool.fetch_imas_paths("equilibrium/time_slice/boundary/type")
         assert len(result.nodes) == 1
         node = result.nodes[0]
         assert node.identifier_schema is not None
@@ -436,9 +434,7 @@ class TestFetchImasPathsEnrichment:
     async def test_fetch_no_identifier_schema(self, graph_client):
         """Path without IdentifierSchema should have None."""
         tool = self._make_tool(graph_client)
-        result = await tool.fetch_imas_paths(
-            "equilibrium/time_slice/profiles_1d/psi"
-        )
+        result = await tool.fetch_imas_paths("equilibrium/time_slice/profiles_1d/psi")
         node = result.nodes[0]
         assert node.identifier_schema is None
 
@@ -573,10 +569,12 @@ class TestGetDDVersionContext:
 
     @pytest.mark.anyio
     async def test_multiple_paths(self, version_tool):
-        result = await version_tool.get_dd_version_context([
-            "core_profiles/profiles_1d/electrons/pressure",
-            "equilibrium/time_slice/profiles_1d/psi",
-        ])
+        result = await version_tool.get_dd_version_context(
+            [
+                "core_profiles/profiles_1d/electrons/pressure",
+                "equilibrium/time_slice/profiles_1d/psi",
+            ]
+        )
         assert result["total_paths"] == 2
         assert result["paths_with_changes"] == 1
 
@@ -590,3 +588,284 @@ class TestGetDDVersionContext:
     async def test_empty_paths(self, version_tool):
         result = await version_tool.get_dd_version_context("")
         assert "error" in result
+
+
+# ── _common_path_prefix tests ────────────────────────────────────────────
+
+
+class TestCommonPathPrefix:
+    """Tests for the _common_path_prefix helper."""
+
+    def test_common_prefix(self):
+        from imas_codex.tools.graph_search import _common_path_prefix
+
+        result = _common_path_prefix(
+            [
+                "equilibrium/time_slice/boundary/psi",
+                "equilibrium/time_slice/boundary/psi_norm",
+                "equilibrium/time_slice/boundary/type",
+            ]
+        )
+        assert result == "equilibrium/time_slice/boundary"
+
+    def test_no_common_prefix(self):
+        from imas_codex.tools.graph_search import _common_path_prefix
+
+        result = _common_path_prefix(
+            [
+                "equilibrium/time_slice/profiles_1d/psi",
+                "core_profiles/profiles_1d/electrons/temperature",
+            ]
+        )
+        assert result == ""
+
+    def test_single_path(self):
+        from imas_codex.tools.graph_search import _common_path_prefix
+
+        result = _common_path_prefix(["equilibrium/time_slice/profiles_1d/psi"])
+        assert result == "equilibrium/time_slice/profiles_1d/psi"
+
+    def test_empty_list(self):
+        from imas_codex.tools.graph_search import _common_path_prefix
+
+        result = _common_path_prefix([])
+        assert result == ""
+
+
+# ── Cluster path lookup tests ────────────────────────────────────────────
+
+
+class TestClusterPathLookup:
+    """Tests for cluster search by specific path."""
+
+    def _make_tool(self, graph_client):
+        from imas_codex.tools.graph_search import GraphClustersTool
+
+        return GraphClustersTool(graph_client)
+
+    @pytest.mark.asyncio
+    async def test_path_in_cluster(self, graph_client):
+        """Path that is a cluster member should return its cluster."""
+        tool = self._make_tool(graph_client)
+        result = await tool.search_imas_clusters(
+            query="equilibrium/time_slice/boundary/psi"
+        )
+        assert result["query_type"] == "path"
+        assert result["clusters_found"] >= 1
+        labels = [c["label"] for c in result["clusters"]]
+        assert "Equilibrium Boundary" in labels
+
+    @pytest.mark.asyncio
+    async def test_path_not_in_cluster(self, graph_client):
+        """Path not in any cluster should return 0 clusters."""
+        tool = self._make_tool(graph_client)
+        result = await tool.search_imas_clusters(
+            query="equilibrium/time_slice/profiles_1d/psi"
+        )
+        assert result["query_type"] == "path"
+        assert result["clusters_found"] == 0
+
+
+# ── Domain resolution tests ──────────────────────────────────────────────
+
+
+class TestResolveDomain:
+    """Tests for _resolve_physics_domain helper."""
+
+    def test_exact_match(self, graph_client):
+        from imas_codex.tools.graph_search import _resolve_physics_domain
+
+        domains, method = _resolve_physics_domain(graph_client, "transport")
+        assert domains == ["transport"]
+        assert method == "exact"
+
+    def test_ids_name_resolution(self, graph_client):
+        """IDS name 'equilibrium' resolves to its physics_domain."""
+        from imas_codex.tools.graph_search import _resolve_physics_domain
+
+        domains, method = _resolve_physics_domain(graph_client, "equilibrium")
+        # In fixture, equilibrium IDS has physics_domain='magnetics'
+        # But 'equilibrium' is also a valid PhysicsDomain enum value,
+        # so it matches exact first
+        assert "equilibrium" in domains
+        assert method == "exact"
+
+    def test_ids_name_not_in_enum(self, graph_client):
+        """IDS name that isn't a PhysicsDomain resolves via graph."""
+        from imas_codex.tools.graph_search import _resolve_physics_domain
+
+        # core_profiles is not a PhysicsDomain enum value
+        domains, method = _resolve_physics_domain(graph_client, "core_profiles")
+        assert domains == ["transport"]
+        assert method == "ids_name:core_profiles"
+
+    def test_substring_match(self, graph_client):
+        from imas_codex.tools.graph_search import _resolve_physics_domain
+
+        domains, method = _resolve_physics_domain(graph_client, "auxiliary")
+        assert "auxiliary_heating" in domains
+        assert method == "substring:auxiliary"
+
+    def test_no_match(self, graph_client):
+        from imas_codex.tools.graph_search import _resolve_physics_domain
+
+        domains, method = _resolve_physics_domain(
+            graph_client, "nonexistent_domain_xyz"
+        )
+        assert domains == []
+        assert method == "no_match"
+
+    def test_category_expansion(self, graph_client):
+        from imas_codex.tools.graph_search import _resolve_physics_domain
+
+        domains, method = _resolve_physics_domain(graph_client, "diagnostics")
+        assert method == "category:diagnostics"
+        assert "magnetic_field_diagnostics" in domains
+        assert "radiation_measurement_diagnostics" in domains
+
+
+# ── Domain export tests ──────────────────────────────────────────────────
+
+
+class TestExportDomain:
+    """Tests for export_imas_domain with domain resolution."""
+
+    def _make_tool(self, graph_client):
+        from imas_codex.tools.graph_search import GraphStructureTool
+
+        return GraphStructureTool(graph_client)
+
+    @pytest.mark.asyncio
+    async def test_export_exact_domain(self, graph_client):
+        """Exact domain name should return paths."""
+        tool = self._make_tool(graph_client)
+        # 'magnetics' is stored on equilibrium paths in fixtures
+        result = await tool.export_imas_domain(domain="magnetics")
+        assert result["total_paths"] > 0
+        assert "magnetics" in result["resolved_domains"]
+
+    @pytest.mark.asyncio
+    async def test_export_ids_name(self, graph_client):
+        """IDS name should resolve and export domain paths."""
+        tool = self._make_tool(graph_client)
+        result = await tool.export_imas_domain(domain="core_profiles")
+        assert result["total_paths"] > 0
+        assert result["resolution"] == "ids_name:core_profiles"
+        assert "transport" in result["resolved_domains"]
+
+    @pytest.mark.asyncio
+    async def test_export_no_match(self, graph_client):
+        """No-match domain should return error."""
+        tool = self._make_tool(graph_client)
+        result = await tool.export_imas_domain(domain="nonexistent_xyz")
+        assert result["total_paths"] == 0
+        assert "error" in result
+
+
+# ── Phase 4: Fetch metadata parity ──────────────────────────────────────
+
+
+class TestFetchMetadataParity:
+    """Verify fetch_imas_paths returns introduced_after_version and version_changes."""
+
+    def _make_tool(self, graph_client):
+        from imas_codex.tools.graph_search import GraphPathTool
+
+        return GraphPathTool(graph_client)
+
+    @pytest.mark.asyncio
+    async def test_introduced_after_version_populated(self, graph_client):
+        """Paths with INTRODUCED_IN should expose introduced_after_version."""
+        tool = self._make_tool(graph_client)
+        result = await tool.fetch_imas_paths("equilibrium/time_slice/profiles_1d/psi")
+        node = result.nodes[0]
+        assert node.introduced_after_version == "3.42.0"
+
+    @pytest.mark.asyncio
+    async def test_introduced_version_newer_path(self, graph_client):
+        """A path introduced in 4.0.0 should reflect that version."""
+        tool = self._make_tool(graph_client)
+        result = await tool.fetch_imas_paths(
+            "core_profiles/profiles_1d/electrons/pressure"
+        )
+        node = result.nodes[0]
+        assert node.introduced_after_version == "4.0.0"
+
+    @pytest.mark.asyncio
+    async def test_version_changes_included(self, graph_client):
+        """include_version_history=True should return version_changes."""
+        tool = self._make_tool(graph_client)
+        result = await tool.fetch_imas_paths(
+            "core_profiles/profiles_1d/electrons/pressure",
+            include_version_history=True,
+        )
+        node = result.nodes[0]
+        assert node.version_changes is not None
+        assert len(node.version_changes) > 0
+        change = node.version_changes[0]
+        assert change["version"] == "4.0.0"
+
+    @pytest.mark.asyncio
+    async def test_version_changes_empty_without_flag(self, graph_client):
+        """Without include_version_history, version_changes should be None."""
+        tool = self._make_tool(graph_client)
+        result = await tool.fetch_imas_paths(
+            "core_profiles/profiles_1d/electrons/pressure",
+            include_version_history=False,
+        )
+        node = result.nodes[0]
+        assert node.version_changes is None
+
+
+# ── Phase 5: Identifier search with enrichment ──────────────────────────
+
+
+class TestIdentifierSearch:
+    """Verify identifier search uses enriched descriptions and keywords."""
+
+    def _make_tool(self, graph_client):
+        from imas_codex.tools.graph_search import GraphIdentifiersTool
+
+        return GraphIdentifiersTool(graph_client)
+
+    @pytest.mark.asyncio
+    async def test_list_all_identifiers(self, graph_client):
+        """No query should return all schemas."""
+        tool = self._make_tool(graph_client)
+        result = await tool.get_imas_identifiers()
+        assert result.analytics["total_schemas"] >= 1
+        schema = result.schemas[0]
+        assert schema["path"] == "boundary_type"
+
+    @pytest.mark.asyncio
+    async def test_keyword_match_enriched_description(self, graph_client):
+        """Query matching enriched_description should return schema."""
+        tool = self._make_tool(graph_client)
+        result = await tool.get_imas_identifiers(query="topology")
+        assert result.analytics["total_schemas"] >= 1
+        names = [s["path"] for s in result.schemas]
+        assert "boundary_type" in names
+
+    @pytest.mark.asyncio
+    async def test_keyword_match_keywords_field(self, graph_client):
+        """Query matching keywords list should return schema."""
+        tool = self._make_tool(graph_client)
+        result = await tool.get_imas_identifiers(query="separatrix")
+        assert result.analytics["total_schemas"] >= 1
+        names = [s["path"] for s in result.schemas]
+        assert "boundary_type" in names
+
+    @pytest.mark.asyncio
+    async def test_enriched_description_preferred(self, graph_client):
+        """Description should prefer enriched_description over raw description."""
+        tool = self._make_tool(graph_client)
+        result = await tool.get_imas_identifiers()
+        schema = result.schemas[0]
+        assert "topology" in schema["description"]
+
+    @pytest.mark.asyncio
+    async def test_no_match(self, graph_client):
+        """Query with no match should return empty."""
+        tool = self._make_tool(graph_client)
+        result = await tool.get_imas_identifiers(query="zzz_nonexistent_xyz")
+        assert result.analytics["total_schemas"] == 0
