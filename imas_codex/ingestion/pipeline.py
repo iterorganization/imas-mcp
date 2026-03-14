@@ -561,13 +561,16 @@ async def ingest_files(
             processed_files += len(batch_files)
             stats["files"] = processed_files
 
-    # Final relationship linking
+    # Final relationship linking — scoped to only the examples we just created.
+    # This avoids catastrophic O(all_refs × all_signals) global scans that
+    # previously spent 300+ seconds per batch scanning the entire graph.
+    all_example_ids = list(file_metadata.keys())
     report(processed_files, total_to_process, "Creating final graph relationships...")
 
     with GraphClient() as graph_client:
-        link_chunks_to_imas_paths(graph_client)
-        link_chunks_to_data_nodes(graph_client)
-        link_examples_to_facility(graph_client)
+        link_chunks_to_imas_paths(graph_client, example_ids=all_example_ids)
+        link_chunks_to_data_nodes(graph_client, example_ids=all_example_ids)
+        link_examples_to_facility(graph_client, example_ids=all_example_ids)
 
     report(
         total_to_process,
