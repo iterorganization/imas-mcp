@@ -245,6 +245,7 @@ def imas_build(
             from imas_codex.graph.dd_progress import create_dd_build_display
 
             display = create_dd_build_display(
+                state,
                 console=console_obj,
                 skip_enrichment=skip_enrichment,
                 skip_embeddings=skip_embeddings,

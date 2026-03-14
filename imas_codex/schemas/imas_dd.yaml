@@ -302,6 +302,18 @@ classes:
           SHA256 hash of build parameters (DD versions, flags) for idempotency.
           If hash matches on next run, DD build is skipped. Replaces the
           former _GraphMeta.dd_build_hash property.
+      build_completed_at:
+        description: Timestamp when the last build completed
+        range: datetime
+      build_duration:
+        description: Wall-clock duration of the last build in seconds
+        range: float
+      build_cost:
+        description: Total LLM cost of the last build in USD
+        range: float
+      enrichment_cost:
+        description: LLM enrichment cost of the last build in USD
+        range: float
       created_at:
         description: Timestamp when DDVersion node was created in the graph
         range: datetime
