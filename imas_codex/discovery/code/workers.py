@@ -695,14 +695,13 @@ async def code_worker(
     on_progress: Callable | None = None,
     batch_size: int = 10,
 ) -> None:
-    """Code worker: Fetch, chunk, embed, and link code files.
+    """Code worker: Fetch, chunk, and link code files.
 
     Claims scored CodeFiles, runs the ingestion pipeline (tree-sitter
-    chunking, embedding, entity extraction).
+    chunking, entity extraction, graph writes).  Embedding is deferred
+    to the ``embed_text_worker`` which populates embeddings
+    asynchronously on the GPU.
     Transitions: scored → ingested | failed
-
-    Creates a single shared Encoder instance to avoid loading the
-    embedding model multiple times on the same GPU.
 
     Uses small claim batches (default 10) so progress is reported
     frequently — this keeps the streamer display flowing and the
@@ -710,7 +709,6 @@ async def code_worker(
     """
     import time as _time
 
-    from imas_codex.embeddings.encoder import Encoder
     from imas_codex.ingestion.pipeline import ingest_files
 
     logger.warning(
@@ -722,8 +720,6 @@ async def code_worker(
         state.score_only,
     )
 
-    # Create encoder once for this worker — avoid per-batch GPU model loading.
-    encoder = Encoder()
     idle_log_interval = 10  # log every Nth consecutive idle poll
     consecutive_idle = 0
     batches_processed = 0
@@ -815,7 +811,6 @@ async def code_worker(
                 facility=state.facility,
                 remote_paths=remote_paths,
                 force=False,
-                encoder=encoder,
             )
 
             batch_elapsed = _time.monotonic() - batch_start

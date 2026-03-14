@@ -20,8 +20,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import numpy as np
-
 from imas_codex.graph import GraphClient
 
 if TYPE_CHECKING:
@@ -42,88 +40,6 @@ logger = logging.getLogger(__name__)
 
 # Progress callback type: (current, total, message) -> None
 ProgressCallback = Callable[[int, int, str], None]
-
-# Maximum number of chunk texts to embed in a single call.
-# Prevents CUDA OOM on large batches — each chunk can be up to 10KB.
-# With 1024-dim embeddings, 32 chunks ≈ 320KB text → ~1 GiB GPU memory.
-MAX_CHUNKS_PER_EMBED = 16
-
-
-def _embed_chunks_safe(
-    encoder: "Encoder",
-    chunk_texts: list[str],
-    max_per_call: int = MAX_CHUNKS_PER_EMBED,
-) -> np.ndarray:
-    """Embed chunks in sub-batches with OOM-aware retry.
-
-    Splits large embedding requests into sub-batches to fit in GPU memory.
-    On CUDA OOM, halves the sub-batch size and retries. Single-chunk OOMs
-    skip only that chunk (zero vector) instead of failing the entire batch.
-
-    Args:
-        encoder: Encoder instance (local or remote)
-        chunk_texts: List of text strings to embed
-        max_per_call: Maximum chunks per embedding call
-
-    Returns:
-        Numpy array of embeddings (zero vectors for skipped chunks)
-    """
-    if not chunk_texts:
-        return np.array([])
-
-    all_embeddings: list[np.ndarray] = []
-    i = 0
-    current_batch = max_per_call
-    dim: int | None = None
-
-    while i < len(chunk_texts):
-        batch = chunk_texts[i : i + current_batch]
-        try:
-            emb = encoder.embed_texts(batch)
-            all_embeddings.append(emb)
-            if dim is None:
-                dim = emb.shape[1]
-            i += len(batch)
-            # Gradually restore batch size after success
-            if current_batch < max_per_call:
-                current_batch = min(current_batch * 2, max_per_call)
-        except RuntimeError as e:
-            if "CUDA out of memory" in str(e) or "out of memory" in str(e).lower():
-                # Free cached GPU memory before retrying
-                try:
-                    import torch
-
-                    if torch.cuda.is_available():
-                        torch.cuda.empty_cache()
-                except Exception:
-                    pass
-
-                if current_batch > 1:
-                    current_batch = max(1, current_batch // 2)
-                    logger.warning(
-                        "OOM with %d chunks, retrying with %d",
-                        len(batch),
-                        current_batch,
-                    )
-                    continue
-                else:
-                    # Single chunk OOM — skip it with a zero vector and continue
-                    logger.warning(
-                        "OOM embedding single chunk (%d chars), inserting zero vector",
-                        len(batch[0]),
-                    )
-                    if dim is None:
-                        from imas_codex.settings import get_embedding_dimension
-
-                        dim = get_embedding_dimension()
-                    all_embeddings.append(np.zeros((1, dim), dtype=np.float32))
-                    i += 1
-                    current_batch = max_per_call
-                    continue
-            else:
-                raise
-
-    return np.vstack(all_embeddings)
 
 
 def _split_and_extract(
@@ -245,6 +161,10 @@ async def ingest_files(
     1. **Path list mode**: Provide remote_paths explicitly
     2. **Graph-driven mode**: Omit remote_paths to process queued CodeFile nodes
 
+    Embedding is deferred: CodeChunk nodes are written with
+    ``embedding = null``.  The ``embed_text_worker`` populates
+    embeddings asynchronously on the GPU.
+
     Features:
     - Deduplication: Skips files that are already ingested (unless force=True)
     - Interrupt-safe: Each file is committed atomically
@@ -258,7 +178,8 @@ async def ingest_files(
         progress_callback: Optional callback for progress reporting
         force: If True, re-ingest files even if already present
         limit: Maximum files to process from graph queue
-        encoder: Optional shared Encoder instance (avoids loading model per call)
+        encoder: Unused (kept for backward compatibility).  Embedding
+            is now handled by the ``embed_text_worker``.
 
     Returns:
         Dict with counts: files, chunks, ids_found, mdsplus_paths, skipped, data_nodes_linked
@@ -381,12 +302,6 @@ async def ingest_files(
     total_to_process = len(all_files)
     stats["files"] = 0
 
-    # Load encoder for embeddings (reuse shared instance if provided)
-    if encoder is None:
-        from imas_codex.embeddings.encoder import Encoder
-
-        encoder = Encoder()
-
     BATCH_SIZE = 20
 
     processed_files = 0
@@ -463,25 +378,10 @@ async def ingest_files(
 
         t_chunk_elapsed = _time.monotonic() - t_chunk_start
 
-        # ONE embedding call for ALL chunks across all languages
-        chunk_texts = [c["text"] for c in all_chunks]
-        t_embed_start = _time.monotonic()
-        try:
-            embeddings = await asyncio.to_thread(
-                _embed_chunks_safe, encoder, chunk_texts
-            )
-            for i, chunk in enumerate(all_chunks):
-                chunk["embedding"] = embeddings[i].tolist()
-        except Exception as e:
-            logger.error("Embedding failed for %d chunks: %s", len(chunk_texts), e)
-            for file_info in batch_files:
-                meta = file_metadata.get(file_info["example_id"], {})
-                sf_id = meta.get("_source_file_id")
-                if sf_id:
-                    update_source_file_status(sf_id, "failed", error=str(e)[:200])
-            continue
-
-        t_embed_elapsed = _time.monotonic() - t_embed_start
+        # Deferred embedding: write chunks to graph WITHOUT embeddings.
+        # The embed_text_worker picks up CodeChunk nodes where
+        # embedding IS NULL and embeds them asynchronously on the GPU.
+        # This decouples ingestion throughput from embedding latency.
 
         # Count stats
         batch_ids_found = 0
@@ -606,14 +506,12 @@ async def ingest_files(
         t_graph_elapsed = _time.monotonic() - t_graph_start
 
         logger.info(
-            "Batch %d-%d timing: chunk=%.1fs embed=%.1fs (%d chunks) "
-            "graph=%.1fs",
+            "Batch %d-%d timing: chunk=%.1fs graph=%.1fs (%d chunks)",
             batch_start + 1,
             batch_end,
             t_chunk_elapsed,
-            t_embed_elapsed,
-            len(all_chunks),
             t_graph_elapsed,
+            len(all_chunks),
         )
 
         processed_files += len(batch_files)
