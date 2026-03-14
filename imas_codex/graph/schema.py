@@ -554,110 +554,60 @@ class GraphSchema:
                 )
         return statements
 
+    # Slot names that should be indexed on every class that has them.
+    # These are pattern-based: if a class has a `status` slot, it gets
+    # a status index automatically.  No need to add each class manually.
+    AUTO_INDEX_SLOTS: frozenset[str] = frozenset({
+        "status",           # claim-loop status filter
+        "claim_token",      # two-step claim verification
+        "content_hash",     # dedup gate lookups
+        "data_source_name", # signal/epoch scoping
+        "url",              # wiki page lookups
+    })
+
     def index_statements(
-        self, indexes: dict[str, list[str]] | None = None
+        self,
+        indexes: dict[str, list[str]] | None = None,
     ) -> list[str]:
         """Generate Neo4j index statements.
 
-        Creates indexes for:
-        - facility_id on all facility-owned nodes (for fast facility-scoped queries)
-        - Common lookup patterns (category, role, etc.)
+        Creates indexes in three layers:
+        1. **facility_id** on all facility-owned nodes (auto-derived from schema)
+        2. **AUTO_INDEX_SLOTS** — any class that has a slot named in the
+           set gets an index automatically (status, claim_token, etc.)
+        3. **Extra per-label indexes** for class-specific lookup patterns
+           that can't be derived from slot names alone.
 
         Args:
-            indexes: Optional dict mapping label to list of fields to index.
-                     If not provided, creates indexes on common lookup patterns.
+            indexes: Optional dict mapping label to list of extra fields
+                     to index.  If not provided, uses built-in extra indexes.
 
         Returns:
             List of Cypher CREATE INDEX statements.
         """
         if indexes is None:
-            # Default indexes based on common query patterns.
-            #
-            # Every label that participates in claim-loop queries needs
-            # `status` + `claim_token` indexes at minimum.  Properties
-            # used in WHERE filters on large tables (>10 K nodes) are
-            # also indexed to avoid full-label scans.
-            #
-            # Generated from a full audit of all Cypher queries in the
-            # codebase — see commit message for details.
+            # Class-specific indexes that can't be derived from slot names.
+            # Only list properties NOT already covered by AUTO_INDEX_SLOTS.
             indexes = {
-                # --- Facility & infrastructure ---
                 "Facility": ["ssh_host"],
+                "FacilityPath": ["id", "device_inode"],
                 "MDSplusServer": ["role"],
+                "SignalNode": ["node_type"],
                 "Diagnostic": ["category"],
                 "AnalysisCode": ["code_type"],
                 "Tool": ["category", "available"],
-                # --- Path discovery (275 K nodes) ---
-                "FacilityPath": [
-                    "id",
-                    "device_inode",
-                    "status",
-                    "claim_token",
-                ],
-                # --- Code discovery (220 K nodes) ---
-                "CodeFile": [
-                    "status",
-                    "content_hash",
-                    "claim_token",
-                ],
-                "CodeChunk": [
-                    "code_example_id",
-                ],
-                "CodeExample": [
-                    "source_file",
-                ],
-                # --- Signal discovery (55 K + 89 K nodes) ---
-                "FacilitySignal": [
-                    "status",
-                    "claim_token",
-                    "diagnostic",
-                ],
-                "SignalNode": [
-                    "node_type",
-                    "data_source_name",
-                    "claim_token",
-                ],
-                "SignalEpoch": [
-                    "status",
-                    "data_source_name",
-                    "claim_token",
-                ],
-                "SignalSource": [
-                    "status",
-                    "data_source_name",
-                    "claim_token",
-                ],
-                # --- Wiki discovery (28 K + 128 K nodes) ---
-                "WikiPage": [
-                    "status",
-                    "claim_token",
-                    "url",
-                ],
-                "WikiChunk": [
-                    "wiki_page_id",
-                ],
-                # --- Document pipeline (41 K nodes) ---
-                "Document": [
-                    "status",
-                    "claim_token",
-                    "document_type",
-                ],
-                "Image": [
-                    "status",
-                ],
-                # --- IMAS data dictionary (61 K nodes) ---
-                "IMASNode": [
-                    "ids",
-                ],
-                "IMASMapping": [
-                    "status",
-                    "ids_name",
-                ],
+                "CodeChunk": ["code_example_id"],
+                "CodeExample": ["source_file"],
+                "FacilitySignal": ["diagnostic"],
+                "WikiChunk": ["wiki_page_id"],
+                "Document": ["document_type"],
+                "IMASNode": ["ids"],
+                "IMASMapping": ["ids_name"],
             }
 
         statements = []
 
-        # Add facility_id index for all facility-owned nodes
+        # --- Layer 1: facility_id on all facility-owned nodes ---
         for label in self.node_labels:
             if "facility_id" in self.get_required_fields(label):
                 index_name = f"{label.lower()}_facility_id"
@@ -666,15 +616,36 @@ class GraphSchema:
                     f"FOR (n:{label}) ON (n.facility_id)"
                 )
 
-        # Add custom indexes
+        # --- Layer 2: auto-index slots derived from schema ---
+        # Any class that has a slot named in AUTO_INDEX_SLOTS gets an
+        # index on that slot.  New classes automatically pick up indexes
+        # by simply defining the slot — no manual registration needed.
+        seen: set[tuple[str, str]] = set()
+        for label in self.node_labels:
+            slots = self.get_all_slots(label)
+            for slot_name in self.AUTO_INDEX_SLOTS:
+                if slot_name in slots:
+                    key = (label, slot_name)
+                    if key not in seen:
+                        seen.add(key)
+                        index_name = f"{label.lower()}_{slot_name}"
+                        statements.append(
+                            f"CREATE INDEX {index_name} IF NOT EXISTS "
+                            f"FOR (n:{label}) ON (n.{slot_name})"
+                        )
+
+        # --- Layer 3: extra per-label indexes ---
         for label, fields in indexes.items():
             if label in self.node_labels:
                 for field_name in fields:
-                    index_name = f"{label.lower()}_{field_name}"
-                    statements.append(
-                        f"CREATE INDEX {index_name} IF NOT EXISTS "
-                        f"FOR (n:{label}) ON (n.{field_name})"
-                    )
+                    key = (label, field_name)
+                    if key not in seen:
+                        seen.add(key)
+                        index_name = f"{label.lower()}_{field_name}"
+                        statements.append(
+                            f"CREATE INDEX {index_name} IF NOT EXISTS "
+                            f"FOR (n:{label}) ON (n.{field_name})"
+                        )
         return statements
 
 
