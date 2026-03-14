@@ -47,8 +47,6 @@ _PROJECT = "$HOME/Code/imas-codex"
 # Per-service resource defaults
 _NEO4J_CPUS = 4
 _NEO4J_MEM = "32G"
-_EMBED_CPUS = 2
-_EMBED_MEM = "16G"
 
 
 # ── Color-coded status helpers ───────────────────────────────────────────
@@ -969,11 +967,16 @@ def deploy_embed(gpus: int = _DEFAULT_GPUS, workers: int | None = None) -> dict:
     port = _embed_port()
 
     click.echo(f"Deploying embed server ({gpus} GPUs, {workers} workers)...")
+    # Scale CPUs and memory with worker count:
+    # - Each worker needs ~1 CPU for torch inference + 1 for parent/tracker
+    # - Each worker needs ~3 GiB RAM (Python + model weights + overhead)
+    embed_cpus = max(workers + 1, 4)
+    embed_mem = f"{max(workers * 4, 16)}G"
     return _ensure_service_job(
         _EMBED_JOB,
         _embed_service_command(gpus, workers),
-        cpus=_EMBED_CPUS,
-        mem=_EMBED_MEM,
+        cpus=embed_cpus,
+        mem=embed_mem,
         gpus=gpus,
         health_cmd=f"curl -sf http://{host}:{port}/health",
         health_test='"status"',
