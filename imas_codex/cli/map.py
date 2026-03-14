@@ -49,7 +49,12 @@ def map_cmd() -> None:
     default=None,
     help="Maximum runtime in minutes.",
 )
-@click.option("--plain", is_flag=True, help="Disable rich progress display.")
+@click.option("-v", "--verbose", is_flag=True, help="Enable verbose logging.")
+@click.option(
+    "--clear",
+    is_flag=True,
+    help="Clear any existing mapping for this facility/IDS before generating.",
+)
 def map_run(
     facility: str,
     ids_name: str,
@@ -59,7 +64,8 @@ def map_run(
     no_persist: bool,
     no_activate: bool,
     time_limit: int | None,
-    plain: bool,
+    verbose: bool,
+    clear: bool,
 ) -> None:
     """Run the full mapping pipeline.
 
@@ -68,14 +74,42 @@ def map_run(
       imas-codex imas map run jet pf_active
       imas-codex imas map run --no-persist jet pf_active
       imas-codex imas map run --cost-limit 2.0 --time 10 jet pf_active
+      imas-codex imas map run --clear jet pf_active
     """
-    configure_cli_logging("map", facility=facility)
+    from imas_codex.cli.discover.common import (
+        DiscoveryConfig,
+        make_log_print,
+        run_discovery,
+        setup_logging,
+        use_rich_output,
+    )
+
+    use_rich = use_rich_output()
+    console = setup_logging("map", facility, use_rich, verbose=verbose)
+    log_print = make_log_print("map", console)
+
+    # Clear previous mapping if requested
+    if clear:
+        _clear_mapping(facility, ids_name, log_print)
+
+    log_print(f"\n[bold]Signal Mapping: {facility}/{ids_name}[/bold]")
+    log_print(f"  Cost limit: ${cost_limit:.2f}")
+    if model:
+        log_print(f"  Model: {model}")
+    if dd_version:
+        log_print(f"  DD version: {dd_version}")
+    if time_limit is not None:
+        log_print(f"  Time limit: {time_limit} min")
+    if no_persist:
+        log_print("  Mode: no-persist (dry run)")
+    elif no_activate:
+        log_print("  Mode: persist as generated")
+    log_print("")
 
     from imas_codex.ids.mapping import generate_mapping
 
-    if plain:
+    if not use_rich:
         # Plain mode — simple synchronous execution
-        click.echo(f"Generating mapping for {facility}/{ids_name}...")
         try:
             result = generate_mapping(
                 facility,
@@ -96,15 +130,15 @@ def map_run(
     import asyncio
     import time
 
-    from imas_codex.cli.discover.common import DiscoveryConfig, run_discovery
     from imas_codex.discovery.base.facility import get_facility
     from imas_codex.ids.progress import MappingProgressDisplay
     from imas_codex.ids.workers import MappingDiscoveryState, run_mapping_engine
 
     try:
         facility_config = get_facility(facility)
-    except Exception:
-        facility_config = {"id": facility}
+    except Exception as e:
+        log_print(f"[red]Error loading facility config: {e}[/red]")
+        raise SystemExit(1) from e
 
     display = MappingProgressDisplay(
         facility=facility,
@@ -124,6 +158,7 @@ def map_run(
         check_graph=True,
         check_embed=False,
         check_ssh=False,
+        verbose=verbose,
     )
 
     async def _run_mapping(stop_event, service_monitor):
@@ -475,6 +510,57 @@ def map_validate(facility: str, ids_name: str) -> None:
                 )
 
 
+def _clear_mapping(facility: str, ids_name: str, log_print=None) -> int:
+    """Remove a mapping and its relationships from the graph.
+
+    Returns the number of mapping nodes deleted.
+    """
+    from imas_codex.graph.client import GraphClient
+
+    gc = GraphClient()
+
+    # Delete MAPS_TO_IMAS from signal sources used by this mapping
+    gc.query(
+        """
+        MATCH (m:IMASMapping {facility_id: $facility, ids_name: $ids})
+              -[:USES_SIGNAL_SOURCE]->(sg:SignalSource)
+        MATCH (sg)-[r:MAPS_TO_IMAS]->(:IMASNode)
+        DELETE r
+        """,
+        facility=facility,
+        ids=ids_name,
+    )
+
+    # Delete evidence nodes
+    gc.query(
+        """
+        MATCH (m:IMASMapping {facility_id: $facility, ids_name: $ids})
+              -[:USES_SIGNAL_SOURCE]->(sg:SignalSource)
+        MATCH (sg)-[:HAS_EVIDENCE]->(ev:MappingEvidence)
+        DETACH DELETE ev
+        """,
+        facility=facility,
+        ids=ids_name,
+    )
+
+    # Delete mapping node and its relationships
+    result = gc.query(
+        """
+        MATCH (m:IMASMapping {facility_id: $facility, ids_name: $ids})
+        WITH m, m.id AS mid
+        DETACH DELETE m
+        RETURN count(*) AS deleted
+        """,
+        facility=facility,
+        ids=ids_name,
+    )
+
+    deleted = result[0]["deleted"] if result else 0
+    if log_print and deleted:
+        log_print(f"Cleared previous mapping {facility}:{ids_name}")
+    return deleted
+
+
 @map_cmd.command("clear")
 @click.argument("facility")
 @click.argument("ids_name")
@@ -483,41 +569,14 @@ def map_clear(facility: str, ids_name: str) -> None:
     """Remove a mapping and its relationships from the graph."""
     configure_cli_logging("map", facility=facility)
 
-    from imas_codex.graph.client import GraphClient
+    from imas_codex.cli.discover.common import make_log_print
 
-    gc = GraphClient()
-    mapping_id = f"{facility}:{ids_name}"
-
-    # Delete MAPS_TO_IMAS from signal sources used by this mapping
-    gc.query(
-        """
-        MATCH (m:IMASMapping {id: $id})-[:USES_SIGNAL_SOURCE]->(sg:SignalSource)
-        MATCH (sg)-[r:MAPS_TO_IMAS]->(:IMASNode)
-        DELETE r
-        """,
-        id=mapping_id,
-    )
-
-    # Delete evidence nodes
-    gc.query(
-        """
-        MATCH (m:IMASMapping {id: $id})-[:USES_SIGNAL_SOURCE]->(sg:SignalSource)
-        MATCH (sg)-[:HAS_EVIDENCE]->(ev:MappingEvidence)
-        DETACH DELETE ev
-        """,
-        id=mapping_id,
-    )
-
-    # Delete mapping node and its relationships
-    gc.query(
-        """
-        MATCH (m:IMASMapping {id: $id})
-        DETACH DELETE m
-        """,
-        id=mapping_id,
-    )
-
-    click.echo(f"Cleared mapping {mapping_id}.")
+    log_print = make_log_print("map")
+    count = _clear_mapping(facility, ids_name, log_print)
+    if count == 0:
+        click.echo(f"No mapping found for {facility}/{ids_name}.")
+    else:
+        click.echo(f"Cleared mapping {facility}:{ids_name}.")
 
 
 @map_cmd.command("activate")
@@ -539,26 +598,26 @@ def map_activate(facility: str, ids_name: str) -> None:
     from imas_codex.graph.client import GraphClient
 
     gc = GraphClient()
-    mapping_id = f"{facility}:{ids_name}"
 
     rows = gc.query(
         """
-        MATCH (m:IMASMapping {id: $id})
+        MATCH (m:IMASMapping {facility_id: $facility, ids_name: $ids})
         RETURN m.status AS status
         """,
-        id=mapping_id,
+        facility=facility,
+        ids=ids_name,
     )
     if not rows:
-        click.echo(f"No mapping found for {mapping_id}.", err=True)
+        click.echo(f"No mapping found for {facility}/{ids_name}.", err=True)
         raise SystemExit(1)
 
     current = rows[0].get("status")
     if current == "active":
-        click.echo(f"Mapping {mapping_id} is already active.")
+        click.echo(f"Mapping {facility}:{ids_name} is already active.")
         return
     if current == "deprecated":
         click.echo(
-            f"Cannot activate deprecated mapping {mapping_id}. "
+            f"Cannot activate deprecated mapping {facility}:{ids_name}. "
             "Generate a new mapping first.",
             err=True,
         )
@@ -566,12 +625,13 @@ def map_activate(facility: str, ids_name: str) -> None:
 
     gc.query(
         """
-        MATCH (m:IMASMapping {id: $id})
+        MATCH (m:IMASMapping {facility_id: $facility, ids_name: $ids})
         SET m.status = 'active'
         """,
-        id=mapping_id,
+        facility=facility,
+        ids=ids_name,
     )
-    click.echo(f"Activated mapping {mapping_id} (was '{current}').")
+    click.echo(f"Activated mapping {facility}:{ids_name} (was '{current}').")
 
 
 @map_cmd.command("validate-e2e")
