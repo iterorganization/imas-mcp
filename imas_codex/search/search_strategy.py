@@ -137,6 +137,24 @@ class SearchHit(SearchBase):
         description="COCOS transformation expression (e.g., '- {psi_like}')",
     )
 
+    # LLM enrichment fields
+    description: str | None = Field(
+        default=None,
+        description="LLM-generated physics-aware description of this path",
+    )
+    physics_summary: str | None = Field(
+        default=None,
+        description="One-sentence physics summary for compact display",
+    )
+    keywords: list[str] | None = Field(
+        default=None,
+        description="LLM-generated searchable keywords for this path",
+    )
+    enrichment_source: str | None = Field(
+        default=None,
+        description="Source of enrichment: 'llm' or 'template'",
+    )
+
     # Additional fields from raw_data
     validation_rules: dict[str, Any] | None = Field(
         default=None, description="Validation rules for this path"
