@@ -223,7 +223,10 @@ def code(
             check_auth=False,
             suppress_loggers=[
                 "imas_codex.embeddings",
-                "imas_codex.discovery.code",
+                "imas_codex.discovery.code.scanner",
+                "imas_codex.discovery.code.enrichment",
+                "imas_codex.discovery.code.scorer",
+                "imas_codex.discovery.code.graph_ops",
             ],
             verbose=verbose,
         )
