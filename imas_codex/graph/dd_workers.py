@@ -108,6 +108,10 @@ async def extract_worker(state: DDBuildState, **_kwargs) -> None:
     def _on_progress(processed: int, total: int) -> None:
         state.extract_stats.total = total
         state.extract_stats.processed = processed
+        if processed < total:
+            state.extract_stats.status_text = f"v{state.versions[processed]}"
+        else:
+            state.extract_stats.status_text = ""
 
     def _run() -> None:
         from imas_codex.graph.build_dd import phase_extract
@@ -139,6 +143,10 @@ async def build_worker(state: DDBuildState, **_kwargs) -> None:
     def _on_progress(processed: int, total: int) -> None:
         state.build_stats.total = total
         state.build_stats.processed = processed
+        if processed < total:
+            state.build_stats.status_text = f"v{state.versions[processed]}"
+        else:
+            state.build_stats.status_text = ""
 
     def _run() -> None:
         from imas_codex.graph.build_dd import (
@@ -224,6 +232,10 @@ async def enrich_worker(state: DDBuildState, **_kwargs) -> None:
     def _on_progress(processed: int, total: int) -> None:
         state.enrich_stats.total = total
         state.enrich_stats.processed = processed
+        if processed < total:
+            state.enrich_stats.status_text = f"{processed:,} / {total:,} paths"
+        else:
+            state.enrich_stats.status_text = ""
 
     def _run() -> None:
         from imas_codex.graph.build_dd import phase_enrich
@@ -266,6 +278,10 @@ async def embed_worker(state: DDBuildState, **_kwargs) -> None:
     def _on_progress(processed: int, total: int) -> None:
         state.embed_stats.total = total
         state.embed_stats.processed = processed
+        if processed < total:
+            state.embed_stats.status_text = f"{processed:,} / {total:,} paths"
+        else:
+            state.embed_stats.status_text = ""
 
     def _run() -> None:
         from imas_codex.graph.build_dd import phase_embed
@@ -311,6 +327,10 @@ async def cluster_worker(state: DDBuildState, **_kwargs) -> None:
     def _on_progress(processed: int, total: int) -> None:
         state.cluster_stats.total = total
         state.cluster_stats.processed = processed
+        if processed > 0:
+            state.cluster_stats.status_text = f"{processed:,} clusters"
+        else:
+            state.cluster_stats.status_text = ""
 
     def _run() -> None:
         from imas_codex.graph.build_dd import phase_cluster
