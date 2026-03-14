@@ -1493,3 +1493,215 @@ class TestMapRunTimeLimit:
         )
         assert result.exit_code == 0
         assert "jet:pf_active" in result.output
+
+
+# ---------------------------------------------------------------------------
+# Phase 8: E2E tests for pipeline plan changes
+# ---------------------------------------------------------------------------
+
+
+class TestTransformExpressionValidator:
+    """Test the transform_expression validator on SignalMappingEntry."""
+
+    def test_identity_transform(self):
+        e = SignalMappingEntry(
+            source_id="s1", target_id="t1",
+            transform_expression="value", confidence=0.9,
+        )
+        assert e.transform_expression == "value"
+
+    def test_empty_transform_defaults(self):
+        e = SignalMappingEntry(
+            source_id="s1", target_id="t1", confidence=0.9,
+        )
+        assert e.transform_expression == "value"
+
+    def test_arithmetic_transforms(self):
+        for expr in ["-value", "value * 1e-3", "value + 1.0", "value / 2"]:
+            e = SignalMappingEntry(
+                source_id="s1", target_id="t1",
+                transform_expression=expr, confidence=0.9,
+            )
+            assert e.transform_expression == expr
+
+    def test_allowed_function_calls(self):
+        for expr in [
+            "convert_units(value, 'mm', 'm')",
+            "math.radians(value)",
+            "abs(value)",
+            "cocos_sign('ip_like', cocos_in=2, cocos_out=11) * value",
+        ]:
+            e = SignalMappingEntry(
+                source_id="s1", target_id="t1",
+                transform_expression=expr, confidence=0.9,
+            )
+            assert e.transform_expression == expr
+
+    def test_blocks_import(self):
+        with pytest.raises(Exception):
+            SignalMappingEntry(
+                source_id="s1", target_id="t1",
+                transform_expression="import os", confidence=0.5,
+            )
+
+    def test_blocks_eval(self):
+        with pytest.raises(Exception):
+            SignalMappingEntry(
+                source_id="s1", target_id="t1",
+                transform_expression="eval('1+1')", confidence=0.5,
+            )
+
+    def test_blocks_exec(self):
+        with pytest.raises(Exception):
+            SignalMappingEntry(
+                source_id="s1", target_id="t1",
+                transform_expression="exec('x=1')", confidence=0.5,
+            )
+
+    def test_blocks_dunder(self):
+        with pytest.raises(Exception):
+            SignalMappingEntry(
+                source_id="s1", target_id="t1",
+                transform_expression="__builtins__", confidence=0.5,
+            )
+
+    def test_blocks_getattr(self):
+        with pytest.raises(Exception):
+            SignalMappingEntry(
+                source_id="s1", target_id="t1",
+                transform_expression="getattr(value, '__class__')",
+                confidence=0.5,
+            )
+
+
+class TestCoverageThreshold:
+    """Test the coverage threshold enforcement."""
+
+    def test_import(self):
+        from imas_codex.ids.validation import (
+            COVERAGE_ERROR_THRESHOLD,
+            COVERAGE_WARNING_THRESHOLD,
+            check_coverage_threshold,
+        )
+        assert COVERAGE_WARNING_THRESHOLD > COVERAGE_ERROR_THRESHOLD
+        assert COVERAGE_ERROR_THRESHOLD >= 0
+
+    def test_check_returns_list(self):
+        from imas_codex.ids.validation import check_coverage_threshold
+
+        # With mock gc that returns no fields, coverage = 0%
+        gc = MagicMock()
+        gc.query.return_value = []
+        result = check_coverage_threshold("pf_active", [], gc=gc)
+        assert isinstance(result, list)
+
+
+class TestMappingDiscoveryState:
+    """Test the MappingDiscoveryState from workers.py."""
+
+    def test_create(self):
+        from imas_codex.ids.workers import MappingDiscoveryState
+
+        state = MappingDiscoveryState(
+            facility="jet", target_ids="pf_active", cost_limit=5.0,
+        )
+        assert state.facility == "jet"
+        assert state.target_ids == "pf_active"
+        assert state.cost_limit == 5.0
+        assert not state.should_stop()
+        assert state.total_cost == 0.0
+
+    def test_phases_initially_not_done(self):
+        from imas_codex.ids.workers import MappingDiscoveryState
+
+        state = MappingDiscoveryState(facility="jet", target_ids="pf_active")
+        assert not state.context_phase.done
+        assert not state.assign_phase.done
+        assert not state.map_phase.done
+        assert not state.validate_phase.done
+
+    def test_phase_mark_done(self):
+        from imas_codex.ids.workers import MappingDiscoveryState
+
+        state = MappingDiscoveryState(facility="jet", target_ids="pf_active")
+        state.context_phase.mark_done()
+        assert state.context_phase.done
+        assert not state.assign_phase.done
+
+    def test_should_stop_when_requested(self):
+        from imas_codex.ids.workers import MappingDiscoveryState
+
+        state = MappingDiscoveryState(facility="jet", target_ids="pf_active")
+        assert not state.should_stop()
+        state.stop_requested = True
+        assert state.should_stop()
+
+    def test_should_stop_when_budget_exhausted(self):
+        from imas_codex.ids.workers import MappingDiscoveryState
+
+        state = MappingDiscoveryState(
+            facility="jet", target_ids="pf_active", cost_limit=1.0,
+        )
+        state.cost.add("test", 2.0, 1000)
+        assert state.should_stop()
+
+    def test_versioned_mapping_id_format(self):
+        """Versioned mapping ID includes DD version."""
+        result = ValidatedMappingResult(
+            facility="jet", ids_name="pf_active", dd_version="4.1.1",
+            sections=[], bindings=[], escalations=[],
+        )
+
+        gc = MagicMock()
+        gc.query.return_value = []
+        mapping_id = persist_mapping_result(result, gc=gc)
+        assert mapping_id == "jet:pf_active:4.1.1"
+
+
+class TestWorkerImports:
+    """Test that all worker components import correctly."""
+
+    def test_worker_functions_importable(self):
+        from imas_codex.ids.workers import (
+            assign_worker,
+            claim_sources_for_mapping,
+            context_worker,
+            map_worker,
+            release_source_claim,
+            run_mapping_engine,
+            validate_worker,
+        )
+        assert callable(context_worker)
+        assert callable(assign_worker)
+        assert callable(map_worker)
+        assert callable(validate_worker)
+        assert callable(run_mapping_engine)
+        assert callable(claim_sources_for_mapping)
+        assert callable(release_source_claim)
+
+
+class TestSemanticCandidatesInPrompt:
+    """Test that semantic_candidates renders in signal_mapping prompt."""
+
+    def test_semantic_candidates_placeholder(self):
+        from imas_codex.ids.mapping import _render_prompt
+
+        rendered = _render_prompt(
+            "signal_mapping",
+            facility="jet",
+            ids_name="pf_active",
+            section_path="pf_active/coil",
+            signal_source_detail="test",
+            imas_fields="test",
+            identifier_schemas="",
+            version_context="",
+            unit_analysis="",
+            cocos_paths="(none)",
+            existing_mappings="{}",
+            code_references="(none)",
+            source_cocos="(none)",
+            semantic_candidates="- pf_active/coil/r (score=0.95): Coil R position",
+        )
+        assert "Semantic Candidates" in rendered
+        assert "pf_active/coil/r" in rendered
+        assert "score=0.95" in rendered
