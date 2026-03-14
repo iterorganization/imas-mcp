@@ -944,6 +944,7 @@ async def run_supervised_loop(
     on_worker_status: Callable[[SupervisedWorkerGroup], None] | None = None,
     on_tick: Callable[[], Coroutine | None] | None = None,
     phases: list[PipelinePhase] | None = None,
+    phase_tasks: dict[PipelinePhase, list[asyncio.Task]] | None = None,
     status_interval: float = 0.5,
     poll_interval: float = 0.25,
     phase_refresh_interval: float = 5.0,
@@ -961,12 +962,19 @@ async def run_supervised_loop(
     graph queries that each ``PipelinePhase.done`` formerly performed
     inline.
 
+    When ``phase_tasks`` is provided, phases whose tasks have all
+    completed are force-marked done.  This prevents the loop from
+    hanging when the graph still shows pending work but no workers
+    remain alive to process it.
+
     Args:
         worker_group: Group of supervised workers to monitor
         should_stop: Function returning True when discovery should stop
         on_worker_status: Optional callback for worker status updates
         on_tick: Optional async callback called each tick (e.g., orphan recovery)
         phases: Pipeline phases whose has_work caches should be refreshed
+        phase_tasks: Mapping from PipelinePhase to its worker tasks.
+            When all tasks for a phase are done, the phase is force-marked.
         status_interval: Seconds between worker status updates (default: 0.5)
         poll_interval: Seconds between stop-condition checks (default: 0.25)
         phase_refresh_interval: Seconds between phase cache refreshes
@@ -987,6 +995,27 @@ async def run_supervised_loop(
         for phase in phases or []:
             phase.refresh_has_work()
 
+    def _mark_completed_phases() -> None:
+        """Force-mark phases whose worker tasks have all completed.
+
+        When all asyncio tasks for a phase are done (exited normally,
+        crashed past max_restarts, or were cancelled), the phase is
+        force-marked done.  Without this, ``PipelinePhase.done`` can
+        return False forever when the graph has pending work but no
+        workers are alive to process it — causing the loop to hang.
+        """
+        if not phase_tasks:
+            return
+        for phase, tasks in phase_tasks.items():
+            if phase.done:
+                continue
+            if all(t.done() for t in tasks):
+                logger.info(
+                    "All workers for phase '%s' exited — force-marking done",
+                    phase.name,
+                )
+                phase.mark_done()
+
     try:
         while not should_stop():
             await asyncio.sleep(poll_interval)
@@ -995,6 +1024,9 @@ async def run_supervised_loop(
             if phases and time.time() - last_phase_refresh > phase_refresh_interval:
                 await asyncio.to_thread(_refresh_all_phases)
                 last_phase_refresh = time.time()
+
+            # Force-mark phases whose workers have all exited
+            _mark_completed_phases()
 
             # Auto-exit when all workers have naturally completed
             if worker_group.all_tasks_done():
