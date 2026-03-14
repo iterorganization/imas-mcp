@@ -11,7 +11,6 @@ The server integrates:
 
 import importlib.metadata
 import logging
-import os
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -40,14 +39,18 @@ logging.getLogger("FastMCP").setLevel(logging.WARNING)
 
 
 def _connect_graph() -> GraphClient:
-    """Connect to Neo4j. Raises RuntimeError if unavailable."""
-    uri = os.environ.get("NEO4J_URI", "bolt://127.0.0.1:7687")
-    username = os.environ.get("NEO4J_USERNAME", "neo4j")
-    password = os.environ.get("NEO4J_PASSWORD", "")
+    """Connect to Neo4j using profile resolution.
 
-    gc = GraphClient(uri=uri, username=username, password=password)
+    Uses the full profile resolution chain:
+    1. Environment variable overrides (NEO4J_URI, NEO4J_USERNAME, NEO4J_PASSWORD)
+    2. pyproject.toml [tool.imas-codex.graph] configuration
+    3. Location-aware auto-tunneling for remote databases
+
+    Raises RuntimeError if connection fails.
+    """
+    gc = GraphClient.from_profile()
     gc.query("RETURN 1")
-    logger.info(f"Connected to Neo4j at {uri}")
+    logger.info(f"Connected to Neo4j at {gc.uri}")
     return gc
 
 

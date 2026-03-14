@@ -194,7 +194,7 @@ def generate_schema_context(
 
     content = "\n".join(lines)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(content)
+    output_path.write_text(content, encoding="utf-8")
     print(
         f"[gen-schema-context] Generated {output_path} "
         f"({len(all_labels)} labels, {len(vector_indexes)} vector indexes, "
