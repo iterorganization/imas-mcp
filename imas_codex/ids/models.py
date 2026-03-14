@@ -232,7 +232,7 @@ def persist_mapping_result(
     if gc is None:
         gc = GraphClient()
 
-    mapping_id = f"{result.facility}:{result.ids_name}"
+    mapping_id = f"{result.facility}:{result.ids_name}:{result.dd_version}"
 
     # 1. Create or update IMASMapping node
     gc.query(
