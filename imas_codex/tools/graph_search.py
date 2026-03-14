@@ -233,7 +233,6 @@ class GraphSearchTool:
                    path.cocos_label_transformation AS cocos_label,
                    path.cocos_transformation_expression AS cocos_expression,
                    path.description AS enriched_description,
-                   path.physics_summary AS physics_summary,
                    path.keywords AS keywords,
                    path.enrichment_source AS enrichment_source,
                    collect(DISTINCT coord.id) AS coordinates,
@@ -283,7 +282,6 @@ class GraphSearchTool:
                     cocos_label_transformation=r["cocos_label"],
                     cocos_transformation_expression=r["cocos_expression"],
                     description=r.get("enriched_description"),
-                    physics_summary=r.get("physics_summary"),
                     keywords=r.get("keywords"),
                     enrichment_source=r.get("enrichment_source"),
                     has_identifier_schema=bool(r["has_identifier_schema"]),
@@ -487,7 +485,6 @@ class GraphPathTool:
                        p.cocos_label_transformation AS cocos_label,
                        p.cocos_transformation_expression AS cocos_expression,
                        p.description AS enriched_description,
-                       p.physics_summary AS physics_summary,
                        p.keywords AS keywords,
                        p.enrichment_source AS enrichment_source,
                        u.id AS units,
@@ -555,7 +552,6 @@ class GraphPathTool:
                     cocos_label_transformation=r.get("cocos_label"),
                     cocos_transformation_expression=r.get("cocos_expression"),
                     description=r.get("enriched_description"),
-                    physics_summary=r.get("physics_summary"),
                     keywords=r.get("keywords"),
                     enrichment_source=r.get("enrichment_source"),
                 )
@@ -1532,6 +1528,7 @@ def _text_search_imas_paths(
             {ft_where}
             WITH p, score
             WHERE size(coalesce(p.documentation, '')) > 10
+                  OR p.description IS NOT NULL
             RETURN p.id AS id, score
             LIMIT $limit
         """
@@ -1557,6 +1554,8 @@ def _text_search_imas_paths(
             toLower(p.documentation) CONTAINS $query_lower
             OR toLower(p.id) CONTAINS $query_lower
             OR toLower(p.name) CONTAINS $query_lower
+            OR toLower(coalesce(p.description, '')) CONTAINS $query_lower
+            OR any(kw IN coalesce(p.keywords, []) WHERE toLower(kw) CONTAINS $query_lower)
           )
           AND size(coalesce(p.documentation, '')) > 10
         WITH p,

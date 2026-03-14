@@ -49,9 +49,6 @@ class IMASPathEnrichmentResult(BaseModel):
             "or coordinate information already in metadata fields."
         )
     )
-    physics_summary: str = Field(
-        description="One-sentence physics summary for compact display and tooltips"
-    )
     keywords: list[str] = Field(
         default_factory=list,
         max_length=5,
@@ -101,7 +98,7 @@ def is_boilerplate_path(path_id: str) -> bool:
 def generate_template_description(path_id: str, path_info: dict) -> dict[str, Any]:
     """Generate a template description for boilerplate paths.
 
-    Returns dict with description, physics_summary, keywords suitable for
+    Returns dict with description, keywords suitable for
     direct graph update. No LLM call needed.
     """
     name = path_info.get("name", path_id.split("/")[-1])
@@ -130,30 +127,25 @@ def generate_template_description(path_id: str, path_info: dict) -> dict[str, An
             f"Error metadata for the {base_readable} field. "
             f"Provides standardized error reporting for {base_readable} measurements."
         )
-        summary = f"Error metadata for {base_readable}"
         keywords = ["error", "uncertainty", base_name]
     elif error_type == "validity":
         desc = (
             f"Validity status indicator for the {base_readable} field. "
             f"Integer code indicating data quality or processing status."
         )
-        summary = f"Validity flag for {base_readable}"
         keywords = ["validity", "status", "quality", base_name]
     elif error_type == "validity_timed":
         desc = (
             f"Time-varying validity status for the {base_readable} field. "
             f"Array of validity codes aligned with the time base."
         )
-        summary = f"Time-varying validity for {base_readable}"
         keywords = ["validity", "time-varying", "status", base_name]
     else:
         desc = f"Data field in {ids_name}"
-        summary = f"{name} in {ids_name}"
         keywords = [base_name]
 
     return {
         "description": desc,
-        "physics_summary": summary,
         "keywords": keywords[:5],
         "enrichment_source": "template",
     }
@@ -387,7 +379,7 @@ def enrich_imas_paths(
 
     For each path lacking a description (or with mismatched enrichment_hash):
     1. Gather rich context (hierarchy, siblings, metadata)
-    2. Call LLM to generate description, physics_summary, keywords
+    2. Call LLM to generate description, keywords
     3. Update graph with enrichment fields
     4. Optionally propagate physics_domain back to graph
 
@@ -494,7 +486,6 @@ def enrich_imas_paths(
                 {
                     "id": path["id"],
                     "description": template["description"],
-                    "physics_summary": template["physics_summary"],
                     "keywords": template["keywords"],
                     "enrichment_hash": template_hash,
                     "enrichment_model": "template",
@@ -570,7 +561,6 @@ def enrich_imas_paths(
                         update = {
                             "id": ctx["id"],
                             "description": enrichment.description,
-                            "physics_summary": enrichment.physics_summary,
                             "keywords": enrichment.keywords[:5],
                             "enrichment_hash": ctx["_expected_hash"],
                             "enrichment_model": model,
@@ -604,7 +594,7 @@ def _batch_update_enrichments(
 ) -> None:
     """Batch update enrichment fields on IMASNode nodes.
 
-    Updates: description, physics_summary, keywords, enrichment_hash,
+    Updates: description, keywords, enrichment_hash,
     enrichment_model, enrichment_source, and optionally physics_domain.
     """
     for i in range(0, len(updates), batch_size):
@@ -614,7 +604,6 @@ def _batch_update_enrichments(
             UNWIND $updates AS u
             MATCH (p:IMASNode {id: u.id})
             SET p.description = u.description,
-                p.physics_summary = u.physics_summary,
                 p.keywords = u.keywords,
                 p.enrichment_hash = u.enrichment_hash,
                 p.enrichment_model = u.enrichment_model,

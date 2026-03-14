@@ -8,9 +8,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from imas_codex.graph.dd_enrichment import (
+    BOILERPLATE_PATTERNS,
     IMASPathEnrichmentBatch,
     IMASPathEnrichmentResult,
-    BOILERPLATE_PATTERNS,
     compute_enrichment_hash,
     generate_template_description,
     is_boilerplate_path,
@@ -121,7 +121,6 @@ class TestPydanticModels:
         result = IMASPathEnrichmentResult(
             path_index=1,
             description="Poloidal flux profile from equilibrium reconstruction.",
-            physics_summary="Poloidal flux radial profile",
             keywords=["flux", "equilibrium", "radial"],
             physics_domain=None,
         )
@@ -134,7 +133,6 @@ class TestPydanticModels:
         result = IMASPathEnrichmentResult(
             path_index=1,
             description="ECE channel measurement.",
-            physics_summary="ECE temperature measurement",
             keywords=["ece", "temperature"],
             physics_domain="electromagnetic_wave_diagnostics",
         )
@@ -147,13 +145,11 @@ class TestPydanticModels:
                 IMASPathEnrichmentResult(
                     path_index=1,
                     description="First path description.",
-                    physics_summary="First summary",
                     keywords=["a", "b"],
                 ),
                 IMASPathEnrichmentResult(
                     path_index=2,
                     description="Second path description.",
-                    physics_summary="Second summary",
                     keywords=["c", "d"],
                 ),
             ]
@@ -174,7 +170,6 @@ class TestGenerateEmbeddingText:
             "name": "psi",
             "documentation": "Raw documentation.",
             "description": "LLM-generated physics description.",
-            "physics_summary": "Short summary.",
             "keywords": ["flux", "equilibrium"],
         }
 
@@ -230,7 +225,13 @@ class TestEnrichImasPaths:
                 }
             ],
             # IDS info query
-            [{"id": "equilibrium", "description": "Equilibrium IDS", "physics_domain": "equilibrium"}],
+            [
+                {
+                    "id": "equilibrium",
+                    "description": "Equilibrium IDS",
+                    "physics_domain": "equilibrium",
+                }
+            ],
             # Sibling query
             [],
             # Children query
@@ -248,7 +249,6 @@ class TestEnrichImasPaths:
                     IMASPathEnrichmentResult(
                         path_index=1,
                         description="Test description",
-                        physics_summary="Test summary",
                         keywords=["test"],
                     )
                 ]
@@ -260,7 +260,7 @@ class TestEnrichImasPaths:
         # This will fail because we're not fully mocking, but we can verify
         # the mocking approach works
         try:
-            stats = enrich_imas_paths(
+            enrich_imas_paths(
                 client=mock_client,
                 version="4.0.0",
                 model="google/gemini-3-flash",

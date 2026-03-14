@@ -142,10 +142,6 @@ class SearchHit(SearchBase):
         default=None,
         description="LLM-generated physics-aware description of this path",
     )
-    physics_summary: str | None = Field(
-        default=None,
-        description="One-sentence physics summary for compact display",
-    )
     keywords: list[str] | None = Field(
         default=None,
         description="LLM-generated searchable keywords for this path",
