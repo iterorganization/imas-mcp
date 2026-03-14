@@ -583,6 +583,10 @@ class GraphSchema:
                 "Diagnostic": ["category"],
                 "AnalysisCode": ["code_type"],
                 "Tool": ["category", "available"],
+                "CodeFile": [
+                    "status",
+                    "content_hash",
+                ],  # claim query perf: status filter + dedup gate
             }
 
         statements = []

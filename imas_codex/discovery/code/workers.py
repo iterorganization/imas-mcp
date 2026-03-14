@@ -650,7 +650,7 @@ async def code_worker(
     from imas_codex.embeddings.encoder import Encoder
     from imas_codex.ingestion.pipeline import ingest_files
 
-    logger.info(
+    logger.warning(
         "code_worker started (facility=%s, batch_size=%d, "
         "scan_only=%s, score_only=%s)",
         state.facility,
@@ -667,7 +667,7 @@ async def code_worker(
 
     while not state.should_stop():
         if state.scan_only or state.score_only:
-            logger.info(
+            logger.warning(
                 "code_worker exiting: scan_only=%s, score_only=%s",
                 state.scan_only,
                 state.score_only,
@@ -691,7 +691,7 @@ async def code_worker(
             consecutive_idle += 1
             state.code_phase.record_idle()
             if state.code_phase.done:
-                logger.info(
+                logger.warning(
                     "code_worker exiting: phase done after %d batches "
                     "(%d files processed, %d errors)",
                     batches_processed,
@@ -700,7 +700,7 @@ async def code_worker(
                 )
                 break
             if consecutive_idle == 1 or consecutive_idle % idle_log_interval == 0:
-                logger.info(
+                logger.warning(
                     "code_worker idle (poll #%d, phase.idle=%s, "
                     "score_phase.done=%s, processed=%d)",
                     consecutive_idle,
@@ -723,7 +723,7 @@ async def code_worker(
         all_ids = [f["id"] for f in files]
         scores = [f.get("score_composite", 0) for f in files]
 
-        logger.info(
+        logger.warning(
             "code_worker claimed %d files (scores %.2f–%.2f): %s",
             len(files),
             min(scores),
@@ -761,7 +761,7 @@ async def code_worker(
             state.code_stats.last_batch_time = batch_elapsed
             state.code_stats.record_batch(batch_total)
 
-            logger.info(
+            logger.warning(
                 "code_worker batch #%d: ingested=%d skipped=%d "
                 "chunks=%d elapsed=%.1fs",
                 batches_processed,
@@ -799,7 +799,7 @@ async def code_worker(
 
         await asyncio.sleep(0.1)
 
-    logger.info(
+    logger.warning(
         "code_worker stopped (facility=%s, batches=%d, "
         "processed=%d, errors=%d, should_stop=%s)",
         state.facility,
