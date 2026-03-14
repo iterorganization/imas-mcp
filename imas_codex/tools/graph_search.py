@@ -454,14 +454,14 @@ class GraphPathTool:
                 OPTIONAL MATCH (change:IMASNodeChange)-[:FOR_IMAS_PATH]->(p)
                 WHERE change.semantic_change_type IN
                       ['sign_convention', 'coordinate_convention', 'units', 'definition_clarification']
-                WITH p, u, cluster_labels, coordinates, ident,
+                WITH p, u, cluster_labels, coordinates, ident, iv,
                      collect(DISTINCT {version: change.version,
                                        type: change.semantic_change_type,
                                        summary: change.summary}) AS version_changes
                 """
             else:
                 version_clause = """
-                WITH p, u, cluster_labels, coordinates, ident,
+                WITH p, u, cluster_labels, coordinates, ident, iv,
                      [] AS version_changes
                 """
 
@@ -473,17 +473,24 @@ class GraphPathTool:
                 OPTIONAL MATCH (p)-[:IN_CLUSTER]->(c:IMASSemanticCluster)
                 OPTIONAL MATCH (p)-[:HAS_COORDINATE]->(coord:IMASCoordinateSpec)
                 OPTIONAL MATCH (p)-[:HAS_IDENTIFIER_SCHEMA]->(ident:IdentifierSchema)
+                OPTIONAL MATCH (p)-[:INTRODUCED_IN]->(iv:DDVersion)
                 WITH p, u,
                      collect(DISTINCT c.label) AS cluster_labels,
                      collect(DISTINCT coord.id) AS coordinates,
-                     ident
+                     ident, iv
                 {version_clause}
                 RETURN p.id AS id, p.name AS name, p.ids AS ids,
                        p.documentation AS documentation, p.data_type AS data_type,
                        p.node_type AS node_type, p.physics_domain AS physics_domain,
                        p.ndim AS ndim,
+                       p.path_doc AS structure_path,
+                       p.lifecycle_status AS lifecycle_status,
+                       p.lifecycle_version AS lifecycle_version,
                        p.cocos_label_transformation AS cocos_label,
                        p.cocos_transformation_expression AS cocos_expression,
+                       p.coordinate1_same_as AS coordinate1,
+                       p.coordinate2_same_as AS coordinate2,
+                       p.timebasepath AS timebase,
                        p.description AS enriched_description,
                        p.keywords AS keywords,
                        p.enrichment_source AS enrichment_source,
@@ -493,6 +500,7 @@ class GraphPathTool:
                        ident.name AS identifier_schema_name,
                        ident.description AS identifier_schema_description,
                        ident.options AS identifier_schema_options,
+                       iv.id AS introduced_after_version,
                        version_changes
                 """,
                 path=path,
@@ -554,6 +562,10 @@ class GraphPathTool:
                     description=r.get("enriched_description"),
                     keywords=r.get("keywords"),
                     enrichment_source=r.get("enrichment_source"),
+                    introduced_after_version=r.get("introduced_after_version"),
+                    lifecycle_status=r.get("lifecycle_status"),
+                    lifecycle_version=r.get("lifecycle_version"),
+                    structure_reference=r.get("structure_path"),
                 )
                 nodes.append(node)
             else:
@@ -1020,7 +1032,7 @@ class GraphClustersTool:
         results = self._gc.query(
             f"""
             CALL db.index.vector.queryNodes(
-                'cluster_description_embedding', $k, $embedding
+                'cluster_embedding', $k, $embedding
             )
             YIELD node AS cluster, score
             WHERE score > 0.3
@@ -1040,6 +1052,42 @@ class GraphClustersTool:
         )
 
         clusters = self._format_clusters(results or [], include_score=True)
+
+        # Enrich unlabeled clusters with member-derived context
+        unlabeled_ids = [
+            c["id"] for c in clusters if not c.get("label") and c.get("paths")
+        ]
+        if unlabeled_ids:
+            member_docs = self._gc.query(
+                """
+                UNWIND $cluster_ids AS cid
+                MATCH (c:IMASSemanticCluster {id: cid})<-[:IN_CLUSTER]-(m:IMASNode)
+                WITH c, m ORDER BY m.id
+                WITH c.id AS cluster_id,
+                     collect(DISTINCT m.ids)[..5] AS ids_names,
+                     collect(m.documentation)[..5] AS sample_docs,
+                     collect(m.id)[..5] AS sample_paths
+                RETURN cluster_id, ids_names, sample_docs, sample_paths
+                """,
+                cluster_ids=unlabeled_ids,
+            )
+            member_ctx = {r["cluster_id"]: r for r in member_docs or []}
+            for cluster in clusters:
+                if cluster["id"] in member_ctx:
+                    ctx = member_ctx[cluster["id"]]
+                    if not cluster.get("label"):
+                        # Derive label from common path prefix
+                        paths = ctx.get("sample_paths", [])
+                        if paths:
+                            prefix = _common_path_prefix(paths)
+                            cluster["label"] = prefix or ""
+                    if not cluster.get("description"):
+                        docs = [d for d in (ctx.get("sample_docs") or []) if d]
+                        if docs:
+                            cluster["description"] = "; ".join(docs[:3])
+                    if not cluster.get("ids") and ctx.get("ids_names"):
+                        cluster["ids"] = ctx["ids_names"]
+
         return {
             "query": query,
             "query_type": "semantic",
@@ -1106,61 +1154,153 @@ class GraphIdentifiersTool:
         dd_version: int | None = None,
         ctx: Context | None = None,
     ) -> GetIdentifiersResult:
-        """Get identifier schemas from graph."""
+        """Get identifier schemas from graph.
+
+        When a query is provided, uses a two-strategy approach:
+        1. Vector similarity search on enriched description embeddings
+        2. Keyword matching on name, description, keywords, and options
+
+        Results from both strategies are merged (vector matches first).
+        """
+        if query:
+            return self._search_identifiers(query)
+        return self._list_all_identifiers()
+
+    def _list_all_identifiers(self) -> GetIdentifiersResult:
+        """Return all identifier schemas."""
         results = self._gc.query(
             """
             MATCH (s:IdentifierSchema)
             RETURN s.name AS name, s.description AS description,
+                   s.enriched_description AS enriched_description,
+                   s.keywords AS keywords,
                    s.option_count AS option_count, s.options AS options,
                    s.field_count AS field_count, s.source AS source
             ORDER BY s.name
             """
         )
-
-        schemas = []
-        for r in results or []:
-            # Apply query filter
-            if query:
-                query_lower = query.lower()
-                name_match = query_lower in (r["name"] or "").lower()
-                desc_match = query_lower in (r["description"] or "").lower()
-                opts_match = query_lower in (r["options"] or "").lower()
-                if not (name_match or desc_match or opts_match):
-                    continue
-
-            options = []
-            if r["options"]:
-                try:
-                    options = json.loads(r["options"])
-                except (json.JSONDecodeError, TypeError):
-                    pass
-
-            option_count = r["option_count"] or len(options)
-            schemas.append(
-                {
-                    "path": r["name"],
-                    "schema_path": r["source"] or "",
-                    "option_count": option_count,
-                    "branching_significance": _classify_significance(option_count),
-                    "options": options,
-                    "description": r["description"] or "",
-                }
-            )
-
-        # Compute analytics
-        total_schemas = len(schemas)
+        schemas = [self._format_schema(r) for r in results or []]
         total_options = sum(s["option_count"] for s in schemas)
 
         return GetIdentifiersResult(
             schemas=schemas,
             paths=[],
             analytics={
-                "total_schemas": total_schemas,
+                "total_schemas": len(schemas),
+                "total_paths": 0,
+                "enumeration_space": total_options,
+                "query_context": None,
+            },
+        )
+
+    def _search_identifiers(self, query: str) -> GetIdentifiersResult:
+        """Search identifier schemas by vector similarity + keyword match."""
+        seen: set[str] = set()
+        schemas: list[dict] = []
+
+        # Strategy 1: Vector similarity search
+        try:
+            from imas_codex.embeddings.config import EncoderConfig
+            from imas_codex.embeddings.encoder import Encoder
+            from imas_codex.settings import (
+                get_embedding_dimension,
+                get_embedding_model,
+            )
+
+            model_name = get_embedding_model()
+            dim = get_embedding_dimension()
+            encoder = Encoder(
+                config=EncoderConfig(model_name=model_name, dimension=dim)
+            )
+            query_embedding = encoder.encode([query])[0].tolist()
+
+            vector_results = self._gc.query(
+                """
+                CALL db.index.vector.queryNodes(
+                    'identifier_schema_embedding', $k, $embedding
+                ) YIELD node, score
+                WHERE score >= $threshold
+                RETURN node.name AS name, node.description AS description,
+                       node.enriched_description AS enriched_description,
+                       node.keywords AS keywords,
+                       node.option_count AS option_count,
+                       node.options AS options,
+                       node.field_count AS field_count,
+                       node.source AS source,
+                       score
+                """,
+                embedding=query_embedding,
+                k=10,
+                threshold=0.3,
+            )
+            for r in vector_results or []:
+                name = r["name"]
+                if name not in seen:
+                    seen.add(name)
+                    schemas.append(self._format_schema(r))
+        except Exception:
+            pass  # Vector index may not exist yet
+
+        # Strategy 2: Keyword matching on remaining schemas
+        keyword_results = self._gc.query(
+            """
+            MATCH (s:IdentifierSchema)
+            RETURN s.name AS name, s.description AS description,
+                   s.enriched_description AS enriched_description,
+                   s.keywords AS keywords,
+                   s.option_count AS option_count, s.options AS options,
+                   s.field_count AS field_count, s.source AS source
+            ORDER BY s.name
+            """
+        )
+        query_lower = query.lower()
+        for r in keyword_results or []:
+            name = r["name"]
+            if name in seen:
+                continue
+            name_match = query_lower in (name or "").lower()
+            desc_match = query_lower in (r["description"] or "").lower()
+            enriched_match = query_lower in (r["enriched_description"] or "").lower()
+            opts_match = query_lower in (r["options"] or "").lower()
+            kw_match = any(
+                query_lower in kw.lower() for kw in (r.get("keywords") or [])
+            )
+            if name_match or desc_match or enriched_match or opts_match or kw_match:
+                seen.add(name)
+                schemas.append(self._format_schema(r))
+
+        total_options = sum(s["option_count"] for s in schemas)
+        return GetIdentifiersResult(
+            schemas=schemas,
+            paths=[],
+            analytics={
+                "total_schemas": len(schemas),
                 "total_paths": 0,
                 "enumeration_space": total_options,
                 "query_context": query,
             },
         )
+
+    @staticmethod
+    def _format_schema(r: dict) -> dict:
+        """Format a graph row into a schema result dict."""
+        options = []
+        if r.get("options"):
+            try:
+                options = json.loads(r["options"])
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        option_count = r.get("option_count") or len(options)
+        desc = r.get("enriched_description") or r.get("description") or ""
+        return {
+            "path": r["name"],
+            "schema_path": r.get("source") or "",
+            "option_count": option_count,
+            "branching_significance": _classify_significance(option_count),
+            "options": options,
+            "description": desc,
+        }
 
 
 class GraphPathContextTool:
@@ -1441,7 +1581,20 @@ class GraphStructureTool:
         ctx: Context | None = None,
     ) -> dict[str, Any]:
         """Export all IMAS paths in a physics domain, grouped by IDS."""
-        dd_params: dict[str, Any] = {"domain": domain}
+        resolved_domains, resolution = _resolve_physics_domain(self._gc, domain)
+
+        if not resolved_domains:
+            return {
+                "domain": domain,
+                "resolved_domains": [],
+                "resolution": "no_match",
+                "total_paths": 0,
+                "ids_count": 0,
+                "by_ids": {},
+                "error": f"No physics domain found matching '{domain}'.",
+            }
+
+        dd_params: dict[str, Any] = {"domains": resolved_domains}
         dd_clause = _dd_version_clause("p", dd_version, dd_params)
 
         ids_clause = ""
@@ -1452,7 +1605,7 @@ class GraphStructureTool:
         paths = self._gc.query(
             f"""
             MATCH (p:IMASNode)
-            WHERE p.physics_domain = $domain {ids_clause} {dd_clause}
+            WHERE p.physics_domain IN $domains {ids_clause} {dd_clause}
             OPTIONAL MATCH (p)-[:HAS_UNIT]->(u:Unit)
             RETURN p.id AS path,
                    p.ids AS ids,
@@ -1473,6 +1626,8 @@ class GraphStructureTool:
 
         return {
             "domain": domain,
+            "resolved_domains": resolved_domains,
+            "resolution": resolution,
             "ids_filter": ids_filter,
             "total_paths": len(paths),
             "ids_count": len(grouped),
@@ -1482,12 +1637,27 @@ class GraphStructureTool:
 
 def _normalize_paths(paths: str | list[str]) -> list[str]:
     """Normalize paths input to a flat list, stripping index annotations."""
+    import json
+
     from imas_codex.core.paths import strip_path_annotations
 
-    if isinstance(paths, str):
-        raw = [p.strip() for p in paths.replace(",", " ").split() if p.strip()]
-    else:
-        raw = list(paths)
+    if isinstance(paths, list):
+        return [strip_path_annotations(p) for p in paths]
+
+    s = paths.strip()
+    # Handle JSON array strings from MCP transport
+    if s.startswith("[") and s.endswith("]"):
+        try:
+            parsed = json.loads(s)
+            if isinstance(parsed, list):
+                return [
+                    strip_path_annotations(str(p).strip())
+                    for p in parsed
+                    if str(p).strip()
+                ]
+        except (json.JSONDecodeError, TypeError):
+            pass
+    raw = [p.strip() for p in s.replace(",", " ").split() if p.strip()]
     return [strip_path_annotations(p) for p in raw]
 
 
@@ -1725,3 +1895,86 @@ def _get_version_context(
     """
     results = gc.query(cypher, path_ids=path_ids)
     return {r["id"]: r for r in results}
+
+
+def _common_path_prefix(paths: list[str]) -> str:
+    """Find the longest common path prefix from a list of IMAS paths."""
+    if not paths:
+        return ""
+    split_paths = [p.split("/") for p in paths]
+    prefix = []
+    for segments in zip(*split_paths, strict=False):
+        if len(set(segments)) == 1:
+            prefix.append(segments[0])
+        else:
+            break
+    return "/".join(prefix)
+
+
+def _resolve_physics_domain(
+    gc: GraphClient, domain_query: str
+) -> tuple[list[str], str]:
+    """Resolve a user-provided domain query to canonical physics domain names.
+
+    Resolution order:
+    1. Exact match on PhysicsDomain enum value
+    2. IDS name → its physics_domain from the graph
+    3. DomainCategory expansion (all domains in that category)
+    4. Substring match on domain names
+
+    Returns:
+        (resolved_domains, resolution_method) — list of canonical domain
+        names and a string describing how the input was resolved.
+    """
+    from imas_codex.core.physics_domain import PhysicsDomain
+
+    query = domain_query.strip().lower().replace(" ", "_").replace("-", "_")
+
+    # 1. Exact match on PhysicsDomain enum value
+    valid_domains = {d.value for d in PhysicsDomain}
+    if query in valid_domains:
+        return [query], "exact"
+
+    # 2. IDS name → its physics_domain
+    ids_rows = gc.query(
+        "MATCH (i:IDS {name: $name}) RETURN i.physics_domain AS domain",
+        name=query,
+    )
+    if ids_rows:
+        domains = [r["domain"] for r in ids_rows if r.get("domain")]
+        if domains:
+            return sorted(set(domains)), f"ids_name:{query}"
+
+    # 3. DomainCategory expansion
+    try:
+        from pathlib import Path
+
+        from linkml_runtime.utils.schemaview import SchemaView
+
+        schema_path = Path(__file__).parent.parent / "definitions/physics/domains.yaml"
+        if schema_path.exists():
+            sv = SchemaView(str(schema_path))
+            cat_enum = sv.get_enum("DomainCategory")
+            if cat_enum and query in cat_enum.permissible_values:
+                pd_enum = sv.get_enum("PhysicsDomain")
+                if pd_enum:
+                    domains = []
+                    for pv_name, pv in pd_enum.permissible_values.items():
+                        cat = (
+                            pv.annotations.get("category", {}).get("value", "")
+                            if pv.annotations
+                            else ""
+                        )
+                        if cat == query:
+                            domains.append(pv_name)
+                    if domains:
+                        return sorted(domains), f"category:{query}"
+    except Exception:
+        pass
+
+    # 4. Substring match on domain names
+    matches = [d for d in sorted(valid_domains) if query in d]
+    if matches:
+        return matches, f"substring:{query}"
+
+    return [], "no_match"
