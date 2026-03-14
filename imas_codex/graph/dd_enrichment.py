@@ -374,6 +374,7 @@ def enrich_imas_paths(
     ids_filter: set[str] | None = None,
     use_rich: bool | None = None,
     force: bool = False,
+    on_progress: "Callable[[int, int], None] | None" = None,
 ) -> dict[str, Any]:
     """Enrich IMAS paths with LLM-generated descriptions.
 
@@ -455,6 +456,9 @@ def enrich_imas_paths(
     if not all_paths:
         return stats
 
+    if on_progress:
+        on_progress(0, len(all_paths))
+
     # Query IDS info for context
     ids_query = """
     MATCH (i:IDS)
@@ -496,6 +500,9 @@ def enrich_imas_paths(
         # Batch update boilerplate paths
         _batch_update_enrichments(client, template_updates)
         stats["enriched_template"] = len(template_updates)
+
+        if on_progress:
+            on_progress(len(boilerplate_paths), len(all_paths))
 
     # Process LLM paths in batches
     if llm_paths:
@@ -583,6 +590,12 @@ def enrich_imas_paths(
                     # Continue with next batch
 
                 phase.update(batch_items[batch_num])
+
+                if on_progress:
+                    processed = len(boilerplate_paths) + min(
+                        batch_idx + batch_size, len(llm_paths)
+                    )
+                    on_progress(processed, len(all_paths))
 
     return stats
 

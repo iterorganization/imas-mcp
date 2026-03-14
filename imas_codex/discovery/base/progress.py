@@ -1373,6 +1373,17 @@ class BaseProgressDisplay(ABC):
         ]
         return len(workers) > 0 and all(s.state == WorkerState.stopped for s in workers)
 
+    def _worker_running(self, group: str) -> bool:
+        """Check if any worker in a group is running or idle (waiting)."""
+        wg = self.worker_group
+        if not wg:
+            return False
+        return any(
+            s.state in (WorkerState.running, WorkerState.idle)
+            for _n, s in wg.workers.items()
+            if (s.group or _n.split("_worker")[0]) == group
+        )
+
     def update_worker_status(self, worker_group: SupervisedWorkerGroup) -> None:
         """Update worker status from supervised worker group."""
         self.worker_group = worker_group
@@ -1826,6 +1837,7 @@ class DataDrivenProgressDisplay(BaseProgressDisplay):
                 else max(completed, 1)
             )
             complete = self._worker_complete(stage.group)
+            running = self._worker_running(stage.group)
 
             rows.append(
                 PipelineRowConfig(
@@ -1840,6 +1852,7 @@ class DataDrivenProgressDisplay(BaseProgressDisplay):
                     worker_count=count,
                     worker_annotation=ann,
                     is_complete=complete,
+                    is_processing=running and not complete,
                 )
             )
         return build_pipeline_section(rows, self.bar_width)
