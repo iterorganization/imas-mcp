@@ -211,10 +211,6 @@ def generate_embedding_text(
     if enriched_desc:
         # Use LLM-generated description as primary content
         sentences.append(enriched_desc)
-        # Also include physics_summary if different enough
-        physics_summary = path_info.get("physics_summary")
-        if physics_summary and physics_summary not in enriched_desc:
-            sentences.append(physics_summary)
     else:
         # Fall back to raw documentation
         doc = path_info.get("documentation", "")
@@ -1797,18 +1793,16 @@ def build_dd_graph(
                 AND p.description IS NOT NULL
                 RETURN p.id AS id,
                        p.description AS description,
-                       p.physics_summary AS physics_summary,
                        p.keywords AS keywords
                 """
                 enriched_data = {
                     r["id"]: {
                         "description": r["description"],
-                        "physics_summary": r["physics_summary"],
                         "keywords": r["keywords"] or [],
                     }
                     for r in client.query(enriched_paths_query)
                 }
-                
+
                 # Merge enriched data into paths_to_reembed
                 paths_to_reembed = {}
                 for path_id, enrichment in enriched_data.items():

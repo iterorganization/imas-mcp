@@ -92,7 +92,6 @@ class IdsNode(BaseModel):
 
     # LLM enrichment fields
     description: str | None = None  # LLM-generated physics-aware description
-    physics_summary: str | None = None  # One-sentence physics summary
     keywords: list[str] | None = None  # LLM-generated searchable keywords
     enrichment_source: str | None = None  # 'llm' or 'template'
 

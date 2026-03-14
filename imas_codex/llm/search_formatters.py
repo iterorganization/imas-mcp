@@ -762,7 +762,10 @@ def format_fetch_paths_report(result: Any) -> str:
 
     for node in result.nodes:
         parts.append(f"### {node.path}")
-        if node.documentation:
+        # Prefer enriched description over documentation
+        if hasattr(node, "description") and node.description:
+            parts.append(f'  "{node.description}"')
+        elif node.documentation:
             parts.append(f'  "{node.documentation}"')
 
         meta = []
@@ -781,7 +784,7 @@ def format_fetch_paths_report(result: Any) -> str:
             parts.append(f"  Coordinates: {', '.join(node.coordinates)}")
         if hasattr(node, "cluster_labels") and node.cluster_labels:
             parts.append(
-                f"  Clusters: {', '.join(f'\"{c}\"' for c in node.cluster_labels)}"
+                f"  Clusters: {', '.join(f'"{c}"' for c in node.cluster_labels)}"
             )
         parts.append("")
 
@@ -901,7 +904,6 @@ def format_cluster_report(result: dict[str, Any]) -> str:
 
     parts: list[str] = []
     clusters = result.get("clusters", [])
-    query_type = result.get("query_type", "semantic")
 
     parts.append(f"## IMAS Clusters ({result.get('clusters_found', 0)} found)\n")
 
@@ -911,7 +913,6 @@ def format_cluster_report(result: dict[str, Any]) -> str:
         scope = cl.get("scope", "")
         cl_type = cl.get("type", "")
         relevance = cl.get("relevance_score")
-        similarity = cl.get("similarity", 0)
 
         header = f"### {label}"
         if relevance:
@@ -961,7 +962,10 @@ def format_search_imas_report(result: Any, cluster_result: dict | None = None) -
             score_str = f" (score: {hit.score:.2f})" if hit.score else ""
             parts.append(f"### {hit.path}{score_str}")
 
-            if hit.documentation:
+            # Prefer enriched description over raw documentation
+            if hit.description:
+                parts.append(f'  "{hit.description}"')
+            elif hit.documentation:
                 parts.append(f'  "{hit.documentation}"')
 
             meta = []
@@ -984,6 +988,8 @@ def format_search_imas_report(result: Any, cluster_result: dict | None = None) -
                 parts.append(f"  Structure: {hit.structure_reference}")
             if hit.introduced_after_version:
                 parts.append(f"  Introduced: DD {hit.introduced_after_version}")
+            if hit.keywords:
+                parts.append(f"  Keywords: {', '.join(hit.keywords)}")
 
             # Facility cross-references
             xref = hit.facility_xrefs or {}
@@ -997,7 +1003,7 @@ def format_search_imas_report(result: Any, cluster_result: dict | None = None) -
                 wiki = xref.get("wiki_mentions") or []
                 if wiki:
                     parts.append(
-                        f"  Wiki: mentioned in {', '.join(f'\"{s}\"' for s in wiki)}"
+                        f"  Wiki: mentioned in {', '.join(f'"{s}"' for s in wiki)}"
                     )
                 code = xref.get("code_files") or []
                 if code:
@@ -1047,7 +1053,7 @@ def format_path_context_report(result: dict[str, Any]) -> str:
         for cluster, items in by_cluster.items():
             parts.append(f"\n**{cluster}**")
             for item in items:
-                doc = f' — {item["doc"]}' if item.get("doc") else ""
+                doc = f" — {item['doc']}" if item.get("doc") else ""
                 parts.append(f"  - `{item['path']}`{doc}")
         parts.append("")
 
@@ -1073,7 +1079,7 @@ def format_path_context_report(result: dict[str, Any]) -> str:
         for unit, items in by_unit.items():
             parts.append(f"\n**{unit}**")
             for item in items:
-                doc = f' — {item["doc"]}' if item.get("doc") else ""
+                doc = f" — {item['doc']}" if item.get("doc") else ""
                 parts.append(f"  - `{item['path']}`{doc}")
         parts.append("")
 

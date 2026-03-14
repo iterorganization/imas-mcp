@@ -394,7 +394,7 @@ classes:
     annotations:
       fulltext_index:
         tag: fulltext_index
-        value: "imas_node_text:documentation,name,id"
+        value: "imas_node_text:documentation,name,id,description,keywords"
     attributes:
       id:
         identifier: true
@@ -570,10 +570,6 @@ classes:
           separately from units, coordinates, and other metadata to avoid
           redundancy. Used as primary content for embedding generation when
           present.
-      physics_summary:
-        description: >-
-          One-sentence physics summary for compact display. Generated alongside
-          description for use in UI tooltips and search result previews.
       keywords:
         description: >-
           LLM-generated searchable keywords (max 5) for this path. Physics

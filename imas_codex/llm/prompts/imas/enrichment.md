@@ -18,11 +18,9 @@ For each path in the batch, provide:
 
 1. **description**: 2-4 sentences explaining what this quantity measures, its physical significance, and its role in the IDS structure. Focus on physics meaning, not metadata.
 
-2. **physics_summary**: One-sentence summary for tooltips and search results.
+2. **keywords**: Up to 5 searchable terms — physics concepts, measurement types, related terms NOT already in the documentation.
 
-3. **keywords**: Up to 5 searchable terms — physics concepts, measurement types, related terms NOT already in the documentation.
-
-4. **physics_domain**: Primary physics domain ONLY if clearly different from the IDS-level domain. Use null to inherit.
+3. **physics_domain**: Primary physics domain ONLY if clearly different from the IDS-level domain. Use null to inherit.
 
 ## Critical Guidelines
 
@@ -69,7 +67,6 @@ Return a JSON object with a `results` array containing one entry per input path:
     {
       "path_index": 1,
       "description": "Poloidal magnetic flux as a function of normalized toroidal flux coordinate. Fundamental quantity for equilibrium reconstruction that maps the nested flux surface geometry. Sign depends on COCOS convention.",
-      "physics_summary": "Poloidal flux radial profile from equilibrium reconstruction",
       "keywords": ["flux surface", "equilibrium", "radial profile", "reconstruction"],
       "physics_domain": null
     }
