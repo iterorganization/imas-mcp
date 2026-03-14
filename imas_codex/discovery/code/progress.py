@@ -206,7 +206,8 @@ class FileProgressState:
     )
     embed_queue: StreamQueue = field(
         default_factory=lambda: StreamQueue(
-            rate=0.5, max_rate=3.0, min_display_time=0.3
+            rate=0.5, max_rate=3.0, min_display_time=0.3,
+            max_display_time=3.0,
         )
     )
 
