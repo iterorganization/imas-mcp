@@ -41,12 +41,17 @@ logger = logging.getLogger(__name__)
 # Progress callback type: (current, total, message) -> None
 ProgressCallback = Callable[[int, int, str], None]
 
+# Target chunk size in characters for code chunking.
+# Matches embed worker's TARGET_EMBED_TEXT_CHARS to avoid segment splitting
+# at embed time.  4000 chars ≈ 1K tokens for Qwen3-Embedding.
+DEFAULT_CHUNK_MAX_CHARS = 4000
+
 
 def _split_and_extract(
     content: str,
     language: str,
     metadata: dict[str, Any],
-    max_chars: int = 10000,
+    max_chars: int = DEFAULT_CHUNK_MAX_CHARS,
     chunk_lines: int = 40,
     chunk_lines_overlap: int = 10,
     use_text_splitter: bool = False,
