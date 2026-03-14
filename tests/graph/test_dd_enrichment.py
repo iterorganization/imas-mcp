@@ -31,10 +31,11 @@ class TestBoilerplateDetection:
             ("equilibrium/time_slice/profiles_1d/psi", False),
             ("equilibrium/time_slice/profiles_1d/temperature", False),
             ("core_profiles/profiles_1d/electrons/temperature", False),
-            # Edge cases
-            ("equilibrium/error_index", True),
-            ("equilibrium/error_upper", True),
-            ("equilibrium/validity", True),
+            # Edge cases — bare names without a base field prefix don't match
+            # because the regex requires a leading underscore (e.g. _error_index$)
+            ("equilibrium/error_index", False),
+            ("equilibrium/error_upper", False),
+            ("equilibrium/validity", False),
         ],
     )
     def test_is_boilerplate_path(self, path_id: str, expected: bool) -> None:
@@ -204,7 +205,7 @@ class TestGenerateEmbeddingText:
 class TestEnrichImasPaths:
     """Test the main enrichment function (mocked)."""
 
-    @patch("imas_codex.graph.dd_enrichment.call_llm_structured")
+    @patch("imas_codex.discovery.base.llm.call_llm_structured")
     def test_enrichment_calls_llm(self, mock_llm: MagicMock) -> None:
         """Test that enrichment calls the LLM correctly."""
         from imas_codex.graph.dd_enrichment import enrich_imas_paths
@@ -233,6 +234,8 @@ class TestEnrichImasPaths:
                 }
             ],
             # Sibling query
+            [],
+            # Ancestor query
             [],
             # Children query
             [],

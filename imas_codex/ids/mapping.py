@@ -100,7 +100,7 @@ def _format_subtree(rows: list[dict[str, Any]]) -> str:
             parts.append(f"[{units}]")
         line = " ".join(parts)
         if doc:
-            line += f" — {doc[:100]}"
+            line += f" — {doc}"
         lines.append(line)
     return "\n".join(lines) if lines else "(no paths)"
 
@@ -116,11 +116,9 @@ def _format_section_clusters(clusters: list[dict[str, Any]]) -> str:
         paths = c.get("paths", [])
         line = f"- **{label}**"
         if desc:
-            line += f": {desc[:200]}"
+            line += f": {desc}"
         if paths:
-            line += f"\n  Paths: {', '.join(paths[:10])}"
-            if len(paths) > 10:
-                line += f" (+{len(paths) - 10} more)"
+            line += f"\n  Paths: {', '.join(paths)}"
         lines.append(line)
     return "\n".join(lines)
 
@@ -161,7 +159,7 @@ def _format_sources(groups: list[dict[str, Any]]) -> str:
         # Enriched metadata from representative signal
         rep_desc = g.get("rep_description")
         if rep_desc and rep_desc != desc:
-            line += f"\n  Representative: {rep_desc[:200]}"
+            line += f"\n  Representative: {rep_desc}"
         rep_unit = g.get("rep_unit")
         if rep_unit:
             line += f"\n  Unit: {rep_unit}"
@@ -173,7 +171,7 @@ def _format_sources(groups: list[dict[str, Any]]) -> str:
             line += f"\n  Sign convention: {rep_sign}"
         accessors = g.get("sample_accessors")
         if accessors:
-            line += f"\n  Accessors: {', '.join(str(a) for a in accessors[:5])}"
+            line += f"\n  Accessors: {', '.join(str(a) for a in accessors)}"
         if mapped:
             targets = ", ".join(m["target_id"] for m in mapped)
             line += f"\n  [already mapped → {targets}]"
@@ -191,7 +189,7 @@ def _format_source_detail(source: dict[str, Any]) -> str:
         parts.append(f"**Description**: {desc}")
     rep_desc = source.get("rep_description")
     if rep_desc and rep_desc != desc:
-        parts.append(f"**Representative Signal**: {rep_desc[:200]}")
+        parts.append(f"**Representative Signal**: {rep_desc}")
     domain = source.get("physics_domain")
     if domain:
         parts.append(f"**Physics Domain**: {domain}")
@@ -207,7 +205,7 @@ def _format_source_detail(source: dict[str, Any]) -> str:
         parts.append(f"**Accessor Pattern**: {key}")
     accessors = source.get("sample_accessors")
     if accessors:
-        parts.append(f"**Sample Accessors**: {', '.join(str(a) for a in accessors[:5])}")
+        parts.append(f"**Sample Accessors**: {', '.join(str(a) for a in accessors)}")
     existing = source.get("imas_mappings", [])
     mapped = [m for m in existing if m.get("target_id")]
     if mapped:
@@ -232,7 +230,7 @@ def _format_fields(fields: list[dict[str, Any]]) -> str:
             parts.append(f"ndim={ndim}")
         line = " ".join(parts)
         if doc:
-            line += f"\n  {doc[:200]}"
+            line += f"\n  {doc}"
         lines.append(line)
     return "\n".join(lines) if lines else "(no fields)"
 
@@ -257,10 +255,10 @@ def _format_identifier_schemas(fields: list[dict[str, Any]]) -> str:
 
         line = f"- **{path}** (schema: {schema_path})"
         if doc:
-            line += f"\n  {doc[:200]}"
+            line += f"\n  {doc}"
         if options:
             opt_lines = []
-            for opt in options[:20]:
+            for opt in options:
                 if isinstance(opt, dict):
                     name = opt.get("name", "")
                     idx = opt.get("index", "")
@@ -271,8 +269,6 @@ def _format_identifier_schemas(fields: list[dict[str, Any]]) -> str:
                     desc = opt.description if hasattr(opt, "description") else ""
                 opt_lines.append(f"    - {idx}: {name}" + (f" — {desc}" if desc else ""))
             line += "\n  Valid values:\n" + "\n".join(opt_lines)
-            if len(options) > 20:
-                line += f"\n    (+{len(options) - 20} more)"
         lines.append(line)
     return "\n".join(lines) if lines else "(no identifier schemas)"
 
@@ -292,7 +288,7 @@ def _format_version_context(version_ctx: dict[str, Any]) -> str:
             version = c.get("version", "?")
             ctype = c.get("type", "?")
             summary = c.get("summary", "")
-            lines.append(f"  - v{version} [{ctype}]: {summary[:200]}")
+            lines.append(f"  - v{version} [{ctype}]: {summary}")
     return "\n".join(lines) if lines else "(no notable version changes)"
 
 
@@ -626,11 +622,11 @@ def map_signals(
         semantic_context = ""
         if source_semantic:
             semantic_lines = []
-            for sc in source_semantic[:10]:
+            for sc in source_semantic:
                 path = sc.get("id", "")
                 score = sc.get("score", 0)
                 doc = sc.get("documentation", "")
-                semantic_lines.append(f"  - {path} (score={score:.2f}): {doc[:100]}")
+                semantic_lines.append(f"  - {path} (score={score:.2f}): {doc}")
             semantic_context = "Semantic search candidates:\n" + "\n".join(semantic_lines)
 
         prompt = _render_prompt(
