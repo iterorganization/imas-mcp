@@ -40,6 +40,15 @@ Use these to understand which paths form physics-coherent groups:
 
 {{ section_clusters }}
 
+{% if cross_facility_mappings %}
+### Cross-Facility Precedent
+
+Other facilities have already mapped signals to these IDS sections.
+Use this as strong evidence for where similar signals should be assigned:
+
+{{ cross_facility_mappings }}
+{% endif %}
+
 ## Task
 
 For each signal source, determine which IMAS structural-array section

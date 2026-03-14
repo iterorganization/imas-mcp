@@ -6,6 +6,7 @@ No Neo4j required.
 
 from imas_codex.ids.mapping import (
     _format_coordinate_context,
+    _format_cross_facility_mappings,
     _format_identifier_schemas,
     _format_section_clusters,
     _format_version_context,
@@ -140,3 +141,28 @@ class TestFormatCoordinateContext:
         assert "equilibrium/time_slice/profiles_1d/psi" in result
         assert "rho_tor_norm" in result
         assert "time" in result
+
+
+class TestFormatCrossFacilityMappings:
+    def test_empty_list(self):
+        assert _format_cross_facility_mappings([]) == ""
+
+    def test_single_facility(self):
+        rows = [
+            {"facility": "tcv", "target_path": "equilibrium/time_slice/global_quantities/ip"},
+            {"facility": "tcv", "target_path": "equilibrium/time_slice/profiles_1d/psi"},
+        ]
+        result = _format_cross_facility_mappings(rows)
+        assert "**tcv**" in result
+        assert "equilibrium/time_slice/global_quantities/ip" in result
+        assert "equilibrium/time_slice/profiles_1d/psi" in result
+
+    def test_multiple_facilities_sorted(self):
+        rows = [
+            {"facility": "tcv", "target_path": "pf_active/coil/current"},
+            {"facility": "aug", "target_path": "pf_active/coil/voltage"},
+        ]
+        result = _format_cross_facility_mappings(rows)
+        lines = result.strip().split("\n")
+        assert lines[0].startswith("- **aug**")
+        assert lines[1].startswith("- **tcv**")

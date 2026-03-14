@@ -7,7 +7,7 @@ delegate to shared Graph*Tool classes in ``imas_codex.tools.graph_search``.
 Functions that remain local (no shared tool equivalent):
 - query_signal_sources — facility-specific SignalSource traversal
 - fetch_source_code_refs — SignalSource→FacilitySignal→CodeChunk
-- search_existing_mappings — IMASMapping lookup
+- search_existing_mappings — IMASMapping lookup for current facility
 - fetch_cross_facility_mappings — cross-facility IMASMapping precedent
 - get_sign_flip_paths — COCOS-specific
 - analyze_units — pint-based unit compatibility
@@ -458,3 +458,34 @@ def search_existing_mappings(
         "sections": sections,
         "bindings": bindings,
     }
+
+
+def fetch_cross_facility_mappings(
+    ids_name: str,
+    exclude_facility: str,
+    *,
+    gc: GraphClient | None = None,
+) -> list[dict[str, Any]]:
+    """Return active mappings from other facilities to this IDS.
+
+    Useful as precedent context: if TCV already mapped its plasma current
+    to ``equilibrium/time_slice/global_quantities/ip``, that's strong
+    evidence for where JET's plasma current should go.
+    """
+    if gc is None:
+        gc = GraphClient()
+
+    return gc.query(
+        """
+        MATCH (m:IMASMapping)-[:POPULATES]->(ip:IMASNode)
+        WHERE m.ids_name = $ids_name
+          AND m.facility_id <> $exclude
+          AND m.status IN ['active', 'validated']
+        RETURN m.facility_id AS facility,
+               ip.id AS target_path,
+               m.status AS status
+        ORDER BY m.facility_id, ip.id
+        """,
+        ids_name=ids_name,
+        exclude=exclude_facility,
+    )
