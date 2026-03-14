@@ -853,6 +853,27 @@ def _provide_static_enrichment_schema() -> dict[str, Any]:
     }
 
 
+@lru_cache(maxsize=1)
+def _provide_imas_enrichment_schema() -> dict[str, Any]:
+    """Provide IMASPathEnrichmentBatch Pydantic schema for LLM prompts.
+
+    Used by imas/enrichment prompt for batch IMAS path description generation.
+    """
+    from imas_codex.graph.dd_enrichment import (
+        IMASPathEnrichmentBatch,
+        IMASPathEnrichmentResult,
+    )
+
+    return {
+        "imas_enrichment_schema_example": get_pydantic_schema_json(
+            IMASPathEnrichmentBatch
+        ),
+        "imas_enrichment_schema_fields": get_pydantic_schema_description(
+            IMASPathEnrichmentResult
+        ),
+    }
+
+
 # Registry mapping schema_needs names to provider functions
 _SCHEMA_PROVIDERS: dict[str, Any] = {
     "path_purposes": _provide_path_purposes,
@@ -876,6 +897,8 @@ _SCHEMA_PROVIDERS: dict[str, Any] = {
     "diagnostic_categories": _provide_diagnostic_categories,
     # Static tree enrichment
     "static_enrichment_schema": _provide_static_enrichment_schema,
+    # IMAS DD enrichment
+    "imas_enrichment_schema": _provide_imas_enrichment_schema,
     # Cluster labeling
     "cluster_vocabularies": _provide_cluster_vocabularies,
     "cluster_label_schema": _provide_cluster_label_schema,
@@ -951,6 +974,11 @@ _DEFAULT_SCHEMA_NEEDS: dict[str, list[str]] = {
         "physics_domains",
         "signal_enrichment_schema",
         "diagnostic_categories",
+    ],
+    # IMAS DD enrichment
+    "imas/enrichment": [
+        "physics_domains",
+        "imas_enrichment_schema",
     ],
     # Static tree enrichment
     "discovery/static-enricher": [

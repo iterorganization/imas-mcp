@@ -104,6 +104,17 @@ imas.add_command(map_cmd, "map")
 @click.option(
     "--dry-run", is_flag=True, help="Preview changes without writing to graph"
 )
+@click.option(
+    "--skip-enrichment",
+    is_flag=True,
+    help="Skip LLM description enrichment (enrichment is ON by default)",
+)
+@click.option(
+    "--enrichment-model",
+    type=str,
+    default=None,
+    help="LLM model for enrichment (defaults to configured language model)",
+)
 def imas_build(
     verbose: bool,
     quiet: bool,
@@ -117,6 +128,8 @@ def imas_build(
     embedding_model: str,
     ids_filter: str | None,
     dry_run: bool,
+    skip_enrichment: bool,
+    enrichment_model: str | None,
 ) -> None:
     """Build the IMAS Data Dictionary Knowledge Graph.
 
@@ -131,6 +144,7 @@ def imas_build(
     - IMASNodeChange nodes for metadata evolution between versions
     - RENAMED_TO relationships for path migrations
     - HAS_ERROR relationships linking data paths to error fields
+    - LLM-enriched descriptions for semantic understanding (ON by default)
     - Vector embeddings for semantic search (current version only)
     - IMASSemanticCluster nodes with centroids for cluster-based search
 
@@ -143,6 +157,7 @@ def imas_build(
         imas-codex imas dd build --force --no-hash  # Full recomputation (skip all caches)
         imas-codex imas dd build --dry-run -v     # Preview without writing
         imas-codex imas dd build --ids-filter "core_profiles equilibrium"  # Test subset
+        imas-codex imas dd build --skip-enrichment   # Skip LLM enrichment step
     """
     # On air-gapped nodes, prevent LiteLLM import-time remote fetches
     from imas_codex.discovery.base.llm import set_litellm_offline_env
@@ -232,8 +247,10 @@ def imas_build(
                 ids_filter=ids_set,
                 include_clusters=not skip_clusters,
                 include_embeddings=not skip_embeddings,
+                include_enrichment=not skip_enrichment,
                 dry_run=dry_run,
                 embedding_model=embedding_model,
+                enrichment_model=enrichment_model,
                 force_embeddings=force,
                 no_hash=no_hash,
                 skip_cluster_labels=skip_cluster_labels,
@@ -262,6 +279,12 @@ def imas_build(
             click.echo(f"HAS_ERROR relationships: {stats['error_relationships']}")
             click.echo(f"Embeddings updated: {stats['embeddings_updated']}")
             click.echo(f"Embeddings cached: {stats['embeddings_cached']}")
+        if not skip_enrichment:
+            click.echo(f"Paths enriched (LLM): {stats.get('enriched_llm', 0)}")
+            click.echo(f"Paths enriched (template): {stats.get('enriched_template', 0)}")
+            click.echo(f"Enrichment cached: {stats.get('enrichment_cached', 0)}")
+            if stats.get('enrichment_cost', 0) > 0:
+                click.echo(f"Enrichment cost: ${stats['enrichment_cost']:.4f}")
         if not skip_clusters:
             click.echo(f"Cluster nodes: {stats['clusters_created']}")
 
