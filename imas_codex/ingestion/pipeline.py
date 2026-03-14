@@ -14,6 +14,7 @@ import asyncio
 import hashlib
 import logging
 import re
+import time as _time
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -330,9 +331,12 @@ async def ingest_files(
     files_by_language: dict[str, list[dict[str, Any]]] = {}
     file_metadata: dict[str, dict[str, Any]] = {}
 
-    for idx, (remote_path, content, language) in enumerate(
-        fetch_remote_files(facility, paths_to_ingest)
-    ):
+    # Fetch files off the event loop thread (SSH blocks synchronously)
+    fetched_files = await asyncio.to_thread(
+        lambda: list(fetch_remote_files(facility, paths_to_ingest))
+    )
+
+    for idx, (remote_path, content, language) in enumerate(fetched_files):
         filename = Path(remote_path).name
         report(idx, len(paths_to_ingest), f"Fetched {filename} ({language})")
 
@@ -399,6 +403,7 @@ async def ingest_files(
         # Split and extract for each file (language-aware per file)
         all_chunks: list[dict[str, Any]] = []
         chunk_example_ids: list[str] = []
+        t_chunk_start = _time.monotonic()
 
         for file_info in batch_files:
             example_id = file_info["example_id"]
@@ -456,8 +461,11 @@ async def ingest_files(
                     update_source_file_status(sf_id, "failed", error="No chunks")
             continue
 
+        t_chunk_elapsed = _time.monotonic() - t_chunk_start
+
         # ONE embedding call for ALL chunks across all languages
         chunk_texts = [c["text"] for c in all_chunks]
+        t_embed_start = _time.monotonic()
         try:
             embeddings = await asyncio.to_thread(
                 _embed_chunks_safe, encoder, chunk_texts
@@ -473,6 +481,8 @@ async def ingest_files(
                     update_source_file_status(sf_id, "failed", error=str(e)[:200])
             continue
 
+        t_embed_elapsed = _time.monotonic() - t_embed_start
+
         # Count stats
         batch_ids_found = 0
         batch_mdsplus_paths = 0
@@ -487,6 +497,7 @@ async def ingest_files(
         # Batched graph writes — one session for all files in the batch.
         # Previously did N × create_nodes("CodeExample") + N × individual queries;
         # now batches into single UNWIND calls (~6 queries vs ~5N).
+        t_graph_start = _time.monotonic()
         with GraphClient() as graph_client:
             # Step 1: Batch create CodeExample nodes (auto-creates AT_FACILITY)
             all_example_props: list[dict[str, Any]] = []
@@ -586,10 +597,24 @@ async def ingest_files(
             )
 
             # Step 7: Link MDSplus refs to data nodes (batched, not per-example)
-            linked = link_chunks_to_data_nodes(
-                graph_client, example_ids=chunk_example_ids
-            )
-            stats["data_nodes_linked"] += linked
+            if batch_mdsplus_paths > 0:
+                linked = link_chunks_to_data_nodes(
+                    graph_client, example_ids=chunk_example_ids
+                )
+                stats["data_nodes_linked"] += linked
+
+        t_graph_elapsed = _time.monotonic() - t_graph_start
+
+        logger.info(
+            "Batch %d-%d timing: chunk=%.1fs embed=%.1fs (%d chunks) "
+            "graph=%.1fs",
+            batch_start + 1,
+            batch_end,
+            t_chunk_elapsed,
+            t_embed_elapsed,
+            len(all_chunks),
+            t_graph_elapsed,
+        )
 
         processed_files += len(batch_files)
         stats["files"] = processed_files
@@ -599,10 +624,13 @@ async def ingest_files(
     all_example_ids = list(file_metadata.keys())
     report(processed_files, total_to_process, "Creating final graph relationships...")
 
+    t_link_start = _time.monotonic()
     with GraphClient() as graph_client:
         link_chunks_to_imas_paths(graph_client, example_ids=all_example_ids)
-        link_chunks_to_data_nodes(graph_client, example_ids=all_example_ids)
+        if stats["mdsplus_paths"] > 0:
+            link_chunks_to_data_nodes(graph_client, example_ids=all_example_ids)
         link_examples_to_facility(graph_client, example_ids=all_example_ids)
+    t_link_elapsed = _time.monotonic() - t_link_start
 
     report(
         total_to_process,
@@ -610,6 +638,7 @@ async def ingest_files(
         f"Completed: {stats['files']} files, {stats['chunks']} chunks, "
         f"{stats['skipped']} skipped, {stats['data_nodes_linked']} data nodes linked",
     )
+    logger.info("Final linking: %.1fs", t_link_elapsed)
     return stats
 
 
