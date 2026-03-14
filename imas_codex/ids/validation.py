@@ -252,6 +252,73 @@ def validate_mapping(
 
 
 # ---------------------------------------------------------------------------
+# Coverage threshold enforcement
+# ---------------------------------------------------------------------------
+
+# Minimum coverage percentage below which a warning is raised
+COVERAGE_WARNING_THRESHOLD = 5.0
+# Minimum coverage percentage below which an error is raised
+COVERAGE_ERROR_THRESHOLD = 1.0
+
+
+def check_coverage_threshold(
+    ids_name: str,
+    bindings: list,
+    *,
+    gc: GraphClient | None = None,
+    warning_threshold: float = COVERAGE_WARNING_THRESHOLD,
+    error_threshold: float = COVERAGE_ERROR_THRESHOLD,
+) -> list[EscalationFlag]:
+    """Check whether mapping coverage meets minimum thresholds.
+
+    Returns escalation flags when field coverage is below thresholds:
+    - ERROR when coverage < error_threshold
+    - WARNING when coverage < warning_threshold
+
+    Args:
+        ids_name: IDS name.
+        bindings: List of mapping bindings with target_id attribute.
+        gc: GraphClient (created if None).
+        warning_threshold: Percentage below which a warning is issued.
+        error_threshold: Percentage below which an error is issued.
+
+    Returns:
+        List of escalation flags (empty if coverage is acceptable).
+    """
+    coverage = compute_coverage(ids_name, bindings, gc=gc)
+    escalations: list[EscalationFlag] = []
+
+    if coverage.percentage < error_threshold:
+        escalations.append(
+            EscalationFlag(
+                source_id=ids_name,
+                target_id=ids_name,
+                severity=EscalationSeverity.ERROR,
+                reason=(
+                    f"IDS coverage critically low: {coverage.mapped_fields}/"
+                    f"{coverage.total_leaf_fields} fields mapped "
+                    f"({coverage.percentage:.1f}% < {error_threshold}% threshold)"
+                ),
+            )
+        )
+    elif coverage.percentage < warning_threshold:
+        escalations.append(
+            EscalationFlag(
+                source_id=ids_name,
+                target_id=ids_name,
+                severity=EscalationSeverity.WARNING,
+                reason=(
+                    f"IDS coverage below expected: {coverage.mapped_fields}/"
+                    f"{coverage.total_leaf_fields} fields mapped "
+                    f"({coverage.percentage:.1f}% < {warning_threshold}% threshold)"
+                ),
+            )
+        )
+
+    return escalations
+
+
+# ---------------------------------------------------------------------------
 # Coverage reporting
 # ---------------------------------------------------------------------------
 
