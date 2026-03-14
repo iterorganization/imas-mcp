@@ -447,7 +447,7 @@ class TestPersistMappingResult:
 
     def test_returns_mapping_id(self, mock_gc, sample_validated_result):
         result = persist_mapping_result(sample_validated_result, gc=mock_gc)
-        assert result == "jet:pf_active:4.1.1"
+        assert result == "jet:pf_active"
 
     def test_escalation_persisted(self, mock_gc, sample_validated_result):
         persist_mapping_result(sample_validated_result, gc=mock_gc)
@@ -800,7 +800,7 @@ class TestMapCLI:
 
         runner = CliRunner()
         result = runner.invoke(
-            map_cmd, ["run", "jet", "pf_active", "--no-persist", "--plain"]
+            map_cmd, ["run", "jet", "pf_active", "--no-persist"]
         )
         assert result.exit_code == 0
         assert "jet:pf_active" in result.output
@@ -814,10 +814,10 @@ class TestMapCLI:
 
         mock_generate.side_effect = ValueError("No signal sources found")
 
-        runner = CliRunner()
-        result = runner.invoke(map_cmd, ["run", "jet", "pf_active", "--plain"])
+        runner = CliRunner(mix_stderr=False)
+        result = runner.invoke(map_cmd, ["run", "jet", "pf_active"])
         assert result.exit_code == 1
-        assert "No signal sources found" in result.output
+        assert "No signal sources found" in result.stderr
 
 
 # ---------------------------------------------------------------------------
@@ -1321,7 +1321,36 @@ class TestValidateSameSourceDiffTargetsOk:
 
 @pytest.mark.integration
 class TestIntegrationMappingPipeline:
-    """Integration tests requiring Neo4j. Skipped in normal test runs."""
+    """Integration tests requiring Neo4j."""
+
+    @pytest.fixture(autouse=True)
+    def _setup_graph_nodes(self):
+        """Create prerequisite nodes for integration tests, clean up after."""
+        from imas_codex.graph.client import GraphClient
+
+        gc = GraphClient()
+        # Create SignalSource, IMASNode, and Facility nodes used by fixtures
+        gc.query("MERGE (:Facility {id: 'jet'})")
+        gc.query("MERGE (:SignalSource {id: 'jet:pf_coils:group1'})")
+        gc.query("MERGE (:SignalSource {id: 'jet:pf_coils:group2'})")
+        gc.query(
+            "MERGE (:IMASNode {id: 'pf_active/coil/element/geometry/rectangle/r'})"
+        )
+        gc.query(
+            "MERGE (:IMASNode {id: 'pf_active/coil/element/geometry/rectangle/z'})"
+        )
+        gc.query("MERGE (:IMASNode {id: 'pf_active/coil'})")
+        yield
+        # Clean up mapping artefacts
+        gc.query(
+            """
+            MATCH (m:IMASMapping {facility_id: 'jet', ids_name: 'pf_active'})
+            OPTIONAL MATCH (m)-[:USES_SIGNAL_SOURCE]->(sg)
+            OPTIONAL MATCH (sg)-[r:MAPS_TO_IMAS]->()
+            OPTIONAL MATCH (sg)-[:HAS_EVIDENCE]->(ev)
+            DETACH DELETE ev, r, m
+            """
+        )
 
     def test_persist_and_load_roundtrip(self, sample_validated_result):
         """Persist result → load → verify bindings match."""
@@ -1363,9 +1392,9 @@ class TestIntegrationMappingPipeline:
         )
         rows = gc.query(
             """
-            MATCH (m:IMASMapping {facility: 'jet', ids_name: 'pf_active'})
+            MATCH (m:IMASMapping {facility_id: 'jet', ids_name: 'pf_active'})
                   -[r:POPULATES]->(s:IMASNode)
-            RETURN r.assembly_pattern AS pattern, r.init_arrays AS init_arrays
+            RETURN r.structure AS pattern, r.init_arrays AS init_arrays
             """
         )
         assert len(rows) > 0
@@ -1465,7 +1494,7 @@ class TestMapRunCostLimit:
         runner = CliRunner()
         result = runner.invoke(
             map_cmd,
-            ["run", "--cost-limit", "2.0", "--no-persist", "--plain", "jet", "pf_active"],
+            ["run", "--cost-limit", "2.0", "--no-persist", "jet", "pf_active"],
         )
         assert result.exit_code == 0
         assert "jet:pf_active" in result.output
@@ -1489,7 +1518,7 @@ class TestMapRunTimeLimit:
         runner = CliRunner()
         result = runner.invoke(
             map_cmd,
-            ["run", "--time", "10", "--no-persist", "--plain", "jet", "pf_active"],
+            ["run", "--time", "10", "--no-persist", "jet", "pf_active"],
         )
         assert result.exit_code == 0
         assert "jet:pf_active" in result.output
@@ -1645,8 +1674,8 @@ class TestMappingDiscoveryState:
         state.cost.add("test", 2.0, 1000)
         assert state.should_stop()
 
-    def test_versioned_mapping_id_format(self):
-        """Versioned mapping ID includes DD version."""
+    def test_mapping_id_format(self):
+        """Mapping ID is facility:ids_name (DD version stored as property)."""
         result = ValidatedMappingResult(
             facility="jet", ids_name="pf_active", dd_version="4.1.1",
             sections=[], bindings=[], escalations=[],
@@ -1655,7 +1684,7 @@ class TestMappingDiscoveryState:
         gc = MagicMock()
         gc.query.return_value = []
         mapping_id = persist_mapping_result(result, gc=gc)
-        assert mapping_id == "jet:pf_active:4.1.1"
+        assert mapping_id == "jet:pf_active"
 
 
 class TestWorkerImports:
