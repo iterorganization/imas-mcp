@@ -136,7 +136,6 @@ async def run_discovery_engine(
 
     # --- Step 3: Register workers ---
     worker_group = SupervisedWorkerGroup()
-    phase_tasks: dict[str, list[asyncio.Task]] = {}
 
     for spec in workers:
         if not spec.enabled or spec.count == 0:
@@ -167,7 +166,6 @@ async def run_discovery_engine(
                 )
             )
             worker_group.add_task(task)
-            phase_tasks.setdefault(spec.phase_attr, []).append(task)
 
     # --- Step 4: Orphan recovery tick ---
     orphan_tick = None
@@ -192,7 +190,6 @@ async def run_discovery_engine(
             on_worker_status=on_worker_status,
             on_tick=orphan_tick,
             phases=phases or None,
-            phase_tasks=phase_tasks or None,
             **loop_kwargs,
         )
     finally:
