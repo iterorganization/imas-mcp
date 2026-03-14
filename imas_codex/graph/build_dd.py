@@ -1749,8 +1749,13 @@ def phase_cluster(
     dry_run: bool = False,
     no_hash: bool = False,
     skip_labels: bool = False,
+    on_progress: "Callable[[int, int], None] | None" = None,
 ) -> int:
     """Import semantic clusters.
+
+    Args:
+        on_progress: Optional callback ``(processed, total)`` for
+            live progress updates during cluster import.
 
     Returns:
         Number of cluster nodes created.
@@ -1761,6 +1766,7 @@ def phase_cluster(
         use_rich=False,
         no_hash=no_hash,
         skip_labels=skip_labels,
+        on_progress=on_progress,
     )
 
 
@@ -2704,6 +2710,7 @@ def _import_clusters(
     use_rich: bool | None = None,
     no_hash: bool = False,
     skip_labels: bool = False,
+    on_progress: "Callable[[int, int], None] | None" = None,
 ) -> int:
     """Build semantic clusters from graph embeddings and merge into the graph.
 
@@ -2720,6 +2727,8 @@ def _import_clusters(
         client: GraphClient instance
         dry_run: If True, don't write to graph
         use_rich: Force rich progress setting
+        on_progress: Optional callback ``(processed, total)`` for
+            live progress updates.
 
     Returns:
         Number of clusters created/updated
@@ -2774,6 +2783,9 @@ def _import_clusters(
                 return 0
 
             logger.info("HDBSCAN produced %d clusters", len(clusters))
+
+            if on_progress:
+                on_progress(0, len(clusters))
 
             if dry_run:
                 return len(clusters)
@@ -2835,6 +2847,11 @@ def _import_clusters(
                     """,
                     clusters=batch,
                 )
+                if on_progress:
+                    on_progress(
+                        min(i + 1000, len(cluster_batch)),
+                        len(cluster_batch),
+                    )
 
             # Step 6: Clear old IN_CLUSTER relationships for clusters being updated
             #         then recreate them. This handles membership changes.
