@@ -586,7 +586,9 @@ class FileProgressDisplay(BaseProgressDisplay):
     ) -> None:
         """Update scan worker state."""
         self.state.run_scanned = stats.processed
-        self.state.scan_rate = stats.ema_rate or stats.active_rate
+        ema = stats.ema_rate or stats.active_rate
+        if ema and ema > 0:
+            self.state.scan_rate = ema
 
         if message == "idle":
             self.state.scan_processing = False
@@ -636,7 +638,9 @@ class FileProgressDisplay(BaseProgressDisplay):
             self.state.triage_processing = not self.state.triage_queue.is_empty()
             stats.mark_active()
 
-        self.state.triage_rate = stats.ema_rate
+        ema = stats.ema_rate
+        if ema and ema > 0:
+            self.state.triage_rate = ema
 
         if results:
             items = [
@@ -680,7 +684,9 @@ class FileProgressDisplay(BaseProgressDisplay):
             self.state.score_processing = not self.state.score_queue.is_empty()
             stats.mark_active()
 
-        self.state.score_rate = stats.ema_rate
+        ema = stats.ema_rate
+        if ema and ema > 0:
+            self.state.score_rate = ema
 
         if results:
             items = [
@@ -720,7 +726,9 @@ class FileProgressDisplay(BaseProgressDisplay):
             self.state.enrich_processing = not self.state.enrich_queue.is_empty()
             stats.mark_active()
 
-        self.state.enrich_rate = stats.ema_rate
+        ema = stats.ema_rate
+        if ema and ema > 0:
+            self.state.enrich_rate = ema
 
         if results:
             items = [
@@ -762,8 +770,12 @@ class FileProgressDisplay(BaseProgressDisplay):
             self.state.ingest_processing = not self.state.ingest_queue.is_empty()
             stats.mark_active()
 
-        # Use EMA rate for live display (falls back to active_rate)
-        self.state.code_rate = stats.ema_rate
+        # Use EMA rate for live display (falls back to active_rate).
+        # Only update when we have a valid rate — avoids overwriting the
+        # previous rate with None during the first batch after a restart.
+        ema = stats.ema_rate
+        if ema and ema > 0:
+            self.state.code_rate = ema
 
         if results:
             items = [
