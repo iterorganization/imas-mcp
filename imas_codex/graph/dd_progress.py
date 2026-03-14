@@ -8,15 +8,51 @@ with one worker per group.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from imas_codex.discovery.base.progress import (
     DataDrivenProgressDisplay,
     StageDisplaySpec,
 )
 
+if TYPE_CHECKING:
+    from imas_codex.graph.dd_workers import DDBuildState
+
+
+def _build_stats(state: DDBuildState) -> list[tuple[str, str, str]]:
+    """Build STATS row entries from live build state."""
+    stats: list[tuple[str, str, str]] = []
+    s = state.stats
+
+    versions = s.get("versions_processed", 0)
+    if versions:
+        stats.append(("versions", str(versions), "blue"))
+
+    paths = s.get("paths_created", 0)
+    if paths:
+        stats.append(("paths", f"{paths:,}", "green"))
+
+    enriched = s.get("enriched_llm", 0) + s.get("enriched_template", 0)
+    if enriched:
+        stats.append(("enriched", f"{enriched:,}", "green"))
+
+    cached = s.get("enrichment_cached", 0)
+    if cached:
+        stats.append(("cached", f"{cached:,}", "dim"))
+
+    embedded = s.get("embeddings_updated", 0) + s.get("embeddings_cached", 0)
+    if embedded:
+        stats.append(("embedded", f"{embedded:,}", "magenta"))
+
+    clusters = s.get("clusters_created", 0)
+    if clusters:
+        stats.append(("clusters", f"{clusters:,}", "cyan"))
+
+    return stats
+
 
 def create_dd_build_display(
+    state: DDBuildState,
     *,
     cost_limit: float = 0.0,
     console: Any | None = None,
@@ -31,6 +67,7 @@ def create_dd_build_display(
     five sequential build phases.  Disabled stages show as "skipped".
 
     Args:
+        state: Live build state — used for STATS summary row.
         cost_limit: LLM cost limit (for resource gauge).
         console: Rich Console instance (auto-created if None).
         skip_enrichment: Disable the ENRICH stage.
@@ -93,4 +130,5 @@ def create_dd_build_display(
         console=console,
         title_suffix="DD Build",
         mode_label=mode_label,
+        stats_fn=lambda: _build_stats(state),
     )

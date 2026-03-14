@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -66,6 +67,7 @@ class DDBuildState(DiscoveryStateBase):
     # Build results
     stats: dict[str, Any] = field(default_factory=dict)
     skipped: bool = False
+    build_start_time: float = field(default_factory=time.time)
 
     # Per-phase progress (observed by display)
     extract_stats: WorkerStats = field(default_factory=WorkerStats)
@@ -414,3 +416,36 @@ async def run_dd_build_engine(
         stop_event=stop_event,
         on_worker_status=on_worker_status,
     )
+
+    # Persist build metadata to graph
+    if not state.dry_run and not state.skipped:
+        _write_build_metadata(state)
+
+
+def _write_build_metadata(state: DDBuildState) -> None:
+    """Write build timing, cost, and hash to the current DDVersion node."""
+    from imas_codex import dd_version as current_dd_version
+    from imas_codex.graph.client import GraphClient
+
+    duration = time.time() - state.build_start_time
+    total_cost = state.total_cost
+
+    try:
+        with GraphClient() as client:
+            client.query(
+                """
+                MATCH (v:DDVersion {id: $version})
+                SET v.build_hash = $build_hash,
+                    v.build_completed_at = datetime(),
+                    v.build_duration = $duration,
+                    v.build_cost = $total_cost,
+                    v.enrichment_cost = $enrichment_cost
+                """,
+                version=current_dd_version,
+                build_hash=state.build_hash,
+                duration=duration,
+                total_cost=total_cost,
+                enrichment_cost=state.enrich_stats.cost,
+            )
+    except Exception:
+        logger.warning("Failed to write build metadata to graph", exc_info=True)

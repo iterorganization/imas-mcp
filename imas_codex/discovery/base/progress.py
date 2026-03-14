@@ -252,6 +252,10 @@ class StreamQueue:
        ``add()``, the pop rate is automatically tuned so the queue
        drains just before the next batch arrives.
     4. Larger queue buffer to absorb batch processing bursts
+    5. Maximum display time per item (default: unlimited) — caps how
+       long any single item stays visible.  Useful for slow workers
+       (e.g. embed) where the adaptive rate would otherwise hold each
+       item for 10+ seconds.
 
     Stale detection: tracks when items were last added. When the queue is
     empty and no items have been added for ``stale_timeout`` seconds, the
@@ -264,6 +268,7 @@ class StreamQueue:
     rate: float = 2.0  # items per second (current pop rate)
     max_rate: float = 5.0  # never exceed this rate even if worker is faster
     min_display_time: float = 0.2  # minimum seconds each item stays visible
+    max_display_time: float = 0.0  # max seconds per item (0 = unlimited)
     max_size: int = 500  # larger buffer to absorb batch bursts
     stale_timeout: float = 8.0  # seconds without adds before queue is stale
 
@@ -318,13 +323,19 @@ class StreamQueue:
     def pop(self) -> Any | None:
         """Pop next item if rate limit allows.
 
-        Enforces both rate limiting and minimum display time.
+        Enforces rate limiting, minimum display time, and optional
+        maximum display time.  When ``max_display_time > 0`` the pop
+        interval is clamped so no single item stays visible longer
+        than the configured ceiling.
         """
         if not self.items:
             return None
         # Use the slower of: rate interval or min_display_time
         rate_interval = 1.0 / self.rate if self.rate > 0 else 0.5
         interval = max(rate_interval, self.min_display_time)
+        # Cap at max_display_time when configured
+        if self.max_display_time > 0:
+            interval = min(interval, self.max_display_time)
         now = time.time()
         if now - self.last_pop >= interval:
             self.last_pop = now
@@ -1824,6 +1835,7 @@ class DataDrivenProgressDisplay(BaseProgressDisplay):
         title_suffix: str = "Discovery",
         mode_label: str | None = None,
         graph_refresh_fn: Callable[[str], None] | None = None,
+        stats_fn: Callable[[], list[tuple[str, str, str]]] | None = None,
     ) -> None:
         super().__init__(
             facility=facility,
@@ -1836,6 +1848,7 @@ class DataDrivenProgressDisplay(BaseProgressDisplay):
         self._mode_label = mode_label
         self._engine_state: Any | None = None
         self._graph_refresh_fn = graph_refresh_fn
+        self._stats_fn = stats_fn
 
     def set_engine_state(self, state: Any) -> None:
         """Connect display to the live engine state."""
@@ -1891,6 +1904,7 @@ class DataDrivenProgressDisplay(BaseProgressDisplay):
             elapsed=self.elapsed,
             run_cost=total_cost if total_cost > 0 else None,
             cost_limit=self.cost_limit,
+            stats=self._stats_fn() if self._stats_fn else None,
         )
         return build_resource_section(config, self.gauge_width)
 
