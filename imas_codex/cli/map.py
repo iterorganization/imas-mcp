@@ -92,13 +92,14 @@ def map_run(
         _print_result(result)
         return
 
-    # Rich mode — progress display via run_discovery harness
+    # Rich mode — worker-based engine with progress display
     import asyncio
     import time
 
     from imas_codex.cli.discover.common import DiscoveryConfig, run_discovery
     from imas_codex.discovery.base.facility import get_facility
     from imas_codex.ids.progress import MappingProgressDisplay
+    from imas_codex.ids.workers import MappingDiscoveryState, run_mapping_engine
 
     try:
         facility_config = get_facility(facility)
@@ -126,37 +127,71 @@ def map_run(
     )
 
     async def _run_mapping(stop_event, service_monitor):
-        def _sync_run():
-            return generate_mapping(
-                facility,
-                ids_name,
-                model=model,
-                dd_version=dd_version,
-                persist=not no_persist,
-                activate=not no_activate,
-            )
+        engine_state = MappingDiscoveryState(
+            facility=facility,
+            target_ids=ids_name,
+            dd_version=dd_version,
+            model=model,
+            cost_limit=cost_limit,
+            persist=not no_persist,
+            activate=not no_activate,
+        )
+        if time_limit:
+            engine_state.deadline = time.time() + time_limit * 60
+        if service_monitor:
+            engine_state.service_monitor = service_monitor
+
+        def _update_display(detail, stats):
+            """Sync display state from worker progress."""
+            ds = display.state
+            ds.sources_found = engine_state.sources_found
+            ds.sections_assigned = engine_state.sections_assigned
+            ds.sections_mapped = engine_state.sections_mapped
+            ds.bindings_total = engine_state.bindings_total
+            ds.bindings_passed = engine_state.bindings_passed
+            ds.escalations = engine_state.escalations
+            ds.cost = engine_state.cost
+            ds.current_detail = str(detail)
 
         try:
-            result = await asyncio.to_thread(_sync_run)
+            await run_mapping_engine(
+                engine_state,
+                stop_event=stop_event,
+                on_progress=_update_display,
+            )
         except ValueError as e:
             click.echo(f"\nError: {e}", err=True)
             raise SystemExit(1) from None
 
-        # Update display state for final render
-        state = display.state
-        state.current_step = "done"
-        state.bindings_total = len(result.validated.bindings)
-        state.bindings_passed = state.bindings_total
-        state.escalations = len(result.validated.escalations)
-        state.cost = result.cost
+        # Final display update
+        ds = display.state
+        ds.current_step = "done"
+        ds.sources_found = engine_state.sources_found
+        ds.sections_assigned = engine_state.sections_assigned
+        ds.sections_mapped = engine_state.sections_mapped
+        ds.bindings_total = engine_state.bindings_total
+        ds.bindings_passed = engine_state.bindings_passed
+        ds.escalations = engine_state.escalations
+        ds.cost = engine_state.cost
 
-        return {"result": result}
+        return {
+            "mapping_id": engine_state.mapping_id,
+            "bindings_total": engine_state.bindings_total,
+            "bindings_passed": engine_state.bindings_passed,
+            "escalations": engine_state.escalations,
+            "cost": engine_state.cost,
+            "persisted": engine_state.persist,
+        }
 
     def _on_complete(results):
-        result = results.get("result")
-        if result:
-            click.echo()
-            _print_result(result)
+        click.echo()
+        click.echo(f"\nMapping: {results.get('mapping_id', 'N/A')}")
+        click.echo(f"Bindings: {results.get('bindings_total', 0)}")
+        click.echo(f"Escalations: {results.get('escalations', 0)}")
+        click.echo(f"Persisted: {results.get('persisted', False)}")
+        cost = results.get("cost")
+        if cost:
+            click.echo(f"\nCost: ${cost.total_usd:.4f} ({cost.total_tokens} tokens)")
 
     try:
         run_discovery(config, _run_mapping, on_complete=_on_complete)
