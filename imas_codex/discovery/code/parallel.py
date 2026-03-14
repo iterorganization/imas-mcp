@@ -230,9 +230,13 @@ async def run_parallel_code_discovery(
         ),
     ]
 
-    # --- Embed worker ---
-    from imas_codex.discovery.base.embed_worker import embed_description_worker
+    # --- Embed workers ---
+    from imas_codex.discovery.base.embed_worker import (
+        embed_description_worker,
+        embed_text_worker,
+    )
 
+    # Description embeddings for CodeExample nodes
     workers.append(
         WorkerSpec(
             "embed",
@@ -240,6 +244,19 @@ async def run_parallel_code_discovery(
             embed_description_worker,
             group="embed",
             kwargs={"labels": ["CodeExample"]},
+        )
+    )
+
+    # Chunk text embeddings — picks up CodeChunk nodes written by the
+    # ingestion pipeline with embedding=null and embeds them
+    # asynchronously on the GPU.
+    workers.append(
+        WorkerSpec(
+            "chunk_embed",
+            "code_phase",
+            embed_text_worker,
+            group="embed",
+            kwargs={"labels": ["CodeChunk"]},
         )
     )
 

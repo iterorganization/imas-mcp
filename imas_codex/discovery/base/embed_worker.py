@@ -1,39 +1,33 @@
-"""Shared embed-description worker for all discovery engines.
+"""Shared embedding workers for all discovery engines.
 
-A single async worker that polls the graph for nodes with descriptions
-but no embeddings, embeds them in batches, and persists the results.
-Designed to run alongside LLM scoring workers in any discovery CLI.
+Two async workers that poll the graph for nodes with text but no
+embeddings, embed them in batches, and persist the results.  Designed
+to run alongside LLM scoring workers in any discovery CLI.
 
-The worker is label-agnostic: it accepts a list of node labels to process
-(e.g., ["FacilityPath", "WikiPage", "Document", "FacilitySignal", "Image"])
-and embeds descriptions round-robin across all labels.
+``embed_description_worker``
+    Targets nodes with a ``description`` field (FacilityPath,
+    FacilitySignal, WikiPage, etc.).  Round-robin across labels.
+
+``embed_text_worker``
+    Targets chunk nodes with a ``text`` field (CodeChunk, WikiChunk).
+    Runs asynchronously so the ingestion pipeline can write chunks
+    without blocking on GPU embedding.
+
+Both workers are label-agnostic and accept an explicit label list.
 
 Integration:
-    # In any discovery engine's run_parallel_* function:
-    from imas_codex.discovery.base.embed_worker import embed_description_worker
-
-    # Add as a supervised worker (wiki/data pattern):
-    embed_status = worker_group.create_status("embed_worker", group="ingest")
-    worker_group.add_task(
-        asyncio.create_task(
-            supervised_worker(
-                embed_description_worker,
-                "embed_worker",
-                state,
-                state.should_stop,
-                labels=["WikiPage", "Document", "FacilitySignal"],
-                on_progress=on_embed_progress,
-                status_tracker=embed_status,
-            )
-        )
+    from imas_codex.discovery.base.embed_worker import (
+        embed_description_worker,
+        embed_text_worker,
     )
 
-    # Or as a plain async task (paths pattern):
-    embed_task = asyncio.create_task(
-        embed_description_worker(
-            state, labels=["FacilityPath"], on_progress=callback
-        )
-    )
+    # Description embeddings (wiki/signals/paths pattern):
+    WorkerSpec("embed", "enrich_phase", embed_description_worker,
+              group="embed", kwargs={"labels": ["CodeExample"]})
+
+    # Chunk text embeddings (code/wiki pattern):
+    WorkerSpec("chunk_embed", "code_phase", embed_text_worker,
+              group="embed", kwargs={"labels": ["CodeChunk"]})
 """
 
 from __future__ import annotations
@@ -50,6 +44,11 @@ logger = logging.getLogger(__name__)
 # Default batch size for embedding operations
 DEFAULT_EMBED_BATCH_SIZE = 100
 
+# Default batch size for text (chunk) embeddings — smaller than
+# description batches because code chunks are up to 10 KB each.
+# Prevents CUDA OOM on large batches while keeping throughput high.
+DEFAULT_TEXT_EMBED_BATCH_SIZE = 12
+
 # How long to sleep when no work is found (seconds)
 IDLE_SLEEP = 3.0
 
@@ -64,10 +63,18 @@ def _get_description_labels() -> list[str]:
     return get_schema().description_embeddable_labels
 
 
+def _get_text_labels() -> list[str]:
+    """Derive text-embeddable labels from schema (nodes with text + embedding)."""
+    from imas_codex.graph.schema import get_schema
+
+    return get_schema().text_embeddable_labels
+
+
 def _fetch_unembedded(
     label: str,
     facility: str | None,
     batch_size: int,
+    text_field: str = "description",
 ) -> list[dict[str, Any]]:
     """Fetch nodes with text but no embedding.
 
@@ -75,13 +82,13 @@ def _fetch_unembedded(
         label: Node label (e.g., "FacilityPath")
         facility: Optional facility filter
         batch_size: Max items to fetch
+        text_field: Property containing text to embed
 
     Returns:
         List of dicts with 'id' and text field
     """
     from imas_codex.graph import GraphClient
 
-    text_field = "description"
     facility_filter = ""
     params: dict[str, Any] = {"batch_size": batch_size}
 
@@ -107,11 +114,11 @@ def _fetch_unembedded(
 def _count_unembedded(
     label: str,
     facility: str | None,
+    text_field: str = "description",
 ) -> int:
     """Count nodes with text but no embedding."""
     from imas_codex.graph import GraphClient
 
-    text_field = "description"
     facility_filter = ""
     params: dict[str, Any] = {}
 
@@ -176,6 +183,7 @@ def embed_batch_sync(
     label: str,
     facility: str | None = None,
     batch_size: int = DEFAULT_EMBED_BATCH_SIZE,
+    text_field: str = "description",
 ) -> tuple[int, int]:
     """Synchronous single-batch embed for one label.
 
@@ -185,18 +193,20 @@ def embed_batch_sync(
         label: Node label to process
         facility: Optional facility filter
         batch_size: Max items per batch
+        text_field: Property containing text to embed
 
     Returns:
         (fetched, embedded) counts
     """
     from imas_codex.embeddings.description import embed_descriptions_batch
 
-    items = _fetch_unembedded(label, facility, batch_size)
+    items = _fetch_unembedded(label, facility, batch_size, text_field=text_field)
     if not items:
         return 0, 0
 
-    # embed_descriptions_batch expects 'description' key by default
-    # Rename 'text' → 'description' for the batch embedder
+    # embed_descriptions_batch expects a known text_field key.
+    # _fetch_unembedded returns items with 'text' key regardless of source field;
+    # rename to match the batch embedder's expected field.
     for item in items:
         item["description"] = item.pop("text")
 
@@ -352,6 +362,127 @@ async def embed_description_worker(
 
     logger.info(
         "embed_worker %s: stopped after embedding %d descriptions",
+        worker_id,
+        stats.processed,
+    )
+
+
+async def embed_text_worker(
+    state: Any,
+    *,
+    labels: list[str] | None = None,
+    facility: str | None = None,
+    batch_size: int = DEFAULT_TEXT_EMBED_BATCH_SIZE,
+    on_progress: Callable | None = None,
+) -> None:
+    """Async worker that embeds the ``text`` field of chunk nodes.
+
+    Mirrors ``embed_description_worker`` but targets nodes whose
+    searchable content lives in a ``text`` property (CodeChunk,
+    WikiChunk) rather than ``description``.  This decouples embedding
+    from the ingestion pipeline so chunks can be written to the graph
+    immediately and embedded asynchronously by the GPU.
+
+    Args:
+        state: Discovery state object (must have facility attribute)
+        labels: Node labels to process.  Defaults to all
+            text-embeddable labels from the schema.
+        facility: Override facility (defaults to state.facility)
+        batch_size: Items per embedding batch
+        on_progress: Optional progress callback(msg, stats)
+    """
+    from imas_codex.discovery.base.progress import WorkerStats
+
+    worker_id = id(asyncio.current_task())
+    facility = facility or getattr(state, "facility", None)
+    labels = labels or _get_text_labels()
+    stats = WorkerStats()
+
+    logger.info(
+        "embed_text_worker started (task=%s, labels=%s, facility=%s)",
+        worker_id,
+        labels,
+        facility,
+    )
+
+    def _should_stop() -> bool:
+        if hasattr(state, "should_stop") and callable(state.should_stop):
+            return state.should_stop()
+        return getattr(state, "stop_requested", False)
+
+    # Warm up encoder eagerly
+    try:
+        await asyncio.to_thread(_warmup_encoder)
+        logger.debug("embed_text_worker %s: encoder warmed up", worker_id)
+    except Exception as e:
+        logger.warning(
+            "embed_text_worker %s: encoder warmup failed: %s", worker_id, e
+        )
+
+    idle_count = 0
+    error_count = 0
+
+    while not _should_stop():
+        total_fetched = 0
+        total_embedded = 0
+
+        for label in labels:
+            if _should_stop():
+                break
+
+            try:
+                fetched, embedded = await asyncio.to_thread(
+                    embed_batch_sync, label, facility, batch_size,
+                    text_field="text",
+                )
+            except Exception as e:
+                logger.warning(
+                    "embed_text_worker %s: error embedding %s: %s",
+                    worker_id, label, e,
+                )
+                stats.errors += 1
+                error_count += 1
+                continue
+
+            total_fetched += fetched
+            total_embedded += embedded
+
+            if embedded > 0:
+                stats.processed += embedded
+                error_count = 0
+                logger.debug(
+                    "embed_text_worker %s: embedded %d/%d %s",
+                    worker_id, embedded, fetched, label,
+                )
+                if on_progress:
+                    on_progress(f"embedded {embedded} {label}", stats)
+
+        if total_fetched == 0:
+            idle_count += 1
+            error_count = 0
+            if on_progress and idle_count <= 3:
+                on_progress("idle", stats)
+            await asyncio.sleep(min(IDLE_SLEEP * idle_count, 15.0))
+        elif total_embedded == 0:
+            error_count += 1
+            idle_count = 0
+            backoff = min(IDLE_SLEEP * (2**error_count), ERROR_BACKOFF_MAX)
+            logger.info(
+                "embed_text_worker %s: fetched %d but embedded 0, "
+                "backing off %.0fs",
+                worker_id, total_fetched, backoff,
+            )
+            if on_progress:
+                on_progress(
+                    f"embed failed (backing off {backoff:.0f}s)", stats
+                )
+            await asyncio.sleep(backoff)
+        else:
+            idle_count = 0
+            error_count = 0
+
+    logger.info(
+        "embed_text_worker %s: stopped after embedding %d chunks",
         worker_id,
         stats.processed,
     )

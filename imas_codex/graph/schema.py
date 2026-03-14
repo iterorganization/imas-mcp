@@ -166,6 +166,21 @@ class GraphSchema:
         )
 
     @cached_property
+    def text_embeddable_labels(self) -> list[str]:
+        """Get node labels with 'text' and 'embedding' but no 'description'.
+
+        These are chunk nodes (CodeChunk, WikiChunk) where we embed
+        their text content rather than a description field.
+        """
+        return sorted(
+            label
+            for label in self.node_labels
+            if "embedding" in self.get_all_slots(label)
+            and "text" in self.get_all_slots(label)
+            and "description" not in self.get_all_slots(label)
+        )
+
+    @cached_property
     def vector_indexes(self) -> list[tuple[str, str, str]]:
         """Derive vector indexes from schema based on embedding slots.
 

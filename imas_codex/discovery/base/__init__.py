@@ -11,6 +11,7 @@ Provides:
 from imas_codex.discovery.base.embed_worker import (
     embed_batch_sync,
     embed_description_worker,
+    embed_text_worker,
 )
 from imas_codex.discovery.base.executor import CommandResult, ParallelExecutor
 from imas_codex.discovery.base.facility import (
