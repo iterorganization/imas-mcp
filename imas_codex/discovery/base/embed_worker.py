@@ -56,6 +56,12 @@ IDLE_SLEEP = 3.0
 # Maximum backoff when embed server is down (seconds)
 ERROR_BACKOFF_MAX = 60.0
 
+# Maximum text length (chars) to send to the embedding model.
+# Qwen3-Embedding-0.6B supports 32K tokens but self-attention is O(n²)
+# in sequence length — long texts exhaust GPU VRAM.  8192 chars ≈ 2K
+# tokens which is well within budget for a P100-16GB even in batches.
+MAX_EMBED_TEXT_CHARS = 8192
+
 
 def _get_description_labels() -> list[str]:
     """Derive embeddable labels from schema (nodes with description + embedding)."""
@@ -104,6 +110,7 @@ def _fetch_unembedded(
           AND n.embedding IS NULL
           {facility_filter}
         RETURN n.id AS id, n.{text_field} AS text
+        ORDER BY rand()
         LIMIT $batch_size
     """
 
@@ -211,10 +218,27 @@ def embed_batch_sync(
     # _fetch_unembedded returns items with 'text' key regardless of source field;
     # rename to match the batch embedder's expected field.
     for item in items:
-        item["description"] = item.pop("text")
+        text = item.pop("text")
+        # Truncate long texts to avoid CUDA OOM — self-attention is O(n²)
+        if len(text) > MAX_EMBED_TEXT_CHARS:
+            text = text[:MAX_EMBED_TEXT_CHARS]
+        item["description"] = text
 
     items = embed_descriptions_batch(items)
     embedded = _persist_embeddings(label, items)
+
+    # Batch failed (e.g. CUDA OOM) — fall back to one-at-a-time
+    if embedded == 0 and len(items) > 1:
+        logger.info(
+            "Batch embed failed for %d %s items — retrying one-at-a-time",
+            len(items),
+            label,
+        )
+        for item in items:
+            single = embed_descriptions_batch([item])
+            _persist_embeddings(label, single)
+            if single[0].get("embedding") is not None:
+                embedded += 1
 
     return len(items), embedded, node_ids
 
