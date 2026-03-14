@@ -49,6 +49,7 @@ _encode_timeout: float = 300.0  # 5 minutes max per embed request
 _location: str | None = None  # Deployment location label (e.g. "titan")
 _worker_gpu: int | None = None  # GPU index claimed by this worker
 _gpu_pool: list[int] = []  # Available GPU indices for multi-worker
+_gpu_slot_fds: list[int] = []  # Open lock fds — prevent GC/release
 _request_count: int = 0  # Total embed requests served
 _total_texts: int = 0  # Total texts embedded
 _total_elapsed_ms: float = 0.0  # Total encoding time in ms
@@ -100,41 +101,59 @@ class HealthResponse(BaseModel):
 def _claim_gpu() -> int | None:
     """Claim a unique GPU index from the pool for this worker process.
 
-    Uses an atomic file-based counter so that multiple uvicorn worker
-    processes each get a different GPU.  The counter file lives in the
-    system temp directory and is keyed by the parent PID (the uvicorn
-    master process) so independent server instances don't collide.
+    Uses per-slot lock files so that each GPU index can only be held by
+    one live worker at a time.  When a worker dies its lock is released
+    automatically by the OS (flock is process-scoped), making the slot
+    available for a respawned replacement.
+
+    Previous approach used a monotonic counter (idx++ mod pool_size)
+    which broke when uvicorn respawned dead workers — the counter never
+    reset, causing wrapping collisions where two workers loaded models
+    on the same physical GPU → CUDA OOM → death spiral.
 
     Returns the claimed GPU index, or None if no pool is configured.
     """
     if not _gpu_pool:
         return None
 
-    # Counter file keyed by master PID so independent servers don't collide
     master_pid = os.getppid()
-    counter_path = os.path.join(tempfile.gettempdir(), f"codex-embed-gpu-{master_pid}")
+    my_pid = os.getpid()
 
-    try:
-        fd = os.open(counter_path, os.O_RDWR | os.O_CREAT, 0o600)
+    # Try each slot in the pool — first unlocked slot wins.
+    for slot_idx, gpu_id in enumerate(_gpu_pool):
+        lock_path = os.path.join(
+            tempfile.gettempdir(),
+            f"codex-embed-gpu-{master_pid}-slot-{slot_idx}.lock",
+        )
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX)
-            data = os.read(fd, 16)
-            idx = int(data) if data.strip() else 0
-            os.lseek(fd, 0, os.SEEK_SET)
+            fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+            # Non-blocking exclusive lock — skip if another worker holds it.
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            # Write our PID for debugging (lock itself is the guard).
             os.ftruncate(fd, 0)
-            os.write(fd, str(idx + 1).encode())
-        finally:
-            fcntl.flock(fd, fcntl.LOCK_UN)
-            os.close(fd)
-    except Exception as e:
-        logger.warning("GPU claim failed, defaulting to pool[0]: %s", e)
-        idx = 0
+            os.write(fd, str(my_pid).encode())
+            # Keep fd open — lock is released when this process exits.
+            # Store on module global so GC doesn't close it.
+            _gpu_slot_fds.append(fd)
+            logger.info(
+                "Worker PID %d claimed GPU %d (slot %d of %d)",
+                my_pid, gpu_id, slot_idx, len(_gpu_pool),
+            )
+            return gpu_id
+        except OSError:
+            # LOCK_NB raises OSError if another process holds the lock.
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+            continue
 
-    gpu_id = _gpu_pool[idx % len(_gpu_pool)]
-    logger.info(
-        "Worker PID %d claimed GPU %d (pool index %d)", os.getpid(), gpu_id, idx
+    # All slots taken — should not happen with workers <= pool size.
+    logger.error(
+        "Worker PID %d: all %d GPU slots occupied, defaulting to pool[0]",
+        my_pid, len(_gpu_pool),
     )
-    return gpu_id
+    return _gpu_pool[0]
 
 
 def _get_gpu_info() -> tuple[str | None, int | None]:
