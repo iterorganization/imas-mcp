@@ -231,6 +231,26 @@ def release_version_claim(version_id: str) -> None:
         )
 
 
+def mark_version_failed(version_id: str, error: str) -> None:
+    """Mark a SignalEpoch as permanently failed.
+
+    Used when extraction returns a non-transient error (e.g. tree file
+    not found on disk). Prevents infinite retry loops by moving the
+    version out of 'discovered' status.
+    """
+    with GraphClient() as gc:
+        gc.query(
+            """
+            MATCH (v:SignalEpoch {id: $id})
+            SET v.status = 'failed',
+                v.claimed_at = null,
+                v.error = $error
+            """,
+            id=version_id,
+            error=error[:500],
+        )
+
+
 # ---------------------------------------------------------------------------
 # Units — track unit extraction per version
 # ---------------------------------------------------------------------------
