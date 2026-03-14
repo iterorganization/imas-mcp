@@ -294,7 +294,17 @@ async def cluster_worker(state: DDBuildState, **_kwargs) -> None:
     from imas_codex.cli.logging import WorkerLogAdapter
 
     wlog = WorkerLogAdapter(logger, worker_name="cluster_worker")
+
+    if state.dry_run:
+        wlog.info("Clustering skipped (dry run)")
+        state.cluster_phase.mark_done()
+        return
+
     wlog.info("Starting cluster import")
+
+    def _on_progress(processed: int, total: int) -> None:
+        state.cluster_stats.total = total
+        state.cluster_stats.processed = processed
 
     def _run() -> None:
         from imas_codex.graph.build_dd import phase_cluster
@@ -306,6 +316,7 @@ async def cluster_worker(state: DDBuildState, **_kwargs) -> None:
                 dry_run=state.dry_run,
                 no_hash=state.no_hash,
                 skip_labels=state.skip_cluster_labels,
+                on_progress=_on_progress,
             )
             state.stats["clusters_created"] = cluster_count
             state.cluster_stats.processed = cluster_count
