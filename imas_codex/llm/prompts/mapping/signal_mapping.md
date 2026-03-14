@@ -108,6 +108,14 @@ Unit compatibility analysis between signal and IMAS units:
 
 {{ unit_analysis }}
 
+### Semantic Candidates
+
+Top IMAS paths matched by semantic similarity to this signal source.
+Use these to identify likely target fields, but verify against the
+section fields above:
+
+{{ semantic_candidates }}
+
 ### Existing Mappings
 
 Any existing mappings for this facility/IDS:
