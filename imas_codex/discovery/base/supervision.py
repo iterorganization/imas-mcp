@@ -236,15 +236,18 @@ class PipelinePhase:
         This runs the has_work_fn synchronously and updates the cache.
         Designed to be called via ``asyncio.to_thread()`` from the
         supervision loop so the event loop is never blocked.
+
+        Note: does NOT reset ``_idle_count``.  Workers manage their own
+        idle state via ``record_activity()`` / ``record_idle()``.  The
+        cached result is sufficient to gate ``done`` — resetting here
+        would prevent termination when all workers have exited but the
+        graph still reports pending work that will never be processed.
         """
         if self._force_done or self._has_work_fn is None:
             return
         try:
             self._cached_has_work = self._has_work_fn()
             self._cache_time = time.time()
-            if self._cached_has_work:
-                # Graph still has work — reset idle count so workers re-poll
-                self._idle_count = 0
         except Exception as e:
             logger.debug("PipelinePhase %s: has_work_fn error: %s", self.name, e)
 
@@ -944,6 +947,7 @@ async def run_supervised_loop(
     on_worker_status: Callable[[SupervisedWorkerGroup], None] | None = None,
     on_tick: Callable[[], Coroutine | None] | None = None,
     phases: list[PipelinePhase] | None = None,
+    phase_tasks: dict[str, list[asyncio.Task]] | None = None,
     status_interval: float = 0.5,
     poll_interval: float = 0.25,
     phase_refresh_interval: float = 5.0,
@@ -961,12 +965,21 @@ async def run_supervised_loop(
     graph queries that each ``PipelinePhase.done`` formerly performed
     inline.
 
+    When ``phase_tasks`` is provided, phases are force-marked done when
+    all their worker tasks have completed.  This prevents the pipeline
+    from hanging when workers exit normally but the graph still reports
+    pending work that no worker will ever process (e.g., budget
+    exhausted with unenriched signals remaining).
+
     Args:
         worker_group: Group of supervised workers to monitor
         should_stop: Function returning True when discovery should stop
         on_worker_status: Optional callback for worker status updates
         on_tick: Optional async callback called each tick (e.g., orphan recovery)
         phases: Pipeline phases whose has_work caches should be refreshed
+        phase_tasks: Mapping of phase_attr → list of asyncio.Tasks for
+            that phase.  When all tasks for a phase complete, the phase
+            is force-marked done.
         status_interval: Seconds between worker status updates (default: 0.5)
         poll_interval: Seconds between stop-condition checks (default: 0.25)
         phase_refresh_interval: Seconds between phase cache refreshes
@@ -982,10 +995,40 @@ async def run_supervised_loop(
     last_status_update = time.time()
     last_phase_refresh = 0.0
 
+    # Track which phases have already been force-marked done to avoid
+    # redundant log messages.
+    _force_marked: set[str] = set()
+
     def _refresh_all_phases() -> None:
         """Refresh all phase caches (runs in thread pool)."""
         for phase in phases or []:
             phase.refresh_has_work()
+
+    def _mark_completed_phases() -> None:
+        """Force-mark phases whose worker tasks have all completed."""
+        if not phase_tasks:
+            return
+        for phase_attr, tasks in phase_tasks.items():
+            if phase_attr in _force_marked:
+                continue
+            if all(t.done() for t in tasks):
+                phase = phases_by_attr.get(phase_attr)
+                if phase and not phase.done:
+                    logger.info(
+                        "All workers for phase %r exited — marking done",
+                        phase.name,
+                    )
+                    phase.mark_done()
+                _force_marked.add(phase_attr)
+
+    # Build attr→phase lookup for _mark_completed_phases
+    phases_by_attr: dict[str, PipelinePhase] = {}
+    if phase_tasks and phases:
+        # Resolve phase objects from their names
+        for phase in phases:
+            for attr in phase_tasks:
+                if phase.name == attr or attr.replace("_phase", "") == phase.name:
+                    phases_by_attr[attr] = phase
 
     try:
         while not should_stop():
@@ -995,6 +1038,9 @@ async def run_supervised_loop(
             if phases and time.time() - last_phase_refresh > phase_refresh_interval:
                 await asyncio.to_thread(_refresh_all_phases)
                 last_phase_refresh = time.time()
+
+            # Force-mark phases whose workers have all exited
+            _mark_completed_phases()
 
             # Auto-exit when all workers have naturally completed
             if worker_group.all_tasks_done():
