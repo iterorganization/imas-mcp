@@ -1619,6 +1619,7 @@ def phase_enrich(
     force: bool = False,
     on_progress: "Callable[[int, int], None] | None" = None,
     on_cost: "Callable[[float], None] | None" = None,
+    on_items: "Callable[[list[dict], float], None] | None" = None,
 ) -> dict[str, int | float]:
     """LLM enrichment of path descriptions.
 
@@ -1637,6 +1638,7 @@ def phase_enrich(
         force=force,
         on_progress=on_progress,
         on_cost=on_cost,
+        on_items=on_items,
     )
 
     # Enrich identifier schemas
@@ -1667,6 +1669,7 @@ def phase_embed(
     force: bool = False,
     no_hash: bool = False,
     on_progress: "Callable[[int, int], None] | None" = None,
+    on_items: "Callable[[list[dict], float], None] | None" = None,
 ) -> dict[str, int]:
     """Generate vector embeddings for DD paths.
 
@@ -1761,6 +1764,21 @@ def phase_embed(
             embedding_stats["updated"] + embedding_stats["cached"],
             len(embeddable_paths),
         )
+
+    # Stream embedded path IDs for display
+    if on_items:
+        import time as _time
+
+        embed_start = _time.time()
+        stream_items = [
+            {"primary_text": pid}
+            for pid in list(embeddable_paths.keys())[
+                : embedding_stats["updated"] + embedding_stats["cached"]
+            ]
+        ]
+        if stream_items:
+            batch_time = _time.time() - embed_start + 0.1
+            on_items(stream_items, batch_time)
 
     from imas_codex.settings import get_embedding_model
 

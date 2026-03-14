@@ -286,6 +286,11 @@ class StreamQueue:
         ensures items remain in the queue when the next batch arrives,
         bridging inter-batch gaps and preventing "processing..." flicker.
 
+        When a batch is larger than the queue can drain at the fastest
+        stream rate before the next batch arrives, items are strided
+        with ``[::n]`` to ensure users see a representative sample
+        across the full batch rather than only the first entries.
+
         Args:
             items: Items to enqueue.
             rate: Fallback pop rate (items/s). Used when adaptive
@@ -294,6 +299,16 @@ class StreamQueue:
                 these items. Used to estimate when the next batch will
                 arrive, so the queue drains smoothly.
         """
+        # Stride items if the batch is too large to display at max_rate
+        # before the next batch arrives.  This ensures users see items
+        # from across the batch, not just the first few.
+        if last_batch_time > 0 and len(items) > 0:
+            expected_gap = last_batch_time + 1.0
+            max_displayable = int(self.max_rate * expected_gap)
+            if max_displayable > 0 and len(items) > max_displayable:
+                stride = max(1, len(items) // max_displayable)
+                items = items[::stride]
+
         self.items.extend(items)
         self.last_add = time.time()
 
@@ -474,6 +489,20 @@ class WorkerStats:
 
     # Current activity description (for display)
     status_text: str = ""
+
+    # Streaming display queue for per-item display in pipeline rows.
+    # Items should be dicts with keys matching PipelineRowConfig fields
+    # (e.g. ``primary_text``, ``description``, ``physics_domain``).
+    stream_queue: StreamQueue = field(
+        default_factory=lambda: StreamQueue(
+            rate=0.5,
+            max_rate=3.0,
+            min_display_time=0.3,
+            max_display_time=2.0,
+        )
+    )
+    # Currently displayed stream item (popped from stream_queue)
+    _current_stream_item: dict[str, Any] | None = None
 
     # SSH/connection timing
     _connection_start: float | None = None  # When current connection attempt began
@@ -1855,6 +1884,22 @@ class DataDrivenProgressDisplay(BaseProgressDisplay):
     def _header_mode_label(self) -> str | None:
         return self._mode_label
 
+    def tick(self) -> None:
+        """Drain streaming queues from worker stats."""
+        if not self._engine_state:
+            return
+        for stage in self.stages:
+            stats: WorkerStats | None = getattr(
+                self._engine_state, stage.stats_attr, None
+            )
+            if stats is None:
+                continue
+            item = stats.stream_queue.pop()
+            if item is not None:
+                stats._current_stream_item = item
+            elif stats.stream_queue.is_stale():
+                stats._current_stream_item = None
+
     def _build_pipeline_section(self) -> Text:
         rows: list[PipelineRowConfig] = []
         for stage in self.stages:
@@ -1869,6 +1914,16 @@ class DataDrivenProgressDisplay(BaseProgressDisplay):
             running = self._worker_running(stage.group)
             waiting = self._worker_waiting(stage.group)
 
+            # Stream item display — use current popped item from queue
+            primary_text = stats.status_text if stats else ""
+            description = ""
+            physics_domain = ""
+            if stats and stats._current_stream_item:
+                si = stats._current_stream_item
+                primary_text = si.get("primary_text", primary_text)
+                description = si.get("description", "")
+                physics_domain = si.get("physics_domain", "")
+
             rows.append(
                 PipelineRowConfig(
                     name=stage.name,
@@ -1881,7 +1936,9 @@ class DataDrivenProgressDisplay(BaseProgressDisplay):
                     disabled_msg=stage.disabled_msg,
                     worker_count=count,
                     worker_annotation=ann,
-                    primary_text=stats.status_text if stats else "",
+                    primary_text=primary_text,
+                    description=description,
+                    physics_domain=physics_domain,
                     is_complete=complete,
                     is_processing=running and not complete,
                     processing_label="waiting..." if waiting else "processing...",

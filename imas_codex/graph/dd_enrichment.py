@@ -23,6 +23,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
+import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
@@ -414,6 +415,7 @@ def enrich_imas_paths(
     force: bool = False,
     on_progress: Callable[[int, int], None] | None = None,
     on_cost: Callable[[float], None] | None = None,
+    on_items: Callable[[list[dict], float], None] | None = None,
 ) -> dict[str, Any]:
     """Enrich IMAS paths with LLM-generated descriptions.
 
@@ -588,6 +590,7 @@ def enrich_imas_paths(
                 messages = build_enrichment_messages(to_enrich, ids_info)
 
                 try:
+                    batch_start = time.time()
                     result, cost, tokens = call_llm_structured(
                         model=model,
                         messages=messages,
@@ -595,6 +598,7 @@ def enrich_imas_paths(
                     )
                     stats["enrichment_cost"] += cost
                     stats["enrichment_tokens"] += tokens
+                    batch_time = time.time() - batch_start
 
                     if on_cost:
                         on_cost(stats["enrichment_cost"])
@@ -630,6 +634,18 @@ def enrich_imas_paths(
                     # Batch update graph
                     _batch_update_enrichments(client, updates)
                     stats["enriched_llm"] += len(updates)
+
+                    # Stream enriched items for display
+                    if on_items and updates:
+                        stream_items = [
+                            {
+                                "primary_text": u["id"],
+                                "description": u.get("description", ""),
+                                "physics_domain": u.get("physics_domain", ""),
+                            }
+                            for u in updates
+                        ]
+                        on_items(stream_items, batch_time)
 
                 except Exception as e:
                     logger.error(f"Error enriching batch {batch_num + 1}: {e}")
