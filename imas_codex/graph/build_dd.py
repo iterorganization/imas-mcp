@@ -666,6 +666,7 @@ def update_path_embeddings(
     use_rich: bool | None = None,
     dd_version: str | None = None,
     track_changes: bool = True,
+    on_store_batch: "Callable[[list[str], float], None] | None" = None,
 ) -> dict[str, int]:
     """
     Generate and store embeddings for IMASNode nodes with content-based caching.
@@ -813,6 +814,9 @@ def update_path_embeddings(
                     }
                 )
 
+            import time as _time
+
+            store_start = _time.time()
             client.query(
                 """
                 UNWIND $batch AS b
@@ -823,6 +827,13 @@ def update_path_embeddings(
                 """,
                 batch=batch_data,
             )
+            store_time = _time.time() - store_start
+
+            if on_store_batch:
+                on_store_batch(
+                    [bd["path_id"] for bd in batch_data],
+                    store_time,
+                )
 
             if store_progress:
                 paths_stored = min(
@@ -1747,6 +1758,20 @@ def phase_embed(
     # Force rebuild if enrichment produced new descriptions
     force_for_embed = no_hash or enriched_llm_count > 0 or enriched_count > 0
 
+    # Track cumulative progress across store batches
+    _embed_stored = [0]
+
+    def _on_store_batch(path_ids: list[str], batch_time: float) -> None:
+        _embed_stored[0] += len(path_ids)
+        if on_progress:
+            on_progress(
+                _embed_stored[0] + embedding_stats.get("cached", 0),
+                len(embeddable_paths),
+            )
+        if on_items:
+            stream_items = [{"primary_text": pid} for pid in path_ids]
+            on_items(stream_items, batch_time)
+
     embedding_stats = update_path_embeddings(
         client=client,
         paths_data=embeddable_paths,
@@ -1755,30 +1780,17 @@ def phase_embed(
         use_rich=False,
         dd_version=current_dd_version,
         track_changes=True,
+        on_store_batch=_on_store_batch,
     )
     stats["embeddings_updated"] = embedding_stats["updated"]
     stats["embeddings_cached"] = embedding_stats["cached"]
 
+    # Final progress update for cached paths (no store batches emitted)
     if on_progress:
         on_progress(
             embedding_stats["updated"] + embedding_stats["cached"],
             len(embeddable_paths),
         )
-
-    # Stream embedded path IDs for display
-    if on_items:
-        import time as _time
-
-        embed_start = _time.time()
-        stream_items = [
-            {"primary_text": pid}
-            for pid in list(embeddable_paths.keys())[
-                : embedding_stats["updated"] + embedding_stats["cached"]
-            ]
-        ]
-        if stream_items:
-            batch_time = _time.time() - embed_start + 0.1
-            on_items(stream_items, batch_time)
 
     from imas_codex.settings import get_embedding_model
 
