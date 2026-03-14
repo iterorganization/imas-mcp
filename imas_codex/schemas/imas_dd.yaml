@@ -561,12 +561,45 @@ classes:
       coordinate6_same_as:
         description: >-
           Raw coordinate6_same_as value from DD XML for the sixth dimension.
+      # LLM enrichment fields for semantic understanding
+      description:
+        description: >-
+          LLM-generated physics-aware description of this IMAS path. Richer than
+          the raw documentation field — explains what the quantity measures, its
+          physical significance, and its role in the IDS structure. Stored
+          separately from units, coordinates, and other metadata to avoid
+          redundancy. Used as primary content for embedding generation when
+          present.
+      physics_summary:
+        description: >-
+          One-sentence physics summary for compact display. Generated alongside
+          description for use in UI tooltips and search result previews.
+      keywords:
+        description: >-
+          LLM-generated searchable keywords (max 5) for this path. Physics
+          concepts, measurement types, and related terms not in the documentation.
+        multivalued: true
+      enrichment_hash:
+        description: >-
+          SHA256 hash of enrichment context + model name. Used for idempotent
+          re-enrichment: if hash matches, skip re-enrichment on rebuild.
+      enrichment_model:
+        description: >-
+          LLM model that generated the description (e.g., "google/gemini-3-flash").
+          Tracked for provenance and to detect when model changes warrant
+          re-enrichment.
+      enrichment_source:
+        description: >-
+          Source of the enrichment: 'llm' for LLM-generated descriptions, or
+          'template' for boilerplate error/validity fields that use formulaic
+          descriptions without LLM calls.
       # Embedding fields for semantic search
       embedding_text:
         description: >-
           Pre-concatenated context for embedding: combines IDS description,
           parent path context, documentation, units, and coordinates into
           natural language prose optimized for sentence transformer embedding.
+          When description is present, it replaces documentation in this text.
       embedding:
         description: >-
           256-dim embedding vector. Model tracked on DDVersion.embeddings_model.

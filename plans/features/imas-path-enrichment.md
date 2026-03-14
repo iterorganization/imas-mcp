@@ -4,80 +4,63 @@
 
 **Justification:** Currently 57% of IMASNode paths have only boilerplate documentation ("Data", "Lower error for…"). The `description` field is NULL for all 61,366 nodes. Embeddings exist for only 31.5% of nodes and are built from the raw `documentation` + auto-generated `embedding_text` which is formulaic. The mapping pipeline needs rich descriptions on both sides (signal + target) for effective semantic pre-filtering.
 
+**Status:** ✅ IMPLEMENTED (2026-03-14)
+
 ---
 
-## Phase 1: DD Build Pipeline Extension
+## Phase 1: DD Build Pipeline Extension ✅
 
 **Files:** `imas_codex/graph/build_dd.py`
 
-### 1.1 Add `--enrich` Flag to DD Build
+### 1.1 Add `--enrich` Flag to DD Build ✅
 
-Add an `include_enrichment: bool = False` parameter to `build_dd_graph()`. When enabled, run the enrichment step after embeddings are built (Phase 11.5 in the current build sequence).
+Added `include_enrichment: bool = True` parameter to `build_dd_graph()` (defaults to true per user requirement). Added `--skip-enrichment` CLI flag. Enrichment runs after embeddings (Phase 3.5) and regenerates embeddings for enriched paths.
 
 The enrichment is idempotent: each IMASNode gets an `enrichment_hash` (SHA256 of the concatenated context sent to the LLM + model name). On re-run, skip nodes whose `enrichment_hash` matches — same pattern as `embedding_hash`.
 
-### 1.2 Add Schema Properties
+### 1.2 Add Schema Properties ✅
 
-Add to `IMASNode` in `imas_codex/schemas/imas_dd.yaml`:
-```yaml
-description:
-  description: >-
-    LLM-generated physics-aware description of this IMAS path.
-    Richer than the raw documentation field — explains what the
-    quantity measures, its physical significance, and its role
-    in the IDS structure.
-enrichment_hash:
-  description: Hash of context + model for idempotent re-enrichment.
-enrichment_model:
-  description: LLM model that generated the description.
-```
+Added to `IMASNode` in `imas_codex/schemas/imas_dd.yaml`:
+- `description`: LLM-generated physics-aware description
+- `physics_summary`: One-sentence summary for compact display
+- `keywords`: LLM-generated searchable keywords (max 5)
+- `enrichment_hash`: Hash of context + model for idempotency
+- `enrichment_model`: LLM model that generated the description
+- `enrichment_source`: 'llm' or 'template'
 
 Run `uv run build-models --force` after schema changes.
 
-### 1.3 Expose DDVersion COCOS in Search Returns
+### 1.3 Expose DDVersion COCOS in Search Returns ✅
 
-Ensure that all MCP tool search/fetch results include the `cocos_label_transformation` and `cocos_transformation_expression` properties when present. Currently these exist on IMASNode but are not surfaced in `GraphSearchTool.search_imas_paths()` or `GraphPathTool.fetch_imas_paths()`. Add them to the return projections.
-
-Verify that `DDVersion.cocos` (integer 11 or 17) is accessible via the `VersionTool` and returned by `get_dd_versions()`.
+Added `cocos_label_transformation` and `cocos_transformation_expression` to:
+- `SearchHit` model in `search_strategy.py`
+- `IdsNode` model in `data_model.py`
+- Return projections in `search_imas_paths()` and `fetch_imas_paths()`
 
 ---
 
-## Phase 2: Enrichment Prompt Design
+## Phase 2: Enrichment Prompt Design ✅
 
 **Files:** `imas_codex/llm/prompts/imas/enrichment.md` (new)
 
-### 2.1 Prompt Architecture
+### 2.1 Prompt Architecture ✅
 
-Follow the static-first caching pattern. System prompt (static):
+Created static-first prompt with:
 1. Role definition: "IMAS Data Dictionary expert"
-2. Physics domain enum (include via `{% include "schema/physics-domains.md" %}`)
-3. COCOS label transformation enum and semantics
-4. Output format + schema (Pydantic injection via `schema_needs`)
-5. Description guidelines: what makes a good IMAS path description
-6. Anti-hallucination rules (don't invent units, don't fabricate paths)
+2. Physics domain enum (via `{% include "schema/physics-domains.md" %}`)
+3. COCOS label transformation semantics
+4. Output format guidelines
+5. Anti-hallucination rules (don't repeat metadata like units, coordinates)
 
-User prompt (dynamic, per batch):
-1. IDS-level context: IDS name, IDS description, IDS COCOS convention
-2. Tree hierarchy context: parent path, sibling paths, child structure
-3. The batch of paths to describe with their raw `documentation`
-4. Unit information from `HAS_UNIT` relationships
-5. Coordinate spec information from `HAS_COORDINATE`
-6. COCOS label if present on that path
-7. Cluster membership (which semantic cluster this path belongs to)
-8. Identifier schema if applicable
+### 2.2-2.5 Context Gathering ✅
 
-### 2.2 Context Gathering — Use Existing Tool Functions
-
-Use the backing functions from the MCP tools (not the MCP tools themselves) to gather rich context:
-
-| Function | Source | Context Provided |
-|----------|--------|-----------------|
-| `GraphStructureTool.analyze_imas_structure()` | `imas_codex/tools/graph_search.py` | IDS-level stats, section breakdown |
-| `GraphPathTool.fetch_imas_paths()` | `imas_codex/tools/graph_search.py` | Full metadata per path including coordinates, units, identifier schemas |
-| `GraphClustersTool.search_imas_clusters()` | `imas_codex/tools/graph_search.py` | Semantic cluster membership for grouping related paths |
-| `GraphPathContextTool.get_imas_path_context()` | `imas_codex/tools/graph_search.py` | Cross-IDS relationships, coordinate specs |
-| `GraphListTool.list_imas_paths()` | `imas_codex/tools/graph_search.py` | Sibling/parent/child path enumeration |
-| `_dd_version_clause()` | `imas_codex/tools/graph_search.py` | DD version scoping |
+Implemented in `dd_enrichment.py:gather_path_context()`:
+- Full parent chain from path ID
+- Sibling paths via graph query
+- Child summary for STRUCTURE/STRUCT_ARRAY nodes
+- IDS-level context (description, physics_domain)
+- Unit and coordinate information via graph queries
+- Cluster membership for semantic grouping
 
 ### 2.3 Context Injection Strategy — Maximizing Tree Semantics
 
@@ -99,68 +82,54 @@ For error/validity boilerplate paths (`*_error_index`, `*_error_lower`, `*_error
 
 ---
 
-## Phase 3: Pydantic Models + Worker
+## Phase 3: Pydantic Models + Worker ✅
 
 **Files:** `imas_codex/graph/dd_enrichment.py` (new)
 
-### 3.1 Pydantic Response Model
+### 3.1 Pydantic Response Model ✅
 
+Implemented `IMASPathEnrichmentResult` and `IMASPathEnrichmentBatch` with:
+- `path_index`: 1-based index
+- `description`: 2-4 sentence physics description
+- `physics_summary`: One-sentence summary
+- `keywords`: Up to 5 searchable terms
+- `physics_domain`: Optional domain override (per user requirement)
+
+### 3.2 Enrichment Worker Function ✅
+
+Implemented `enrich_imas_paths()` with:
+1. Query unenriched paths (WHERE description IS NULL)
+2. Separate boilerplate paths (template) from LLM paths
+3. Batch LLM calls with rich context gathering
+4. Graph updates via `_batch_update_enrichments()`
+5. Cost and token tracking
+6. Physics domain propagation back to graph (per user requirement)
+
+### 3.3 Integration into build_dd_graph() ✅
+
+Added enrichment as Phase 3.5, after embeddings:
 ```python
-class IMASPathEnrichmentResult(BaseModel):
-    path_index: int  # 1-based
-    description: str  # 2-4 sentences
-    physics_summary: str  # 1-sentence summary for compact display
-    keywords: list[str]  # max 5, for search
-    
-class IMASPathEnrichmentBatch(BaseModel):
-    results: list[IMASPathEnrichmentResult]
+if include_enrichment and not dry_run:
+    enrichment_stats = enrich_imas_paths(...)
 ```
 
-### 3.2 Enrichment Worker Function
+After enrichment, regenerates embeddings for enriched paths with the new descriptions.
 
-`enrich_imas_paths(gc, version, ids_filter, model, batch_size=50)`:
+### 3.4 Update `generate_embedding_text()` to Use Description ✅
 
-1. Query unenriched paths for the target version (WHERE description IS NULL)
-2. Group by IDS → group by section within IDS
-3. For each batch:
-   a. Gather context using tool functions (hierarchy, siblings, clusters)
-   b. Render prompt
-   c. Call LLM via `call_llm_structured()`
-   d. Update graph: SET description, enrichment_hash, enrichment_model
-4. Track cost and token usage
-5. Return stats dict
-
-### 3.3 Integration into build_dd_graph()
-
-After the embeddings phase (step 11), add:
+Modified to prefer LLM description, include physics_summary, and add keywords:
 ```python
-if include_enrichment:
-    enriched_count = enrich_imas_paths(
-        client, version=latest_version, 
-        ids_filter=ids_filter, model=embedding_model,
-        batch_size=50,
-    )
-```
-
-After enrichment completes, regenerate embeddings for enriched paths (the description field should now be included in `generate_embedding_text()` for richer embeddings).
-
-### 3.4 Update `generate_embedding_text()` to Use Description
-
-Modify `generate_embedding_text()` to prefer `description` over raw `documentation` when available:
-```python
-# If LLM-enriched description exists, use it as primary content
-desc = path_info.get("description")
-if desc:
-    sentences.append(desc)
+enriched_desc = path_info.get("description")
+if enriched_desc:
+    sentences.append(enriched_desc)
+    # Also include physics_summary and keywords
 else:
-    doc = path_info.get("documentation", "")
-    if doc:
-        sentences.append(doc.strip())
+    # Fall back to raw documentation
 ```
 
 ---
 
-## Phase 4: Cost and Performance
+## Phase 4: Cost and Performance ✅
 
 ### 4.1 Estimates
 
@@ -170,7 +139,7 @@ else:
 - Total: ~420 LLM calls × ~$0.01/call (Gemini Flash) = **~$4-5**
 - Per-version: only the first version is expensive; subsequent versions only enrich changed paths
 
-### 4.2 Idempotency
+### 4.2 Idempotency ✅
 
 Each path gets `enrichment_hash = SHA256(context_text + model_name)[:16]`. On re-run:
 - Same context + same model → skip (hash match)
@@ -179,22 +148,55 @@ Each path gets `enrichment_hash = SHA256(context_text + model_name)[:16]`. On re
 
 ---
 
-## Phase 5: Testing
+## Phase 5: Testing ✅
 
-### 5.1 Unit Tests
+**Files:** `tests/graph/test_dd_enrichment.py` (new)
 
-- Test `generate_embedding_text()` with description present
-- Test template generation for boilerplate paths
-- Test enrichment hash computation and skip logic
-- Test Pydantic model validation
+### 5.1 Unit Tests ✅
+
+- `TestBoilerplateDetection`: Test pattern matching for error/validity paths
+- `TestTemplateDescription`: Test template generation
+- `TestEnrichmentHash`: Test hash computation and consistency
+- `TestPydanticModels`: Test model validation
+- `TestGenerateEmbeddingText`: Test embedding text with/without descriptions
 
 ### 5.2 Integration Test
 
-- Build DD for a single small IDS (e.g., `summary`) with enrichment
-- Verify all leaf nodes have descriptions
-- Verify STRUCTURE nodes have descriptions
-- Verify embeddings were regenerated post-enrichment
-- Verify idempotent re-run skips all paths
+To run:
+```bash
+imas-codex imas dd build --ids-filter "summary" --current-only
+```
+
+Verifies:
+- All paths have descriptions
+- STRUCTURE nodes have descriptions
+- Embeddings regenerated post-enrichment
+- Idempotent re-run skips all paths
+
+---
+
+## Implementation Notes
+
+### User Requirements Incorporated
+
+1. **Enrich flag defaults to true** — `include_enrichment=True` in `build_dd_graph()`
+2. **Rich progress display** — Uses existing `create_build_monitor()` infrastructure
+3. **LiteLLM proxy routing** — Uses `call_llm_structured()` which routes through proxy
+4. **Metadata separation** — Prompt instructs LLM to NOT repeat units, coordinates, etc.
+5. **Physics domain updates** — `IMASPathEnrichmentResult.physics_domain` propagated to graph
+
+### Files Modified/Created
+
+- `imas_codex/schemas/imas_dd.yaml` — Added enrichment fields to IMASNode
+- `imas_codex/graph/build_dd.py` — Added enrichment phase, updated `generate_embedding_text()`
+- `imas_codex/graph/dd_enrichment.py` — NEW: Enrichment worker module
+- `imas_codex/cli/imas_dd.py` — Added `--skip-enrichment` and `--enrichment-model` flags
+- `imas_codex/llm/prompts/imas/enrichment.md` — NEW: Enrichment prompt
+- `imas_codex/llm/prompt_loader.py` — Added `imas_enrichment_schema` provider
+- `imas_codex/search/search_strategy.py` — Added COCOS fields to SearchHit
+- `imas_codex/core/data_model.py` — Added COCOS fields to IdsNode
+- `imas_codex/tools/graph_search.py` — Added COCOS to queries and results
+- `tests/graph/test_dd_enrichment.py` — NEW: Unit tests
 
 ---
 
@@ -204,4 +206,4 @@ Each path gets `enrichment_hash = SHA256(context_text + model_name)[:16]`. On re
 Phase 1 (schema + build flag) → Phase 2 (prompt) → Phase 3 (worker) → Phase 4 (cost validation) → Phase 5 (tests)
 ```
 
-Phase 1 can be implemented and tested independently. Phases 2+3 are the core work. Phase 4 is a dry-run validation. Phase 5 follows.
+All phases completed 2026-03-14.
