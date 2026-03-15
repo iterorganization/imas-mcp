@@ -89,6 +89,25 @@ def _render_prompt(name: str, **context: Any) -> str:
     return render_prompt(f"mapping/{name}", context)
 
 
+def _render_system_prompt(name: str) -> str:
+    """Render a static system-level mapping prompt (no context variables)."""
+    from imas_codex.llm.prompt_loader import render_prompt
+
+    return render_prompt(f"mapping/{name}")
+
+
+def _build_messages(system_name: str, user_prompt: str) -> list[dict[str, str]]:
+    """Build [system, user] message pair for LLM calls.
+
+    Uses a dedicated static system prompt (cacheable across calls)
+    and the already-rendered dynamic user prompt.
+    """
+    return [
+        {"role": "system", "content": _render_system_prompt(system_name)},
+        {"role": "user", "content": user_prompt},
+    ]
+
+
 def _format_subtree(rows: list[dict[str, Any]]) -> str:
     """Format IMAS subtree rows into a readable tree summary."""
     lines: list[str] = []
@@ -659,10 +678,7 @@ def assign_sections(
         ),
     )
 
-    messages = [
-        {"role": "system", "content": "You are an IMAS mapping expert."},
-        {"role": "user", "content": prompt},
-    ]
+    messages = _build_messages("section_assignment_system", prompt)
 
     return _call_llm(
         messages,
@@ -818,10 +834,7 @@ def map_signals(
             semantic_match_matrix=match_matrix_ctx,
         )
 
-        messages = [
-            {"role": "system", "content": "You are an IMAS mapping expert."},
-            {"role": "user", "content": prompt},
-        ]
+        messages = _build_messages("signal_mapping_system", prompt)
 
         batch = _call_llm(
             messages,
@@ -918,10 +931,7 @@ def discover_assembly(
             coordinate_context=_format_coordinate_context(section_fields),
         )
 
-        messages = [
-            {"role": "system", "content": "You are an IMAS assembly expert."},
-            {"role": "user", "content": prompt},
-        ]
+        messages = _build_messages("assembly_system", prompt)
 
         config = _call_llm(
             messages,
