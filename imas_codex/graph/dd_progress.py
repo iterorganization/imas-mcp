@@ -112,6 +112,24 @@ def _graph_refresh(state: DDBuildState, _facility: str) -> None:
     if embedded > state.embed_stats.processed:
         state.embed_stats.processed = embedded
 
+    # Accumulated enrichment cost from graph (source of truth across runs)
+    try:
+        from imas_codex.graph.client import GraphClient
+
+        with GraphClient() as gc:
+            cost_result = gc.query(
+                """
+                MATCH (v:DDVersion)
+                WHERE v.enrichment_cost IS NOT NULL
+                RETURN sum(v.enrichment_cost) AS accumulated_cost
+                """
+            )
+        state.accumulated_cost = (
+            cost_result[0]["accumulated_cost"] or 0.0 if cost_result else 0.0
+        )
+    except Exception:
+        pass
+
 
 def create_dd_build_display(
     state: DDBuildState,
@@ -183,4 +201,5 @@ def create_dd_build_display(
         graph_refresh_fn=lambda f: _graph_refresh(state, f),
         stats_fn=lambda: _build_stats(state),
         pending_fn=lambda: _build_pending(state),
+        accumulated_cost_fn=lambda: state.accumulated_cost,
     )
