@@ -54,6 +54,22 @@ DEFAULT_TEXT_EMBED_BATCH_SIZE = 6
 # How long to sleep when no work is found (seconds)
 IDLE_SLEEP = 3.0
 
+# Cypher fragments that join from node ``n`` to the ancestor carrying
+# ``score_composite``.  When a ``min_score`` filter is active the
+# fragment is appended to the MATCH/WHERE of ``_fetch_unembedded`` and
+# ``_count_unembedded``.  Labels not listed here are assumed to carry
+# ``score_composite`` directly on the node.
+_SCORE_JOINS: dict[str, str] = {
+    "CodeChunk": (
+        "MATCH (n)<-[:HAS_CHUNK]-(:CodeExample)<-[:HAS_EXAMPLE]-(scored:CodeFile)\n"
+        "WHERE scored.score_composite >= $min_score"
+    ),
+    "CodeExample": (
+        "MATCH (n)-[:FROM_FILE]->(scored:CodeFile)\n"
+        "WHERE scored.score_composite >= $min_score"
+    ),
+}
+
 # Maximum backoff when embed server is down (seconds)
 ERROR_BACKOFF_MAX = 60.0
 
@@ -119,6 +135,8 @@ def _fetch_unembedded(
     facility: str | None,
     batch_size: int,
     text_field: str = "description",
+    min_score: float | None = None,
+    score_joins: dict[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     """Fetch nodes with text but no embedding.
 
@@ -127,6 +145,13 @@ def _fetch_unembedded(
         facility: Optional facility filter
         batch_size: Max items to fetch
         text_field: Property containing text to embed
+        min_score: Minimum score threshold.  When set, nodes below
+            this score (or whose scored ancestor is below it) are
+            excluded.
+        score_joins: Per-label Cypher fragments that traverse from
+            ``n`` to the ancestor carrying ``score_composite``.
+            Falls back to ``_SCORE_JOINS`` then to a direct property
+            check on ``n``.
 
     Returns:
         List of dicts with 'id' and text field
@@ -140,12 +165,22 @@ def _fetch_unembedded(
         facility_filter = "AND n.facility_id = $facility"
         params["facility"] = facility
 
+    score_filter = ""
+    if min_score is not None:
+        params["min_score"] = min_score
+        joins = score_joins or _SCORE_JOINS
+        if label in joins:
+            score_filter = joins[label]
+        else:
+            score_filter = "WITH n WHERE n.score_composite >= $min_score"
+
     query = f"""
         MATCH (n:{label})
         WHERE n.{text_field} IS NOT NULL
           AND n.{text_field} <> ''
           AND n.embedding IS NULL
           {facility_filter}
+        {score_filter}
         RETURN n.id AS id, n.{text_field} AS text
         ORDER BY rand()
         LIMIT $batch_size
@@ -160,6 +195,8 @@ def _count_unembedded(
     label: str,
     facility: str | None,
     text_field: str = "description",
+    min_score: float | None = None,
+    score_joins: dict[str, str] | None = None,
 ) -> int:
     """Count nodes with text but no embedding."""
     from imas_codex.graph import GraphClient
@@ -171,12 +208,22 @@ def _count_unembedded(
         facility_filter = "AND n.facility_id = $facility"
         params["facility"] = facility
 
+    score_filter = ""
+    if min_score is not None:
+        params["min_score"] = min_score
+        joins = score_joins or _SCORE_JOINS
+        if label in joins:
+            score_filter = joins[label]
+        else:
+            score_filter = "WITH n WHERE n.score_composite >= $min_score"
+
     query = f"""
         MATCH (n:{label})
         WHERE n.{text_field} IS NOT NULL
           AND n.{text_field} <> ''
           AND n.embedding IS NULL
           {facility_filter}
+        {score_filter}
         RETURN count(n) AS total
     """
 
@@ -229,6 +276,8 @@ def embed_batch_sync(
     facility: str | None = None,
     batch_size: int = DEFAULT_EMBED_BATCH_SIZE,
     text_field: str = "description",
+    min_score: float | None = None,
+    score_joins: dict[str, str] | None = None,
 ) -> tuple[int, int, list[str]]:
     """Synchronous single-batch embed for one label.
 
@@ -240,6 +289,8 @@ def embed_batch_sync(
         facility: Optional facility filter
         batch_size: Max items per batch
         text_field: Property containing text to embed
+        min_score: Minimum score threshold (propagated to fetch query)
+        score_joins: Per-label Cypher score traversal fragments
 
     Returns:
         (fetched, embedded, ids) — counts and list of embedded node IDs
@@ -248,7 +299,10 @@ def embed_batch_sync(
 
     from imas_codex.embeddings.description import embed_descriptions_batch
 
-    items = _fetch_unembedded(label, facility, batch_size, text_field=text_field)
+    items = _fetch_unembedded(
+        label, facility, batch_size, text_field=text_field,
+        min_score=min_score, score_joins=score_joins,
+    )
     if not items:
         return 0, 0, []
 
@@ -315,7 +369,10 @@ def embed_batch_sync(
             if item.get("embedding") is not None:
                 continue
             # Re-fetch and retry single item
-            single_items = _fetch_unembedded(label, facility, 1, text_field=text_field)
+            single_items = _fetch_unembedded(
+                label, facility, 1, text_field=text_field,
+                min_score=min_score, score_joins=score_joins,
+            )
             if single_items:
                 single_item = single_items[0]
                 text = single_item.pop("text")
@@ -345,6 +402,8 @@ async def embed_description_worker(
     facility: str | None = None,
     batch_size: int = DEFAULT_EMBED_BATCH_SIZE,
     on_progress: Callable | None = None,
+    min_score: float | None = None,
+    score_joins: dict[str, str] | None = None,
 ) -> None:
     """Async worker that continuously embeds descriptions for specified labels.
 
@@ -363,6 +422,10 @@ async def embed_description_worker(
         facility: Override facility (defaults to state.facility)
         batch_size: Items per embedding batch
         on_progress: Optional progress callback(msg, stats)
+        min_score: Minimum score threshold.  Defaults to
+            ``state.min_score`` when available.
+        score_joins: Per-label Cypher traversal fragments for score
+            filtering (defaults to built-in ``_SCORE_JOINS``).
     """
     from imas_codex.discovery.base.progress import WorkerStats
 
@@ -371,11 +434,16 @@ async def embed_description_worker(
     labels = labels or _get_description_labels()
     stats = WorkerStats()
 
+    # Resolve min_score from explicit kwarg → state.min_score → None
+    if min_score is None:
+        min_score = getattr(state, "min_score", None)
+
     logger.info(
-        "embed_worker started (task=%s, labels=%s, facility=%s)",
+        "embed_worker started (task=%s, labels=%s, facility=%s, min_score=%s)",
         worker_id,
         labels,
         facility,
+        min_score,
     )
 
     def _should_stop() -> bool:
@@ -424,7 +492,8 @@ async def embed_description_worker(
             batch_start = _time.monotonic()
             try:
                 fetched, embedded, _ids = await asyncio.to_thread(
-                    embed_batch_sync, label, facility, batch_size
+                    embed_batch_sync, label, facility, batch_size,
+                    min_score=min_score, score_joins=score_joins,
                 )
             except Exception as e:
                 logger.warning(
@@ -504,6 +573,8 @@ async def embed_text_worker(
     facility: str | None = None,
     batch_size: int = DEFAULT_TEXT_EMBED_BATCH_SIZE,
     on_progress: Callable | None = None,
+    min_score: float | None = None,
+    score_joins: dict[str, str] | None = None,
 ) -> None:
     """Async worker that embeds the ``text`` field of chunk nodes.
 
@@ -520,6 +591,10 @@ async def embed_text_worker(
         facility: Override facility (defaults to state.facility)
         batch_size: Items per embedding batch
         on_progress: Optional progress callback(msg, stats)
+        min_score: Minimum score threshold.  Defaults to
+            ``state.min_score`` when available.
+        score_joins: Per-label Cypher traversal fragments for score
+            filtering (defaults to built-in ``_SCORE_JOINS``).
     """
     from imas_codex.discovery.base.progress import WorkerStats
 
@@ -528,11 +603,16 @@ async def embed_text_worker(
     labels = labels or _get_text_labels()
     stats = WorkerStats()
 
+    # Resolve min_score from explicit kwarg → state.min_score → None
+    if min_score is None:
+        min_score = getattr(state, "min_score", None)
+
     logger.info(
-        "embed_text_worker started (task=%s, labels=%s, facility=%s)",
+        "embed_text_worker started (task=%s, labels=%s, facility=%s, min_score=%s)",
         worker_id,
         labels,
         facility,
+        min_score,
     )
 
     def _should_stop() -> bool:
@@ -565,6 +645,7 @@ async def embed_text_worker(
                 fetched, embedded, node_ids = await asyncio.to_thread(
                     embed_batch_sync, label, facility, batch_size,
                     text_field="text",
+                    min_score=min_score, score_joins=score_joins,
                 )
             except Exception as e:
                 logger.warning(
