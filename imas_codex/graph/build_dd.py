@@ -33,7 +33,6 @@ import imas
 import numpy as np
 
 from imas_codex import dd_version as current_dd_version
-from imas_codex.core.exclusions import ExclusionChecker
 from imas_codex.core.paths import strip_path_annotations
 from imas_codex.core.physics_categorization import physics_categorizer
 from imas_codex.core.progress_monitor import (
@@ -436,51 +435,35 @@ def _extract_ids_context_section(text: str) -> str | None:
 ERROR_FIELD_PATTERN = re.compile(r"^(.+?)_error_(upper|lower|index)$")
 
 
-def filter_embeddable_paths(
+def _detect_error_relationships(
     paths_data: dict[str, dict],
-    exclusion_checker: ExclusionChecker | None = None,
-) -> tuple[dict[str, dict], dict[str, tuple[str, str]]]:
-    """
-    Filter paths to only those that should have embeddings generated.
+) -> dict[str, tuple[str, str]]:
+    """Detect error field relationships from path data.
 
-    Error fields and metadata paths are excluded from embedding generation
-    but still exist as nodes in the graph. GGD paths are included by default
-    (configurable via `include-ggd` setting in pyproject.toml).
+    Identifies error paths (e.g., psi_error_upper) and maps them to their
+    base data paths (e.g., psi) for HAS_ERROR relationship creation.
 
     Args:
         paths_data: Dict mapping path_id to path metadata
-        exclusion_checker: Optional ExclusionChecker (uses default if None)
 
     Returns:
-        Tuple of (embeddable_paths, error_relationships) where:
-        - embeddable_paths: Dict of paths that should have embeddings
-        - error_relationships: Dict mapping error_path -> (data_path, error_type)
-          where error_type is "upper", "lower", or "index"
+        Dict mapping error_path -> (data_path, error_type)
+        where error_type is "upper", "lower", or "index"
     """
-    checker = exclusion_checker or ExclusionChecker()
-    embeddable = {}
     error_relationships: dict[str, tuple[str, str]] = {}
 
     for path_id, path_info in paths_data.items():
-        exclusion_reason = checker.get_exclusion_reason(path_id)
+        name = path_info.get("name", "")
+        match = ERROR_FIELD_PATTERN.match(name)
+        if match:
+            base_name = match.group(1)
+            error_type = match.group(2)  # "upper", "lower", or "index"
+            parent_path = path_info.get("parent_path", "")
+            if parent_path:
+                data_path = f"{parent_path}/{base_name}"
+                error_relationships[path_id] = (data_path, error_type)
 
-        if exclusion_reason is None:
-            # Not excluded - will be embedded
-            embeddable[path_id] = path_info
-        elif exclusion_reason == "error_field":
-            # Error field - extract base path and error type for linking
-            name = path_info.get("name", "")
-            match = ERROR_FIELD_PATTERN.match(name)
-            if match:
-                base_name = match.group(1)
-                error_type = match.group(2)  # "upper", "lower", or "index"
-                # Construct the data path by replacing error suffix in full path
-                parent_path = path_info.get("parent_path", "")
-                if parent_path:
-                    data_path = f"{parent_path}/{base_name}"
-                    error_relationships[path_id] = (data_path, error_type)
-
-    return embeddable, error_relationships
+    return error_relationships
 
 
 def generate_embeddings_batch(
@@ -1371,9 +1354,7 @@ def _check_build_nodes_exist(
             return False
 
         # Check that IMASNodes exist (any status)
-        node_result = client.query(
-            "MATCH (p:IMASNode) RETURN count(p) AS cnt"
-        )
+        node_result = client.query("MATCH (p:IMASNode) RETURN count(p) AS cnt")
         if not node_result or node_result[0]["cnt"] == 0:
             return False
 
@@ -1799,11 +1780,10 @@ def phase_embed(
     if not merged_paths:
         return stats
 
-    embeddable_paths, error_relationships = filter_embeddable_paths(merged_paths)
-    stats["paths_filtered"] = len(merged_paths) - len(embeddable_paths)
+    error_relationships = _detect_error_relationships(merged_paths)
 
     if on_progress:
-        on_progress(0, len(embeddable_paths))
+        on_progress(0, len(merged_paths))
 
     if error_relationships:
         stats["error_relationships"] = _batch_create_error_relationships(
@@ -1821,7 +1801,7 @@ def phase_embed(
         if on_progress:
             on_progress(
                 _embed_stored[0] + embedding_stats.get("cached", 0),
-                len(embeddable_paths),
+                len(merged_paths),
             )
         if on_items:
             stream_items = [{"primary_text": pid} for pid in path_ids]
@@ -1829,7 +1809,7 @@ def phase_embed(
 
     embedding_stats = update_path_embeddings(
         client=client,
-        paths_data=embeddable_paths,
+        paths_data=merged_paths,
         ids_info=merged_ids_info,
         force_rebuild=force or force_for_embed,
         use_rich=False,
@@ -1844,7 +1824,7 @@ def phase_embed(
     if on_progress:
         on_progress(
             embedding_stats["updated"] + embedding_stats["cached"],
-            len(embeddable_paths),
+            len(merged_paths),
         )
 
     from imas_codex.settings import get_embedding_model
@@ -1925,13 +1905,9 @@ def phase_embed_stale(
 
     logger.info("Re-embedding %d paths with stale embeddings", len(stale_paths))
 
-    embeddable, _ = filter_embeddable_paths(stale_paths)
-    if not embeddable:
-        return 0
-
     embedding_stats = update_path_embeddings(
         client=client,
-        paths_data=embeddable,
+        paths_data=stale_paths,
         ids_info={},
         force_rebuild=True,
         use_rich=False,
