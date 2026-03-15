@@ -38,10 +38,12 @@ from imas_codex.ids.models import (
 from imas_codex.ids.tools import (
     _run_async,
     analyze_units,
+    fetch_code_context,
     fetch_cross_facility_mappings,
     fetch_imas_fields,
     fetch_imas_subtree,
     fetch_source_code_refs,
+    fetch_wiki_context,
     get_sign_flip_paths,
     query_ids_physics_domains,
     query_signal_sources,
@@ -539,6 +541,29 @@ def gather_context(
     except Exception:
         logger.debug("Could not query DD COCOS — continuing without it")
 
+    # Wiki and code context enrichment (Phase 3)
+    wiki_context: list[dict[str, Any]] = []
+    code_context: list[dict[str, Any]] = []
+    if target_domains:
+        try:
+            wiki_context = fetch_wiki_context(
+                facility, target_domains,
+                min_imas_relevance=0.5, k=15, gc=gc,
+            )
+            logger.info("Wiki context: %d chunks", len(wiki_context))
+        except Exception:
+            logger.debug("Wiki context fetch failed — continuing without it")
+
+        try:
+            code_context = fetch_code_context(
+                facility, target_domains,
+                score_dimension="score_data_access",
+                min_score=0.5, k=15, gc=gc,
+            )
+            logger.info("Code context: %d chunks", len(code_context))
+        except Exception:
+            logger.debug("Code context fetch failed — continuing without it")
+
     return {
         "groups": groups,
         "subtree": subtree,
@@ -551,6 +576,8 @@ def gather_context(
         "dd_cocos": dd_cocos,
         "section_clusters": section_clusters,
         "target_domains": target_domains,
+        "wiki_context": wiki_context,
+        "code_context": code_context,
     }
 
 

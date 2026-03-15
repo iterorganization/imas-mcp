@@ -460,6 +460,106 @@ def search_existing_mappings(
     }
 
 
+# ---------------------------------------------------------------------------
+# Wiki and code context for mapping enrichment
+# ---------------------------------------------------------------------------
+
+
+def fetch_wiki_context(
+    facility: str,
+    physics_domains: list[str],
+    *,
+    min_imas_relevance: float = 0.5,
+    k: int = 10,
+    gc: GraphClient | None = None,
+) -> list[dict[str, Any]]:
+    """Fetch wiki chunks relevant to the mapping task.
+
+    Uses physics_domain + score_imas_relevance filtering on WikiPage to find
+    high-value documentation, then returns chunk text + page title + scores.
+    """
+    if gc is None:
+        gc = GraphClient()
+
+    if not physics_domains:
+        return []
+
+    results = gc.query(
+        """
+        MATCH (wp:WikiPage)-[:HAS_CHUNK]->(wc:WikiChunk)
+        WHERE wp.facility_id = $facility
+          AND wp.physics_domain IN $domains
+          AND wp.score_imas_relevance >= $min_score
+          AND wp.status = 'ingested'
+        RETURN wc.text AS text,
+               wp.title AS page_title,
+               wp.physics_domain AS physics_domain,
+               wp.score_imas_relevance AS score_imas_relevance,
+               wp.score_data_access AS score_data_access,
+               wp.score_composite AS score_composite
+        ORDER BY wp.score_imas_relevance DESC, wp.score_composite DESC
+        LIMIT $k
+        """,
+        facility=facility,
+        domains=physics_domains,
+        min_score=min_imas_relevance,
+        k=k,
+    )
+    return results
+
+
+def fetch_code_context(
+    facility: str,
+    physics_domains: list[str],
+    *,
+    score_dimension: str = "score_data_access",
+    min_score: float = 0.5,
+    k: int = 10,
+    gc: GraphClient | None = None,
+) -> list[dict[str, Any]]:
+    """Fetch code chunks demonstrating data access patterns.
+
+    Filters FacilityPaths by physics_domain and the given score dimension,
+    then retrieves CodeChunks via CodeFile → CodeExample → CodeChunk.
+    This surfaces code that shows HOW signals are read, complementing
+    the narrow fetch_source_code_refs() which only finds code for a
+    single signal.
+    """
+    if gc is None:
+        gc = GraphClient()
+
+    if not physics_domains:
+        return []
+
+    # Sanitize dimension name to prevent injection
+    dim = "".join(c for c in score_dimension if c.isalnum() or c == "_")
+
+    results = gc.query(
+        f"""
+        MATCH (fp:FacilityPath)<-[:IN_DIRECTORY]-(cf:CodeFile)
+        WHERE fp.facility_id = $facility
+          AND fp.physics_domain IN $domains
+          AND cf.{dim} >= $min_score
+          AND cf.status = 'ingested'
+        WITH cf
+        MATCH (cf)-[:HAS_EXAMPLE]->(ce)-[:HAS_CHUNK]->(cc:CodeChunk)
+        RETURN cc.text AS text,
+               cc.function_name AS function_name,
+               cc.source_file AS source_file,
+               cc.language AS language,
+               cf.{dim} AS score_data_access,
+               cf.score_composite AS score_composite
+        ORDER BY cf.{dim} DESC, cf.score_composite DESC
+        LIMIT $k
+        """,
+        facility=facility,
+        domains=physics_domains,
+        min_score=min_score,
+        k=k,
+    )
+    return results
+
+
 def fetch_cross_facility_mappings(
     ids_name: str,
     exclude_facility: str,
