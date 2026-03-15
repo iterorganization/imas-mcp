@@ -41,7 +41,7 @@ _NEO4J_JOB = "codex-neo4j"
 _EMBED_JOB = "codex-embed"
 
 _SERVICES_DIR = "$HOME/.local/share/imas-codex/services"
-_DEFAULT_GPUS = 4
+_DEFAULT_GPUS = 8
 _PROJECT = "$HOME/Code/imas-codex"
 
 # Per-service resource defaults
