@@ -316,14 +316,57 @@ def _format_version_context(version_ctx: dict[str, Any]) -> str:
 
 
 def _format_coordinate_context(fields: list[dict[str, Any]]) -> str:
-    """Format coordinate spec data from fields for the assembly prompt."""
+    """Format coordinate spec data from fields for the assembly prompt.
+
+    Includes coordinate axis references, timebase info, and shared grid
+    relationships so the LLM can determine array sizing and dimension ordering.
+    """
     lines: list[str] = []
+    shared_grids: dict[str, list[str]] = {}  # coordinate_ref → [field_paths]
+
     for f in fields:
         path = f.get("id", "") or f.get("path", "")
+        data_type = f.get("data_type", "")
         coords = f.get("coordinates", [])
-        if not coords:
+        coord1 = f.get("coordinate1")
+        coord2 = f.get("coordinate2")
+        timebase = f.get("timebase")
+
+        # Skip fields with no dimensionality info
+        if not coords and not coord1 and not coord2 and not timebase:
             continue
-        lines.append(f"- **{path}**: coordinates = {', '.join(coords)}")
+
+        parts = [f"- **{path}** ({data_type})"]
+
+        # Dimension-specific coordinate axes
+        dim_info: list[str] = []
+        if coord1:
+            dim_info.append(f"dim1={coord1}")
+            shared_grids.setdefault(coord1, []).append(path)
+        if coord2:
+            dim_info.append(f"dim2={coord2}")
+            shared_grids.setdefault(coord2, []).append(path)
+        if dim_info:
+            parts.append(f"  axes: {', '.join(dim_info)}")
+
+        # Index-based coordinate specs (bounded/unbounded)
+        if coords:
+            parts.append(f"  specs: {', '.join(coords)}")
+
+        # Timebase reference
+        if timebase:
+            parts.append(f"  timebase: {timebase}")
+
+        lines.append("\n".join(parts))
+
+    # Append shared grid summary — fields sharing coordinate axes
+    # should be sized consistently
+    shared = {ref: paths for ref, paths in shared_grids.items() if len(paths) > 1}
+    if shared:
+        lines.append("\n**Shared coordinate grids** (size these consistently):")
+        for ref, paths in sorted(shared.items()):
+            lines.append(f"- `{ref}` shared by: {', '.join(paths)}")
+
     return "\n".join(lines) if lines else "(no coordinate spec data)"
 
 
@@ -819,6 +862,7 @@ def map_signals(
             signal_source_detail=_format_source_detail(sg_detail),
             imas_fields=_format_fields(all_fields),
             identifier_schemas=_format_identifier_schemas(all_fields),
+            coordinate_context=_format_coordinate_context(fields),
             version_context=version_context_str,
             unit_analysis=_format_unit_analysis(
                 [sg_detail] if sg_detail else [], all_fields

@@ -40,6 +40,14 @@ units, and documentation:
 
 {{ imas_fields }}
 
+### Coordinate Specifications
+
+Coordinate axes and dimensionality for array fields in this section.
+Use this to match source signal dimensionality to the correct target field
+and determine if dimension reordering is needed:
+
+{{ coordinate_context }}
+
 ### Identifier Schemas
 
 These target fields have enumerated valid values. Use these exact values
