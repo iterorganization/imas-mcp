@@ -844,6 +844,7 @@ async def run_dd_build_engine(
             "embed",
             "embed_phase",
             embed_worker,
+            count=4,
             depends_on=["build_phase"],
         ),
         WorkerSpec(

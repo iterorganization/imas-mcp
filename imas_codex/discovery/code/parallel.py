@@ -257,15 +257,17 @@ async def run_parallel_code_discovery(
 
     # Chunk text embeddings — picks up CodeChunk nodes written by the
     # ingestion pipeline with embedding=null and embeds them
-    # asynchronously on the GPU.  count=4 matches the default number
-    # of GPU workers on the embed server so all GPUs stay busy.
+    # asynchronously on the GPU.  Multiple workers keep the embed
+    # server busy across GPUs; 2 per CLI instance × N concurrent
+    # facility CLIs saturates the server without excessive Neo4j
+    # contention.
     workers.append(
         WorkerSpec(
             "chunk_embed",
             "code_phase",
             embed_text_worker,
             group="embed",
-            count=4,
+            count=2,
             on_progress=on_embed_progress,
             kwargs={"labels": ["CodeChunk"]},
         )
