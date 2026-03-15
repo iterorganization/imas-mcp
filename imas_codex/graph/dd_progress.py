@@ -79,6 +79,22 @@ def _build_pending(state: DDBuildState) -> list[tuple[str, int]]:
     return pending
 
 
+def _get_accumulated_build_time() -> float:
+    """Query accumulated build duration from DDVersion nodes."""
+    try:
+        from imas_codex.graph.client import GraphClient
+
+        with GraphClient() as gc:
+            result = gc.query(
+                "MATCH (v:DDVersion) "
+                "WHERE v.build_duration IS NOT NULL "
+                "RETURN sum(v.build_duration) AS total_time"
+            )
+        return float(result[0]["total_time"] or 0.0) if result else 0.0
+    except Exception:
+        return 0.0
+
+
 def _graph_refresh(state: DDBuildState, _facility: str) -> None:
     """Refresh enrich/embed progress from graph status counts.
 
@@ -202,4 +218,5 @@ def create_dd_build_display(
         stats_fn=lambda: _build_stats(state),
         pending_fn=lambda: _build_pending(state),
         accumulated_cost_fn=lambda: state.accumulated_cost,
+        accumulated_time_fn=lambda: _get_accumulated_build_time(),
     )

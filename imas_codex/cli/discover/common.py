@@ -235,7 +235,9 @@ def run_discovery(
             install_shutdown_handlers(stop_event=stop_event)
             return await async_main(stop_event, None)
 
-        return safe_asyncio_run(_run_plain())
+        result = safe_asyncio_run(_run_plain())
+        _record_session_time(config, result)
+        return result
 
     # Rich mode: full lifecycle with display, service monitor, refresh tasks
     display = config.display
@@ -329,7 +331,26 @@ def run_discovery(
         if hasattr(display, "print_summary"):
             display.print_summary()
 
+    # Record session wall-clock time to the graph for accumulated display
+    _record_session_time(config, result)
+
     return result
+
+
+def _record_session_time(config: DiscoveryConfig, result: dict) -> None:
+    """Record session wall-clock time to the Facility node.
+
+    Best-effort — failures are silently ignored.
+    """
+    elapsed = result.get("elapsed_seconds", 0)
+    if elapsed <= 0:
+        return
+    try:
+        from imas_codex.discovery.base.progress import record_session_time
+
+        record_session_time(config.facility, config.domain, elapsed)
+    except Exception:
+        pass
 
 
 def domain_option(required: bool = False, default: str | None = None) -> Callable:

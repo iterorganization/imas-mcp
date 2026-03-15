@@ -150,8 +150,9 @@ class DataProgressState:
     enrich_rate: float | None = None
     check_rate: float | None = None
 
-    # Accumulated facility cost (from graph)
+    # Accumulated facility cost and time (from graph)
     accumulated_cost: float = 0.0
+    accumulated_time: float = 0.0
 
     # Extract/promote stats (tracked internally, displayed as SCAN)
     run_extracted: int = 0
@@ -603,6 +604,7 @@ class DataProgressDisplay(BaseProgressDisplay):
         config = ResourceConfig(
             elapsed=self.state.elapsed,
             eta=None if self.state.discover_only else self.state.eta_seconds,
+            accumulated_time=self.state.accumulated_time,
             run_cost=self.state.run_cost,
             cost_limit=self.state.cost_limit,
             accumulated_cost=self.state.accumulated_cost,
@@ -902,6 +904,13 @@ class DataProgressDisplay(BaseProgressDisplay):
             self.state.signal_sources = kwargs["signal_sources"]
         if "grouped_signals" in kwargs:
             self.state.grouped_signals = kwargs["grouped_signals"]
+
+        # Accumulated wall-clock time from prior sessions
+        from imas_codex.discovery.base.progress import get_accumulated_time
+        self.state.accumulated_time = get_accumulated_time(
+            self.state.facility, "signals"
+        )
+
         self._refresh()
 
     def print_summary(self) -> None:

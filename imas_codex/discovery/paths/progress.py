@@ -167,8 +167,9 @@ class ProgressState:
     enrich_rate: float | None = None
     score_rate: float | None = None
 
-    # Accumulated facility cost (from graph)
+    # Accumulated facility cost and time (from graph)
     accumulated_cost: float = 0.0
+    accumulated_time: float = 0.0
 
     # Provider budget exhaustion (API key credit limit hit)
     provider_budget_exhausted: bool = False
@@ -750,6 +751,7 @@ class ParallelProgressDisplay(BaseProgressDisplay):
         config = ResourceConfig(
             elapsed=self.state.elapsed,
             eta=None if self.state.scan_only else self.state.eta_seconds,
+            accumulated_time=self.state.accumulated_time,
             run_cost=self.state.run_cost,
             cost_limit=self.state.cost_limit,
             accumulated_cost=self.state.accumulated_cost,
@@ -1141,6 +1143,10 @@ class ParallelProgressDisplay(BaseProgressDisplay):
         # Get accumulated facility cost from graph
         cost_data = get_accumulated_cost(facility)
         self.state.accumulated_cost = cost_data["total_cost"]
+
+        # Accumulated wall-clock time from prior sessions
+        from imas_codex.discovery.base.progress import get_accumulated_time
+        self.state.accumulated_time = get_accumulated_time(facility, "paths")
 
         self._refresh()
 
