@@ -267,7 +267,7 @@ model = "google/gemini-3-flash-preview"
 model = "anthropic/claude-opus-4.6"
 
 [tool.imas-codex.compaction]
-model = "anthropic/claude-sonnet-4.5"
+model = "anthropic/claude-sonnet-4.6"
 
 [tool.imas-codex.llm]
 # LiteLLM proxy settings. Port base = 18400, offset by location index.
