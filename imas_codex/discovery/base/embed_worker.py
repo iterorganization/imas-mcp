@@ -185,32 +185,6 @@ def _count_unembedded(
         return result[0]["total"] if result else 0
 
 
-def _lookup_parent_scores(
-    node_ids: list[str], label: str
-) -> dict[str, float]:
-    """Batch lookup parent node scores for embedded chunks.
-
-    For CodeChunk nodes, traverses CodeFile→HAS_EXAMPLE→CodeExample→HAS_CHUNK→CodeChunk
-    to find the parent CodeFile's score_composite.
-    """
-    if label != "CodeChunk" or not node_ids:
-        return {}
-
-    from imas_codex.graph import GraphClient
-
-    with GraphClient() as gc:
-        result = gc.query(
-            """
-            UNWIND $ids AS chunk_id
-            MATCH (cc:CodeChunk {id: chunk_id})
-            MATCH (cf:CodeFile)-[:HAS_EXAMPLE]->(:CodeExample)-[:HAS_CHUNK]->(cc)
-            RETURN chunk_id AS id, cf.score_composite AS score
-            """,
-            ids=node_ids,
-        )
-        return {r["id"]: r["score"] for r in result if r.get("score") is not None}
-
-
 def _persist_embeddings(
     label: str,
     items: list[dict[str, Any]],
@@ -615,15 +589,8 @@ async def embed_text_worker(
                     worker_id, embedded, fetched, label,
                 )
                 if on_progress:
-                    score_map = _lookup_parent_scores(
-                        node_ids[:embedded], label
-                    )
                     results = [
-                        {
-                            "id": nid,
-                            "label": label,
-                            "score": score_map.get(nid),
-                        }
+                        {"id": nid, "label": label}
                         for nid in node_ids[:embedded]
                     ]
                     on_progress(

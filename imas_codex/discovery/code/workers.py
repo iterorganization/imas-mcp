@@ -135,7 +135,7 @@ async def scan_worker(
                                 {
                                     "path": path,
                                     "files_found": persist_result.get("discovered", 0),
-                                    "score": path_info.get("score"),
+                                    "score_composite": path_info.get("score"),
                                 }
                             ],
                         )
@@ -148,7 +148,7 @@ async def scan_worker(
                         on_progress(
                             "no files",
                             state.scan_stats,
-                            [{"path": path, "files_found": 0, "score": path_info.get("score")}],
+                            [{"path": path, "files_found": 0, "score_composite": path_info.get("score")}],
                         )
 
                 # Release claim after processing
@@ -329,7 +329,7 @@ async def triage_worker(
                     triage_results.append(
                         {
                             "path": r.path,
-                            "score": round(composite, 3),
+                            "triage_composite": round(composite, 3),
                             "description": r.description,
                             "category": top_dim,
                             "skipped": composite < 0.75,
@@ -480,7 +480,7 @@ async def score_worker(
                     score_results.append(
                         {
                             "path": r.path,
-                            "score": round(r.score_composite, 3),
+                            "score_composite": round(r.score_composite, 3),
                             "category": r.file_category,
                             "description": r.description,
                             "skipped": r.skip,
@@ -859,7 +859,7 @@ async def code_worker(
                         {
                             "path": f["path"],
                             "language": f.get("language", ""),
-                            "score": f.get("score_composite"),
+                            "score_composite": f.get("score_composite"),
                             "chunks": avg_chunks,
                             "file_type": "code",
                         }
@@ -1002,7 +1002,7 @@ async def enrich_worker(
                     enrich_results.append(
                         {
                             "path": r["path"],
-                            "score": triage_score,
+                            "triage_composite": triage_score,
                             "patterns": r.get("total_pattern_matches", 0),
                             "line_count": r.get("line_count", 0),
                             "pattern_categories": dict(top_cats),
