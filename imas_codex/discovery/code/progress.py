@@ -55,7 +55,7 @@ class ScanItem:
 
     path: str
     files_found: int = 0
-    score: float | None = None  # FacilityPath score_composite
+    score_composite: float | None = None  # FacilityPath.score_composite
 
 
 @dataclass
@@ -63,7 +63,7 @@ class TriageItem:
     """Current triage activity."""
 
     path: str
-    score_composite: float | None = None
+    triage_composite: float | None = None  # CodeFile.triage_composite
     category: str = ""  # top scoring dimension (modeling, analysis, imas, etc.)
     description: str = ""  # LLM description of what the file contains
     skipped: bool = False
@@ -85,7 +85,7 @@ class EnrichItem:
     """Current enrich activity."""
 
     path: str
-    score: float | None = None  # triage_composite from triage phase
+    triage_composite: float | None = None  # CodeFile.triage_composite
     patterns: int = 0  # total pattern matches
     line_count: int = 0  # lines of code
     pattern_categories: dict[str, int] = field(
@@ -101,7 +101,7 @@ class IngestItem:
     path: str
     language: str = ""
     file_type: str = ""  # code, document, notebook, config
-    score: float | None = None  # composite score from scoring phase
+    score_composite: float | None = None  # CodeFile.score_composite
     chunks: int = 0  # average chunks per file in batch
 
 
@@ -111,7 +111,7 @@ class EmbedItem:
 
     chunk_id: str  # CodeChunk node ID (e.g. "jet:path/to/file.py:chunk_0")
     label: str = "CodeChunk"  # node label being embedded
-    score: float | None = None  # parent CodeFile score_composite
+    score_composite: float | None = None  # parent CodeFile.score_composite (graph lookup)
 
 
 # =============================================================================
@@ -396,8 +396,8 @@ class FileProgressDisplay(BaseProgressDisplay):
         scan_score_parts: list[tuple[str, str]] | None = None
         if scan:
             scan_text = scan.path
-            if scan.score is not None:
-                scan_score_parts = [(f"{scan.score:.2f}", "bold blue")]
+            if scan.score_composite is not None:
+                scan_score_parts = [(f"{scan.score_composite:.2f}", "bold blue")]
             if scan.files_found > 0:
                 scan_desc = f"{scan.files_found} files found"
 
@@ -413,8 +413,8 @@ class FileProgressDisplay(BaseProgressDisplay):
                 triage_terminal = "skip"
                 if triage.description:
                     triage_desc = clean_text(triage.description)
-            elif triage.score_composite is not None:
-                triage_score_parts = [(f"{triage.score_composite:.2f}", "bold green")]
+            elif triage.triage_composite is not None:
+                triage_score_parts = [(f"{triage.triage_composite:.2f}", "bold green")]
                 if triage.category:
                     triage_category = triage.category.replace("_", " ")
                 if triage.description:
@@ -426,8 +426,8 @@ class FileProgressDisplay(BaseProgressDisplay):
         enrich_score_parts: list[tuple[str, str]] | None = None
         if enrich:
             enrich_text = enrich.path
-            if enrich.score is not None:
-                enrich_score_parts = [(f"{enrich.score:.2f}", "bold green")]
+            if enrich.triage_composite is not None:
+                enrich_score_parts = [(f"{enrich.triage_composite:.2f}", "bold green")]
             desc_parts = []
             if enrich.line_count > 0:
                 desc_parts.append(f"{enrich.line_count:,} LOC")
@@ -474,8 +474,8 @@ class FileProgressDisplay(BaseProgressDisplay):
         ingest_score_parts: list[tuple[str, str]] | None = None
         if ingest:
             ingest_text = ingest.path
-            if ingest.score is not None:
-                ingest_score_parts = [(f"{ingest.score:.2f}", "bold cyan")]
+            if ingest.score_composite is not None:
+                ingest_score_parts = [(f"{ingest.score_composite:.2f}", "bold cyan")]
             desc_parts = []
             if ingest.language:
                 desc_parts.append(f"[{ingest.language}]")
@@ -499,8 +499,8 @@ class FileProgressDisplay(BaseProgressDisplay):
         if embed:
             embed_text = embed.chunk_id
             embed_desc = embed.label
-            if embed.score is not None:
-                embed_score_parts = [(f"{embed.score:.2f}", "bold cyan")]
+            if embed.score_composite is not None:
+                embed_score_parts = [(f"{embed.score_composite:.2f}", "bold cyan")]
 
         # --- Build pipeline rows ---
 
@@ -679,7 +679,7 @@ class FileProgressDisplay(BaseProgressDisplay):
                 ScanItem(
                     path=r.get("path", ""),
                     files_found=r.get("files_found", 0),
-                    score=r.get("score"),
+                    score_composite=r.get("score_composite"),
                 )
                 for r in results
             ]
@@ -722,7 +722,7 @@ class FileProgressDisplay(BaseProgressDisplay):
             items = [
                 TriageItem(
                     path=r.get("path", ""),
-                    score_composite=r.get("score"),
+                    triage_composite=r.get("triage_composite"),
                     category=r.get("category", ""),
                     description=r.get("description", ""),
                     skipped=r.get("skipped", False),
@@ -768,7 +768,7 @@ class FileProgressDisplay(BaseProgressDisplay):
             items = [
                 ScoreItem(
                     path=r.get("path", ""),
-                    score_composite=r.get("score"),
+                    score_composite=r.get("score_composite"),
                     category=r.get("category", ""),
                     description=r.get("description", ""),
                     skipped=r.get("skipped", False),
@@ -810,7 +810,7 @@ class FileProgressDisplay(BaseProgressDisplay):
             items = [
                 EnrichItem(
                     path=r.get("path", ""),
-                    score=r.get("score"),
+                    triage_composite=r.get("triage_composite"),
                     patterns=r.get("patterns", 0),
                     line_count=r.get("line_count", 0),
                     pattern_categories=r.get("pattern_categories", {}),
@@ -859,7 +859,7 @@ class FileProgressDisplay(BaseProgressDisplay):
                 IngestItem(
                     path=r.get("path", ""),
                     language=r.get("language", ""),
-                    score=r.get("score"),
+                    score_composite=r.get("score_composite"),
                     chunks=r.get("chunks", 0),
                     file_type="code",
                 )
@@ -902,11 +902,15 @@ class FileProgressDisplay(BaseProgressDisplay):
             self.state.embed_rate = ema
 
         if results:
+            # Lookup parent CodeFile score_composite via graph traversal
+            score_map = self._lookup_chunk_parent_scores(
+                [r.get("id", "") for r in results if r.get("label") == "CodeChunk"]
+            )
             items = [
                 EmbedItem(
                     chunk_id=r.get("id", ""),
                     label=r.get("label", "CodeChunk"),
-                    score=r.get("score"),
+                    score_composite=score_map.get(r.get("id", "")),
                 )
                 for r in results
             ]
@@ -917,6 +921,33 @@ class FileProgressDisplay(BaseProgressDisplay):
             )
 
         self._refresh()
+
+    @staticmethod
+    def _lookup_chunk_parent_scores(chunk_ids: list[str]) -> dict[str, float]:
+        """Query parent CodeFile score_composite for CodeChunk nodes."""
+        if not chunk_ids:
+            return {}
+        try:
+            from imas_codex.graph import GraphClient
+
+            with GraphClient() as gc:
+                result = gc.query(
+                    """
+                    UNWIND $ids AS cid
+                    MATCH (cc:CodeChunk {id: cid})
+                    MATCH (cf:CodeFile)-[:HAS_EXAMPLE]->(:CodeExample)
+                          -[:HAS_CHUNK]->(cc)
+                    RETURN cid AS id, cf.score_composite AS score
+                    """,
+                    ids=chunk_ids,
+                )
+                return {
+                    r["id"]: r["score"]
+                    for r in result
+                    if r.get("score") is not None
+                }
+        except Exception:
+            return {}
 
     def refresh_from_graph(self, facility: str) -> None:
         """Refresh totals from graph database."""
