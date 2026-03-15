@@ -47,9 +47,11 @@ DEFAULT_EMBED_BATCH_SIZE = 100
 
 # Default batch size for text (chunk) embeddings — smaller than
 # description batches because code chunks are up to 10 KB each.
-# Self-attention is O(n²) in sequence length; 6 long chunks fit
-# comfortably in P100-16GB while keeping throughput reasonable.
-DEFAULT_TEXT_EMBED_BATCH_SIZE = 6
+# The pipeline pre-splits at 4K chars (~1K tokens); the embed server
+# adaptively sub-batches at 16 for texts >2K chars.  24 items per
+# request balances GPU utilisation against graph query overhead on
+# P100-16GB.
+DEFAULT_TEXT_EMBED_BATCH_SIZE = 24
 
 # How long to sleep when no work is found (seconds)
 IDLE_SLEEP = 3.0
