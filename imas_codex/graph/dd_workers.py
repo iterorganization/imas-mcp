@@ -520,6 +520,12 @@ async def cluster_worker(state: DDBuildState, **_kwargs) -> None:
         state.cluster_phase.mark_done()
         return
 
+    # Check stop BEFORE entering the long-running clustering thread
+    if state.should_stop():
+        wlog.info("Clustering skipped (stop requested)")
+        state.cluster_phase.mark_done()
+        return
+
     wlog.info("Starting cluster import")
 
     def _on_progress(processed: int, total: int) -> None:
@@ -540,6 +546,7 @@ async def cluster_worker(state: DDBuildState, **_kwargs) -> None:
                 dry_run=state.dry_run,
                 force_reembed=state.reset_to is not None,
                 on_progress=_on_progress,
+                stop_check=state.should_stop,
             )
             state.stats["clusters_created"] = cluster_count
             state.cluster_stats.processed = cluster_count
