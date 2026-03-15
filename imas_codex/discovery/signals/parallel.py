@@ -2135,6 +2135,7 @@ async def seed_worker(
 
     if existing_total > 0:
         # Show signal count (not version count) for meaningful display
+        state.discover_stats.set_baseline(existing_total)
         state.discover_stats.processed = existing_total
         if on_progress:
             on_progress(
@@ -2578,6 +2579,7 @@ async def mdsplus_extract_worker(
     existing_versions = state.initial_version_counts
     existing_sigs = state.initial_signal_counts
     if existing_versions.get("ingested", 0) > 0:
+        state.extract_stats.set_baseline(existing_sigs.get("total", 0))
         state.extract_stats.processed = existing_sigs.get("total", 0)
         if on_progress:
             on_progress(
@@ -2835,6 +2837,7 @@ async def mdsplus_promote_worker(
     # Report existing promoted signals for idempotent restart (pre-fetched)
     existing = state.initial_signal_counts
     if existing.get("total", 0) > 0:
+        state.promote_stats.set_baseline(existing["total"])
         state.promote_stats.processed = existing["total"]
         if on_progress:
             on_progress(

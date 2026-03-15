@@ -339,9 +339,11 @@ async def enrich_worker(state: DDBuildState, **_kwargs) -> None:
             already_enriched = status_counts.get("enriched", 0) + status_counts.get(
                 "embedded", 0
             )
+            state.enrich_stats.set_baseline(already_enriched)
             state.enrich_stats.processed = already_enriched
             # Nodes already past embedding
             already_embedded = status_counts.get("embedded", 0)
+            state.embed_stats.set_baseline(already_embedded)
             state.embed_stats.processed = already_embedded
     except Exception:
         wlog.debug("Could not fetch initial node counts", exc_info=True)
@@ -457,6 +459,7 @@ async def embed_worker(state: DDBuildState, **_kwargs) -> None:
         if total_nodes > 0:
             state.embed_stats.total = max(state.embed_stats.total, total_nodes)
             already_embedded = status_counts.get("embedded", 0)
+            state.embed_stats.set_baseline(already_embedded)
             state.embed_stats.processed = max(
                 state.embed_stats.processed, already_embedded
             )

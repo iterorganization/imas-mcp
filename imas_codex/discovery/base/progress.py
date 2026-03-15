@@ -596,6 +596,12 @@ class WorkerStats:
     # Frozen rate — captured when phase completes to prevent decay during idle
     _frozen_rate: float | None = None
 
+    # Baseline: items already processed before this session started.
+    # Set via ``set_baseline()`` when graph refresh first loads historical
+    # counts.  ``session_processed`` = ``processed - _baseline_processed``
+    # ensures rate calculations reflect only current-session throughput.
+    _baseline_processed: int = 0
+
     # Idle time tracking (excluded from active_rate)
     _idle_total: float = 0.0  # Cumulative idle seconds
     _idle_start: float | None = None  # When current idle period began
@@ -637,19 +643,44 @@ class WorkerStats:
         return time.time() - self.start_time
 
     @property
+    def session_processed(self) -> int:
+        """Items processed in the current session only.
+
+        Subtracts ``_baseline_processed`` (items from prior runs) so that
+        rate calculations reflect only current-session throughput.
+        """
+        return max(0, self.processed - self._baseline_processed)
+
+    def set_baseline(self, count: int) -> None:
+        """Record the number of already-processed items at session start.
+
+        Call once when graph refresh first loads historical counts, so
+        subsequent rate calculations use only current-session items.
+        Has no effect if already set (baseline is captured only once).
+        """
+        if self._baseline_processed == 0 and count > 0:
+            self._baseline_processed = count
+
+    @property
     def rate(self) -> float | None:
-        """Overall average rate (items/second) since start."""
-        if self.processed == 0 or self.elapsed <= 0:
+        """Average rate (items/second) for the current session only.
+
+        Uses ``session_processed`` (items done this session) divided by
+        elapsed time, so restarting a process does not inflate the rate
+        with items from prior runs.
+        """
+        if self.session_processed == 0 or self.elapsed <= 0:
             return None
-        return self.processed / self.elapsed
+        return self.session_processed / self.elapsed
 
     @property
     def active_rate(self) -> float | None:
         """Average rate excluding idle time (items/second).
 
-        If no idle time was tracked, falls back to overall rate.
+        Uses ``session_processed`` for numerator. If no idle time was
+        tracked, falls back to overall session rate.
         """
-        if self.processed == 0:
+        if self.session_processed == 0:
             return None
         idle = self._idle_total
         if self._idle_start is not None:
@@ -657,7 +688,7 @@ class WorkerStats:
         active = self.elapsed - idle
         if active <= 0:
             return self.rate
-        return self.processed / active
+        return self.session_processed / active
 
     @property
     def ema_rate(self) -> float | None:
