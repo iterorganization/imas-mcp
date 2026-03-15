@@ -37,6 +37,7 @@ from imas_codex.discovery.base.progress import (
     build_pipeline_section,
     build_resource_section,
     clean_text,
+    compute_projected_etc,
     format_time,
 )
 
@@ -236,6 +237,13 @@ class FileProgressState:
         return self._run_triage_cost + self._run_score_cost
 
     @property
+    def cost_per_triage(self) -> float | None:
+        """Average LLM cost per triaged file."""
+        if self.run_triaged > 0:
+            return self._run_triage_cost / self.run_triaged
+        return None
+
+    @property
     def cost_per_file(self) -> float | None:
         """Average LLM cost per scored file."""
         if self.run_scored > 0:
@@ -256,28 +264,27 @@ class FileProgressState:
     def eta_seconds(self) -> float | None:
         """Estimated time to termination.
 
-        Returns the maximum ETA across all active worker pipelines.
+        Returns the maximum ETA across all active worker pipelines
+        (parallel workers → max determines completion time).
         """
-        etas: list[float] = []
+        from imas_codex.discovery.base.progress import compute_parallel_eta
 
-        # Cost-based ETA
+        # Cost-based ETA takes priority (if cost limit set)
         if self.run_cost > 0 and self.cost_limit > 0 and self.elapsed > 0:
             cost_rate = self.run_cost / self.elapsed
             if cost_rate > 0:
                 remaining_budget = self.cost_limit - self.run_cost
                 if remaining_budget > 0:
-                    etas.append(remaining_budget / cost_rate)
+                    return remaining_budget / cost_rate
 
-        # Score pipeline ETA
-        if self.score_rate and self.score_rate > 0 and self.pending_score > 0:
-            etas.append(self.pending_score / self.score_rate)
-
-        # Ingest pipeline ETA
-        ingest_rate = self.ingest_rate
-        if ingest_rate and ingest_rate > 0 and self.pending_ingest > 0:
-            etas.append(self.pending_ingest / ingest_rate)
-
-        return max(etas) if etas else None
+        # Work-based ETA: max across all worker groups
+        return compute_parallel_eta([
+            (self.pending_triage, self.triage_rate),
+            (self.pending_enrich, self.enrich_rate),
+            (self.pending_score, self.score_rate),
+            (self.pending_ingest, self.ingest_rate),
+            (self.pending_embed, self.embed_rate),
+        ])
 
 
 # =============================================================================
@@ -608,12 +615,12 @@ class FileProgressDisplay(BaseProgressDisplay):
 
     def _build_resources_section(self) -> Text:
         """Build the resource consumption gauges using unified builder."""
-        # Compute ETC
+        # Compute ETC — sum of per-worker cost projections
         total_cost = self.state.accumulated_cost
-        etc = total_cost
-        cpf = self.state.cost_per_file
-        if cpf and cpf > 0 and self.state.pending_score > 0:
-            etc = total_cost + (cpf * self.state.pending_score)
+        etc = compute_projected_etc(total_cost, [
+            (self.state.pending_triage, self.state.cost_per_triage),
+            (self.state.pending_score, self.state.cost_per_file),
+        ])
 
         # Build stats — completed counts across pipeline
         stats: list[tuple[str, str, str]] = [
@@ -637,7 +644,7 @@ class FileProgressDisplay(BaseProgressDisplay):
             run_cost=self.state.run_cost,
             cost_limit=self.state.cost_limit,
             accumulated_cost=self.state.accumulated_cost,
-            etc=etc if etc > total_cost else None,
+            etc=etc,
             scan_only=self.state.scan_only,
             limit_reason=self.state.limit_reason,
             stats=stats,

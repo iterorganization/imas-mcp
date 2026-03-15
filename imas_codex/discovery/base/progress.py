@@ -162,6 +162,59 @@ def format_rate(rate: float, unit: str = "s") -> str:
 
 
 # =============================================================================
+# ETA / ETC Calculation Utilities
+# =============================================================================
+
+
+def compute_parallel_eta(
+    work_items: list[tuple[int, float | None]],
+) -> float | None:
+    """Compute ETA for parallel workers: max of (pending / rate).
+
+    Since workers run concurrently, the overall completion time is
+    bounded by the slowest worker group.
+
+    Args:
+        work_items: List of (pending_count, rate_per_second) tuples.
+            Each tuple represents one worker group.
+
+    Returns:
+        Maximum ETA across all workers, or None if no rate data.
+    """
+    etas: list[float] = []
+    for pending, rate in work_items:
+        if pending > 0 and rate and rate > 0:
+            etas.append(pending / rate)
+    return max(etas) if etas else None
+
+
+def compute_projected_etc(
+    accumulated_cost: float,
+    cost_items: list[tuple[int, float | None]],
+) -> float | None:
+    """Compute projected total cost: accumulated + sum of per-worker projections.
+
+    Cost is additive across workers — each worker that incurs cost
+    contributes independently to the total projected spend.
+
+    Args:
+        accumulated_cost: Current accumulated cost (source of truth from graph).
+        cost_items: List of (pending_count, cost_per_item) tuples.
+            Each tuple represents one cost-incurring worker group.
+
+    Returns:
+        Projected total cost, or None if no projected costs remain.
+    """
+    projected = 0.0
+    for pending, cost_per_item in cost_items:
+        if pending > 0 and cost_per_item and cost_per_item > 0:
+            projected += pending * cost_per_item
+    if projected > 0:
+        return accumulated_cost + projected
+    return None
+
+
+# =============================================================================
 # Progress Bar Utilities
 # =============================================================================
 
@@ -1967,45 +2020,44 @@ class DataDrivenProgressDisplay(BaseProgressDisplay):
 
     def _build_resources_section(self) -> Text:
         total_cost = 0.0
-        etc = 0.0
+        cost_items: list[tuple[int, float | None]] = []
+        work_items: list[tuple[int, float | None]] = []
+
         if self._engine_state:
             for stage in self.stages:
                 stats = getattr(self._engine_state, stage.stats_attr, None)
-                if stats and stats.cost > 0:
+                if stats is None:
+                    continue
+
+                # Collect per-stage cost projections (ETC = sum)
+                if stats.cost > 0:
                     total_cost += stats.cost
-                    # ETC: project remaining cost from cost-per-item
                     if stats.processed > 0 and stats.total > stats.processed:
                         cost_per_item = stats.cost / stats.processed
                         remaining = stats.total - stats.processed
-                        etc += remaining * cost_per_item
+                        cost_items.append((remaining, cost_per_item))
 
-        # ETA: max of remaining time across active stages
-        eta = None
-        if self._engine_state:
-            for stage in self.stages:
-                stats = getattr(self._engine_state, stage.stats_attr, None)
+                # Collect per-stage time estimates (ETA = max)
                 if (
-                    stats
-                    and stats.total > 0
+                    stats.total > 0
                     and stats.processed > 0
                     and stats.processed < stats.total
                 ):
                     rate = stats.ema_rate or stats.rate
-                    if rate and rate > 0:
-                        remaining = stats.total - stats.processed
-                        stage_eta = remaining / rate
-                        if eta is None or stage_eta > eta:
-                            eta = stage_eta
+                    remaining = stats.total - stats.processed
+                    work_items.append((remaining, rate))
 
-        projected_cost = total_cost + etc if etc > 0 else None
+        # ETA: max of remaining time across active stages
+        eta = compute_parallel_eta(work_items)
 
         # Accumulated cost: graph-sourced (cross-run) + current session
         accumulated = total_cost
         if self._accumulated_cost_fn:
             graph_cost = self._accumulated_cost_fn()
             accumulated = graph_cost + total_cost
-            if etc > 0:
-                projected_cost = accumulated + etc
+
+        # ETC: accumulated + sum of per-stage remaining cost projections
+        projected_cost = compute_projected_etc(accumulated, cost_items)
 
         config = ResourceConfig(
             elapsed=self.elapsed,

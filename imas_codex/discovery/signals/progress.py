@@ -36,6 +36,7 @@ from imas_codex.discovery.base.progress import (
     build_pipeline_section,
     build_resource_section,
     clean_text,
+    compute_projected_etc,
     format_rate,
     format_time,
 )
@@ -234,14 +235,10 @@ class DataProgressState:
     def eta_seconds(self) -> float | None:
         """Estimated time to termination.
 
-        Returns the maximum ETA across all active worker pipelines:
-        - Enrich ETA: based on pending_enrich / enrich_rate
-        - Check ETA: based on pending_check / check_rate
-        - Cost ETA: based on remaining budget / cost rate
-
+        Returns the maximum ETA across all active worker pipelines.
         The actual completion time is bounded by the slowest pipeline.
         """
-        etas = []
+        from imas_codex.discovery.base.progress import compute_parallel_eta
 
         # Cost-based ETA (if we have cost tracking)
         if self.run_cost > 0 and self.cost_limit > 0 and self.elapsed > 0:
@@ -249,7 +246,7 @@ class DataProgressState:
             if cost_rate > 0:
                 remaining_budget = self.cost_limit - self.run_cost
                 if remaining_budget > 0:
-                    etas.append(remaining_budget / cost_rate)
+                    return remaining_budget / cost_rate
 
         # Signal limit ETA
         if self.signal_limit is not None and self.signal_limit > 0:
@@ -257,18 +254,13 @@ class DataProgressState:
                 rate = self.run_enriched / self.elapsed
                 remaining = self.signal_limit - self.run_enriched
                 if rate > 0 and remaining > 0:
-                    etas.append(remaining / rate)
+                    return remaining / rate
 
-        # Enrich ETA (pipeline bottleneck)
-        if self.enrich_rate and self.enrich_rate > 0 and self.pending_enrich > 0:
-            etas.append(self.pending_enrich / self.enrich_rate)
-
-        # Check ETA (pipeline bottleneck)
-        if self.check_rate and self.check_rate > 0 and self.pending_check > 0:
-            etas.append(self.pending_check / self.check_rate)
-
-        # Return the maximum (slowest pipeline determines completion)
-        return max(etas) if etas else None
+        # Work-based ETA: max across all worker groups
+        return compute_parallel_eta([
+            (self.pending_enrich, self.enrich_rate),
+            (self.pending_check, self.check_rate),
+        ])
 
 
 # =============================================================================
@@ -574,15 +566,17 @@ class DataProgressDisplay(BaseProgressDisplay):
         enriched = self.state.signals_enriched + self.state.signals_checked
         checked = self.state.signals_checked
 
-        # Compute ETC — accumulated_cost from graph is source of truth
-        # (already includes current-session costs after graph refresh)
+        # Compute ETC — sum of per-worker cost projections
         total_cost = self.state.accumulated_cost
-        etc = total_cost
-        signals_enriched = self.state.run_enriched
-        signals_remaining = self.state.pending_enrich + self.state.pending_check
-        if signals_enriched > 0 and signals_remaining > 0:
-            cost_per_signal = self.state.run_cost / signals_enriched
-            etc = total_cost + (cost_per_signal * signals_remaining)
+        cost_per_signal = (
+            self.state._run_enrich_cost / self.state.run_enriched
+            if self.state.run_enriched > 0
+            else None
+        )
+        etc = compute_projected_etc(total_cost, [
+            (self.state.pending_enrich, cost_per_signal),
+            (self.state.pending_check, cost_per_signal),
+        ])
 
         # Build stats
         stats: list[tuple[str, str, str]] = [
@@ -612,7 +606,7 @@ class DataProgressDisplay(BaseProgressDisplay):
             run_cost=self.state.run_cost,
             cost_limit=self.state.cost_limit,
             accumulated_cost=self.state.accumulated_cost,
-            etc=etc if etc > total_cost else None,
+            etc=etc,
             scan_only=self.state.discover_only,
             stats=stats,
             pending=[
