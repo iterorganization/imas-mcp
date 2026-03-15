@@ -592,11 +592,13 @@ def embed_stop() -> None:
     stopped = False
 
     # Cancel embed SLURM job
-    if _cancel_service_job(_EMBED_JOB):
+    slurm_cancelled = _cancel_service_job(_EMBED_JOB)
+    if slurm_cancelled:
         click.echo("Stopped embed server (SLURM job cancelled)")
         stopped = True
-        # Wait for SLURM to fully terminate processes — scancel is async
-        time.sleep(2)
+        # Wait for SLURM to fully terminate processes — scancel is async.
+        # uvicorn workers trap SIGTERM; 4s covers typical shutdown.
+        time.sleep(4)
 
     # Stop systemd service
     try:
@@ -629,14 +631,21 @@ def embed_stop() -> None:
         pids = [p.strip() for p in result.strip().split("\n") if p.strip().isdigit()]
         if pids:
             _kill_embed_orphans(host)
-            pid_list = " ".join(pids)
-            click.echo(
-                click.style(
-                    f"⚠ Killed rogue embed process(es) on {host} (PIDs: {pid_list})\n"
-                    "  These were NOT managed by SLURM — use 'imas-codex embed start' next time.",
-                    fg="yellow",
+            if slurm_cancelled:
+                # Expected stragglers from the SLURM job we just cancelled
+                click.echo(
+                    f"  Cleaned up {len(pids)} worker process(es) on {host}"
                 )
-            )
+            else:
+                # Genuinely orphaned — no SLURM job was running
+                pid_list = " ".join(pids)
+                click.echo(
+                    click.style(
+                        f"⚠ Killed rogue embed process(es) on {host} (PIDs: {pid_list})\n"
+                        "  These were NOT managed by SLURM — use 'imas-codex embed start' next time.",
+                        fg="yellow",
+                    )
+                )
             stopped = True
     except Exception:
         pass
