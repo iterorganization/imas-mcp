@@ -34,7 +34,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from imas_codex.discovery.base.engine import WorkerSpec, run_discovery_engine
-from imas_codex.discovery.base.progress import WorkerStats
+from imas_codex.discovery.base.progress import WorkerStats, format_count
 from imas_codex.discovery.base.state import DiscoveryStateBase
 from imas_codex.discovery.base.supervision import PipelinePhase
 
@@ -533,7 +533,7 @@ async def cluster_worker(state: DDBuildState, **_kwargs) -> None:
         state.cluster_stats.total = total
         state.cluster_stats.processed = processed
         if processed > 0:
-            state.cluster_stats.status_text = f"{processed:,} clusters"
+            state.cluster_stats.status_text = f"{format_count(processed)} clusters"
         else:
             state.cluster_stats.status_text = ""
 

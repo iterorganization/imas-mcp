@@ -37,6 +37,7 @@ from imas_codex.discovery.base.progress import (
     build_resource_section,
     clean_text,
     compute_projected_etc,
+    format_count,
     format_rate,
     format_time,
 )
@@ -389,7 +390,7 @@ class DataProgressDisplay(BaseProgressDisplay):
                 else f"extracting {ext.version_id}"
             )
             if ext.node_count > 0:
-                scan_desc = f"{ext.node_count:,} nodes"
+                scan_desc = f"{format_count(ext.node_count)} nodes"
             else:
                 # Use connection timing from extract_stats if available
                 conn_status = self.state.extract_stats.format_connection_status()
@@ -398,9 +399,9 @@ class DataProgressDisplay(BaseProgressDisplay):
             scan_text = f"promoting {prom.data_source_name}"
             parts = []
             if prom.signals_promoted > 0:
-                parts.append(f"{prom.signals_promoted:,} signals")
+                parts.append(f"{format_count(prom.signals_promoted)} signals")
             if prom.units_count > 0:
-                parts.append(f"{prom.units_count:,} units")
+                parts.append(f"{format_count(prom.units_count)} units")
             scan_desc = "  ".join(parts)
         elif scan:
             if scan.epoch_phase:
@@ -430,7 +431,7 @@ class DataProgressDisplay(BaseProgressDisplay):
                 if scan.data_source_name:
                     scan_desc = f"tree={scan.data_source_name}"
                 if scan.signals_in_source > 0:
-                    scan_desc += f"  {scan.signals_in_source:,} versions"
+                    scan_desc += f"  {format_count(scan.signals_in_source)} versions"
         elif scan_processing and self.state.current_tree:
             scan_text = f"tree={self.state.current_tree}"
 
@@ -935,35 +936,35 @@ class DataProgressDisplay(BaseProgressDisplay):
 
         # SEED stats
         summary.append("  SEED    ", style="bold blue")
-        summary.append(f"seeded={self.state.run_discovered:,}", style="blue")
+        summary.append(f"seeded={format_count(self.state.run_discovered)}", style="blue")
         if self.state.discover_rate:
             summary.append(f"  {format_rate(self.state.discover_rate)}", style="dim")
         summary.append("\n")
 
         # EXTRACT stats
         summary.append("  EXTRACT ", style="bold cyan")
-        summary.append(f"extracted={self.state.run_extracted:,}", style="cyan")
+        summary.append(f"extracted={format_count(self.state.run_extracted)}", style="cyan")
         if self.state.extract_rate:
             summary.append(f"  {format_rate(self.state.extract_rate)}", style="dim")
         summary.append("\n")
 
         # PROMOTE stats
         summary.append("  PROMOTE ", style="bold yellow")
-        summary.append(f"promoted={self.state.run_promoted:,}", style="yellow")
-        summary.append(f"  total={total:,}", style="dim")
+        summary.append(f"promoted={format_count(self.state.run_promoted)}", style="yellow")
+        summary.append(f"  total={format_count(total)}", style="dim")
         if self.state.promote_rate:
             summary.append(f"  {format_rate(self.state.promote_rate)}", style="dim")
         summary.append("\n")
 
         # ENRICH stats
         summary.append("  ENRICH  ", style="bold green")
-        summary.append(f"enriched={enriched:,}", style="green")
+        summary.append(f"enriched={format_count(enriched)}", style="green")
         if self.state.signal_sources > 0:
             summary.append(
-                f"  groups={self.state.signal_sources} ({self.state.grouped_signals:,} members)",
+                f"  groups={self.state.signal_sources} ({format_count(self.state.grouped_signals)} members)",
                 style="cyan",
             )
-        summary.append(f"  skipped={self.state.signals_skipped:,}", style="yellow")
+        summary.append(f"  skipped={format_count(self.state.signals_skipped)}", style="yellow")
         summary.append(f"  cost=${self.state.run_cost:.3f}", style="yellow")
         if self.state.enrich_rate:
             summary.append(f"  {format_rate(self.state.enrich_rate)}", style="dim")
@@ -971,8 +972,8 @@ class DataProgressDisplay(BaseProgressDisplay):
 
         # CHECK stats
         summary.append("  CHECK  ", style="bold magenta")
-        summary.append(f"checked={checked:,}", style="magenta")
-        summary.append(f"  failed={self.state.signals_failed:,}", style="red")
+        summary.append(f"checked={format_count(checked)}", style="magenta")
+        summary.append(f"  failed={format_count(self.state.signals_failed)}", style="red")
         if self.state.check_rate:
             summary.append(f"  {format_rate(self.state.check_rate)}", style="dim")
         summary.append("\n")

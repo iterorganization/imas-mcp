@@ -14,6 +14,8 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING
 
+from imas_codex.discovery.base.progress import format_count
+
 from .state import StaticDiscoveryState
 
 if TYPE_CHECKING:
@@ -126,7 +128,7 @@ async def extract_worker(
 
             if on_progress:
                 on_progress(
-                    f"v{version} done — {node_count:,} nodes, {tags} tags",
+                    f"v{version} done — {format_count(node_count)} nodes, {tags} tags",
                     state.extract_stats,
                     [
                         {
@@ -248,7 +250,7 @@ async def units_worker(
             batch_num = (checked // units_batch_size) + 1
             total_batches = (total + units_batch_size - 1) // units_batch_size
             on_progress(
-                f"{checked:,}/{total:,} checked, {found} with units",
+                f"{format_count(checked)}/{format_count(total)} checked, {found} with units",
                 state.units_stats,
                 [
                     {

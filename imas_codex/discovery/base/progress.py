@@ -132,11 +132,19 @@ def format_bytes(num_bytes: int) -> str:
 
 
 def format_count(count: int) -> str:
-    """Format large counts: 1.5M, 256K, 1234"""
+    """Format large counts compactly: 1.1M, 61.5K, 403.
+
+    Drops trailing ``.0`` for cleaner display (``10K`` not ``10.0K``).
+    """
     if count >= 1_000_000:
-        return f"{count / 1_000_000:.1f}M"
+        val = count / 1_000_000
+        return f"{val:.0f}M" if val == int(val) else f"{val:.1f}M"
+    if count >= 10_000:
+        val = count / 1_000
+        return f"{val:.0f}K" if val == int(val) else f"{val:.1f}K"
     if count >= 1_000:
-        return f"{count / 1_000:.1f}K"
+        val = count / 1_000
+        return f"{val:.1f}K"
     return str(count)
 
 
@@ -549,10 +557,10 @@ class ScannerProgress:
     def format_status(self) -> str:
         """Format as compact status string for display.
 
-        Examples: ``wiki✓``, ``ppf✓ 5,204``, ``jpf: subsystem DA 3/26``
+        Examples: ``wiki✓``, ``ppf✓ 5.2K``, ``jpf: subsystem DA 3/26``
         """
         if self.status == "done":
-            count = f" {self.items_discovered:,}" if self.items_discovered else ""
+            count = f" {format_count(self.items_discovered)}" if self.items_discovered else ""
             return f"{self.name}✓{count}"
         if self.status == "failed":
             return f"{self.name}✗"
@@ -920,7 +928,7 @@ class WorkerStats:
 # constants rather than redefining them.
 #
 #   LABEL_WIDTH       – left label column ("  EXTRACTx2", "  TIME")
-#   METRICS_WIDTH     – right stat column for progress bars (" {n:>8,} {%}")
+#   METRICS_WIDTH     – right stat column for progress bars (" {count} {%}")
 #   GAUGE_METRICS_WIDTH – right stat column for resource gauges (wider: time/cost text)
 #   MIN_WIDTH         – minimum panel width
 #
@@ -1109,8 +1117,8 @@ def build_pipeline_row(config: PipelineRowConfig, bar_width: int = 40) -> Text:
     bar_ratio = 1.0 if round(pct) >= 100 else ratio
     row.append(make_bar(bar_ratio, effective_bar), style=config.style.split()[-1])
 
-    # Right: count + pct only
-    count_s = f" {config.completed:>8,}"
+    # Right: count + pct only (format_count for compact display)
+    count_s = f" {format_count(config.completed):>8}"
     pct_s = f" {pct:>3.0f}%" if config.show_pct else "     "
     pad = max(0, METRICS_WIDTH - len(count_s) - len(pct_s))
     if pad > 0:
@@ -1945,7 +1953,7 @@ def build_resource_section(
         if config.pending:
             active = [(label, count) for label, count in config.pending if count > 0]
             if active:
-                parts = [f"{label}:{count}" for label, count in active]
+                parts = [f"{label}:{format_count(count)}" for label, count in active]
                 pending_text = f"pending=[{' '.join(parts)}]"
                 max_pending = content_width - LABEL_WIDTH
                 if len(pending_text) > max_pending:

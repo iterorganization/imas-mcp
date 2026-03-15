@@ -43,6 +43,7 @@ from imas_codex.discovery.base.progress import (
     clean_text,
     clip_text,
     compute_projected_etc,
+    format_count,
     format_time,
 )
 from imas_codex.discovery.base.supervision import WorkerState
@@ -991,9 +992,9 @@ class WikiProgressDisplay(BaseProgressDisplay):
             + self.state.pages_failed
         )
         stats: list[tuple[str, str, str]] = [
-            ("scored", f"{scored_total:,}", "blue"),
-            ("ingested", f"{self.state.pages_ingested:,}", "magenta"),
-            ("skipped", f"{self.state.pages_skipped:,}", "yellow"),
+            ("scored", format_count(scored_total), "blue"),
+            ("ingested", format_count(self.state.pages_ingested), "magenta"),
+            ("skipped", format_count(self.state.pages_skipped), "yellow"),
         ]
 
         # Pending work — only show categories with active workers
@@ -1534,10 +1535,10 @@ class WikiProgressDisplay(BaseProgressDisplay):
         # SCORE stats (pages)
         total_scored = self.state.pages_scored + self.state.pages_ingested
         summary.append(f"{'  SCORE':<{LABEL_WIDTH}}", style="bold blue")
-        summary.append(f"scored={total_scored:,}", style="blue")
-        summary.append(f"  skipped={self.state.pages_skipped:,}", style="yellow")
+        summary.append(f"scored={format_count(total_scored)}", style="blue")
+        summary.append(f"  skipped={format_count(self.state.pages_skipped)}", style="yellow")
         if self.state.pages_failed > 0:
-            summary.append(f"  failed={self.state.pages_failed:,}", style="red")
+            summary.append(f"  failed={format_count(self.state.pages_failed)}", style="red")
         page_cost = self.state.accumulated_page_cost
         if page_cost > 0:
             summary.append(f"  cost=${page_cost:.2f}", style="yellow")
@@ -1549,7 +1550,7 @@ class WikiProgressDisplay(BaseProgressDisplay):
         # INGEST stats
         total_ingested = self.state.pages_ingested
         summary.append(f"{'  INGEST':<{LABEL_WIDTH}}", style="bold magenta")
-        summary.append(f"ingested={total_ingested:,}", style="magenta")
+        summary.append(f"ingested={format_count(total_ingested)}", style="magenta")
         if self.state.ingest_rate or self.state._final_ingest_rate:
             rate = self.state.ingest_rate or self.state._final_ingest_rate
             summary.append(f"  {rate:.1f}/s", style="dim")
@@ -1563,12 +1564,12 @@ class WikiProgressDisplay(BaseProgressDisplay):
             art_failed = self.state.documents_failed
             art_deferred = self.state.documents_deferred
             summary.append(f"{'  FILE':<{LABEL_WIDTH}}", style="bold yellow")
-            summary.append(f"scored={art_scored:,}", style="yellow")
-            summary.append(f"  ingested={art_ingested:,}", style="yellow")
+            summary.append(f"scored={format_count(art_scored)}", style="yellow")
+            summary.append(f"  ingested={format_count(art_ingested)}", style="yellow")
             if art_failed > 0:
-                summary.append(f"  failed={art_failed:,}", style="red")
+                summary.append(f"  failed={format_count(art_failed)}", style="red")
             if art_deferred > 0:
-                summary.append(f"  deferred={art_deferred:,}", style="dim")
+                summary.append(f"  deferred={format_count(art_deferred)}", style="dim")
             art_cost = self.state.accumulated_document_cost
             if art_cost > 0:
                 summary.append(f"  cost=${art_cost:.2f}", style="yellow")
@@ -1581,10 +1582,10 @@ class WikiProgressDisplay(BaseProgressDisplay):
         images_described = self.state.images_scored
         if images_described > 0:
             summary.append(f"{'  IMAGE':<{LABEL_WIDTH}}", style="bold green")
-            summary.append(f"described={images_described:,}", style="green")
+            summary.append(f"described={format_count(images_described)}", style="green")
             pending_img = self.state.pending_image_score
             if pending_img > 0:
-                summary.append(f"  pending={pending_img:,}", style="yellow")
+                summary.append(f"  pending={format_count(pending_img)}", style="yellow")
             img_cost = self.state.accumulated_image_cost
             if img_cost > 0:
                 summary.append(f"  cost=${img_cost:.2f}", style="yellow")

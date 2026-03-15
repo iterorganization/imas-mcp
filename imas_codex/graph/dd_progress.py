@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 from imas_codex.discovery.base.progress import (
     DataDrivenProgressDisplay,
     StageDisplaySpec,
+    format_count,
 )
 
 if TYPE_CHECKING:
@@ -30,23 +31,23 @@ def _build_stats(state: DDBuildState) -> list[tuple[str, str, str]]:
 
     paths = s.get("paths_created", 0)
     if paths:
-        stats.append(("paths", f"{paths:,}", "green"))
+        stats.append(("paths", format_count(paths), "green"))
 
     enriched = s.get("enriched_llm", 0) + s.get("enriched_template", 0)
     if enriched:
-        stats.append(("enriched", f"{enriched:,}", "green"))
+        stats.append(("enriched", format_count(enriched), "green"))
 
     cached = s.get("enrichment_cached", 0)
     if cached:
-        stats.append(("cached", f"{cached:,}", "dim"))
+        stats.append(("cached", format_count(cached), "dim"))
 
     embedded = s.get("embeddings_updated", 0) + s.get("embeddings_cached", 0)
     if embedded:
-        stats.append(("embedded", f"{embedded:,}", "magenta"))
+        stats.append(("embedded", format_count(embedded), "magenta"))
 
     clusters = s.get("clusters_created", 0)
     if clusters:
-        stats.append(("clusters", f"{clusters:,}", "cyan"))
+        stats.append(("clusters", format_count(clusters), "cyan"))
 
     cost = state.enrich_stats.cost
     if cost > 0:

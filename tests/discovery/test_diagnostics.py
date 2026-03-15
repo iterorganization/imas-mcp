@@ -104,7 +104,7 @@ class TestScannerProgress:
     def test_format_status_done_with_count(self):
         sp = ScannerProgress(name="ppf")
         sp.mark_done(items=5204)
-        assert sp.format_status() == "ppf✓ 5,204"
+        assert sp.format_status() == "ppf✓ 5.2K"
 
     def test_format_status_failed(self):
         sp = ScannerProgress(name="mdsplus")
@@ -143,7 +143,7 @@ class TestWorkerStatsScanner:
         stats.finish_scanner("ppf", items=5204)
         status = stats.format_scanner_status()
         assert "wiki✓" in status
-        assert "ppf✓ 5,204" in status
+        assert "ppf✓ 5.2K" in status
 
     def test_format_scanner_status_empty(self):
         stats = WorkerStats()
