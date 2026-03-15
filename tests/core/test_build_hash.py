@@ -10,50 +10,43 @@ class TestComputeBuildHash:
 
     def test_deterministic(self):
         """Same inputs → same hash."""
-        h1 = _compute_build_hash(["4.0.0", "4.1.0"], None, "model-a", True, True)
-        h2 = _compute_build_hash(["4.0.0", "4.1.0"], None, "model-a", True, True)
+        h1 = _compute_build_hash(["4.0.0", "4.1.0"], None)
+        h2 = _compute_build_hash(["4.0.0", "4.1.0"], None)
         assert h1 == h2
 
     def test_order_independent_versions(self):
         """Version order doesn't change hash (sorted internally)."""
-        h1 = _compute_build_hash(["4.1.0", "4.0.0"], None, "m", True, True)
-        h2 = _compute_build_hash(["4.0.0", "4.1.0"], None, "m", True, True)
+        h1 = _compute_build_hash(["4.1.0", "4.0.0"], None)
+        h2 = _compute_build_hash(["4.0.0", "4.1.0"], None)
         assert h1 == h2
 
     def test_different_versions_different_hash(self):
-        h1 = _compute_build_hash(["4.0.0"], None, "m", True, True)
-        h2 = _compute_build_hash(["4.1.0"], None, "m", True, True)
+        h1 = _compute_build_hash(["4.0.0"], None)
+        h2 = _compute_build_hash(["4.1.0"], None)
         assert h1 != h2
 
     def test_different_ids_filter_different_hash(self):
-        h1 = _compute_build_hash(["4.0.0"], {"equilibrium"}, "m", True, True)
-        h2 = _compute_build_hash(["4.0.0"], {"core_profiles"}, "m", True, True)
+        h1 = _compute_build_hash(["4.0.0"], {"equilibrium"})
+        h2 = _compute_build_hash(["4.0.0"], {"core_profiles"})
         assert h1 != h2
 
     def test_none_vs_empty_ids_filter(self):
-        h1 = _compute_build_hash(["4.0.0"], None, "m", True, True)
-        h2 = _compute_build_hash(["4.0.0"], set(), "m", True, True)
+        h1 = _compute_build_hash(["4.0.0"], None)
+        h2 = _compute_build_hash(["4.0.0"], set())
         # Both produce empty string for ids_filter → same hash
         assert h1 == h2
 
-    def test_clusters_flag_changes_hash(self):
-        h1 = _compute_build_hash(["4.0.0"], None, "m", True, True)
-        h2 = _compute_build_hash(["4.0.0"], None, "m", False, True)
-        assert h1 != h2
-
-    def test_embeddings_flag_changes_hash(self):
-        h1 = _compute_build_hash(["4.0.0"], None, "m", True, True)
-        h2 = _compute_build_hash(["4.0.0"], None, "m", True, False)
-        assert h1 != h2
-
     def test_returns_16_char_hex(self):
-        h = _compute_build_hash(["4.0.0"], None, "m", True, True)
+        h = _compute_build_hash(["4.0.0"], None)
         assert len(h) == 16
         int(h, 16)  # Should be valid hex
 
 
 class TestCheckGraphUpToDate:
-    """Tests for _check_graph_up_to_date."""
+    """Tests for _check_graph_up_to_date.
+
+    The function now unconditionally checks embeddings and clusters.
+    """
 
     def _make_client(
         self,
@@ -81,62 +74,50 @@ class TestCheckGraphUpToDate:
 
     def test_no_meta_returns_false(self):
         client = self._make_client(hash_response=[])
-        assert _check_graph_up_to_date(client, "abc", ["4.0.0"], True, True) is False
+        assert _check_graph_up_to_date(client, "abc", ["4.0.0"]) is False
 
     def test_hash_mismatch_returns_false(self):
         client = self._make_client(
             hash_response=[{"hash": "wrong"}],
         )
-        assert _check_graph_up_to_date(client, "abc", ["4.0.0"], True, True) is False
+        assert _check_graph_up_to_date(client, "abc", ["4.0.0"]) is False
 
     def test_version_mismatch_returns_false(self):
         client = self._make_client(
             hash_response=[{"hash": "abc"}],
             ver_response=[{"versions": ["3.0.0"]}],
         )
-        assert _check_graph_up_to_date(client, "abc", ["4.0.0"], True, True) is False
+        assert _check_graph_up_to_date(client, "abc", ["4.0.0"]) is False
 
-    def test_matching_no_embeddings_no_clusters(self):
-        """Hash + versions match, no embeddings/clusters requested → True."""
-        client = self._make_client(
-            hash_response=[{"hash": "abc"}],
-            ver_response=[{"versions": ["4.0.0"]}],
-        )
-        assert _check_graph_up_to_date(client, "abc", ["4.0.0"], False, False) is True
-
-    def test_matching_with_embeddings_present(self):
+    def test_fully_up_to_date(self):
+        """Hash + versions + embeddings + clusters all present → True."""
         client = self._make_client(
             hash_response=[{"hash": "abc"}],
             ver_response=[{"versions": ["4.0.0"]}],
             emb_response=[{"total": 100, "with_emb": 100}],
+            cluster_response=[{"cnt": 50}],
         )
-        assert _check_graph_up_to_date(client, "abc", ["4.0.0"], True, False) is True
+        assert _check_graph_up_to_date(client, "abc", ["4.0.0"]) is True
 
-    def test_matching_with_insufficient_embeddings(self):
+    def test_insufficient_embeddings_returns_false(self):
         client = self._make_client(
             hash_response=[{"hash": "abc"}],
             ver_response=[{"versions": ["4.0.0"]}],
             emb_response=[{"total": 100, "with_emb": 10}],
-        )
-        assert _check_graph_up_to_date(client, "abc", ["4.0.0"], True, False) is False
-
-    def test_matching_with_clusters_present(self):
-        client = self._make_client(
-            hash_response=[{"hash": "abc"}],
-            ver_response=[{"versions": ["4.0.0"]}],
             cluster_response=[{"cnt": 50}],
         )
-        assert _check_graph_up_to_date(client, "abc", ["4.0.0"], False, True) is True
+        assert _check_graph_up_to_date(client, "abc", ["4.0.0"]) is False
 
-    def test_matching_with_no_clusters(self):
+    def test_no_clusters_returns_false(self):
         client = self._make_client(
             hash_response=[{"hash": "abc"}],
             ver_response=[{"versions": ["4.0.0"]}],
+            emb_response=[{"total": 100, "with_emb": 100}],
             cluster_response=[{"cnt": 0}],
         )
-        assert _check_graph_up_to_date(client, "abc", ["4.0.0"], False, True) is False
+        assert _check_graph_up_to_date(client, "abc", ["4.0.0"]) is False
 
     def test_query_exception_returns_false(self):
         client = MagicMock()
         client.query.side_effect = Exception("boom")
-        assert _check_graph_up_to_date(client, "abc", ["4.0.0"], True, True) is False
+        assert _check_graph_up_to_date(client, "abc", ["4.0.0"]) is False

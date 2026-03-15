@@ -76,6 +76,7 @@ class DataDictionaryTransformer:
         self._exclusion_checker = ExclusionChecker(
             include_ggd=self.include_ggd,
             include_error_fields=self.include_error_fields,
+            include_metadata=True,  # XML extraction needs all paths; classification happens later
             excluded_patterns=self.excluded_patterns,
         )
 

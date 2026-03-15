@@ -718,6 +718,13 @@ classes:
           different campaigns for coverage.
         multivalued: true
         range: integer
+      dda_descriptions:
+        description: >-
+          Human-readable descriptions of DDA codes for enrichment prompt
+          context. Each entry has a code (e.g., EFIT) and description
+          (e.g., Equilibrium reconstruction).
+        multivalued: true
+        range: DDADescriptionConfig
 
   EDASConfig:
     description: >-
@@ -872,6 +879,36 @@ classes:
           contour points, etc.).
         range: integer
 
+  DDADescriptionConfig:
+    description: >-
+      A DDA code with its human-readable description for enrichment
+      prompt context.
+    class_uri: fc:DDADescriptionConfig
+    attributes:
+      code:
+        description: DDA code identifier (e.g., EFIT)
+        required: true
+      description:
+        description: Human-readable description of the DDA
+        required: true
+
+  SensorVersionConfig:
+    description: >-
+      A historical sensor position file version. Tracks geometry
+      refinements over time with file name, filesystem path, and
+      effective date.
+    class_uri: fc:SensorVersionConfig
+    attributes:
+      file:
+        description: Sensor geometry filename
+        required: true
+      path:
+        description: Filesystem directory containing the file
+        required: true
+      date:
+        description: Effective date of this sensor version (ISO 8601)
+        required: true
+
   StaticSourceConfig:
     description: >-
       A named collection of files providing machine description, calibration,
@@ -941,6 +978,14 @@ classes:
           Examples: magnetics, pf_coils, vessel, limiters, iron_core.
         multivalued: true
         range: SourceSystem
+      sensor_versions:
+        description: >-
+          Historical sensor position file versions tracking geometry
+          refinements over time. Each entry records a sensor geometry
+          file with its filesystem path and effective date. Used to
+          create SUPERSEDES relationships between versions.
+        multivalued: true
+        range: SensorVersionConfig
 
   UserInfoConfig:
     description: >-
