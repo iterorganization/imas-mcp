@@ -1025,6 +1025,9 @@ def deploy_embed_noslurm(gpus: int = _DEFAULT_GPUS, workers: int | None = None) 
 
     Use when the compute node is in draining/down state and SLURM
     won't schedule new jobs, but the GPUs are still accessible via SSH.
+
+    Automatically detects a deadlocked CUDA driver (from D-state
+    processes) and falls back to CPU mode when GPUs are unusable.
     """
     import base64
 
@@ -1043,17 +1046,55 @@ def deploy_embed_noslurm(gpus: int = _DEFAULT_GPUS, workers: int | None = None) 
     services_dir = f"$HOME/.local/share/imas-codex/services"
     log_file = f"{services_dir}/codex-embed.log"
 
+    # Check if CUDA is usable by running a quick probe.
+    # D-state processes from previous crashes can deadlock the NVIDIA
+    # kernel module, making torch.cuda.is_available() hang indefinitely.
+    force_cpu = False
+    try:
+        probe_script = (
+            "cd $HOME/Code/imas-codex && "
+            "timeout 10 .venv/bin/python3 -c "
+            "'import torch; print(torch.cuda.device_count())' 2>&1"
+        )
+        result = _run_on_node(host, probe_script, timeout=20)
+        gpu_count = int(result.strip().split("\n")[-1])
+        if gpu_count == 0:
+            force_cpu = True
+    except Exception:
+        force_cpu = True
+
+    if force_cpu:
+        click.echo(
+            click.style(
+                "  ⚠ CUDA driver unresponsive — deploying in CPU mode",
+                fg="yellow",
+            )
+        )
+        workers = min(workers, 4)  # CPU doesn't need 8 workers
+
     # Build the nohup command that runs on the compute node
-    script = (
+    env_lines = (
         f"mkdir -p {services_dir}\n"
         f"cd $HOME/Code/imas-codex\n"
         f"source $HOME/Code/imas-codex/.env 2>/dev/null || true\n"
         f'echo "codex-embed started on $(hostname) at $(date)" > {log_file}\n'
-        f"export CUDA_VISIBLE_DEVICES={gpu_ids}\n"
-        f"export IMAS_CODEX_GPU_MEMORY_FRACTION=0.95\n"
-        f"nohup uv run --offline --extra gpu imas-codex embed start -f "
+    )
+    if force_cpu:
+        env_lines += "export IMAS_CODEX_FORCE_CPU=1\n"
+        env_lines += "export CUDA_VISIBLE_DEVICES=\n"
+
+    else:
+        env_lines += f"export CUDA_VISIBLE_DEVICES={gpu_ids}\n"
+        env_lines += "export IMAS_CODEX_GPU_MEMORY_FRACTION=0.95\n"
+
+    # In CPU mode, skip --gpus to avoid GPU claiming logic
+    gpus_flag = "" if force_cpu else f"--gpus {gpu_ids} "
+
+    script = (
+        env_lines
+        + f"nohup uv run --offline --extra gpu imas-codex embed start -f "
         f"--host 0.0.0.0 --port {port} "
-        f"--gpus {gpu_ids} --workers {workers} "
+        f"{gpus_flag}--workers {workers} "
         f"--deploy-label {partition_name} "
         f">> {log_file} 2>&1 &\n"
         f"echo $!\n"

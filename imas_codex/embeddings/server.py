@@ -262,7 +262,13 @@ def _cuda_available() -> bool:
 
     Catches both ImportError (torch not installed) and AttributeError
     (corrupted torch installation missing __init__.py / cuda submodule).
+
+    Respects IMAS_CODEX_FORCE_CPU=1 to skip the CUDA driver check
+    entirely — critical when the NVIDIA kernel module is deadlocked
+    (D-state processes) and torch.cuda.is_available() would hang.
     """
+    if os.environ.get("IMAS_CODEX_FORCE_CPU"):
+        return False
     try:
         import torch
 
