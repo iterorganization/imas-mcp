@@ -815,9 +815,39 @@ class GraphOverviewTool:
         ids_statistics = {}
         physics_domains = set()
 
+        # If query provided, try semantic search via ids_embedding vector index
+        semantic_scores: dict[str, float] = {}
+        if query:
+            try:
+                from imas_codex.embeddings.config import EncoderConfig
+                from imas_codex.embeddings.encoder import Encoder
+                from imas_codex.settings import get_embedding_model
+
+                encoder = Encoder(
+                    config=EncoderConfig(
+                        model_name=get_embedding_model(),
+                        normalize_embeddings=True,
+                    )
+                )
+                query_vec = encoder.embed_texts([query])[0].tolist()
+                sem_results = self._gc.query(
+                    """
+                    CALL db.index.vector.queryNodes(
+                        'ids_embedding', $k, $query_vec
+                    ) YIELD node, score
+                    RETURN node.id AS name, score
+                    """,
+                    k=20,
+                    query_vec=query_vec,
+                )
+                for r in sem_results or []:
+                    semantic_scores[r["name"]] = r["score"]
+            except Exception:
+                pass  # Vector index may not exist yet
+
         for r in ids_results or []:
             ids_name = r["name"]
-            # Apply query filter
+            # Apply query filter: text match OR semantic match
             if query:
                 query_lower = query.lower()
                 name_match = query_lower in ids_name.lower()
@@ -825,7 +855,8 @@ class GraphOverviewTool:
                 domain_match = (r["physics_domain"] or "").lower().find(
                     query_lower
                 ) >= 0
-                if not (name_match or desc_match or domain_match):
+                semantic_match = ids_name in semantic_scores
+                if not (name_match or desc_match or domain_match or semantic_match):
                     continue
 
             all_ids.append(ids_name)

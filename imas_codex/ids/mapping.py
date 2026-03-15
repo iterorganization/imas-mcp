@@ -695,21 +695,41 @@ def gather_context(
     }
 
 
+def _fetch_ids_description(ids_name: str, gc: GraphClient) -> str:
+    """Fetch the enriched IDS description from the graph."""
+    rows = gc.query(
+        """
+        MATCH (i:IDS {id: $ids_name})
+        RETURN i.enriched_description AS desc
+        """,
+        ids_name=ids_name,
+    )
+    if rows and rows[0].get("desc"):
+        return rows[0]["desc"]
+    return ""
+
+
 def assign_sections(
     facility: str,
     ids_name: str,
     context: dict[str, Any],
     *,
+    gc: "GraphClient | None" = None,
     model: str | None = None,
     cost: PipelineCost,
 ) -> SectionAssignmentBatch:
     """Assign signal sources to IMAS struct-array sections."""
     logger.info("Assigning signal sources to IMAS sections")
 
+    ids_description = ""
+    if gc is not None:
+        ids_description = _fetch_ids_description(ids_name, gc)
+
     prompt = _render_prompt(
         "section_assignment",
         facility=facility,
         ids_name=ids_name,
+        ids_description=ids_description,
         signal_sources=_format_sources(context["groups"]),
         imas_subtree=_format_subtree(context["subtree"]),
         semantic_results=_format_subtree(context["semantic"]),
@@ -1167,7 +1187,7 @@ def generate_mapping(
 
     # Step 1: Assign sections
     sections = assign_sections(
-        facility, ids_name, context, model=model, cost=cost
+        facility, ids_name, context, gc=gc, model=model, cost=cost
     )
 
     if not sections.assignments:

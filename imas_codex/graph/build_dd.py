@@ -1697,13 +1697,24 @@ def phase_enrich(
         force=force,
     )
 
+    # Enrich IDS nodes (depends on identifier enrichment for context)
+    from imas_codex.graph.dd_ids_enrichment import enrich_ids_nodes
+
+    ids_stats = enrich_ids_nodes(
+        client,
+        model=model,
+        force=force,
+    )
+
     return {
         "enriched_llm": enrichment_stats.get("enriched_llm", 0),
         "enriched_template": enrichment_stats.get("enriched_template", 0),
         "enrichment_cached": enrichment_stats.get("enrichment_cached", 0),
         "enrichment_cost": enrichment_stats.get("enrichment_cost", 0.0)
-        + ident_stats.get("cost", 0.0),
+        + ident_stats.get("cost", 0.0)
+        + ids_stats.get("cost", 0.0),
         "identifier_schemas_enriched": ident_stats.get("enriched", 0),
+        "ids_enriched": ids_stats.get("enriched", 0),
     }
 
 
@@ -1859,6 +1870,13 @@ def phase_embed(
     ident_embed_stats = embed_identifier_schemas(client, force_reembed=force_reembed)
     stats["identifier_embeddings_updated"] = ident_embed_stats["updated"]
     stats["identifier_embeddings_cached"] = ident_embed_stats["cached"]
+
+    # Embed enriched IDS nodes
+    from imas_codex.graph.dd_ids_enrichment import embed_ids_nodes
+
+    ids_embed_stats = embed_ids_nodes(client, force_reembed=force_reembed)
+    stats["ids_embeddings_updated"] = ids_embed_stats["updated"]
+    stats["ids_embeddings_cached"] = ids_embed_stats["cached"]
 
     return stats
 
@@ -2180,33 +2198,65 @@ def _create_coordinate_spec_nodes(client: GraphClient, specs: set[str]) -> None:
 
 
 def _collect_identifier_schemas(paths: dict[str, dict]) -> dict[str, dict]:
-    """Collect IdentifierSchema data from extracted path metadata.
+    """Collect IdentifierSchema data with full option metadata from DD XML.
 
-    Deduplicates by enum name and aggregates field counts and option values.
+    Uses ``imas_data_dictionaries.get_identifier_xml()`` to extract per-option
+    ``description`` and ``units`` alongside the ``index`` and ``name`` already
+    captured.  Also extracts the XML ``<header>`` text as the schema-level
+    description.
+
+    Falls back to path-metadata extraction when the XML API is unavailable.
     """
-    schemas: dict[str, dict] = {}
+    import xml.etree.ElementTree as ET
+
+    from imas_data_dictionaries import dd_identifiers, get_identifier_xml
+
+    # Count field references per enum name from extracted paths
+    referenced: dict[str, int] = {}
     for _path, info in paths.items():
         enum_name = info.get("identifier_enum_name")
-        if not enum_name:
+        if enum_name:
+            referenced[enum_name] = referenced.get(enum_name, 0) + 1
+
+    available = set(dd_identifiers())
+    schemas: dict[str, dict] = {}
+
+    for enum_name, field_count in referenced.items():
+        if enum_name not in available:
             continue
-        if enum_name not in schemas:
-            enum_values = info.get("_identifier_enum_values", {})
-            # Source from doc_identifier XML attribute
-            source = info.get("doc_identifier", "")
-            schemas[enum_name] = {
-                "id": enum_name,
-                "name": enum_name,
-                "options": json.dumps(
-                    [
-                        {"index": v, "name": k}
-                        for k, v in sorted(enum_values.items(), key=lambda x: x[1])
-                    ]
-                ),
-                "option_count": len(enum_values),
-                "field_count": 0,
-                "source": source,
-            }
-        schemas[enum_name]["field_count"] += 1
+        xml_bytes = get_identifier_xml(enum_name)
+        root = ET.fromstring(xml_bytes)
+
+        # Extract header as schema description
+        header = root.find("header")
+        description = (
+            header.text.strip() if header is not None and header.text else ""
+        )
+
+        # Extract per-option metadata from <int> elements
+        options = []
+        for child in root:
+            if child.tag == "int" and child.text:
+                options.append(
+                    {
+                        "index": int(child.text.strip()),
+                        "name": child.attrib.get("name", ""),
+                        "description": child.attrib.get("description", ""),
+                        "units": child.attrib.get("units", ""),
+                    }
+                )
+        options.sort(key=lambda o: o["index"])
+
+        schemas[enum_name] = {
+            "id": enum_name,
+            "name": enum_name,
+            "description": description,
+            "options": json.dumps(options),
+            "option_count": len(options),
+            "field_count": field_count,
+            "source": f"utilities/{enum_name}.xml",
+        }
+
     return schemas
 
 
@@ -2220,6 +2270,7 @@ def _create_identifier_schema_nodes(
         UNWIND $schemas AS s
         MERGE (schema:IdentifierSchema {id: s.id})
         SET schema.name = s.name,
+            schema.description = s.description,
             schema.option_count = s.option_count,
             schema.options = s.options,
             schema.field_count = s.field_count,

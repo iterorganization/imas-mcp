@@ -168,18 +168,13 @@ def enrich_identifier_schemas(
                 except (json.JSONDecodeError, TypeError):
                     pass
 
-            option_names = [
-                opt.get("name", str(opt.get("index", "")))
-                for opt in options[:20]  # Cap display at 20 options
-            ]
-
             batch_data.append(
                 {
                     "index": idx,
                     "name": schema["name"],
                     "description": schema.get("description") or "",
                     "option_count": schema.get("option_count") or len(options),
-                    "options_preview": ", ".join(option_names),
+                    "options": options,
                     "field_count": schema.get("field_count") or 0,
                     "source": schema.get("source") or "",
                 }
@@ -191,19 +186,32 @@ def enrich_identifier_schemas(
             context={"batch": batch_data},
         )
 
-        # Build user message
+        # Build user message with full option context
         user_lines = ["Enrich the following IMAS identifier schemas:\n"]
         for entry in batch_data:
             user_lines.append(f"\n### Schema {entry['index']}: `{entry['name']}`")
             if entry["description"]:
-                user_lines.append(f"- Description: {entry['description']}")
+                user_lines.append(f"- Header: {entry['description']}")
             user_lines.append(f"- Option count: {entry['option_count']}")
-            if entry["options_preview"]:
-                user_lines.append(f"- Options: {entry['options_preview']}")
             if entry["field_count"]:
-                user_lines.append(f"- Used by {entry['field_count']} fields in the DD")
+                user_lines.append(
+                    f"- Used by {entry['field_count']} fields in the DD"
+                )
             if entry["source"]:
                 user_lines.append(f"- Source: {entry['source']}")
+            if entry["options"]:
+                user_lines.append("- Options:")
+                for opt in entry["options"]:
+                    idx = opt.get("index", "")
+                    name = opt.get("name", "")
+                    desc = opt.get("description", "")
+                    units = opt.get("units", "")
+                    line = f"    - {idx}: {name}"
+                    if desc:
+                        line += f" — {desc}"
+                    if units:
+                        line += f" [{units}]"
+                    user_lines.append(line)
 
         messages = [
             {"role": "system", "content": system_prompt},
@@ -241,13 +249,14 @@ def enrich_identifier_schemas(
                     }
                 )
 
-            # Batch update graph
+            # Batch update graph — set both description and enriched_description
             if updates:
                 client.query(
                     """
                     UNWIND $updates AS u
                     MATCH (s:IdentifierSchema {id: u.id})
-                    SET s.enriched_description = u.enriched_description,
+                    SET s.description = u.enriched_description,
+                        s.enriched_description = u.enriched_description,
                         s.keywords = u.keywords,
                         s.enrichment_hash = u.enrichment_hash,
                         s.enrichment_source = u.enrichment_source
