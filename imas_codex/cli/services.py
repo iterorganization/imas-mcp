@@ -1050,6 +1050,7 @@ def deploy_embed_noslurm(gpus: int = _DEFAULT_GPUS, workers: int | None = None) 
         f"source $HOME/Code/imas-codex/.env 2>/dev/null || true\n"
         f'echo "codex-embed started on $(hostname) at $(date)" > {log_file}\n'
         f"export CUDA_VISIBLE_DEVICES={gpu_ids}\n"
+        f"export IMAS_CODEX_GPU_MEMORY_FRACTION=0.95\n"
         f"nohup uv run --offline --extra gpu imas-codex embed start -f "
         f"--host 0.0.0.0 --port {port} "
         f"--gpus {gpu_ids} --workers {workers} "
@@ -1077,8 +1078,12 @@ def deploy_embed_noslurm(gpus: int = _DEFAULT_GPUS, workers: int | None = None) 
 
     # Wait for health check
     click.echo("  Waiting for health check...")
+    # Sequential startup with startup lock: each worker loads the model
+    # one at a time (~30s each).  8 workers × 30s + overhead ≈ 5 minutes.
+    health_timeout_s = max(90, workers * 45)
+    health_attempts = health_timeout_s // 3
     health_cmd = f"curl -sf http://{host}:{port}/health"
-    for attempt in range(30):
+    for attempt in range(health_attempts):
         time.sleep(3)
         try:
             result = _run_remote(health_cmd, timeout=5)
@@ -1090,7 +1095,11 @@ def deploy_embed_noslurm(gpus: int = _DEFAULT_GPUS, workers: int | None = None) 
         if attempt % 5 == 4:
             click.echo(f"  Still waiting... ({(attempt + 1) * 3}s)")
 
-    click.echo(click.style("  ✗ Health check timed out after 90s", fg="red"))
+    click.echo(
+        click.style(
+            f"  ✗ Health check timed out after {health_timeout_s}s", fg="red"
+        )
+    )
     click.echo(f"  Check logs: ssh {host} 'tail -50 {log_file}'")
 
 

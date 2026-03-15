@@ -271,14 +271,153 @@ def _cuda_available() -> bool:
         return False
 
 
+def _init_worker_gpu() -> None:
+    """Claim a GPU and load the model with serialized CUDA initialization.
+
+    Uses an exclusive file lock so only ONE worker at a time performs
+    CUDA initialization.  This prevents the CUDA driver deadlock that
+    occurs when multiple workers call torch.cuda.init() simultaneously,
+    which leaves processes in uninterruptible D state and causes the
+    node to enter SLURM "draining" with "Kill task failed".
+
+    The lock is held during: GPU claim → torch import → CUDA context
+    creation → model download/load → first inference warmup.  Released
+    once the model is fully on the GPU and ready to serve.
+
+    Runs in a background thread (via asyncio.to_thread) so the async
+    event loop isn't blocked — uvicorn can still respond to the master
+    process's health probes while waiting for the lock.
+    """
+    global _encoder, _worker_gpu
+    global _gpu_name, _gpu_memory_mb, _cached_device_info, _cached_embedding_dim
+
+    # Ensure Python logging works in worker subprocesses.
+    # Uvicorn configures its own loggers but not the root logger,
+    # so our logger.info() etc. would go nowhere without this.
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(levelname)s:     %(message)s",
+        force=True,
+    )
+
+    master_pid = os.getppid()
+    lock_path = os.path.join(
+        tempfile.gettempdir(),
+        f"codex-embed-startup-{master_pid}.lock",
+    )
+    lock_fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+
+    try:
+        logger.info(
+            "Worker PID %d: waiting for CUDA init lock...", os.getpid()
+        )
+        # Blocking exclusive lock — only one worker initializes at a time.
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        logger.info(
+            "Worker PID %d: acquired CUDA init lock", os.getpid()
+        )
+
+        # Claim a GPU slot
+        if _gpu_pool:
+            gpu_id = _claim_gpu()
+            if gpu_id is not None:
+                _worker_gpu = gpu_id
+                os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+
+        # Set BEFORE importing torch
+        os.environ.setdefault(
+            "PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True"
+        )
+
+        logger.info("Loading embedding model...")
+        start = time.time()
+
+        from imas_codex.embeddings.config import EmbeddingBackend, EncoderConfig
+        from imas_codex.embeddings.encoder import Encoder
+        from imas_codex.settings import get_embedding_model
+
+        model_name = get_embedding_model()
+        device = "cuda" if _cuda_available() else "cpu"
+
+        cuda_visible = os.environ.get("CUDA_VISIBLE_DEVICES", None)
+        if cuda_visible:
+            logger.info("CUDA_VISIBLE_DEVICES=%s", cuda_visible)
+
+        # GPU memory protection.
+        is_dedicated = bool(os.environ.get("SLURM_JOB_ID"))
+        default_fraction = "0.95" if is_dedicated else "0.6"
+
+        if device == "cuda":
+            try:
+                import torch
+
+                mem_fraction = float(
+                    os.environ.get(
+                        "IMAS_CODEX_GPU_MEMORY_FRACTION", default_fraction
+                    )
+                )
+                torch.cuda.set_per_process_memory_fraction(mem_fraction)
+                free_mb, total_mb = torch.cuda.mem_get_info(0)
+                logger.info(
+                    "GPU memory cap: %.0f%% of %.0f MiB = %.0f MiB "
+                    "(free: %.0f MiB, others using: %.0f MiB, dedicated=%s)",
+                    mem_fraction * 100,
+                    total_mb / 1024 / 1024,
+                    mem_fraction * total_mb / 1024 / 1024,
+                    free_mb / 1024 / 1024,
+                    (total_mb - free_mb) / 1024 / 1024,
+                    is_dedicated,
+                )
+            except Exception as e:
+                logger.warning("Failed to set GPU memory cap: %s", e)
+
+        config = EncoderConfig(
+            model_name=model_name,
+            device=device,
+            backend=EmbeddingBackend.LOCAL,
+            normalize_embeddings=True,
+            use_rich=False,
+            batch_size=32,
+        )
+
+        _encoder = Encoder(config=config)
+
+        # Cache GPU info
+        _gpu_name, _gpu_memory_mb = _get_gpu_info()
+        _cached_device_info = _encoder.device_info
+        try:
+            _cached_embedding_dim = (
+                _encoder.get_model().get_sentence_embedding_dimension() or 0
+            )
+        except Exception:
+            _cached_embedding_dim = 0
+
+        load_time = time.time() - start
+        logger.info(
+            "Model %s loaded in %.1fs (device=%s, gpu=%s)",
+            model_name,
+            load_time,
+            device,
+            _gpu_name or "none",
+        )
+
+    finally:
+        # Release the lock so the next worker can initialize.
+        # Small grace period for the CUDA driver to settle.
+        time.sleep(2)
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        os.close(lock_fd)
+        logger.info(
+            "Worker PID %d GPU %s: released CUDA init lock",
+            os.getpid(),
+            _worker_gpu,
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Load model at startup, cleanup at shutdown."""
-    global _encoder
     global _startup_time, _last_request_time, _shutdown_event
-    global _gpu_name, _gpu_memory_mb, _cached_device_info, _cached_embedding_dim
-
-    global _worker_gpu
 
     # Multi-worker GPU claim: each worker process picks a unique GPU
     # from the pool configured via IMAS_CODEX_GPU_POOL env var.
@@ -286,111 +425,13 @@ async def lifespan(app: FastAPI):
     if pool_env and not _gpu_pool:
         _gpu_pool.extend(int(g) for g in pool_env.split(",") if g.strip())
 
-    if _gpu_pool:
-        gpu_id = _claim_gpu()
-        if gpu_id is not None:
-            _worker_gpu = gpu_id
-            os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+    # Run CUDA initialization in a thread so the event loop isn't blocked.
+    # This lets uvicorn's master process communicate with the worker
+    # (health probes, signal handling) while waiting for the startup lock.
+    await asyncio.to_thread(_init_worker_gpu)
 
-            # Stagger CUDA initialization across workers.  When 8 workers
-            # all call torch.cuda.init() simultaneously, they can deadlock
-            # on the CUDA driver's internal lock, leaving processes stuck
-            # in D (uninterruptible I/O) state indefinitely.  SLURM then
-            # fails to kill them → node enters "draining" state.
-            # Slot-based delay: GPU 0 starts immediately, GPU 7 waits 7s.
-            stagger_s = gpu_id * 1.0
-            if stagger_s > 0:
-                logger.info(
-                    "Worker GPU %d: staggering CUDA init by %.0fs", gpu_id, stagger_s
-                )
-                await asyncio.sleep(stagger_s)
-
-    # Set BEFORE importing torch — the allocator config is read at
-    # CUDA initialization time, not when we call set_per_process_memory_fraction.
-    os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
-
-    logger.info("Loading embedding model...")
-    start = time.time()
-
-    # Import here to avoid circular imports
-    from imas_codex.embeddings.config import EmbeddingBackend, EncoderConfig
-    from imas_codex.embeddings.encoder import Encoder
-    from imas_codex.settings import get_embedding_model
-
-    model_name = get_embedding_model()
-    device = "cuda" if _cuda_available() else "cpu"
-
-    # Log CUDA device selection
-    cuda_visible = os.environ.get("CUDA_VISIBLE_DEVICES", None)
-    if cuda_visible:
-        logger.info("CUDA_VISIBLE_DEVICES=%s", cuda_visible)
-
-    # GPU memory protection.
-    # On shared login nodes (T4 + NX desktops), cap to 60% to coexist.
-    # On dedicated compute nodes (SLURM job on titan), use 95%.
-    is_dedicated = bool(os.environ.get("SLURM_JOB_ID"))
-    default_fraction = "0.95" if is_dedicated else "0.6"
-
-    if device == "cuda":
-        try:
-            import torch
-
-            mem_fraction = float(
-                os.environ.get("IMAS_CODEX_GPU_MEMORY_FRACTION", default_fraction)
-            )
-            torch.cuda.set_per_process_memory_fraction(mem_fraction)
-            free_mb, total_mb = torch.cuda.mem_get_info(0)
-            logger.info(
-                "GPU memory cap: %.0f%% of %.0f MiB = %.0f MiB "
-                "(free: %.0f MiB, others using: %.0f MiB, dedicated=%s)",
-                mem_fraction * 100,
-                total_mb / 1024 / 1024,
-                mem_fraction * total_mb / 1024 / 1024,
-                free_mb / 1024 / 1024,
-                (total_mb - free_mb) / 1024 / 1024,
-                is_dedicated,
-            )
-        except Exception as e:
-            logger.warning("Failed to set GPU memory cap: %s", e)
-
-    config = EncoderConfig(
-        model_name=model_name,
-        device=device,
-        # CRITICAL: Server must always use LOCAL backend (its own GPU).
-        # Without this, it reads pyproject.toml which says "remote"
-        # causing the server to try calling itself via HTTP.
-        backend=EmbeddingBackend.LOCAL,
-        normalize_embeddings=True,
-        use_rich=False,
-        # Conservative batch size to limit peak VRAM.  Smaller batches
-        # reduce the memory high-water mark and allow empty_cache() to
-        # release blocks between batches for NX sessions.
-        batch_size=32,
-    )
-
-    _encoder = Encoder(config=config)
     _startup_time = time.time()
     _last_request_time = time.time()
-
-    # Cache GPU info once at startup to avoid blocking CUDA calls
-    # in request handlers (which would block the async event loop)
-    _gpu_name, _gpu_memory_mb = _get_gpu_info()
-    _cached_device_info = _encoder.device_info
-    try:
-        _cached_embedding_dim = (
-            _encoder.get_model().get_sentence_embedding_dimension() or 0
-        )
-    except Exception:
-        _cached_embedding_dim = 0
-
-    load_time = time.time() - start
-    logger.info(
-        "Model %s loaded in %.1fs (device=%s, gpu=%s)",
-        model_name,
-        load_time,
-        device,
-        _gpu_name or "none",
-    )
 
     # Write initial worker state for /workers endpoint
     _write_worker_state()
