@@ -42,6 +42,11 @@ def embed():
     help="Run server in foreground (for debugging or SLURM batch scripts)",
 )
 @click.option(
+    "--no-slurm",
+    is_flag=True,
+    help="Deploy via SSH+nohup instead of SLURM (for when node is draining)",
+)
+@click.option(
     "--gpus",
     "-g",
     default=None,
@@ -95,6 +100,7 @@ def embed():
 )
 def embed_start(
     foreground: bool,
+    no_slurm: bool,
     gpus: str | None,
     workers: int | None,
     host: str,
@@ -112,6 +118,7 @@ def embed_start(
     - SLURM compute (e.g. titan): submits a SLURM batch job
     - Login node: starts via systemd
     - --foreground: runs server directly (for debugging)
+    - --no-slurm: SSH+nohup to compute node (when node is draining)
 
     SLURM batch scripts call this with --foreground internally.
 
@@ -121,6 +128,7 @@ def embed_start(
         imas-codex embed start -g 2      # Deploy with 2 GPUs
         imas-codex embed start -f        # Run in foreground
         imas-codex embed start -f --gpu 1  # Foreground on GPU 1
+        imas-codex embed start --no-slurm  # Bypass SLURM
     """
     # Auto-detect foreground: if SLURM_JOB_ID is set, we're inside a batch
     # script and should run the server directly
@@ -138,6 +146,11 @@ def embed_start(
             workers=workers or 1,
             gpus=gpus,
         )
+    elif no_slurm:
+        from imas_codex.cli.services import deploy_embed_noslurm
+
+        gpu_count = int(gpus) if gpus else _DEFAULT_GPUS
+        deploy_embed_noslurm(gpu_count, workers)
     else:
         _start_deploy(gpus=gpus, workers=workers)
 
@@ -669,7 +682,12 @@ def embed_stop() -> None:
     type=int,
     help="Worker processes (default: same as gpus)",
 )
-def embed_restart(gpus: int, workers: int | None) -> None:
+@click.option(
+    "--no-slurm",
+    is_flag=True,
+    help="Deploy via SSH+nohup instead of SLURM (for when node is draining)",
+)
+def embed_restart(gpus: int, workers: int | None, no_slurm: bool) -> None:
     """Restart the embedding server (stop + start).
 
     Cancels the existing embed SLURM job and submits a new one.
@@ -677,8 +695,9 @@ def embed_restart(gpus: int, workers: int | None) -> None:
 
     \b
     Examples:
-        imas-codex embed restart         # Restart
-        imas-codex embed restart -g 2    # Restart with 2 GPUs
+        imas-codex embed restart             # Restart via SLURM
+        imas-codex embed restart --no-slurm  # Restart via SSH+nohup
+        imas-codex embed restart -g 2        # Restart with 2 GPUs
     """
     # Full stop — reuse embed_stop to cancel SLURM, systemd, AND kill rogues
     ctx = click.get_current_context()
@@ -686,7 +705,11 @@ def embed_restart(gpus: int, workers: int | None) -> None:
     time.sleep(2)
 
     # Start
-    if _is_compute_target():
+    if no_slurm:
+        from imas_codex.cli.services import deploy_embed_noslurm
+
+        deploy_embed_noslurm(gpus, workers)
+    elif _is_compute_target():
         deploy_embed(gpus, workers)
     else:
         _deploy_login_embed()
