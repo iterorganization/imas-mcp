@@ -1741,11 +1741,23 @@ def phase_embed(
             merged_paths.update(vdata["paths"])
             merged_ids_info.update(vdata["ids_info"])
 
+    # Detect error relationships before filtering (needs all paths)
+    all_paths_for_errors = dict(merged_paths)
+
+    # Filter merged version data to data nodes only — error/metadata skip embedding
+    merged_paths = {
+        path: info
+        for path, info in merged_paths.items()
+        if _classify_node(path, info.get("name", path.split("/")[-1])) == "data"
+    }
+
     # Also include graph paths not in version_data (from previous builds)
-    # so that incremental builds still embed all paths
+    # so that incremental builds still embed all paths.
+    # Only embed data nodes — error/metadata nodes are excluded.
     existing_paths_query = """
     MATCH (p:IMASNode)
     WHERE p.embedding IS NULL
+      AND p.node_category = 'data'
     RETURN p.id AS id, p.name AS name, p.documentation AS documentation,
            p.data_type AS data_type, p.ids AS ids, p.units AS units,
            p.description AS description, p.keywords AS keywords,
@@ -1780,7 +1792,7 @@ def phase_embed(
     if not merged_paths:
         return stats
 
-    error_relationships = _detect_error_relationships(merged_paths)
+    error_relationships = _detect_error_relationships(all_paths_for_errors)
 
     if on_progress:
         on_progress(0, len(merged_paths))
@@ -1922,6 +1934,7 @@ def phase_cluster(
     dry_run: bool = False,
     force_reembed: bool = False,
     on_progress: "Callable[[int, int], None] | None" = None,
+    stop_check: "Callable[[], bool] | None" = None,
 ) -> int:
     """Import semantic clusters.
 
@@ -1930,6 +1943,8 @@ def phase_cluster(
             cluster text (labels/descriptions).
         on_progress: Optional callback ``(processed, total)`` for
             live progress updates during cluster import.
+        stop_check: Optional callable returning True when the
+            operation should be interrupted (e.g. Ctrl+C).
 
     Returns:
         Number of cluster nodes created.
@@ -1940,6 +1955,7 @@ def phase_cluster(
         use_rich=False,
         force_reembed=force_reembed,
         on_progress=on_progress,
+        stop_check=stop_check,
     )
 
 
@@ -2078,6 +2094,12 @@ def _ensure_indexes(client: GraphClient) -> None:
 
     # IMASNode.id - critical for MERGE and relationship creation
     client.query("CREATE INDEX imaspath_id IF NOT EXISTS FOR (p:IMASNode) ON (p.id)")
+
+    # IMASNode.node_category - indexed filtering for search/enrichment/embedding
+    client.query(
+        "CREATE INDEX imas_node_category IF NOT EXISTS "
+        "FOR (p:IMASNode) ON (p.node_category)"
+    )
 
     # IDS.name - for IDS relationship lookups
     client.query("CREATE INDEX ids_name IF NOT EXISTS FOR (i:IDS) ON (i.name)")
@@ -2267,6 +2289,28 @@ def _batch_upsert_ids_nodes(
         )
 
 
+def _classify_node(path_id: str, name: str) -> str:
+    """Classify an IMASNode path into a node_category.
+
+    Returns 'data', 'error', or 'metadata' based on path structure.
+    Delegates to ExclusionChecker for consistent classification logic.
+    Used at node creation time to set the indexed node_category property.
+    """
+    from imas_codex.core.exclusions import ExclusionChecker
+
+    # Use a checker with both error fields and ggd included so that
+    # _is_error_field and _is_metadata_path are the only classification
+    # criteria — we want to classify, not exclude based on settings.
+    checker = ExclusionChecker(include_error_fields=False, include_ggd=True)
+
+    if checker._is_error_field(name):
+        return "error"
+    if checker._is_metadata_path(path_id):
+        return "metadata"
+
+    return "data"
+
+
 def _batch_create_path_nodes(
     client: GraphClient,
     paths_data: dict[str, dict],
@@ -2282,11 +2326,13 @@ def _batch_create_path_nodes(
     for path, path_info in paths_data.items():
         ids_name = path.split("/")[0]
         physics_domain = physics_categorizer.get_domain_for_ids(ids_name).value
+        name = path_info.get("name", "")
 
         path_list.append(
             {
                 "id": path,
-                "name": path_info.get("name", ""),
+                "name": name,
+                "node_category": _classify_node(path, name),
                 "documentation": path_info.get("documentation", ""),
                 "data_type": path_info.get("data_type"),
                 "ndim": path_info.get("ndim", 0),
@@ -2337,6 +2383,7 @@ def _batch_create_path_nodes(
             UNWIND $paths AS p
             MERGE (path:IMASNode {id: p.id})
             SET path.name = p.name,
+                path.node_category = p.node_category,
                 path.documentation = p.documentation,
                 path.data_type = p.data_type,
                 path.ndim = p.ndim,
@@ -2733,6 +2780,7 @@ def _import_clusters(
     use_rich: bool | None = None,
     force_reembed: bool = False,
     on_progress: "Callable[[int, int], None] | None" = None,
+    stop_check: "Callable[[], bool] | None" = None,
 ) -> int:
     """Build semantic clusters from graph embeddings and merge into the graph.
 
@@ -2751,10 +2799,15 @@ def _import_clusters(
         use_rich: Force rich progress setting
         on_progress: Optional callback ``(processed, total)`` for
             live progress updates.
+        stop_check: Optional callable returning True when the
+            operation should be interrupted (e.g. Ctrl+C).
 
     Returns:
         Number of clusters created/updated
     """
+    def _stopped() -> bool:
+        return stop_check is not None and stop_check()
+
     with suppress_third_party_logging():
         try:
             from imas_codex.clusters.hierarchical import HierarchicalClusterer
@@ -2786,6 +2839,10 @@ def _import_clusters(
                 embeddings.shape[1],
             )
 
+            if _stopped():
+                logger.info("Clustering interrupted after loading embeddings")
+                return 0
+
             # Step 2: Run HDBSCAN clustering
             logger.info("Running hierarchical clustering...")
             clusterer = HierarchicalClusterer(
@@ -2805,6 +2862,10 @@ def _import_clusters(
                 return 0
 
             logger.info("HDBSCAN produced %d clusters", len(clusters))
+
+            if _stopped():
+                logger.info("Clustering interrupted after HDBSCAN")
+                return 0
 
             if on_progress:
                 on_progress(0, len(clusters))
@@ -2846,6 +2907,10 @@ def _import_clusters(
                     )
 
             # Step 4: Get existing cluster IDs for stale detection
+            if _stopped():
+                logger.info("Clustering interrupted before graph merge")
+                return 0
+
             existing_result = client.query(
                 "MATCH (c:IMASSemanticCluster) RETURN c.id AS id"
             )
@@ -2854,6 +2919,10 @@ def _import_clusters(
             )
 
             # Step 5: MERGE cluster nodes (preserves existing label/description)
+            if _stopped():
+                logger.info("Clustering interrupted before node merge")
+                return 0
+
             logger.info("Merging %d cluster nodes...", len(cluster_batch))
             for i in range(0, len(cluster_batch), 1000):
                 batch = cluster_batch[i : i + 1000]
@@ -2877,6 +2946,10 @@ def _import_clusters(
 
             # Step 6: Clear old IN_CLUSTER relationships for clusters being updated
             #         then recreate them. This handles membership changes.
+            if _stopped():
+                logger.info("Clustering interrupted after node merge")
+                return len(clusters)
+
             updated_ids = list(new_cluster_ids & existing_ids)
             if updated_ids:
                 for i in range(0, len(updated_ids), 1000):
@@ -2891,6 +2964,10 @@ def _import_clusters(
                     )
 
             # Step 7: Create IN_CLUSTER relationships
+            if _stopped():
+                logger.info("Clustering interrupted before membership creation")
+                return len(clusters)
+
             logger.info(
                 "Creating %d IN_CLUSTER relationships...", len(membership_batch)
             )
@@ -2919,6 +2996,10 @@ def _import_clusters(
                 WITH c, member_count, dim,
                      [i IN range(0, dim - 1) |
                         reduce(s = 0.0, emb IN embeddings | s + emb[i]) / member_count
+            if _stopped():
+                logger.info("Clustering interrupted before centroid computation")
+                return len(clusters)
+
                      ] AS centroid_raw
                 WITH c, centroid_raw,
                      sqrt(reduce(s = 0.0, x IN centroid_raw | s + x * x)) AS norm
@@ -2940,9 +3021,17 @@ def _import_clusters(
             )
 
             # Step 8.5: Generate labels for unlabeled clusters via LLM
+            if _stopped():
+                logger.info("Clustering interrupted before LLM labeling")
+                return len(clusters)
+
             _label_unlabeled_clusters(client, batch_size=50)
 
             # Step 9: Embed cluster labels and descriptions (with hash caching)
+            if _stopped():
+                logger.info("Clustering interrupted before text embedding")
+                return len(clusters)
+
             _embed_cluster_text(
                 client,
                 embedding_batch_size=256,
@@ -2951,6 +3040,10 @@ def _import_clusters(
             )
 
             # Step 10: Delete stale clusters no longer in the computation
+            if _stopped():
+                logger.info("Clustering interrupted before stale cleanup")
+                return len(clusters)
+
             stale_ids = existing_ids - new_cluster_ids
             if stale_ids:
                 logger.info("Removing %d stale clusters...", len(stale_ids))
