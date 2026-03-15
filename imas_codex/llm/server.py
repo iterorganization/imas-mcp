@@ -2066,6 +2066,9 @@ class AgentsServer:
             facility: str,
             k: int = 15,
             site: str | None = None,
+            physics_domain: str | None = None,
+            min_score: float | None = None,
+            score_dimension: str | None = None,
         ) -> str:
             """Search documentation (wiki, documents, images) with cross-links.
 
@@ -2080,18 +2083,34 @@ class AgentsServer:
                 facility: Facility id (required, e.g. "tcv", "jet")
                 k: Results per index (default 15)
                 site: Optional wiki site filter (substring match on wiki URL)
+                physics_domain: Filter by WikiPage physics domain (e.g. "equilibrium")
+                min_score: Minimum score threshold for score_dimension
+                score_dimension: Score dimension to filter on. Valid dimensions:
+                    score_imas_relevance, score_physics_depth, score_operational,
+                    score_engineering, score_tutorial, score_composite
 
             Returns:
                 Formatted report with wiki documentation grouped by page,
                 cross-links to signals/IMAS paths, and related documents.
             """
-            return _search_docs(query, facility, k=k, site=site)
+            return _search_docs(
+                query,
+                facility,
+                k=k,
+                site=site,
+                physics_domain=physics_domain,
+                min_score=min_score,
+                score_dimension=score_dimension,
+            )
 
         @self.mcp.tool()
         def search_code(
             query: str,
             facility: str | None = None,
             k: int = 10,
+            physics_domain: str | None = None,
+            min_score: float | None = None,
+            score_dimension: str | None = None,
         ) -> str:
             """Search ingested code with data reference enrichment.
 
@@ -2105,12 +2124,25 @@ class AgentsServer:
                 query: Natural language search text (e.g. "equilibrium reconstruction")
                 facility: Optional facility filter (e.g. "tcv")
                 k: Number of results (default 10)
+                physics_domain: Filter by FacilityPath physics domain (e.g. "equilibrium")
+                min_score: Minimum score threshold for score_dimension
+                score_dimension: Score dimension to filter on. Valid dimensions:
+                    score_modeling_code, score_analysis_code, score_operations_code,
+                    score_data_access, score_workflow, score_visualization,
+                    score_documentation, score_imas, score_convention, score_composite
 
             Returns:
                 Formatted report with code examples, data references,
                 and directory context.
             """
-            return _search_code(query, facility=facility, k=k)
+            return _search_code(
+                query,
+                facility=facility,
+                k=k,
+                physics_domain=physics_domain,
+                min_score=min_score,
+                score_dimension=score_dimension,
+            )
 
         @self.mcp.tool()
         def search_imas(

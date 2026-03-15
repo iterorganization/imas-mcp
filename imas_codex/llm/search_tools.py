@@ -623,6 +623,9 @@ def _search_docs(
     *,
     k: int = 10,
     site: str | None = None,
+    physics_domain: str | None = None,
+    min_score: float | None = None,
+    score_dimension: str | None = None,
     gc: GraphClient | None = None,
     encoder: Encoder | None = None,
 ) -> str:
@@ -630,6 +633,18 @@ def _search_docs(
 
     Performs vector search across wiki chunks, documents, and images,
     enriches with cross-links to signals, tree nodes, and IMAS paths.
+
+    Args:
+        query: Natural language search text.
+        facility: Facility identifier.
+        k: Number of results.
+        site: Optional wiki site filter.
+        physics_domain: Filter wiki pages by physics domain.
+        min_score: Minimum score threshold for score_dimension.
+        score_dimension: Score dimension to filter on (default: score_composite).
+            Valid content dimensions: score_data_documentation,
+            score_physics_content, score_code_documentation, score_data_access,
+            score_calibration, score_imas_relevance, score_composite.
     """
     try:
         if gc is None:
@@ -650,7 +665,9 @@ def _search_docs(
     try:
         # Step 1: Vector search on wiki chunks
         chunk_ids, scores = _vector_search_wiki_chunks(
-            gc, embedding, facility, k, site=site
+            gc, embedding, facility, k, site=site,
+            physics_domain=physics_domain,
+            min_score=min_score, score_dimension=score_dimension,
         )
 
         # Step 1b: Text search for keyword matches (hybrid boost)
@@ -714,31 +731,49 @@ def _vector_search_wiki_chunks(
     facility: str,
     k: int,
     site: str | None = None,
+    physics_domain: str | None = None,
+    min_score: float | None = None,
+    score_dimension: str | None = None,
 ) -> tuple[list[str], dict[str, float]]:
     """Vector search on wiki_chunk_embedding index.
 
     Uses property-based facility filter with over-fetching.
-    Optionally filters by wiki site URL substring.
+    Optionally filters by wiki site URL substring, physics domain,
+    and score dimension thresholds.
     """
     internal_k = max(k * 5, 200)
+    # Build dynamic WHERE clauses for WikiPage join
+    page_filters: list[str] = []
+    params: dict[str, Any] = {
+        "k": internal_k,
+        "embedding": embedding,
+        "facility": facility,
+        "limit": k,
+    }
     if site:
+        page_filters.append("p.wiki_site CONTAINS $site")
+        params["site"] = site
+    if physics_domain:
+        page_filters.append("p.physics_domain = $physics_domain")
+        params["physics_domain"] = physics_domain
+    if min_score is not None:
+        dim = score_dimension or "score_composite"
+        # Sanitize dimension name to prevent injection
+        dim = "".join(c for c in dim if c.isalnum() or c == "_")
+        page_filters.append(f"p.{dim} >= $min_score")
+        params["min_score"] = min_score
+
+    if page_filters:
+        page_where = " AND ".join(page_filters)
         cypher = (
             'CALL db.index.vector.queryNodes("wiki_chunk_embedding", $k, $embedding) '
             "YIELD node AS c, score "
             "WHERE c.facility_id = $facility "
             "WITH c, score "
             "MATCH (p:WikiPage)-[:HAS_CHUNK]->(c) "
-            "WHERE p.wiki_site CONTAINS $site "
+            f"WHERE {page_where} "
             "RETURN c.id AS id, score "
             "ORDER BY score DESC LIMIT $limit"
-        )
-        results = gc.query(
-            cypher,
-            k=internal_k,
-            embedding=embedding,
-            facility=facility,
-            site=site,
-            limit=k,
         )
     else:
         cypher = (
@@ -748,9 +783,8 @@ def _vector_search_wiki_chunks(
             "RETURN c.id AS id, score "
             "ORDER BY score DESC LIMIT $limit"
         )
-        results = gc.query(
-            cypher, k=internal_k, embedding=embedding, facility=facility, limit=k
-        )
+
+    results = gc.query(cypher, **params)
     ids = [r["id"] for r in results]
     scores = {r["id"]: round(r["score"], 3) for r in results}
     return ids, scores
@@ -1222,6 +1256,9 @@ def _search_code(
     *,
     facility: str | None = None,
     k: int = 10,
+    physics_domain: str | None = None,
+    min_score: float | None = None,
+    score_dimension: str | None = None,
     gc: GraphClient | None = None,
     encoder: Encoder | None = None,
 ) -> str:
@@ -1229,6 +1266,18 @@ def _search_code(
 
     Performs hybrid search (vector + text) on code chunks, enriches
     with data references (MDSplus, TDI, IMAS) and directory context.
+
+    Args:
+        query: Natural language search text.
+        facility: Optional facility filter.
+        k: Number of results.
+        physics_domain: Filter code by FacilityPath physics domain.
+        min_score: Minimum score threshold for score_dimension.
+        score_dimension: Score dimension to filter on (default: score_composite).
+            Valid code dimensions: score_modeling_code, score_analysis_code,
+            score_operations_code, score_data_access, score_workflow,
+            score_visualization, score_documentation, score_imas,
+            score_convention, score_composite.
     """
     try:
         if gc is None:
@@ -1248,7 +1297,11 @@ def _search_code(
 
     try:
         # Step 1: Vector search on code chunks
-        chunk_ids, scores = _vector_search_code_chunks(gc, embedding, facility, k)
+        chunk_ids, scores = _vector_search_code_chunks(
+            gc, embedding, facility, k,
+            physics_domain=physics_domain,
+            min_score=min_score, score_dimension=score_dimension,
+        )
 
         # Step 1b: Text search for keyword matches (hybrid boost)
         text_chunks = _text_search_code_chunks(gc, query, facility, k)
@@ -1302,33 +1355,52 @@ def _vector_search_code_chunks(
     embedding: list[float],
     facility: str | None,
     k: int,
+    physics_domain: str | None = None,
+    min_score: float | None = None,
+    score_dimension: str | None = None,
 ) -> tuple[list[str], dict[str, float]]:
     """Vector search on code_chunk_embedding index.
 
     Facility filtering uses CodeChunk's ``facility_id`` property directly.
+    Optionally filters by FacilityPath physics domain and score dimensions.
     """
     # Over-fetch to avoid facility starvation when one facility dominates
     internal_k = max(k * 5, 200)
-    params: dict[str, Any] = {"k": internal_k, "embedding": embedding}
+    params: dict[str, Any] = {"k": internal_k, "embedding": embedding, "limit": k}
 
+    where_parts: list[str] = []
     if facility is not None:
-        cypher = (
-            'CALL db.index.vector.queryNodes("code_chunk_embedding", $k, $embedding) '
-            "YIELD node AS cc, score "
-            "WHERE cc.facility_id = $facility "
-            "RETURN cc.id AS id, score "
-            "ORDER BY score DESC LIMIT $limit"
-        )
+        where_parts.append("cc.facility_id = $facility")
         params["facility"] = facility
-        params["limit"] = k
-    else:
-        cypher = (
-            'CALL db.index.vector.queryNodes("code_chunk_embedding", $k, $embedding) '
-            "YIELD node AS cc, score "
-            "RETURN cc.id AS id, score "
-            "ORDER BY score DESC LIMIT $limit"
+
+    where_clause = " AND ".join(where_parts) if where_parts else "true"
+
+    # Build optional path-level filter join for physics_domain/score
+    path_join = ""
+    if physics_domain or min_score is not None:
+        path_parts: list[str] = []
+        if physics_domain:
+            path_parts.append("fp.physics_domain = $physics_domain")
+            params["physics_domain"] = physics_domain
+        if min_score is not None:
+            dim = score_dimension or "score_composite"
+            dim = "".join(c for c in dim if c.isalnum() or c == "_")
+            path_parts.append(f"fp.{dim} >= $min_score")
+            params["min_score"] = min_score
+        path_where = " AND ".join(path_parts)
+        path_join = (
+            "WITH cc, score "
+            "MATCH (cf:CodeFile {path: cc.source_file})-[:IN_DIRECTORY]->(fp:FacilityPath) "
+            f"WHERE {path_where} "
         )
-        params["limit"] = k
+
+    cypher = (
+        'CALL db.index.vector.queryNodes("code_chunk_embedding", $k, $embedding) '
+        f"YIELD node AS cc, score WHERE {where_clause} "
+        f"{path_join}"
+        "RETURN cc.id AS id, score "
+        "ORDER BY score DESC LIMIT $limit"
+    )
 
     results = gc.query(cypher, **params)
     ids = [r["id"] for r in results]
