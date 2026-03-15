@@ -602,22 +602,18 @@ class GraphSchema:
         """
         if indexes is None:
             # Class-specific indexes that can't be derived from slot names.
-            # Only list properties NOT already covered by AUTO_INDEX_SLOTS.
-            # NOTE: "id" entries create single-property indexes essential for
-            # id-only lookups (e.g., UNWIND + MATCH {id: x}).  Composite
-            # uniqueness constraints on (id, facility_id) do NOT efficiently
-            # serve prefix-only queries in Neo4j — measured at 4x slower.
+            # Only list properties NOT already covered by AUTO_INDEX_SLOTS
+            # or the automatic id prefix index (Layer 1.5 below).
             indexes = {
                 "Facility": ["ssh_host"],
-                "FacilityPath": ["id", "device_inode"],
+                "FacilityPath": ["device_inode"],
                 "MDSplusServer": ["role"],
                 "SignalNode": ["node_type", "path"],
                 "Diagnostic": ["category"],
                 "AnalysisCode": ["code_type"],
                 "Tool": ["category", "available"],
-                "CodeChunk": ["id", "code_example_id"],
-                "CodeExample": ["id", "source_file"],
-                "CodeFile": ["id"],
+                "CodeChunk": ["code_example_id"],
+                "CodeExample": ["source_file"],
                 "FacilitySignal": ["diagnostic"],
                 "WikiChunk": ["wiki_page_id"],
                 "Document": ["document_type"],
@@ -626,6 +622,16 @@ class GraphSchema:
             }
 
         statements = []
+
+        # Collect constraint names to detect backing-index collisions.
+        # Composite uniqueness constraints create a backing index with the
+        # same name (e.g. ``codechunk_id``); a single-property index needs
+        # a different name so ``IF NOT EXISTS`` doesn't silently skip it.
+        constraint_names: set[str] = set()
+        for label in self.node_labels:
+            id_field = self.get_identifier(label)
+            if id_field:
+                constraint_names.add(f"{label.lower()}_{id_field}")
 
         # --- Layer 1: facility_id on all facility-owned nodes ---
         for label in self.node_labels:
@@ -636,11 +642,32 @@ class GraphSchema:
                     f"FOR (n:{label}) ON (n.facility_id)"
                 )
 
+        # --- Layer 1.5: single-property id index for composite constraints ---
+        # Composite uniqueness constraints on (id, facility_id) do NOT
+        # efficiently serve id-only lookups in Neo4j — measured at 4x
+        # slower for single lookups and 370x slower for UNWIND batches.
+        # Create a dedicated single-property index for every label that
+        # has a composite constraint so that ``MATCH (n:Label {id: x})``
+        # patterns always use an index.
+        seen: set[tuple[str, str]] = set()
+        for label in self.node_labels:
+            if not self.needs_composite_constraint(label):
+                continue
+            id_field = self.get_identifier(label)
+            if not id_field:
+                continue
+            key = (label, id_field)
+            seen.add(key)
+            index_name = f"{label.lower()}_{id_field}_idx"
+            statements.append(
+                f"CREATE INDEX {index_name} IF NOT EXISTS "
+                f"FOR (n:{label}) ON (n.{id_field})"
+            )
+
         # --- Layer 2: auto-index slots derived from schema ---
         # Any class that has a slot named in AUTO_INDEX_SLOTS gets an
         # index on that slot.  New classes automatically pick up indexes
         # by simply defining the slot — no manual registration needed.
-        seen: set[tuple[str, str]] = set()
         for label in self.node_labels:
             slots = self.get_all_slots(label)
             for slot_name in self.AUTO_INDEX_SLOTS:
@@ -655,16 +682,6 @@ class GraphSchema:
                         )
 
         # --- Layer 3: extra per-label indexes ---
-        # Collect constraint names to avoid collisions.  Composite
-        # uniqueness constraints create a backing index with the same
-        # name; a single-property index needs a different name so
-        # ``IF NOT EXISTS`` doesn't silently skip it.
-        constraint_names: set[str] = set()
-        for label in self.node_labels:
-            id_field = self.get_identifier(label)
-            if id_field:
-                constraint_names.add(f"{label.lower()}_{id_field}")
-
         for label, fields in indexes.items():
             if label in self.node_labels:
                 for field_name in fields:
