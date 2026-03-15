@@ -908,6 +908,41 @@ class TestFormatCodeReport:
         assert "\\PSI" in result
         assert "Data references" in result
 
+    def test_code_fence_uses_chunk_language(self):
+        """Code fence uses the chunk's language, not hardcoded 'python'."""
+        code_results = [
+            {
+                "id": "c1",
+                "text": "SUBROUTINE PFCOIL(x)\n  WRITE(*,*) x\nEND SUBROUTINE",
+                "function_name": "PFCOIL",
+                "source_file": "/home/mkovari/process/pfcoil.f",
+                "source_file_id": "jet:/home/mkovari/process/pfcoil.f",
+                "facility_id": "jet",
+                "language": "fortran",
+                "data_refs": [],
+                "directory": None,
+                "dir_description": None,
+            }
+        ]
+        result = format_code_report(code_results, {"c1": 0.89})
+        assert "```fortran" in result
+        assert "```python" not in result
+
+    def test_code_fence_defaults_to_python(self):
+        """Code fence defaults to python when language is missing."""
+        code_results = [
+            {
+                "id": "c1",
+                "text": "def foo(): pass",
+                "function_name": "foo",
+                "source_file": "/code/foo.py",
+                "facility_id": "tcv",
+                "data_refs": [],
+            }
+        ]
+        result = format_code_report(code_results, {"c1": 0.8})
+        assert "```python" in result
+
 
 # ---------------------------------------------------------------------------
 # search_imas

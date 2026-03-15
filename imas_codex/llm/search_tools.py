@@ -1394,6 +1394,7 @@ def _enrich_code_chunks(
         OPTIONAL MATCH (cf)-[:IN_DIRECTORY]->(fp:FacilityPath)
         RETURN cc.id AS id, cc.text AS text,
                cc.function_name AS function_name,
+               cc.language AS language,
                coalesce(ce.source_file, cc.source_file) AS source_file,
                cf.id AS source_file_id,
                coalesce(ce.facility_id, cc.facility_id) AS facility_id,
