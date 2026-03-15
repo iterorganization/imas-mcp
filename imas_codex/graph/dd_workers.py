@@ -146,6 +146,12 @@ async def extract_worker(state: DDBuildState, **_kwargs) -> None:
         )
         from imas_codex.graph.client import GraphClient
 
+        # Skip extraction entirely when only re-enriching or re-embedding
+        if state.reset_to in ("built", "enriched"):
+            wlog.info("Extraction skipped (reset-to %s)", state.reset_to)
+            _on_progress(len(state.versions), len(state.versions))
+            return
+
         # Quick graph check before expensive XML parsing
         if not state.dry_run and not state.skip_build_hash:
             build_hash = _compute_build_hash(state.versions, state.ids_filter)
@@ -189,10 +195,9 @@ async def build_worker(state: DDBuildState, **_kwargs) -> None:
     def _on_progress(processed: int, total: int) -> None:
         state.build_stats.total = total
         state.build_stats.processed = processed
-        if processed < total:
-            state.build_stats.status_text = f"v{state.versions[processed]}"
-        else:
-            state.build_stats.status_text = ""
+
+    def _on_version(version: str) -> None:
+        state.build_stats.status_text = f"v{version}"
 
     def _run() -> None:
         from imas_codex.graph.build_dd import (
@@ -205,13 +210,19 @@ async def build_worker(state: DDBuildState, **_kwargs) -> None:
         )
         from imas_codex.graph.client import GraphClient
 
+        # Always compute build hash (needed by downstream phases)
+        build_hash = _compute_build_hash(state.versions, state.ids_filter)
+        state.build_hash = build_hash
+
+        # Skip build entirely when only re-enriching or re-embedding
+        if state.reset_to in ("built", "enriched"):
+            state.stats["skipped_build"] = True
+            state.stats["versions_processed"] = len(state.versions)
+            wlog.info("Build skipped (reset-to %s)", state.reset_to)
+            _on_progress(len(state.versions), len(state.versions))
+            return
+
         with GraphClient() as client:
-            # Hash-based idempotency check
-            build_hash = _compute_build_hash(
-                state.versions,
-                state.ids_filter,
-            )
-            state.build_hash = build_hash
 
             if not state.dry_run and not state.skip_build_hash:
                 # Full check: everything including embeddings + clusters
@@ -258,6 +269,7 @@ async def build_worker(state: DDBuildState, **_kwargs) -> None:
                 state.all_units,
                 dry_run=state.dry_run,
                 on_progress=_on_progress,
+                on_version=_on_version,
             )
             state.stats.update(build_stats)
 
