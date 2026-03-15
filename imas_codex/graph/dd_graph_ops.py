@@ -146,10 +146,14 @@ def release_enrichment_claims(path_ids: list[str]) -> None:
 
 
 def has_pending_enrichment(*, ids_filter: set[str] | None = None) -> bool:
-    """Check if there are built IMASNodes awaiting enrichment."""
-    cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
+    """Check if there are built IMASNodes awaiting enrichment.
+
+    Counts ALL built nodes — both unclaimed and actively claimed.
+    This prevents premature phase completion when workers still have
+    claimed batches in flight.
+    """
     ids_clause = "AND p.ids IN $ids_filter" if ids_filter else ""
-    params: dict = {"status": "built", "cutoff": cutoff}
+    params: dict = {"status": "built"}
     if ids_filter:
         params["ids_filter"] = list(ids_filter)
 
@@ -158,8 +162,6 @@ def has_pending_enrichment(*, ids_filter: set[str] | None = None) -> bool:
             f"""
             MATCH (p:IMASNode)
             WHERE p.status = $status
-              AND (p.claimed_at IS NULL
-                   OR p.claimed_at < datetime() - duration($cutoff))
               {ids_clause}
             RETURN count(p) AS pending
             """,
@@ -284,20 +286,21 @@ def count_imas_nodes_by_status() -> dict[str, int]:
 
 
 def has_pending_embedding() -> bool:
-    """Check if there are enriched IMASNodes awaiting embedding."""
-    cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
+    """Check if there are enriched IMASNodes awaiting embedding.
 
+    Counts ALL enriched nodes — both unclaimed and actively claimed.
+    This prevents premature phase completion when workers still have
+    claimed batches in flight (e.g. 4 embed workers each claim 500,
+    the 4th goes idle with 1500 still being processed by the other 3).
+    """
     with GraphClient() as gc:
         result = gc.query(
             """
             MATCH (p:IMASNode)
             WHERE p.status = $status
-              AND (p.claimed_at IS NULL
-                   OR p.claimed_at < datetime() - duration($cutoff))
             RETURN count(p) AS pending
             """,
             status="enriched",
-            cutoff=cutoff,
         )
         return result[0]["pending"] > 0 if result else False
 
