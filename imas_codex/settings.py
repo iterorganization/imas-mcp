@@ -79,7 +79,7 @@ _MODEL_DEFAULTS: dict[str, str] = {
     "embedding": "Qwen/Qwen3-Embedding-0.6B",
     "language": "google/gemini-3-flash-preview",
     "vision": "google/gemini-3-flash-preview",
-    "agent": "anthropic/claude-sonnet-4.5",
+    "agent": "anthropic/claude-sonnet-4.6",
     "compaction": "anthropic/claude-haiku-4.5",
 }
 

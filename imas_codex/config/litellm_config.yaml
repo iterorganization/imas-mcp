@@ -22,10 +22,10 @@ model_list:
       model: openrouter/anthropic/claude-opus-4.6
       litellm_credential_name: openrouter
 
-  # Sonnet 4.5 — focused tasks, search, data gathering
+  # Sonnet 4.6 — compaction, summarization, focused tasks
   - model_name: sonnet
     litellm_params:
-      model: openrouter/anthropic/claude-sonnet-4.5
+      model: openrouter/anthropic/claude-sonnet-4.6
       litellm_credential_name: openrouter
 
   # Haiku 4.5 — structured output, graph writes, low-reasoning
