@@ -371,7 +371,7 @@ def _probe_litellm_proxy(location: str) -> tuple[bool, str]:
         req = urllib.request.Request(health_url)
         if api_key:
             req.add_header("Authorization", f"Bearer {api_key}")
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with urllib.request.urlopen(req, timeout=30) as resp:
             data = json.loads(resp.read())
             healthy_count = data.get("healthy_count", 0)
             unhealthy_count = data.get("unhealthy_count", 0)
