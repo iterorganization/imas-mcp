@@ -524,8 +524,9 @@ def _ensure_service_job(
         pre_launch=pre_launch,
     )
 
-    # Wait for RUNNING state + health check with rich spinner
-    timeout_s = 120
+    # Wait for RUNNING state + health check with rich spinner.
+    # 8 GPU workers loading Qwen3-0.6B models can take ~3 min on P100s.
+    timeout_s = 240
     job = _wait_for_job(
         job_name, timeout_s=timeout_s, health_cmd=health_cmd, health_test=health_test
     )
@@ -1002,10 +1003,11 @@ def deploy_embed(gpus: int = _DEFAULT_GPUS, workers: int | None = None) -> dict:
 
     click.echo(f"Deploying embed server ({gpus} GPUs, {workers} workers)...")
     # Scale CPUs and memory with worker count.
-    # Each torch worker spawns ~22 threads; during model load all workers
-    # compete for CPU.  2 CPUs per worker handles startup contention +
-    # steady-state inference, plus 1 for the uvicorn parent.
-    embed_cpus = workers * 2 + 1
+    # Inference is GPU-bound; 1 CPU per worker + 1 for the uvicorn
+    # parent handles steady-state.  Thread-level parallelism (PyTorch
+    # intra-op threads) doesn't need dedicated CPUs — they share the
+    # allocation.  Cap at available CPUs minus neo4j headroom.
+    embed_cpus = min(workers + 1, 15)
     embed_mem = f"{max(workers * 4, 16)}G"
     return _ensure_service_job(
         _EMBED_JOB,
