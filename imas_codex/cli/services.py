@@ -435,7 +435,7 @@ def _submit_service_job(
             f"Node {host} is {node_state} (reason: {reason}).\n"
             f"SLURM will not schedule jobs on this node.\n"
             f"Ask an admin to resume: scontrol update NodeName={host} State=RESUME\n"
-            f"Do NOT bypass SLURM with nohup/ssh — all services must run as SLURM jobs."
+            f"Or bypass SLURM: imas-codex embed start --no-slurm"
         )
 
     remote_home = _run_remote("echo $HOME", timeout=10).strip()
@@ -1018,6 +1018,80 @@ def deploy_embed(gpus: int = _DEFAULT_GPUS, workers: int | None = None) -> dict:
         health_cmd=f"curl -sf http://{host}:{port}/health",
         health_test='"status"',
     )
+
+
+def deploy_embed_noslurm(gpus: int = _DEFAULT_GPUS, workers: int | None = None) -> None:
+    """Deploy the embed server via SSH + nohup, bypassing SLURM.
+
+    Use when the compute node is in draining/down state and SLURM
+    won't schedule new jobs, but the GPUs are still accessible via SSH.
+    """
+    import base64
+
+    if workers is None:
+        workers = gpus
+
+    host = _gpu_entry()["location"]
+    port = _embed_port()
+
+    # Kill any existing embed processes on the node
+    _kill_embed_orphans(host)
+
+    gpu_ids = ",".join(str(i) for i in range(gpus))
+    partition = _gpu_partition()
+    partition_name = partition["name"]
+    services_dir = f"$HOME/.local/share/imas-codex/services"
+    log_file = f"{services_dir}/codex-embed.log"
+
+    # Build the nohup command that runs on the compute node
+    script = (
+        f"mkdir -p {services_dir}\n"
+        f"cd $HOME/Code/imas-codex\n"
+        f"source $HOME/Code/imas-codex/.env 2>/dev/null || true\n"
+        f'echo "codex-embed started on $(hostname) at $(date)" > {log_file}\n'
+        f"export CUDA_VISIBLE_DEVICES={gpu_ids}\n"
+        f"nohup uv run --offline --extra gpu imas-codex embed start -f "
+        f"--host 0.0.0.0 --port {port} "
+        f"--gpus {gpu_ids} --workers {workers} "
+        f"--deploy-label {partition_name} "
+        f">> {log_file} 2>&1 &\n"
+        f"echo $!\n"
+    )
+
+    click.echo(
+        f"Deploying embed server via SSH ({gpus} GPUs, {workers} workers)..."
+    )
+    click.echo(
+        click.style("  ⚠ Running outside SLURM — not managed by scheduler", fg="yellow")
+    )
+
+    try:
+        result = _run_on_node(host, script, timeout=15)
+        pid = result.strip().split("\n")[-1].strip()
+        click.echo(f"  Started on {host} (PID: {pid})")
+        click.echo(f"  Log: {log_file}")
+    except Exception as e:
+        raise click.ClickException(
+            f"Failed to start embed server on {host}: {e}"
+        ) from e
+
+    # Wait for health check
+    click.echo("  Waiting for health check...")
+    health_cmd = f"curl -sf http://{host}:{port}/health"
+    for attempt in range(30):
+        time.sleep(3)
+        try:
+            result = _run_remote(health_cmd, timeout=5)
+            if '"status"' in result:
+                click.echo(click.style("  ✓ Healthy", fg="green"))
+                return
+        except Exception:
+            pass
+        if attempt % 5 == 4:
+            click.echo(f"  Still waiting... ({(attempt + 1) * 3}s)")
+
+    click.echo(click.style("  ✗ Health check timed out after 90s", fg="red"))
+    click.echo(f"  Check logs: ssh {host} 'tail -50 {log_file}'")
 
 
 # ── Health checks ────────────────────────────────────────────────────────
