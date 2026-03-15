@@ -300,8 +300,20 @@ async def run_parallel_code_discovery(
     }
 
 
-def get_code_discovery_stats(facility: str) -> dict[str, int | float]:
-    """Get code discovery statistics from graph for progress display."""
+def get_code_discovery_stats(
+    facility: str, min_score: float | None = None
+) -> dict[str, int | float]:
+    """Get code discovery statistics from graph for progress display.
+
+    Args:
+        facility: Facility ID
+        min_score: Minimum score threshold for pending counts.
+            Defaults to ``get_discovery_threshold()``.
+    """
+    if min_score is None:
+        from imas_codex.settings import get_discovery_threshold
+
+        min_score = get_discovery_threshold()
     with GraphClient() as gc:
         result = gc.query(
             """
@@ -382,11 +394,12 @@ def get_code_discovery_stats(facility: str) -> dict[str, int | float]:
             """
             MATCH (cf:CodeFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
             WHERE cf.status = 'scored'
-              AND cf.score_composite >= 0.75
+              AND cf.score_composite >= $min_score
               AND coalesce(cf.line_count, 0) <= 10000
             RETURN count(cf) AS pending
             """,
             facility=facility,
+            min_score=min_score,
         )
         stats["pending_ingest"] = ingest_result[0]["pending"] if ingest_result else 0
 
@@ -416,14 +429,19 @@ def get_code_discovery_stats(facility: str) -> dict[str, int | float]:
             cost_result[0]["accumulated_cost"] or 0.0 if cost_result else 0.0
         )
 
-        # Chunk embedding stats
+        # Chunk embedding stats — only count chunks from CodeFiles
+        # meeting the score threshold so pending counts are consistent
+        # with what the embed workers will actually process.
         embed_result = gc.query(
             """
             MATCH (cc:CodeChunk)-[:AT_FACILITY]->(f:Facility {id: $facility})
+            MATCH (cc)<-[:HAS_CHUNK]-(:CodeExample)<-[:HAS_EXAMPLE]-(cf:CodeFile)
+            WHERE cf.score_composite >= $min_score
             RETURN count(cc) AS total,
                    count(cc.embedding) AS embedded
             """,
             facility=facility,
+            min_score=min_score,
         )
         if embed_result:
             total_chunks = embed_result[0]["total"]
