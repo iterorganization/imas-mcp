@@ -112,11 +112,13 @@ def mark_paths_enriched(updates: list[dict]) -> int:
             UNWIND $updates AS item
             MATCH (p:IMASNode {id: item.id})
             SET p.status = 'enriched',
-                p.description = item.description,
-                p.keywords = item.keywords,
-                p.enrichment_hash = item.enrichment_hash,
-                p.enrichment_model = item.enrichment_model,
-                p.enrichment_source = item.enrichment_source,
+                p.description = coalesce(item.description, p.description),
+                p.keywords = coalesce(item.keywords, p.keywords),
+                p.enrichment_hash = coalesce(item.enrichment_hash, p.enrichment_hash),
+                p.enrichment_model = coalesce(item.enrichment_model, p.enrichment_model),
+                p.enrichment_source = coalesce(item.enrichment_source, p.enrichment_source),
+                p.physics_domain = coalesce(item.physics_domain, p.physics_domain),
+                p.enriched_at = datetime(),
                 p.claimed_at = null,
                 p.claim_token = null
             RETURN count(p) AS updated
@@ -324,3 +326,93 @@ def reset_stale_imas_claims(*, timeout_seconds: int = CLAIM_TIMEOUT_SECONDS) -> 
         if count:
             logger.info("Released %d orphaned IMASNode claims", count)
         return count
+
+
+# =============================================================================
+# Status reset
+# =============================================================================
+
+# Fields to clear when resetting to each target status
+_RESET_CLEAR_FIELDS: dict[str, list[str]] = {
+    "built": [
+        "description",
+        "keywords",
+        "enrichment_hash",
+        "enrichment_model",
+        "enrichment_source",
+        "enriched_at",
+        "physics_domain",
+        "embedding",
+        "embedding_hash",
+        "embedded_at",
+    ],
+    "enriched": [
+        "embedding",
+        "embedding_hash",
+        "embedded_at",
+    ],
+}
+
+# Statuses eligible for reset to each target
+_RESET_SOURCE_STATUSES: dict[str, list[str]] = {
+    "built": ["enriched", "embedded"],
+    "enriched": ["embedded"],
+}
+
+
+def reset_imas_nodes(
+    target_status: str,
+    *,
+    ids_filter: set[str] | None = None,
+) -> int:
+    """Reset IMASNode nodes to a target status for reprocessing.
+
+    Args:
+        target_status: Target status (``built`` or ``enriched``).
+        ids_filter: Optional set of IDS names to limit the reset.
+
+    Returns:
+        Number of nodes reset.
+    """
+    if target_status not in _RESET_CLEAR_FIELDS:
+        raise ValueError(
+            f"Invalid target_status '{target_status}'. "
+            f"Must be one of: {list(_RESET_CLEAR_FIELDS)}"
+        )
+
+    clear_fields = _RESET_CLEAR_FIELDS[target_status]
+    source_statuses = _RESET_SOURCE_STATUSES[target_status]
+
+    ids_clause = "AND p.ids IN $ids_filter" if ids_filter else ""
+    params: dict = {"source_statuses": source_statuses, "target": target_status}
+    if ids_filter:
+        params["ids_filter"] = list(ids_filter)
+
+    set_parts = [
+        "p.status = $target",
+        "p.claimed_at = null",
+        "p.claim_token = null",
+    ]
+    for fld in clear_fields:
+        set_parts.append(f"p.{fld} = null")
+    set_clause = ", ".join(set_parts)
+
+    with GraphClient() as gc:
+        result = gc.query(
+            f"""
+            MATCH (p:IMASNode)
+            WHERE p.status IN $source_statuses
+            {ids_clause}
+            SET {set_clause}
+            RETURN count(p) AS reset_count
+            """,
+            **params,
+        )
+        count = result[0]["reset_count"] if result else 0
+
+    logger.info(
+        "Reset %d IMASNode nodes to '%s'",
+        count,
+        target_status,
+    )
+    return count

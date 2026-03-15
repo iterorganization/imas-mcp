@@ -270,7 +270,7 @@ def enrich_identifier_schemas(
 def embed_identifier_schemas(
     client: GraphClient,
     *,
-    no_hash: bool = False,
+    force_reembed: bool = False,
 ) -> dict[str, int]:
     """Generate embeddings for enriched IdentifierSchema nodes.
 
@@ -322,7 +322,7 @@ def embed_identifier_schemas(
         text = f"{r['name']}: {r['enriched_description']} Keywords: {keywords_str}"
         text_hash = hashlib.sha256(f"{model_name}:{text}".encode()).hexdigest()[:16]
 
-        if not no_hash and r.get("existing_hash") == text_hash:
+        if not force_reembed and r.get("existing_hash") == text_hash:
             stats["cached"] += 1
             continue
 
