@@ -603,6 +603,10 @@ class GraphSchema:
         if indexes is None:
             # Class-specific indexes that can't be derived from slot names.
             # Only list properties NOT already covered by AUTO_INDEX_SLOTS.
+            # NOTE: "id" entries create single-property indexes essential for
+            # id-only lookups (e.g., UNWIND + MATCH {id: x}).  Composite
+            # uniqueness constraints on (id, facility_id) do NOT efficiently
+            # serve prefix-only queries in Neo4j — measured at 4x slower.
             indexes = {
                 "Facility": ["ssh_host"],
                 "FacilityPath": ["id", "device_inode"],
@@ -611,8 +615,9 @@ class GraphSchema:
                 "Diagnostic": ["category"],
                 "AnalysisCode": ["code_type"],
                 "Tool": ["category", "available"],
-                "CodeChunk": ["code_example_id"],
-                "CodeExample": ["source_file"],
+                "CodeChunk": ["id", "code_example_id"],
+                "CodeExample": ["id", "source_file"],
+                "CodeFile": ["id"],
                 "FacilitySignal": ["diagnostic"],
                 "WikiChunk": ["wiki_page_id"],
                 "Document": ["document_type"],
@@ -650,6 +655,16 @@ class GraphSchema:
                         )
 
         # --- Layer 3: extra per-label indexes ---
+        # Collect constraint names to avoid collisions.  Composite
+        # uniqueness constraints create a backing index with the same
+        # name; a single-property index needs a different name so
+        # ``IF NOT EXISTS`` doesn't silently skip it.
+        constraint_names: set[str] = set()
+        for label in self.node_labels:
+            id_field = self.get_identifier(label)
+            if id_field:
+                constraint_names.add(f"{label.lower()}_{id_field}")
+
         for label, fields in indexes.items():
             if label in self.node_labels:
                 for field_name in fields:
@@ -657,6 +672,8 @@ class GraphSchema:
                     if key not in seen:
                         seen.add(key)
                         index_name = f"{label.lower()}_{field_name}"
+                        if index_name in constraint_names:
+                            index_name = f"{index_name}_idx"
                         statements.append(
                             f"CREATE INDEX {index_name} IF NOT EXISTS "
                             f"FOR (n:{label}) ON (n.{field_name})"
