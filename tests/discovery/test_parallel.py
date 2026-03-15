@@ -73,6 +73,69 @@ class TestWorkerStats:
         assert rate is not None
         assert 4.5 < rate < 5.5  # ~5 per second
 
+    def test_session_processed_no_baseline(self):
+        """Without baseline, session_processed equals processed."""
+        stats = WorkerStats()
+        stats.processed = 100
+        assert stats.session_processed == 100
+
+    def test_session_processed_with_baseline(self):
+        """With baseline set, session_processed excludes prior items."""
+        stats = WorkerStats()
+        stats.set_baseline(80)
+        stats.processed = 100
+        assert stats.session_processed == 20
+
+    def test_set_baseline_only_once(self):
+        """Baseline is captured only on first call."""
+        stats = WorkerStats()
+        stats.set_baseline(80)
+        stats.set_baseline(90)  # should be ignored
+        stats.processed = 100
+        assert stats.session_processed == 20  # still 100 - 80
+
+    def test_set_baseline_ignores_zero(self):
+        """set_baseline(0) does not capture a baseline."""
+        stats = WorkerStats()
+        stats.set_baseline(0)
+        stats.set_baseline(50)  # should capture now
+        stats.processed = 100
+        assert stats.session_processed == 50
+
+    def test_rate_with_baseline(self):
+        """Rate uses session_processed, not total processed."""
+        import time
+
+        stats = WorkerStats()
+        stats.start_time = time.time() - 10
+        stats.set_baseline(200)
+        stats.processed = 250  # 50 items this session
+        rate = stats.rate
+        assert rate is not None
+        assert 4.5 < rate < 5.5  # 50/10 = 5/s, not 250/10
+
+    def test_active_rate_with_baseline(self):
+        """active_rate uses session_processed."""
+        import time
+
+        stats = WorkerStats()
+        stats.start_time = time.time() - 10
+        stats.set_baseline(200)
+        stats.processed = 250
+        active = stats.active_rate
+        assert active is not None
+        assert 4.5 < active < 5.5
+
+    def test_rate_none_when_only_baseline_items(self):
+        """Rate is None when no new items processed this session."""
+        import time
+
+        stats = WorkerStats()
+        stats.start_time = time.time() - 10
+        stats.set_baseline(200)
+        stats.processed = 200  # no new items
+        assert stats.rate is None
+
 
 class TestDiscoveryState:
     """Tests for DiscoveryState dataclass."""

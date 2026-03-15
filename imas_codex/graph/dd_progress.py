@@ -119,12 +119,14 @@ def _graph_refresh(state: DDBuildState, _facility: str) -> None:
     built = counts.get("built", 0)
     enrich_processed = total - built
     state.enrich_stats.total = total
+    state.enrich_stats.set_baseline(enrich_processed)
     if enrich_processed > state.enrich_stats.processed:
         state.enrich_stats.processed = enrich_processed
 
     # Embed: enriched → embedded.  Processed = embedded count.
     embedded = counts.get("embedded", 0)
     state.embed_stats.total = total
+    state.embed_stats.set_baseline(embedded)
     if embedded > state.embed_stats.processed:
         state.embed_stats.processed = embedded
 
