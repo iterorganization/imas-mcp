@@ -198,3 +198,14 @@ Code examples showing how similar signals are accessed at this facility
 
 {{ code_data_access }}
 {% endif %}
+
+{% if semantic_match_matrix %}
+### Semantic Match Matrix
+
+Cross-index cosine similarity matches for this source across IMAS fields,
+wiki documentation, and code. Higher scores indicate stronger semantic
+alignment. Use IMAS matches as primary mapping candidates and wiki/code
+matches as supporting evidence for mapping decisions.
+
+{{ semantic_match_matrix }}
+{% endif %}

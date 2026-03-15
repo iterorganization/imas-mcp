@@ -589,3 +589,145 @@ def fetch_cross_facility_mappings(
         ids_name=ids_name,
         exclude=exclude_facility,
     )
+
+
+# ---------------------------------------------------------------------------
+# Semantic match matrix
+# ---------------------------------------------------------------------------
+
+
+def compute_semantic_matches(
+    source_descriptions: list[tuple[str, str]],
+    target_ids_name: str,
+    *,
+    gc: GraphClient | None = None,
+    k_per_source: int = 5,
+    include_wiki: bool = True,
+    include_code: bool = True,
+    dd_version: int | None = None,
+) -> dict[str, list[dict[str, Any]]]:
+    """Compute semantic match vectors between sources and targets.
+
+    For each source, embeds its description and searches against:
+    1. imas_node_embedding (primary: target IMAS fields)
+    2. wiki_chunk_embedding (bridging: domain documentation)
+    3. code_chunk_embedding (bridging: data access patterns)
+
+    Uses batch embedding for efficiency — all source descriptions are
+    embedded in a single encoder call.
+
+    Returns a dict mapping source_id -> ranked match list, where each
+    match has {target_id, score, content_type, excerpt}.
+    """
+    if gc is None:
+        gc = GraphClient()
+
+    if not source_descriptions:
+        return {}
+
+    from imas_codex.embeddings.encoder import Encoder
+
+    encoder = Encoder()
+    texts = [desc for _, desc in source_descriptions]
+    source_ids = [sid for sid, _ in source_descriptions]
+
+    # Batch embed all source descriptions at once
+    embeddings = encoder.embed_texts(texts)
+
+    results: dict[str, list[dict[str, Any]]] = {}
+
+    for i, source_id in enumerate(source_ids):
+        embedding = embeddings[i].tolist() if hasattr(embeddings[i], "tolist") else list(embeddings[i])
+        matches: list[dict[str, Any]] = []
+
+        # 1. Search IMAS node embeddings (primary)
+        imas_params: dict[str, Any] = {
+            "k": k_per_source * 3,
+            "embedding": embedding,
+            "limit": k_per_source,
+        }
+        imas_where = ""
+        if target_ids_name:
+            imas_where = "WHERE n.id STARTS WITH $ids_prefix "
+            imas_params["ids_prefix"] = f"{target_ids_name}/"
+        if dd_version is not None:
+            dd_clause = "n.dd_version = $dd_version"
+            imas_where = f"WHERE {dd_clause} " if not imas_where else imas_where.rstrip() + f" AND {dd_clause} "
+            imas_params["dd_version"] = dd_version
+
+        imas_cypher = (
+            'CALL db.index.vector.queryNodes("imas_node_embedding", $k, $embedding) '
+            f"YIELD node AS n, score {imas_where}"
+            "RETURN n.id AS id, n.documentation AS doc, score "
+            "ORDER BY score DESC LIMIT $limit"
+        )
+        try:
+            imas_hits = gc.query(imas_cypher, **imas_params)
+            for h in imas_hits:
+                doc = h.get("doc") or ""
+                matches.append({
+                    "target_id": h["id"],
+                    "score": round(h["score"], 3),
+                    "content_type": "imas",
+                    "excerpt": doc[:200] + "..." if len(doc) > 200 else doc,
+                })
+        except Exception:
+            logger.debug("IMAS vector search failed for %s", source_id)
+
+        # 2. Search wiki chunk embeddings (bridging)
+        if include_wiki:
+            try:
+                wiki_hits = gc.query(
+                    'CALL db.index.vector.queryNodes("wiki_chunk_embedding", $k, $embedding) '
+                    "YIELD node AS c, score "
+                    "WITH c, score "
+                    "MATCH (p:WikiPage)-[:HAS_CHUNK]->(c) "
+                    "RETURN p.title AS title, c.text AS text, score "
+                    "ORDER BY score DESC LIMIT $limit",
+                    k=k_per_source * 3,
+                    embedding=embedding,
+                    limit=k_per_source,
+                )
+                for h in wiki_hits:
+                    text = h.get("text") or ""
+                    matches.append({
+                        "target_id": h.get("title", ""),
+                        "score": round(h["score"], 3),
+                        "content_type": "wiki",
+                        "excerpt": text[:200] + "..." if len(text) > 200 else text,
+                    })
+            except Exception:
+                logger.debug("Wiki vector search failed for %s", source_id)
+
+        # 3. Search code chunk embeddings (bridging)
+        if include_code:
+            try:
+                code_hits = gc.query(
+                    'CALL db.index.vector.queryNodes("code_chunk_embedding", $k, $embedding) '
+                    "YIELD node AS cc, score "
+                    "RETURN cc.source_file AS source_file, cc.function_name AS func, "
+                    "cc.text AS text, score "
+                    "ORDER BY score DESC LIMIT $limit",
+                    k=k_per_source * 3,
+                    embedding=embedding,
+                    limit=k_per_source,
+                )
+                for h in code_hits:
+                    text = h.get("text") or ""
+                    label = h.get("source_file") or ""
+                    if h.get("func"):
+                        label += f"::{h['func']}"
+                    matches.append({
+                        "target_id": label,
+                        "score": round(h["score"], 3),
+                        "content_type": "code",
+                        "excerpt": text[:200] + "..." if len(text) > 200 else text,
+                    })
+            except Exception:
+                logger.debug("Code vector search failed for %s", source_id)
+
+        # Sort all matches by score descending
+        matches.sort(key=lambda m: m["score"], reverse=True)
+        results[source_id] = matches
+
+    return results

@@ -38,6 +38,7 @@ from imas_codex.ids.models import (
 from imas_codex.ids.tools import (
     _run_async,
     analyze_units,
+    compute_semantic_matches,
     fetch_code_context,
     fetch_cross_facility_mappings,
     fetch_imas_fields,
@@ -382,6 +383,30 @@ def _format_code_context(code_items: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+def _format_semantic_match_matrix(
+    matrix: dict[str, list[dict[str, Any]]],
+    source_id: str,
+) -> str:
+    """Format the semantic match matrix for a single source."""
+    matches = matrix.get(source_id, [])
+    if not matches:
+        return ""
+    lines: list[str] = []
+    for m in matches:
+        content_type = m.get("content_type", "")
+        target = m.get("target_id", "")
+        score = m.get("score", 0)
+        excerpt = m.get("excerpt", "")
+        type_label = {"imas": "IMAS", "wiki": "Wiki", "code": "Code"}.get(
+            content_type, content_type.upper()
+        )
+        line = f"  - {type_label}: {target} ({score:.3f})"
+        if excerpt:
+            line += f" — {excerpt}"
+        lines.append(line)
+    return "\n".join(lines)
+
+
 # ---------------------------------------------------------------------------
 # Pipeline steps
 # ---------------------------------------------------------------------------
@@ -502,6 +527,32 @@ def gather_context(
     except Exception:
         logger.debug("Cluster enrichment unavailable — continuing without it")
 
+    # Semantic match matrix: batch-embed sources and search across all indexes
+    semantic_match_matrix: dict[str, list[dict[str, Any]]] = {}
+    try:
+        source_descs = [
+            (g["id"], g.get("rep_description") or g.get("description") or "")
+            for g in groups
+            if g.get("rep_description") or g.get("description")
+        ]
+        if source_descs:
+            semantic_match_matrix = compute_semantic_matches(
+                source_descs,
+                ids_name,
+                gc=gc,
+                k_per_source=5,
+                include_wiki=True,
+                include_code=True,
+                dd_version=dd_version,
+            )
+            logger.info(
+                "Semantic match matrix: %d sources, %d total matches",
+                len(semantic_match_matrix),
+                sum(len(v) for v in semantic_match_matrix.values()),
+            )
+    except Exception:
+        logger.debug("Semantic match matrix unavailable — continuing without it")
+
     existing = search_existing_mappings(facility, ids_name, gc=gc)
     cocos_paths = get_sign_flip_paths(ids_name)
 
@@ -569,6 +620,7 @@ def gather_context(
         "subtree": subtree,
         "semantic": semantic_hits,
         "source_candidates": source_candidates,
+        "semantic_match_matrix": semantic_match_matrix,
         "existing": existing,
         "cross_mappings": cross_mappings,
         "cocos_paths": cocos_paths,
@@ -738,6 +790,11 @@ def map_signals(
         wiki_ctx = _format_wiki_context(context.get("wiki_context", []))
         code_ctx = _format_code_context(context.get("code_context", []))
 
+        # Semantic match matrix from gather_context (Phase 4 enrichment)
+        match_matrix_ctx = _format_semantic_match_matrix(
+            context.get("semantic_match_matrix", {}), source_id,
+        )
+
         prompt = _render_prompt(
             "signal_mapping",
             facility=facility,
@@ -758,6 +815,7 @@ def map_signals(
             cluster_candidates=cluster_context or "(no cluster candidates)",
             wiki_context=wiki_ctx,
             code_data_access=code_ctx,
+            semantic_match_matrix=match_matrix_ctx,
         )
 
         messages = [
