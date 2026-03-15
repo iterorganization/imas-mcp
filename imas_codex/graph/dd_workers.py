@@ -60,8 +60,12 @@ class DDBuildState(DiscoveryStateBase):
 
     # Feature flags
     dry_run: bool = False
-    force: bool = False
     reset_to: str | None = None
+
+    @property
+    def force(self) -> bool:
+        """Bypass build hash checks when any reset is requested."""
+        return self.reset_to is not None
 
     # Shared data (extract → build/embed)
     version_data: dict[str, dict] = field(default_factory=dict)
