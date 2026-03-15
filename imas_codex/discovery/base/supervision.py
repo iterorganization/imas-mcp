@@ -210,12 +210,22 @@ class PipelinePhase:
         self._cache_ttl = cache_ttl
 
     def record_activity(self, count: int = 1) -> None:
-        """Record that the worker processed items — resets idle state."""
+        """Record that the worker processed items — resets idle state.
+
+        Clears the done event so that downstream phases waiting on
+        ``wait_until_done()`` re-block until this phase is genuinely
+        complete.  Without this, a transient idle→done→active cycle
+        would permanently unblock dependents (e.g. clustering starts
+        before embedding finishes).
+        """
         self._idle_count = 0
         self._total_processed += count
         # Invalidate cache — we know there's activity
         self._cached_has_work = True
         self._cache_time = time.time()
+        # Clear done event so dependents re-block
+        if not self._force_done:
+            self._done_event.clear()
 
     def record_idle(self) -> None:
         """Record an idle poll (no work found)."""
