@@ -383,6 +383,11 @@ async def enrich_worker(state: DDBuildState, **_kwargs) -> None:
         state.enrich_phase.record_activity(len(paths))
         path_ids = [p["id"] for p in paths]
 
+        # Check stop AFTER claiming — release claims and exit promptly
+        if state.should_stop():
+            await asyncio.to_thread(release_enrichment_claims, path_ids)
+            break
+
         try:
             updates = await _enrich_batch(paths, model, state)
 
@@ -472,6 +477,12 @@ async def embed_worker(state: DDBuildState, **_kwargs) -> None:
 
         state.embed_phase.record_activity(len(paths))
         path_ids = [p["id"] for p in paths]
+
+        # Check stop AFTER claiming — release claims and exit promptly
+        # so Ctrl+C doesn't block waiting for a full embed batch.
+        if state.should_stop():
+            await asyncio.to_thread(release_embedding_claims, path_ids)
+            break
 
         try:
             embedded_ids = await _embed_batch(paths, state)
