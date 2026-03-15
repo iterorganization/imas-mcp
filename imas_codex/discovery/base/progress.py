@@ -472,6 +472,9 @@ class WorkerStats:
     _prev_processed: int = 0  # Items at last batch
     _prev_batch_time: float = 0.0  # Time at last batch
 
+    # Frozen rate — captured when phase completes to prevent decay during idle
+    _frozen_rate: float | None = None
+
     # Idle time tracking (excluded from active_rate)
     _idle_total: float = 0.0  # Cumulative idle seconds
     _idle_start: float | None = None  # When current idle period began
@@ -539,11 +542,23 @@ class WorkerStats:
     def ema_rate(self) -> float | None:
         """Exponential moving average rate over recent batches.
 
-        Falls back to active_rate if no batch data available.
+        Returns frozen rate if set (phase completed), then EMA,
+        then falls back to active_rate.
         """
+        if self._frozen_rate is not None:
+            return self._frozen_rate
         if self._ema_rate > 0:
             return self._ema_rate
         return self.active_rate
+
+    def freeze_rate(self) -> None:
+        """Freeze the current rate so it stays constant after phase completion.
+
+        Captures the best available rate (EMA > active > overall) at the
+        moment the phase finishes.  Subsequent calls to ``ema_rate`` return
+        this frozen value instead of recomputing from elapsed time.
+        """
+        self._frozen_rate = self._ema_rate or self.active_rate or self.rate
 
     def mark_idle(self) -> None:
         """Mark the start of an idle period."""

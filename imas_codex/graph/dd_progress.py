@@ -79,6 +79,40 @@ def _build_pending(state: DDBuildState) -> list[tuple[str, int]]:
     return pending
 
 
+def _graph_refresh(state: DDBuildState, _facility: str) -> None:
+    """Refresh enrich/embed progress from graph status counts.
+
+    Queries ``count_imas_nodes_by_status`` and updates the WorkerStats
+    ``processed`` and ``total`` from the authoritative graph state,
+    ensuring the display tracks actual graph progress rather than
+    in-memory counters that may miss items processed by other workers.
+    """
+    from imas_codex.graph.dd_graph_ops import count_imas_nodes_by_status
+
+    try:
+        counts = count_imas_nodes_by_status()
+    except Exception:
+        return
+
+    state.imas_node_status_counts = counts
+    total = counts.get("total", 0)
+    if total <= 0:
+        return
+
+    # Enrich: built → enriched/embedded.  Processed = not-built.
+    built = counts.get("built", 0)
+    enrich_processed = total - built
+    state.enrich_stats.total = total
+    if enrich_processed > state.enrich_stats.processed:
+        state.enrich_stats.processed = enrich_processed
+
+    # Embed: enriched → embedded.  Processed = embedded count.
+    embedded = counts.get("embedded", 0)
+    state.embed_stats.total = total
+    if embedded > state.embed_stats.processed:
+        state.embed_stats.processed = embedded
+
+
 def create_dd_build_display(
     state: DDBuildState,
     *,
@@ -146,6 +180,7 @@ def create_dd_build_display(
         console=console,
         title_suffix="DD Build",
         mode_label=mode_label,
+        graph_refresh_fn=lambda f: _graph_refresh(state, f),
         stats_fn=lambda: _build_stats(state),
         pending_fn=lambda: _build_pending(state),
     )

@@ -294,6 +294,7 @@ async def build_worker(state: DDBuildState, **_kwargs) -> None:
             "Build complete: %d paths created",
             state.stats.get("paths_created", 0),
         )
+    state.build_stats.freeze_rate()
     state.build_phase.mark_done()
 
 
@@ -416,6 +417,7 @@ async def enrich_worker(state: DDBuildState, **_kwargs) -> None:
         state.stats.get("enriched_llm", 0),
         state.stats.get("enriched_template", 0),
     )
+    state.enrich_stats.freeze_rate()
 
 
 async def embed_worker(state: DDBuildState, **_kwargs) -> None:
@@ -490,6 +492,7 @@ async def embed_worker(state: DDBuildState, **_kwargs) -> None:
         "Embedding complete: %d updated",
         state.stats.get("embeddings_updated", 0),
     )
+    state.embed_stats.freeze_rate()
 
 
 async def cluster_worker(state: DDBuildState, **_kwargs) -> None:
@@ -533,6 +536,7 @@ async def cluster_worker(state: DDBuildState, **_kwargs) -> None:
         "Cluster import complete: %d clusters",
         state.stats.get("clusters_created", 0),
     )
+    state.cluster_stats.freeze_rate()
     state.cluster_phase.mark_done()
 
 
