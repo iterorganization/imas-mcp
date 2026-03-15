@@ -377,7 +377,7 @@ def _persist_code_files(
 
 def scan_facility_files(
     facility: str,
-    min_score: float = 0.5,
+    min_score: float | None = None,
     max_paths: int = 100,
     max_depth: int = 5,
     ssh_host: str | None = None,

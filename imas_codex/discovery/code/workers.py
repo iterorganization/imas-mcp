@@ -506,7 +506,7 @@ async def score_worker(
 def _claim_code_files_for_ingestion(
     facility: str,
     limit: int = 20,
-    min_score: float = 0.75,
+    min_score: float | None = None,
     max_line_count: int = 10000,
 ) -> list[dict[str, Any]]:
     """Claim scored CodeFiles for ingestion.
@@ -522,6 +522,10 @@ def _claim_code_files_for_ingestion(
     Uses anti-deadlock patterns: ORDER BY rand(), claim_token two-step
     verify, and @retry_on_deadlock decorator.
     """
+    if min_score is None:
+        from imas_codex.settings import get_discovery_threshold
+
+        min_score = get_discovery_threshold()
     import uuid
 
     from imas_codex.discovery.base.claims import DEFAULT_CLAIM_TIMEOUT_SECONDS
@@ -740,6 +744,7 @@ async def code_worker(
                 _claim_code_files_for_ingestion,
                 state.facility,
                 limit=batch_size,
+                min_score=state.min_score,
             )
         except Exception as e:
             logger.warning("Code claim failed: %s", e)

@@ -93,7 +93,7 @@ def reset_orphaned_file_claims(
 @retry_on_deadlock()
 def claim_paths_for_file_scan(
     facility: str,
-    min_score: float = 0.5,
+    min_score: float | None = None,
     limit: int = 100,
 ) -> list[dict[str, Any]]:
     """Atomically claim scored FacilityPaths for file scanning.
@@ -117,6 +117,10 @@ def claim_paths_for_file_scan(
     Returns:
         List of dicts with ``id``, ``path``, ``score``, ``purpose``, ``files_scanned``
     """
+    if min_score is None:
+        from imas_codex.settings import get_discovery_threshold
+
+        min_score = get_discovery_threshold()
     cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
     claim_token = str(uuid.uuid4())
     with GraphClient() as gc:
@@ -523,8 +527,12 @@ def release_file_score_claims(file_ids: list[str]) -> None:
 # ---------------------------------------------------------------------------
 
 
-def has_pending_scan_work(facility: str, min_score: float = 0.5) -> bool:
+def has_pending_scan_work(facility: str, min_score: float | None = None) -> bool:
     """Check if there are FacilityPaths remaining to scan for files."""
+    if min_score is None:
+        from imas_codex.settings import get_discovery_threshold
+
+        min_score = get_discovery_threshold()
     with GraphClient() as gc:
         result = gc.query(
             """
@@ -596,9 +604,13 @@ def has_pending_enrich_work(facility: str) -> bool:
 
 
 def has_pending_code_work(
-    facility: str, min_score: float = 0.75, max_line_count: int = 10000
+    facility: str, min_score: float | None = None, max_line_count: int = 10000
 ) -> bool:
     """Check if there are scored code files needing ingestion."""
+    if min_score is None:
+        from imas_codex.settings import get_discovery_threshold
+
+        min_score = get_discovery_threshold()
     with GraphClient() as gc:
         result = gc.query(
             """

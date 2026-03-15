@@ -54,7 +54,7 @@ async def run_parallel_code_discovery(
     ssh_host: str,
     *,
     cost_limit: float = 5.0,
-    min_score: float = 0.7,
+    min_score: float | None = None,
     max_paths: int = 100,
     focus: str | None = None,
     num_scan_workers: int = 2,
@@ -116,6 +116,12 @@ async def run_parallel_code_discovery(
     """
     start_time = time.time()
 
+    # Resolve threshold lazily so pyproject.toml changes take effect
+    if min_score is None:
+        from imas_codex.settings import get_discovery_threshold
+
+        min_score = get_discovery_threshold()
+
     # Release orphaned claims from previous runs
     reset_orphaned_file_claims(facility, silent=True)
 
@@ -149,7 +155,7 @@ async def run_parallel_code_discovery(
         lambda: has_pending_score_work(facility) or not state.enrich_phase.done
     )
     state.code_phase.set_has_work_fn(
-        lambda: has_pending_code_work(facility) or not state.score_phase.done
+        lambda: has_pending_code_work(facility, min_score) or not state.score_phase.done
     )
     # Link phase depends on code phase (propagates evidence after ingestion)
     state.link_phase.set_has_work_fn(
