@@ -106,25 +106,48 @@ class ClusterLabeler:
         """
         from imas_codex.llm.prompt_loader import render_prompt
 
-        cluster_data = []
-        for cluster in clusters:
-            cluster_data.append(
-                {
-                    "id": cluster["id"],
-                    "type": cluster.get(
-                        "type",
-                        "cross_ids" if cluster.get("is_cross_ids") else "intra_ids",
-                    ),
-                    "scope": cluster.get("scope", "global"),
-                    "scope_detail": cluster.get("scope_detail"),
-                    "ids": cluster.get("ids", cluster.get("ids_names", [])),
-                    "paths": cluster.get("paths", [])[:20],
-                    "path_count": len(cluster.get("paths", [])),
-                }
-            )
-
         system_prompt = render_prompt("clusters/labeler")
-        user_prompt = json.dumps(cluster_data, indent=2)
+
+        # Build structured user prompt (mirrors enrichment pattern)
+        user_lines = ["Label the following IMAS path clusters:\n"]
+        for cluster in clusters:
+            paths = cluster.get("paths", [])
+            path_docs = cluster.get("path_docs", {})
+            ids_names = cluster.get("ids", cluster.get("ids_names", []))
+            is_cross = cluster.get("is_cross_ids", len(set(ids_names)) > 1)
+            scope = cluster.get("scope", "global")
+
+            user_lines.append(f"\n### Cluster `{cluster['id']}`")
+            user_lines.append(
+                f"- Type: {'cross-IDS' if is_cross else 'intra-IDS'}"
+            )
+            user_lines.append(f"- Scope: {scope}")
+            if cluster.get("scope_detail"):
+                user_lines.append(f"- Scope detail: {cluster['scope_detail']}")
+            if ids_names:
+                user_lines.append(f"- IDS: {', '.join(ids_names)}")
+            user_lines.append(f"- Member count: {len(paths)}")
+
+            # Show paths with documentation when available
+            shown_paths = paths[:20]
+            if path_docs:
+                path_lines = []
+                for p in shown_paths:
+                    doc = path_docs.get(p, "")
+                    if doc:
+                        path_lines.append(f"  - `{p}`: {doc}")
+                    else:
+                        path_lines.append(f"  - `{p}`")
+                user_lines.append("- Member paths:")
+                user_lines.extend(path_lines)
+            else:
+                user_lines.append(
+                    f"- Member paths: {', '.join(shown_paths)}"
+                )
+            if len(paths) > 20:
+                user_lines.append(f"  - ... and {len(paths) - 20} more")
+
+        user_prompt = "\n".join(user_lines)
         return system_prompt, user_prompt
 
     def label_clusters(

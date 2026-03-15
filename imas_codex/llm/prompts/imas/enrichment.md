@@ -60,19 +60,14 @@ If a COCOS label is present (e.g., `psi_like`, `ip_like`), the field participate
 
 ## Output Format
 
-Return a JSON object with a `results` array containing one entry per input path:
+Return a JSON object matching this schema:
 
 ```json
-{
-  "results": [
-    {
-      "path_index": 1,
-      "description": "Poloidal magnetic flux as a function of normalized toroidal flux coordinate. This is the fundamental quantity for equilibrium reconstruction — it defines the nested flux surface geometry that organizes all radial profile data in tokamak plasmas. The psi profile is computed by Grad-Shafranov solvers (EFIT, LIUQE, NICE) from magnetics diagnostic measurements and constrains the mapping between real-space (R,Z) coordinates and flux coordinates used across transport, stability, and heating analyses. Sign convention depends on the COCOS convention in use.",
-      "keywords": ["flux surface", "Grad-Shafranov", "equilibrium reconstruction", "radial coordinate", "magnetic topology"],
-      "physics_domain": null
-    }
-  ]
-}
+{{ imas_enrichment_schema_example }}
 ```
+
+### Field Requirements
+
+{{ imas_enrichment_schema_fields }}
 
 Note: `path_index` is 1-based and must match the input order exactly.
