@@ -67,20 +67,14 @@ imas.add_command(map_cmd, "map")
     help="Start from a specific version (for incremental updates)",
 )
 @click.option(
-    "-f",
-    "--force",
-    is_flag=True,
-    help="Bypass top-level build hash check (re-run extract/build, per-item hashes still apply)",
-)
-@click.option(
     "--reset-to",
     type=click.Choice(["built", "enriched"], case_sensitive=False),
     default=None,
     help=(
-        "Reset nodes to a target state for reprocessing. "
-        "built: re-enrich all nodes (clears descriptions, resets to built). "
-        "enriched: re-embed all nodes (clears embeddings, resets to enriched). "
-        "Implies --force."
+        "Reset nodes to a target state before rebuilding. "
+        "built: clear enrichments and re-enrich all nodes from scratch. "
+        "enriched: clear embeddings and re-embed all nodes. "
+        "Bypasses the build hash check so the full pipeline runs."
     ),
 )
 @click.option(
@@ -96,7 +90,6 @@ def imas_build(
     quiet: bool,
     current_only: bool,
     from_version: str | None,
-    force: bool,
     reset_to: str | None,
     ids_filter: str | None,
     dry_run: bool,
@@ -123,9 +116,8 @@ def imas_build(
         imas-codex imas dd build                  # Build all DD versions (default)
         imas-codex imas dd build --current-only   # Build current version only
         imas-codex imas dd build --from-version 4.0.0  # Incremental from 4.0.0
-        imas-codex imas dd build --force          # Re-run pipeline (per-item hashes still apply)
-        imas-codex imas dd build --reset-to built   # Re-enrich everything
-        imas-codex imas dd build --reset-to enriched  # Re-embed everything
+        imas-codex imas dd build --reset-to built   # Re-enrich everything (prompt/model change)
+        imas-codex imas dd build --reset-to enriched  # Re-embed everything (embedding model change)
         imas-codex imas dd build --dry-run -v     # Preview without writing
         imas-codex imas dd build --ids-filter "core_profiles equilibrium"  # Test subset
     """
@@ -177,18 +169,12 @@ def imas_build(
         if ids_filter:
             ids_set = set(ids_filter.split())
 
-        # Handle --reset-to: reset nodes before building
-        if reset_to:
-            force = True
-
         log_print("\n[bold]IMAS DD Build[/bold]")
         log_print(f"  Versions: {len(versions)} ({versions[0]} → {versions[-1]})")
         if ids_set:
             log_print(f"  IDS filter: {sorted(ids_set)}")
         if dry_run:
             log_print("  Mode: dry run")
-        if force:
-            log_print("  Mode: force rebuild")
         if reset_to:
             log_print(f"  Reset: nodes → {reset_to}")
         log_print("")
@@ -218,7 +204,6 @@ def imas_build(
             versions=versions,
             ids_filter=ids_set,
             dry_run=dry_run,
-            force=force,
             reset_to=reset_to,
         )
 
