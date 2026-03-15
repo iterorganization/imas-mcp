@@ -1114,6 +1114,7 @@ def generate_mapping(
     ids_name: str,
     *,
     model: str | None = None,
+    reasoning_model: str | None = None,
     dd_version: str | None = None,
     persist: bool = True,
     activate: bool = True,
@@ -1131,7 +1132,8 @@ def generate_mapping(
     Args:
         facility: Facility name (e.g., "jet").
         ids_name: IDS name (e.g., "pf_active").
-        model: LLM model override (default: language tier).
+        model: LLM model override for classification steps (default: language tier).
+        reasoning_model: LLM model override for signal mapping (default: reasoning tier).
         dd_version: DD version override (default: from settings).
         persist: Whether to persist results to graph.
         activate: Whether to promote status to 'active' after persisting.
@@ -1196,14 +1198,15 @@ def generate_mapping(
             f"for {facility}/{ids_name}."
         )
 
-    # Step 2: Signal mappings
+    # Step 2: Signal mappings (reasoning tier — highest accuracy needed)
+    mapping_model = reasoning_model or get_model("reasoning")
     field_batches = map_signals(
         facility,
         ids_name,
         sections,
         context,
         gc=gc,
-        model=model,
+        model=mapping_model,
         cost=cost,
     )
 
