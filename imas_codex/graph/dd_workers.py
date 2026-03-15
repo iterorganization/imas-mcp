@@ -300,6 +300,12 @@ async def enrich_worker(state: DDBuildState, **_kwargs) -> None:
                     state.stats.get("enriched_template", 0) + template_count
                 )
 
+            # Release claims for paths not in the updates (LLM failures)
+            updated_ids = {u["id"] for u in updates} if updates else set()
+            failed_ids = [pid for pid in path_ids if pid not in updated_ids]
+            if failed_ids:
+                await asyncio.to_thread(release_enrichment_claims, failed_ids)
+
         except Exception:
             wlog.exception("Error enriching batch, releasing claims")
             await asyncio.to_thread(release_enrichment_claims, path_ids)
