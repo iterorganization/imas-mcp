@@ -1351,152 +1351,160 @@ def mark_paths_triaged(
     from imas_codex.graph import GraphClient
 
     now = datetime.now(UTC).isoformat()
-    updated = 0
+
+    # Pre-compute Evidence nodes and FacilityPath update items
+    evidence_items: list[dict[str, Any]] = []
+    path_items: list[dict[str, Any]] = []
+    child_skip_ids: list[dict[str, Any]] = []
+    evidence_seen: set[str] = set()
+
+    for score_data in scores:
+        path = score_data["path"]
+        path_id = f"{facility}:{path}"
+
+        # Build evidence node data
+        evidence_dict = score_data.get("evidence")
+        evidence_id = None
+
+        if evidence_dict and isinstance(evidence_dict, dict):
+            evidence_json = json.dumps(evidence_dict, sort_keys=True)
+            hash_bytes = hashlib.sha256(evidence_json.encode()).hexdigest()[:16]
+            evidence_id = f"ev:{hash_bytes}"
+
+            if evidence_id not in evidence_seen:
+                evidence_seen.add(evidence_id)
+                evidence_items.append({
+                    "id": evidence_id,
+                    "code_indicators": evidence_dict.get("code_indicators", []),
+                    "data_indicators": evidence_dict.get("data_indicators", []),
+                    "doc_indicators": evidence_dict.get("doc_indicators", []),
+                    "imas_indicators": evidence_dict.get("imas_indicators", []),
+                    "physics_indicators": evidence_dict.get("physics_indicators", []),
+                    "quality_indicators": evidence_dict.get("quality_indicators", []),
+                    "now": now,
+                })
+
+        should_expand = score_data.get("should_expand", False)
+
+        path_items.append({
+            "id": path_id,
+            "now": now,
+            "triaged": PathStatus.triaged.value,
+            "triage_composite": score_data.get("triage_composite"),
+            "triage_modeling_code": score_data.get("triage_modeling_code"),
+            "triage_analysis_code": score_data.get("triage_analysis_code"),
+            "triage_operations_code": score_data.get("triage_operations_code"),
+            "triage_modeling_data": score_data.get("triage_modeling_data"),
+            "triage_experimental_data": score_data.get("triage_experimental_data"),
+            "triage_data_access": score_data.get("triage_data_access"),
+            "triage_workflow": score_data.get("triage_workflow"),
+            "triage_visualization": score_data.get("triage_visualization"),
+            "triage_documentation": score_data.get("triage_documentation"),
+            "triage_imas": score_data.get("triage_imas"),
+            "triage_convention": score_data.get("triage_convention"),
+            "description": score_data.get("description"),
+            "path_purpose": score_data.get("path_purpose"),
+            "evidence_id": evidence_id,
+            "should_expand": should_expand,
+            "should_enrich": score_data.get("should_enrich", True),
+            "keywords": score_data.get("keywords"),
+            "physics_domain": score_data.get("physics_domain"),
+            "expansion_reason": score_data.get("expansion_reason"),
+            "skip_reason": score_data.get("skip_reason"),
+            "terminal_reason": score_data.get("terminal_reason"),
+            "enrich_skip_reason": score_data.get("enrich_skip_reason"),
+            "score_cost": score_data.get("score_cost", 0.0),
+        })
+
+        # Collect child-skip candidates
+        path_purpose = score_data.get("path_purpose")
+        data_purposes = {"modeling_data", "experimental_data"}
+        if path_purpose in data_purposes and not should_expand:
+            child_skip_ids.append({
+                "id": path_id,
+                "reason": f"parent_{path_purpose}",
+            })
 
     with GraphClient() as gc:
-        for score_data in scores:
-            path = score_data["path"]
-            path_id = f"{facility}:{path}"
-
-            # Create content-addressable Evidence node from indicators
-            evidence_dict = score_data.get("evidence")
-            evidence_id = None
-
-            if evidence_dict and isinstance(evidence_dict, dict):
-                # Compute stable hash from evidence content
-                evidence_json = json.dumps(evidence_dict, sort_keys=True)
-                hash_bytes = hashlib.sha256(evidence_json.encode()).hexdigest()[:16]
-                evidence_id = f"ev:{hash_bytes}"
-
-                # MERGE evidence node (idempotent)
-                gc.query(
-                    """
-                    MERGE (e:Evidence {id: $ev_id})
-                    ON CREATE SET
-                        e.code_indicators = $code_indicators,
-                        e.data_indicators = $data_indicators,
-                        e.doc_indicators = $doc_indicators,
-                        e.imas_indicators = $imas_indicators,
-                        e.physics_indicators = $physics_indicators,
-                        e.quality_indicators = $quality_indicators,
-                        e.created_at = $now
-                    """,
-                    ev_id=evidence_id,
-                    code_indicators=evidence_dict.get("code_indicators", []),
-                    data_indicators=evidence_dict.get("data_indicators", []),
-                    doc_indicators=evidence_dict.get("doc_indicators", []),
-                    imas_indicators=evidence_dict.get("imas_indicators", []),
-                    physics_indicators=evidence_dict.get("physics_indicators", []),
-                    quality_indicators=evidence_dict.get("quality_indicators", []),
-                    now=now,
-                )
-
-            # Update FacilityPath with scores and link to Evidence
-            # terminal_reason is only set when provided (e.g., empty directories)
-            # For LLM-scored paths it stays NULL - reason is derivable from
-            # has_git, path_purpose, score.
-
-            should_expand = score_data.get("should_expand", False)
-
+        # Batch MERGE Evidence nodes
+        if evidence_items:
             gc.query(
                 """
-                MATCH (p:FacilityPath {id: $id})
-                SET p.status = $triaged,
+                UNWIND $items AS item
+                MERGE (e:Evidence {id: item.id})
+                ON CREATE SET
+                    e.code_indicators = item.code_indicators,
+                    e.data_indicators = item.data_indicators,
+                    e.doc_indicators = item.doc_indicators,
+                    e.imas_indicators = item.imas_indicators,
+                    e.physics_indicators = item.physics_indicators,
+                    e.quality_indicators = item.quality_indicators,
+                    e.created_at = item.now
+                """,
+                items=evidence_items,
+            )
+
+        # Batch update FacilityPaths and link to Evidence
+        if path_items:
+            gc.query(
+                """
+                UNWIND $items AS item
+                MATCH (p:FacilityPath {id: item.id})
+                SET p.status = item.triaged,
                     p.claimed_at = null,
-                    p.triaged_at = $now,
-                    p.triage_composite = $triage_composite,
-                    p.triage_modeling_code = $triage_modeling_code,
-                    p.triage_analysis_code = $triage_analysis_code,
-                    p.triage_operations_code = $triage_operations_code,
-                    p.triage_modeling_data = $triage_modeling_data,
-                    p.triage_experimental_data = $triage_experimental_data,
-                    p.triage_data_access = $triage_data_access,
-                    p.triage_workflow = $triage_workflow,
-                    p.triage_visualization = $triage_visualization,
-                    p.triage_documentation = $triage_documentation,
-                    p.triage_imas = $triage_imas,
-                    p.triage_convention = $triage_convention,
-                    p.description = $description,
-                    p.path_purpose = $path_purpose,
-                    p.evidence_id = $evidence_id,
-                    p.should_expand = $should_expand,
-                    p.should_enrich = $should_enrich,
-                    p.keywords = $keywords,
-                    p.physics_domain = $physics_domain,
-                    p.expansion_reason = $expansion_reason,
-                    p.skip_reason = $skip_reason,
-                    p.terminal_reason = $terminal_reason,
-                    p.enrich_skip_reason = $enrich_skip_reason,
-                    p.score_cost = coalesce(p.score_cost, 0) + $score_cost
-                WITH p
-                OPTIONAL MATCH (e:Evidence {id: $evidence_id})
+                    p.triaged_at = item.now,
+                    p.triage_composite = item.triage_composite,
+                    p.triage_modeling_code = item.triage_modeling_code,
+                    p.triage_analysis_code = item.triage_analysis_code,
+                    p.triage_operations_code = item.triage_operations_code,
+                    p.triage_modeling_data = item.triage_modeling_data,
+                    p.triage_experimental_data = item.triage_experimental_data,
+                    p.triage_data_access = item.triage_data_access,
+                    p.triage_workflow = item.triage_workflow,
+                    p.triage_visualization = item.triage_visualization,
+                    p.triage_documentation = item.triage_documentation,
+                    p.triage_imas = item.triage_imas,
+                    p.triage_convention = item.triage_convention,
+                    p.description = item.description,
+                    p.path_purpose = item.path_purpose,
+                    p.evidence_id = item.evidence_id,
+                    p.should_expand = item.should_expand,
+                    p.should_enrich = item.should_enrich,
+                    p.keywords = item.keywords,
+                    p.physics_domain = item.physics_domain,
+                    p.expansion_reason = item.expansion_reason,
+                    p.skip_reason = item.skip_reason,
+                    p.terminal_reason = item.terminal_reason,
+                    p.enrich_skip_reason = item.enrich_skip_reason,
+                    p.score_cost = coalesce(p.score_cost, 0) + item.score_cost
+                WITH p, item
+                OPTIONAL MATCH (e:Evidence {id: item.evidence_id})
                 FOREACH (_ IN CASE WHEN e IS NOT NULL THEN [1] ELSE [] END |
                     MERGE (p)-[:HAS_EVIDENCE]->(e)
                 )
                 """,
-                id=path_id,
-                now=now,
-                triage_composite=score_data.get("triage_composite"),
-                triage_modeling_code=score_data.get("triage_modeling_code"),
-                triage_analysis_code=score_data.get("triage_analysis_code"),
-                triage_operations_code=score_data.get("triage_operations_code"),
-                triage_modeling_data=score_data.get("triage_modeling_data"),
-                triage_experimental_data=score_data.get("triage_experimental_data"),
-                triage_data_access=score_data.get("triage_data_access"),
-                triage_workflow=score_data.get("triage_workflow"),
-                triage_visualization=score_data.get("triage_visualization"),
-                triage_documentation=score_data.get("triage_documentation"),
-                triage_imas=score_data.get("triage_imas"),
-                triage_convention=score_data.get("triage_convention"),
-                description=score_data.get("description"),
-                path_purpose=score_data.get("path_purpose"),
-                evidence_id=evidence_id,
-                should_expand=should_expand,
-                should_enrich=score_data.get("should_enrich", True),
-                keywords=score_data.get("keywords"),
-                physics_domain=score_data.get("physics_domain"),
-                expansion_reason=score_data.get("expansion_reason"),
-                skip_reason=score_data.get("skip_reason"),
-                terminal_reason=score_data.get("terminal_reason"),
-                enrich_skip_reason=score_data.get("enrich_skip_reason"),
-                score_cost=score_data.get("score_cost", 0.0),
-                triaged=PathStatus.triaged.value,
+                items=path_items,
             )
-            updated += 1
 
-            # Data container child-skip: mark children as skipped if parent is
-            # a data container that shouldn't expand (modeling_data, experimental_data)
-            path_purpose = score_data.get("path_purpose")
-            should_expand = score_data.get("should_expand", False)
-            data_purposes = {"modeling_data", "experimental_data"}
+        # Batch child-skip for data containers
+        if child_skip_ids:
+            gc.query(
+                """
+                UNWIND $parents AS parent
+                MATCH (child:FacilityPath)-[:IN_DIRECTORY]->(p:FacilityPath {id: parent.id})
+                WHERE child.status = 'discovered'
+                SET child.status = $skipped,
+                    child.skipped_at = $now,
+                    child.terminal_reason = $terminal_reason,
+                    child.skip_reason = parent.reason
+                """,
+                parents=child_skip_ids,
+                now=now,
+                terminal_reason=TerminalReason.parent_terminal.value,
+                skipped=PathStatus.skipped.value,
+            )
 
-            if path_purpose in data_purposes and not should_expand:
-                # Mark all discovered children as skipped
-                skipped_result = gc.query(
-                    """
-                    MATCH (child:FacilityPath)-[:IN_DIRECTORY]->(p:FacilityPath {id: $id})
-                    WHERE child.status = 'discovered'
-                    SET child.status = $skipped,
-                        child.skipped_at = $now,
-                        child.terminal_reason = $terminal_reason,
-                        child.skip_reason = $reason
-                    RETURN count(child) AS skipped_count
-                    """,
-                    id=path_id,
-                    now=now,
-                    terminal_reason=TerminalReason.parent_terminal.value,
-                    reason=f"parent_{path_purpose}",
-                    skipped=PathStatus.skipped.value,
-                )
-                skipped_count = (
-                    skipped_result[0]["skipped_count"] if skipped_result else 0
-                )
-                if skipped_count > 0:
-                    logger.debug(
-                        f"Skipped {skipped_count} children of {path_purpose}: {path}"
-                    )
-
-    return updated
+    return len(path_items)
 
 
 def mark_path_skipped(
@@ -2972,57 +2980,68 @@ def mark_enrichment_complete(
     from imas_codex.graph import GraphClient
 
     now = datetime.now(UTC).isoformat()
-    updated = 0
 
-    with GraphClient() as gc:
-        for result in results:
-            path = result["path"]
-            path_id = f"{facility}:{path}"
+    # Separate errors from successes for batch processing
+    error_items: list[dict[str, Any]] = []
+    success_items: list[dict[str, Any]] = []
 
-            if result.get("error"):
-                # Mark as unenrichable
-                gc.query(
-                    """
-                    MATCH (p:FacilityPath {id: $id})
-                    SET p.claimed_at = null,
-                        p.should_enrich = false,
-                        p.enrich_skip_reason = $reason
-                    """,
-                    id=path_id,
-                    reason=result["error"],
-                )
-                continue
+    for result in results:
+        path_id = f"{facility}:{result['path']}"
 
-            # Prepare language breakdown as JSON string (Neo4j rejects empty dicts)
+        if result.get("error"):
+            error_items.append({
+                "id": path_id,
+                "reason": result["error"],
+            })
+        else:
             lang_breakdown = result.get("language_breakdown")
             if isinstance(lang_breakdown, dict):
                 lang_breakdown = json.dumps(lang_breakdown) if lang_breakdown else None
 
-            # Serialize warnings to string for Neo4j
             warnings = result.get("warnings", [])
             warn_str = ", ".join(warnings) if warnings else None
 
+            success_items.append({
+                "id": path_id,
+                "now": now,
+                "total_bytes": result.get("total_bytes"),
+                "total_lines": result.get("total_lines"),
+                "language_breakdown": lang_breakdown,
+                "is_multiformat": result.get("is_multiformat"),
+                "enrich_warnings": warn_str,
+            })
+
+    updated = 0
+    with GraphClient() as gc:
+        if error_items:
             gc.query(
                 """
-                MATCH (p:FacilityPath {id: $id})
-                SET p.is_enriched = true,
-                    p.enriched_at = $now,
-                    p.claimed_at = null,
-                    p.total_bytes = $total_bytes,
-                    p.total_lines = $total_lines,
-                    p.language_breakdown = $language_breakdown,
-                    p.is_multiformat = $is_multiformat,
-                    p.enrich_warnings = $enrich_warnings
+                UNWIND $items AS item
+                MATCH (p:FacilityPath {id: item.id})
+                SET p.claimed_at = null,
+                    p.should_enrich = false,
+                    p.enrich_skip_reason = item.reason
                 """,
-                id=path_id,
-                now=now,
-                total_bytes=result.get("total_bytes"),
-                total_lines=result.get("total_lines"),
-                language_breakdown=lang_breakdown,
-                is_multiformat=result.get("is_multiformat"),
-                enrich_warnings=warn_str,
+                items=error_items,
             )
-            updated += 1
+
+        if success_items:
+            gc.query(
+                """
+                UNWIND $items AS item
+                MATCH (p:FacilityPath {id: item.id})
+                SET p.is_enriched = true,
+                    p.enriched_at = item.now,
+                    p.claimed_at = null,
+                    p.total_bytes = item.total_bytes,
+                    p.total_lines = item.total_lines,
+                    p.language_breakdown = item.language_breakdown,
+                    p.is_multiformat = item.is_multiformat,
+                    p.enrich_warnings = item.enrich_warnings
+                """,
+                items=success_items,
+            )
+            updated = len(success_items)
 
     return updated
 
@@ -3281,67 +3300,56 @@ def mark_score_complete(
     from imas_codex.graph import GraphClient
 
     now = datetime.now(UTC).isoformat()
-    updated = 0
 
     # Dimension fields to update
-    dimensions = [
-        "score_modeling_code",
-        "score_analysis_code",
-        "score_operations_code",
-        "score_modeling_data",
-        "score_experimental_data",
-        "score_data_access",
-        "score_workflow",
-        "score_visualization",
-        "score_documentation",
-        "score_imas",
-        "score_convention",
-    ]
+    dimensions = SCORE_DIMENSIONS
+
+    # Build batch items with all dimensions (null if absent)
+    items: list[dict[str, Any]] = []
+    for result in results:
+        path_id = f"{facility}:{result['path']}"
+        item: dict[str, Any] = {
+            "id": path_id,
+            "now": now,
+            "score": result.get("score"),
+            "cost": result.get("score_cost", 0.0),
+            "scored": PathStatus.scored.value,
+            "score_reason": result.get("adjustment_reason"),
+        }
+        for dim in dimensions:
+            item[dim] = result.get(dim)
+        items.append(item)
+
+    if not items:
+        return 0
 
     with GraphClient() as gc:
-        for result in results:
-            path = result["path"]
-            path_id = f"{facility}:{path}"
+        gc.query(
+            """
+            UNWIND $items AS item
+            MATCH (p:FacilityPath {id: item.id})
+            SET p.score_composite = item.score,
+                p.status = item.scored,
+                p.scored_at = item.now,
+                p.claimed_at = null,
+                p.score_cost = coalesce(p.score_cost, 0) + item.cost,
+                p.score_reason = item.score_reason,
+                p.score_modeling_code = coalesce(item.score_modeling_code, p.score_modeling_code),
+                p.score_analysis_code = coalesce(item.score_analysis_code, p.score_analysis_code),
+                p.score_operations_code = coalesce(item.score_operations_code, p.score_operations_code),
+                p.score_modeling_data = coalesce(item.score_modeling_data, p.score_modeling_data),
+                p.score_experimental_data = coalesce(item.score_experimental_data, p.score_experimental_data),
+                p.score_data_access = coalesce(item.score_data_access, p.score_data_access),
+                p.score_workflow = coalesce(item.score_workflow, p.score_workflow),
+                p.score_visualization = coalesce(item.score_visualization, p.score_visualization),
+                p.score_documentation = coalesce(item.score_documentation, p.score_documentation),
+                p.score_imas = coalesce(item.score_imas, p.score_imas),
+                p.score_convention = coalesce(item.score_convention, p.score_convention)
+            """,
+            items=items,
+        )
 
-            # Build SET clause dynamically based on which dimensions are present
-            set_parts = [
-                "p.score_composite = $score",
-                "p.status = $scored",
-                "p.scored_at = $now",
-                "p.claimed_at = null",
-                "p.score_cost = coalesce(p.score_cost, 0) + $cost",
-            ]
-            params = {
-                "id": path_id,
-                "now": now,
-                "score": result.get("score"),
-                "cost": result.get("score_cost", 0.0),
-                "scored": PathStatus.scored.value,
-            }
-
-            # Store score reason
-            if result.get("adjustment_reason"):
-                set_parts.append("p.score_reason = $score_reason")
-                params["score_reason"] = result["adjustment_reason"]
-
-            # Add each dimension that has a value
-            for dim in dimensions:
-                if dim in result:
-                    set_parts.append(f"p.{dim} = ${dim}")
-                    params[dim] = result[dim]
-
-            # Build and execute query
-            set_clause = ", ".join(set_parts)
-            gc.query(
-                f"""
-                MATCH (p:FacilityPath {{id: $id}})
-                SET {set_clause}
-                """,
-                **params,
-            )
-            updated += 1
-
-    return updated
+    return len(items)
 
 
 def get_hierarchy_context(

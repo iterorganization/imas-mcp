@@ -871,84 +871,88 @@ def mark_enrichment_complete(
     Returns:
         Number of paths updated
     """
+    import json
     from datetime import UTC, datetime
 
     from imas_codex.graph import GraphClient
 
     now = datetime.now(UTC).isoformat()
-    updated = 0
 
-    with GraphClient() as gc:
-        for result in enrichment_results:
-            path_id = f"{facility}:{result['path']}"
+    # Separate errors from successes for batch processing
+    error_items: list[dict[str, Any]] = []
+    success_items: list[dict[str, Any]] = []
 
-            if result.get("error"):
-                error_msg = result["error"][:200]
-                # Permanent errors: path won't succeed on retry, so stop
-                # re-claiming it by setting should_enrich = false.
-                permanent = error_msg in (
-                    "not a directory",
-                    "permission denied",
-                )
-                gc.query(
-                    """
-                    MATCH (p:FacilityPath {id: $id})
-                    SET p.claimed_at = null,
-                        p.enrich_error = $error,
-                        p.should_enrich = CASE WHEN $permanent
-                            THEN false ELSE p.should_enrich END
-                    """,
-                    id=path_id,
-                    error=error_msg,
-                    permanent=permanent,
-                )
-                continue
+    for result in enrichment_results:
+        path_id = f"{facility}:{result['path']}"
 
-            # Serialize language_breakdown dict to JSON (Neo4j rejects dicts)
+        if result.get("error"):
+            error_msg = result["error"][:200]
+            permanent = error_msg in ("not a directory", "permission denied")
+            error_items.append({
+                "id": path_id,
+                "error": error_msg,
+                "permanent": permanent,
+            })
+        else:
             lang_breakdown = result.get("language_breakdown")
             if isinstance(lang_breakdown, dict):
-                import json
-
                 lang_breakdown = json.dumps(lang_breakdown) if lang_breakdown else None
 
-            # Serialize pattern_categories dict to JSON
             pattern_cats = result.get("pattern_categories")
             if isinstance(pattern_cats, dict):
-                import json
-
                 pattern_cats = json.dumps(pattern_cats) if pattern_cats else None
 
-            # Serialize warnings list to comma-separated string for Neo4j
             warnings = result.get("warnings", [])
             warn_str = ", ".join(warnings) if warnings else None
 
+            success_items.append({
+                "id": path_id,
+                "now": now,
+                "total_bytes": result.get("total_bytes"),
+                "total_lines": result.get("total_lines"),
+                "language_breakdown": lang_breakdown,
+                "is_multiformat": result.get("is_multiformat", False),
+                "pattern_categories": pattern_cats,
+                "read_matches": result.get("read_matches", 0),
+                "write_matches": result.get("write_matches", 0),
+                "enrich_warnings": warn_str,
+            })
+
+    updated = 0
+    with GraphClient() as gc:
+        if error_items:
             gc.query(
                 """
-                MATCH (p:FacilityPath {id: $id})
+                UNWIND $items AS item
+                MATCH (p:FacilityPath {id: item.id})
+                SET p.claimed_at = null,
+                    p.enrich_error = item.error,
+                    p.should_enrich = CASE WHEN item.permanent
+                        THEN false ELSE p.should_enrich END
+                """,
+                items=error_items,
+            )
+
+        if success_items:
+            gc.query(
+                """
+                UNWIND $items AS item
+                MATCH (p:FacilityPath {id: item.id})
                 SET p.is_enriched = true,
-                    p.enriched_at = $now,
-                    p.total_bytes = $total_bytes,
-                    p.total_lines = $total_lines,
-                    p.language_breakdown = $language_breakdown,
-                    p.is_multiformat = $is_multiformat,
-                    p.pattern_categories = $pattern_categories,
-                    p.read_matches = $read_matches,
-                    p.write_matches = $write_matches,
-                    p.enrich_warnings = $enrich_warnings,
+                    p.enriched_at = item.now,
+                    p.total_bytes = item.total_bytes,
+                    p.total_lines = item.total_lines,
+                    p.language_breakdown = item.language_breakdown,
+                    p.is_multiformat = item.is_multiformat,
+                    p.pattern_categories = item.pattern_categories,
+                    p.read_matches = item.read_matches,
+                    p.write_matches = item.write_matches,
+                    p.enrich_warnings = item.enrich_warnings,
                     p.claimed_at = null
                 """,
-                id=path_id,
-                now=now,
-                total_bytes=result.get("total_bytes"),
-                total_lines=result.get("total_lines"),
-                language_breakdown=lang_breakdown,
-                is_multiformat=result.get("is_multiformat", False),
-                pattern_categories=pattern_cats,
-                read_matches=result.get("read_matches", 0),
-                write_matches=result.get("write_matches", 0),
-                enrich_warnings=warn_str,
+                items=success_items,
             )
-            updated += 1
+            updated = len(success_items)
 
     return updated
 
@@ -975,103 +979,105 @@ def mark_score_complete(
     from imas_codex.graph import GraphClient
 
     now = datetime.now(UTC).isoformat()
-    updated = 0
+
+    from imas_codex.discovery.paths.frontier import SCORE_DIMENSIONS
+
+    # Build batch items with all dimensions included (null if absent)
+    items: list[dict[str, Any]] = []
+    child_skip_ids: list[dict[str, Any]] = []
+
+    for result in score_results:
+        path_id = f"{facility}:{result['path']}"
+
+        primary_evidence = result.get("primary_evidence", [])
+        if isinstance(primary_evidence, list):
+            primary_evidence = json.dumps(primary_evidence)
+
+        keywords = result.get("keywords", [])
+        if isinstance(keywords, list):
+            keywords = json.dumps(keywords)
+
+        item: dict[str, Any] = {
+            "id": path_id,
+            "now": now,
+            "score": result.get("score"),
+            "score_cost": result.get("score_cost", 0.0),
+            "scored": PathStatus.scored.value,
+            "adjustment_reason": result.get("adjustment_reason", ""),
+            "primary_evidence": primary_evidence,
+            "evidence_summary": result.get("evidence_summary", ""),
+            "description": result.get("description", ""),
+            "keywords": keywords,
+            "path_purpose": result.get("path_purpose"),
+            "physics_domain": result.get("physics_domain"),
+            "should_expand": result.get("should_expand", True),
+        }
+        for dim in SCORE_DIMENSIONS:
+            item[dim] = result.get(dim)
+        items.append(item)
+
+        # Collect child-skip candidates
+        path_purpose = result.get("path_purpose")
+        should_expand = result.get("should_expand", True)
+        if path_purpose in {"modeling_data", "experimental_data"} and not should_expand:
+            child_skip_ids.append({
+                "id": path_id,
+                "reason": f"parent_{path_purpose}",
+            })
+
+    if not items:
+        return 0
 
     with GraphClient() as gc:
-        for result in score_results:
-            path_id = f"{facility}:{result['path']}"
+        gc.query(
+            """
+            UNWIND $items AS item
+            MATCH (p:FacilityPath {id: item.id})
+            SET p.status = item.scored,
+                p.scored_at = item.now,
+                p.score_composite = item.score,
+                p.score_cost = coalesce(p.score_cost, 0) + item.score_cost,
+                p.score_reason = item.adjustment_reason,
+                p.primary_evidence = item.primary_evidence,
+                p.evidence_summary = item.evidence_summary,
+                p.description = item.description,
+                p.keywords = item.keywords,
+                p.path_purpose = item.path_purpose,
+                p.physics_domain = item.physics_domain,
+                p.should_expand = item.should_expand,
+                p.claimed_at = null,
+                p.score_modeling_code = coalesce(item.score_modeling_code, p.score_modeling_code),
+                p.score_analysis_code = coalesce(item.score_analysis_code, p.score_analysis_code),
+                p.score_operations_code = coalesce(item.score_operations_code, p.score_operations_code),
+                p.score_modeling_data = coalesce(item.score_modeling_data, p.score_modeling_data),
+                p.score_experimental_data = coalesce(item.score_experimental_data, p.score_experimental_data),
+                p.score_data_access = coalesce(item.score_data_access, p.score_data_access),
+                p.score_workflow = coalesce(item.score_workflow, p.score_workflow),
+                p.score_visualization = coalesce(item.score_visualization, p.score_visualization),
+                p.score_documentation = coalesce(item.score_documentation, p.score_documentation),
+                p.score_imas = coalesce(item.score_imas, p.score_imas),
+                p.score_convention = coalesce(item.score_convention, p.score_convention)
+            """,
+            items=items,
+        )
 
-            # Serialize evidence lists to JSON
-            primary_evidence = result.get("primary_evidence", [])
-            if isinstance(primary_evidence, list):
-                primary_evidence = json.dumps(primary_evidence)
-
-            # Build per-dimension SET clauses for scores that were adjusted
-            dim_params: dict[str, float] = {}
-            dim_set_clauses: list[str] = []
-            from imas_codex.discovery.paths.frontier import SCORE_DIMENSIONS
-
-            for dim in SCORE_DIMENSIONS:
-                if dim in result:
-                    dim_params[dim] = result[dim]
-                    dim_set_clauses.append(f"p.{dim} = ${dim}")
-
-            extra_set = ""
-            if dim_set_clauses:
-                extra_set = ",\n                    " + ",\n                    ".join(
-                    dim_set_clauses
-                )
-
-            # Serialize keywords to JSON for graph storage
-            keywords = result.get("keywords", [])
-            if isinstance(keywords, list):
-                keywords = json.dumps(keywords)
-
+        # Batch child-skip for data containers
+        if child_skip_ids:
             gc.query(
-                f"""
-                MATCH (p:FacilityPath {{id: $id}})
-                SET p.status = $scored,
-                    p.scored_at = $now,
-                    p.score_composite = $score,
-                    p.score_cost = coalesce(p.score_cost, 0) + $score_cost,
-                    p.score_reason = $adjustment_reason,
-                    p.primary_evidence = $primary_evidence,
-                    p.evidence_summary = $evidence_summary,
-                    p.description = $description,
-                    p.keywords = $keywords,
-                    p.path_purpose = $path_purpose,
-                    p.physics_domain = $physics_domain,
-                    p.should_expand = $should_expand,
-                    p.claimed_at = null{extra_set}
+                """
+                UNWIND $parents AS parent
+                MATCH (child:FacilityPath)-[:IN_DIRECTORY]->(p:FacilityPath {id: parent.id})
+                WHERE child.status = 'discovered'
+                SET child.status = $skipped,
+                    child.skipped_at = $now,
+                    child.terminal_reason = $terminal_reason,
+                    child.skip_reason = parent.reason
                 """,
-                id=path_id,
+                parents=child_skip_ids,
                 now=now,
-                score=result.get("score"),
-                score_cost=result.get("score_cost", 0.0),
-                scored=PathStatus.scored.value,
-                adjustment_reason=result.get("adjustment_reason", ""),
-                primary_evidence=primary_evidence,
-                evidence_summary=result.get("evidence_summary", ""),
-                description=result.get("description", ""),
-                keywords=keywords,
-                path_purpose=result.get("path_purpose"),
-                physics_domain=result.get("physics_domain"),
-                should_expand=result.get("should_expand", True),
-                **dim_params,
+                terminal_reason=TerminalReason.parent_terminal.value,
+                skipped=PathStatus.skipped.value,
             )
-            updated += 1
-
-            # Data container child-skip: if scoring marked this as a data
-            # container that shouldn't expand, mark children as terminal
-            path_purpose = result.get("path_purpose")
-            should_expand = result.get("should_expand", True)
-            data_purposes = {"modeling_data", "experimental_data"}
-
-            if path_purpose in data_purposes and not should_expand:
-                skipped_result = gc.query(
-                    """
-                    MATCH (child:FacilityPath)-[:IN_DIRECTORY]->(p:FacilityPath {id: $id})
-                    WHERE child.status = 'discovered'
-                    SET child.status = $skipped,
-                        child.skipped_at = $now,
-                        child.terminal_reason = $terminal_reason,
-                        child.skip_reason = $reason
-                    RETURN count(child) AS skipped_count
-                    """,
-                    id=path_id,
-                    now=now,
-                    terminal_reason=TerminalReason.parent_terminal.value,
-                    reason=f"parent_{path_purpose}",
-                    skipped=PathStatus.skipped.value,
-                )
-                skipped_count = (
-                    skipped_result[0]["skipped_count"] if skipped_result else 0
-                )
-                if skipped_count > 0:
-                    logger.debug(
-                        f"Score: skipped {skipped_count} children of "
-                        f"{path_purpose}: {result['path']}"
-                    )
 
     return updated
 
