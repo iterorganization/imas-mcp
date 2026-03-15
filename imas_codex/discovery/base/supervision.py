@@ -1054,8 +1054,14 @@ async def run_supervised_loop(
         while not should_stop():
             await asyncio.sleep(poll_interval)
 
-            # Refresh phase caches periodically in a background thread
-            if phases and time.time() - last_phase_refresh > phase_refresh_interval:
+            # Refresh phase caches periodically in a background thread.
+            # Skip when stopping — graph queries can block for seconds,
+            # delaying graceful shutdown.
+            if (
+                phases
+                and not should_stop()
+                and time.time() - last_phase_refresh > phase_refresh_interval
+            ):
                 await asyncio.to_thread(_refresh_all_phases)
                 last_phase_refresh = time.time()
 
