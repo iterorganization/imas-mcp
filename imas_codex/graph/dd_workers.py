@@ -90,6 +90,9 @@ class DDBuildState(DiscoveryStateBase):
     # Status breakdown from graph (for pending display)
     imas_node_status_counts: dict[str, int] = field(default_factory=dict)
 
+    # Accumulated cost from prior builds (queried from graph)
+    accumulated_cost: float = 0.0
+
     # Per-phase progress (observed by display)
     extract_stats: WorkerStats = field(default_factory=WorkerStats)
     build_stats: WorkerStats = field(default_factory=WorkerStats)

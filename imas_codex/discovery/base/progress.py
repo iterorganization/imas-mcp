@@ -1879,6 +1879,7 @@ class DataDrivenProgressDisplay(BaseProgressDisplay):
         graph_refresh_fn: Callable[[str], None] | None = None,
         stats_fn: Callable[[], list[tuple[str, str, str]]] | None = None,
         pending_fn: Callable[[], list[tuple[str, int]]] | None = None,
+        accumulated_cost_fn: Callable[[], float] | None = None,
     ) -> None:
         super().__init__(
             facility=facility,
@@ -1893,6 +1894,7 @@ class DataDrivenProgressDisplay(BaseProgressDisplay):
         self._graph_refresh_fn = graph_refresh_fn
         self._stats_fn = stats_fn
         self._pending_fn = pending_fn
+        self._accumulated_cost_fn = accumulated_cost_fn
 
     def set_engine_state(self, state: Any) -> None:
         """Connect display to the live engine state."""
@@ -1996,11 +1998,21 @@ class DataDrivenProgressDisplay(BaseProgressDisplay):
                             eta = stage_eta
 
         projected_cost = total_cost + etc if etc > 0 else None
+
+        # Accumulated cost: graph-sourced (cross-run) + current session
+        accumulated = total_cost
+        if self._accumulated_cost_fn:
+            graph_cost = self._accumulated_cost_fn()
+            accumulated = graph_cost + total_cost
+            if etc > 0:
+                projected_cost = accumulated + etc
+
         config = ResourceConfig(
             elapsed=self.elapsed,
             eta=eta,
             run_cost=total_cost if total_cost > 0 else None,
             cost_limit=self.cost_limit if self.cost_limit > 0 else None,
+            accumulated_cost=accumulated,
             etc=projected_cost,
             stats=self._stats_fn() if self._stats_fn else None,
             pending=self._pending_fn() if self._pending_fn else None,
