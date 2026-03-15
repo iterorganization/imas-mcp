@@ -1,15 +1,18 @@
-# Mapping Pipeline Search Enrichment
+# Mapping Pipeline: Search Enrichment & Mapping Fidelity
 
 **Status**: Plan  
 **Created**: 2026-03-15  
-**Scope**: `imas_codex/ids/`, `imas_codex/llm/search_tools.py`, `imas_codex/tools/graph_search.py`
+**Updated**: 2026-03-15  
+**Scope**: `imas_codex/ids/`, `imas_codex/llm/search_tools.py`, `imas_codex/tools/graph_search.py`, `imas_codex/schemas/facility.yaml`
 
 ## Executive Summary
 
 The IMAS mapping pipeline (`imas map run`) generates signal-level mappings from
-facility signal sources to IMAS IDS fields. While the pipeline already uses
-physics-domain filtering and per-source semantic search, it leaves significant
-value on the table by not leveraging:
+facility signal sources to IMAS IDS fields. This plan addresses two interrelated
+areas: **search enrichment** (better context for mapping decisions) and **mapping
+fidelity** (correct handling of no-match, many-to-one, and one-to-many mappings).
+
+### Search Enrichment Gaps
 
 1. **Scored wiki and code content** — 982 wiki pages and 569 code files in
    pf_active-relevant domains are never consulted during mapping
@@ -20,6 +23,25 @@ value on the table by not leveraging:
 4. **MCP tool discoverability** — agents calling `search_docs`, `search_code`,
    `search_signals` have no visibility into available physics domains or score
    dimensions at call time
+
+### Mapping Fidelity Gaps
+
+5. **Forced low-confidence matches** — The pipeline currently produces a binding
+   for every assigned source, even when no credible IMAS target exists. Many
+   facility signals (operational parameters, diagnostics metadata, facility-
+   specific computed quantities) have no IMAS equivalent. These should be
+   persisted as explicit "no mapping" decisions with evidence-based reasoning,
+   not forced into low-confidence bindings.
+6. **Many-to-one mapping legitimacy** — Multiple source signals mapping to the
+   same IMAS target is a valid and expected pattern (e.g., machine description
+   data from different epochs, signals at different processing stages: raw,
+   subsampled, filtered). The pipeline and validation need to distinguish
+   legitimate many-to-one mappings from erroneous duplicates.
+7. **One-to-many mapping support** — A single source signal should map to
+   multiple IMAS targets when IMAS stores the same physical parameter in
+   multiple locations (e.g., plasma current in `core_profiles`, `equilibrium`,
+   `summary`). The IMAS clustering system already groups these cross-IDS
+   equivalent paths and should be exploited to discover them.
 
 ## Current State
 
@@ -150,9 +172,381 @@ The `physics_domain` parameter on `search_signals` accepts a string but
 doesn't list the 22 valid enum values. The `search_docs` and `search_code`
 tools don't even accept a `physics_domain` parameter.
 
+#### Gap 5: No Graceful Handling of Unmappable Signals
+
+The current pipeline model (`SignalMappingBatch`) only supports positive
+bindings and escalation flags. There is no structured way to say "this signal
+has no IMAS target and here is why." The `unassigned_groups` field on
+`SectionAssignmentBatch` captures sources that don't fit any section, but
+doesn't persist them with a reason. Sources that are assigned to a section
+but have no valid field target are forced into low-confidence bindings or
+silently dropped.
+
+**Expected categories of unmappable signals**:
+- Facility-specific operational parameters (e.g., power supply voltages,
+  cryogenics temperatures) with no IMAS IDS equivalent
+- Diagnostic metadata (e.g., calibration timestamps, acquisition rates)
+  that are properties of the measurement, not measured quantities
+- Computed indicators (e.g., local plasma state indices) that are
+  facility-specific derived quantities
+- Signals from systems not yet covered by IMAS DD versions in use
+
+**Impact**: Low-confidence bindings pollute the graph with incorrect
+`MAPS_TO_IMAS` relationships, reducing overall mapping quality and
+complicating downstream IDS assembly.
+
+#### Gap 6: Duplicate Target Detection Conflates Valid Many-to-One Patterns
+
+`validate_mappings()` detects duplicate targets and creates escalation flags,
+but does not distinguish between:
+
+1. **Legitimate many-to-one** — multiple sources validly map to the same IMAS
+   target because they represent:
+   - The same quantity across machine description epochs (e.g., coil
+     geometry from different commissioning campaigns)
+   - Different stages of a processing pipeline (raw measurement,
+     subsampled, filtered, ELM-averaged)
+   - Redundant diagnostics measuring the same quantity
+
+2. **Erroneous duplicates** — two unrelated sources mapping to the same target
+   due to LLM confusion
+
+**Impact**: Legitimate patterns generate false escalation noise, masking
+genuinely erroneous duplicates.
+
+#### Gap 7: No Cluster-Aware One-to-Many Mapping
+
+The IMAS clustering system groups paths that represent the same physical
+parameter across multiple IDSs (e.g., plasma current appears in
+`core_profiles/global_quantities/ip`, `equilibrium/time_slice/global_quantities/ip`,
+`summary/global_quantities/ip/value`). The mapping pipeline does not use
+this clustering to discover additional targets when a source maps to one
+member of a cluster.
+
+**Impact**: Each `imas map run` invocation only maps within a single IDS,
+missing cross-IDS mappings that the cluster index could supply. Even within
+a single IDS, related paths in the same cluster are not surfaced as
+candidates.
+
 ## Phased Implementation
 
-### Phase 1: Score-Dimension Filtering in Search Tools
+### Phase 1: Mapping Fidelity — Output Model, Prompt, and Schema (Gaps 5, 6, 7)
+
+**Goal**: Enable the pipeline to produce correct outputs for the three
+fundamental mapping cardinalities: no-match (0:1), many-to-one (N:1), and
+one-to-many (1:N). The majority of this work is in prompt refinement, output
+model development, and schema evolution — minimal changes to pipeline
+orchestration.
+
+**Targets**:
+- `imas_codex/ids/models.py` — output model changes
+- `imas_codex/llm/prompts/mapping/signal_mapping.md` — prompt refinement
+- `imas_codex/llm/prompts/mapping/section_assignment.md` — prompt refinement
+- `imas_codex/schemas/facility.yaml` — schema extensions
+- `imas_codex/ids/validation.py` — validation refinement
+- `imas_codex/ids/mapping.py` — persist unmapped decisions
+
+**Changes**:
+
+#### 1a. Explicit No-Match Output Model (Gap 5)
+
+Add a structured model for signals that have no IMAS target. This replaces
+the current pattern of forcing low-confidence bindings or silently dropping
+unmatched signals.
+
+```python
+class MappingDisposition(StrEnum):
+    """Why a signal was or was not mapped."""
+    MAPPED = "mapped"                       # Positive binding exists
+    NO_IMAS_EQUIVALENT = "no_imas_equivalent"  # No corresponding IDS field
+    METADATA_ONLY = "metadata_only"         # Signal is diagnostic metadata, not a measurement
+    FACILITY_SPECIFIC = "facility_specific" # Facility-specific quantity, no IDS coverage
+    INSUFFICIENT_CONTEXT = "insufficient_context"  # Could map but evidence is inadequate
+    DD_VERSION_GAP = "dd_version_gap"       # Target exists in newer DD but not current
+
+class UnmappedSignal(BaseModel):
+    """A signal that was evaluated and determined to have no valid IMAS target."""
+    source_id: str = Field(description="SignalSource node id")
+    disposition: MappingDisposition = Field(
+        description="Why this signal has no mapping"
+    )
+    evidence: str = Field(
+        description=(
+            "Concise evidence-based explanation. Must reference concrete facts: "
+            "searched IMAS paths, checked IDS sections, why no match exists. "
+            "Example: 'No IDS field for PF supply interlock status. "
+            "Searched pf_active/supply — only current/voltage/energy fields "
+            "exist. Interlock is a facility-specific operational parameter.'"
+        )
+    )
+    nearest_imas_path: str | None = Field(
+        default=None,
+        description="Closest IMAS path considered but rejected, if any"
+    )
+    nearest_similarity: float | None = Field(
+        default=None, ge=0, le=1,
+        description="Cosine similarity to nearest_imas_path, if computed"
+    )
+```
+
+Extend `SignalMappingBatch` to include unmapped signals:
+
+```python
+class SignalMappingBatch(BaseModel):
+    ids_name: str
+    section_path: str
+    mappings: list[SignalMappingEntry]
+    unmapped: list[UnmappedSignal] = Field(default_factory=list)  # NEW
+    escalations: list[EscalationFlag] = Field(default_factory=list)
+```
+
+Extend `ValidatedSignalMapping` to carry the disposition and evidence:
+
+```python
+class ValidatedSignalMapping(BaseModel):
+    source_id: str
+    source_property: str = "value"
+    target_id: str
+    transform_expression: str = "value"
+    source_units: str | None = None
+    target_units: str | None = None
+    cocos_label: str | None = None
+    confidence: float = Field(ge=0, le=1)
+    disposition: MappingDisposition = MappingDisposition.MAPPED  # NEW
+    evidence: str = ""  # NEW — reasoning for mapping or non-mapping
+```
+
+#### 1b. Prompt Refinement for No-Match Honesty (Gap 5)
+
+Update `signal_mapping.md` to explicitly instruct the LLM to produce
+`unmapped` entries when no credible target exists. The key prompt additions:
+
+```markdown
+## No-Match Handling
+
+Not every signal has an IMAS equivalent. When no target field exists:
+
+1. **Do not force a low-confidence mapping.** A confidence < 0.3 mapping is
+   worse than an explicit "no mapping" decision.
+2. **Add to `unmapped`** with a `disposition` explaining why:
+   - `no_imas_equivalent` — The physical quantity has no IDS field
+   - `metadata_only` — The signal is diagnostic metadata (acquisition rate,
+     calibration timestamp) not a measured/computed quantity
+   - `facility_specific` — Facility-specific operational parameter
+   - `insufficient_context` — Could map but evidence is too weak to commit
+   - `dd_version_gap` — Target exists in newer DD but not current version
+3. **Provide evidence**: Reference the IMAS paths you searched, the section
+   fields available, and why none match. Cite specific field names.
+4. **Set `nearest_imas_path`** if you found a close-but-wrong candidate,
+   and explain in `evidence` why it was rejected.
+
+**Confidence threshold**: If your best candidate has confidence < 0.3, emit
+an `unmapped` entry instead of a mapping.
+```
+
+Also update `section_assignment.md` to make `unassigned_groups` first-class
+with per-source reasoning:
+
+```python
+class UnassignedSource(BaseModel):
+    """A source that could not be assigned to any IDS section."""
+    source_id: str
+    disposition: MappingDisposition
+    evidence: str
+
+class SectionAssignmentBatch(BaseModel):
+    ids_name: str
+    assignments: list[SectionAssignment]
+    unassigned: list[UnassignedSource] = Field(default_factory=list)  # replaces unassigned_groups
+```
+
+#### 1c. Schema Extension for Mapping Reasoning (Gap 5)
+
+Add a `mapping_reason` property to the `MAPS_TO_IMAS` relationship and a
+`mapping_disposition` + `mapping_evidence` on `SignalSource` for unmapped
+signals:
+
+```yaml
+# In SignalSource attributes (facility.yaml):
+mapping_disposition:
+  description: >-
+    Disposition of mapping evaluation. Set to the MappingDisposition
+    value after the mapping pipeline processes this source.
+    'mapped' if MAPS_TO_IMAS exists, otherwise the reason no mapping exists.
+  range: MappingDispositionEnum
+
+mapping_evidence:
+  description: >-
+    Concise evidence-based explanation for the mapping disposition.
+    For mapped signals: why this target was chosen, with references.
+    For unmapped signals: what was searched and why no target fits.
+  range: string
+```
+
+The `MAPS_TO_IMAS` relationship already carries `confidence` and
+`transform_expression` as properties. Add `evidence` as a relationship
+property in `persist_mapping_result()`:
+
+```python
+# In persist_mapping_result(), step 4:
+gc.query(
+    """
+    MATCH (sg:SignalSource {id: $sg_id})
+    MATCH (ip:IMASNode {id: $target_id})
+    MERGE (sg)-[r:MAPS_TO_IMAS]->(ip)
+    SET r.source_property = $source_property,
+        r.transform_expression = $transform_expression,
+        r.confidence = $confidence,
+        r.evidence = $evidence
+        ...
+    """,
+    evidence=fm.evidence,
+    ...
+)
+```
+
+For unmapped signals, persist the disposition directly on the `SignalSource`
+node (no `MAPS_TO_IMAS` relationship is created):
+
+```python
+# New step in persist_mapping_result():
+for um in unmapped_signals:
+    gc.query(
+        """
+        MATCH (sg:SignalSource {id: $sg_id})
+        SET sg.mapping_disposition = $disposition,
+            sg.mapping_evidence = $evidence
+        """,
+        sg_id=um.source_id,
+        disposition=um.disposition.value,
+        evidence=um.evidence,
+    )
+```
+
+#### 1d. Many-to-One Validation Refinement (Gap 6)
+
+The current `validate_mappings()` flags all duplicate targets as escalations.
+Refine this to classify many-to-one patterns:
+
+```python
+class DuplicateTargetClassification(StrEnum):
+    """Classification of why multiple sources map to the same target."""
+    EPOCH_VARIANTS = "epoch_variants"         # Same quantity, different epochs
+    PROCESSING_STAGES = "processing_stages"   # Raw/filtered/averaged variants
+    REDUNDANT_DIAGNOSTICS = "redundant_diagnostics"  # Different instruments, same measurement
+    LEGITIMATE_OTHER = "legitimate_other"     # Other valid many-to-one pattern
+    ERRONEOUS = "erroneous"                   # Likely LLM error
+```
+
+Update the duplicate target detection in `validate_mappings()` to:
+
+1. Group bindings by `target_id`
+2. For each group with >1 binding, check source metadata:
+   - If sources share a `group_key` prefix but differ by index → epoch variants
+   - If sources have the same `physics_domain` and similar descriptions
+     but different `representative_signal` tree paths → processing stages
+   - If sources are from different diagnostics → redundant diagnostics
+3. Only flag `ERRONEOUS` when sources have unrelated physics domains or
+   descriptions with low mutual similarity
+
+This is primarily a prompt + output model refinement. Add a `many_to_one_note`
+field to `SignalMappingEntry`:
+
+```python
+class SignalMappingEntry(BaseModel):
+    ...
+    many_to_one_note: str | None = Field(
+        default=None,
+        description=(
+            "When multiple sources map to this target, explain why. "
+            "E.g., 'Epoch variant: same coil geometry from 2019 commissioning' "
+            "or 'Processing stage: raw measurement before ELM filtering'"
+        ),
+    )
+```
+
+Update the signal_mapping prompt to instruct the LLM:
+
+```markdown
+## Many-to-One Mappings
+
+Multiple source signals mapping to the same IMAS target is expected and valid.
+Common patterns:
+- **Epoch variants**: The same physical quantity measured/defined at different
+  machine configuration epochs (e.g., coil geometry from different commissioning
+  campaigns). All are correct mappings — which epoch to use is resolved at
+  assembly time via the `source_epoch_field`.
+- **Processing stages**: Raw, subsampled, filtered, or ELM-averaged variants
+  of the same measurement. All map to the same IMAS field — which stage to use
+  is a user/workflow choice.
+- **Redundant diagnostics**: Different instruments measuring the same quantity
+  (e.g., two independent Ip Rogowski coils).
+
+When you map multiple sources to the same target, set `many_to_one_note` on
+each mapping to explain the relationship between the sources.
+```
+
+#### 1e. Cluster-Aware One-to-Many Mapping (Gap 7)
+
+Enable the pipeline to discover additional IMAS targets for a source signal
+by consulting the IMAS semantic cluster index. This is a prompt + context
+enrichment change — the `SignalMappingEntry` model already supports multiple
+mappings per source via the `mappings` list, and the prompt already says
+"Return ALL valid mappings for each source."
+
+**Context enrichment** in `gather_context()`:
+
+```python
+# After semantic search, look up clusters for top-scoring IMAS matches
+from imas_codex.clusters.search import ClusterSearcher
+
+cluster_searcher = ClusterSearcher.load()
+for source_id, candidates in source_candidates.items():
+    for cand in candidates[:3]:  # Top 3 semantic hits
+        cluster_hits = cluster_searcher.search_by_path(cand["id"])
+        if cluster_hits:
+            # Add cluster members as additional target candidates
+            for hit in cluster_hits:
+                for member_path in hit.paths:
+                    if member_path != cand["id"]:
+                        candidates.append({
+                            "id": member_path,
+                            "score": hit.similarity_score * cand["score"],
+                            "via_cluster": hit.label,
+                            "documentation": f"Cluster member: {hit.description}",
+                        })
+```
+
+**Prompt addition** to `signal_mapping.md`:
+
+```markdown
+### IMAS Cluster Candidates
+
+Some semantic candidates below are cluster members — IMAS paths that store
+the same physical parameter in different IDSs. When a source maps to one
+member of a cluster, evaluate whether it should also map to other members.
+
+Cluster members from different IDSs (e.g., `core_profiles/.../ip` and
+`equilibrium/.../ip`) are valid one-to-many mappings if the source signal
+genuinely represents that quantity. Set appropriate confidence — the primary
+IDS target (within the current `{{ ids_name }}`) should have higher confidence
+than cross-IDS targets.
+```
+
+**Note**: Cross-IDS mappings from clusters will naturally be limited to paths
+within the target IDS for any single `imas map run` invocation. The cluster
+context primarily helps when the same parameter appears in multiple _sections_
+within the same IDS, or when a future multi-IDS mapping mode is added.
+
+**Validation**:
+- Run `imas map run --no-persist jet pf_active` before and after
+- Verify that unmapped signals appear in output with dispositions
+- Confirm that legitimate many-to-one patterns no longer produce false
+  escalations
+- Check that cluster candidates appear in semantic context
+- Measure prompt token impact (expect modest increase from cluster context)
+
+### Phase 2: Score-Dimension Filtering in Search Tools (Gap 2)
 
 **Goal**: Enable filtering search results by score dimensions across all three
 content search tools.
@@ -209,7 +603,7 @@ content search tools.
 - Integration test: `search_docs("coil current", "jet", physics_domain="magnetic_field_systems")`
   should return fewer, more relevant results than unfiltered
 
-### Phase 2: Wiki and Code Context in Mapping Pipeline
+### Phase 3: Wiki and Code Context in Mapping Pipeline (Gap 1)
 
 **Goal**: Enrich the LLM prompt context in `gather_context()` and
 `map_signals()` with relevant wiki and code content, filtered by physics
@@ -316,7 +710,7 @@ domain and score dimensions.
    {{ code_data_access }}
    ```
 
-5. **Per-source wiki/code narrowing** (optional for Phase 2)
+5. **Per-source wiki/code narrowing** (optional for Phase 3)
 
    In `map_signals()` per-section loop, optionally run semantic search on wiki
    and code using the source description for per-source context, similar to
@@ -329,7 +723,7 @@ domain and score dimensions.
 - Check cost increase is acceptable (wiki/code context adds tokens)
 - Verify no regression on existing binding quality
 
-### Phase 3: Semantic Match Matrix (Cross-Domain Bridge)
+### Phase 4: Semantic Match Matrix (Cross-Domain Bridge) (Gap 3)
 
 **Goal**: Implement a semantic bridge that computes cosine similarity between
 source content embeddings and target IMAS node embeddings, returning a ranked
@@ -415,7 +809,7 @@ match matrix that the LLM uses as strong candidate signals.
 - Measure latency increase (batch embedding should be faster than one-at-a-time)
 - Verify wiki/code bridge matches add value vs noise in LLM output
 
-### Phase 4: Dynamic MCP Tool Docstrings
+### Phase 5: Dynamic MCP Tool Docstrings (Gap 4)
 
 **Goal**: Update MCP tool docstrings to include available physics domains and
 score dimensions at registration time, so calling agents know what values are
@@ -498,21 +892,6 @@ valid without consulting external documentation.
 
    In `imas_codex/tools/graph_search.py`, the `@mcp_tool` decorator takes a
    static description string. These should also enumerate valid physics domains.
-   Options:
-   - **Dynamic string at import time**: Construct the description string using
-     f-strings at module load time (imports `PhysicsDomain` from generated
-     models)
-   - **Template pattern**: Use a helper that formats the docstring from enum
-     values:
-     ```python
-     from imas_codex.tools.utils import physics_domain_doc, score_dimensions_doc
-
-     @mcp_tool(
-         "Find IMAS IDS entries using semantic and lexical search. "
-         f"physics_domain: Filter results by physics domain. {physics_domain_doc()} "
-         f"score_dimension: Filter by score. {score_dimensions_doc('content')} "
-     )
-     ```
 
 **Validation**:
 - Call `get_graph_schema()` or inspect tool descriptions to verify domains and
@@ -564,16 +943,20 @@ The `PhysicsDomain` enum (22 values) from `physics_domains.yaml`:
 ## Implementation Order & Dependencies
 
 ```
-Phase 1 (search tool filters)
+Phase 1 (mapping fidelity: models + prompts + schema)
     ↓
-Phase 2 (pipeline wiki/code context)  ←— depends on Phase 1 tools
+Phase 2 (search tool score filters)
     ↓
-Phase 3 (semantic match matrix)       ←— depends on Phase 2 context model
+Phase 3 (pipeline wiki/code context)       ←— depends on Phase 2 tools
     ↓
-Phase 4 (dynamic docstrings)          ←— can run in parallel with 2-3
+Phase 4 (semantic match matrix)            ←— depends on Phase 3 context model
+    ↓
+Phase 5 (dynamic docstrings)               ←— can run in parallel with 2-4
 ```
 
-Phase 4 is independent and can be implemented alongside any other phase.
+Phase 1 is foundational — it defines the output model contract that all
+subsequent phases build on. Phase 5 is independent and can be implemented
+alongside any other phase.
 
 ## Risk Assessment
 
@@ -585,27 +968,46 @@ Phase 4 is independent and can be implemented alongside any other phase.
 - **False positives**: Low-quality wiki/code matches could mislead the LLM.
   Mitigated by: score thresholds, cosine similarity cutoffs, and clear prompt
   framing that marks these as "supporting evidence, not authoritative".
+- **Over-rejection**: Instructing the LLM not to force mappings could lead to
+  too many `unmapped` signals. Mitigated by: requiring evidence for rejection
+  (not just low confidence), and tracking unmapped rates per facility/IDS to
+  detect regression. Validate against known-good mappings.
+- **Cluster noise in one-to-many**: Cluster members from unrelated IDSs could
+  distract the LLM. Mitigated by: filtering cluster candidates to the target
+  IDS (within-IDS clusters only for Phase 1), scoring cluster candidates by
+  the product of source-to-primary similarity and cluster coherence, and
+  capping cluster-derived candidates per source.
 
 ## Files Modified Per Phase
 
 ### Phase 1
+- `imas_codex/ids/models.py` — `MappingDisposition`, `UnmappedSignal`, updated `SignalMappingBatch`, `UnassignedSource`, `ValidatedSignalMapping` with disposition/evidence
+- `imas_codex/llm/prompts/mapping/signal_mapping.md` — no-match, many-to-one, cluster prompts
+- `imas_codex/llm/prompts/mapping/section_assignment.md` — unassigned reasoning
+- `imas_codex/schemas/facility.yaml` — `MappingDispositionEnum`, `mapping_disposition`, `mapping_evidence` on SignalSource, `evidence` on MAPS_TO_IMAS
+- `imas_codex/ids/mapping.py` — persist unmapped signals, pass cluster context
+- `imas_codex/ids/validation.py` — classify many-to-one patterns
+- `imas_codex/ids/tools.py` — cluster candidate lookup in `gather_context()`
+- `tests/ids/` — tests for new models, unmapped persistence, many-to-one classification
+
+### Phase 2
 - `imas_codex/llm/search_tools.py` — add physics_domain and score_dimension params
 - `imas_codex/llm/server.py` — update tool registration signatures
 - `tests/` — new parametrized tests for filtered search
 
-### Phase 2
+### Phase 3
 - `imas_codex/ids/tools.py` — new `fetch_wiki_context()`, `fetch_code_context()`
 - `imas_codex/ids/mapping.py` — `gather_context()`, `map_signals()` integration
 - `imas_codex/llm/prompts/mapping/signal_mapping.md` — new template sections
 - `tests/ids/` — tests for new tool functions
 
-### Phase 3
+### Phase 4
 - `imas_codex/ids/tools.py` — new `compute_semantic_matches()`
 - `imas_codex/ids/mapping.py` — replace `source_candidates` with match matrix
 - `imas_codex/llm/prompts/mapping/signal_mapping.md` — match matrix section
 - `tests/ids/` — tests for semantic matching
 
-### Phase 4
+### Phase 5
 - `imas_codex/tools/utils.py` — `physics_domain_doc()`, `score_dimensions_doc()`
 - `imas_codex/llm/server.py` — dynamic docstrings in tool registration
 - `imas_codex/tools/graph_search.py` — dynamic `@mcp_tool` descriptions
