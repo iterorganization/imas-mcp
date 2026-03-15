@@ -427,7 +427,7 @@ class FileProgressDisplay(BaseProgressDisplay):
         if enrich:
             enrich_text = enrich.path
             if enrich.score is not None:
-                enrich_score_parts = [(f"{enrich.score:.2f}", "bold magenta")]
+                enrich_score_parts = [(f"{enrich.score:.2f}", "bold green")]
             desc_parts = []
             if enrich.line_count > 0:
                 desc_parts.append(f"{enrich.line_count:,} LOC")
@@ -475,7 +475,7 @@ class FileProgressDisplay(BaseProgressDisplay):
         if ingest:
             ingest_text = ingest.path
             if ingest.score is not None:
-                ingest_score_parts = [(f"{ingest.score:.2f}", "bold yellow")]
+                ingest_score_parts = [(f"{ingest.score:.2f}", "bold cyan")]
             desc_parts = []
             if ingest.language:
                 desc_parts.append(f"[{ingest.language}]")
@@ -500,7 +500,7 @@ class FileProgressDisplay(BaseProgressDisplay):
             embed_text = embed.chunk_id
             embed_desc = embed.label
             if embed.score is not None:
-                embed_score_parts = [(f"{embed.score:.2f}", "bold white")]
+                embed_score_parts = [(f"{embed.score:.2f}", "bold cyan")]
 
         # --- Build pipeline rows ---
 
