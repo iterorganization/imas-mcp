@@ -608,7 +608,7 @@ class TestBuildServersSection:
         from imas_codex.discovery.base.services import ServiceState, ServiceStatus
 
         defaults = {
-            "name": "models",
+            "name": "llm",
             "state": ServiceState.unhealthy,
             "detail": "",
         }
