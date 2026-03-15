@@ -596,6 +596,28 @@ classes:
           are eligible for re-scanning by discover code --rescan.
         range: datetime
 
+      # === ACCUMULATED DISCOVERY TIME (wall-clock seconds across sessions) ===
+      paths_elapsed_seconds:
+        description: >-
+          Accumulated wall-clock seconds spent on paths discovery across all
+          sessions. Atomically incremented at session end.
+        range: float
+      code_elapsed_seconds:
+        description: >-
+          Accumulated wall-clock seconds spent on code discovery across all
+          sessions. Atomically incremented at session end.
+        range: float
+      signals_elapsed_seconds:
+        description: >-
+          Accumulated wall-clock seconds spent on signals discovery across all
+          sessions. Atomically incremented at session end.
+        range: float
+      wiki_elapsed_seconds:
+        description: >-
+          Accumulated wall-clock seconds spent on wiki discovery across all
+          sessions. Atomically incremented at session end.
+        range: float
+
       # === PRIVATE FIELDS (<facility>_private.yaml only, never graphed) ===
       ssh_host:
         description: SSH host alias for connection

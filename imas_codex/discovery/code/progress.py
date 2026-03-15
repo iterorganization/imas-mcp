@@ -164,8 +164,9 @@ class FileProgressState:
     code_rate: float | None = None
     embed_rate: float | None = None
 
-    # Accumulated facility cost (from graph)
+    # Accumulated facility cost and time (from graph)
     accumulated_cost: float = 0.0
+    accumulated_time: float = 0.0
 
     # Embed stats (from graph)
     total_chunks: int = 0
@@ -641,6 +642,7 @@ class FileProgressDisplay(BaseProgressDisplay):
         config = ResourceConfig(
             elapsed=self.state.elapsed,
             eta=None if self.state.scan_only else self.state.eta_seconds,
+            accumulated_time=self.state.accumulated_time,
             run_cost=self.state.run_cost,
             cost_limit=self.state.cost_limit,
             accumulated_cost=self.state.accumulated_cost,
@@ -984,6 +986,12 @@ class FileProgressDisplay(BaseProgressDisplay):
 
         # Accumulated LLM cost from graph (source of truth across runs)
         self.state.accumulated_cost = stats.get("accumulated_cost", 0.0)
+
+        # Accumulated wall-clock time from prior sessions
+        from imas_codex.discovery.base.progress import get_accumulated_time
+        self.state.accumulated_time = get_accumulated_time(
+            self.state.facility, "code"
+        )
 
         self._refresh()
 

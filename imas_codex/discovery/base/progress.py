@@ -215,6 +215,74 @@ def compute_projected_etc(
 
 
 # =============================================================================
+# Accumulated Time Tracking
+# =============================================================================
+
+# Map discovery domain names to Facility node property names
+_DOMAIN_TIME_PROPERTY: dict[str, str] = {
+    "paths": "paths_elapsed_seconds",
+    "code": "code_elapsed_seconds",
+    "signals": "signals_elapsed_seconds",
+    "wiki": "wiki_elapsed_seconds",
+}
+
+
+def get_accumulated_time(facility: str, domain: str) -> float:
+    """Query accumulated wall-clock discovery time from the graph.
+
+    Args:
+        facility: Facility ID (e.g. "tcv", "jet").
+        domain: Discovery domain ("paths", "code", "signals", "wiki").
+
+    Returns:
+        Accumulated seconds from prior sessions, or 0.0 if not tracked.
+    """
+    prop = _DOMAIN_TIME_PROPERTY.get(domain)
+    if not prop:
+        return 0.0
+    try:
+        from imas_codex.graph.client import GraphClient
+
+        with GraphClient() as gc:
+            result = gc.query(
+                f"MATCH (f:Facility {{id: $facility}}) "  # noqa: S608
+                f"RETURN f.{prop} AS accumulated_time",
+                facility=facility,
+            )
+        return float(result[0]["accumulated_time"] or 0.0) if result else 0.0
+    except Exception:
+        return 0.0
+
+
+def record_session_time(facility: str, domain: str, elapsed: float) -> None:
+    """Atomically increment accumulated discovery time on the Facility node.
+
+    Called at session end. Safe for concurrent sessions — each adds
+    its own wall-clock time independently.
+
+    Args:
+        facility: Facility ID.
+        domain: Discovery domain ("paths", "code", "signals", "wiki").
+        elapsed: Wall-clock seconds for this session.
+    """
+    prop = _DOMAIN_TIME_PROPERTY.get(domain)
+    if not prop or elapsed <= 0:
+        return
+    try:
+        from imas_codex.graph.client import GraphClient
+
+        with GraphClient() as gc:
+            gc.query(
+                f"MATCH (f:Facility {{id: $facility}}) "  # noqa: S608
+                f"SET f.{prop} = coalesce(f.{prop}, 0) + $elapsed",
+                facility=facility,
+                elapsed=elapsed,
+            )
+    except Exception:
+        pass  # Best effort — don't fail the session for a time recording issue
+
+
+# =============================================================================
 # Progress Bar Utilities
 # =============================================================================
 
@@ -1727,6 +1795,7 @@ class ResourceConfig:
 
     elapsed: float
     eta: float | None = None
+    accumulated_time: float = 0.0  # Historic time from prior sessions
 
     # Cost tracking
     run_cost: float | None = None
@@ -1769,18 +1838,21 @@ def build_resource_section(
     # Value column starts right after gauge, ETA/ETC at fixed offset
     value_col_width = 10  # "  $12.34" or "  1h 23m"
 
-    # TIME row — elapsed ticker, no limit gauge
+    # TIME row — shows accumulated time (historic + session elapsed)
     section.append(f"{'  TIME':<{LABEL_WIDTH}}", style="bold cyan")
+
+    # Total time = prior sessions + current session
+    total_time = config.accumulated_time + config.elapsed
 
     eta = None if config.scan_only else config.eta
     if eta is not None and eta > 0:
-        # Show work-based progress (elapsed / estimated-total)
-        total_est = config.elapsed + eta
-        section.append_text(make_resource_gauge(config.elapsed, total_est, gauge_width))
+        # Show work-based progress (total_time / estimated-total)
+        total_est = total_time + eta
+        section.append_text(make_resource_gauge(total_time, total_est, gauge_width))
     else:
         section.append("━" * gauge_width, style="cyan")
 
-    elapsed_s = f"  {format_time(config.elapsed)}"
+    elapsed_s = f"  {format_time(total_time)}"
     section.append(elapsed_s, style="bold")
     # Left-align ETA at fixed position
     pad = max(1, value_col_width - len(elapsed_s))
@@ -1933,6 +2005,7 @@ class DataDrivenProgressDisplay(BaseProgressDisplay):
         stats_fn: Callable[[], list[tuple[str, str, str]]] | None = None,
         pending_fn: Callable[[], list[tuple[str, int]]] | None = None,
         accumulated_cost_fn: Callable[[], float] | None = None,
+        accumulated_time_fn: Callable[[], float] | None = None,
     ) -> None:
         super().__init__(
             facility=facility,
@@ -1948,6 +2021,7 @@ class DataDrivenProgressDisplay(BaseProgressDisplay):
         self._stats_fn = stats_fn
         self._pending_fn = pending_fn
         self._accumulated_cost_fn = accumulated_cost_fn
+        self._accumulated_time_fn = accumulated_time_fn
 
     def set_engine_state(self, state: Any) -> None:
         """Connect display to the live engine state."""
@@ -2062,6 +2136,9 @@ class DataDrivenProgressDisplay(BaseProgressDisplay):
         config = ResourceConfig(
             elapsed=self.elapsed,
             eta=eta,
+            accumulated_time=(
+                self._accumulated_time_fn() if self._accumulated_time_fn else 0.0
+            ),
             run_cost=total_cost if total_cost > 0 else None,
             cost_limit=self.cost_limit if self.cost_limit > 0 else None,
             accumulated_cost=accumulated,

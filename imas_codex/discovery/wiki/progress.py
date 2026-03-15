@@ -192,8 +192,9 @@ class ProgressState:
     image_score_rate: float | None = None
     _run_image_score_cost: float = 0.0
 
-    # Accumulated facility cost (from graph)
+    # Accumulated facility cost and time (from graph)
     accumulated_cost: float = 0.0
+    accumulated_time: float = 0.0
 
     # Per-group accumulated costs (from graph, across all sessions)
     accumulated_page_cost: float = 0.0
@@ -1020,6 +1021,7 @@ class WikiProgressDisplay(BaseProgressDisplay):
         config = ResourceConfig(
             elapsed=self.state.elapsed,
             eta=None if self.state.scan_only else self.state.eta_seconds,
+            accumulated_time=self.state.accumulated_time,
             run_cost=self.state.run_cost,
             cost_limit=self.state.cost_limit,
             accumulated_cost=self.state.accumulated_cost,
@@ -1423,6 +1425,13 @@ class WikiProgressDisplay(BaseProgressDisplay):
             self.state._historic_score_rate = kwargs["historic_score_rate"]
         if "historic_ingest_rate" in kwargs:
             self.state._historic_ingest_rate = kwargs["historic_ingest_rate"]
+
+        # Accumulated wall-clock time from prior sessions
+        from imas_codex.discovery.base.progress import get_accumulated_time
+        self.state.accumulated_time = get_accumulated_time(
+            self.state.facility, "wiki"
+        )
+
         self._refresh()
 
     def set_site_info(self, site_name: str, site_index: int, total_sites: int) -> None:
