@@ -684,6 +684,8 @@ classes:
           Use Neo4j vector index for semantic search.
         multivalued: true
         range: float
+        annotations:
+          vector_index_name: imas_node_embedding
       embedding_hash:
         description: >-
           SHA256 hash of embedding_text content. Used for cache busting - if hash

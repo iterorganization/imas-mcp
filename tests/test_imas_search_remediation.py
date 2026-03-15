@@ -348,6 +348,11 @@ class TestGraphSearchToolHybrid:
                         "coordinates": [],
                         "has_identifier_schema": False,
                         "introduced_after_version": "3.0.0",
+                        "cocos_label": None,
+                        "cocos_expression": None,
+                        "enriched_description": None,
+                        "keywords": None,
+                        "enrichment_source": None,
                     }
                 ],
             }
@@ -390,6 +395,11 @@ class TestGraphSearchToolHybrid:
                         "coordinates": [],
                         "has_identifier_schema": False,
                         "introduced_after_version": "3.0.0",
+                        "cocos_label": None,
+                        "cocos_expression": None,
+                        "enriched_description": None,
+                        "keywords": None,
+                        "enrichment_source": None,
                     }
                 ],
             }
@@ -431,6 +441,11 @@ class TestGraphSearchToolHybrid:
                         ],
                         "has_identifier_schema": False,
                         "introduced_after_version": "3.42.0",
+                        "cocos_label": None,
+                        "cocos_expression": None,
+                        "enriched_description": None,
+                        "keywords": None,
+                        "enrichment_source": None,
                     }
                 ],
             }
@@ -494,6 +509,11 @@ class TestGraphSearchToolHybrid:
                         "coordinates": [],
                         "has_identifier_schema": False,
                         "introduced_after_version": "3.42.0",
+                        "cocos_label": None,
+                        "cocos_expression": None,
+                        "enriched_description": None,
+                        "keywords": None,
+                        "enrichment_source": None,
                     }
                 ],
             }
@@ -564,6 +584,11 @@ class TestGraphSearchToolHybrid:
                         "coordinates": [],
                         "has_identifier_schema": False,
                         "introduced_after_version": None,
+                        "cocos_label": None,
+                        "cocos_expression": None,
+                        "enriched_description": None,
+                        "keywords": None,
+                        "enrichment_source": None,
                     },
                     {
                         "id": "core_profiles/profiles_1d/electrons/temperature",
@@ -582,8 +607,11 @@ class TestGraphSearchToolHybrid:
                         "coordinate2": None,
                         "coordinates": [],
                         "has_identifier_schema": False,
-                        "introduced_after_version": None,
-                    },
+                        "introduced_after_version": None,                        "cocos_label": None,
+                        "cocos_expression": None,
+                        "enriched_description": None,
+                        "keywords": None,
+                        "enrichment_source": None,                    },
                 ],
             }
         )

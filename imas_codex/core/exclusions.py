@@ -29,11 +29,13 @@ class ExclusionChecker:
     Args:
         include_ggd: Whether to include GGD paths. Default from settings.
         include_error_fields: Whether to include error fields. Default from settings.
+        include_metadata: Whether to include metadata paths (ids_properties, code). Default False.
         excluded_patterns: Patterns always excluded (metadata fields).
     """
 
     include_ggd: bool = field(default_factory=get_include_ggd)
     include_error_fields: bool = field(default_factory=get_include_error_fields)
+    include_metadata: bool = False
     excluded_patterns: set[str] = field(default_factory=set)
 
     def get_exclusion_reason(self, path: str) -> str | None:
@@ -59,8 +61,8 @@ class ExclusionChecker:
             if pattern in name or pattern in path:
                 return "metadata"
 
-        # Check metadata subtrees (always excluded)
-        if self._is_metadata_path(path):
+        # Check metadata subtrees (exclude if not included)
+        if not self.include_metadata and self._is_metadata_path(path):
             return "metadata"
 
         # Check GGD patterns (exclude if not included)
