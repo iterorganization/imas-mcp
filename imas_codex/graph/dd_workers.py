@@ -135,7 +135,10 @@ async def extract_worker(state: DDBuildState, **_kwargs) -> None:
 
     def _on_progress(processed: int, total: int) -> None:
         state.extract_stats.total = total
+        prev = state.extract_stats.processed
         state.extract_stats.processed = processed
+        if processed > prev:
+            state.extract_stats.record_batch(processed - prev)
         if processed < total:
             state.extract_stats.status_text = f"v{state.versions[processed]}"
         else:
@@ -185,6 +188,7 @@ async def extract_worker(state: DDBuildState, **_kwargs) -> None:
         len(state.version_data),
         total_paths,
     )
+    state.extract_stats.freeze_rate()
     state.extract_phase.mark_done()
 
 
@@ -197,7 +201,10 @@ async def build_worker(state: DDBuildState, **_kwargs) -> None:
 
     def _on_progress(processed: int, total: int) -> None:
         state.build_stats.total = total
+        prev = state.build_stats.processed
         state.build_stats.processed = processed
+        if processed > prev:
+            state.build_stats.record_batch(processed - prev)
 
     def _on_version(version: str) -> None:
         state.build_stats.status_text = f"v{version}"
@@ -318,6 +325,8 @@ async def enrich_worker(state: DDBuildState, **_kwargs) -> None:
     model = get_model("language")
 
     # Set initial totals from graph so progress bar shows real denominator
+    # and initialize processed counts from already-completed work so that
+    # restarting the CLI doesn't reset progress to 0%.
     try:
         status_counts = await asyncio.to_thread(count_imas_nodes_by_status)
         state.imas_node_status_counts = status_counts
@@ -325,6 +334,14 @@ async def enrich_worker(state: DDBuildState, **_kwargs) -> None:
         if total_nodes > 0:
             state.enrich_stats.total = total_nodes
             state.embed_stats.total = total_nodes
+            # Nodes already past enrichment (enriched or embedded)
+            already_enriched = status_counts.get("enriched", 0) + status_counts.get(
+                "embedded", 0
+            )
+            state.enrich_stats.processed = already_enriched
+            # Nodes already past embedding
+            already_embedded = status_counts.get("embedded", 0)
+            state.embed_stats.processed = already_embedded
     except Exception:
         wlog.debug("Could not fetch initial node counts", exc_info=True)
 
@@ -346,6 +363,17 @@ async def enrich_worker(state: DDBuildState, **_kwargs) -> None:
                 if total_nodes > 0:
                     state.enrich_stats.total = total_nodes
                     state.embed_stats.total = total_nodes
+                    # Keep processed in sync with graph state
+                    already_enriched = status_counts.get(
+                        "enriched", 0
+                    ) + status_counts.get("embedded", 0)
+                    state.enrich_stats.processed = max(
+                        state.enrich_stats.processed, already_enriched
+                    )
+                    already_embedded = status_counts.get("embedded", 0)
+                    state.embed_stats.processed = max(
+                        state.embed_stats.processed, already_embedded
+                    )
             except Exception:
                 pass
             await asyncio.sleep(1.0)
@@ -409,9 +437,24 @@ async def embed_worker(state: DDBuildState, **_kwargs) -> None:
 
     from imas_codex.graph.dd_graph_ops import (
         claim_paths_for_embedding,
+        count_imas_nodes_by_status,
         mark_paths_embedded,
         release_embedding_claims,
     )
+
+    # Initialize processed count from graph state so restarting doesn't
+    # show 0% for already-embedded work.
+    try:
+        status_counts = await asyncio.to_thread(count_imas_nodes_by_status)
+        total_nodes = status_counts.get("total", 0)
+        if total_nodes > 0:
+            state.embed_stats.total = max(state.embed_stats.total, total_nodes)
+            already_embedded = status_counts.get("embedded", 0)
+            state.embed_stats.processed = max(
+                state.embed_stats.processed, already_embedded
+            )
+    except Exception:
+        wlog.debug("Could not fetch initial embed counts", exc_info=True)
 
     while not state.should_stop():
         # Claim a batch of enriched paths
