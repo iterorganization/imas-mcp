@@ -416,7 +416,8 @@ def format_code_report(
 
         text = chunk.get("text") or ""
         if text:
-            parts.append(f"  ```python\n  {text}\n  ```")
+            lang = chunk.get("language") or "python"
+            parts.append(f"  ```{lang}\n  {text}\n  ```")
 
         # Data references
         data_refs = chunk.get("data_refs") or []
