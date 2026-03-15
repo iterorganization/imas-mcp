@@ -24,8 +24,8 @@ from imas_codex.ids.models import (
     EscalationFlag,
     EscalationSeverity,
     MappingDisposition,
-    SectionAssignment,
-    SectionAssignmentBatch,
+    TargetAssignment,
+    TargetAssignmentBatch,
     SignalMappingBatch,
     SignalMappingEntry,
     UnassignedSource,
@@ -117,7 +117,7 @@ class TestSystemPromptSplit:
 
         for name in [
             "signal_mapping_system.md",
-            "section_assignment_system.md",
+            "target_assignment_system.md",
             "assembly_system.md",
         ]:
             content = (PROMPTS_DIR / "mapping" / name).read_text()
@@ -128,7 +128,7 @@ class TestSystemPromptSplit:
 
         for name in [
             "signal_mapping.md",
-            "section_assignment.md",
+            "target_assignment.md",
             "assembly.md",
         ]:
             content = (PROMPTS_DIR / "mapping" / name).read_text()
@@ -144,7 +144,7 @@ class TestSystemPromptSplit:
         assert "No-Match Handling" in sig
         assert "Many-to-One Mappings" in sig
 
-        sec = (PROMPTS_DIR / "mapping" / "section_assignment_system.md").read_text()
+        sec = (PROMPTS_DIR / "mapping" / "target_assignment_system.md").read_text()
         assert "Task" in sec
         assert "Output Format" in sec
         assert "UnassignedSource" in sec
@@ -162,7 +162,7 @@ class TestSystemPromptSplit:
         assert "{{ imas_fields }}" in sig
         assert "{{ cocos_paths }}" in sig
 
-        sec = (PROMPTS_DIR / "mapping" / "section_assignment.md").read_text()
+        sec = (PROMPTS_DIR / "mapping" / "target_assignment.md").read_text()
         assert "{{ facility }}" in sec
         assert "{{ signal_sources }}" in sec
         assert "{{ imas_subtree }}" in sec
@@ -214,16 +214,16 @@ class TestBuildMessages:
         from imas_codex.ids.mapping import _build_messages
 
         m1 = _build_messages("signal_mapping_system", "x")
-        m2 = _build_messages("section_assignment_system", "x")
+        m2 = _build_messages("target_assignment_system", "x")
 
         assert m1[0]["content"] != m2[0]["content"]
 
-    def test_section_assignment_system_prompt(self):
+    def test_target_assignment_system_prompt(self):
         from imas_codex.ids.mapping import _build_messages
 
-        messages = _build_messages("section_assignment_system", "user prompt")
+        messages = _build_messages("target_assignment_system", "user prompt")
         assert "IMAS mapping expert" in messages[0]["content"]
-        assert "SectionAssignmentBatch" in messages[0]["content"]
+        assert "TargetAssignmentBatch" in messages[0]["content"]
 
     def test_assembly_system_prompt(self):
         from imas_codex.ids.mapping import _build_messages
@@ -241,11 +241,11 @@ class TestBuildMessages:
 class TestPromptRenderingWithContext:
     """Test that prompts render correctly with realistic data."""
 
-    def test_section_assignment_renders_all_sections(self):
+    def test_target_assignment_renders_all_sections(self):
         from imas_codex.ids.mapping import _render_prompt
 
         rendered = _render_prompt(
-            "section_assignment",
+            "target_assignment",
             facility="jet",
             ids_name="pf_active",
             signal_sources="- jet:pf_coils:group1 (domain=magnetic_field_systems)",
@@ -259,11 +259,11 @@ class TestPromptRenderingWithContext:
         assert "jet:pf_coils:group1" in rendered
         assert "tcv" in rendered
 
-    def test_section_assignment_omits_cross_facility_when_empty(self):
+    def test_target_assignment_omits_cross_facility_when_empty(self):
         from imas_codex.ids.mapping import _render_prompt
 
         rendered = _render_prompt(
-            "section_assignment",
+            "target_assignment",
             facility="jet",
             ids_name="pf_active",
             signal_sources="- src1",
@@ -281,7 +281,7 @@ class TestPromptRenderingWithContext:
             "signal_mapping",
             facility="jet",
             ids_name="pf_active",
-            section_path="pf_active/coil",
+            target_path="pf_active/coil",
             signal_source_detail="Source: jet:pf_coils:group1",
             imas_fields="- pf_active/coil/element/geometry/rectangle/r (FLT_0D) [m]",
             identifier_schemas="(no identifier schemas)",
@@ -312,7 +312,7 @@ class TestPromptRenderingWithContext:
             "signal_mapping",
             facility="jet",
             ids_name="pf_active",
-            section_path="pf_active/coil",
+            target_path="pf_active/coil",
             signal_source_detail="source detail",
             imas_fields="fields",
             identifier_schemas="schemas",
@@ -340,7 +340,7 @@ class TestPromptRenderingWithContext:
             "assembly",
             facility="jet",
             ids_name="pf_active",
-            section_path="pf_active/coil",
+            target_path="pf_active/coil",
             signal_mappings="- jet:pf_coils:group1.value → pf_active/coil/element/geometry/rectangle/r",
             imas_section_structure="pf_active/coil/element (STRUCT_ARRAY)",
             source_metadata="Source: jet:pf_coils:group1",
@@ -560,7 +560,7 @@ class TestSignalMappingBatchWithUnmapped:
     def test_batch_with_unmapped(self):
         batch = SignalMappingBatch(
             ids_name="pf_active",
-            section_path="pf_active/coil",
+            target_path="pf_active/coil",
             mappings=[
                 SignalMappingEntry(
                     source_id="jet:pf:group1",
@@ -585,7 +585,7 @@ class TestSignalMappingBatchWithUnmapped:
     def test_batch_json_roundtrip_with_unmapped(self):
         batch = SignalMappingBatch(
             ids_name="eq",
-            section_path="equilibrium/time_slice",
+            target_path="equilibrium/time_slice",
             mappings=[],
             unmapped=[
                 UnmappedSignal(
@@ -600,14 +600,14 @@ class TestSignalMappingBatchWithUnmapped:
         assert restored.unmapped[0].source_id == "jet:eq:debug"
 
 
-class TestSectionAssignmentBatchWithUnassigned:
+class TestTargetAssignmentBatchWithUnassigned:
     def test_batch_with_unassigned(self):
-        batch = SectionAssignmentBatch(
+        batch = TargetAssignmentBatch(
             ids_name="pf_active",
             assignments=[
-                SectionAssignment(
+                TargetAssignment(
                     source_id="jet:pf:group1",
-                    imas_section_path="pf_active/coil",
+                    imas_target_path="pf_active/coil",
                     confidence=0.95,
                     reasoning="test",
                 ),
@@ -624,7 +624,7 @@ class TestSectionAssignmentBatchWithUnassigned:
         assert batch.unassigned[0].disposition == MappingDisposition.FACILITY_SPECIFIC
 
     def test_batch_roundtrip_with_unassigned(self):
-        batch = SectionAssignmentBatch(
+        batch = TargetAssignmentBatch(
             ids_name="pf_active",
             assignments=[],
             unassigned=[
@@ -635,7 +635,7 @@ class TestSectionAssignmentBatchWithUnassigned:
                 ),
             ],
         )
-        restored = SectionAssignmentBatch.model_validate_json(batch.model_dump_json())
+        restored = TargetAssignmentBatch.model_validate_json(batch.model_dump_json())
         assert len(restored.unassigned) == 1
 
 
@@ -733,20 +733,20 @@ class TestCheckCoverageThreshold:
 
 
 # ---------------------------------------------------------------------------
-# 7. Pipeline integration: assign_sections uses _build_messages
+# 7. Pipeline integration: assign_targets uses _build_messages
 # ---------------------------------------------------------------------------
 
 
 class TestAssignSectionsUsesSystemPrompt:
-    """Verify assign_sections sends system+user messages."""
+    """Verify assign_targets sends system+user messages."""
 
     @patch("imas_codex.ids.mapping._call_llm")
     def test_messages_have_system_role(
         self, mock_call_llm, sample_groups, sample_subtree
     ):
-        from imas_codex.ids.mapping import PipelineCost, assign_sections
+        from imas_codex.ids.mapping import PipelineCost, assign_targets
 
-        mock_call_llm.return_value = SectionAssignmentBatch(
+        mock_call_llm.return_value = TargetAssignmentBatch(
             ids_name="pf_active",
             assignments=[],
         )
@@ -758,14 +758,14 @@ class TestAssignSectionsUsesSystemPrompt:
             "semantic": sample_subtree,
         }
 
-        assign_sections("jet", "pf_active", context, cost=cost)
+        assign_targets("jet", "pf_active", context, cost=cost)
 
         # Inspect the messages passed to _call_llm
         call_args = mock_call_llm.call_args
         messages = call_args[0][0]
         assert messages[0]["role"] == "system"
         assert messages[1]["role"] == "user"
-        assert "SectionAssignmentBatch" in messages[0]["content"]
+        assert "TargetAssignmentBatch" in messages[0]["content"]
         assert "jet" in messages[1]["content"]
 
 
@@ -790,7 +790,7 @@ class TestMapSignalsUsesSystemPrompt:
 
         batch = SignalMappingBatch(
             ids_name="pf_active",
-            section_path="pf_active/coil",
+            target_path="pf_active/coil",
             mappings=[],
         )
         mock_fields.return_value = sample_subtree[1:]
@@ -800,18 +800,18 @@ class TestMapSignalsUsesSystemPrompt:
         cost = PipelineCost()
 
         # Two different source assignments to the same section
-        assignments = SectionAssignmentBatch(
+        assignments = TargetAssignmentBatch(
             ids_name="pf_active",
             assignments=[
-                SectionAssignment(
+                TargetAssignment(
                     source_id="jet:pf_coils:group1",
-                    imas_section_path="pf_active/coil",
+                    imas_target_path="pf_active/coil",
                     confidence=0.95,
                     reasoning="PF coil 1",
                 ),
-                SectionAssignment(
+                TargetAssignment(
                     source_id="jet:pf_coils:group2",
-                    imas_section_path="pf_active/coil",
+                    imas_target_path="pf_active/coil",
                     confidence=0.90,
                     reasoning="PF coil 2",
                 ),
@@ -860,19 +860,19 @@ class TestDiscoverAssemblyUsesSystemPrompt:
         mock_subtree.return_value = sample_subtree
         mock_fields.return_value = sample_subtree
         mock_call_llm.return_value = AssemblyConfig(
-            section_path="pf_active/coil",
+            target_path="pf_active/coil",
             pattern=AssemblyPattern.ARRAY_PER_NODE,
             confidence=0.85,
             reasoning="One coil per entry",
         )
         cost = PipelineCost()
 
-        assignments = SectionAssignmentBatch(
+        assignments = TargetAssignmentBatch(
             ids_name="pf_active",
             assignments=[
-                SectionAssignment(
+                TargetAssignment(
                     source_id="jet:pf_coils:group1",
-                    imas_section_path="pf_active/coil",
+                    imas_target_path="pf_active/coil",
                     confidence=0.95,
                     reasoning="test",
                 ),
@@ -880,7 +880,7 @@ class TestDiscoverAssemblyUsesSystemPrompt:
         )
         field_batch = SignalMappingBatch(
             ids_name="pf_active",
-            section_path="pf_active/coil",
+            target_path="pf_active/coil",
             mappings=[
                 SignalMappingEntry(
                     source_id="jet:pf_coils:group1",

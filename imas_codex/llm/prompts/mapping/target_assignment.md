@@ -1,9 +1,9 @@
 ---
-name: section_assignment
-description: Per-call context for section assignment (dynamic, changes per call)
+name: target_assignment
+description: Per-call context for target assignment (dynamic, changes per call)
 ---
 
-Assign the following signal sources to IMAS sections.
+Assign the following signal sources to IDS target paths.
 
 ## Context
 
@@ -27,8 +27,10 @@ domain indicates the source's primary measurement category.
 
 ### IDS Structure
 
-The target IDS has these structural-array sections. Each section
-represents a repeating element (e.g., each coil, each channel).
+The target IDS has these structural paths. Each path includes its node type
+(structure, data, etc.) to help classify the target type. Paths with
+array-of-structures semantics are struct-array targets; leaf data paths
+are scalar targets; time-indexed containers are time-slice targets.
 
 {{ imas_subtree }}
 
@@ -40,7 +42,7 @@ Additional context from semantic search:
 
 ### Section Clusters
 
-These semantic clusters group related IDS sections by physics concept.
+These semantic clusters group related IDS paths by physics concept.
 Use these to understand which paths form physics-coherent groups:
 
 {{ section_clusters }}
@@ -48,7 +50,7 @@ Use these to understand which paths form physics-coherent groups:
 {% if cross_facility_mappings %}
 ### Cross-Facility Precedent
 
-Other facilities have already mapped signals to these IDS sections.
+Other facilities have already mapped signals to these IDS paths.
 Use this as strong evidence for where similar signals should be assigned:
 
 {{ cross_facility_mappings }}

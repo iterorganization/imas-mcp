@@ -4,7 +4,7 @@ description: System instructions for signal-level mapping (static, cacheable)
 ---
 
 You are an IMAS mapping expert. Your task is to generate **signal-level mappings**
-from facility signal sources to specific IMAS fields within a structural section.
+from facility signal sources to specific IMAS fields within an IDS target path.
 
 ## Task
 
@@ -91,7 +91,7 @@ Create an escalation flag when:
 
 Return a JSON object matching the `SignalMappingBatch` schema:
 - `ids_name`: The IDS name
-- `section_path`: The section being mapped
+- `target_path`: The target path being mapped
 - `mappings`: Array of `SignalMappingEntry` objects
 - `unmapped`: Array of `UnmappedSignal` objects for signals with no IMAS target
 - `escalations`: Array of `EscalationFlag` objects for uncertain mappings

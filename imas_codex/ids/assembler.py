@@ -211,7 +211,13 @@ class IDSAssembler:
             "parent_size": section.get("parent_size"),
         }
 
-        if structure == "nested_array":
+        if structure == "direct":
+            # Scalar/leaf write: apply mappings directly to IDS root
+            for node_data in flat_nodes:
+                self._apply_mappings(
+                    ids, node_data, section_mappings, section_name, section_config
+                )
+        elif structure == "nested_array":
             self._build_nested_array(
                 struct_array,
                 flat_nodes,
