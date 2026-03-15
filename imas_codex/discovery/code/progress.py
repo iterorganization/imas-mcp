@@ -111,6 +111,7 @@ class EmbedItem:
 
     chunk_id: str  # CodeChunk node ID (e.g. "jet:path/to/file.py:chunk_0")
     label: str = "CodeChunk"  # node label being embedded
+    score: float | None = None  # parent CodeFile score_composite
 
 
 # =============================================================================
@@ -494,9 +495,12 @@ class FileProgressDisplay(BaseProgressDisplay):
         )
         embed_text = ""
         embed_desc = ""
+        embed_score_parts: list[tuple[str, str]] | None = None
         if embed:
             embed_text = embed.chunk_id
             embed_desc = embed.label
+            if embed.score is not None:
+                embed_score_parts = [(f"{embed.score:.2f}", "bold white")]
 
         # --- Build pipeline rows ---
 
@@ -590,6 +594,7 @@ class FileProgressDisplay(BaseProgressDisplay):
                 rate=self.state.embed_rate,
                 disabled=self.state.scan_only or self.state.score_only,
                 primary_text=embed_text,
+                score_parts=embed_score_parts,
                 description=embed_desc,
                 is_processing=self.state.embed_processing,
                 is_complete=embed_complete,
@@ -901,6 +906,7 @@ class FileProgressDisplay(BaseProgressDisplay):
                 EmbedItem(
                     chunk_id=r.get("id", ""),
                     label=r.get("label", "CodeChunk"),
+                    score=r.get("score"),
                 )
                 for r in results
             ]
