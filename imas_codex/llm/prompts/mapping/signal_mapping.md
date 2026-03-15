@@ -9,7 +9,8 @@ Generate signal-level mappings for the following source and context.
 
 - **Facility**: {{ facility }}
 - **IDS**: {{ ids_name }}
-- **Section**: {{ section_path }}
+- **Target**: {{ section_path }}
+{% if target_type %}- **Target Type**: {{ target_type }}{% endif %}
 
 ### COCOS Sign-Flip Paths
 

@@ -19,8 +19,8 @@ from imas_codex.ids.models import (
     EscalationSeverity,
     SignalMappingBatch,
     SignalMappingEntry,
-    SectionAssignment,
-    SectionAssignmentBatch,
+    TargetAssignment,
+    TargetAssignmentBatch,
     ValidatedSignalMapping,
     ValidatedMappingResult,
     persist_mapping_result,
@@ -133,18 +133,18 @@ def sample_subtree():
 @pytest.fixture
 def sample_section_assignment():
     """Sample section assignment result from Step 1."""
-    return SectionAssignmentBatch(
+    return TargetAssignmentBatch(
         ids_name="pf_active",
         assignments=[
-            SectionAssignment(
+            TargetAssignment(
                 source_id="jet:pf_coils:group1",
-                imas_section_path="pf_active/coil",
+                imas_target_path="pf_active/coil",
                 confidence=0.95,
                 reasoning="PF coil geometry maps to pf_active/coil",
             ),
-            SectionAssignment(
+            TargetAssignment(
                 source_id="jet:pf_coils:group2",
-                imas_section_path="pf_active/coil",
+                imas_target_path="pf_active/coil",
                 confidence=0.90,
                 reasoning="PF coil 2 geometry maps to pf_active/coil",
             ),
@@ -158,7 +158,7 @@ def sample_field_batch():
     """Sample field mapping batch from Step 2."""
     return SignalMappingBatch(
         ids_name="pf_active",
-        section_path="pf_active/coil",
+        target_path="pf_active/coil",
         mappings=[
             SignalMappingEntry(
                 source_id="jet:pf_coils:group1",
@@ -200,9 +200,9 @@ def sample_validated_result():
         ids_name="pf_active",
         dd_version="4.1.1",
         sections=[
-            SectionAssignment(
+            TargetAssignment(
                 source_id="jet:pf_coils:group1",
-                imas_section_path="pf_active/coil",
+                imas_target_path="pf_active/coil",
                 confidence=0.95,
                 reasoning="PF coil geometry maps to pf_active/coil",
             ),
@@ -396,16 +396,16 @@ class TestGetSignFlipPaths:
 # ---------------------------------------------------------------------------
 
 
-class TestSectionAssignmentBatch:
+class TestTargetAssignmentBatch:
     def test_serialization(self, sample_section_assignment):
         data = sample_section_assignment.model_dump()
-        restored = SectionAssignmentBatch.model_validate(data)
+        restored = TargetAssignmentBatch.model_validate(data)
         assert len(restored.assignments) == 2
         assert restored.ids_name == "pf_active"
 
     def test_json_roundtrip(self, sample_section_assignment):
         json_str = sample_section_assignment.model_dump_json()
-        restored = SectionAssignmentBatch.model_validate_json(json_str)
+        restored = TargetAssignmentBatch.model_validate_json(json_str)
         assert restored.assignments[0].confidence == 0.95
 
 
@@ -508,11 +508,11 @@ class TestPipelineOrchestrator:
         assert len(ctx["subtree"]) == 3
 
     @patch("imas_codex.ids.mapping._call_llm")
-    def test_assign_sections(
+    def test_assign_targets(
         self, mock_call_llm, sample_groups, sample_subtree, sample_section_assignment
     ):
         """Test section assignment."""
-        from imas_codex.ids.mapping import PipelineCost, assign_sections
+        from imas_codex.ids.mapping import PipelineCost, assign_targets
 
         mock_call_llm.return_value = sample_section_assignment
         cost = PipelineCost()
@@ -523,7 +523,7 @@ class TestPipelineOrchestrator:
             "semantic": sample_subtree,
         }
 
-        result = assign_sections("jet", "pf_active", context, cost=cost)
+        result = assign_targets("jet", "pf_active", context, cost=cost)
         assert len(result.assignments) == 2
         mock_call_llm.assert_called_once()
 
@@ -604,7 +604,7 @@ class TestPipelineOrchestrator:
     @patch("imas_codex.ids.mapping.validate_mappings")
     @patch("imas_codex.ids.mapping.discover_assembly")
     @patch("imas_codex.ids.mapping.map_signals")
-    @patch("imas_codex.ids.mapping.assign_sections")
+    @patch("imas_codex.ids.mapping.assign_targets")
     @patch("imas_codex.ids.mapping.gather_context")
     def test_generate_mapping_full_pipeline(
         self,
@@ -652,7 +652,7 @@ class TestPipelineOrchestrator:
     @patch("imas_codex.ids.mapping.validate_mappings")
     @patch("imas_codex.ids.mapping.discover_assembly")
     @patch("imas_codex.ids.mapping.map_signals")
-    @patch("imas_codex.ids.mapping.assign_sections")
+    @patch("imas_codex.ids.mapping.assign_targets")
     @patch("imas_codex.ids.mapping.gather_context")
     def test_generate_mapping_surfaces_unassigned_groups(
         self,
@@ -670,12 +670,12 @@ class TestPipelineOrchestrator:
         """Test that unassigned_groups from Step 1 are surfaced in MappingResult."""
         from imas_codex.ids.mapping import generate_mapping
 
-        unassigned = SectionAssignmentBatch(
+        unassigned = TargetAssignmentBatch(
             ids_name="pf_active",
             assignments=[
-                SectionAssignment(
+                TargetAssignment(
                     source_id="jet:pf_coils:group1",
-                    imas_section_path="pf_active/coil",
+                    imas_target_path="pf_active/coil",
                     confidence=0.95,
                     reasoning="PF coil geometry maps to pf_active/coil",
                 ),
@@ -828,10 +828,10 @@ class TestMapCLI:
 class TestPromptTemplates:
     """Test that prompt templates exist and render correctly."""
 
-    def test_section_assignment_prompt_exists(self):
+    def test_target_assignment_prompt_exists(self):
         from imas_codex.llm.prompt_loader import PROMPTS_DIR
 
-        path = PROMPTS_DIR / "mapping" / "section_assignment.md"
+        path = PROMPTS_DIR / "mapping" / "target_assignment.md"
         assert path.exists()
         prompt = path.read_text().lower()
         assert "signal sources" in prompt
@@ -853,11 +853,11 @@ class TestPromptTemplates:
         prompt = path.read_text().lower()
         assert "valid" in prompt
 
-    def test_section_assignment_prompt_renders(self):
+    def test_target_assignment_prompt_renders(self):
         from imas_codex.ids.mapping import _render_prompt
 
         rendered = _render_prompt(
-            "section_assignment",
+            "target_assignment",
             facility="jet",
             ids_name="pf_active",
             signal_sources="- group1: PF coil 1",
@@ -875,7 +875,7 @@ class TestPromptTemplates:
             "signal_mapping",
             facility="jet",
             ids_name="pf_active",
-            section_path="pf_active/coil",
+            target_path="pf_active/coil",
             signal_source_detail="{}",
             imas_fields="- pf_active/coil/element/geometry/rectangle/r (FLT_0D) [m]",
             unit_analysis="m → m: compatible",
@@ -1028,7 +1028,7 @@ class TestAssignSectionsValidOutput:
     def test_all_paths_start_with_ids_name(
         self, mock_call_llm, sample_groups, sample_subtree, sample_section_assignment
     ):
-        from imas_codex.ids.mapping import PipelineCost, assign_sections
+        from imas_codex.ids.mapping import PipelineCost, assign_targets
 
         mock_call_llm.return_value = sample_section_assignment
         cost = PipelineCost()
@@ -1039,10 +1039,10 @@ class TestAssignSectionsValidOutput:
             "semantic": sample_subtree,
         }
 
-        result = assign_sections("jet", "pf_active", context, cost=cost)
-        assert isinstance(result, SectionAssignmentBatch)
+        result = assign_targets("jet", "pf_active", context, cost=cost)
+        assert isinstance(result, TargetAssignmentBatch)
         for a in result.assignments:
-            assert a.imas_section_path.startswith("pf_active/")
+            assert a.imas_target_path.startswith("pf_active/")
 
 
 class TestMapSignalsMultiTarget:
@@ -1067,7 +1067,7 @@ class TestMapSignalsMultiTarget:
         # LLM returns batch with same source mapped to two targets
         multi_target_batch = SignalMappingBatch(
             ids_name="pf_active",
-            section_path="pf_active/coil",
+            target_path="pf_active/coil",
             mappings=[
                 SignalMappingEntry(
                     source_id="jet:pf_coils:group1",
@@ -1092,12 +1092,12 @@ class TestMapSignalsMultiTarget:
         mock_code_refs.return_value = []
         cost = PipelineCost()
 
-        assignment = SectionAssignmentBatch(
+        assignment = TargetAssignmentBatch(
             ids_name="pf_active",
             assignments=[
-                SectionAssignment(
+                TargetAssignment(
                     source_id="jet:pf_coils:group1",
-                    imas_section_path="pf_active/coil",
+                    imas_target_path="pf_active/coil",
                     confidence=0.95,
                     reasoning="PF coil geometry",
                 ),
@@ -1142,7 +1142,7 @@ class TestDiscoverAssemblyPatterns:
 
         mock_subtree.return_value = sample_subtree
         mock_call_llm.return_value = AssemblyConfig(
-            section_path="pf_active/coil",
+            target_path="pf_active/coil",
             pattern=AssemblyPattern.ARRAY_PER_NODE,
             confidence=0.85,
             reasoning="Each PF coil maps to one struct-array element",
@@ -1182,12 +1182,12 @@ class TestValidateMappingsCatchesUnitMismatch:
         ]
         mock_gc.query.return_value = [{"id": "jet:pf_coils:group1"}]
 
-        sections = SectionAssignmentBatch(
+        sections = TargetAssignmentBatch(
             ids_name="pf_active",
             assignments=[
-                SectionAssignment(
+                TargetAssignment(
                     source_id="jet:pf_coils:group1",
-                    imas_section_path="pf_active/coil",
+                    imas_target_path="pf_active/coil",
                     confidence=0.9,
                     reasoning="test",
                 ),
@@ -1195,7 +1195,7 @@ class TestValidateMappingsCatchesUnitMismatch:
         )
         field_batch = SignalMappingBatch(
             ids_name="pf_active",
-            section_path="pf_active/coil",
+            target_path="pf_active/coil",
             mappings=[
                 SignalMappingEntry(
                     source_id="jet:pf_coils:group1",
@@ -1233,12 +1233,12 @@ class TestValidateMappingsCatchesCOCOSMissing:
         mock_check.return_value = [{"path": target, "exists": True}]
         mock_gc.query.return_value = [{"id": "jet:eq:psi_group"}]
 
-        sections = SectionAssignmentBatch(
+        sections = TargetAssignmentBatch(
             ids_name="equilibrium",
             assignments=[
-                SectionAssignment(
+                TargetAssignment(
                     source_id="jet:eq:psi_group",
-                    imas_section_path="equilibrium/time_slice",
+                    imas_target_path="equilibrium/time_slice",
                     confidence=0.9,
                     reasoning="test",
                 ),
@@ -1246,7 +1246,7 @@ class TestValidateMappingsCatchesCOCOSMissing:
         )
         field_batch = SignalMappingBatch(
             ids_name="equilibrium",
-            section_path="equilibrium/time_slice",
+            target_path="equilibrium/time_slice",
             mappings=[
                 SignalMappingEntry(
                     source_id="jet:eq:psi_group",
@@ -1378,7 +1378,7 @@ class TestIntegrationMappingPipeline:
             ids_name="pf_active",
             configs=[
                 AssemblyConfig(
-                    section_path="pf_active/coil",
+                    target_path="pf_active/coil",
                     pattern=AssemblyPattern.ARRAY_PER_NODE,
                     init_arrays={"coil": 12},
                     reasoning="One element per coil",
@@ -1413,7 +1413,7 @@ class TestAssemblyPromptRenders:
             "assembly",
             facility="jet",
             ids_name="pf_active",
-            section_path="pf_active/coil",
+            target_path="pf_active/coil",
             signal_mappings="- group1 → r (FLT_0D)",
             imas_section_structure="pf_active/coil (STRUCT_ARRAY)",
             source_metadata="2 groups, 6 signals",
@@ -1476,7 +1476,7 @@ class TestStaticFirstOrdering:
 
         for name in [
             "signal_mapping_system.md",
-            "section_assignment_system.md",
+            "target_assignment_system.md",
             "assembly_system.md",
         ]:
             content = (PROMPTS_DIR / "mapping" / name).read_text()
@@ -1731,7 +1731,7 @@ class TestSemanticCandidatesInPrompt:
             "signal_mapping",
             facility="jet",
             ids_name="pf_active",
-            section_path="pf_active/coil",
+            target_path="pf_active/coil",
             signal_source_detail="test",
             imas_fields="test",
             identifier_schemas="",

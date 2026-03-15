@@ -9,9 +9,9 @@ Discover the assembly pattern for the following section.
 
 - **Facility**: {{ facility }}
 - **IDS**: {{ ids_name }}
-- **Section**: {{ section_path }}
+- **Target**: {{ section_path }}
 
-### Signal Mappings for This Section
+### Signal Mappings for This Target
 
 These signal mappings have been generated. Each maps a SignalSource to one or
 more IMAS fields with individual transform expressions:

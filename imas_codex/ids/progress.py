@@ -110,7 +110,7 @@ class MappingProgressDisplay(BaseProgressDisplay):
                 completed=s.sections_assigned,
                 total=max(s.sections_total, s.sections_assigned, 1),
                 is_complete=sections_done,
-                cost=s.cost.steps.get("assign_sections"),
+                cost=s.cost.steps.get("assign_targets"),
                 description=(
                     f"{s.sections_assigned} assigned"
                     if sections_done

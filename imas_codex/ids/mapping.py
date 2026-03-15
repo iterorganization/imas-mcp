@@ -4,9 +4,9 @@ Multi-step LLM pipeline that generates signal-level IMAS mappings
 from facility signal sources:
 
   gather_context:     Fetch signal sources + DD context (programmatic)
-  assign_sections:    LLM assigns sources to IMAS sections
-  map_signals:        For each section, LLM generates signal mappings
-  discover_assembly:  For each section, LLM discovers assembly patterns
+  assign_targets:     LLM assigns sources to IDS target paths
+  map_signals:        For each target, LLM generates signal mappings
+  discover_assembly:  For each target, LLM discovers assembly patterns
   validate_mappings:  Programmatic validation (source/target existence, transforms, units)
   persist:            Write to graph
 
@@ -27,9 +27,11 @@ from imas_codex.graph.client import GraphClient
 from imas_codex.ids.models import (
     AssemblyBatch,
     AssemblyConfig,
+    AssemblyPattern,
     EscalationFlag,
     SignalMappingBatch,
-    SectionAssignmentBatch,
+    TargetAssignmentBatch,
+    TargetType,
     UnmappedSignal,
     ValidatedSignalMapping,
     ValidatedMappingResult,
@@ -709,7 +711,7 @@ def _fetch_ids_description(ids_name: str, gc: GraphClient) -> str:
     return ""
 
 
-def assign_sections(
+def assign_targets(
     facility: str,
     ids_name: str,
     context: dict[str, Any],
@@ -717,16 +719,16 @@ def assign_sections(
     gc: "GraphClient | None" = None,
     model: str | None = None,
     cost: PipelineCost,
-) -> SectionAssignmentBatch:
-    """Assign signal sources to IMAS struct-array sections."""
-    logger.info("Assigning signal sources to IMAS sections")
+) -> TargetAssignmentBatch:
+    """Assign signal sources to IDS target paths."""
+    logger.info("Assigning signal sources to IDS target paths")
 
     ids_description = ""
     if gc is not None:
         ids_description = _fetch_ids_description(ids_name, gc)
 
     prompt = _render_prompt(
-        "section_assignment",
+        "target_assignment",
         facility=facility,
         ids_name=ids_name,
         ids_description=ids_description,
@@ -741,13 +743,13 @@ def assign_sections(
         ),
     )
 
-    messages = _build_messages("section_assignment_system", prompt)
+    messages = _build_messages("target_assignment_system", prompt)
 
     return _call_llm(
         messages,
-        SectionAssignmentBatch,
+        TargetAssignmentBatch,
         model=model,
-        step_name="assign_sections",
+        step_name="assign_targets",
         cost=cost,
     )
 
@@ -755,7 +757,7 @@ def assign_sections(
 def map_signals(
     facility: str,
     ids_name: str,
-    sections: SectionAssignmentBatch,
+    sections: TargetAssignmentBatch,
     context: dict[str, Any],
     *,
     gc: GraphClient,
@@ -764,22 +766,22 @@ def map_signals(
 ) -> list[SignalMappingBatch]:
     """Generate signal mappings per section."""
     logger.info(
-        "Generating signal mappings for %d sections", len(sections.assignments)
+        "Generating signal mappings for %d targets", len(sections.assignments)
     )
 
     batches: list[SignalMappingBatch] = []
     dd_ver = context.get("dd_version")
 
     for assignment in sections.assignments:
-        section_path = assignment.imas_section_path
+        target_path = assignment.imas_target_path
 
-        # Get detailed fields for this section
+        # Get detailed fields for this target
         fields = fetch_imas_fields(
-            ids_name, [section_path], gc=gc, dd_version=dd_ver,
+            ids_name, [target_path], gc=gc, dd_version=dd_ver,
         )
-        # Also get leaf fields under this section
+        # Also get leaf fields under this target
         subtree_fields = fetch_imas_subtree(
-            ids_name, section_path.removeprefix(f"{ids_name}/"), gc=gc,
+            ids_name, target_path.removeprefix(f"{ids_name}/"), gc=gc,
             leaf_only=True, dd_version=dd_ver,
         )
 
@@ -813,7 +815,7 @@ def map_signals(
                 parts.append(f"Target DD COCOS convention: {dd_cocos}")
             flip_paths = [
                 p for p in context["cocos_paths"]
-                if p.startswith(section_path)
+                if p.startswith(target_path)
             ]
             if flip_paths:
                 parts.append(
@@ -878,7 +880,8 @@ def map_signals(
             "signal_mapping",
             facility=facility,
             ids_name=ids_name,
-            section_path=section_path,
+            section_path=target_path,
+            target_type=assignment.target_type.value,
             signal_source_detail=_format_source_detail(sg_detail),
             imas_fields=_format_fields(all_fields),
             identifier_schemas=_format_identifier_schemas(all_fields),
@@ -904,7 +907,7 @@ def map_signals(
             messages,
             SignalMappingBatch,
             model=model,
-            step_name=f"map_signals_{section_path}",
+            step_name=f"map_signals_{target_path}",
             cost=cost,
         )
         batches.append(batch)
@@ -951,7 +954,7 @@ def _format_source_metadata(
 def discover_assembly(
     facility: str,
     ids_name: str,
-    sections: SectionAssignmentBatch,
+    sections: TargetAssignmentBatch,
     signal_batches: list[SignalMappingBatch],
     context: dict[str, Any],
     *,
@@ -959,9 +962,9 @@ def discover_assembly(
     model: str | None = None,
     cost: PipelineCost,
 ) -> AssemblyBatch:
-    """Discover assembly patterns for each section."""
+    """Discover assembly patterns for each target."""
     logger.info(
-        "Discovering assembly patterns for %d sections",
+        "Discovering assembly patterns for %d targets",
         len(sections.assignments),
     )
 
@@ -969,30 +972,47 @@ def discover_assembly(
     dd_ver = context.get("dd_version")
 
     for assignment, batch in zip(sections.assignments, signal_batches):
-        section_path = assignment.imas_section_path
+        target_path = assignment.imas_target_path
 
-        section_structure = fetch_imas_subtree(
+        # For SCALAR and PROFILE targets, auto-generate a DIRECT config
+        # without an LLM call — these have trivial assembly patterns
+        if assignment.target_type in (TargetType.SCALAR, TargetType.PROFILE):
+            logger.info(
+                "Auto-generating DIRECT assembly for %s target %s",
+                assignment.target_type, target_path,
+            )
+            configs.append(
+                AssemblyConfig(
+                    target_path=target_path,
+                    pattern=AssemblyPattern.DIRECT,
+                    reasoning=f"Auto-generated: {assignment.target_type} target uses direct write",
+                    confidence=1.0,
+                )
+            )
+            continue
+
+        target_structure = fetch_imas_subtree(
             ids_name,
-            section_path.removeprefix(f"{ids_name}/"),
+            target_path.removeprefix(f"{ids_name}/"),
             gc=gc,
             dd_version=dd_ver,
         )
 
         # Fetch fields with identifier schema data for assembly context
-        section_fields = fetch_imas_fields(
-            ids_name, [section_path], gc=gc, dd_version=dd_ver,
+        target_fields = fetch_imas_fields(
+            ids_name, [target_path], gc=gc, dd_version=dd_ver,
         )
 
         prompt = _render_prompt(
             "assembly",
             facility=facility,
             ids_name=ids_name,
-            section_path=section_path,
+            section_path=target_path,
             signal_mappings=_format_signal_mappings(batch),
-            imas_section_structure=_format_subtree(section_structure),
+            imas_section_structure=_format_subtree(target_structure),
             source_metadata=_format_source_metadata(assignment, context),
-            identifier_schemas=_format_identifier_schemas(section_fields),
-            coordinate_context=_format_coordinate_context(section_fields),
+            identifier_schemas=_format_identifier_schemas(target_fields),
+            coordinate_context=_format_coordinate_context(target_fields),
         )
 
         messages = _build_messages("assembly_system", prompt)
@@ -1001,7 +1021,7 @@ def discover_assembly(
             messages,
             AssemblyConfig,
             model=model,
-            step_name=f"discover_assembly_{section_path}",
+            step_name=f"discover_assembly_{target_path}",
             cost=cost,
         )
         configs.append(config)
@@ -1013,7 +1033,7 @@ def validate_mappings(
     facility: str,
     ids_name: str,
     dd_version: str,
-    sections: SectionAssignmentBatch,
+    sections: TargetAssignmentBatch,
     field_batches: list[SignalMappingBatch],
     *,
     gc: GraphClient,
@@ -1187,14 +1207,14 @@ def generate_mapping(
             "Run signal discovery first."
         )
 
-    # Step 1: Assign sections
-    sections = assign_sections(
+    # Step 1: Assign targets
+    sections = assign_targets(
         facility, ids_name, context, gc=gc, model=model, cost=cost
     )
 
     if not sections.assignments:
         raise ValueError(
-            f"LLM could not assign any signal sources to IMAS sections "
+            f"LLM could not assign any signal sources to IDS target paths "
             f"for {facility}/{ids_name}."
         )
 

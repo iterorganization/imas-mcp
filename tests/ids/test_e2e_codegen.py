@@ -438,7 +438,7 @@ class TestAssemblyConfigExtensions:
     def test_assembly_code_default_none(self):
         from imas_codex.ids.models import AssemblyConfig
 
-        config = AssemblyConfig(section_path="pf_active/coil")
+        config = AssemblyConfig(target_path="pf_active/coil")
         assert config.assembly_code is None
         assert config.assembly_function_name is None
 
@@ -446,7 +446,7 @@ class TestAssemblyConfigExtensions:
         from imas_codex.ids.models import AssemblyConfig
 
         config = AssemblyConfig(
-            section_path="pf_active/coil",
+            target_path="pf_active/coil",
             assembly_code="def f(ids, signals, mappings): pass",
             assembly_function_name="f",
         )
@@ -457,7 +457,7 @@ class TestAssemblyConfigExtensions:
         from imas_codex.ids.models import AssemblyConfig
 
         config = AssemblyConfig(
-            section_path="test",
+            target_path="test",
             assembly_code="x = 1\ny = 2",
             assembly_function_name="assemble_test",
         )

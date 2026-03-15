@@ -268,13 +268,13 @@ async def assign_worker(
         return
 
     if on_progress:
-        on_progress("assigning sections", state.assign_stats)
+        on_progress("assigning targets", state.assign_stats)
 
     try:
-        from imas_codex.ids.mapping import assign_sections
+        from imas_codex.ids.mapping import assign_targets
 
         sections = await asyncio.to_thread(
-            assign_sections,
+            assign_targets,
             state.facility,
             state.target_ids,
             state.context,

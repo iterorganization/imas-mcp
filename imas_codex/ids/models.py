@@ -1,7 +1,7 @@
 """Response models for the IMAS signal mapping pipeline.
 
 Pydantic models used as structured output targets for each LLM step:
-  assign_sections     — SectionAssignmentBatch: assign signal sources to IMAS sections
+  assign_targets      — TargetAssignmentBatch: assign signal sources to IDS target paths
   map_signals         — SignalMappingBatch: signal-level mappings with transforms
   discover_assembly   — AssemblyBatch: assembly patterns for struct-array population
   validate_mappings   — ValidatedMappingResult: programmatically validated mappings
@@ -41,17 +41,38 @@ class MappingDisposition(StrEnum):
     DD_VERSION_GAP = "dd_version_gap"
 
 
+class TargetType(StrEnum):
+    """Classification of the IDS target path structure."""
+
+    STRUCT_ARRAY = "struct_array"
+    TIME_SLICE = "time_slice"
+    SCALAR = "scalar"
+    PROFILE = "profile"
+    DD_VERSION_GAP = "dd_version_gap"
+
+
 # ---------------------------------------------------------------------------
 # Step 1: Section assignment
 # ---------------------------------------------------------------------------
 
 
-class SectionAssignment(BaseModel):
-    """Map a signal source to an IMAS structural array section."""
+class TargetAssignment(BaseModel):
+    """Map a signal source to an IDS target path."""
 
     source_id: str = Field(description="SignalSource node id")
-    imas_section_path: str = Field(
-        description="IMAS struct-array path (e.g. pf_active/coil)"
+    imas_target_path: str = Field(
+        description=(
+            "IMAS subtree path — struct-array (e.g. pf_active/coil), "
+            "time-slice container (e.g. equilibrium/time_slice), "
+            "or scalar path (e.g. summary/global_quantities/ip)"
+        )
+    )
+    target_type: TargetType = Field(
+        default=TargetType.STRUCT_ARRAY,
+        description=(
+            "Classification of the target path structure: "
+            "struct_array, time_slice, scalar, or profile"
+        ),
     )
     confidence: float = Field(ge=0, le=1, description="Assignment confidence 0-1")
     reasoning: str = Field(description="Brief justification")
@@ -69,11 +90,11 @@ class UnassignedSource(BaseModel):
     )
 
 
-class SectionAssignmentBatch(BaseModel):
-    """Batch of section assignments from Step 1."""
+class TargetAssignmentBatch(BaseModel):
+    """Batch of target assignments from Step 1."""
 
     ids_name: str
-    assignments: list[SectionAssignment]
+    assignments: list[TargetAssignment]
     unassigned_groups: list[str] = Field(
         default_factory=list,
         description="Signal source IDs that could not be assigned (deprecated)",
@@ -205,10 +226,10 @@ class SignalMappingEntry(BaseModel):
 
 
 class SignalMappingBatch(BaseModel):
-    """Batch of signal mappings from map_signals (per section)."""
+    """Batch of signal mappings from map_signals (per target)."""
 
     ids_name: str
-    section_path: str = Field(description="IMAS struct-array section")
+    target_path: str = Field(description="IMAS target path")
     mappings: list[SignalMappingEntry]
     unmapped: list[UnmappedSignal] = Field(default_factory=list)
     escalations: list[EscalationFlag] = Field(default_factory=list)
@@ -220,8 +241,9 @@ class SignalMappingBatch(BaseModel):
 
 
 class AssemblyPattern(StrEnum):
-    """How multiple signal sources compose into an IMAS struct-array."""
+    """How signal sources compose into an IDS target structure."""
 
+    DIRECT = "direct"
     ARRAY_PER_NODE = "array_per_node"
     CONCATENATE = "concatenate"
     CONCATENATE_TRANSPOSE = "concatenate_transpose"
@@ -230,9 +252,9 @@ class AssemblyPattern(StrEnum):
 
 
 class AssemblyConfig(BaseModel):
-    """Assembly configuration for one IMAS struct-array section."""
+    """Assembly configuration for one IDS target path."""
 
-    section_path: str
+    target_path: str
     pattern: AssemblyPattern = AssemblyPattern.ARRAY_PER_NODE
     init_arrays: dict[str, int] | None = None
     elements_config: str | None = Field(
@@ -290,7 +312,7 @@ class ValidatedMappingResult(BaseModel):
     facility: str
     ids_name: str
     dd_version: str
-    sections: list[SectionAssignment]
+    sections: list[TargetAssignment]
     bindings: list[ValidatedSignalMapping]
     unmapped: list[UnmappedSignal] = Field(default_factory=list)
     escalations: list[EscalationFlag] = Field(default_factory=list)
@@ -378,13 +400,13 @@ def persist_mapping_result(
         validation_strategy=validation_strategy,
     )
 
-    # 2. Create POPULATES relationships to section roots with assembly config
-    assembly_by_section: dict[str, AssemblyConfig] = {}
+    # 2. Create POPULATES relationships to target roots with assembly config
+    assembly_by_target: dict[str, AssemblyConfig] = {}
     if assembly:
-        assembly_by_section = {c.section_path: c for c in assembly.configs}
+        assembly_by_target = {c.target_path: c for c in assembly.configs}
 
     for section in result.sections:
-        asm = assembly_by_section.get(section.imas_section_path)
+        asm = assembly_by_target.get(section.imas_target_path)
         asm_params: dict[str, Any] = {}
         if asm:
             asm_params = {
@@ -420,7 +442,7 @@ def persist_mapping_result(
                 r.assembly_function_name = $assembly_function_name
             """,
             mapping_id=mapping_id,
-            imas_path=section.imas_section_path,
+            imas_path=section.imas_target_path,
             confidence=section.confidence,
             structure=asm_params.get("structure"),
             init_arrays=asm_params.get("init_arrays"),
