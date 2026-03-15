@@ -814,10 +814,10 @@ class TestMapCLI:
 
         mock_generate.side_effect = ValueError("No signal sources found")
 
-        runner = CliRunner(mix_stderr=False)
+        runner = CliRunner()
         result = runner.invoke(map_cmd, ["run", "jet", "pf_active"])
         assert result.exit_code == 1
-        assert "No signal sources found" in result.stderr
+        assert "No signal sources found" in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -889,12 +889,11 @@ class TestPromptTemplates:
     def test_signal_mapping_prompt_has_transform_examples(self):
         from imas_codex.llm.prompt_loader import PROMPTS_DIR
 
-        prompt = (PROMPTS_DIR / "mapping" / "signal_mapping.md").read_text()
-        # Phase 6: transform expression examples
+        # Transform examples are now in the system prompt
+        prompt = (PROMPTS_DIR / "mapping" / "signal_mapping_system.md").read_text()
         assert "value * 1e-3" in prompt
         assert "math.radians(value)" in prompt
         assert "convert_units(value" in prompt
-        # Phase 6: unit mismatch rule
         assert "source_units" in prompt
         assert "MUST" in prompt
 
@@ -1452,23 +1451,36 @@ class TestPromptsNoSignalMappingTerminology:
 
 
 class TestStaticFirstOrdering:
-    def test_static_sections_before_dynamic(self):
-        """Task/rules sections appear before dynamic context."""
+    def test_static_in_system_prompt_dynamic_in_user_prompt(self):
+        """Static instructions are in the system prompt file, dynamic in user."""
         from imas_codex.llm.prompt_loader import PROMPTS_DIR
 
-        prompt = (PROMPTS_DIR / "mapping" / "signal_mapping.md").read_text()
-        # Static markers should appear before dynamic Jinja2 variables
-        task_pos = prompt.find("Task")
-        rules_pos = prompt.find("Rules")
-        # Dynamic context markers
-        facility_pos = prompt.find("{{ facility }}")
+        system = (PROMPTS_DIR / "mapping" / "signal_mapping_system.md").read_text()
+        user = (PROMPTS_DIR / "mapping" / "signal_mapping.md").read_text()
 
-        # Task and Rules must appear before dynamic context
-        assert task_pos >= 0, "Task section not found"
-        if facility_pos >= 0:
-            assert task_pos < facility_pos
-        if rules_pos >= 0 and facility_pos >= 0:
-            assert rules_pos < facility_pos
+        # Static instructions live in system prompt
+        assert "Task" in system
+        assert "Transform Rules" in system
+        assert "Output Format" in system
+
+        # Dynamic context lives in user prompt
+        assert "{{ facility }}" in user
+        assert "{{ ids_name }}" in user
+
+        # System prompt has NO template variables
+        assert "{{ " not in system
+
+    def test_all_system_prompts_are_static(self):
+        """Verify none of the system prompt files contain Jinja2 variables."""
+        from imas_codex.llm.prompt_loader import PROMPTS_DIR
+
+        for name in [
+            "signal_mapping_system.md",
+            "section_assignment_system.md",
+            "assembly_system.md",
+        ]:
+            content = (PROMPTS_DIR / "mapping" / name).read_text()
+            assert "{{ " not in content, f"{name} should not contain template variables"
 
 
 # ---------------------------------------------------------------------------

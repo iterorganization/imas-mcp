@@ -30,7 +30,7 @@ class TestFormatSectionClusters:
         assert "Electron and ion temps" in result
         assert "core_profiles/profiles_1d/electrons/temperature" in result
 
-    def test_paths_truncated_at_10(self):
+    def test_many_paths_rendered(self):
         clusters = [
             {
                 "label": "Big",
@@ -39,7 +39,9 @@ class TestFormatSectionClusters:
             }
         ]
         result = _format_section_clusters(clusters)
-        assert "+5 more" in result
+        # All paths are rendered (no truncation)
+        assert "a/b/c14" in result
+        assert "**Big**" in result
 
     def test_no_description(self):
         clusters = [{"label": "X", "paths": []}]
