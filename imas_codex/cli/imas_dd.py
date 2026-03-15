@@ -68,13 +68,13 @@ imas.add_command(map_cmd, "map")
 )
 @click.option(
     "--reset-to",
-    type=click.Choice(["built", "enriched"], case_sensitive=False),
+    type=click.Choice(["extracted", "built", "enriched"], case_sensitive=False),
     default=None,
     help=(
         "Reset nodes to a target state before rebuilding. "
-        "built: clear enrichments and re-enrich all nodes from scratch. "
-        "enriched: clear embeddings and re-embed all nodes. "
-        "Bypasses the build hash check so the full pipeline runs."
+        "extracted: delete all nodes and rebuild from DD XML. "
+        "built: clear enrichments and re-enrich all nodes. "
+        "enriched: clear embeddings and re-embed all nodes."
     ),
 )
 @click.option(
@@ -116,8 +116,9 @@ def imas_build(
         imas-codex imas dd build                  # Build all DD versions (default)
         imas-codex imas dd build --current-only   # Build current version only
         imas-codex imas dd build --from-version 4.0.0  # Incremental from 4.0.0
-        imas-codex imas dd build --reset-to built   # Re-enrich everything (prompt/model change)
-        imas-codex imas dd build --reset-to enriched  # Re-embed everything (embedding model change)
+        imas-codex imas dd build --reset-to extracted  # Full rebuild from DD XML
+        imas-codex imas dd build --reset-to built      # Re-enrich (prompt/model change)
+        imas-codex imas dd build --reset-to enriched   # Re-embed (embedding model change)
         imas-codex imas dd build --dry-run -v     # Preview without writing
         imas-codex imas dd build --ids-filter "core_profiles equilibrium"  # Test subset
     """
