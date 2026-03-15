@@ -63,8 +63,18 @@ class DDBuildState(DiscoveryStateBase):
     reset_to: str | None = None
 
     @property
-    def force(self) -> bool:
-        """Bypass build hash checks when any reset is requested."""
+    def skip_build_hash(self) -> bool:
+        """Bypass build-level hash check (re-extract/rebuild)."""
+        return self.reset_to == "extracted"
+
+    @property
+    def skip_enrichment_hash(self) -> bool:
+        """Bypass per-path enrichment hash check (re-enrich all)."""
+        return self.reset_to in ("extracted", "built")
+
+    @property
+    def skip_embedding_hash(self) -> bool:
+        """Bypass per-path embedding hash check (re-embed all)."""
         return self.reset_to is not None
 
     # Shared data (extract → build/embed)
@@ -137,7 +147,7 @@ async def extract_worker(state: DDBuildState, **_kwargs) -> None:
         from imas_codex.graph.client import GraphClient
 
         # Quick graph check before expensive XML parsing
-        if not state.dry_run and not state.force:
+        if not state.dry_run and not state.skip_build_hash:
             build_hash = _compute_build_hash(state.versions, state.ids_filter)
             try:
                 with GraphClient() as client:
@@ -203,7 +213,7 @@ async def build_worker(state: DDBuildState, **_kwargs) -> None:
             )
             state.build_hash = build_hash
 
-            if not state.dry_run and not state.force:
+            if not state.dry_run and not state.skip_build_hash:
                 # Full check: everything including embeddings + clusters
                 if _check_graph_up_to_date(
                     client,
@@ -661,7 +671,7 @@ async def _embed_batch(
     paths_to_embed = []
     for pid in path_ids:
         existing_hash = paths_data[pid].get("embedding_hash")
-        if not state.force and existing_hash == content_hashes[pid]:
+        if not state.skip_embedding_hash and existing_hash == content_hashes[pid]:
             continue  # Already embedded with same content
         paths_to_embed.append(pid)
 
