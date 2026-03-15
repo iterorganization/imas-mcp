@@ -700,7 +700,7 @@ def _fetch_ids_description(ids_name: str, gc: GraphClient) -> str:
     rows = gc.query(
         """
         MATCH (i:IDS {id: $ids_name})
-        RETURN i.enriched_description AS desc
+        RETURN i.description AS desc
         """,
         ids_name=ids_name,
     )

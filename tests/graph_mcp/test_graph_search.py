@@ -838,8 +838,8 @@ class TestIdentifierSearch:
         assert schema["path"] == "boundary_type"
 
     @pytest.mark.asyncio
-    async def test_keyword_match_enriched_description(self, graph_client):
-        """Query matching enriched_description should return schema."""
+    async def test_keyword_match_description(self, graph_client):
+        """Query matching LLM description should return schema."""
         tool = self._make_tool(graph_client)
         result = await tool.get_imas_identifiers(query="topology")
         assert result.analytics["total_schemas"] >= 1
@@ -856,8 +856,8 @@ class TestIdentifierSearch:
         assert "boundary_type" in names
 
     @pytest.mark.asyncio
-    async def test_enriched_description_preferred(self, graph_client):
-        """Description should prefer enriched_description over raw description."""
+    async def test_description_preferred(self, graph_client):
+        """Description should contain LLM-enriched content when available."""
         tool = self._make_tool(graph_client)
         result = await tool.get_imas_identifiers()
         schema = result.schemas[0]

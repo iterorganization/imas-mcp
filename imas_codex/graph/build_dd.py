@@ -1018,7 +1018,7 @@ def extract_paths_for_version(version: str, ids_filter: set[str] | None = None) 
             xml_meta = ids_xml_meta.get(ids_name, {})
             ids_info[ids_name] = {
                 "name": ids_name,
-                "description": metadata.documentation or "",
+                "documentation": metadata.documentation or "",
                 "physics_domain": physics_categorizer.get_domain_for_ids(
                     ids_name
                 ).value,
@@ -2250,7 +2250,7 @@ def _collect_identifier_schemas(paths: dict[str, dict]) -> dict[str, dict]:
         schemas[enum_name] = {
             "id": enum_name,
             "name": enum_name,
-            "description": description,
+            "documentation": description,
             "options": json.dumps(options),
             "option_count": len(options),
             "field_count": field_count,
@@ -2270,7 +2270,7 @@ def _create_identifier_schema_nodes(
         UNWIND $schemas AS s
         MERGE (schema:IdentifierSchema {id: s.id})
         SET schema.name = s.name,
-            schema.description = s.description,
+            schema.documentation = s.documentation,
             schema.option_count = s.option_count,
             schema.options = s.options,
             schema.field_count = s.field_count,
@@ -2291,7 +2291,7 @@ def _batch_upsert_ids_nodes(
         {
             "id": ids_name,
             "name": ids_name,
-            "description": info.get("description", ""),
+            "documentation": info.get("documentation", ""),
             "physics_domain": info.get("physics_domain", "general"),
             "path_count": info.get("path_count", 0),
             "leaf_count": info.get("leaf_count", 0),
@@ -2312,7 +2312,7 @@ def _batch_upsert_ids_nodes(
         UNWIND $ids_list AS ids_data
         MERGE (ids:IDS {id: ids_data.id})
         SET ids.name = ids_data.name,
-            ids.description = ids_data.description,
+            ids.documentation = ids_data.documentation,
             ids.physics_domain = ids_data.physics_domain,
             ids.path_count = ids_data.path_count,
             ids.leaf_count = ids_data.leaf_count,

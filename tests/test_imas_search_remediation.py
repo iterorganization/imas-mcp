@@ -350,7 +350,7 @@ class TestGraphSearchToolHybrid:
                         "introduced_after_version": "3.0.0",
                         "cocos_label": None,
                         "cocos_expression": None,
-                        "enriched_description": None,
+                        "description": None,
                         "keywords": None,
                         "enrichment_source": None,
                     }
@@ -397,7 +397,7 @@ class TestGraphSearchToolHybrid:
                         "introduced_after_version": "3.0.0",
                         "cocos_label": None,
                         "cocos_expression": None,
-                        "enriched_description": None,
+                        "description": None,
                         "keywords": None,
                         "enrichment_source": None,
                     }
@@ -443,7 +443,7 @@ class TestGraphSearchToolHybrid:
                         "introduced_after_version": "3.42.0",
                         "cocos_label": None,
                         "cocos_expression": None,
-                        "enriched_description": None,
+                        "description": None,
                         "keywords": None,
                         "enrichment_source": None,
                     }
@@ -511,7 +511,7 @@ class TestGraphSearchToolHybrid:
                         "introduced_after_version": "3.42.0",
                         "cocos_label": None,
                         "cocos_expression": None,
-                        "enriched_description": None,
+                        "description": None,
                         "keywords": None,
                         "enrichment_source": None,
                     }
@@ -586,7 +586,7 @@ class TestGraphSearchToolHybrid:
                         "introduced_after_version": None,
                         "cocos_label": None,
                         "cocos_expression": None,
-                        "enriched_description": None,
+                        "description": None,
                         "keywords": None,
                         "enrichment_source": None,
                     },
@@ -609,7 +609,7 @@ class TestGraphSearchToolHybrid:
                         "has_identifier_schema": False,
                         "introduced_after_version": None,                        "cocos_label": None,
                         "cocos_expression": None,
-                        "enriched_description": None,
+                        "description": None,
                         "keywords": None,
                         "enrichment_source": None,                    },
                 ],

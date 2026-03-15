@@ -274,8 +274,8 @@ IDENTIFIER_SCHEMAS = [
     {
         "id": "equilibrium/time_slice/boundary/type",
         "name": "boundary_type",
-        "description": "Type of boundary shape",
-        "enriched_description": "Classifies the plasma boundary topology. The distinction between last closed flux surface and limiter boundary determines how edge transport and scrape-off layer physics are modelled in equilibrium reconstruction.",
+        "documentation": "Type of boundary shape",
+        "description": "Classifies the plasma boundary topology. The distinction between last closed flux surface and limiter boundary determines how edge transport and scrape-off layer physics are modelled in equilibrium reconstruction.",
         "keywords": ["boundary", "topology", "plasma edge", "separatrix"],
         "options": '[{"value": 0, "label": "last_closed_flux_surface"}, {"value": 1, "label": "limiter"}]',
     },
@@ -418,8 +418,8 @@ def _load_fixture_graph(client) -> None:
     for ident in IDENTIFIER_SCHEMAS:
         client.query(
             "CREATE (s:IdentifierSchema {id: $id, name: $name, "
-            "description: $description, options: $options, "
-            "enriched_description: $enriched_description, "
+            "documentation: $documentation, options: $options, "
+            "description: $description, "
             "keywords: $keywords})",
             **ident,
         )
