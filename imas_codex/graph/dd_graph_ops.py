@@ -66,6 +66,7 @@ def claim_paths_for_enrichment(
             f"""
             MATCH (p:IMASNode)
             WHERE p.status = $status
+              AND p.node_category = 'data'
               AND (p.claimed_at IS NULL
                    OR p.claimed_at < datetime() - duration($cutoff))
               {ids_clause}
@@ -162,6 +163,7 @@ def has_pending_enrichment(*, ids_filter: set[str] | None = None) -> bool:
             f"""
             MATCH (p:IMASNode)
             WHERE p.status = $status
+              AND p.node_category = 'data'
               {ids_clause}
             RETURN count(p) AS pending
             """,
@@ -191,6 +193,7 @@ def claim_paths_for_embedding(limit: int = 500) -> list[dict]:
             """
             MATCH (p:IMASNode)
             WHERE p.status = $status
+              AND p.node_category = 'data'
               AND (p.claimed_at IS NULL
                    OR p.claimed_at < datetime() - duration($cutoff))
             WITH p
@@ -298,6 +301,7 @@ def has_pending_embedding() -> bool:
             """
             MATCH (p:IMASNode)
             WHERE p.status = $status
+              AND p.node_category = 'data'
             RETURN count(p) AS pending
             """,
             status="enriched",

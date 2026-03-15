@@ -377,16 +377,14 @@ def find_imas(
 
     params: dict[str, Any] = {"k": limit, "embedding": embedding}
 
-    where_parts: list[str] = []
+    where_parts: list[str] = ["p.node_category = 'data'"]
     if not include_deprecated:
         where_parts.append("NOT (p)-[:DEPRECATED_IN]->(:DDVersion)")
     if ids_filter is not None:
         where_parts.append("p.ids = $ids_filter")
         params["ids_filter"] = ids_filter
 
-    where_clause = ""
-    if where_parts:
-        where_clause = "WHERE " + " AND ".join(where_parts) + " "
+    where_clause = "WHERE " + " AND ".join(where_parts) + " "
 
     cypher = (
         'CALL db.index.vector.queryNodes("imas_node_embedding", $k, $embedding) '

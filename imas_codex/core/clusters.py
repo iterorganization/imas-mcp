@@ -198,8 +198,8 @@ class Clusters:
                 MATCH (p:IMASNode)
                 WITH count(p) AS total,
                      count(CASE WHEN p.embedding IS NOT NULL THEN 1 END) AS with_emb,
-                     count(CASE WHEN p.is_error_field = true THEN 1 END) AS error_fields
-                WITH total, with_emb, total - error_fields AS embeddable
+                     count(CASE WHEN p.node_category <> 'data' THEN 1 END) AS non_data
+                WITH total, with_emb, total - non_data AS embeddable
                 RETURN total, with_emb, embeddable,
                        CASE WHEN embeddable > 0
                             THEN toFloat(with_emb) / embeddable

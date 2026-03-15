@@ -34,61 +34,66 @@ def _route_query(routes: dict[str, list[dict[str, Any]]]) -> Any:
 
 
 # ---------------------------------------------------------------------------
-# Phase 4: Generic metadata path filtering (_is_generic_metadata_path)
+# Phase 4: Node category classification (replaces _is_generic_metadata_path)
 # ---------------------------------------------------------------------------
 
 
-class TestIsGenericMetadataPath:
-    """Tests for _is_generic_metadata_path() in both servers."""
+class TestNodeCategoryFiltering:
+    """Tests that ExclusionChecker correctly categorizes metadata paths.
+
+    These paths were previously filtered by _is_generic_metadata_path().
+    Now they are classified at build time via ExclusionChecker and
+    filtered at query time via node_category index.
+    """
 
     @pytest.fixture()
-    def filter_fn(self):
-        """Single implementation in shared tools."""
-        from imas_codex.tools.graph_search import _is_generic_metadata_path
-        return _is_generic_metadata_path
+    def classify(self):
+        """Node classification via ExclusionChecker (same logic as _classify_node)."""
+        from imas_codex.core.exclusions import ExclusionChecker
+        checker = ExclusionChecker()
 
-    def test_filters_description_tail(self, filter_fn):
-        assert filter_fn("equilibrium/time_slice/profiles_1d/description") is True
+        def _classify(path_id: str, name: str) -> str:
+            if checker._is_error_field(name):
+                return "error"
+            if checker._is_metadata_path(path_id):
+                return "metadata"
+            return "data"
 
-    def test_filters_name_tail(self, filter_fn):
-        assert filter_fn("core_profiles/profiles_1d/electrons/name") is True
+        return _classify
 
-    def test_filters_comment_tail(self, filter_fn):
-        assert filter_fn("magnetics/flux_loop/comment") is True
+    def test_filters_description_tail(self, classify):
+        assert classify("equilibrium/time_slice/profiles_1d/description", "description") == "metadata"
 
-    def test_filters_source_tail(self, filter_fn):
-        assert filter_fn("equilibrium/time_slice/source") is True
+    def test_filters_name_tail(self, classify):
+        assert classify("core_profiles/profiles_1d/electrons/name", "name") == "metadata"
 
-    def test_filters_provider_tail(self, filter_fn):
-        assert filter_fn("core_profiles/global_quantities/provider") is True
+    def test_filters_comment_tail(self, classify):
+        assert classify("magnetics/flux_loop/comment", "comment") == "metadata"
 
-    def test_filters_identifier_name(self, filter_fn):
-        assert filter_fn("equilibrium/time_slice/boundary/identifier/name") is True
+    def test_filters_source_tail(self, classify):
+        assert classify("equilibrium/time_slice/source", "source") == "metadata"
 
-    def test_filters_identifier_description(self, filter_fn):
-        assert (
-            filter_fn("equilibrium/time_slice/boundary/identifier/description") is True
-        )
+    def test_filters_provider_tail(self, classify):
+        assert classify("core_profiles/global_quantities/provider", "provider") == "metadata"
 
-    def test_filters_type_description(self, filter_fn):
-        assert (
-            filter_fn("equilibrium/time_slice/boundary/neutral_type/description")
-            is True
-        )
+    def test_filters_identifier_name(self, classify):
+        assert classify("equilibrium/time_slice/boundary/identifier/name", "name") == "metadata"
 
-    def test_keeps_physics_leaf(self, filter_fn):
-        assert filter_fn("equilibrium/time_slice/profiles_1d/psi") is False
+    def test_filters_identifier_description(self, classify):
+        assert classify("equilibrium/time_slice/boundary/identifier/description", "description") == "metadata"
 
-    def test_keeps_temperature(self, filter_fn):
-        assert filter_fn("core_profiles/profiles_1d/electrons/temperature") is False
+    def test_keeps_physics_leaf(self, classify):
+        assert classify("equilibrium/time_slice/profiles_1d/psi", "psi") == "data"
 
-    def test_keeps_short_path(self, filter_fn):
-        """Paths with fewer than 3 segments are never generic."""
-        assert filter_fn("equilibrium/name") is False
-        assert filter_fn("description") is False
+    def test_keeps_temperature(self, classify):
+        assert classify("core_profiles/profiles_1d/electrons/temperature", "temperature") == "data"
 
-    def test_keeps_value_leaf(self, filter_fn):
-        assert filter_fn("magnetics/ip/0d/value") is False
+    def test_keeps_short_path(self, classify):
+        """Paths with fewer than 3 segments are never metadata."""
+        assert classify("equilibrium/name", "name") == "data"
+
+    def test_keeps_value_leaf(self, classify):
+        assert classify("magnetics/ip/0d/value", "value") == "data"
 
 
 # ---------------------------------------------------------------------------
@@ -132,24 +137,27 @@ class TestTextSearchImasPathsDDServer:
         lower = next(r for r in results if r["id"] == "magnetics/flux_loop/flux/data")
         assert 0.7 <= lower["score"] <= 1.0
 
-    def test_fulltext_filters_generic_metadata(self, mock_gc):
-        """Fulltext results containing generic metadata paths are filtered."""
+    def test_fulltext_includes_node_category_filter(self, mock_gc):
+        """Fulltext query includes node_category='data' in WHERE clause."""
         from imas_codex.tools.graph_search import _text_search_imas_paths
 
         mock_gc.query.side_effect = _route_query(
             {
                 "db.index.fulltext.queryNodes": [
                     {"id": "magnetics/ip/0d/value", "score": 10.0},
-                    {"id": "magnetics/ip/description", "score": 9.0},
                 ],
             }
         )
 
-        results = _text_search_imas_paths(mock_gc, "plasma current", 50, None)
-        ids = {r["id"] for r in results}
+        _text_search_imas_paths(mock_gc, "plasma current", 50, None)
 
-        assert "magnetics/ip/0d/value" in ids
-        assert "magnetics/ip/description" not in ids
+        # Verify the fulltext query was called with node_category filter
+        calls = mock_gc.query.call_args_list
+        ft_call = next(
+            c for c in calls
+            if "db.index.fulltext.queryNodes" in c[0][0]
+        )
+        assert "node_category = 'data'" in ft_call[0][0]
 
     def test_contains_fallback_when_fulltext_fails(self, mock_gc):
         """When fulltext index raises, falls back to CONTAINS matching."""
@@ -458,18 +466,14 @@ class TestGraphSearchToolHybrid:
         assert hit.rank == 1
 
     @pytest.mark.asyncio
-    async def test_generic_paths_excluded_from_vector(self, mock_gc):
-        """Generic metadata paths from vector results are filtered out."""
+    async def test_vector_query_includes_node_category_filter(self, mock_gc):
+        """Vector search query includes node_category='data' WHERE clause."""
         tool = self._make_tool(mock_gc)
 
         mock_gc.query.side_effect = _route_query(
             {
                 "imas_node_embedding": [
                     {"id": "equilibrium/time_slice/profiles_1d/psi", "score": 0.90},
-                    {
-                        "id": "equilibrium/time_slice/profiles_1d/description",
-                        "score": 0.88,
-                    },
                 ],
                 "UNWIND $path_ids": [
                     {
@@ -495,11 +499,15 @@ class TestGraphSearchToolHybrid:
             }
         )
 
-        result = await tool.search_imas_paths(query="profiles")
+        await tool.search_imas_paths(query="profiles")
 
-        paths = {h.path for h in result.hits}
-        assert "equilibrium/time_slice/profiles_1d/psi" in paths
-        assert "equilibrium/time_slice/profiles_1d/description" not in paths
+        # Verify the vector query includes node_category filter
+        calls = mock_gc.query.call_args_list
+        vector_call = next(
+            c for c in calls
+            if "imas_node_embedding" in c[0][0]
+        )
+        assert "node_category = 'data'" in vector_call[0][0]
 
     @pytest.mark.asyncio
     async def test_empty_query_returns_error(self, mock_gc):

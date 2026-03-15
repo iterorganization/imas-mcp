@@ -240,6 +240,18 @@ enums:
       embedded:
         description: Vector embedding generated from enriched description
 
+  NodeCategory:
+    description: >-
+      Classification of IMASNode fields for filtering. Determines whether
+      a node participates in enrichment, embedding, and search pipelines.
+    permissible_values:
+      data:
+        description: Physics data fields (enriched, embedded, searchable)
+      error:
+        description: Uncertainty bound fields (_error_upper, _error_lower, _error_index)
+      metadata:
+        description: Bookkeeping subtrees (ids_properties, code, identifier descriptors)
+
   DDVersionStatus:
     description: >-
       Pipeline lifecycle status for DDVersion nodes during DD build.
@@ -459,6 +471,13 @@ classes:
           setting claimed_at, then advance the status on completion.
         range: IMASNodeStatus
         required: true
+      node_category:
+        description: >-
+          Classification of this node for filtering: data (physics quantities),
+          error (uncertainty bounds), or metadata (ids_properties, code subtrees,
+          identifier descriptors). Determines participation in enrichment,
+          embedding, and search pipelines. Set at build time by _classify_node().
+        range: NodeCategory
       claimed_at:
         description: >-
           Timestamp when a worker claimed this node for processing.

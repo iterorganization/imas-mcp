@@ -675,21 +675,21 @@ async def test_fetch_multiple_deprecated_paths(path_tool):
 class TestExclusionChecker:
     """Test the ExclusionChecker class."""
 
-    def test_default_includes_everything(self):
-        """Test that default checker excludes nothing (all paths embedded)."""
+    def test_default_excludes_errors_and_metadata(self):
+        """Test that default checker excludes error fields and metadata."""
         checker = ExclusionChecker()
 
-        # Error fields included by default
+        # Error fields excluded by default
         assert (
             checker.get_exclusion_reason("equilibrium/time_slice/psi_error_upper")
-            is None
+            == "error_field"
         )
-        # Metadata paths included by default
+        # Metadata subtrees always excluded
         assert (
             checker.get_exclusion_reason("equilibrium/ids_properties/homogeneous_time")
-            is None
+            == "metadata"
         )
-        assert checker.get_exclusion_reason("core_profiles/code/name") is None
+        assert checker.get_exclusion_reason("core_profiles/code/name") == "metadata"
         # GGD included by default
         assert checker.get_exclusion_reason("edge_profiles/ggd/grid") is None
 
@@ -752,13 +752,13 @@ class TestExclusionChecker:
         """Test the is_excluded convenience method."""
         checker = ExclusionChecker()
 
-        # Default: nothing excluded
-        assert checker.is_excluded("equilibrium/time_slice/psi_error_upper") is False
+        # Default: error fields and metadata excluded
+        assert checker.is_excluded("equilibrium/time_slice/psi_error_upper") is True
         assert checker.is_excluded("equilibrium/time_slice/profiles_1d/psi") is False
 
-        # Configured: error fields excluded
-        checker = ExclusionChecker(include_error_fields=False)
-        assert checker.is_excluded("equilibrium/time_slice/psi_error_upper") is True
+        # Configured: error fields included
+        checker = ExclusionChecker(include_error_fields=True)
+        assert checker.is_excluded("equilibrium/time_slice/psi_error_upper") is False
         assert checker.is_excluded("equilibrium/time_slice/profiles_1d/psi") is False
 
     def test_configurable_exclusions(self):
@@ -781,12 +781,12 @@ class TestExclusionChecker:
 
 
 def test_path_map_get_exclusion_reason(mock_path_map: MockPathMap):
-    """Test getting exclusion reason — default settings exclude nothing."""
-    # Error field paths are no longer excluded
+    """Test getting exclusion reason — default settings exclude error fields."""
+    # Error field paths are excluded by default
     reason = mock_path_map.get_exclusion_reason(
         "equilibrium/time_slice/profiles_1d/psi_error_lower"
     )
-    assert reason is None
+    assert reason == "error_field"
 
     # GGD paths are no longer excluded
     reason = mock_path_map.get_exclusion_reason(
@@ -796,12 +796,12 @@ def test_path_map_get_exclusion_reason(mock_path_map: MockPathMap):
 
 
 def test_path_map_get_exclusion_reason_fallback(mock_path_map: MockPathMap):
-    """Test that exclusion check returns None for unmapped paths with default settings."""
-    # With default settings (include all), live checker returns None
+    """Test that exclusion check catches error fields even for unmapped paths."""
+    # With default settings (exclude errors), live checker catches error fields
     reason = mock_path_map.get_exclusion_reason(
         "core_profiles/profiles_1d/some_field_error_upper"
     )
-    assert reason is None
+    assert reason == "error_field"
 
 
 def test_path_map_get_exclusion_description(mock_path_map: MockPathMap):
@@ -814,10 +814,10 @@ def test_path_map_get_exclusion_description(mock_path_map: MockPathMap):
 
 
 def test_path_map_is_excluded(mock_path_map: MockPathMap):
-    """Test is_excluded — default settings exclude nothing."""
+    """Test is_excluded — default settings exclude error fields."""
     assert (
         mock_path_map.is_excluded("equilibrium/time_slice/profiles_1d/psi_error_lower")
-        is False
+        is True
     )
     assert mock_path_map.is_excluded("equilibrium/time_slice/profiles_1d/psi") is False
 
@@ -828,21 +828,22 @@ def test_path_map_is_excluded(mock_path_map: MockPathMap):
 
 
 @pytest.mark.asyncio
-async def test_check_error_field_path_not_excluded(path_tool):
-    """Test that error field paths are NOT excluded (all paths are now embedded)."""
+async def test_check_error_field_path_excluded(path_tool):
+    """Test that error field paths ARE excluded by default."""
     result = await path_tool.check_imas_paths(
         "equilibrium/time_slice/profiles_1d/psi_error_lower"
     )
 
     assert result.summary["total"] == 1
-    # Error field path should NOT be flagged as excluded
+    # Error field path should be flagged as excluded
     res = result.results[0]
-    assert res.excluded is None
+    assert res.excluded is not None
+    assert res.excluded["reason_key"] == "error_field"
 
 
 @pytest.mark.asyncio
 async def test_check_deprecated_path_with_error_field_new_path(path_tool):
-    """Test deprecated paths whose new_path is an error field (no longer excluded)."""
+    """Test deprecated paths whose new_path is an error field (excluded by default)."""
     result = await path_tool.check_imas_paths(
         "core_profiles/profiles_1d/j_tor_error_upper_old"
     )
@@ -854,8 +855,8 @@ async def test_check_deprecated_path_with_error_field_new_path(path_tool):
     assert res.exists is False
     assert res.migration is not None
     assert res.migration["new_path"] == "core_profiles/profiles_1d/j_tor_error_upper"
-    # Error fields are no longer excluded
-    assert res.migration.get("new_path_excluded") is not True
+    # Error fields are excluded by default
+    assert res.migration.get("new_path_excluded") is True
 
 
 # ============================================================================
@@ -864,32 +865,32 @@ async def test_check_deprecated_path_with_error_field_new_path(path_tool):
 
 
 @pytest.mark.asyncio
-async def test_fetch_error_field_path_not_excluded(path_tool):
-    """Test that fetching an error field path does not report exclusion."""
+async def test_fetch_error_field_path_excluded(path_tool):
+    """Test that fetching an error field path reports exclusion."""
     result = await path_tool.fetch_imas_paths(
         "equilibrium/time_slice/profiles_1d/psi_error_lower"
     )
 
-    # No excluded_paths — error fields are now embedded
-    assert result.summary.get("excluded", 0) == 0
-    assert len(result.excluded_paths) == 0
+    # Error fields are excluded by default
+    assert result.summary.get("excluded", 0) == 1
+    assert len(result.excluded_paths) == 1
 
 
 @pytest.mark.asyncio
 async def test_fetch_deprecated_path_with_error_field_new_path(path_tool):
-    """Test deprecated paths whose new_path is an error field (no longer excluded)."""
+    """Test deprecated paths whose new_path is an error field (excluded by default)."""
     result = await path_tool.fetch_imas_paths(
         "core_profiles/profiles_1d/j_tor_error_upper_old"
     )
 
-    # Should be in deprecated_paths, but new_path is NOT excluded
+    # Should be in deprecated_paths, new_path IS excluded
     assert result.summary["deprecated"] == 1
     assert len(result.deprecated_paths) == 1
 
     deprecated = result.deprecated_paths[0]
     assert deprecated.path == "core_profiles/profiles_1d/j_tor_error_upper_old"
     assert deprecated.new_path == "core_profiles/profiles_1d/j_tor_error_upper"
-    assert deprecated.new_path_excluded is not True
+    assert deprecated.new_path_excluded is True
 
 
 @pytest.mark.asyncio
@@ -905,7 +906,8 @@ async def test_fetch_mixed_valid_deprecated_invalid(path_tool):
 
     assert result.summary["retrieved"] == 1
     assert result.summary["deprecated"] == 1
-    assert result.summary["not_found"] == 2  # psi_error_lower + fake/path
+    assert result.summary["excluded"] == 1  # psi_error_lower is excluded
+    assert result.summary["not_found"] == 1  # fake/path
     assert result.summary["invalid"] == 1
 
     assert result.node_count == 1

@@ -527,14 +527,14 @@ def get_include_ggd() -> bool:
 def get_include_error_fields() -> bool:
     """Get whether to include error fields (_error_upper, _error_lower, etc.).
 
-    Priority: IMAS_CODEX_INCLUDE_ERROR_FIELDS env → [data-dictionary].include-error-fields → True.
+    Priority: IMAS_CODEX_INCLUDE_ERROR_FIELDS env → [data-dictionary].include-error-fields → False.
     """
     if env := os.getenv("IMAS_CODEX_INCLUDE_ERROR_FIELDS"):
         return _parse_bool(env)
     val = _get_section("data-dictionary").get("include-error-fields")
     if val is not None:
         return _parse_bool(val)
-    return True
+    return False
 
 
 # ─── General settings ──────────────────────────────────────────────────────
