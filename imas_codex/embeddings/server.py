@@ -23,6 +23,7 @@ GPU Memory Protection:
 
 import asyncio
 import fcntl
+import json
 import logging
 import os
 import tempfile
@@ -53,6 +54,89 @@ _gpu_slot_fds: list[int] = []  # Open lock fds — prevent GC/release
 _request_count: int = 0  # Total embed requests served
 _total_texts: int = 0  # Total texts embedded
 _total_elapsed_ms: float = 0.0  # Total encoding time in ms
+
+
+def _worker_state_dir() -> str:
+    """Return temp directory for worker state files, keyed to master PID."""
+    master_pid = os.getppid()
+    d = os.path.join(tempfile.gettempdir(), f"codex-embed-workers-{master_pid}")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def _write_worker_state() -> None:
+    """Write this worker's current state to a shared temp file."""
+    try:
+        import torch
+
+        gpu_info: dict[str, Any] = {
+            "name": _gpu_name,
+            "memory_mb": _gpu_memory_mb,
+        }
+        if torch.cuda.is_available():
+            gpu_info["memory_used_mb"] = int(
+                torch.cuda.memory_allocated() / (1024 * 1024)
+            )
+            gpu_info["memory_reserved_mb"] = int(
+                torch.cuda.memory_reserved() / (1024 * 1024)
+            )
+            free, total = torch.cuda.mem_get_info()
+            gpu_info["memory_free_mb"] = int(free / (1024 * 1024))
+            gpu_info["memory_total_mb"] = int(total / (1024 * 1024))
+    except Exception:
+        gpu_info = {"name": _gpu_name, "memory_mb": _gpu_memory_mb}
+
+    state = {
+        "worker_gpu": _worker_gpu,
+        "worker_pid": os.getpid(),
+        "gpu": gpu_info,
+        "stats": {
+            "request_count": _request_count,
+            "total_texts": _total_texts,
+            "total_elapsed_ms": _total_elapsed_ms,
+            "avg_ms_per_request": (
+                _total_elapsed_ms / _request_count if _request_count > 0 else 0
+            ),
+        },
+        "uptime_seconds": time.time() - _startup_time if _startup_time else 0,
+        "idle_seconds": time.time() - _last_request_time if _last_request_time else 0,
+        "timestamp": time.time(),
+    }
+    path = os.path.join(_worker_state_dir(), f"gpu-{_worker_gpu}.json")
+    tmp = path + f".{os.getpid()}.tmp"
+    try:
+        with open(tmp, "w") as f:
+            json.dump(state, f)
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+
+
+def _read_all_worker_states() -> list[dict[str, Any]]:
+    """Read all worker state files and return as a sorted list."""
+    state_dir = _worker_state_dir()
+    workers = []
+    try:
+        for fname in os.listdir(state_dir):
+            if fname.endswith(".json") and not ".tmp" in fname:
+                path = os.path.join(state_dir, fname)
+                try:
+                    with open(path) as f:
+                        state = json.load(f)
+                    # Skip stale entries (>60s old = worker likely dead)
+                    age = time.time() - state.get("timestamp", 0)
+                    if age < 120:
+                        state["state_age_seconds"] = round(age, 1)
+                        workers.append(state)
+                except (json.JSONDecodeError, OSError):
+                    continue
+    except FileNotFoundError:
+        pass
+    workers.sort(key=lambda w: w.get("worker_gpu", 999))
+    return workers
 
 
 # Server-side text length ceiling (characters).
@@ -294,6 +378,9 @@ async def lifespan(app: FastAPI):
         device,
         _gpu_name or "none",
     )
+
+    # Write initial worker state for /workers endpoint
+    _write_worker_state()
 
     # Start idle watchdog if timeout is configured
     _shutdown_event = asyncio.Event()
@@ -539,6 +626,9 @@ def create_app() -> FastAPI:
             _total_texts += len(request.texts)
             _total_elapsed_ms += elapsed_ms
 
+            # Update worker state file for /workers endpoint
+            _write_worker_state()
+
             return EmbedResponse(
                 embeddings=embeddings.tolist(),
                 model=_encoder.config.model_name,
@@ -618,6 +708,21 @@ def create_app() -> FastAPI:
                     _total_elapsed_ms / _request_count if _request_count > 0 else 0
                 ),
             },
+        }
+
+    @app.get("/workers")
+    async def workers() -> dict[str, Any]:
+        """Aggregated status of all worker processes.
+
+        Each worker writes its GPU state to a temp file after startup
+        and after each /embed request.  This endpoint reads all state
+        files and returns them sorted by GPU index.
+        """
+        all_workers = _read_all_worker_states()
+        return {
+            "worker_count": len(all_workers),
+            "gpu_pool": _gpu_pool,
+            "workers": all_workers,
         }
 
     return app

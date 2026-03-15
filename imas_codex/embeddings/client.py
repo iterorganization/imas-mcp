@@ -152,6 +152,22 @@ class RemoteEmbeddingClient:
             logger.debug(f"Failed to get detailed info: {e}")
         return None
 
+    def get_workers_info(self) -> dict[str, Any] | None:
+        """Get aggregated status of all worker processes.
+
+        Returns:
+            Dict with worker_count, gpu_pool, and per-worker GPU stats,
+            or None if the endpoint is unavailable.
+        """
+        try:
+            client = self._get_client()
+            response = client.get("/workers")
+            if response.status_code == 200:
+                return response.json()
+        except Exception as e:
+            logger.debug(f"Failed to get workers info: {e}")
+        return None
+
     def embed(
         self,
         texts: list[str],

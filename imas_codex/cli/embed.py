@@ -344,17 +344,6 @@ def embed_status(url: str | None, local: bool) -> None:
             click.echo(f"  Model: {info['model']['name']}")
             click.echo(f"  Device: {info['model']['device']}")
             click.echo(f"  Dimension: {info['model']['embedding_dimension']}")
-            if info["gpu"]["name"]:
-                gpu = info["gpu"]
-                click.echo(f"  GPU: {gpu['name']} ({gpu['memory_mb']} MB)")
-                # GPU memory bar from live torch stats
-                gpu_used = gpu.get("memory_used_mb")
-                gpu_total = gpu.get("memory_total_mb")
-                if gpu_used is not None and gpu_total:
-                    from imas_codex.cli.services import _colored_bar
-
-                    gpu_bar = _colored_bar(gpu_used, gpu_total)
-                    click.echo(f"  VRAM: {gpu_bar}  {gpu_used} MB / {gpu_total} MB")
             location = info["server"].get("location")
             hostname = info["server"].get("hostname")
             if location:
@@ -379,7 +368,63 @@ def embed_status(url: str | None, local: bool) -> None:
                     click.echo(f"  Idle: {idle_min:.0f}m")
                 else:
                     click.echo(f"  Idle: {idle_s:.0f}s")
-            # Request statistics
+
+        # Per-worker GPU status from /workers
+        workers_info = client.get_workers_info()
+        if workers_info and workers_info.get("workers"):
+            from imas_codex.cli.services import _colored_bar
+
+            workers = workers_info["workers"]
+            click.echo(f"  Workers: {len(workers)} / GPUs: {workers_info.get('gpu_pool', [])}")
+            total_requests = 0
+            total_texts = 0
+            for w in workers:
+                gpu_idx = w.get("worker_gpu", "?")
+                gpu = w.get("gpu", {})
+                gpu_name = gpu.get("name", "unknown")
+                used = gpu.get("memory_used_mb")
+                total = gpu.get("memory_total_mb")
+                free = gpu.get("memory_free_mb")
+                stats = w.get("stats", {})
+                req_count = stats.get("request_count", 0)
+                total_requests += req_count
+                total_texts += stats.get("total_texts", 0)
+
+                if used is not None and total:
+                    bar = _colored_bar(used, total, width=15)
+                    click.echo(
+                        f"    GPU {gpu_idx}: {bar}  "
+                        f"{used} / {total} MB  "
+                        f"({req_count} reqs)"
+                    )
+                elif free is not None and total:
+                    used_calc = total - free
+                    bar = _colored_bar(used_calc, total, width=15)
+                    click.echo(
+                        f"    GPU {gpu_idx}: {bar}  "
+                        f"{used_calc} / {total} MB  "
+                        f"({req_count} reqs)"
+                    )
+                else:
+                    click.echo(
+                        f"    GPU {gpu_idx}: {gpu_name}  ({req_count} reqs)"
+                    )
+            if total_requests > 0:
+                click.echo(
+                    f"  Total: {total_requests} requests, "
+                    f"{total_texts} texts embedded"
+                )
+        elif info and info.get("gpu", {}).get("name"):
+            # Fallback: server too old for /workers, show single GPU
+            from imas_codex.cli.services import _colored_bar
+
+            gpu = info["gpu"]
+            click.echo(f"  GPU: {gpu['name']} ({gpu['memory_mb']} MB)")
+            gpu_used = gpu.get("memory_used_mb")
+            gpu_total = gpu.get("memory_total_mb")
+            if gpu_used is not None and gpu_total:
+                gpu_bar = _colored_bar(gpu_used, gpu_total)
+                click.echo(f"  VRAM: {gpu_bar}  {gpu_used} MB / {gpu_total} MB")
             stats = info.get("stats", {})
             if stats.get("request_count", 0) > 0:
                 click.echo(
