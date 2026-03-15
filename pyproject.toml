@@ -246,7 +246,7 @@ location = "titan"      # compute location for embed server (or "local" for in-p
 # Minimum combined score for high-value path processing.
 # Used by: enrichment auto-threshold, refinement gate, code CLI default.
 # Override: IMAS_CODEX_DISCOVERY_THRESHOLD
-threshold = 0.75
+threshold = 0.90
 
 [tool.imas-codex.logs]
 # Where CLI commands run and write logs.

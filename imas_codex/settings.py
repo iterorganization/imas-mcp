@@ -403,11 +403,11 @@ def get_discovery_threshold() -> float:
 
     Used by enrichment auto-threshold, refinement gate, and code CLI default.
 
-    Priority: IMAS_CODEX_DISCOVERY_THRESHOLD env → [discovery].threshold → 0.75.
+    Priority: IMAS_CODEX_DISCOVERY_THRESHOLD env → [discovery].threshold → 0.90.
     """
     if env := os.getenv("IMAS_CODEX_DISCOVERY_THRESHOLD"):
         return float(env)
-    return float(_get_section("discovery").get("threshold", 0.75))
+    return float(_get_section("discovery").get("threshold", 0.90))
 
 
 # ─── Log settings ──────────────────────────────────────────────────────────
