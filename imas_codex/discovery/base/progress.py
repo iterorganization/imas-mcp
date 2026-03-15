@@ -1863,6 +1863,7 @@ class DataDrivenProgressDisplay(BaseProgressDisplay):
         mode_label: str | None = None,
         graph_refresh_fn: Callable[[str], None] | None = None,
         stats_fn: Callable[[], list[tuple[str, str, str]]] | None = None,
+        pending_fn: Callable[[], list[tuple[str, int]]] | None = None,
     ) -> None:
         super().__init__(
             facility=facility,
@@ -1876,6 +1877,7 @@ class DataDrivenProgressDisplay(BaseProgressDisplay):
         self._engine_state: Any | None = None
         self._graph_refresh_fn = graph_refresh_fn
         self._stats_fn = stats_fn
+        self._pending_fn = pending_fn
 
     def set_engine_state(self, state: Any) -> None:
         """Connect display to the live engine state."""
@@ -1986,6 +1988,7 @@ class DataDrivenProgressDisplay(BaseProgressDisplay):
             cost_limit=self.cost_limit if self.cost_limit > 0 else None,
             etc=projected_cost,
             stats=self._stats_fn() if self._stats_fn else None,
+            pending=self._pending_fn() if self._pending_fn else None,
         )
         return build_resource_section(config, self.gauge_width)
 

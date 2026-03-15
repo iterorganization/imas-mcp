@@ -87,6 +87,9 @@ class DDBuildState(DiscoveryStateBase):
     skipped: bool = False
     build_start_time: float = field(default_factory=time.time)
 
+    # Status breakdown from graph (for pending display)
+    imas_node_status_counts: dict[str, int] = field(default_factory=dict)
+
     # Per-phase progress (observed by display)
     extract_stats: WorkerStats = field(default_factory=WorkerStats)
     build_stats: WorkerStats = field(default_factory=WorkerStats)
@@ -317,6 +320,7 @@ async def enrich_worker(state: DDBuildState, **_kwargs) -> None:
     # Set initial totals from graph so progress bar shows real denominator
     try:
         status_counts = await asyncio.to_thread(count_imas_nodes_by_status)
+        state.imas_node_status_counts = status_counts
         total_nodes = status_counts.get("total", 0)
         if total_nodes > 0:
             state.enrich_stats.total = total_nodes
@@ -337,6 +341,7 @@ async def enrich_worker(state: DDBuildState, **_kwargs) -> None:
             # Refresh totals while idle (build may still be adding nodes)
             try:
                 status_counts = await asyncio.to_thread(count_imas_nodes_by_status)
+                state.imas_node_status_counts = status_counts
                 total_nodes = status_counts.get("total", 0)
                 if total_nodes > 0:
                     state.enrich_stats.total = total_nodes

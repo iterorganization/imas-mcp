@@ -55,6 +55,30 @@ def _build_stats(state: DDBuildState) -> list[tuple[str, str, str]]:
     return stats
 
 
+def _build_pending(state: DDBuildState) -> list[tuple[str, int]]:
+    """Build pending work counts from live build state."""
+    counts = state.imas_node_status_counts
+    pending: list[tuple[str, int]] = []
+
+    pending_enrich = counts.get("built", 0)
+    pending.append(("enrich", pending_enrich))
+
+    pending_embed = counts.get("enriched", 0)
+    pending.append(("embed", pending_embed))
+
+    # Cluster is a single-shot phase: pending if embed is done but cluster hasn't run
+    cluster_pending = 0
+    if (
+        state.embed_phase.is_done
+        and not state.cluster_phase.is_done
+        and state.cluster_stats.processed == 0
+    ):
+        cluster_pending = 1
+    pending.append(("cluster", cluster_pending))
+
+    return pending
+
+
 def create_dd_build_display(
     state: DDBuildState,
     *,
@@ -123,4 +147,5 @@ def create_dd_build_display(
         title_suffix="DD Build",
         mode_label=mode_label,
         stats_fn=lambda: _build_stats(state),
+        pending_fn=lambda: _build_pending(state),
     )
