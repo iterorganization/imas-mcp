@@ -132,7 +132,7 @@ RETRYABLE_PATTERNS = frozenset(
 # the primary scoring model and large batches (50+ items) need room.
 MODEL_TOKEN_LIMITS: dict[str, dict[str, int]] = {
     "gemini": {
-        "max_tokens": 65000,  # Gemini 3 Flash supports up to 65k output
+        "max_tokens": 16000,  # Observed completions are ~9-10K; 16K gives ample headroom
         "timeout": 120,  # 2 min — large batches take time
     },
     "claude": {
