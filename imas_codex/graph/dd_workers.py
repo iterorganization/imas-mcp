@@ -61,21 +61,22 @@ class DDBuildState(DiscoveryStateBase):
     # Feature flags
     dry_run: bool = False
     reset_to: str | None = None
+    force: bool = False
 
     @property
     def skip_build_hash(self) -> bool:
         """Bypass build-level hash check (re-extract/rebuild)."""
-        return self.reset_to == "extracted"
+        return self.force or self.reset_to == "extracted"
 
     @property
     def skip_enrichment_hash(self) -> bool:
         """Bypass per-path enrichment hash check (re-enrich all)."""
-        return self.reset_to in ("extracted", "built")
+        return self.force or self.reset_to in ("extracted", "built")
 
     @property
     def skip_embedding_hash(self) -> bool:
         """Bypass per-path embedding hash check (re-embed all)."""
-        return self.reset_to is not None
+        return self.force or self.reset_to is not None
 
     # Shared data (extract → build/embed)
     version_data: dict[str, dict] = field(default_factory=dict)

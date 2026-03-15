@@ -85,6 +85,14 @@ imas.add_command(map_cmd, "map")
 @click.option(
     "--dry-run", is_flag=True, help="Preview changes without writing to graph"
 )
+@click.option(
+    "--force",
+    is_flag=True,
+    help=(
+        "Force a complete rebuild: reset all nodes to extracted state, "
+        "skip all hash checks, re-enrich and re-embed everything."
+    ),
+)
 def imas_build(
     verbose: bool,
     quiet: bool,
@@ -93,6 +101,7 @@ def imas_build(
     reset_to: str | None,
     ids_filter: str | None,
     dry_run: bool,
+    force: bool,
 ) -> None:
     """Build the IMAS Data Dictionary Knowledge Graph.
 
@@ -121,6 +130,7 @@ def imas_build(
         imas-codex imas dd build --reset-to enriched   # Re-embed (embedding model change)
         imas-codex imas dd build --dry-run -v     # Preview without writing
         imas-codex imas dd build --ids-filter "core_profiles equilibrium"  # Test subset
+        imas-codex imas dd build --force          # Full rebuild, no skips, no hash matches
     """
     # On air-gapped nodes, prevent LiteLLM import-time remote fetches
     from imas_codex.discovery.base.llm import set_litellm_offline_env
@@ -176,6 +186,9 @@ def imas_build(
             log_print(f"  IDS filter: {sorted(ids_set)}")
         if dry_run:
             log_print("  Mode: dry run")
+        if force:
+            reset_to = "extracted"
+            log_print("  Mode: [bold red]FORCE[/bold red] (full rebuild, no skips)")
         if reset_to:
             log_print(f"  Reset: nodes → {reset_to}")
         log_print("")
@@ -206,6 +219,7 @@ def imas_build(
             ids_filter=ids_set,
             dry_run=dry_run,
             reset_to=reset_to,
+            force=force,
         )
 
         # Build display for rich mode
@@ -468,7 +482,7 @@ def imas_search(
 
     # Build filter clause
     # By default, exclude deprecated paths unless --include-deprecated flag is used
-    where_clauses = []
+    where_clauses = ["node.node_category = 'data'"]
     if not include_deprecated:
         where_clauses.append("NOT (node)-[:DEPRECATED_IN]->(:DDVersion)")
     if ids:

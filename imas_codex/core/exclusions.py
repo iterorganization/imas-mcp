@@ -59,6 +59,10 @@ class ExclusionChecker:
             if pattern in name or pattern in path:
                 return "metadata"
 
+        # Check metadata subtrees (always excluded)
+        if self._is_metadata_path(path):
+            return "metadata"
+
         # Check GGD patterns (exclude if not included)
         if not self.include_ggd and self._is_ggd_path(path_lower, name_lower):
             return "ggd"
@@ -86,14 +90,25 @@ class ExclusionChecker:
     def _is_error_field(self, name: str) -> bool:
         """Check if name matches error field patterns."""
         return (
-            "_error_" in name
-            or name.endswith("_error_upper")
+            name.endswith("_error_upper")
             or name.endswith("_error_lower")
             or name.endswith("_error_index")
-            or "error_upper" in name
-            or "error_lower" in name
-            or "error_index" in name
         )
+
+    def _is_metadata_path(self, path: str) -> bool:
+        """Check if path is a metadata subtree or generic metadata leaf."""
+        parts = path.split("/")
+        # Subtree exclusion: ids_properties/*, code/*
+        if any(seg in ("ids_properties", "code") for seg in parts[1:]):
+            return True
+        # Generic metadata leaf fields
+        if len(parts) >= 3:
+            tail = parts[-1]
+            if tail in ("description", "name", "comment", "source", "provider"):
+                return True
+            if len(parts) >= 2 and parts[-2] == "identifier" and tail in ("description", "name"):
+                return True
+        return False
 
 
 # Default singleton instance with standard exclusion settings

@@ -646,13 +646,12 @@ def compute_semantic_matches(
             "embedding": embedding,
             "limit": k_per_source,
         }
-        imas_where = ""
+        imas_where = "WHERE n.node_category = 'data' "
         if target_ids_name:
-            imas_where = "WHERE n.id STARTS WITH $ids_prefix "
+            imas_where += "AND n.id STARTS WITH $ids_prefix "
             imas_params["ids_prefix"] = f"{target_ids_name}/"
         if dd_version is not None:
-            dd_clause = "n.dd_version = $dd_version"
-            imas_where = f"WHERE {dd_clause} " if not imas_where else imas_where.rstrip() + f" AND {dd_clause} "
+            imas_where += "AND n.dd_version = $dd_version "
             imas_params["dd_version"] = dd_version
 
         imas_cypher = (

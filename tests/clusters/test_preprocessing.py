@@ -68,7 +68,7 @@ class TestPathFilter:
         assert "test_ids/whitespace_path" not in result
 
     def test_filter_meaningful_paths_includes_all_documented(self, path_filter):
-        """Test that all paths with documentation are included (semantic-first)."""
+        """Test that documented data paths are included, metadata excluded."""
         ids_data = {
             "test_ids": {
                 "paths": {
@@ -80,9 +80,10 @@ class TestPathFilter:
             }
         }
         result = path_filter.filter_meaningful_paths(ids_data)
-        # Semantic-first: no skip patterns, all documented paths kept
+        # Data paths with documentation are kept
         assert "test_ids/good_path" in result
-        assert "test_ids/ids_properties/version" in result
+        # Metadata subtrees are excluded regardless of documentation
+        assert "test_ids/ids_properties/version" not in result
 
     def test_filter_meaningful_paths_includes_description(self, path_filter):
         """Test that filtered paths include semantic description."""

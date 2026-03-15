@@ -23,11 +23,14 @@ class PathFilter:
     def filter_meaningful_paths(
         self, ids_data: dict[str, Any]
     ) -> dict[str, dict[str, Any]]:
-        """Filter paths, keeping all paths with any documentation.
+        """Filter paths, keeping only data paths with documentation.
 
-        Trusts embeddings to distinguish meaningful from generic paths.
+        Excludes error fields and metadata subtrees. Trusts embeddings
+        to distinguish meaningful from generic paths within data nodes.
         Only excludes paths with truly empty documentation.
         """
+        from imas_codex.graph.build_dd import _classify_node
+
         filtered = {}
         total_paths = 0
 
@@ -36,6 +39,11 @@ class PathFilter:
             total_paths += len(paths)
 
             for path, path_data in paths.items():
+                # Skip error and metadata nodes
+                name = path.split("/")[-1] if "/" in path else path
+                if _classify_node(path, name) != "data":
+                    continue
+
                 # Only skip paths with no documentation at all
                 doc = path_data.get("documentation", "")
                 if not doc.strip():

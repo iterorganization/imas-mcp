@@ -689,6 +689,9 @@ def _init_repl() -> dict[str, Any]:
     ) -> str:
         """Search IMAS Data Dictionary using semantic search.
 
+        Excludes error fields and metadata subtrees from results.
+        Use fetch_imas_paths to access error fields via HAS_ERROR relationships.
+
         Args:
             query_text: Natural language query
             ids_filter: Optional IDS name filter (space-delimited)
@@ -2190,6 +2193,11 @@ class AgentsServer:
             context, units, and optional facility cross-references and
             version history.
 
+            Error fields (_error_upper, _error_lower, _error_index) and
+            metadata subtrees (ids_properties/*, code/*) are excluded from
+            search results. To access error fields for a data path, use
+            fetch_imas_paths to get HAS_ERROR relationships.
+
             Use this for: "What IMAS paths represent [concept]?"
 
             Args:
@@ -2308,6 +2316,57 @@ class AgentsServer:
             return format_fetch_paths_report(result)
 
         @self.mcp.tool()
+        def fetch_error_fields(
+            path: str,
+            dd_version: int | None = None,
+        ) -> str:
+            """Fetch error fields for a data path via HAS_ERROR relationships.
+
+            Returns the error fields (_error_upper, _error_lower,
+            _error_index) associated with a given data path. Error fields
+            are not included in search or list results — use this tool
+            to discover them for a known data path.
+
+            Args:
+                path: IMAS data path (e.g., "equilibrium/time_slice/profiles_1d/psi")
+                dd_version: Filter by DD major version (e.g., 3 or 4)
+
+            Returns:
+                Formatted list of error fields with their types.
+            """
+            from imas_codex.graph.client import GraphClient
+
+            dd_clause = ""
+            params: dict = {"path": path.strip()}
+            if dd_version is not None:
+                dd_clause = "AND e.dd_version = $dd_version"
+                params["dd_version"] = dd_version
+
+            with GraphClient() as gc:
+                results = gc.query(
+                    f"""
+                    MATCH (d:IMASNode {{id: $path}})-[rel:HAS_ERROR]->(e:IMASNode)
+                    WHERE true {dd_clause}
+                    RETURN e.id AS path, e.name AS name,
+                           rel.error_type AS error_type,
+                           e.documentation AS documentation
+                    ORDER BY e.id
+                    """,
+                    **params,
+                )
+
+            if not results:
+                return f"No error fields found for '{path}'"
+
+            lines = [f"Error fields for {path}:"]
+            for r in results:
+                line = f"  {r['path']} ({r['error_type']})"
+                if r.get("documentation"):
+                    line += f" — {r['documentation'][:100]}"
+                lines.append(line)
+            return "\n".join(lines)
+
+        @self.mcp.tool()
         def list_imas_paths(
             paths: str,
             leaf_only: bool = False,
@@ -2316,9 +2375,11 @@ class AgentsServer:
         ) -> str:
             """List data paths within an IMAS IDS or subtree.
 
-            Enumerates all paths under the given IDS name(s) or
-            path prefix(es). Use leaf_only=True to get only data
-            endpoints (excluding structures).
+            Enumerates all data paths under the given IDS name(s) or
+            path prefix(es). Error fields and metadata subtrees are
+            excluded. Use leaf_only=True to get only data endpoints
+            (excluding structures). Error fields are accessible via
+            HAS_ERROR relationships from their parent data paths.
 
             Args:
                 paths: Space-separated IDS names or path prefixes

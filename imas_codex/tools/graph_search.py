@@ -143,6 +143,7 @@ class GraphSearchTool:
             CALL db.index.vector.queryNodes('imas_node_embedding', $k, $embedding)
             YIELD node AS path, score
             WHERE NOT (path)-[:DEPRECATED_IN]->(:DDVersion)
+              AND path.node_category = 'data'
             {filter_clause}
             {dd_clause}
             RETURN path.id AS id, score
@@ -155,8 +156,7 @@ class GraphSearchTool:
         scores: dict[str, float] = {}
         for r in vector_results or []:
             pid = r["id"]
-            if not _is_generic_metadata_path(pid):
-                scores[pid] = round(r["score"], 4)
+            scores[pid] = round(r["score"], 4)
 
         # --- Text search ---
         text_results = _text_search_imas_paths(
@@ -674,6 +674,7 @@ class GraphListTool:
                 f"""
                 MATCH (p:IMASNode)
                 WHERE p.id STARTS WITH $prefix
+                AND p.node_category = 'data'
                 {leaf_filter}
                 {dd_clause}
                 {return_clause}
@@ -690,6 +691,7 @@ class GraphListTool:
                     f"""
                     MATCH (p:IMASNode)
                     WHERE p.ids = $ids_name
+                    AND p.node_category = 'data'
                     {leaf_filter}
                     {dd_clause}
                     {return_clause}
@@ -1661,30 +1663,6 @@ def _normalize_paths(paths: str | list[str]) -> list[str]:
     return [strip_path_annotations(p) for p in raw]
 
 
-def _is_generic_metadata_path(path_id: str) -> bool:
-    """Check if an IMAS path is a generic metadata/descriptor field.
-
-    Filters out paths ending in /description, /name, /identifier/name etc.
-    whose documentation is typically "Verbose description" or similar
-    generic text that pollutes search results.
-    """
-    parts = path_id.split("/")
-    if len(parts) < 3:
-        return False
-    tail = parts[-1]
-    if tail in ("description", "name", "comment", "source", "provider"):
-        return True
-    if (
-        len(parts) >= 2
-        and parts[-2] == "identifier"
-        and tail in ("description", "name")
-    ):
-        return True
-    if tail == "description" and parts[-2].endswith("_type"):
-        return True
-    return False
-
-
 def _text_search_imas_paths(
     gc: GraphClient,
     query: str,
@@ -1701,7 +1679,7 @@ def _text_search_imas_paths(
     query_lower = query.lower()
     query_words = [w for w in query_lower.split() if len(w) > 2]
 
-    where_parts = ["NOT (p)-[:DEPRECATED_IN]->(:DDVersion)"]
+    where_parts = ["NOT (p)-[:DEPRECATED_IN]->(:DDVersion)", "p.node_category = 'data'"]
     params: dict[str, Any] = {"query_lower": query_lower, "limit": limit}
 
     dd_clause = _dd_version_clause("p", dd_version, params)
@@ -1717,7 +1695,7 @@ def _text_search_imas_paths(
 
     # Try fulltext index first (BM25 scoring)
     try:
-        ft_where = "WHERE NOT (p)-[:DEPRECATED_IN]->(:DDVersion)"
+        ft_where = "WHERE NOT (p)-[:DEPRECATED_IN]->(:DDVersion) AND p.node_category = 'data'"
         ft_params: dict[str, Any] = {"query": query, "limit": limit}
         if ids_filter is not None:
             filter_list = ids_filter if isinstance(ids_filter, list) else [ids_filter]
@@ -1745,9 +1723,8 @@ def _text_search_imas_paths(
             normalized = []
             for r in ft_results:
                 pid = r["id"]
-                if not _is_generic_metadata_path(pid):
-                    raw = r["score"] / max_score if max_score > 0 else 0.0
-                    normalized.append({"id": pid, "score": max(raw, 0.7)})
+                raw = r["score"] / max_score if max_score > 0 else 0.0
+                normalized.append({"id": pid, "score": max(raw, 0.7)})
             return normalized
     except Exception:
         pass
@@ -1810,8 +1787,6 @@ def _text_search_imas_paths(
     final: dict[str, dict[str, Any]] = {}
     for r in results:
         pid = r["id"]
-        if _is_generic_metadata_path(pid):
-            continue
         if pid not in final or r["score"] > final[pid]["score"]:
             final[pid] = r
     return list(final.values())
