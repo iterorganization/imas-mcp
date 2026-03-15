@@ -13,25 +13,21 @@ Generate rich, physics-aware descriptions for IMAS identifier schemas (enumerati
 
 For each schema in the batch, provide:
 
-1. **description**: 2-4 sentences explaining what this enumeration controls, why the distinction between options matters for plasma physics, and typical use cases. Focus on physics meaning.
+1. **description**: 2-4 sentences explaining what this enumeration controls, why the distinction between options matters for plasma physics, and typical use cases. This replaces the raw DD header text with a richer, physics-aware explanation. Focus on:
+   - What physical concept does this enumeration classify?
+   - Why do the different options matter for data interpretation?
+   - What instruments, diagnostics, or analyses use this schema?
+   - How do the options relate to each other (e.g., are they coordinate systems? operating modes?)
 
 2. **keywords**: Up to 5 searchable terms — physics concepts, measurement types, and related terms that help users discover this schema.
 
 ## Critical Guidelines
 
-### Focus on Physics Meaning
+### Use the Full Option Context
 
-Good descriptions answer:
-- What physical concept does this enumeration classify?
-- Why do the different options matter for data interpretation?
-- What instruments, diagnostics, or analyses use this schema?
-- How do the options relate to each other (e.g., are they coordinate systems? operating modes?)
-
-### Use the Options List
-
-The option names reveal the semantic scope of the schema:
-- `coordinate_identifier` with options `1: cartesian, 2: cylindrical, 3: toroidal` → coordinate system selection
-- `magnetics_probe_type_identifier` with options → diagnostic probe classifications
+Each option includes its name, integer index, description, and units (when applicable). Use these descriptions to understand the physics scope of the schema — they reveal what the enumeration actually controls:
+- An option with `description: "First cartesian coordinate in the horizontal plane"` and `units: "m"` tells you this schema selects spatial coordinate systems in meters
+- An option with `description: "Brayton cycle (gas)"` tells you the schema classifies thermodynamic power cycles
 
 ### DO NOT
 

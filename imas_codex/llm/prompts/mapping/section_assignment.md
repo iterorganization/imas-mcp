@@ -10,6 +10,12 @@ Assign the following signal sources to IMAS sections.
 - **Facility**: {{ facility }}
 - **IDS**: {{ ids_name }}
 
+{% if ids_description %}
+### IDS Description
+
+{{ ids_description }}
+{% endif %}
+
 ### Signal Sources
 
 The following signal sources have been discovered for this facility.

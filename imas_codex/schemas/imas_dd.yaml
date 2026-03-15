@@ -424,6 +424,32 @@ classes:
         range: DDVersion
         annotations:
           relationship_type: DEPRECATED_IN
+      # LLM enrichment fields
+      enriched_description:
+        description: >-
+          LLM-generated physics-aware description of this IDS. Explains what
+          physics the IDS captures, typical data sources, and relationships
+          to other IDSs. Replaces the raw DD description with richer context.
+      keywords:
+        description: >-
+          LLM-generated searchable keywords (up to 8) for this IDS. Physics
+          domains, measurement types, analysis methods.
+        multivalued: true
+      enrichment_hash:
+        description: Hash of enrichment context + model for idempotency
+      enrichment_source:
+        description: Source of enrichment (llm)
+      # Embedding for semantic search
+      embedding:
+        description: >-
+          Embedding vector for semantic search over IDS nodes. Enables
+          queries like "which IDS stores electron density profiles?"
+        multivalued: true
+        range: float
+        annotations:
+          vector_index_name: ids_embedding
+      embedding_hash:
+        description: Hash of text used for embedding, for cache busting
 
   IMASNode:
     description: >-
