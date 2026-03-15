@@ -42,11 +42,48 @@ A single signal source may map to **multiple** IMAS fields. This is expected whe
 
 Return ALL valid mappings for each source — do not limit to one-to-one.
 
+## No-Match Handling
+
+Not every signal has an IMAS equivalent. When no target field exists:
+
+1. **Do not force a low-confidence mapping.** A confidence < 0.3 mapping is
+   worse than an explicit "no mapping" decision.
+2. **Add to `unmapped`** with a `disposition` explaining why:
+   - `no_imas_equivalent` — The physical quantity has no IDS field
+   - `metadata_only` — The signal is diagnostic metadata (acquisition rate,
+     calibration timestamp) not a measured/computed quantity
+   - `facility_specific` — Facility-specific operational parameter
+   - `insufficient_context` — Could map but evidence is too weak to commit
+   - `dd_version_gap` — Target exists in newer DD but not current version
+3. **Provide evidence**: Reference the IMAS paths you searched, the section
+   fields available, and why none match. Cite specific field names.
+4. **Set `nearest_imas_path`** if you found a close-but-wrong candidate,
+   and explain in `evidence` why it was rejected.
+
+**Confidence threshold**: If your best candidate has confidence < 0.3, emit
+an `unmapped` entry instead of a mapping.
+
+## Many-to-One Mappings
+
+Multiple source signals mapping to the same IMAS target is expected and valid.
+Common patterns:
+- **Epoch variants**: The same physical quantity measured/defined at different
+  machine configuration epochs (e.g., coil geometry from different commissioning
+  campaigns). All are correct mappings — which epoch to use is resolved at
+  assembly time via the `source_epoch_field`.
+- **Processing stages**: Raw, subsampled, filtered, or ELM-averaged variants
+  of the same measurement. All map to the same IMAS field — which stage to use
+  is a user/workflow choice.
+- **Redundant diagnostics**: Different instruments measuring the same quantity
+  (e.g., two independent Ip Rogowski coils).
+
+When you map multiple sources to the same target, set `many_to_one_note` on
+each mapping to explain the relationship between the sources.
+
 ## Escalation Rules
 
 Create an escalation flag when:
 - Unit dimensions are incompatible (not just different scales)
-- No clear target field exists for a signal property
 - The transform requires complex logic beyond a simple expression
 - COCOS convention is ambiguous
 
@@ -56,6 +93,7 @@ Return a JSON object matching the `SignalMappingBatch` schema:
 - `ids_name`: The IDS name
 - `section_path`: The section being mapped
 - `mappings`: Array of `SignalMappingEntry` objects
+- `unmapped`: Array of `UnmappedSignal` objects for signals with no IMAS target
 - `escalations`: Array of `EscalationFlag` objects for uncertain mappings
 
 ---
@@ -128,3 +166,35 @@ Notable changes to target fields across DD versions. Check whether your
 target DD version is before or after these changes:
 
 {{ version_context }}
+
+### IMAS Cluster Candidates
+
+Some semantic candidates below are cluster members — IMAS paths that store
+the same physical parameter in different IDSs. When a source maps to one
+member of a cluster, evaluate whether it should also map to other members.
+
+Cluster members from different IDSs (e.g., `core_profiles/.../ip` and
+`equilibrium/.../ip`) are valid one-to-many mappings if the source signal
+genuinely represents that quantity. Set appropriate confidence — the primary
+IDS target (within the current `{{ ids_name }}`) should have higher confidence
+than cross-IDS targets.
+
+{{ cluster_candidates }}
+
+{% if wiki_context %}
+### Domain Documentation
+
+Wiki documentation relevant to this physics domain (filtered by
+IMAS relevance score):
+
+{{ wiki_context }}
+{% endif %}
+
+{% if code_data_access %}
+### Data Access Code Patterns
+
+Code examples showing how similar signals are accessed at this facility
+(filtered by data_access score):
+
+{{ code_data_access }}
+{% endif %}

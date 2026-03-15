@@ -223,6 +223,22 @@ enums:
       enriched:
         description: Description and keywords populated via LLM
 
+  MappingDispositionEnum:
+    description: Why a signal was or was not mapped
+    permissible_values:
+      mapped:
+        description: Positive binding exists (MAPS_TO_IMAS relationship created)
+      no_imas_equivalent:
+        description: No corresponding IDS field for this quantity
+      metadata_only:
+        description: Signal is diagnostic metadata, not a measurement
+      facility_specific:
+        description: Facility-specific operational parameter with no IDS coverage
+      insufficient_context:
+        description: Could map but evidence is too weak to commit
+      dd_version_gap:
+        description: Target exists in newer DD but not current version
+
   PopulationType:
     description: How tree nodes are populated with data
     permissible_values:
@@ -1830,6 +1846,18 @@ classes:
         range: IMASNode
         annotations:
           relationship_type: MAPS_TO_IMAS
+      mapping_disposition:
+        description: >-
+          Disposition of mapping evaluation. Set to the MappingDisposition
+          value after the mapping pipeline processes this source.
+          'mapped' if MAPS_TO_IMAS exists, otherwise the reason no mapping exists.
+        range: MappingDispositionEnum
+      mapping_evidence:
+        description: >-
+          Concise evidence-based explanation for the mapping disposition.
+          For mapped signals: why this target was chosen, with references.
+          For unmapped signals: what was searched and why no target fits.
+        range: string
       has_evidence:
         description: Evidence supporting this group's mapping claim
         range: MappingEvidence

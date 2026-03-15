@@ -26,6 +26,22 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# Shared enums
+# ---------------------------------------------------------------------------
+
+
+class MappingDisposition(StrEnum):
+    """Why a signal was or was not mapped."""
+
+    MAPPED = "mapped"
+    NO_IMAS_EQUIVALENT = "no_imas_equivalent"
+    METADATA_ONLY = "metadata_only"
+    FACILITY_SPECIFIC = "facility_specific"
+    INSUFFICIENT_CONTEXT = "insufficient_context"
+    DD_VERSION_GAP = "dd_version_gap"
+
+
+# ---------------------------------------------------------------------------
 # Step 1: Section assignment
 # ---------------------------------------------------------------------------
 
@@ -41,6 +57,18 @@ class SectionAssignment(BaseModel):
     reasoning: str = Field(description="Brief justification")
 
 
+class UnassignedSource(BaseModel):
+    """A source that could not be assigned to any IDS section."""
+
+    source_id: str = Field(description="SignalSource node id")
+    disposition: MappingDisposition = Field(
+        description="Why this source has no section assignment"
+    )
+    evidence: str = Field(
+        description="Concise evidence why no section fits"
+    )
+
+
 class SectionAssignmentBatch(BaseModel):
     """Batch of section assignments from Step 1."""
 
@@ -48,7 +76,11 @@ class SectionAssignmentBatch(BaseModel):
     assignments: list[SectionAssignment]
     unassigned_groups: list[str] = Field(
         default_factory=list,
-        description="Signal source IDs that could not be assigned",
+        description="Signal source IDs that could not be assigned (deprecated)",
+    )
+    unassigned: list[UnassignedSource] = Field(
+        default_factory=list,
+        description="Sources with structured reasoning for non-assignment",
     )
 
 
@@ -85,6 +117,31 @@ _TRANSFORM_ALLOWED_NAMES: frozenset[str] = frozenset({
 })
 
 
+class UnmappedSignal(BaseModel):
+    """A signal that was evaluated and determined to have no valid IMAS target."""
+
+    source_id: str = Field(description="SignalSource node id")
+    disposition: MappingDisposition = Field(
+        description="Why this signal has no mapping"
+    )
+    evidence: str = Field(
+        description=(
+            "Concise evidence-based explanation. Must reference concrete facts: "
+            "searched IMAS paths, checked IDS sections, why no match exists."
+        )
+    )
+    nearest_imas_path: str | None = Field(
+        default=None,
+        description="Closest IMAS path considered but rejected, if any",
+    )
+    nearest_similarity: float | None = Field(
+        default=None,
+        ge=0,
+        le=1,
+        description="Cosine similarity to nearest_imas_path, if computed",
+    )
+
+
 class SignalMappingEntry(BaseModel):
     """Single signal mapping entry with transform details."""
 
@@ -106,6 +163,14 @@ class SignalMappingEntry(BaseModel):
     )
     confidence: float = Field(ge=0, le=1, description="Mapping confidence 0-1")
     reasoning: str = Field(default="", description="Brief justification")
+    many_to_one_note: str | None = Field(
+        default=None,
+        description=(
+            "When multiple sources map to this target, explain why. "
+            "E.g., 'Epoch variant: same coil geometry from 2019 commissioning' "
+            "or 'Processing stage: raw measurement before ELM filtering'"
+        ),
+    )
 
     @field_validator("transform_expression")
     @classmethod
@@ -145,6 +210,7 @@ class SignalMappingBatch(BaseModel):
     ids_name: str
     section_path: str = Field(description="IMAS struct-array section")
     mappings: list[SignalMappingEntry]
+    unmapped: list[UnmappedSignal] = Field(default_factory=list)
     escalations: list[EscalationFlag] = Field(default_factory=list)
 
 
@@ -214,6 +280,8 @@ class ValidatedSignalMapping(BaseModel):
     target_units: str | None = None
     cocos_label: str | None = None
     confidence: float = Field(ge=0, le=1)
+    disposition: MappingDisposition = MappingDisposition.MAPPED
+    evidence: str = ""
 
 
 class ValidatedMappingResult(BaseModel):
@@ -224,6 +292,7 @@ class ValidatedMappingResult(BaseModel):
     dd_version: str
     sections: list[SectionAssignment]
     bindings: list[ValidatedSignalMapping]
+    unmapped: list[UnmappedSignal] = Field(default_factory=list)
     escalations: list[EscalationFlag] = Field(default_factory=list)
     corrections: list[str] = Field(
         default_factory=list,
@@ -391,7 +460,8 @@ def persist_mapping_result(
                 r.source_units = $source_units,
                 r.target_units = $target_units,
                 r.cocos_label = $cocos_label,
-                r.confidence = $confidence
+                r.confidence = $confidence,
+                r.evidence = $evidence
             """,
             sg_id=fm.source_id,
             target_id=fm.target_id,
@@ -401,6 +471,7 @@ def persist_mapping_result(
             target_units=fm.target_units,
             cocos_label=fm.cocos_label,
             confidence=fm.confidence,
+            evidence=fm.evidence,
         )
 
     # 5. Persist escalations as MappingEvidence
@@ -423,9 +494,23 @@ def persist_mapping_result(
             reason=esc.reason,
         )
 
+    # 6. Persist unmapped signal dispositions
+    for um in result.unmapped:
+        gc.query(
+            """
+            MATCH (sg:SignalSource {id: $sg_id})
+            SET sg.mapping_disposition = $disposition,
+                sg.mapping_evidence = $evidence
+            """,
+            sg_id=um.source_id,
+            disposition=um.disposition.value,
+            evidence=um.evidence,
+        )
+
     logger.info(
-        "Persisted mapping %s with %d bindings",
+        "Persisted mapping %s with %d bindings, %d unmapped",
         mapping_id,
         len(result.bindings),
+        len(result.unmapped),
     )
     return mapping_id
