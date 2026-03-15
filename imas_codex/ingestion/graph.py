@@ -309,7 +309,9 @@ def link_chunks_to_data_nodes(
                 MERGE (d)-[:RESOLVES_TO_NODE]->(t)
                 RETURN count(*) AS resolved
             """
-            # Phase 2: Fuzzy match for remaining (facility-scoped)
+            # Phase 2: Fuzzy match for remaining (facility-scoped).
+            # Uses CALL {} subquery with LIMIT 1 per DataReference to avoid
+            # O(refs × signals) cross-product that caused 14-26s stalls.
             resolve_fuzzy = """
                 MATCH (c:CodeChunk)
                 WHERE c.code_example_id IN $example_ids
@@ -317,10 +319,14 @@ def link_chunks_to_data_nodes(
                 MATCH (c)-[:CONTAINS_REF]->(d:DataReference {ref_type: 'mdsplus_path'})
                 WHERE NOT (d)-[:RESOLVES_TO_NODE]->()
                 WITH DISTINCT d
-                MATCH (t:SignalNode {facility_id: d.facility_id})
-                WHERE t.path ENDS WITH substring(d.raw_string, 1)
-                   OR toLower(split(t.path, ':')[-1]) = toLower(split(d.raw_string, '::')[-1])
-                   OR toUpper(t.path) = d.normalized_path
+                CALL {
+                    WITH d
+                    MATCH (t:SignalNode {facility_id: d.facility_id})
+                    WHERE t.path ENDS WITH substring(d.raw_string, 1)
+                       OR toLower(split(t.path, ':')[-1]) = toLower(split(d.raw_string, '::')[-1])
+                       OR toUpper(t.path) = d.normalized_path
+                    RETURN t LIMIT 1
+                }
                 MERGE (d)-[:RESOLVES_TO_NODE]->(t)
                 RETURN count(*) AS resolved
             """
@@ -334,15 +340,20 @@ def link_chunks_to_data_nodes(
                 MERGE (d)-[:RESOLVES_TO_NODE]->(t)
                 RETURN count(*) AS resolved
             """
-            # Phase 2: Fuzzy match for remaining (facility-scoped)
+            # Phase 2: Fuzzy match for remaining (facility-scoped).
+            # Uses CALL {} subquery with LIMIT 1 per DataReference.
             resolve_fuzzy = """
                 MATCH (d:DataReference {ref_type: 'mdsplus_path'})
                 WHERE NOT (d)-[:RESOLVES_TO_NODE]->()
                 WITH d
-                MATCH (t:SignalNode {facility_id: d.facility_id})
-                WHERE t.path ENDS WITH substring(d.raw_string, 1)
-                   OR toLower(split(t.path, ':')[-1]) = toLower(split(d.raw_string, '::')[-1])
-                   OR toUpper(t.path) = d.normalized_path
+                CALL {
+                    WITH d
+                    MATCH (t:SignalNode {facility_id: d.facility_id})
+                    WHERE t.path ENDS WITH substring(d.raw_string, 1)
+                       OR toLower(split(t.path, ':')[-1]) = toLower(split(d.raw_string, '::')[-1])
+                       OR toUpper(t.path) = d.normalized_path
+                    RETURN t LIMIT 1
+                }
                 MERGE (d)-[:RESOLVES_TO_NODE]->(t)
                 RETURN count(*) AS resolved
             """

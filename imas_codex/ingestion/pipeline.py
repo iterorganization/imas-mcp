@@ -496,12 +496,20 @@ async def ingest_files(
                 )
             step_times["codefile_status"] = _time.monotonic() - t_s
 
-            # Step 5: Create CodeChunk nodes (auto-creates CODE_EXAMPLE_ID, AT_FACILITY)
+            # Step 5: Create CodeChunk nodes (relationships handled below)
+            # Disable auto-relationship creation — the pipeline already
+            # creates HAS_CHUNK (step 6), CONTAINS_REF (step 7), and
+            # AT_FACILITY in the final linking step.  Skipping the 3-5
+            # separate relationship queries per batch of 50 saves 30-70s.
             t_s = _time.monotonic()
-            graph_client.create_nodes("CodeChunk", all_chunks)
+            graph_client.create_nodes(
+                "CodeChunk", all_chunks, create_relationships=False
+            )
             step_times["create_chunks"] = _time.monotonic() - t_s
 
-            # Step 6: Create HAS_CHUNK (inverse traversal convenience)
+            # Step 6: Create HAS_CHUNK + AT_FACILITY for CodeChunks
+            # Combined into one query to avoid extra round-trip (previously
+            # AT_FACILITY was auto-created by create_nodes, now handled here).
             t_s = _time.monotonic()
             graph_client.query(
                 """
@@ -509,6 +517,10 @@ async def ingest_files(
                 WHERE c.code_example_id IN $example_ids
                 MATCH (e:CodeExample {id: c.code_example_id})
                 MERGE (e)-[:HAS_CHUNK]->(c)
+                WITH c
+                WHERE c.facility_id IS NOT NULL
+                MATCH (f:Facility {id: c.facility_id})
+                MERGE (c)-[:AT_FACILITY]->(f)
                 """,
                 example_ids=chunk_example_ids,
             )
