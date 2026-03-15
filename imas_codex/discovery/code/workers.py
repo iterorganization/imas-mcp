@@ -127,6 +127,7 @@ async def scan_worker(
                         )
 
                     if on_progress:
+                        path_info = path_map.get(path, {})
                         on_progress(
                             f"found {persist_result.get('discovered', 0)} files",
                             state.scan_stats,
@@ -134,6 +135,7 @@ async def scan_worker(
                                 {
                                     "path": path,
                                     "files_found": persist_result.get("discovered", 0),
+                                    "score": path_info.get("score"),
                                 }
                             ],
                         )
@@ -142,10 +144,11 @@ async def scan_worker(
                     if path_id:
                         await asyncio.to_thread(mark_path_file_scanned, path_id, 0)
                     if on_progress:
+                        path_info = path_map.get(path, {})
                         on_progress(
                             "no files",
                             state.scan_stats,
-                            [{"path": path, "files_found": 0}],
+                            [{"path": path, "files_found": 0, "score": path_info.get("score")}],
                         )
 
                 # Release claim after processing
@@ -989,9 +992,17 @@ async def enrich_worker(
                             ):
                                 snippet = stripped[:80]
                                 break
+                    # Look up triage_composite from the claim data
+                    file_id = file_id_map.get(r["path"])
+                    triage_score = None
+                    for f in files:
+                        if f["id"] == file_id:
+                            triage_score = f.get("triage_composite")
+                            break
                     enrich_results.append(
                         {
                             "path": r["path"],
+                            "score": triage_score,
                             "patterns": r.get("total_pattern_matches", 0),
                             "line_count": r.get("line_count", 0),
                             "pattern_categories": dict(top_cats),

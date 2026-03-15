@@ -55,6 +55,7 @@ class ScanItem:
 
     path: str
     files_found: int = 0
+    score: float | None = None  # FacilityPath score_composite
 
 
 @dataclass
@@ -84,6 +85,7 @@ class EnrichItem:
     """Current enrich activity."""
 
     path: str
+    score: float | None = None  # triage_composite from triage phase
     patterns: int = 0  # total pattern matches
     line_count: int = 0  # lines of code
     pattern_categories: dict[str, int] = field(
@@ -390,14 +392,17 @@ class FileProgressDisplay(BaseProgressDisplay):
         # SCAN activity
         scan_text = ""
         scan_desc = ""
+        scan_score_parts: list[tuple[str, str]] | None = None
         if scan:
             scan_text = scan.path
+            if scan.score is not None:
+                scan_score_parts = [(f"{scan.score:.2f}", "bold blue")]
             if scan.files_found > 0:
                 scan_desc = f"{scan.files_found} files found"
 
         # TRIAGE activity — score + category + description
         triage_text = ""
-        triage_value: float | None = None
+        triage_score_parts: list[tuple[str, str]] | None = None
         triage_category = ""
         triage_desc = ""
         triage_terminal = ""
@@ -408,17 +413,20 @@ class FileProgressDisplay(BaseProgressDisplay):
                 if triage.description:
                     triage_desc = clean_text(triage.description)
             elif triage.score_composite is not None:
-                triage_value = triage.score_composite
+                triage_score_parts = [(f"{triage.score_composite:.2f}", "bold green")]
                 if triage.category:
                     triage_category = triage.category.replace("_", " ")
                 if triage.description:
                     triage_desc = clean_text(triage.description)
 
-        # ENRICH activity — line count + pattern categories + preview
+        # ENRICH activity — triage score + line count + pattern categories + preview
         enrich_text = ""
         enrich_desc = ""
+        enrich_score_parts: list[tuple[str, str]] | None = None
         if enrich:
             enrich_text = enrich.path
+            if enrich.score is not None:
+                enrich_score_parts = [(f"{enrich.score:.2f}", "bold magenta")]
             desc_parts = []
             if enrich.line_count > 0:
                 desc_parts.append(f"{enrich.line_count:,} LOC")
@@ -440,7 +448,7 @@ class FileProgressDisplay(BaseProgressDisplay):
 
         # SCORE activity — score + category + description
         score_text = ""
-        score_value: float | None = None
+        score_score_parts: list[tuple[str, str]] | None = None
         score_category = ""
         score_desc = ""
         score_terminal = ""
@@ -453,7 +461,7 @@ class FileProgressDisplay(BaseProgressDisplay):
                 if score.description:
                     score_desc = clean_text(score.description)
             elif score.score_composite is not None:
-                score_value = score.score_composite
+                score_score_parts = [(f"{score.score_composite:.2f}", "bold cyan")]
                 if score.category:
                     score_category = score.category
                 if score.description:
@@ -462,8 +470,11 @@ class FileProgressDisplay(BaseProgressDisplay):
         # INGEST activity — language + score + chunks
         ingest_text = ""
         ingest_desc = ""
+        ingest_score_parts: list[tuple[str, str]] | None = None
         if ingest:
             ingest_text = ingest.path
+            if ingest.score is not None:
+                ingest_score_parts = [(f"{ingest.score:.2f}", "bold yellow")]
             desc_parts = []
             if ingest.language:
                 desc_parts.append(f"[{ingest.language}]")
@@ -498,6 +509,7 @@ class FileProgressDisplay(BaseProgressDisplay):
                 rate=self.state.scan_rate,
                 disabled=self.state.score_only,
                 primary_text=scan_text,
+                score_parts=scan_score_parts,
                 description=scan_desc,
                 is_processing=self.state.scan_processing,
                 is_complete=scan_complete,
@@ -513,7 +525,7 @@ class FileProgressDisplay(BaseProgressDisplay):
                 cost=triage_cost,
                 disabled=self.state.scan_only,
                 primary_text=triage_text,
-                score_value=triage_value,
+                score_parts=triage_score_parts,
                 physics_domain=triage_category,
                 terminal_label=triage_terminal,
                 description=triage_desc,
@@ -530,6 +542,7 @@ class FileProgressDisplay(BaseProgressDisplay):
                 rate=self.state.enrich_rate,
                 disabled=self.state.scan_only,
                 primary_text=enrich_text,
+                score_parts=enrich_score_parts,
                 description=enrich_desc,
                 is_processing=self.state.enrich_processing,
                 is_complete=enrich_complete,
@@ -545,7 +558,7 @@ class FileProgressDisplay(BaseProgressDisplay):
                 cost=score_cost,
                 disabled=self.state.scan_only,
                 primary_text=score_text,
-                score_value=score_value,
+                score_parts=score_score_parts,
                 physics_domain=score_category,
                 terminal_label=score_terminal,
                 description=score_desc,
@@ -562,6 +575,7 @@ class FileProgressDisplay(BaseProgressDisplay):
                 rate=self.state.ingest_rate,
                 disabled=self.state.scan_only or self.state.score_only,
                 primary_text=ingest_text,
+                score_parts=ingest_score_parts,
                 description=ingest_desc,
                 is_processing=self.state.ingest_processing,
                 is_complete=ingest_complete,
@@ -660,6 +674,7 @@ class FileProgressDisplay(BaseProgressDisplay):
                 ScanItem(
                     path=r.get("path", ""),
                     files_found=r.get("files_found", 0),
+                    score=r.get("score"),
                 )
                 for r in results
             ]
@@ -790,6 +805,7 @@ class FileProgressDisplay(BaseProgressDisplay):
             items = [
                 EnrichItem(
                     path=r.get("path", ""),
+                    score=r.get("score"),
                     patterns=r.get("patterns", 0),
                     line_count=r.get("line_count", 0),
                     pattern_categories=r.get("pattern_categories", {}),
