@@ -648,6 +648,10 @@ classes:
           Source of the enrichment: 'llm' for LLM-generated descriptions, or
           'template' for boilerplate error/validity fields that use formulaic
           descriptions without LLM calls.
+      enriched_at:
+        description: >-
+          ISO 8601 timestamp of when this node was last enriched. Used for
+          selective reset of enrichments by time window.
       # Embedding fields for semantic search
       embedding_text:
         description: >-

@@ -1723,7 +1723,7 @@ def phase_embed(
     *,
     enriched_llm_count: int = 0,
     force: bool = False,
-    no_hash: bool = False,
+    force_reembed: bool = False,
     on_progress: "Callable[[int, int], None] | None" = None,
     on_items: "Callable[[list[dict], float], None] | None" = None,
 ) -> dict[str, int]:
@@ -1801,7 +1801,7 @@ def phase_embed(
         )
 
     # Force rebuild if enrichment produced new descriptions
-    force_for_embed = no_hash or enriched_llm_count > 0 or enriched_count > 0
+    force_for_embed = force_reembed or enriched_llm_count > 0 or enriched_count > 0
 
     # Track cumulative progress across store batches
     _embed_stored = [0]
@@ -1854,7 +1854,7 @@ def phase_embed(
     # Embed enriched identifier schemas
     from imas_codex.graph.dd_identifier_enrichment import embed_identifier_schemas
 
-    ident_embed_stats = embed_identifier_schemas(client, no_hash=no_hash)
+    ident_embed_stats = embed_identifier_schemas(client, force_reembed=force_reembed)
     stats["identifier_embeddings_updated"] = ident_embed_stats["updated"]
     stats["identifier_embeddings_cached"] = ident_embed_stats["cached"]
 
@@ -1934,12 +1934,14 @@ def phase_cluster(
     client: GraphClient,
     *,
     dry_run: bool = False,
-    no_hash: bool = False,
+    force_reembed: bool = False,
     on_progress: "Callable[[int, int], None] | None" = None,
 ) -> int:
     """Import semantic clusters.
 
     Args:
+        force_reembed: If True, skip hash checks and re-embed all
+            cluster text (labels/descriptions).
         on_progress: Optional callback ``(processed, total)`` for
             live progress updates during cluster import.
 
@@ -1950,7 +1952,7 @@ def phase_cluster(
         client,
         dry_run,
         use_rich=False,
-        no_hash=no_hash,
+        force_reembed=force_reembed,
         on_progress=on_progress,
     )
 
@@ -2743,7 +2745,7 @@ def _import_clusters(
     client: GraphClient,
     dry_run: bool,
     use_rich: bool | None = None,
-    no_hash: bool = False,
+    force_reembed: bool = False,
     on_progress: "Callable[[int, int], None] | None" = None,
 ) -> int:
     """Build semantic clusters from graph embeddings and merge into the graph.
@@ -2959,7 +2961,7 @@ def _import_clusters(
                 client,
                 embedding_batch_size=256,
                 use_rich=use_rich,
-                no_hash=no_hash,
+                force_reembed=force_reembed,
             )
 
             # Step 10: Delete stale clusters no longer in the computation
@@ -3157,7 +3159,7 @@ def _embed_cluster_text(
     client: GraphClient,
     embedding_batch_size: int = 256,
     use_rich: bool | None = None,
-    no_hash: bool = False,
+    force_reembed: bool = False,
 ) -> None:
     """Embed cluster labels and descriptions with per-cluster hash caching.
 
@@ -3167,7 +3169,7 @@ def _embed_cluster_text(
 
     Only re-embeds clusters whose text_embedding_hash has changed (i.e.,
     label or description text changed, or the embedding model changed).
-    When no_hash is True, skips hash comparison and re-embeds everything.
+    When force_reembed is True, skips hash comparison and re-embeds everything.
     Clusters without labels are skipped.
 
     Args:
@@ -3218,7 +3220,7 @@ def _embed_cluster_text(
         label = r["label"]
         description = r["description"] or label
         text_hash = compute_embedding_hash(f"{label}|{description}", model_name)
-        if not no_hash and text_hash == r.get("existing_hash"):
+        if not force_reembed and text_hash == r.get("existing_hash"):
             cached_count += 1
             continue
         clusters_to_embed.append(

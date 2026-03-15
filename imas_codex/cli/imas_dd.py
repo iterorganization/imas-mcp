@@ -70,12 +70,18 @@ imas.add_command(map_cmd, "map")
     "-f",
     "--force",
     is_flag=True,
-    help="Bypass top-level build hash check (per-item hashes still apply)",
+    help="Bypass top-level build hash check (re-run extract/build, per-item hashes still apply)",
 )
 @click.option(
-    "--no-hash",
-    is_flag=True,
-    help="Skip per-item hash caching (recompute all embeddings/clusters). Implies --force",
+    "--reset-to",
+    type=click.Choice(["built", "enriched"], case_sensitive=False),
+    default=None,
+    help=(
+        "Reset nodes to a target state for reprocessing. "
+        "built: re-enrich all nodes (clears descriptions, resets to built). "
+        "enriched: re-embed all nodes (clears embeddings, resets to enriched). "
+        "Implies --force."
+    ),
 )
 @click.option(
     "--ids-filter",
@@ -91,7 +97,7 @@ def imas_build(
     current_only: bool,
     from_version: str | None,
     force: bool,
-    no_hash: bool,
+    reset_to: str | None,
     ids_filter: str | None,
     dry_run: bool,
 ) -> None:
@@ -118,7 +124,8 @@ def imas_build(
         imas-codex imas dd build --current-only   # Build current version only
         imas-codex imas dd build --from-version 4.0.0  # Incremental from 4.0.0
         imas-codex imas dd build --force          # Re-run pipeline (per-item hashes still apply)
-        imas-codex imas dd build --force --no-hash  # Full recomputation (skip all caches)
+        imas-codex imas dd build --reset-to built   # Re-enrich everything
+        imas-codex imas dd build --reset-to enriched  # Re-embed everything
         imas-codex imas dd build --dry-run -v     # Preview without writing
         imas-codex imas dd build --ids-filter "core_profiles equilibrium"  # Test subset
     """
@@ -170,7 +177,8 @@ def imas_build(
         if ids_filter:
             ids_set = set(ids_filter.split())
 
-        if no_hash:
+        # Handle --reset-to: reset nodes before building
+        if reset_to:
             force = True
 
         log_print("\n[bold]IMAS DD Build[/bold]")
@@ -181,7 +189,25 @@ def imas_build(
             log_print("  Mode: dry run")
         if force:
             log_print("  Mode: force rebuild")
+        if reset_to:
+            log_print(f"  Reset: nodes → {reset_to}")
         log_print("")
+
+        # Execute reset before building
+        if reset_to and not dry_run:
+            from imas_codex.graph.dd_graph_ops import reset_imas_nodes
+
+            reset_count = reset_imas_nodes(
+                reset_to, ids_filter=ids_set
+            )
+            if reset_count > 0:
+                log_print(
+                    f"  [yellow]Reset {reset_count:,} nodes to '{reset_to}'[/yellow]"
+                )
+            else:
+                log_print(
+                    f"  [dim]No nodes to reset to '{reset_to}'[/dim]"
+                )
 
         # Build state
         from imas_codex.graph.dd_workers import DDBuildState, run_dd_build_engine
@@ -193,7 +219,7 @@ def imas_build(
             ids_filter=ids_set,
             dry_run=dry_run,
             force=force,
-            no_hash=no_hash,
+            reset_to=reset_to,
         )
 
         # Build display for rich mode

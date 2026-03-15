@@ -91,11 +91,69 @@ BOILERPLATE_PATTERNS = [
     re.compile(r"_validity_timed$"),
 ]
 
+# Structural metadata subtrees identical across all IDS
+METADATA_PREFIXES = (
+    "ids_properties/",
+    "/ids_properties/",
+    "/code/",
+)
+
+# Known metadata leaf fields and their descriptions
+METADATA_FIELD_TEMPLATES: dict[str, tuple[str, list[str]]] = {
+    "homogeneous_time": (
+        "Integer flag indicating the time mode of this IDS: "
+        "0 = heterogeneous (fields may have independent time bases), "
+        "1 = homogeneous (all time-dependent fields share a single time vector), "
+        "2 = independent (no time correlation between fields).",
+        ["time", "homogeneous", "metadata"],
+    ),
+    "comment": (
+        "Free-text annotation describing this IDS occurrence, "
+        "such as code settings, run conditions, or data provenance notes.",
+        ["comment", "annotation", "metadata"],
+    ),
+    "provider": (
+        "Name of the person or system that created this data entry.",
+        ["provider", "author", "metadata"],
+    ),
+    "creation_date": (
+        "ISO 8601 timestamp recording when this IDS occurrence was written.",
+        ["timestamp", "creation", "metadata"],
+    ),
+    "version_put": (
+        "Container recording the exact IMAS software versions used when writing this data.",
+        ["version", "provenance", "software"],
+    ),
+    "data_dictionary": (
+        "Version string of the IMAS Data Dictionary used when this IDS was written.",
+        ["version", "data-dictionary", "schema"],
+    ),
+    "access_layer": (
+        "Version of the IMAS Access Layer software used for I/O.",
+        ["version", "access-layer", "software"],
+    ),
+    "access_layer_language": (
+        "Programming language binding of the Access Layer (e.g. Python, Fortran).",
+        ["language", "binding", "access-layer"],
+    ),
+    "occurrence_type": (
+        "Classifier for this IDS occurrence indicating whether it contains "
+        "core plasma data, edge data, or another category.",
+        ["occurrence", "classification", "metadata"],
+    ),
+}
+
 
 def is_boilerplate_path(path_id: str) -> bool:
-    """Check if a path is a boilerplate error/validity field."""
+    """Check if a path is a boilerplate error/validity/metadata field."""
     name = path_id.split("/")[-1]
-    return any(p.search(name) for p in BOILERPLATE_PATTERNS)
+    if any(p.search(name) for p in BOILERPLATE_PATTERNS):
+        return True
+    # Structural metadata subtrees (ids_properties/*, code/*)
+    parts = path_id.split("/")
+    if len(parts) >= 2 and parts[1] in ("ids_properties", "code"):
+        return True
+    return False
 
 
 def _is_boilerplate_sibling(name: str) -> bool:
@@ -106,13 +164,23 @@ def _is_boilerplate_sibling(name: str) -> bool:
 def generate_template_description(path_id: str, path_info: dict) -> dict[str, Any]:
     """Generate a template description for boilerplate paths.
 
+    Covers three categories:
+    - Error fields (_error_upper, _error_lower, _error_index)
+    - Validity fields (_validity, _validity_timed)
+    - Structural metadata (ids_properties/*, code/*)
+
     Returns dict with description, keywords suitable for
     direct graph update. No LLM call needed.
     """
     name = path_info.get("name", path_id.split("/")[-1])
     ids_name = path_id.split("/")[0]
+    parts = path_id.split("/")
 
-    # Extract the base field name (remove the error/validity suffix)
+    # --- Structural metadata (ids_properties/*, code/*) ---
+    if len(parts) >= 2 and parts[1] in ("ids_properties", "code"):
+        return _generate_metadata_template(path_id, name, ids_name, parts)
+
+    # --- Error / validity fields ---
     base_name = name
     error_type = None
     for suffix in (
@@ -127,30 +195,142 @@ def generate_template_description(path_id: str, path_info: dict) -> dict[str, An
             error_type = suffix[1:]  # Remove leading underscore
             break
 
-    # Build template description
     base_readable = base_name.replace("_", " ")
+    data_type = path_info.get("data_type", "")
+    ndim = _ndim_from_dtype(data_type)
 
-    if error_type and "error" in error_type:
+    if error_type == "error_upper":
         desc = (
-            f"Error metadata for the {base_readable} field. "
-            f"Provides standardized error reporting for {base_readable} measurements."
+            f"Upper bound of the uncertainty on {base_readable}{ndim}. "
+            f"In the IMAS error convention, if only error_upper is populated "
+            f"the error is symmetric and represents one standard deviation. "
+            f"When both error_upper and error_lower are set, they define the "
+            f"asymmetric uncertainty envelope around the {base_readable} value."
         )
-        keywords = ["error", "uncertainty", base_name]
+        keywords = ["error", "uncertainty", "standard-deviation", base_name]
+    elif error_type == "error_lower":
+        desc = (
+            f"Lower bound of the uncertainty on {base_readable}{ndim}. "
+            f"Populated only for asymmetric errors; when absent, the error "
+            f"is symmetric and fully described by error_upper alone."
+        )
+        keywords = ["error", "uncertainty", "asymmetric", base_name]
+    elif error_type == "error_index":
+        desc = (
+            f"Integer index into the error description vector for {base_readable}. "
+            f"Links this measurement to a specific error model or systematic "
+            f"error source documented in the parent structure."
+        )
+        keywords = ["error", "index", "systematic", base_name]
     elif error_type == "validity":
         desc = (
-            f"Validity status indicator for the {base_readable} field. "
-            f"Integer code indicating data quality or processing status."
+            f"Validity flag for {base_readable} (INT_0D). "
+            f"Integer code: 0 = valid, negative = invalid or not available, "
+            f"positive = valid with caveats. Used to filter unreliable data."
         )
-        keywords = ["validity", "status", "quality", base_name]
+        keywords = ["validity", "quality", "status", base_name]
     elif error_type == "validity_timed":
         desc = (
-            f"Time-varying validity status for the {base_readable} field. "
-            f"Array of validity codes aligned with the time base."
+            f"Time-dependent validity flag for {base_readable}. "
+            f"Array of integer codes aligned with the time base, marking "
+            f"each time slice as valid (0), invalid (negative), or "
+            f"conditionally valid (positive)."
         )
-        keywords = ["validity", "time-varying", "status", base_name]
+        keywords = ["validity", "time-varying", "quality", base_name]
     else:
-        desc = f"Data field in {ids_name}"
+        desc = f"Data field in {ids_name}."
         keywords = [base_name]
+
+    return {
+        "description": desc,
+        "keywords": keywords[:5],
+        "enrichment_source": "template",
+    }
+
+
+def _ndim_from_dtype(data_type: str) -> str:
+    """Extract dimensionality hint from IMAS data type string."""
+    if not data_type:
+        return ""
+    # FLT_1D → " (1D array)", FLT_0D → " (scalar)", CPX_3D → " (3D array)"
+    for dim in ("0D", "1D", "2D", "3D", "4D", "5D", "6D"):
+        if dim in data_type:
+            return " (scalar)" if dim == "0D" else f" ({dim} array)"
+    return ""
+
+
+def _generate_metadata_template(
+    path_id: str, name: str, ids_name: str, parts: list[str]
+) -> dict[str, Any]:
+    """Generate template for ids_properties/* and code/* subtrees."""
+    subtree = parts[1]  # 'ids_properties' or 'code'
+    depth = len(parts) - 2  # depth within the subtree
+
+    # Check for known field templates
+    if name in METADATA_FIELD_TEMPLATES:
+        desc, keywords = METADATA_FIELD_TEMPLATES[name]
+        return {
+            "description": desc,
+            "keywords": keywords[:5],
+            "enrichment_source": "template",
+        }
+
+    # Subtree roots
+    if depth == 0:
+        if subtree == "ids_properties":
+            desc = (
+                f"Metadata container for the {ids_name} IDS. Holds provenance, "
+                f"versioning, time homogeneity flag, and plugin information "
+                f"that describe how this data was produced and stored."
+            )
+            keywords = ["metadata", "provenance", "ids_properties", ids_name]
+        else:  # code
+            desc = (
+                f"Container for the code that produced this {ids_name} data. "
+                f"Records the code name, version, repository, commit hash, "
+                f"parameters, and linked libraries for full reproducibility."
+            )
+            keywords = ["code", "provenance", "software", ids_name]
+        return {
+            "description": desc,
+            "keywords": keywords[:5],
+            "enrichment_source": "template",
+        }
+
+    # Common provenance fields that appear in multiple subtrees
+    readable = name.replace("_", " ")
+    provenance_fields: dict[str, str] = {
+        "name": f"Identifier name for this {subtree} component.",
+        "description": f"Description of this {subtree} component.",
+        "commit": "Version control commit hash for reproducibility.",
+        "version": "Software version string.",
+        "repository": "URL of the source code repository.",
+        "parameters": "Input parameters or configuration used for this run.",
+        "path": f"IDS path reference within the {subtree} subtree.",
+        "index": "Integer index identifying this item within its array.",
+    }
+
+    if name in provenance_fields:
+        desc = provenance_fields[name]
+        keywords = [name, "provenance", subtree]
+    elif "plugin" in path_id or "infrastructure" in path_id:
+        desc = (
+            f"Access Layer plugin metadata ({readable}) recording which "
+            f"I/O backend was used and its version."
+        )
+        keywords = ["plugin", "access-layer", name]
+    elif "library" in path_id:
+        desc = (
+            f"External library dependency ({readable}) linked by the "
+            f"producing code."
+        )
+        keywords = ["library", "dependency", name]
+    elif "provenance" in path_id:
+        desc = f"Data provenance record ({readable}) tracking origins and processing."
+        keywords = ["provenance", "lineage", name]
+    else:
+        desc = f"Metadata field ({readable}) in the {subtree} structure of {ids_name}."
+        keywords = [subtree, name, "metadata"]
 
     return {
         "description": desc,

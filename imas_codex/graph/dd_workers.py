@@ -61,7 +61,7 @@ class DDBuildState(DiscoveryStateBase):
     # Feature flags
     dry_run: bool = False
     force: bool = False
-    no_hash: bool = False
+    reset_to: str | None = None
 
     # Shared data (extract → build/embed)
     version_data: dict[str, dict] = field(default_factory=dict)
@@ -447,7 +447,7 @@ async def cluster_worker(state: DDBuildState, **_kwargs) -> None:
             cluster_count = phase_cluster(
                 client,
                 dry_run=state.dry_run,
-                no_hash=state.no_hash,
+                force_reembed=state.reset_to is not None,
                 on_progress=_on_progress,
             )
             state.stats["clusters_created"] = cluster_count
@@ -533,15 +533,23 @@ async def _enrich_batch(
 
         # Check hashes — skip already-enriched (hash match)
         to_enrich = []
+        hash_match_updates = []
         for ctx in batch_contexts:
             ctx_str = (
                 f"{ctx['id']}:{ctx.get('documentation', '')}:{ctx.get('siblings', [])}"
             )
             expected_hash = compute_enrichment_hash(ctx_str, model)
-            if not state.no_hash and ctx.get("enrichment_hash") == expected_hash:
-                continue  # Already enriched with same context
+            if state.reset_to != "built" and ctx.get("enrichment_hash") == expected_hash:
+                # Hash matches — content unchanged. Still need to mark as
+                # enriched so the node advances from built → enriched.
+                hash_match_updates.append({"id": ctx["id"]})
+                continue
             ctx["_expected_hash"] = expected_hash
             to_enrich.append(ctx)
+
+        # Advance hash-matched nodes without re-enriching
+        if hash_match_updates:
+            updates.extend(hash_match_updates)
 
         if to_enrich:
             messages = build_enrichment_messages(to_enrich, ids_info)
@@ -599,15 +607,9 @@ async def _enrich_batch(
 
 async def _batch_update_enrichments_with_graph(updates: list[dict]) -> None:
     """Write enrichment updates to graph (sets status=enriched)."""
+    from imas_codex.graph.dd_graph_ops import mark_paths_enriched
 
-    def _write():
-        from imas_codex.graph.client import GraphClient
-        from imas_codex.graph.dd_enrichment import _batch_update_enrichments
-
-        with GraphClient() as client:
-            _batch_update_enrichments(client, updates)
-
-    await asyncio.to_thread(_write)
+    await asyncio.to_thread(mark_paths_enriched, updates)
 
 
 async def _embed_batch(
