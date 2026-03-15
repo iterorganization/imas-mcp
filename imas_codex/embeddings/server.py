@@ -292,6 +292,19 @@ async def lifespan(app: FastAPI):
             _worker_gpu = gpu_id
             os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
 
+            # Stagger CUDA initialization across workers.  When 8 workers
+            # all call torch.cuda.init() simultaneously, they can deadlock
+            # on the CUDA driver's internal lock, leaving processes stuck
+            # in D (uninterruptible I/O) state indefinitely.  SLURM then
+            # fails to kill them → node enters "draining" state.
+            # Slot-based delay: GPU 0 starts immediately, GPU 7 waits 7s.
+            stagger_s = gpu_id * 1.0
+            if stagger_s > 0:
+                logger.info(
+                    "Worker GPU %d: staggering CUDA init by %.0fs", gpu_id, stagger_s
+                )
+                await asyncio.sleep(stagger_s)
+
     # Set BEFORE importing torch — the allocator config is read at
     # CUDA initialization time, not when we call set_per_process_memory_fraction.
     os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
