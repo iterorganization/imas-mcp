@@ -112,7 +112,7 @@ class TestGatherIDSContext:
                 {
                     "ids_name": "equilibrium",
                     "schema_name": "coordinate_identifier",
-                    "schema_description": "Coordinate system selection",
+                    "schema_documentation": "Coordinate system selection",
                     "option_count": 20,
                 },
             ],
@@ -127,7 +127,7 @@ class TestGatherIDSContext:
             {
                 "id": "equilibrium",
                 "name": "equilibrium",
-                "description": "MHD equilibrium",
+                "documentation": "MHD equilibrium",
                 "physics_domain": "equilibrium",
             }
         ]
@@ -176,7 +176,7 @@ class TestEnrichIDSNodes:
                 {
                     "id": "equilibrium",
                     "name": "equilibrium",
-                    "description": "MHD equilibrium",
+                    "documentation": "MHD equilibrium",
                     "physics_domain": "equilibrium",
                     "path_count": 1500,
                     "leaf_count": 800,
@@ -229,7 +229,7 @@ class TestEnrichIDSNodes:
         update_call = client.query.call_args_list[-1]
         updates = update_call.kwargs.get("updates") or update_call[1].get("updates")
         assert updates[0]["id"] == "equilibrium"
-        assert "flux surfaces" in updates[0]["enriched_description"]
+        assert "flux surfaces" in updates[0]["description"]
 
     def test_caches_enriched_ids(self):
         """Already-enriched IDS with matching hash are skipped."""

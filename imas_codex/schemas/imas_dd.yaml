@@ -377,8 +377,8 @@ classes:
       name:
         description: IDS name, same as id
         required: true
-      description:
-        description: IDS description from DD documentation
+      documentation:
+        description: IDS description from DD documentation (raw XML text)
       physics_domain:
         description: Primary physics domain
         range: PhysicsDomain
@@ -425,11 +425,11 @@ classes:
         annotations:
           relationship_type: DEPRECATED_IN
       # LLM enrichment fields
-      enriched_description:
+      description:
         description: >-
           LLM-generated physics-aware description of this IDS. Explains what
           physics the IDS captures, typical data sources, and relationships
-          to other IDSs. Replaces the raw DD description with richer context.
+          to other IDSs. Used for embedding and semantic search.
       keywords:
         description: >-
           LLM-generated searchable keywords (up to 8) for this IDS. Physics
@@ -857,8 +857,8 @@ classes:
         description: >-
           Schema name, same as id
         required: true
-      description:
-        description: Schema description
+      documentation:
+        description: Schema description from DD XML header
       option_count:
         description: Number of valid options in this schema
         range: integer
@@ -874,7 +874,7 @@ classes:
           Source XML file for this identifier schema (e.g.,
           "utilities/coordinate_identifier.xml")
       # LLM enrichment fields
-      enriched_description:
+      description:
         description: >-
           LLM-generated physics-aware description of this identifier schema.
           Explains what the enumeration controls and how the options relate

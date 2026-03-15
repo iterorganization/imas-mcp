@@ -75,8 +75,8 @@ class TestCollectIdentifierSchemas:
             "a/b/c": {"identifier_enum_name": "coordinate_identifier"},
         }
         schemas = _collect_identifier_schemas(paths)
-        desc = schemas["coordinate_identifier"]["description"]
-        assert desc, "Schema description should be populated from XML header"
+        desc = schemas["coordinate_identifier"]["documentation"]
+        assert desc, "Schema documentation should be populated from XML header"
         assert "coordinate" in desc.lower() or "translation" in desc.lower()
 
     def test_options_sorted_by_index(self):
@@ -189,7 +189,7 @@ class TestEnrichIdentifierSchemas:
                 {
                     "id": "coordinate_identifier",
                     "name": "coordinate_identifier",
-                    "description": "Translation table",
+                    "documentation": "Translation table",
                     "options": json.dumps(
                         [
                             {
@@ -229,4 +229,4 @@ class TestEnrichIdentifierSchemas:
         # Verify graph update was called with description
         update_call = client.query.call_args_list[-1]
         updates = update_call.kwargs.get("updates") or update_call[1].get("updates")
-        assert updates[0]["enriched_description"] == "Selects the coordinate system convention."
+        assert updates[0]["description"] == "Selects the coordinate system convention."

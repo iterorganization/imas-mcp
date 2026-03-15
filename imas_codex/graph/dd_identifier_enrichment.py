@@ -117,7 +117,7 @@ def enrich_identifier_schemas(
     if force:
         query = """
         MATCH (s:IdentifierSchema)
-        RETURN s.id AS id, s.name AS name, s.description AS description,
+        RETURN s.id AS id, s.name AS name, s.documentation AS documentation,
                s.options AS options, s.option_count AS option_count,
                s.field_count AS field_count, s.source AS source,
                s.enrichment_hash AS enrichment_hash
@@ -126,8 +126,8 @@ def enrich_identifier_schemas(
     else:
         query = """
         MATCH (s:IdentifierSchema)
-        WHERE s.enriched_description IS NULL OR s.enrichment_hash IS NULL
-        RETURN s.id AS id, s.name AS name, s.description AS description,
+        WHERE s.description IS NULL OR s.enrichment_hash IS NULL
+        RETURN s.id AS id, s.name AS name, s.documentation AS documentation,
                s.options AS options, s.option_count AS option_count,
                s.field_count AS field_count, s.source AS source,
                s.enrichment_hash AS enrichment_hash
@@ -147,7 +147,7 @@ def enrich_identifier_schemas(
         # Check hashes for cached entries
         to_enrich = []
         for schema in batch:
-            ctx_str = f"{schema['id']}:{schema.get('options', '')}:{schema.get('description', '')}"
+            ctx_str = f"{schema['id']}:{schema.get('options', '')}:{schema.get('documentation', '')}"
             expected_hash = _compute_enrichment_hash(ctx_str, model)
             if not force and schema.get("enrichment_hash") == expected_hash:
                 stats["cached"] += 1
@@ -172,7 +172,7 @@ def enrich_identifier_schemas(
                 {
                     "index": idx,
                     "name": schema["name"],
-                    "description": schema.get("description") or "",
+                    "documentation": schema.get("documentation") or "",
                     "option_count": schema.get("option_count") or len(options),
                     "options": options,
                     "field_count": schema.get("field_count") or 0,
@@ -190,8 +190,8 @@ def enrich_identifier_schemas(
         user_lines = ["Enrich the following IMAS identifier schemas:\n"]
         for entry in batch_data:
             user_lines.append(f"\n### Schema {entry['index']}: `{entry['name']}`")
-            if entry["description"]:
-                user_lines.append(f"- Header: {entry['description']}")
+            if entry["documentation"]:
+                user_lines.append(f"- Header: {entry['documentation']}")
             user_lines.append(f"- Option count: {entry['option_count']}")
             if entry["field_count"]:
                 user_lines.append(
@@ -242,21 +242,20 @@ def enrich_identifier_schemas(
                 updates.append(
                     {
                         "id": schema["id"],
-                        "enriched_description": enrichment.description,
+                        "description": enrichment.description,
                         "keywords": enrichment.keywords[:5],
                         "enrichment_hash": schema["_expected_hash"],
                         "enrichment_source": "llm",
                     }
                 )
 
-            # Batch update graph — set both description and enriched_description
+            # Batch update graph
             if updates:
                 client.query(
                     """
                     UNWIND $updates AS u
                     MATCH (s:IdentifierSchema {id: u.id})
-                    SET s.description = u.enriched_description,
-                        s.enriched_description = u.enriched_description,
+                    SET s.description = u.description,
                         s.keywords = u.keywords,
                         s.enrichment_hash = u.enrichment_hash,
                         s.enrichment_source = u.enrichment_source
@@ -297,9 +296,9 @@ def embed_identifier_schemas(
     # Fetch schemas with enriched descriptions
     results = client.query("""
         MATCH (s:IdentifierSchema)
-        WHERE s.enriched_description IS NOT NULL
+        WHERE s.description IS NOT NULL AND s.enrichment_source IS NOT NULL
         RETURN s.id AS id, s.name AS name,
-               s.enriched_description AS enriched_description,
+               s.description AS description,
                s.keywords AS keywords,
                s.embedding_hash AS existing_hash
         ORDER BY s.id
@@ -328,7 +327,7 @@ def embed_identifier_schemas(
     to_embed = []
     for r in results:
         keywords_str = ", ".join(r.get("keywords") or [])
-        text = f"{r['name']}: {r['enriched_description']} Keywords: {keywords_str}"
+        text = f"{r['name']}: {r['description']} Keywords: {keywords_str}"
         text_hash = hashlib.sha256(f"{model_name}:{text}".encode()).hexdigest()[:16]
 
         if not force_reembed and r.get("existing_hash") == text_hash:

@@ -232,7 +232,7 @@ class GraphSearchTool:
                    path.coordinate2_same_as AS coordinate2,
                    path.cocos_label_transformation AS cocos_label,
                    path.cocos_transformation_expression AS cocos_expression,
-                   path.description AS enriched_description,
+                   path.description AS description,
                    path.keywords AS keywords,
                    path.enrichment_source AS enrichment_source,
                    collect(DISTINCT coord.id) AS coordinates,
@@ -281,7 +281,7 @@ class GraphSearchTool:
                     coordinate2=r["coordinate2"],
                     cocos_label_transformation=r["cocos_label"],
                     cocos_transformation_expression=r["cocos_expression"],
-                    description=r.get("enriched_description"),
+                    description=r.get("description"),
                     keywords=r.get("keywords"),
                     enrichment_source=r.get("enrichment_source"),
                     has_identifier_schema=bool(r["has_identifier_schema"]),
@@ -491,14 +491,14 @@ class GraphPathTool:
                        p.coordinate1_same_as AS coordinate1,
                        p.coordinate2_same_as AS coordinate2,
                        p.timebasepath AS timebase,
-                       p.description AS enriched_description,
+                       p.description AS description,
                        p.keywords AS keywords,
                        p.enrichment_source AS enrichment_source,
                        u.id AS units,
                        cluster_labels,
                        coordinates,
                        ident.name AS identifier_schema_name,
-                       ident.description AS identifier_schema_description,
+                       ident.documentation AS identifier_schema_documentation,
                        ident.options AS identifier_schema_options,
                        iv.id AS introduced_after_version,
                        version_changes
@@ -532,7 +532,7 @@ class GraphPathTool:
 
                     ident_schema = IdentifierSchema(
                         schema_path=r["identifier_schema_name"],
-                        documentation=r.get("identifier_schema_description"),
+                        documentation=r.get("identifier_schema_documentation"),
                         options=options,
                     )
 
@@ -562,7 +562,7 @@ class GraphPathTool:
                     version_changes=v_changes,
                     cocos_label_transformation=r.get("cocos_label"),
                     cocos_transformation_expression=r.get("cocos_expression"),
-                    description=r.get("enriched_description"),
+                    description=r.get("description"),
                     keywords=r.get("keywords"),
                     enrichment_source=r.get("enrichment_source"),
                     introduced_after_version=r.get("introduced_after_version"),
@@ -791,7 +791,8 @@ class GraphOverviewTool:
             OPTIONAL MATCH (i)<-[:IN_IDS]-(p:IMASNode)
             WHERE true {dd_clause}
             WITH i, count(p) AS path_count
-            RETURN i.name AS name, i.description AS description,
+            RETURN i.name AS name,
+                   COALESCE(i.description, i.documentation) AS description,
                    i.physics_domain AS physics_domain,
                    i.lifecycle_status AS lifecycle_status,
                    path_count
@@ -1207,8 +1208,8 @@ class GraphIdentifiersTool:
         results = self._gc.query(
             """
             MATCH (s:IdentifierSchema)
-            RETURN s.name AS name, s.description AS description,
-                   s.enriched_description AS enriched_description,
+            RETURN s.name AS name,
+                   COALESCE(s.description, s.documentation) AS description,
                    s.keywords AS keywords,
                    s.option_count AS option_count, s.options AS options,
                    s.field_count AS field_count, s.source AS source
@@ -1256,8 +1257,8 @@ class GraphIdentifiersTool:
                     'identifier_schema_embedding', $k, $embedding
                 ) YIELD node, score
                 WHERE score >= $threshold
-                RETURN node.name AS name, node.description AS description,
-                       node.enriched_description AS enriched_description,
+                RETURN node.name AS name,
+                       COALESCE(node.description, node.documentation) AS description,
                        node.keywords AS keywords,
                        node.option_count AS option_count,
                        node.options AS options,
@@ -1281,8 +1282,8 @@ class GraphIdentifiersTool:
         keyword_results = self._gc.query(
             """
             MATCH (s:IdentifierSchema)
-            RETURN s.name AS name, s.description AS description,
-                   s.enriched_description AS enriched_description,
+            RETURN s.name AS name,
+                   COALESCE(s.description, s.documentation) AS description,
                    s.keywords AS keywords,
                    s.option_count AS option_count, s.options AS options,
                    s.field_count AS field_count, s.source AS source
@@ -1296,12 +1297,11 @@ class GraphIdentifiersTool:
                 continue
             name_match = query_lower in (name or "").lower()
             desc_match = query_lower in (r["description"] or "").lower()
-            enriched_match = query_lower in (r["enriched_description"] or "").lower()
             opts_match = query_lower in (r["options"] or "").lower()
             kw_match = any(
                 query_lower in kw.lower() for kw in (r.get("keywords") or [])
             )
-            if name_match or desc_match or enriched_match or opts_match or kw_match:
+            if name_match or desc_match or opts_match or kw_match:
                 seen.add(name)
                 schemas.append(self._format_schema(r))
 
@@ -1328,7 +1328,7 @@ class GraphIdentifiersTool:
                 pass
 
         option_count = r.get("option_count") or len(options)
-        desc = r.get("enriched_description") or r.get("description") or ""
+        desc = r.get("description") or ""
         return {
             "path": r["name"],
             "schema_path": r.get("source") or "",

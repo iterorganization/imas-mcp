@@ -126,7 +126,7 @@ def _gather_ids_context(
     MATCH (p:IMASNode {ids: ids_name})-[:HAS_IDENTIFIER_SCHEMA]->(s:IdentifierSchema)
     RETURN p.ids AS ids_name,
            s.name AS schema_name,
-           s.description AS schema_description,
+           s.documentation AS schema_documentation,
            s.option_count AS option_count
     """
     ident_by_ids: dict[str, list[dict]] = {n: [] for n in ids_names}
@@ -139,7 +139,7 @@ def _gather_ids_context(
             ident_by_ids[ids_name].append(
                 {
                     "name": schema_name,
-                    "description": r["schema_description"] or "",
+                    "documentation": r["schema_documentation"] or "",
                     "option_count": r["option_count"] or 0,
                 }
             )
@@ -192,7 +192,7 @@ def enrich_ids_nodes(
     For each IDS lacking enrichment (or with mismatched hash):
     1. Gather context (sections, identifier schemas, domain siblings)
     2. Call LLM to generate description and keywords
-    3. Update graph with description, enriched_description, keywords
+    3. Update graph with description, keywords
 
     Args:
         client: Neo4j GraphClient
@@ -221,7 +221,7 @@ def enrich_ids_nodes(
     if force:
         query = """
         MATCH (i:IDS)
-        RETURN i.id AS id, i.name AS name, i.description AS description,
+        RETURN i.id AS id, i.name AS name, i.documentation AS documentation,
                i.physics_domain AS physics_domain,
                i.path_count AS path_count, i.leaf_count AS leaf_count,
                i.max_depth AS max_depth,
@@ -233,8 +233,8 @@ def enrich_ids_nodes(
     else:
         query = """
         MATCH (i:IDS)
-        WHERE i.enriched_description IS NULL OR i.enrichment_hash IS NULL
-        RETURN i.id AS id, i.name AS name, i.description AS description,
+        WHERE i.description IS NULL OR i.enrichment_hash IS NULL
+        RETURN i.id AS id, i.name AS name, i.documentation AS documentation,
                i.physics_domain AS physics_domain,
                i.path_count AS path_count, i.leaf_count AS leaf_count,
                i.max_depth AS max_depth,
@@ -261,7 +261,7 @@ def enrich_ids_nodes(
         to_enrich = []
         for ids_ctx in batch:
             ctx_str = (
-                f"{ids_ctx['id']}:{ids_ctx.get('description', '')}:"
+                f"{ids_ctx['id']}:{ids_ctx.get('documentation', '')}:"
                 f"{ids_ctx.get('path_count', 0)}:"
                 f"{json.dumps(ids_ctx.get('sections', []), sort_keys=True)}"
             )
@@ -282,7 +282,7 @@ def enrich_ids_nodes(
                 {
                     "index": idx,
                     "name": ids_ctx["name"],
-                    "description": ids_ctx.get("description") or "",
+                    "documentation": ids_ctx.get("documentation") or "",
                     "physics_domain": ids_ctx.get("physics_domain") or "general",
                     "path_count": ids_ctx.get("path_count") or 0,
                     "leaf_count": ids_ctx.get("leaf_count") or 0,
@@ -304,8 +304,8 @@ def enrich_ids_nodes(
         user_lines = ["Enrich the following IMAS IDS definitions:\n"]
         for entry in batch_data:
             user_lines.append(f"\n### IDS {entry['index']}: `{entry['name']}`")
-            if entry["description"]:
-                user_lines.append(f"- Raw DD description: {entry['description']}")
+            if entry["documentation"]:
+                user_lines.append(f"- Raw DD description: {entry['documentation']}")
             user_lines.append(f"- Physics domain: {entry['physics_domain']}")
             user_lines.append(f"- Type: {entry['ids_type'] or 'dynamic'}")
             if entry["lifecycle_status"]:
@@ -329,8 +329,8 @@ def enrich_ids_nodes(
                 user_lines.append("- Identifier schemas used:")
                 for ident in entry["identifier_schemas"]:
                     line = f"    - {ident['name']}"
-                    if ident["description"]:
-                        line += f" — {ident['description']}"
+                    if ident["documentation"]:
+                        line += f" — {ident['documentation']}"
                     user_lines.append(line)
 
             # Domain siblings
@@ -369,21 +369,20 @@ def enrich_ids_nodes(
                 updates.append(
                     {
                         "id": ids_ctx["id"],
-                        "enriched_description": enrichment.description,
+                        "description": enrichment.description,
                         "keywords": enrichment.keywords[:8],
                         "enrichment_hash": ids_ctx["_expected_hash"],
                         "enrichment_source": "llm",
                     }
                 )
 
-            # Batch update graph — set both description and enriched_description
+            # Batch update graph
             if updates:
                 client.query(
                     """
                     UNWIND $updates AS u
                     MATCH (i:IDS {id: u.id})
-                    SET i.description = u.enriched_description,
-                        i.enriched_description = u.enriched_description,
+                    SET i.description = u.description,
                         i.keywords = u.keywords,
                         i.enrichment_hash = u.enrichment_hash,
                         i.enrichment_source = u.enrichment_source
@@ -424,9 +423,9 @@ def embed_ids_nodes(
     # Fetch IDS with enriched descriptions
     results = client.query("""
         MATCH (i:IDS)
-        WHERE i.enriched_description IS NOT NULL
+        WHERE i.description IS NOT NULL AND i.enrichment_source IS NOT NULL
         RETURN i.id AS id, i.name AS name,
-               i.enriched_description AS enriched_description,
+               i.description AS description,
                i.keywords AS keywords,
                i.embedding_hash AS existing_hash
         ORDER BY i.id
@@ -455,7 +454,7 @@ def embed_ids_nodes(
     to_embed = []
     for r in results:
         keywords_str = ", ".join(r.get("keywords") or [])
-        text = f"{r['name']}: {r['enriched_description']} Keywords: {keywords_str}"
+        text = f"{r['name']}: {r['description']} Keywords: {keywords_str}"
         text_hash = hashlib.sha256(f"{model_name}:{text}".encode()).hexdigest()[:16]
 
         if not force_reembed and r.get("existing_hash") == text_hash:
