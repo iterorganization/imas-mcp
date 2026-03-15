@@ -105,7 +105,12 @@ class DDBuildState(DiscoveryStateBase):
 
 
 async def extract_worker(state: DDBuildState, **_kwargs) -> None:
-    """Extract paths from DD XML for all versions."""
+    """Extract paths from DD XML for all versions.
+
+    Skips extraction if build nodes already exist in the graph with
+    matching build hash — the version_data is not needed when
+    build_worker will also skip.
+    """
     from imas_codex.cli.logging import WorkerLogAdapter
 
     wlog = WorkerLogAdapter(logger, worker_name="extract_worker")
@@ -120,7 +125,26 @@ async def extract_worker(state: DDBuildState, **_kwargs) -> None:
             state.extract_stats.status_text = ""
 
     def _run() -> None:
-        from imas_codex.graph.build_dd import phase_extract
+        from imas_codex.graph.build_dd import (
+            _check_build_nodes_exist,
+            _compute_build_hash,
+            phase_extract,
+        )
+        from imas_codex.graph.client import GraphClient
+
+        # Quick graph check before expensive XML parsing
+        if not state.dry_run and not state.force:
+            build_hash = _compute_build_hash(state.versions, state.ids_filter)
+            try:
+                with GraphClient() as client:
+                    if _check_build_nodes_exist(client, build_hash, state.versions):
+                        wlog.info(
+                            "Build nodes already exist — skipping XML extraction"
+                        )
+                        _on_progress(len(state.versions), len(state.versions))
+                        return
+            except Exception:
+                wlog.debug("Graph check failed, proceeding with extraction")
 
         version_data, all_units = phase_extract(
             state.versions,
@@ -158,6 +182,7 @@ async def build_worker(state: DDBuildState, **_kwargs) -> None:
 
     def _run() -> None:
         from imas_codex.graph.build_dd import (
+            _check_build_nodes_exist,
             _check_graph_up_to_date,
             _compute_build_hash,
             _create_version_nodes,
@@ -175,6 +200,7 @@ async def build_worker(state: DDBuildState, **_kwargs) -> None:
             state.build_hash = build_hash
 
             if not state.dry_run and not state.force:
+                # Full check: everything including embeddings + clusters
                 if _check_graph_up_to_date(
                     client,
                     build_hash,
@@ -183,6 +209,22 @@ async def build_worker(state: DDBuildState, **_kwargs) -> None:
                     wlog.info("Graph already up-to-date — skipping")
                     state.skipped = True
                     state.stats["skipped"] = True
+                    state.stats["versions_processed"] = len(state.versions)
+                    _on_progress(len(state.versions), len(state.versions))
+                    return
+
+                # Lighter check: build nodes exist, skip extract+build
+                # but let enrich/embed/cluster continue
+                if _check_build_nodes_exist(
+                    client,
+                    build_hash,
+                    state.versions,
+                ):
+                    wlog.info(
+                        "Build nodes already exist — skipping extract/build, "
+                        "downstream phases will continue"
+                    )
+                    state.stats["skipped_build"] = True
                     state.stats["versions_processed"] = len(state.versions)
                     _on_progress(len(state.versions), len(state.versions))
                     return

@@ -98,6 +98,11 @@ def is_boilerplate_path(path_id: str) -> bool:
     return any(p.search(name) for p in BOILERPLATE_PATTERNS)
 
 
+def _is_boilerplate_sibling(name: str) -> bool:
+    """Check if a sibling name is a boilerplate error/validity field."""
+    return any(p.search(name) for p in BOILERPLATE_PATTERNS)
+
+
 def generate_template_description(path_id: str, path_info: dict) -> dict[str, Any]:
     """Generate a template description for boilerplate paths.
 
@@ -353,8 +358,12 @@ def build_enrichment_messages(
     )
 
     # Build user message with batch data
+    # Emit IDS descriptions once per IDS group to avoid repetition
     user_lines = ["Enrich the following IMAS paths:\n"]
+    emitted_ids_descriptions: set[str] = set()
+
     for entry in batch_data:
+        ids_name = entry["path"].split("/")[0]
         user_lines.append(f"\n### Path {entry['index']}: `{entry['path']}`")
         user_lines.append(f"- Name: {entry['name']}")
         if entry["documentation"]:
@@ -379,7 +388,19 @@ def build_enrichment_messages(
         elif entry.get("parent_doc"):
             user_lines.append(f"- Parent documentation: {entry['parent_doc']}")
         if entry["siblings"]:
-            user_lines.append(f"- Siblings: {', '.join(entry['siblings'])}")
+            # Filter out boilerplate error/validity siblings and cap at 30
+            meaningful = [
+                s for s in entry["siblings"]
+                if not _is_boilerplate_sibling(s)
+            ]
+            if len(meaningful) > 30:
+                shown = meaningful[:30]
+                user_lines.append(
+                    f"- Siblings ({len(meaningful)} total, showing 30): "
+                    f"{', '.join(shown)}"
+                )
+            else:
+                user_lines.append(f"- Siblings: {', '.join(meaningful)}")
         if entry["children"]:
             user_lines.append(f"- Children: {', '.join(entry['children'])}")
         if entry["unit"]:
@@ -390,8 +411,10 @@ def build_enrichment_messages(
             user_lines.append(f"- Cluster: {entry['cluster_label']}")
         if entry["cocos_label"]:
             user_lines.append(f"- COCOS label: {entry['cocos_label']}")
-        if entry["ids_description"]:
+        # Only emit IDS description once per IDS to avoid repetition
+        if entry["ids_description"] and ids_name not in emitted_ids_descriptions:
             user_lines.append(f"- IDS description: {entry['ids_description']}")
+            emitted_ids_descriptions.add(ids_name)
 
     return [
         {"role": "system", "content": system_prompt},

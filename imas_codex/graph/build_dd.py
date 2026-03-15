@@ -1341,6 +1341,48 @@ def _check_graph_up_to_date(
         return False
 
 
+def _check_build_nodes_exist(
+    client: GraphClient,
+    build_hash: str,
+    versions: list[str],
+) -> bool:
+    """Check if extract+build nodes already exist (regardless of downstream state).
+
+    Lighter check than ``_check_graph_up_to_date`` — only verifies that
+    DDVersion nodes exist with a matching build_hash and IMASNode nodes
+    are present.  Does NOT check embedding or cluster completeness, so
+    extract+build can be skipped while enrich/embed/cluster continue.
+    """
+    try:
+        result = client.query(
+            """
+            MATCH (d:DDVersion {is_current: true})
+            RETURN d.build_hash AS hash
+            """
+        )
+        if not result or result[0].get("hash") != build_hash:
+            return False
+
+        ver_result = client.query(
+            "MATCH (d:DDVersion) RETURN collect(d.id) AS versions"
+        )
+        stored_versions = ver_result[0]["versions"] if ver_result else []
+        if set(versions) != set(stored_versions):
+            return False
+
+        # Check that IMASNodes exist (any status)
+        node_result = client.query(
+            "MATCH (p:IMASNode) RETURN count(p) AS cnt"
+        )
+        if not node_result or node_result[0]["cnt"] == 0:
+            return False
+
+        return True
+    except Exception as e:
+        logger.debug(f"Build-nodes-exist check failed: {e}")
+        return False
+
+
 # =============================================================================
 # Phase Functions (called by workers)
 # =============================================================================
@@ -3018,14 +3060,19 @@ def _label_unlabeled_clusters(
     Returns:
         Number of clusters labeled
     """
-    # Fetch unlabeled clusters with their member paths
+    # Fetch unlabeled clusters with their member paths and documentation
     unlabeled = client.query("""
         MATCH (c:IMASSemanticCluster)
         WHERE c.label IS NULL
         OPTIONAL MATCH (m:IMASNode)-[:IN_CLUSTER]->(c)
-        WITH c, collect(m.id) AS paths, collect(DISTINCT m.ids) AS ids_names
+        WITH c,
+             collect(m.id) AS paths,
+             collect(DISTINCT m.ids) AS ids_names,
+             collect(CASE WHEN m.documentation IS NOT NULL
+                     THEN [m.id, m.documentation] END) AS doc_pairs
         RETURN c.id AS id, c.scope AS scope, c.cross_ids AS cross_ids,
-               paths, ids_names
+               paths, ids_names,
+               [p IN doc_pairs WHERE p IS NOT NULL] AS path_doc_pairs
         ORDER BY c.id
     """)
 
@@ -3047,10 +3094,16 @@ def _label_unlabeled_clusters(
             # Format for ClusterLabeler
             cluster_dicts = []
             for row in batch:
+                # Build path_docs dict from doc_pairs
+                path_docs = {}
+                for pair in row.get("path_doc_pairs", []):
+                    if pair and len(pair) == 2:
+                        path_docs[pair[0]] = pair[1]
                 cluster_dicts.append(
                     {
                         "id": row["id"],
                         "paths": row["paths"] or [],
+                        "path_docs": path_docs,
                         "ids_names": row["ids_names"] or [],
                         "is_cross_ids": bool(row.get("cross_ids")),
                         "scope": row.get("scope", "global"),
