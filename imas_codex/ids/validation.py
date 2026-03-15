@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from enum import StrEnum
 
 from imas_codex.graph.client import GraphClient
 from imas_codex.ids.models import EscalationFlag, EscalationSeverity
@@ -23,6 +24,16 @@ from imas_codex.ids.tools import analyze_units, check_imas_paths
 from imas_codex.ids.transforms import execute_transform
 
 logger = logging.getLogger(__name__)
+
+
+class DuplicateTargetClassification(StrEnum):
+    """Classification of why multiple sources map to the same target."""
+
+    EPOCH_VARIANTS = "epoch_variants"
+    PROCESSING_STAGES = "processing_stages"
+    REDUNDANT_DIAGNOSTICS = "redundant_diagnostics"
+    LEGITIMATE_OTHER = "legitimate_other"
+    ERRONEOUS = "erroneous"
 
 
 @dataclass
@@ -181,7 +192,7 @@ def validate_mapping(
 
     # 5. Duplicate target detection (multi-target aware)
     # Same source → multiple targets: expected (no warning)
-    # Multiple sources → same target: warning (potential conflict)
+    # Multiple sources → same target: classify the pattern
     # Same source → same target with different transforms: error (conflicting)
     target_to_bindings: dict[str, list] = {}
     for b in bindings:
@@ -191,20 +202,33 @@ def validate_mapping(
     for target_id, target_bindings in target_to_bindings.items():
         unique_sources = {b.source_id for b in target_bindings}
         if len(unique_sources) > 1:
-            # Multiple sources → same target: warning
-            report.duplicate_targets.append(target_id)
-            source_list = sorted(unique_sources)
-            report.escalations.append(
-                EscalationFlag(
-                    source_id=source_list[0],
-                    target_id=target_id,
-                    severity=EscalationSeverity.WARNING,
-                    reason=(
-                        f"Multiple sources → same target: {target_id} ← "
-                        f"{len(source_list)} sources ({', '.join(source_list)})"
-                    ),
-                )
+            # Classify the many-to-one pattern
+            classification = _classify_many_to_one(
+                target_id, target_bindings, gc
             )
+            source_list = sorted(unique_sources)
+
+            if classification == DuplicateTargetClassification.ERRONEOUS:
+                report.duplicate_targets.append(target_id)
+                report.escalations.append(
+                    EscalationFlag(
+                        source_id=source_list[0],
+                        target_id=target_id,
+                        severity=EscalationSeverity.WARNING,
+                        reason=(
+                            f"Potentially erroneous many-to-one: {target_id} ← "
+                            f"{len(source_list)} sources ({', '.join(source_list)})"
+                        ),
+                    )
+                )
+            else:
+                # Legitimate many-to-one — log but do not escalate
+                logger.info(
+                    "Legitimate many-to-one (%s): %s ← %d sources",
+                    classification.value,
+                    target_id,
+                    len(source_list),
+                )
         elif len(target_bindings) > 1:
             # Same source, same target — check for conflicting transforms
             transforms = {
@@ -249,6 +273,57 @@ def validate_mapping(
     )
 
     return report
+
+
+def _classify_many_to_one(
+    target_id: str,
+    bindings: list,
+    gc: GraphClient,
+) -> DuplicateTargetClassification:
+    """Classify whether multiple sources mapping to the same target is legitimate.
+
+    Checks source metadata to distinguish epoch variants, processing stages,
+    redundant diagnostics, and erroneous duplicates.
+    """
+    source_ids = list({b.source_id for b in bindings})
+    if len(source_ids) < 2:
+        return DuplicateTargetClassification.LEGITIMATE_OTHER
+
+    # Fetch source metadata for classification
+    rows = gc.query(
+        """
+        UNWIND $source_ids AS sid
+        MATCH (sg:SignalSource {id: sid})
+        RETURN sg.id AS id, sg.group_key AS group_key,
+               sg.physics_domain AS physics_domain,
+               sg.description AS description
+        """,
+        source_ids=source_ids,
+    )
+    meta = {r["id"]: r for r in rows}
+
+    group_keys = [meta.get(sid, {}).get("group_key", "") for sid in source_ids]
+    domains = {meta.get(sid, {}).get("physics_domain") for sid in source_ids}
+    domains.discard(None)
+
+    # Check for epoch variants: same group_key prefix, differing by index
+    prefixes = set()
+    for gk in group_keys:
+        parts = gk.rsplit(":", 1) if ":" in gk else gk.rsplit("/", 1)
+        if len(parts) == 2:
+            prefixes.add(parts[0])
+    if len(prefixes) == 1:
+        return DuplicateTargetClassification.EPOCH_VARIANTS
+
+    # Same physics domain = likely processing stages or redundant diagnostics
+    if len(domains) == 1:
+        return DuplicateTargetClassification.PROCESSING_STAGES
+
+    # Multiple physics domains = likely erroneous
+    if len(domains) > 1:
+        return DuplicateTargetClassification.ERRONEOUS
+
+    return DuplicateTargetClassification.LEGITIMATE_OTHER
 
 
 # ---------------------------------------------------------------------------

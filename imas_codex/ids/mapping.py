@@ -30,6 +30,7 @@ from imas_codex.ids.models import (
     EscalationFlag,
     SignalMappingBatch,
     SectionAssignmentBatch,
+    UnmappedSignal,
     ValidatedSignalMapping,
     ValidatedMappingResult,
     persist_mapping_result,
@@ -336,6 +337,48 @@ def _format_unit_analysis(
                     lines.append(f"  {signal_unit} → {imas_unit}: {result['error']}")
     return "\n".join(lines) if lines else "(no unit analysis needed)"
 
+def _format_wiki_context(wiki_items: list[dict[str, Any]]) -> str:
+    """Format wiki context for the signal mapping prompt."""
+    if not wiki_items:
+        return ""
+    lines: list[str] = []
+    for item in wiki_items:
+        title = item.get("page_title", "")
+        text = item.get("text", "")
+        score = item.get("score_imas_relevance", 0)
+        if title:
+            lines.append(f"**{title}** (IMAS relevance: {score:.2f})")
+        if text:
+            # Truncate long chunks
+            snippet = text[:500] + "..." if len(text) > 500 else text
+            lines.append(snippet)
+        lines.append("")
+    return "\n".join(lines)
+
+
+def _format_code_context(code_items: list[dict[str, Any]]) -> str:
+    """Format code context for the signal mapping prompt."""
+    if not code_items:
+        return ""
+    lines: list[str] = []
+    for item in code_items:
+        path = item.get("source_file", "")
+        func = item.get("function_name", "")
+        text = item.get("text", "")
+        lang = item.get("language", "")
+        score = item.get("score_data_access", 0)
+        header = path
+        if func:
+            header += f"::{func}"
+        if score:
+            header += f" (data_access: {score:.2f})"
+        lines.append(header)
+        if text:
+            snippet = text[:800] + "..." if len(text) > 800 else text
+            lines.append(f"```{lang}\n{snippet}\n```")
+        lines.append("")
+    return "\n".join(lines)
+
 
 # ---------------------------------------------------------------------------
 # Pipeline steps
@@ -432,6 +475,30 @@ def gather_context(
                     source_candidates[g["id"]] = candidates
             except Exception:
                 pass
+
+    # Enrich source candidates with cluster members (one-to-many discovery)
+    try:
+        from imas_codex.clusters.search import ClusterSearcher
+
+        cluster_searcher = ClusterSearcher.load()
+        for source_id, candidates in source_candidates.items():
+            cluster_additions: list[dict[str, Any]] = []
+            existing_ids = {c["id"] for c in candidates}
+            for cand in candidates[:3]:
+                cluster_hits = cluster_searcher.search_by_path(cand["id"])
+                for hit in cluster_hits:
+                    for member_path in hit.paths:
+                        if member_path not in existing_ids:
+                            cluster_additions.append({
+                                "id": member_path,
+                                "score": hit.similarity_score * cand.get("score", 0.5),
+                                "via_cluster": hit.label,
+                                "documentation": f"Cluster member: {hit.description}",
+                            })
+                            existing_ids.add(member_path)
+            candidates.extend(cluster_additions)
+    except Exception:
+        logger.debug("Cluster enrichment unavailable — continuing without it")
 
     existing = search_existing_mappings(facility, ids_name, gc=gc)
     cocos_paths = get_sign_flip_paths(ids_name)
@@ -620,14 +687,29 @@ def map_signals(
         source_id = assignment.source_id
         source_semantic = context.get("source_candidates", {}).get(source_id, [])
         semantic_context = ""
+        cluster_context = ""
         if source_semantic:
             semantic_lines = []
+            cluster_lines = []
             for sc in source_semantic:
                 path = sc.get("id", "")
                 score = sc.get("score", 0)
                 doc = sc.get("documentation", "")
-                semantic_lines.append(f"  - {path} (score={score:.2f}): {doc}")
-            semantic_context = "Semantic search candidates:\n" + "\n".join(semantic_lines)
+                via = sc.get("via_cluster")
+                if via:
+                    cluster_lines.append(
+                        f"  - {path} (score={score:.2f}, cluster={via}): {doc}"
+                    )
+                else:
+                    semantic_lines.append(f"  - {path} (score={score:.2f}): {doc}")
+            if semantic_lines:
+                semantic_context = "Semantic search candidates:\n" + "\n".join(semantic_lines)
+            if cluster_lines:
+                cluster_context = "Cluster-derived candidates:\n" + "\n".join(cluster_lines)
+
+        # Wiki and code context from gather_context (Phase 3 enrichment)
+        wiki_ctx = _format_wiki_context(context.get("wiki_context", []))
+        code_ctx = _format_code_context(context.get("code_context", []))
 
         prompt = _render_prompt(
             "signal_mapping",
@@ -646,6 +728,9 @@ def map_signals(
             code_references=code_context or "(no code references available)",
             source_cocos=cocos_context or "(no COCOS context)",
             semantic_candidates=semantic_context or "(no semantic candidates)",
+            cluster_candidates=cluster_context or "(no cluster candidates)",
+            wiki_context=wiki_ctx,
+            code_data_access=code_ctx,
         )
 
         messages = [
@@ -783,9 +868,10 @@ def validate_mappings(
 
     logger.info("Running programmatic validation")
 
-    # Assemble bindings + escalations from Step 2 batches
+    # Assemble bindings + escalations + unmapped from Step 2 batches
     all_bindings: list[ValidatedSignalMapping] = []
     all_escalations: list[EscalationFlag] = []
+    all_unmapped: list[UnmappedSignal] = []
     for batch in field_batches:
         for m in batch.mappings:
             all_bindings.append(
@@ -800,6 +886,7 @@ def validate_mappings(
                     confidence=m.confidence,
                 )
             )
+        all_unmapped.extend(batch.unmapped)
         all_escalations.extend(batch.escalations)
 
     # Run programmatic validation
@@ -840,6 +927,7 @@ def validate_mappings(
         dd_version=dd_version,
         sections=sections.assignments,
         bindings=all_bindings,
+        unmapped=all_unmapped,
         escalations=all_escalations,
         corrections=corrections,
     )

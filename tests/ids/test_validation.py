@@ -195,7 +195,20 @@ class TestValidateMapping:
         assert report.binding_checks[0].units_compatible is True
 
     def test_duplicate_targets(self, mock_gc):
-        mock_gc.query.return_value = [{"id": "some_group"}]
+        """Multiple sources → same target with different physics domains = erroneous."""
+        def mock_query(cypher, **kwargs):
+            # Source existence check
+            if "SignalSource" in cypher and "RETURN sg.id AS id LIMIT 1" in cypher:
+                return [{"id": kwargs.get("id", "some_group")}]
+            # Classification query for many-to-one
+            if "UNWIND" in cypher and "group_key" in cypher:
+                return [
+                    {"id": "group_a", "group_key": "PF:r", "physics_domain": "magnetic_field_systems", "description": "Coil radius"},
+                    {"id": "group_b", "group_key": "MP:angle", "physics_domain": "plasma_diagnostics", "description": "Probe angle"},
+                ]
+            return [{"id": kwargs.get("id", "some_group")}]
+
+        mock_gc.query.side_effect = mock_query
 
         b1 = _make_binding(
             source_id="group_a", target_id="pf_active/circuit/description"
@@ -213,11 +226,43 @@ class TestValidateMapping:
 
         assert "pf_active/circuit/description" in report.duplicate_targets
         assert report.all_passed is False
-        # Should have escalation for multiple sources → same target
+        # Should have escalation for erroneous many-to-one
         dup_escalations = [
-            e for e in report.escalations if "Multiple sources" in e.reason
+            e for e in report.escalations if "erroneous" in e.reason.lower() or "many-to-one" in e.reason.lower()
         ]
         assert len(dup_escalations) == 1
+
+    def test_duplicate_targets_legitimate(self, mock_gc):
+        """Multiple sources → same target with same physics domain = legitimate."""
+        def mock_query(cypher, **kwargs):
+            if "SignalSource" in cypher and "RETURN sg.id AS id LIMIT 1" in cypher:
+                return [{"id": kwargs.get("id", "some_group")}]
+            if "UNWIND" in cypher and "group_key" in cypher:
+                return [
+                    {"id": "group_a", "group_key": "PF:r_v1", "physics_domain": "magnetic_field_systems", "description": "Coil R v1"},
+                    {"id": "group_b", "group_key": "PF:r_v2", "physics_domain": "magnetic_field_systems", "description": "Coil R v2"},
+                ]
+            return [{"id": kwargs.get("id", "some_group")}]
+
+        mock_gc.query.side_effect = mock_query
+
+        b1 = _make_binding(
+            source_id="group_a", target_id="pf_active/circuit/description"
+        )
+        b2 = _make_binding(
+            source_id="group_b", target_id="pf_active/circuit/description"
+        )
+        from unittest.mock import patch
+
+        with patch("imas_codex.ids.validation.check_imas_paths") as mock_check:
+            mock_check.return_value = [
+                {"path": "pf_active/circuit/description", "exists": True}
+            ]
+            report = validate_mapping([b1, b2], gc=mock_gc)
+
+        # Legitimate many-to-one should NOT be in duplicate_targets
+        assert "pf_active/circuit/description" not in report.duplicate_targets
+        assert report.all_passed is True
 
     def test_multiple_bindings_mixed(self, mock_gc):
         """One good binding, one with missing target."""
