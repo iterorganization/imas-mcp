@@ -209,6 +209,7 @@ def code(
                 console=console,
                 scan_only=scan_only,
                 score_only=score_only,
+                min_score=min_score,
             )
 
         disc_config = DiscoveryConfig(

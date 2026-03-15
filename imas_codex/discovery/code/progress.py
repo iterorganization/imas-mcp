@@ -301,6 +301,7 @@ class FileProgressDisplay(BaseProgressDisplay):
         console: Console | None = None,
         scan_only: bool = False,
         score_only: bool = False,
+        min_score: float | None = None,
     ) -> None:
         super().__init__(
             facility=facility,
@@ -309,6 +310,7 @@ class FileProgressDisplay(BaseProgressDisplay):
             focus=focus,
             title_suffix="Code Discovery",
         )
+        self.min_score = min_score
         self.state = FileProgressState(
             facility=facility,
             cost_limit=cost_limit,
@@ -953,7 +955,7 @@ class FileProgressDisplay(BaseProgressDisplay):
         """Refresh totals from graph database."""
         from imas_codex.discovery.code.parallel import get_code_discovery_stats
 
-        stats = get_code_discovery_stats(facility)
+        stats = get_code_discovery_stats(facility, min_score=self.min_score)
         self.state.total = stats["total"]
         self.state.discovered = stats["discovered"]
         self.state.triaged_count = stats["triaged"]
