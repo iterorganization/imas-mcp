@@ -1992,6 +1992,34 @@ class AgentsServer:
             _signal_analytics,
         )
 
+        # Build dynamic docstring fragments for valid parameter values
+        from imas_codex.discovery.base.scoring import (
+            CODE_SCORE_DIMENSIONS,
+            CONTENT_SCORE_DIMENSIONS,
+        )
+
+        _content_scores_doc = ", ".join(sorted(CONTENT_SCORE_DIMENSIONS))
+        _code_scores_doc = ", ".join(sorted(CODE_SCORE_DIMENSIONS))
+
+        # Read physics domains from LinkML schema
+        try:
+            from linkml_runtime.utils.schemaview import SchemaView
+
+            _sv = SchemaView(
+                str(
+                    __import__("pathlib").Path(__file__).resolve().parent.parent
+                    / "schemas"
+                    / "physics_domains.yaml"
+                )
+            )
+            _pd_enum = _sv.get_enum("PhysicsDomain")
+            _physics_domains_doc = ", ".join(
+                sorted(_pd_enum.permissible_values.keys())
+            )
+            del _sv, _pd_enum
+        except Exception:
+            _physics_domains_doc = "(see physics_domains.yaml for valid values)"
+
         @self.mcp.tool()
         def search_signals(
             query: str,
@@ -2003,7 +2031,7 @@ class AgentsServer:
             include_check_details: bool = False,
             k: int = 20,
         ) -> str:
-            """Search facility signals with full graph enrichment.
+            f"""Search facility signals with full graph enrichment.
 
             Performs hybrid search (vector + keyword) on signal descriptions,
             then enriches with data access templates, IMAS mappings, diagnostic
@@ -2015,7 +2043,8 @@ class AgentsServer:
                 query: Natural language search text (e.g. "plasma current")
                 facility: Facility id (required, e.g. "tcv", "jet")
                 diagnostic: Optional diagnostic filter (e.g. "magnetics")
-                physics_domain: Optional physics domain filter
+                physics_domain: Optional physics domain filter. Valid values:
+                    {_physics_domains_doc}
                 check_status: Filter by check outcome: "passed", "failed", or "unchecked"
                 error_type: Filter by error classification (e.g. "not_available_for_shot")
                 include_check_details: Include CHECKED_WITH relationship data in results
@@ -2070,7 +2099,7 @@ class AgentsServer:
             min_score: float | None = None,
             score_dimension: str | None = None,
         ) -> str:
-            """Search documentation (wiki, documents, images) with cross-links.
+            f"""Search documentation (wiki, documents, images) with cross-links.
 
             Performs hybrid search (vector + keyword) across wiki content,
             linked documents, and images, enriched with cross-references to
@@ -2083,11 +2112,12 @@ class AgentsServer:
                 facility: Facility id (required, e.g. "tcv", "jet")
                 k: Results per index (default 15)
                 site: Optional wiki site filter (substring match on wiki URL)
-                physics_domain: Filter by WikiPage physics domain (e.g. "equilibrium")
-                min_score: Minimum score threshold for score_dimension
-                score_dimension: Score dimension to filter on. Valid dimensions:
-                    score_imas_relevance, score_physics_depth, score_operational,
-                    score_engineering, score_tutorial, score_composite
+                physics_domain: Filter by WikiPage physics domain. Valid values:
+                    {_physics_domains_doc}
+                min_score: Minimum score threshold (0.0-1.0) for score_dimension
+                score_dimension: Score dimension to filter on. Valid values:
+                    {_content_scores_doc}.
+                    Defaults to score_composite.
 
             Returns:
                 Formatted report with wiki documentation grouped by page,
@@ -2112,7 +2142,7 @@ class AgentsServer:
             min_score: float | None = None,
             score_dimension: str | None = None,
         ) -> str:
-            """Search ingested code with data reference enrichment.
+            f"""Search ingested code with data reference enrichment.
 
             Performs hybrid search (vector + keyword) on code chunks,
             enriched with MDSplus paths, TDI function calls, IMAS path
@@ -2124,12 +2154,12 @@ class AgentsServer:
                 query: Natural language search text (e.g. "equilibrium reconstruction")
                 facility: Optional facility filter (e.g. "tcv")
                 k: Number of results (default 10)
-                physics_domain: Filter by FacilityPath physics domain (e.g. "equilibrium")
-                min_score: Minimum score threshold for score_dimension
-                score_dimension: Score dimension to filter on. Valid dimensions:
-                    score_modeling_code, score_analysis_code, score_operations_code,
-                    score_data_access, score_workflow, score_visualization,
-                    score_documentation, score_imas, score_convention, score_composite
+                physics_domain: Filter by FacilityPath physics domain. Valid values:
+                    {_physics_domains_doc}
+                min_score: Minimum score threshold (0.0-1.0) for score_dimension
+                score_dimension: Score dimension to filter on. Valid values:
+                    {_code_scores_doc}.
+                    Defaults to score_composite.
 
             Returns:
                 Formatted report with code examples, data references,
