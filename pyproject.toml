@@ -240,7 +240,7 @@ include-error-fields = false
 [tool.imas-codex.embedding]
 model = "Qwen/Qwen3-Embedding-0.6B"
 dimension = 256
-location = "titan"      # compute location for embed server (or "local" for in-process)
+location = "iter"       # login node T4 (or "titan" for compute P100 via SLURM)
 
 [tool.imas-codex.discovery]
 # Minimum combined score for high-value path processing.
