@@ -1429,12 +1429,17 @@ def phase_build(
     *,
     dry_run: bool = False,
     on_progress: "Callable[[int, int], None] | None" = None,
+    on_version: "Callable[[str], None] | None" = None,
 ) -> dict[str, int]:
     """Create graph nodes from extracted data.
 
     Creates Unit, CoordinateSpec, IdentifierSchema nodes; IDS and
     IMASNode nodes per version with hierarchical relationships;
     RENAMED_TO, COCOS label, and field metadata updates.
+
+    Args:
+        on_progress: Called with ``(paths_processed, total_paths)``.
+        on_version: Called with the version string at the start of each version.
 
     Returns:
         Stats dict with creation/update counts.
@@ -1474,16 +1479,20 @@ def phase_build(
 
     # Per-version: IDS + IMASNode + relationships + path changes
     prev_paths: dict[str, dict] = {}
-    total_versions = len(versions)
+    total_paths = sum(
+        len(version_data[v]["paths"]) for v in versions if v in version_data
+    )
+    paths_processed = 0
 
     if on_progress:
-        on_progress(0, total_versions)
+        on_progress(0, total_paths)
 
     for i, version in enumerate(versions):
         if version not in version_data:
-            if on_progress:
-                on_progress(i + 1, total_versions)
             continue
+
+        if on_version:
+            on_version(version)
 
         data = version_data[version]
         changes = compute_version_changes(prev_paths, data["paths"])
@@ -1509,9 +1518,10 @@ def phase_build(
                     stats["definitions_changed"] += 1
 
         prev_paths = data["paths"]
+        paths_processed += len(data["paths"])
 
         if on_progress:
-            on_progress(i + 1, total_versions)
+            on_progress(paths_processed, total_paths)
 
     # RENAMED_TO relationships
     if not dry_run:
