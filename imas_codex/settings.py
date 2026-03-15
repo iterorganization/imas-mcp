@@ -72,7 +72,7 @@ def _get_section(section: str) -> dict:
 
 # ─── Valid model sections ───────────────────────────────────────────────────
 
-MODEL_SECTIONS = frozenset({"embedding", "language", "vision", "agent", "compaction"})
+MODEL_SECTIONS = frozenset({"embedding", "language", "vision", "agent", "compaction", "reasoning"})
 
 # Default model per section (fallback when not configured)
 _MODEL_DEFAULTS: dict[str, str] = {
@@ -81,6 +81,7 @@ _MODEL_DEFAULTS: dict[str, str] = {
     "vision": "google/gemini-3-flash-preview",
     "agent": "anthropic/claude-sonnet-4.6",
     "compaction": "anthropic/claude-haiku-4.5",
+    "reasoning": "anthropic/claude-sonnet-4.6",
 }
 
 # Environment variable names per section
@@ -90,6 +91,7 @@ _MODEL_ENV_VARS: dict[str, str] = {
     "vision": "IMAS_CODEX_VISION_MODEL",
     "agent": "IMAS_CODEX_AGENT_MODEL",
     "compaction": "IMAS_CODEX_COMPACTION_MODEL",
+    "reasoning": "IMAS_CODEX_REASONING_MODEL",
 }
 
 

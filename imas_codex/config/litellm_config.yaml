@@ -34,6 +34,12 @@ model_list:
       model: openrouter/anthropic/claude-haiku-4.5
       litellm_credential_name: openrouter
 
+  # Sonnet 4.6 — reasoning-heavy tasks (IMAS mapping, complex structured output)
+  - model_name: reasoning
+    litellm_params:
+      model: openrouter/anthropic/claude-sonnet-4.6
+      litellm_credential_name: openrouter
+
   # Gemini Flash — scoring, batch classification (auto-caches)
   - model_name: scoring
     litellm_params:

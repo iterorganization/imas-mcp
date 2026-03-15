@@ -35,10 +35,11 @@ All model and tool settings live in `pyproject.toml` under `[tool.imas-codex]`. 
 | `[vision]` | Image/document tasks | `get_model("vision")` |
 | `[agent]` | Planning, exploration, autonomous tasks | `get_model("agent")` |
 | `[compaction]` | Summarization/compaction | `get_model("compaction")` |
+| `[reasoning]` | Complex structured output (IMAS mapping, multi-step reasoning) | `get_model("reasoning")` |
 | `[discovery]` | Discovery threshold for high-value processing | `get_discovery_threshold()` |
 | `[data-dictionary]` | DD version, include-ggd, include-error-fields | `get_dd_version()` |
 
-**Model access:** `get_model(section)` is the single entry point for all model lookups. Pass the pyproject.toml section name directly: `"language"`, `"vision"`, `"agent"`, `"compaction"`, or `"embedding"`. Priority: section env var → pyproject.toml config → default.
+**Model access:** `get_model(section)` is the single entry point for all model lookups. Pass the pyproject.toml section name directly: `"language"`, `"vision"`, `"agent"`, `"compaction"`, `"reasoning"`, or `"embedding"`. Priority: section env var → pyproject.toml config → default.
 
 **Graph access:** Graph profiles separate **name** (what data) from **location** (where Neo4j runs). The default graph `"codex"` contains all facilities + IMAS DD and runs at location `"iter"`. `IMAS_CODEX_GRAPH` env var selects the graph name. `IMAS_CODEX_GRAPH_LOCATION` overrides where it runs. Each location maps to a unique bolt+HTTP port pair by convention:
 
