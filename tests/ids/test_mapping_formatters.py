@@ -129,13 +129,14 @@ class TestFormatCoordinateContext:
         assert _format_coordinate_context([]) == "(no coordinate spec data)"
 
     def test_no_coordinates(self):
-        fields = [{"id": "a/b", "coordinates": []}]
+        fields = [{"id": "a/b", "coordinates": [], "data_type": "STR_0D"}]
         assert _format_coordinate_context(fields) == "(no coordinate spec data)"
 
     def test_with_coordinates(self):
         fields = [
             {
                 "id": "equilibrium/time_slice/profiles_1d/psi",
+                "data_type": "FLT_1D",
                 "coordinates": ["rho_tor_norm", "time"],
             }
         ]
@@ -143,6 +144,43 @@ class TestFormatCoordinateContext:
         assert "equilibrium/time_slice/profiles_1d/psi" in result
         assert "rho_tor_norm" in result
         assert "time" in result
+
+    def test_with_coordinate_axes(self):
+        fields = [
+            {
+                "id": "pf_active/coil/current/data",
+                "data_type": "FLT_2D",
+                "coordinates": ["1...N"],
+                "coordinate1": "time",
+                "coordinate2": "pf_active/coil",
+                "timebase": "pf_active/coil/current/time",
+            }
+        ]
+        result = _format_coordinate_context(fields)
+        assert "FLT_2D" in result
+        assert "dim1=time" in result
+        assert "dim2=pf_active/coil" in result
+        assert "timebase: pf_active/coil/current/time" in result
+        assert "1...N" in result
+
+    def test_shared_grids(self):
+        fields = [
+            {
+                "id": "core_profiles/profiles_1d/electrons/temperature",
+                "data_type": "FLT_1D",
+                "coordinate1": "core_profiles/profiles_1d/grid/rho_tor_norm",
+            },
+            {
+                "id": "core_profiles/profiles_1d/electrons/density",
+                "data_type": "FLT_1D",
+                "coordinate1": "core_profiles/profiles_1d/grid/rho_tor_norm",
+            },
+        ]
+        result = _format_coordinate_context(fields)
+        assert "Shared coordinate grids" in result
+        assert "rho_tor_norm" in result
+        assert "temperature" in result
+        assert "density" in result
 
 
 class TestFormatCrossFacilityMappings:
