@@ -328,6 +328,97 @@ async def _idle_watchdog() -> None:
             return
 
 
+def _encode_batch_safe(
+    model: Any,
+    texts: list[str],
+    normalize: bool,
+    batch_size: int,
+) -> Any:
+    """Encode a batch with CUDA OOM recovery.
+
+    On OOM, clears GPU cache and retries with halved batch size.
+    If batch_size reaches 1 and still OOMs, encodes texts one at a
+    time, skipping any individual text that triggers OOM (returns a
+    zero vector for that text).
+
+    This prevents worker crashloops where uvicorn respawns a worker
+    that immediately hits the same OOM-causing request pattern.
+    """
+    import numpy as np
+    import torch
+
+    while batch_size >= 1:
+        try:
+            if len(texts) <= batch_size:
+                result = model.encode(
+                    texts,
+                    convert_to_numpy=True,
+                    normalize_embeddings=normalize,
+                    batch_size=batch_size,
+                    show_progress_bar=False,
+                )
+                return result
+
+            results = []
+            for i in range(0, len(texts), batch_size):
+                batch = texts[i : i + batch_size]
+                embeddings = model.encode(
+                    batch,
+                    convert_to_numpy=True,
+                    normalize_embeddings=normalize,
+                    batch_size=batch_size,
+                    show_progress_bar=False,
+                )
+                results.append(embeddings)
+                _release_gpu_cache()
+
+            return np.vstack(results)
+
+        except torch.cuda.OutOfMemoryError:
+            _release_gpu_cache()
+            new_batch_size = max(1, batch_size // 2)
+            if new_batch_size == batch_size:
+                # Already at batch_size=1, fall through to one-at-a-time
+                break
+            logger.warning(
+                "CUDA OOM at batch_size=%d for %d texts (max_len=%d chars), "
+                "retrying with batch_size=%d",
+                batch_size,
+                len(texts),
+                max(len(t) for t in texts) if texts else 0,
+                new_batch_size,
+            )
+            batch_size = new_batch_size
+
+    # Last resort: encode one at a time, substituting zero vectors for
+    # texts that still OOM (e.g. extremely long individual texts).
+    logger.warning(
+        "Falling back to one-at-a-time encoding for %d texts", len(texts)
+    )
+    dim = _cached_embedding_dim or 1024
+    results = []
+    for j, text in enumerate(texts):
+        try:
+            emb = model.encode(
+                [text],
+                convert_to_numpy=True,
+                normalize_embeddings=normalize,
+                batch_size=1,
+                show_progress_bar=False,
+            )
+            results.append(emb)
+        except torch.cuda.OutOfMemoryError:
+            _release_gpu_cache()
+            logger.error(
+                "CUDA OOM on single text (%d chars), returning zero vector",
+                len(text),
+            )
+            results.append(np.zeros((1, dim), dtype=np.float32))
+        _release_gpu_cache()
+
+    return np.vstack(results)
+
+
 def _encode_texts_sync(
     texts: list[str],
     normalize: bool,
@@ -339,8 +430,6 @@ def _encode_texts_sync(
     freed GPU memory is returned to the driver for other processes
     (especially NX desktop sessions on the shared login node T4).
     """
-    import numpy as np
-
     # Truncate oversized texts to prevent O(n²) attention OOM.
     # The pipeline already chunks to 10K chars; this catches direct API calls.
     texts = [t[:_MAX_TEXT_CHARS] if len(t) > _MAX_TEXT_CHARS else t for t in texts]
@@ -362,34 +451,9 @@ def _encode_texts_sync(
     model = _encoder.get_model()
 
     try:
-        # For small requests, encode directly
-        if len(texts) <= batch_size:
-            result = model.encode(
-                texts,
-                convert_to_numpy=True,
-                normalize_embeddings=normalize,
-                batch_size=batch_size,
-                show_progress_bar=False,
-            )
-            return result
-
-        # For larger requests, encode in sub-batches with cache release
-        results = []
-        for i in range(0, len(texts), batch_size):
-            batch = texts[i : i + batch_size]
-            embeddings = model.encode(
-                batch,
-                convert_to_numpy=True,
-                normalize_embeddings=normalize,
-                batch_size=batch_size,
-                show_progress_bar=False,
-            )
-            results.append(embeddings)
-            _release_gpu_cache()
-
-        return np.vstack(results)
+        return _encode_batch_safe(model, texts, normalize, batch_size)
     finally:
-        # Always release GPU cache — critical on error paths (CUDA OOM)
+        # Always release GPU cache — critical on error paths
         # where partial allocations remain in PyTorch's caching allocator.
         _release_gpu_cache()
 
