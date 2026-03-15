@@ -42,6 +42,7 @@ from imas_codex.discovery.base.progress import (
     build_resource_section,
     clean_text,
     clip_text,
+    compute_projected_etc,
     format_time,
 )
 from imas_codex.discovery.base.supervision import WorkerState
@@ -392,9 +393,10 @@ class ProgressState:
 
         For limit-based runs (cost or page limit), estimate time to hit limit.
         For unconstrained runs, estimate from the slowest worker group:
-        the terminal time is max(score_eta, ingest_eta, document_score_eta,
-        document_ingest_eta) since workers run in parallel.
+        the terminal time is max of all worker ETAs since they run in parallel.
         """
+        from imas_codex.discovery.base.progress import compute_parallel_eta
+
         # Priority 1: Cost limit - time to exhaust budget
         if self.run_cost > 0 and self.cost_limit > 0:
             cost_rate = self.run_cost / self.elapsed if self.elapsed > 0 else 0
@@ -411,43 +413,13 @@ class ProgressState:
                 return max(0, remaining / rate) if rate > 0 else None
 
         # Priority 3: Work-based ETA from slowest worker group
-        # Each worker group has its own remaining work and processing rate.
-        # Terminal time = max of all worker ETAs (parallel pipeline).
-        worker_etas: list[float] = []
-
-        # Page scoring ETA
-        if self.pending_score > 0 and self.score_rate and self.score_rate > 0:
-            worker_etas.append(self.pending_score / self.score_rate)
-
-        # Page ingestion ETA (scored pages above threshold)
-        if self.pending_ingest > 0 and self.ingest_rate and self.ingest_rate > 0:
-            worker_etas.append(self.pending_ingest / self.ingest_rate)
-
-        # Document scoring ETA
-        if (
-            self.pending_document_score > 0
-            and self.document_score_rate
-            and self.document_score_rate > 0
-        ):
-            worker_etas.append(self.pending_document_score / self.document_score_rate)
-
-        # Document ingestion ETA
-        if self.pending_document_ingest > 0 and self.docs_rate and self.docs_rate > 0:
-            worker_etas.append(self.pending_document_ingest / self.docs_rate)
-
-        # Image scoring ETA
-        if (
-            self.pending_image_score > 0
-            and self.image_score_rate
-            and self.image_score_rate > 0
-        ):
-            worker_etas.append(self.pending_image_score / self.image_score_rate)
-
-        if worker_etas:
-            return max(worker_etas)
-
-        # No rate data yet - can't estimate
-        return None
+        return compute_parallel_eta([
+            (self.pending_score, self.score_rate),
+            (self.pending_ingest, self.ingest_rate),
+            (self.pending_document_score, self.document_score_rate),
+            (self.pending_document_ingest, self.docs_rate),
+            (self.pending_image_score, self.image_score_rate),
+        ])
 
 
 # =============================================================================
@@ -1000,19 +972,13 @@ class WikiProgressDisplay(BaseProgressDisplay):
 
     def _build_resources_section(self) -> Text:
         """Build the resource consumption gauges using unified builder."""
-        # Compute ETC — accumulated_cost from graph is source of truth
-        # (already includes current-session costs after graph refresh)
+        # Compute ETC — sum of per-worker cost projections
         total_facility_cost = self.state.accumulated_cost
-        etc = total_facility_cost
-        cpp = self.state.cost_per_page
-        if cpp and cpp > 0 and self.state.pending_score > 0:
-            etc += self.state.pending_score * cpp
-        cpa = self.state.cost_per_document_score
-        if cpa and cpa > 0 and self.state.pending_document_score > 0:
-            etc += self.state.pending_document_score * cpa
-        cpi = self.state.cost_per_image_score
-        if cpi and cpi > 0 and self.state.pending_image_score > 0:
-            etc += self.state.pending_image_score * cpi
+        etc = compute_projected_etc(total_facility_cost, [
+            (self.state.pending_score, self.state.cost_per_page),
+            (self.state.pending_document_score, self.state.cost_per_document_score),
+            (self.state.pending_image_score, self.state.cost_per_image_score),
+        ])
 
         # Build stats — show pipeline outcome counts.
         # The SCORE progress bar already shows total scored, so STATS
@@ -1057,7 +1023,7 @@ class WikiProgressDisplay(BaseProgressDisplay):
             run_cost=self.state.run_cost,
             cost_limit=self.state.cost_limit,
             accumulated_cost=self.state.accumulated_cost,
-            etc=etc if etc > total_facility_cost else None,
+            etc=etc,
             scan_only=self.state.scan_only,
             limit_reason=limit_reason,
             stats=stats,

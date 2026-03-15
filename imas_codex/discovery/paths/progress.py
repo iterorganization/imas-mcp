@@ -29,6 +29,7 @@ from imas_codex.discovery.base.progress import (
     build_pipeline_section,
     build_resource_section,
     clean_text,
+    compute_projected_etc,
 )
 
 if TYPE_CHECKING:
@@ -317,6 +318,8 @@ class ProgressState:
         3. Full work: max of all worker ETAs (parallel pipeline)
            Terminal time = slowest worker group since they run concurrently.
         """
+        from imas_codex.discovery.base.progress import compute_parallel_eta
+
         # Try cost-based ETA first (if we have cost data)
         if self.run_cost > 0 and self.cost_limit > 0:
             cost_rate = self.run_cost / self.elapsed if self.elapsed > 0 else 0
@@ -333,37 +336,14 @@ class ProgressState:
                 return max(0, remaining / rate) if rate > 0 else None
 
         # Fall back to work-based ETA from slowest worker group.
-        # Each worker group has its own remaining work and processing rate.
         # Terminal time = max of all worker ETAs (parallel pipeline).
-        worker_etas: list[float] = []
-
-        # Scan + expand pipeline: pending_scan paths at combined scan+expand rate
-        combined_scan_rate = sum(r for r in [self.scan_rate, self.expand_rate] if r)
-        if self.pending_scan > 0 and combined_scan_rate > 0:
-            worker_etas.append(self.pending_scan / combined_scan_rate)
-
-        # Score pipeline: pending_triage paths at combined triage+score rate
-        combined_triage_rate = sum(r for r in [self.triage_rate, self.score_rate] if r)
-        if self.pending_triage > 0 and combined_triage_rate > 0:
-            worker_etas.append(self.pending_triage / combined_triage_rate)
-
-        # Expand pipeline: pending_expand at expand rate
-        if self.pending_expand > 0 and self.expand_rate and self.expand_rate > 0:
-            worker_etas.append(self.pending_expand / self.expand_rate)
-
-        # Enrich pipeline: pending_enrich at enrich rate
-        if self.pending_enrich > 0 and self.enrich_rate and self.enrich_rate > 0:
-            worker_etas.append(self.pending_enrich / self.enrich_rate)
-
-        # Score pipeline: pending_score at score rate
-        if self.pending_score > 0 and self.score_rate and self.score_rate > 0:
-            worker_etas.append(self.pending_score / self.score_rate)
-
-        if worker_etas:
-            return max(worker_etas)
-
-        # No rate data yet - can't estimate
-        return None
+        return compute_parallel_eta([
+            (self.pending_scan, self.scan_rate),
+            (self.pending_triage, self.triage_rate),
+            (self.pending_expand, self.expand_rate),
+            (self.pending_enrich, self.enrich_rate),
+            (self.pending_score, self.score_rate),
+        ])
 
 
 # ============================================================================
@@ -742,17 +722,18 @@ class ParallelProgressDisplay(BaseProgressDisplay):
 
     def _build_resources_section(self) -> Text:
         """Build the resource consumption gauges using unified builder."""
-        # Compute ETC — accumulated_cost from graph is source of truth
-        # (already includes current-session costs after graph refresh)
+        # Compute ETC — sum of per-worker cost projections
         total_facility_cost = self.state.accumulated_cost
-        etc = total_facility_cost
-        cpp = self.state.cost_per_path
-        if cpp and cpp > 0:
-            pending = self.state.pending_scan + self.state.pending_triage
-            etc += pending * cpp
-        if self.state.run_scored > 0 and self.state._run_score_cost > 0:
-            cost_per_score = self.state._run_score_cost / self.state.run_scored
-            etc += self.state.pending_score * cost_per_score
+        cost_per_score = (
+            self.state._run_score_cost / self.state.run_scored
+            if self.state.run_scored > 0 and self.state._run_score_cost > 0
+            else None
+        )
+        etc = compute_projected_etc(total_facility_cost, [
+            (self.state.pending_scan + self.state.pending_triage,
+             self.state.cost_per_path),
+            (self.state.pending_score, cost_per_score),
+        ])
 
         # Build stats
         stats: list[tuple[str, str, str]] = [
@@ -772,7 +753,7 @@ class ParallelProgressDisplay(BaseProgressDisplay):
             run_cost=self.state.run_cost,
             cost_limit=self.state.cost_limit,
             accumulated_cost=self.state.accumulated_cost,
-            etc=etc if etc > total_facility_cost else None,
+            etc=etc,
             scan_only=self.state.scan_only,
             limit_reason=self.state.limit_reason,
             stats=stats + extra_stats,
