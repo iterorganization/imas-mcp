@@ -167,9 +167,7 @@ async def extract_worker(state: DDBuildState, **_kwargs) -> None:
             try:
                 with GraphClient() as client:
                     if _check_build_nodes_exist(client, build_hash, state.versions):
-                        wlog.info(
-                            "Build nodes already exist — skipping XML extraction"
-                        )
+                        wlog.info("Build nodes already exist — skipping XML extraction")
                         _on_progress(len(state.versions), len(state.versions))
                         return
             except Exception:
@@ -236,7 +234,6 @@ async def build_worker(state: DDBuildState, **_kwargs) -> None:
             return
 
         with GraphClient() as client:
-
             if not state.dry_run and not state.skip_build_hash:
                 # Full check: everything including embeddings + clusters
                 if _check_graph_up_to_date(
@@ -620,7 +617,10 @@ async def _enrich_batch(
                 f"{ctx['id']}:{ctx.get('documentation', '')}:{ctx.get('siblings', [])}"
             )
             expected_hash = compute_enrichment_hash(ctx_str, model)
-            if state.reset_to != "built" and ctx.get("enrichment_hash") == expected_hash:
+            if (
+                state.reset_to != "built"
+                and ctx.get("enrichment_hash") == expected_hash
+            ):
                 # Hash matches — content unchanged. Still need to mark as
                 # enriched so the node advances from built → enriched.
                 hash_match_updates.append({"id": ctx["id"]})
@@ -706,7 +706,6 @@ async def _embed_batch(
     """
     from imas_codex.graph.build_dd import (
         compute_embedding_hash,
-        filter_embeddable_paths,
         generate_embedding_text,
         generate_embeddings_batch,
     )
@@ -720,21 +719,16 @@ async def _embed_batch(
         pid = r["id"]
         paths_data[pid] = {k: v for k, v in r.items() if v is not None}
 
-    # Filter to embeddable paths (excludes STRUCTURE, error fields, etc.)
-    embeddable, _ = filter_embeddable_paths(paths_data)
-    if not embeddable:
-        return []
-
-    # Generate embedding text and hashes
+    # Generate embedding text and hashes for all paths
     embedding_texts = {}
     content_hashes = {}
-    for path_id, path_info in embeddable.items():
+    for path_id, path_info in paths_data.items():
         text = generate_embedding_text(path_id, path_info, {})
         embedding_texts[path_id] = text
         content_hashes[path_id] = compute_embedding_hash(text, resolved_model)
 
     # Skip paths where hash hasn't changed (already embedded correctly)
-    path_ids = list(embeddable.keys())
+    path_ids = list(paths_data.keys())
     paths_to_embed = []
     for pid in path_ids:
         existing_hash = paths_data[pid].get("embedding_hash")
@@ -819,7 +813,7 @@ async def run_dd_build_engine(
         )
     )
     state.embed_phase.set_has_work_fn(
-        lambda: (dd_graph_ops.has_pending_embedding() or not state.enrich_phase.done)
+        lambda: dd_graph_ops.has_pending_embedding() or not state.enrich_phase.done
     )
 
     workers = [

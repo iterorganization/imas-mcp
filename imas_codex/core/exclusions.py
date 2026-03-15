@@ -34,9 +34,7 @@ class ExclusionChecker:
 
     include_ggd: bool = field(default_factory=get_include_ggd)
     include_error_fields: bool = field(default_factory=get_include_error_fields)
-    excluded_patterns: set[str] = field(
-        default_factory=lambda: {"ids_properties", "code"}
-    )
+    excluded_patterns: set[str] = field(default_factory=set)
 
     def get_exclusion_reason(self, path: str) -> str | None:
         """

@@ -367,21 +367,20 @@ class TestElementFiltering:
 
         assert should_skip is True
 
-    def test_should_skip_excluded_patterns(self, transformer):
-        """Test excluded patterns are skipped."""
+    def test_should_not_skip_metadata_by_default(self, transformer):
+        """Test that ids_properties paths are NOT skipped with default config."""
         root = transformer._root
         ids_elem = root.find(".//IDS[@name='equilibrium']")
 
-        # Create element with excluded pattern name
+        # Create element with metadata pattern name
         elem = ET.SubElement(ids_elem, "field")
         elem.set("name", "ids_properties")
 
+        # Default: excluded_patterns is empty, so nothing is skipped
         should_skip = transformer._should_skip_element(
             elem, ids_elem, transformer._global_parent_map
         )
-
-        # ids_properties should be excluded
-        assert should_skip is True
+        assert should_skip is False
 
 
 class TestIdsDataExtraction:
@@ -678,6 +677,5 @@ class TestExclusionChecker:
         assert transformer._exclusion_checker is not None
 
     def test_default_excluded_patterns(self, transformer):
-        """Test default excluded patterns."""
-        assert "ids_properties" in transformer.excluded_patterns
-        assert "code" in transformer.excluded_patterns
+        """Test default excluded patterns — empty (all paths included)."""
+        assert len(transformer.excluded_patterns) == 0
