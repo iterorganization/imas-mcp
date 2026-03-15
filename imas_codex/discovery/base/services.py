@@ -807,7 +807,7 @@ def create_service_monitor(
 
     - ``graph``: Neo4j connectivity
     - ``embed``: Embedding server health
-    - ``models``: LLM service health (LiteLLM proxy)
+    - ``llm``: LLM service health (LiteLLM proxy)
     - ``ssh``: SSH connectivity to remote host (critical — workers pause)
     - ``auth``: Wiki page reachability via HTTP (critical — workers pause)
 
@@ -848,7 +848,7 @@ def create_service_monitor(
 
     if check_model:
         monitor.add_check(
-            "models",
+            "llm",
             lambda sec=model_section: llm_health_check(sec),
             poll_interval=60.0,  # LLM APIs are generally stable
             critical=False,  # Workers have their own retry logic
