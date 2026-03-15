@@ -30,6 +30,7 @@ from imas_codex.discovery.base.progress import (
     build_resource_section,
     clean_text,
     compute_projected_etc,
+    format_count,
 )
 
 if TYPE_CHECKING:
@@ -534,7 +535,7 @@ class ParallelProgressDisplay(BaseProgressDisplay):
                     size_str = f"{enrich.total_bytes}B"
                 desc_parts = [size_str]
                 if enrich.total_lines > 0:
-                    desc_parts.append(f"{enrich.total_lines:,} LOC")
+                    desc_parts.append(f"{format_count(enrich.total_lines)} LOC")
                 if enrich.languages:
                     desc_parts.append(f"[{', '.join(enrich.languages[:3])}]")
                 if enrich.pattern_categories:

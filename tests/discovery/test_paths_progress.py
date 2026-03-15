@@ -368,7 +368,7 @@ class TestParallelProgressDisplay:
         text = section.plain
         assert "analysis" in text
         assert "1.5MB" in text
-        assert "5,000 LOC" in text
+        assert "5.0K LOC" in text
         assert "Python" in text
 
     def test_pipeline_shows_enrich_error(self):

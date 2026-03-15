@@ -38,6 +38,7 @@ from imas_codex.discovery.base.progress import (
     build_resource_section,
     clean_text,
     compute_projected_etc,
+    format_count,
     format_time,
 )
 
@@ -440,7 +441,7 @@ class FileProgressDisplay(BaseProgressDisplay):
                 enrich_score_parts = [(f"{enrich.triage_composite:.2f}", "bold green")]
             desc_parts = []
             if enrich.line_count > 0:
-                desc_parts.append(f"{enrich.line_count:,} LOC")
+                desc_parts.append(f"{format_count(enrich.line_count)} LOC")
             if enrich.pattern_categories:
                 cat_strs = [
                     f"{cat}:{count}"
@@ -1076,14 +1077,14 @@ class FileProgressDisplay(BaseProgressDisplay):
 
         # SCAN stats
         summary.append("  SCAN     ", style="bold blue")
-        summary.append(f"scanned={self.state.run_scanned:,}", style="blue")
+        summary.append(f"scanned={format_count(self.state.run_scanned)}", style="blue")
         if self.state.scan_rate:
             summary.append(f"  {self.state.scan_rate:.1f}/s", style="dim")
         summary.append("\n")
 
         # TRIAGE stats
         summary.append("  TRIAGE   ", style="bold green")
-        summary.append(f"triaged={self.state.run_triaged:,}", style="green")
+        summary.append(f"triaged={format_count(self.state.run_triaged)}", style="green")
         if self.state._run_triage_cost > 0:
             summary.append(f"  cost=${self.state._run_triage_cost:.3f}", style="yellow")
         if self.state.triage_rate:
@@ -1092,16 +1093,16 @@ class FileProgressDisplay(BaseProgressDisplay):
 
         # ENRICH stats
         summary.append("  ENRICH   ", style="bold magenta")
-        summary.append(f"enriched={self.state.run_enriched:,}", style="magenta")
+        summary.append(f"enriched={format_count(self.state.run_enriched)}", style="magenta")
         if self.state.enrich_rate:
             summary.append(f"  {self.state.enrich_rate:.1f}/s", style="dim")
         summary.append("\n")
 
         # SCORE stats
         summary.append("  SCORE    ", style="bold cyan")
-        summary.append(f"scored={self.state.run_scored:,}", style="cyan")
+        summary.append(f"scored={format_count(self.state.run_scored)}", style="cyan")
         if self.state.run_skipped > 0:
-            summary.append(f"  skipped={self.state.run_skipped:,}", style="yellow")
+            summary.append(f"  skipped={format_count(self.state.run_skipped)}", style="yellow")
         summary.append(f"  cost=${self.state._run_score_cost:.3f}", style="yellow")
         if self.state.score_rate:
             summary.append(f"  {self.state.score_rate:.1f}/s", style="dim")
@@ -1109,7 +1110,7 @@ class FileProgressDisplay(BaseProgressDisplay):
 
         # INGEST stats
         summary.append("  INGEST   ", style="bold yellow")
-        summary.append(f"code={self.state.run_code_ingested:,}", style="yellow")
+        summary.append(f"code={format_count(self.state.run_code_ingested)}", style="yellow")
         ingest_rate = self.state.ingest_rate
         if ingest_rate:
             summary.append(f"  {ingest_rate:.1f}/s", style="dim")
@@ -1118,11 +1119,11 @@ class FileProgressDisplay(BaseProgressDisplay):
         # EMBED stats
         summary.append("  EMBED    ", style="bold white")
         summary.append(
-            f"embedded={self.state.run_embedded:,}", style="white"
+            f"embedded={format_count(self.state.run_embedded)}", style="white"
         )
         if self.state.pending_embed > 0:
             summary.append(
-                f"  pending={self.state.pending_embed:,}", style="yellow"
+                f"  pending={format_count(self.state.pending_embed)}", style="yellow"
             )
         if self.state.embed_rate:
             summary.append(f"  {self.state.embed_rate:.1f}/s", style="dim")

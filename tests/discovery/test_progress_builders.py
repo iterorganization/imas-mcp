@@ -20,8 +20,53 @@ from imas_codex.discovery.base.progress import (
     build_pipeline_section,
     build_resource_section,
     build_servers_section,
+    format_count,
     format_rate,
 )
+
+# =============================================================================
+# format_count
+# =============================================================================
+
+
+class TestFormatCount:
+    """Tests for compact count formatting."""
+
+    def test_small_number(self):
+        assert format_count(42) == "42"
+
+    def test_hundreds(self):
+        assert format_count(999) == "999"
+
+    def test_low_thousands(self):
+        assert format_count(1_500) == "1.5K"
+
+    def test_high_thousands(self):
+        assert format_count(61_474) == "61.5K"
+
+    def test_exact_thousand_boundary(self):
+        """10K boundary drops .0 for cleaner display."""
+        assert format_count(10_000) == "10K"
+
+    def test_exact_thousand(self):
+        assert format_count(1_000) == "1.0K"
+
+    def test_millions(self):
+        assert format_count(1_130_319) == "1.1M"
+
+    def test_exact_million(self):
+        assert format_count(1_000_000) == "1M"
+
+    def test_large_millions(self):
+        assert format_count(2_500_000) == "2.5M"
+
+    def test_zero(self):
+        assert format_count(0) == "0"
+
+    def test_boundary_9999(self):
+        """9999 is below 10K threshold, uses .1f format."""
+        assert format_count(9_999) == "10.0K"
+
 
 # =============================================================================
 # format_rate
