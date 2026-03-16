@@ -185,32 +185,6 @@ class TestProgressStateProperties:
 class TestProgressStateEta:
     """Tests for ProgressState.eta_seconds computation."""
 
-    def test_eta_from_cost_limit(self):
-        """Cost-limited run should estimate time to exhaust budget."""
-        state = ProgressState(
-            facility="tcv",
-            cost_limit=1.0,
-            _run_score_cost=0.50,
-        )
-        # Force elapsed to 60 seconds
-        state.start_time = time.time() - 60
-        eta = state.eta_seconds
-        assert eta is not None
-        assert eta > 0  # Should have remaining budget time
-
-    def test_eta_from_page_limit(self):
-        """Page-limited run should estimate time to reach limit."""
-        state = ProgressState(
-            facility="tcv",
-            cost_limit=0.0,  # No cost limit
-            page_limit=100,
-            run_scored=50,
-        )
-        state.start_time = time.time() - 100
-        eta = state.eta_seconds
-        assert eta is not None
-        assert eta > 0
-
     def test_eta_from_pending_work(self):
         """Work-based ETA should use slowest worker group."""
         state = ProgressState(
@@ -234,6 +208,35 @@ class TestProgressStateEta:
             cost_limit=0.0,
         )
         assert state.eta_seconds is None
+
+    def test_eta_ignores_cost_limit(self):
+        """ETA reflects work remaining, not cost budget."""
+        state = ProgressState(
+            facility="tcv",
+            cost_limit=1.0,
+            _run_score_cost=0.50,
+            pending_score=100,
+            score_rate=10.0,  # 100/10 = 10s work ETA
+        )
+        state.start_time = time.time() - 60
+        eta = state.eta_seconds
+        assert eta is not None
+        assert eta == pytest.approx(10.0)
+
+    def test_eta_ignores_page_limit(self):
+        """ETA reflects work remaining, not page limit."""
+        state = ProgressState(
+            facility="tcv",
+            cost_limit=0.0,
+            page_limit=50,
+            run_scored=25,
+            pending_ingest=200,
+            ingest_rate=5.0,  # 200/5 = 40s work ETA
+        )
+        state.start_time = time.time() - 100
+        eta = state.eta_seconds
+        assert eta is not None
+        assert eta == pytest.approx(40.0)
 
 
 # =============================================================================

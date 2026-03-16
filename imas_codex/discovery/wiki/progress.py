@@ -391,36 +391,28 @@ class ProgressState:
 
     @property
     def eta_seconds(self) -> float | None:
-        """Estimated time to termination based on limits.
+        """Estimated time to complete all pending work.
 
-        For limit-based runs (cost or page limit), estimate time to hit limit.
-        For unconstrained runs, estimate from the slowest worker group:
-        the terminal time is max of all worker ETAs since they run in parallel.
+        Pure work-based ETA: max across parallel worker groups
+        (bounded by the slowest pipeline).  Cost and page limits
+        are stop conditions, not ETA inputs.
+
+        Uses session-average rates (aggregate across concurrent workers)
+        to avoid per-worker EMA undercount.
         """
         from imas_codex.discovery.base.progress import compute_parallel_eta
 
-        # Priority 1: Cost limit - time to exhaust budget
-        if self.run_cost > 0 and self.cost_limit > 0:
-            cost_rate = self.run_cost / self.elapsed if self.elapsed > 0 else 0
-            if cost_rate > 0:
-                remaining_budget = self.cost_limit - self.run_cost
-                return max(0, remaining_budget / cost_rate)
+        def _agg(count: int, fallback: float | None) -> float | None:
+            if count > 0 and self.elapsed > 5:
+                return count / self.elapsed
+            return fallback
 
-        # Priority 2: Page limit
-        if self.page_limit is not None and self.page_limit > 0:
-            total_scored = self.total_run_scored
-            if total_scored > 0 and self.elapsed > 0:
-                rate = total_scored / self.elapsed
-                remaining = self.page_limit - total_scored
-                return max(0, remaining / rate) if rate > 0 else None
-
-        # Priority 3: Work-based ETA from slowest worker group
         return compute_parallel_eta([
-            (self.pending_score, self.score_rate),
-            (self.pending_ingest, self.ingest_rate),
-            (self.pending_document_score, self.document_score_rate),
-            (self.pending_document_ingest, self.docs_rate),
-            (self.pending_image_score, self.image_score_rate),
+            (self.pending_score, _agg(self.run_scored, self.score_rate)),
+            (self.pending_ingest, _agg(self.run_ingested, self.ingest_rate)),
+            (self.pending_document_score, _agg(self.run_docs_scored, self.document_score_rate)),
+            (self.pending_document_ingest, _agg(self.run_docs, self.docs_rate)),
+            (self.pending_image_score, _agg(self.run_images_scored, self.image_score_rate)),
         ])
 
 

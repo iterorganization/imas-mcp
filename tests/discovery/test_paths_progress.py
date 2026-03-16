@@ -153,25 +153,42 @@ class TestProgressStateProperties:
         state = self._state()
         assert state.eta_seconds is None
 
-    def test_eta_seconds_cost_based(self):
-        """ETA uses cost-based estimate when cost data available."""
-        state = self._state(cost_limit=10.0, _run_triage_cost=5.0)
-        # Force elapsed
-        state.start_time = time.time() - 100  # 100s elapsed, 5.0 spent
-        eta = state.eta_seconds
-        assert eta is not None
-        assert eta > 0  # Should be ~100s remaining
-
     def test_eta_seconds_work_based(self):
-        """ETA uses work-based estimate when rates available."""
+        """ETA uses work-based estimate from pending / rate."""
         state = self._state(
-            cost_limit=0.0,  # No cost limit
+            cost_limit=0.0,
             pending_scan=100,
             scan_rate=10.0,  # 10 paths/s
         )
         eta = state.eta_seconds
         assert eta is not None
         assert abs(eta - 10.0) < 1e-6  # 100/10 = 10s
+
+    def test_eta_ignores_cost_limit(self):
+        """ETA reflects work remaining, not cost budget."""
+        state = self._state(
+            cost_limit=2.0,  # Tight budget
+            _run_triage_cost=1.5,  # 75% spent
+            pending_score=100,
+            score_rate=10.0,  # 100/10 = 10s work ETA
+        )
+        state.start_time = time.time() - 100
+        eta = state.eta_seconds
+        assert eta is not None
+        # Should reflect work (10s), not cost budget (~33s)
+        assert eta == pytest.approx(10.0)
+
+    def test_eta_ignores_path_limit(self):
+        """ETA reflects work remaining, not path limit."""
+        state = self._state(
+            cost_limit=0.0,
+            path_limit=50,
+            pending_score=200,
+            score_rate=10.0,  # 200/10 = 20s work ETA
+        )
+        eta = state.eta_seconds
+        assert eta is not None
+        assert eta == pytest.approx(20.0)
 
 
 # =============================================================================
