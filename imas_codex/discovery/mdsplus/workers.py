@@ -75,6 +75,7 @@ async def extract_worker(
 
         state.extract_phase.record_activity(1)
         version = claimed["version"]
+        extraction_shot = claimed.get("first_shot") or version
         version_id = claimed["id"]
 
         if on_progress:
@@ -90,13 +91,13 @@ async def extract_worker(
             data = await async_extract_tree_version(
                 facility=state.facility,
                 data_source_name=state.data_source_name,
-                shot=version,
+                shot=extraction_shot,
                 timeout=state.timeout,
                 node_usages=node_usages,
             )
             ssh_retry_count = 0  # Reset on success
 
-            ver_data = data.get("versions", {}).get(str(version), {})
+            ver_data = data.get("versions", {}).get(str(extraction_shot), {})
             if "error" in ver_data:
                 logger.warning(
                     "Extraction returned error for v%d: %s",
@@ -202,6 +203,7 @@ async def units_worker(
     from imas_codex.mdsplus.extraction import async_extract_units_for_version
 
     from .graph_ops import (
+        get_latest_ingested_epoch_target,
         has_pending_units_work,
         mark_all_versions_units_extracted,
         merge_units_to_graph,
@@ -230,12 +232,11 @@ async def units_worker(
         state.units_phase.mark_done()
         return
 
-    # Find the latest version from config
-    ver_configs = state.tree_config.get("versions", [])
-    if ver_configs:
-        latest_version = max(v["version"] for v in ver_configs)
-    else:
-        latest_version = 1
+    latest_epoch = await asyncio.to_thread(
+        get_latest_ingested_epoch_target, state.facility, state.data_source_name
+    )
+    latest_version = latest_epoch["latest_version"] if latest_epoch else 1
+    latest_shot = latest_epoch["latest_shot"] if latest_epoch else latest_version
 
     if on_progress:
         on_progress(
@@ -269,7 +270,7 @@ async def units_worker(
         units = await async_extract_units_for_version(
             state.facility,
             state.data_source_name,
-            latest_version,
+            latest_shot,
             timeout=state.timeout,
             batch_size=units_batch_size,
             on_progress=_on_ssh_progress,
