@@ -275,7 +275,7 @@ class TestExportNodeCategoryFilter:
 
     @pytest.mark.asyncio
     async def test_export_ids_filters_data_only(self):
-        """export_imas_ids Cypher must include node_category = 'data'."""
+        """export_imas_ids default must filter to data nodes only."""
         gc = MagicMock()
         gc.query.return_value = []
         tool = GraphStructureTool(gc)
@@ -283,11 +283,11 @@ class TestExportNodeCategoryFilter:
         await tool.export_imas_ids("equilibrium")
 
         cypher = gc.query.call_args[0][0]
-        assert "node_category = 'data'" in cypher
-
-    @pytest.mark.asyncio
+        assert "node_category IN $categories" in cypher
+        kwargs = gc.query.call_args[1]
+        assert kwargs["categories"] == ["data"]
     async def test_export_domain_filters_data_only(self):
-        """export_imas_domain Cypher must include node_category = 'data'."""
+        """export_imas_domain default must filter to data nodes only."""
         gc = MagicMock()
         # _resolve_physics_domain tries: exact enum match first, then IDS query.
         # Mock IDS lookup to return a valid domain.
@@ -302,9 +302,9 @@ class TestExportNodeCategoryFilter:
 
         # The export query is the last call
         export_cypher = gc.query.call_args_list[-1][0][0]
-        assert "node_category = 'data'" in export_cypher
-
-    @pytest.mark.asyncio
+        assert "node_category IN $categories" in export_cypher
+        kwargs = gc.query.call_args_list[-1][1]
+        assert kwargs["categories"] == ["data"]
     async def test_export_ids_with_dd_version(self):
         """export_imas_ids with dd_version must filter both."""
         gc = MagicMock()
@@ -314,10 +314,51 @@ class TestExportNodeCategoryFilter:
         await tool.export_imas_ids("equilibrium", dd_version=4)
 
         cypher = gc.query.call_args[0][0]
-        assert "node_category = 'data'" in cypher
+        assert "node_category" in cypher
         assert "INTRODUCED_IN" in cypher
         kwargs = gc.query.call_args[1]
         assert kwargs["dd_version"] == 4
+
+    @pytest.mark.asyncio
+    async def test_export_ids_include_errors(self):
+        """export_imas_ids with include_errors=True must include error nodes."""
+        gc = MagicMock()
+        gc.query.return_value = []
+        tool = GraphStructureTool(gc)
+
+        await tool.export_imas_ids("equilibrium", include_errors=True)
+
+        kwargs = gc.query.call_args[1]
+        assert "data" in kwargs["categories"]
+        assert "error" in kwargs["categories"]
+
+    @pytest.mark.asyncio
+    async def test_export_ids_default_excludes_errors(self):
+        """export_imas_ids default must exclude error nodes."""
+        gc = MagicMock()
+        gc.query.return_value = []
+        tool = GraphStructureTool(gc)
+
+        await tool.export_imas_ids("equilibrium")
+
+        kwargs = gc.query.call_args[1]
+        assert kwargs["categories"] == ["data"]
+
+    @pytest.mark.asyncio
+    async def test_export_domain_include_errors(self):
+        """export_imas_domain with include_errors=True must include error nodes."""
+        gc = MagicMock()
+        gc.query.side_effect = [
+            [{"domain": "equilibrium"}],  # IDS name resolution
+            [],  # export results
+        ]
+        tool = GraphStructureTool(gc)
+
+        await tool.export_imas_domain("equilibrium", include_errors=True)
+
+        kwargs = gc.query.call_args_list[-1][1]
+        assert "data" in kwargs["categories"]
+        assert "error" in kwargs["categories"]
 
 
 # ============================================================================
