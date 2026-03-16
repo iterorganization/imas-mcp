@@ -366,6 +366,12 @@ async def enrich_worker(state: DDBuildState, **_kwargs) -> None:
         )
 
         if not paths:
+            if not state.aux_enrichment_done:
+                state.enrich_stats.status_text = "IDS/identifier"
+                await _run_aux_enrichment(state)
+                state.enrich_stats.status_text = ""
+                continue
+
             state.enrich_phase.record_idle()
             if state.enrich_phase.done:
                 break
@@ -491,6 +497,12 @@ async def embed_worker(state: DDBuildState, **_kwargs) -> None:
         )
 
         if not paths:
+            if state.enrich_phase.done and not state.aux_embedding_done:
+                state.embed_stats.status_text = "IDS/identifier"
+                await _run_aux_embedding(state)
+                state.embed_stats.status_text = ""
+                continue
+
             state.embed_phase.record_idle()
             if state.embed_phase.done:
                 break
