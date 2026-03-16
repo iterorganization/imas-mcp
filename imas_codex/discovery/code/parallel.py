@@ -251,7 +251,10 @@ async def run_parallel_code_discovery(
             "enrich_phase",
             embed_description_worker,
             group="embed",
-            kwargs={"labels": ["CodeExample"]},
+            kwargs={
+                "labels": ["CodeExample"],
+                "done_check": lambda: state.enrich_phase.done,
+            },
         )
     )
 
@@ -269,7 +272,10 @@ async def run_parallel_code_discovery(
             group="embed",
             count=2,
             on_progress=on_embed_progress,
-            kwargs={"labels": ["CodeChunk"]},
+            kwargs={
+                "labels": ["CodeChunk"],
+                "done_check": lambda: state.code_phase.done,
+            },
         )
     )
 

@@ -4925,7 +4925,10 @@ async def run_parallel_data_discovery(
             "enrich_phase",  # embed lifecycle follows enrich
             embed_description_worker,
             group="embed",
-            kwargs={"labels": ["FacilitySignal"]},
+            kwargs={
+                "labels": ["FacilitySignal"],
+                "done_check": lambda: state.enrich_phase.done,
+            },
         )
     )
 

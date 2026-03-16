@@ -406,12 +406,14 @@ async def embed_description_worker(
     on_progress: Callable | None = None,
     min_score: float | None = None,
     score_joins: dict[str, str] | None = None,
+    done_check: Callable[[], bool] | None = None,
 ) -> None:
     """Async worker that continuously embeds descriptions for specified labels.
 
     Polls the graph for nodes with descriptions but no embeddings,
     embeds them in batches, and persists the results. Runs until
-    the parent state signals stop.
+    the parent state signals stop or ``done_check`` returns True
+    while the worker is idle.
 
     The worker processes labels round-robin to distribute embedding
     work evenly across node types.
@@ -428,6 +430,10 @@ async def embed_description_worker(
             ``state.min_score`` when available.
         score_joins: Per-label Cypher traversal fragments for score
             filtering (defaults to built-in ``_SCORE_JOINS``).
+        done_check: Optional callable returning True when the worker
+            should exit (e.g. ``lambda: state.enrich_phase.done``).
+            Checked when idle — allows embed workers to terminate
+            when their upstream phase has completed.
     """
     from imas_codex.discovery.base.progress import WorkerStats
 
@@ -537,6 +543,13 @@ async def embed_description_worker(
         if total_fetched == 0:
             idle_count += 1
             error_count = 0
+            # Exit when idle and phase is done (no more upstream work coming)
+            if done_check is not None and idle_count >= 3 and done_check():
+                logger.info(
+                    "embed_worker %s: phase done and idle — exiting",
+                    worker_id,
+                )
+                break
             if on_progress and idle_count <= 3:
                 on_progress("idle", stats)
             await asyncio.sleep(min(IDLE_SLEEP * idle_count, 15.0))
@@ -577,6 +590,7 @@ async def embed_text_worker(
     on_progress: Callable | None = None,
     min_score: float | None = None,
     score_joins: dict[str, str] | None = None,
+    done_check: Callable[[], bool] | None = None,
 ) -> None:
     """Async worker that embeds the ``text`` field of chunk nodes.
 
@@ -597,6 +611,8 @@ async def embed_text_worker(
             ``state.min_score`` when available.
         score_joins: Per-label Cypher traversal fragments for score
             filtering (defaults to built-in ``_SCORE_JOINS``).
+        done_check: Optional callable returning True when the worker
+            should exit (e.g. ``lambda: state.code_phase.done``).
     """
     from imas_codex.discovery.base.progress import WorkerStats
 
@@ -683,6 +699,13 @@ async def embed_text_worker(
         if total_fetched == 0:
             idle_count += 1
             error_count = 0
+            # Exit when idle and phase is done (no more upstream work coming)
+            if done_check is not None and idle_count >= 3 and done_check():
+                logger.info(
+                    "embed_text_worker %s: phase done and idle — exiting",
+                    worker_id,
+                )
+                break
             if on_progress and idle_count <= 3:
                 on_progress("idle", stats)
             await asyncio.sleep(min(IDLE_SLEEP * idle_count, 15.0))

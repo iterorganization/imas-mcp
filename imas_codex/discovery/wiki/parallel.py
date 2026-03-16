@@ -734,7 +734,10 @@ async def run_parallel_wiki_discovery(
                 "ingest_phase",  # embed lifecycle follows ingest
                 embed_description_worker,
                 group="pages",
-                kwargs={"labels": ["WikiPage", "Document", "Image"]},
+                kwargs={
+                    "labels": ["WikiPage", "Document", "Image"],
+                    "done_check": lambda: state.ingest_phase.done,
+                },
             )
         )
 
@@ -1267,6 +1270,7 @@ def start_facility_workers(
                 facility_state,
                 facility_state.should_stop_image_scoring,
                 labels=["WikiPage", "Document", "Image"],
+                done_check=lambda: facility_state.image_phase.done,
                 status_tracker=embed_status,
             )
         )
