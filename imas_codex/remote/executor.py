@@ -1211,6 +1211,8 @@ def run_python_script(
         )
 
     if result.returncode != 0:
+        if not is_local and ssh_host and result.returncode == 255:
+            _invalidate_ssh_host(ssh_host)
         raise subprocess.CalledProcessError(
             result.returncode, script_name, result.stdout, result.stderr
         )
@@ -1362,6 +1364,8 @@ async def async_run_python_script(
         )
 
     if proc.returncode != 0:
+        if not is_local and ssh_host and proc.returncode == 255:
+            _invalidate_ssh_host(ssh_host)
         raise subprocess.CalledProcessError(
             proc.returncode, script_name, stdout, stderr
         )

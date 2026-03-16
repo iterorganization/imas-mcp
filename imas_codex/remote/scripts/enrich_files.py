@@ -115,8 +115,16 @@ def enrich_file(path: str, pattern_categories: Dict[str, str]) -> Dict[str, Any]
         "content_hash": "",
     }
 
-    if not os.path.isfile(path):
+    if not os.path.exists(path):
         result["error"] = "file_not_found"
+        return result
+
+    if not os.path.isfile(path):
+        result["error"] = "not_a_file"
+        return result
+
+    if not os.access(path, os.R_OK):
+        result["error"] = "permission_denied"
         return result
 
     # Line count
