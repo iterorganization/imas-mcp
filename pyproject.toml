@@ -247,6 +247,10 @@ location = "iter"       # login node T4 (or "titan" for compute P100 via SLURM)
 # Used by: enrichment auto-threshold, refinement gate, code CLI default.
 # Override: IMAS_CODEX_DISCOVERY_THRESHOLD
 threshold = 0.90
+# Offset subtracted from threshold to get the triage gate.
+# triage_threshold = threshold - triage-offset (default: 0.90 - 0.15 = 0.75).
+# Override: IMAS_CODEX_TRIAGE_THRESHOLD
+triage-offset = 0.15
 
 [tool.imas-codex.logs]
 # Where CLI commands run and write logs.

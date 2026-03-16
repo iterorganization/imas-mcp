@@ -116,11 +116,15 @@ async def run_parallel_code_discovery(
     """
     start_time = time.time()
 
-    # Resolve threshold lazily so pyproject.toml changes take effect
+    # Resolve thresholds lazily so pyproject.toml changes take effect
     if min_score is None:
         from imas_codex.settings import get_discovery_threshold
 
         min_score = get_discovery_threshold()
+
+    from imas_codex.settings import get_triage_threshold
+
+    min_triage_score = get_triage_threshold()
 
     # Release orphaned claims from previous runs
     reset_orphaned_file_claims(facility, silent=True)
@@ -135,6 +139,7 @@ async def run_parallel_code_discovery(
         service_monitor=service_monitor,
         cost_limit=cost_limit,
         min_score=min_score,
+        min_triage_score=min_triage_score,
         max_paths=max_paths,
         focus=focus,
         deadline=deadline,
@@ -149,7 +154,8 @@ async def run_parallel_code_discovery(
         lambda: has_pending_triage_work(facility) or not state.scan_phase.done
     )
     state.enrich_phase.set_has_work_fn(
-        lambda: has_pending_enrich_work(facility) or not state.triage_phase.done
+        lambda: has_pending_enrich_work(facility, min_triage_score)
+        or not state.triage_phase.done
     )
     state.score_phase.set_has_work_fn(
         lambda: has_pending_score_work(facility) or not state.enrich_phase.done
@@ -311,7 +317,9 @@ async def run_parallel_code_discovery(
 
 
 def get_code_discovery_stats(
-    facility: str, min_score: float | None = None
+    facility: str,
+    min_score: float | None = None,
+    min_triage_score: float | None = None,
 ) -> dict[str, int | float]:
     """Get code discovery statistics from graph for progress display.
 
@@ -319,11 +327,17 @@ def get_code_discovery_stats(
         facility: Facility ID
         min_score: Minimum score threshold for pending counts.
             Defaults to ``get_discovery_threshold()``.
+        min_triage_score: Minimum triage composite for enrich pending.
+            Defaults to ``get_triage_threshold()``.
     """
     if min_score is None:
         from imas_codex.settings import get_discovery_threshold
 
         min_score = get_discovery_threshold()
+    if min_triage_score is None:
+        from imas_codex.settings import get_triage_threshold
+
+        min_triage_score = get_triage_threshold()
     with GraphClient() as gc:
         result = gc.query(
             """
@@ -375,15 +389,17 @@ def get_code_discovery_stats(
         )
         stats["pending_triage"] = triage_result[0]["pending"] if triage_result else 0
 
-        # Pending enrich: triaged but not enriched
+        # Pending enrich: triaged but not enriched (above triage threshold)
         enrich_pending = gc.query(
             """
             MATCH (cf:CodeFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
             WHERE cf.status = 'triaged'
+              AND cf.triage_composite >= $min_triage
               AND coalesce(cf.is_enriched, false) = false
             RETURN count(cf) AS pending
             """,
             facility=facility,
+            min_triage=min_triage_score,
         )
         stats["pending_enrich"] = enrich_pending[0]["pending"] if enrich_pending else 0
 

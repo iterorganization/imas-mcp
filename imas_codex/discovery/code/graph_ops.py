@@ -348,7 +348,7 @@ def release_file_triage_claims(file_ids: list[str]) -> None:
 def claim_files_for_enrichment(
     facility: str,
     limit: int = 200,
-    min_triage_composite: float = 0.75,
+    min_triage_composite: float | None = None,
 ) -> list[dict[str, Any]]:
     """Atomically claim triaged CodeFiles for rg pattern enrichment.
 
@@ -362,11 +362,16 @@ def claim_files_for_enrichment(
     Args:
         facility: Facility ID
         limit: Maximum files to claim
-        min_triage_composite: Minimum triage composite to enrich
+        min_triage_composite: Minimum triage composite to enrich.
+            Defaults to ``get_triage_threshold()``.
 
     Returns:
         List of dicts with id, path, language, triage_composite
     """
+    if min_triage_composite is None:
+        from imas_codex.settings import get_triage_threshold
+
+        min_triage_composite = get_triage_threshold()
     cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
     claim_token = str(uuid.uuid4())
     with GraphClient() as gc:
@@ -588,17 +593,25 @@ def has_pending_triage_work(facility: str) -> bool:
         return result[0]["has_work"] if result else False
 
 
-def has_pending_enrich_work(facility: str) -> bool:
+def has_pending_enrich_work(
+    facility: str, min_triage_composite: float | None = None
+) -> bool:
     """Check if there are triaged CodeFiles needing rg enrichment."""
+    if min_triage_composite is None:
+        from imas_codex.settings import get_triage_threshold
+
+        min_triage_composite = get_triage_threshold()
     with GraphClient() as gc:
         result = gc.query(
             """
             MATCH (sf:CodeFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
             WHERE sf.status = 'triaged'
+              AND sf.triage_composite >= $min_triage
               AND coalesce(sf.is_enriched, false) = false
             RETURN count(sf) > 0 AS has_work
             """,
             facility=facility,
+            min_triage=min_triage_composite,
         )
         return result[0]["has_work"] if result else False
 

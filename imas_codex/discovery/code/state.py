@@ -26,6 +26,7 @@ class FileDiscoveryState(DiscoveryStateBase):
     # Limits
     cost_limit: float = 5.0
     min_score: float = 0.9
+    min_triage_score: float = 0.75
     max_paths: int = 100
     focus: str | None = None
 
