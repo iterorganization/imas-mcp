@@ -1399,88 +1399,173 @@ class GraphPathContextTool:
         self._gc = graph_client
 
     @mcp_tool(
-        "Get structural context for an IMAS path via graph traversal. "
-        "Discovers sibling paths via shared clusters, coordinates, units, "
-        "and identifier schemas across IDS boundaries. "
+        "Get structural context for an IMAS path via graph traversal and semantic similarity. "
+        "Combines vector embedding similarity, cluster membership, physics coordinate sharing, "
+        "unit+domain affinity, and identifier schemas to discover meaningful cross-IDS relationships. "
         "path (required): Exact IMAS path (e.g. 'equilibrium/time_slice/profiles_1d/psi'). "
-        "relationship_types: Filter to specific types — 'cluster', 'coordinate', "
-        "'unit', 'identifier', or 'all' (default)."
+        "relationship_types: Filter to 'semantic', 'cluster', 'coordinate', 'unit', "
+        "'identifier', or 'all' (default). "
+        "max_results: Maximum results per section (default 20). "
+        "dd_version: Filter by DD major version (e.g., 3 or 4)."
     )
     @handle_errors("get_imas_path_context")
     async def get_imas_path_context(
         self,
         path: str,
         relationship_types: str = "all",
+        max_results: int = 20,
         dd_version: int | None = None,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
-        """Discover cross-IDS relationships for an IMAS path."""
-        dd_params: dict[str, Any] = {"path": path}
-        dd_clause = _dd_version_clause("sibling", dd_version, dd_params)
+        """Discover cross-IDS relationships for an IMAS path via graph + semantics.
+
+        Strategy:
+        1. Semantic neighbors  — vector similarity via imas_node_embedding index
+        2. Cluster siblings    — explicit cluster co-membership (different IDS)
+        3. Coordinate partners — paths sharing physics-specific coordinates only
+                                 (generic coords like '1...N' are filtered out)
+        4. Unit companions     — same unit symbol in same physics domain
+        5. Identifier links    — shared identifier schema (enumerations)
+        """
         sections: dict[str, list[dict[str, Any]]] = {}
 
-        # Cluster siblings — paths in same cluster but different IDS
+        # ── Fetch source node properties upfront ────────────────────────────
+        node_rows = self._gc.query(
+            "MATCH (p:IMASNode {id: $path}) "
+            "RETURN p.embedding AS embedding, p.ids AS ids, "
+            "       p.physics_domain AS physics_domain",
+            path=path,
+        )
+        if not node_rows:
+            return {
+                "path": path,
+                "error": f"Path '{path}' not found in IMAS graph",
+                "sections": sections,
+                "total_connections": 0,
+            }
+
+        node = node_rows[0]
+        src_ids: str = node.get("ids") or ""
+        src_domain: str = node.get("physics_domain") or ""
+        embedding: list[float] | None = node.get("embedding")
+
+        # ── 1. Semantic neighbors via vector index ───────────────────────────
+        # Primary signal: find paths whose description embedding is closest to
+        # this path's embedding. Filtered to different IDS only.
+        if relationship_types in ("all", "semantic") and embedding:
+            sem_params: dict[str, Any] = {
+                "embedding": embedding,
+                "src_ids": src_ids,
+                "sem_k": min(max_results * 10, 200),
+                "sem_limit": max_results,
+            }
+            dd_clause_sem = _dd_version_clause("sibling", dd_version, sem_params)
+            semantic_results = self._gc.query(
+                f"""
+                CALL db.index.vector.queryNodes('imas_node_embedding', $sem_k, $embedding)
+                YIELD node AS sibling, score
+                WHERE sibling.ids <> $src_ids
+                  AND sibling.node_category = 'data'
+                  AND NOT (sibling)-[:DEPRECATED_IN]->(:DDVersion)
+                  {dd_clause_sem}
+                OPTIONAL MATCH (sibling)-[:HAS_UNIT]->(u:Unit)
+                OPTIONAL MATCH (sibling)-[:IN_CLUSTER]->(cl:IMASSemanticCluster)
+                RETURN sibling.id AS path, sibling.ids AS ids,
+                       coalesce(sibling.description, sibling.documentation) AS description,
+                       sibling.data_type AS data_type, u.id AS unit,
+                       sibling.physics_domain AS physics_domain,
+                       collect(DISTINCT cl.label) AS clusters,
+                       round(score, 4) AS score
+                ORDER BY score DESC
+                LIMIT $sem_limit
+                """,
+                **sem_params,
+            )
+            if semantic_results:
+                sections["semantic_neighbors"] = semantic_results
+
+        # ── 2. Cluster siblings — explicit cluster co-membership ─────────────
         if relationship_types in ("all", "cluster"):
+            cl_params: dict[str, Any] = {"path": path, "cl_limit": max_results * 2}
+            dd_clause_cl = _dd_version_clause("sibling", dd_version, cl_params)
             cluster_siblings = self._gc.query(
                 f"""
                 MATCH (p:IMASNode {{id: $path}})-[:IN_CLUSTER]->(cl:IMASSemanticCluster)
                       <-[:IN_CLUSTER]-(sibling:IMASNode)
-                WHERE sibling.ids <> p.ids {dd_clause}
+                WHERE sibling.ids <> p.ids {dd_clause_cl}
                 RETURN cl.label AS cluster, sibling.id AS path,
-                       sibling.ids AS ids, sibling.documentation AS doc
+                       sibling.ids AS ids,
+                       coalesce(sibling.description, sibling.documentation) AS doc
                 ORDER BY cl.label, sibling.ids
+                LIMIT $cl_limit
                 """,
-                **dd_params,
+                **cl_params,
             )
             if cluster_siblings:
                 sections["cluster_siblings"] = cluster_siblings
 
-        # Coordinate partners — paths sharing coordinate spec
+        # ── 3. Physics coordinate partners (generic coords filtered out) ─────
+        # Only match on IMASCoordinateSpec nodes whose id contains '/' —
+        # i.e. actual IMAS path-based coordinate expressions like
+        # "profiles_1d(itime)/grid/rho_tor_norm". Generic tokens like
+        # "1...N" are shared across thousands of nodes and carry no semantic
+        # meaning; matching on them produces 13 k+ noise results.
         if relationship_types in ("all", "coordinate"):
+            co_params: dict[str, Any] = {"path": path}
+            dd_clause_co = _dd_version_clause("sibling", dd_version, co_params)
             coord_partners = self._gc.query(
                 f"""
                 MATCH (p:IMASNode {{id: $path}})-[:HAS_COORDINATE]->(coord:IMASCoordinateSpec)
-                      <-[:HAS_COORDINATE]-(sibling:IMASNode)
-                WHERE sibling.ids <> p.ids {dd_clause}
+                WHERE coord.id CONTAINS '/'
+                MATCH (coord)<-[:HAS_COORDINATE]-(sibling:IMASNode)
+                WHERE sibling.ids <> p.ids {dd_clause_co}
                 RETURN coord.id AS coordinate, sibling.id AS path,
-                       sibling.ids AS ids, sibling.data_type AS data_type
+                       sibling.ids AS ids, sibling.data_type AS data_type,
+                       sibling.physics_domain AS physics_domain
                 ORDER BY coord.id, sibling.ids
+                LIMIT 40
                 """,
-                **dd_params,
+                **co_params,
             )
             if coord_partners:
                 sections["coordinate_partners"] = coord_partners
 
-        # Unit companions — paths with same unit in same physics domain
-        if relationship_types in ("all", "unit"):
+        # ── 4. Unit companions — same unit, same physics domain ──────────────
+        if relationship_types in ("all", "unit") and src_domain:
+            u_params: dict[str, Any] = {"path": path, "src_domain": src_domain}
+            dd_clause_u = _dd_version_clause("sibling", dd_version, u_params)
             unit_companions = self._gc.query(
                 f"""
                 MATCH (p:IMASNode {{id: $path}})-[:HAS_UNIT]->(u:Unit)
                       <-[:HAS_UNIT]-(sibling:IMASNode)
                 WHERE sibling.ids <> p.ids
-                  AND sibling.physics_domain = p.physics_domain {dd_clause}
+                  AND sibling.physics_domain = $src_domain {dd_clause_u}
                 RETURN u.id AS unit, sibling.id AS path,
-                       sibling.ids AS ids, sibling.documentation AS doc
+                       sibling.ids AS ids,
+                       coalesce(sibling.description, sibling.documentation) AS doc
                 ORDER BY u.id, sibling.ids
                 LIMIT 30
                 """,
-                **dd_params,
+                **u_params,
             )
             if unit_companions:
                 sections["unit_companions"] = unit_companions
 
-        # Identifier schema links
+        # ── 5. Identifier schema links ───────────────────────────────────────
         if relationship_types in ("all", "identifier"):
+            id_params: dict[str, Any] = {"path": path}
+            dd_clause_id = _dd_version_clause("sibling", dd_version, id_params)
             ident_links = self._gc.query(
                 f"""
                 MATCH (p:IMASNode {{id: $path}})-[:HAS_IDENTIFIER_SCHEMA]->(s:IdentifierSchema)
                       <-[:HAS_IDENTIFIER_SCHEMA]-(sibling:IMASNode)
-                WHERE sibling.ids <> p.ids {dd_clause}
+                WHERE sibling.ids <> p.ids {dd_clause_id}
                 RETURN s.name AS schema, sibling.id AS path,
                        sibling.ids AS ids
                 ORDER BY s.name
+                LIMIT 30
                 """,
-                **dd_params,
+                **id_params,
             )
             if ident_links:
                 sections["identifier_links"] = ident_links
