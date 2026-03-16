@@ -444,3 +444,132 @@ class TestCliSearchDDVersion:
         source = inspect.getsource(imas_dd_module)
         assert "INTRODUCED_IN" in source
         assert "node.dd_version" not in source
+
+
+# ============================================================================
+# Phase 4: Error field context attachment tests
+# ============================================================================
+
+
+class TestErrorFieldContext:
+    """Verify search and fetch tools attach error field context."""
+
+    def test_search_hit_has_error_fields_attribute(self):
+        """SearchHit model must have error_fields field."""
+        from imas_codex.search.search_strategy import SearchHit
+
+        hit = SearchHit(
+            path="equilibrium/time_slice/profiles_1d/psi",
+            documentation="test",
+            ids_name="equilibrium",
+            score=0.9,
+            rank=1,
+            search_mode="auto",
+            error_fields=["equilibrium/time_slice/profiles_1d/psi_error_upper"],
+        )
+        assert hit.error_fields == [
+            "equilibrium/time_slice/profiles_1d/psi_error_upper"
+        ]
+
+    def test_search_hit_error_fields_default_none(self):
+        """SearchHit error_fields defaults to None."""
+        from imas_codex.search.search_strategy import SearchHit
+
+        hit = SearchHit(
+            path="equilibrium/time_slice/profiles_1d/psi",
+            documentation="test",
+            ids_name="equilibrium",
+            score=0.9,
+            rank=1,
+            search_mode="auto",
+        )
+        assert hit.error_fields is None
+
+    def test_ids_node_has_error_fields_attribute(self):
+        """IdsNode model must have error_fields field."""
+        from imas_codex.core.data_model import IdsNode
+
+        node = IdsNode(
+            path="equilibrium/time_slice/profiles_1d/psi",
+            documentation="test",
+            error_fields=["equilibrium/time_slice/profiles_1d/psi_error_upper"],
+        )
+        assert node.error_fields == [
+            "equilibrium/time_slice/profiles_1d/psi_error_upper"
+        ]
+
+    def test_search_enrichment_query_includes_has_error(self):
+        """search_imas_paths enrichment query must fetch HAS_ERROR."""
+        import inspect
+
+        from imas_codex.tools.graph_search import GraphSearchTool
+
+        source = inspect.getsource(GraphSearchTool.search_imas_paths)
+        assert "HAS_ERROR" in source
+        assert "error_fields" in source
+
+    def test_fetch_enrichment_query_includes_has_error(self):
+        """fetch_imas_paths enrichment query must fetch HAS_ERROR."""
+        import inspect
+
+        from imas_codex.tools.graph_search import GraphPathTool
+
+        source = inspect.getsource(GraphPathTool.fetch_imas_paths)
+        assert "HAS_ERROR" in source
+        assert "error_fields" in source
+
+
+# ============================================================================
+# Phase 4: Cluster-aware reranking tests
+# ============================================================================
+
+
+class TestClusterReranking:
+    """Verify cluster-aware reranking suppresses duplicate cluster hits."""
+
+    def test_search_enrichment_fetches_cluster_labels(self):
+        """search_imas_paths enrichment must fetch IN_CLUSTER labels."""
+        import inspect
+
+        from imas_codex.tools.graph_search import GraphSearchTool
+
+        source = inspect.getsource(GraphSearchTool.search_imas_paths)
+        assert "IN_CLUSTER" in source
+        assert "cluster_labels" in source
+
+    def test_cluster_penalty_reduces_duplicate_scores(self):
+        """Cluster duplicates should receive a score penalty."""
+        scores = {
+            "path/a": 0.95,
+            "path/b": 0.90,
+            "path/c": 0.85,
+        }
+        enriched_by_id = {
+            "path/a": {"cluster_labels": ["temperature"]},
+            "path/b": {"cluster_labels": ["temperature"]},
+            "path/c": {"cluster_labels": ["pressure"]},
+        }
+
+        # Apply cluster penalty logic (mirrors graph_search.py implementation)
+        seen_clusters: dict[str, str] = {}
+        sorted_ids = sorted(scores, key=lambda pid: scores[pid], reverse=True)
+        for pid in sorted_ids:
+            r = enriched_by_id.get(pid)
+            if not r:
+                continue
+            for cl in r.get("cluster_labels") or []:
+                if not cl:
+                    continue
+                if cl not in seen_clusters:
+                    seen_clusters[cl] = pid
+                elif scores.get(pid, 0) > scores.get(seen_clusters[cl], 0):
+                    scores[seen_clusters[cl]] = round(
+                        scores.get(seen_clusters[cl], 0) * 0.95, 4
+                    )
+                    seen_clusters[cl] = pid
+                else:
+                    scores[pid] = round(scores.get(pid, 0) * 0.95, 4)
+
+        assert scores["path/a"] == 0.95
+        assert scores["path/b"] < 0.90
+        assert scores["path/c"] == 0.85

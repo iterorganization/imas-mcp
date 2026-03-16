@@ -177,6 +177,10 @@ class SearchHit(SearchBase):
         default=None,
         description="DD version change history for this path",
     )
+    error_fields: list[str] | None = Field(
+        default=None,
+        description="Associated error field paths (via HAS_ERROR relationships)",
+    )
 
 
 class SearchMatch(SearchBase):
