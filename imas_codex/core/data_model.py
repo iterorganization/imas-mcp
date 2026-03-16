@@ -95,6 +95,9 @@ class IdsNode(BaseModel):
     keywords: list[str] | None = None  # LLM-generated searchable keywords
     enrichment_source: str | None = None  # 'llm' or 'template'
 
+    # Error fields (associated via HAS_ERROR relationships)
+    error_fields: list[str] | None = None  # Error field paths linked to this data path
+
     # Additional XML attributes
     coordinate1: str | None = None
     coordinate2: str | None = None

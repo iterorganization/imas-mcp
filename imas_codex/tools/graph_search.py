@@ -220,6 +220,8 @@ class GraphSearchTool:
             OPTIONAL MATCH (path)-[:HAS_COORDINATE]->(coord:IMASCoordinateSpec)
             OPTIONAL MATCH (path)-[:HAS_IDENTIFIER_SCHEMA]->(ident:IdentifierSchema)
             OPTIONAL MATCH (path)-[:INTRODUCED_IN]->(intro:DDVersion)
+            OPTIONAL MATCH (path)-[:HAS_ERROR]->(err:IMASNode)
+            OPTIONAL MATCH (path)-[:IN_CLUSTER]->(cl:IMASSemanticCluster)
             RETURN path.id AS id, path.name AS name, path.ids AS ids,
                    path.documentation AS documentation, path.data_type AS data_type,
                    path.physics_domain AS physics_domain, u.id AS units,
@@ -237,13 +239,43 @@ class GraphSearchTool:
                    path.enrichment_source AS enrichment_source,
                    collect(DISTINCT coord.id) AS coordinates,
                    ident IS NOT NULL AS has_identifier_schema,
-                   intro.id AS introduced_after_version
+                   intro.id AS introduced_after_version,
+                   collect(DISTINCT err.id) AS error_fields,
+                   collect(DISTINCT cl.label) AS cluster_labels
             """,
             path_ids=sorted_ids,
         )
 
         # Index by path ID for score lookup
         enriched_by_id = {r["id"]: r for r in enriched or []}
+
+        # --- Cluster-aware reranking ---
+        # When multiple hits share a cluster, penalize all but the
+        # highest-scoring to reduce redundancy in results.
+        seen_clusters: dict[str, str] = {}  # cluster_label -> best_pid
+        for pid in sorted_ids:
+            r = enriched_by_id.get(pid)
+            if not r:
+                continue
+            for cl in r.get("cluster_labels") or []:
+                if not cl:
+                    continue
+                if cl not in seen_clusters:
+                    seen_clusters[cl] = pid
+                elif scores.get(pid, 0) > scores.get(seen_clusters[cl], 0):
+                    # New pid beats current best — penalize old best
+                    scores[seen_clusters[cl]] = round(
+                        scores.get(seen_clusters[cl], 0) * 0.95, 4
+                    )
+                    seen_clusters[cl] = pid
+                else:
+                    # Penalize this pid as a cluster duplicate
+                    scores[pid] = round(scores.get(pid, 0) * 0.95, 4)
+
+        # Re-sort after cluster penalty
+        sorted_ids = sorted(scores, key=lambda pid: scores[pid], reverse=True)[
+            :max_results
+        ]
 
         # --- Optional facility cross-references ---
         facility_xrefs: dict[str, dict[str, Any]] = {}
@@ -291,6 +323,7 @@ class GraphSearchTool:
                     search_mode=mode,
                     facility_xrefs=xref,
                     version_context=vctx,
+                    error_fields=r.get("error_fields") or None,
                 )
             )
             if r["physics_domain"]:
@@ -454,14 +487,14 @@ class GraphPathTool:
                 OPTIONAL MATCH (change:IMASNodeChange)-[:FOR_IMAS_PATH]->(p)
                 WHERE change.semantic_change_type IN
                       ['sign_convention', 'coordinate_convention', 'units', 'definition_clarification']
-                WITH p, u, cluster_labels, coordinates, ident, iv,
+                WITH p, u, cluster_labels, coordinates, error_fields, ident, iv,
                      collect(DISTINCT {version: change.version,
                                        type: change.semantic_change_type,
                                        summary: change.summary}) AS version_changes
                 """
             else:
                 version_clause = """
-                WITH p, u, cluster_labels, coordinates, ident, iv,
+                WITH p, u, cluster_labels, coordinates, error_fields, ident, iv,
                      [] AS version_changes
                 """
 
@@ -474,9 +507,11 @@ class GraphPathTool:
                 OPTIONAL MATCH (p)-[:HAS_COORDINATE]->(coord:IMASCoordinateSpec)
                 OPTIONAL MATCH (p)-[:HAS_IDENTIFIER_SCHEMA]->(ident:IdentifierSchema)
                 OPTIONAL MATCH (p)-[:INTRODUCED_IN]->(iv:DDVersion)
+                OPTIONAL MATCH (p)-[:HAS_ERROR]->(err:IMASNode)
                 WITH p, u,
                      collect(DISTINCT c.label) AS cluster_labels,
                      collect(DISTINCT coord.id) AS coordinates,
+                     collect(DISTINCT err.id) AS error_fields,
                      ident, iv
                 {version_clause}
                 RETURN p.id AS id, p.name AS name, p.ids AS ids,
@@ -501,7 +536,8 @@ class GraphPathTool:
                        ident.documentation AS identifier_schema_documentation,
                        ident.options AS identifier_schema_options,
                        iv.id AS introduced_after_version,
-                       version_changes
+                       version_changes,
+                       error_fields
                 """,
                 path=path,
                 **dd_params,
@@ -569,6 +605,7 @@ class GraphPathTool:
                     lifecycle_status=r.get("lifecycle_status"),
                     lifecycle_version=r.get("lifecycle_version"),
                     structure_reference=r.get("structure_path"),
+                    error_fields=r.get("error_fields") or None,
                 )
                 nodes.append(node)
             else:
