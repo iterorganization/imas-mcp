@@ -38,7 +38,6 @@ class MappingDisposition(StrEnum):
     METADATA_ONLY = "metadata_only"
     FACILITY_SPECIFIC = "facility_specific"
     INSUFFICIENT_CONTEXT = "insufficient_context"
-    DD_VERSION_GAP = "dd_version_gap"
 
 
 class TargetType(StrEnum):

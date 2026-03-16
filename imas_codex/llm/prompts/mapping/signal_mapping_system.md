@@ -54,7 +54,6 @@ Not every signal has an IMAS equivalent. When no target field exists:
      calibration timestamp) not a measured/computed quantity
    - `facility_specific` — Facility-specific operational parameter
    - `insufficient_context` — Could map but evidence is too weak to commit
-   - `dd_version_gap` — Target exists in newer DD but not current version
 3. **Provide evidence**: Reference the IMAS paths you searched, the section
    fields available, and why none match. Cite specific field names.
 4. **Set `nearest_imas_path`** if you found a close-but-wrong candidate,

@@ -236,8 +236,6 @@ enums:
         description: Facility-specific operational parameter with no IDS coverage
       insufficient_context:
         description: Could map but evidence is too weak to commit
-      dd_version_gap:
-        description: Target exists in newer DD but not current version
 
   PopulationType:
     description: How tree nodes are populated with data
