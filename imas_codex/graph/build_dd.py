@@ -1272,7 +1272,7 @@ def _check_graph_up_to_date(
     Validates:
     - DDVersion.build_hash on the current version matches
     - All requested versions exist
-    - Embedding coverage is complete (on data nodes only)
+    - Embedding coverage is complete
     - Clusters exist
 
     Returns True only when the graph is fully up-to-date.
@@ -1285,17 +1285,10 @@ def _check_graph_up_to_date(
             """
         )
         if not result:
-            logger.debug("Up-to-date check: no current DDVersion found")
             return False
 
         meta = result[0]
         if meta.get("hash") != build_hash:
-            logger.debug(
-                "Up-to-date check: build hash mismatch "
-                "(stored=%s, computed=%s)",
-                meta.get("hash"),
-                build_hash,
-            )
             return False
 
         # Verify all requested versions exist
@@ -1304,21 +1297,12 @@ def _check_graph_up_to_date(
         )
         stored_versions = ver_result[0]["versions"] if ver_result else []
         if set(versions) != set(stored_versions):
-            logger.debug(
-                "Up-to-date check: version mismatch "
-                "(stored=%d, requested=%d)",
-                len(stored_versions),
-                len(versions),
-            )
             return False
 
-        # Verify embeddings are present on data nodes (the only category
-        # that goes through the embedding pipeline — error and metadata
-        # nodes never receive embeddings).
+        # Verify embeddings are present
         emb_result = client.query(
             """
             MATCH (p:IMASNode)
-            WHERE p.node_category = 'data'
             WITH count(p) AS total,
                  count(CASE WHEN p.embedding IS NOT NULL THEN 1 END) AS with_emb
             RETURN total, with_emb
@@ -1327,19 +1311,11 @@ def _check_graph_up_to_date(
         if emb_result:
             row = emb_result[0]
             if row["total"] == 0 or row["with_emb"] < row["total"] * 0.95:
-                logger.debug(
-                    "Up-to-date check: embedding coverage %.1f%% "
-                    "(%d/%d data nodes)",
-                    row["with_emb"] / row["total"] * 100 if row["total"] else 0,
-                    row["with_emb"],
-                    row["total"],
-                )
                 return False
 
         # Verify clusters are present
         cl_result = client.query("MATCH (c:IMASSemanticCluster) RETURN count(c) AS cnt")
         if not cl_result or cl_result[0]["cnt"] == 0:
-            logger.debug("Up-to-date check: no clusters found")
             return False
 
         return True
