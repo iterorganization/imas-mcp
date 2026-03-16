@@ -17,11 +17,11 @@ Architecture:
     - mdsplus: Direct MDSplus tree traversal — any MDSplus facility
     - imas: IMAS IDS signal enumeration — ITER, JET, JT-60SA
     - device_xml: EFIT device XML geometry files in git — JET
-    - wiki: Wiki-documented signal extraction — any facility with wiki
+    - wiki: Internal wiki metadata loader used for enrichment context
 
-    The wiki scanner is special: it runs for ALL facilities that have
-    wiki_sites configured, complementing the primary data source scanners
-    with pre-documented signal metadata (descriptions, units, paths).
+    Wiki content is not exposed as a first-class scanner on the CLI. It is
+    loaded separately when wiki_sites are configured so enrichment can reuse
+    curated descriptions, units, and path hints.
 """
 
 from __future__ import annotations
@@ -165,27 +165,29 @@ def get_scanner(scanner_type: str) -> DataSourceScanner:
 
 
 def list_scanners() -> list[str]:
-    """List all registered scanner types."""
+    """List user-selectable scanner types.
+
+    Internal metadata helpers such as the wiki context loader are not exposed as
+    normal scanner choices on the CLI.
+    """
     if not _auto_registered:
         _auto_register()
-    return list(_registry.keys())
+    return [scanner_type for scanner_type in _registry if scanner_type != "wiki"]
 
 
 def get_scanners_for_facility(facility: str) -> list[DataSourceScanner]:
     """Get scanners matching a facility's data_systems config.
 
-    Returns scanners for each configured data source type, plus the wiki
-    scanner if the facility has wiki_sites configured.
+    Returns scanners for each configured data source type.
 
-    Wiki scanner runs first so that wiki_context is available when the
-    enrich_worker starts processing signals from other scanners.
+    Wiki-derived metadata is loaded separately for enrichment context and is no
+    longer treated as a first-class signal scanner.
 
     Args:
         facility: Facility ID (e.g., "tcv", "jet")
 
     Returns:
-        List of scanner instances. Wiki scanner first (if configured),
-        then data_source scanners in config key order.
+        List of scanner instances in config key order.
     """
     from imas_codex.discovery.base.facility import get_facility
 
@@ -196,12 +198,6 @@ def get_scanners_for_facility(facility: str) -> list[DataSourceScanner]:
     data_systems = config.get("data_systems", {})
 
     scanners = []
-
-    # Wiki scanner runs first so wiki_context is populated before
-    # enrich_worker starts processing signals from other scanners
-    wiki_sites = config.get("wiki_sites", [])
-    if wiki_sites and "wiki" in _registry:
-        scanners.append(_registry["wiki"])
 
     for source_type in data_systems:
         if source_type in _registry:

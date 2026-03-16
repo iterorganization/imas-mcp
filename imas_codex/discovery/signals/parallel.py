@@ -66,6 +66,18 @@ logger = logging.getLogger(__name__)
 # Claim timeout - signals claimed longer than this are reclaimed
 CLAIM_TIMEOUT_SECONDS = 300  # 5 minutes
 
+# Static data sources that should route to DeviceXMLScanner behavior instead of
+# being treated as generic MDSplus/tree signals.
+STATIC_DATA_SOURCES = {
+    "device_xml",
+    "magnetics_config",
+    "pf_coil_turns",
+    "greens_table",
+    "jec2020_geometry",
+    "sensor_calibration",
+    "jec2020_xml",
+}
+
 
 def build_device_xml_context_query(
     group_key: str,
@@ -131,6 +143,45 @@ def build_device_xml_context_query(
         base_terms.extend(["diagnostic", "hardware", "layout"])
 
     return " ".join(term for term in base_terms if term)
+
+
+def get_signal_scanner_type(signal: dict[str, Any]) -> str:
+    """Determine the logical scanner family for a signal record."""
+
+    source = signal.get("discovery_source", "")
+    if signal.get("tdi_function") or source.startswith("tdi"):
+        return "tdi"
+    if source == "ppf":
+        return "ppf"
+    if source == "jpf":
+        return "jpf"
+    if source == "edas":
+        return "edas"
+    if source in STATIC_DATA_SOURCES:
+        return "device_xml"
+
+    data_source_name = signal.get("data_source_name", "")
+    if data_source_name in STATIC_DATA_SOURCES:
+        return "device_xml"
+
+    return "mdsplus"
+
+
+def get_scanner_scope_sources(scanner_types: list[str] | None) -> list[str] | None:
+    """Expand user-selected scanner types into logical scanner families.
+
+    Downstream workers operate on persisted FacilitySignal rows, so they need a
+    stable mapping from signal metadata to the requested scanner scope.
+    """
+
+    if not scanner_types:
+        return None
+
+    scoped = set()
+    for scanner_type in scanner_types:
+        if scanner_type != "wiki":
+            scoped.add(scanner_type)
+    return sorted(scoped)
 
 
 def get_checkpoint_dir() -> Path:
@@ -568,6 +619,7 @@ def clear_facility_signals(
 def claim_signals_for_enrichment(
     facility: str,
     batch_size: int = 10,
+    scanner_types: list[str] | None = None,
 ) -> list[dict]:
     """Claim a batch of discovered signals for enrichment.
 
@@ -582,6 +634,7 @@ def claim_signals_for_enrichment(
 
     cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
     claim_token = str(_uuid.uuid4())
+    scoped_scanners = get_scanner_scope_sources(scanner_types)
     try:
         with GraphClient() as gc:
             # First skip channel signals in bulk so they don't clog the queue.
@@ -591,7 +644,18 @@ def claim_signals_for_enrichment(
             gc.query(
                 """
                 MATCH (s:FacilitySignal {facility_id: $facility})
+                                WITH s,
+                                         CASE
+                                             WHEN s.tdi_function IS NOT NULL OR s.discovery_source STARTS WITH 'tdi' THEN 'tdi'
+                                             WHEN s.discovery_source = 'ppf' THEN 'ppf'
+                                             WHEN s.discovery_source = 'jpf' THEN 'jpf'
+                                             WHEN s.discovery_source = 'edas' THEN 'edas'
+                                             WHEN s.discovery_source IN $static_sources THEN 'device_xml'
+                                             WHEN s.data_source_name IN $static_sources THEN 'device_xml'
+                                             ELSE 'mdsplus'
+                                         END AS scanner_scope
                 WHERE s.status = $discovered
+                                    AND ($scoped_scanners IS NULL OR scanner_scope IN $scoped_scanners)
                   AND (
                     s.accessor =~ '.*[_:]CHANNEL_?\\d{2,3}\\)?$'
                     OR s.accessor =~ '.*[_:]\\d{2,3}\\)?$'
@@ -606,13 +670,26 @@ def claim_signals_for_enrichment(
                 facility=facility,
                 discovered=FacilitySignalStatus.discovered.value,
                 skipped=FacilitySignalStatus.skipped.value,
+                scoped_scanners=scoped_scanners,
+                static_sources=sorted(STATIC_DATA_SOURCES),
             )
 
             # Step 1: Claim with random ordering and unique token
             gc.query(
                 """
                 MATCH (s:FacilitySignal {facility_id: $facility})
+                                WITH s,
+                                         CASE
+                                             WHEN s.tdi_function IS NOT NULL OR s.discovery_source STARTS WITH 'tdi' THEN 'tdi'
+                                             WHEN s.discovery_source = 'ppf' THEN 'ppf'
+                                             WHEN s.discovery_source = 'jpf' THEN 'jpf'
+                                             WHEN s.discovery_source = 'edas' THEN 'edas'
+                                             WHEN s.discovery_source IN $static_sources THEN 'device_xml'
+                                             WHEN s.data_source_name IN $static_sources THEN 'device_xml'
+                                             ELSE 'mdsplus'
+                                         END AS scanner_scope
                 WHERE s.status IN [$discovered, $underspecified]
+                                    AND ($scoped_scanners IS NULL OR scanner_scope IN $scoped_scanners)
                   AND NOT EXISTS {
                     MATCH (s)-[:MEMBER_OF]->(sg:SignalSource)
                     WHERE sg.representative_id <> s.id
@@ -628,6 +705,8 @@ def claim_signals_for_enrichment(
                 batch_size=batch_size,
                 cutoff=cutoff,
                 token=claim_token,
+                scoped_scanners=scoped_scanners,
+                static_sources=sorted(STATIC_DATA_SOURCES),
             )
 
             # Step 2: Read back only signals WE successfully claimed
@@ -859,6 +938,7 @@ def claim_signals_for_check(
     facility: str,
     batch_size: int = 5,
     reference_shot: int | None = None,
+    scanner_types: list[str] | None = None,
 ) -> list[dict]:
     """Claim a batch of enriched signals for check.
 
@@ -869,13 +949,25 @@ def claim_signals_for_check(
 
     cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
     claim_token = str(_uuid.uuid4())
+    scoped_scanners = get_scanner_scope_sources(scanner_types)
     try:
         with GraphClient() as gc:
             # Step 1: Claim with random ordering and unique token
             gc.query(
                 """
                 MATCH (s:FacilitySignal {facility_id: $facility})
+                                WITH s,
+                                         CASE
+                                             WHEN s.tdi_function IS NOT NULL OR s.discovery_source STARTS WITH 'tdi' THEN 'tdi'
+                                             WHEN s.discovery_source = 'ppf' THEN 'ppf'
+                                             WHEN s.discovery_source = 'jpf' THEN 'jpf'
+                                             WHEN s.discovery_source = 'edas' THEN 'edas'
+                                             WHEN s.discovery_source IN $static_sources THEN 'device_xml'
+                                             WHEN s.data_source_name IN $static_sources THEN 'device_xml'
+                                             ELSE 'mdsplus'
+                                         END AS scanner_scope
                 WHERE s.status = $enriched
+                                    AND ($scoped_scanners IS NULL OR scanner_scope IN $scoped_scanners)
                   AND (s.claimed_at IS NULL
                        OR s.claimed_at < datetime() - duration($cutoff))
                 WITH s ORDER BY rand() LIMIT $batch_size
@@ -886,6 +978,8 @@ def claim_signals_for_check(
                 batch_size=batch_size,
                 cutoff=cutoff,
                 token=claim_token,
+                scoped_scanners=scoped_scanners,
+                static_sources=sorted(STATIC_DATA_SOURCES),
             )
 
             # Step 2: Read back only signals WE successfully claimed
@@ -3421,6 +3515,7 @@ async def enrich_worker(
             claim_signals_for_enrichment,
             state.facility,
             batch_size=20,
+            scanner_types=state.scanner_types,
         )
 
         if not signals:
@@ -4427,35 +4522,6 @@ async def check_worker(
     # from the same tree all land in one group, overloading MDSplus.
     BATCH_SIZE = 20
 
-    # Static data sources that should route to DeviceXMLScanner (local graph
-    # check) instead of falling through to remote MDSplus checking.
-    STATIC_DATA_SOURCES = {
-        "device_xml", "magnetics_config", "pf_coil_turns",
-        "greens_table", "jec2020_geometry", "sensor_calibration",
-        "jec2020_xml",
-    }
-
-    def _get_signal_scanner_type(signal: dict) -> str:
-        """Determine which scanner should check this signal."""
-        source = signal.get("discovery_source", "")
-        if source == "ppf":
-            return "ppf"
-        if source == "jpf":
-            return "jpf"
-        if source == "edas":
-            return "edas"
-        if source == "wiki":
-            return "wiki"
-        if source in STATIC_DATA_SOURCES:
-            return "device_xml"
-        # Also check data_source_name for static sources that may have
-        # a different discovery_source value
-        dsn = signal.get("data_source_name", "")
-        if dsn in STATIC_DATA_SOURCES:
-            return "device_xml"
-        # Default to MDSplus/TDI batch check
-        return "mdsplus"
-
     while not state.should_stop_checking():
         # Claim batch of signals with reference_shot
         signals = await asyncio.to_thread(
@@ -4463,6 +4529,7 @@ async def check_worker(
             state.facility,
             batch_size=BATCH_SIZE,
             reference_shot=state.reference_shot,
+            scanner_types=state.scanner_types,
         )
 
         if not signals:
@@ -4484,7 +4551,7 @@ async def check_worker(
         signal_scanner_type: dict[str, str] = {}
 
         for signal in signals:
-            scanner_type = _get_signal_scanner_type(signal)
+            scanner_type = get_signal_scanner_type(signal)
             scanner_groups[scanner_type].append(signal)
             signal_data_access[signal["id"]] = signal.get("data_access")
             signal_scanner_type[signal["id"]] = scanner_type
@@ -4829,7 +4896,7 @@ async def run_parallel_data_discovery(
     # blocking the event loop for 30-60 s on remote Neo4j.
     def _preflight(
         _facility: str, _ssh_host: str | None, _scanner_types: list[str] | None
-    ) -> tuple[dict, str | None, list[str], dict, dict]:
+    ) -> tuple[dict, str | None, list[str], dict, dict, dict[str, dict[str, str]]]:
         from imas_codex.discovery.base.facility import get_facility
         from imas_codex.discovery.mdsplus.graph_ops import (
             get_signal_counts,
@@ -4838,6 +4905,7 @@ async def run_parallel_data_discovery(
         from imas_codex.discovery.signals.scanners.base import (
             get_scanners_for_facility,
         )
+        from imas_codex.discovery.signals.scanners.wiki import load_wiki_context
         from imas_codex.graph import GraphClient as _GC
 
         config = get_facility(_facility)
@@ -4866,8 +4934,18 @@ async def run_parallel_data_discovery(
 
         version_counts = get_version_counts(_facility)
         signal_counts = get_signal_counts(_facility)
+        wiki_context = {}
+        if config.get("wiki_sites"):
+            wiki_context = load_wiki_context(_facility)
 
-        return config, _ssh_host, _scanner_types, version_counts, signal_counts
+        return (
+            config,
+            _ssh_host,
+            _scanner_types,
+            version_counts,
+            signal_counts,
+            wiki_context,
+        )
 
     (
         facility_config,
@@ -4875,6 +4953,7 @@ async def run_parallel_data_discovery(
         scanner_types,
         initial_version_counts,
         initial_signal_counts,
+        wiki_context,
     ) = await asyncio.to_thread(_preflight, facility, ssh_host, scanner_types)
 
     # Initialize state
@@ -4887,6 +4966,7 @@ async def run_parallel_data_discovery(
         reference_shot=reference_shot,
         scanner_types=scanner_types,
         tdi_path=tdi_path,
+        wiki_context=wiki_context,
         cost_limit=cost_limit,
         signal_limit=signal_limit,
         focus=focus,

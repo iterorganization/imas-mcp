@@ -2,7 +2,9 @@
 
 Dispatches to registered scanner plugins based on facility config data_systems.
 Scanner plugins handle facility-specific enumeration (TDI, PPF, EDAS, MDSplus,
-IMAS, wiki), while shared infrastructure handles LLM enrichment and validation.
+IMAS, device XML), while shared infrastructure handles LLM enrichment and
+validation. Wiki content is used as enrichment context rather than a
+user-selectable scanner.
 """
 
 from __future__ import annotations

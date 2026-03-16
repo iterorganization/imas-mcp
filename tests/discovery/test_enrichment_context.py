@@ -13,6 +13,8 @@ import pytest
 from imas_codex.discovery.signals.parallel import (
     build_device_xml_context_query,
     fetch_tree_context,
+    get_scanner_scope_sources,
+    get_signal_scanner_type,
 )
 
 
@@ -232,6 +234,25 @@ class TestClaimSignalsSourceNode:
 
         assert len(signals) == 1
         assert signals[0]["data_source_node"] == "tcv:results:\\RESULTS::TOP:IP"
+
+
+class TestScannerScopeMapping:
+    """Tests for downstream scanner scoping helpers."""
+
+    def test_tdi_signals_remain_distinct_from_mdsplus(self):
+        """Persisted TDI signals are still recognized as TDI scope."""
+        signal = {
+            "tdi_function": "tcv_ip",
+            "discovery_source": "tdi_introspection",
+            "data_source_name": None,
+        }
+
+        assert get_signal_scanner_type(signal) == "tdi"
+
+    def test_scanner_scope_preserves_explicit_tdi_selection(self):
+        """User scanner filters keep TDI and MDSplus separate."""
+        assert get_scanner_scope_sources(["tdi"]) == ["tdi"]
+        assert get_scanner_scope_sources(["mdsplus"]) == ["mdsplus"]
 
 
 class TestEnrichWorkerTreeContext:
