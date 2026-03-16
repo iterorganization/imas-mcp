@@ -257,9 +257,64 @@ def map_run(
     if time_limit is not None:
         deadline = time_mod.time() + time_limit * 60
 
+    ids_names_list = [t["ids_name"] for t in targets]
+
     # -------------------------------------------------------------------
-    # Iterate IDS targets
+    # Run mapping pipeline
     # -------------------------------------------------------------------
+    if not use_rich:
+        all_results = _run_plain_mode(
+            facility=facility,
+            targets=targets,
+            model=model,
+            dd_version=dd_version,
+            cost_limit=cost_limit,
+            no_persist=no_persist,
+            no_activate=no_activate,
+            clear=clear,
+            deadline=deadline,
+            log_print=log_print,
+        )
+    else:
+        all_results = _run_rich_mode(
+            facility=facility,
+            ids_names=ids_names_list,
+            model=model,
+            dd_version=dd_version,
+            cost_limit=cost_limit,
+            no_persist=no_persist,
+            no_activate=no_activate,
+            clear=clear,
+            deadline=deadline,
+            verbose=verbose,
+            console=console,
+            log_print=log_print,
+        )
+
+    # -------------------------------------------------------------------
+    # Summary
+    # -------------------------------------------------------------------
+    _print_summary(all_results, log_print)
+
+
+def _run_plain_mode(
+    *,
+    facility: str,
+    targets: list[dict],
+    model: str | None,
+    dd_version: str | None,
+    cost_limit: float,
+    no_persist: bool,
+    no_activate: bool,
+    clear: bool,
+    deadline: float | None,
+    log_print,
+) -> list[dict]:
+    """Run mapping for all IDS targets in plain (non-rich) mode."""
+    import time as time_mod
+
+    from imas_codex.ids.mapping import generate_mapping
+
     all_results: list[dict] = []
 
     for idx, target in enumerate(targets, 1):
@@ -269,136 +324,57 @@ def map_run(
             f"{ids_name} \u2501\u2501\u2501[/bold cyan]"
         )
 
-        # Check deadline
         if deadline and time_mod.time() >= deadline:
             log_print("[yellow]Time limit reached \u2014 stopping.[/yellow]")
             break
 
-        # Clear previous mapping if requested
         if clear:
             _clear_mapping(facility, ids_name, log_print)
 
-        # Run mapping for this IDS
-        result = _run_single_ids(
-            facility=facility,
-            ids_name=ids_name,
-            model=model,
-            dd_version=dd_version,
-            cost_limit=cost_limit,
-            no_persist=no_persist,
-            no_activate=no_activate,
-            deadline=deadline,
-            verbose=verbose,
-            use_rich=use_rich,
-            console=console,
-            log_print=log_print,
-        )
+        try:
+            result = generate_mapping(
+                facility,
+                ids_name,
+                model=model,
+                dd_version=dd_version,
+                persist=not no_persist,
+                activate=not no_activate,
+            )
+        except ValueError as e:
+            log_print(f"[red]Error: {e}[/red]")
+            continue
 
-        if result:
-            all_results.append(result)
+        _print_result(result)
+        all_results.append({
+            "ids_name": ids_name,
+            "mapping_id": result.mapping_id,
+            "bindings": len(result.validated.bindings),
+            "escalations": len(result.validated.escalations),
+            "cost": result.cost,
+            "persisted": result.persisted,
+        })
 
-    # -------------------------------------------------------------------
-    # Summary
-    # -------------------------------------------------------------------
-    _print_summary(all_results, log_print)
+    return all_results
 
 
-def _run_single_ids(
+def _run_rich_mode(
     *,
     facility: str,
-    ids_name: str,
+    ids_names: list[str],
     model: str | None,
     dd_version: str | None,
     cost_limit: float,
     no_persist: bool,
     no_activate: bool,
-    deadline: float | None,
-    verbose: bool,
-    use_rich: bool,
-    console,
-    log_print,
-) -> dict | None:
-    """Run mapping pipeline for a single IDS. Returns result dict or None."""
-    if not use_rich:
-        return _run_single_ids_plain(
-            facility=facility,
-            ids_name=ids_name,
-            model=model,
-            dd_version=dd_version,
-            cost_limit=cost_limit,
-            no_persist=no_persist,
-            no_activate=no_activate,
-            log_print=log_print,
-        )
-
-    return _run_single_ids_rich(
-        facility=facility,
-        ids_name=ids_name,
-        model=model,
-        dd_version=dd_version,
-        cost_limit=cost_limit,
-        no_persist=no_persist,
-        no_activate=no_activate,
-        deadline=deadline,
-        verbose=verbose,
-        console=console,
-        log_print=log_print,
-    )
-
-
-def _run_single_ids_plain(
-    *,
-    facility: str,
-    ids_name: str,
-    model: str | None,
-    dd_version: str | None,
-    cost_limit: float,
-    no_persist: bool,
-    no_activate: bool,
-    log_print,
-) -> dict | None:
-    """Run mapping for a single IDS in plain (non-rich) mode."""
-    from imas_codex.ids.mapping import generate_mapping
-
-    try:
-        result = generate_mapping(
-            facility,
-            ids_name,
-            model=model,
-            dd_version=dd_version,
-            persist=not no_persist,
-            activate=not no_activate,
-        )
-    except ValueError as e:
-        log_print(f"[red]Error: {e}[/red]")
-        return None
-
-    _print_result(result)
-    return {
-        "ids_name": ids_name,
-        "mapping_id": result.mapping_id,
-        "bindings": len(result.validated.bindings),
-        "escalations": len(result.validated.escalations),
-        "cost": result.cost,
-        "persisted": result.persisted,
-    }
-
-
-def _run_single_ids_rich(
-    *,
-    facility: str,
-    ids_name: str,
-    model: str | None,
-    dd_version: str | None,
-    cost_limit: float,
-    no_persist: bool,
-    no_activate: bool,
+    clear: bool,
     deadline: float | None,
     verbose: bool,
     console,
     log_print,
-) -> dict | None:
-    """Run mapping for a single IDS with Rich progress display."""
+) -> list[dict]:
+    """Run mapping for all IDS targets with a single Rich progress display."""
+    import time as time_mod
+
     from imas_codex.cli.discover.common import DiscoveryConfig, run_discovery
     from imas_codex.discovery.base.facility import get_facility
     from imas_codex.ids.progress import MappingProgressDisplay
@@ -408,11 +384,11 @@ def _run_single_ids_rich(
         facility_config = get_facility(facility)
     except Exception as e:
         log_print(f"[red]Error loading facility config: {e}[/red]")
-        return None
+        return []
 
     display = MappingProgressDisplay(
         facility=facility,
-        ids_name=ids_name,
+        ids_targets=ids_names,
         cost_limit=cost_limit,
         model=model,
     )
@@ -431,25 +407,87 @@ def _run_single_ids_rich(
         verbose=verbose,
     )
 
-    result_holder: dict = {}
+    all_results: list[dict] = []
 
-    async def _run_mapping(stop_event, service_monitor):
-        engine_state = MappingDiscoveryState(
-            facility=facility,
-            target_ids=ids_name,
-            dd_version=dd_version,
-            model=model,
-            cost_limit=cost_limit,
-            persist=not no_persist,
-            activate=not no_activate,
-        )
-        if deadline:
-            engine_state.deadline = deadline
-        if service_monitor:
-            engine_state.service_monitor = service_monitor
+    async def _run_all_ids(stop_event, service_monitor):
+        for idx, ids_name in enumerate(ids_names):
+            if stop_event.is_set():
+                break
+            if deadline and time_mod.time() >= deadline:
+                break
 
-        def _update_display(detail, stats):
+            if clear:
+                _clear_mapping(facility, ids_name)
+
+            # Reset display state for this IDS
+            display.state.reset_for_ids(idx)
+
+            engine_state = MappingDiscoveryState(
+                facility=facility,
+                target_ids=ids_name,
+                dd_version=dd_version,
+                model=model,
+                cost_limit=cost_limit,
+                persist=not no_persist,
+                activate=not no_activate,
+            )
+            if deadline:
+                engine_state.deadline = deadline
+            if service_monitor:
+                engine_state.service_monitor = service_monitor
+
+            def _update_display(detail, stats):
+                ds = display.state
+                ds.sources_found = engine_state.sources_found
+                ds.sections_assigned = engine_state.sections_assigned
+                ds.sections_mapped = engine_state.sections_mapped
+                ds.bindings_total = engine_state.bindings_total
+                ds.bindings_passed = engine_state.bindings_passed
+                ds.escalations = engine_state.escalations
+                ds.cost = engine_state.cost
+                ds.current_detail = str(detail)
+                # Derive sections_total from context
+                ctx = engine_state.context
+                if ctx:
+                    sections = ctx.get("sections")
+                    if sections and hasattr(sections, "assignments"):
+                        ds.sections_total = len(sections.assignments)
+                # Track current pipeline step from worker phases
+                if engine_state.context_phase.done:
+                    if engine_state.assign_phase.done:
+                        if engine_state.map_phase.done:
+                            ds.current_step = "validate"
+                        else:
+                            ds.current_step = "mapping"
+                    else:
+                        ds.current_step = "assign"
+                else:
+                    ds.current_step = "context"
+
+            try:
+                await run_mapping_engine(
+                    engine_state,
+                    stop_event=stop_event,
+                    on_progress=_update_display,
+                )
+            except ValueError as e:
+                logger.warning("Error mapping %s: %s", ids_name, e)
+                continue
+
+            result = {
+                "ids_name": ids_name,
+                "mapping_id": engine_state.mapping_id,
+                "bindings": engine_state.bindings_total,
+                "escalations": engine_state.escalations,
+                "cost": engine_state.cost,
+                "persisted": engine_state.persist,
+            }
+            all_results.append(result)
+            display.state.completed_ids.append(result)
+
+            # Update display to show completion
             ds = display.state
+            ds.current_step = "done"
             ds.sources_found = engine_state.sources_found
             ds.sections_assigned = engine_state.sections_assigned
             ds.sections_mapped = engine_state.sections_mapped
@@ -457,61 +495,17 @@ def _run_single_ids_rich(
             ds.bindings_passed = engine_state.bindings_passed
             ds.escalations = engine_state.escalations
             ds.cost = engine_state.cost
-            ds.current_detail = str(detail)
 
-        try:
-            await run_mapping_engine(
-                engine_state,
-                stop_event=stop_event,
-                on_progress=_update_display,
-            )
-        except ValueError as e:
-            log_print(f"[red]Error: {e}[/red]")
-            return {"error": str(e)}
-
-        ds = display.state
-        ds.current_step = "done"
-        ds.sources_found = engine_state.sources_found
-        ds.sections_assigned = engine_state.sections_assigned
-        ds.sections_mapped = engine_state.sections_mapped
-        ds.bindings_total = engine_state.bindings_total
-        ds.bindings_passed = engine_state.bindings_passed
-        ds.escalations = engine_state.escalations
-        ds.cost = engine_state.cost
-
-        return {
-            "ids_name": ids_name,
-            "mapping_id": engine_state.mapping_id,
-            "bindings": engine_state.bindings_total,
-            "escalations": engine_state.escalations,
-            "cost": engine_state.cost,
-            "persisted": engine_state.persist,
-        }
-
-    def _on_complete(results):
-        result_holder.update(results)
-        cost = results.get("cost")
-        cost_str = ""
-        if cost:
-            cost_str = f"  ${cost.total_usd:.4f}"
-        click.echo(
-            f"  {ids_name}: "
-            f"{results.get('bindings', 0)} bindings, "
-            f"{results.get('escalations', 0)} escalations"
-            f"{cost_str}"
-        )
+        return {"completed": len(all_results), "total": len(ids_names)}
 
     try:
-        run_discovery(config, _run_mapping, on_complete=_on_complete)
+        run_discovery(config, _run_all_ids)
     except SystemExit:
         raise
     except Exception as e:
-        log_print(f"[red]Error mapping {ids_name}: {e}[/red]")
-        return None
+        log_print(f"[red]Error in mapping pipeline: {e}[/red]")
 
-    if "error" in result_holder:
-        return None
-    return result_holder
+    return all_results
 
 
 # ---------------------------------------------------------------------------
