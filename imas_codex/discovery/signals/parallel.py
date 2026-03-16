@@ -78,6 +78,18 @@ STATIC_DATA_SOURCES = {
     "jec2020_xml",
 }
 
+SIGNAL_SCANNER_SCOPE_CASE = """
+CASE
+    WHEN {alias}.tdi_function IS NOT NULL OR {alias}.discovery_source STARTS WITH 'tdi' THEN 'tdi'
+    WHEN {alias}.discovery_source = 'ppf' THEN 'ppf'
+    WHEN {alias}.discovery_source = 'jpf' THEN 'jpf'
+    WHEN {alias}.discovery_source = 'edas' THEN 'edas'
+    WHEN {alias}.discovery_source IN $static_sources THEN 'device_xml'
+    WHEN {alias}.data_source_name IN $static_sources THEN 'device_xml'
+    ELSE 'mdsplus'
+END
+""".strip()
+
 
 def build_device_xml_context_query(
     group_key: str,
@@ -184,6 +196,21 @@ def get_scanner_scope_sources(scanner_types: list[str] | None) -> list[str] | No
     return sorted(scoped)
 
 
+def get_scanner_scope_query_params(scanner_types: list[str] | None) -> dict[str, Any]:
+    """Return common query parameters for scanner-scoped signal filters."""
+
+    return {
+        "scoped_scanners": get_scanner_scope_sources(scanner_types),
+        "static_sources": sorted(STATIC_DATA_SOURCES),
+    }
+
+
+def build_signal_scope_case(alias: str = "s") -> str:
+    """Render the common scanner-scope CASE expression for Cypher queries."""
+
+    return SIGNAL_SCANNER_SCOPE_CASE.format(alias=alias)
+
+
 def get_checkpoint_dir() -> Path:
     """Get checkpoint directory for data discovery, creating if needed.
 
@@ -279,11 +306,15 @@ class DataDiscoveryState(DiscoveryStateBase):
         )
         self.enrich_phase = PipelinePhase(
             "enrich",
-            has_work_fn=lambda: has_pending_enrich_work(self.facility),
+            has_work_fn=lambda: has_pending_enrich_work(
+                self.facility, self.scanner_types
+            ),
         )
         self.check_phase = PipelinePhase(
             "check",
-            has_work_fn=lambda: has_pending_check_work(self.facility),
+            has_work_fn=lambda: has_pending_check_work(
+                self.facility, self.scanner_types
+            ),
         )
         # Composite scan phase — done when all sub-phases are done
         self._scan_phase = PipelinePhase("scan")
@@ -381,94 +412,124 @@ class DataDiscoveryState(DiscoveryStateBase):
 # =============================================================================
 
 
-def has_pending_work(facility: str) -> bool:
+def has_pending_work(facility: str, scanner_types: list[str] | None = None) -> bool:
     """Check if there's any pending work for this facility."""
-    return has_pending_enrich_work(facility) or has_pending_check_work(facility)
+    return has_pending_enrich_work(
+        facility, scanner_types
+    ) or has_pending_check_work(facility, scanner_types)
 
 
-def has_pending_enrich_work(facility: str) -> bool:
+def has_pending_enrich_work(
+    facility: str,
+    scanner_types: list[str] | None = None,
+) -> bool:
     """Check if there are signals awaiting enrichment."""
+    scope_params = get_scanner_scope_query_params(scanner_types)
+    query = f"""
+        MATCH (s:FacilitySignal {{facility_id: $facility}})
+        WITH s, {build_signal_scope_case("s")} AS scanner_scope
+        WHERE s.status = $discovered
+          AND ($scoped_scanners IS NULL OR scanner_scope IN $scoped_scanners)
+          AND s.claimed_at IS NULL
+        RETURN count(s) > 0 AS has_work
+    """
     try:
         with GraphClient() as gc:
             result = gc.query(
-                """
-                MATCH (s:FacilitySignal {facility_id: $facility})
-                WHERE s.status = $discovered
-                  AND s.claimed_at IS NULL
-                RETURN count(s) > 0 AS has_work
-                """,
+                query,
                 facility=facility,
                 discovered=FacilitySignalStatus.discovered.value,
+                **scope_params,
             )
             return result[0]["has_work"] if result else False
     except Exception:
         return False
 
 
-def has_pending_check_work(facility: str) -> bool:
+def has_pending_check_work(
+    facility: str,
+    scanner_types: list[str] | None = None,
+) -> bool:
     """Check if there are enriched signals awaiting check."""
+    scope_params = get_scanner_scope_query_params(scanner_types)
+    query = f"""
+        MATCH (s:FacilitySignal {{facility_id: $facility}})
+        WITH s, {build_signal_scope_case("s")} AS scanner_scope
+        WHERE s.status = $enriched
+          AND ($scoped_scanners IS NULL OR scanner_scope IN $scoped_scanners)
+          AND s.claimed_at IS NULL
+        RETURN count(s) > 0 AS has_work
+    """
     try:
         with GraphClient() as gc:
             result = gc.query(
-                """
-                MATCH (s:FacilitySignal {facility_id: $facility})
-                WHERE s.status = $enriched
-                  AND s.claimed_at IS NULL
-                RETURN count(s) > 0 AS has_work
-                """,
+                query,
                 facility=facility,
                 enriched=FacilitySignalStatus.enriched.value,
+                **scope_params,
             )
             return result[0]["has_work"] if result else False
     except Exception:
         return False
 
 
-def get_data_discovery_stats(facility: str) -> dict[str, Any]:
+def get_data_discovery_stats(
+    facility: str,
+    scanner_types: list[str] | None = None,
+) -> dict[str, Any]:
     """Get current discovery statistics from graph.
 
     Returns counts of signals by status, pending work, accumulated
     enrichment cost, and access check outcomes for historical tracking.
     """
+    scope_params = get_scanner_scope_query_params(scanner_types)
+    signal_query = f"""
+        MATCH (s:FacilitySignal {{facility_id: $facility}})
+        WHERE 'FacilitySignal' IN labels(s)
+        WITH s, {build_signal_scope_case("s")} AS scanner_scope
+        WHERE $scoped_scanners IS NULL OR scanner_scope IN $scoped_scanners
+        OPTIONAL MATCH (s)-[c:CHECKED_WITH]->()
+        RETURN
+            count(DISTINCT s) AS total,
+            sum(CASE WHEN s.status = $discovered THEN 1 ELSE 0 END) AS discovered,
+            sum(CASE WHEN s.status = $enriched THEN 1 ELSE 0 END) AS enriched,
+            sum(CASE WHEN s.status = $checked THEN 1 ELSE 0 END) AS checked,
+            sum(CASE WHEN s.status = $skipped THEN 1 ELSE 0 END) AS skipped,
+            sum(CASE WHEN s.status = $failed THEN 1 ELSE 0 END) AS failed,
+            sum(CASE WHEN s.status = $discovered AND s.claimed_at IS NULL THEN 1 ELSE 0 END) AS pending_enrich,
+            sum(CASE WHEN s.status = $enriched AND s.claimed_at IS NULL THEN 1 ELSE 0 END) AS pending_check,
+            sum(coalesce(s.llm_cost, 0)) AS accumulated_cost,
+            count(CASE WHEN c.success = true THEN 1 END) AS checks_passed,
+            count(CASE WHEN c.success = false THEN 1 END) AS checks_failed
+    """
+    group_query = f"""
+        MATCH (sg:SignalSource {{facility_id: $facility}})
+        OPTIONAL MATCH (s:FacilitySignal {{facility_id: $facility}})-[:MEMBER_OF]->(sg)
+        WITH sg, s,
+             CASE
+                 WHEN s IS NULL THEN NULL
+                 ELSE {build_signal_scope_case("s")}
+             END AS scanner_scope
+        WHERE s IS NULL OR $scoped_scanners IS NULL OR scanner_scope IN $scoped_scanners
+        RETURN count(DISTINCT CASE WHEN s IS NOT NULL THEN sg END) AS signal_sources,
+               count(s) AS grouped_signals
+    """
     try:
         with GraphClient() as gc:
             result = gc.query(
-                """
-                MATCH (s:FacilitySignal {facility_id: $facility})
-                WHERE 'FacilitySignal' IN labels(s)
-                OPTIONAL MATCH (s)-[c:CHECKED_WITH]->()
-                RETURN
-                    count(DISTINCT s) AS total,
-                    sum(CASE WHEN s.status = $discovered THEN 1 ELSE 0 END) AS discovered,
-                    sum(CASE WHEN s.status = $enriched THEN 1 ELSE 0 END) AS enriched,
-                    sum(CASE WHEN s.status = $checked THEN 1 ELSE 0 END) AS checked,
-                    sum(CASE WHEN s.status = $skipped THEN 1 ELSE 0 END) AS skipped,
-                    sum(CASE WHEN s.status = $failed THEN 1 ELSE 0 END) AS failed,
-                    sum(CASE WHEN s.status = $discovered AND s.claimed_at IS NULL THEN 1 ELSE 0 END) AS pending_enrich,
-                    sum(CASE WHEN s.status = $enriched AND s.claimed_at IS NULL THEN 1 ELSE 0 END) AS pending_check,
-                    sum(coalesce(s.llm_cost, 0)) AS accumulated_cost,
-                    count(CASE WHEN c.success = true THEN 1 END) AS checks_passed,
-                    count(CASE WHEN c.success = false THEN 1 END) AS checks_failed
-                """,
+                signal_query,
                 facility=facility,
                 discovered=FacilitySignalStatus.discovered.value,
                 enriched=FacilitySignalStatus.enriched.value,
                 checked=FacilitySignalStatus.checked.value,
                 skipped=FacilitySignalStatus.skipped.value,
                 failed=FacilitySignalStatus.failed.value,
+                **scope_params,
             )
             stats = dict(result[0]) if result else {}
 
             # Signal source counts (separate query to avoid cross-product)
-            grp = gc.query(
-                """
-                MATCH (sg:SignalSource {facility_id: $facility})
-                OPTIONAL MATCH (s:FacilitySignal)-[:MEMBER_OF]->(sg)
-                RETURN count(DISTINCT sg) AS signal_sources,
-                       count(s) AS grouped_signals
-                """,
-                facility=facility,
-            )
+            grp = gc.query(group_query, facility=facility, **scope_params)
             if grp:
                 stats["signal_sources"] = grp[0]["signal_sources"]
                 stats["grouped_signals"] = grp[0]["grouped_signals"]
@@ -4898,10 +4959,7 @@ async def run_parallel_data_discovery(
         _facility: str, _ssh_host: str | None, _scanner_types: list[str] | None
     ) -> tuple[dict, str | None, list[str], dict, dict, dict[str, dict[str, str]]]:
         from imas_codex.discovery.base.facility import get_facility
-        from imas_codex.discovery.mdsplus.graph_ops import (
-            get_signal_counts,
-            get_version_counts,
-        )
+        from imas_codex.discovery.mdsplus.graph_ops import get_version_counts
         from imas_codex.discovery.signals.scanners.base import (
             get_scanners_for_facility,
         )
@@ -4933,7 +4991,7 @@ async def run_parallel_data_discovery(
             _scanner_types = [s.scanner_type for s in scanner_instances]
 
         version_counts = get_version_counts(_facility)
-        signal_counts = get_signal_counts(_facility)
+        signal_counts = get_data_discovery_stats(_facility, _scanner_types)
         wiki_context = {}
         if config.get("wiki_sites"):
             wiki_context = load_wiki_context(_facility)

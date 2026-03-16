@@ -13,6 +13,9 @@ import pytest
 from imas_codex.discovery.signals.parallel import (
     build_device_xml_context_query,
     fetch_tree_context,
+    get_data_discovery_stats,
+    has_pending_check_work,
+    has_pending_enrich_work,
     get_scanner_scope_sources,
     get_signal_scanner_type,
 )
@@ -253,6 +256,63 @@ class TestScannerScopeMapping:
         """User scanner filters keep TDI and MDSplus separate."""
         assert get_scanner_scope_sources(["tdi"]) == ["tdi"]
         assert get_scanner_scope_sources(["mdsplus"]) == ["mdsplus"]
+
+    def test_pending_queries_receive_scanner_scope(self):
+        """Pending-work checks apply the selected scanner scope in Cypher."""
+        mock_gc = MagicMock()
+        mock_gc.query.return_value = [{"has_work": True}]
+        mock_gc.__enter__ = MagicMock(return_value=mock_gc)
+        mock_gc.__exit__ = MagicMock(return_value=False)
+
+        with patch(
+            "imas_codex.discovery.signals.parallel.GraphClient",
+            return_value=mock_gc,
+        ):
+            assert has_pending_enrich_work("jet", ["device_xml", "ppf"]) is True
+            assert has_pending_check_work("jet", ["device_xml", "ppf"]) is True
+
+        assert mock_gc.query.call_count == 2
+        for call in mock_gc.query.call_args_list:
+            kwargs = call.kwargs
+            assert kwargs["scoped_scanners"] == ["device_xml", "ppf"]
+            assert "static_sources" in kwargs
+
+    def test_stats_queries_receive_scanner_scope(self):
+        """Discovery stats use scoped totals instead of facility-wide totals."""
+        mock_gc = MagicMock()
+        mock_gc.query.side_effect = [
+            [
+                {
+                    "total": 12,
+                    "discovered": 5,
+                    "enriched": 4,
+                    "checked": 3,
+                    "skipped": 0,
+                    "failed": 0,
+                    "pending_enrich": 1,
+                    "pending_check": 2,
+                    "accumulated_cost": 1.25,
+                    "checks_passed": 3,
+                    "checks_failed": 0,
+                }
+            ],
+            [{"signal_sources": 2, "grouped_signals": 6}],
+        ]
+        mock_gc.__enter__ = MagicMock(return_value=mock_gc)
+        mock_gc.__exit__ = MagicMock(return_value=False)
+
+        with patch(
+            "imas_codex.discovery.signals.parallel.GraphClient",
+            return_value=mock_gc,
+        ):
+            stats = get_data_discovery_stats("jet", ["device_xml", "ppf"])
+
+        assert stats["total"] == 12
+        assert stats["signal_sources"] == 2
+        assert stats["grouped_signals"] == 6
+        for call in mock_gc.query.call_args_list:
+            kwargs = call.kwargs
+            assert kwargs["scoped_scanners"] == ["device_xml", "ppf"]
 
 
 class TestEnrichWorkerTreeContext:

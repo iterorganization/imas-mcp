@@ -270,7 +270,11 @@ def signals(
                 get_data_discovery_stats,
             )
 
-            stats = await asyncio.to_thread(get_data_discovery_stats, facility)
+            stats = await asyncio.to_thread(
+                get_data_discovery_stats,
+                facility,
+                scanner_types,
+            )
             if stats and display:
                 display.update_from_graph(
                     total_signals=stats.get("total", 0),
@@ -378,7 +382,7 @@ def signals(
                         get_data_discovery_stats,
                     )
 
-                    final_stats = get_data_discovery_stats(facility)
+                    final_stats = get_data_discovery_stats(facility, scanner_types)
                     if final_stats:
                         display.update_from_graph(
                             total_signals=final_stats.get("total", 0),
