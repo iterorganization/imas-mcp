@@ -202,6 +202,7 @@ def _fetch_unembedded(
         MATCH (n:{label})
         WHERE n.{text_field} IS NOT NULL
           AND n.{text_field} <> ''
+          AND trim(n.{text_field}) <> ''
           AND n.embedding IS NULL
           AND n.embed_failed_at IS NULL
           {facility_filter}
@@ -246,6 +247,7 @@ def _count_unembedded(
         MATCH (n:{label})
         WHERE n.{text_field} IS NOT NULL
           AND n.{text_field} <> ''
+          AND trim(n.{text_field}) <> ''
           AND n.embedding IS NULL
           AND n.embed_failed_at IS NULL
           {facility_filter}
@@ -529,6 +531,7 @@ async def embed_description_worker(
 
         total_fetched = 0
         total_embedded = 0
+        had_errors = False
 
         # Process each label round-robin
         for label in labels:
@@ -550,6 +553,7 @@ async def embed_description_worker(
                 )
                 stats.errors += 1
                 error_count += 1
+                had_errors = True
                 continue
 
             total_fetched += fetched
@@ -578,7 +582,10 @@ async def embed_description_worker(
         # Backoff logic: distinguish idle (no work) from errors (work but
         # embed server failing).  When items are fetched but none embedded,
         # the embed server is down — back off exponentially.
-        if total_fetched == 0:
+        # Important: exceptions during fetch/embed cause `continue`,
+        # leaving total_fetched=0 even though work exists.  Treat this
+        # as an error, not idle, so idle_count does not falsely advance.
+        if total_fetched == 0 and not had_errors:
             idle_count += 1
             error_count = 0
             # Exit when idle and phase is done (no more upstream work coming)
@@ -591,6 +598,14 @@ async def embed_description_worker(
             if on_progress and idle_count <= 3:
                 on_progress("idle", stats)
             await asyncio.sleep(min(IDLE_SLEEP * idle_count, 15.0))
+        elif total_fetched == 0 and had_errors:
+            # Errors prevented fetching — back off but don't count as idle
+            backoff = min(IDLE_SLEEP * (2**error_count), ERROR_BACKOFF_MAX)
+            if on_progress:
+                on_progress(
+                    f"embed errors (backing off {backoff:.0f}s)", stats
+                )
+            await asyncio.sleep(backoff)
         elif total_embedded == 0:
             # Fetched items but failed to embed any — server is down
             error_count += 1
@@ -691,6 +706,7 @@ async def embed_text_worker(
     while not _should_stop():
         total_fetched = 0
         total_embedded = 0
+        had_errors = False
 
         for label in labels:
             if _should_stop():
@@ -710,6 +726,7 @@ async def embed_text_worker(
                 )
                 stats.errors += 1
                 error_count += 1
+                had_errors = True
                 continue
 
             total_fetched += fetched
@@ -734,7 +751,7 @@ async def embed_text_worker(
                         f"embedded {embedded} {label}", stats, results
                     )
 
-        if total_fetched == 0:
+        if total_fetched == 0 and not had_errors:
             idle_count += 1
             error_count = 0
             # Exit when idle and phase is done (no more upstream work coming)
@@ -747,6 +764,14 @@ async def embed_text_worker(
             if on_progress and idle_count <= 3:
                 on_progress("idle", stats)
             await asyncio.sleep(min(IDLE_SLEEP * idle_count, 15.0))
+        elif total_fetched == 0 and had_errors:
+            # Errors prevented fetching — back off but don't count as idle
+            backoff = min(IDLE_SLEEP * (2**error_count), ERROR_BACKOFF_MAX)
+            if on_progress:
+                on_progress(
+                    f"embed errors (backing off {backoff:.0f}s)", stats
+                )
+            await asyncio.sleep(backoff)
         elif total_embedded == 0:
             error_count += 1
             idle_count = 0

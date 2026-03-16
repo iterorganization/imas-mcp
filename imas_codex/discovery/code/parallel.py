@@ -458,6 +458,8 @@ def get_code_discovery_stats(
         # Chunk embedding stats — only count chunks from CodeFiles
         # meeting the score threshold so pending counts are consistent
         # with what the embed workers will actually process.
+        # Exclude whitespace-only chunks from pending (they can't be
+        # meaningfully embedded and the workers skip them).
         embed_result = gc.query(
             """
             MATCH (cc:CodeChunk)-[:AT_FACILITY]->(f:Facility {id: $facility})
@@ -467,6 +469,8 @@ def get_code_discovery_stats(
                    count(cc.embedding) AS embedded,
                    count(CASE WHEN cc.embedding IS NULL
                               AND cc.embed_failed_at IS NULL
+                              AND cc.text IS NOT NULL
+                              AND trim(cc.text) <> ''
                          THEN 1 END) AS pending
             """,
             facility=facility,
