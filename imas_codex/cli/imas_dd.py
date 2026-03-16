@@ -26,10 +26,10 @@ def imas() -> None:
 
     \b
     Mapping:
-      imas-codex imas map <facility>           Map all achievable IDS
-      imas-codex imas map <f> -d magnetics     Map by physics domain
-      imas-codex imas map <f> -i pf_active     Map specific IDS
-      imas-codex imas map status <f>           Show mapping status
+      imas-codex imas map <facility>                          Map all achievable IDS
+      imas-codex imas map <f> -d magnetic_field_systems       Map by physics domain
+      imas-codex imas map <f> -i pf_active                    Map specific IDS
+      imas-codex imas map status <f>                          Show mapping status
 
     \b
     Assembly:
