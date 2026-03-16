@@ -15,6 +15,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from imas_codex.discovery.base.progress import format_count
+from imas_codex.discovery.base.supervision import is_infrastructure_error
 
 from .state import StaticDiscoveryState
 
@@ -518,6 +519,8 @@ async def enrich_worker(
             logger.error("Signal source enrich batch failed: %s", e)
             state.enrich_stats.errors += 1
             await asyncio.to_thread(release_signal_source_claims, pattern_ids)
+            if is_infrastructure_error(e):
+                raise
 
         await asyncio.sleep(0.1)
 
@@ -654,6 +657,8 @@ async def enrich_worker(
             logger.error("Parent enrich failed for %s: %s", parent_path, e)
             state.enrich_stats.errors += 1
             await asyncio.to_thread(release_parent_claim, parent_id)
+            if is_infrastructure_error(e):
+                raise
 
         await asyncio.sleep(0.1)
 
@@ -764,5 +769,7 @@ async def enrich_worker(
             logger.error("Orphan enrich failed: %s", e)
             state.enrich_stats.errors += 1
             await asyncio.to_thread(release_orphan_claims, orphan_ids)
+            if is_infrastructure_error(e):
+                raise
 
         await asyncio.sleep(0.1)

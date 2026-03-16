@@ -33,6 +33,7 @@ from imas_codex.discovery.base.state import DiscoveryStateBase
 from imas_codex.discovery.base.supervision import (
     OrphanRecoverySpec,
     PipelinePhase,
+    is_infrastructure_error,
 )
 from imas_codex.discovery.paths.models import ScoreBatch
 from imas_codex.graph.models import PathStatus, TerminalReason
@@ -1974,6 +1975,8 @@ async def triage_worker(
             logger.exception(f"Triage error: {e}")
             state.triage_stats.errors += len(paths_to_score)
             _revert_path_claims(state.facility, [p["path"] for p in paths_to_score])
+            if is_infrastructure_error(e):
+                raise
 
         # Brief yield
         await asyncio.sleep(0.1)
@@ -2099,6 +2102,8 @@ async def enrich_worker(
             logger.exception(f"Enrich error: {e}")
             state.enrich_stats.errors += len(paths)
             _revert_path_claims(state.facility, path_strs)
+            if is_infrastructure_error(e):
+                raise
 
         # Brief yield
         await asyncio.sleep(0.1)
@@ -2247,6 +2252,8 @@ async def score_worker(
         except Exception as e:
             logger.exception(f"Score error: {e}")
             state.score_stats.errors += len(paths)
+            if is_infrastructure_error(e):
+                raise
 
         # Brief yield
         await asyncio.sleep(0.1)
