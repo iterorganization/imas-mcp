@@ -93,6 +93,34 @@ class TestGetScannersForFacility:
         register_scanner(TDIScanner())
         assert get_scanner("tdi").scanner_type == "tdi"
 
+    def test_disabled_data_source_is_skipped(self, monkeypatch):
+        """Data systems marked available=false are not scheduled."""
+        from imas_codex.discovery.signals.scanners import base
+
+        monkeypatch.setattr(
+            base,
+            "_auto_register",
+            lambda: None,
+        )
+        _registry.clear()
+
+        from imas_codex.discovery.signals.scanners.mdsplus import MDSplusScanner
+
+        register_scanner(MDSplusScanner())
+        monkeypatch.setattr(
+            "imas_codex.discovery.base.facility.get_facility",
+            lambda facility: {
+                "data_systems": {
+                    "mdsplus": {},
+                    "ppf": {"available": False},
+                }
+            },
+        )
+
+        scanners = get_scanners_for_facility("jet")
+
+        assert [scanner.scanner_type for scanner in scanners] == ["mdsplus"]
+
     def test_register_custom_scanner(self):
         """Custom scanners can be registered."""
 

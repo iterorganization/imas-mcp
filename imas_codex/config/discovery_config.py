@@ -13,7 +13,7 @@ Configuration structure:
         ├── data_systems.yaml # IMAS, MDSplus, HDF5, etc.
         └── physics.yaml      # Physics domain patterns
 
-Facility-specific exclusions are merged from *_private.yaml files.
+Facility-specific exclusions are merged from public facility YAML files.
 """
 
 from __future__ import annotations
@@ -78,7 +78,7 @@ class ExclusionConfig:
     """URL patterns for VCS remotes known to be accessible (e.g., 'git.iter.org')"""
 
     def merge_facility_excludes(self, facility_excludes: dict) -> ExclusionConfig:
-        """Merge facility-specific exclusions from *_private.yaml.
+        """Merge facility-specific exclusions from facility YAML.
 
         Args:
             facility_excludes: Dict with optional keys:
@@ -507,7 +507,7 @@ def get_exclusion_config_for_facility(facility: str) -> ExclusionConfig:
     """Get exclusion config with facility-specific patterns merged.
 
     Loads base exclusions from patterns/exclude.yaml, then merges
-    any facility-specific exclusions from the facility's private config.
+    any facility-specific exclusions from the facility's public config.
 
     Args:
         facility: Facility identifier (e.g., 'iter', 'tcv', 'jet')
@@ -518,10 +518,10 @@ def get_exclusion_config_for_facility(facility: str) -> ExclusionConfig:
     base_config = get_discovery_config().exclusions
 
     try:
-        from imas_codex.discovery.base.facility import get_facility_infrastructure
+        from imas_codex.discovery.base.facility import get_facility
 
-        infra = get_facility_infrastructure(facility)
-        facility_excludes = infra.get("excludes", {})
+        config = get_facility(facility)
+        facility_excludes = config.get("excludes", {})
 
         if facility_excludes:
             logger.debug(

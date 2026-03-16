@@ -12,6 +12,9 @@ location: Culham, United Kingdom
 # SSH connection (user configures ~/.ssh/config with this alias)
 ssh_host: jet
 
+# Lower the priority of codex SSH workloads on shared JET hosts.
+nice_level: 19
+
 # Data system configuration for signal discovery
 # Used by: imas-codex discover signals jet
 data_systems:
@@ -660,6 +663,16 @@ data_systems:
           role: greens_index
           description: Shot-range to Green's table version mapping
 
+
+excludes:
+  directories:
+    - /scratch
+    - /tmp
+    - /var/tmp
+  patterns:
+    - '*.dat.old'
+    - '*.backup'
+    - '*.bak'
 
 # Data access patterns discovered during facility exploration.
 data_access_patterns:

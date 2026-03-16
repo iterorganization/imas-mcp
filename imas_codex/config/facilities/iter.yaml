@@ -27,6 +27,9 @@ login_nodes:
 local_hosts:
   - iter
 
+# Lower the priority of codex SSH workloads on the shared SDCC hosts.
+nice_level: 10
+
 # Compute sub-locations — SLURM partitions addressable as service locations.
 # When pyproject.toml sets location = "titan", the code looks up this table
 # to derive: facility=iter, scheduler=slurm, partition=titan.
@@ -45,6 +48,16 @@ data_systems:
       - mdsplus
       - hdf5
     db_name: iter
+
+excludes:
+  directories:
+    - /tmp
+    - /var/tmp
+    - /mnt/HPC_T2/ITER/HPC/scratch
+  patterns:
+    - '*.dat.old'
+    - '*.backup'
+    - '*.bak'
 
 # Data access patterns discovered during facility exploration.
 data_access_patterns:

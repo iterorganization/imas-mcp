@@ -240,9 +240,10 @@ classes:
         annotations:
           is_private: true
       excludes:
-        description: Paths/patterns to exclude during exploration
-        annotations:
-          is_private: true
+        description: >-
+          Paths and patterns to exclude during runtime discovery and exploration.
+          Public field because scan behavior must be reproducible from committed
+          facility configuration.
       tools:
         description: Tool availability map (tool -> version)
         annotations:
@@ -292,8 +293,6 @@ classes:
           run_script_via_stdin() calls to this host are wrapped with nice.
           Applied automatically via the per-host nice registry in executor.py.
         range: integer
-        annotations:
-          is_private: true
       compute:
         description: >-
           Compute infrastructure available at this facility. Describes job
