@@ -13,6 +13,7 @@ import uuid
 from typing import TYPE_CHECKING, Any
 
 from imas_codex.discovery.base.claims import retry_on_deadlock
+from imas_codex.discovery.base.supervision import is_infrastructure_error
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -227,6 +228,8 @@ async def image_fetch_worker(
             except Exception as e:
                 logger.error("Image batch fetch failed: %s", e)
                 state.image_stats.errors += 1
+                if is_infrastructure_error(e):
+                    raise
                 for d in docs:
                     await asyncio.to_thread(
                         _mark_document_failed, d["id"], str(e)[:200]
@@ -321,6 +324,8 @@ async def image_score_worker(
             )
         except Exception as e:
             logger.warning("image_score_worker: claim failed: %s", e)
+            if is_infrastructure_error(e):
+                raise
             await asyncio.sleep(5.0)
             continue
 

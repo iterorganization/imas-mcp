@@ -18,6 +18,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from imas_codex.discovery.base.llm import ProviderBudgetExhausted
+from imas_codex.discovery.base.supervision import is_infrastructure_error
 from imas_codex.graph import GraphClient
 from imas_codex.graph.models import WikiPageStatus
 
@@ -184,6 +185,8 @@ async def score_worker(
         except Exception as e:
             # Neo4j connection error - backoff and retry
             logger.warning("score_worker %s: claim failed: %s", worker_id, e)
+            if is_infrastructure_error(e):
+                raise
             await asyncio.sleep(5.0)
             continue
         logger.debug(f"score_worker {worker_id}: claimed {len(pages)} pages")
@@ -388,6 +391,9 @@ async def score_worker(
             break
         except Exception as e:
             logger.error("Error in scoring batch: %s", e)
+            if is_infrastructure_error(e):
+                await asyncio.to_thread(_release_claimed_pages, [p["id"] for p in pages])
+                raise
             # Run blocking Neo4j calls in thread pool
             for page in pages:
                 await asyncio.to_thread(
@@ -529,6 +535,8 @@ async def ingest_worker(
         except Exception as e:
             # Neo4j connection error - backoff and retry
             logger.warning("ingest_worker: claim failed: %s", e)
+            if is_infrastructure_error(e):
+                raise
             await asyncio.sleep(5.0)
             continue
 
@@ -656,6 +664,8 @@ async def docs_worker(
             )
         except Exception as e:
             logger.warning("docs_worker: claim failed: %s", e)
+            if is_infrastructure_error(e):
+                raise
             await asyncio.sleep(5.0)
             continue
 
@@ -782,6 +792,8 @@ async def docs_worker(
                 )
 
             except Exception as e:
+                if is_infrastructure_error(e):
+                    raise
                 # Unwrap common error wrappers to get the actual error message
                 error_msg = str(e)
                 if hasattr(e, "__cause__") and e.__cause__:
@@ -880,6 +892,8 @@ async def docs_score_worker(
             )
         except Exception as e:
             logger.warning("docs_score_worker %s: claim failed: %s", worker_id, e)
+            if is_infrastructure_error(e):
+                raise
             await asyncio.sleep(5.0)
             continue
 
@@ -1050,6 +1064,8 @@ async def docs_score_worker(
             break
         except Exception as e:
             logger.error("Error in document scoring batch: %s", e)
+            if is_infrastructure_error(e):
+                raise
             for document in documents:
                 await asyncio.to_thread(mark_document_failed, document["id"], str(e))
 
@@ -1116,6 +1132,8 @@ async def image_score_worker(
             )
         except Exception as e:
             logger.warning("image_score_worker %s: claim failed: %s", worker_id, e)
+            if is_infrastructure_error(e):
+                raise
             await asyncio.sleep(5.0)
             continue
 
