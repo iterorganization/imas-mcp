@@ -82,10 +82,12 @@ class TestTunnelStart:
 
 
 class TestComputeNodeDiscovery:
-	def test_ssh_tunnel_opts_clear_inherited_forwards(self):
-		assert "ClearAllForwardings=yes" in SSH_TUNNEL_OPTS
+	def test_ssh_tunnel_opts_no_clear_all_forwardings(self):
+		# ClearAllForwardings=yes must NOT be used — it clears our own -L
+		# forwards (confirmed OpenSSH 8.9 behaviour).
+		assert "ClearAllForwardings=yes" not in SSH_TUNNEL_OPTS
 
-	def test_local_discovery_falls_back_to_known_job_names(self):
+	def test_local_discovery_uses_configured_job_name(self):
 		calls = []
 
 		def _run(args, **kwargs):
@@ -93,17 +95,13 @@ class TestComputeNodeDiscovery:
 
 			class Result:
 				returncode = 0
-
-				if args[2] == "codex-neo4j":
-					stdout = "98dci4-gpu-0002\n"
-				else:
-					stdout = ""
+				stdout = "98dci4-gpu-0002\n"
 
 			return Result()
 
 		with patch("imas_codex.remote.tunnel.subprocess.run", side_effect=_run):
-			node = discover_compute_node_local("imas-codex-services")
+			node = discover_compute_node_local("codex-neo4j")
 
 		assert node == "98dci4-gpu-0002"
-		assert calls[0][2] == "imas-codex-services"
-		assert calls[1][2] == "codex-neo4j"
+		assert len(calls) == 1
+		assert calls[0][2] == "codex-neo4j"

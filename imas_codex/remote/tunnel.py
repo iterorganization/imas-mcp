@@ -87,30 +87,28 @@ _SSH_ALIVE_COUNT_MAX = 3
 
 # Common SSH options for tunnel connections.
 # These are used by both ensure_tunnel() and the CLI.
+#
+# We do NOT use ClearAllForwardings=yes because it also clears our own
+# explicit -L local forwards (confirmed OpenSSH 8.9 behaviour).
+#
+# ExitOnForwardFailure=no: the user's ~/.ssh/config may contain
+# RemoteForward directives (e.g. for ProxyJump setups) that can fail
+# when the port is already in use.  We tolerate those failures — only
+# our local forwards matter.
 SSH_TUNNEL_OPTS: list[str] = [
     "-o", "ControlMaster=no",
     "-o", "ControlPath=none",
-    "-o", "ClearAllForwardings=yes",
     "-o", "TCPKeepAlive=yes",
     "-o", f"ServerAliveInterval={_SSH_ALIVE_INTERVAL}",
     "-o", f"ServerAliveCountMax={_SSH_ALIVE_COUNT_MAX}",
     "-o", "ConnectTimeout=10",
-    "-o", "ExitOnForwardFailure=yes",
+    "-o", "ExitOnForwardFailure=no",
 ]  # fmt: skip
 
 
 def _candidate_service_job_names(service_job_name: str) -> list[str]:
-    """Return likely SLURM service job names in priority order.
-
-    Facility private config can lag behind public config when job names are
-    renamed. Try the configured value first, then a small set of known aliases.
-    """
-    names = [service_job_name, "codex-neo4j", "imas-codex-services", "neo4j"]
-    ordered: list[str] = []
-    for name in names:
-        if name and name not in ordered:
-            ordered.append(name)
-    return ordered
+    """Return the configured SLURM service job name as a single-element list."""
+    return [service_job_name]
 
 
 def _pid_file(ssh_host: str) -> Path:
@@ -481,7 +479,7 @@ def stop_tunnel(ssh_host: str) -> bool:
 
 
 def discover_compute_node(
-    ssh_host: str, service_job_name: str = "imas-codex-services"
+    ssh_host: str, service_job_name: str = "codex-neo4j"
 ) -> str | None:
     """Discover the SLURM compute node running imas-codex services.
 
@@ -522,7 +520,7 @@ def discover_compute_node(
 
 
 def discover_compute_node_local(
-    service_job_name: str = "imas-codex-services",
+    service_job_name: str = "codex-neo4j",
 ) -> str | None:
     """Discover the SLURM compute node running services — local squeue.
 
@@ -571,7 +569,7 @@ def discover_compute_node_local(
 
 
 def resolve_remote_bind(
-    ssh_host: str, scheduler: str, service_job_name: str = "imas-codex-services"
+    ssh_host: str, scheduler: str, service_job_name: str = "codex-neo4j"
 ) -> str:
     """Resolve the remote bind address for a tunnel.
 

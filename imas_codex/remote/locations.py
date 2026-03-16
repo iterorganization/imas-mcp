@@ -52,7 +52,7 @@ class LocationInfo:
     ssh_host: str
     scheduler: str = "none"
     partition: str | None = None
-    service_job_name: str = "imas-codex-services"
+    service_job_name: str = "codex-neo4j"
     is_compute: bool = False
 
     @property
@@ -124,7 +124,7 @@ def _find_compute_location(name: str) -> LocationInfo | None:
                 ssh_host=ssh_host,
                 scheduler=loc_cfg.get("scheduler", "slurm"),
                 partition=loc_cfg.get("partition", name),
-                service_job_name=loc_cfg.get("service_job_name", "imas-codex-services"),
+                service_job_name=loc_cfg.get("service_job_name", "codex-neo4j"),
                 is_compute=True,
             )
     return None
