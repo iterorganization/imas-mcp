@@ -489,6 +489,7 @@ class TestSupervisedWorkerRestartReset:
             lambda: stop,
             status_tracker=status,
             max_restarts=3,
+            max_infrastructure_restarts=10,
             initial_backoff=0.01,
             max_backoff=0.01,
             restart_reset_seconds=0.0,
@@ -580,6 +581,7 @@ class TestSupervisedWorkerRestartReset:
             lambda: stop,
             status_tracker=status,
             max_restarts=3,  # Only 3 app-error restarts allowed
+            max_infrastructure_restarts=25,
             initial_backoff=0.01,
             max_backoff=0.01,
             restart_reset_seconds=9999.0,  # No reset from stable runs
@@ -588,6 +590,36 @@ class TestSupervisedWorkerRestartReset:
         # Worker survived 20 infra errors (more than max_restarts=3)
         assert call_count == 21
         assert status.state == WorkerState.stopped
+
+    @pytest.mark.asyncio
+    async def test_infra_errors_kill_after_max_infrastructure_restarts(self):
+        """Persistent infrastructure failures eventually crash the worker."""
+        from neo4j.exceptions import ServiceUnavailable
+
+        call_count = 0
+
+        async def always_infra_fail(state):
+            nonlocal call_count
+            call_count += 1
+            raise ServiceUnavailable("Connection refused")
+
+        status = WorkerStatus(name="score_worker_0", group="score")
+
+        await supervised_worker(
+            always_infra_fail,
+            "score_worker_0",
+            None,
+            lambda: False,
+            status_tracker=status,
+            max_restarts=3,
+            max_infrastructure_restarts=4,
+            initial_backoff=0.01,
+            max_backoff=0.01,
+            restart_reset_seconds=9999.0,
+        )
+
+        assert call_count == 4
+        assert status.state == WorkerState.crashed
 
     @pytest.mark.asyncio
     async def test_app_errors_still_kill_after_max_restarts(self):
