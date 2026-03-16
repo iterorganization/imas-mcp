@@ -199,7 +199,14 @@ def get_scanners_for_facility(facility: str) -> list[DataSourceScanner]:
 
     scanners = []
 
-    for source_type in data_systems:
+    for source_type, source_config in data_systems.items():
+        if isinstance(source_config, dict) and source_config.get("available") is False:
+            logger.info(
+                "Skipping disabled data source '%s' for facility %s",
+                source_type,
+                facility,
+            )
+            continue
         if source_type in _registry:
             scanners.append(_registry[source_type])
         else:
@@ -231,6 +238,8 @@ def get_facility_reference_shot(facility: str) -> int | None:
 
     for source_config in data_systems.values():
         if isinstance(source_config, dict):
+            if source_config.get("available") is False:
+                continue
             ref = source_config.get("reference_shot") or source_config.get(
                 "reference_pulse"
             )
