@@ -214,8 +214,7 @@ def _format_version_context_report(result: dict) -> str:
     lines = [
         f"Version Context Report: {result.get('total_paths', 0)} paths queried, "
         f"{len(result.get('paths_found', []))} found, "
-        f"{result.get('paths_with_changes', 0)} with changes, "
-        f"{result.get('graph_change_nodes_seen', 0)} change nodes matched",
+        f"{result.get('paths_with_changes', 0)} with changes",
         "",
     ]
 
@@ -227,16 +226,35 @@ def _format_version_context_report(result: dict) -> str:
         return "No version context found for the requested paths."
 
     for path_id, ctx in paths_data.items():
-        changes = ctx.get("notable_changes", [])
+        changes = ctx.get("changes", [])
+        introduced = ctx.get("introduced_in")
+        deprecated = ctx.get("deprecated_in")
+        lifecycle_parts = []
+        if introduced:
+            lifecycle_parts.append(f"introduced v{introduced}")
+        if deprecated:
+            lifecycle_parts.append(f"deprecated v{deprecated}")
+        lifecycle_str = f" ({', '.join(lifecycle_parts)})" if lifecycle_parts else ""
+
         if changes:
-            lines.append(f"**{path_id}** ({len(changes)} change(s)):")
+            lines.append(f"**{path_id}**{lifecycle_str} — {len(changes)} change(s):")
             for c in changes:
                 version = c.get("version", "?")
-                ctype = c.get("type", "?")
-                summary = c.get("summary", "")
-                lines.append(f"  - v{version} [{ctype}]: {summary}")
+                change_type = c.get("change_type", "?")
+                semantic = c.get("semantic_type")
+                old_val = c.get("old_value", "")
+                new_val = c.get("new_value", "")
+                label = f"{change_type}" + (f"/{semantic}" if semantic and semantic != "none" else "")
+                if old_val and new_val:
+                    lines.append(f"  - v{version} [{label}]: `{old_val}` → `{new_val}`")
+                elif new_val:
+                    lines.append(f"  - v{version} [{label}]: added `{new_val}`")
+                elif old_val:
+                    lines.append(f"  - v{version} [{label}]: removed `{old_val}`")
+                else:
+                    lines.append(f"  - v{version} [{label}]")
         else:
-            lines.append(f"**{path_id}**: no notable changes")
+            lines.append(f"**{path_id}**{lifecycle_str}: no metadata changes recorded")
 
     not_found = result.get("not_found", [])
     if not_found:

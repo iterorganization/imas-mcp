@@ -87,15 +87,21 @@ class VersionTool:
                 """
                 UNWIND $path_ids AS pid
                 MATCH (p:IMASNode {id: pid})
+                OPTIONAL MATCH (p)-[:INTRODUCED_IN]->(iv:DDVersion)
+                OPTIONAL MATCH (p)-[:DEPRECATED_IN]->(dv:DDVersion)
                 OPTIONAL MATCH (change:IMASNodeChange)-[:FOR_IMAS_PATH]->(p)
-                WHERE change.semantic_change_type IN
-                      ['sign_convention', 'coordinate_convention', 'units',
-                       'definition_clarification']
+                OPTIONAL MATCH (change)-[:IN_VERSION]->(v:DDVersion)
                 RETURN p.id AS id,
+                       iv.id AS introduced_in,
+                       dv.id AS deprecated_in,
                        count(change) AS change_count,
-                       collect({version: change.version,
-                                type: change.semantic_change_type,
-                                summary: change.summary})[..10] AS notable_changes
+                       collect({
+                           version: v.id,
+                           change_type: change.change_type,
+                           semantic_type: change.semantic_type,
+                           old_value: change.old_value,
+                           new_value: change.new_value
+                       })[..20] AS changes
                 """,
                 path_ids=path_list,
             )
@@ -104,13 +110,16 @@ class VersionTool:
 
         path_ctx: dict[str, Any] = {}
         for r in results or []:
+            # Filter out null entries produced when OPTIONAL MATCH finds nothing
             changes = [
-                c for c in (r.get("notable_changes") or [])
+                c for c in (r.get("changes") or [])
                 if c.get("version") is not None
             ]
             path_ctx[r["id"]] = {
-                "change_count": r["change_count"],
-                "notable_changes": changes,
+                "introduced_in": r.get("introduced_in"),
+                "deprecated_in": r.get("deprecated_in"),
+                "change_count": len(changes),
+                "changes": changes,
             }
 
         # Report paths not found in graph
