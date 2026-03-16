@@ -493,7 +493,7 @@ class TestMappingDisposition:
         values = set(MappingDisposition)
         expected = {
             "mapped", "no_imas_equivalent", "metadata_only",
-            "facility_specific", "insufficient_context", "dd_version_gap",
+            "facility_specific", "insufficient_context",
         }
         assert {v.value for v in values} == expected
 
@@ -527,11 +527,11 @@ class TestUnmappedSignal:
     def test_roundtrip(self):
         u = UnmappedSignal(
             source_id="src",
-            disposition=MappingDisposition.DD_VERSION_GAP,
-            evidence="Field added in DD 4.2.0, current is 4.1.1",
+            disposition=MappingDisposition.INSUFFICIENT_CONTEXT,
+            evidence="Could map but not enough evidence",
         )
         restored = UnmappedSignal.model_validate_json(u.model_dump_json())
-        assert restored.disposition == MappingDisposition.DD_VERSION_GAP
+        assert restored.disposition == MappingDisposition.INSUFFICIENT_CONTEXT
         assert restored.evidence == u.evidence
 
 
