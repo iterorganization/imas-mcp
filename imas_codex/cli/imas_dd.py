@@ -529,12 +529,22 @@ def imas_search(
         where_clauses.append("NOT (node)-[:DEPRECATED_IN]->(:DDVersion)")
     if ids:
         where_clauses.append(f"node.id STARTS WITH '{ids}/'")
-    if version_filter:
-        where_clauses.append(f"node.dd_version = '{version_filter}'")
 
     where_clause = ""
     if where_clauses:
         where_clause = "WHERE " + " AND ".join(where_clauses)
+
+    # Build version filter using relationship-based INTRODUCED_IN
+    dd_version_join = ""
+    extra_params: dict[str, Any] = {}
+    if version_filter:
+        dd_major = int(version_filter.split(".")[0])
+        dd_version_join = (
+            "WITH node, score "
+            "MATCH (node)-[:INTRODUCED_IN]->(iv:DDVersion) "
+            "WHERE toInteger(split(iv.id, '.')[0]) <= $dd_version "
+        )
+        extra_params["dd_version"] = dd_major
 
     with GraphClient() as gc:
         results = gc.query(
@@ -542,11 +552,13 @@ def imas_search(
             CALL db.index.vector.queryNodes("imas_node_embedding", $limit * 2, $embedding)
             YIELD node, score
             {where_clause}
+            {dd_version_join}
             RETURN node.id AS path, score, node.unit AS unit, node.documentation AS doc
             LIMIT $limit
         """,
             embedding=embedding,
             limit=limit,
+            **extra_params,
         )
 
     if not results:

@@ -726,10 +726,18 @@ class GraphListTool:
             else:
                 return_clause = "RETURN p.id AS id"
 
+            # Use ids-level match when prefix has no slash (whole IDS)
+            if "/" not in prefix:
+                path_filter = "p.ids = $ids_name"
+                filter_params = {"ids_name": ids_name, **dd_params}
+            else:
+                path_filter = "p.id STARTS WITH $prefix"
+                filter_params = {"prefix": prefix, **dd_params}
+
             path_results = self._gc.query(
                 f"""
                 MATCH (p:IMASNode)
-                WHERE p.id STARTS WITH $prefix
+                WHERE {path_filter}
                 AND p.node_category = 'data'
                 {leaf_filter}
                 {dd_clause}
@@ -737,26 +745,8 @@ class GraphListTool:
                 ORDER BY p.id
                 {limit_clause}
                 """,
-                prefix=prefix + ("/" if "/" not in prefix else ""),
-                **dd_params,
+                **filter_params,
             )
-
-            # Also include the prefix itself if it's an exact IDS
-            if "/" not in prefix:
-                path_results = self._gc.query(
-                    f"""
-                    MATCH (p:IMASNode)
-                    WHERE p.ids = $ids_name
-                    AND p.node_category = 'data'
-                    {leaf_filter}
-                    {dd_clause}
-                    {return_clause}
-                    ORDER BY p.id
-                    {limit_clause}
-                    """,
-                    ids_name=ids_name,
-                    **dd_params,
-                )
 
             path_ids = [r["id"] for r in (path_results or [])]
             if not include_ids_prefix:

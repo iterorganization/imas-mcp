@@ -812,13 +812,19 @@ def compute_semantic_matches(
         if target_ids_name:
             imas_where += "AND n.id STARTS WITH $ids_prefix "
             imas_params["ids_prefix"] = f"{target_ids_name}/"
+
+        dd_version_join = ""
         if dd_version is not None:
-            imas_where += "AND n.dd_version = $dd_version "
+            dd_version_join = (
+                "MATCH (n)-[:INTRODUCED_IN]->(iv:DDVersion) "
+                "WHERE toInteger(split(iv.id, '.')[0]) <= $dd_version "
+            )
             imas_params["dd_version"] = dd_version
 
         imas_cypher = (
             'CALL db.index.vector.queryNodes("imas_node_embedding", $k, $embedding) '
             f"YIELD node AS n, score {imas_where}"
+            f"WITH n, score {dd_version_join}"
             "RETURN n.id AS id, n.documentation AS doc, score "
             "ORDER BY score DESC LIMIT $limit"
         )
