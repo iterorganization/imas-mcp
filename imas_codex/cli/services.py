@@ -1417,20 +1417,98 @@ def _wait_for_health_plain(
 
 
 def _deploy_login_embed() -> None:
-    """Deploy embed server to login node via systemd."""
-    click.echo("Deploying to login node via systemd...")
+    """Deploy embed server to login node via systemd or nohup fallback.
+
+    Tries systemd first.  Falls back to nohup when systemd --user is
+    unavailable (common on HPC nodes without a D-Bus session bus).
+    """
+    # Try systemd first
     try:
         _run_remote(
+            "systemctl --user status imas-codex-embed >/dev/null 2>&1 && "
             "systemctl --user restart imas-codex-embed 2>/dev/null || "
-            "systemctl --user start imas-codex-embed",
+            "systemctl --user start imas-codex-embed 2>/dev/null",
             timeout=15,
             check=True,
         )
-        click.echo("  Service started")
-    except subprocess.CalledProcessError as exc:
+        click.echo("Deployed to login node via systemd")
+        return
+    except subprocess.CalledProcessError:
+        pass
+
+    # systemd unavailable — fall back to nohup
+    click.echo("Deploying to login node via nohup (no systemd session bus)...")
+    _deploy_login_embed_nohup()
+
+
+def _deploy_login_embed_nohup() -> None:
+    """Deploy embed server on the login node via nohup.
+
+    Used when systemd --user is unavailable (no D-Bus session bus).
+    """
+    from imas_codex.settings import get_embed_server_port
+
+    port = get_embed_server_port()
+    services_dir = _SERVICES_DIR
+    log_file = f"{services_dir}/codex-embed.log"
+
+    # Kill any existing embed processes on this node
+    _kill_login_embed()
+
+    script = (
+        f"mkdir -p {services_dir}\n"
+        f"cd {_PROJECT}\n"
+        f"source {_PROJECT}/.env 2>/dev/null || true\n"
+        f'echo "codex-embed started on $(hostname) at $(date)" > {log_file}\n'
+        f"export CUDA_VISIBLE_DEVICES=1\n"
+        f"nohup uv run --offline --extra gpu imas-codex embed start -f "
+        f"--host 0.0.0.0 --port {port} "
+        f"--deploy-label login "
+        f">> {log_file} 2>&1 &\n"
+        f"echo $!\n"
+    )
+
+    try:
+        result = _run_remote(script, timeout=15, check=True)
+        pid = result.strip().split("\n")[-1].strip()
+        click.echo(f"  Started (PID: {pid})")
+        click.echo(f"  Log: {log_file}")
+    except Exception as e:
         raise click.ClickException(
-            "Service not installed. Run: imas-codex embed service install"
-        ) from exc
+            f"Failed to start embed server: {e}"
+        ) from e
+
+    # Wait for health check
+    click.echo("  Waiting for health check...")
+    health_timeout_s = 90
+    health_attempts = health_timeout_s // 3
+    health_cmd = f"curl -sf http://localhost:{port}/health"
+    for attempt in range(health_attempts):
+        time.sleep(3)
+        try:
+            result = _run_remote(health_cmd, timeout=5)
+            if "ok" in result.lower() or "healthy" in result.lower():
+                click.echo("  ✓ Healthy")
+                _show_embed_info()
+                return
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            pass
+    click.echo(f"  Warning: not healthy after {health_timeout_s}s — check logs")
+
+
+def _kill_login_embed() -> None:
+    """Kill any running embed server processes on the login node."""
+    kill_cmd = (
+        'pids=$(pgrep -u $USER -f "imas-codex embed" 2>/dev/null)\n'
+        'if [ -n "$pids" ]; then\n'
+        '    echo "$pids" | xargs kill -9 2>/dev/null || true\n'
+        '    sleep 1\n'
+        'fi\n'
+    )
+    try:
+        _run_remote(kill_cmd, timeout=10)
+    except subprocess.CalledProcessError:
+        pass
 
 
 def _deploy_login_neo4j() -> None:
