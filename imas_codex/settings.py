@@ -412,6 +412,23 @@ def get_discovery_threshold() -> float:
     return float(_get_section("discovery").get("threshold", 0.90))
 
 
+def get_triage_threshold() -> float:
+    """Get the minimum triage composite for enrichment/scoring.
+
+    Derived from the discovery threshold minus a configurable offset.
+    Always lower than the ingestion threshold — files must pass this
+    cheap gate before full LLM scoring.
+
+    ``triage_threshold = discovery_threshold - triage_offset``
+
+    Priority: IMAS_CODEX_TRIAGE_THRESHOLD env → computed from offset → 0.75.
+    """
+    if env := os.getenv("IMAS_CODEX_TRIAGE_THRESHOLD"):
+        return float(env)
+    offset = float(_get_section("discovery").get("triage-offset", 0.15))
+    return get_discovery_threshold() - offset
+
+
 # ─── Log settings ──────────────────────────────────────────────────────────
 
 

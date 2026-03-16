@@ -298,6 +298,7 @@ async def triage_worker(
                 apply_triage_results,
                 triage_parsed.results,
                 file_id_map,
+                threshold=state.min_triage_score,
                 batch_cost=triage_cost,
             )
 
@@ -332,7 +333,7 @@ async def triage_worker(
                             "triage_composite": round(composite, 3),
                             "description": r.description,
                             "category": top_dim,
-                            "skipped": composite < 0.75,
+                            "skipped": composite < state.min_triage_score,
                         }
                     )
                 on_progress(
@@ -928,6 +929,7 @@ async def enrich_worker(
             claim_files_for_enrichment,
             state.facility,
             limit=batch_size,
+            min_triage_composite=state.min_triage_score,
         )
 
         if not files:

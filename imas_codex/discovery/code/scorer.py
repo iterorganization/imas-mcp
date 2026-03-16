@@ -447,7 +447,7 @@ def _group_files_by_parent(
 def apply_triage_results(
     results: list[FileTriageResult],
     file_id_map: dict[str, str],
-    threshold: float = 0.75,
+    threshold: float | None = None,
     batch_cost: float = 0.0,
 ) -> dict[str, Any]:
     """Persist triage dimension scores to CodeFile nodes.
@@ -459,10 +459,15 @@ def apply_triage_results(
         results: Triage results from LLM.
         file_id_map: Mapping from path to CodeFile ID.
         threshold: Minimum triage composite to proceed.
+            Defaults to ``get_triage_threshold()``.
         batch_cost: Total LLM cost for the batch, distributed per-file.
 
     Returns dict with triaged, skipped counts and triaged_ids.
     """
+    if threshold is None:
+        from imas_codex.settings import get_triage_threshold
+
+        threshold = get_triage_threshold()
     triaged_items = []
     skipped_items = []
 
