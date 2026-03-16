@@ -60,7 +60,34 @@ def test_build_stats_include_auxiliary_ids_and_identifier_totals() -> None:
 
     stats = dd_progress._build_stats(state)
 
-    assert ("ident", "62/62", "cyan") in stats
+    # Merged into single fields: identifiers and ids (no separate -emb fields)
+    assert ("identifiers", "62/62", "cyan") in stats
     assert ("ids", "87/87", "green") in stats
-    assert ("ident-emb", "62/62", "magenta") in stats
-    assert ("ids-emb", "87/87", "magenta") in stats
+    # Old separate fields must not appear
+    assert not any(label == "ident" for label, _, _ in stats)
+    assert not any(label == "ident-emb" for label, _, _ in stats)
+    assert not any(label == "ids-emb" for label, _, _ in stats)
+
+
+def test_build_stats_uses_max_of_enriched_and_embedded() -> None:
+    """When enrichment returns 0 (prior run), embedding count is used."""
+    state = _state()
+    state.stats.update(
+        {
+            "identifier_schemas_total": 62,
+            "identifier_schemas_enriched": 0,
+            "identifier_schemas_cached": 0,
+            "ids_total": 87,
+            "ids_enriched": 0,
+            "ids_cached": 0,
+            "identifier_embeddings_updated": 0,
+            "identifier_embeddings_cached": 62,
+            "ids_embeddings_updated": 0,
+            "ids_embeddings_cached": 87,
+        }
+    )
+
+    stats = dd_progress._build_stats(state)
+
+    assert ("identifiers", "62/62", "cyan") in stats
+    assert ("ids", "87/87", "green") in stats
