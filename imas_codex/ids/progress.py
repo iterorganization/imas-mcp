@@ -215,10 +215,7 @@ class MappingProgressDisplay(BaseProgressDisplay):
         )
 
     def _header_mode_label(self) -> str | None:
-        s = self.state
-        if not s.ids_targets:
-            return None
-        return f"{len(s.ids_targets)} IDS targets"
+        return None
 
     def _build_pipeline_section(self) -> Text:
         s = self.state

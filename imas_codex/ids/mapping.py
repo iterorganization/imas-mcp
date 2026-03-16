@@ -614,23 +614,51 @@ def gather_context(
     except Exception:
         logger.warning("Semantic search unavailable — continuing without it")
 
-    _emit(f"per-source narrowing ({len(groups)} sources)")
-    # Per-source semantic narrowing: for each source with a description,
-    # search for matching IMAS paths
+    _emit(f"batch semantic match matrix ({len(groups)} sources)")
+    # Semantic match matrix: batch-embed sources and search across all indexes
+    # This replaces the old per-source narrowing loop — one batch embed call
+    # instead of N individual embed calls, with threaded vector queries.
+    semantic_match_matrix: dict[str, list[dict[str, Any]]] = {}
+    try:
+        source_descs = [
+            (g["id"], g.get("rep_description") or g.get("description") or "")
+            for g in groups
+            if g.get("rep_description") or g.get("description")
+        ]
+        if source_descs:
+            semantic_match_matrix = compute_semantic_matches(
+                source_descs,
+                ids_name,
+                gc=gc,
+                k_per_source=10,
+                include_wiki=True,
+                include_code=True,
+                dd_version=dd_version,
+                on_progress=on_progress,
+            )
+            logger.info(
+                "Semantic match matrix: %d sources, %d total matches",
+                len(semantic_match_matrix),
+                sum(len(v) for v in semantic_match_matrix.values()),
+            )
+    except Exception:
+        logger.debug("Semantic match matrix unavailable — continuing without it")
+
+    # Build source_candidates from the IMAS hits in the match matrix
+    # (replaces legacy per-source search_imas_semantic loop)
     source_candidates: dict[str, list[dict[str, Any]]] = {}
-    for idx, g in enumerate(groups):
-        desc = g.get("rep_description") or g.get("description")
-        if desc:
-            if idx % 50 == 0:
-                _emit(f"narrowing {idx + 1}/{len(groups)}")
-            try:
-                candidates = search_imas_semantic(
-                    desc, ids_name, gc=gc, k=10, dd_version=dd_version,
-                )
-                if candidates:
-                    source_candidates[g["id"]] = candidates
-            except Exception:
-                pass
+    for source_id, matches in semantic_match_matrix.items():
+        imas_hits = [
+            {
+                "id": m["target_id"],
+                "score": m["score"],
+                "documentation": m["excerpt"],
+            }
+            for m in matches
+            if m["content_type"] == "imas"
+        ]
+        if imas_hits:
+            source_candidates[source_id] = imas_hits
 
     _emit("cluster enrichment")
     # Enrich source candidates with cluster members (one-to-many discovery)
@@ -656,33 +684,6 @@ def gather_context(
             candidates.extend(cluster_additions)
     except Exception:
         logger.debug("Cluster enrichment unavailable — continuing without it")
-
-    _emit("batch semantic match matrix")
-    # Semantic match matrix: batch-embed sources and search across all indexes
-    semantic_match_matrix: dict[str, list[dict[str, Any]]] = {}
-    try:
-        source_descs = [
-            (g["id"], g.get("rep_description") or g.get("description") or "")
-            for g in groups
-            if g.get("rep_description") or g.get("description")
-        ]
-        if source_descs:
-            semantic_match_matrix = compute_semantic_matches(
-                source_descs,
-                ids_name,
-                gc=gc,
-                k_per_source=5,
-                include_wiki=True,
-                include_code=True,
-                dd_version=dd_version,
-            )
-            logger.info(
-                "Semantic match matrix: %d sources, %d total matches",
-                len(semantic_match_matrix),
-                sum(len(v) for v in semantic_match_matrix.values()),
-            )
-    except Exception:
-        logger.debug("Semantic match matrix unavailable — continuing without it")
 
     _emit("existing mappings + COCOS")
     existing = search_existing_mappings(facility, ids_name, gc=gc)

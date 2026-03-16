@@ -382,8 +382,10 @@ def _run_rich_mode(
         facility_config=facility_config,
         display=display,
         check_graph=True,
-        check_embed=False,
+        check_embed=True,
         check_ssh=False,
+        check_model=True,
+        model_section="reasoning",
         verbose=verbose,
     )
 
