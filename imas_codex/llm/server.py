@@ -211,14 +211,20 @@ def _format_version_context_report(result: dict) -> str:
         return f"Error: {result['error']}"
 
     paths_data = result.get("paths", {})
-    if not paths_data:
-        return "No version context found for the requested paths."
-
     lines = [
         f"Version Context Report: {result.get('total_paths', 0)} paths queried, "
-        f"{result.get('paths_with_changes', 0)} with changes",
+        f"{len(result.get('paths_found', []))} found, "
+        f"{result.get('paths_with_changes', 0)} with changes, "
+        f"{result.get('graph_change_nodes_seen', 0)} change nodes matched",
         "",
     ]
+
+    if not paths_data:
+        not_found = result.get("not_found", [])
+        if not_found:
+            lines.append(f"No matching graph paths found. Not found: {', '.join(not_found)}")
+            return "\n".join(lines)
+        return "No version context found for the requested paths."
 
     for path_id, ctx in paths_data.items():
         changes = ctx.get("notable_changes", [])
@@ -237,6 +243,57 @@ def _format_version_context_report(result: dict) -> str:
         lines.append("")
         lines.append(f"Not found: {', '.join(not_found)}")
 
+    paths_without_changes = result.get("paths_without_changes", [])
+    if paths_without_changes:
+        lines.append("")
+        lines.append(
+            f"Paths without notable changes: {', '.join(paths_without_changes)}"
+        )
+
+    return "\n".join(lines)
+
+
+def _format_dd_versions_report(result: dict) -> str:
+    """Format DD version metadata into readable text."""
+    if result.get("error"):
+        return f"Error: {result['error']}"
+
+    current_version = result.get("current_version") or "unknown"
+    version_range = result.get("version_range") or "unknown"
+    version_count = result.get("version_count", 0)
+    versions = result.get("versions", []) or []
+
+    lines = [
+        "DD Version Metadata",
+        f"Current version: {current_version}",
+        f"Version range: {version_range}",
+        f"Version count: {version_count}",
+    ]
+    if versions:
+        lines.append(f"Version chain: {' -> '.join(versions)}")
+    return "\n".join(lines)
+
+
+def _format_error_fields_report(result: dict) -> str:
+    """Format HAS_ERROR traversal results into readable text."""
+    if result.get("error"):
+        return f"Error: {result['error']}"
+
+    path = result.get("path", "")
+    if result.get("not_found"):
+        return f"Path not found: {path}"
+
+    error_fields = result.get("error_fields", []) or []
+    if not error_fields:
+        return f"No error fields found for '{path}'"
+
+    lines = [f"Error fields for {path}:"]
+    for field in error_fields:
+        line = f"  {field.get('path', '')} ({field.get('error_type', 'unknown')})"
+        documentation = field.get("documentation")
+        if documentation:
+            line += f" - {documentation[:100]}"
+        lines.append(line)
     return "\n".join(lines)
 
 
@@ -2213,6 +2270,7 @@ class AgentsServer:
                 cross-references, and version context.
             """
             from imas_codex.llm.search_formatters import format_search_imas_report
+            from imas_codex.models.error_models import ToolError
 
             tools = _get_imas_tools()
             result = _run_async(
@@ -2225,6 +2283,8 @@ class AgentsServer:
                     dd_version=dd_version,
                 )
             )
+            if isinstance(result, ToolError):
+                return format_search_imas_report(result)
 
             # Also search clusters for cross-domain context
             cluster_result = None
@@ -2236,6 +2296,11 @@ class AgentsServer:
                         dd_version=dd_version,
                     )
                 )
+                if isinstance(cluster_result, ToolError):
+                    logger.debug(
+                        "Cluster search returned ToolError, omitting optional cluster context"
+                    )
+                    cluster_result = None
             except Exception:
                 logger.debug("Cluster search failed, continuing without", exc_info=True)
 
@@ -2334,37 +2399,11 @@ class AgentsServer:
             Returns:
                 Formatted list of error fields with their types.
             """
-            from imas_codex.graph.client import GraphClient
-
-            dd_clause = ""
-            params: dict = {"path": path.strip()}
-            if dd_version is not None:
-                dd_clause = "AND e.dd_version = $dd_version"
-                params["dd_version"] = dd_version
-
-            with GraphClient() as gc:
-                results = gc.query(
-                    f"""
-                    MATCH (d:IMASNode {{id: $path}})-[rel:HAS_ERROR]->(e:IMASNode)
-                    WHERE true {dd_clause}
-                    RETURN e.id AS path, e.name AS name,
-                           rel.error_type AS error_type,
-                           e.documentation AS documentation
-                    ORDER BY e.id
-                    """,
-                    **params,
-                )
-
-            if not results:
-                return f"No error fields found for '{path}'"
-
-            lines = [f"Error fields for {path}:"]
-            for r in results:
-                line = f"  {r['path']} ({r['error_type']})"
-                if r.get("documentation"):
-                    line += f" — {r['documentation'][:100]}"
-                lines.append(line)
-            return "\n".join(lines)
+            tools = _get_imas_tools()
+            result = _run_async(
+                tools.fetch_error_fields(path=path, dd_version=dd_version)
+            )
+            return _format_error_fields_report(result)
 
         @self.mcp.tool()
         def list_imas_paths(
@@ -2474,6 +2513,8 @@ class AgentsServer:
             Returns:
                 Formatted cluster report with paths and descriptions.
             """
+            from imas_codex.models.error_models import ToolError
+
             tools = _get_imas_tools()
             result = _run_async(
                 tools.clusters_tool.search_imas_clusters(
@@ -2484,6 +2525,8 @@ class AgentsServer:
                     dd_version=dd_version,
                 )
             )
+            if isinstance(result, ToolError):
+                return format_cluster_report(result)
             return format_cluster_report(result)
 
         from imas_codex.llm.search_formatters import (
@@ -2620,6 +2663,17 @@ class AgentsServer:
             tools = _get_imas_tools()
             result = _run_async(tools.get_dd_version_context(paths=paths))
             return _format_version_context_report(result)
+
+        @self.mcp.tool()
+        def get_dd_versions() -> str:
+            """Get Data Dictionary version metadata from the graph.
+
+            Returns current version, available version range, version count,
+            and the ordered version chain.
+            """
+            tools = _get_imas_tools()
+            result = _run_async(tools.get_dd_versions())
+            return _format_dd_versions_report(result)
 
         @self.mcp.tool()
         def fetch(resource: str) -> str:

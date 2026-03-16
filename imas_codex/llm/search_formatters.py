@@ -9,7 +9,77 @@ render all results they receive without artificial truncation.
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Iterable
 from typing import Any
+
+def _get_value(result: Any, key: str, default: Any = None) -> Any:
+    """Read a field from a dict-like or attribute-based result object."""
+    if isinstance(result, dict):
+        return result.get(key, default)
+    return getattr(result, key, default)
+
+
+def _format_tool_error(result: Any) -> str | None:
+    """Render ToolError-like results consistently across formatters."""
+    error = _get_value(result, "error")
+    if not error:
+        return None
+
+    lines = [f"Error: {error}"]
+
+    suggestions = _get_value(result, "suggestions", []) or []
+    if suggestions:
+        lines.append("")
+        lines.append("Suggestions:")
+        for suggestion in suggestions:
+            lines.append(f"- {suggestion}")
+
+    fallback_data = _get_value(result, "fallback_data")
+    if isinstance(fallback_data, dict) and fallback_data:
+        message = fallback_data.get("message")
+        if message:
+            lines.append("")
+            lines.append(f"Fallback: {message}")
+
+        fallback_suggestions = fallback_data.get("suggestions") or []
+        if fallback_suggestions:
+            lines.append("Fallback suggestions:")
+            for item in fallback_suggestions:
+                if isinstance(item, dict):
+                    tool = item.get("tool") or "unknown"
+                    reason = item.get("reason") or ""
+                    description = item.get("description") or ""
+                    detail = " — ".join(part for part in (reason, description) if part)
+                    lines.append(f"- {tool}" + (f": {detail}" if detail else ""))
+                else:
+                    lines.append(f"- {item}")
+
+    return "\n".join(lines)
+
+
+def _stringify_cluster_labels(values: Any) -> list[str]:
+    """Normalize cluster labels for rendering."""
+    if not values:
+        return []
+
+    if not isinstance(values, Iterable) or isinstance(values, str):
+        values = [values]
+
+    labels: list[str] = []
+    for value in values:
+        if not value:
+            continue
+        if isinstance(value, str):
+            labels.append(value)
+            continue
+        if isinstance(value, dict):
+            label = value.get("label") or value.get("name") or value.get("id")
+            if label:
+                labels.append(str(label))
+                continue
+        labels.append(str(value))
+
+    return labels
 
 # ---------------------------------------------------------------------------
 # search_signals formatter
@@ -751,17 +821,18 @@ def format_check_report(result: Any) -> str:
 
 def format_fetch_paths_report(result: Any) -> str:
     """Format FetchPathsResult into a detailed path documentation report."""
-    if result.error:
-        return f"Error: {result.error}"
+    tool_error = _format_tool_error(result)
+    if tool_error:
+        return tool_error
 
     parts: list[str] = []
-    summary = result.summary
+    summary = _get_value(result, "summary", {}) or {}
     fetched = summary.get("fetched", 0)
     not_found_count = summary.get("not_found", 0)
     nf_str = f", {not_found_count} not found" if not_found_count else ""
     parts.append(f"## IMAS Path Details ({fetched} fetched{nf_str})\n")
 
-    for node in result.nodes:
+    for node in _get_value(result, "nodes", []) or []:
         parts.append(f"### {node.path}")
         # Prefer enriched description over documentation
         if hasattr(node, "description") and node.description:
@@ -783,18 +854,17 @@ def format_fetch_paths_report(result: Any) -> str:
             parts.append(f"  Physics domain: {node.physics_domain}")
         if node.coordinates:
             parts.append(f"  Coordinates: {', '.join(node.coordinates)}")
-        if hasattr(node, "cluster_labels") and node.cluster_labels:
-            parts.append(
-                f"  Clusters: {', '.join(f'"{c}"' for c in node.cluster_labels)}"
-            )
+        labels = _stringify_cluster_labels(getattr(node, "cluster_labels", None))
+        if labels:
+            parts.append(f"  Clusters: {', '.join(f'"{c}"' for c in labels)}")
         parts.append("")
 
-    for nf in result.not_found_paths:
+    for nf in _get_value(result, "not_found_paths", []) or []:
         parts.append(f"  {nf.path}: NOT FOUND ({nf.reason})")
         if nf.suggestion:
             parts.append(f"    Suggestion: {nf.suggestion}")
 
-    for dep in result.deprecated_paths:
+    for dep in _get_value(result, "deprecated_paths", []) or []:
         parts.append(f"  {dep.path}: DEPRECATED (since DD {dep.deprecated_in})")
         if dep.new_path:
             parts.append(f"    Replacement: {dep.new_path}")
@@ -911,15 +981,16 @@ def format_identifiers_report(result: Any) -> str:
     return "\n".join(parts)
 
 
-def format_cluster_report(result: dict[str, Any]) -> str:
+def format_cluster_report(result: Any) -> str:
     """Format cluster search result dict into a readable report."""
-    if result.get("error"):
-        return f"Error: {result['error']}"
+    tool_error = _format_tool_error(result)
+    if tool_error:
+        return tool_error
 
     parts: list[str] = []
-    clusters = result.get("clusters", [])
+    clusters = _get_value(result, "clusters", []) or []
 
-    parts.append(f"## IMAS Clusters ({result.get('clusters_found', 0)} found)\n")
+    parts.append(f"## IMAS Clusters ({_get_value(result, 'clusters_found', 0)} found)\n")
 
     for cl in clusters:
         label = cl.get("label", "?")
@@ -961,7 +1032,7 @@ def format_cluster_report(result: dict[str, Any]) -> str:
     return "\n".join(parts)
 
 
-def format_search_imas_report(result: Any, cluster_result: dict | None = None) -> str:
+def format_search_imas_report(result: Any, cluster_result: Any | None = None) -> str:
     """Format SearchPathsResult + optional clusters into a combined report.
 
     This is the typed-result version of format_imas_report(), used when
@@ -969,10 +1040,15 @@ def format_search_imas_report(result: Any, cluster_result: dict | None = None) -
     """
     parts: list[str] = []
 
-    if result.hits:
-        parts.append(f"## IMAS Paths ({len(result.hits)} matches)\n")
+    tool_error = _format_tool_error(result)
+    if tool_error:
+        parts.append(tool_error)
 
-        for hit in result.hits:
+    hits = _get_value(result, "hits", []) or []
+    if hits:
+        parts.append(f"## IMAS Paths ({len(hits)} matches)\n")
+
+        for hit in hits:
             score_str = f" (score: {hit.score:.2f})" if hit.score else ""
             parts.append(f"### {hit.path}{score_str}")
 
@@ -1039,8 +1115,13 @@ def format_search_imas_report(result: Any, cluster_result: dict | None = None) -
 
             parts.append("")
 
-    if cluster_result and cluster_result.get("clusters"):
+    cluster_hits = _get_value(cluster_result, "clusters", []) if cluster_result else []
+    if cluster_result and cluster_hits:
         parts.append(format_cluster_report(cluster_result))
+    elif cluster_result:
+        cluster_error = _format_tool_error(cluster_result)
+        if cluster_error:
+            parts.append(cluster_error)
 
     if not parts:
         return "No IMAS paths found."
@@ -1194,17 +1275,59 @@ def format_export_ids_report(result: dict[str, Any]) -> str:
     return "\n".join(parts)
 
 
-def format_export_domain_report(result: dict[str, Any]) -> str:
+def format_export_domain_report(result: Any) -> str:
     """Format export_imas_domain result into readable text."""
     parts: list[str] = []
-    domain = result.get("domain", "")
-    total = result.get("total_paths", 0)
-    ids_count = result.get("ids_count", 0)
+    if isinstance(result, dict):
+        domain = result.get("domain", "")
+        total = result.get("total_paths", 0)
+        ids_count = result.get("ids_count", 0)
+        resolved_domains = result.get("resolved_domains", []) or []
+        resolution = result.get("resolution") or ""
+        error = result.get("error")
+
+        parts.append(f"## Physics Domain: {domain}")
+        if resolved_domains:
+            parts.append(f"Resolved domains: {', '.join(resolved_domains)}")
+        if resolution:
+            parts.append(f"Resolution: {resolution}")
+        parts.append(f"Total paths: {total} across {ids_count} IDS\n")
+
+        by_ids = result.get("by_ids", {}) or {}
+        if error and not by_ids:
+            parts.append(error)
+            return "\n".join(parts)
+
+        if not by_ids:
+            parts.append("No paths matched the resolved domain query.")
+            return "\n".join(parts)
+
+        for ids_name, paths in sorted(by_ids.items()):
+            parts.append(f"### {ids_name} ({len(paths)} paths)")
+            for p in paths:
+                path = p.get("path", "")
+                doc = p.get("documentation", "")
+                units = p.get("units", "")
+                units_str = f" [{units}]" if units else ""
+                parts.append(f"  - `{path}`{units_str}")
+                if doc:
+                    parts.append(f"    {doc}")
+            parts.append("")
+
+        return "\n".join(parts)
+
+    tool_error = _format_tool_error(result)
+    if tool_error:
+        return tool_error
+
+    domain = _get_value(result, "domain", "")
+    total = _get_value(result, "total_paths", 0)
+    ids_count = _get_value(result, "ids_count", 0)
 
     parts.append(f"## Physics Domain: {domain}")
     parts.append(f"Total paths: {total} across {ids_count} IDS\n")
 
-    by_ids = result.get("by_ids", {})
+    by_ids = _get_value(result, "by_ids", {}) or {}
     for ids_name, paths in sorted(by_ids.items()):
         parts.append(f"### {ids_name} ({len(paths)} paths)")
         for p in paths:

@@ -77,7 +77,7 @@ class IdsNode(BaseModel):
     introduced_after_version: str | None = None  # Renamed from introduced_after
     lifecycle_status: str | None = None  # Added lifecycle status field
     lifecycle_version: str | None = None  # Added lifecycle version field
-    cluster_labels: list[dict[str, str]] | None = None  # LLM-generated cluster labels
+    cluster_labels: list[str] | None = None  # Cluster labels associated with this path
     validation_rules: ValidationRules | None = None
     identifier_schema: IdentifierSchema | None = (
         None  # Schema information for identifier fields

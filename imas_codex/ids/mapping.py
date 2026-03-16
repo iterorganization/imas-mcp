@@ -300,9 +300,18 @@ def _format_identifier_schemas(fields: list[dict[str, Any]]) -> str:
 
 def _format_version_context(version_ctx: dict[str, Any]) -> str:
     """Format version change context for the signal mapping prompt."""
+    from imas_codex.models.error_models import ToolError
+
+    if isinstance(version_ctx, ToolError):
+        return f"(version change history unavailable: {version_ctx.error})"
+
     paths_data = version_ctx.get("paths", {})
-    if not paths_data:
+    not_found = version_ctx.get("not_found", [])
+    paths_without_changes = version_ctx.get("paths_without_changes", [])
+
+    if not paths_data and not not_found:
         return "(no version change history)"
+
     lines: list[str] = []
     for path_id, ctx in paths_data.items():
         changes = ctx.get("notable_changes", [])
@@ -314,6 +323,14 @@ def _format_version_context(version_ctx: dict[str, Any]) -> str:
             ctype = c.get("type", "?")
             summary = c.get("summary", "")
             lines.append(f"  - v{version} [{ctype}]: {summary}")
+
+    if paths_without_changes:
+        lines.append(
+            "Paths without notable changes: " + ", ".join(paths_without_changes)
+        )
+    if not_found:
+        lines.append("Paths not found in DD graph: " + ", ".join(not_found))
+
     return "\n".join(lines) if lines else "(no notable version changes)"
 
 

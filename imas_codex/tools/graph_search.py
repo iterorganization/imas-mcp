@@ -586,6 +586,59 @@ class GraphPathTool:
             },
         )
 
+    @measure_performance(include_metrics=True, slow_threshold=0.5)
+    @handle_errors(fallback="fetch_suggestions")
+    @mcp_tool(
+        "Fetch error fields for a data path via HAS_ERROR relationships. "
+        "path (required): Exact IMAS data path. "
+        "dd_version: Filter by DD major version (e.g., 3 or 4). None returns all versions."
+    )
+    async def fetch_error_fields(
+        self,
+        path: str,
+        dd_version: int | None = None,
+        ctx: Context | None = None,
+    ) -> dict[str, Any]:
+        """Fetch HAS_ERROR-linked fields for an IMAS data path."""
+        clean_path = path.strip()
+        dd_params: dict[str, Any] = {"path": clean_path}
+        dd_clause = _dd_version_clause("d", dd_version, dd_params)
+
+        rows = self._gc.query(
+            f"""
+            MATCH (d:IMASNode {{id: $path}})
+            WHERE true {dd_clause}
+            OPTIONAL MATCH (d)-[rel:HAS_ERROR]->(e:IMASNode)
+            RETURN d.id AS path,
+                   collect(
+                       CASE WHEN e IS NULL THEN NULL ELSE {{
+                           path: e.id,
+                           name: e.name,
+                           error_type: rel.error_type,
+                           documentation: e.documentation,
+                           data_type: e.data_type
+                       }} END
+                   ) AS error_fields
+            """,
+            **dd_params,
+        )
+
+        if not rows:
+            return {
+                "path": clean_path,
+                "count": 0,
+                "error_fields": [],
+                "not_found": True,
+            }
+
+        error_fields = [field for field in rows[0].get("error_fields", []) if field]
+        return {
+            "path": clean_path,
+            "count": len(error_fields),
+            "error_fields": error_fields,
+            "not_found": False,
+        }
+
 
 class GraphListTool:
     """Graph-backed path listing."""
@@ -1470,8 +1523,7 @@ class GraphStructureTool:
             WHERE p.ids = $ids_name {dd_clause}
             WITH p,
                  size(split(p.id, '/')) - 1 AS depth,
-                 CASE WHEN p.data_type IS NOT NULL
-                      AND p.data_type <> 'structure'
+                  CASE WHEN {_leaf_data_type_clause('p')}
                       THEN 1 ELSE 0 END AS is_leaf
             RETURN count(p) AS total_paths,
                    sum(is_leaf) AS leaf_count,
@@ -1568,11 +1620,7 @@ class GraphStructureTool:
         dd_params: dict[str, Any] = {"ids_name": ids_name}
         dd_clause = _dd_version_clause("p", dd_version, dd_params)
 
-        leaf_filter = (
-            "AND p.data_type IS NOT NULL AND p.data_type <> 'structure'"
-            if leaf_only
-            else ""
-        )
+        leaf_filter = f"AND {_leaf_data_type_clause('p')}" if leaf_only else ""
 
         paths = self._gc.query(
             f"""
@@ -1697,6 +1745,15 @@ def _normalize_paths(paths: str | list[str]) -> list[str]:
     return [strip_path_annotations(p) for p in raw]
 
 
+STRUCTURE_DATA_TYPES = ("STRUCTURE", "STRUCT_ARRAY")
+
+
+def _leaf_data_type_clause(alias: str) -> str:
+    """Return a Cypher clause that matches non-structure data nodes."""
+    quoted_types = ", ".join(f"'{dtype}'" for dtype in STRUCTURE_DATA_TYPES)
+    return f"{alias}.data_type IS NOT NULL AND {alias}.data_type NOT IN [{quoted_types}]"
+
+
 def _text_search_imas_paths(
     gc: GraphClient,
     query: str,
@@ -1777,13 +1834,13 @@ def _text_search_imas_paths(
           AND size(coalesce(p.documentation, '')) > 10
         WITH p,
              CASE
-               WHEN toLower(p.documentation) CONTAINS $query_lower
-                    AND p.data_type IS NOT NULL AND p.data_type <> 'structure'
+            WHEN toLower(p.documentation) CONTAINS $query_lower
+                AND {_leaf_data_type_clause('p')}
                  THEN 0.95
                WHEN toLower(p.documentation) CONTAINS $query_lower
                  THEN 0.88
                WHEN toLower(p.name) CONTAINS $query_lower
-                    AND p.data_type IS NOT NULL AND p.data_type <> 'structure'
+                AND {_leaf_data_type_clause('p')}
                  THEN 0.93
                WHEN toLower(p.id) CONTAINS $query_lower
                  THEN 0.90
@@ -1803,7 +1860,7 @@ def _text_search_imas_paths(
                 MATCH (p:IMASNode)
                 WHERE {where_base}
                   AND (toLower(p.name) = $word OR toLower(p.id) CONTAINS $word)
-                  AND p.data_type IS NOT NULL AND p.data_type <> 'structure'
+                                    AND {_leaf_data_type_clause('p')}
                   AND size(coalesce(p.documentation, '')) > 10
                 RETURN p.id AS id, 0.90 AS score
                 LIMIT 10

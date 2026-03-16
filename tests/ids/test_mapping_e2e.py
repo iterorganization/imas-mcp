@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
@@ -32,8 +32,12 @@ from imas_codex.ids.tools import (
     fetch_imas_subtree,
     get_sign_flip_paths,
     query_signal_sources,
+    search_imas_semantic,
     search_existing_mappings,
 )
+from imas_codex.core.data_model import IdsNode
+from imas_codex.models.error_models import ToolError
+from imas_codex.models.result_models import FetchPathsResult
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -286,6 +290,51 @@ class TestFetchImasFields:
         )
         assert len(result) == 1
         assert result[0]["units"] == "m"
+
+    @patch("imas_codex.tools.graph_search.GraphPathTool.fetch_imas_paths", new_callable=AsyncMock)
+    def test_returns_stable_dict_output_for_string_cluster_labels(
+        self, mock_fetch_paths, mock_gc
+    ):
+        mock_fetch_paths.return_value = FetchPathsResult(
+            nodes=[
+                IdsNode(
+                    id="pf_active/coil/current/data",
+                    name="data",
+                    ids="pf_active",
+                    path="pf_active/coil/current/data",
+                    documentation="Current data",
+                    data_type="FLT_1D",
+                    node_type="dynamic",
+                    cluster_labels=["coil currents"],
+                )
+            ]
+        )
+
+        result = fetch_imas_fields(
+            "pf_active",
+            ["coil/current/data"],
+            gc=mock_gc,
+        )
+
+        assert len(result) == 1
+        assert result[0]["path"] == "pf_active/coil/current/data"
+        assert result[0]["documentation"] == "Current data"
+        assert result[0]["data_type"] == "FLT_1D"
+        assert result[0]["node_type"] == "dynamic"
+        assert result[0]["cluster_labels"] == ["coil currents"]
+
+
+class TestSearchImasSemantic:
+    @patch("imas_codex.tools.graph_search.GraphSearchTool.search_imas_paths", new_callable=AsyncMock)
+    def test_degrades_cleanly_on_tool_error(self, mock_search, mock_gc):
+        mock_search.return_value = ToolError(
+            error="semantic search backend unavailable",
+            suggestions=[],
+        )
+
+        result = search_imas_semantic("coil current", gc=mock_gc)
+
+        assert result == []
 
 
 class TestCheckImasPaths:

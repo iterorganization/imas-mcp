@@ -14,7 +14,7 @@ Validates that:
 from __future__ import annotations
 
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -838,6 +838,74 @@ class TestMapSignalsUsesSystemPrompt:
         assert call1_msgs[0]["role"] == "system"
         # User messages differ (different source context)
         assert call1_msgs[1]["content"] != call2_msgs[1]["content"]
+
+    @patch(
+        "imas_codex.tools.version_tool.VersionTool.get_dd_version_context",
+        new_callable=AsyncMock,
+    )
+    @patch("imas_codex.ids.mapping.fetch_source_code_refs")
+    @patch("imas_codex.ids.mapping._call_llm")
+    @patch("imas_codex.ids.mapping.fetch_imas_fields")
+    @patch("imas_codex.ids.mapping.fetch_imas_subtree")
+    def test_user_prompt_includes_version_not_found_and_no_change_context(
+        self,
+        mock_subtree,
+        mock_fields,
+        mock_call_llm,
+        mock_code_refs,
+        mock_version_context,
+        mock_gc,
+        sample_groups,
+        sample_subtree,
+    ):
+        from imas_codex.ids.mapping import PipelineCost, map_signals
+
+        mock_fields.return_value = sample_subtree[1:]
+        mock_subtree.return_value = sample_subtree[1:]
+        mock_call_llm.return_value = SignalMappingBatch(
+            ids_name="pf_active",
+            target_path="pf_active/coil",
+            mappings=[],
+        )
+        mock_code_refs.return_value = []
+        mock_version_context.return_value = {
+            "paths": {
+                "pf_active/coil/element/geometry/rectangle/r": {
+                    "change_count": 0,
+                    "notable_changes": [],
+                }
+            },
+            "paths_without_changes": ["pf_active/coil/element/geometry/rectangle/r"],
+            "not_found": ["pf_active/coil/element/geometry/rectangle/missing"],
+        }
+        cost = PipelineCost()
+
+        assignments = TargetAssignmentBatch(
+            ids_name="pf_active",
+            assignments=[
+                TargetAssignment(
+                    source_id="jet:pf_coils:group1",
+                    imas_target_path="pf_active/coil",
+                    confidence=0.95,
+                    reasoning="PF coil 1",
+                ),
+            ],
+        )
+        context = {
+            "groups": sample_groups,
+            "subtree": sample_subtree,
+            "cocos_paths": [],
+            "existing": {"mapping": None, "sections": [], "bindings": []},
+        }
+
+        map_signals("jet", "pf_active", assignments, context, gc=mock_gc, cost=cost)
+
+        messages = mock_call_llm.call_args[0][0]
+        user_prompt = messages[1]["content"]
+        assert "Paths without notable changes" in user_prompt
+        assert "pf_active/coil/element/geometry/rectangle/r" in user_prompt
+        assert "Paths not found in DD graph" in user_prompt
+        assert "pf_active/coil/element/geometry/rectangle/missing" in user_prompt
 
 
 class TestDiscoverAssemblyUsesSystemPrompt:
