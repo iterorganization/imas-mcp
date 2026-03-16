@@ -464,7 +464,10 @@ def get_code_discovery_stats(
             MATCH (cc)<-[:HAS_CHUNK]-(:CodeExample)<-[:HAS_EXAMPLE]-(cf:CodeFile)
             WHERE cf.score_composite >= $min_score
             RETURN count(cc) AS total,
-                   count(cc.embedding) AS embedded
+                   count(cc.embedding) AS embedded,
+                   count(CASE WHEN cc.embedding IS NULL
+                              AND cc.embed_failed_at IS NULL
+                         THEN 1 END) AS pending
             """,
             facility=facility,
             min_score=min_score,
@@ -474,7 +477,7 @@ def get_code_discovery_stats(
             embedded_chunks = embed_result[0]["embedded"]
             stats["total_chunks"] = total_chunks
             stats["embedded_chunks"] = embedded_chunks
-            stats["pending_embed"] = total_chunks - embedded_chunks
+            stats["pending_embed"] = embed_result[0]["pending"]
         else:
             stats["total_chunks"] = 0
             stats["embedded_chunks"] = 0
