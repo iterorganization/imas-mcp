@@ -481,8 +481,8 @@ async def assign_worker(
 ) -> None:
     """Assign sources to IMAS target paths via LLM, per-IDS batch.
 
-    For each IDS target, calls aassign_targets with all matching
-    sources, then sets mapping_status='assigned' on each source.
+    For each IDS target, filters sources to those matching the IDS's
+    physics domains, then calls aassign_targets.
     """
     wlog = WorkerLogAdapter(logger, worker_name="assign_worker")
 
@@ -497,21 +497,40 @@ async def assign_worker(
             wlog.warning("No context for %s, skipping", ids_name)
             continue
 
-        groups = context.get("groups", [])
+        # Filter sources to IDS-relevant physics domains
+        ids_domains = set(context.get("target_domains", []))
+        all_groups = context.get("groups", [])
+        if ids_domains:
+            groups = [
+                g for g in all_groups
+                if g.get("physics_domain") in ids_domains
+            ]
+        else:
+            groups = all_groups
+
         if not groups:
-            wlog.info("No sources for %s, skipping", ids_name)
+            wlog.info("No domain-matched sources for %s, skipping", ids_name)
             continue
 
-        if on_progress:
-            on_progress(f"assigning {ids_name}", state.assign_stats)
+        # Build a scoped context with only domain-matched sources
+        scoped_context = {**context, "groups": groups}
 
-        wlog.info("Assigning %d sources for %s", len(groups), ids_name)
+        if on_progress:
+            on_progress(
+                f"assigning {ids_name} ({len(groups)} sources)",
+                state.assign_stats,
+            )
+
+        wlog.info(
+            "Assigning %d/%d sources for %s (domains=%s)",
+            len(groups), len(all_groups), ids_name, sorted(ids_domains),
+        )
 
         try:
             sections = await aassign_targets(
                 state.facility,
                 ids_name,
-                context,
+                scoped_context,
                 model=state.model,
                 cost=state.cost,
             )
@@ -883,7 +902,7 @@ async def run_mapping_engine(
         WorkerSpec(
             "map", "map_phase", map_worker,
             on_progress=on_progress,
-            depends_on=["assign_phase"],
+            depends_on=["context_phase"],  # can overlap with assign
         ),
         WorkerSpec(
             "validate", "validate_phase", validate_worker,
