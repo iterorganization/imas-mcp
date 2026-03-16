@@ -330,7 +330,9 @@ async def enrich_worker(state: DDBuildState, **_kwargs) -> None:
     # and initialize processed counts from already-completed work so that
     # restarting the CLI doesn't reset progress to 0%.
     try:
-        status_counts = await asyncio.to_thread(count_imas_nodes_by_status)
+        status_counts = await asyncio.to_thread(
+            count_imas_nodes_by_status, node_category="data"
+        )
         state.imas_node_status_counts = status_counts
         total_nodes = status_counts.get("total", 0)
         if total_nodes > 0:
@@ -363,7 +365,9 @@ async def enrich_worker(state: DDBuildState, **_kwargs) -> None:
                 break
             # Refresh totals while idle (build may still be adding nodes)
             try:
-                status_counts = await asyncio.to_thread(count_imas_nodes_by_status)
+                status_counts = await asyncio.to_thread(
+                    count_imas_nodes_by_status, node_category="data"
+                )
                 state.imas_node_status_counts = status_counts
                 total_nodes = status_counts.get("total", 0)
                 if total_nodes > 0:
@@ -457,7 +461,9 @@ async def embed_worker(state: DDBuildState, **_kwargs) -> None:
     # Initialize processed count from graph state so restarting doesn't
     # show 0% for already-embedded work.
     try:
-        status_counts = await asyncio.to_thread(count_imas_nodes_by_status)
+        status_counts = await asyncio.to_thread(
+            count_imas_nodes_by_status, node_category="data"
+        )
         total_nodes = status_counts.get("total", 0)
         if total_nodes > 0:
             state.embed_stats.total = max(state.embed_stats.total, total_nodes)
