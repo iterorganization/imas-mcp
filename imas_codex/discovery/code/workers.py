@@ -17,6 +17,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from imas_codex.discovery.base.claims import retry_on_deadlock
+from imas_codex.discovery.base.supervision import is_infrastructure_error
 
 from .state import FileDiscoveryState
 
@@ -356,6 +357,8 @@ async def triage_worker(
             logger.error("Triage batch failed: %s", e)
             state.triage_stats.errors += 1
             await asyncio.to_thread(release_file_triage_claims, batch_ids)
+            if is_infrastructure_error(e):
+                raise
 
         await asyncio.sleep(0.1)
 
@@ -497,6 +500,8 @@ async def score_worker(
             logger.error("Score batch failed: %s", e)
             state.score_stats.errors += 1
             await asyncio.to_thread(release_file_score_claims, batch_ids)
+            if is_infrastructure_error(e):
+                raise
 
         await asyncio.sleep(0.1)
 
@@ -752,6 +757,8 @@ async def code_worker(
             )
         except Exception as e:
             logger.warning("Code claim failed: %s", e)
+            if is_infrastructure_error(e):
+                raise
             await asyncio.sleep(2.0)
             continue
 
@@ -788,6 +795,8 @@ async def code_worker(
             files = await asyncio.to_thread(_filter_duplicates, files)
         except Exception as e:
             logger.warning("Dedup filter failed (proceeding with full batch): %s", e)
+            if is_infrastructure_error(e):
+                raise
 
         if not files:
             # Entire batch was duplicates — count as activity but skip processing
@@ -869,6 +878,13 @@ async def code_worker(
                 )
 
         except Exception as e:
+            if is_infrastructure_error(e):
+                logger.warning(
+                    "Code ingestion batch hit infrastructure failure (%d files): %s",
+                    len(files),
+                    e,
+                )
+                raise
             logger.error(
                 "Code ingestion batch failed (%d files): %s", len(files), e
             )
@@ -961,13 +977,16 @@ async def enrich_worker(
                 file_paths,
             )
 
-            enriched = await asyncio.to_thread(
+            enrich_counts = await asyncio.to_thread(
                 persist_file_enrichment, results, file_id_map
             )
+            enriched = enrich_counts["enriched"]
+            failed = enrich_counts["failed"]
+            processed = enriched + failed
 
-            state.enrich_stats.processed += enriched
+            state.enrich_stats.processed += processed
             state.enrich_stats.last_batch_time = _time.monotonic() - batch_start
-            state.enrich_stats.record_batch(enriched)
+            state.enrich_stats.record_batch(processed)
 
             # Release claims
             await asyncio.to_thread(release_file_enrich_claims, batch_ids)
@@ -1012,7 +1031,7 @@ async def enrich_worker(
                         }
                     )
                 on_progress(
-                    f"enriched {enriched}",
+                    f"enriched {enriched}, failed {failed}",
                     state.enrich_stats,
                     enrich_results,
                 )
@@ -1021,6 +1040,8 @@ async def enrich_worker(
             logger.error("File enrichment batch failed: %s", e)
             state.enrich_stats.errors += 1
             await asyncio.to_thread(release_file_enrich_claims, batch_ids)
+            if is_infrastructure_error(e):
+                raise
 
         await asyncio.sleep(0.1)
 
@@ -1086,6 +1107,8 @@ async def link_worker(
         except Exception as e:
             logger.error("Code evidence linking failed: %s", e)
             state.link_stats.errors += 1
+            if is_infrastructure_error(e):
+                raise
 
         # Link is cheap, run every 10s
         await asyncio.sleep(10.0)
@@ -1105,3 +1128,5 @@ async def link_worker(
                 )
         except Exception as e:
             logger.error("Final code evidence linking failed: %s", e)
+            if is_infrastructure_error(e):
+                raise
