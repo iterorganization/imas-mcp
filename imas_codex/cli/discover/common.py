@@ -303,8 +303,12 @@ def run_discovery(
             ticker_task = asyncio.create_task(_tick())
 
             try:
-                return await async_main(stop_event, service_monitor)
+                result = await async_main(stop_event, service_monitor)
             finally:
+                # Signal background tasks to stop before cancelling,
+                # so they don't start a new to_thread graph query that
+                # would block cancellation for seconds.
+                stop_event.set()
                 refresh_task.cancel()
                 ticker_task.cancel()
                 # Bounded wait so a blocked thread (e.g. Neo4j query
@@ -320,6 +324,8 @@ def run_discovery(
                     )
                 except (asyncio.CancelledError, TimeoutError):
                     pass
+
+            return result
 
         result = safe_asyncio_run(_run_rich())
 

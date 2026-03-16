@@ -2890,7 +2890,7 @@ def _import_clusters(
         try:
             from imas_codex.clusters.hierarchical import HierarchicalClusterer
 
-            # Step 1: Load embeddings from graph
+            # Step 1: Load embedded IMASNode IDs from graph
             logger.info("Loading embeddings from graph for clustering...")
             emb_result = client.query(
                 """
@@ -2916,6 +2916,40 @@ def _import_clusters(
                 embeddings.shape[0],
                 embeddings.shape[1],
             )
+
+            # Step 1.5: Check cluster input hash — skip if IMASNode set unchanged
+            cluster_input_hash = hashlib.sha256(
+                "\n".join(path_ids).encode("utf-8")
+            ).hexdigest()[:16]
+
+            if not force_reembed:
+                stored = client.query(
+                    """
+                    MATCH (v:DDVersion {is_current: true})
+                    RETURN v.cluster_input_hash AS hash
+                    """
+                )
+                if (
+                    stored
+                    and stored[0].get("hash") == cluster_input_hash
+                ):
+                    # Verify clusters actually exist in the graph
+                    cl_count = client.query(
+                        "MATCH (c:IMASSemanticCluster) "
+                        "RETURN count(c) AS cnt"
+                    )
+                    if cl_count and cl_count[0]["cnt"] > 0:
+                        count = cl_count[0]["cnt"]
+                        logger.info(
+                            "Clustering skipped — %d embedded paths unchanged "
+                            "(hash %s), %d clusters in graph",
+                            len(path_ids),
+                            cluster_input_hash[:8],
+                            count,
+                        )
+                        if on_progress:
+                            on_progress(count, count)
+                        return count
 
             if _stopped():
                 logger.info("Clustering interrupted after loading embeddings")
@@ -3114,14 +3148,16 @@ def _import_clusters(
                     )
                 logger.info("Deleted %d stale clusters", len(stale_ids))
 
-            # Update DDVersion with cluster metadata
+            # Update DDVersion with cluster metadata + input hash
             client.query(
                 """
                 MATCH (v:DDVersion {is_current: true})
                 SET v.clusters_built_at = datetime(),
-                    v.clusters_count = $count
+                    v.clusters_count = $count,
+                    v.cluster_input_hash = $hash
                 """,
                 count=len(clusters),
+                hash=cluster_input_hash,
             )
 
             return len(clusters)
