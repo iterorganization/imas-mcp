@@ -211,6 +211,22 @@ def build_signal_scope_case(alias: str = "s") -> str:
     return SIGNAL_SCANNER_SCOPE_CASE.format(alias=alias)
 
 
+def build_enrich_claimable_predicate(alias: str = "s") -> str:
+    """Render the enrich-claimability predicate for FacilitySignal rows.
+
+    Enrichment only runs on standalone signals and SignalSource representatives.
+    Non-representative members inherit enrichment via propagation and must not be
+    counted as runnable work in completion checks or progress stats.
+    """
+
+    return f"""
+        NOT EXISTS {{
+            MATCH ({alias})-[:MEMBER_OF]->(sg:SignalSource)
+            WHERE sg.representative_id <> {alias}.id
+        }}
+    """.strip()
+
+
 def get_checkpoint_dir() -> Path:
     """Get checkpoint directory for data discovery, creating if needed.
 
@@ -430,6 +446,7 @@ def has_pending_enrich_work(
         WITH s, {build_signal_scope_case("s")} AS scanner_scope
         WHERE s.status = $discovered
           AND ($scoped_scanners IS NULL OR scanner_scope IN $scoped_scanners)
+          AND {build_enrich_claimable_predicate("s")}
           AND s.claimed_at IS NULL
         RETURN count(s) > 0 AS has_work
     """
@@ -496,7 +513,7 @@ def get_data_discovery_stats(
             sum(CASE WHEN s.status = $checked THEN 1 ELSE 0 END) AS checked,
             sum(CASE WHEN s.status = $skipped THEN 1 ELSE 0 END) AS skipped,
             sum(CASE WHEN s.status = $failed THEN 1 ELSE 0 END) AS failed,
-            sum(CASE WHEN s.status = $discovered AND s.claimed_at IS NULL THEN 1 ELSE 0 END) AS pending_enrich,
+            sum(CASE WHEN s.status = $discovered AND {build_enrich_claimable_predicate("s")} AND s.claimed_at IS NULL THEN 1 ELSE 0 END) AS pending_enrich,
             sum(CASE WHEN s.status = $enriched AND s.claimed_at IS NULL THEN 1 ELSE 0 END) AS pending_check,
             sum(coalesce(s.llm_cost, 0)) AS accumulated_cost,
             count(CASE WHEN c.success = true THEN 1 END) AS checks_passed,

@@ -273,9 +273,12 @@ class TestScannerScopeMapping:
 
         assert mock_gc.query.call_count == 2
         for call in mock_gc.query.call_args_list:
+            query = call.args[0]
             kwargs = call.kwargs
             assert kwargs["scoped_scanners"] == ["device_xml", "ppf"]
             assert "static_sources" in kwargs
+            if "s.status = $discovered" in query:
+                assert "sg.representative_id <> s.id" in query
 
     def test_stats_queries_receive_scanner_scope(self):
         """Discovery stats use scoped totals instead of facility-wide totals."""
@@ -310,6 +313,8 @@ class TestScannerScopeMapping:
         assert stats["total"] == 12
         assert stats["signal_sources"] == 2
         assert stats["grouped_signals"] == 6
+        signal_query = mock_gc.query.call_args_list[0].args[0]
+        assert "sg.representative_id <> s.id" in signal_query
         for call in mock_gc.query.call_args_list:
             kwargs = call.kwargs
             assert kwargs["scoped_scanners"] == ["device_xml", "ppf"]
