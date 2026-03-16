@@ -520,6 +520,33 @@ def _call_llm(
     return result
 
 
+async def _acall_llm(
+    messages: list[dict[str, str]],
+    response_model: type,
+    *,
+    model: str | None = None,
+    step_name: str = "",
+    cost: PipelineCost | None = None,
+) -> Any:
+    """Async LLM call with structured output parsing."""
+    from imas_codex.discovery.base.llm import acall_llm_structured
+
+    llm_model = model or get_model("language")
+    logger.info("Step %s: calling %s (async)", step_name, llm_model)
+
+    result, usd, tokens = await acall_llm_structured(
+        llm_model,
+        messages,
+        response_model,
+    )
+
+    if cost:
+        cost.add(step_name, usd, tokens)
+
+    logger.info("Step %s: %d tokens, $%.4f", step_name, tokens, usd)
+    return result
+
+
 def gather_context(
     facility: str,
     ids_name: str,
@@ -771,6 +798,49 @@ def assign_targets(
     )
 
 
+async def aassign_targets(
+    facility: str,
+    ids_name: str,
+    context: dict[str, Any],
+    *,
+    gc: "GraphClient | None" = None,
+    model: str | None = None,
+    cost: PipelineCost,
+) -> TargetAssignmentBatch:
+    """Async version of assign_targets."""
+    logger.info("Assigning signal sources to IDS target paths (async)")
+
+    ids_description = ""
+    if gc is not None:
+        ids_description = _fetch_ids_description(ids_name, gc)
+
+    prompt = _render_prompt(
+        "target_assignment",
+        facility=facility,
+        ids_name=ids_name,
+        ids_description=ids_description,
+        signal_sources=_format_sources(context["groups"]),
+        imas_subtree=_format_subtree(context["subtree"]),
+        semantic_results=_format_subtree(context["semantic"]),
+        section_clusters=_format_section_clusters(
+            context.get("section_clusters", [])
+        ),
+        cross_facility_mappings=_format_cross_facility_mappings(
+            context.get("cross_mappings", [])
+        ),
+    )
+
+    messages = _build_messages("target_assignment_system", prompt)
+
+    return await _acall_llm(
+        messages,
+        TargetAssignmentBatch,
+        model=model,
+        step_name="assign_targets",
+        cost=cost,
+    )
+
+
 def map_signals(
     facility: str,
     ids_name: str,
@@ -932,6 +1002,184 @@ def map_signals(
     return batches
 
 
+async def amap_signals(
+    facility: str,
+    ids_name: str,
+    sections: TargetAssignmentBatch,
+    context: dict[str, Any],
+    *,
+    gc: GraphClient,
+    model: str | None = None,
+    cost: PipelineCost,
+):
+    """Async generator that yields (assignment, batch) per section.
+
+    Identical logic to ``map_signals`` but uses async LLM calls and
+    yields each batch as it completes for streaming display.
+    """
+    import asyncio
+
+    logger.info(
+        "Generating signal mappings for %d targets (async)", len(sections.assignments)
+    )
+
+    dd_ver = context.get("dd_version")
+
+    for assignment in sections.assignments:
+        target_path = assignment.imas_target_path
+
+        # Prepare context — all sync graph/CPU work, run in thread
+        prep = await asyncio.to_thread(
+            _prepare_section_context,
+            facility, ids_name, assignment, context, gc=gc, dd_version=dd_ver,
+        )
+
+        messages = _build_messages("signal_mapping_system", prep["prompt"])
+
+        batch = await _acall_llm(
+            messages,
+            SignalMappingBatch,
+            model=model,
+            step_name=f"map_signals_{target_path}",
+            cost=cost,
+        )
+        yield assignment, batch
+
+
+def _prepare_section_context(
+    facility: str,
+    ids_name: str,
+    assignment,
+    context: dict[str, Any],
+    *,
+    gc: GraphClient,
+    dd_version: int | None = None,
+) -> dict[str, Any]:
+    """Prepare all context for a single section mapping (sync, thread-safe).
+
+    Returns a dict with the rendered prompt string.
+    """
+    target_path = assignment.imas_target_path
+
+    fields = fetch_imas_fields(
+        ids_name, [target_path], gc=gc, dd_version=dd_version,
+    )
+    subtree_fields = fetch_imas_subtree(
+        ids_name, target_path.removeprefix(f"{ids_name}/"), gc=gc,
+        leaf_only=True, dd_version=dd_version,
+    )
+
+    sg_detail = next(
+        (g for g in context["groups"] if g["id"] == assignment.source_id),
+        {},
+    )
+
+    code_refs = fetch_source_code_refs(assignment.source_id, gc=gc)
+    code_context = ""
+    if code_refs:
+        snippets = []
+        for ref in code_refs:
+            if ref.get("code"):
+                lang = ref.get("language", "")
+                snippets.append(f"```{lang}\n{ref['code']}\n```")
+        if snippets:
+            code_context = "\n".join(snippets)
+
+    source_cocos = sg_detail.get("rep_cocos")
+    dd_cocos = context.get("dd_cocos")
+    cocos_context = ""
+    if source_cocos or dd_cocos:
+        parts = []
+        if source_cocos:
+            parts.append(f"Signal COCOS convention: {source_cocos}")
+        if dd_cocos:
+            parts.append(f"Target DD COCOS convention: {dd_cocos}")
+        flip_paths = [
+            p for p in context["cocos_paths"]
+            if p.startswith(target_path)
+        ]
+        if flip_paths:
+            parts.append(
+                "Target IMAS paths requiring sign flip:\n"
+                + "\n".join(f"- {p}" for p in flip_paths)
+            )
+        cocos_context = "\n".join(parts)
+
+    all_fields = subtree_fields or fields
+
+    version_context_str = "(no version change history)"
+    try:
+        from imas_codex.tools.version_tool import VersionTool
+
+        vt = VersionTool(gc)
+        field_paths = [
+            f.get("id", "") or f.get("path", "")
+            for f in all_fields if (f.get("id") or f.get("path"))
+        ]
+        if field_paths:
+            version_ctx = _run_async(vt.get_dd_version_context(paths=field_paths))
+            version_context_str = _format_version_context(version_ctx)
+    except Exception:
+        logger.debug("Version context fetch failed — continuing without it")
+
+    source_id = assignment.source_id
+    source_semantic = context.get("source_candidates", {}).get(source_id, [])
+    semantic_context = ""
+    cluster_context = ""
+    if source_semantic:
+        semantic_lines = []
+        cluster_lines = []
+        for sc in source_semantic:
+            path = sc.get("id", "")
+            score = sc.get("score", 0)
+            doc = sc.get("documentation", "")
+            via = sc.get("via_cluster")
+            if via:
+                cluster_lines.append(
+                    f"  - {path} (score={score:.2f}, cluster={via}): {doc}"
+                )
+            else:
+                semantic_lines.append(f"  - {path} (score={score:.2f}): {doc}")
+        if semantic_lines:
+            semantic_context = "Semantic search candidates:\n" + "\n".join(semantic_lines)
+        if cluster_lines:
+            cluster_context = "Cluster-derived candidates:\n" + "\n".join(cluster_lines)
+
+    wiki_ctx = _format_wiki_context(context.get("wiki_context", []))
+    code_ctx = _format_code_context(context.get("code_context", []))
+
+    match_matrix_ctx = _format_semantic_match_matrix(
+        context.get("semantic_match_matrix", {}), source_id,
+    )
+
+    prompt = _render_prompt(
+        "signal_mapping",
+        facility=facility,
+        ids_name=ids_name,
+        section_path=target_path,
+        target_type=assignment.target_type.value,
+        signal_source_detail=_format_source_detail(sg_detail),
+        imas_fields=_format_fields(all_fields),
+        identifier_schemas=_format_identifier_schemas(all_fields),
+        coordinate_context=_format_coordinate_context(fields),
+        version_context=version_context_str,
+        unit_analysis=_format_unit_analysis(
+            [sg_detail] if sg_detail else [], all_fields
+        ),
+        cocos_paths="\n".join(f"- {p}" for p in context["cocos_paths"]) or "(none)",
+        existing_mappings=json.dumps(context["existing"], indent=2, default=str),
+        code_references=code_context or "(no code references available)",
+        source_cocos=cocos_context or "(no COCOS context)",
+        semantic_candidates=semantic_context or "(no semantic candidates)",
+        cluster_candidates=cluster_context or "(no cluster candidates)",
+        wiki_context=wiki_ctx,
+        code_data_access=code_ctx,
+        semantic_match_matrix=match_matrix_ctx,
+    )
+
+    return {"prompt": prompt}
+
+
 def _format_signal_mappings(batch: SignalMappingBatch) -> str:
     """Format signal mappings for the assembly prompt."""
     lines: list[str] = []
@@ -1044,6 +1292,81 @@ def discover_assembly(
         configs.append(config)
 
     return AssemblyBatch(ids_name=ids_name, configs=configs)
+
+
+async def adiscover_assembly(
+    facility: str,
+    ids_name: str,
+    sections: TargetAssignmentBatch,
+    signal_batches: list[SignalMappingBatch],
+    context: dict[str, Any],
+    *,
+    gc: GraphClient,
+    model: str | None = None,
+    cost: PipelineCost,
+):
+    """Async generator that yields (assignment, config) per section."""
+    import asyncio
+
+    logger.info(
+        "Discovering assembly patterns for %d targets (async)",
+        len(sections.assignments),
+    )
+
+    dd_ver = context.get("dd_version")
+
+    for assignment, batch in zip(sections.assignments, signal_batches):
+        target_path = assignment.imas_target_path
+
+        if assignment.target_type in (TargetType.SCALAR, TargetType.PROFILE):
+            logger.info(
+                "Auto-generating DIRECT assembly for %s target %s",
+                assignment.target_type, target_path,
+            )
+            config = AssemblyConfig(
+                target_path=target_path,
+                pattern=AssemblyPattern.DIRECT,
+                reasoning=f"Auto-generated: {assignment.target_type} target uses direct write",
+                confidence=1.0,
+            )
+            yield assignment, config
+            continue
+
+        target_structure = await asyncio.to_thread(
+            fetch_imas_subtree,
+            ids_name,
+            target_path.removeprefix(f"{ids_name}/"),
+            gc=gc,
+            dd_version=dd_ver,
+        )
+
+        target_fields = await asyncio.to_thread(
+            fetch_imas_fields,
+            ids_name, [target_path], gc=gc, dd_version=dd_ver,
+        )
+
+        prompt = _render_prompt(
+            "assembly",
+            facility=facility,
+            ids_name=ids_name,
+            section_path=target_path,
+            signal_mappings=_format_signal_mappings(batch),
+            imas_section_structure=_format_subtree(target_structure),
+            source_metadata=_format_source_metadata(assignment, context),
+            identifier_schemas=_format_identifier_schemas(target_fields),
+            coordinate_context=_format_coordinate_context(target_fields),
+        )
+
+        messages = _build_messages("assembly_system", prompt)
+
+        config = await _acall_llm(
+            messages,
+            AssemblyConfig,
+            model=model,
+            step_name=f"discover_assembly_{target_path}",
+            cost=cost,
+        )
+        yield assignment, config
 
 
 def validate_mappings(
