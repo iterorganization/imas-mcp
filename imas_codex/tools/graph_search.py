@@ -842,7 +842,7 @@ class GraphOverviewTool:
             f"""
             MATCH (i:IDS)
             OPTIONAL MATCH (i)<-[:IN_IDS]-(p:IMASNode)
-            WHERE true {dd_clause}
+            WHERE p.node_category = 'data' {dd_clause}
             WITH i, count(p) AS path_count
             RETURN i.name AS name,
                    COALESCE(i.description, i.documentation) AS description,
@@ -1710,7 +1710,9 @@ class GraphStructureTool:
         paths = self._gc.query(
             f"""
             MATCH (p:IMASNode)
-            WHERE p.ids = $ids_name {leaf_filter} {dd_clause}
+            WHERE p.ids = $ids_name
+            AND p.node_category = 'data'
+            {leaf_filter} {dd_clause}
             OPTIONAL MATCH (p)-[:HAS_UNIT]->(u:Unit)
             OPTIONAL MATCH (p)-[:HAS_COORDINATE]->(coord:IMASCoordinateSpec)
             OPTIONAL MATCH (p)-[:IN_CLUSTER]->(cl:IMASSemanticCluster)
@@ -1774,7 +1776,9 @@ class GraphStructureTool:
         paths = self._gc.query(
             f"""
             MATCH (p:IMASNode)
-            WHERE p.physics_domain IN $domains {ids_clause} {dd_clause}
+            WHERE p.physics_domain IN $domains
+            AND p.node_category = 'data'
+            {ids_clause} {dd_clause}
             OPTIONAL MATCH (p)-[:HAS_UNIT]->(u:Unit)
             RETURN p.id AS path,
                    p.ids AS ids,

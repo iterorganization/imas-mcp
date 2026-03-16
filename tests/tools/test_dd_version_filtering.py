@@ -1,4 +1,5 @@
-"""Tests for DD version validity filtering and cluster scope query construction.
+"""Tests for DD version validity filtering, cluster scope query construction,
+and node_category filtering in overview and export tools.
 
 Validates that _dd_version_clause uses correct "valid in major N" semantics:
 - A path is valid in DD major N if introduced in major ≤ N and not deprecated in major ≤ N.
@@ -6,7 +7,8 @@ Validates that _dd_version_clause uses correct "valid in major N" semantics:
 - Paths deprecated in DD4 are valid in DD3 but not DD4.
 - Paths deprecated in DD3 are invalid in both DD3 and DD4.
 
-Also validates that cluster scope queries produce valid Cypher.
+Also validates that cluster scope queries produce valid Cypher, and that
+overview/export tools filter by node_category='data'.
 """
 
 from unittest.mock import MagicMock, call
@@ -15,7 +17,9 @@ import pytest
 
 from imas_codex.tools.graph_search import (
     GraphClustersTool,
+    GraphOverviewTool,
     GraphPathTool,
+    GraphStructureTool,
     _dd_version_clause,
 )
 
@@ -197,3 +201,119 @@ class TestClusterScopeQuery:
 
         assert result["query_type"] == "path"
         assert result["clusters_found"] == 0
+
+
+# ============================================================================
+# Overview node_category filtering tests
+# ============================================================================
+
+
+class TestOverviewNodeCategoryFilter:
+    """Test that get_imas_overview counts only data nodes."""
+
+    @pytest.mark.asyncio
+    async def test_overview_query_filters_data_only(self):
+        """The overview Cypher must include node_category = 'data'."""
+        gc = MagicMock()
+        gc.query.side_effect = [
+            # IDS query result
+            [
+                {
+                    "name": "equilibrium",
+                    "description": "Equilibrium quantities",
+                    "physics_domain": "equilibrium",
+                    "lifecycle_status": "active",
+                    "path_count": 641,
+                }
+            ],
+            # DDVersion query result
+            [{"version": "4.1.0"}],
+        ]
+
+        tool = GraphOverviewTool(gc)
+        await tool.get_imas_overview()
+
+        # First query is the IDS+path count query
+        ids_cypher = gc.query.call_args_list[0][0][0]
+        assert "node_category = 'data'" in ids_cypher
+
+    @pytest.mark.asyncio
+    async def test_overview_with_dd_version_filters_data(self):
+        """Overview with dd_version must filter both node_category and version."""
+        gc = MagicMock()
+        gc.query.side_effect = [
+            [
+                {
+                    "name": "equilibrium",
+                    "description": "Equilibrium quantities",
+                    "physics_domain": "equilibrium",
+                    "lifecycle_status": "active",
+                    "path_count": 455,
+                }
+            ],
+            [{"version": "4.1.0"}],
+        ]
+
+        tool = GraphOverviewTool(gc)
+        await tool.get_imas_overview(dd_version=4)
+
+        ids_cypher = gc.query.call_args_list[0][0][0]
+        assert "node_category = 'data'" in ids_cypher
+        assert "INTRODUCED_IN" in ids_cypher
+        kwargs = gc.query.call_args_list[0][1]
+        assert kwargs["dd_version"] == 4
+
+
+# ============================================================================
+# Export node_category filtering tests
+# ============================================================================
+
+
+class TestExportNodeCategoryFilter:
+    """Test that export tools filter to data nodes by default."""
+
+    @pytest.mark.asyncio
+    async def test_export_ids_filters_data_only(self):
+        """export_imas_ids Cypher must include node_category = 'data'."""
+        gc = MagicMock()
+        gc.query.return_value = []
+        tool = GraphStructureTool(gc)
+
+        await tool.export_imas_ids("equilibrium")
+
+        cypher = gc.query.call_args[0][0]
+        assert "node_category = 'data'" in cypher
+
+    @pytest.mark.asyncio
+    async def test_export_domain_filters_data_only(self):
+        """export_imas_domain Cypher must include node_category = 'data'."""
+        gc = MagicMock()
+        # _resolve_physics_domain tries: exact enum match first, then IDS query.
+        # Mock IDS lookup to return a valid domain.
+        gc.query.side_effect = [
+            [{"domain": "equilibrium"}],  # IDS name resolution
+            [],  # export results
+        ]
+        tool = GraphStructureTool(gc)
+
+        # Use an IDS name so _resolve_physics_domain falls through to gc.query
+        await tool.export_imas_domain("equilibrium")
+
+        # The export query is the last call
+        export_cypher = gc.query.call_args_list[-1][0][0]
+        assert "node_category = 'data'" in export_cypher
+
+    @pytest.mark.asyncio
+    async def test_export_ids_with_dd_version(self):
+        """export_imas_ids with dd_version must filter both."""
+        gc = MagicMock()
+        gc.query.return_value = []
+        tool = GraphStructureTool(gc)
+
+        await tool.export_imas_ids("equilibrium", dd_version=4)
+
+        cypher = gc.query.call_args[0][0]
+        assert "node_category = 'data'" in cypher
+        assert "INTRODUCED_IN" in cypher
+        kwargs = gc.query.call_args[1]
+        assert kwargs["dd_version"] == 4
