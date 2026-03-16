@@ -424,12 +424,21 @@ async def context_worker(
                 {"detail": f"querying context for {ids_name}"}
             ])
 
+        def _context_progress(detail: str) -> None:
+            if on_progress:
+                on_progress(
+                    f"{ids_name}: {detail}",
+                    state.context_stats,
+                    [{"detail": f"{ids_name}: {detail}"}],
+                )
+
         context = await asyncio.to_thread(
             gather_context,
             state.facility,
             ids_name,
             gc=GraphClient(),
             dd_version=state.dd_major,
+            on_progress=_context_progress,
         )
         state.contexts[ids_name] = context
         ids_sources = len(context.get("groups", []))
