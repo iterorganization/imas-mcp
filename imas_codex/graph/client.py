@@ -37,6 +37,7 @@ from imas_codex.settings import (
 # Suppress noisy Neo4j warnings about unknown property keys
 # These are harmless (e.g., retry_count doesn't exist until first failure)
 logging.getLogger("neo4j.notifications").setLevel(logging.ERROR)
+logging.getLogger("neo4j.pool").setLevel(logging.ERROR)
 
 logger = logging.getLogger(__name__)
 
@@ -125,26 +126,10 @@ class GraphClient:
 
             self.graph_name = get_active_graph_name()
 
-        # Limit pool size for tunneled connections — fewer concurrent
-        # connections reduce pressure on SSH tunnels and avoid congestion
-        # that causes tunnel drops under DDL bursts.
-        from imas_codex.remote.tunnel import TUNNEL_OFFSET
-
-        pool_size = 100  # Neo4j default
-        # Detect tunneled URIs by checking for offset ports (e.g. 17687)
-        try:
-            port_str = self.uri.rsplit(":", 1)[-1].rstrip("/")
-            port = int(port_str)
-            if port >= TUNNEL_OFFSET:
-                pool_size = 5
-        except (ValueError, IndexError):
-            pass
-
         self._driver = GraphDatabase.driver(
             self.uri,
             auth=(self.username, self.password),
-            max_connection_pool_size=pool_size,
-            connection_acquisition_timeout=30,
+            **self._driver_kwargs(self.uri),
         )
         self._schema = get_schema()
 
@@ -174,6 +159,45 @@ class GraphClient:
             self._driver.close()
             self._driver = None
 
+    @staticmethod
+    def _pool_size_for_uri(uri: str) -> int:
+        """Choose a conservative pool size for tunneled connections."""
+        from imas_codex.remote.tunnel import TUNNEL_OFFSET
+
+        pool_size = 100
+        try:
+            port_str = uri.rsplit(":", 1)[-1].rstrip("/")
+            port = int(port_str)
+            if port >= TUNNEL_OFFSET:
+                pool_size = 5
+        except (ValueError, IndexError):
+            pass
+        return pool_size
+
+    @classmethod
+    def _driver_kwargs(cls, uri: str) -> dict[str, Any]:
+        """Build Neo4j driver kwargs with bounded pooled connection reuse."""
+        return {
+            "max_connection_pool_size": cls._pool_size_for_uri(uri),
+            "connection_acquisition_timeout": 30,
+            "max_connection_lifetime": 300,
+        }
+
+    def _recreate_driver(self, uri: str | None = None) -> None:
+        """Close and recreate the Neo4j driver, optionally with a new URI."""
+        target_uri = uri or self.uri
+        if self._driver:
+            try:
+                self._driver.close()
+            except Exception:
+                pass
+        self._driver = GraphDatabase.driver(
+            target_uri,
+            auth=(self.username, self.password),
+            **self._driver_kwargs(target_uri),
+        )
+        self.uri = target_uri
+
     def __enter__(self) -> Self:
         """Enter context manager."""
         return self
@@ -194,8 +218,8 @@ class GraphClient:
             raise RuntimeError(msg)
         try:
             sess = self._driver.session()
-        except Exception:
-            if self._try_reconnect():
+        except Exception as exc:
+            if self._is_connection_error(exc) and self._try_reconnect(exc):
                 sess = self._driver.session()  # type: ignore[union-attr]
             else:
                 raise
@@ -204,14 +228,21 @@ class GraphClient:
         finally:
             sess.close()
 
-    def _try_reconnect(self) -> bool:
-        """Attempt tunnel reconnection and driver recreation.
+    def _try_reconnect(self, exc: Exception | None = None) -> bool:
+        """Attempt driver recreation, then tunnel reconnection if needed.
 
         Returns True if the driver was successfully recreated.
         """
         from imas_codex.graph.profiles import invalidate_uri_cache, reconnect_tunnel
 
-        logger.warning("Graph connection failed, attempting tunnel reconnection...")
+        detail = f": {exc}" if exc else ""
+        logger.warning("Graph connection failed%s, recreating driver...", detail)
+        try:
+            self._recreate_driver()
+            return True
+        except Exception:
+            logger.warning("Driver recreation failed, attempting tunnel reconnection...")
+
         if not reconnect_tunnel():
             logger.error("Tunnel reconnection failed")
             return False
@@ -220,32 +251,12 @@ class GraphClient:
         invalidate_uri_cache()
         new_uri = get_graph_uri()
         logger.info("Recreating Neo4j driver with URI: %s", new_uri)
-
-        if self._driver:
-            try:
-                self._driver.close()
-            except Exception:
-                pass
-
-        # Preserve pool size limit for tunneled connections
-        from imas_codex.remote.tunnel import TUNNEL_OFFSET
-
-        pool_size = 100
         try:
-            port_str = new_uri.rsplit(":", 1)[-1].rstrip("/")
-            if int(port_str) >= TUNNEL_OFFSET:
-                pool_size = 5
-        except (ValueError, IndexError):
-            pass
-
-        self._driver = GraphDatabase.driver(
-            new_uri,
-            auth=(self.username, self.password),
-            max_connection_pool_size=pool_size,
-            connection_acquisition_timeout=30,
-        )
-        self.uri = new_uri
-        return True
+            self._recreate_driver(new_uri)
+            return True
+        except Exception:
+            logger.exception("Neo4j driver recreation failed after tunnel reconnect")
+            return False
 
     # =========================================================================
     # Schema Management
@@ -930,14 +941,29 @@ class GraphClient:
         """
         from neo4j.exceptions import DatabaseError, ServiceUnavailable
 
+        msg = str(exc).lower()
         if isinstance(exc, ServiceUnavailable | ConnectionError | OSError):
             return True
+        if any(
+            token in msg
+            for token in (
+                "defunct connection",
+                "failed to read from defunct connection",
+                "socketdeadlineexceedederror",
+                "connection reset",
+                "connection refused",
+                "timed out",
+            )
+        ):
+            return True
         if isinstance(exc, DatabaseError):
-            msg = str(exc).lower()
             if "critical error" in msg or "needs to be restarted" in msg:
                 return True
         # Check nested cause
         cause = getattr(exc, "__cause__", None)
+        if isinstance(cause, Exception) and cause is not exc:
+            if GraphClient._is_connection_error(cause):
+                return True
         if isinstance(cause, ConnectionError | OSError):
             return True
         return False

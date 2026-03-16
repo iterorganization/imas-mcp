@@ -45,6 +45,13 @@ class TestIsConnectionError:
         outer.__cause__ = inner
         assert GraphClient._is_connection_error(outer) is True
 
+    def test_defunct_connection_message(self):
+        exc = RuntimeError(
+            "Failed to read from defunct connection; "
+            "SocketDeadlineExceededError('timed out')"
+        )
+        assert GraphClient._is_connection_error(exc) is True
+
 
 class TestIsDatabaseCriticalError:
     """Tests for GraphClient._is_database_critical_error."""

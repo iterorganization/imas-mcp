@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -147,6 +148,9 @@ class DiscoveryConfig:
 
     verbose: bool = False
     """Whether verbose output was requested."""
+
+    force_exit_on_complete: bool = False
+    """Force a hard process exit after summary output is flushed."""
 
 
 def make_log_print(domain: str, console: Any | None = None) -> Callable[[str], None]:
@@ -333,6 +337,11 @@ def run_discovery(
 
     # Record session wall-clock time to the graph for accumulated display
     _record_session_time(config, result)
+
+    if config.force_exit_on_complete and "PYTEST_CURRENT_TEST" not in os.environ:
+        from imas_codex.cli.shutdown import force_exit
+
+        force_exit()
 
     return result
 

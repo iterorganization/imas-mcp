@@ -1069,6 +1069,7 @@ class PipelineRowConfig:
 
     # Activity (current item) — structured fields (preferred)
     primary_text: str = ""  # Resource name (shown on line 2, left-aligned)
+    primary_text_style: str = "white"  # Rich style for primary_text
     score_value: float | None = None  # Score (shown on line 3, before description)
     score_parts: list[tuple[str, str]] | None = (
         None  # Custom score rendering (e.g. "0.65"+"+0.20")
@@ -1172,7 +1173,10 @@ def build_pipeline_row(config: PipelineRowConfig, bar_width: int = 40) -> Text:
         if rate_s:
             suffix_width += len(rate_s) + 2
         max_name = max(10, row_width - 2 - suffix_width)
-        line2.append(clip_text(config.primary_text, max_name), style="white")
+        line2.append(
+            clip_text(config.primary_text, max_name),
+            style=config.primary_text_style,
+        )
         if config.physics_domain:
             line2.append("  ", style="dim")
             line2.append(config.physics_domain, style="green")
@@ -2125,11 +2129,13 @@ class DataDrivenProgressDisplay(BaseProgressDisplay):
 
             # Stream item display — use current popped item from queue
             primary_text = stats.status_text if stats else ""
+            primary_text_style = "white"
             description = ""
             physics_domain = ""
             if stats and stats._current_stream_item:
                 si = stats._current_stream_item
                 primary_text = si.get("primary_text", primary_text)
+                primary_text_style = si.get("primary_text_style", "white")
                 description = si.get("description", "")
                 physics_domain = si.get("physics_domain", "")
 
@@ -2146,6 +2152,7 @@ class DataDrivenProgressDisplay(BaseProgressDisplay):
                     worker_count=count,
                     worker_annotation=ann,
                     primary_text=primary_text,
+                    primary_text_style=primary_text_style,
                     description=description,
                     physics_domain=physics_domain,
                     is_complete=complete,
@@ -2238,3 +2245,8 @@ class DataDrivenProgressDisplay(BaseProgressDisplay):
             self.console.print()
             for line in lines:
                 self.console.print(f"  {line}")
+        stats = self._stats_fn() if self._stats_fn else None
+        if stats:
+            summary = "  ".join(f"{label}={value}" for label, value, _style in stats)
+            if summary:
+                self.console.print(f"  {summary}")

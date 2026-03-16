@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 
 import click
 from rich.console import Console
@@ -251,6 +252,7 @@ def imas_build(
                 "imas",
             ],
             verbose=verbose,
+            force_exit_on_complete=use_rich and "PYTEST_CURRENT_TEST" not in os.environ,
         )
 
         async def async_main(stop_event, service_monitor):
@@ -304,6 +306,17 @@ def _print_build_summary(stats: dict) -> None:
     click.echo(f"Paths enriched (LLM): {stats.get('enriched_llm', 0)}")
     click.echo(f"Paths enriched (template): {stats.get('enriched_template', 0)}")
     click.echo(f"Enrichment cached: {stats.get('enrichment_cached', 0)}")
+    if stats.get("identifier_schemas_total", 0):
+        click.echo(
+            "Identifier schemas enriched: "
+            f"{stats.get('identifier_schemas_enriched', 0)} "
+            f"(cached: {stats.get('identifier_schemas_cached', 0)})"
+        )
+    if stats.get("ids_total", 0):
+        click.echo(
+            f"IDS enriched: {stats.get('ids_enriched', 0)} "
+            f"(cached: {stats.get('ids_cached', 0)})"
+        )
     if stats.get("enrichment_cost", 0) > 0:
         click.echo(f"Enrichment cost: ${stats['enrichment_cost']:.4f}")
     click.echo(
@@ -312,7 +325,20 @@ def _print_build_summary(stats: dict) -> None:
     click.echo(f"HAS_ERROR relationships: {stats['error_relationships']}")
     click.echo(f"Embeddings updated: {stats['embeddings_updated']}")
     click.echo(f"Embeddings cached: {stats['embeddings_cached']}")
+    if stats.get("identifier_schemas_total", 0):
+        click.echo(
+            "Identifier schema embeddings: "
+            f"{stats.get('identifier_embeddings_updated', 0)} "
+            f"(cached: {stats.get('identifier_embeddings_cached', 0)})"
+        )
+    if stats.get("ids_total", 0):
+        click.echo(
+            f"IDS embeddings: {stats.get('ids_embeddings_updated', 0)} "
+            f"(cached: {stats.get('ids_embeddings_cached', 0)})"
+        )
     click.echo(f"Cluster nodes: {stats['clusters_created']}")
+    if stats.get("elapsed_seconds", 0) > 0:
+        click.echo(f"Elapsed: {stats['elapsed_seconds']:.1f}s")
 
 
 @dd.command("status")

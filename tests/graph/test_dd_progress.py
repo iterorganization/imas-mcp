@@ -41,3 +41,26 @@ def test_graph_refresh_overwrites_processed_with_graph_count(monkeypatch) -> Non
     assert state.enrich_stats.processed == 7
     assert state.embed_stats.total == 12
     assert state.embed_stats.processed == 7
+
+
+def test_build_stats_include_auxiliary_ids_and_identifier_totals() -> None:
+    state = _state()
+    state.stats.update(
+        {
+            "identifier_schemas_total": 62,
+            "identifier_schemas_enriched": 40,
+            "identifier_schemas_cached": 22,
+            "ids_total": 87,
+            "ids_enriched": 50,
+            "ids_cached": 37,
+            "identifier_embeddings_updated": 62,
+            "ids_embeddings_updated": 87,
+        }
+    )
+
+    stats = dd_progress._build_stats(state)
+
+    assert ("ident", "62/62", "cyan") in stats
+    assert ("ids", "87/87", "green") in stats
+    assert ("ident-emb", "62/62", "magenta") in stats
+    assert ("ids-emb", "87/87", "magenta") in stats
