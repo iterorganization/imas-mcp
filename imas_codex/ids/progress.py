@@ -20,11 +20,19 @@ from imas_codex.ids.mapping import PipelineCost
 
 @dataclass
 class MappingProgressState:
-    """Live state for the mapping pipeline progress display."""
+    """Live state for the mapping pipeline progress display.
 
-    ids_name: str
+    Tracks both per-IDS pipeline progress and multi-IDS iteration state.
+    """
+
+    # Multi-IDS tracking
+    ids_targets: list[str] = field(default_factory=list)
+    current_ids_idx: int = 0
+    completed_ids: list[dict] = field(default_factory=list)
+
     model: str | None = None
-    # Pipeline progress
+
+    # Per-IDS pipeline progress (reset between IDS)
     sources_found: int = 0
     sections_assigned: int = 0
     sections_total: int = 0
@@ -33,14 +41,27 @@ class MappingProgressState:
     bindings_total: int = 0
     bindings_passed: int = 0
     escalations: int = 0
+
     # Step activity
     current_step: str = ""
     current_detail: str = ""
-    # Cost tracking
+
+    # Cost tracking (cumulative across all IDS)
     cost: PipelineCost = field(default_factory=PipelineCost)
+
     # Time tracking
     start_time: float = field(default_factory=time.time)
     deadline: float | None = None
+
+    @property
+    def current_ids(self) -> str:
+        if self.ids_targets and self.current_ids_idx < len(self.ids_targets):
+            return self.ids_targets[self.current_ids_idx]
+        return ""
+
+    @property
+    def total_ids(self) -> int:
+        return len(self.ids_targets)
 
     @property
     def elapsed(self) -> float:
@@ -50,17 +71,33 @@ class MappingProgressState:
     def deadline_expired(self) -> bool:
         return time.time() >= self.deadline if self.deadline else False
 
+    def reset_for_ids(self, idx: int) -> None:
+        """Reset per-IDS counters when starting a new IDS."""
+        self.current_ids_idx = idx
+        self.sources_found = 0
+        self.sections_assigned = 0
+        self.sections_total = 0
+        self.sections_mapped = 0
+        self.sections_assembled = 0
+        self.bindings_total = 0
+        self.bindings_passed = 0
+        self.escalations = 0
+        self.current_step = ""
+        self.current_detail = ""
+
 
 class MappingProgressDisplay(BaseProgressDisplay):
     """Rich progress display for the signal mapping pipeline.
 
-    Shows five stages: CONTEXT, SECTIONS, MAPPING, ASSEMBLY, VALIDATE.
+    Shows five pipeline stages (CONTEXT, SECTIONS, MAPPING, ASSEMBLY,
+    VALIDATE) for the current IDS, with a header showing multi-IDS
+    progress.
     """
 
     def __init__(
         self,
         facility: str,
-        ids_name: str,
+        ids_targets: list[str],
         cost_limit: float,
         model: str | None = None,
         console: Any | None = None,
@@ -69,15 +106,19 @@ class MappingProgressDisplay(BaseProgressDisplay):
             facility=facility,
             cost_limit=cost_limit,
             console=console,
-            title_suffix=f"Signal Mapping — {ids_name}",
+            title_suffix="Signal Mapping",
         )
         self.state = MappingProgressState(
-            ids_name=ids_name,
+            ids_targets=ids_targets,
             model=model,
         )
 
     def _header_mode_label(self) -> str | None:
-        return None
+        s = self.state
+        if not s.ids_targets:
+            return None
+        idx = min(s.current_ids_idx + 1, s.total_ids)
+        return f"{idx}/{s.total_ids} {s.current_ids}"
 
     def _build_pipeline_section(self) -> Text:
         s = self.state
@@ -192,3 +233,7 @@ class MappingProgressDisplay(BaseProgressDisplay):
             cost_limit=self.cost_limit,
         )
         return build_resource_section(config, self.gauge_width)
+
+    def tick(self) -> None:
+        """Refresh the display on each tick so pipeline state updates are visible."""
+        self._refresh()
