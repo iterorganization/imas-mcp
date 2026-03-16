@@ -1433,7 +1433,6 @@ def phase_build(
         "definitions_changed": 0,
         "cocos_labels_updated": 0,
         "identifier_schemas_created": 0,
-        "error_relationships": 0,
     }
 
     # Create Unit / CoordinateSpec nodes
@@ -1654,17 +1653,6 @@ def phase_build(
                 """,
                     rels=batch,
                 )
-
-    # Create HAS_ERROR relationships from error field naming patterns
-    if not dry_run and version_data:
-        all_paths: dict[str, dict] = {}
-        for vdata in version_data.values():
-            all_paths.update(vdata["paths"])
-        error_relationships = _detect_error_relationships(all_paths)
-        if error_relationships:
-            stats["error_relationships"] = _batch_create_error_relationships(
-                client, error_relationships
-            )
 
     return stats
 
@@ -3251,10 +3239,11 @@ def _label_unlabeled_clusters(
         WITH c,
              collect(m.id) AS paths,
              collect(DISTINCT m.ids) AS ids_names,
-             [pair IN collect([m.id, m.documentation]) WHERE pair[1] IS NOT NULL] AS doc_pairs
+             collect(CASE WHEN m.documentation IS NOT NULL
+                     THEN [m.id, m.documentation] END) AS doc_pairs
         RETURN c.id AS id, c.scope AS scope, c.cross_ids AS cross_ids,
                paths, ids_names,
-               doc_pairs AS path_doc_pairs
+               [p IN doc_pairs WHERE p IS NOT NULL] AS path_doc_pairs
         ORDER BY c.id
     """)
 

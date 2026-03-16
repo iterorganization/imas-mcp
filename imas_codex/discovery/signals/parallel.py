@@ -1136,10 +1136,14 @@ def mark_signals_enriched(
                     s.physics_domain = sig.physics_domain,
                     s.description = sig.description,
                     s.name = sig.name,
-                    s.diagnostic = coalesce(nullIf(sig.diagnostic, ''), s.diagnostic),
-                    s.analysis_code = coalesce(nullIf(sig.analysis_code, ''), s.analysis_code),
-                    s.keywords = coalesce(sig.keywords, s.keywords),
-                    s.sign_convention = coalesce(nullIf(sig.sign_convention, ''), s.sign_convention),
+                    s.diagnostic = CASE WHEN sig.diagnostic IS NOT NULL AND sig.diagnostic <> ''
+                                        THEN sig.diagnostic ELSE s.diagnostic END,
+                    s.analysis_code = CASE WHEN sig.analysis_code IS NOT NULL AND sig.analysis_code <> ''
+                                           THEN sig.analysis_code ELSE s.analysis_code END,
+                    s.keywords = CASE WHEN sig.keywords IS NOT NULL
+                                      THEN sig.keywords ELSE s.keywords END,
+                    s.sign_convention = CASE WHEN sig.sign_convention IS NOT NULL AND sig.sign_convention <> ''
+                                             THEN sig.sign_convention ELSE s.sign_convention END,
                     s.context_quality = sig.context_quality,
                     s.enrichment_source = 'direct',
                     s.enrichment_model = $model,
@@ -1218,10 +1222,14 @@ def mark_signals_underspecified(
                     s.physics_domain = sig.physics_domain,
                     s.description = sig.description,
                     s.name = sig.name,
-                    s.diagnostic = coalesce(nullIf(sig.diagnostic, ''), s.diagnostic),
-                    s.analysis_code = coalesce(nullIf(sig.analysis_code, ''), s.analysis_code),
-                    s.keywords = coalesce(sig.keywords, s.keywords),
-                    s.sign_convention = coalesce(nullIf(sig.sign_convention, ''), s.sign_convention),
+                    s.diagnostic = CASE WHEN sig.diagnostic IS NOT NULL AND sig.diagnostic <> ''
+                                        THEN sig.diagnostic ELSE s.diagnostic END,
+                    s.analysis_code = CASE WHEN sig.analysis_code IS NOT NULL AND sig.analysis_code <> ''
+                                           THEN sig.analysis_code ELSE s.analysis_code END,
+                    s.keywords = CASE WHEN sig.keywords IS NOT NULL
+                                      THEN sig.keywords ELSE s.keywords END,
+                    s.sign_convention = CASE WHEN sig.sign_convention IS NOT NULL AND sig.sign_convention <> ''
+                                             THEN sig.sign_convention ELSE s.sign_convention END,
                     s.enrichment_source = 'direct_underspecified',
                     s.llm_cost = $per_signal_cost,
                     s.enriched_at = datetime(),
@@ -1634,10 +1642,10 @@ def propagate_source_enrichment(
                 s.physics_domain = $physics_domain,
                 s.description = $description,
                 s.name = $name,
-                s.diagnostic = coalesce(nullIf($diagnostic, ''), s.diagnostic),
-                s.analysis_code = coalesce(nullIf($analysis_code, ''), s.analysis_code),
+                s.diagnostic = CASE WHEN $diagnostic <> '' THEN $diagnostic ELSE s.diagnostic END,
+                s.analysis_code = CASE WHEN $analysis_code <> '' THEN $analysis_code ELSE s.analysis_code END,
                 s.keywords = $keywords,
-                s.sign_convention = coalesce(nullIf($sign_convention, ''), s.sign_convention),
+                s.sign_convention = CASE WHEN $sign_convention <> '' THEN $sign_convention ELSE s.sign_convention END,
                 s.context_quality = $context_quality,
                 s.llm_cost = $per_signal_cost,
                 s.enriched_at = datetime(),
