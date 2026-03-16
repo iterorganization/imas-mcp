@@ -1248,9 +1248,9 @@ classes:
           SLURM job name for the imas-codex services allocation (Neo4j + embed
           server).  Used by ``discover_compute_node()`` to find which compute
           node the services run on via ``squeue -n <name>``.  Default:
-          ``"imas-codex-services"``.  Override per facility when using a
+          ``"codex-neo4j"``.  Override per facility when using a
           different job name or wrapper script.
-        ifabsent: "imas-codex-services"
+        ifabsent: "codex-neo4j"
 
   PartitionConfig:
     description: A scheduler partition (Slurm) or queue (SGE/PBS)

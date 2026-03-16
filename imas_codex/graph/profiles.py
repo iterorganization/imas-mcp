@@ -219,7 +219,7 @@ def _get_service_job_name(location: str | None = None) -> str:
     """Read ``service_job_name`` from the resolved location.
 
     Delegates to :mod:`imas_codex.remote.locations` for compute location
-    metadata.  Falls back to ``"imas-codex-services"`` if not configured.
+    metadata.  Falls back to ``"codex-neo4j"`` if not configured.
     """
     if location is None:
         location = get_graph_location()
@@ -229,7 +229,7 @@ def _get_service_job_name(location: str | None = None) -> str:
         info = resolve_location(location)
         return info.service_job_name
     except Exception:
-        return "imas-codex-services"
+        return "codex-neo4j"
 
 
 def get_active_graph_name() -> str:
