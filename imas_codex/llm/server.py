@@ -2540,28 +2540,33 @@ class AgentsServer:
         def get_imas_path_context(
             path: str,
             relationship_types: str = "all",
+            max_results: int = 20,
             dd_version: int | None = None,
         ) -> str:
-            """Get structural context for an IMAS path via graph traversal.
+            """Get structural context for an IMAS path via graph traversal and semantic similarity.
 
-            Discovers sibling paths via shared clusters, coordinates, units,
-            and identifier schemas across IDS boundaries. Useful for
-            understanding how a path relates to other data in the dictionary.
+            Combines vector embedding similarity, cluster membership, physics coordinate
+            sharing, unit+domain affinity, and identifier schemas to discover meaningful
+            cross-IDS relationships. Produces focused, noise-free results by filtering
+            generic coordinate tokens (e.g. '1...N') that would otherwise match thousands
+            of unrelated paths.
 
             Args:
                 path: Exact IMAS path (e.g. 'equilibrium/time_slice/profiles_1d/psi')
-                relationship_types: Filter to 'cluster', 'coordinate', 'unit',
-                    'identifier', or 'all' (default)
+                relationship_types: Filter to 'semantic', 'cluster', 'coordinate',
+                    'unit', 'identifier', or 'all' (default)
+                max_results: Maximum results per section (default 20)
                 dd_version: Filter by DD major version (e.g., 3 or 4)
 
             Returns:
-                Formatted report with cross-IDS connections grouped by type.
+                Formatted report with cross-IDS connections grouped by signal type.
             """
             tools = _get_imas_tools()
             result = _run_async(
                 tools.get_imas_path_context(
                     path=path,
                     relationship_types=relationship_types,
+                    max_results=max_results,
                     dd_version=dd_version,
                 )
             )
