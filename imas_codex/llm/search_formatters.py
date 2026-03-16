@@ -1151,86 +1151,30 @@ def format_path_context_report(result: dict[str, Any]) -> str:
     if tool_error:
         return tool_error
 
-    if result.get("error"):
-        return f"## Path Context Error\n{result['error']}"
-
     parts: list[str] = []
     path = result.get("path", "")
     sections = result.get("sections", {})
     total = result.get("total_connections", 0)
 
     parts.append(f"## Path Context: {path}")
+    parts.append(f"Total cross-IDS connections: {total}\n")
 
-    # Summarise what signals were found
-    signal_names = {
-        "semantic_neighbors": "semantic",
-        "cluster_siblings": "clusters",
-        "coordinate_partners": "coordinates",
-        "unit_companions": "unit+domain",
-        "identifier_links": "identifiers",
-    }
-    active = [signal_names[k] for k in signal_names if k in sections]
-    parts.append(
-        f"Total cross-IDS connections: {total}"
-        + (f" (signals: {', '.join(active)})" if active else "")
-    )
-    parts.append("")
-
-    # ── Semantic neighbors — primary discovery signal ─────────────────────
-    if "semantic_neighbors" in sections:
-        neighbors = sections["semantic_neighbors"]
-        parts.append(f"### Semantic Neighbors ({len(neighbors)} paths)")
-        parts.append(
-            "Paths across other IDS whose physics description is most similar "
-            "to this path (vector embedding similarity)."
-        )
-        for item in neighbors:
-            score = item.get("score", 0)
-            ids = item.get("ids", "")
-            dtype = item.get("data_type", "")
-            domain = item.get("physics_domain", "")
-            desc = item.get("description", "")
-            clusters = [c for c in (item.get("clusters") or []) if c]
-
-            tag_parts = []
-            if dtype:
-                tag_parts.append(dtype)
-            if domain:
-                tag_parts.append(domain)
-            tag = f" [{', '.join(tag_parts)}]" if tag_parts else ""
-            score_str = f" (score: {score:.3f})" if score else ""
-            desc_str = f"\n    {desc}" if desc else ""
-            cluster_str = (
-                f"\n    Clusters: {', '.join(clusters)}" if clusters else ""
-            )
-            parts.append(
-                f"  - `{item['path']}` [{ids}]{tag}{score_str}{desc_str}{cluster_str}"
-            )
-        parts.append("")
-
-    # ── Cluster siblings — explicit cluster co-membership ────────────────
     if "cluster_siblings" in sections:
         siblings = sections["cluster_siblings"]
         parts.append(f"### Cluster Siblings ({len(siblings)} paths)")
         by_cluster: dict[str, list[dict[str, Any]]] = {}
         for s in siblings:
-            by_cluster.setdefault(s.get("cluster") or "unnamed", []).append(s)
+            by_cluster.setdefault(s["cluster"], []).append(s)
         for cluster, items in by_cluster.items():
             parts.append(f"\n**{cluster}**")
             for item in items:
                 doc = f" — {item['doc']}" if item.get("doc") else ""
-                ids = item.get("ids", "")
-                parts.append(f"  - `{item['path']}` [{ids}]{doc}")
+                parts.append(f"  - `{item['path']}`{doc}")
         parts.append("")
 
-    # ── Physics coordinate partners ───────────────────────────────────────
     if "coordinate_partners" in sections:
         partners = sections["coordinate_partners"]
-        parts.append(f"### Physics Coordinate Partners ({len(partners)} paths)")
-        parts.append(
-            "Paths sharing a named physics coordinate expression "
-            "(generic 1...N indices excluded)."
-        )
+        parts.append(f"### Coordinate Partners ({len(partners)} paths)")
         by_coord: dict[str, list[dict[str, Any]]] = {}
         for p in partners:
             by_coord.setdefault(p["coordinate"], []).append(p)
@@ -1238,14 +1182,9 @@ def format_path_context_report(result: dict[str, Any]) -> str:
             parts.append(f"\n**{coord}**")
             for item in items:
                 dtype = f" [{item['data_type']}]" if item.get("data_type") else ""
-                domain = (
-                    f" ({item['physics_domain']})" if item.get("physics_domain") else ""
-                )
-                ids = item.get("ids", "")
-                parts.append(f"  - `{item['path']}` [{ids}]{dtype}{domain}")
+                parts.append(f"  - `{item['path']}`{dtype}")
         parts.append("")
 
-    # ── Unit companions ───────────────────────────────────────────────────
     if "unit_companions" in sections:
         companions = sections["unit_companions"]
         parts.append(f"### Unit Companions ({len(companions)} paths)")
@@ -1256,11 +1195,9 @@ def format_path_context_report(result: dict[str, Any]) -> str:
             parts.append(f"\n**{unit}**")
             for item in items:
                 doc = f" — {item['doc']}" if item.get("doc") else ""
-                ids = item.get("ids", "")
-                parts.append(f"  - `{item['path']}` [{ids}]{doc}")
+                parts.append(f"  - `{item['path']}`{doc}")
         parts.append("")
 
-    # ── Identifier schema links ───────────────────────────────────────────
     if "identifier_links" in sections:
         links = sections["identifier_links"]
         parts.append(f"### Identifier Schema Links ({len(links)} paths)")
@@ -1270,8 +1207,7 @@ def format_path_context_report(result: dict[str, Any]) -> str:
         for schema, items in by_schema.items():
             parts.append(f"\n**{schema}**")
             for item in items:
-                ids = item.get("ids", "")
-                parts.append(f"  - `{item['path']}` [{ids}]")
+                parts.append(f"  - `{item['path']}`")
         parts.append("")
 
     if not sections:

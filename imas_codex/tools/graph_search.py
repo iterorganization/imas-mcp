@@ -41,31 +41,31 @@ def _dd_version_clause(
     dd_version: int | None = None,
     params: dict[str, Any] | None = None,
 ) -> str:
-    """Return a Cypher WHERE fragment for DD major version validity filtering.
+    """Return a Cypher WHERE fragment for DD major version filtering.
 
     When dd_version is None, returns empty string (no filter).
-
-    A path is **valid in DD major N** if:
-    - introduced in any version with major ≤ N
-    - NOT deprecated in any version with major ≤ N
+    Otherwise generates a clause ensuring the path was introduced in a
+    DD version with the given major prefix and not deprecated before the
+    latest version of that major line.
 
     The DDVersion.id is a semver string like "3.42.2" or "4.0.0".
-    Major version is extracted via ``toInteger(split(id, '.')[0])``.
+    Filtering by major version uses string prefix matching on $dd_version_prefix.
 
-    If *params* dict is provided, adds ``dd_version`` to it.
+    If *params* dict is provided, adds ``dd_version_prefix`` to it.
     """
     if dd_version is None:
         return ""
+    prefix = f"{dd_version}."
     if params is not None:
-        params["dd_version"] = dd_version
+        params["dd_version_prefix"] = prefix
     return (
         f"AND EXISTS {{ "
         f"  MATCH ({alias})-[:INTRODUCED_IN]->(iv:DDVersion) "
-        f"  WHERE toInteger(split(iv.id, '.')[0]) <= $dd_version "
+        f"  WHERE iv.id STARTS WITH $dd_version_prefix "
         f"}} "
         f"AND NOT EXISTS {{ "
         f"  MATCH ({alias})-[:DEPRECATED_IN]->(dv:DDVersion) "
-        f"  WHERE toInteger(split(dv.id, '.')[0]) <= $dd_version "
+        f"  WHERE dv.id STARTS WITH $dd_version_prefix "
         f"}}"
     )
 
@@ -220,8 +220,6 @@ class GraphSearchTool:
             OPTIONAL MATCH (path)-[:HAS_COORDINATE]->(coord:IMASCoordinateSpec)
             OPTIONAL MATCH (path)-[:HAS_IDENTIFIER_SCHEMA]->(ident:IdentifierSchema)
             OPTIONAL MATCH (path)-[:INTRODUCED_IN]->(intro:DDVersion)
-            OPTIONAL MATCH (path)-[:HAS_ERROR]->(err:IMASNode)
-            OPTIONAL MATCH (path)-[:IN_CLUSTER]->(cl:IMASSemanticCluster)
             RETURN path.id AS id, path.name AS name, path.ids AS ids,
                    path.documentation AS documentation, path.data_type AS data_type,
                    path.physics_domain AS physics_domain, u.id AS units,
@@ -239,43 +237,13 @@ class GraphSearchTool:
                    path.enrichment_source AS enrichment_source,
                    collect(DISTINCT coord.id) AS coordinates,
                    ident IS NOT NULL AS has_identifier_schema,
-                   intro.id AS introduced_after_version,
-                   collect(DISTINCT err.id) AS error_fields,
-                   collect(DISTINCT cl.label) AS cluster_labels
+                   intro.id AS introduced_after_version
             """,
             path_ids=sorted_ids,
         )
 
         # Index by path ID for score lookup
         enriched_by_id = {r["id"]: r for r in enriched or []}
-
-        # --- Cluster-aware reranking ---
-        # When multiple hits share a cluster, penalize all but the
-        # highest-scoring to reduce redundancy in results.
-        seen_clusters: dict[str, str] = {}  # cluster_label -> best_pid
-        for pid in sorted_ids:
-            r = enriched_by_id.get(pid)
-            if not r:
-                continue
-            for cl in r.get("cluster_labels") or []:
-                if not cl:
-                    continue
-                if cl not in seen_clusters:
-                    seen_clusters[cl] = pid
-                elif scores.get(pid, 0) > scores.get(seen_clusters[cl], 0):
-                    # New pid beats current best — penalize old best
-                    scores[seen_clusters[cl]] = round(
-                        scores.get(seen_clusters[cl], 0) * 0.95, 4
-                    )
-                    seen_clusters[cl] = pid
-                else:
-                    # Penalize this pid as a cluster duplicate
-                    scores[pid] = round(scores.get(pid, 0) * 0.95, 4)
-
-        # Re-sort after cluster penalty
-        sorted_ids = sorted(scores, key=lambda pid: scores[pid], reverse=True)[
-            :max_results
-        ]
 
         # --- Optional facility cross-references ---
         facility_xrefs: dict[str, dict[str, Any]] = {}
@@ -323,7 +291,6 @@ class GraphSearchTool:
                     search_mode=mode,
                     facility_xrefs=xref,
                     version_context=vctx,
-                    error_fields=r.get("error_fields") or None,
                 )
             )
             if r["physics_domain"]:
@@ -487,14 +454,14 @@ class GraphPathTool:
                 OPTIONAL MATCH (change:IMASNodeChange)-[:FOR_IMAS_PATH]->(p)
                 WHERE change.semantic_change_type IN
                       ['sign_convention', 'coordinate_convention', 'units', 'definition_clarification']
-                WITH p, u, cluster_labels, coordinates, error_fields, ident, iv,
+                WITH p, u, cluster_labels, coordinates, ident, iv,
                      collect(DISTINCT {version: change.version,
                                        type: change.semantic_change_type,
                                        summary: change.summary}) AS version_changes
                 """
             else:
                 version_clause = """
-                WITH p, u, cluster_labels, coordinates, error_fields, ident, iv,
+                WITH p, u, cluster_labels, coordinates, ident, iv,
                      [] AS version_changes
                 """
 
@@ -507,11 +474,9 @@ class GraphPathTool:
                 OPTIONAL MATCH (p)-[:HAS_COORDINATE]->(coord:IMASCoordinateSpec)
                 OPTIONAL MATCH (p)-[:HAS_IDENTIFIER_SCHEMA]->(ident:IdentifierSchema)
                 OPTIONAL MATCH (p)-[:INTRODUCED_IN]->(iv:DDVersion)
-                OPTIONAL MATCH (p)-[:HAS_ERROR]->(err:IMASNode)
                 WITH p, u,
                      collect(DISTINCT c.label) AS cluster_labels,
                      collect(DISTINCT coord.id) AS coordinates,
-                     collect(DISTINCT err.id) AS error_fields,
                      ident, iv
                 {version_clause}
                 RETURN p.id AS id, p.name AS name, p.ids AS ids,
@@ -536,8 +501,7 @@ class GraphPathTool:
                        ident.documentation AS identifier_schema_documentation,
                        ident.options AS identifier_schema_options,
                        iv.id AS introduced_after_version,
-                       version_changes,
-                       error_fields
+                       version_changes
                 """,
                 path=path,
                 **dd_params,
@@ -605,7 +569,6 @@ class GraphPathTool:
                     lifecycle_status=r.get("lifecycle_status"),
                     lifecycle_version=r.get("lifecycle_version"),
                     structure_reference=r.get("structure_path"),
-                    error_fields=r.get("error_fields") or None,
                 )
                 nodes.append(node)
             else:
@@ -763,18 +726,10 @@ class GraphListTool:
             else:
                 return_clause = "RETURN p.id AS id"
 
-            # Use ids-level match when prefix has no slash (whole IDS)
-            if "/" not in prefix:
-                path_filter = "p.ids = $ids_name"
-                filter_params = {"ids_name": ids_name, **dd_params}
-            else:
-                path_filter = "p.id STARTS WITH $prefix"
-                filter_params = {"prefix": prefix, **dd_params}
-
             path_results = self._gc.query(
                 f"""
                 MATCH (p:IMASNode)
-                WHERE {path_filter}
+                WHERE p.id STARTS WITH $prefix
                 AND p.node_category = 'data'
                 {leaf_filter}
                 {dd_clause}
@@ -782,8 +737,26 @@ class GraphListTool:
                 ORDER BY p.id
                 {limit_clause}
                 """,
-                **filter_params,
+                prefix=prefix + ("/" if "/" not in prefix else ""),
+                **dd_params,
             )
+
+            # Also include the prefix itself if it's an exact IDS
+            if "/" not in prefix:
+                path_results = self._gc.query(
+                    f"""
+                    MATCH (p:IMASNode)
+                    WHERE p.ids = $ids_name
+                    AND p.node_category = 'data'
+                    {leaf_filter}
+                    {dd_clause}
+                    {return_clause}
+                    ORDER BY p.id
+                    {limit_clause}
+                    """,
+                    ids_name=ids_name,
+                    **dd_params,
+                )
 
             path_ids = [r["id"] for r in (path_results or [])]
             if not include_ids_prefix:
@@ -869,7 +842,7 @@ class GraphOverviewTool:
             f"""
             MATCH (i:IDS)
             OPTIONAL MATCH (i)<-[:IN_IDS]-(p:IMASNode)
-            WHERE p.node_category = 'data' {dd_clause}
+            WHERE true {dd_clause}
             WITH i, count(p) AS path_count
             RETURN i.name AS name,
                    COALESCE(i.description, i.documentation) AS description,
@@ -1102,7 +1075,7 @@ class GraphClustersTool:
         results = self._gc.query(
             f"""
             MATCH (p:IMASNode {{id: $path}})-[:IN_CLUSTER]->(c:IMASSemanticCluster)
-            WHERE true {scope_filter}
+            {scope_filter}
             OPTIONAL MATCH (member:IMASNode)-[:IN_CLUSTER]->(c)
             WHERE true {dd_clause}
             WITH c, collect(DISTINCT member.id) AS paths
@@ -1426,173 +1399,88 @@ class GraphPathContextTool:
         self._gc = graph_client
 
     @mcp_tool(
-        "Get structural context for an IMAS path via graph traversal and semantic similarity. "
-        "Combines vector embedding similarity, cluster membership, physics coordinate sharing, "
-        "unit+domain affinity, and identifier schemas to discover meaningful cross-IDS relationships. "
+        "Get structural context for an IMAS path via graph traversal. "
+        "Discovers sibling paths via shared clusters, coordinates, units, "
+        "and identifier schemas across IDS boundaries. "
         "path (required): Exact IMAS path (e.g. 'equilibrium/time_slice/profiles_1d/psi'). "
-        "relationship_types: Filter to 'semantic', 'cluster', 'coordinate', 'unit', "
-        "'identifier', or 'all' (default). "
-        "max_results: Maximum results per section (default 20). "
-        "dd_version: Filter by DD major version (e.g., 3 or 4)."
+        "relationship_types: Filter to specific types — 'cluster', 'coordinate', "
+        "'unit', 'identifier', or 'all' (default)."
     )
     @handle_errors("get_imas_path_context")
     async def get_imas_path_context(
         self,
         path: str,
         relationship_types: str = "all",
-        max_results: int = 20,
         dd_version: int | None = None,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
-        """Discover cross-IDS relationships for an IMAS path via graph + semantics.
-
-        Strategy:
-        1. Semantic neighbors  — vector similarity via imas_node_embedding index
-        2. Cluster siblings    — explicit cluster co-membership (different IDS)
-        3. Coordinate partners — paths sharing physics-specific coordinates only
-                                 (generic coords like '1...N' are filtered out)
-        4. Unit companions     — same unit symbol in same physics domain
-        5. Identifier links    — shared identifier schema (enumerations)
-        """
+        """Discover cross-IDS relationships for an IMAS path."""
+        dd_params: dict[str, Any] = {"path": path}
+        dd_clause = _dd_version_clause("sibling", dd_version, dd_params)
         sections: dict[str, list[dict[str, Any]]] = {}
 
-        # ── Fetch source node properties upfront ────────────────────────────
-        node_rows = self._gc.query(
-            "MATCH (p:IMASNode {id: $path}) "
-            "RETURN p.embedding AS embedding, p.ids AS ids, "
-            "       p.physics_domain AS physics_domain",
-            path=path,
-        )
-        if not node_rows:
-            return {
-                "path": path,
-                "error": f"Path '{path}' not found in IMAS graph",
-                "sections": sections,
-                "total_connections": 0,
-            }
-
-        node = node_rows[0]
-        src_ids: str = node.get("ids") or ""
-        src_domain: str = node.get("physics_domain") or ""
-        embedding: list[float] | None = node.get("embedding")
-
-        # ── 1. Semantic neighbors via vector index ───────────────────────────
-        # Primary signal: find paths whose description embedding is closest to
-        # this path's embedding. Filtered to different IDS only.
-        if relationship_types in ("all", "semantic") and embedding:
-            sem_params: dict[str, Any] = {
-                "embedding": embedding,
-                "src_ids": src_ids,
-                "sem_k": min(max_results * 10, 200),
-                "sem_limit": max_results,
-            }
-            dd_clause_sem = _dd_version_clause("sibling", dd_version, sem_params)
-            semantic_results = self._gc.query(
-                f"""
-                CALL db.index.vector.queryNodes('imas_node_embedding', $sem_k, $embedding)
-                YIELD node AS sibling, score
-                WHERE sibling.ids <> $src_ids
-                  AND sibling.node_category = 'data'
-                  AND NOT (sibling)-[:DEPRECATED_IN]->(:DDVersion)
-                  {dd_clause_sem}
-                OPTIONAL MATCH (sibling)-[:HAS_UNIT]->(u:Unit)
-                OPTIONAL MATCH (sibling)-[:IN_CLUSTER]->(cl:IMASSemanticCluster)
-                RETURN sibling.id AS path, sibling.ids AS ids,
-                       coalesce(sibling.description, sibling.documentation) AS description,
-                       sibling.data_type AS data_type, u.id AS unit,
-                       sibling.physics_domain AS physics_domain,
-                       collect(DISTINCT cl.label) AS clusters,
-                       round(score, 4) AS score
-                ORDER BY score DESC
-                LIMIT $sem_limit
-                """,
-                **sem_params,
-            )
-            if semantic_results:
-                sections["semantic_neighbors"] = semantic_results
-
-        # ── 2. Cluster siblings — explicit cluster co-membership ─────────────
+        # Cluster siblings — paths in same cluster but different IDS
         if relationship_types in ("all", "cluster"):
-            cl_params: dict[str, Any] = {"path": path, "cl_limit": max_results * 2}
-            dd_clause_cl = _dd_version_clause("sibling", dd_version, cl_params)
             cluster_siblings = self._gc.query(
                 f"""
                 MATCH (p:IMASNode {{id: $path}})-[:IN_CLUSTER]->(cl:IMASSemanticCluster)
                       <-[:IN_CLUSTER]-(sibling:IMASNode)
-                WHERE sibling.ids <> p.ids {dd_clause_cl}
+                WHERE sibling.ids <> p.ids {dd_clause}
                 RETURN cl.label AS cluster, sibling.id AS path,
-                       sibling.ids AS ids,
-                       coalesce(sibling.description, sibling.documentation) AS doc
+                       sibling.ids AS ids, sibling.documentation AS doc
                 ORDER BY cl.label, sibling.ids
-                LIMIT $cl_limit
                 """,
-                **cl_params,
+                **dd_params,
             )
             if cluster_siblings:
                 sections["cluster_siblings"] = cluster_siblings
 
-        # ── 3. Physics coordinate partners (generic coords filtered out) ─────
-        # Only match on IMASCoordinateSpec nodes whose id contains '/' —
-        # i.e. actual IMAS path-based coordinate expressions like
-        # "profiles_1d(itime)/grid/rho_tor_norm". Generic tokens like
-        # "1...N" are shared across thousands of nodes and carry no semantic
-        # meaning; matching on them produces 13 k+ noise results.
+        # Coordinate partners — paths sharing coordinate spec
         if relationship_types in ("all", "coordinate"):
-            co_params: dict[str, Any] = {"path": path}
-            dd_clause_co = _dd_version_clause("sibling", dd_version, co_params)
             coord_partners = self._gc.query(
                 f"""
                 MATCH (p:IMASNode {{id: $path}})-[:HAS_COORDINATE]->(coord:IMASCoordinateSpec)
-                WHERE coord.id CONTAINS '/'
-                MATCH (coord)<-[:HAS_COORDINATE]-(sibling:IMASNode)
-                WHERE sibling.ids <> p.ids {dd_clause_co}
+                      <-[:HAS_COORDINATE]-(sibling:IMASNode)
+                WHERE sibling.ids <> p.ids {dd_clause}
                 RETURN coord.id AS coordinate, sibling.id AS path,
-                       sibling.ids AS ids, sibling.data_type AS data_type,
-                       sibling.physics_domain AS physics_domain
+                       sibling.ids AS ids, sibling.data_type AS data_type
                 ORDER BY coord.id, sibling.ids
-                LIMIT 40
                 """,
-                **co_params,
+                **dd_params,
             )
             if coord_partners:
                 sections["coordinate_partners"] = coord_partners
 
-        # ── 4. Unit companions — same unit, same physics domain ──────────────
-        if relationship_types in ("all", "unit") and src_domain:
-            u_params: dict[str, Any] = {"path": path, "src_domain": src_domain}
-            dd_clause_u = _dd_version_clause("sibling", dd_version, u_params)
+        # Unit companions — paths with same unit in same physics domain
+        if relationship_types in ("all", "unit"):
             unit_companions = self._gc.query(
                 f"""
                 MATCH (p:IMASNode {{id: $path}})-[:HAS_UNIT]->(u:Unit)
                       <-[:HAS_UNIT]-(sibling:IMASNode)
                 WHERE sibling.ids <> p.ids
-                  AND sibling.physics_domain = $src_domain {dd_clause_u}
+                  AND sibling.physics_domain = p.physics_domain {dd_clause}
                 RETURN u.id AS unit, sibling.id AS path,
-                       sibling.ids AS ids,
-                       coalesce(sibling.description, sibling.documentation) AS doc
+                       sibling.ids AS ids, sibling.documentation AS doc
                 ORDER BY u.id, sibling.ids
                 LIMIT 30
                 """,
-                **u_params,
+                **dd_params,
             )
             if unit_companions:
                 sections["unit_companions"] = unit_companions
 
-        # ── 5. Identifier schema links ───────────────────────────────────────
+        # Identifier schema links
         if relationship_types in ("all", "identifier"):
-            id_params: dict[str, Any] = {"path": path}
-            dd_clause_id = _dd_version_clause("sibling", dd_version, id_params)
             ident_links = self._gc.query(
                 f"""
                 MATCH (p:IMASNode {{id: $path}})-[:HAS_IDENTIFIER_SCHEMA]->(s:IdentifierSchema)
                       <-[:HAS_IDENTIFIER_SCHEMA]-(sibling:IMASNode)
-                WHERE sibling.ids <> p.ids {dd_clause_id}
+                WHERE sibling.ids <> p.ids {dd_clause}
                 RETURN s.name AS schema, sibling.id AS path,
                        sibling.ids AS ids
                 ORDER BY s.name
-                LIMIT 30
                 """,
-                **id_params,
+                **dd_params,
             )
             if ident_links:
                 sections["identifier_links"] = ident_links
@@ -1718,8 +1606,7 @@ class GraphStructureTool:
         "Export full IDS structure with documentation, units, and types. "
         "Returns all paths in an IDS with their complete metadata. "
         "ids_name (required): IDS name (e.g. 'equilibrium'). "
-        "leaf_only: If true, return only leaf nodes (default false). "
-        "include_errors: If true, include error fields alongside data paths (default false)."
+        "leaf_only: If true, return only leaf nodes (default false)."
     )
     @handle_errors("export_imas_ids")
     async def export_imas_ids(
@@ -1727,12 +1614,10 @@ class GraphStructureTool:
         ids_name: str,
         leaf_only: bool = False,
         dd_version: int | None = None,
-        include_errors: bool = False,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
         """Export full IDS structure with documentation, units, and types."""
-        categories = ["data", "error"] if include_errors else ["data"]
-        dd_params: dict[str, Any] = {"ids_name": ids_name, "categories": categories}
+        dd_params: dict[str, Any] = {"ids_name": ids_name}
         dd_clause = _dd_version_clause("p", dd_version, dd_params)
 
         leaf_filter = f"AND {_leaf_data_type_clause('p')}" if leaf_only else ""
@@ -1740,9 +1625,7 @@ class GraphStructureTool:
         paths = self._gc.query(
             f"""
             MATCH (p:IMASNode)
-            WHERE p.ids = $ids_name
-            AND p.node_category IN $categories
-            {leaf_filter} {dd_clause}
+            WHERE p.ids = $ids_name {leaf_filter} {dd_clause}
             OPTIONAL MATCH (p)-[:HAS_UNIT]->(u:Unit)
             OPTIONAL MATCH (p)-[:HAS_COORDINATE]->(coord:IMASCoordinateSpec)
             OPTIONAL MATCH (p)-[:IN_CLUSTER]->(cl:IMASSemanticCluster)
@@ -1771,8 +1654,7 @@ class GraphStructureTool:
     @mcp_tool(
         "Export all IMAS paths in a physics domain, grouped by IDS. "
         "domain (required): Physics domain name (e.g. 'magnetics', 'equilibrium'). "
-        "ids_filter: Optional IDS name filter. "
-        "include_errors: If true, include error fields alongside data paths (default false)."
+        "ids_filter: Optional IDS name filter."
     )
     @handle_errors("export_imas_domain")
     async def export_imas_domain(
@@ -1780,7 +1662,6 @@ class GraphStructureTool:
         domain: str,
         ids_filter: str | None = None,
         dd_version: int | None = None,
-        include_errors: bool = False,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
         """Export all IMAS paths in a physics domain, grouped by IDS."""
@@ -1797,8 +1678,7 @@ class GraphStructureTool:
                 "error": f"No physics domain found matching '{domain}'.",
             }
 
-        categories = ["data", "error"] if include_errors else ["data"]
-        dd_params: dict[str, Any] = {"domains": resolved_domains, "categories": categories}
+        dd_params: dict[str, Any] = {"domains": resolved_domains}
         dd_clause = _dd_version_clause("p", dd_version, dd_params)
 
         ids_clause = ""
@@ -1809,9 +1689,7 @@ class GraphStructureTool:
         paths = self._gc.query(
             f"""
             MATCH (p:IMASNode)
-            WHERE p.physics_domain IN $domains
-            AND p.node_category IN $categories
-            {ids_clause} {dd_clause}
+            WHERE p.physics_domain IN $domains {ids_clause} {dd_clause}
             OPTIONAL MATCH (p)-[:HAS_UNIT]->(u:Unit)
             RETURN p.id AS path,
                    p.ids AS ids,
