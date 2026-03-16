@@ -303,33 +303,7 @@ def mock_heavy_operations():
                 mock_clusters_instance.get_clusters.return_value = mock_clusters
                 mock_clusters_class.return_value = mock_clusters_instance
 
-                with patch(
-                    "imas_codex.tools.clusters_tool.Clusters"
-                ) as mock_clusters_tool:
-                    mock_clusters_tool.return_value = mock_clusters_instance
-
-                    with patch(
-                        "imas_codex.tools.clusters_tool.ClusterSearcher"
-                    ) as mock_searcher_class:
-                        mock_searcher = MagicMock()
-                        mock_searcher.search_by_path.return_value = (
-                            create_mock_cluster_search_results("path")
-                        )
-                        mock_searcher.search_by_text.return_value = (
-                            create_mock_cluster_search_results("text")
-                        )
-                        mock_searcher_class.return_value = mock_searcher
-
-                        with patch(
-                            "imas_codex.tools.clusters_tool.Encoder"
-                        ) as mock_encoder_class:
-                            mock_encoder = MagicMock()
-                            mock_encoder.encode.return_value = np.zeros(
-                                (1, 256), dtype=np.float32
-                            )
-                            mock_encoder_class.return_value = mock_encoder
-
-                            yield
+                yield
 
 
 def _create_mock_graph_client():

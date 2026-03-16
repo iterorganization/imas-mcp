@@ -103,19 +103,22 @@ class OverviewTool(BaseTool):
         temp_tools._tool_instances = []
 
         # We need to scan all tool classes for @mcp_tool decorated methods
-        from imas_codex.tools.clusters_tool import ClustersTool
+        from imas_codex.tools.graph_search import (
+            GraphClustersTool,
+            GraphOverviewTool,
+            GraphPathTool,
+            GraphSearchTool,
+        )
         from imas_codex.tools.identifiers_tool import IdentifiersTool
         from imas_codex.tools.list_tool import ListTool
-        from imas_codex.tools.path_tool import PathTool
-        from imas_codex.tools.search_tool import SearchTool
 
         tool_classes = [
-            SearchTool,
-            PathTool,
+            GraphSearchTool,
+            GraphPathTool,
             ListTool,
-            OverviewTool,
+            GraphOverviewTool,
             IdentifiersTool,
-            ClustersTool,
+            GraphClustersTool,
         ]
 
         tool_names = []

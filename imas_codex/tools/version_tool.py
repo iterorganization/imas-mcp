@@ -116,12 +116,21 @@ class VersionTool:
         # Report paths not found in graph
         found = set(path_ctx.keys())
         not_found = [p for p in path_list if p not in found]
+        paths_without_changes = sorted(
+            path_id for path_id, ctx in path_ctx.items() if ctx["change_count"] == 0
+        )
+        graph_change_nodes_seen = sum(
+            ctx["change_count"] for ctx in path_ctx.values()
+        )
 
         return {
             "paths": path_ctx,
             "total_paths": len(path_list),
+            "paths_found": sorted(found),
+            "paths_without_changes": paths_without_changes,
             "paths_with_changes": sum(
                 1 for v in path_ctx.values() if v["change_count"] > 0
             ),
+            "graph_change_nodes_seen": graph_change_nodes_seen,
             "not_found": not_found,
         }

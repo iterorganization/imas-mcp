@@ -4,6 +4,7 @@ These are pure functions that format data for prompt injection.
 No Neo4j required.
 """
 
+from imas_codex.models.error_models import ToolError
 from imas_codex.ids.mapping import (
     _format_coordinate_context,
     _format_cross_facility_mappings,
@@ -99,6 +100,12 @@ class TestFormatVersionContext:
     def test_empty_paths(self):
         assert _format_version_context({"paths": {}}) == "(no version change history)"
 
+    def test_tool_error(self):
+        result = _format_version_context(
+            ToolError(error="backend unavailable", suggestions=[])
+        )
+        assert result == "(version change history unavailable: backend unavailable)"
+
     def test_path_with_changes(self):
         ctx = {
             "paths": {
@@ -122,6 +129,16 @@ class TestFormatVersionContext:
         ctx = {"paths": {"a/b/c": {"notable_changes": []}}}
         result = _format_version_context(ctx)
         assert result == "(no notable version changes)"
+
+    def test_path_without_changes_and_not_found(self):
+        ctx = {
+            "paths": {"a/b/c": {"notable_changes": [], "change_count": 0}},
+            "paths_without_changes": ["a/b/c"],
+            "not_found": ["missing/path"],
+        }
+        result = _format_version_context(ctx)
+        assert "Paths without notable changes: a/b/c" in result
+        assert "Paths not found in DD graph: missing/path" in result
 
 
 class TestFormatCoordinateContext:

@@ -1,6 +1,9 @@
 """IMAS Codex Tools Package.
 
-All tools are backed by Neo4j via GraphClient.
+The supported IMAS DD tool surface is graph-backed and implemented via
+the Graph*Tool classes exported from graph_search.py plus VersionTool.
+Legacy file-backed IMAS tool implementations remain in the repository only
+until the clean-break removal phase and must not be wired into this provider.
 """
 
 import logging
@@ -43,6 +46,7 @@ class Tools(MCPProvider):
 
         self.ids_set = ids_set
 
+        # Graph-backed IMAS DD tools are the only supported provider path.
         self.search_tool = GraphSearchTool(graph_client)
         self.path_tool = GraphPathTool(graph_client)
         self.list_tool = GraphListTool(graph_client)
@@ -140,6 +144,10 @@ class Tools(MCPProvider):
         """Delegate to structure tool."""
         return await self.structure_tool.export_imas_domain(*args, **kwargs)
 
+    async def get_dd_versions(self, *args, **kwargs):
+        """Delegate to version tool."""
+        return await self.version_tool.get_dd_versions(*args, **kwargs)
+
     async def search_imas_clusters(self, *args, **kwargs):
         """Delegate to clusters tool."""
         return await self.clusters_tool.search_imas_clusters(*args, **kwargs)
@@ -147,6 +155,10 @@ class Tools(MCPProvider):
     async def get_dd_version_context(self, *args, **kwargs):
         """Delegate to version tool."""
         return await self.version_tool.get_dd_version_context(*args, **kwargs)
+
+    async def fetch_error_fields(self, *args, **kwargs):
+        """Delegate to path tool."""
+        return await self.path_tool.fetch_error_fields(*args, **kwargs)
 
 
 __all__ = [

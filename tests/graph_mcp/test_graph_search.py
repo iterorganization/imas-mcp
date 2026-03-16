@@ -88,6 +88,7 @@ class TestGraphPathTool:
         # This path is in cluster_equilibrium_boundary
         assert node.cluster_labels is not None
         assert len(node.cluster_labels) > 0
+        assert all(isinstance(label, str) for label in node.cluster_labels)
 
     @pytest.mark.asyncio
     async def test_fetch_nonexistent_path(self, graph_client):
@@ -577,12 +578,21 @@ class TestGetDDVersionContext:
         )
         assert result["total_paths"] == 2
         assert result["paths_with_changes"] == 1
+        assert "equilibrium/time_slice/profiles_1d/psi" in result["paths_without_changes"]
 
     @pytest.mark.anyio
     async def test_nonexistent_path(self, version_tool):
         result = await version_tool.get_dd_version_context("fake/path")
         assert result["total_paths"] == 1
         assert "fake/path" in result["not_found"]
+
+    @pytest.mark.anyio
+    async def test_version_context_reports_change_diagnostics(self, version_tool):
+        result = await version_tool.get_dd_version_context(
+            "core_profiles/profiles_1d/electrons/pressure"
+        )
+        assert result["paths_found"] == ["core_profiles/profiles_1d/electrons/pressure"]
+        assert result["graph_change_nodes_seen"] >= 1
 
     @pytest.mark.anyio
     async def test_empty_paths(self, version_tool):
