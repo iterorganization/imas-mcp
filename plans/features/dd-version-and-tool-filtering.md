@@ -1,9 +1,23 @@
 # DD Version Validity & Tool Filtering Fixes
 
-**Status:** Plan
+**Status:** Implemented
 **Created:** 2026-03-16
-**Scope:** `imas_codex/tools/graph_search.py`, `imas_codex/tools/overview_tool.py`,
-tests, CLI, legacy code paths
+**Completed:** 2026-03-17
+**Scope:** `imas_codex/tools/graph_search.py`, `imas_codex/search/search_strategy.py`,
+`imas_codex/core/data_model.py`, `imas_codex/ids/tools.py`, `imas_codex/cli/imas_dd.py`,
+tests
+
+## Implementation Status
+
+| Phase | Description | Status | Commit |
+|-------|-------------|--------|--------|
+| 1 | Critical fixes: `_dd_version_clause` + cluster scope | **Done** | `82666921` |
+| 2 | Overview + export `node_category='data'` filtering | **Done** | `4c4928cc` |
+| 3 | List query consolidation + legacy dd_version migration | **Done** | `2d848432` |
+| 4 | Error field context attachment + cluster reranking | **Done** | `6b9f965d` |
+
+**Test coverage:** 32 regression tests in `tests/tools/test_dd_version_filtering.py`
+(162 total tools tests pass).
 
 ## Problem Statement
 
