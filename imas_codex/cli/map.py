@@ -279,6 +279,7 @@ def map_run(
         all_results = _run_rich_mode(
             facility=facility,
             ids_names=ids_names_list,
+            targets=targets,
             model=model,
             dd_version=dd_version,
             cost_limit=cost_limit,
@@ -311,48 +312,49 @@ def _run_plain_mode(
     log_print,
 ) -> list[dict]:
     """Run mapping for all IDS targets in plain (non-rich) mode."""
+    import asyncio
     import time as time_mod
 
-    from imas_codex.ids.mapping import generate_mapping
+    from imas_codex.ids.workers import MappingDiscoveryState, run_mapping_engine
 
-    all_results: list[dict] = []
+    ids_names = [t["ids_name"] for t in targets]
 
-    for idx, target in enumerate(targets, 1):
-        ids_name = target["ids_name"]
-        log_print(
-            f"[bold cyan]\u2501\u2501\u2501 [{idx}/{len(targets)}] "
-            f"{ids_name} \u2501\u2501\u2501[/bold cyan]"
+    engine_state = MappingDiscoveryState(
+        facility=facility,
+        target_ids_list=ids_names,
+        target_info=targets,
+        dd_version=dd_version,
+        model=model,
+        cost_limit=cost_limit,
+        persist=not no_persist,
+        activate=not no_activate,
+        clear=clear,
+    )
+    if deadline:
+        engine_state.deadline = deadline
+
+    def _on_progress(detail, stats, stream_items=None):
+        log_print(f"  {detail}")
+
+    try:
+        asyncio.run(
+            run_mapping_engine(engine_state, on_progress=_on_progress)
         )
+    except Exception as e:
+        log_print(f"[red]Error: {e}[/red]")
 
-        if deadline and time_mod.time() >= deadline:
-            log_print("[yellow]Time limit reached \u2014 stopping.[/yellow]")
-            break
-
-        if clear:
-            _clear_mapping(facility, ids_name, log_print)
-
-        try:
-            result = generate_mapping(
-                facility,
-                ids_name,
-                model=model,
-                dd_version=dd_version,
-                persist=not no_persist,
-                activate=not no_activate,
-            )
-        except ValueError as e:
-            log_print(f"[red]Error: {e}[/red]")
-            continue
-
-        _print_result(result)
-        all_results.append({
-            "ids_name": ids_name,
-            "mapping_id": result.mapping_id,
-            "bindings": len(result.validated.bindings),
-            "escalations": len(result.validated.escalations),
-            "cost": result.cost,
-            "persisted": result.persisted,
-        })
+    # Build results from engine state
+    all_results: list[dict] = []
+    for ids_name in ids_names:
+        batches = engine_state.mapping_batches.get(ids_name, [])
+        if batches:
+            all_results.append({
+                "ids_name": ids_name,
+                "bindings": sum(len(b.mappings) for _, b in batches),
+                "escalations": engine_state.escalations,
+                "cost": engine_state.cost,
+                "persisted": engine_state.persist,
+            })
 
     return all_results
 
@@ -361,6 +363,7 @@ def _run_rich_mode(
     *,
     facility: str,
     ids_names: list[str],
+    targets: list[dict],
     model: str | None,
     dd_version: str | None,
     cost_limit: float,
@@ -372,9 +375,12 @@ def _run_rich_mode(
     console,
     log_print,
 ) -> list[dict]:
-    """Run mapping for all IDS targets with a single Rich progress display."""
-    import time as time_mod
+    """Run mapping for all IDS targets with a single Rich progress display.
 
+    No per-IDS stepping — the engine handles all IDS targets internally.
+    Workers use the graph as a state machine with ``mapping_status`` and
+    ``mapping_claimed_at`` on SignalSource nodes.
+    """
     from imas_codex.cli.discover.common import DiscoveryConfig, run_discovery
     from imas_codex.discovery.base.facility import get_facility
     from imas_codex.ids.progress import MappingProgressDisplay
@@ -409,114 +415,102 @@ def _run_rich_mode(
 
     all_results: list[dict] = []
 
-    async def _run_all_ids(stop_event, service_monitor):
-        for idx, ids_name in enumerate(ids_names):
-            if stop_event.is_set():
-                break
-            if deadline and time_mod.time() >= deadline:
-                break
+    async def _run_mapping(stop_event, service_monitor):
+        # Single engine call for ALL IDS targets
+        engine_state = MappingDiscoveryState(
+            facility=facility,
+            target_ids_list=ids_names,
+            target_info=targets,
+            dd_version=dd_version,
+            model=model,
+            cost_limit=cost_limit,
+            persist=not no_persist,
+            activate=not no_activate,
+            clear=clear,
+        )
+        if deadline:
+            engine_state.deadline = deadline
+        if service_monitor:
+            engine_state.service_monitor = service_monitor
 
-            if clear:
-                _clear_mapping(facility, ids_name)
-
-            # Reset display state for this IDS
-            display.state.reset_for_ids(idx)
-
-            engine_state = MappingDiscoveryState(
-                facility=facility,
-                target_ids=ids_name,
-                dd_version=dd_version,
-                model=model,
-                cost_limit=cost_limit,
-                persist=not no_persist,
-                activate=not no_activate,
-            )
-            if deadline:
-                engine_state.deadline = deadline
-            if service_monitor:
-                engine_state.service_monitor = service_monitor
-
-            def _update_display(detail, stats, stream_items=None):
-                ds = display.state
-                ds.sources_found = engine_state.sources_found
-                ds.sections_assigned = engine_state.sections_assigned
-                ds.sections_mapped = engine_state.sections_mapped
-                ds.bindings_total = engine_state.bindings_total
-                ds.bindings_passed = engine_state.bindings_passed
-                ds.escalations = engine_state.escalations
-                ds.sections_assembled = getattr(engine_state, "sections_assembled", 0)
-                ds.cost = engine_state.cost
-                ds.current_detail = str(detail)
-                # Derive sections_total from context
-                ctx = engine_state.context
-                if ctx:
-                    sections = ctx.get("sections")
-                    if sections and hasattr(sections, "assignments"):
-                        ds.sections_total = len(sections.assignments)
-                # Track current pipeline step from worker phases
-                if engine_state.context_phase.done:
-                    if engine_state.assign_phase.done:
-                        if engine_state.map_phase.done:
-                            ds.current_step = "validate"
-                        else:
-                            ds.current_step = "mapping"
-                    else:
-                        ds.current_step = "assign"
-                else:
-                    ds.current_step = "context"
-
-                # Push stream items to the appropriate queue
-                if stream_items:
-                    step = ds.current_step
-                    if step == "context":
-                        ds.context_queue.add(stream_items)
-                    elif step == "assign":
-                        ds.assign_queue.add(stream_items)
-                    elif step == "mapping":
-                        ds.map_queue.add(stream_items)
-                    elif step == "validate":
-                        # Route to assembly or validate queue based on content
-                        if stream_items and "pattern" in stream_items[0]:
-                            ds.assembly_queue.add(stream_items)
-                        else:
-                            ds.validate_queue.add(stream_items)
-
-            try:
-                await run_mapping_engine(
-                    engine_state,
-                    stop_event=stop_event,
-                    on_progress=_update_display,
-                )
-            except ValueError as e:
-                logger.warning("Error mapping %s: %s", ids_name, e)
-                continue
-
-            result = {
-                "ids_name": ids_name,
-                "mapping_id": engine_state.mapping_id,
-                "bindings": engine_state.bindings_total,
-                "escalations": engine_state.escalations,
-                "cost": engine_state.cost,
-                "persisted": engine_state.persist,
-            }
-            all_results.append(result)
-            display.state.completed_ids.append(result)
-
-            # Update display to show completion
+        def _update_display(detail, stats, stream_items=None):
             ds = display.state
-            ds.current_step = "done"
-            ds.sources_found = engine_state.sources_found
-            ds.sections_assigned = engine_state.sections_assigned
-            ds.sections_mapped = engine_state.sections_mapped
+            ds.sources_found = engine_state.sources_total
+            ds.sections_assigned = engine_state.sources_assigned
+            ds.sections_mapped = engine_state.sources_mapped
             ds.bindings_total = engine_state.bindings_total
             ds.bindings_passed = engine_state.bindings_passed
             ds.escalations = engine_state.escalations
+            ds.sections_assembled = engine_state.sources_validated
             ds.cost = engine_state.cost
+            ds.current_detail = str(detail)
 
+            # Derive sections_total from all assignments
+            total_assigned = sum(
+                len(s.assignments)
+                for s in engine_state.assignments.values()
+                if hasattr(s, "assignments")
+            )
+            if total_assigned:
+                ds.sections_total = total_assigned
+
+            # Track current pipeline step from worker phases
+            if engine_state.context_phase.done:
+                if engine_state.assign_phase.done:
+                    if engine_state.map_phase.done:
+                        ds.current_step = "validate"
+                    else:
+                        ds.current_step = "mapping"
+                else:
+                    ds.current_step = "assign"
+            else:
+                ds.current_step = "context"
+
+            # Push stream items to the appropriate queue
+            if stream_items:
+                step = ds.current_step
+                if step == "context":
+                    ds.context_queue.add(stream_items)
+                elif step == "assign":
+                    ds.assign_queue.add(stream_items)
+                elif step == "mapping":
+                    ds.map_queue.add(stream_items)
+                elif step == "validate":
+                    if stream_items and "pattern" in stream_items[0]:
+                        ds.assembly_queue.add(stream_items)
+                    else:
+                        ds.validate_queue.add(stream_items)
+
+        try:
+            await run_mapping_engine(
+                engine_state,
+                stop_event=stop_event,
+                on_progress=_update_display,
+            )
+        except ValueError as e:
+            logger.warning("Mapping engine error: %s", e)
+
+        # Build results from engine state
+        for ids_name in ids_names:
+            batches = engine_state.mapping_batches.get(ids_name, [])
+            if batches:
+                result = {
+                    "ids_name": ids_name,
+                    "bindings": sum(len(b.mappings) for _, b in batches),
+                    "escalations": engine_state.escalations,
+                    "cost": engine_state.cost,
+                    "persisted": engine_state.persist,
+                }
+                all_results.append(result)
+
+        # Update display to show completion
+        ds = display.state
+        ds.current_step = "done"
+        ds.completed_ids = all_results
         return {"completed": len(all_results), "total": len(ids_names)}
 
     try:
-        run_discovery(config, _run_all_ids)
+        run_discovery(config, _run_mapping)
     except SystemExit:
         raise
     except Exception as e:

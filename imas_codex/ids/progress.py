@@ -218,8 +218,7 @@ class MappingProgressDisplay(BaseProgressDisplay):
         s = self.state
         if not s.ids_targets:
             return None
-        idx = min(s.current_ids_idx + 1, s.total_ids)
-        return f"{idx}/{s.total_ids} {s.current_ids}"
+        return f"{len(s.ids_targets)} IDS targets"
 
     def _build_pipeline_section(self) -> Text:
         s = self.state

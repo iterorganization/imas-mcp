@@ -880,11 +880,13 @@ class OrphanRecoverySpec:
         label: Neo4j node label (e.g., "FacilityPath", "WikiPage")
         facility_field: Property containing the facility ID (default: "facility_id")
         timeout_seconds: How old a claim must be to be orphaned (default: 300)
+        claimed_field: Name of the timestamp property to check (default: "claimed_at")
     """
 
     label: str
     facility_field: str = "facility_id"
     timeout_seconds: int = 300
+    claimed_field: str = "claimed_at"
 
 
 def make_orphan_recovery_tick(
@@ -924,6 +926,7 @@ def make_orphan_recovery_tick(
                     facility,
                     timeout_seconds=spec.timeout_seconds,
                     facility_field=spec.facility_field,
+                    claimed_field=spec.claimed_field,
                 )
                 if released:
                     logger.info(
