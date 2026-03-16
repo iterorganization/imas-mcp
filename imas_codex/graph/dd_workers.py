@@ -126,6 +126,14 @@ class DDBuildState(DiscoveryStateBase):
         return self.enrich_stats.cost
 
 
+def _style_stream_items(items: list[dict], primary_text_style: str) -> list[dict]:
+    """Attach display style metadata to DD stream items."""
+    return [
+        {**item, "primary_text_style": item.get("primary_text_style", primary_text_style)}
+        for item in items
+    ]
+
+
 # =============================================================================
 # Workers
 # =============================================================================
@@ -846,15 +854,26 @@ async def _run_aux_enrichment(state: DDBuildState) -> None:
 
         loop = asyncio.get_running_loop()
 
-        def _on_items(items: list[dict], batch_time: float) -> None:
+        def _publish_items(
+            items: list[dict],
+            batch_time: float,
+            *,
+            primary_text_style: str,
+        ) -> None:
             loop.call_soon_threadsafe(
                 lambda: state.enrich_stats.stream_queue.add(
-                    items,
+                    _style_stream_items(items, primary_text_style),
                     last_batch_time=batch_time,
                 )
             )
 
-        def _run() -> tuple[dict[str, Any], dict[str, Any]]:
+        def _on_identifier_items(items: list[dict], batch_time: float) -> None:
+            _publish_items(items, batch_time, primary_text_style="bold cyan")
+
+        def _on_ids_items(items: list[dict], batch_time: float) -> None:
+            _publish_items(items, batch_time, primary_text_style="bold green")
+
+        def _run() -> tuple[int, int, dict[str, Any], dict[str, Any]]:
             from imas_codex.graph.client import GraphClient
             from imas_codex.graph.dd_identifier_enrichment import (
                 enrich_identifier_schemas,
@@ -863,21 +882,31 @@ async def _run_aux_enrichment(state: DDBuildState) -> None:
             from imas_codex.settings import get_model
 
             with GraphClient() as client:
+                identifier_total = client.query(
+                    "MATCH (s:IdentifierSchema) RETURN count(s) AS total"
+                )[0]["total"]
+                ids_total = client.query("MATCH (i:IDS) RETURN count(i) AS total")[0][
+                    "total"
+                ]
                 ident_stats = enrich_identifier_schemas(
                     client,
                     model=get_model("language"),
                     force=state.skip_enrichment_hash,
-                    on_items=_on_items,
+                    on_items=_on_identifier_items,
                 )
                 ids_stats = enrich_ids_nodes(
                     client,
                     model=get_model("language"),
                     force=state.skip_enrichment_hash,
-                    on_items=_on_items,
+                    on_items=_on_ids_items,
                 )
-            return ident_stats, ids_stats
+            return identifier_total, ids_total, ident_stats, ids_stats
 
-        ident_stats, ids_stats = await asyncio.to_thread(_run)
+        identifier_total, ids_total, ident_stats, ids_stats = await asyncio.to_thread(
+            _run
+        )
+        state.stats["identifier_schemas_total"] = identifier_total
+        state.stats["ids_total"] = ids_total
         state.stats["identifier_schemas_enriched"] = ident_stats.get("enriched", 0)
         state.stats["ids_enriched"] = ids_stats.get("enriched", 0)
         state.stats["identifier_schemas_cached"] = ident_stats.get("cached", 0)
@@ -895,13 +924,24 @@ async def _run_aux_embedding(state: DDBuildState) -> None:
 
         loop = asyncio.get_running_loop()
 
-        def _on_items(items: list[dict], batch_time: float) -> None:
+        def _publish_items(
+            items: list[dict],
+            batch_time: float,
+            *,
+            primary_text_style: str,
+        ) -> None:
             loop.call_soon_threadsafe(
                 lambda: state.embed_stats.stream_queue.add(
-                    items,
+                    _style_stream_items(items, primary_text_style),
                     last_batch_time=batch_time,
                 )
             )
+
+        def _on_identifier_items(items: list[dict], batch_time: float) -> None:
+            _publish_items(items, batch_time, primary_text_style="bold cyan")
+
+        def _on_ids_items(items: list[dict], batch_time: float) -> None:
+            _publish_items(items, batch_time, primary_text_style="bold green")
 
         def _run() -> tuple[dict[str, int], dict[str, int]]:
             from imas_codex.graph.client import GraphClient
@@ -914,12 +954,12 @@ async def _run_aux_embedding(state: DDBuildState) -> None:
                 ident_stats = embed_identifier_schemas(
                     client,
                     force_reembed=state.skip_embedding_hash,
-                    on_items=_on_items,
+                    on_items=_on_identifier_items,
                 )
                 ids_stats = embed_ids_nodes(
                     client,
                     force_reembed=state.skip_embedding_hash,
-                    on_items=_on_items,
+                    on_items=_on_ids_items,
                 )
             return ident_stats, ids_stats
 
@@ -1007,6 +1047,8 @@ async def run_dd_build_engine(
         on_worker_status=on_worker_status,
         orphan_specs=orphan_specs,
     )
+
+    state.stats["elapsed_seconds"] = time.time() - state.build_start_time
 
     # Persist build metadata to graph
     if not state.dry_run and not state.skipped:

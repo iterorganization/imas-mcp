@@ -538,6 +538,21 @@ class TestBuildPipelineSection:
                 f"{line!r}"
             )
 
+    def test_primary_text_style_applied(self):
+        """primary_text_style controls the rendered stream item style."""
+        config = PipelineRowConfig(
+            name="EMBED",
+            style="bold magenta",
+            completed=1,
+            total=2,
+            primary_text="camera_identifier",
+            primary_text_style="bold cyan",
+        )
+
+        result = build_pipeline_row(config, bar_width=40)
+
+        assert any("bold cyan" in str(span.style) for span in result.spans)
+
 
 # =============================================================================
 # Integration: display classes can render without errors

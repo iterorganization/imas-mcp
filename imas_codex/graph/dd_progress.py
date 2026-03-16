@@ -48,6 +48,50 @@ def _build_stats(state: DDBuildState) -> list[tuple[str, str, str]]:
     if embedded:
         stats.append(("embedded", format_count(embedded), "magenta"))
 
+    identifier_total = s.get("identifier_schemas_total", 0)
+    if identifier_total:
+        ident_done = s.get("identifier_schemas_enriched", 0) + s.get(
+            "identifier_schemas_cached", 0
+        )
+        stats.append(
+            (
+                "ident",
+                f"{format_count(ident_done)}/{format_count(identifier_total)}",
+                "cyan",
+            )
+        )
+
+    ids_total = s.get("ids_total", 0)
+    if ids_total:
+        ids_done = s.get("ids_enriched", 0) + s.get("ids_cached", 0)
+        stats.append(
+            ("ids", f"{format_count(ids_done)}/{format_count(ids_total)}", "green")
+        )
+
+    identifier_embedded = s.get("identifier_embeddings_updated", 0) + s.get(
+        "identifier_embeddings_cached", 0
+    )
+    if identifier_total and identifier_embedded:
+        stats.append(
+            (
+                "ident-emb",
+                f"{format_count(identifier_embedded)}/{format_count(identifier_total)}",
+                "magenta",
+            )
+        )
+
+    ids_embedded = s.get("ids_embeddings_updated", 0) + s.get(
+        "ids_embeddings_cached", 0
+    )
+    if ids_total and ids_embedded:
+        stats.append(
+            (
+                "ids-emb",
+                f"{format_count(ids_embedded)}/{format_count(ids_total)}",
+                "magenta",
+            )
+        )
+
     clusters = s.get("clusters_created", 0)
     if clusters:
         stats.append(("clusters", format_count(clusters), "cyan"))
