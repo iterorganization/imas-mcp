@@ -24,6 +24,7 @@ def _build_stats(state: DDBuildState) -> list[tuple[str, str, str]]:
     """Build STATS row entries from live build state."""
     stats: list[tuple[str, str, str]] = []
     s = state.stats
+    counts = state.imas_node_status_counts
 
     versions = s.get("versions_processed", 0)
     if versions:
@@ -41,7 +42,9 @@ def _build_stats(state: DDBuildState) -> list[tuple[str, str, str]]:
     if cached:
         stats.append(("cached", format_count(cached), "dim"))
 
-    embedded = s.get("embeddings_updated", 0) + s.get("embeddings_cached", 0)
+    embedded = counts.get("embedded", 0) or state.embed_stats.processed
+    if embedded <= 0:
+        embedded = s.get("embeddings_updated", 0) + s.get("embeddings_cached", 0)
     if embedded:
         stats.append(("embedded", format_count(embedded), "magenta"))
 
@@ -107,7 +110,7 @@ def _graph_refresh(state: DDBuildState, _facility: str) -> None:
     from imas_codex.graph.dd_graph_ops import count_imas_nodes_by_status
 
     try:
-        counts = count_imas_nodes_by_status()
+        counts = count_imas_nodes_by_status(node_category="data")
     except Exception:
         return
 
@@ -121,15 +124,13 @@ def _graph_refresh(state: DDBuildState, _facility: str) -> None:
     enrich_processed = total - built
     state.enrich_stats.total = total
     state.enrich_stats.set_baseline(enrich_processed)
-    if enrich_processed > state.enrich_stats.processed:
-        state.enrich_stats.processed = enrich_processed
+    state.enrich_stats.processed = enrich_processed
 
     # Embed: enriched → embedded.  Processed = embedded count.
     embedded = counts.get("embedded", 0)
     state.embed_stats.total = total
     state.embed_stats.set_baseline(embedded)
-    if embedded > state.embed_stats.processed:
-        state.embed_stats.processed = embedded
+    state.embed_stats.processed = embedded
 
     # Accumulated enrichment cost from graph (source of truth across runs)
     try:

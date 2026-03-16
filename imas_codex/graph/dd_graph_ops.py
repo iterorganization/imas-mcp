@@ -266,8 +266,11 @@ def release_embedding_claims(path_ids: list[str]) -> None:
         )
 
 
-def count_imas_nodes_by_status() -> dict[str, int]:
+def count_imas_nodes_by_status(*, node_category: str | None = None) -> dict[str, int]:
     """Count IMASNode nodes grouped by status.
+
+    Args:
+        node_category: Optional IMASNode.node_category filter.
 
     Returns dict mapping status → count, plus a 'total' key.
     """
@@ -276,8 +279,10 @@ def count_imas_nodes_by_status() -> dict[str, int]:
             """
             MATCH (p:IMASNode)
             WHERE p.status IS NOT NULL
+              AND ($node_category IS NULL OR p.node_category = $node_category)
             RETURN p.status AS status, count(p) AS cnt
-            """
+            """,
+            node_category=node_category,
         )
         counts: dict[str, int] = {}
         total = 0
