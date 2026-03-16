@@ -22,6 +22,7 @@ import json
 import logging
 from dataclasses import dataclass, field
 from typing import Any
+from collections.abc import Callable
 
 from imas_codex.graph.client import GraphClient
 from imas_codex.ids.models import (
@@ -553,6 +554,7 @@ def gather_context(
     *,
     gc: GraphClient,
     dd_version: int | None = None,
+    on_progress: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
     """Gather all context needed for the signal mapping pipeline.
 
@@ -560,12 +562,26 @@ def gather_context(
     1. Query physics domains for the target IDS
     2. Filter signal sources to matching domains
     3. Semantic narrowing within domain for candidate ranking
+
+    Parameters
+    ----------
+    on_progress : callable, optional
+        Called with a short status string at each major step so the
+        display can stream progress instead of showing a static label.
     """
     logger.info("Gathering context for %s/%s", facility, ids_name)
+
+    def _emit(msg: str) -> None:
+        if on_progress:
+            on_progress(msg)
+
+    _emit(f"querying domains for {ids_name}")
 
     # Step 1: Get physics domains for the target IDS
     target_domains = query_ids_physics_domains(ids_name, gc=gc, dd_version=dd_version)
     logger.info("Target IDS %s has domains: %s", ids_name, target_domains)
+
+    _emit(f"{len(target_domains)} domains → querying sources")
 
     # Step 2: Query signal sources filtered by physics domain
     # If we have target domains, filter to matching sources (dramatic reduction).
@@ -582,8 +598,10 @@ def gather_context(
         groups = query_signal_sources(facility, gc=gc, status_filter="enriched")
         logger.info("No domain filter — using all %d enriched sources", len(groups))
 
+    _emit(f"{len(groups)} sources → fetching IDS subtree")
     subtree = fetch_imas_subtree(ids_name, gc=gc, dd_version=dd_version)
 
+    _emit("semantic search (IDS → sources)")
     # Step 3: Semantic narrowing — bidirectional search
     # Forward: IDS description → signal source embeddings
     # Reverse: source descriptions → IMAS path embeddings
@@ -596,12 +614,15 @@ def gather_context(
     except Exception:
         logger.warning("Semantic search unavailable — continuing without it")
 
+    _emit(f"per-source narrowing ({len(groups)} sources)")
     # Per-source semantic narrowing: for each source with a description,
     # search for matching IMAS paths
     source_candidates: dict[str, list[dict[str, Any]]] = {}
-    for g in groups:
+    for idx, g in enumerate(groups):
         desc = g.get("rep_description") or g.get("description")
         if desc:
+            if idx % 50 == 0:
+                _emit(f"narrowing {idx + 1}/{len(groups)}")
             try:
                 candidates = search_imas_semantic(
                     desc, ids_name, gc=gc, k=10, dd_version=dd_version,
@@ -611,6 +632,7 @@ def gather_context(
             except Exception:
                 pass
 
+    _emit("cluster enrichment")
     # Enrich source candidates with cluster members (one-to-many discovery)
     try:
         from imas_codex.clusters.search import ClusterSearcher
@@ -635,6 +657,7 @@ def gather_context(
     except Exception:
         logger.debug("Cluster enrichment unavailable — continuing without it")
 
+    _emit("batch semantic match matrix")
     # Semantic match matrix: batch-embed sources and search across all indexes
     semantic_match_matrix: dict[str, list[dict[str, Any]]] = {}
     try:
@@ -661,12 +684,14 @@ def gather_context(
     except Exception:
         logger.debug("Semantic match matrix unavailable — continuing without it")
 
+    _emit("existing mappings + COCOS")
     existing = search_existing_mappings(facility, ids_name, gc=gc)
     cocos_paths = get_sign_flip_paths(ids_name)
 
     # Cross-facility precedent: how other facilities mapped to this IDS
     cross_mappings = fetch_cross_facility_mappings(ids_name, facility, gc=gc)
 
+    _emit("section clusters")
     # Fetch section clusters for the target IDS
     section_clusters: list[dict[str, Any]] = []
     try:
@@ -700,6 +725,7 @@ def gather_context(
     except Exception:
         logger.debug("Could not query DD COCOS — continuing without it")
 
+    _emit("wiki + code context")
     # Wiki and code context enrichment (Phase 3)
     wiki_context: list[dict[str, Any]] = []
     code_context: list[dict[str, Any]] = []

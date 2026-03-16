@@ -72,7 +72,7 @@ def map_cmd() -> None:
       --time             Max total runtime in minutes
       --model/-m         Override LLM model identifier
       --clear            Clear existing mappings before generating
-      --no-persist       Dry run (skip graph persistence)
+      --dry-run          Skip graph persistence (dry run)
       --no-activate      Persist as 'generated' without promoting to 'active'
     """
 
@@ -110,7 +110,7 @@ def map_cmd() -> None:
     help="Maximum LLM spend in USD per IDS (default: $5).",
 )
 @click.option(
-    "--no-persist",
+    "--dry-run",
     is_flag=True,
     help="Skip graph persistence (dry run).",
 )
@@ -139,7 +139,7 @@ def map_run(
     model: str | None,
     dd_version: str | None,
     cost_limit: float,
-    no_persist: bool,
+    dry_run: bool,
     no_activate: bool,
     time_limit: int | None,
     verbose: bool,
@@ -224,32 +224,6 @@ def map_run(
             )
         raise SystemExit(1)
 
-    # Print plan
-    domain_set = sorted({d for t in targets for d in t["domains"]})
-    log_print(f"\n[bold]Signal Mapping: {facility}[/bold]")
-    log_print(f"  Physics domains: {', '.join(domain_set)}")
-    log_print(f"  IDS targets: {len(targets)}")
-    log_print(f"  Signal sources: {total_sources} enriched")
-    log_print(f"  Cost limit: ${cost_limit:.2f}/IDS")
-    if model:
-        log_print(f"  Model: {model}")
-    if dd_version:
-        log_print(f"  DD version: {dd_version}")
-    if time_limit is not None:
-        log_print(f"  Time limit: {time_limit} min")
-    if no_persist:
-        log_print("  Mode: no-persist (dry run)")
-    elif no_activate:
-        log_print("  Mode: persist as generated")
-    log_print("")
-    for t in targets:
-        domains_str = ", ".join(t["domains"])
-        log_print(
-            f"  \u2192 {t['ids_name']:<25} "
-            f"({domains_str}, {t['source_count']} sources)"
-        )
-    log_print("")
-
     # -------------------------------------------------------------------
     # Compute global deadline
     # -------------------------------------------------------------------
@@ -269,7 +243,7 @@ def map_run(
             model=model,
             dd_version=dd_version,
             cost_limit=cost_limit,
-            no_persist=no_persist,
+            dry_run=dry_run,
             no_activate=no_activate,
             clear=clear,
             deadline=deadline,
@@ -283,7 +257,7 @@ def map_run(
             model=model,
             dd_version=dd_version,
             cost_limit=cost_limit,
-            no_persist=no_persist,
+            dry_run=dry_run,
             no_activate=no_activate,
             clear=clear,
             deadline=deadline,
@@ -305,7 +279,7 @@ def _run_plain_mode(
     model: str | None,
     dd_version: str | None,
     cost_limit: float,
-    no_persist: bool,
+    dry_run: bool,
     no_activate: bool,
     clear: bool,
     deadline: float | None,
@@ -326,7 +300,7 @@ def _run_plain_mode(
         dd_version=dd_version,
         model=model,
         cost_limit=cost_limit,
-        persist=not no_persist,
+        persist=not dry_run,
         activate=not no_activate,
         clear=clear,
     )
@@ -367,7 +341,7 @@ def _run_rich_mode(
     model: str | None,
     dd_version: str | None,
     cost_limit: float,
-    no_persist: bool,
+    dry_run: bool,
     no_activate: bool,
     clear: bool,
     deadline: float | None,
@@ -424,7 +398,7 @@ def _run_rich_mode(
             dd_version=dd_version,
             model=model,
             cost_limit=cost_limit,
-            persist=not no_persist,
+            persist=not dry_run,
             activate=not no_activate,
             clear=clear,
         )
