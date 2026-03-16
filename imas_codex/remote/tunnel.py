@@ -90,12 +90,27 @@ _SSH_ALIVE_COUNT_MAX = 3
 SSH_TUNNEL_OPTS: list[str] = [
     "-o", "ControlMaster=no",
     "-o", "ControlPath=none",
+    "-o", "ClearAllForwardings=yes",
     "-o", "TCPKeepAlive=yes",
     "-o", f"ServerAliveInterval={_SSH_ALIVE_INTERVAL}",
     "-o", f"ServerAliveCountMax={_SSH_ALIVE_COUNT_MAX}",
     "-o", "ConnectTimeout=10",
     "-o", "ExitOnForwardFailure=yes",
 ]  # fmt: skip
+
+
+def _candidate_service_job_names(service_job_name: str) -> list[str]:
+    """Return likely SLURM service job names in priority order.
+
+    Facility private config can lag behind public config when job names are
+    renamed. Try the configured value first, then a small set of known aliases.
+    """
+    names = [service_job_name, "codex-neo4j", "imas-codex-services", "neo4j"]
+    ordered: list[str] = []
+    for name in names:
+        if name and name not in ordered:
+            ordered.append(name)
+    return ordered
 
 
 def _pid_file(ssh_host: str) -> Path:
@@ -482,26 +497,27 @@ def discover_compute_node(
     Returns:
         Compute node hostname, or None if no allocation is active.
     """
-    try:
-        result = subprocess.run(
-            [
-                "ssh",
-                ssh_host,
-                "-o",
-                "ConnectTimeout=10",
-                f'squeue -n {service_job_name} -u "$USER" '
-                '--format="%N" --noheader 2>/dev/null',
-            ],
-            capture_output=True,
-            text=True,
-            timeout=15,
-        )
-        if result.returncode == 0:
-            node = result.stdout.strip().splitlines()[0].strip()
-            if node:
-                return node
-    except (subprocess.TimeoutExpired, OSError, IndexError):
-        pass
+    for job_name in _candidate_service_job_names(service_job_name):
+        try:
+            result = subprocess.run(
+                [
+                    "ssh",
+                    ssh_host,
+                    "-o",
+                    "ConnectTimeout=10",
+                    f'squeue -n {job_name} -u "$USER" '
+                    '--format="%N" --noheader 2>/dev/null',
+                ],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            if result.returncode == 0:
+                node = result.stdout.strip().splitlines()[0].strip()
+                if node:
+                    return node
+        except (subprocess.TimeoutExpired, OSError, IndexError):
+            continue
     return None
 
 
@@ -524,32 +540,33 @@ def discover_compute_node_local(
         Compute node hostname, or None if squeue is unavailable or no
         matching job is running.
     """
-    try:
-        result = subprocess.run(
-            [
-                "squeue",
-                "-n",
-                service_job_name,
-                "-u",
-                os.environ.get("USER", ""),
-                "--format=%N",
-                "--noheader",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        if result.returncode == 0:
-            node = result.stdout.strip().splitlines()[0].strip()
-            if node:
-                logger.debug(
-                    "Local squeue found service node: %s (job=%s)",
-                    node,
-                    service_job_name,
-                )
-                return node
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError, IndexError):
-        pass
+    for job_name in _candidate_service_job_names(service_job_name):
+        try:
+            result = subprocess.run(
+                [
+                    "squeue",
+                    "-n",
+                    job_name,
+                    "-u",
+                    os.environ.get("USER", ""),
+                    "--format=%N",
+                    "--noheader",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode == 0:
+                node = result.stdout.strip().splitlines()[0].strip()
+                if node:
+                    logger.debug(
+                        "Local squeue found service node: %s (job=%s)",
+                        node,
+                        job_name,
+                    )
+                    return node
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError, IndexError):
+            continue
     return None
 
 

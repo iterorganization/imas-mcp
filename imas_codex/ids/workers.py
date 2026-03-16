@@ -67,6 +67,7 @@ class MappingDiscoveryState(DiscoveryStateBase):
     sources_found: int = 0
     sections_assigned: int = 0
     sections_mapped: int = 0
+    sections_assembled: int = 0
     bindings_total: int = 0
     bindings_passed: int = 0
     escalations: int = 0
@@ -214,12 +215,15 @@ async def context_worker(
     """Worker that gathers all context for the mapping pipeline.
 
     One-shot worker: gathers context and marks phase done.
+    Context gathering is sync (graph/embedding ops) so runs in a thread.
     """
     wlog = WorkerLogAdapter(logger, worker_name="context_worker")
     wlog.info("Starting context gathering for %s/%s", state.facility, state.target_ids)
 
     if on_progress:
-        on_progress("gathering context", state.context_stats)
+        on_progress("gathering context", state.context_stats, [
+            {"detail": f"querying domains for {state.target_ids}"}
+        ])
 
     try:
         from imas_codex.ids.mapping import gather_context
@@ -236,10 +240,12 @@ async def context_worker(
         state.context_stats.processed = 1
         wlog.info("Context gathered: %d sources found", state.sources_found)
 
+        domains = context.get("target_domains", [])
         if on_progress:
             on_progress(
                 f"{state.sources_found} sources found",
                 state.context_stats,
+                [{"detail": f"{state.sources_found} sources, {len(domains)} domains"}],
             )
     except Exception as e:
         wlog.error("Context gathering failed: %s", e)
@@ -254,11 +260,10 @@ async def assign_worker(
     on_progress: Callable | None = None,
     **_kwargs,
 ) -> None:
-    """Worker that assigns signal sources to IMAS sections via LLM."""
+    """Worker that assigns signal sources to IMAS sections via async LLM."""
     wlog = WorkerLogAdapter(logger, worker_name="assign_worker")
     wlog.info("Assign worker ready, waiting for context phase")
 
-    # Wait for context phase
     while not state.stop_requested:
         if state.context_phase.done and state.context:
             break
@@ -271,10 +276,9 @@ async def assign_worker(
         on_progress("assigning targets", state.assign_stats)
 
     try:
-        from imas_codex.ids.mapping import assign_targets
+        from imas_codex.ids.mapping import aassign_targets
 
-        sections = await asyncio.to_thread(
-            assign_targets,
+        sections = await aassign_targets(
             state.facility,
             state.target_ids,
             state.context,
@@ -284,12 +288,28 @@ async def assign_worker(
         state.context["sections"] = sections
         state.sections_assigned = len(sections.assignments)
         state.assign_stats.processed = state.sections_assigned
-        wlog.info("%d sections assigned, cost $%.4f", state.sections_assigned, state.cost.total_usd)
+        wlog.info(
+            "%d sections assigned, cost $%.4f",
+            state.sections_assigned, state.cost.total_usd,
+        )
 
+        # Stream each assignment for display
         if on_progress:
+            stream_items = []
+            for a in sections.assignments:
+                sg = next(
+                    (g for g in state.context["groups"] if g["id"] == a.source_id),
+                    {},
+                )
+                stream_items.append({
+                    "source_id": a.source_id,
+                    "target_path": a.imas_target_path,
+                    "physics_domain": sg.get("physics_domain", ""),
+                })
             on_progress(
                 f"{state.sections_assigned} sections assigned",
                 state.assign_stats,
+                stream_items,
             )
     except Exception as e:
         wlog.error("Section assignment failed: %s", e)
@@ -304,11 +324,14 @@ async def map_worker(
     on_progress: Callable | None = None,
     **_kwargs,
 ) -> None:
-    """Worker that generates signal mappings per section via LLM."""
+    """Worker that generates signal mappings per section via async LLM.
+
+    Uses the async generator ``amap_signals`` to yield per-section results,
+    streaming each completed mapping to the display.
+    """
     wlog = WorkerLogAdapter(logger, worker_name="map_worker")
     wlog.info("Map worker ready, waiting for assign phase")
 
-    # Wait for assign phase
     while not state.stop_requested:
         if state.assign_phase.done and state.context.get("sections"):
             break
@@ -326,11 +349,12 @@ async def map_worker(
         on_progress("generating mappings", state.map_stats)
 
     try:
-        from imas_codex.ids.mapping import map_signals
+        from imas_codex.ids.mapping import amap_signals
 
         gc = GraphClient()
-        batches = await asyncio.to_thread(
-            map_signals,
+        batches: list = []
+
+        async for assignment, batch in amap_signals(
             state.facility,
             state.target_ids,
             sections,
@@ -338,24 +362,51 @@ async def map_worker(
             gc=gc,
             model=state.model,
             cost=state.cost,
-        )
-        state.context["field_batches"] = batches
-        state.sections_mapped = len(batches)
+        ):
+            batches.append(batch)
+            state.sections_mapped = len(batches)
+            state.bindings_total = sum(len(b.mappings) for b in batches)
+            state.map_stats.processed = state.sections_mapped
 
-        # Count total bindings
-        total = sum(len(b.mappings) for b in batches)
-        state.bindings_total = total
-        state.map_stats.processed = state.sections_mapped
+            # Stream rich mapping content for display
+            if on_progress:
+                sg = next(
+                    (g for g in state.context["groups"]
+                     if g["id"] == assignment.source_id),
+                    {},
+                )
+                stream_items = [{
+                    "source_id": assignment.source_id,
+                    "target_path": assignment.imas_target_path,
+                    "physics_domain": sg.get("physics_domain", ""),
+                    "bindings": len(batch.mappings),
+                }]
+                # Add individual mapping lines for richer streaming
+                for m in batch.mappings[:5]:
+                    stream_items.append({
+                        "source_id": f"{m.source_id}.{m.source_property}",
+                        "target_path": m.target_id,
+                        "physics_domain": sg.get("physics_domain", ""),
+                        "bindings": 1,
+                    })
+                on_progress(
+                    f"{state.sections_mapped}/{len(sections.assignments)} sections",
+                    state.map_stats,
+                    stream_items,
+                )
+
+            wlog.info(
+                "Mapped section %d/%d: %s → %d bindings",
+                len(batches), len(sections.assignments),
+                assignment.imas_target_path, len(batch.mappings),
+            )
+
+        state.context["field_batches"] = batches
         wlog.info(
             "%d sections mapped, %d bindings, cost $%.4f",
-            state.sections_mapped, total, state.cost.total_usd,
+            state.sections_mapped, state.bindings_total, state.cost.total_usd,
         )
 
-        if on_progress:
-            on_progress(
-                f"{state.sections_mapped} sections, {total} bindings",
-                state.map_stats,
-            )
     except Exception as e:
         wlog.error("Signal mapping failed: %s", e)
         state.map_stats.errors += 1
@@ -369,11 +420,10 @@ async def validate_worker(
     on_progress: Callable | None = None,
     **_kwargs,
 ) -> None:
-    """Worker that validates and persists mappings."""
+    """Worker that discovers assembly patterns, validates, and persists."""
     wlog = WorkerLogAdapter(logger, worker_name="validate_worker")
     wlog.info("Validate worker ready, waiting for map phase")
 
-    # Wait for map phase
     while not state.stop_requested:
         if state.map_phase.done and state.context.get("field_batches"):
             break
@@ -389,20 +439,21 @@ async def validate_worker(
         return
 
     if on_progress:
-        on_progress("validating mappings", state.validate_stats)
+        on_progress("discovering assembly", state.validate_stats)
 
     try:
         from imas_codex.ids.mapping import (
-            discover_assembly,
+            AssemblyBatch,
+            adiscover_assembly,
             validate_mappings,
         )
         from imas_codex.ids.models import persist_mapping_result
 
         gc = GraphClient()
 
-        # Assembly discovery
-        assembly = await asyncio.to_thread(
-            discover_assembly,
+        # Assembly discovery — async generator, stream each result
+        configs = []
+        async for assignment, config in adiscover_assembly(
             state.facility,
             state.target_ids,
             sections,
@@ -411,9 +462,29 @@ async def validate_worker(
             gc=gc,
             model=state.model,
             cost=state.cost,
-        )
+        ):
+            configs.append(config)
+            state.sections_assembled = len(configs)
 
-        # Validation
+            if on_progress:
+                sg = next(
+                    (g for g in state.context["groups"]
+                     if g["id"] == assignment.source_id),
+                    {},
+                )
+                on_progress(
+                    f"assembly {len(configs)}/{len(sections.assignments)}",
+                    state.validate_stats,
+                    [{
+                        "target_path": config.target_path,
+                        "pattern": config.pattern.value if hasattr(config.pattern, "value") else str(config.pattern),
+                        "physics_domain": sg.get("physics_domain", ""),
+                    }],
+                )
+
+        assembly = AssemblyBatch(ids_name=state.target_ids, configs=configs)
+
+        # Validation — sync, run in thread
         dd_version = state.dd_version or ""
         validated = await asyncio.to_thread(
             validate_mappings,
@@ -425,16 +496,19 @@ async def validate_worker(
             gc=gc,
         )
 
-        state.bindings_passed = sum(
-            1 for c in validated.bindings
-        )
+        state.bindings_passed = len(validated.bindings)
         state.escalations = len(validated.escalations)
         state.validate_stats.processed = 1
 
         if on_progress:
             on_progress(
-                f"{state.bindings_passed} bindings, {state.escalations} escalations",
+                f"{state.bindings_passed} passed, {state.escalations} escalations",
                 state.validate_stats,
+                [{
+                    "target_path": state.target_ids,
+                    "passed": state.bindings_passed,
+                    "escalations": state.escalations,
+                }],
             )
 
         # Persist

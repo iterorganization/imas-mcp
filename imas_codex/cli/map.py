@@ -436,7 +436,7 @@ def _run_rich_mode(
             if service_monitor:
                 engine_state.service_monitor = service_monitor
 
-            def _update_display(detail, stats):
+            def _update_display(detail, stats, stream_items=None):
                 ds = display.state
                 ds.sources_found = engine_state.sources_found
                 ds.sections_assigned = engine_state.sections_assigned
@@ -444,6 +444,7 @@ def _run_rich_mode(
                 ds.bindings_total = engine_state.bindings_total
                 ds.bindings_passed = engine_state.bindings_passed
                 ds.escalations = engine_state.escalations
+                ds.sections_assembled = getattr(engine_state, "sections_assembled", 0)
                 ds.cost = engine_state.cost
                 ds.current_detail = str(detail)
                 # Derive sections_total from context
@@ -463,6 +464,22 @@ def _run_rich_mode(
                         ds.current_step = "assign"
                 else:
                     ds.current_step = "context"
+
+                # Push stream items to the appropriate queue
+                if stream_items:
+                    step = ds.current_step
+                    if step == "context":
+                        ds.context_queue.add(stream_items)
+                    elif step == "assign":
+                        ds.assign_queue.add(stream_items)
+                    elif step == "mapping":
+                        ds.map_queue.add(stream_items)
+                    elif step == "validate":
+                        # Route to assembly or validate queue based on content
+                        if stream_items and "pattern" in stream_items[0]:
+                            ds.assembly_queue.add(stream_items)
+                        else:
+                            ds.validate_queue.add(stream_items)
 
             try:
                 await run_mapping_engine(
