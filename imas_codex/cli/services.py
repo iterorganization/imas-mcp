@@ -846,7 +846,7 @@ def _kill_embed_orphans(node: str) -> None:
     )
     try:
         _run_on_node(node, kill_cmd, timeout=15)
-    except subprocess.CalledProcessError:
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
         pass
 
 
