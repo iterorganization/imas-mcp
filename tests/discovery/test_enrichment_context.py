@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from imas_codex.discovery.signals.parallel import (
+    build_device_xml_context_query,
     fetch_tree_context,
 )
 
@@ -319,3 +320,61 @@ class TestEnrichmentTemplateContent:
         assert "tdi_function" in content
         assert "tdi_source" in content
         assert "applicability" in content
+
+
+class TestDeviceXmlContextQueries:
+    """Tests for targeted device_xml semantic query construction."""
+
+    def test_build_device_xml_context_query_uses_section_metadata(self):
+        indexed_signals = [
+            (
+                0,
+                {
+                    "name": "Magnetic Probe 1 Radial position",
+                    "data_source_name": "device_xml",
+                    "data_source_path": "magprobes/1/r",
+                },
+            )
+        ]
+
+        query = build_device_xml_context_query("device_xml:magprobes", indexed_signals)
+
+        assert "JET" in query
+        assert "device xml" in query
+        assert "magprobes" in query
+        assert "magnetic probe" in query
+        assert "magnetics.bpol_probe" in query
+        assert "r z angle" in query
+
+    def test_build_device_xml_code_query_adds_code_specific_terms(self):
+        indexed_signals = [
+            (
+                0,
+                {
+                    "name": "PF coil 3 Turns per element",
+                    "data_source_name": "device_xml",
+                    "data_source_path": "pfcoils/3/turnsperelement",
+                },
+            )
+        ]
+
+        query = build_device_xml_context_query(
+            "device_xml:pfcoils", indexed_signals, for_code=True
+        )
+
+        assert "pfcoils" in query
+        assert "PF coil" in query
+        assert "pf_active.coil" in query
+        assert "EFIT" in query
+        assert "parser" in query
+
+    def test_build_device_xml_context_query_falls_back_for_unknown_section(self):
+        indexed_signals = [
+            (0, {"name": "Unknown geometry signal", "data_source_path": "other/x/y"})
+        ]
+
+        query = build_device_xml_context_query("device_xml:other", indexed_signals)
+
+        assert "JET" in query
+        assert "machine description" in query
+        assert "Unknown geometry signal" in query

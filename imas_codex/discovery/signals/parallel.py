@@ -67,6 +67,72 @@ logger = logging.getLogger(__name__)
 CLAIM_TIMEOUT_SECONDS = 300  # 5 minutes
 
 
+def build_device_xml_context_query(
+    group_key: str,
+    indexed_signals: list[tuple[int, dict]],
+    *,
+    for_code: bool = False,
+) -> str:
+    """Build a targeted semantic query for a device_xml signal group.
+
+    device_xml signals are grouped as ``device_xml:<section>`` where the section
+    names correspond to EFIT device XML sections such as ``magprobes`` or
+    ``pfcoils``. Using only signal names for semantic search is weak because the
+    names are generic geometry labels. This helper injects section metadata so
+    wiki/code searches target the relevant hardware domain.
+    """
+
+    from imas_codex.discovery.signals.scanners.device_xml import SECTION_METADATA
+
+    signal_names = " ".join(s.get("name") or "" for _, s in indexed_signals[:5]).strip()
+
+    if not group_key.startswith("device_xml:"):
+        return signal_names
+
+    section = group_key.split(":", 1)[1]
+    section_meta = SECTION_METADATA.get(section)
+
+    if not section_meta:
+        base_terms = ["JET", "device xml", "machine description", "geometry"]
+        if signal_names:
+            base_terms.append(signal_names)
+        return " ".join(base_terms)
+
+    label = section_meta.get("label", section)
+    imas_ids = section_meta.get("imas_ids", "")
+    system = section_meta.get("system", "")
+    field_terms = " ".join(section_meta.get("fields", {}).keys())
+    field_desc_terms = " ".join(
+        field.get("desc", "") for field in section_meta.get("fields", {}).values()
+    )
+
+    base_terms = [
+        "JET",
+        "device xml",
+        "machine description",
+        "geometry",
+        section,
+        label,
+    ]
+    if system:
+        base_terms.append(system)
+    if imas_ids:
+        base_terms.append(imas_ids)
+    if field_terms:
+        base_terms.append(field_terms)
+    if field_desc_terms:
+        base_terms.append(field_desc_terms)
+    if signal_names:
+        base_terms.append(signal_names)
+
+    if for_code:
+        base_terms.extend(["EFIT", "parser", "configuration", "coordinates"])
+    else:
+        base_terms.extend(["diagnostic", "hardware", "layout"])
+
+    return " ".join(term for term in base_terms if term)
+
+
 def get_checkpoint_dir() -> Path:
     """Get checkpoint directory for data discovery, creating if needed.
 
@@ -3201,11 +3267,8 @@ async def enrich_worker(
             subsystem = group_key[4:]
             signal_names = " ".join(s.get("name") or "" for _, s in indexed_signals[:5])
             query = f"JET JPF {subsystem} diagnostic {signal_names}"
-        elif group_key == "device_xml":
-            signal_names = " ".join(s.get("name") or "" for _, s in indexed_signals[:5])
-            query = (
-                f"JET machine description geometry coils probes sensors {signal_names}"
-            )
+        elif group_key.startswith("device_xml:"):
+            query = build_device_xml_context_query(group_key, indexed_signals)
         elif group_key.startswith("tree:"):
             tree = group_key[5:]
             signal_names = " ".join(
@@ -3256,8 +3319,10 @@ async def enrich_worker(
             query_text = f"JET {group_key[4:]} ppf {signal_names}"
         elif group_key.startswith("jpf:"):
             query_text = f"JET JPF {group_key[4:]} {signal_names}"
-        elif group_key == "device_xml":
-            query_text = f"JET geometry coils probes {signal_names}"
+        elif group_key.startswith("device_xml:"):
+            query_text = build_device_xml_context_query(
+                group_key, indexed_signals, for_code=True
+            )
         elif group_key.startswith("tree:"):
             query_text = f"{group_key[5:]} MDSplus {signal_names}"
         else:
