@@ -63,6 +63,7 @@ if TYPE_CHECKING:
 __all__ = [
     "DEFAULT_INITIAL_BACKOFF",
     "DEFAULT_MAX_BACKOFF",
+    "DEFAULT_MAX_INFRASTRUCTURE_RESTARTS",
     "DEFAULT_MAX_RESTARTS",
     "DEFAULT_RESTART_RESET_SECONDS",
     "OrphanRecoveryResult",
@@ -89,6 +90,7 @@ logger = logging.getLogger(__name__)
 
 # Default settings - can be overridden per worker
 DEFAULT_MAX_RESTARTS = 10  # Maximum restarts before giving up
+DEFAULT_MAX_INFRASTRUCTURE_RESTARTS = 20  # Max persistent infra failures
 DEFAULT_INITIAL_BACKOFF = 2.0  # Initial backoff on infrastructure error (seconds)
 DEFAULT_MAX_BACKOFF = 60.0  # Maximum backoff time (seconds)
 # If a worker runs successfully for this long before crashing again,
@@ -428,6 +430,7 @@ async def supervised_worker(
     wait_phases: list[PipelinePhase] | None = None,
     status_tracker: WorkerStatus | None = None,
     max_restarts: int = DEFAULT_MAX_RESTARTS,
+    max_infrastructure_restarts: int = DEFAULT_MAX_INFRASTRUCTURE_RESTARTS,
     initial_backoff: float = DEFAULT_INITIAL_BACKOFF,
     max_backoff: float = DEFAULT_MAX_BACKOFF,
     restart_reset_seconds: float = DEFAULT_RESTART_RESET_SECONDS,
@@ -458,6 +461,8 @@ async def supervised_worker(
             so they never block dependents.
         status_tracker: Optional WorkerStatus for live monitoring
         max_restarts: Maximum restarts before giving up
+        max_infrastructure_restarts: Maximum consecutive infrastructure
+            failures before giving up
         initial_backoff: Initial backoff delay in seconds
         max_backoff: Maximum backoff delay in seconds
         restart_reset_seconds: Seconds of successful operation before
@@ -492,6 +497,7 @@ async def supervised_worker(
                 return
 
     restart_count = 0
+    infra_restart_count = 0
     backoff = initial_backoff
 
     # Initialize status tracker if provided
@@ -499,7 +505,11 @@ async def supervised_worker(
         status_tracker.state = WorkerState.starting
         status_tracker.max_restarts = max_restarts
 
-    while not should_stop_fn() and restart_count < max_restarts:
+    while (
+        not should_stop_fn()
+        and restart_count < max_restarts
+        and infra_restart_count < max_infrastructure_restarts
+    ):
         run_start = time.time()
         try:
             if status_tracker:
@@ -525,27 +535,37 @@ async def supervised_worker(
             # restart budget — it was clearly making progress and this
             # is a new transient failure, not a crash loop.
             run_duration = time.time() - run_start
-            if run_duration >= restart_reset_seconds and restart_count > 0:
+            if (
+                run_duration >= restart_reset_seconds
+                and (restart_count > 0 or infra_restart_count > 0)
+            ):
                 logger.info(
                     "%s ran for %.0fs before error — resetting restart "
-                    "counter (was %d/%d)",
+                    "counters (app=%d/%d infra=%d/%d)",
                     worker_name,
                     run_duration,
                     restart_count,
                     max_restarts,
+                    infra_restart_count,
+                    max_infrastructure_restarts,
                 )
                 restart_count = 0
+                infra_restart_count = 0
                 backoff = initial_backoff
 
             is_infra = is_infrastructure_error(e)
 
-            # Infrastructure errors (Neo4j down, SSH unavailable) do NOT
-            # consume restart budget. They represent temporary service
-            # unavailability, not worker bugs. The worker backs off with
-            # exponential delay and retries indefinitely until the service
-            # recovers or stop is requested. Only application errors
-            # (bugs, unexpected exceptions) consume the restart budget.
-            if not is_infra:
+            # Infrastructure errors (Neo4j down, SSH unavailable) do not
+            # consume the application restart budget. They represent
+            # temporary service unavailability, not worker bugs. The worker
+            # backs off with exponential delay and retries until the service
+            # recovers, stop is requested, or the infrastructure failure
+            # budget is exhausted. Only application errors consume the
+            # application restart budget.
+            if is_infra:
+                infra_restart_count += 1
+            else:
+                infra_restart_count = 0
                 restart_count += 1
 
             # Update status tracker
@@ -555,10 +575,13 @@ async def supervised_worker(
                 status_tracker.last_error_time = time.time()
 
             if is_infra:
-                # Infrastructure error - backoff and retry indefinitely
+                # Infrastructure error - backoff and retry within the
+                # dedicated infrastructure failure budget.
                 logger.warning(
-                    "%s infrastructure error: %s. Backing off %.1fs...",
+                    "%s infrastructure error (%d/%d): %s. Backing off %.1fs...",
                     worker_name,
+                    infra_restart_count,
+                    max_infrastructure_restarts,
                     e,
                     backoff,
                 )
@@ -587,7 +610,15 @@ async def supervised_worker(
                 backoff = initial_backoff
 
     # Exceeded max restarts or stop requested
-    if restart_count >= max_restarts:
+    if infra_restart_count >= max_infrastructure_restarts:
+        logger.error(
+            "%s exceeded persistent infrastructure failure budget (%d), giving up",
+            worker_name,
+            max_infrastructure_restarts,
+        )
+        if status_tracker:
+            status_tracker.state = WorkerState.crashed
+    elif restart_count >= max_restarts:
         logger.error(
             "%s exceeded max restarts (%d), giving up",
             worker_name,
