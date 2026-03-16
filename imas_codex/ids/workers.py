@@ -449,7 +449,7 @@ async def context_worker(
                 )
                 on_progress(label, state.context_stats, [{"detail": label}])
 
-        _ids_progress("vector queries")
+        _ids_progress("subtree + filters")
         context = await asyncio.to_thread(
             gather_ids_context,
             state.facility,

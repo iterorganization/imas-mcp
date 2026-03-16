@@ -655,10 +655,31 @@ def gather_shared_context(
     except Exception:
         pass
 
+    # Per-source vector queries — run ONCE with NO IDS filter.
+    # Results are post-filtered by IDS prefix in gather_ids_context.
+    _emit(f"vector search ({len(source_descs)} sources)")
+    semantic_match_matrix: dict[str, list[dict[str, Any]]] = {}
+    if source_descs and embeddings is not None:
+        try:
+            semantic_match_matrix = compute_semantic_matches(
+                source_descs,
+                "",  # No IDS filter — get matches across ALL IDS
+                gc=gc,
+                k_per_source=20,
+                include_wiki=True,
+                include_code=True,
+                dd_version=dd_version,
+                on_progress=on_progress,
+                precomputed_embeddings=embeddings,
+            )
+        except Exception:
+            logger.debug("Semantic match matrix failed", exc_info=True)
+
     t_total = _time.monotonic()
     _emit(
-        f"{len(groups)} sources, {len(wiki_context)} wiki, "
-        f"{len(code_context)} code ({t_total - t0:.1f}s)"
+        f"{len(groups)} sources, {len(semantic_match_matrix)} matched, "
+        f"{len(wiki_context)} wiki, {len(code_context)} code "
+        f"({t_total - t0:.1f}s)"
     )
 
     return {
@@ -671,6 +692,7 @@ def gather_shared_context(
         "code_context": code_context,
         "dd_version": dd_version,
         "dd_cocos": dd_cocos,
+        "semantic_match_matrix": semantic_match_matrix,
     }
 
 
@@ -684,9 +706,9 @@ def gather_ids_context(
 ) -> dict[str, Any]:
     """Gather IDS-specific context using pre-computed shared data.
 
-    Uses pre-computed source embeddings from ``gather_shared_context``
-    to avoid redundant batch embedding.  Only the IDS-scoped vector
-    queries (filtered by ``ids_name``) run here.
+    Uses the pre-computed ``semantic_match_matrix`` from
+    ``gather_shared_context`` — no vector queries here.  Only cheap
+    graph lookups (subtree, existing mappings, clusters, COCOS).
     """
     import time as _time
 
@@ -696,17 +718,15 @@ def gather_ids_context(
 
     dd_version = shared["dd_version"]
     groups = shared["groups"]
-    source_descs = shared["source_descs"]
-    embeddings = shared["embeddings"]
     cluster_searcher = shared["cluster_searcher"]
 
     t0 = _time.monotonic()
 
     # IDS subtree
-    _emit(f"IDS subtree")
+    _emit("IDS subtree")
     subtree = fetch_imas_subtree(ids_name, gc=gc, dd_version=dd_version)
 
-    # Global semantic search (1 embed + 1 vector query)
+    # Global semantic search (1 embed + 1 vector query — cheap)
     semantic_hits: list[dict[str, Any]] = []
     try:
         semantic_hits = search_imas_semantic(
@@ -716,29 +736,21 @@ def gather_ids_context(
     except Exception:
         logger.warning("Semantic search unavailable")
 
-    # Per-source vector queries using PRE-COMPUTED embeddings
-    _emit(f"vector search ({len(source_descs)} sources)")
+    # Post-filter pre-computed match matrix by IDS prefix
+    _emit("filtering matches")
+    ids_prefix = f"{ids_name}/"
+    full_matrix = shared.get("semantic_match_matrix", {})
     semantic_match_matrix: dict[str, list[dict[str, Any]]] = {}
-    if source_descs and embeddings is not None:
-        try:
-            semantic_match_matrix = compute_semantic_matches(
-                source_descs,
-                ids_name,
-                gc=gc,
-                k_per_source=10,
-                include_wiki=True,
-                include_code=True,
-                dd_version=dd_version,
-                on_progress=on_progress,
-                precomputed_embeddings=embeddings,
-            )
-        except Exception:
-            logger.debug("Semantic match matrix failed")
+    for source_id, matches in full_matrix.items():
+        filtered = [
+            m for m in matches
+            if m["content_type"] != "imas"
+            or m["target_id"].startswith(ids_prefix)
+        ]
+        if filtered:
+            semantic_match_matrix[source_id] = filtered
 
-    t_vector = _time.monotonic()
-    _emit(f"vector search done ({t_vector - t0:.1f}s)")
-
-    # Build source_candidates from IMAS hits in the match matrix
+    # Build source_candidates from IMAS hits in the filtered matrix
     source_candidates: dict[str, list[dict[str, Any]]] = {}
     for source_id, matches in semantic_match_matrix.items():
         imas_hits = [
