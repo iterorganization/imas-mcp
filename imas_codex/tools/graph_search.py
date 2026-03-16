@@ -41,31 +41,31 @@ def _dd_version_clause(
     dd_version: int | None = None,
     params: dict[str, Any] | None = None,
 ) -> str:
-    """Return a Cypher WHERE fragment for DD major version filtering.
+    """Return a Cypher WHERE fragment for DD major version validity filtering.
 
     When dd_version is None, returns empty string (no filter).
-    Otherwise generates a clause ensuring the path was introduced in a
-    DD version with the given major prefix and not deprecated before the
-    latest version of that major line.
+
+    A path is **valid in DD major N** if:
+    - introduced in any version with major ≤ N
+    - NOT deprecated in any version with major ≤ N
 
     The DDVersion.id is a semver string like "3.42.2" or "4.0.0".
-    Filtering by major version uses string prefix matching on $dd_version_prefix.
+    Major version is extracted via ``toInteger(split(id, '.')[0])``.
 
-    If *params* dict is provided, adds ``dd_version_prefix`` to it.
+    If *params* dict is provided, adds ``dd_version`` to it.
     """
     if dd_version is None:
         return ""
-    prefix = f"{dd_version}."
     if params is not None:
-        params["dd_version_prefix"] = prefix
+        params["dd_version"] = dd_version
     return (
         f"AND EXISTS {{ "
         f"  MATCH ({alias})-[:INTRODUCED_IN]->(iv:DDVersion) "
-        f"  WHERE iv.id STARTS WITH $dd_version_prefix "
+        f"  WHERE toInteger(split(iv.id, '.')[0]) <= $dd_version "
         f"}} "
         f"AND NOT EXISTS {{ "
         f"  MATCH ({alias})-[:DEPRECATED_IN]->(dv:DDVersion) "
-        f"  WHERE dv.id STARTS WITH $dd_version_prefix "
+        f"  WHERE toInteger(split(dv.id, '.')[0]) <= $dd_version "
         f"}}"
     )
 
@@ -1075,7 +1075,7 @@ class GraphClustersTool:
         results = self._gc.query(
             f"""
             MATCH (p:IMASNode {{id: $path}})-[:IN_CLUSTER]->(c:IMASSemanticCluster)
-            {scope_filter}
+            WHERE true {scope_filter}
             OPTIONAL MATCH (member:IMASNode)-[:IN_CLUSTER]->(c)
             WHERE true {dd_clause}
             WITH c, collect(DISTINCT member.id) AS paths

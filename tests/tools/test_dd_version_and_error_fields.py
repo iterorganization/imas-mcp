@@ -71,16 +71,20 @@ async def test_version_context_includes_diagnostics():
     gc.query.return_value = [
         {
             "id": "core_profiles/profiles_1d/electrons/pressure",
-            "change_count": 2,
-            "notable_changes": [
-                {"version": "4.0.0", "type": "units", "summary": "Units updated"},
-                {"version": None, "type": None, "summary": None},
+            "introduced_in": "3.22.0",
+            "deprecated_in": None,
+            "change_count": 1,
+            "changes": [
+                {"version": "4.0.0", "change_type": "units", "semantic_type": "units",
+                 "old_value": "Pa", "new_value": "Pa"},
             ],
         },
         {
             "id": "equilibrium/time_slice/profiles_1d/psi",
+            "introduced_in": "3.22.0",
+            "deprecated_in": None,
             "change_count": 0,
-            "notable_changes": [],
+            "changes": [],
         },
     ]
     tool = VersionTool(gc)
@@ -100,5 +104,5 @@ async def test_version_context_includes_diagnostics():
     assert result["paths_without_changes"] == [
         "equilibrium/time_slice/profiles_1d/psi"
     ]
-    assert result["graph_change_nodes_seen"] == 2
+    assert result["graph_change_nodes_seen"] == 1
     assert result["not_found"] == ["fake/path"]
