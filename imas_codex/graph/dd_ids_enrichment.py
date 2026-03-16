@@ -24,6 +24,8 @@ from typing import TYPE_CHECKING, Any
 from pydantic import BaseModel, Field
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from imas_codex.graph import GraphClient
 
 logger = logging.getLogger(__name__)
@@ -186,6 +188,7 @@ def enrich_ids_nodes(
     model: str | None = None,
     batch_size: int = 30,
     force: bool = False,
+    on_items: "Callable[[list[dict], float], None] | None" = None,
 ) -> dict[str, Any]:
     """Enrich IDS nodes with LLM-generated descriptions and keywords.
 
@@ -199,6 +202,7 @@ def enrich_ids_nodes(
         model: LLM model for enrichment (defaults to language model)
         batch_size: IDS per LLM call
         force: Re-enrich all IDS regardless of hash
+        on_items: Optional callback for streaming enriched item labels
 
     Returns:
         Statistics dict with counts.
@@ -390,6 +394,17 @@ def enrich_ids_nodes(
                     updates=updates,
                 )
                 stats["enriched"] += len(updates)
+                if on_items:
+                    on_items(
+                        [
+                            {
+                                "primary_text": update["id"],
+                                "description": update["description"],
+                            }
+                            for update in updates
+                        ],
+                        0.0,
+                    )
 
         except Exception as e:
             logger.error(f"Error enriching IDS batch: {e}")
@@ -406,6 +421,7 @@ def embed_ids_nodes(
     client: GraphClient,
     *,
     force_reembed: bool = False,
+    on_items: "Callable[[list[dict], float], None] | None" = None,
 ) -> dict[str, int]:
     """Generate embeddings for enriched IDS nodes.
 
@@ -504,6 +520,11 @@ def embed_ids_nodes(
         batch=batch_data,
     )
     stats["updated"] = len(to_embed)
+    if on_items and batch_data:
+        on_items(
+            [{"primary_text": item["id"]} for item in batch_data],
+            0.0,
+        )
 
     logger.info(
         f"IDS embeddings: {stats['updated']} updated, "

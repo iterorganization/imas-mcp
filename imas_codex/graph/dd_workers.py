@@ -94,6 +94,12 @@ class DDBuildState(DiscoveryStateBase):
     # Accumulated cost from prior builds (queried from graph)
     accumulated_cost: float = 0.0
 
+    # Auxiliary IDS / identifier enrichment and embedding run once per build
+    aux_enrichment_done: bool = False
+    aux_embedding_done: bool = False
+    aux_enrichment_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
+    aux_embedding_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
+
     # Per-phase progress (observed by display)
     extract_stats: WorkerStats = field(default_factory=WorkerStats)
     build_stats: WorkerStats = field(default_factory=WorkerStats)
@@ -426,6 +432,8 @@ async def enrich_worker(state: DDBuildState, **_kwargs) -> None:
             wlog.exception("Error enriching batch, releasing claims")
             await asyncio.to_thread(release_enrichment_claims, path_ids)
 
+    await _run_aux_enrichment(state)
+
     wlog.info(
         "Enrichment complete: %d LLM, %d template",
         state.stats.get("enriched_llm", 0),
@@ -512,6 +520,8 @@ async def embed_worker(state: DDBuildState, **_kwargs) -> None:
         except Exception:
             wlog.exception("Error embedding batch, releasing claims")
             await asyncio.to_thread(release_embedding_claims, path_ids)
+
+    await _run_aux_embedding(state)
 
     wlog.info(
         "Embedding complete: %d updated",
@@ -814,6 +824,99 @@ async def _embed_batch(
         state.embed_stats.stream_queue.add(stream_items, last_batch_time=0.0)
 
     return path_ids
+
+
+async def _run_aux_enrichment(state: DDBuildState) -> None:
+    """Run IDS and identifier enrichment once per DD build."""
+    async with state.aux_enrichment_lock:
+        if state.aux_enrichment_done or state.dry_run:
+            return
+
+        loop = asyncio.get_running_loop()
+
+        def _on_items(items: list[dict], batch_time: float) -> None:
+            loop.call_soon_threadsafe(
+                lambda: state.enrich_stats.stream_queue.add(
+                    items,
+                    last_batch_time=batch_time,
+                )
+            )
+
+        def _run() -> tuple[dict[str, Any], dict[str, Any]]:
+            from imas_codex.graph.client import GraphClient
+            from imas_codex.graph.dd_identifier_enrichment import (
+                enrich_identifier_schemas,
+            )
+            from imas_codex.graph.dd_ids_enrichment import enrich_ids_nodes
+            from imas_codex.settings import get_model
+
+            with GraphClient() as client:
+                ident_stats = enrich_identifier_schemas(
+                    client,
+                    model=get_model("language"),
+                    force=state.skip_enrichment_hash,
+                    on_items=_on_items,
+                )
+                ids_stats = enrich_ids_nodes(
+                    client,
+                    model=get_model("language"),
+                    force=state.skip_enrichment_hash,
+                    on_items=_on_items,
+                )
+            return ident_stats, ids_stats
+
+        ident_stats, ids_stats = await asyncio.to_thread(_run)
+        state.stats["identifier_schemas_enriched"] = ident_stats.get("enriched", 0)
+        state.stats["ids_enriched"] = ids_stats.get("enriched", 0)
+        state.stats["identifier_schemas_cached"] = ident_stats.get("cached", 0)
+        state.stats["ids_cached"] = ids_stats.get("cached", 0)
+        state.enrich_stats.cost += ident_stats.get("cost", 0.0)
+        state.enrich_stats.cost += ids_stats.get("cost", 0.0)
+        state.aux_enrichment_done = True
+
+
+async def _run_aux_embedding(state: DDBuildState) -> None:
+    """Run IDS and identifier embedding once per DD build."""
+    async with state.aux_embedding_lock:
+        if state.aux_embedding_done or state.dry_run:
+            return
+
+        loop = asyncio.get_running_loop()
+
+        def _on_items(items: list[dict], batch_time: float) -> None:
+            loop.call_soon_threadsafe(
+                lambda: state.embed_stats.stream_queue.add(
+                    items,
+                    last_batch_time=batch_time,
+                )
+            )
+
+        def _run() -> tuple[dict[str, int], dict[str, int]]:
+            from imas_codex.graph.client import GraphClient
+            from imas_codex.graph.dd_identifier_enrichment import (
+                embed_identifier_schemas,
+            )
+            from imas_codex.graph.dd_ids_enrichment import embed_ids_nodes
+
+            with GraphClient() as client:
+                ident_stats = embed_identifier_schemas(
+                    client,
+                    force_reembed=state.skip_embedding_hash,
+                    on_items=_on_items,
+                )
+                ids_stats = embed_ids_nodes(
+                    client,
+                    force_reembed=state.skip_embedding_hash,
+                    on_items=_on_items,
+                )
+            return ident_stats, ids_stats
+
+        ident_stats, ids_stats = await asyncio.to_thread(_run)
+        state.stats["identifier_embeddings_updated"] = ident_stats.get("updated", 0)
+        state.stats["identifier_embeddings_cached"] = ident_stats.get("cached", 0)
+        state.stats["ids_embeddings_updated"] = ids_stats.get("updated", 0)
+        state.stats["ids_embeddings_cached"] = ids_stats.get("cached", 0)
+        state.aux_embedding_done = True
 
 
 async def run_dd_build_engine(
