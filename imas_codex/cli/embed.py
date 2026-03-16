@@ -527,13 +527,19 @@ Nice=5
 WantedBy=default.target
 """
         service_file.write_text(service_content)
-        subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
-        subprocess.run(
-            ["systemctl", "--user", "enable", "imas-codex-embed"], check=True
-        )
-        click.echo("✓ Service installed and enabled")
-        click.echo("  Start: systemctl --user start imas-codex-embed")
-        click.echo("  Or:    imas-codex embed service start")
+        try:
+            subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
+            subprocess.run(
+                ["systemctl", "--user", "enable", "imas-codex-embed"], check=True
+            )
+            click.echo("✓ Service installed and enabled")
+            click.echo("  Start: systemctl --user start imas-codex-embed")
+            click.echo("  Or:    imas-codex embed service start")
+        except subprocess.CalledProcessError:
+            click.echo("✓ Service file written but systemd --user unavailable")
+            click.echo("  (No D-Bus session bus — common on HPC login nodes)")
+            click.echo("  Use instead: imas-codex embed start")
+            click.echo("  This will auto-deploy via nohup fallback.")
 
     elif action == "uninstall":
         if not service_file.exists():
@@ -623,6 +629,23 @@ def embed_stop() -> None:
         click.echo("Stopped login embed service")
         stopped = True
     except subprocess.CalledProcessError:
+        pass
+
+    # Kill login-node nohup embed processes (non-systemd fallback)
+    try:
+        from imas_codex.cli.services import _kill_login_embed
+
+        result = _run_remote(
+            'pgrep -u $USER -f "imas-codex embed" 2>/dev/null || true',
+            timeout=10,
+        )
+        pids = [p.strip() for p in result.strip().split("\n") if p.strip().isdigit()]
+        if pids:
+            _kill_login_embed()
+            pid_list = " ".join(pids)
+            click.echo(f"Stopped login embed process(es) (PIDs: {pid_list})")
+            stopped = True
+    except Exception:
         pass
 
     # Kill orphan embed processes on the compute node.
