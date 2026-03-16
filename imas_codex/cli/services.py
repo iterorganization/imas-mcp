@@ -846,7 +846,13 @@ def _kill_embed_orphans(node: str) -> None:
     )
     try:
         _run_on_node(node, kill_cmd, timeout=15)
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+    except subprocess.TimeoutExpired:
+        click.echo(
+            f"Warning: could not reach {node} to kill orphans "
+            f"(SSH timed out after 15s — node may be down)",
+            err=True,
+        )
+    except subprocess.CalledProcessError:
         pass
 
 
