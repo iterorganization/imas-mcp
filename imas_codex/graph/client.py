@@ -962,8 +962,5 @@ class GraphClient:
         # Check nested cause
         cause = getattr(exc, "__cause__", None)
         if isinstance(cause, Exception) and cause is not exc:
-            if GraphClient._is_connection_error(cause):
-                return True
-        if isinstance(cause, ConnectionError | OSError):
-            return True
+            return GraphClient._is_connection_error(cause)
         return False
