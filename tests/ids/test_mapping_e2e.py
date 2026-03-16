@@ -787,6 +787,8 @@ class TestMapCLI:
         result = runner.invoke(map_cmd, ["--help"])
         assert result.exit_code == 0
         assert "IMAS signal mapping pipeline" in result.output
+        assert "magnetic_field_systems" in result.output
+        assert "Union of filters" in result.output
 
     def test_map_status_help(self):
         from imas_codex.cli.map import map_cmd
@@ -879,6 +881,64 @@ class TestMapCLI:
         result = runner.invoke(map_cmd, ["jet", "-i", "pf_active"])
         # Error is caught gracefully in multi-IDS loop, summary shows no success
         assert "No IDS were successfully mapped" in result.output or result.exit_code == 0
+
+
+class TestDiscoverMappableIds:
+    def test_union_of_domain_and_ids_filters(self):
+        from unittest.mock import MagicMock
+
+        from imas_codex.ids.tools import discover_mappable_ids
+
+        gc = MagicMock()
+        gc.query.side_effect = [
+            [
+                {"domain": "equilibrium", "cnt": 20},
+                {"domain": "magnetic_field_systems", "cnt": 132},
+                {"domain": "plasma_control", "cnt": 64},
+            ],
+            [
+                {
+                    "ids_name": "equilibrium",
+                    "domains": ["equilibrium"],
+                },
+                {
+                    "ids_name": "magnetics",
+                    "domains": ["equilibrium"],
+                },
+            ],
+            [
+                {
+                    "ids_name": "pf_active",
+                    "domains": [
+                        "magnetic_field_systems",
+                        "plasma_control",
+                    ],
+                },
+            ],
+        ]
+
+        result = discover_mappable_ids(
+            "jet",
+            gc=gc,
+            domains=["equilibrium"],
+            ids_filter=["pf_active"],
+        )
+
+        assert result["available_domains"] == [
+            "equilibrium",
+            "magnetic_field_systems",
+            "plasma_control",
+        ]
+        assert [row["ids_name"] for row in result["ids_targets"]] == [
+            "equilibrium",
+            "magnetics",
+            "pf_active",
+        ]
+        assert result["ids_targets"][-1]["domains"] == [
+            "magnetic_field_systems",
+            "plasma_control",
+        ]
+        assert result["total_sources"] == 216
 
 
 # ---------------------------------------------------------------------------

@@ -1,9 +1,9 @@
 """CLI commands for IMAS signal mapping pipeline.
 
 Usage:
-    imas-codex imas map FACILITY                   # Map all achievable IDS
-    imas-codex imas map FACILITY -d magnetics      # Map IDS in a physics domain
-    imas-codex imas map FACILITY -i pf_active      # Map specific IDS
+    imas-codex imas map FACILITY                                # Map all achievable IDS
+    imas-codex imas map FACILITY -d magnetic_field_systems      # Map IDS in a physics domain
+    imas-codex imas map FACILITY -i pf_active                   # Map specific IDS
     imas-codex imas map status FACILITY [IDS_NAME]
     imas-codex imas map show FACILITY IDS_NAME
     imas-codex imas map validate FACILITY IDS_NAME
@@ -51,10 +51,10 @@ def map_cmd() -> None:
 
     \b
     Running Mappings:
-      imas-codex imas map FACILITY                  Map all achievable IDS
-      imas-codex imas map FACILITY -d magnetics     Map IDS in a physics domain
-      imas-codex imas map FACILITY -i pf_active     Map specific IDS
-      imas-codex imas map FACILITY -d mhd -d magnetics  Multiple domains
+      imas-codex imas map FACILITY                              Map all achievable IDS
+      imas-codex imas map FACILITY -d magnetic_field_systems     Map IDS in a domain
+      imas-codex imas map FACILITY -i pf_active                  Map specific IDS
+      imas-codex imas map FACILITY -d equilibrium -i magnetics   Union of filters
 
     \b
     Management Commands:
@@ -153,18 +153,18 @@ def map_run(
     \b
     Scoping:
       No flags         Map all achievable IDS from all enriched signal sources
-      --domain/-d      Map only IDS in the specified physics domain(s)
-      --ids/-i         Map specific IDS name(s)
-      Both             Map specified IDS, filtered to specified domains
+      --domain/-d      Map IDS whose IMASNodes touch these physics domains
+      --ids/-i         Map specific IDS name(s) directly
+      Both             Union of both result sets
 
     \b
     Examples:
-      imas-codex imas map jet                          Map all achievable IDS
-      imas-codex imas map jet -d magnetics             Map magnetics domain only
-      imas-codex imas map jet -i pf_active             Map specific IDS
-      imas-codex imas map jet -d magnetics -d mhd      Multiple domains
-      imas-codex imas map jet -c 2.0 --time 10         Budget and time limits
-      imas-codex imas map jet --clear -i pf_active     Clear and remap
+      imas-codex imas map jet                                    Map all achievable IDS
+      imas-codex imas map jet -d magnetic_field_systems           Map IDS in domain
+      imas-codex imas map jet -i pf_active                        Map specific IDS
+      imas-codex imas map jet -d equilibrium -i magnetics         Union of filters
+      imas-codex imas map jet -c 2.0 --time 10                    Budget and time limits
+      imas-codex imas map jet --clear -i pf_active                Clear and remap
     """
     import time as time_mod
 
@@ -206,16 +206,15 @@ def map_run(
         raise SystemExit(1)
 
     if not targets:
-        if domains:
+        if domains or ids_names:
+            parts = []
+            if domains:
+                parts.append(f"domains={list(domains)}")
+            if ids_names:
+                parts.append(f"ids={list(ids_names)}")
             click.echo(
-                f"No IDS found matching domains {list(domains)} "
+                f"No IDS found matching {', '.join(parts)} "
                 f"for {facility}. Available domains: {available}",
-                err=True,
-            )
-        elif ids_names:
-            click.echo(
-                f"No IDS found matching {list(ids_names)} "
-                f"with available signal sources for {facility}.",
                 err=True,
             )
         else:

@@ -378,15 +378,17 @@ def discover_mappable_ids(
 ) -> dict[str, Any]:
     """Discover IDS targets achievable from available signal sources.
 
-    Computes the union of physics domains from enriched signal sources,
-    then finds IDS names whose IMASNode paths intersect those domains.
+    Filtering uses union semantics:
+      --domain selects IDS whose IMASNodes touch those physics domains
+      --ids selects those IDS names directly
+      Both flags produce the union of both result sets
+      Neither flag discovers all IDS with matching signal source domains
 
     Args:
         facility: Facility identifier.
         gc: GraphClient instance.
-        domains: Restrict to these physics domains. If None, uses all
-            domains present in enriched signal sources.
-        ids_filter: Restrict to these specific IDS names.
+        domains: Select IDS in these physics domains (union with ids_filter).
+        ids_filter: Select these IDS names directly (union with domains).
         dd_version: DD major version filter.
 
     Returns:
@@ -420,57 +422,106 @@ def discover_mappable_ids(
             "total_sources": 0,
         }
 
-    # Apply --domain filter
-    active_domains = available_domains
-    if domains:
-        active_domains = [d for d in domains if d in available_domains]
-        if not active_domains:
-            return {
-                "available_domains": available_domains,
-                "ids_targets": [],
-                "total_sources": 0,
-            }
-
-    # Step 2: Find IDS names whose IMASNode paths have matching domains
     from imas_codex.tools.graph_search import _dd_version_clause
 
     dd_params: dict[str, Any] = {}
     dd_clause = _dd_version_clause("p", dd_version, dd_params)
 
-    ids_filter_clause = ""
+    # Step 2: Build IDS target set via union of --domain and --ids filters
+    ids_by_name: dict[str, dict] = {}
+
+    # Branch A: --domain selects IDS whose IMASNodes touch those domains
+    if domains:
+        # Validate requested domains exist in signal sources
+        valid_domains = [d for d in domains if d in available_domains]
+        if valid_domains:
+            domain_rows = gc.query(
+                f"""
+                MATCH (p:IMASNode)
+                WHERE p.physics_domain IN $filter_domains
+                  AND p.ids IS NOT NULL
+                  AND p.ids <> ''
+                  {dd_clause}
+                WITH DISTINCT p.ids AS ids_name,
+                     collect(DISTINCT p.physics_domain) AS domains
+                RETURN ids_name, domains
+                ORDER BY ids_name
+                """,
+                filter_domains=valid_domains,
+                **dd_params,
+            )
+            for r in domain_rows:
+                ids_by_name[r["ids_name"]] = {
+                    "ids_name": r["ids_name"],
+                    "domains": set(r["domains"]),
+                }
+
+    # Branch B: --ids selects IDS directly, resolving their domains
     if ids_filter:
-        ids_filter_clause = "AND p.ids IN $ids_filter"
-        dd_params["ids_filter"] = ids_filter
+        ids_rows = gc.query(
+            f"""
+            MATCH (p:IMASNode)
+            WHERE p.ids IN $ids_filter
+              AND p.physics_domain IS NOT NULL
+              AND p.physics_domain <> ''
+              {dd_clause}
+            WITH DISTINCT p.ids AS ids_name,
+                 collect(DISTINCT p.physics_domain) AS domains
+            RETURN ids_name, domains
+            ORDER BY ids_name
+            """,
+            ids_filter=ids_filter,
+            **dd_params,
+        )
+        for r in ids_rows:
+            name = r["ids_name"]
+            if name in ids_by_name:
+                ids_by_name[name]["domains"] |= set(r["domains"])
+            else:
+                ids_by_name[name] = {
+                    "ids_name": name,
+                    "domains": set(r["domains"]),
+                }
 
-    ids_rows = gc.query(
-        f"""
-        MATCH (p:IMASNode)
-        WHERE p.physics_domain IN $active_domains
-          AND p.ids IS NOT NULL
-          AND p.ids <> ''
-          {dd_clause}
-          {ids_filter_clause}
-        WITH DISTINCT p.ids AS ids_name,
-             collect(DISTINCT p.physics_domain) AS domains
-        RETURN ids_name, domains
-        ORDER BY ids_name
-        """,
-        active_domains=active_domains,
-        **dd_params,
-    )
+    # Branch C: no filters — discover all IDS from available domains
+    if not domains and not ids_filter:
+        all_rows = gc.query(
+            f"""
+            MATCH (p:IMASNode)
+            WHERE p.physics_domain IN $available_domains
+              AND p.ids IS NOT NULL
+              AND p.ids <> ''
+              {dd_clause}
+            WITH DISTINCT p.ids AS ids_name,
+                 collect(DISTINCT p.physics_domain) AS domains
+            RETURN ids_name, domains
+            ORDER BY ids_name
+            """,
+            available_domains=available_domains,
+            **dd_params,
+        )
+        for r in all_rows:
+            ids_by_name[r["ids_name"]] = {
+                "ids_name": r["ids_name"],
+                "domains": set(r["domains"]),
+            }
 
+    # Step 3: Compute source counts and build targets list
     ids_targets = []
-    for r in ids_rows:
-        ids_name = r["ids_name"]
-        ids_domains = r["domains"]
-        source_count = sum(source_counts.get(d, 0) for d in ids_domains)
+    all_domains: set[str] = set()
+    for entry in sorted(ids_by_name.values(), key=lambda e: e["ids_name"]):
+        ds = sorted(entry["domains"])
+        source_count = sum(source_counts.get(d, 0) for d in ds)
         ids_targets.append({
-            "ids_name": ids_name,
-            "domains": ids_domains,
+            "ids_name": entry["ids_name"],
+            "domains": ds,
             "source_count": source_count,
         })
+        all_domains.update(ds)
 
-    total_sources = sum(source_counts.get(d, 0) for d in active_domains)
+    total_sources = sum(
+        source_counts.get(d, 0) for d in all_domains & set(available_domains)
+    )
 
     return {
         "available_domains": available_domains,
