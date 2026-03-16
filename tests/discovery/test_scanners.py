@@ -9,6 +9,7 @@ from imas_codex.discovery.signals.scanners.base import (
     ScanResult,
     _registry,
     get_scanner,
+    get_scanners_for_facility,
     list_scanners,
     register_scanner,
 )
@@ -26,6 +27,7 @@ class TestScannerRegistry:
         assert "mdsplus" in scanners
         assert "imas" in scanners
         assert "device_xml" in scanners
+        assert "wiki" not in scanners
 
     def test_get_scanner_returns_instance(self):
         """get_scanner returns a scanner with correct type."""
@@ -56,6 +58,22 @@ class TestScannerRegistry:
 
 class TestGetScannersForFacility:
     """Test facility-based scanner dispatch."""
+
+    def test_wiki_context_is_not_auto_added_as_scanner(self, monkeypatch):
+        """Facilities with wiki sites only get configured data_system scanners."""
+        from imas_codex.discovery.signals.scanners import base
+
+        monkeypatch.setattr(
+            "imas_codex.discovery.base.facility.get_facility",
+            lambda facility: {
+                "data_systems": {"mdsplus": {}},
+                "wiki_sites": ["https://example.test/wiki"],
+            },
+        )
+
+        scanners = get_scanners_for_facility("jet")
+
+        assert [scanner.scanner_type for scanner in scanners] == ["mdsplus"]
 
     def test_tcv_returns_tdi(self, monkeypatch):
         """TCV facility should dispatch TDI scanner."""

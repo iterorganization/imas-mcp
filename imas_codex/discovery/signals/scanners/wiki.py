@@ -249,6 +249,19 @@ def _build_wiki_context(
     return context
 
 
+def load_wiki_context(
+    facility: str,
+) -> dict[str, dict[str, str]]:
+    """Load per-signal wiki metadata for enrichment context.
+
+    This is intentionally separate from scanner selection. The signals pipeline
+    uses wiki content as supporting metadata even when the user scopes the run
+    to non-wiki scanners.
+    """
+
+    return _build_wiki_context(facility)
+
+
 def fetch_semantic_wiki_context(
     facility: str,
     query_text: str,

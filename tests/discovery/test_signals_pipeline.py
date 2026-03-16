@@ -23,6 +23,7 @@ import pytest
 
 from imas_codex.discovery.signals.parallel import (
     DataDiscoveryState,
+    check_worker,
     run_parallel_data_discovery,
 )
 
@@ -1029,40 +1030,46 @@ class TestPipelineE2E:
         """enrich_only mode pre-marks scan phases done and only enriches.
 
         This tests that when enrich_only=True, no scan/extract/epoch workers
-        are started and the pipeline only runs enrichment + embed.
+        are started, wiki context is preloaded, and only enrich/embed workers
+        are wired into the engine.
         """
         patches = self._build_patches()
+        patches["get_facility"] = patch(
+            "imas_codex.discovery.base.facility.get_facility",
+            return_value={
+                **FACILITY_CONFIG,
+                "wiki_sites": ["https://example.test/wiki"],
+            },
+        )
         mocks = {}
         for name, p in patches.items():
             mocks[name] = p.start()
 
-        # Mock the enrich-specific functions
-        enrich_claim_count = {"value": 0}
+        engine_calls = []
 
-        def mock_claim_enrich(facility, limit=10):
-            enrich_claim_count["value"] += 1
-            if enrich_claim_count["value"] == 1:
-                return [
-                    {
-                        "id": f"{FACILITY}:magnetics/top.node_000",
-                        "accessor": "NODE_000",
-                        "data_source_name": "magnetics",
-                    }
-                ]
-            return []
+        async def mock_run_engine(state, workers, **kwargs):
+            engine_calls.append(
+                {
+                    "scanner_types": state.scanner_types,
+                    "wiki_context": state.wiki_context,
+                    "worker_names": [worker.name for worker in workers],
+                }
+            )
+            state.enrich_phase.mark_done()
+            state.check_phase.mark_done()
 
         with (
             patch(
-                "imas_codex.discovery.signals.parallel.claim_signals_for_enrichment",
-                side_effect=mock_claim_enrich,
+                "imas_codex.discovery.signals.parallel.run_discovery_engine",
+                side_effect=mock_run_engine,
             ),
             patch(
-                "imas_codex.discovery.signals.parallel.has_pending_enrich_work",
-                return_value=False,
-            ),
+                "imas_codex.discovery.signals.scanners.wiki.load_wiki_context",
+                return_value={"\\MAGNETICS::TOP.NODE_000": {"description": "wiki"}},
+            ) as load_wiki_context,
             patch(
-                "imas_codex.discovery.signals.parallel.has_pending_check_work",
-                return_value=False,
+                "imas_codex.discovery.signals.parallel.individualize_source_descriptions",
+                new=AsyncMock(return_value=0),
             ),
             patch(
                 "imas_codex.discovery.base.embed_worker.embed_description_worker",
@@ -1086,6 +1093,64 @@ class TestPipelineE2E:
         assert result["extract_count"] == 0
         assert result["units_count"] == 0
         assert result["promote_count"] == 0
+        assert engine_calls == [
+            {
+                "scanner_types": ["mdsplus"],
+                "wiki_context": {"\\MAGNETICS::TOP.NODE_000": {"description": "wiki"}},
+                "worker_names": ["enrich", "embed"],
+            }
+        ]
+        load_wiki_context.assert_called_once_with(FACILITY)
+
+    @pytest.mark.anyio
+    @pytest.mark.timeout(30)
+    async def test_check_worker_passes_scanner_scope_to_claims(self):
+        """Check worker claims are scoped to the requested scanners."""
+        state = DataDiscoveryState(
+            facility=FACILITY,
+            ssh_host=SSH_HOST,
+            facility_config=FACILITY_CONFIG,
+            scanner_types=["ppf"],
+            reference_shot=5000,
+            cost_limit=10.0,
+        )
+
+        claim_calls = []
+
+        def mock_claim_check(
+            facility,
+            batch_size=5,
+            reference_shot=None,
+            scanner_types=None,
+        ):
+            claim_calls.append(
+                {
+                    "facility": facility,
+                    "batch_size": batch_size,
+                    "reference_shot": reference_shot,
+                    "scanner_types": scanner_types,
+                }
+            )
+            state.stop_requested = True
+            return []
+
+        with (
+            patch(
+                "imas_codex.discovery.signals.parallel.claim_signals_for_check",
+                side_effect=mock_claim_check,
+            ),
+            patch("asyncio.sleep", new=AsyncMock()),
+        ):
+            await check_worker(state)
+
+        assert claim_calls == [
+            {
+                "facility": FACILITY,
+                "batch_size": 20,
+                "reference_shot": 5000,
+                "scanner_types": ["ppf"],
+            }
+        ]
 
     @pytest.mark.anyio
     @pytest.mark.timeout(30)
