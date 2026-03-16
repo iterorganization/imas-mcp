@@ -432,31 +432,20 @@ RETURN cl.label AS cluster, collect(path.id) AS cluster_peers
 This reduces result redundancy when a query like "electron temperature"
 returns 10 paths from the same temperature measurement cluster.
 
-#### 4.3 Version-Validity Materialization (Optional)
+#### 4.3 Version-Validity Materialization — **Declined**
 
-During graph build, compute `valid_from_major` and `valid_to_major` properties
-on each `IMASNode` derived from `INTRODUCED_IN` and `DEPRECATED_IN` edges.
-This would allow simple property-based filtering:
+~~During graph build, compute `valid_from_major` and `valid_to_major` properties
+on each `IMASNode` derived from `INTRODUCED_IN` and `DEPRECATED_IN` edges.~~
 
-```cypher
-WHERE p.valid_from_major <= $dd_version
-  AND (p.valid_to_major IS NULL OR p.valid_to_major > $dd_version)
-```
+**Decision:** This optimization was evaluated and declined because:
+1. **Redundant data** — the INTRODUCED_IN/DEPRECATED_IN relationships already provide this information with 100% coverage
+2. **Risk of divergence** — two sources of truth (property vs relationship) could get out of sync
+3. **Marginal benefit** — 61K nodes is not large enough for relationship traversal to be a bottleneck
+4. **Build complexity** — requires migration for existing data
 
-Benefits:
-- Faster queries (property index vs. relationship traversal + string split)
-- Simpler Cypher
-- Consistent with the dual property+relationship schema design
-
-Implementation:
-- Add `valid_from_major` and `valid_to_major` slots to `IMASNode` in
-  `imas_dd.yaml`
-- Compute during `_batch_create_path_nodes` and `_batch_mark_paths_deprecated`
-- Add range indexes
-- Migrate `_dd_version_clause` to use properties instead of relationships
-
-This is Phase 4 because the relationship-based fix (Phase 1) is correct
-and sufficient. Materialization is a performance/clarity optimization.
+The relationship-based `_dd_version_clause` (Phase 1) is correct and sufficient.
+Neo4j is efficient at relationship traversal; the `toInteger(split())` overhead
+is negligible for this workload.
 
 ---
 

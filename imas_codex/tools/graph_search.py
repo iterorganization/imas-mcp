@@ -1718,7 +1718,8 @@ class GraphStructureTool:
         "Export full IDS structure with documentation, units, and types. "
         "Returns all paths in an IDS with their complete metadata. "
         "ids_name (required): IDS name (e.g. 'equilibrium'). "
-        "leaf_only: If true, return only leaf nodes (default false)."
+        "leaf_only: If true, return only leaf nodes (default false). "
+        "include_errors: If true, include error fields alongside data paths (default false)."
     )
     @handle_errors("export_imas_ids")
     async def export_imas_ids(
@@ -1726,10 +1727,12 @@ class GraphStructureTool:
         ids_name: str,
         leaf_only: bool = False,
         dd_version: int | None = None,
+        include_errors: bool = False,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
         """Export full IDS structure with documentation, units, and types."""
-        dd_params: dict[str, Any] = {"ids_name": ids_name}
+        categories = ["data", "error"] if include_errors else ["data"]
+        dd_params: dict[str, Any] = {"ids_name": ids_name, "categories": categories}
         dd_clause = _dd_version_clause("p", dd_version, dd_params)
 
         leaf_filter = f"AND {_leaf_data_type_clause('p')}" if leaf_only else ""
@@ -1738,7 +1741,7 @@ class GraphStructureTool:
             f"""
             MATCH (p:IMASNode)
             WHERE p.ids = $ids_name
-            AND p.node_category = 'data'
+            AND p.node_category IN $categories
             {leaf_filter} {dd_clause}
             OPTIONAL MATCH (p)-[:HAS_UNIT]->(u:Unit)
             OPTIONAL MATCH (p)-[:HAS_COORDINATE]->(coord:IMASCoordinateSpec)
@@ -1768,7 +1771,8 @@ class GraphStructureTool:
     @mcp_tool(
         "Export all IMAS paths in a physics domain, grouped by IDS. "
         "domain (required): Physics domain name (e.g. 'magnetics', 'equilibrium'). "
-        "ids_filter: Optional IDS name filter."
+        "ids_filter: Optional IDS name filter. "
+        "include_errors: If true, include error fields alongside data paths (default false)."
     )
     @handle_errors("export_imas_domain")
     async def export_imas_domain(
@@ -1776,6 +1780,7 @@ class GraphStructureTool:
         domain: str,
         ids_filter: str | None = None,
         dd_version: int | None = None,
+        include_errors: bool = False,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
         """Export all IMAS paths in a physics domain, grouped by IDS."""
@@ -1792,7 +1797,8 @@ class GraphStructureTool:
                 "error": f"No physics domain found matching '{domain}'.",
             }
 
-        dd_params: dict[str, Any] = {"domains": resolved_domains}
+        categories = ["data", "error"] if include_errors else ["data"]
+        dd_params: dict[str, Any] = {"domains": resolved_domains, "categories": categories}
         dd_clause = _dd_version_clause("p", dd_version, dd_params)
 
         ids_clause = ""
@@ -1804,7 +1810,7 @@ class GraphStructureTool:
             f"""
             MATCH (p:IMASNode)
             WHERE p.physics_domain IN $domains
-            AND p.node_category = 'data'
+            AND p.node_category IN $categories
             {ids_clause} {dd_clause}
             OPTIONAL MATCH (p)-[:HAS_UNIT]->(u:Unit)
             RETURN p.id AS path,
