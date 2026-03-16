@@ -404,7 +404,12 @@ async def context_worker(
     on_progress: Callable | None = None,
     **_kwargs,
 ) -> None:
-    """Gather context for ALL IDS targets. One-shot per IDS, cached."""
+    """Gather context for ALL IDS targets with shared embedding.
+
+    Two phases:
+    1. Shared: batch embed all sources, wiki/code context (ONCE)
+    2. Per-IDS: vector queries using pre-computed embeddings (fast)
+    """
     wlog = WorkerLogAdapter(logger, worker_name="context_worker")
     wlog.info(
         "Gathering context for %d IDS targets: %s",
@@ -412,57 +417,59 @@ async def context_worker(
         state.target_ids_list,
     )
 
-    from imas_codex.ids.mapping import gather_context
+    from imas_codex.ids.mapping import gather_ids_context, gather_shared_context
 
-    total_sources = 0
-    for ids_name in state.target_ids_list:
+    def _shared_progress(detail: str) -> None:
+        if on_progress:
+            on_progress(detail, state.context_stats, [{"detail": detail}])
+
+    # Phase 1: Shared context (sources, embeddings, wiki, code) — done ONCE
+    shared = await asyncio.to_thread(
+        gather_shared_context,
+        state.facility,
+        state.target_ids_list,
+        gc=GraphClient(),
+        dd_version=state.dd_major,
+        on_progress=_shared_progress,
+    )
+
+    state.sources_total = len(shared["groups"])
+
+    # Phase 2: Per-IDS context (vector queries with pre-computed embeddings)
+    for i, ids_name in enumerate(state.target_ids_list):
         if state.should_stop():
             break
 
-        if on_progress:
-            on_progress(f"gathering {ids_name}", state.context_stats, [
-                {"detail": f"querying context for {ids_name}"}
-            ])
-
-        def _context_progress(detail: str) -> None:
+        def _ids_progress(detail: str, _ids=ids_name, _i=i) -> None:
             if on_progress:
-                on_progress(
-                    f"{ids_name}: {detail}",
-                    state.context_stats,
-                    [{"detail": f"{ids_name}: {detail}"}],
+                label = (
+                    f"{_ids}: {detail}"
+                    if len(state.target_ids_list) > 1
+                    else detail
                 )
+                on_progress(label, state.context_stats, [{"detail": label}])
 
+        _ids_progress("vector queries")
         context = await asyncio.to_thread(
-            gather_context,
+            gather_ids_context,
             state.facility,
             ids_name,
+            shared,
             gc=GraphClient(),
-            dd_version=state.dd_major,
-            on_progress=_context_progress,
+            on_progress=_ids_progress,
         )
         state.contexts[ids_name] = context
-        ids_sources = len(context.get("groups", []))
-        total_sources += ids_sources
 
         wlog.info(
-            "Context for %s: %d sources, %d domains",
+            "Context for %s: %d candidates",
             ids_name,
-            ids_sources,
-            len(context.get("target_domains", [])),
+            len(context.get("source_candidates", {})),
         )
 
-        if on_progress:
-            on_progress(
-                f"{ids_name}: {ids_sources} sources",
-                state.context_stats,
-                [{"detail": f"{ids_name}: {ids_sources} sources"}],
-            )
-
-    state.sources_total = total_sources
     state.context_stats.processed = len(state.target_ids_list)
     wlog.info(
         "Context complete: %d IDS, %d total sources",
-        len(state.contexts), total_sources,
+        len(state.contexts), state.sources_total,
     )
     state.context_phase.mark_done()
 

@@ -770,6 +770,7 @@ def compute_semantic_matches(
     dd_version: int | None = None,
     on_progress: Callable[[str], None] | None = None,
     max_workers: int = 8,
+    precomputed_embeddings: Any | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
     """Compute semantic match vectors between sources and targets.
 
@@ -783,6 +784,12 @@ def compute_semantic_matches(
     in a thread pool (``max_workers`` threads) for parallelism over
     the Neo4j tunnel.
 
+    Parameters
+    ----------
+    precomputed_embeddings : array-like, optional
+        If provided, skip the batch embed call and use these embeddings
+        directly.  Must have len == len(source_descriptions).
+
     Returns a dict mapping source_id -> ranked match list, where each
     match has {target_id, score, content_type, excerpt}.
     """
@@ -794,17 +801,20 @@ def compute_semantic_matches(
     if not source_descriptions:
         return {}
 
-    from imas_codex.embeddings.encoder import Encoder
-
-    encoder = Encoder()
-    texts = [desc for _, desc in source_descriptions]
     source_ids = [sid for sid, _ in source_descriptions]
 
-    if on_progress:
-        on_progress(f"embedding {len(texts)} sources")
+    if precomputed_embeddings is not None:
+        embeddings = precomputed_embeddings
+    else:
+        from imas_codex.embeddings.encoder import Encoder
 
-    # Batch embed all source descriptions at once
-    embeddings = encoder.embed_texts(texts)
+        encoder = Encoder()
+        texts = [desc for _, desc in source_descriptions]
+
+        if on_progress:
+            on_progress(f"embedding {len(texts)} sources")
+
+        embeddings = encoder.embed_texts(texts)
 
     # Pre-compute shared Cypher fragments
     imas_where = "WHERE n.node_category = 'data' "

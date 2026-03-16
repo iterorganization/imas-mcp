@@ -548,63 +548,165 @@ async def _acall_llm(
     return result
 
 
-def gather_context(
+def gather_shared_context(
     facility: str,
-    ids_name: str,
+    all_ids_names: list[str],
     *,
     gc: GraphClient,
     dd_version: int | None = None,
     on_progress: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
-    """Gather all context needed for the signal mapping pipeline.
+    """Gather domain-level context shared across all IDS targets.
 
-    Uses physics domain scoping to dramatically reduce the candidate set:
-    1. Query physics domains for the target IDS
-    2. Filter signal sources to matching domains
-    3. Semantic narrowing within domain for candidate ranking
-
-    Parameters
-    ----------
-    on_progress : callable, optional
-        Called with a short status string at each major step so the
-        display can stream progress instead of showing a static label.
+    This is the expensive part — batch embedding + source queries — done
+    ONCE regardless of how many IDS are being mapped.
     """
-    logger.info("Gathering context for %s/%s", facility, ids_name)
+    import time as _time
 
     def _emit(msg: str) -> None:
         if on_progress:
             on_progress(msg)
 
-    _emit(f"querying domains for {ids_name}")
+    t0 = _time.monotonic()
 
-    # Step 1: Get physics domains for the target IDS
-    target_domains = query_ids_physics_domains(ids_name, gc=gc, dd_version=dd_version)
-    logger.info("Target IDS %s has domains: %s", ids_name, target_domains)
+    # Collect ALL unique physics domains across all target IDS
+    _emit("querying physics domains")
+    all_domains: set[str] = set()
+    ids_domains: dict[str, list[str]] = {}
+    for ids_name in all_ids_names:
+        domains = query_ids_physics_domains(ids_name, gc=gc, dd_version=dd_version)
+        ids_domains[ids_name] = domains
+        all_domains.update(domains)
 
-    _emit(f"{len(target_domains)} domains → querying sources")
+    domain_list = sorted(all_domains)
+    _emit(f"{len(domain_list)} domains across {len(all_ids_names)} IDS")
 
-    # Step 2: Query signal sources filtered by physics domain
-    # If we have target domains, filter to matching sources (dramatic reduction).
-    # Fall back to all enriched sources if no domains found.
-    if target_domains:
+    # Query ALL signal sources for the union of all domains (ONCE)
+    if domain_list:
         groups = query_signal_sources(
-            facility, gc=gc, physics_domains=target_domains, status_filter="enriched",
-        )
-        logger.info(
-            "Domain-filtered sources: %d (from domains %s)",
-            len(groups), target_domains,
+            facility, gc=gc, physics_domains=domain_list, status_filter="enriched",
         )
     else:
         groups = query_signal_sources(facility, gc=gc, status_filter="enriched")
-        logger.info("No domain filter — using all %d enriched sources", len(groups))
 
-    _emit(f"{len(groups)} sources → fetching IDS subtree")
+    t_sources = _time.monotonic()
+    _emit(f"{len(groups)} sources ({t_sources - t0:.1f}s)")
+
+    # Batch embed ALL source descriptions ONCE
+    source_descs = [
+        (g["id"], g.get("rep_description") or g.get("description") or "")
+        for g in groups
+        if g.get("rep_description") or g.get("description")
+    ]
+
+    embeddings = None
+    if source_descs:
+        from imas_codex.embeddings.encoder import Encoder
+        encoder = Encoder()
+        _emit(f"embedding {len(source_descs)} sources")
+        texts = [desc for _, desc in source_descs]
+        embeddings = encoder.embed_texts(texts)
+        t_embed = _time.monotonic()
+        _emit(f"embedded {len(source_descs)} sources ({t_embed - t_sources:.1f}s)")
+
+    # Cluster searcher (loaded once, used per-IDS)
+    cluster_searcher = None
+    try:
+        from imas_codex.clusters.search import ClusterSearcher
+        cluster_searcher = ClusterSearcher.load()
+    except Exception:
+        logger.debug("Cluster searcher unavailable")
+
+    # Wiki + code context (domain-scoped, shared across IDS)
+    _emit("wiki + code context")
+    wiki_context: list[dict[str, Any]] = []
+    code_context: list[dict[str, Any]] = []
+    if domain_list:
+        try:
+            wiki_context = fetch_wiki_context(
+                facility, domain_list,
+                min_imas_relevance=0.5, k=15, gc=gc,
+            )
+        except Exception:
+            logger.debug("Wiki context fetch failed")
+        try:
+            code_context = fetch_code_context(
+                facility, domain_list,
+                score_dimension="score_data_access",
+                min_score=0.5, k=15, gc=gc,
+            )
+        except Exception:
+            logger.debug("Code context fetch failed")
+
+    # DD COCOS convention
+    dd_cocos: int | None = None
+    try:
+        cocos_rows = gc.query(
+            """
+            MATCH (v:DDVersion)
+            WHERE v.major = $dd_major
+            RETURN v.cocos AS cocos
+            LIMIT 1
+            """,
+            dd_major=dd_version,
+        )
+        if cocos_rows and cocos_rows[0].get("cocos"):
+            dd_cocos = cocos_rows[0]["cocos"]
+    except Exception:
+        pass
+
+    t_total = _time.monotonic()
+    _emit(
+        f"{len(groups)} sources, {len(wiki_context)} wiki, "
+        f"{len(code_context)} code ({t_total - t0:.1f}s)"
+    )
+
+    return {
+        "groups": groups,
+        "source_descs": source_descs,
+        "embeddings": embeddings,
+        "ids_domains": ids_domains,
+        "cluster_searcher": cluster_searcher,
+        "wiki_context": wiki_context,
+        "code_context": code_context,
+        "dd_version": dd_version,
+        "dd_cocos": dd_cocos,
+    }
+
+
+def gather_ids_context(
+    facility: str,
+    ids_name: str,
+    shared: dict[str, Any],
+    *,
+    gc: GraphClient,
+    on_progress: Callable[[str], None] | None = None,
+) -> dict[str, Any]:
+    """Gather IDS-specific context using pre-computed shared data.
+
+    Uses pre-computed source embeddings from ``gather_shared_context``
+    to avoid redundant batch embedding.  Only the IDS-scoped vector
+    queries (filtered by ``ids_name``) run here.
+    """
+    import time as _time
+
+    def _emit(msg: str) -> None:
+        if on_progress:
+            on_progress(msg)
+
+    dd_version = shared["dd_version"]
+    groups = shared["groups"]
+    source_descs = shared["source_descs"]
+    embeddings = shared["embeddings"]
+    cluster_searcher = shared["cluster_searcher"]
+
+    t0 = _time.monotonic()
+
+    # IDS subtree
+    _emit(f"IDS subtree")
     subtree = fetch_imas_subtree(ids_name, gc=gc, dd_version=dd_version)
 
-    _emit("semantic search (IDS → sources)")
-    # Step 3: Semantic narrowing — bidirectional search
-    # Forward: IDS description → signal source embeddings
-    # Reverse: source descriptions → IMAS path embeddings
+    # Global semantic search (1 embed + 1 vector query)
     semantic_hits: list[dict[str, Any]] = []
     try:
         semantic_hits = search_imas_semantic(
@@ -612,20 +714,13 @@ def gather_context(
             dd_version=dd_version,
         )
     except Exception:
-        logger.warning("Semantic search unavailable — continuing without it")
+        logger.warning("Semantic search unavailable")
 
-    _emit(f"batch semantic match matrix ({len(groups)} sources)")
-    # Semantic match matrix: batch-embed sources and search across all indexes
-    # This replaces the old per-source narrowing loop — one batch embed call
-    # instead of N individual embed calls, with threaded vector queries.
+    # Per-source vector queries using PRE-COMPUTED embeddings
+    _emit(f"vector search ({len(source_descs)} sources)")
     semantic_match_matrix: dict[str, list[dict[str, Any]]] = {}
-    try:
-        source_descs = [
-            (g["id"], g.get("rep_description") or g.get("description") or "")
-            for g in groups
-            if g.get("rep_description") or g.get("description")
-        ]
-        if source_descs:
+    if source_descs and embeddings is not None:
+        try:
             semantic_match_matrix = compute_semantic_matches(
                 source_descs,
                 ids_name,
@@ -635,17 +730,15 @@ def gather_context(
                 include_code=True,
                 dd_version=dd_version,
                 on_progress=on_progress,
+                precomputed_embeddings=embeddings,
             )
-            logger.info(
-                "Semantic match matrix: %d sources, %d total matches",
-                len(semantic_match_matrix),
-                sum(len(v) for v in semantic_match_matrix.values()),
-            )
-    except Exception:
-        logger.debug("Semantic match matrix unavailable — continuing without it")
+        except Exception:
+            logger.debug("Semantic match matrix failed")
 
-    # Build source_candidates from the IMAS hits in the match matrix
-    # (replaces legacy per-source search_imas_semantic loop)
+    t_vector = _time.monotonic()
+    _emit(f"vector search done ({t_vector - t0:.1f}s)")
+
+    # Build source_candidates from IMAS hits in the match matrix
     source_candidates: dict[str, list[dict[str, Any]]] = {}
     for source_id, matches in semantic_match_matrix.items():
         imas_hits = [
@@ -660,44 +753,36 @@ def gather_context(
         if imas_hits:
             source_candidates[source_id] = imas_hits
 
-    _emit("cluster enrichment")
-    # Enrich source candidates with cluster members (one-to-many discovery)
-    try:
-        from imas_codex.clusters.search import ClusterSearcher
-
-        cluster_searcher = ClusterSearcher.load()
+    # Cluster enrichment (using pre-loaded searcher)
+    if cluster_searcher:
         for source_id, candidates in source_candidates.items():
             cluster_additions: list[dict[str, Any]] = []
             existing_ids = {c["id"] for c in candidates}
             for cand in candidates[:3]:
-                cluster_hits = cluster_searcher.search_by_path(cand["id"])
-                for hit in cluster_hits:
-                    for member_path in hit.paths:
-                        if member_path not in existing_ids:
-                            cluster_additions.append({
-                                "id": member_path,
-                                "score": hit.similarity_score * cand.get("score", 0.5),
-                                "via_cluster": hit.label,
-                                "documentation": f"Cluster member: {hit.description}",
-                            })
-                            existing_ids.add(member_path)
+                try:
+                    cluster_hits = cluster_searcher.search_by_path(cand["id"])
+                    for hit in cluster_hits:
+                        for member_path in hit.paths:
+                            if member_path not in existing_ids:
+                                cluster_additions.append({
+                                    "id": member_path,
+                                    "score": hit.similarity_score * cand.get("score", 0.5),
+                                    "via_cluster": hit.label,
+                                    "documentation": f"Cluster member: {hit.description}",
+                                })
+                                existing_ids.add(member_path)
+                except Exception:
+                    pass
             candidates.extend(cluster_additions)
-    except Exception:
-        logger.debug("Cluster enrichment unavailable — continuing without it")
 
-    _emit("existing mappings + COCOS")
+    # IDS-specific: existing mappings, COCOS, cross-facility, section clusters
     existing = search_existing_mappings(facility, ids_name, gc=gc)
     cocos_paths = get_sign_flip_paths(ids_name)
-
-    # Cross-facility precedent: how other facilities mapped to this IDS
     cross_mappings = fetch_cross_facility_mappings(ids_name, facility, gc=gc)
 
-    _emit("section clusters")
-    # Fetch section clusters for the target IDS
     section_clusters: list[dict[str, Any]] = []
     try:
         from imas_codex.tools.graph_search import GraphClustersTool
-
         clusters_tool = GraphClustersTool(gc)
         cluster_result = _run_async(
             clusters_tool.search_imas_clusters(
@@ -706,49 +791,15 @@ def gather_context(
         )
         section_clusters = cluster_result.get("clusters", [])
     except Exception:
-        logger.warning("Cluster listing unavailable — continuing without it")
+        pass
 
-    # Query target DD version's COCOS convention
-    dd_cocos: int | None = None
-    try:
-        cocos_rows = gc.query(
-            """
-            MATCH (v:DDVersion)
-            WHERE v.major = $dd_major
-            RETURN v.cocos AS cocos
-            LIMIT 1
-            """,
-            dd_major=dd_version,
-        )
-        if cocos_rows and cocos_rows[0].get("cocos"):
-            dd_cocos = cocos_rows[0]["cocos"]
-            logger.info("Target DD COCOS convention: %s", dd_cocos)
-    except Exception:
-        logger.debug("Could not query DD COCOS — continuing without it")
-
-    _emit("wiki + code context")
-    # Wiki and code context enrichment (Phase 3)
-    wiki_context: list[dict[str, Any]] = []
-    code_context: list[dict[str, Any]] = []
-    if target_domains:
-        try:
-            wiki_context = fetch_wiki_context(
-                facility, target_domains,
-                min_imas_relevance=0.5, k=15, gc=gc,
-            )
-            logger.info("Wiki context: %d chunks", len(wiki_context))
-        except Exception:
-            logger.debug("Wiki context fetch failed — continuing without it")
-
-        try:
-            code_context = fetch_code_context(
-                facility, target_domains,
-                score_dimension="score_data_access",
-                min_score=0.5, k=15, gc=gc,
-            )
-            logger.info("Code context: %d chunks", len(code_context))
-        except Exception:
-            logger.debug("Code context fetch failed — continuing without it")
+    target_domains = shared["ids_domains"].get(ids_name, [])
+    t_total = _time.monotonic()
+    _emit(
+        f"{len(source_candidates)} candidates, "
+        f"{sum(len(v) for v in semantic_match_matrix.values())} matches "
+        f"({t_total - t0:.1f}s)"
+    )
 
     return {
         "groups": groups,
@@ -760,12 +811,37 @@ def gather_context(
         "cross_mappings": cross_mappings,
         "cocos_paths": cocos_paths,
         "dd_version": dd_version,
-        "dd_cocos": dd_cocos,
+        "dd_cocos": shared["dd_cocos"],
         "section_clusters": section_clusters,
         "target_domains": target_domains,
-        "wiki_context": wiki_context,
-        "code_context": code_context,
+        "wiki_context": shared["wiki_context"],
+        "code_context": shared["code_context"],
     }
+
+
+def gather_context(
+    facility: str,
+    ids_name: str,
+    *,
+    gc: GraphClient,
+    dd_version: int | None = None,
+    on_progress: Callable[[str], None] | None = None,
+) -> dict[str, Any]:
+    """Gather all context needed for the signal mapping pipeline.
+
+    Convenience wrapper that calls ``gather_shared_context`` +
+    ``gather_ids_context`` for a single IDS.  For multi-IDS mapping,
+    use the split functions directly to share the expensive batch
+    embedding across IDS targets.
+    """
+    shared = gather_shared_context(
+        facility, [ids_name], gc=gc, dd_version=dd_version,
+        on_progress=on_progress,
+    )
+    return gather_ids_context(
+        facility, ids_name, shared, gc=gc,
+        on_progress=on_progress,
+    )
 
 
 def _fetch_ids_description(ids_name: str, gc: GraphClient) -> str:
