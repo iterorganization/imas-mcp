@@ -421,7 +421,39 @@ When a command times out, **persist the constraint immediately** via `update_inf
 
 ## Graph Operations
 
-**Schema verification:** Before writing Cypher queries, verify property names against `agents/schema-reference.md` (auto-generated) or call `get_graph_schema()`. Common pitfall: WikiChunk/CodeChunk text content is stored in the `text` property.\n\n### Neo4j Management
+**Schema verification:** Before writing Cypher queries, verify property names against `agents/schema-reference.md` (auto-generated) or call `get_graph_schema()`. Common pitfall: WikiChunk/CodeChunk text content is stored in the `text` property.
+
+### Cypher Compatibility — Neo4j 2026
+
+We run **Neo4j 2026.01.x** with `db.query.default_language: CYPHER_5`. Most Cypher syntax works normally, with one critical exception:
+
+```cypher
+-- WRONG (syntax error in Cypher 5):
+WHERE n.type NOT IN ['A', 'B']
+
+-- RIGHT:
+WHERE NOT (n.type IN ['A', 'B'])
+```
+
+**`x NOT IN [list]` is removed in Cypher 5.** Always use `NOT (x IN [list])` instead. This is the **only** breaking syntax change that affects this codebase.
+
+**`CASE WHEN` works fine** — use it freely for conditional logic, counting, SET, ORDER BY, FOREACH, etc. Do not replace `CASE WHEN` with `nullIf()` hacks unless there is a measured performance benefit.
+
+**Preferred patterns for conditional SET (update-if-non-empty):**
+```cypher
+-- Use coalesce/nullIf for "keep old value if new is empty" — cleaner than CASE WHEN:
+SET s.diagnostic = coalesce(nullIf(sig.diagnostic, ''), s.diagnostic)
+-- Instead of:
+SET s.diagnostic = CASE WHEN sig.diagnostic <> '' THEN sig.diagnostic ELSE s.diagnostic END
+```
+
+**Rules:**
+- Never use `x NOT IN [...]` — syntax error. Use `NOT (x IN [...])`
+- `CASE WHEN` is supported — do not gratuitously replace it
+- `coalesce(nullIf(new_val, ''), old_val)` is preferred for conditional SET updates
+- Test new Cypher against the live graph before committing
+
+### Neo4j Management
 
 ```bash
 uv run imas-codex graph start                 # Start Neo4j (auto-detects mode)
