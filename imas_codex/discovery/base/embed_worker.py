@@ -132,6 +132,28 @@ def _get_text_labels() -> list[str]:
     return get_schema().text_embeddable_labels
 
 
+def _mark_embed_failed(label: str, ids: list[str]) -> None:
+    """Mark items as permanently failed for embedding.
+
+    Sets ``embed_failed_at`` so these nodes are excluded from future
+    embedding attempts.  To retry, clear the property manually.
+    """
+    if not ids:
+        return
+    from imas_codex.graph import GraphClient
+
+    with GraphClient() as gc:
+        gc.query(
+            f"""
+            UNWIND $ids AS item_id
+            MATCH (n:{label} {{id: item_id}})
+            SET n.embed_failed_at = datetime()
+            """,
+            ids=ids,
+        )
+    logger.warning("Marked %d %s items as embed-failed", len(ids), label)
+
+
 def _fetch_unembedded(
     label: str,
     facility: str | None,
@@ -181,6 +203,7 @@ def _fetch_unembedded(
         WHERE n.{text_field} IS NOT NULL
           AND n.{text_field} <> ''
           AND n.embedding IS NULL
+          AND n.embed_failed_at IS NULL
           {facility_filter}
         {score_filter}
         RETURN n.id AS id, n.{text_field} AS text
@@ -224,6 +247,7 @@ def _count_unembedded(
         WHERE n.{text_field} IS NOT NULL
           AND n.{text_field} <> ''
           AND n.embedding IS NULL
+          AND n.embed_failed_at IS NULL
           {facility_filter}
         {score_filter}
         RETURN count(n) AS total
@@ -367,6 +391,7 @@ def embed_batch_sync(
             len(items),
             label,
         )
+        failed_ids: list[str] = []
         for item in items:
             if item.get("embedding") is not None:
                 continue
@@ -375,24 +400,37 @@ def embed_batch_sync(
                 label, facility, 1, text_field=text_field,
                 min_score=min_score, score_joins=score_joins,
             )
-            if single_items:
-                single_item = single_items[0]
-                text = single_item.pop("text")
-                text_segments = _split_oversized_text(text)
-                seg_items = [{"id": f"seg{j}", "description": seg} for j, seg in enumerate(text_segments)]
-                seg_items = embed_descriptions_batch(seg_items)
-                embeddings = [s["embedding"] for s in seg_items if s.get("embedding")]
-                if embeddings:
-                    if len(embeddings) == 1:
-                        single_item["embedding"] = embeddings[0]
-                    else:
-                        avg = np.mean(embeddings, axis=0)
-                        norm = np.linalg.norm(avg)
-                        if norm > 0:
-                            avg = avg / norm
-                        single_item["embedding"] = avg.tolist()
-                    _persist_embeddings(label, [single_item])
-                    embedded += 1
+            if not single_items:
+                break  # no more items to try
+            single_item = single_items[0]
+            text = single_item.pop("text")
+            text_segments = _split_oversized_text(text)
+            if len(text_segments) > 1:
+                logger.debug(
+                    "Split oversized %s %s (%d chars) into %d segments",
+                    label, single_item["id"], len(text), len(text_segments),
+                )
+            seg_items = [{"id": f"seg{j}", "description": seg} for j, seg in enumerate(text_segments)]
+            seg_items = embed_descriptions_batch(seg_items)
+            embeddings = [s["embedding"] for s in seg_items if s.get("embedding")]
+            if embeddings:
+                if len(embeddings) == 1:
+                    single_item["embedding"] = embeddings[0]
+                else:
+                    avg = np.mean(embeddings, axis=0)
+                    norm = np.linalg.norm(avg)
+                    if norm > 0:
+                        avg = avg / norm
+                    single_item["embedding"] = avg.tolist()
+                _persist_embeddings(label, [single_item])
+                embedded += 1
+            else:
+                # Item failed even individually — mark as permanently
+                # failed so it stops poisoning future batches.
+                failed_ids.append(single_item["id"])
+
+        if failed_ids:
+            _mark_embed_failed(label, failed_ids)
 
     return len(items), embedded, node_ids
 
