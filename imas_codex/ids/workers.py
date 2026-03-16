@@ -88,6 +88,9 @@ class MappingDiscoveryState(DiscoveryStateBase):
     bindings_passed: int = 0
     escalations: int = 0
 
+    # Per-IDS results: ids_name -> {bindings, escalations}
+    ids_results: dict[str, dict] = field(default_factory=dict)
+
     # Worker stats
     context_stats: WorkerStats = field(default_factory=WorkerStats)
     assign_stats: WorkerStats = field(default_factory=WorkerStats)
@@ -790,6 +793,12 @@ async def validate_worker(
             state.escalations += ids_escalations
             state.sources_validated += len(batches_for_ids)
             state.validate_stats.processed += 1
+
+            # Store per-IDS results
+            state.ids_results[ids_name] = {
+                "bindings": ids_passed,
+                "escalations": ids_escalations,
+            }
 
             if on_progress:
                 on_progress(

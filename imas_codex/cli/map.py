@@ -320,13 +320,13 @@ def _run_plain_mode(
     # Build results from engine state
     all_results: list[dict] = []
     for ids_name in ids_names:
+        ids_result = engine_state.ids_results.get(ids_name, {})
         batches = engine_state.mapping_batches.get(ids_name, [])
-        if batches:
+        if batches or ids_result:
             all_results.append({
                 "ids_name": ids_name,
-                "bindings": sum(len(b.mappings) for _, b in batches),
-                "escalations": engine_state.escalations,
-                "cost": engine_state.cost,
+                "bindings": ids_result.get("bindings", sum(len(b.mappings) for _, b in batches)),
+                "escalations": ids_result.get("escalations", 0),
                 "persisted": engine_state.persist,
             })
 
@@ -468,13 +468,13 @@ def _run_rich_mode(
 
         # Build results from engine state
         for ids_name in ids_names:
+            ids_result = engine_state.ids_results.get(ids_name, {})
             batches = engine_state.mapping_batches.get(ids_name, [])
-            if batches:
+            if batches or ids_result:
                 result = {
                     "ids_name": ids_name,
-                    "bindings": sum(len(b.mappings) for _, b in batches),
-                    "escalations": engine_state.escalations,
-                    "cost": engine_state.cost,
+                    "bindings": ids_result.get("bindings", sum(len(b.mappings) for _, b in batches)),
+                    "escalations": ids_result.get("escalations", 0),
                     "persisted": engine_state.persist,
                 }
                 all_results.append(result)
@@ -548,27 +548,17 @@ def _print_summary(results: list[dict], log_print) -> None:
 
     total_bindings = sum(r.get("bindings", 0) for r in results)
     total_escalations = sum(r.get("escalations", 0) for r in results)
-    total_cost = sum(
-        r["cost"].total_usd for r in results if r.get("cost")
-    )
-    total_tokens = sum(
-        r["cost"].total_tokens for r in results if r.get("cost")
-    )
 
     log_print(f"\n[bold]Mapping Summary[/bold]")
     log_print(f"  IDS mapped: {len(results)}")
     log_print(f"  Total bindings: {total_bindings}")
     log_print(f"  Total escalations: {total_escalations}")
-    log_print(f"  Total cost: ${total_cost:.4f} ({total_tokens} tokens)")
 
     for r in results:
-        cost = r.get("cost")
-        cost_str = f" ${cost.total_usd:.4f}" if cost else ""
         log_print(
             f"    {r.get('ids_name', '?')}: "
             f"{r.get('bindings', 0)} bindings, "
             f"{r.get('escalations', 0)} escalations"
-            f"{cost_str}"
         )
 
 
