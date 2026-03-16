@@ -48,7 +48,6 @@ class TargetType(StrEnum):
     TIME_SLICE = "time_slice"
     SCALAR = "scalar"
     PROFILE = "profile"
-    DD_VERSION_GAP = "dd_version_gap"
 
 
 # ---------------------------------------------------------------------------
