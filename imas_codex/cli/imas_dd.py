@@ -281,6 +281,20 @@ def imas_build(
 
     except SystemExit:
         raise
+    except TypeError as e:
+        if "unexpected keyword argument" in str(e):
+            click.echo(
+                f"Error: {e}\n\n"
+                "This usually means the installed package is out of sync "
+                "with the source code.\n"
+                "Run 'uv sync' to update, then retry.",
+                err=True,
+            )
+        else:
+            click.echo(f"Error: {e}", err=True)
+        if verbose:
+            logger.exception("Full traceback:")
+        raise SystemExit(1) from e
     except Exception as e:
         logger.error(f"Error building DD graph: {e}")
         if verbose:
