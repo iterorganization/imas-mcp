@@ -359,6 +359,8 @@ async def enrich_worker(state: DDBuildState, **_kwargs) -> None:
 
         if not paths:
             state.enrich_phase.record_idle()
+            if state.enrich_phase.done:
+                break
             # Refresh totals while idle (build may still be adding nodes)
             try:
                 status_counts = await asyncio.to_thread(count_imas_nodes_by_status)
@@ -476,6 +478,8 @@ async def embed_worker(state: DDBuildState, **_kwargs) -> None:
 
         if not paths:
             state.embed_phase.record_idle()
+            if state.embed_phase.done:
+                break
             await asyncio.sleep(1.0)
             continue
 

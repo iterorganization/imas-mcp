@@ -470,7 +470,22 @@ async def supervised_worker(
         for phase in wait_phases:
             while not should_stop_fn():
                 if await phase.wait_until_done(timeout=1.0):
-                    break
+                    # Re-verify after brief delay to catch transient
+                    # done→active races.  Without this, a brief idle
+                    # window (all workers between batches + stale cache)
+                    # can set _done_event, unblock this coroutine, and
+                    # then new activity clears the event — but we
+                    # already broke out.
+                    await asyncio.sleep(0.5)
+                    if phase.done:
+                        break
+                    # Phase went back to active — continue waiting
+                    logger.debug(
+                        "%s: phase '%s' went back to active after "
+                        "transient done, re-waiting",
+                        worker_name,
+                        phase.name,
+                    )
             if should_stop_fn():
                 if status_tracker:
                     status_tracker.state = WorkerState.stopped

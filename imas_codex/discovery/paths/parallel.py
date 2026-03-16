@@ -3168,7 +3168,10 @@ async def run_parallel_discovery(
                 "score_phase",  # embed lifecycle follows score
                 embed_description_worker,
                 group="embed",
-                kwargs={"labels": ["FacilityPath"]},
+                kwargs={
+                    "labels": ["FacilityPath"],
+                    "done_check": lambda: state.score_phase.done,
+                },
             )
         )
 

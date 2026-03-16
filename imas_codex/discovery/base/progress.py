@@ -386,9 +386,11 @@ class StreamQueue:
        (e.g. embed) where the adaptive rate would otherwise hold each
        item for 10+ seconds.
 
-    Stale detection: tracks when items were last added. When the queue is
-    empty and no items have been added for ``stale_timeout`` seconds, the
-    queue is considered stale — meaning the displayed item should be cleared.
+    Stale detection: tracks when items were last added.  Uses adaptive
+    timeout based on the last batch processing time — items are cleared
+    after 1.2× the batch time, ensuring the display transitions to
+    "done" promptly when the worker finishes its last batch.  Falls
+    back to ``stale_timeout`` when no batch time is available.
     """
 
     items: deque = field(default_factory=deque)
@@ -400,6 +402,7 @@ class StreamQueue:
     max_display_time: float = 0.0  # max seconds per item (0 = unlimited)
     max_size: int = 500  # larger buffer to absorb batch bursts
     stale_timeout: float = 8.0  # seconds without adds before queue is stale
+    _last_batch_time: float = 0.0  # batch processing time for adaptive stale
 
     def add(
         self,
@@ -409,6 +412,11 @@ class StreamQueue:
         last_batch_time: float = 0.0,
     ) -> None:
         """Add items to queue with adaptive rate calculation.
+
+        Clears any previously queued items before adding the new batch.
+        This prevents accumulation of stale items from prior batches
+        that could keep the display in "streaming" mode long after
+        the worker has moved on.
 
         When ``last_batch_time`` is provided, the pop rate is computed so
         that items drain *slower* than the worker produces them. This
@@ -426,7 +434,8 @@ class StreamQueue:
                 calculation is not possible.
             last_batch_time: Elapsed time of the batch that produced
                 these items. Used to estimate when the next batch will
-                arrive, so the queue drains smoothly.
+                arrive, so the queue drains smoothly.  Also used for
+                adaptive stale detection (1.2× batch time).
         """
         # Stride items if the batch is too large to display at max_rate
         # before the next batch arrives.  This ensures users see items
@@ -438,8 +447,13 @@ class StreamQueue:
                 stride = max(1, len(items) // max_displayable)
                 items = items[::stride]
 
+        # Reset queue on each new batch — discard un-displayed items
+        # from the previous batch to avoid accumulation.
+        self.items.clear()
         self.items.extend(items)
         self.last_add = time.time()
+        if last_batch_time > 0:
+            self._last_batch_time = last_batch_time
 
         queue_depth = len(self.items)
         new_rate: float | None = None
@@ -493,15 +507,20 @@ class StreamQueue:
     def is_stale(self) -> bool:
         """Check if queue is empty and no items added recently.
 
-        Returns True when the queue has drained AND no new items have
-        been added for ``stale_timeout`` seconds, indicating the worker
-        has stopped producing and the current displayed item is outdated.
+        Uses adaptive timeout: 1.2× the last batch processing time
+        ensures the display transitions to "done" promptly once the
+        worker finishes its last batch.  Falls back to ``stale_timeout``
+        when no batch time is tracked.
         """
         if not self.is_empty():
             return False
         if self.last_add == 0.0:
             return False  # never received items
-        return (time.time() - self.last_add) >= self.stale_timeout
+        # Adaptive: use 1.2× batch time when available, otherwise fixed timeout
+        timeout = self.stale_timeout
+        if self._last_batch_time > 0:
+            timeout = min(self._last_batch_time * 1.2, self.stale_timeout)
+        return (time.time() - self.last_add) >= timeout
 
     def clear(self) -> None:
         """Clear the queue. Use on termination to prevent hanging."""
