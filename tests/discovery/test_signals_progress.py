@@ -105,18 +105,10 @@ class TestDataProgressStateProperties:
         state = self._state()
         assert state.eta_seconds is None
 
-    def test_eta_seconds_cost_based(self):
-        """ETA uses cost-based estimate when cost data available."""
-        state = self._state(cost_limit=10.0, _run_enrich_cost=5.0)
-        state.start_time = time.time() - 100  # 100s elapsed
-        eta = state.eta_seconds
-        assert eta is not None
-        assert eta > 0  # Should be ~100s remaining
-
     def test_eta_seconds_enrich_rate(self):
         """ETA uses enrich rate when available."""
         state = self._state(
-            cost_limit=0.0,  # No cost limit
+            cost_limit=0.0,
             pending_enrich=100,
             enrich_rate=10.0,  # 10 signals/s
         )
@@ -148,17 +140,17 @@ class TestDataProgressStateProperties:
         assert eta is not None
         assert abs(eta - 40.0) < 1e-6  # Slowest pipeline wins
 
-    def test_eta_seconds_signal_limit(self):
-        """ETA considers signal limit."""
+    def test_eta_seconds_ignores_signal_limit(self):
+        """ETA reflects work remaining, not signal limit."""
         state = self._state(
             cost_limit=0.0,
             signal_limit=100,
-            run_enriched=50,
+            pending_enrich=100,
+            enrich_rate=10.0,
         )
-        state.start_time = time.time() - 50  # 50s for 50 signals = 1/s
         eta = state.eta_seconds
         assert eta is not None
-        assert abs(eta - 50.0) < 0.01  # 50 remaining at 1/s
+        assert abs(eta - 10.0) < 1e-6
 
 
 # =============================================================================

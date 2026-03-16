@@ -235,30 +235,17 @@ class DataProgressState:
 
     @property
     def eta_seconds(self) -> float | None:
-        """Estimated time to termination.
+        """Estimated time to complete all pending work.
 
-        Returns the maximum ETA across all active worker pipelines.
-        The actual completion time is bounded by the slowest pipeline.
+        Pure work-based ETA: max across parallel worker groups
+        (bounded by the slowest pipeline).  Cost and signal limits
+        are stop conditions, not ETA inputs.
+
+        Uses stage-aware worker rates so ETA matches the rates shown
+        in the pipeline rows.
         """
         from imas_codex.discovery.base.progress import compute_parallel_eta
 
-        # Cost-based ETA (if we have cost tracking)
-        if self.run_cost > 0 and self.cost_limit > 0 and self.elapsed > 0:
-            cost_rate = self.run_cost / self.elapsed
-            if cost_rate > 0:
-                remaining_budget = self.cost_limit - self.run_cost
-                if remaining_budget > 0:
-                    return remaining_budget / cost_rate
-
-        # Signal limit ETA
-        if self.signal_limit is not None and self.signal_limit > 0:
-            if self.run_enriched > 0 and self.elapsed > 0:
-                rate = self.run_enriched / self.elapsed
-                remaining = self.signal_limit - self.run_enriched
-                if rate > 0 and remaining > 0:
-                    return remaining / rate
-
-        # Work-based ETA: max across all worker groups
         return compute_parallel_eta([
             (self.pending_enrich, self.enrich_rate),
             (self.pending_check, self.check_rate),
@@ -703,7 +690,16 @@ class DataProgressDisplay(BaseProgressDisplay):
         """Update seed/epoch worker state."""
         self.state.discover_stats = stats
         self.state.run_discovered = stats.processed
-        self.state.discover_rate = stats.ema_rate or stats.active_rate
+
+        if "idle" in message.lower():
+            self.state.scan_processing = False
+            stats.mark_idle()
+            self.state.discover_rate = stats.active_rate or stats.rate
+            self._refresh()
+            return
+
+        stats.mark_active()
+        self.state.discover_rate = stats.active_rate or stats.rate
 
         if current_tree:
             self.state.current_tree = current_tree
@@ -734,9 +730,13 @@ class DataProgressDisplay(BaseProgressDisplay):
                 for r in results
             ]
             max_rate = 5.0
-            effective = stats.ema_rate or stats.active_rate
+            effective = stats.active_rate or stats.rate
             display_rate = min(effective, max_rate) if effective else 2.0
-            self.state.scan_queue.add(items, display_rate)
+            self.state.scan_queue.add(
+                items,
+                display_rate,
+                last_batch_time=stats.last_batch_time,
+            )
 
         self._refresh()
 
@@ -749,7 +749,16 @@ class DataProgressDisplay(BaseProgressDisplay):
         """Update extract worker state."""
         self.state.extract_stats = stats
         self.state.run_extracted = stats.processed
-        self.state.extract_rate = stats.ema_rate or stats.active_rate
+
+        if "idle" in message.lower():
+            self.state.extract_processing = False
+            stats.mark_idle()
+            self.state.extract_rate = stats.active_rate or stats.rate
+            self._refresh()
+            return
+
+        stats.mark_active()
+        self.state.extract_rate = stats.active_rate or stats.rate
 
         if "extracting" in message.lower() or "v" in message.lower():
             self.state.extract_processing = True
@@ -767,9 +776,13 @@ class DataProgressDisplay(BaseProgressDisplay):
                 for r in results
             ]
             max_rate = 3.0
-            effective = stats.ema_rate or stats.active_rate
+            effective = stats.active_rate or stats.rate
             display_rate = min(effective, max_rate) if effective else 1.0
-            self.state.extract_queue.add(items, display_rate)
+            self.state.extract_queue.add(
+                items,
+                display_rate,
+                last_batch_time=stats.last_batch_time,
+            )
 
         self._refresh()
 
@@ -781,7 +794,16 @@ class DataProgressDisplay(BaseProgressDisplay):
     ) -> None:
         """Update units/promote worker state."""
         self.state.run_promoted = stats.processed
-        self.state.promote_rate = stats.ema_rate or stats.active_rate
+
+        if "idle" in message.lower():
+            self.state.promote_processing = False
+            stats.mark_idle()
+            self.state.promote_rate = stats.active_rate or stats.rate
+            self._refresh()
+            return
+
+        stats.mark_active()
+        self.state.promote_rate = stats.active_rate or stats.rate
 
         if "promoting" in message.lower() or "units" in message.lower():
             self.state.promote_processing = True
@@ -798,9 +820,13 @@ class DataProgressDisplay(BaseProgressDisplay):
                 for r in results
             ]
             max_rate = 3.0
-            effective = stats.ema_rate or stats.active_rate
+            effective = stats.active_rate or stats.rate
             display_rate = min(effective, max_rate) if effective else 1.0
-            self.state.promote_queue.add(items, display_rate)
+            self.state.promote_queue.add(
+                items,
+                display_rate,
+                last_batch_time=stats.last_batch_time,
+            )
 
         self._refresh()
 
@@ -812,20 +838,29 @@ class DataProgressDisplay(BaseProgressDisplay):
     ) -> None:
         """Update enrich worker state."""
         self.state.run_enriched = stats.processed
-        self.state.enrich_rate = stats.ema_rate or stats.active_rate
         self.state._run_enrich_cost = stats.cost
 
         msg_lower = message.lower()
+        if "idle" in msg_lower:
+            self.state.enrich_processing = False
+            stats.mark_idle()
+            self.state.enrich_rate = stats.active_rate or stats.rate
+            self._refresh()
+            return
         if "classifying" in msg_lower or "enriching" in msg_lower:
             self.state.enrich_processing = True
+            stats.mark_active()
         elif "detected" in msg_lower and "patterns" in msg_lower:
             # Pattern detection — not LLM processing but keep processing flag
-            pass
+            stats.mark_active()
         elif "propagated" in msg_lower:
             # Propagation — processing is active
             self.state.enrich_processing = True
+            stats.mark_active()
         else:
             self.state.enrich_processing = False
+
+        self.state.enrich_rate = stats.active_rate or stats.rate
 
         if results:
             items = [
@@ -837,9 +872,13 @@ class DataProgressDisplay(BaseProgressDisplay):
                 for r in results
             ]
             max_rate = 2.0
-            effective = stats.ema_rate or stats.active_rate
+            effective = stats.active_rate or stats.rate
             display_rate = min(effective, max_rate) if effective else 0.5
-            self.state.enrich_queue.add(items, display_rate)
+            self.state.enrich_queue.add(
+                items,
+                display_rate,
+                last_batch_time=stats.last_batch_time,
+            )
 
         self._refresh()
 
@@ -852,9 +891,19 @@ class DataProgressDisplay(BaseProgressDisplay):
         """Update validate worker state."""
         self.state.check_stats = stats
         self.state.run_checked = stats.processed
-        self.state.check_rate = stats.ema_rate or stats.active_rate
 
-        if "testing" in message.lower() or "validating" in message.lower():
+        msg_lower = message.lower()
+        if "idle" in msg_lower:
+            self.state.check_processing = False
+            stats.mark_idle()
+            self.state.check_rate = stats.active_rate or stats.rate
+            self._refresh()
+            return
+
+        stats.mark_active()
+        self.state.check_rate = stats.active_rate or stats.rate
+
+        if "testing" in msg_lower or "validating" in msg_lower:
             self.state.check_processing = True
         else:
             self.state.check_processing = False
@@ -872,9 +921,13 @@ class DataProgressDisplay(BaseProgressDisplay):
                 for r in results
             ]
             max_rate = 2.0
-            effective = stats.ema_rate or stats.active_rate
+            effective = stats.active_rate or stats.rate
             display_rate = min(effective, max_rate) if effective else 0.5
-            self.state.check_queue.add(items, display_rate)
+            self.state.check_queue.add(
+                items,
+                display_rate,
+                last_batch_time=stats.last_batch_time,
+            )
 
         self._refresh()
 

@@ -312,39 +312,28 @@ class ProgressState:
 
     @property
     def eta_seconds(self) -> float | None:
-        """Estimated time to termination based on limits.
+        """Estimated time to complete all pending work.
 
-        Priority order:
-        1. Cost limit: if -c flag set, estimate time to exhaust budget
-        2. Path limit: if -l flag set, estimate time to process that many paths
-        3. Full work: max of all worker ETAs (parallel pipeline)
-           Terminal time = slowest worker group since they run concurrently.
+        Pure work-based ETA: max across parallel worker groups
+        (bounded by the slowest pipeline).  Cost and path limits
+        are stop conditions, not ETA inputs.
+
+        Uses session-average rates (aggregate across concurrent workers)
+        to avoid per-worker EMA undercount.
         """
         from imas_codex.discovery.base.progress import compute_parallel_eta
 
-        # Try cost-based ETA first (if we have cost data)
-        if self.run_cost > 0 and self.cost_limit > 0:
-            cost_rate = self.run_cost / self.elapsed if self.elapsed > 0 else 0
-            if cost_rate > 0:
-                remaining_budget = self.cost_limit - self.run_cost
-                return max(0, remaining_budget / cost_rate)
+        def _agg(count: int, fallback: float | None) -> float | None:
+            if count > 0 and self.elapsed > 5:
+                return count / self.elapsed
+            return fallback
 
-        # Try path-limit-based ETA (if -l flag set)
-        if self.path_limit is not None and self.path_limit > 0:
-            # Use scored count (terminal state) for path limit ETA
-            if self.run_scored > 0 and self.elapsed > 0:
-                rate = self.run_scored / self.elapsed
-                remaining = self.path_limit - self.run_scored
-                return max(0, remaining / rate) if rate > 0 else None
-
-        # Fall back to work-based ETA from slowest worker group.
-        # Terminal time = max of all worker ETAs (parallel pipeline).
         return compute_parallel_eta([
-            (self.pending_scan, self.scan_rate),
-            (self.pending_triage, self.triage_rate),
-            (self.pending_expand, self.expand_rate),
-            (self.pending_enrich, self.enrich_rate),
-            (self.pending_score, self.score_rate),
+            (self.pending_scan, _agg(self.run_scanned, self.scan_rate)),
+            (self.pending_triage, _agg(self.run_triaged, self.triage_rate)),
+            (self.pending_expand, _agg(self.run_expanded, self.expand_rate)),
+            (self.pending_enrich, _agg(self.run_enriched, self.enrich_rate)),
+            (self.pending_score, _agg(self.run_scored, self.score_rate)),
         ])
 
 

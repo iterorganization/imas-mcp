@@ -264,28 +264,28 @@ class FileProgressState:
 
     @property
     def eta_seconds(self) -> float | None:
-        """Estimated time to termination.
+        """Estimated time to complete all pending work.
 
-        Returns the maximum ETA across all active worker pipelines
-        (parallel workers → max determines completion time).
+        Pure work-based ETA: max across parallel worker groups
+        (bounded by the slowest pipeline).  Cost limits are stop
+        conditions, not ETA inputs.
+
+        Uses session-average rates (aggregate across concurrent workers)
+        to avoid per-worker EMA undercount.
         """
         from imas_codex.discovery.base.progress import compute_parallel_eta
 
-        # Cost-based ETA takes priority (if cost limit set)
-        if self.run_cost > 0 and self.cost_limit > 0 and self.elapsed > 0:
-            cost_rate = self.run_cost / self.elapsed
-            if cost_rate > 0:
-                remaining_budget = self.cost_limit - self.run_cost
-                if remaining_budget > 0:
-                    return remaining_budget / cost_rate
+        def _agg(count: int, fallback: float | None) -> float | None:
+            if count > 0 and self.elapsed > 5:
+                return count / self.elapsed
+            return fallback
 
-        # Work-based ETA: max across all worker groups
         return compute_parallel_eta([
-            (self.pending_triage, self.triage_rate),
-            (self.pending_enrich, self.enrich_rate),
-            (self.pending_score, self.score_rate),
-            (self.pending_ingest, self.ingest_rate),
-            (self.pending_embed, self.embed_rate),
+            (self.pending_triage, _agg(self.run_triaged, self.triage_rate)),
+            (self.pending_enrich, _agg(self.run_enriched, self.enrich_rate)),
+            (self.pending_score, _agg(self.run_scored, self.score_rate)),
+            (self.pending_ingest, _agg(self.run_code_ingested, self.ingest_rate)),
+            (self.pending_embed, _agg(self.run_embedded, self.embed_rate)),
         ])
 
 

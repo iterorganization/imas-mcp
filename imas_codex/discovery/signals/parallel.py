@@ -50,6 +50,7 @@ from imas_codex.discovery.base.state import DiscoveryStateBase
 from imas_codex.discovery.base.supervision import (
     OrphanRecoverySpec,
     PipelinePhase,
+    is_infrastructure_error,
 )
 from imas_codex.graph import GraphClient
 from imas_codex.graph.models import FacilitySignalStatus
@@ -2180,6 +2181,7 @@ async def seed_worker(
                         ver_list = [state.reference_shot]
 
                     if ver_list:
+                        batch_start = time.monotonic()
                         seeded = await asyncio.to_thread(
                             seed_versions,
                             state.facility,
@@ -2189,6 +2191,9 @@ async def seed_worker(
                         )
                         total_discovered += seeded
                         state.discover_stats.processed += seeded
+                        state.discover_stats.last_batch_time = (
+                            time.monotonic() - batch_start
+                        )
                         state.discover_stats.record_batch(seeded)
                         if on_progress and seeded:
                             on_progress(
@@ -2289,12 +2294,14 @@ async def seed_worker(
                 state.wiki_context.update(result.wiki_context)
 
             if result.signals:
+                batch_start = time.monotonic()
                 count = await asyncio.to_thread(
                     ingest_discovered_signals,
                     [s.model_dump(exclude_none=True) for s in result.signals],
                 )
                 total_discovered += count
                 state.discover_stats.processed += count
+                state.discover_stats.last_batch_time = time.monotonic() - batch_start
                 state.discover_stats.record_batch(count)
 
                 if on_progress:
@@ -2360,6 +2367,8 @@ async def seed_worker(
 
         except Exception as e:
             logger.error("%s scan failed for %s: %s", scanner_type, state.facility, e)
+            if is_infrastructure_error(e):
+                raise
 
     state.seed_phase.mark_done()
     if on_progress:
@@ -2522,6 +2531,8 @@ async def epoch_worker(
 
         except Exception as e:
             logger.error("Epoch detection failed for %s: %s", data_source_name, e)
+            if is_infrastructure_error(e):
+                raise
             if on_progress:
                 on_progress(
                     f"{data_source_name}: epoch detection failed - {e}",
@@ -2675,10 +2686,12 @@ async def mdsplus_extract_worker(
                 with GC2() as client:
                     ingest_static_tree(client, _facility, _merged)
 
+            start = time.monotonic()
             await asyncio.to_thread(_ingest_tree, state.facility, merged)
 
             await asyncio.to_thread(mark_version_extracted, version_id, node_count)
             state.extract_stats.processed += 1
+            state.extract_stats.last_batch_time = time.monotonic() - start
             state.extract_stats.record_batch(1)
 
             if on_progress:
@@ -2811,6 +2824,8 @@ async def mdsplus_units_worker(
         except Exception as e:
             logger.error("Units extraction failed for %s: %s", data_source_name, e)
             state.units_stats.errors += 1
+            if is_infrastructure_error(e):
+                raise
 
     state.units_phase.mark_done()
 
@@ -2882,12 +2897,14 @@ async def mdsplus_promote_worker(
             )
 
         try:
+            start = time.monotonic()
             promoted = await asyncio.to_thread(
                 promote_leaf_nodes_to_signals,
                 state.facility,
                 data_source_name,
             )
             state.promote_stats.processed += promoted
+            state.promote_stats.last_batch_time = time.monotonic() - start
             state.promote_stats.record_batch(promoted)
 
             if on_progress:
@@ -2920,6 +2937,8 @@ async def mdsplus_promote_worker(
         except Exception as e:
             logger.error("Promote failed for %s: %s", data_source_name, e)
             state.promote_stats.errors += 1
+            if is_infrastructure_error(e):
+                raise
 
     state.promote_phase.mark_done()
 
@@ -3347,6 +3366,7 @@ async def enrich_worker(
             continue
 
         state.enrich_phase.record_activity(len(signals))
+        batch_start = time.monotonic()
 
         if on_progress:
             on_progress("enriching batch", state.enrich_stats)
@@ -3754,6 +3774,7 @@ async def enrich_worker(
                 mark_signals_underspecified, underspecified, batch_cost
             )
             state.enrich_stats.processed += len(underspecified)
+            state.enrich_stats.last_batch_time = time.monotonic() - batch_start
             state.enrich_stats.record_batch(len(underspecified))
             logger.info(
                 "Marked %d signals as underspecified (low context)",
@@ -3770,6 +3791,7 @@ async def enrich_worker(
                 prompt_hash=prompt_hash,
             )
             state.enrich_stats.processed += len(enriched)
+            state.enrich_stats.last_batch_time = time.monotonic() - batch_start
             state.enrich_stats.record_batch(len(enriched))
 
             # Propagate enrichment from representative signals to pattern followers
@@ -3792,6 +3814,7 @@ async def enrich_worker(
 
             if total_propagated > 0:
                 state.enrich_stats.processed += total_propagated
+                state.enrich_stats.last_batch_time = time.monotonic() - batch_start
                 state.enrich_stats.record_batch(total_propagated)
                 if on_progress:
                     on_progress(
@@ -4385,6 +4408,7 @@ async def check_worker(
             continue
 
         state.check_phase.record_activity(len(signals))
+        loop_start = time.monotonic()
 
         if on_progress:
             on_progress(f"checking {len(signals)} signals", state.check_stats)
@@ -4674,6 +4698,7 @@ async def check_worker(
         if checked:
             await asyncio.to_thread(mark_signals_checked, checked)
             state.check_stats.processed += len(checked)
+            state.check_stats.last_batch_time = time.monotonic() - loop_start
             state.check_stats.record_batch(len(checked))
 
             if on_progress:

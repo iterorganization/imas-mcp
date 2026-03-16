@@ -184,7 +184,12 @@ def compute_parallel_eta(
 
     Args:
         work_items: List of (pending_count, rate_per_second) tuples.
-            Each tuple represents one worker group.
+            Each tuple represents one worker group.  The rate should
+            be the **aggregate** throughput for that group (i.e. the
+            combined rate of all workers in the group, not a single
+            worker's rate).  Use ``WorkerStats.active_rate`` or
+            session-average ``run_count / elapsed`` to get aggregate
+            rates when multiple workers share a ``WorkerStats``.
 
     Returns:
         Maximum ETA across all workers, or None if no rate data.
@@ -2175,7 +2180,9 @@ class DataDrivenProgressDisplay(BaseProgressDisplay):
                     and stats.processed > 0
                     and stats.processed < stats.total
                 ):
-                    rate = stats.ema_rate or stats.rate
+                    # Use active_rate (aggregate across concurrent workers)
+                    # for accurate multi-worker ETA
+                    rate = stats.active_rate or stats.ema_rate or stats.rate
                     remaining = stats.total - stats.processed
                     work_items.append((remaining, rate))
 
