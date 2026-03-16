@@ -23,6 +23,8 @@ from typing import TYPE_CHECKING, Any
 from pydantic import BaseModel, Field
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from imas_codex.graph import GraphClient
 
 logger = logging.getLogger(__name__)
@@ -82,6 +84,7 @@ def enrich_identifier_schemas(
     model: str | None = None,
     batch_size: int = 30,
     force: bool = False,
+    on_items: "Callable[[list[dict], float], None] | None" = None,
 ) -> dict[str, Any]:
     """Enrich IdentifierSchema nodes with LLM-generated descriptions.
 
@@ -95,6 +98,7 @@ def enrich_identifier_schemas(
         model: LLM model for enrichment (defaults to language model)
         batch_size: Schemas per LLM call
         force: Re-enrich all schemas regardless of hash
+        on_items: Optional callback for streaming enriched item labels
 
     Returns:
         Statistics dict with counts.
@@ -263,6 +267,17 @@ def enrich_identifier_schemas(
                     updates=updates,
                 )
                 stats["enriched"] += len(updates)
+                if on_items:
+                    on_items(
+                        [
+                            {
+                                "primary_text": update["id"],
+                                "description": update["description"],
+                            }
+                            for update in updates
+                        ],
+                        0.0,
+                    )
 
         except Exception as e:
             logger.error(f"Error enriching identifier batch: {e}")
@@ -279,6 +294,7 @@ def embed_identifier_schemas(
     client: GraphClient,
     *,
     force_reembed: bool = False,
+    on_items: "Callable[[list[dict], float], None] | None" = None,
 ) -> dict[str, int]:
     """Generate embeddings for enriched IdentifierSchema nodes.
 
@@ -377,6 +393,11 @@ def embed_identifier_schemas(
         batch=batch_data,
     )
     stats["updated"] = len(to_embed)
+    if on_items and batch_data:
+        on_items(
+            [{"primary_text": item["id"]} for item in batch_data],
+            0.0,
+        )
 
     logger.info(
         f"Identifier schema embeddings: {stats['updated']} updated, "
