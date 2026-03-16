@@ -786,10 +786,6 @@ def format_fetch_report(chunks: list[dict[str, Any]]) -> str:
 
 def format_check_report(result: Any) -> str:
     """Format CheckPathsResult into a readable validation report."""
-    tool_error = _format_tool_error(result)
-    if tool_error:
-        return tool_error
-
     if result.error:
         return f"Error: {result.error}"
 
@@ -878,10 +874,6 @@ def format_fetch_paths_report(result: Any) -> str:
 
 def format_list_report(result: Any) -> str:
     """Format ListPathsResult into a path listing report."""
-    tool_error = _format_tool_error(result)
-    if tool_error:
-        return tool_error
-
     parts: list[str] = []
     summary = result.summary
     parts.append(
@@ -923,10 +915,6 @@ def format_list_report(result: Any) -> str:
 
 def format_overview_report(result: Any) -> str:
     """Format GetOverviewResult into an overview report."""
-    tool_error = _format_tool_error(result)
-    if tool_error:
-        return tool_error
-
     parts: list[str] = [result.content, ""]
 
     if result.physics_domains:
@@ -959,10 +947,6 @@ def format_overview_report(result: Any) -> str:
 
 def format_identifiers_report(result: Any) -> str:
     """Format GetIdentifiersResult into an identifiers report."""
-    tool_error = _format_tool_error(result)
-    if tool_error:
-        return tool_error
-
     parts: list[str] = []
     analytics = result.analytics
     parts.append(
@@ -1147,10 +1131,6 @@ def format_search_imas_report(result: Any, cluster_result: Any | None = None) ->
 
 def format_path_context_report(result: dict[str, Any]) -> str:
     """Format get_imas_path_context result into readable text."""
-    tool_error = _format_tool_error(result)
-    if tool_error:
-        return tool_error
-
     parts: list[str] = []
     path = result.get("path", "")
     sections = result.get("sections", {})
@@ -1218,10 +1198,6 @@ def format_path_context_report(result: dict[str, Any]) -> str:
 
 def format_structure_report(result: dict[str, Any]) -> str:
     """Format analyze_imas_structure result into readable text."""
-    tool_error = _format_tool_error(result)
-    if tool_error:
-        return tool_error
-
     parts: list[str] = []
     ids_name = result.get("ids_name", "")
 
@@ -1264,10 +1240,6 @@ def format_structure_report(result: dict[str, Any]) -> str:
 
 def format_export_ids_report(result: dict[str, Any]) -> str:
     """Format export_imas_ids result into readable text."""
-    tool_error = _format_tool_error(result)
-    if tool_error:
-        return tool_error
-
     parts: list[str] = []
     ids_name = result.get("ids_name", "")
     path_count = result.get("path_count", 0)

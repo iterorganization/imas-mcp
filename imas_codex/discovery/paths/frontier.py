@@ -3242,7 +3242,8 @@ def _fetch_dimension_calibration(
                            p.path_purpose AS purpose,
                            p.description AS description
                     ORDER BY
-                        p.facility_id <> $facility,
+                        CASE WHEN p.facility_id = $facility
+                             THEN 0 ELSE 1 END,
                         abs(p.{graph_prop} - $target) ASC,
                         p.id ASC
                     LIMIT $limit

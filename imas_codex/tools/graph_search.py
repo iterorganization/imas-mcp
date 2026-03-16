@@ -609,16 +609,16 @@ class GraphPathTool:
             MATCH (d:IMASNode {{id: $path}})
             WHERE true {dd_clause}
             OPTIONAL MATCH (d)-[rel:HAS_ERROR]->(e:IMASNode)
-            WITH d, e, rel
-            WHERE e IS NOT NULL
             RETURN d.id AS path,
-                   collect({{
-                       path: e.id,
-                       name: e.name,
-                       error_type: rel.error_type,
-                       documentation: e.documentation,
-                       data_type: e.data_type
-                   }}) AS error_fields
+                   collect(
+                       CASE WHEN e IS NULL THEN NULL ELSE {{
+                           path: e.id,
+                           name: e.name,
+                           error_type: rel.error_type,
+                           documentation: e.documentation,
+                           data_type: e.data_type
+                       }} END
+                   ) AS error_fields
             """,
             **dd_params,
         )
@@ -1516,18 +1516,20 @@ class GraphStructureTool:
         dd_params: dict[str, Any] = {"ids_name": ids_name}
         dd_clause = _dd_version_clause("p", dd_version, dd_params)
 
-        # Basic metrics — single scan using nullIf for leaf counting (Neo4j 2026 compat)
+        # Basic metrics
         metrics = self._gc.query(
             f"""
             MATCH (p:IMASNode)
             WHERE p.ids = $ids_name {dd_clause}
+            WITH p,
+                 size(split(p.id, '/')) - 1 AS depth,
+                  CASE WHEN {_leaf_data_type_clause('p')}
+                      THEN 1 ELSE 0 END AS is_leaf
             RETURN count(p) AS total_paths,
-                   max(size(split(p.id, '/')) - 1) AS max_depth,
-                   avg(size(split(p.id, '/')) - 1) AS avg_depth,
-                   count(nullIf(
-                       p.data_type IS NULL OR p.data_type IN {_structure_type_list()},
-                       true
-                   )) AS leaf_count
+                   sum(is_leaf) AS leaf_count,
+                   count(p) - sum(is_leaf) AS structure_count,
+                   max(depth) AS max_depth,
+                   avg(depth) AS avg_depth
             """,
             **dd_params,
         )
@@ -1579,13 +1581,11 @@ class GraphStructureTool:
         )
 
         basic = metrics[0] if metrics else {}
-        total_paths = basic.get("total_paths", 0)
-        leaf_count = basic.get("leaf_count", 0)
         return {
             "ids_name": ids_name,
-            "total_paths": total_paths,
-            "leaf_count": leaf_count,
-            "structure_count": total_paths - leaf_count,
+            "total_paths": basic.get("total_paths", 0),
+            "leaf_count": basic.get("leaf_count", 0),
+            "structure_count": basic.get("structure_count", 0),
             "max_depth": basic.get("max_depth", 0),
             "avg_depth": round(basic.get("avg_depth", 0), 1),
             "physics_domains": [
@@ -1748,15 +1748,10 @@ def _normalize_paths(paths: str | list[str]) -> list[str]:
 STRUCTURE_DATA_TYPES = ("STRUCTURE", "STRUCT_ARRAY")
 
 
-def _structure_type_list() -> str:
-    """Return a Cypher list literal of structure data types."""
-    quoted = ", ".join(f"'{dtype}'" for dtype in STRUCTURE_DATA_TYPES)
-    return f"[{quoted}]"
-
-
 def _leaf_data_type_clause(alias: str) -> str:
     """Return a Cypher clause that matches non-structure data nodes."""
-    return f"{alias}.data_type IS NOT NULL AND NOT ({alias}.data_type IN {_structure_type_list()})"
+    quoted_types = ", ".join(f"'{dtype}'" for dtype in STRUCTURE_DATA_TYPES)
+    return f"{alias}.data_type IS NOT NULL AND {alias}.data_type NOT IN [{quoted_types}]"
 
 
 def _text_search_imas_paths(
