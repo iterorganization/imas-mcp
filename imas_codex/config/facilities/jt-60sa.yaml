@@ -12,6 +12,9 @@ location: Naka, Japan
 # SSH connection (user configures ~/.ssh/config with this alias)
 ssh_host: jt-60sa
 
+# Lower the priority of codex SSH workloads on shared JT-60SA hosts.
+nice_level: 19
+
 # Data system configuration for signal discovery
 # Used by: imas-codex discover signals jt-60sa
 data_systems:
@@ -30,6 +33,16 @@ data_systems:
     backends:
       - mdsplus
     db_name: jt-60sa
+
+excludes:
+  directories:
+    - /tmp
+    - /var/tmp
+    - /work/edas
+  patterns:
+    - '*.avi'
+    - '*.dat.old'
+    - '*.backup'
 
 # Data access patterns discovered during facility exploration.
 data_access_patterns:

@@ -12,6 +12,9 @@ location: Lausanne, Switzerland
 # SSH connection (user configures ~/.ssh/config with this alias)
 ssh_host: tcv
 
+# Lower the priority of codex SSH workloads on the shared analysis host.
+nice_level: 19
+
 # Discovery root paths for path discovery pipeline
 # These are seeded as starting points for directory scanning
 discovery_roots:
@@ -206,6 +209,15 @@ data_systems:
       - NODES_USED
       - TEST
       - TRIAL
+
+excludes:
+  directories:
+    - /tmp
+    - /var/tmp
+  patterns:
+    - '*.dat.old'
+    - '*.backup'
+    - '*.bak'
 
 # Data access patterns discovered during facility exploration.
 # Informs wiki scoring, code ingestion, and signal discovery.
