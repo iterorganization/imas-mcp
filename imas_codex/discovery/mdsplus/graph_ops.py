@@ -1982,11 +1982,39 @@ def claim_tree_for_units(facility: str) -> dict | None:
             MATCH (v:SignalEpoch {facility_id: $facility})
             WHERE v.status = 'ingested'
               AND (v.units_extracted IS NULL OR v.units_extracted = false)
-            WITH v.data_source_name AS data_source_name, max(v.version) AS latest_version
-            RETURN data_source_name, latest_version
+            WITH v.data_source_name AS data_source_name, v
+            ORDER BY data_source_name, coalesce(v.first_shot, v.version) DESC, v.version DESC
+            WITH data_source_name, collect(v)[0] AS latest
+            RETURN data_source_name,
+                   latest.version AS latest_version,
+                   coalesce(latest.first_shot, latest.version) AS latest_shot
             LIMIT 1
             """,
             facility=facility,
+        )
+        if result:
+            return dict(result[0])
+        return None
+
+
+def get_latest_ingested_epoch_target(
+    facility: str,
+    data_source_name: str,
+) -> dict[str, int] | None:
+    """Get the latest ingested epoch version and extraction shot for a tree."""
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (v:SignalEpoch {facility_id: $facility, data_source_name: $data_source_name})
+            WHERE v.status = 'ingested'
+            WITH v
+            ORDER BY coalesce(v.first_shot, v.version) DESC, v.version DESC
+            RETURN v.version AS latest_version,
+                   coalesce(v.first_shot, v.version) AS latest_shot
+            LIMIT 1
+            """,
+            facility=facility,
+            data_source_name=data_source_name,
         )
         if result:
             return dict(result[0])
