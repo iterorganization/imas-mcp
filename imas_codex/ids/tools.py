@@ -368,6 +368,117 @@ def query_ids_physics_domains(
     return [r["domain"] for r in rows if r.get("domain")]
 
 
+def discover_mappable_ids(
+    facility: str,
+    *,
+    gc: GraphClient | None = None,
+    domains: list[str] | None = None,
+    ids_filter: list[str] | None = None,
+    dd_version: int | None = None,
+) -> dict[str, Any]:
+    """Discover IDS targets achievable from available signal sources.
+
+    Computes the union of physics domains from enriched signal sources,
+    then finds IDS names whose IMASNode paths intersect those domains.
+
+    Args:
+        facility: Facility identifier.
+        gc: GraphClient instance.
+        domains: Restrict to these physics domains. If None, uses all
+            domains present in enriched signal sources.
+        ids_filter: Restrict to these specific IDS names.
+        dd_version: DD major version filter.
+
+    Returns:
+        Dict with keys:
+            available_domains: list[str] — physics domains with enriched sources
+            ids_targets: list[dict] — [{ids_name, domains, source_count}]
+            total_sources: int — total enriched signal sources in scope
+    """
+    if gc is None:
+        gc = GraphClient()
+
+    # Step 1: Get physics domains from enriched signal sources
+    source_rows = gc.query(
+        """
+        MATCH (sg:SignalSource {facility_id: $facility})
+        WHERE sg.status = 'enriched'
+          AND sg.physics_domain IS NOT NULL
+          AND sg.physics_domain <> ''
+        RETURN sg.physics_domain AS domain, count(sg) AS cnt
+        ORDER BY cnt DESC
+        """,
+        facility=facility,
+    )
+    available_domains = [r["domain"] for r in source_rows]
+    source_counts = {r["domain"]: r["cnt"] for r in source_rows}
+
+    if not available_domains:
+        return {
+            "available_domains": [],
+            "ids_targets": [],
+            "total_sources": 0,
+        }
+
+    # Apply --domain filter
+    active_domains = available_domains
+    if domains:
+        active_domains = [d for d in domains if d in available_domains]
+        if not active_domains:
+            return {
+                "available_domains": available_domains,
+                "ids_targets": [],
+                "total_sources": 0,
+            }
+
+    # Step 2: Find IDS names whose IMASNode paths have matching domains
+    from imas_codex.tools.graph_search import _dd_version_clause
+
+    dd_params: dict[str, Any] = {}
+    dd_clause = _dd_version_clause("p", dd_version, dd_params)
+
+    ids_filter_clause = ""
+    if ids_filter:
+        ids_filter_clause = "AND p.ids IN $ids_filter"
+        dd_params["ids_filter"] = ids_filter
+
+    ids_rows = gc.query(
+        f"""
+        MATCH (p:IMASNode)
+        WHERE p.physics_domain IN $active_domains
+          AND p.ids IS NOT NULL
+          AND p.ids <> ''
+          {dd_clause}
+          {ids_filter_clause}
+        WITH DISTINCT p.ids AS ids_name,
+             collect(DISTINCT p.physics_domain) AS domains
+        RETURN ids_name, domains
+        ORDER BY ids_name
+        """,
+        active_domains=active_domains,
+        **dd_params,
+    )
+
+    ids_targets = []
+    for r in ids_rows:
+        ids_name = r["ids_name"]
+        ids_domains = r["domains"]
+        source_count = sum(source_counts.get(d, 0) for d in ids_domains)
+        ids_targets.append({
+            "ids_name": ids_name,
+            "domains": ids_domains,
+            "source_count": source_count,
+        })
+
+    total_sources = sum(source_counts.get(d, 0) for d in active_domains)
+
+    return {
+        "available_domains": available_domains,
+        "ids_targets": ids_targets,
+        "total_sources": total_sources,
+    }
+
+
 def fetch_source_code_refs(
     source_id: str,
     *,
