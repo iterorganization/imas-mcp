@@ -1497,9 +1497,14 @@ def _deploy_login_embed_nohup() -> None:
 
 
 def _kill_login_embed() -> None:
-    """Kill any running embed server processes on the login node."""
+    """Kill any running embed server processes on the login node.
+
+    Uses ``imas-codex embed start`` as the pgrep pattern to match only
+    running server processes — not CLI management commands like
+    ``embed stop`` or ``embed restart`` (which would self-kill).
+    """
     kill_cmd = (
-        'pids=$(pgrep -u $USER -f "imas-codex embed" 2>/dev/null)\n'
+        'pids=$(pgrep -u $USER -f "imas-codex embed start" 2>/dev/null)\n'
         'if [ -n "$pids" ]; then\n'
         '    echo "$pids" | xargs kill -9 2>/dev/null || true\n'
         '    sleep 1\n'

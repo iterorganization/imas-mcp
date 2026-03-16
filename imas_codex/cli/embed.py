@@ -631,12 +631,14 @@ def embed_stop() -> None:
     except subprocess.CalledProcessError:
         pass
 
-    # Kill login-node nohup embed processes (non-systemd fallback)
+    # Kill login-node nohup embed processes (non-systemd fallback).
+    # Pattern "imas-codex embed start" matches server processes only,
+    # not the running stop/restart CLI (which would self-kill).
     try:
         from imas_codex.cli.services import _kill_login_embed
 
         result = _run_remote(
-            'pgrep -u $USER -f "imas-codex embed" 2>/dev/null || true',
+            'pgrep -u $USER -f "imas-codex embed start" 2>/dev/null || true',
             timeout=10,
         )
         pids = [p.strip() for p in result.strip().split("\n") if p.strip().isdigit()]
