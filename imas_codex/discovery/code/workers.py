@@ -1113,19 +1113,25 @@ async def link_worker(
         # Link is cheap, run every 10s
         await asyncio.sleep(10.0)
 
-    # Final pass after all code ingestion is done
+    # Final pass after all code ingestion is done.
+    # Skip it when the graph is already drained; otherwise the worker can
+    # spend minutes in a no-op relinking query after the UI has gone idle.
     if not (state.scan_only or state.score_only):
         try:
-            result = await asyncio.to_thread(
-                link_code_evidence_to_signals, state.facility
+            final_has_work = await asyncio.to_thread(
+                has_pending_link_work, state.facility
             )
-            final_linked = result.get("signals_linked", 0)
-            if final_linked > last_linked and on_progress:
-                on_progress(
-                    f"final link: {final_linked} signals",
-                    state.link_stats,
-                    None,
+            if final_has_work:
+                result = await asyncio.to_thread(
+                    link_code_evidence_to_signals, state.facility
                 )
+                final_linked = result.get("signals_linked", 0)
+                if final_linked > last_linked and on_progress:
+                    on_progress(
+                        f"final link: {final_linked} signals",
+                        state.link_stats,
+                        None,
+                    )
         except Exception as e:
             logger.error("Final code evidence linking failed: %s", e)
             if is_infrastructure_error(e):
