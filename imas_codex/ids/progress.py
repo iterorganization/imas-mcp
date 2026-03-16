@@ -231,12 +231,11 @@ class MappingProgressDisplay(BaseProgressDisplay):
                 completed=1 if context_done else 0,
                 total=1,
                 is_complete=context_done,
-                primary_text=ctx.detail if ctx else "",
                 description=(
                     f"{s.sources_found} sources, "
                     f"{s.sections_total or '?'} sections"
                     if context_done
-                    else (ctx.detail if ctx else "")
+                    else ""
                 ),
                 is_processing=s.current_step == "context" and not context_done,
                 processing_label=ctx.detail if ctx else "gathering context...",
