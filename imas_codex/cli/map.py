@@ -1,11 +1,12 @@
-"""CLI commands for IMAS mapping pipeline.
+"""CLI commands for IMAS signal mapping pipeline.
 
 Usage:
-    imas-codex imas map run FACILITY IDS_NAME
+    imas-codex imas map FACILITY                   # Map all achievable IDS
+    imas-codex imas map FACILITY -d magnetics      # Map IDS in a physics domain
+    imas-codex imas map FACILITY -i pf_active      # Map specific IDS
     imas-codex imas map status FACILITY [IDS_NAME]
     imas-codex imas map show FACILITY IDS_NAME
     imas-codex imas map validate FACILITY IDS_NAME
-    imas-codex imas map validate-e2e FACILITY IDS_NAME --shot SHOT
     imas-codex imas map clear FACILITY IDS_NAME
 """
 
@@ -19,14 +20,86 @@ from imas_codex.cli.logging import configure_cli_logging
 logger = logging.getLogger(__name__)
 
 
-@click.group()
+# ---------------------------------------------------------------------------
+# Group with default 'run' subcommand
+# ---------------------------------------------------------------------------
+
+
+class _DefaultRunGroup(click.Group):
+    """Click group that defaults to 'run' when first arg is not a subcommand.
+
+    Enables ``imas map jet`` as shorthand for ``imas map run jet``.
+    """
+
+    def resolve_command(self, ctx, args):
+        if args:
+            maybe_cmd = args[0]
+            if maybe_cmd in self.commands:
+                return super().resolve_command(ctx, args)
+            # Not a known subcommand — prepend 'run'
+            return super().resolve_command(ctx, ["run", *args])
+        return super().resolve_command(ctx, args)
+
+
+@click.group(cls=_DefaultRunGroup)
 def map_cmd() -> None:
-    """IMAS mapping pipeline commands."""
+    """IMAS signal mapping pipeline.
+
+    \b
+    Maps facility signal sources to IMAS data structures. Sources are
+    grouped by physics domain and matched to IDS targets via LLM.
+
+    \b
+    Running Mappings:
+      imas-codex imas map FACILITY                  Map all achievable IDS
+      imas-codex imas map FACILITY -d magnetics     Map IDS in a physics domain
+      imas-codex imas map FACILITY -i pf_active     Map specific IDS
+      imas-codex imas map FACILITY -d mhd -d magnetics  Multiple domains
+
+    \b
+    Management Commands:
+      status             Show mapping status
+      show               Show detailed mapping JSON
+      validate           Validate mapping paths, transforms, units
+      clear              Remove mapping and relationships
+      activate           Promote mapping to active status
+
+    \b
+    Options:
+      --domain/-d        Filter by physics domain (repeatable)
+      --ids/-i           Filter by IDS name (repeatable)
+      --cost-limit/-c    Max LLM spend per IDS in USD (default: $5)
+      --time             Max total runtime in minutes
+      --model/-m         Override LLM model identifier
+      --clear            Clear existing mappings before generating
+      --no-persist       Dry run (skip graph persistence)
+      --no-activate      Persist as 'generated' without promoting to 'active'
+    """
+
+
+# ---------------------------------------------------------------------------
+# Run command (default when no subcommand given)
+# ---------------------------------------------------------------------------
 
 
 @map_cmd.command("run")
 @click.argument("facility")
-@click.argument("ids_name")
+@click.option(
+    "--domain",
+    "-d",
+    "domains",
+    multiple=True,
+    help="Physics domain(s) to map. Repeatable. Without this flag, "
+    "maps all domains with enriched signal sources.",
+)
+@click.option(
+    "--ids",
+    "-i",
+    "ids_names",
+    multiple=True,
+    help="Specific IDS name(s) to map. Repeatable. "
+    "Physics domains are derived from the IDS internally.",
+)
 @click.option("--model", "-m", help="Override LLM model identifier.")
 @click.option("--dd-version", help="Override Data Dictionary version.")
 @click.option(
@@ -34,9 +107,13 @@ def map_cmd() -> None:
     "-c",
     type=float,
     default=5.0,
-    help="Maximum LLM spend in USD (default: $5).",
+    help="Maximum LLM spend in USD per IDS (default: $5).",
 )
-@click.option("--no-persist", is_flag=True, help="Skip graph persistence.")
+@click.option(
+    "--no-persist",
+    is_flag=True,
+    help="Skip graph persistence (dry run).",
+)
 @click.option(
     "--no-activate",
     is_flag=True,
@@ -47,17 +124,18 @@ def map_cmd() -> None:
     "time_limit",
     type=int,
     default=None,
-    help="Maximum runtime in minutes.",
+    help="Maximum total runtime in minutes.",
 )
 @click.option("-v", "--verbose", is_flag=True, help="Enable verbose logging.")
 @click.option(
     "--clear",
     is_flag=True,
-    help="Clear any existing mapping for this facility/IDS before generating.",
+    help="Clear existing mappings for targeted IDS before generating.",
 )
 def map_run(
     facility: str,
-    ids_name: str,
+    domains: tuple[str, ...],
+    ids_names: tuple[str, ...],
     model: str | None,
     dd_version: str | None,
     cost_limit: float,
@@ -67,19 +145,31 @@ def map_run(
     verbose: bool,
     clear: bool,
 ) -> None:
-    """Run the full mapping pipeline.
+    """Run the IMAS signal mapping pipeline.
+
+    Maps facility signal sources to IMAS data structures. Signal sources
+    are grouped by physics domain and matched to IDS targets.
+
+    \b
+    Scoping:
+      No flags         Map all achievable IDS from all enriched signal sources
+      --domain/-d      Map only IDS in the specified physics domain(s)
+      --ids/-i         Map specific IDS name(s)
+      Both             Map specified IDS, filtered to specified domains
 
     \b
     Examples:
-      imas-codex imas map run jet pf_active
-      imas-codex imas map run --no-persist jet pf_active
-      imas-codex imas map run --cost-limit 2.0 --time 10 jet pf_active
-      imas-codex imas map run --clear jet pf_active
+      imas-codex imas map jet                          Map all achievable IDS
+      imas-codex imas map jet -d magnetics             Map magnetics domain only
+      imas-codex imas map jet -i pf_active             Map specific IDS
+      imas-codex imas map jet -d magnetics -d mhd      Multiple domains
+      imas-codex imas map jet -c 2.0 --time 10         Budget and time limits
+      imas-codex imas map jet --clear -i pf_active     Clear and remap
     """
+    import time as time_mod
+
     from imas_codex.cli.discover.common import (
-        DiscoveryConfig,
         make_log_print,
-        run_discovery,
         setup_logging,
         use_rich_output,
     )
@@ -88,12 +178,60 @@ def map_run(
     console = setup_logging("map", facility, use_rich, verbose=verbose)
     log_print = make_log_print("map", console)
 
-    # Clear previous mapping if requested
-    if clear:
-        _clear_mapping(facility, ids_name, log_print)
+    # -------------------------------------------------------------------
+    # Pre-flight: discover mappable IDS from physics domain intersection
+    # -------------------------------------------------------------------
+    from imas_codex.graph.client import GraphClient
+    from imas_codex.ids.tools import discover_mappable_ids
 
-    log_print(f"\n[bold]Signal Mapping: {facility}/{ids_name}[/bold]")
-    log_print(f"  Cost limit: ${cost_limit:.2f}")
+    gc = GraphClient()
+    plan = discover_mappable_ids(
+        facility,
+        gc=gc,
+        domains=list(domains) if domains else None,
+        ids_filter=list(ids_names) if ids_names else None,
+    )
+
+    available = plan["available_domains"]
+    targets = plan["ids_targets"]
+    total_sources = plan["total_sources"]
+
+    if not available:
+        click.echo(
+            f"No enriched signal sources found for {facility}. "
+            "Run signal discovery first: imas-codex discover signals "
+            f"{facility}",
+            err=True,
+        )
+        raise SystemExit(1)
+
+    if not targets:
+        if domains:
+            click.echo(
+                f"No IDS found matching domains {list(domains)} "
+                f"for {facility}. Available domains: {available}",
+                err=True,
+            )
+        elif ids_names:
+            click.echo(
+                f"No IDS found matching {list(ids_names)} "
+                f"with available signal sources for {facility}.",
+                err=True,
+            )
+        else:
+            click.echo(
+                f"No mappable IDS found for {facility}.",
+                err=True,
+            )
+        raise SystemExit(1)
+
+    # Print plan
+    domain_set = sorted({d for t in targets for d in t["domains"]})
+    log_print(f"\n[bold]Signal Mapping: {facility}[/bold]")
+    log_print(f"  Physics domains: {', '.join(domain_set)}")
+    log_print(f"  IDS targets: {len(targets)}")
+    log_print(f"  Signal sources: {total_sources} enriched")
+    log_print(f"  Cost limit: ${cost_limit:.2f}/IDS")
     if model:
         log_print(f"  Model: {model}")
     if dd_version:
@@ -105,31 +243,164 @@ def map_run(
     elif no_activate:
         log_print("  Mode: persist as generated")
     log_print("")
+    for t in targets:
+        domains_str = ", ".join(t["domains"])
+        log_print(
+            f"  \u2192 {t['ids_name']:<25} "
+            f"({domains_str}, {t['source_count']} sources)"
+        )
+    log_print("")
 
+    # -------------------------------------------------------------------
+    # Compute global deadline
+    # -------------------------------------------------------------------
+    deadline: float | None = None
+    if time_limit is not None:
+        deadline = time_mod.time() + time_limit * 60
+
+    # -------------------------------------------------------------------
+    # Iterate IDS targets
+    # -------------------------------------------------------------------
+    all_results: list[dict] = []
+
+    for idx, target in enumerate(targets, 1):
+        ids_name = target["ids_name"]
+        log_print(
+            f"[bold cyan]\u2501\u2501\u2501 [{idx}/{len(targets)}] "
+            f"{ids_name} \u2501\u2501\u2501[/bold cyan]"
+        )
+
+        # Check deadline
+        if deadline and time_mod.time() >= deadline:
+            log_print("[yellow]Time limit reached \u2014 stopping.[/yellow]")
+            break
+
+        # Clear previous mapping if requested
+        if clear:
+            _clear_mapping(facility, ids_name, log_print)
+
+        # Run mapping for this IDS
+        result = _run_single_ids(
+            facility=facility,
+            ids_name=ids_name,
+            model=model,
+            dd_version=dd_version,
+            cost_limit=cost_limit,
+            no_persist=no_persist,
+            no_activate=no_activate,
+            deadline=deadline,
+            verbose=verbose,
+            use_rich=use_rich,
+            console=console,
+            log_print=log_print,
+        )
+
+        if result:
+            all_results.append(result)
+
+    # -------------------------------------------------------------------
+    # Summary
+    # -------------------------------------------------------------------
+    _print_summary(all_results, log_print)
+
+
+def _run_single_ids(
+    *,
+    facility: str,
+    ids_name: str,
+    model: str | None,
+    dd_version: str | None,
+    cost_limit: float,
+    no_persist: bool,
+    no_activate: bool,
+    deadline: float | None,
+    verbose: bool,
+    use_rich: bool,
+    console,
+    log_print,
+) -> dict | None:
+    """Run mapping pipeline for a single IDS. Returns result dict or None."""
+    if not use_rich:
+        return _run_single_ids_plain(
+            facility=facility,
+            ids_name=ids_name,
+            model=model,
+            dd_version=dd_version,
+            cost_limit=cost_limit,
+            no_persist=no_persist,
+            no_activate=no_activate,
+            log_print=log_print,
+        )
+
+    return _run_single_ids_rich(
+        facility=facility,
+        ids_name=ids_name,
+        model=model,
+        dd_version=dd_version,
+        cost_limit=cost_limit,
+        no_persist=no_persist,
+        no_activate=no_activate,
+        deadline=deadline,
+        verbose=verbose,
+        console=console,
+        log_print=log_print,
+    )
+
+
+def _run_single_ids_plain(
+    *,
+    facility: str,
+    ids_name: str,
+    model: str | None,
+    dd_version: str | None,
+    cost_limit: float,
+    no_persist: bool,
+    no_activate: bool,
+    log_print,
+) -> dict | None:
+    """Run mapping for a single IDS in plain (non-rich) mode."""
     from imas_codex.ids.mapping import generate_mapping
 
-    if not use_rich:
-        # Plain mode — simple synchronous execution
-        try:
-            result = generate_mapping(
-                facility,
-                ids_name,
-                model=model,
-                dd_version=dd_version,
-                persist=not no_persist,
-                activate=not no_activate,
-            )
-        except ValueError as e:
-            click.echo(f"Error: {e}", err=True)
-            raise SystemExit(1) from None
+    try:
+        result = generate_mapping(
+            facility,
+            ids_name,
+            model=model,
+            dd_version=dd_version,
+            persist=not no_persist,
+            activate=not no_activate,
+        )
+    except ValueError as e:
+        log_print(f"[red]Error: {e}[/red]")
+        return None
 
-        _print_result(result)
-        return
+    _print_result(result)
+    return {
+        "ids_name": ids_name,
+        "mapping_id": result.mapping_id,
+        "bindings": len(result.validated.bindings),
+        "escalations": len(result.validated.escalations),
+        "cost": result.cost,
+        "persisted": result.persisted,
+    }
 
-    # Rich mode — worker-based engine with progress display
-    import asyncio
-    import time
 
+def _run_single_ids_rich(
+    *,
+    facility: str,
+    ids_name: str,
+    model: str | None,
+    dd_version: str | None,
+    cost_limit: float,
+    no_persist: bool,
+    no_activate: bool,
+    deadline: float | None,
+    verbose: bool,
+    console,
+    log_print,
+) -> dict | None:
+    """Run mapping for a single IDS with Rich progress display."""
+    from imas_codex.cli.discover.common import DiscoveryConfig, run_discovery
     from imas_codex.discovery.base.facility import get_facility
     from imas_codex.ids.progress import MappingProgressDisplay
     from imas_codex.ids.workers import MappingDiscoveryState, run_mapping_engine
@@ -138,7 +409,7 @@ def map_run(
         facility_config = get_facility(facility)
     except Exception as e:
         log_print(f"[red]Error loading facility config: {e}[/red]")
-        raise SystemExit(1) from e
+        return None
 
     display = MappingProgressDisplay(
         facility=facility,
@@ -147,8 +418,8 @@ def map_run(
         model=model,
     )
 
-    if time_limit:
-        display.state.deadline = time.time() + time_limit * 60
+    if deadline:
+        display.state.deadline = deadline
 
     config = DiscoveryConfig(
         domain="mapping",
@@ -161,6 +432,8 @@ def map_run(
         verbose=verbose,
     )
 
+    result_holder: dict = {}
+
     async def _run_mapping(stop_event, service_monitor):
         engine_state = MappingDiscoveryState(
             facility=facility,
@@ -171,13 +444,12 @@ def map_run(
             persist=not no_persist,
             activate=not no_activate,
         )
-        if time_limit:
-            engine_state.deadline = time.time() + time_limit * 60
+        if deadline:
+            engine_state.deadline = deadline
         if service_monitor:
             engine_state.service_monitor = service_monitor
 
         def _update_display(detail, stats):
-            """Sync display state from worker progress."""
             ds = display.state
             ds.sources_found = engine_state.sources_found
             ds.sections_assigned = engine_state.sections_assigned
@@ -195,10 +467,9 @@ def map_run(
                 on_progress=_update_display,
             )
         except ValueError as e:
-            click.echo(f"\nError: {e}", err=True)
-            raise SystemExit(1) from None
+            log_print(f"[red]Error: {e}[/red]")
+            return {"error": str(e)}
 
-        # Final display update
         ds = display.state
         ds.current_step = "done"
         ds.sources_found = engine_state.sources_found
@@ -210,35 +481,47 @@ def map_run(
         ds.cost = engine_state.cost
 
         return {
+            "ids_name": ids_name,
             "mapping_id": engine_state.mapping_id,
-            "bindings_total": engine_state.bindings_total,
-            "bindings_passed": engine_state.bindings_passed,
+            "bindings": engine_state.bindings_total,
             "escalations": engine_state.escalations,
             "cost": engine_state.cost,
             "persisted": engine_state.persist,
         }
 
     def _on_complete(results):
-        click.echo()
-        click.echo(f"\nMapping: {results.get('mapping_id', 'N/A')}")
-        click.echo(f"Bindings: {results.get('bindings_total', 0)}")
-        click.echo(f"Escalations: {results.get('escalations', 0)}")
-        click.echo(f"Persisted: {results.get('persisted', False)}")
+        result_holder.update(results)
         cost = results.get("cost")
+        cost_str = ""
         if cost:
-            click.echo(f"\nCost: ${cost.total_usd:.4f} ({cost.total_tokens} tokens)")
+            cost_str = f"  ${cost.total_usd:.4f}"
+        click.echo(
+            f"  {ids_name}: "
+            f"{results.get('bindings', 0)} bindings, "
+            f"{results.get('escalations', 0)} escalations"
+            f"{cost_str}"
+        )
 
     try:
         run_discovery(config, _run_mapping, on_complete=_on_complete)
     except SystemExit:
         raise
     except Exception as e:
-        click.echo(f"Error: {e}", err=True)
-        raise SystemExit(1) from None
+        log_print(f"[red]Error mapping {ids_name}: {e}[/red]")
+        return None
+
+    if "error" in result_holder:
+        return None
+    return result_holder
+
+
+# ---------------------------------------------------------------------------
+# Result printing
+# ---------------------------------------------------------------------------
 
 
 def _print_result(result) -> None:
-    """Print mapping result summary."""
+    """Print mapping result summary for a single IDS."""
     click.echo(f"\nMapping: {result.mapping_id}")
     click.echo(f"Bindings: {len(result.validated.bindings)}")
     click.echo(f"Escalations: {len(result.validated.escalations)}")
@@ -258,7 +541,7 @@ def _print_result(result) -> None:
         click.echo(f"\nEscalations ({len(result.validated.escalations)}):")
         for esc in result.validated.escalations:
             click.echo(
-                f"  [{esc.severity.value}] {esc.source_id} → {esc.target_id}"
+                f"  [{esc.severity.value}] {esc.source_id} \u2192 {esc.target_id}"
             )
             click.echo(f"    {esc.reason}")
 
@@ -277,237 +560,41 @@ def _print_result(result) -> None:
             click.echo(f"  - {gid}")
 
 
-@map_cmd.command("status")
-@click.argument("facility")
-@click.argument("ids_name", required=False)
-def map_status(facility: str, ids_name: str | None) -> None:
-    """Show mapping status for a facility."""
-    configure_cli_logging("map", facility=facility)
-
-    from imas_codex.graph.client import GraphClient
-
-    gc = GraphClient()
-
-    if ids_name:
-        # Show specific mapping status
-        from imas_codex.ids.tools import search_existing_mappings
-
-        result = search_existing_mappings(facility, ids_name, gc=gc)
-        if not result["mapping"]:
-            click.echo(f"No mapping found for {facility}/{ids_name}.")
-            return
-
-        m = result["mapping"]
-        click.echo(f"Mapping: {m['id']}")
-        click.echo(f"Status: {m.get('status', 'unknown')}")
-        click.echo(f"DD version: {m.get('dd_version', 'unknown')}")
-        click.echo(f"Sections: {len(result['sections'])}")
-        click.echo(f"Bindings: {len(result['bindings'])}")
-    else:
-        # List all mappings for facility
-        rows = gc.query(
-            """
-            MATCH (m:IMASMapping)
-            WHERE m.facility_id = $facility
-            RETURN m.id AS id, m.ids_name AS ids_name,
-                   m.status AS status, m.dd_version AS dd_version
-            ORDER BY m.ids_name
-            """,
-            facility=facility,
-        )
-        if not rows:
-            click.echo(f"No mappings found for {facility}.")
-            return
-
-        click.echo(f"{'IDS':<20} {'Status':<12} {'DD Version':<12}")
-        click.echo("-" * 44)
-        for r in rows:
-            click.echo(
-                f"{r['ids_name']:<20} "
-                f"{r.get('status', '?'):<12} "
-                f"{r.get('dd_version', '?'):<12}"
-            )
-
-
-@map_cmd.command("show")
-@click.argument("facility")
-@click.argument("ids_name")
-def map_show(facility: str, ids_name: str) -> None:
-    """Show detailed mapping for a facility/IDS pair."""
-    configure_cli_logging("map", facility=facility)
-
-    from imas_codex.ids.tools import search_existing_mappings
-
-    result = search_existing_mappings(facility, ids_name)
-    if not result["mapping"]:
-        click.echo(f"No mapping found for {facility}/{ids_name}.")
+def _print_summary(results: list[dict], log_print) -> None:
+    """Print summary across all mapped IDS."""
+    if not results:
+        log_print("[yellow]No IDS were successfully mapped.[/yellow]")
         return
 
-    click.echo(json.dumps(result, indent=2, default=str))
-
-
-@map_cmd.command("validate")
-@click.argument("facility")
-@click.argument("ids_name")
-def map_validate(facility: str, ids_name: str) -> None:
-    """Validate existing mapping paths, transforms, units, and coverage."""
-    configure_cli_logging("map", facility=facility)
-
-    from imas_codex.graph.client import GraphClient
-    from imas_codex.ids.tools import search_existing_mappings
-    from imas_codex.ids.validation import (
-        compute_assembly_coverage,
-        compute_confidence_distribution,
-        compute_coverage,
-        compute_signal_coverage,
-        compute_signal_source_coverage,
-        validate_mapping,
+    total_bindings = sum(r.get("bindings", 0) for r in results)
+    total_escalations = sum(r.get("escalations", 0) for r in results)
+    total_cost = sum(
+        r["cost"].total_usd for r in results if r.get("cost")
+    )
+    total_tokens = sum(
+        r["cost"].total_tokens for r in results if r.get("cost")
     )
 
-    gc = GraphClient()
-    result = search_existing_mappings(facility, ids_name, gc=gc)
-    if not result["mapping"]:
-        click.echo(f"No mapping found for {facility}/{ids_name}.")
-        return
+    log_print(f"\n[bold]Mapping Summary[/bold]")
+    log_print(f"  IDS mapped: {len(results)}")
+    log_print(f"  Total bindings: {total_bindings}")
+    log_print(f"  Total escalations: {total_escalations}")
+    log_print(f"  Total cost: ${total_cost:.4f} ({total_tokens} tokens)")
 
-    # Build lightweight binding objects from graph data
-    from imas_codex.ids.models import ValidatedSignalMapping
-
-    bindings = [ValidatedSignalMapping(**b) for b in result["bindings"]]
-    if not bindings:
-        click.echo("No bindings to validate.")
-        return
-
-    # Run validation
-    report = validate_mapping(bindings, gc=gc)
-
-    passed = sum(
-        1
-        for c in report.binding_checks
-        if c.source_exists
-        and c.target_exists
-        and c.transform_executes
-        and c.units_compatible
-    )
-    failed = len(report.binding_checks) - passed
-
-    click.echo(f"Validated {len(bindings)} bindings:")
-    click.echo(f"  Passed: {passed}")
-    click.echo(f"  Failed: {failed}")
-
-    for c in report.binding_checks:
-        if c.error:
-            click.echo(f"  ✗ {c.source_id} → {c.target_id}")
-            click.echo(f"    {c.error}")
-
-    if report.duplicate_targets:
-        click.echo(f"\nDuplicate targets ({len(report.duplicate_targets)}):")
-        for dup in report.duplicate_targets:
-            sources = [b.source_id for b in bindings if b.target_id == dup]
-            click.echo(f"  {dup} ← {', '.join(sources)}")
-
-    # Coverage
-    coverage = compute_coverage(ids_name, bindings, gc=gc)
-    if coverage.total_leaf_fields > 0:
-        click.echo(
-            f"\nCoverage ({ids_name}): "
-            f"{coverage.mapped_fields}/{coverage.total_leaf_fields} "
-            f"leaf fields ({coverage.percentage:.1f}%)"
-        )
-        if coverage.mapped_paths:
-            click.echo(f"  Mapped: {', '.join(coverage.mapped_paths[:10])}")
-            if len(coverage.mapped_paths) > 10:
-                click.echo(f"    ... and {len(coverage.mapped_paths) - 10} more")
-        if coverage.unmapped_fields:
-            shown = coverage.unmapped_fields[:10]
-            click.echo(f"  Unmapped: {', '.join(shown)}")
-            if len(coverage.unmapped_fields) > 10:
-                click.echo(
-                    f"    ... and {len(coverage.unmapped_fields) - 10} more"
-                )
-
-    # Signal source coverage
-    sig_cov = compute_signal_coverage(facility, gc=gc)
-    if sig_cov.total_enriched > 0:
-        click.echo(
-            f"\nSignal sources ({facility}): "
-            f"{sig_cov.mapped}/{sig_cov.total_enriched} "
-            f"enriched groups mapped ({sig_cov.percentage:.1f}%)"
-        )
-        if sig_cov.unmapped_groups:
-            shown = sig_cov.unmapped_groups[:10]
-            click.echo(f"  Unmapped: {', '.join(shown)}")
-            if len(sig_cov.unmapped_groups) > 10:
-                click.echo(
-                    f"    ... and {len(sig_cov.unmapped_groups) - 10} more"
-                )
-
-    # Extended signal source coverage per IDS (8.1)
-    src_cov = compute_signal_source_coverage(facility, ids_name, gc=gc)
-    if src_cov.total_enriched_matching > 0:
-        click.echo(
-            f"\nSignal source coverage ({facility}/{ids_name}): "
-            f"{src_cov.mapped_to_ids}/{src_cov.total_enriched_matching} "
-            f"enriched sources mapped ({src_cov.enriched_mapped_pct:.1f}%)"
-        )
-        if src_cov.unmapped_enriched:
-            shown = src_cov.unmapped_enriched[:10]
-            click.echo(f"  Unmapped enriched: {', '.join(shown)}")
-            if len(src_cov.unmapped_enriched) > 10:
-                click.echo(
-                    f"    ... and {len(src_cov.unmapped_enriched) - 10} more"
-                )
-    if src_cov.discovered_sources > 0:
-        click.echo(
-            f"  Underspecified (discovered, not enriched): "
-            f"{src_cov.discovered_sources}"
-        )
-    if src_cov.multi_target_sources > 0:
-        click.echo(
-            f"  Multi-target sources: {src_cov.multi_target_sources}"
+    for r in results:
+        cost = r.get("cost")
+        cost_str = f" ${cost.total_usd:.4f}" if cost else ""
+        log_print(
+            f"    {r.get('ids_name', '?')}: "
+            f"{r.get('bindings', 0)} bindings, "
+            f"{r.get('escalations', 0)} escalations"
+            f"{cost_str}"
         )
 
-    # Assembly coverage (8.2)
-    asm_cov = compute_assembly_coverage(facility, ids_name, gc=gc)
-    if asm_cov.total_sections > 0:
-        click.echo(
-            f"\nAssembly coverage ({ids_name}): "
-            f"{asm_cov.sections_with_config}/{asm_cov.total_sections} "
-            f"sections configured"
-        )
-        if asm_cov.sections_without_config:
-            click.echo(
-                f"  Unconfigured: {', '.join(asm_cov.sections_without_config)}"
-            )
-        click.echo(
-            f"  Patterns: {asm_cov.default_pattern_count} default "
-            f"(array_per_node), {asm_cov.custom_pattern_count} custom"
-        )
-        click.echo(
-            f"  init_arrays: {asm_cov.init_arrays_configured} configured, "
-            f"{asm_cov.init_arrays_unconfigured} unconfigured"
-        )
 
-    # Confidence distribution (8.3)
-    conf_dist = compute_confidence_distribution(bindings)
-    if conf_dist.total_bindings > 0:
-        click.echo(
-            f"\nConfidence distribution ({conf_dist.total_bindings} bindings, "
-            f"avg {conf_dist.average_confidence:.2f}):"
-        )
-        click.echo(
-            f"  High (>0.8): {conf_dist.high_count}  "
-            f"Medium (0.5-0.8): {conf_dist.medium_count}  "
-            f"Low (<0.5): {conf_dist.low_count}"
-        )
-        if conf_dist.low_bindings:
-            click.echo("  Low-confidence (review needed):")
-            for entry in conf_dist.low_bindings[:10]:
-                click.echo(f"    {entry}")
-            if len(conf_dist.low_bindings) > 10:
-                click.echo(
-                    f"    ... and {len(conf_dist.low_bindings) - 10} more"
-                )
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
 
 
 def _clear_mapping(facility: str, ids_name: str, log_print=None) -> int:
@@ -561,12 +648,290 @@ def _clear_mapping(facility: str, ids_name: str, log_print=None) -> int:
     return deleted
 
 
+# ---------------------------------------------------------------------------
+# Status subcommand
+# ---------------------------------------------------------------------------
+
+
+@map_cmd.command("status")
+@click.argument("facility")
+@click.argument("ids_name", required=False)
+def map_status(facility: str, ids_name: str | None) -> None:
+    """Show mapping status for a facility.
+
+    \b
+    Without IDS_NAME, lists all mappings for the facility.
+    With IDS_NAME, shows detailed status for that mapping.
+
+    \b
+    Examples:
+      imas-codex imas map status jet
+      imas-codex imas map status jet pf_active
+    """
+    configure_cli_logging("map", facility=facility)
+
+    from imas_codex.graph.client import GraphClient
+
+    gc = GraphClient()
+
+    if ids_name:
+        from imas_codex.ids.tools import search_existing_mappings
+
+        result = search_existing_mappings(facility, ids_name, gc=gc)
+        if not result["mapping"]:
+            click.echo(f"No mapping found for {facility}/{ids_name}.")
+            return
+
+        m = result["mapping"]
+        click.echo(f"Mapping: {m['id']}")
+        click.echo(f"Status: {m.get('status', 'unknown')}")
+        click.echo(f"DD version: {m.get('dd_version', 'unknown')}")
+        click.echo(f"Sections: {len(result['sections'])}")
+        click.echo(f"Bindings: {len(result['bindings'])}")
+    else:
+        rows = gc.query(
+            """
+            MATCH (m:IMASMapping)
+            WHERE m.facility_id = $facility
+            RETURN m.id AS id, m.ids_name AS ids_name,
+                   m.status AS status, m.dd_version AS dd_version
+            ORDER BY m.ids_name
+            """,
+            facility=facility,
+        )
+        if not rows:
+            click.echo(f"No mappings found for {facility}.")
+            return
+
+        click.echo(f"{'IDS':<20} {'Status':<12} {'DD Version':<12}")
+        click.echo("-" * 44)
+        for r in rows:
+            click.echo(
+                f"{r['ids_name']:<20} "
+                f"{r.get('status', '?'):<12} "
+                f"{r.get('dd_version', '?'):<12}"
+            )
+
+
+# ---------------------------------------------------------------------------
+# Show subcommand
+# ---------------------------------------------------------------------------
+
+
+@map_cmd.command("show")
+@click.argument("facility")
+@click.argument("ids_name")
+def map_show(facility: str, ids_name: str) -> None:
+    """Show detailed mapping for a facility/IDS pair.
+
+    \b
+    Examples:
+      imas-codex imas map show jet pf_active
+    """
+    configure_cli_logging("map", facility=facility)
+
+    from imas_codex.ids.tools import search_existing_mappings
+
+    result = search_existing_mappings(facility, ids_name)
+    if not result["mapping"]:
+        click.echo(f"No mapping found for {facility}/{ids_name}.")
+        return
+
+    click.echo(json.dumps(result, indent=2, default=str))
+
+
+# ---------------------------------------------------------------------------
+# Validate subcommand
+# ---------------------------------------------------------------------------
+
+
+@map_cmd.command("validate")
+@click.argument("facility")
+@click.argument("ids_name")
+def map_validate(facility: str, ids_name: str) -> None:
+    """Validate existing mapping paths, transforms, units, and coverage.
+
+    \b
+    Checks source existence, target existence, transform execution,
+    unit compatibility, duplicate targets, and field coverage.
+
+    \b
+    Examples:
+      imas-codex imas map validate jet pf_active
+    """
+    configure_cli_logging("map", facility=facility)
+
+    from imas_codex.graph.client import GraphClient
+    from imas_codex.ids.tools import search_existing_mappings
+    from imas_codex.ids.validation import (
+        compute_assembly_coverage,
+        compute_confidence_distribution,
+        compute_coverage,
+        compute_signal_coverage,
+        compute_signal_source_coverage,
+        validate_mapping,
+    )
+
+    gc = GraphClient()
+    result = search_existing_mappings(facility, ids_name, gc=gc)
+    if not result["mapping"]:
+        click.echo(f"No mapping found for {facility}/{ids_name}.")
+        return
+
+    from imas_codex.ids.models import ValidatedSignalMapping
+
+    bindings = [ValidatedSignalMapping(**b) for b in result["bindings"]]
+    if not bindings:
+        click.echo("No bindings to validate.")
+        return
+
+    report = validate_mapping(bindings, gc=gc)
+
+    passed = sum(
+        1
+        for c in report.binding_checks
+        if c.source_exists
+        and c.target_exists
+        and c.transform_executes
+        and c.units_compatible
+    )
+    failed = len(report.binding_checks) - passed
+
+    click.echo(f"Validated {len(bindings)} bindings:")
+    click.echo(f"  Passed: {passed}")
+    click.echo(f"  Failed: {failed}")
+
+    for c in report.binding_checks:
+        if c.error:
+            click.echo(f"  \u2717 {c.source_id} \u2192 {c.target_id}")
+            click.echo(f"    {c.error}")
+
+    if report.duplicate_targets:
+        click.echo(f"\nDuplicate targets ({len(report.duplicate_targets)}):")
+        for dup in report.duplicate_targets:
+            sources = [b.source_id for b in bindings if b.target_id == dup]
+            click.echo(f"  {dup} \u2190 {', '.join(sources)}")
+
+    # Coverage
+    coverage = compute_coverage(ids_name, bindings, gc=gc)
+    if coverage.total_leaf_fields > 0:
+        click.echo(
+            f"\nCoverage ({ids_name}): "
+            f"{coverage.mapped_fields}/{coverage.total_leaf_fields} "
+            f"leaf fields ({coverage.percentage:.1f}%)"
+        )
+        if coverage.mapped_paths:
+            click.echo(f"  Mapped: {', '.join(coverage.mapped_paths[:10])}")
+            if len(coverage.mapped_paths) > 10:
+                click.echo(f"    ... and {len(coverage.mapped_paths) - 10} more")
+        if coverage.unmapped_fields:
+            shown = coverage.unmapped_fields[:10]
+            click.echo(f"  Unmapped: {', '.join(shown)}")
+            if len(coverage.unmapped_fields) > 10:
+                click.echo(
+                    f"    ... and {len(coverage.unmapped_fields) - 10} more"
+                )
+
+    # Signal source coverage
+    sig_cov = compute_signal_coverage(facility, gc=gc)
+    if sig_cov.total_enriched > 0:
+        click.echo(
+            f"\nSignal sources ({facility}): "
+            f"{sig_cov.mapped}/{sig_cov.total_enriched} "
+            f"enriched groups mapped ({sig_cov.percentage:.1f}%)"
+        )
+        if sig_cov.unmapped_groups:
+            shown = sig_cov.unmapped_groups[:10]
+            click.echo(f"  Unmapped: {', '.join(shown)}")
+            if len(sig_cov.unmapped_groups) > 10:
+                click.echo(
+                    f"    ... and {len(sig_cov.unmapped_groups) - 10} more"
+                )
+
+    # Extended signal source coverage per IDS
+    src_cov = compute_signal_source_coverage(facility, ids_name, gc=gc)
+    if src_cov.total_enriched_matching > 0:
+        click.echo(
+            f"\nSignal source coverage ({facility}/{ids_name}): "
+            f"{src_cov.mapped_to_ids}/{src_cov.total_enriched_matching} "
+            f"enriched sources mapped ({src_cov.enriched_mapped_pct:.1f}%)"
+        )
+        if src_cov.unmapped_enriched:
+            shown = src_cov.unmapped_enriched[:10]
+            click.echo(f"  Unmapped enriched: {', '.join(shown)}")
+            if len(src_cov.unmapped_enriched) > 10:
+                click.echo(
+                    f"    ... and {len(src_cov.unmapped_enriched) - 10} more"
+                )
+    if src_cov.discovered_sources > 0:
+        click.echo(
+            f"  Underspecified (discovered, not enriched): "
+            f"{src_cov.discovered_sources}"
+        )
+    if src_cov.multi_target_sources > 0:
+        click.echo(
+            f"  Multi-target sources: {src_cov.multi_target_sources}"
+        )
+
+    # Assembly coverage
+    asm_cov = compute_assembly_coverage(facility, ids_name, gc=gc)
+    if asm_cov.total_sections > 0:
+        click.echo(
+            f"\nAssembly coverage ({ids_name}): "
+            f"{asm_cov.sections_with_config}/{asm_cov.total_sections} "
+            f"sections configured"
+        )
+        if asm_cov.sections_without_config:
+            click.echo(
+                f"  Unconfigured: {', '.join(asm_cov.sections_without_config)}"
+            )
+        click.echo(
+            f"  Patterns: {asm_cov.default_pattern_count} default "
+            f"(array_per_node), {asm_cov.custom_pattern_count} custom"
+        )
+        click.echo(
+            f"  init_arrays: {asm_cov.init_arrays_configured} configured, "
+            f"{asm_cov.init_arrays_unconfigured} unconfigured"
+        )
+
+    # Confidence distribution
+    conf_dist = compute_confidence_distribution(bindings)
+    if conf_dist.total_bindings > 0:
+        click.echo(
+            f"\nConfidence distribution ({conf_dist.total_bindings} bindings, "
+            f"avg {conf_dist.average_confidence:.2f}):"
+        )
+        click.echo(
+            f"  High (>0.8): {conf_dist.high_count}  "
+            f"Medium (0.5-0.8): {conf_dist.medium_count}  "
+            f"Low (<0.5): {conf_dist.low_count}"
+        )
+        if conf_dist.low_bindings:
+            click.echo("  Low-confidence (review needed):")
+            for entry in conf_dist.low_bindings[:10]:
+                click.echo(f"    {entry}")
+            if len(conf_dist.low_bindings) > 10:
+                click.echo(
+                    f"    ... and {len(conf_dist.low_bindings) - 10} more"
+                )
+
+
+# ---------------------------------------------------------------------------
+# Clear subcommand
+# ---------------------------------------------------------------------------
+
+
 @map_cmd.command("clear")
 @click.argument("facility")
 @click.argument("ids_name")
 @click.confirmation_option(prompt="Delete this mapping and all its relationships?")
 def map_clear(facility: str, ids_name: str) -> None:
-    """Remove a mapping and its relationships from the graph."""
+    """Remove a mapping and its relationships from the graph.
+
+    \b
+    Examples:
+      imas-codex imas map clear jet pf_active
+    """
     configure_cli_logging("map", facility=facility)
 
     from imas_codex.cli.discover.common import make_log_print
@@ -577,6 +942,11 @@ def map_clear(facility: str, ids_name: str) -> None:
         click.echo(f"No mapping found for {facility}/{ids_name}.")
     else:
         click.echo(f"Cleared mapping {facility}:{ids_name}.")
+
+
+# ---------------------------------------------------------------------------
+# Activate subcommand
+# ---------------------------------------------------------------------------
 
 
 @map_cmd.command("activate")
@@ -632,101 +1002,3 @@ def map_activate(facility: str, ids_name: str) -> None:
         ids=ids_name,
     )
     click.echo(f"Activated mapping {facility}:{ids_name} (was '{current}').")
-
-
-@map_cmd.command("validate-e2e")
-@click.argument("facility")
-@click.argument("ids_name")
-@click.option("--shot", type=int, required=True, help="Shot number to validate against.")
-@click.option(
-    "--strategy",
-    type=click.Choice(["auto", "client", "remote"]),
-    default="auto",
-    help="Execution strategy (default: auto-detect).",
-)
-@click.option("--ssh-host", default=None, help="Override SSH host for extraction.")
-def map_validate_e2e(
-    facility: str,
-    ids_name: str,
-    shot: int,
-    strategy: str,
-    ssh_host: str | None,
-) -> None:
-    """Run end-to-end validation: extract → assemble → validate.
-
-    \b
-    Extracts signal data for a single shot from the facility,
-    runs assembly, and validates the populated IDS.
-
-    \b
-    Examples:
-      imas-codex imas map validate-e2e tcv pf_active --shot 80000
-      imas-codex imas map validate-e2e jet magnetics --shot 99000 --strategy client
-    """
-    configure_cli_logging("map", facility=facility)
-
-    from imas_codex.graph.client import GraphClient
-    from imas_codex.ids.validation import validate_mapping_e2e
-
-    gc = GraphClient()
-
-    click.echo(f"E2E VALIDATION — {facility}/{ids_name} shot {shot}")
-    click.echo("━" * 50)
-
-    result = validate_mapping_e2e(
-        facility,
-        ids_name,
-        shot,
-        gc=gc,
-        ssh_host=ssh_host,
-        strategy=strategy,
-    )
-
-    # Strategy
-    click.echo(f"STRATEGY  {result.strategy}")
-    click.echo()
-
-    # Extraction
-    total = result.extraction_success + result.extraction_failed
-    click.echo(
-        f"EXTRACT   {result.extraction_success} success, "
-        f"{result.extraction_failed} failed (of {total})"
-    )
-    for err in result.extraction_errors[:10]:
-        click.echo(f"  ✗ {err}")
-    if len(result.extraction_errors) > 10:
-        click.echo(f"  ... and {len(result.extraction_errors) - 10} more")
-    click.echo()
-
-    # Assembly
-    if result.assembly_error:
-        click.echo(f"ASSEMBLE  ✗ {result.assembly_error}")
-    elif result.assembly_success:
-        click.echo("ASSEMBLE  ✓ Assembly completed")
-    else:
-        click.echo("ASSEMBLE  ✗ No data extracted")
-    click.echo()
-
-    # Field checks
-    populated = sum(1 for f in result.field_checks if f.populated)
-    click.echo(
-        f"FIELDS    {populated}/{len(result.field_checks)} populated"
-    )
-    for fc in result.field_checks:
-        if not fc.populated:
-            click.echo(f"  ✗ {fc.target_path}")
-        elif fc.value_range:
-            click.echo(f"  ✓ {fc.target_path} {fc.value_range}")
-    click.echo()
-
-    # Time bases
-    tb_mark = "✓" if result.time_base_consistent else "⚠"
-    click.echo(f"TIMEBASES {tb_mark} {'consistent' if result.time_base_consistent else 'inconsistent'}")
-    click.echo()
-
-    # Overall
-    overall = "✓ PASS" if result.all_passed else "✗ FAIL"
-    click.echo(f"RESULT    {overall}")
-
-    if not result.all_passed:
-        raise SystemExit(1)

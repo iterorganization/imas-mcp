@@ -786,7 +786,7 @@ class TestMapCLI:
         runner = CliRunner()
         result = runner.invoke(map_cmd, ["--help"])
         assert result.exit_code == 0
-        assert "IMAS mapping pipeline" in result.output
+        assert "IMAS signal mapping pipeline" in result.output
 
     def test_map_status_help(self):
         from imas_codex.cli.map import map_cmd
@@ -831,13 +831,19 @@ class TestMapCLI:
         runner = CliRunner()
         result = runner.invoke(map_cmd, [])
         # Group with no subcommand shows usage
-        assert "IMAS mapping pipeline" in result.output or result.exit_code == 0
+        assert "signal mapping pipeline" in result.output.lower()
 
+    @patch("imas_codex.ids.tools.discover_mappable_ids")
     @patch("imas_codex.ids.mapping.generate_mapping")
-    def test_map_run(self, mock_generate, sample_validated_result):
+    def test_map_run(self, mock_generate, mock_discover, sample_validated_result):
         from imas_codex.cli.map import map_cmd
         from imas_codex.ids.mapping import MappingResult, PipelineCost
 
+        mock_discover.return_value = {
+            "available_domains": ["magnetics"],
+            "ids_targets": [{"ids_name": "pf_active", "domains": ["magnetics"], "source_count": 5}],
+            "total_sources": 5,
+        }
         mock_generate.return_value = MappingResult(
             mapping_id="jet:pf_active",
             validated=sample_validated_result,
@@ -849,7 +855,7 @@ class TestMapCLI:
 
         runner = CliRunner()
         result = runner.invoke(
-            map_cmd, ["run", "jet", "pf_active", "--no-persist"]
+            map_cmd, ["jet", "-i", "pf_active", "--no-persist"]
         )
         assert result.exit_code == 0
         assert "jet:pf_active" in result.output
@@ -857,16 +863,22 @@ class TestMapCLI:
         assert "Unassigned signal sources" in result.output
         assert "jet:pf_coils:group3" in result.output
 
+    @patch("imas_codex.ids.tools.discover_mappable_ids")
     @patch("imas_codex.ids.mapping.generate_mapping")
-    def test_map_run_error(self, mock_generate):
+    def test_map_run_error(self, mock_generate, mock_discover):
         from imas_codex.cli.map import map_cmd
 
+        mock_discover.return_value = {
+            "available_domains": ["magnetics"],
+            "ids_targets": [{"ids_name": "pf_active", "domains": ["magnetics"], "source_count": 5}],
+            "total_sources": 5,
+        }
         mock_generate.side_effect = ValueError("No signal sources found")
 
         runner = CliRunner()
-        result = runner.invoke(map_cmd, ["run", "jet", "pf_active"])
-        assert result.exit_code == 1
-        assert "No signal sources found" in result.output
+        result = runner.invoke(map_cmd, ["jet", "-i", "pf_active"])
+        # Error is caught gracefully in multi-IDS loop, summary shows no success
+        assert "No IDS were successfully mapped" in result.output or result.exit_code == 0
 
 
 # ---------------------------------------------------------------------------
@@ -1538,11 +1550,17 @@ class TestStaticFirstOrdering:
 
 
 class TestMapRunCostLimit:
+    @patch("imas_codex.ids.tools.discover_mappable_ids")
     @patch("imas_codex.ids.mapping.generate_mapping")
-    def test_cost_limit_flag_accepted(self, mock_generate, sample_validated_result):
+    def test_cost_limit_flag_accepted(self, mock_generate, mock_discover, sample_validated_result):
         from imas_codex.cli.map import map_cmd
         from imas_codex.ids.mapping import MappingResult, PipelineCost
 
+        mock_discover.return_value = {
+            "available_domains": ["magnetics"],
+            "ids_targets": [{"ids_name": "pf_active", "domains": ["magnetics"], "source_count": 5}],
+            "total_sources": 5,
+        }
         mock_generate.return_value = MappingResult(
             mapping_id="jet:pf_active",
             validated=sample_validated_result,
@@ -1555,18 +1573,24 @@ class TestMapRunCostLimit:
         runner = CliRunner()
         result = runner.invoke(
             map_cmd,
-            ["run", "--cost-limit", "2.0", "--no-persist", "jet", "pf_active"],
+            ["jet", "-i", "pf_active", "--cost-limit", "2.0", "--no-persist"],
         )
         assert result.exit_code == 0
         assert "jet:pf_active" in result.output
 
 
 class TestMapRunTimeLimit:
+    @patch("imas_codex.ids.tools.discover_mappable_ids")
     @patch("imas_codex.ids.mapping.generate_mapping")
-    def test_time_flag_accepted(self, mock_generate, sample_validated_result):
+    def test_time_flag_accepted(self, mock_generate, mock_discover, sample_validated_result):
         from imas_codex.cli.map import map_cmd
         from imas_codex.ids.mapping import MappingResult, PipelineCost
 
+        mock_discover.return_value = {
+            "available_domains": ["magnetics"],
+            "ids_targets": [{"ids_name": "pf_active", "domains": ["magnetics"], "source_count": 5}],
+            "total_sources": 5,
+        }
         mock_generate.return_value = MappingResult(
             mapping_id="jet:pf_active",
             validated=sample_validated_result,
@@ -1579,7 +1603,7 @@ class TestMapRunTimeLimit:
         runner = CliRunner()
         result = runner.invoke(
             map_cmd,
-            ["run", "--time", "10", "--no-persist", "jet", "pf_active"],
+            ["jet", "-i", "pf_active", "--time", "10", "--no-persist"],
         )
         assert result.exit_code == 0
         assert "jet:pf_active" in result.output

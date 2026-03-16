@@ -8,7 +8,6 @@ Tests cover:
   - Extraction caching
   - Remote capability probe strategy selection
   - E2E validation from fixtures
-  - CLI validate-e2e command
 """
 
 from __future__ import annotations
@@ -465,27 +464,6 @@ class TestAssemblyConfigExtensions:
         restored = AssemblyConfig(**data)
         assert restored.assembly_code == config.assembly_code
         assert restored.assembly_function_name == config.assembly_function_name
-
-
-# ---------------------------------------------------------------------------
-# 11.2.9 CLI validate-e2e Command
-# ---------------------------------------------------------------------------
-
-
-class TestMapValidateE2ECLI:
-    """Tests for the validate-e2e CLI command."""
-
-    def test_help_text(self):
-        from click.testing import CliRunner
-
-        from imas_codex.cli.map import map_cmd
-
-        runner = CliRunner()
-        result = runner.invoke(map_cmd, ["validate-e2e", "--help"])
-        assert result.exit_code == 0
-        assert "validate" in result.output.lower()
-        assert "--shot" in result.output
-        assert "--strategy" in result.output
 
 
 # ---------------------------------------------------------------------------

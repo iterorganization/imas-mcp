@@ -1,13 +1,14 @@
-"""
-Unified facility configuration loading.
+"""Facility configuration loading.
 
-Loads public (<facility>.yaml) and private (<facility>_private.yaml) data,
-merging them into a single Facility model. Private fields are identified
-via is_private annotations in the schema.
+Runtime code should read public facility configuration from ``<facility>.yaml``
+via :func:`get_facility`. Private infrastructure data lives in
+``<facility>_private.yaml`` and must be accessed explicitly via
+:func:`get_facility_infrastructure` or :func:`get_facility_with_infrastructure`.
 
 Key functions:
-- get_facility(name) -> Facility: Load merged facility data
-- save_private(name, data): Write private fields to *_private.yaml
+- get_facility(name) -> dict: Load public facility data only
+- get_facility_with_infrastructure(name) -> dict: Load merged public + private data
+- update_infrastructure(name, data): Write private fields to *_private.yaml
 - list_facilities() -> list[str]: List available facilities
 """
 
@@ -110,49 +111,67 @@ def _deep_merge_ruamel(base: CommentedMap, updates: dict[str, Any]) -> Commented
 
 @lru_cache(maxsize=8)
 def get_facility(facility_id: str) -> dict[str, Any]:
-    """Load complete facility configuration (public + private merged).
+    """Load public facility configuration.
 
-    Merges data from:
-    - <facility>.yaml (public, git-tracked)
-    - <facility>_private.yaml (private, gitignored)
-
-    Use this when you need full context for exploration.
-    For graph ingestion, use get_facility_metadata() instead.
+    Reads only ``<facility>.yaml``. This is the default accessor for runtime
+    code so discovery, ingestion, and CLI behavior are driven entirely by
+    committed configuration.
 
     Args:
         facility_id: Facility identifier (e.g., "tcv", "iter")
 
     Returns:
-        Merged facility data as dict with all fields
+        Public facility data as dict
 
     Raises:
         ValueError: If facility not found
 
     Examples:
         >>> config = get_facility('iter')
-        >>> print(config['paths'])  # Has both public and private paths
-        >>> print(config['tools'])  # Tool availability (private)
+        >>> print(config['data_systems'].keys())
+        >>> print(config['wiki_sites'])
     """
     facilities_dir = get_facilities_dir()
     public_path = facilities_dir / f"{facility_id}.yaml"
-    private_path = facilities_dir / f"{facility_id}_private.yaml"
 
     if not public_path.exists():
         available = list_facilities()
         msg = f"Unknown facility: {facility_id}. Available: {available}"
         raise ValueError(msg)
 
-    # Load both files
-    public_data = _load_yaml(public_path)
-    private_data = _load_yaml(private_path)
+    config = _load_yaml(public_path)
 
-    # Merge private into public (private wins on conflict)
+    # Ensure facility ID is set without mutating caller-visible schema keys.
+    config["id"] = facility_id
+    if "facility" in config:
+        config["id"] = config["facility"]
+
+    return config
+
+
+@lru_cache(maxsize=8)
+def get_facility_with_infrastructure(facility_id: str) -> dict[str, Any]:
+    """Load merged facility configuration with private infrastructure.
+
+    This accessor is for explicit infrastructure-aware workflows only.
+    Normal runtime code should use :func:`get_facility` instead.
+
+    Args:
+        facility_id: Facility identifier (e.g., "tcv", "iter")
+
+    Returns:
+        Merged public + private facility data as dict
+    """
+    facilities_dir = get_facilities_dir()
+    private_path = facilities_dir / f"{facility_id}_private.yaml"
+
+    public_data = get_facility(facility_id)
+    private_data = _load_yaml(private_path)
     merged = _deep_merge(public_data, private_data)
 
-    # Ensure facility ID is set
     merged["id"] = facility_id
     if "facility" in merged:
-        merged["id"] = merged.pop("facility")
+        merged["id"] = merged["facility"]
 
     return merged
 
@@ -317,6 +336,7 @@ def update_infrastructure(facility_id: str, data: dict[str, Any]) -> None:
 
     # Clear cache since data changed
     get_facility.cache_clear()
+    get_facility_with_infrastructure.cache_clear()
 
     logger.info(f"Updated infrastructure data for {facility_id}")
 
@@ -365,6 +385,7 @@ def update_metadata(facility_id: str, data: dict[str, Any]) -> None:
 
     # Clear cache since data changed
     get_facility.cache_clear()
+    get_facility_with_infrastructure.cache_clear()
 
     logger.info(f"Updated metadata for {facility_id}")
 
