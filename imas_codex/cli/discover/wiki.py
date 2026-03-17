@@ -697,10 +697,18 @@ def wiki(
             if documents_discovered > 0:
                 log_print(f"  [green]{documents_discovered:,} documents[/green]")
 
+        # For twiki_raw sites, pages have ssh:// URLs (not http://), so
+        # the URL prefix used for pending-work checks must match.
+        url_prefix = base_url
+        if site_type == "twiki_raw" and ssh_host:
+            data_path = site.get("data_path", base_url)
+            url_prefix = f"ssh://{ssh_host}{data_path}"
+
         site_configs.append(
             {
                 "site_type": site_type,
                 "base_url": base_url,
+                "url_prefix": url_prefix,
                 "portal_page": portal_page,
                 "ssh_host": ssh_host,
                 "auth_type": auth_type,
@@ -1030,7 +1038,7 @@ def wiki(
                         has_pending_work as _has_page_work,
                     )
 
-                    site_url = sc["base_url"]
+                    site_url = sc.get("url_prefix", sc["base_url"])
                     if not _has_page_work(
                         facility, base_url=site_url
                     ) and not _has_doc_work(facility, base_url=site_url):
@@ -1052,7 +1060,7 @@ def wiki(
                     disco_kwargs: dict = {
                         "facility": facility,
                         "site_type": sc["site_type"],
-                        "base_url": sc["base_url"],
+                        "base_url": sc.get("url_prefix", sc["base_url"]),
                         "portal_page": sc["portal_page"],
                         "ssh_host": sc["ssh_host"],
                         "auth_type": sc["auth_type"],
