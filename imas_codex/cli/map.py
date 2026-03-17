@@ -68,7 +68,7 @@ def map_cmd() -> None:
     Options:
       --domain/-d        Filter by physics domain (repeatable)
       --ids/-i           Filter by IDS name (repeatable)
-      --cost-limit/-c    Max LLM spend per IDS in USD (default: $5)
+      --cost-limit/-c    Max total LLM spend in USD (default: $25)
       --time             Max total runtime in minutes
       --model/-m         Override LLM model identifier
       --clear            Clear existing mappings before generating
@@ -106,8 +106,8 @@ def map_cmd() -> None:
     "--cost-limit",
     "-c",
     type=float,
-    default=5.0,
-    help="Maximum LLM spend in USD per IDS (default: $5).",
+    default=25.0,
+    help="Maximum total LLM spend in USD (default: $25).",
 )
 @click.option(
     "--dry-run",
