@@ -154,8 +154,10 @@ async def run_parallel_code_discovery(
         lambda: has_pending_triage_work(facility) or not state.scan_phase.done
     )
     state.enrich_phase.set_has_work_fn(
-        lambda: has_pending_enrich_work(facility, min_triage_score)
-        or not state.triage_phase.done
+        lambda: (
+            has_pending_enrich_work(facility, min_triage_score)
+            or not state.triage_phase.done
+        )
     )
     state.score_phase.set_has_work_fn(
         lambda: has_pending_score_work(facility) or not state.enrich_phase.done

@@ -79,10 +79,7 @@ def reset_to_status(
 
     # Build MATCH clause
     if spec.facility_via_rel:
-        match = (
-            f"MATCH (n:{spec.label})-[:AT_FACILITY]->"
-            f"(f:Facility {{id: $facility}})"
-        )
+        match = f"MATCH (n:{spec.label})-[:AT_FACILITY]->(f:Facility {{id: $facility}})"
     else:
         match = f"MATCH (n:{spec.label} {{{spec.facility_key}: $facility}})"
 
@@ -163,9 +160,7 @@ SIGNAL_RESET_SPECS: dict[str, ResetSpec] = {
             "enrichment_model",
             "enrichment_prompt_hash",
         ],
-        post_cypher=(
-            "OPTIONAL MATCH (n)-[r:MEMBER_OF]->() DELETE r"
-        ),
+        post_cypher=("OPTIONAL MATCH (n)-[r:MEMBER_OF]->() DELETE r"),
     ),
     "enriched": ResetSpec(
         label="FacilitySignal",
@@ -176,9 +171,7 @@ SIGNAL_RESET_SPECS: dict[str, ResetSpec] = {
             "checked_at",
             "check_retries",
         ],
-        post_cypher=(
-            "OPTIONAL MATCH (n)-[r:CHECKED_WITH]->() DELETE r"
-        ),
+        post_cypher=("OPTIONAL MATCH (n)-[r:CHECKED_WITH]->() DELETE r"),
     ),
 }
 

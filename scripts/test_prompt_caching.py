@@ -166,8 +166,7 @@ SYSTEM_PROMPT = (
     "You are an expert in IMAS (Integrated Modelling & Analysis Suite) "
     "for fusion research. You understand data dictionaries, IDS structures, "
     "COCOS conventions, MDSplus trees, and facility-specific data systems "
-    "across TCV, JET, ITER, and JT-60SA.\n\n"
-    + _IMAS_REFERENCE
+    "across TCV, JET, ITER, and JT-60SA.\n\n" + _IMAS_REFERENCE
 )
 
 # Different user questions so we test cache reuse across varying user content
@@ -382,9 +381,7 @@ def _query_langfuse(reports: list[TestReport]) -> None:
             usage = gen.usage or {}
 
             # Langfuse stores usage differently depending on provider
-            prompt_t = getattr(usage, "input", 0) or getattr(
-                usage, "prompt_tokens", 0
-            )
+            prompt_t = getattr(usage, "input", 0) or getattr(usage, "prompt_tokens", 0)
             compl_t = getattr(usage, "output", 0) or getattr(
                 usage, "completion_tokens", 0
             )
@@ -428,13 +425,9 @@ def _print_summary(reports: list[TestReport]) -> None:
     # Print cache economics
     click.echo("\n  Cache Economics (per OpenRouter docs):")
     click.echo("  " + "-" * 55)
-    click.echo(
-        "  Anthropic: read=0.1× input  write=1.25× (5min) / 2× (1hr)"
-    )
+    click.echo("  Anthropic: read=0.1× input  write=1.25× (5min) / 2× (1hr)")
     click.echo("  Gemini:    read=0.25× input  write≈input+storage (5min)")
-    click.echo(
-        "  Gemini implicit caching is automatic (no breakpoints needed)"
-    )
+    click.echo("  Gemini implicit caching is automatic (no breakpoints needed)")
     click.echo("  cache_control breakpoints give explicit control over what's cached")
 
 
@@ -486,7 +479,9 @@ def main(
         click.echo(f"{'=' * 70}")
         click.echo(f"Testing: {m}")
         click.echo(f"{'=' * 70}")
-        report = _run_model_test(m, num_calls=calls, pause=pause, pin_provider=pin_provider)
+        report = _run_model_test(
+            m, num_calls=calls, pause=pause, pin_provider=pin_provider
+        )
         reports.append(report)
         click.echo()
 

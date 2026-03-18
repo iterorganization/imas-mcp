@@ -72,7 +72,9 @@ def _get_section(section: str) -> dict:
 
 # ─── Valid model sections ───────────────────────────────────────────────────
 
-MODEL_SECTIONS = frozenset({"embedding", "language", "vision", "agent", "compaction", "reasoning"})
+MODEL_SECTIONS = frozenset(
+    {"embedding", "language", "vision", "agent", "compaction", "reasoning"}
+)
 
 # Default model per section (fallback when not configured)
 _MODEL_DEFAULTS: dict[str, str] = {

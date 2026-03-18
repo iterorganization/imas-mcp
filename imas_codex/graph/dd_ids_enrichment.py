@@ -39,9 +39,7 @@ logger = logging.getLogger(__name__)
 class IDSEnrichmentResult(BaseModel):
     """Enrichment result for a single IDS."""
 
-    ids_index: int = Field(
-        description="1-based index matching the input batch order"
-    )
+    ids_index: int = Field(description="1-based index matching the input batch order")
     description: str = Field(
         description=(
             "Physics-aware description of this IDS (3-5 sentences). "
@@ -161,9 +159,7 @@ def _gather_ids_context(
     for ids in ids_list:
         ids_name = ids["id"]
         domain = ids.get("physics_domain") or "general"
-        siblings = [
-            n for n in domain_groups.get(domain, []) if n != ids_name
-        ]
+        siblings = [n for n in domain_groups.get(domain, []) if n != ids_name]
 
         enriched.append(
             {
@@ -315,8 +311,7 @@ def enrich_ids_nodes(
             if entry["lifecycle_status"]:
                 user_lines.append(f"- Lifecycle: {entry['lifecycle_status']}")
             user_lines.append(
-                f"- Paths: {entry['path_count']} total, "
-                f"{entry['leaf_count']} leaves"
+                f"- Paths: {entry['path_count']} total, {entry['leaf_count']} leaves"
             )
 
             # Structural sections
@@ -361,9 +356,7 @@ def enrich_ids_nodes(
             # Build updates
             updates = []
             for enrichment in result.results:
-                if enrichment.ids_index < 1 or enrichment.ids_index > len(
-                    to_enrich
-                ):
+                if enrichment.ids_index < 1 or enrichment.ids_index > len(to_enrich):
                     logger.warning(
                         f"Invalid ids_index {enrichment.ids_index} in result"
                     )
@@ -526,8 +519,5 @@ def embed_ids_nodes(
             0.0,
         )
 
-    logger.info(
-        f"IDS embeddings: {stats['updated']} updated, "
-        f"{stats['cached']} cached"
-    )
+    logger.info(f"IDS embeddings: {stats['updated']} updated, {stats['cached']} cached")
     return stats

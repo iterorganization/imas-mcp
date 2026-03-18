@@ -388,7 +388,9 @@ def embed_status(url: str | None, local: bool) -> None:
             from imas_codex.cli.services import _colored_bar
 
             workers = workers_info["workers"]
-            click.echo(f"  Workers: {len(workers)} / GPUs: {workers_info.get('gpu_pool', [])}")
+            click.echo(
+                f"  Workers: {len(workers)} / GPUs: {workers_info.get('gpu_pool', [])}"
+            )
             total_requests = 0
             total_texts = 0
             for w in workers:
@@ -419,13 +421,10 @@ def embed_status(url: str | None, local: bool) -> None:
                         f"({req_count} reqs)"
                     )
                 else:
-                    click.echo(
-                        f"    GPU {gpu_idx}: {gpu_name}  ({req_count} reqs)"
-                    )
+                    click.echo(f"    GPU {gpu_idx}: {gpu_name}  ({req_count} reqs)")
             if total_requests > 0:
                 click.echo(
-                    f"  Total: {total_requests} requests, "
-                    f"{total_texts} texts embedded"
+                    f"  Total: {total_requests} requests, {total_texts} texts embedded"
                 )
         elif info and info.get("gpu", {}).get("name"):
             # Fallback: server too old for /workers, show single GPU
@@ -671,9 +670,7 @@ def embed_stop() -> None:
             _kill_embed_orphans(host)
             if slurm_cancelled:
                 # Expected stragglers from the SLURM job we just cancelled
-                click.echo(
-                    f"  Cleaned up {len(pids)} worker process(es) on {host}"
-                )
+                click.echo(f"  Cleaned up {len(pids)} worker process(es) on {host}")
             else:
                 # Genuinely orphaned — no SLURM job was running
                 pid_list = " ".join(pids)

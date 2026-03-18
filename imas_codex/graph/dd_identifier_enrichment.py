@@ -198,9 +198,7 @@ def enrich_identifier_schemas(
                 user_lines.append(f"- Header: {entry['documentation']}")
             user_lines.append(f"- Option count: {entry['option_count']}")
             if entry["field_count"]:
-                user_lines.append(
-                    f"- Used by {entry['field_count']} fields in the DD"
-                )
+                user_lines.append(f"- Used by {entry['field_count']} fields in the DD")
             if entry["source"]:
                 user_lines.append(f"- Source: {entry['source']}")
             if entry["options"]:

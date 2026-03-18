@@ -367,7 +367,9 @@ def link_chunks_to_data_nodes(
         resolved_count = exact_count + fuzzy_count
         logger.info(
             "Created %d RESOLVES_TO_NODE relationships (exact=%d, fuzzy=%d)",
-            resolved_count, exact_count, fuzzy_count,
+            resolved_count,
+            exact_count,
+            fuzzy_count,
         )
 
         # Step 4: Create RESOLVES_TO_IMAS_PATH via SignalNode → IMASMapping → IMASNode

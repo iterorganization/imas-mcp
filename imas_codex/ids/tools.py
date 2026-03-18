@@ -69,13 +69,15 @@ def fetch_imas_subtree(
 
     query = f"{ids_name}/{path}" if path else ids_name
     tool = GraphListTool(gc)
-    result = _run_async(tool.list_imas_paths(
-        paths=query,
-        leaf_only=leaf_only,
-        max_paths=max_paths,
-        dd_version=dd_version,
-        response_profile="standard",
-    ))
+    result = _run_async(
+        tool.list_imas_paths(
+            paths=query,
+            leaf_only=leaf_only,
+            max_paths=max_paths,
+            dd_version=dd_version,
+            response_profile="standard",
+        )
+    )
     return result.as_dicts()
 
 
@@ -129,7 +131,9 @@ def search_imas_semantic(
     tool = GraphSearchTool(gc)
     result = _run_async(
         tool.search_imas_paths(
-            query=query, ids_filter=ids_name, max_results=k,
+            query=query,
+            ids_filter=ids_name,
+            max_results=k,
             dd_version=dd_version,
         )
     )
@@ -513,11 +517,13 @@ def discover_mappable_ids(
     for entry in sorted(ids_by_name.values(), key=lambda e: e["ids_name"]):
         ds = sorted(entry["domains"])
         source_count = sum(source_counts.get(d, 0) for d in ds)
-        ids_targets.append({
-            "ids_name": entry["ids_name"],
-            "domains": ds,
-            "source_count": source_count,
-        })
+        ids_targets.append(
+            {
+                "ids_name": entry["ids_name"],
+                "domains": ds,
+                "source_count": source_count,
+            }
+        )
         all_domains.update(ds)
 
     total_sources = sum(
@@ -862,12 +868,14 @@ def compute_semantic_matches(
                 imas_hits = tgc.query(imas_cypher, **imas_params)
                 for h in imas_hits:
                     doc = h.get("doc") or ""
-                    matches.append({
-                        "target_id": h["id"],
-                        "score": round(h["score"], 3),
-                        "content_type": "imas",
-                        "excerpt": doc[:200] + "..." if len(doc) > 200 else doc,
-                    })
+                    matches.append(
+                        {
+                            "target_id": h["id"],
+                            "score": round(h["score"], 3),
+                            "content_type": "imas",
+                            "excerpt": doc[:200] + "..." if len(doc) > 200 else doc,
+                        }
+                    )
             except Exception:
                 logger.debug("IMAS vector search failed for %s", source_id)
 
@@ -887,12 +895,16 @@ def compute_semantic_matches(
                     )
                     for h in wiki_hits:
                         text = h.get("text") or ""
-                        matches.append({
-                            "target_id": h.get("title", ""),
-                            "score": round(h["score"], 3),
-                            "content_type": "wiki",
-                            "excerpt": text[:200] + "..." if len(text) > 200 else text,
-                        })
+                        matches.append(
+                            {
+                                "target_id": h.get("title", ""),
+                                "score": round(h["score"], 3),
+                                "content_type": "wiki",
+                                "excerpt": text[:200] + "..."
+                                if len(text) > 200
+                                else text,
+                            }
+                        )
                 except Exception:
                     logger.debug("Wiki vector search failed for %s", source_id)
 
@@ -914,12 +926,16 @@ def compute_semantic_matches(
                         label = h.get("source_file") or ""
                         if h.get("func"):
                             label += f"::{h['func']}"
-                        matches.append({
-                            "target_id": label,
-                            "score": round(h["score"], 3),
-                            "content_type": "code",
-                            "excerpt": text[:200] + "..." if len(text) > 200 else text,
-                        })
+                        matches.append(
+                            {
+                                "target_id": label,
+                                "score": round(h["score"], 3),
+                                "content_type": "code",
+                                "excerpt": text[:200] + "..."
+                                if len(text) > 200
+                                else text,
+                            }
+                        )
                 except Exception:
                     logger.debug("Code vector search failed for %s", source_id)
 

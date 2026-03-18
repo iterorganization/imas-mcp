@@ -110,7 +110,9 @@ class SignalEnrichmentResult(BaseModel):
 
     @field_validator("diagnostic", mode="before")
     @classmethod
-    def normalize_diagnostic(cls, v: str | DiagnosticCategory | None) -> DiagnosticCategory | None:
+    def normalize_diagnostic(
+        cls, v: str | DiagnosticCategory | None
+    ) -> DiagnosticCategory | None:
         """Normalize diagnostic input to DiagnosticCategory enum or None."""
         if v is None or v == "":
             return None

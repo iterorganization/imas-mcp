@@ -328,13 +328,15 @@ class ProgressState:
                 return count / self.elapsed
             return fallback
 
-        return compute_parallel_eta([
-            (self.pending_scan, _agg(self.run_scanned, self.scan_rate)),
-            (self.pending_triage, _agg(self.run_triaged, self.triage_rate)),
-            (self.pending_expand, _agg(self.run_expanded, self.expand_rate)),
-            (self.pending_enrich, _agg(self.run_enriched, self.enrich_rate)),
-            (self.pending_score, _agg(self.run_scored, self.score_rate)),
-        ])
+        return compute_parallel_eta(
+            [
+                (self.pending_scan, _agg(self.run_scanned, self.scan_rate)),
+                (self.pending_triage, _agg(self.run_triaged, self.triage_rate)),
+                (self.pending_expand, _agg(self.run_expanded, self.expand_rate)),
+                (self.pending_enrich, _agg(self.run_enriched, self.enrich_rate)),
+                (self.pending_score, _agg(self.run_scored, self.score_rate)),
+            ]
+        )
 
 
 # ============================================================================
@@ -720,11 +722,16 @@ class ParallelProgressDisplay(BaseProgressDisplay):
             if self.state.run_scored > 0 and self.state._run_score_cost > 0
             else None
         )
-        etc = compute_projected_etc(total_facility_cost, [
-            (self.state.pending_scan + self.state.pending_triage,
-             self.state.cost_per_path),
-            (self.state.pending_score, cost_per_score),
-        ])
+        etc = compute_projected_etc(
+            total_facility_cost,
+            [
+                (
+                    self.state.pending_scan + self.state.pending_triage,
+                    self.state.cost_per_path,
+                ),
+                (self.state.pending_score, cost_per_score),
+            ],
+        )
 
         # Build stats
         stats: list[tuple[str, str, str]] = [
@@ -1136,6 +1143,7 @@ class ParallelProgressDisplay(BaseProgressDisplay):
 
         # Accumulated wall-clock time from prior sessions
         from imas_codex.discovery.base.progress import get_accumulated_time
+
         self.state.accumulated_time = get_accumulated_time(facility, "paths")
 
         self._refresh()

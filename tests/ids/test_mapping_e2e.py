@@ -291,7 +291,10 @@ class TestFetchImasFields:
         assert len(result) == 1
         assert result[0]["units"] == "m"
 
-    @patch("imas_codex.tools.graph_search.GraphPathTool.fetch_imas_paths", new_callable=AsyncMock)
+    @patch(
+        "imas_codex.tools.graph_search.GraphPathTool.fetch_imas_paths",
+        new_callable=AsyncMock,
+    )
     def test_returns_stable_dict_output_for_string_cluster_labels(
         self, mock_fetch_paths, mock_gc
     ):
@@ -325,7 +328,10 @@ class TestFetchImasFields:
 
 
 class TestSearchImasSemantic:
-    @patch("imas_codex.tools.graph_search.GraphSearchTool.search_imas_paths", new_callable=AsyncMock)
+    @patch(
+        "imas_codex.tools.graph_search.GraphSearchTool.search_imas_paths",
+        new_callable=AsyncMock,
+    )
     def test_degrades_cleanly_on_tool_error(self, mock_search, mock_gc):
         mock_search.return_value = ToolError(
             error="semantic search backend unavailable",
@@ -513,9 +519,7 @@ class TestPersistMappingResult:
         assert merge_call[1]["status"] == "generated"
 
     def test_custom_status(self, mock_gc, sample_validated_result):
-        persist_mapping_result(
-            sample_validated_result, gc=mock_gc, status="active"
-        )
+        persist_mapping_result(sample_validated_result, gc=mock_gc, status="active")
         merge_call = mock_gc.query.call_args_list[0]
         assert merge_call[1]["status"] == "active"
 
@@ -838,13 +842,17 @@ class TestMapCLI:
     @patch("imas_codex.graph.client.GraphClient")
     @patch("imas_codex.ids.tools.discover_mappable_ids")
     @patch("imas_codex.ids.mapping.generate_mapping")
-    def test_map_run(self, mock_generate, mock_discover, mock_gc, sample_validated_result):
+    def test_map_run(
+        self, mock_generate, mock_discover, mock_gc, sample_validated_result
+    ):
         from imas_codex.cli.map import map_cmd
         from imas_codex.ids.mapping import MappingResult, PipelineCost
 
         mock_discover.return_value = {
             "available_domains": ["magnetics"],
-            "ids_targets": [{"ids_name": "pf_active", "domains": ["magnetics"], "source_count": 5}],
+            "ids_targets": [
+                {"ids_name": "pf_active", "domains": ["magnetics"], "source_count": 5}
+            ],
             "total_sources": 5,
         }
         mock_generate.return_value = MappingResult(
@@ -857,9 +865,7 @@ class TestMapCLI:
         )
 
         runner = CliRunner()
-        result = runner.invoke(
-            map_cmd, ["jet", "-i", "pf_active", "--no-persist"]
-        )
+        result = runner.invoke(map_cmd, ["jet", "-i", "pf_active", "--no-persist"])
         assert result.exit_code == 0
         assert "jet:pf_active" in result.output
         assert "Bindings: 2" in result.output
@@ -874,7 +880,9 @@ class TestMapCLI:
 
         mock_discover.return_value = {
             "available_domains": ["magnetics"],
-            "ids_targets": [{"ids_name": "pf_active", "domains": ["magnetics"], "source_count": 5}],
+            "ids_targets": [
+                {"ids_name": "pf_active", "domains": ["magnetics"], "source_count": 5}
+            ],
             "total_sources": 5,
         }
         mock_generate.side_effect = ValueError("No signal sources found")
@@ -882,7 +890,9 @@ class TestMapCLI:
         runner = CliRunner()
         result = runner.invoke(map_cmd, ["jet", "-i", "pf_active"])
         # Error is caught gracefully in multi-IDS loop, summary shows no success
-        assert "No IDS were successfully mapped" in result.output or result.exit_code == 0
+        assert (
+            "No IDS were successfully mapped" in result.output or result.exit_code == 0
+        )
 
 
 class TestDiscoverMappableIds:
@@ -1485,9 +1495,7 @@ class TestIntegrationMappingPipeline:
         assert loaded["mapping"] is not None
         assert len(loaded["bindings"]) == len(sample_validated_result.bindings)
 
-    def test_assembly_config_persisted_on_populates(
-        self, sample_validated_result
-    ):
+    def test_assembly_config_persisted_on_populates(self, sample_validated_result):
         """Assembly config properties appear on POPULATES relationships."""
         from imas_codex.graph.client import GraphClient
         from imas_codex.ids.models import (
@@ -1509,9 +1517,7 @@ class TestIntegrationMappingPipeline:
                 ),
             ],
         )
-        persist_mapping_result(
-            sample_validated_result, assembly=assembly, gc=gc
-        )
+        persist_mapping_result(sample_validated_result, assembly=assembly, gc=gc)
         rows = gc.query(
             """
             MATCH (m:IMASMapping {facility_id: 'jet', ids_name: 'pf_active'})
@@ -1614,13 +1620,17 @@ class TestStaticFirstOrdering:
 class TestMapRunCostLimit:
     @patch("imas_codex.ids.tools.discover_mappable_ids")
     @patch("imas_codex.ids.mapping.generate_mapping")
-    def test_cost_limit_flag_accepted(self, mock_generate, mock_discover, sample_validated_result):
+    def test_cost_limit_flag_accepted(
+        self, mock_generate, mock_discover, sample_validated_result
+    ):
         from imas_codex.cli.map import map_cmd
         from imas_codex.ids.mapping import MappingResult, PipelineCost
 
         mock_discover.return_value = {
             "available_domains": ["magnetics"],
-            "ids_targets": [{"ids_name": "pf_active", "domains": ["magnetics"], "source_count": 5}],
+            "ids_targets": [
+                {"ids_name": "pf_active", "domains": ["magnetics"], "source_count": 5}
+            ],
             "total_sources": 5,
         }
         mock_generate.return_value = MappingResult(
@@ -1644,13 +1654,17 @@ class TestMapRunCostLimit:
 class TestMapRunTimeLimit:
     @patch("imas_codex.ids.tools.discover_mappable_ids")
     @patch("imas_codex.ids.mapping.generate_mapping")
-    def test_time_flag_accepted(self, mock_generate, mock_discover, sample_validated_result):
+    def test_time_flag_accepted(
+        self, mock_generate, mock_discover, sample_validated_result
+    ):
         from imas_codex.cli.map import map_cmd
         from imas_codex.ids.mapping import MappingResult, PipelineCost
 
         mock_discover.return_value = {
             "available_domains": ["magnetics"],
-            "ids_targets": [{"ids_name": "pf_active", "domains": ["magnetics"], "source_count": 5}],
+            "ids_targets": [
+                {"ids_name": "pf_active", "domains": ["magnetics"], "source_count": 5}
+            ],
             "total_sources": 5,
         }
         mock_generate.return_value = MappingResult(
@@ -1681,22 +1695,28 @@ class TestTransformExpressionValidator:
 
     def test_identity_transform(self):
         e = SignalMappingEntry(
-            source_id="s1", target_id="t1",
-            transform_expression="value", confidence=0.9,
+            source_id="s1",
+            target_id="t1",
+            transform_expression="value",
+            confidence=0.9,
         )
         assert e.transform_expression == "value"
 
     def test_empty_transform_defaults(self):
         e = SignalMappingEntry(
-            source_id="s1", target_id="t1", confidence=0.9,
+            source_id="s1",
+            target_id="t1",
+            confidence=0.9,
         )
         assert e.transform_expression == "value"
 
     def test_arithmetic_transforms(self):
         for expr in ["-value", "value * 1e-3", "value + 1.0", "value / 2"]:
             e = SignalMappingEntry(
-                source_id="s1", target_id="t1",
-                transform_expression=expr, confidence=0.9,
+                source_id="s1",
+                target_id="t1",
+                transform_expression=expr,
+                confidence=0.9,
             )
             assert e.transform_expression == expr
 
@@ -1708,43 +1728,54 @@ class TestTransformExpressionValidator:
             "cocos_sign('ip_like', cocos_in=2, cocos_out=11) * value",
         ]:
             e = SignalMappingEntry(
-                source_id="s1", target_id="t1",
-                transform_expression=expr, confidence=0.9,
+                source_id="s1",
+                target_id="t1",
+                transform_expression=expr,
+                confidence=0.9,
             )
             assert e.transform_expression == expr
 
     def test_blocks_import(self):
         with pytest.raises(ValueError):
             SignalMappingEntry(
-                source_id="s1", target_id="t1",
-                transform_expression="import os", confidence=0.5,
+                source_id="s1",
+                target_id="t1",
+                transform_expression="import os",
+                confidence=0.5,
             )
 
     def test_blocks_eval(self):
         with pytest.raises(ValueError):
             SignalMappingEntry(
-                source_id="s1", target_id="t1",
-                transform_expression="eval('1+1')", confidence=0.5,
+                source_id="s1",
+                target_id="t1",
+                transform_expression="eval('1+1')",
+                confidence=0.5,
             )
 
     def test_blocks_exec(self):
         with pytest.raises(ValueError):
             SignalMappingEntry(
-                source_id="s1", target_id="t1",
-                transform_expression="exec('x=1')", confidence=0.5,
+                source_id="s1",
+                target_id="t1",
+                transform_expression="exec('x=1')",
+                confidence=0.5,
             )
 
     def test_blocks_dunder(self):
         with pytest.raises(ValueError):
             SignalMappingEntry(
-                source_id="s1", target_id="t1",
-                transform_expression="__builtins__", confidence=0.5,
+                source_id="s1",
+                target_id="t1",
+                transform_expression="__builtins__",
+                confidence=0.5,
             )
 
     def test_blocks_getattr(self):
         with pytest.raises(ValueError):
             SignalMappingEntry(
-                source_id="s1", target_id="t1",
+                source_id="s1",
+                target_id="t1",
                 transform_expression="getattr(value, '__class__')",
                 confidence=0.5,
             )
@@ -1759,6 +1790,7 @@ class TestCoverageThreshold:
             COVERAGE_WARNING_THRESHOLD,
             check_coverage_threshold,
         )
+
         assert COVERAGE_WARNING_THRESHOLD > COVERAGE_ERROR_THRESHOLD
         assert COVERAGE_ERROR_THRESHOLD >= 0
 
@@ -1779,7 +1811,9 @@ class TestMappingDiscoveryState:
         from imas_codex.ids.workers import MappingDiscoveryState
 
         state = MappingDiscoveryState(
-            facility="jet", target_ids="pf_active", cost_limit=5.0,
+            facility="jet",
+            target_ids="pf_active",
+            cost_limit=5.0,
         )
         assert state.facility == "jet"
         assert state.target_ids == "pf_active"
@@ -1816,7 +1850,9 @@ class TestMappingDiscoveryState:
         from imas_codex.ids.workers import MappingDiscoveryState
 
         state = MappingDiscoveryState(
-            facility="jet", target_ids="pf_active", cost_limit=1.0,
+            facility="jet",
+            target_ids="pf_active",
+            cost_limit=1.0,
         )
         state.cost.add("test", 2.0, 1000)
         assert state.should_stop()
@@ -1824,8 +1860,12 @@ class TestMappingDiscoveryState:
     def test_mapping_id_format(self):
         """Mapping ID is facility:ids_name (DD version stored as property)."""
         result = ValidatedMappingResult(
-            facility="jet", ids_name="pf_active", dd_version="4.1.1",
-            sections=[], bindings=[], escalations=[],
+            facility="jet",
+            ids_name="pf_active",
+            dd_version="4.1.1",
+            sections=[],
+            bindings=[],
+            escalations=[],
         )
 
         gc = MagicMock()
@@ -1847,6 +1887,7 @@ class TestWorkerImports:
             run_mapping_engine,
             validate_worker,
         )
+
         assert callable(context_worker)
         assert callable(assign_worker)
         assert callable(map_worker)

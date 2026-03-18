@@ -75,8 +75,13 @@ async def test_version_context_includes_diagnostics():
             "deprecated_in": None,
             "change_count": 1,
             "changes": [
-                {"version": "4.0.0", "change_type": "units", "semantic_type": "units",
-                 "old_value": "Pa", "new_value": "Pa"},
+                {
+                    "version": "4.0.0",
+                    "change_type": "units",
+                    "semantic_type": "units",
+                    "old_value": "Pa",
+                    "new_value": "Pa",
+                },
             ],
         },
         {
@@ -101,8 +106,6 @@ async def test_version_context_includes_diagnostics():
         "core_profiles/profiles_1d/electrons/pressure",
         "equilibrium/time_slice/profiles_1d/psi",
     ]
-    assert result["paths_without_changes"] == [
-        "equilibrium/time_slice/profiles_1d/psi"
-    ]
+    assert result["paths_without_changes"] == ["equilibrium/time_slice/profiles_1d/psi"]
     assert result["graph_change_nodes_seen"] == 1
     assert result["not_found"] == ["fake/path"]

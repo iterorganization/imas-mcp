@@ -430,9 +430,9 @@ class DataDiscoveryState(DiscoveryStateBase):
 
 def has_pending_work(facility: str, scanner_types: list[str] | None = None) -> bool:
     """Check if there's any pending work for this facility."""
-    return has_pending_enrich_work(
+    return has_pending_enrich_work(facility, scanner_types) or has_pending_check_work(
         facility, scanner_types
-    ) or has_pending_check_work(facility, scanner_types)
+    )
 
 
 def has_pending_enrich_work(
@@ -1757,9 +1757,7 @@ def individualize_members(
         member_id = extract_member_identifier(source_key, member["accessor"])
         node_desc = member.get("node_description", "")
         try:
-            name = name_template.format(
-                member_id=member_id, node_description=node_desc
-            )
+            name = name_template.format(member_id=member_id, node_description=node_desc)
         except (KeyError, IndexError):
             name = name_template.replace("{member_id}", member_id)
         try:
@@ -1770,11 +1768,13 @@ def individualize_members(
             description = description_template.replace(
                 "{member_id}", member_id
             ).replace("{node_description}", node_desc)
-        results.append({
-            "id": member["id"],
-            "name": name.strip(),
-            "description": description.strip(),
-        })
+        results.append(
+            {
+                "id": member["id"],
+                "name": name.strip(),
+                "description": description.strip(),
+            }
+        )
     return results
 
 
@@ -2884,9 +2884,7 @@ async def mdsplus_extract_worker(
                     data_source_name,
                     error_msg[:100],
                 )
-                await asyncio.to_thread(
-                    mark_version_failed, version_id, error_msg
-                )
+                await asyncio.to_thread(mark_version_failed, version_id, error_msg)
                 state.extract_stats.errors += 1
                 continue
 
@@ -2953,9 +2951,7 @@ async def mdsplus_extract_worker(
             await asyncio.to_thread(release_version_claim, version_id)
 
             if ssh_retry_count >= max_ssh_retries:
-                wlog.error(
-                    "SSH failed after %d attempts — stopping", max_ssh_retries
-                )
+                wlog.error("SSH failed after %d attempts — stopping", max_ssh_retries)
                 state.extract_phase.mark_done()
                 break
 
@@ -3748,9 +3744,7 @@ async def enrich_worker(
                     "a hardware state change (e.g., new divertor, probe "
                     "added/removed, wall material change)."
                 )
-                user_lines.append(
-                    f"\nSignals from {sec_label} section:"
-                )
+                user_lines.append(f"\nSignals from {sec_label} section:")
 
             elif group_key.startswith("tree:"):
                 tree = group_key[5:]
@@ -4108,17 +4102,22 @@ def fetch_source_member_node_descriptions(
                 source_id=source_id,
                 limit=limit,
             )
-            return [
-                {
-                    "accessor": row["accessor"],
-                    "node_description": row["node_description"],
-                }
-                for row in result
-            ] if result else []
+            return (
+                [
+                    {
+                        "accessor": row["accessor"],
+                        "node_description": row["node_description"],
+                    }
+                    for row in result
+                ]
+                if result
+                else []
+            )
     except Exception as e:
         logger.warning(
             "Could not fetch member node descriptions for %s: %s",
-            source_id, e,
+            source_id,
+            e,
         )
         return []
 
@@ -4147,14 +4146,16 @@ def fetch_all_member_node_descriptions(source_id: str) -> dict[str, str]:
                 """,
                 source_id=source_id,
             )
-            return {
-                row["signal_id"]: row["node_description"]
-                for row in result
-            } if result else {}
+            return (
+                {row["signal_id"]: row["node_description"] for row in result}
+                if result
+                else {}
+            )
     except Exception as e:
         logger.warning(
             "Could not fetch all member node descriptions for %s: %s",
-            source_id, e,
+            source_id,
+            e,
         )
         return {}
 
@@ -4283,8 +4284,7 @@ async def individualize_source_descriptions(
                 user_lines.append("- **Sample node descriptions**:")
                 for sample in samples:
                     user_lines.append(
-                        f"  - `{sample['accessor']}`: "
-                        f"\"{sample['node_description']}\""
+                        f'  - `{sample["accessor"]}`: "{sample["node_description"]}"'
                     )
 
             # Fetch ALL node descriptions for applying templates later
@@ -4328,11 +4328,13 @@ async def individualize_source_descriptions(
             # Enrich members with their node descriptions
             enriched_members = []
             for m in members:
-                enriched_members.append({
-                    "id": m["id"],
-                    "accessor": m["accessor"],
-                    "node_description": all_descs.get(m["id"], ""),
-                })
+                enriched_members.append(
+                    {
+                        "id": m["id"],
+                        "accessor": m["accessor"],
+                        "node_description": all_descs.get(m["id"], ""),
+                    }
+                )
 
             # Apply templates deterministically
             individualized = individualize_members(

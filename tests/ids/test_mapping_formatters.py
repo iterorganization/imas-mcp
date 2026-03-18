@@ -206,8 +206,14 @@ class TestFormatCrossFacilityMappings:
 
     def test_single_facility(self):
         rows = [
-            {"facility": "tcv", "target_path": "equilibrium/time_slice/global_quantities/ip"},
-            {"facility": "tcv", "target_path": "equilibrium/time_slice/profiles_1d/psi"},
+            {
+                "facility": "tcv",
+                "target_path": "equilibrium/time_slice/global_quantities/ip",
+            },
+            {
+                "facility": "tcv",
+                "target_path": "equilibrium/time_slice/profiles_1d/psi",
+            },
         ]
         result = _format_cross_facility_mappings(rows)
         assert "**tcv**" in result

@@ -221,7 +221,9 @@ def _format_version_context_report(result: dict) -> str:
     if not paths_data:
         not_found = result.get("not_found", [])
         if not_found:
-            lines.append(f"No matching graph paths found. Not found: {', '.join(not_found)}")
+            lines.append(
+                f"No matching graph paths found. Not found: {', '.join(not_found)}"
+            )
             return "\n".join(lines)
         return "No version context found for the requested paths."
 
@@ -244,7 +246,9 @@ def _format_version_context_report(result: dict) -> str:
                 semantic = c.get("semantic_type")
                 old_val = c.get("old_value", "")
                 new_val = c.get("new_value", "")
-                label = f"{change_type}" + (f"/{semantic}" if semantic and semantic != "none" else "")
+                label = f"{change_type}" + (
+                    f"/{semantic}" if semantic and semantic != "none" else ""
+                )
                 if old_val and new_val:
                     lines.append(f"  - v{version} [{label}]: `{old_val}` → `{new_val}`")
                 elif new_val:
@@ -2090,9 +2094,7 @@ class AgentsServer:
                 )
             )
             _pd_enum = _sv.get_enum("PhysicsDomain")
-            _physics_domains_doc = ", ".join(
-                sorted(_pd_enum.permissible_values.keys())
-            )
+            _physics_domains_doc = ", ".join(sorted(_pd_enum.permissible_values.keys()))
             del _sv, _pd_enum
         except Exception:
             _physics_domains_doc = "(see physics_domains.yaml for valid values)"

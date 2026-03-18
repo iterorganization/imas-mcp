@@ -148,7 +148,9 @@ def generate_extraction_script(
             accessor = sig.get("accessor", "")
             sig_id = sig.get("id", "")
             data_code = data_template.replace("{accessor}", accessor)
-            time_code = time_template.replace("{accessor}", accessor) if time_template else ""
+            time_code = (
+                time_template.replace("{accessor}", accessor) if time_template else ""
+            )
             signal_entries.append(
                 f"        {{\n"
                 f'            "id": {sig_id!r},\n'
@@ -172,7 +174,7 @@ def generate_extraction_script(
             try:
                 data = eval(_sig["data_code"])
                 time = eval(_sig["time_code"]) if _sig["time_code"] else None
-{textwrap.indent(decimation_code, '                ')}
+{textwrap.indent(decimation_code, "                ")}
                 results[_sig["id"]] = {{
                     "success": True,
                     "data": data.tolist() if hasattr(data, 'tolist') else data,
@@ -267,9 +269,7 @@ def validate_assembly_code(code: str, function_name: str) -> list[str]:
     funcs = [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]
     target = [f for f in funcs if f.name == function_name]
     if not target:
-        errors.append(
-            f"Function '{function_name}' not found in generated code"
-        )
+        errors.append(f"Function '{function_name}' not found in generated code")
         return errors
 
     func = target[0]
@@ -278,14 +278,19 @@ def validate_assembly_code(code: str, function_name: str) -> list[str]:
     args = [a.arg for a in func.args.args]
     expected = {"ids", "signals", "mappings"}
     if not expected.issubset(set(args)):
-        errors.append(
-            f"Function must accept {sorted(expected)}, got {args}"
-        )
+        errors.append(f"Function must accept {sorted(expected)}, got {args}")
 
     # 4. Check for forbidden operations (security)
     allowed_modules = {
-        "numpy", "np", "math", "imas", "json", "collections",
-        "functools", "itertools", "typing",
+        "numpy",
+        "np",
+        "math",
+        "imas",
+        "json",
+        "collections",
+        "functools",
+        "itertools",
+        "typing",
     }
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -345,7 +350,7 @@ def {func_name}(ids, signals, mappings):
     import numpy as np
 
     sources = sorted(set(m["source_id"] for m in mappings))
-    getattr(ids, "{array_attr.split('.')[0]}").resize(len(sources))
+    getattr(ids, "{array_attr.split(".")[0]}").resize(len(sources))
 
     for i, source_id in enumerate(sources):
         entry = getattr(ids, "{array_attr}")[i]

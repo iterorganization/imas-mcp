@@ -246,10 +246,12 @@ class DataProgressState:
         """
         from imas_codex.discovery.base.progress import compute_parallel_eta
 
-        return compute_parallel_eta([
-            (self.pending_enrich, self.enrich_rate),
-            (self.pending_check, self.check_rate),
-        ])
+        return compute_parallel_eta(
+            [
+                (self.pending_enrich, self.enrich_rate),
+                (self.pending_check, self.check_rate),
+            ]
+        )
 
 
 # =============================================================================
@@ -316,9 +318,7 @@ class DataProgressDisplay(BaseProgressDisplay):
         enriched = self.state.signals_enriched + self.state.signals_checked
         checked = self.state.signals_checked
         # Enrich denominator excludes skipped signals (they never need enrichment)
-        enrich_denom = max(
-            self.state.total_signals - self.state.signals_skipped, 1
-        )
+        enrich_denom = max(self.state.total_signals - self.state.signals_skipped, 1)
         check_denom = max(enriched, 1)
 
         # Worker counts — SCAN combines seed + extract + promote groups
@@ -457,7 +457,7 @@ class DataProgressDisplay(BaseProgressDisplay):
             enrich_text = enrich.signal_id
             prefix = f"{self.state.facility}:"
             if enrich_text.startswith(prefix):
-                enrich_text = enrich_text[len(prefix):]
+                enrich_text = enrich_text[len(prefix) :]
             if enrich.physics_domain:
                 enrich_domain = enrich.physics_domain
             if enrich.description:
@@ -473,7 +473,7 @@ class DataProgressDisplay(BaseProgressDisplay):
             sig_display = validate.signal_id
             prefix = f"{self.state.facility}:"
             if sig_display.startswith(prefix):
-                sig_display = sig_display[len(prefix):]
+                sig_display = sig_display[len(prefix) :]
             # Display as "<scanner> <signal_name>" when scanner_type is known
             if validate.scanner_type:
                 check_text = f"{validate.scanner_type} {sig_display}"
@@ -562,10 +562,13 @@ class DataProgressDisplay(BaseProgressDisplay):
             if self.state.run_enriched > 0
             else None
         )
-        etc = compute_projected_etc(total_cost, [
-            (self.state.pending_enrich, cost_per_signal),
-            (self.state.pending_check, cost_per_signal),
-        ])
+        etc = compute_projected_etc(
+            total_cost,
+            [
+                (self.state.pending_enrich, cost_per_signal),
+                (self.state.pending_check, cost_per_signal),
+            ],
+        )
 
         # Build stats
         stats: list[tuple[str, str, str]] = [
@@ -961,6 +964,7 @@ class DataProgressDisplay(BaseProgressDisplay):
 
         # Accumulated wall-clock time from prior sessions
         from imas_codex.discovery.base.progress import get_accumulated_time
+
         self.state.accumulated_time = get_accumulated_time(
             self.state.facility, "signals"
         )
@@ -989,21 +993,27 @@ class DataProgressDisplay(BaseProgressDisplay):
 
         # SEED stats
         summary.append("  SEED    ", style="bold blue")
-        summary.append(f"seeded={format_count(self.state.run_discovered)}", style="blue")
+        summary.append(
+            f"seeded={format_count(self.state.run_discovered)}", style="blue"
+        )
         if self.state.discover_rate:
             summary.append(f"  {format_rate(self.state.discover_rate)}", style="dim")
         summary.append("\n")
 
         # EXTRACT stats
         summary.append("  EXTRACT ", style="bold cyan")
-        summary.append(f"extracted={format_count(self.state.run_extracted)}", style="cyan")
+        summary.append(
+            f"extracted={format_count(self.state.run_extracted)}", style="cyan"
+        )
         if self.state.extract_rate:
             summary.append(f"  {format_rate(self.state.extract_rate)}", style="dim")
         summary.append("\n")
 
         # PROMOTE stats
         summary.append("  PROMOTE ", style="bold yellow")
-        summary.append(f"promoted={format_count(self.state.run_promoted)}", style="yellow")
+        summary.append(
+            f"promoted={format_count(self.state.run_promoted)}", style="yellow"
+        )
         summary.append(f"  total={format_count(total)}", style="dim")
         if self.state.promote_rate:
             summary.append(f"  {format_rate(self.state.promote_rate)}", style="dim")
@@ -1017,7 +1027,9 @@ class DataProgressDisplay(BaseProgressDisplay):
                 f"  groups={self.state.signal_sources} ({format_count(self.state.grouped_signals)} members)",
                 style="cyan",
             )
-        summary.append(f"  skipped={format_count(self.state.signals_skipped)}", style="yellow")
+        summary.append(
+            f"  skipped={format_count(self.state.signals_skipped)}", style="yellow"
+        )
         summary.append(f"  cost=${self.state.run_cost:.3f}", style="yellow")
         if self.state.enrich_rate:
             summary.append(f"  {format_rate(self.state.enrich_rate)}", style="dim")
@@ -1026,7 +1038,9 @@ class DataProgressDisplay(BaseProgressDisplay):
         # CHECK stats
         summary.append("  CHECK  ", style="bold magenta")
         summary.append(f"checked={format_count(checked)}", style="magenta")
-        summary.append(f"  failed={format_count(self.state.signals_failed)}", style="red")
+        summary.append(
+            f"  failed={format_count(self.state.signals_failed)}", style="red"
+        )
         if self.state.check_rate:
             summary.append(f"  {format_rate(self.state.check_rate)}", style="dim")
         summary.append("\n")

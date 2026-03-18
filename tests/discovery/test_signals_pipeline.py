@@ -710,7 +710,11 @@ class TestPipelineE2E:
         units_tree_idx = {"value": 0}
         trees_for_units = [
             {"data_source_name": "magnetics", "latest_version": 3, "latest_shot": 3000},
-            {"data_source_name": "results", "latest_version": 8000, "latest_shot": 8000},
+            {
+                "data_source_name": "results",
+                "latest_version": 8000,
+                "latest_shot": 8000,
+            },
         ]
 
         def mock_claim_tree_units(facility):

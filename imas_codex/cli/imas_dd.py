@@ -201,17 +201,13 @@ def imas_build(
         if reset_to and not dry_run:
             from imas_codex.graph.dd_graph_ops import reset_imas_nodes
 
-            reset_count = reset_imas_nodes(
-                reset_to, ids_filter=ids_set
-            )
+            reset_count = reset_imas_nodes(reset_to, ids_filter=ids_set)
             if reset_count > 0:
                 log_print(
                     f"  [yellow]Reset {reset_count:,} nodes to '{reset_to}'[/yellow]"
                 )
             else:
-                log_print(
-                    f"  [dim]No nodes to reset to '{reset_to}'[/dim]"
-                )
+                log_print(f"  [dim]No nodes to reset to '{reset_to}'[/dim]")
 
         # Build state
         from imas_codex.graph.dd_workers import DDBuildState, run_dd_build_engine

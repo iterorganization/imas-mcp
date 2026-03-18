@@ -310,23 +310,17 @@ class TestReadLog:
         assert "seeded wiki" not in result  # INFO excluded
 
     def test_read_all_levels(self, temp_log_dir):
-        result = read_log(
-            command="signals", facility="jet", level="DEBUG", lines=100
-        )
+        result = read_log(command="signals", facility="jet", level="DEBUG", lines=100)
         assert "starting scan" in result
         assert "SSH timeout" in result
 
     def test_grep_filter(self, temp_log_dir):
-        result = read_log(
-            command="signals", facility="jet", level="DEBUG", grep="ssh"
-        )
+        result = read_log(command="signals", facility="jet", level="DEBUG", grep="ssh")
         assert "SSH timeout" in result
         assert "seeded wiki" not in result
 
     def test_lines_limit(self, temp_log_dir):
-        result = read_log(
-            command="signals", facility="jet", level="DEBUG", lines=2
-        )
+        result = read_log(command="signals", facility="jet", level="DEBUG", lines=2)
         lines = result.strip().split("\n")
         assert len(lines) <= 2
 
@@ -374,25 +368,25 @@ class TestParseSince:
         dt = _parse_since("1h")
         assert dt is not None
         # Should be ~1 hour ago
-        age = (time.time() - dt.timestamp())
+        age = time.time() - dt.timestamp()
         assert 3500 < age < 3700
 
     def test_minutes(self):
         dt = _parse_since("30m")
         assert dt is not None
-        age = (time.time() - dt.timestamp())
+        age = time.time() - dt.timestamp()
         assert 1700 < age < 1900
 
     def test_days(self):
         dt = _parse_since("2d")
         assert dt is not None
-        age = (time.time() - dt.timestamp())
+        age = time.time() - dt.timestamp()
         assert 170000 < age < 175000
 
     def test_seconds(self):
         dt = _parse_since("45s")
         assert dt is not None
-        age = (time.time() - dt.timestamp())
+        age = time.time() - dt.timestamp()
         assert 44 < age < 47
 
     def test_iso_datetime(self):

@@ -119,7 +119,10 @@ class MappingProgressState:
     )
     map_queue: StreamQueue = field(
         default_factory=lambda: StreamQueue(
-            rate=0.5, max_rate=2.0, min_display_time=0.5, max_display_time=3.0,
+            rate=0.5,
+            max_rate=2.0,
+            min_display_time=0.5,
+            max_display_time=3.0,
         )
     )
     assembly_queue: StreamQueue = field(
@@ -231,8 +234,7 @@ class MappingProgressDisplay(BaseProgressDisplay):
                 total=1,
                 is_complete=context_done,
                 description=(
-                    f"{s.sources_found} sources, "
-                    f"{s.sections_total or '?'} sections"
+                    f"{s.sources_found} sources, {s.sections_total or '?'} sections"
                     if context_done
                     else ""
                 ),
@@ -255,7 +257,8 @@ class MappingProgressDisplay(BaseProgressDisplay):
                 primary_text=asg.source_id if asg else "",
                 physics_domain=asg.physics_domain if asg else "",
                 description=(
-                    f"→ {asg.target_path}" if asg
+                    f"→ {asg.target_path}"
+                    if asg
                     else (f"{s.sections_assigned} assigned" if sections_done else "")
                 ),
                 is_processing=s.current_step == "assign" and not sections_done,
@@ -286,8 +289,7 @@ class MappingProgressDisplay(BaseProgressDisplay):
                 total=mapping_total,
                 is_complete=mapping_done,
                 cost=sum(
-                    v for k, v in s.cost.steps.items()
-                    if k.startswith("map_signals_")
+                    v for k, v in s.cost.steps.items() if k.startswith("map_signals_")
                 ),
                 primary_text=map_primary,
                 physics_domain=map_domain,
@@ -311,14 +313,13 @@ class MappingProgressDisplay(BaseProgressDisplay):
                 total=assembly_total,
                 is_complete=assembly_done,
                 cost=sum(
-                    v for k, v in s.cost.steps.items()
+                    v
+                    for k, v in s.cost.steps.items()
                     if k.startswith("discover_assembly_")
                 ),
                 primary_text=asm.target_path if asm else "",
                 physics_domain=asm.physics_domain if asm else "",
-                description=(
-                    asm.pattern if asm else ""
-                ),
+                description=(asm.pattern if asm else ""),
                 is_processing=s.current_step == "assembly" and not assembly_done,
                 processing_label="discovering patterns...",
             )

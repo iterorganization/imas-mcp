@@ -43,7 +43,10 @@ def test_format_version_context_report_distinguishes_not_found_and_no_changes():
     assert "1 found, 0 with changes, 0 change nodes matched" in formatted
     assert "**equilibrium/time_slice/profiles_1d/psi**: no notable changes" in formatted
     assert "Not found: fake/path" in formatted
-    assert "Paths without notable changes: equilibrium/time_slice/profiles_1d/psi" in formatted
+    assert (
+        "Paths without notable changes: equilibrium/time_slice/profiles_1d/psi"
+        in formatted
+    )
 
 
 def test_format_error_fields_report():

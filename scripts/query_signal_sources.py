@@ -33,13 +33,16 @@ with GraphClient() as gc:
 
     # Check what ALL members look like for one of these groups
     if result2:
-        sample_group_id = result2[0]['id']
-        members = gc.query("""
+        sample_group_id = result2[0]["id"]
+        members = gc.query(
+            """
             MATCH (s:FacilitySignal)-[:MEMBER_OF]->(sg:SignalSource {id: $id})
             RETURN s.accessor AS accessor, s.status AS status, s.skip_reason AS skip_reason
             ORDER BY s.accessor
             LIMIT 10
-        """, id=sample_group_id)
+        """,
+            id=sample_group_id,
+        )
         print(f"\nSample members of {sample_group_id}:")
         for m in members:
             print(f"  {m['accessor']}: {m['status']}, skip={m['skip_reason']}")

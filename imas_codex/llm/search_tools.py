@@ -665,9 +665,14 @@ def _search_docs(
     try:
         # Step 1: Vector search on wiki chunks
         chunk_ids, scores = _vector_search_wiki_chunks(
-            gc, embedding, facility, k, site=site,
+            gc,
+            embedding,
+            facility,
+            k,
+            site=site,
             physics_domain=physics_domain,
-            min_score=min_score, score_dimension=score_dimension,
+            min_score=min_score,
+            score_dimension=score_dimension,
         )
 
         # Step 1b: Text search for keyword matches (hybrid boost)
@@ -1298,9 +1303,13 @@ def _search_code(
     try:
         # Step 1: Vector search on code chunks
         chunk_ids, scores = _vector_search_code_chunks(
-            gc, embedding, facility, k,
+            gc,
+            embedding,
+            facility,
+            k,
             physics_domain=physics_domain,
-            min_score=min_score, score_dimension=score_dimension,
+            min_score=min_score,
+            score_dimension=score_dimension,
         )
 
         # Step 1b: Text search for keyword matches (hybrid boost)
@@ -1538,4 +1547,3 @@ def _text_search_code_chunks(
         """
 
     return gc.query(cypher, **params)
-

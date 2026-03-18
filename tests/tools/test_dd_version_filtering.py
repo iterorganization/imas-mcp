@@ -88,8 +88,12 @@ class TestVersionFilteringSemantics:
         gc = MagicMock()
         # First call: the main query with dd_version clause
         gc.query.return_value = [
-            {"id": "equilibrium/time_slice/profiles_1d/psi", "ids": "equilibrium",
-             "data_type": "FLT_1D", "units": "Wb"}
+            {
+                "id": "equilibrium/time_slice/profiles_1d/psi",
+                "ids": "equilibrium",
+                "data_type": "FLT_1D",
+                "units": "Wb",
+            }
         ]
         tool = GraphPathTool(gc)
         result = await tool.check_imas_paths(
@@ -285,6 +289,7 @@ class TestExportNodeCategoryFilter:
         assert "node_category IN $categories" in cypher
         kwargs = gc.query.call_args[1]
         assert kwargs["categories"] == ["data"]
+
     async def test_export_domain_filters_data_only(self):
         """export_imas_domain default must filter to data nodes only."""
         gc = MagicMock()
@@ -304,6 +309,7 @@ class TestExportNodeCategoryFilter:
         assert "node_category IN $categories" in export_cypher
         kwargs = gc.query.call_args_list[-1][1]
         assert kwargs["categories"] == ["data"]
+
     async def test_export_ids_with_dd_version(self):
         """export_imas_ids with dd_version must filter both."""
         gc = MagicMock()

@@ -310,9 +310,7 @@ def _run_plain_mode(
         log_print(f"  {detail}")
 
     try:
-        asyncio.run(
-            run_mapping_engine(engine_state, on_progress=_on_progress)
-        )
+        asyncio.run(run_mapping_engine(engine_state, on_progress=_on_progress))
     except Exception as e:
         log_print(f"[red]Error: {e}[/red]")
 
@@ -322,12 +320,16 @@ def _run_plain_mode(
         ids_result = engine_state.ids_results.get(ids_name, {})
         batches = engine_state.mapping_batches.get(ids_name, [])
         if batches or ids_result:
-            all_results.append({
-                "ids_name": ids_name,
-                "bindings": ids_result.get("bindings", sum(len(b.mappings) for _, b in batches)),
-                "escalations": ids_result.get("escalations", 0),
-                "persisted": engine_state.persist,
-            })
+            all_results.append(
+                {
+                    "ids_name": ids_name,
+                    "bindings": ids_result.get(
+                        "bindings", sum(len(b.mappings) for _, b in batches)
+                    ),
+                    "escalations": ids_result.get("escalations", 0),
+                    "persisted": engine_state.persist,
+                }
+            )
 
     return all_results
 
@@ -472,7 +474,9 @@ def _run_rich_mode(
             if batches or ids_result:
                 result = {
                     "ids_name": ids_name,
-                    "bindings": ids_result.get("bindings", sum(len(b.mappings) for _, b in batches)),
+                    "bindings": ids_result.get(
+                        "bindings", sum(len(b.mappings) for _, b in batches)
+                    ),
                     "escalations": ids_result.get("escalations", 0),
                     "persisted": engine_state.persist,
                 }
@@ -532,9 +536,7 @@ def _print_result(result) -> None:
 
     # Unassigned groups
     if result.unassigned_groups:
-        click.echo(
-            f"\nUnassigned signal sources ({len(result.unassigned_groups)}):"
-        )
+        click.echo(f"\nUnassigned signal sources ({len(result.unassigned_groups)}):")
         for gid in result.unassigned_groups:
             click.echo(f"  - {gid}")
 
@@ -797,9 +799,7 @@ def map_validate(facility: str, ids_name: str) -> None:
             shown = coverage.unmapped_fields[:10]
             click.echo(f"  Unmapped: {', '.join(shown)}")
             if len(coverage.unmapped_fields) > 10:
-                click.echo(
-                    f"    ... and {len(coverage.unmapped_fields) - 10} more"
-                )
+                click.echo(f"    ... and {len(coverage.unmapped_fields) - 10} more")
 
     # Signal source coverage
     sig_cov = compute_signal_coverage(facility, gc=gc)
@@ -813,9 +813,7 @@ def map_validate(facility: str, ids_name: str) -> None:
             shown = sig_cov.unmapped_groups[:10]
             click.echo(f"  Unmapped: {', '.join(shown)}")
             if len(sig_cov.unmapped_groups) > 10:
-                click.echo(
-                    f"    ... and {len(sig_cov.unmapped_groups) - 10} more"
-                )
+                click.echo(f"    ... and {len(sig_cov.unmapped_groups) - 10} more")
 
     # Extended signal source coverage per IDS
     src_cov = compute_signal_source_coverage(facility, ids_name, gc=gc)
@@ -829,18 +827,13 @@ def map_validate(facility: str, ids_name: str) -> None:
             shown = src_cov.unmapped_enriched[:10]
             click.echo(f"  Unmapped enriched: {', '.join(shown)}")
             if len(src_cov.unmapped_enriched) > 10:
-                click.echo(
-                    f"    ... and {len(src_cov.unmapped_enriched) - 10} more"
-                )
+                click.echo(f"    ... and {len(src_cov.unmapped_enriched) - 10} more")
     if src_cov.discovered_sources > 0:
         click.echo(
-            f"  Underspecified (discovered, not enriched): "
-            f"{src_cov.discovered_sources}"
+            f"  Underspecified (discovered, not enriched): {src_cov.discovered_sources}"
         )
     if src_cov.multi_target_sources > 0:
-        click.echo(
-            f"  Multi-target sources: {src_cov.multi_target_sources}"
-        )
+        click.echo(f"  Multi-target sources: {src_cov.multi_target_sources}")
 
     # Assembly coverage
     asm_cov = compute_assembly_coverage(facility, ids_name, gc=gc)
@@ -851,9 +844,7 @@ def map_validate(facility: str, ids_name: str) -> None:
             f"sections configured"
         )
         if asm_cov.sections_without_config:
-            click.echo(
-                f"  Unconfigured: {', '.join(asm_cov.sections_without_config)}"
-            )
+            click.echo(f"  Unconfigured: {', '.join(asm_cov.sections_without_config)}")
         click.echo(
             f"  Patterns: {asm_cov.default_pattern_count} default "
             f"(array_per_node), {asm_cov.custom_pattern_count} custom"
@@ -880,9 +871,7 @@ def map_validate(facility: str, ids_name: str) -> None:
             for entry in conf_dist.low_bindings[:10]:
                 click.echo(f"    {entry}")
             if len(conf_dist.low_bindings) > 10:
-                click.echo(
-                    f"    ... and {len(conf_dist.low_bindings) - 10} more"
-                )
+                click.echo(f"    ... and {len(conf_dist.low_bindings) - 10} more")
 
 
 # ---------------------------------------------------------------------------

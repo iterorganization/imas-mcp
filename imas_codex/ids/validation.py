@@ -60,9 +60,7 @@ class ValidationReport:
     escalations: list[EscalationFlag] = field(default_factory=list)
 
 
-def _check_sources_exist(
-    source_ids: list[str], gc: GraphClient
-) -> dict[str, bool]:
+def _check_sources_exist(source_ids: list[str], gc: GraphClient) -> dict[str, bool]:
     """Check which source SignalSource nodes exist in the graph."""
     result: dict[str, bool] = {}
     for sid in source_ids:
@@ -109,9 +107,7 @@ def validate_mapping(
 
     # Batch checks
     source_exists = _check_sources_exist(source_ids, gc)
-    target_results = {
-        r["path"]: r for r in check_imas_paths(target_paths, gc=gc)
-    }
+    target_results = {r["path"]: r for r in check_imas_paths(target_paths, gc=gc)}
 
     for b in bindings:
         check = BindingCheck(source_id=b.source_id, target_id=b.target_id)
@@ -148,15 +144,8 @@ def validate_mapping(
             unit_result = analyze_units(src_units, tgt_units)
             check.units_compatible = unit_result.get("compatible", False)
             if not check.units_compatible:
-                errors.append(
-                    f"Units incompatible: {src_units} → {tgt_units}"
-                )
-            elif (
-                src_units
-                and tgt_units
-                and src_units != tgt_units
-                and expr == "value"
-            ):
+                errors.append(f"Units incompatible: {src_units} → {tgt_units}")
+            elif src_units and tgt_units and src_units != tgt_units and expr == "value":
                 # Identity transform with mismatched units — needs conversion
                 errors.append(
                     f"Identity transform but units differ: "
@@ -203,9 +192,7 @@ def validate_mapping(
         unique_sources = {b.source_id for b in target_bindings}
         if len(unique_sources) > 1:
             # Classify the many-to-one pattern
-            classification = _classify_many_to_one(
-                target_id, target_bindings, gc
-            )
+            classification = _classify_many_to_one(target_id, target_bindings, gc)
             source_list = sorted(unique_sources)
 
             if classification == DuplicateTargetClassification.ERRONEOUS:
@@ -232,8 +219,7 @@ def validate_mapping(
         elif len(target_bindings) > 1:
             # Same source, same target — check for conflicting transforms
             transforms = {
-                getattr(b, "transform_expression", "value")
-                for b in target_bindings
+                getattr(b, "transform_expression", "value") for b in target_bindings
             }
             if len(transforms) > 1:
                 report.duplicate_targets.append(target_id)
@@ -250,13 +236,16 @@ def validate_mapping(
                     )
                 )
 
-    report.all_passed = all(
-        c.source_exists
-        and c.target_exists
-        and c.transform_executes
-        and c.units_compatible
-        for c in report.binding_checks
-    ) and not report.duplicate_targets
+    report.all_passed = (
+        all(
+            c.source_exists
+            and c.target_exists
+            and c.transform_executes
+            and c.units_compatible
+            for c in report.binding_checks
+        )
+        and not report.duplicate_targets
+    )
 
     logger.info(
         "Validation: %d bindings, %d passed, %d duplicates",
@@ -743,9 +732,7 @@ def compute_confidence_distribution(
 
         if conf < 0.5:
             dist.low_count += 1
-            dist.low_bindings.append(
-                f"{b.source_id} → {b.target_id} ({conf:.2f})"
-            )
+            dist.low_bindings.append(f"{b.source_id} → {b.target_id} ({conf:.2f})")
         elif conf <= 0.8:
             dist.medium_count += 1
         else:
@@ -853,11 +840,13 @@ def validate_mapping_e2e(
         # Derive section from target path (first two path segments)
         parts = target.split("/")
         section = "/".join(parts[:2]) if len(parts) >= 2 else ids_name
-        section_signals.setdefault(section, []).append({
-            "id": b.get("source_id", ""),
-            "accessor": b.get("source_id", ""),
-            "data_source_name": "default",
-        })
+        section_signals.setdefault(section, []).append(
+            {
+                "id": b.get("source_id", ""),
+                "accessor": b.get("source_id", ""),
+                "data_source_name": "default",
+            }
+        )
 
     # 4. Get DataAccess info for extraction script
     da_records = gc.query(
@@ -881,7 +870,7 @@ def validate_mapping_e2e(
 
     try:
         raw_output = run_script_via_stdin(
-            f'import json, sys; config = {_json.dumps({"shot": shot})}\n{script}',
+            f"import json, sys; config = {_json.dumps({'shot': shot})}\n{script}",
             ssh_host=ssh_host,
             timeout=120,
             interpreter="python3",
@@ -897,7 +886,11 @@ def validate_mapping_e2e(
                 result.extraction_success += 1
             else:
                 result.extraction_failed += 1
-                err = sig_result.get("error", "unknown") if isinstance(sig_result, dict) else "unknown"
+                err = (
+                    sig_result.get("error", "unknown")
+                    if isinstance(sig_result, dict)
+                    else "unknown"
+                )
                 result.extraction_errors.append(f"{sig_id}: {err}")
 
     except Exception as e:
@@ -935,9 +928,10 @@ def validate_mapping_e2e(
         starts = [t[0] for t in time_bases]
         ends = [t[1] for t in time_bases]
         result.time_base_consistent = (
-            max(starts) - min(starts) < 1.0
-            and max(ends) - min(ends) < 1.0
-        ) if starts and ends else True
+            (max(starts) - min(starts) < 1.0 and max(ends) - min(ends) < 1.0)
+            if starts and ends
+            else True
+        )
     else:
         result.time_base_consistent = True
 

@@ -556,7 +556,7 @@ class TestGetDDVersionContext:
         assert result["total_paths"] == 1
         path_data = result["paths"]["core_profiles/profiles_1d/electrons/pressure"]
         assert path_data["change_count"] >= 1
-        assert len(path_data["notable_changes"]) >= 1
+        assert len(path_data["changes"]) >= 1
 
     @pytest.mark.anyio
     async def test_path_without_changes(self, version_tool):
@@ -566,7 +566,7 @@ class TestGetDDVersionContext:
         )
         path_data = result["paths"]["equilibrium/time_slice/profiles_1d/psi"]
         assert path_data["change_count"] == 0
-        assert path_data["notable_changes"] == []
+        assert path_data["changes"] == []
 
     @pytest.mark.anyio
     async def test_multiple_paths(self, version_tool):
@@ -578,7 +578,9 @@ class TestGetDDVersionContext:
         )
         assert result["total_paths"] == 2
         assert result["paths_with_changes"] == 1
-        assert "equilibrium/time_slice/profiles_1d/psi" in result["paths_without_changes"]
+        assert (
+            "equilibrium/time_slice/profiles_1d/psi" in result["paths_without_changes"]
+        )
 
     @pytest.mark.anyio
     async def test_nonexistent_path(self, version_tool):
@@ -749,10 +751,10 @@ class TestExportDomain:
     async def test_export_exact_domain(self, graph_client):
         """Exact domain name should return paths."""
         tool = self._make_tool(graph_client)
-        # 'magnetics' is stored on equilibrium paths in fixtures
-        result = await tool.export_imas_domain(domain="magnetics")
+        # 'equilibrium' is stored on equilibrium paths in fixtures
+        result = await tool.export_imas_domain(domain="equilibrium")
         assert result["total_paths"] > 0
-        assert "magnetics" in result["resolved_domains"]
+        assert "equilibrium" in result["resolved_domains"]
 
     @pytest.mark.asyncio
     async def test_export_ids_name(self, graph_client):

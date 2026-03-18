@@ -82,6 +82,7 @@ tools:
     assert config["local_hosts"] == ["iter"]
     assert config["tools"]["rg"]["available"] is True
 
+
 def test_exclusion_config_reads_public_yaml_only(tmp_path, monkeypatch):
     facilities_dir = tmp_path / "facilities"
     facilities_dir.mkdir()

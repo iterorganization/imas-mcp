@@ -84,9 +84,7 @@ class TestValidateMapping:
         from unittest.mock import patch
 
         with patch("imas_codex.ids.validation.check_imas_paths") as mock_check:
-            mock_check.return_value = [
-                {"path": binding.target_id, "exists": True}
-            ]
+            mock_check.return_value = [{"path": binding.target_id, "exists": True}]
             report = validate_mapping([binding], gc=mock_gc)
 
         assert report.all_passed is False
@@ -134,9 +132,7 @@ class TestValidateMapping:
         from unittest.mock import patch
 
         with patch("imas_codex.ids.validation.check_imas_paths") as mock_check:
-            mock_check.return_value = [
-                {"path": binding.target_id, "exists": True}
-            ]
+            mock_check.return_value = [{"path": binding.target_id, "exists": True}]
             report = validate_mapping([binding], gc=mock_gc)
 
         assert report.all_passed is False
@@ -150,9 +146,7 @@ class TestValidateMapping:
         from unittest.mock import patch
 
         with patch("imas_codex.ids.validation.check_imas_paths") as mock_check:
-            mock_check.return_value = [
-                {"path": binding.target_id, "exists": True}
-            ]
+            mock_check.return_value = [{"path": binding.target_id, "exists": True}]
             with patch("imas_codex.ids.validation.analyze_units") as mock_units:
                 mock_units.return_value = {"compatible": False}
                 report = validate_mapping([binding], gc=mock_gc)
@@ -167,9 +161,7 @@ class TestValidateMapping:
         from unittest.mock import patch
 
         with patch("imas_codex.ids.validation.check_imas_paths") as mock_check:
-            mock_check.return_value = [
-                {"path": binding.target_id, "exists": True}
-            ]
+            mock_check.return_value = [{"path": binding.target_id, "exists": True}]
             with patch("imas_codex.ids.validation.analyze_units") as mock_units:
                 mock_units.return_value = {
                     "compatible": True,
@@ -187,15 +179,14 @@ class TestValidateMapping:
         from unittest.mock import patch
 
         with patch("imas_codex.ids.validation.check_imas_paths") as mock_check:
-            mock_check.return_value = [
-                {"path": binding.target_id, "exists": True}
-            ]
+            mock_check.return_value = [{"path": binding.target_id, "exists": True}]
             report = validate_mapping([binding], gc=mock_gc)
 
         assert report.binding_checks[0].units_compatible is True
 
     def test_duplicate_targets(self, mock_gc):
         """Multiple sources → same target with different physics domains = erroneous."""
+
         def mock_query(cypher, **kwargs):
             # Source existence check
             if "SignalSource" in cypher and "RETURN sg.id AS id LIMIT 1" in cypher:
@@ -203,8 +194,18 @@ class TestValidateMapping:
             # Classification query for many-to-one
             if "UNWIND" in cypher and "group_key" in cypher:
                 return [
-                    {"id": "group_a", "group_key": "PF:r", "physics_domain": "magnetic_field_systems", "description": "Coil radius"},
-                    {"id": "group_b", "group_key": "MP:angle", "physics_domain": "plasma_diagnostics", "description": "Probe angle"},
+                    {
+                        "id": "group_a",
+                        "group_key": "PF:r",
+                        "physics_domain": "magnetic_field_systems",
+                        "description": "Coil radius",
+                    },
+                    {
+                        "id": "group_b",
+                        "group_key": "MP:angle",
+                        "physics_domain": "plasma_diagnostics",
+                        "description": "Probe angle",
+                    },
                 ]
             return [{"id": kwargs.get("id", "some_group")}]
 
@@ -228,19 +229,32 @@ class TestValidateMapping:
         assert report.all_passed is False
         # Should have escalation for erroneous many-to-one
         dup_escalations = [
-            e for e in report.escalations if "erroneous" in e.reason.lower() or "many-to-one" in e.reason.lower()
+            e
+            for e in report.escalations
+            if "erroneous" in e.reason.lower() or "many-to-one" in e.reason.lower()
         ]
         assert len(dup_escalations) == 1
 
     def test_duplicate_targets_legitimate(self, mock_gc):
         """Multiple sources → same target with same physics domain = legitimate."""
+
         def mock_query(cypher, **kwargs):
             if "SignalSource" in cypher and "RETURN sg.id AS id LIMIT 1" in cypher:
                 return [{"id": kwargs.get("id", "some_group")}]
             if "UNWIND" in cypher and "group_key" in cypher:
                 return [
-                    {"id": "group_a", "group_key": "PF:r_v1", "physics_domain": "magnetic_field_systems", "description": "Coil R v1"},
-                    {"id": "group_b", "group_key": "PF:r_v2", "physics_domain": "magnetic_field_systems", "description": "Coil R v2"},
+                    {
+                        "id": "group_a",
+                        "group_key": "PF:r_v1",
+                        "physics_domain": "magnetic_field_systems",
+                        "description": "Coil R v1",
+                    },
+                    {
+                        "id": "group_b",
+                        "group_key": "PF:r_v2",
+                        "physics_domain": "magnetic_field_systems",
+                        "description": "Coil R v2",
+                    },
                 ]
             return [{"id": kwargs.get("id", "some_group")}]
 
@@ -330,9 +344,7 @@ class TestComputeCoverage:
         ]
         bindings = [
             _make_binding(target_id="pf_active/coil/name"),
-            _make_binding(
-                target_id="pf_active/coil/element/geometry/rectangle/r"
-            ),
+            _make_binding(target_id="pf_active/coil/element/geometry/rectangle/r"),
         ]
         report = compute_coverage("pf_active", bindings, gc=mock_gc)
         assert report.total_leaf_fields == 3
@@ -572,7 +584,9 @@ class TestComputeConfidenceDistribution:
         bindings = [
             _make_binding(confidence=0.95),  # high
             _make_binding(confidence=0.7, target_id="pf_active/coil/name"),  # medium
-            _make_binding(confidence=0.3, target_id="pf_active/coil/current/data"),  # low
+            _make_binding(
+                confidence=0.3, target_id="pf_active/coil/current/data"
+            ),  # low
         ]
         dist = compute_confidence_distribution(bindings)
         assert dist.total_bindings == 3
@@ -584,8 +598,10 @@ class TestComputeConfidenceDistribution:
 
     def test_boundary_values(self):
         bindings = [
-            _make_binding(confidence=0.5),   # medium (0.5 inclusive)
-            _make_binding(confidence=0.8, target_id="pf_active/coil/name"),  # medium (0.8 inclusive)
+            _make_binding(confidence=0.5),  # medium (0.5 inclusive)
+            _make_binding(
+                confidence=0.8, target_id="pf_active/coil/name"
+            ),  # medium (0.8 inclusive)
         ]
         dist = compute_confidence_distribution(bindings)
         assert dist.medium_count == 2

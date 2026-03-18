@@ -462,7 +462,9 @@ class TestFormatSemanticMatchMatrix:
     def test_source_not_in_matrix(self):
         from imas_codex.ids.mapping import _format_semantic_match_matrix
 
-        matrix = {"other_src": [{"content_type": "imas", "target_id": "a/b", "score": 0.9}]}
+        matrix = {
+            "other_src": [{"content_type": "imas", "target_id": "a/b", "score": 0.9}]
+        }
         assert _format_semantic_match_matrix(matrix, "src1") == ""
 
     def test_formats_matches_by_type(self):
@@ -470,9 +472,24 @@ class TestFormatSemanticMatchMatrix:
 
         matrix = {
             "src1": [
-                {"content_type": "imas", "target_id": "pf_active/coil/r", "score": 0.92, "excerpt": "R position"},
-                {"content_type": "wiki", "target_id": "PF Active page", "score": 0.85, "excerpt": ""},
-                {"content_type": "code", "target_id": "read_jet.py", "score": 0.78, "excerpt": "def read_pf"},
+                {
+                    "content_type": "imas",
+                    "target_id": "pf_active/coil/r",
+                    "score": 0.92,
+                    "excerpt": "R position",
+                },
+                {
+                    "content_type": "wiki",
+                    "target_id": "PF Active page",
+                    "score": 0.85,
+                    "excerpt": "",
+                },
+                {
+                    "content_type": "code",
+                    "target_id": "read_jet.py",
+                    "score": 0.78,
+                    "excerpt": "def read_pf",
+                },
             ]
         }
         result = _format_semantic_match_matrix(matrix, "src1")
@@ -491,8 +508,11 @@ class TestMappingDisposition:
     def test_all_values(self):
         values = set(MappingDisposition)
         expected = {
-            "mapped", "no_imas_equivalent", "metadata_only",
-            "facility_specific", "insufficient_context",
+            "mapped",
+            "no_imas_equivalent",
+            "metadata_only",
+            "facility_specific",
+            "insufficient_context",
         }
         assert {v.value for v in values} == expected
 
@@ -520,7 +540,9 @@ class TestUnmappedSignal:
             nearest_similarity=0.45,
         )
         data = u.model_dump()
-        assert data["nearest_imas_path"] == "pf_active/coil/element/geometry/rectangle/r"
+        assert (
+            data["nearest_imas_path"] == "pf_active/coil/element/geometry/rectangle/r"
+        )
         assert data["nearest_similarity"] == pytest.approx(0.45)
 
     def test_roundtrip(self):
@@ -661,10 +683,23 @@ class TestClassifyManyToOne:
         )
 
         mock_gc.query.return_value = [
-            {"id": "jet:pf:coil:1", "group_key": "pf_coil:1", "physics_domain": "magnetic", "description": ""},
-            {"id": "jet:pf:coil:2", "group_key": "pf_coil:2", "physics_domain": "magnetic", "description": ""},
+            {
+                "id": "jet:pf:coil:1",
+                "group_key": "pf_coil:1",
+                "physics_domain": "magnetic",
+                "description": "",
+            },
+            {
+                "id": "jet:pf:coil:2",
+                "group_key": "pf_coil:2",
+                "physics_domain": "magnetic",
+                "description": "",
+            },
         ]
-        bindings = [MagicMock(source_id="jet:pf:coil:1"), MagicMock(source_id="jet:pf:coil:2")]
+        bindings = [
+            MagicMock(source_id="jet:pf:coil:1"),
+            MagicMock(source_id="jet:pf:coil:2"),
+        ]
         result = _classify_many_to_one("target", bindings, mock_gc)
         assert result == DuplicateTargetClassification.EPOCH_VARIANTS
 
@@ -675,10 +710,23 @@ class TestClassifyManyToOne:
         )
 
         mock_gc.query.return_value = [
-            {"id": "jet:eq:psi_raw", "group_key": "raw_psi", "physics_domain": "equilibrium", "description": ""},
-            {"id": "jet:eq:psi_filtered", "group_key": "filtered_psi", "physics_domain": "equilibrium", "description": ""},
+            {
+                "id": "jet:eq:psi_raw",
+                "group_key": "raw_psi",
+                "physics_domain": "equilibrium",
+                "description": "",
+            },
+            {
+                "id": "jet:eq:psi_filtered",
+                "group_key": "filtered_psi",
+                "physics_domain": "equilibrium",
+                "description": "",
+            },
         ]
-        bindings = [MagicMock(source_id="jet:eq:psi_raw"), MagicMock(source_id="jet:eq:psi_filtered")]
+        bindings = [
+            MagicMock(source_id="jet:eq:psi_raw"),
+            MagicMock(source_id="jet:eq:psi_filtered"),
+        ]
         result = _classify_many_to_one("target", bindings, mock_gc)
         assert result == DuplicateTargetClassification.PROCESSING_STAGES
 
@@ -689,8 +737,18 @@ class TestClassifyManyToOne:
         )
 
         mock_gc.query.return_value = [
-            {"id": "src_a", "group_key": "a", "physics_domain": "magnetic", "description": ""},
-            {"id": "src_b", "group_key": "b", "physics_domain": "thermal", "description": ""},
+            {
+                "id": "src_a",
+                "group_key": "a",
+                "physics_domain": "magnetic",
+                "description": "",
+            },
+            {
+                "id": "src_b",
+                "group_key": "b",
+                "physics_domain": "thermal",
+                "description": "",
+            },
         ]
         bindings = [MagicMock(source_id="src_a"), MagicMock(source_id="src_b")]
         result = _classify_many_to_one("target", bindings, mock_gc)
@@ -961,8 +1019,13 @@ class TestDiscoverAssemblyUsesSystemPrompt:
         context = {"groups": sample_groups, "subtree": sample_subtree}
 
         discover_assembly(
-            "jet", "pf_active", assignments, [field_batch], context,
-            gc=mock_gc, cost=cost,
+            "jet",
+            "pf_active",
+            assignments,
+            [field_batch],
+            context,
+            gc=mock_gc,
+            cost=cost,
         )
 
         call_args = mock_call_llm.call_args
@@ -984,8 +1047,11 @@ class TestDuplicateTargetClassification:
 
         values = set(DuplicateTargetClassification)
         expected = {
-            "epoch_variants", "processing_stages",
-            "redundant_diagnostics", "legitimate_other", "erroneous",
+            "epoch_variants",
+            "processing_stages",
+            "redundant_diagnostics",
+            "legitimate_other",
+            "erroneous",
         }
         assert {v.value for v in values} == expected
 
@@ -998,23 +1064,29 @@ class TestDuplicateTargetClassification:
 class TestManyToOneNote:
     def test_default_none(self):
         e = SignalMappingEntry(
-            source_id="s1", target_id="t1",
-            transform_expression="value", confidence=0.9,
+            source_id="s1",
+            target_id="t1",
+            transform_expression="value",
+            confidence=0.9,
         )
         assert e.many_to_one_note is None
 
     def test_set_note(self):
         e = SignalMappingEntry(
-            source_id="s1", target_id="t1",
-            transform_expression="value", confidence=0.9,
+            source_id="s1",
+            target_id="t1",
+            transform_expression="value",
+            confidence=0.9,
             many_to_one_note="Epoch variant: same coil from 2019 campaign",
         )
         assert "Epoch variant" in e.many_to_one_note
 
     def test_serialization(self):
         e = SignalMappingEntry(
-            source_id="s1", target_id="t1",
-            transform_expression="value", confidence=0.9,
+            source_id="s1",
+            target_id="t1",
+            transform_expression="value",
+            confidence=0.9,
             many_to_one_note="Processing stage: subsampled data",
         )
         data = e.model_dump()

@@ -2241,9 +2241,7 @@ def _collect_identifier_schemas(paths: dict[str, dict]) -> dict[str, dict]:
 
         # Extract header as schema description
         header = root.find("header")
-        description = (
-            header.text.strip() if header is not None and header.text else ""
-        )
+        description = header.text.strip() if header is not None and header.text else ""
 
         # Extract per-option metadata from <int> elements
         options = []
@@ -2895,6 +2893,7 @@ def _import_clusters(
     Returns:
         Number of clusters created/updated
     """
+
     def _stopped() -> bool:
         return stop_check is not None and stop_check()
 
@@ -2941,14 +2940,10 @@ def _import_clusters(
                     RETURN v.cluster_input_hash AS hash
                     """
                 )
-                if (
-                    stored
-                    and stored[0].get("hash") == cluster_input_hash
-                ):
+                if stored and stored[0].get("hash") == cluster_input_hash:
                     # Verify clusters actually exist in the graph
                     cl_count = client.query(
-                        "MATCH (c:IMASSemanticCluster) "
-                        "RETURN count(c) AS cnt"
+                        "MATCH (c:IMASSemanticCluster) RETURN count(c) AS cnt"
                     )
                     if cl_count and cl_count[0]["cnt"] > 0:
                         count = cl_count[0]["cnt"]

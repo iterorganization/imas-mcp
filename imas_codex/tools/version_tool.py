@@ -75,7 +75,9 @@ class VersionTool:
     ) -> dict[str, Any]:
         """Get version change context for IMAS paths."""
         if isinstance(paths, str):
-            path_list = [p.strip() for p in paths.replace(",", " ").split() if p.strip()]
+            path_list = [
+                p.strip() for p in paths.replace(",", " ").split() if p.strip()
+            ]
         else:
             path_list = list(paths)
 
@@ -112,8 +114,7 @@ class VersionTool:
         for r in results or []:
             # Filter out null entries produced when OPTIONAL MATCH finds nothing
             changes = [
-                c for c in (r.get("changes") or [])
-                if c.get("version") is not None
+                c for c in (r.get("changes") or []) if c.get("version") is not None
             ]
             path_ctx[r["id"]] = {
                 "introduced_in": r.get("introduced_in"),
@@ -128,9 +129,7 @@ class VersionTool:
         paths_without_changes = sorted(
             path_id for path_id, ctx in path_ctx.items() if ctx["change_count"] == 0
         )
-        graph_change_nodes_seen = sum(
-            ctx["change_count"] for ctx in path_ctx.values()
-        )
+        graph_change_nodes_seen = sum(ctx["change_count"] for ctx in path_ctx.values())
 
         return {
             "paths": path_ctx,

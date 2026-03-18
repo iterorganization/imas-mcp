@@ -535,9 +535,8 @@ async def supervised_worker(
             # restart budget — it was clearly making progress and this
             # is a new transient failure, not a crash loop.
             run_duration = time.time() - run_start
-            if (
-                run_duration >= restart_reset_seconds
-                and (restart_count > 0 or infra_restart_count > 0)
+            if run_duration >= restart_reset_seconds and (
+                restart_count > 0 or infra_restart_count > 0
             ):
                 logger.info(
                     "%s ran for %.0fs before error — resetting restart "

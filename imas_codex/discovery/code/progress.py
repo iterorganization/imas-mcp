@@ -113,7 +113,9 @@ class EmbedItem:
 
     chunk_id: str  # CodeChunk node ID (e.g. "jet:path/to/file.py:chunk_0")
     label: str = "CodeChunk"  # node label being embedded
-    score_composite: float | None = None  # parent CodeFile.score_composite (graph lookup)
+    score_composite: float | None = (
+        None  # parent CodeFile.score_composite (graph lookup)
+    )
 
 
 # =============================================================================
@@ -212,7 +214,9 @@ class FileProgressState:
     )
     embed_queue: StreamQueue = field(
         default_factory=lambda: StreamQueue(
-            rate=0.5, max_rate=3.0, min_display_time=0.3,
+            rate=0.5,
+            max_rate=3.0,
+            min_display_time=0.3,
             max_display_time=3.0,
         )
     )
@@ -280,13 +284,15 @@ class FileProgressState:
                 return count / self.elapsed
             return fallback
 
-        return compute_parallel_eta([
-            (self.pending_triage, _agg(self.run_triaged, self.triage_rate)),
-            (self.pending_enrich, _agg(self.run_enriched, self.enrich_rate)),
-            (self.pending_score, _agg(self.run_scored, self.score_rate)),
-            (self.pending_ingest, _agg(self.run_code_ingested, self.ingest_rate)),
-            (self.pending_embed, _agg(self.run_embedded, self.embed_rate)),
-        ])
+        return compute_parallel_eta(
+            [
+                (self.pending_triage, _agg(self.run_triaged, self.triage_rate)),
+                (self.pending_enrich, _agg(self.run_enriched, self.enrich_rate)),
+                (self.pending_score, _agg(self.run_scored, self.score_rate)),
+                (self.pending_ingest, _agg(self.run_code_ingested, self.ingest_rate)),
+                (self.pending_embed, _agg(self.run_embedded, self.embed_rate)),
+            ]
+        )
 
 
 # =============================================================================
@@ -501,9 +507,7 @@ class FileProgressDisplay(BaseProgressDisplay):
         embed_count, embed_ann = self._count_group_workers("embed")
         embed_complete = self._worker_complete("embed") and not embed
 
-        embed_total = max(
-            self.state.total_chunks, self.state.embedded_chunks + 1
-        )
+        embed_total = max(self.state.total_chunks, self.state.embedded_chunks + 1)
         embed_text = ""
         embed_desc = ""
         embed_score_parts: list[tuple[str, str]] | None = None
@@ -619,10 +623,13 @@ class FileProgressDisplay(BaseProgressDisplay):
         """Build the resource consumption gauges using unified builder."""
         # Compute ETC — sum of per-worker cost projections
         total_cost = self.state.accumulated_cost
-        etc = compute_projected_etc(total_cost, [
-            (self.state.pending_triage, self.state.cost_per_triage),
-            (self.state.pending_score, self.state.cost_per_file),
-        ])
+        etc = compute_projected_etc(
+            total_cost,
+            [
+                (self.state.pending_triage, self.state.cost_per_triage),
+                (self.state.pending_score, self.state.cost_per_file),
+            ],
+        )
 
         # Build stats — completed counts across pipeline
         stats: list[tuple[str, str, str]] = [
@@ -632,9 +639,7 @@ class FileProgressDisplay(BaseProgressDisplay):
             ("ingested", str(self.state.ingested), "green"),
         ]
         if self.state.embedded_chunks > 0 or self.state.pending_embed > 0:
-            stats.append(
-                ("embedded", str(self.state.embedded_chunks), "white")
-            )
+            stats.append(("embedded", str(self.state.embedded_chunks), "white"))
         if self.state.skipped > 0:
             stats.append(("skipped", str(self.state.skipped), "yellow"))
         if self.state.failed > 0:
@@ -954,9 +959,7 @@ class FileProgressDisplay(BaseProgressDisplay):
                     ids=chunk_ids,
                 )
                 return {
-                    r["id"]: r["score"]
-                    for r in result
-                    if r.get("score") is not None
+                    r["id"]: r["score"] for r in result if r.get("score") is not None
                 }
         except Exception:
             return {}
@@ -990,9 +993,8 @@ class FileProgressDisplay(BaseProgressDisplay):
 
         # Accumulated wall-clock time from prior sessions
         from imas_codex.discovery.base.progress import get_accumulated_time
-        self.state.accumulated_time = get_accumulated_time(
-            self.state.facility, "code"
-        )
+
+        self.state.accumulated_time = get_accumulated_time(self.state.facility, "code")
 
         self._refresh()
 
@@ -1050,9 +1052,7 @@ class FileProgressDisplay(BaseProgressDisplay):
         if next_embed:
             self.state.current_embed = next_embed
             updated = True
-        elif (
-            self.state.embed_queue.is_stale() and self.state.current_embed is not None
-        ):
+        elif self.state.embed_queue.is_stale() and self.state.current_embed is not None:
             self.state.current_embed = None
             updated = True
 
@@ -1093,7 +1093,9 @@ class FileProgressDisplay(BaseProgressDisplay):
 
         # ENRICH stats
         summary.append("  ENRICH   ", style="bold magenta")
-        summary.append(f"enriched={format_count(self.state.run_enriched)}", style="magenta")
+        summary.append(
+            f"enriched={format_count(self.state.run_enriched)}", style="magenta"
+        )
         if self.state.enrich_rate:
             summary.append(f"  {self.state.enrich_rate:.1f}/s", style="dim")
         summary.append("\n")
@@ -1102,7 +1104,9 @@ class FileProgressDisplay(BaseProgressDisplay):
         summary.append("  SCORE    ", style="bold cyan")
         summary.append(f"scored={format_count(self.state.run_scored)}", style="cyan")
         if self.state.run_skipped > 0:
-            summary.append(f"  skipped={format_count(self.state.run_skipped)}", style="yellow")
+            summary.append(
+                f"  skipped={format_count(self.state.run_skipped)}", style="yellow"
+            )
         summary.append(f"  cost=${self.state._run_score_cost:.3f}", style="yellow")
         if self.state.score_rate:
             summary.append(f"  {self.state.score_rate:.1f}/s", style="dim")
@@ -1110,7 +1114,9 @@ class FileProgressDisplay(BaseProgressDisplay):
 
         # INGEST stats
         summary.append("  INGEST   ", style="bold yellow")
-        summary.append(f"code={format_count(self.state.run_code_ingested)}", style="yellow")
+        summary.append(
+            f"code={format_count(self.state.run_code_ingested)}", style="yellow"
+        )
         ingest_rate = self.state.ingest_rate
         if ingest_rate:
             summary.append(f"  {ingest_rate:.1f}/s", style="dim")

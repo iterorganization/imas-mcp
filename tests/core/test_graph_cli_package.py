@@ -12,11 +12,28 @@ class TestGraphCLIPackageRegistration:
         from imas_codex.cli.graph import graph
 
         cmds = sorted(graph.commands.keys())
-        expected = sorted([
-            "clear", "export", "facility", "fetch", "init", "list", "load",
-            "profiles", "prune", "pull", "push", "secure", "shell",
-            "start", "status", "stop", "switch", "tags",
-        ])
+        expected = sorted(
+            [
+                "clear",
+                "export",
+                "facility",
+                "fetch",
+                "init",
+                "list",
+                "load",
+                "profiles",
+                "prune",
+                "pull",
+                "push",
+                "secure",
+                "shell",
+                "start",
+                "status",
+                "stop",
+                "switch",
+                "tags",
+            ]
+        )
         assert cmds == expected
 
     def test_server_commands_importable(self):
@@ -27,9 +44,16 @@ class TestGraphCLIPackageRegistration:
             graph_status,
             graph_stop,
         )
+
         assert all(
             c is not None
-            for c in [graph_start, graph_stop, graph_status, graph_shell, graph_profiles]
+            for c in [
+                graph_start,
+                graph_stop,
+                graph_status,
+                graph_shell,
+                graph_profiles,
+            ]
         )
 
     def test_data_commands_importable(self):
@@ -43,11 +67,18 @@ class TestGraphCLIPackageRegistration:
             graph_secure,
             graph_switch,
         )
+
         assert all(
             c is not None
             for c in [
-                graph_export, graph_load, graph_init, graph_switch,
-                graph_list, graph_clear, graph_secure, graph_facility_group,
+                graph_export,
+                graph_load,
+                graph_init,
+                graph_switch,
+                graph_list,
+                graph_clear,
+                graph_secure,
+                graph_facility_group,
             ]
         )
 
@@ -59,6 +90,7 @@ class TestGraphCLIPackageRegistration:
             graph_push,
             graph_tags,
         )
+
         assert all(
             c is not None
             for c in [graph_push, graph_fetch, graph_pull, graph_tags, graph_prune]

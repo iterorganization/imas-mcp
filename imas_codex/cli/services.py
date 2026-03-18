@@ -836,13 +836,13 @@ def _kill_embed_orphans(node: str) -> None:
         'pids=$(pgrep -u $USER -f "imas-codex embed" 2>/dev/null)\n'
         'if [ -n "$pids" ]; then\n'
         '    echo "$pids" | xargs kill -9 2>/dev/null || true\n'
-        '    sleep 1\n'
-        '    # Verify\n'
+        "    sleep 1\n"
+        "    # Verify\n"
         '    survivors=$(pgrep -u $USER -f "imas-codex embed" 2>/dev/null)\n'
         '    if [ -n "$survivors" ]; then\n'
         '        echo "$survivors" | xargs kill -9 2>/dev/null || true\n'
-        '    fi\n'
-        'fi\n'
+        "    fi\n"
+        "fi\n"
     )
     try:
         _run_on_node(node, kill_cmd, timeout=15)
@@ -1096,8 +1096,7 @@ def deploy_embed_noslurm(gpus: int = _DEFAULT_GPUS, workers: int | None = None) 
     gpus_flag = "" if force_cpu else f"--gpus {gpu_ids} "
 
     script = (
-        env_lines
-        + f"nohup uv run --offline --extra gpu imas-codex embed start -f "
+        env_lines + f"nohup uv run --offline --extra gpu imas-codex embed start -f "
         f"--host 0.0.0.0 --port {port} "
         f"{gpus_flag}--workers {workers} "
         f"--deploy-label {partition_name} "
@@ -1105,9 +1104,7 @@ def deploy_embed_noslurm(gpus: int = _DEFAULT_GPUS, workers: int | None = None) 
         f"echo $!\n"
     )
 
-    click.echo(
-        f"Deploying embed server via SSH ({gpus} GPUs, {workers} workers)..."
-    )
+    click.echo(f"Deploying embed server via SSH ({gpus} GPUs, {workers} workers)...")
     click.echo(
         click.style("  ⚠ Running outside SLURM — not managed by scheduler", fg="yellow")
     )
@@ -1142,9 +1139,7 @@ def deploy_embed_noslurm(gpus: int = _DEFAULT_GPUS, workers: int | None = None) 
             click.echo(f"  Still waiting... ({(attempt + 1) * 3}s)")
 
     click.echo(
-        click.style(
-            f"  ✗ Health check timed out after {health_timeout_s}s", fg="red"
-        )
+        click.style(f"  ✗ Health check timed out after {health_timeout_s}s", fg="red")
     )
     click.echo(f"  Check logs: ssh {host} 'tail -50 {log_file}'")
 
@@ -1331,9 +1326,7 @@ def _wait_for_health(
         return _wait_for_health_rich(
             label, check_cmd, timeout_s, success_test, ssh_host
         )
-    return _wait_for_health_plain(
-        label, check_cmd, timeout_s, success_test, ssh_host
-    )
+    return _wait_for_health_plain(label, check_cmd, timeout_s, success_test, ssh_host)
 
 
 def _wait_for_health_rich(
@@ -1479,9 +1472,7 @@ def _deploy_login_embed_nohup() -> None:
         click.echo(f"  Started (PID: {pid})")
         click.echo(f"  Log: {log_file}")
     except Exception as e:
-        raise click.ClickException(
-            f"Failed to start embed server: {e}"
-        ) from e
+        raise click.ClickException(f"Failed to start embed server: {e}") from e
 
     # Wait for health check
     click.echo("  Waiting for health check...")
@@ -1512,8 +1503,8 @@ def _kill_login_embed() -> None:
         'pids=$(pgrep -u $USER -f "imas-codex embed start" 2>/dev/null)\n'
         'if [ -n "$pids" ]; then\n'
         '    echo "$pids" | xargs kill -9 2>/dev/null || true\n'
-        '    sleep 1\n'
-        'fi\n'
+        "    sleep 1\n"
+        "fi\n"
     )
     try:
         _run_remote(kill_cmd, timeout=10)

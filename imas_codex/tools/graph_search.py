@@ -1791,7 +1791,9 @@ def _text_search_imas_paths(
 
     # Try fulltext index first (BM25 scoring)
     try:
-        ft_where = "WHERE NOT (p)-[:DEPRECATED_IN]->(:DDVersion) AND p.node_category = 'data'"
+        ft_where = (
+            "WHERE NOT (p)-[:DEPRECATED_IN]->(:DDVersion) AND p.node_category = 'data'"
+        )
         ft_params: dict[str, Any] = {"query": query, "limit": limit}
         if ids_filter is not None:
             filter_list = ids_filter if isinstance(ids_filter, list) else [ids_filter]
@@ -1840,12 +1842,12 @@ def _text_search_imas_paths(
         WITH p,
              CASE
             WHEN toLower(p.documentation) CONTAINS $query_lower
-                AND {_leaf_data_type_clause('p')}
+                AND {_leaf_data_type_clause("p")}
                  THEN 0.95
                WHEN toLower(p.documentation) CONTAINS $query_lower
                  THEN 0.88
                WHEN toLower(p.name) CONTAINS $query_lower
-                AND {_leaf_data_type_clause('p')}
+                AND {_leaf_data_type_clause("p")}
                  THEN 0.93
                WHEN toLower(p.id) CONTAINS $query_lower
                  THEN 0.90
@@ -1865,7 +1867,7 @@ def _text_search_imas_paths(
                 MATCH (p:IMASNode)
                 WHERE {where_base}
                   AND (toLower(p.name) = $word OR toLower(p.id) CONTAINS $word)
-                                    AND {_leaf_data_type_clause('p')}
+                                    AND {_leaf_data_type_clause("p")}
                   AND size(coalesce(p.documentation, '')) > 10
                 RETURN p.id AS id, 0.90 AS score
                 LIMIT 10
@@ -2031,11 +2033,8 @@ def _resolve_physics_domain(
                 if pd_enum:
                     domains = []
                     for pv_name, pv in pd_enum.permissible_values.items():
-                        cat = (
-                            pv.annotations.get("category", {}).get("value", "")
-                            if pv.annotations
-                            else ""
-                        )
+                        ann = pv.annotations.get("category") if pv.annotations else None
+                        cat = ann.value if ann else ""
                         if cat == query:
                             domains.append(pv_name)
                     if domains:

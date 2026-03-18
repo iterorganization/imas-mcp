@@ -50,6 +50,7 @@ class TestNodeCategoryFiltering:
     def classify(self):
         """Node classification via ExclusionChecker (same logic as _classify_node)."""
         from imas_codex.core.exclusions import ExclusionChecker
+
         checker = ExclusionChecker()
 
         def _classify(path_id: str, name: str) -> str:
@@ -62,10 +63,15 @@ class TestNodeCategoryFiltering:
         return _classify
 
     def test_filters_description_tail(self, classify):
-        assert classify("equilibrium/time_slice/profiles_1d/description", "description") == "metadata"
+        assert (
+            classify("equilibrium/time_slice/profiles_1d/description", "description")
+            == "metadata"
+        )
 
     def test_filters_name_tail(self, classify):
-        assert classify("core_profiles/profiles_1d/electrons/name", "name") == "metadata"
+        assert (
+            classify("core_profiles/profiles_1d/electrons/name", "name") == "metadata"
+        )
 
     def test_filters_comment_tail(self, classify):
         assert classify("magnetics/flux_loop/comment", "comment") == "metadata"
@@ -74,19 +80,33 @@ class TestNodeCategoryFiltering:
         assert classify("equilibrium/time_slice/source", "source") == "metadata"
 
     def test_filters_provider_tail(self, classify):
-        assert classify("core_profiles/global_quantities/provider", "provider") == "metadata"
+        assert (
+            classify("core_profiles/global_quantities/provider", "provider")
+            == "metadata"
+        )
 
     def test_filters_identifier_name(self, classify):
-        assert classify("equilibrium/time_slice/boundary/identifier/name", "name") == "metadata"
+        assert (
+            classify("equilibrium/time_slice/boundary/identifier/name", "name")
+            == "metadata"
+        )
 
     def test_filters_identifier_description(self, classify):
-        assert classify("equilibrium/time_slice/boundary/identifier/description", "description") == "metadata"
+        assert (
+            classify(
+                "equilibrium/time_slice/boundary/identifier/description", "description"
+            )
+            == "metadata"
+        )
 
     def test_keeps_physics_leaf(self, classify):
         assert classify("equilibrium/time_slice/profiles_1d/psi", "psi") == "data"
 
     def test_keeps_temperature(self, classify):
-        assert classify("core_profiles/profiles_1d/electrons/temperature", "temperature") == "data"
+        assert (
+            classify("core_profiles/profiles_1d/electrons/temperature", "temperature")
+            == "data"
+        )
 
     def test_keeps_short_path(self, classify):
         """Paths with fewer than 3 segments are never metadata."""
@@ -153,10 +173,7 @@ class TestTextSearchImasPathsDDServer:
 
         # Verify the fulltext query was called with node_category filter
         calls = mock_gc.query.call_args_list
-        ft_call = next(
-            c for c in calls
-            if "db.index.fulltext.queryNodes" in c[0][0]
-        )
+        ft_call = next(c for c in calls if "db.index.fulltext.queryNodes" in c[0][0])
         assert "node_category = 'data'" in ft_call[0][0]
 
     def test_contains_fallback_when_fulltext_fails(self, mock_gc):
@@ -208,7 +225,9 @@ class TestTextSearchImasPathsDDServer:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skip(reason="_text_search_imas_paths_by_query removed; unified in GraphSearchTool")
+@pytest.mark.skip(
+    reason="_text_search_imas_paths_by_query removed; unified in GraphSearchTool"
+)
 class TestTextSearchImasPathsCodexServer:
     """Tests for _text_search_imas_paths_by_query in search_tools.py.
 
@@ -523,10 +542,7 @@ class TestGraphSearchToolHybrid:
 
         # Verify the vector query includes node_category filter
         calls = mock_gc.query.call_args_list
-        vector_call = next(
-            c for c in calls
-            if "imas_node_embedding" in c[0][0]
-        )
+        vector_call = next(c for c in calls if "imas_node_embedding" in c[0][0])
         assert "node_category = 'data'" in vector_call[0][0]
 
     @pytest.mark.asyncio
@@ -607,11 +623,13 @@ class TestGraphSearchToolHybrid:
                         "coordinate2": None,
                         "coordinates": [],
                         "has_identifier_schema": False,
-                        "introduced_after_version": None,                        "cocos_label": None,
+                        "introduced_after_version": None,
+                        "cocos_label": None,
                         "cocos_expression": None,
                         "description": None,
                         "keywords": None,
-                        "enrichment_source": None,                    },
+                        "enrichment_source": None,
+                    },
                 ],
             }
         )

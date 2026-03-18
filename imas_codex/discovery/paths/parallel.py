@@ -889,11 +889,13 @@ def mark_enrichment_complete(
         if result.get("error"):
             error_msg = result["error"][:200]
             permanent = error_msg in ("not a directory", "permission denied")
-            error_items.append({
-                "id": path_id,
-                "error": error_msg,
-                "permanent": permanent,
-            })
+            error_items.append(
+                {
+                    "id": path_id,
+                    "error": error_msg,
+                    "permanent": permanent,
+                }
+            )
         else:
             lang_breakdown = result.get("language_breakdown")
             if isinstance(lang_breakdown, dict):
@@ -906,18 +908,20 @@ def mark_enrichment_complete(
             warnings = result.get("warnings", [])
             warn_str = ", ".join(warnings) if warnings else None
 
-            success_items.append({
-                "id": path_id,
-                "now": now,
-                "total_bytes": result.get("total_bytes"),
-                "total_lines": result.get("total_lines"),
-                "language_breakdown": lang_breakdown,
-                "is_multiformat": result.get("is_multiformat", False),
-                "pattern_categories": pattern_cats,
-                "read_matches": result.get("read_matches", 0),
-                "write_matches": result.get("write_matches", 0),
-                "enrich_warnings": warn_str,
-            })
+            success_items.append(
+                {
+                    "id": path_id,
+                    "now": now,
+                    "total_bytes": result.get("total_bytes"),
+                    "total_lines": result.get("total_lines"),
+                    "language_breakdown": lang_breakdown,
+                    "is_multiformat": result.get("is_multiformat", False),
+                    "pattern_categories": pattern_cats,
+                    "read_matches": result.get("read_matches", 0),
+                    "write_matches": result.get("write_matches", 0),
+                    "enrich_warnings": warn_str,
+                }
+            )
 
     updated = 0
     with GraphClient() as gc:
@@ -1021,10 +1025,12 @@ def mark_score_complete(
         path_purpose = result.get("path_purpose")
         should_expand = result.get("should_expand", True)
         if path_purpose in {"modeling_data", "experimental_data"} and not should_expand:
-            child_skip_ids.append({
-                "id": path_id,
-                "reason": f"parent_{path_purpose}",
-            })
+            child_skip_ids.append(
+                {
+                    "id": path_id,
+                    "reason": f"parent_{path_purpose}",
+                }
+            )
 
     if not items:
         return 0

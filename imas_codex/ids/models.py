@@ -83,9 +83,7 @@ class UnassignedSource(BaseModel):
     disposition: MappingDisposition = Field(
         description="Why this source has no section assignment"
     )
-    evidence: str = Field(
-        description="Concise evidence why no section fits"
-    )
+    evidence: str = Field(description="Concise evidence why no section fits")
 
 
 class TargetAssignmentBatch(BaseModel):
@@ -126,14 +124,37 @@ class EscalationFlag(BaseModel):
 
 # Allowed identifiers in transform expressions — value variable,
 # math/numpy builtins, and imas_codex utility functions.
-_TRANSFORM_ALLOWED_NAMES: frozenset[str] = frozenset({
-    "value", "math", "np",
-    "abs", "float", "int", "str", "len",
-    "convert_units", "cocos_sign",
-    "radians", "degrees", "pi", "sqrt", "log", "log10", "exp",
-    "sin", "cos", "tan", "asin", "acos", "atan", "atan2",
-    "True", "False", "None",
-})
+_TRANSFORM_ALLOWED_NAMES: frozenset[str] = frozenset(
+    {
+        "value",
+        "math",
+        "np",
+        "abs",
+        "float",
+        "int",
+        "str",
+        "len",
+        "convert_units",
+        "cocos_sign",
+        "radians",
+        "degrees",
+        "pi",
+        "sqrt",
+        "log",
+        "log10",
+        "exp",
+        "sin",
+        "cos",
+        "tan",
+        "asin",
+        "acos",
+        "atan",
+        "atan2",
+        "True",
+        "False",
+        "None",
+    }
+)
 
 
 class UnmappedSignal(BaseModel):
@@ -205,7 +226,9 @@ class SignalMappingEntry(BaseModel):
             logger.warning(
                 "Transform expression contains unknown identifiers: %s "
                 "(expression: %s). Allowed: %s",
-                unknown, v, sorted(_TRANSFORM_ALLOWED_NAMES),
+                unknown,
+                v,
+                sorted(_TRANSFORM_ALLOWED_NAMES),
             )
 
         # Block dangerous patterns (import, exec, eval, __builtins__)

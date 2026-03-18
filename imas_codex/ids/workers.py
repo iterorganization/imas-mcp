@@ -264,7 +264,7 @@ def set_mapping_status(source_id: str, status: str, **props: Any) -> None:
         gc.query(
             f"""
             MATCH (sg:SignalSource {{id: $id}})
-            SET {', '.join(set_clauses)}
+            SET {", ".join(set_clauses)}
             """,
             **params,
         )
@@ -369,7 +369,8 @@ def count_sources_by_mapping_status(facility: str) -> dict[str, int]:
 
 
 def reset_mapping_state(
-    facility: str, ids_names: list[str] | None = None,
+    facility: str,
+    ids_names: list[str] | None = None,
 ) -> int:
     """Clear mapping_status on sources for fresh re-mapping."""
     params: dict[str, Any] = {"facility": facility}
@@ -446,9 +447,7 @@ async def context_worker(
         def _ids_progress(detail: str, _ids=ids_name, _i=i) -> None:
             if on_progress:
                 label = (
-                    f"{_ids}: {detail}"
-                    if len(state.target_ids_list) > 1
-                    else detail
+                    f"{_ids}: {detail}" if len(state.target_ids_list) > 1 else detail
                 )
                 on_progress(label, state.context_stats, [{"detail": label}])
 
@@ -472,7 +471,8 @@ async def context_worker(
     state.context_stats.processed = len(state.target_ids_list)
     wlog.info(
         "Context complete: %d IDS, %d total sources",
-        len(state.contexts), state.sources_total,
+        len(state.contexts),
+        state.sources_total,
     )
     state.context_phase.mark_done()
 
@@ -504,10 +504,7 @@ async def assign_worker(
         ids_domains = set(context.get("target_domains", []))
         all_groups = context.get("groups", [])
         if ids_domains:
-            groups = [
-                g for g in all_groups
-                if g.get("physics_domain") in ids_domains
-            ]
+            groups = [g for g in all_groups if g.get("physics_domain") in ids_domains]
         else:
             groups = all_groups
 
@@ -526,7 +523,10 @@ async def assign_worker(
 
         wlog.info(
             "Assigning %d/%d sources for %s (domains=%s)",
-            len(groups), len(all_groups), ids_name, sorted(ids_domains),
+            len(groups),
+            len(all_groups),
+            ids_name,
+            sorted(ids_domains),
         )
 
         try:
@@ -555,7 +555,9 @@ async def assign_worker(
 
             wlog.info(
                 "Assigned %d sources for %s, cost $%.4f",
-                assigned_count, ids_name, state.cost.total_usd,
+                assigned_count,
+                ids_name,
+                state.cost.total_usd,
             )
 
             if on_progress:
@@ -564,8 +566,11 @@ async def assign_worker(
                         "source_id": a.source_id,
                         "target_path": a.imas_target_path,
                         "physics_domain": next(
-                            (g.get("physics_domain", "")
-                             for g in groups if g["id"] == a.source_id),
+                            (
+                                g.get("physics_domain", "")
+                                for g in groups
+                                if g["id"] == a.source_id
+                            ),
                             "",
                         ),
                     }
@@ -637,14 +642,14 @@ async def map_worker(
                 assignment = None
                 if sections:
                     assignment = next(
-                        (a for a in sections.assignments
-                         if a.source_id == source_id),
+                        (a for a in sections.assignments if a.source_id == source_id),
                         None,
                     )
 
                 if not assignment:
                     wlog.warning(
-                        "No assignment found for %s, releasing", source_id,
+                        "No assignment found for %s, releasing",
+                        source_id,
                     )
                     await asyncio.to_thread(release_mapping_claim, source_id)
                     continue
@@ -660,7 +665,8 @@ async def map_worker(
                         dd_version=context.get("dd_version"),
                     )
                     messages = _build_messages(
-                        "signal_mapping_system", prep["prompt"],
+                        "signal_mapping_system",
+                        prep["prompt"],
                     )
                     batch = await _acall_llm(
                         messages,
@@ -678,29 +684,38 @@ async def map_worker(
                     state.map_stats.processed += 1
 
                     await asyncio.to_thread(
-                        set_mapping_status, source_id, "mapped",
+                        set_mapping_status,
+                        source_id,
+                        "mapped",
                     )
 
                     wlog.info(
                         "Mapped %s -> %s: %d bindings",
-                        source_id, target_path, len(batch.mappings),
+                        source_id,
+                        target_path,
+                        len(batch.mappings),
                     )
 
                     if on_progress:
                         sg = next(
-                            (g for g in context.get("groups", [])
-                             if g["id"] == source_id),
+                            (
+                                g
+                                for g in context.get("groups", [])
+                                if g["id"] == source_id
+                            ),
                             {},
                         )
                         on_progress(
                             f"{source_id} -> {target_path}",
                             state.map_stats,
-                            [{
-                                "source_id": source_id,
-                                "target_path": target_path,
-                                "physics_domain": sg.get("physics_domain", ""),
-                                "bindings": len(batch.mappings),
-                            }],
+                            [
+                                {
+                                    "source_id": source_id,
+                                    "target_path": target_path,
+                                    "physics_domain": sg.get("physics_domain", ""),
+                                    "bindings": len(batch.mappings),
+                                }
+                            ],
                         )
 
                 except Exception as e:
@@ -767,14 +782,16 @@ async def validate_worker(
                     on_progress(
                         f"assembly {len(configs)}/{len(sections.assignments)}",
                         state.validate_stats,
-                        [{
-                            "target_path": config.target_path,
-                            "pattern": (
-                                config.pattern.value
-                                if hasattr(config.pattern, "value")
-                                else str(config.pattern)
-                            ),
-                        }],
+                        [
+                            {
+                                "target_path": config.target_path,
+                                "pattern": (
+                                    config.pattern.value
+                                    if hasattr(config.pattern, "value")
+                                    else str(config.pattern)
+                                ),
+                            }
+                        ],
                     )
 
             assembly = AssemblyBatch(ids_name=ids_name, configs=configs)
@@ -806,14 +823,15 @@ async def validate_worker(
 
             if on_progress:
                 on_progress(
-                    f"{ids_name}: {ids_passed} passed, "
-                    f"{ids_escalations} escalations",
+                    f"{ids_name}: {ids_passed} passed, {ids_escalations} escalations",
                     state.validate_stats,
-                    [{
-                        "target_path": ids_name,
-                        "passed": ids_passed,
-                        "escalations": ids_escalations,
-                    }],
+                    [
+                        {
+                            "target_path": ids_name,
+                            "passed": ids_passed,
+                            "escalations": ids_escalations,
+                        }
+                    ],
                 )
 
             # Persist
@@ -829,18 +847,25 @@ async def validate_worker(
                 )
                 wlog.info(
                     "Persisted %s mapping %s (%s)",
-                    ids_name, mapping_id, status,
+                    ids_name,
+                    mapping_id,
+                    status,
                 )
 
             # Mark sources as validated in graph
             for a, _ in batches_for_ids:
                 await asyncio.to_thread(
-                    set_mapping_status, a.source_id, "validated",
+                    set_mapping_status,
+                    a.source_id,
+                    "validated",
                 )
 
             wlog.info(
                 "Validated %s: %d passed, %d escalations, cost $%.4f",
-                ids_name, ids_passed, ids_escalations, state.cost.total_usd,
+                ids_name,
+                ids_passed,
+                ids_escalations,
+                state.cost.total_usd,
             )
 
         except Exception as e:
@@ -867,10 +892,9 @@ async def run_mapping_engine(
     Wires up graph-based phase completion checks, orphan recovery,
     and supervised workers via ``run_discovery_engine``.
     """
-    all_domains = sorted({
-        d for info in state.target_info
-        for d in info.get("domains", [])
-    })
+    all_domains = sorted(
+        {d for info in state.target_info for d in info.get("domains", [])}
+    )
 
     # Wire has_work_fn for phase completion detection
     state.assign_phase.set_has_work_fn(
@@ -880,16 +904,10 @@ async def run_mapping_engine(
         )
     )
     state.map_phase.set_has_work_fn(
-        lambda: (
-            has_pending_mapping_work(state.facility)
-            or not state.assign_phase.done
-        )
+        lambda: has_pending_mapping_work(state.facility) or not state.assign_phase.done
     )
     state.validate_phase.set_has_work_fn(
-        lambda: (
-            has_pending_validation_work(state.facility)
-            or not state.map_phase.done
-        )
+        lambda: has_pending_validation_work(state.facility) or not state.map_phase.done
     )
 
     # Clear previous mapping state if requested
@@ -904,21 +922,29 @@ async def run_mapping_engine(
 
     workers = [
         WorkerSpec(
-            "context", "context_phase", context_worker,
+            "context",
+            "context_phase",
+            context_worker,
             on_progress=on_progress,
         ),
         WorkerSpec(
-            "assign", "assign_phase", assign_worker,
+            "assign",
+            "assign_phase",
+            assign_worker,
             on_progress=on_progress,
             depends_on=["context_phase"],
         ),
         WorkerSpec(
-            "map", "map_phase", map_worker,
+            "map",
+            "map_phase",
+            map_worker,
             on_progress=on_progress,
             depends_on=["context_phase"],  # can overlap with assign
         ),
         WorkerSpec(
-            "validate", "validate_phase", validate_worker,
+            "validate",
+            "validate_phase",
+            validate_worker,
             on_progress=on_progress,
             depends_on=["map_phase"],
         ),

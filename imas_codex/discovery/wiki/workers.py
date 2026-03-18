@@ -392,7 +392,9 @@ async def score_worker(
         except Exception as e:
             logger.error("Error in scoring batch: %s", e)
             if is_infrastructure_error(e):
-                await asyncio.to_thread(_release_claimed_pages, [p["id"] for p in pages])
+                await asyncio.to_thread(
+                    _release_claimed_pages, [p["id"] for p in pages]
+                )
                 raise
             # Run blocking Neo4j calls in thread pool
             for page in pages:

@@ -184,7 +184,9 @@ def bench_protobuf(arrays: list[np.ndarray]) -> tuple[float, float, int]:
             offset += 8
             shape = struct.unpack_from(f"<{ndim}I", packed, offset)
             offset += 4 * ndim
-            arr = np.frombuffer(packed, dtype=np.float64, count=nbytes // 8, offset=offset)
+            arr = np.frombuffer(
+                packed, dtype=np.float64, count=nbytes // 8, offset=offset
+            )
             arr = arr.reshape(shape)
             result.append(arr)
             offset += nbytes
@@ -301,10 +303,14 @@ def main():
 
         for name, fn in FORMATS:
             if name == "JSON" and raw_size > JSON_MAX_RAW:
-                print(f"  {name:<22s} {'— skipped —':>12s}  (too slow for {_fmt_size(raw_size)} payload)")
+                print(
+                    f"  {name:<22s} {'— skipped —':>12s}  (too slow for {_fmt_size(raw_size)} payload)"
+                )
                 continue
             if name == "msgpack (list)" and raw_size > JSON_MAX_RAW:
-                print(f"  {name:<22s} {'— skipped —':>12s}  (tolist() too slow for {_fmt_size(raw_size)} payload)")
+                print(
+                    f"  {name:<22s} {'— skipped —':>12s}  (tolist() too slow for {_fmt_size(raw_size)} payload)"
+                )
                 continue
             try:
                 t_pack, t_unpack, wire_size = fn(arrays)
@@ -326,8 +332,18 @@ def main():
     print("Dependency Analysis (installability on remote facility compute nodes)")
     print(f"{'=' * 90}")
     deps = [
-        ("msgpack", "Pure Python (C ext optional)", "uv pip install msgpack", "~100 KB"),
-        ("pyarrow", "C++/Cython compiled extension", "uv pip install pyarrow", "~150 MB"),
+        (
+            "msgpack",
+            "Pure Python (C ext optional)",
+            "uv pip install msgpack",
+            "~100 KB",
+        ),
+        (
+            "pyarrow",
+            "C++/Cython compiled extension",
+            "uv pip install pyarrow",
+            "~150 MB",
+        ),
         ("protobuf", "C++ compiled extension", "uv pip install protobuf", "~1 MB"),
         ("numpy", "C/Fortran compiled extension", "uv pip install numpy", "~30 MB"),
         ("struct (stdlib)", "No install needed", "—", "0"),

@@ -58,9 +58,7 @@ def unpack_array(obj: Any) -> Any:
     if isinstance(obj, dict) and obj.get("__ndarray__"):
         import numpy as np
 
-        return np.frombuffer(
-            obj["data"], dtype=obj["dtype"]
-        ).reshape(obj["shape"])
+        return np.frombuffer(obj["data"], dtype=obj["dtype"]).reshape(obj["shape"])
     return obj
 
 
@@ -100,8 +98,7 @@ def decode_extraction_output(raw: bytes | str) -> dict[str, Any]:
         return _unpack_recursive(data)
     except ImportError:
         logger.warning(
-            "msgpack not available for decoding binary output, "
-            "attempting JSON fallback"
+            "msgpack not available for decoding binary output, attempting JSON fallback"
         )
         return json.loads(raw)
 

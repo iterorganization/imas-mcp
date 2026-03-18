@@ -129,7 +129,10 @@ class DDBuildState(DiscoveryStateBase):
 def _style_stream_items(items: list[dict], primary_text_style: str) -> list[dict]:
     """Attach display style metadata to DD stream items."""
     return [
-        {**item, "primary_text_style": item.get("primary_text_style", primary_text_style)}
+        {
+            **item,
+            "primary_text_style": item.get("primary_text_style", primary_text_style),
+        }
         for item in items
     ]
 

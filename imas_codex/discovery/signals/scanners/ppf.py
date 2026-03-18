@@ -311,9 +311,7 @@ class PPFScanner:
                         python_command=config.get("python_command", "python3"),
                         setup_commands=config.get("setup_commands"),
                     )
-                    retry_data = json.loads(
-                        retry_response.strip().split("\n")[-1]
-                    )
+                    retry_data = json.loads(retry_response.strip().split("\n")[-1])
 
                     still_unavail = []
                     for r in retry_data.get("results", []):

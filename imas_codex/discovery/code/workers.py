@@ -149,7 +149,13 @@ async def scan_worker(
                         on_progress(
                             "no files",
                             state.scan_stats,
-                            [{"path": path, "files_found": 0, "score_composite": path_info.get("score")}],
+                            [
+                                {
+                                    "path": path,
+                                    "files_found": 0,
+                                    "score_composite": path_info.get("score"),
+                                }
+                            ],
                         )
 
                 # Release claim after processing
@@ -725,8 +731,7 @@ async def code_worker(
     from imas_codex.ingestion.pipeline import ingest_files
 
     logger.warning(
-        "code_worker started (facility=%s, batch_size=%d, "
-        "scan_only=%s, score_only=%s)",
+        "code_worker started (facility=%s, batch_size=%d, scan_only=%s, score_only=%s)",
         state.facility,
         batch_size,
         state.scan_only,
@@ -851,8 +856,7 @@ async def code_worker(
             state.code_stats.record_batch(batch_total)
 
             logger.warning(
-                "code_worker batch #%d: ingested=%d skipped=%d "
-                "chunks=%d elapsed=%.1fs",
+                "code_worker batch #%d: ingested=%d skipped=%d chunks=%d elapsed=%.1fs",
                 batches_processed,
                 ingested_count,
                 skipped_count,
@@ -885,9 +889,7 @@ async def code_worker(
                     e,
                 )
                 raise
-            logger.error(
-                "Code ingestion batch failed (%d files): %s", len(files), e
-            )
+            logger.error("Code ingestion batch failed (%d files): %s", len(files), e)
             state.code_stats.errors += 1
             # Mark individual files as failed
             for f in files:
