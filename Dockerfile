@@ -109,9 +109,10 @@ RUN curl -sLO "https://github.com/oras-project/oras/releases/download/v${ORAS_VE
     && tar -xzf "oras_${ORAS_VERSION}_linux_amd64.tar.gz" -C /usr/local/bin oras \
     && rm -f "oras_${ORAS_VERSION}_linux_amd64.tar.gz"
 
-# Pull IMAS-only graph from GHCR (requires GHCR_TOKEN build secret)
-ARG GHCR_REGISTRY="ghcr.io/simon-mcintosh"
+# Pull graph from GHCR (requires GHCR_TOKEN build secret)
+ARG GHCR_REGISTRY="ghcr.io/iterorganization"
 ARG GRAPH_TAG="latest"
+ARG GRAPH_PACKAGE="imas-codex-graph-imas"
 RUN --mount=type=secret,id=GHCR_TOKEN \
     GHCR_TOKEN=$(cat /run/secrets/GHCR_TOKEN 2>/dev/null || echo "") && \
     if [ -z "$GHCR_TOKEN" ]; then \
@@ -121,8 +122,8 @@ RUN --mount=type=secret,id=GHCR_TOKEN \
     fi && \
     echo "$GHCR_TOKEN" | oras login ghcr.io --username __token__ --password-stdin && \
     mkdir -p /tmp/graph-pull && \
-    echo "Pulling IMAS-only graph: ${GHCR_REGISTRY}/imas-codex-graph-imas:${GRAPH_TAG}" && \
-    oras pull "${GHCR_REGISTRY}/imas-codex-graph-imas:${GRAPH_TAG}" -o /tmp/graph-pull && \
+    echo "Pulling graph: ${GHCR_REGISTRY}/${GRAPH_PACKAGE}:${GRAPH_TAG}" && \
+    oras pull "${GHCR_REGISTRY}/${GRAPH_PACKAGE}:${GRAPH_TAG}" -o /tmp/graph-pull && \
     echo "✓ Graph downloaded" && \
     ls -la /tmp/graph-pull/
 

@@ -29,7 +29,6 @@ from imas_codex.discovery.base.supervision import (
     make_snapshot_logger,
 )
 
-
 # =============================================================================
 # Phase 1: Scanner Progress Tracking
 # =============================================================================

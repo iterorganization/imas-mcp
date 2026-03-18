@@ -12,6 +12,7 @@ import hashlib
 from collections.abc import Iterable
 from typing import Any
 
+
 def _get_value(result: Any, key: str, default: Any = None) -> Any:
     """Read a field from a dict-like or attribute-based result object."""
     if isinstance(result, dict):

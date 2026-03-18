@@ -4,7 +4,6 @@ These are pure functions that format data for prompt injection.
 No Neo4j required.
 """
 
-from imas_codex.models.error_models import ToolError
 from imas_codex.ids.mapping import (
     _format_coordinate_context,
     _format_cross_facility_mappings,
@@ -12,6 +11,7 @@ from imas_codex.ids.mapping import (
     _format_section_clusters,
     _format_version_context,
 )
+from imas_codex.models.error_models import ToolError
 
 
 class TestFormatSectionClusters:

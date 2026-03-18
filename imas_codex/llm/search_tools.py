@@ -17,14 +17,14 @@ from typing import Any
 
 from neo4j.exceptions import ServiceUnavailable
 
+from imas_codex.embeddings.encoder import EmbeddingBackendError, Encoder
+from imas_codex.graph.client import GraphClient
 from imas_codex.llm.search_formatters import (
     format_code_report,
     format_docs_report,
     format_fetch_report,
     format_signals_report,
 )
-from imas_codex.embeddings.encoder import EmbeddingBackendError, Encoder
-from imas_codex.graph.client import GraphClient
 
 logger = logging.getLogger(__name__)
 

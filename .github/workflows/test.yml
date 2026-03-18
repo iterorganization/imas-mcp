@@ -79,8 +79,6 @@ jobs:
         run: uv run pytest --cov=imas_codex --cov-report=xml --cov-report=term-missing
         env:
           IMAS_DD_VERSION: ${{ matrix.imas-dd-version }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          OPENAI_BASE_URL: https://openrouter.ai/api/v1
 
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v4
@@ -107,7 +105,7 @@ jobs:
           NEO4J_server_memory_heap_initial__size: 512m
           NEO4J_server_memory_heap_max__size: 1G
         options: >-
-          --health-cmd "curl -f http://localhost:7474/ || exit 1"
+          --health-cmd "wget -q --spider http://localhost:7474/ || exit 1"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 10

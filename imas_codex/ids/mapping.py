@@ -20,9 +20,9 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
-from collections.abc import Callable
 
 from imas_codex.graph.client import GraphClient
 from imas_codex.ids.models import (
@@ -34,8 +34,8 @@ from imas_codex.ids.models import (
     TargetAssignmentBatch,
     TargetType,
     UnmappedSignal,
-    ValidatedSignalMapping,
     ValidatedMappingResult,
+    ValidatedSignalMapping,
     persist_mapping_result,
 )
 from imas_codex.ids.tools import (
@@ -767,7 +767,7 @@ def gather_ids_context(
 
     # Cluster enrichment (using pre-loaded searcher)
     if cluster_searcher:
-        for source_id, candidates in source_candidates.items():
+        for _source_id, candidates in source_candidates.items():
             cluster_additions: list[dict[str, Any]] = []
             existing_ids = {c["id"] for c in candidates}
             for cand in candidates[:3]:
@@ -875,7 +875,7 @@ def assign_targets(
     ids_name: str,
     context: dict[str, Any],
     *,
-    gc: "GraphClient | None" = None,
+    gc: GraphClient | None = None,
     model: str | None = None,
     cost: PipelineCost,
 ) -> TargetAssignmentBatch:
@@ -918,7 +918,7 @@ async def aassign_targets(
     ids_name: str,
     context: dict[str, Any],
     *,
-    gc: "GraphClient | None" = None,
+    gc: GraphClient | None = None,
     model: str | None = None,
     cost: PipelineCost,
 ) -> TargetAssignmentBatch:
@@ -1351,7 +1351,7 @@ def discover_assembly(
     configs: list[AssemblyConfig] = []
     dd_ver = context.get("dd_version")
 
-    for assignment, batch in zip(sections.assignments, signal_batches):
+    for assignment, batch in zip(sections.assignments, signal_batches, strict=False):
         target_path = assignment.imas_target_path
 
         # For SCALAR and PROFILE targets, auto-generate a DIRECT config
@@ -1430,7 +1430,7 @@ async def adiscover_assembly(
 
     dd_ver = context.get("dd_version")
 
-    for assignment, batch in zip(sections.assignments, signal_batches):
+    for assignment, batch in zip(sections.assignments, signal_batches, strict=False):
         target_path = assignment.imas_target_path
 
         if assignment.target_type in (TargetType.SCALAR, TargetType.PROFILE):

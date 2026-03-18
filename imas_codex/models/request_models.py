@@ -5,7 +5,7 @@ This module consolidates all input validation schemas that were previously
 scattered across search/schemas/ directory.
 """
 
-from enum import Enum
+from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -18,7 +18,7 @@ from .constants import (
 )
 
 
-class OutputMode(str, Enum):
+class OutputMode(StrEnum):
     """Output mode for search results."""
 
     FULL = "full"
@@ -288,7 +288,7 @@ class ExportPhysicsDomainInput(BaseInputSchema):
         return v
 
 
-class ListFormat(str, Enum):
+class ListFormat(StrEnum):
     """Output format for list_imas_paths tool."""
 
     YAML = "yaml"

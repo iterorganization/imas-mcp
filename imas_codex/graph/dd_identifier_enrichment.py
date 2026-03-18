@@ -84,7 +84,7 @@ def enrich_identifier_schemas(
     model: str | None = None,
     batch_size: int = 30,
     force: bool = False,
-    on_items: "Callable[[list[dict], float], None] | None" = None,
+    on_items: Callable[[list[dict], float], None] | None = None,
 ) -> dict[str, Any]:
     """Enrich IdentifierSchema nodes with LLM-generated descriptions.
 
@@ -294,7 +294,7 @@ def embed_identifier_schemas(
     client: GraphClient,
     *,
     force_reembed: bool = False,
-    on_items: "Callable[[list[dict], float], None] | None" = None,
+    on_items: Callable[[list[dict], float], None] | None = None,
 ) -> dict[str, int]:
     """Generate embeddings for enriched IdentifierSchema nodes.
 

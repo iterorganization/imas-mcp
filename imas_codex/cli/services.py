@@ -1035,7 +1035,6 @@ def deploy_embed_noslurm(gpus: int = _DEFAULT_GPUS, workers: int | None = None) 
     Automatically detects a deadlocked CUDA driver (from D-state
     processes) and falls back to CPU mode when GPUs are unusable.
     """
-    import base64
 
     if workers is None:
         workers = gpus
@@ -1049,7 +1048,7 @@ def deploy_embed_noslurm(gpus: int = _DEFAULT_GPUS, workers: int | None = None) 
     gpu_ids = ",".join(str(i) for i in range(gpus))
     partition = _gpu_partition()
     partition_name = partition["name"]
-    services_dir = f"$HOME/.local/share/imas-codex/services"
+    services_dir = "$HOME/.local/share/imas-codex/services"
     log_file = f"{services_dir}/codex-embed.log"
 
     # Check if CUDA is usable by running a quick probe.
@@ -1489,7 +1488,7 @@ def _deploy_login_embed_nohup() -> None:
     health_timeout_s = 90
     health_attempts = health_timeout_s // 3
     health_cmd = f"curl -sf http://localhost:{port}/health"
-    for attempt in range(health_attempts):
+    for _attempt in range(health_attempts):
         time.sleep(3)
         try:
             result = _run_remote(health_cmd, timeout=5)

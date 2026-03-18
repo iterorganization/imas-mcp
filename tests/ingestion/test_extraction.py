@@ -5,14 +5,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-_EXTRACT_TREE_SCRIPT = (
-    Path(__file__).resolve().parents[2]
-    / "imas_codex"
-    / "remote"
-    / "scripts"
-    / "extract_tree.py"
-)
-
 from imas_codex.mdsplus.extraction import (
     _compute_parent_path,
     _resolve_shots,
@@ -21,6 +13,14 @@ from imas_codex.mdsplus.extraction import (
     get_static_tree_config,
     merge_units_into_data,
     merge_version_results,
+)
+
+_EXTRACT_TREE_SCRIPT = (
+    Path(__file__).resolve().parents[2]
+    / "imas_codex"
+    / "remote"
+    / "scripts"
+    / "extract_tree.py"
 )
 
 

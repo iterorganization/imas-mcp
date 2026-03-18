@@ -49,7 +49,7 @@ import logging
 import time
 import traceback
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from neo4j.exceptions import ServiceUnavailable, SessionExpired, TransientError
@@ -354,7 +354,7 @@ class PipelinePhase:
 # =============================================================================
 
 
-class WorkerState(str, Enum):
+class WorkerState(StrEnum):
     """Current state of a supervised worker."""
 
     starting = "starting"  # Worker is starting up

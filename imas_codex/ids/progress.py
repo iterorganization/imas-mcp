@@ -18,7 +18,6 @@ from imas_codex.discovery.base.progress import (
 )
 from imas_codex.ids.mapping import PipelineCost
 
-
 # ---------------------------------------------------------------------------
 # Typed stream items for display rows 2-3
 # ---------------------------------------------------------------------------

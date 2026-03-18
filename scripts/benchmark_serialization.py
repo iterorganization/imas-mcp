@@ -29,7 +29,7 @@ def _median(fn, n=ITERATIONS):
     """Run fn n times and return median result tuple."""
     results = [fn() for _ in range(n)]
     # Transpose list-of-tuples and take median per position
-    return tuple(statistics.median(col) for col in zip(*results))
+    return tuple(statistics.median(col) for col in zip(*results, strict=False))
 
 
 def bench_json(arrays: list[np.ndarray]) -> tuple[float, float, int]:

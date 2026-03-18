@@ -7,14 +7,14 @@ from unittest.mock import MagicMock
 import pytest
 
 from imas_codex.ids.graph_ops import (
-    SignalMapping,
     Mapping,
+    SignalMapping,
     _index_from_path,
     create_imas_mapping,
     create_signal_source,
-    load_signal_mappings,
     load_mapping,
     load_sections,
+    load_signal_mappings,
 )
 
 

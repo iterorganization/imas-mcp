@@ -15,7 +15,7 @@ Design principles:
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -34,7 +34,7 @@ __all__ = [
 ]
 
 
-class ContextQuality(str, Enum):
+class ContextQuality(StrEnum):
     """How much context was available for this signal's enrichment.
 
     Signals with 'low' context quality are marked as 'underspecified'

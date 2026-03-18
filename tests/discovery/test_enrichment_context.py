@@ -14,10 +14,10 @@ from imas_codex.discovery.signals.parallel import (
     build_device_xml_context_query,
     fetch_tree_context,
     get_data_discovery_stats,
-    has_pending_check_work,
-    has_pending_enrich_work,
     get_scanner_scope_sources,
     get_signal_scanner_type,
+    has_pending_check_work,
+    has_pending_enrich_work,
 )
 
 

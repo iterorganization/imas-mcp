@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import platform
 import socket
 import statistics
@@ -103,7 +102,7 @@ def bench_raw_ssh_pipe(target: str, size_mb: int, iterations: int = 3) -> dict[s
     block_size = 1024 * 1024  # 1MB blocks
     count = size_mb
 
-    for i in range(iterations):
+    for _i in range(iterations):
         # dd if=/dev/zero bs=1M count=N | ssh target 'cat > /dev/null'
         t0 = time.perf_counter()
         proc = subprocess.run(
@@ -161,7 +160,7 @@ sys.stdout.buffer.flush()
     runner_cmd = _make_remote_cmd(script_b64)
 
     results = []
-    for i in range(iterations):
+    for _i in range(iterations):
         t0 = time.perf_counter()
         proc = subprocess.run(
             ["ssh", "-o", "BatchMode=yes", target, runner_cmd],
@@ -248,7 +247,7 @@ else:
     runner_cmd = _make_remote_cmd(script_b64)
 
     results = []
-    for i in range(iterations):
+    for _i in range(iterations):
         t0 = time.perf_counter()
         proc = subprocess.run(
             ["ssh", "-o", "BatchMode=yes", target, runner_cmd],
@@ -318,7 +317,7 @@ sys.stdout.buffer.flush()
     runner_cmd = _make_remote_cmd(script_b64)
 
     results = []
-    for iteration in range(iterations):
+    for _iteration in range(iterations):
         def run_stream(stream_id: int) -> dict:
             t0 = time.perf_counter()
             proc = subprocess.run(
@@ -482,14 +481,14 @@ def main():
     print(f"  Connected to {conn['remote_hostname']} (RTT: {conn['rtt_s']}s)")
 
     # ---- Network info ----
-    print(f"\n[2/6] Gathering network info...")
+    print("\n[2/6] Gathering network info...")
     net_info = bench_network_info(args.target)
     all_results["network_info"] = net_info
     for k, v in net_info.items():
         print(f"  {k}: {v}")
 
     # ---- SSH Latency ----
-    print(f"\n[3/6] Measuring SSH latency...")
+    print("\n[3/6] Measuring SSH latency...")
     latency = bench_ssh_latency(args.target, iterations=args.iterations * 3)
     all_results["latency"] = latency
     print(f"  Median: {latency['median_ms']}ms  "
@@ -497,7 +496,7 @@ def main():
           f"P95: {latency['p95_ms']}ms")
 
     # ---- Raw SSH Pipe ----
-    print(f"\n[4/6] Raw SSH pipe throughput (dd → ssh → /dev/null)")
+    print("\n[4/6] Raw SSH pipe throughput (dd → ssh → /dev/null)")
     raw_results = {}
     for size_mb in sizes:
         print(f"  {size_mb} MB ...", end="", flush=True)
@@ -511,7 +510,7 @@ def main():
     all_results["raw_ssh_pipe"] = raw_results
 
     # ---- Python-to-Python Pipe ----
-    print(f"\n[5/6] Python→SSH→Python throughput (remote generate, local receive)")
+    print("\n[5/6] Python→SSH→Python throughput (remote generate, local receive)")
     py_results = {}
     for size_mb in sizes:
         print(f"  {size_mb} MB ...", end="", flush=True)
@@ -526,7 +525,7 @@ def main():
 
     # ---- Signal Extraction Simulation ----
     if not args.skip_extraction:
-        print(f"\n[5b/6] Signal extraction protocol (msgpack binary)")
+        print("\n[5b/6] Signal extraction protocol (msgpack binary)")
         ext_results = {}
         # Progressively larger extraction workloads
         workloads = [
@@ -596,14 +595,14 @@ def main():
     print(f"  Best parallel aggregate:    {best_par} MB/s")
 
     # GPU training requirements
-    print(f"\n  GPU Training Requirements (4× H200):")
+    print("\n  GPU Training Requirements (4× H200):")
     print(f"  {'─'*50}")
     h200_mem_gb = 141
     gpu_count = 4
     total_gpu_mem = h200_mem_gb * gpu_count
     print(f"  Total GPU memory:           {total_gpu_mem} GB")
-    print(f"  Min feed rate (avoid stall): ~1,000 MB/s")
-    print(f"  Ideal feed rate:            ~5,000 MB/s")
+    print("  Min feed rate (avoid stall): ~1,000 MB/s")
+    print("  Ideal feed rate:            ~5,000 MB/s")
 
     if best_raw > 0:
         time_to_fill = (total_gpu_mem * 1024) / best_raw

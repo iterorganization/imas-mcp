@@ -194,7 +194,7 @@ def map_run(
 
     available = plan["available_domains"]
     targets = plan["ids_targets"]
-    total_sources = plan["total_sources"]
+    plan["total_sources"]
 
     if not available:
         click.echo(
@@ -287,7 +287,6 @@ def _run_plain_mode(
 ) -> list[dict]:
     """Run mapping for all IDS targets in plain (non-rich) mode."""
     import asyncio
-    import time as time_mod
 
     from imas_codex.ids.workers import MappingDiscoveryState, run_mapping_engine
 
@@ -549,7 +548,7 @@ def _print_summary(results: list[dict], log_print) -> None:
     total_bindings = sum(r.get("bindings", 0) for r in results)
     total_escalations = sum(r.get("escalations", 0) for r in results)
 
-    log_print(f"\n[bold]Mapping Summary[/bold]")
+    log_print("\n[bold]Mapping Summary[/bold]")
     log_print(f"  IDS mapped: {len(results)}")
     log_print(f"  Total bindings: {total_bindings}")
     log_print(f"  Total escalations: {total_escalations}")

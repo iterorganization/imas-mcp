@@ -49,7 +49,7 @@ jobs:
           NEO4J_server_memory_heap_initial__size: 512m
           NEO4J_server_memory_heap_max__size: 1G
         options: >-
-          --health-cmd "curl -f http://localhost:7474/ || exit 1"
+          --health-cmd "wget -q --spider http://localhost:7474/ || exit 1"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 10
