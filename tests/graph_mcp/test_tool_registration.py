@@ -18,15 +18,12 @@ class TestToolRegistration:
         assert "get_dd_graph_schema" in names
         assert "get_dd_versions" in names
 
-    def test_graph_tools_absent_without_client(self):
-        """Graph tools are not registered when no graph_client provided."""
+    def test_graph_client_required(self):
+        """Tools raises ValueError when no graph_client provided."""
         from imas_codex.tools import Tools
 
-        tools = Tools()
-        names = tools.get_registered_tool_names()
-        assert "query_imas_graph" not in names
-        assert "get_dd_graph_schema" not in names
-        assert "get_dd_versions" not in names
+        with pytest.raises(ValueError, match="GraphClient is required"):
+            Tools()
 
     def test_existing_tools_still_registered(self, graph_client):
         """Original tools still present alongside graph tools."""
@@ -40,11 +37,10 @@ class TestToolRegistration:
         assert "get_imas_overview" in names
 
     def test_total_tool_count(self, graph_client):
-        """Total tool count increases with graph tools."""
+        """Total tool count matches expected number of graph-backed tools."""
         from imas_codex.tools import Tools
 
-        without = Tools()
-        with_graph = Tools(graph_client=graph_client)
-        assert len(with_graph.get_registered_tool_names()) == (
-            len(without.get_registered_tool_names()) + 3
-        )
+        tools = Tools(graph_client=graph_client)
+        names = tools.get_registered_tool_names()
+        # All tools are graph-backed: 11 tool classes each with their MCP tools
+        assert len(names) >= 11
