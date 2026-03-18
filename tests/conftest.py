@@ -11,7 +11,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import numpy as np
 import pytest
-from dotenv import load_dotenv
+
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(override=True)
+except ImportError:
+    pass
+
 from fastmcp import Client
 
 from imas_codex.clusters.search import ClusterSearchResult
@@ -19,9 +26,6 @@ from imas_codex.embeddings.encoder import Encoder
 from imas_codex.search.document_store import Document, DocumentMetadata, DocumentStore
 from imas_codex.search.engines.base_engine import MockSearchEngine
 from imas_codex.server import Server
-
-# Load .env file with override=True to ensure test environment uses .env values
-load_dotenv(override=True)
 
 
 def pytest_addoption(parser):

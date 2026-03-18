@@ -10,16 +10,19 @@ import logging
 import sys
 
 import click
-from dotenv import load_dotenv
+
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(override=True)
+except ImportError:
+    pass  # dotenv optional in CI/benchmark environments
 
 from imas_codex import dd_version
 from imas_codex.embeddings.config import EncoderConfig
 from imas_codex.embeddings.encoder import Encoder
 from imas_codex.resource_path_accessor import ResourcePathAccessor
 from imas_codex.search.document_store import DocumentStore
-
-# Load .env file with override to ensure local .env values take precedence
-load_dotenv(override=True)
 
 
 @click.command()

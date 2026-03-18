@@ -17,14 +17,17 @@ import sys
 from typing import Literal
 
 import click
-from dotenv import load_dotenv
+
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(override=True)
+except ImportError:
+    pass  # dotenv optional in CI/benchmark environments
 
 from imas_codex.clusters.label_cache import LabelCache
 from imas_codex.core.clusters import Clusters
 from imas_codex.embeddings.config import EncoderConfig
-
-# Load environment variables from .env file, overriding any existing values
-load_dotenv(override=True)
 
 
 @click.command()
