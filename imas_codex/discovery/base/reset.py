@@ -20,7 +20,7 @@ Usage from a CLI command::
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +90,7 @@ def reset_to_status(
     where = f"WHERE n.status IN $source_statuses {extra_filter}"
 
     # Build SET clause
-    set_parts = [f"n.status = $target_status", "n.claimed_at = null"]
+    set_parts = ["n.status = $target_status", "n.claimed_at = null"]
     for fld in spec.clear_fields:
         set_parts.append(f"n.{fld} = null")
     set_clause = "SET " + ",\n    ".join(set_parts)

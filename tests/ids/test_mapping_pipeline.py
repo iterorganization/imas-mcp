@@ -24,15 +24,14 @@ from imas_codex.ids.models import (
     EscalationFlag,
     EscalationSeverity,
     MappingDisposition,
-    TargetAssignment,
-    TargetAssignmentBatch,
     SignalMappingBatch,
     SignalMappingEntry,
+    TargetAssignment,
+    TargetAssignmentBatch,
     UnassignedSource,
     UnmappedSignal,
     ValidatedSignalMapping,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

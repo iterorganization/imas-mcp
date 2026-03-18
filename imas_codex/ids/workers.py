@@ -597,7 +597,11 @@ async def map_worker(
     """
     wlog = WorkerLogAdapter(logger, worker_name="map_worker")
 
-    from imas_codex.ids.mapping import _acall_llm, _build_messages, _prepare_section_context
+    from imas_codex.ids.mapping import (
+        _acall_llm,
+        _build_messages,
+        _prepare_section_context,
+    )
     from imas_codex.ids.models import SignalMappingBatch
 
     while not state.should_stop():
@@ -748,7 +752,7 @@ async def validate_worker(
         try:
             # Assembly discovery
             configs = []
-            async for assignment, config in adiscover_assembly(
+            async for _assignment, config in adiscover_assembly(
                 state.facility,
                 ids_name,
                 sections,

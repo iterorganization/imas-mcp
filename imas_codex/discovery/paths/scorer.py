@@ -243,10 +243,10 @@ class DirectoryTriager:
         - focus: optional natural language focus
         - dimension_calibration: examples at 5 score levels per dimension
         """
-        from imas_codex.llm.prompt_loader import render_prompt
         from imas_codex.discovery.paths.frontier import (
             sample_dimension_calibration_examples,
         )
+        from imas_codex.llm.prompt_loader import render_prompt
 
         # Build context for template rendering
         context: dict[str, Any] = {}

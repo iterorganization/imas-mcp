@@ -312,7 +312,7 @@ class DataProgressDisplay(BaseProgressDisplay):
 
         # --- Compute progress data ---
 
-        total = max(self.state.total_signals, 1)
+        max(self.state.total_signals, 1)
         enriched = self.state.signals_enriched + self.state.signals_checked
         checked = self.state.signals_checked
         # Enrich denominator excludes skipped signals (they never need enrichment)

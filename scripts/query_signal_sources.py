@@ -16,7 +16,7 @@ with GraphClient() as gc:
     for r in result:
         print(f"  Group: {r['group_key']}, members: {r['member_count']}")
         print(f"    rep: {r['representative_id']}")
-    
+
     # Now check how many have skipped representatives
     result2 = gc.query("""
         MATCH (sg:SignalSource {facility_id: 'tcv', status: 'discovered'})
@@ -30,7 +30,7 @@ with GraphClient() as gc:
     for r in result2:
         print(f"  Group: {r['group_key']}")
         print(f"    rep: {r['rep_accessor']}, skip: {r['skip_reason']}")
-    
+
     # Check what ALL members look like for one of these groups
     if result2:
         sample_group_id = result2[0]['id']

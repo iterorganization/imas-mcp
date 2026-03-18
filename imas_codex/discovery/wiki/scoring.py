@@ -447,12 +447,12 @@ async def _score_documents_batch(
     Returns:
         (results, cost) tuple where cost is actual LLM cost from OpenRouter.
     """
-    from imas_codex.llm.prompt_loader import render_prompt
     from imas_codex.discovery.base.llm import acall_llm_structured
     from imas_codex.discovery.wiki.models import (
         DocumentScoreBatch,
         grounded_document_score,
     )
+    from imas_codex.llm.prompt_loader import render_prompt
 
     # Build system prompt using document-scorer template
     context: dict[str, Any] = {}
@@ -846,12 +846,12 @@ async def _score_pages_batch(
     Returns:
         (results, cost) tuple where cost is actual LLM cost from OpenRouter.
     """
-    from imas_codex.llm.prompt_loader import render_prompt
     from imas_codex.discovery.base.llm import acall_llm_structured
     from imas_codex.discovery.wiki.models import (
         WikiScoreBatch,
         grounded_wiki_score,
     )
+    from imas_codex.llm.prompt_loader import render_prompt
 
     # Build system prompt using dynamic template with schema injection
     context: dict[str, Any] = {}

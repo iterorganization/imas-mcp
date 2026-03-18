@@ -17,7 +17,7 @@ services:
       - neo4j_logs:/logs
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:${HTTP_PORT:-7474}/"]
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:${HTTP_PORT:-7474}/"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -35,14 +35,14 @@ services:
         - IDS_FILTER=${IDS_FILTER}
         - TRANSPORT=${TRANSPORT:-streamable-http}
         - GRAPH_TAG=${GRAPH_TAG:-latest}
+        - GRAPH_PACKAGE=${GRAPH_PACKAGE:-imas-codex-graph-imas}
+        - GHCR_REGISTRY=${GHCR_REGISTRY:-ghcr.io/iterorganization}
       secrets:
         - ghcr_token
     ports:
       - "8000:8000"
     environment:
       - PYTHONPATH=/app
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - OPENAI_BASE_URL=https://openrouter.ai/api/v1
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8000/health"]

@@ -1029,6 +1029,8 @@ def mark_score_complete(
     if not items:
         return 0
 
+    updated = len(items)
+
     with GraphClient() as gc:
         gc.query(
             """
@@ -2421,12 +2423,12 @@ def _score_with_llm(
     """
     import json
 
-    from imas_codex.llm.prompt_loader import render_prompt
     from imas_codex.discovery.paths.frontier import (
         sample_dimension_calibration_examples,
         sample_enriched_paths,
     )
     from imas_codex.discovery.paths.models import ScoreBatch
+    from imas_codex.llm.prompt_loader import render_prompt
     from imas_codex.settings import get_model
 
     # Build prompt context with enriched examples
@@ -2601,12 +2603,12 @@ async def _async_score_with_llm(
     """
     import json
 
-    from imas_codex.llm.prompt_loader import render_prompt
     from imas_codex.discovery.paths.frontier import (
         sample_dimension_calibration_examples,
         sample_enriched_paths,
     )
     from imas_codex.discovery.paths.models import ScoreBatch
+    from imas_codex.llm.prompt_loader import render_prompt
     from imas_codex.settings import get_model
 
     # Build prompt context with enriched examples

@@ -188,7 +188,7 @@ def enrich_ids_nodes(
     model: str | None = None,
     batch_size: int = 30,
     force: bool = False,
-    on_items: "Callable[[list[dict], float], None] | None" = None,
+    on_items: Callable[[list[dict], float], None] | None = None,
 ) -> dict[str, Any]:
     """Enrich IDS nodes with LLM-generated descriptions and keywords.
 
@@ -421,7 +421,7 @@ def embed_ids_nodes(
     client: GraphClient,
     *,
     force_reembed: bool = False,
-    on_items: "Callable[[list[dict], float], None] | None" = None,
+    on_items: Callable[[list[dict], float], None] | None = None,
 ) -> dict[str, int]:
     """Generate embeddings for enriched IDS nodes.
 

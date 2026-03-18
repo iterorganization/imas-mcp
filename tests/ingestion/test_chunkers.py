@@ -124,7 +124,7 @@ def b():
             assert chunk.end_line >= chunk.start_line
 
     def test_unsupported_language_raises(self):
-        with pytest.raises(Exception):
+        with pytest.raises(ValueError):
             chunk_code("some text", "nonexistent_language_xyz")
 
     def test_idl_single_procedure(self):

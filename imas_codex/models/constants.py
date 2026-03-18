@@ -3,7 +3,7 @@
 This module contains all constant definitions used across search, response, and physics models.
 """
 
-from enum import Enum
+from enum import Enum, StrEnum
 
 # ============================================================================
 # SEARCH CONSTANTS
@@ -33,7 +33,7 @@ VERY_LOW_CONFIDENCE_THRESHOLD = 0.25  # Strongly warn - likely nonsense query
 # ============================================================================
 
 
-class DetailLevel(str, Enum):
+class DetailLevel(StrEnum):
     """Detail levels for explanations."""
 
     BASIC = "basic"
@@ -41,7 +41,7 @@ class DetailLevel(str, Enum):
     ADVANCED = "advanced"
 
 
-class ResponseProfile(str, Enum):
+class ResponseProfile(StrEnum):
     """Response formatting presets for search results."""
 
     MINIMAL = "minimal"  # Results only, no extras
@@ -49,7 +49,7 @@ class ResponseProfile(str, Enum):
     DETAILED = "detailed"  # Results + full AI enhancement
 
 
-class RelationshipType(str, Enum):
+class RelationshipType(StrEnum):
     """Types of relationships to explore."""
 
     ALL = "all"
@@ -59,7 +59,7 @@ class RelationshipType(str, Enum):
     MEASUREMENT = "measurement"
 
 
-class IdentifierScope(str, Enum):
+class IdentifierScope(StrEnum):
     """Scopes for identifier exploration."""
 
     ALL = "all"
@@ -69,7 +69,7 @@ class IdentifierScope(str, Enum):
     CONSTANTS = "constants"
 
 
-class OutputFormat(str, Enum):
+class OutputFormat(StrEnum):
     """Output formats for export tools."""
 
     STRUCTURED = "structured"
@@ -78,7 +78,7 @@ class OutputFormat(str, Enum):
     MARKDOWN = "markdown"
 
 
-class AnalysisDepth(str, Enum):
+class AnalysisDepth(StrEnum):
     """Analysis depth levels for exports."""
 
     OVERVIEW = "overview"
@@ -92,7 +92,7 @@ class AnalysisDepth(str, Enum):
 # ============================================================================
 
 
-class ConceptType(str, Enum):
+class ConceptType(StrEnum):
     """Types of physics concepts that can be embedded."""
 
     DOMAIN = "domain"
@@ -101,7 +101,7 @@ class ConceptType(str, Enum):
     MEASUREMENT_METHOD = "measurement_method"
 
 
-class ComplexityLevel(str, Enum):
+class ComplexityLevel(StrEnum):
     """Complexity levels for concept explanations."""
 
     BASIC = "basic"
@@ -109,7 +109,7 @@ class ComplexityLevel(str, Enum):
     ADVANCED = "advanced"
 
 
-class UnitCategory(str, Enum):
+class UnitCategory(StrEnum):
     """Categories for physics units."""
 
     MAGNETIC_FIELD = "magnetic_field"

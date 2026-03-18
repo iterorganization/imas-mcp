@@ -4,7 +4,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from imas_codex.tools.graph_search import GraphStructureTool, _leaf_data_type_clause, _text_search_imas_paths
+from imas_codex.tools.graph_search import (
+    GraphStructureTool,
+    _leaf_data_type_clause,
+    _text_search_imas_paths,
+)
 
 
 def test_leaf_data_type_clause_uses_uppercase_structure_types():

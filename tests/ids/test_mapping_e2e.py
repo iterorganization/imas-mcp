@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from click.testing import CliRunner
 
+from imas_codex.core.data_model import IdsNode
 from imas_codex.ids.models import (
     EscalationFlag,
     EscalationSeverity,
@@ -21,8 +22,8 @@ from imas_codex.ids.models import (
     SignalMappingEntry,
     TargetAssignment,
     TargetAssignmentBatch,
-    ValidatedSignalMapping,
     ValidatedMappingResult,
+    ValidatedSignalMapping,
     persist_mapping_result,
 )
 from imas_codex.ids.tools import (
@@ -32,10 +33,9 @@ from imas_codex.ids.tools import (
     fetch_imas_subtree,
     get_sign_flip_paths,
     query_signal_sources,
-    search_imas_semantic,
     search_existing_mappings,
+    search_imas_semantic,
 )
-from imas_codex.core.data_model import IdsNode
 from imas_codex.models.error_models import ToolError
 from imas_codex.models.result_models import FetchPathsResult
 
@@ -1480,7 +1480,7 @@ class TestIntegrationMappingPipeline:
         from imas_codex.ids.tools import search_existing_mappings
 
         gc = GraphClient()
-        mapping_id = persist_mapping_result(sample_validated_result, gc=gc)
+        persist_mapping_result(sample_validated_result, gc=gc)
         loaded = search_existing_mappings("jet", "pf_active", gc=gc)
         assert loaded["mapping"] is not None
         assert len(loaded["bindings"]) == len(sample_validated_result.bindings)
@@ -1714,35 +1714,35 @@ class TestTransformExpressionValidator:
             assert e.transform_expression == expr
 
     def test_blocks_import(self):
-        with pytest.raises(Exception):
+        with pytest.raises(ValueError):
             SignalMappingEntry(
                 source_id="s1", target_id="t1",
                 transform_expression="import os", confidence=0.5,
             )
 
     def test_blocks_eval(self):
-        with pytest.raises(Exception):
+        with pytest.raises(ValueError):
             SignalMappingEntry(
                 source_id="s1", target_id="t1",
                 transform_expression="eval('1+1')", confidence=0.5,
             )
 
     def test_blocks_exec(self):
-        with pytest.raises(Exception):
+        with pytest.raises(ValueError):
             SignalMappingEntry(
                 source_id="s1", target_id="t1",
                 transform_expression="exec('x=1')", confidence=0.5,
             )
 
     def test_blocks_dunder(self):
-        with pytest.raises(Exception):
+        with pytest.raises(ValueError):
             SignalMappingEntry(
                 source_id="s1", target_id="t1",
                 transform_expression="__builtins__", confidence=0.5,
             )
 
     def test_blocks_getattr(self):
-        with pytest.raises(Exception):
+        with pytest.raises(ValueError):
             SignalMappingEntry(
                 source_id="s1", target_id="t1",
                 transform_expression="getattr(value, '__class__')",

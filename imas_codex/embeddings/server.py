@@ -121,7 +121,7 @@ def _read_all_worker_states() -> list[dict[str, Any]]:
     workers = []
     try:
         for fname in os.listdir(state_dir):
-            if fname.endswith(".json") and not ".tmp" in fname:
+            if fname.endswith(".json") and ".tmp" not in fname:
                 path = os.path.join(state_dir, fname)
                 try:
                     with open(path) as f:
@@ -544,7 +544,7 @@ def _encode_batch_safe(
     )
     dim = _cached_embedding_dim or 1024
     results = []
-    for j, text in enumerate(texts):
+    for _j, text in enumerate(texts):
         try:
             emb = model.encode(
                 [text],

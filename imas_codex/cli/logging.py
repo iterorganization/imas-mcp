@@ -32,10 +32,9 @@ which automatically route to local or remote based on configuration.
 from __future__ import annotations
 
 import logging
-import os
 import re
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -288,8 +287,8 @@ def list_log_files() -> list[dict[str, str | int | float]]:
         if not path.is_file():
             continue
         stat = path.stat()
-        modified = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc)
-        age_hours = (datetime.now(tz=timezone.utc) - modified).total_seconds() / 3600
+        modified = datetime.fromtimestamp(stat.st_mtime, tz=UTC)
+        age_hours = (datetime.now(tz=UTC) - modified).total_seconds() / 3600
         results.append(
             {
                 "name": path.name,
@@ -367,7 +366,7 @@ def read_log(
                     if since_dt is not None:
                         try:
                             line_dt = datetime.strptime(ts_str, DATE_FORMAT).replace(
-                                tzinfo=timezone.utc
+                                tzinfo=UTC
                             )
                             if line_dt < since_dt:
                                 continue
@@ -440,12 +439,12 @@ def _parse_since(since: str) -> datetime | None:
         unit = m.group(2).lower()
         delta_map = {"s": "seconds", "m": "minutes", "h": "hours", "d": "days"}
         delta = timedelta(**{delta_map[unit]: value})
-        return datetime.now(tz=timezone.utc) - delta
+        return datetime.now(tz=UTC) - delta
 
     # Try absolute ISO format
     for fmt in ["%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M", "%Y-%m-%d"]:
         try:
-            return datetime.strptime(since, fmt).replace(tzinfo=timezone.utc)
+            return datetime.strptime(since, fmt).replace(tzinfo=UTC)
         except ValueError:
             continue
 
@@ -488,6 +487,7 @@ def _remote_log_file(command: str, facility: str | None = None) -> str:
 def _remote_list_log_files(ssh_host: str) -> list[dict[str, str | int | float]]:
     """List log files on a remote host via SSH."""
     import json
+
     from imas_codex.remote.executor import run_command
 
     # Use a Python one-liner for reliable JSON output
@@ -519,7 +519,7 @@ def _remote_list_log_files(ssh_host: str) -> list[dict[str, str | int | float]]:
         results = []
         for f in raw:
             mtime = f["modified_epoch"]
-            modified = datetime.fromtimestamp(mtime, tz=timezone.utc)
+            modified = datetime.fromtimestamp(mtime, tz=UTC)
             age_hours = (now - mtime) / 3600
             results.append({
                 "name": f["name"],

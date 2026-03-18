@@ -306,9 +306,9 @@ def _format_error_fields_report(result: dict) -> str:
         return f"No error fields found for '{path}'"
 
     lines = [f"Error fields for {path}:"]
-    for field in error_fields:
-        line = f"  {field.get('path', '')} ({field.get('error_type', 'unknown')})"
-        documentation = field.get("documentation")
+    for ef in error_fields:
+        line = f"  {ef.get('path', '')} ({ef.get('error_type', 'unknown')})"
+        documentation = ef.get("documentation")
         if documentation:
             line += f" - {documentation[:100]}"
         lines.append(line)
@@ -2062,18 +2062,17 @@ class AgentsServer:
         # Unified search tools — multi-index vector search + graph enrichment
         # =====================================================================
 
+        # Build dynamic docstring fragments for valid parameter values
+        from imas_codex.discovery.base.scoring import (
+            CODE_SCORE_DIMENSIONS,
+            CONTENT_SCORE_DIMENSIONS,
+        )
         from imas_codex.llm.search_tools import (
             _fetch,
             _search_code,
             _search_docs,
             _search_signals,
             _signal_analytics,
-        )
-
-        # Build dynamic docstring fragments for valid parameter values
-        from imas_codex.discovery.base.scoring import (
-            CODE_SCORE_DIMENSIONS,
-            CONTENT_SCORE_DIMENSIONS,
         )
 
         _content_scores_doc = ", ".join(sorted(CONTENT_SCORE_DIMENSIONS))
@@ -2109,7 +2108,7 @@ class AgentsServer:
             include_check_details: bool = False,
             k: int = 20,
         ) -> str:
-            f"""Search facility signals with full graph enrichment.
+            """Search facility signals with full graph enrichment.
 
             Performs hybrid search (vector + keyword) on signal descriptions,
             then enriches with data access templates, IMAS mappings, diagnostic
@@ -2121,8 +2120,7 @@ class AgentsServer:
                 query: Natural language search text (e.g. "plasma current")
                 facility: Facility id (required, e.g. "tcv", "jet")
                 diagnostic: Optional diagnostic filter (e.g. "magnetics")
-                physics_domain: Optional physics domain filter. Valid values:
-                    {_physics_domains_doc}
+                physics_domain: Optional physics domain filter
                 check_status: Filter by check outcome: "passed", "failed", or "unchecked"
                 error_type: Filter by error classification (e.g. "not_available_for_shot")
                 include_check_details: Include CHECKED_WITH relationship data in results
@@ -2177,7 +2175,7 @@ class AgentsServer:
             min_score: float | None = None,
             score_dimension: str | None = None,
         ) -> str:
-            f"""Search documentation (wiki, documents, images) with cross-links.
+            """Search documentation (wiki, documents, images) with cross-links.
 
             Performs hybrid search (vector + keyword) across wiki content,
             linked documents, and images, enriched with cross-references to
@@ -2190,12 +2188,9 @@ class AgentsServer:
                 facility: Facility id (required, e.g. "tcv", "jet")
                 k: Results per index (default 15)
                 site: Optional wiki site filter (substring match on wiki URL)
-                physics_domain: Filter by WikiPage physics domain. Valid values:
-                    {_physics_domains_doc}
+                physics_domain: Filter by WikiPage physics domain
                 min_score: Minimum score threshold (0.0-1.0) for score_dimension
-                score_dimension: Score dimension to filter on. Valid values:
-                    {_content_scores_doc}.
-                    Defaults to score_composite.
+                score_dimension: Score dimension to filter on
 
             Returns:
                 Formatted report with wiki documentation grouped by page,
@@ -2220,7 +2215,7 @@ class AgentsServer:
             min_score: float | None = None,
             score_dimension: str | None = None,
         ) -> str:
-            f"""Search ingested code with data reference enrichment.
+            """Search ingested code with data reference enrichment.
 
             Performs hybrid search (vector + keyword) on code chunks,
             enriched with MDSplus paths, TDI function calls, IMAS path
@@ -2232,12 +2227,9 @@ class AgentsServer:
                 query: Natural language search text (e.g. "equilibrium reconstruction")
                 facility: Optional facility filter (e.g. "tcv")
                 k: Number of results (default 10)
-                physics_domain: Filter by FacilityPath physics domain. Valid values:
-                    {_physics_domains_doc}
+                physics_domain: Filter by FacilityPath physics domain
                 min_score: Minimum score threshold (0.0-1.0) for score_dimension
-                score_dimension: Score dimension to filter on. Valid values:
-                    {_code_scores_doc}.
-                    Defaults to score_composite.
+                score_dimension: Score dimension to filter on
 
             Returns:
                 Formatted report with code examples, data references,
