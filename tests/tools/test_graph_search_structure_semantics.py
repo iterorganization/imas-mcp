@@ -31,16 +31,29 @@ def test_text_search_fallback_uses_uppercase_structure_types():
 
     _text_search_imas_paths(gc, "plasma current", 10, None)
 
-    fallback_calls = [call.args[0] for call in gc.query.call_args_list if "MATCH (p:IMASNode)" in call.args[0]]
+    fallback_calls = [
+        call.args[0]
+        for call in gc.query.call_args_list
+        if "MATCH (p:IMASNode)" in call.args[0]
+    ]
     assert fallback_calls
-    assert any("NOT (p.data_type IN ['STRUCTURE', 'STRUCT_ARRAY'])" in cypher for cypher in fallback_calls)
+    assert any(
+        "NOT (p.data_type IN ['STRUCTURE', 'STRUCT_ARRAY'])" in cypher
+        for cypher in fallback_calls
+    )
     assert not any("<> 'structure'" in cypher for cypher in fallback_calls)
 
 
 @pytest.mark.asyncio
 async def test_analyze_imas_structure_uses_uppercase_structure_types():
     gc = MagicMock()
-    gc.query.side_effect = [[{"total_paths": 0, "leaf_count": 0, "max_depth": 0, "avg_depth": 0}], [], [], [], []]
+    gc.query.side_effect = [
+        [{"total_paths": 0, "leaf_count": 0, "max_depth": 0, "avg_depth": 0}],
+        [],
+        [],
+        [],
+        [],
+    ]
     tool = GraphStructureTool(gc)
 
     await tool.analyze_imas_structure("equilibrium")

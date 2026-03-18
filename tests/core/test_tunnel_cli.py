@@ -12,7 +12,12 @@ from imas_codex.remote.tunnel import SSH_TUNNEL_OPTS, discover_compute_node_loca
 
 class TestTunnelServiceHelpers:
     def test_build_systemd_service_content_uses_runtime_service_runner(self):
-        with patch("imas_codex.cli.tunnel.shutil.which", side_effect=lambda cmd: "/usr/bin/uv" if cmd == "uv" else "/usr/bin/autossh"):
+        with patch(
+            "imas_codex.cli.tunnel.shutil.which",
+            side_effect=lambda cmd: (
+                "/usr/bin/uv" if cmd == "uv" else "/usr/bin/autossh"
+            ),
+        ):
             content = _build_systemd_service_content(
                 "iter",
                 neo4j_only=False,
@@ -71,7 +76,10 @@ class TestTunnelStart:
         runner = CliRunner()
 
         with (
-            patch("imas_codex.cli.tunnel._installed_service_supports_request", return_value=True),
+            patch(
+                "imas_codex.cli.tunnel._installed_service_supports_request",
+                return_value=True,
+            ),
             patch("imas_codex.cli.tunnel._run_systemctl_user") as mock_systemctl,
         ):
             result = runner.invoke(tunnel, ["start", "iter"])

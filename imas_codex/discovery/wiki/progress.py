@@ -407,13 +407,21 @@ class ProgressState:
                 return count / self.elapsed
             return fallback
 
-        return compute_parallel_eta([
-            (self.pending_score, _agg(self.run_scored, self.score_rate)),
-            (self.pending_ingest, _agg(self.run_ingested, self.ingest_rate)),
-            (self.pending_document_score, _agg(self.run_docs_scored, self.document_score_rate)),
-            (self.pending_document_ingest, _agg(self.run_docs, self.docs_rate)),
-            (self.pending_image_score, _agg(self.run_images_scored, self.image_score_rate)),
-        ])
+        return compute_parallel_eta(
+            [
+                (self.pending_score, _agg(self.run_scored, self.score_rate)),
+                (self.pending_ingest, _agg(self.run_ingested, self.ingest_rate)),
+                (
+                    self.pending_document_score,
+                    _agg(self.run_docs_scored, self.document_score_rate),
+                ),
+                (self.pending_document_ingest, _agg(self.run_docs, self.docs_rate)),
+                (
+                    self.pending_image_score,
+                    _agg(self.run_images_scored, self.image_score_rate),
+                ),
+            ]
+        )
 
 
 # =============================================================================
@@ -968,11 +976,14 @@ class WikiProgressDisplay(BaseProgressDisplay):
         """Build the resource consumption gauges using unified builder."""
         # Compute ETC — sum of per-worker cost projections
         total_facility_cost = self.state.accumulated_cost
-        etc = compute_projected_etc(total_facility_cost, [
-            (self.state.pending_score, self.state.cost_per_page),
-            (self.state.pending_document_score, self.state.cost_per_document_score),
-            (self.state.pending_image_score, self.state.cost_per_image_score),
-        ])
+        etc = compute_projected_etc(
+            total_facility_cost,
+            [
+                (self.state.pending_score, self.state.cost_per_page),
+                (self.state.pending_document_score, self.state.cost_per_document_score),
+                (self.state.pending_image_score, self.state.cost_per_image_score),
+            ],
+        )
 
         # Build stats — show pipeline outcome counts.
         # The SCORE progress bar already shows total scored, so STATS
@@ -1421,9 +1432,8 @@ class WikiProgressDisplay(BaseProgressDisplay):
 
         # Accumulated wall-clock time from prior sessions
         from imas_codex.discovery.base.progress import get_accumulated_time
-        self.state.accumulated_time = get_accumulated_time(
-            self.state.facility, "wiki"
-        )
+
+        self.state.accumulated_time = get_accumulated_time(self.state.facility, "wiki")
 
         self._refresh()
 
@@ -1528,9 +1538,13 @@ class WikiProgressDisplay(BaseProgressDisplay):
         total_scored = self.state.pages_scored + self.state.pages_ingested
         summary.append(f"{'  SCORE':<{LABEL_WIDTH}}", style="bold blue")
         summary.append(f"scored={format_count(total_scored)}", style="blue")
-        summary.append(f"  skipped={format_count(self.state.pages_skipped)}", style="yellow")
+        summary.append(
+            f"  skipped={format_count(self.state.pages_skipped)}", style="yellow"
+        )
         if self.state.pages_failed > 0:
-            summary.append(f"  failed={format_count(self.state.pages_failed)}", style="red")
+            summary.append(
+                f"  failed={format_count(self.state.pages_failed)}", style="red"
+            )
         page_cost = self.state.accumulated_page_cost
         if page_cost > 0:
             summary.append(f"  cost=${page_cost:.2f}", style="yellow")

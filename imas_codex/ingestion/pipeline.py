@@ -421,11 +421,13 @@ async def ingest_files(
                     source_file_map[example_id] = source_file_id
 
                 from_file_id = f"{facility}:{meta['source_file']}"
-                all_example_props.append({
-                    "id": example_id,
-                    **meta,
-                    "from_file": from_file_id,
-                })
+                all_example_props.append(
+                    {
+                        "id": example_id,
+                        **meta,
+                        "from_file": from_file_id,
+                    }
+                )
 
             t_s = _time.monotonic()
             if all_example_props:

@@ -342,7 +342,9 @@ class StaticSourceHandler(abc.ABC):
             )
             return None
 
-    def build_script_input(self, source_config: dict[str, Any]) -> dict[str, Any] | None:
+    def build_script_input(
+        self, source_config: dict[str, Any]
+    ) -> dict[str, Any] | None:
         """Build input dict for remote script. Override for custom inputs."""
         base_dir = source_config.get("base_dir", "")
         if not base_dir:
@@ -1632,8 +1634,7 @@ def _persist_mcfg_nodes(
                     source_type=DataSourceType.config_file.value,
                     source_format="text",
                     description=(
-                        f"MCFG sensor positions version {date} "
-                        f"from file {filename}"
+                        f"MCFG sensor positions version {date} from file {filename}"
                     ),
                 )
 
@@ -1643,9 +1644,7 @@ def _persist_mcfg_nodes(
                     v_coil_nodes: list[dict] = []
                     for sensor in v_coils:
                         jpf_name = sensor.get("jpf_name", "")
-                        node_path = (
-                            f"{facility}:mcfg:sensor:{jpf_name}:v{date}"
-                        )
+                        node_path = f"{facility}:mcfg:sensor:{jpf_name}:v{date}"
                         dn = {
                             "path": node_path,
                             "id": node_path,
@@ -1667,9 +1666,7 @@ def _persist_mcfg_nodes(
                         }
                         v_coil_nodes.append(dn)
 
-                    gc.create_nodes(
-                        "SignalNode", v_coil_nodes, batch_size=100
-                    )
+                    gc.create_nodes("SignalNode", v_coil_nodes, batch_size=100)
 
                 # Persist hall probes for this version
                 v_halls = sensors_data.get("hall_probes", [])
@@ -1677,9 +1674,7 @@ def _persist_mcfg_nodes(
                     v_hall_nodes: list[dict] = []
                     for sensor in v_halls:
                         jpf_name = sensor.get("jpf_name", "")
-                        node_path = (
-                            f"{facility}:mcfg:hall:{jpf_name}:v{date}"
-                        )
+                        node_path = f"{facility}:mcfg:hall:{jpf_name}:v{date}"
                         dn = {
                             "path": node_path,
                             "id": node_path,
@@ -1700,9 +1695,7 @@ def _persist_mcfg_nodes(
                         }
                         v_hall_nodes.append(dn)
 
-                    gc.create_nodes(
-                        "SignalNode", v_hall_nodes, batch_size=50
-                    )
+                    gc.create_nodes("SignalNode", v_hall_nodes, batch_size=50)
 
             stats["sensor_versions"] = len(
                 [sv for sv in sensor_versions if not sv.get("error")]

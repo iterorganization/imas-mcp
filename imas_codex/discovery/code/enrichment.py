@@ -130,7 +130,9 @@ async def enrich_files(
     for start in range(0, len(file_paths), chunk_size):
         chunk = file_paths[start : start + chunk_size]
         try:
-            recovered.extend(await _run_enrich_batch(ssh_host, chunk, patterns, timeout))
+            recovered.extend(
+                await _run_enrich_batch(ssh_host, chunk, patterns, timeout)
+            )
             continue
         except Exception as chunk_error:
             logger.warning(
@@ -145,7 +147,9 @@ async def enrich_files(
                 single = await _run_enrich_batch(ssh_host, [path], patterns, timeout)
                 recovered.extend(single)
             except Exception as single_error:
-                logger.error("Single-file enrichment failed for %s: %s", path, single_error)
+                logger.error(
+                    "Single-file enrichment failed for %s: %s", path, single_error
+                )
                 recovered.append(_transport_error_result(path, single_error))
 
     return recovered

@@ -146,9 +146,7 @@ class TestGatherIDSContext:
     def test_empty_context(self):
         client = MagicMock()
         client.query.side_effect = [[], [], []]
-        ids_list = [
-            {"id": "test_ids", "name": "test_ids", "physics_domain": "general"}
-        ]
+        ids_list = [{"id": "test_ids", "name": "test_ids", "physics_domain": "general"}]
         result = _gather_ids_context(client, ids_list)
         assert len(result) == 1
         assert result[0]["sections"] == []

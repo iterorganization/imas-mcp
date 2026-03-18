@@ -113,7 +113,7 @@ IDS_NODES = [
         "lifecycle_status": "active",
         "ids_type": "constant_or_dynamic",
         "path_count": 5,
-        "physics_domain": "magnetics",
+        "physics_domain": "equilibrium",
     },
     {
         "id": "core_profiles",
@@ -137,7 +137,7 @@ IMAS_PATHS = [
         "data_type": "FLT_1D",
         "units": "T.m^2",
         "node_type": "leaf",
-        "physics_domain": "magnetics",
+        "physics_domain": "equilibrium",
         "introduced_in": "3.42.0",
     },
     {
@@ -149,7 +149,7 @@ IMAS_PATHS = [
         "data_type": "FLT_1D",
         "units": "Pa",
         "node_type": "leaf",
-        "physics_domain": "magnetics",
+        "physics_domain": "equilibrium",
         "introduced_in": "3.42.0",
     },
     {
@@ -161,7 +161,7 @@ IMAS_PATHS = [
         "data_type": "FLT_0D",
         "units": "T.m^2",
         "node_type": "leaf",
-        "physics_domain": "magnetics",
+        "physics_domain": "equilibrium",
         "introduced_in": "3.42.0",
     },
     {
@@ -173,7 +173,7 @@ IMAS_PATHS = [
         "data_type": "FLT_0D",
         "units": "-",
         "node_type": "leaf",
-        "physics_domain": "magnetics",
+        "physics_domain": "equilibrium",
         "introduced_in": "3.42.0",
     },
     {
@@ -185,7 +185,7 @@ IMAS_PATHS = [
         "data_type": "INT_0D",
         "units": "-",
         "node_type": "leaf",
-        "physics_domain": "magnetics",
+        "physics_domain": "equilibrium",
         "introduced_in": "3.42.0",
     },
     # core_profiles paths
@@ -337,7 +337,8 @@ def _load_fixture_graph(client) -> None:
             "CREATE (p:IMASNode {id: $id, path: $path, ids: $ids_name, "
             "name: $name, "
             "documentation: $documentation, data_type: $data_type, units: $units, "
-            "node_type: $node_type, physics_domain: $physics_domain})",
+            "node_type: $node_type, physics_domain: $physics_domain, "
+            "node_category: 'data'})",
             **p,
         )
         # Link to IDS

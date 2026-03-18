@@ -108,7 +108,11 @@ class ExclusionChecker:
             tail = parts[-1]
             if tail in ("description", "name", "comment", "source", "provider"):
                 return True
-            if len(parts) >= 2 and parts[-2] == "identifier" and tail in ("description", "name"):
+            if (
+                len(parts) >= 2
+                and parts[-2] == "identifier"
+                and tail in ("description", "name")
+            ):
                 return True
         return False
 

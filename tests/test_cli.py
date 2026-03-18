@@ -408,7 +408,14 @@ class TestHostCommand:
 
         procs = {
             "test-node": [
-                {"pid": "100", "cpu": "5.0", "mem": "2.0", "rss_mb": 50, "age_seconds": 3600, "command": "python serve"},
+                {
+                    "pid": "100",
+                    "cpu": "5.0",
+                    "mem": "2.0",
+                    "rss_mb": 50,
+                    "age_seconds": 3600,
+                    "command": "python serve",
+                },
             ]
         }
         table = _build_process_table(procs)
@@ -421,8 +428,26 @@ class TestHostCommand:
         from imas_codex.cli.host import _build_process_table
 
         procs = {
-            "node-a": [{"pid": "1", "cpu": "1.0", "mem": "0.5", "rss_mb": 10, "age_seconds": 60, "command": "cmd a"}],
-            "node-b": [{"pid": "2", "cpu": "2.0", "mem": "1.0", "rss_mb": 20, "age_seconds": 120, "command": "cmd b"}],
+            "node-a": [
+                {
+                    "pid": "1",
+                    "cpu": "1.0",
+                    "mem": "0.5",
+                    "rss_mb": 10,
+                    "age_seconds": 60,
+                    "command": "cmd a",
+                }
+            ],
+            "node-b": [
+                {
+                    "pid": "2",
+                    "cpu": "2.0",
+                    "mem": "1.0",
+                    "rss_mb": 20,
+                    "age_seconds": 120,
+                    "command": "cmd b",
+                }
+            ],
         }
         table = _build_process_table(procs)
         assert table is not None
@@ -457,15 +482,25 @@ class TestHostCommand:
         results = {
             "node-a": {
                 "hostname": "node-a.iter.org",
-                "load_1m": 8.0, "load_5m": 7.0, "load_15m": 6.0,
-                "cpu_count": 16, "mem_total_mb": 16384, "mem_used_mb": 8192,
-                "users": 5, "codex_procs": [],
+                "load_1m": 8.0,
+                "load_5m": 7.0,
+                "load_15m": 6.0,
+                "cpu_count": 16,
+                "mem_total_mb": 16384,
+                "mem_used_mb": 8192,
+                "users": 5,
+                "codex_procs": [],
             },
             "node-b": {
                 "hostname": "node-b.iter.org",
-                "load_1m": 1.0, "load_5m": 0.5, "load_15m": 0.3,
-                "cpu_count": 16, "mem_total_mb": 16384, "mem_used_mb": 4096,
-                "users": 2, "codex_procs": [],
+                "load_1m": 1.0,
+                "load_5m": 0.5,
+                "load_15m": 0.3,
+                "cpu_count": 16,
+                "mem_total_mb": 16384,
+                "mem_used_mb": 4096,
+                "users": 2,
+                "codex_procs": [],
             },
             "node-c": None,
         }

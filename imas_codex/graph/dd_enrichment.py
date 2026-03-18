@@ -320,10 +320,7 @@ def _generate_metadata_template(
         )
         keywords = ["plugin", "access-layer", name]
     elif "library" in path_id:
-        desc = (
-            f"External library dependency ({readable}) linked by the "
-            f"producing code."
-        )
+        desc = f"External library dependency ({readable}) linked by the producing code."
         keywords = ["library", "dependency", name]
     elif "provenance" in path_id:
         desc = f"Data provenance record ({readable}) tracking origins and processing."
@@ -570,8 +567,7 @@ def build_enrichment_messages(
         if entry["siblings"]:
             # Filter out boilerplate error/validity siblings and cap at 30
             meaningful = [
-                s for s in entry["siblings"]
-                if not _is_boilerplate_sibling(s)
+                s for s in entry["siblings"] if not _is_boilerplate_sibling(s)
             ]
             if len(meaningful) > 30:
                 shown = meaningful[:30]

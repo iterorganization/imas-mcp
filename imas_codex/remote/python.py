@@ -683,7 +683,5 @@ def install_extraction_deps(
                 "error": str(e)[:200],
             }
 
-    results["success"] = all(
-        p.get("success") for p in results["packages"].values()
-    )
+    results["success"] = all(p.get("success") for p in results["packages"].values())
     return results

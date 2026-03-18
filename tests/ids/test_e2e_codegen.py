@@ -193,8 +193,16 @@ class TestGenerateAssemblyCode:
         from imas_codex.ids.codegen import generate_assembly_code
 
         mappings = [
-            {"source_id": "s1", "target_id": "pf_active/coil/r", "source_property": "value"},
-            {"source_id": "s2", "target_id": "pf_active/coil/z", "source_property": "value"},
+            {
+                "source_id": "s1",
+                "target_id": "pf_active/coil/r",
+                "source_property": "value",
+            },
+            {
+                "source_id": "s2",
+                "target_id": "pf_active/coil/z",
+                "source_property": "value",
+            },
         ]
         code, func_name = generate_assembly_code(
             "pf_active/coil", "pf_active", mappings, "array_per_node"
@@ -208,7 +216,11 @@ class TestGenerateAssemblyCode:
         from imas_codex.ids.codegen import generate_assembly_code
 
         mappings = [
-            {"source_id": "s1", "target_id": "magnetics/flux_loop/data", "source_property": "value"},
+            {
+                "source_id": "s1",
+                "target_id": "magnetics/flux_loop/data",
+                "source_property": "value",
+            },
         ]
         code, func_name = generate_assembly_code(
             "magnetics/flux_loop", "magnetics", mappings, "concatenate"
@@ -223,7 +235,9 @@ class TestGenerateAssemblyCode:
         mappings = [
             {"source_id": "s1", "target_id": "x/y", "source_property": "value"},
         ]
-        code, func_name = generate_assembly_code("x/y", "x", mappings, "matrix_assembly")
+        code, func_name = generate_assembly_code(
+            "x/y", "x", mappings, "matrix_assembly"
+        )
         assert func_name == "assemble_x_y"
         assert "matrix_assembly" in code
         ast.parse(code)
@@ -396,16 +410,14 @@ class TestE2EFromFixture:
     def test_fixture_success_count(self, fixture_data):
         results = fixture_data["results"]
         success = sum(
-            1 for r in results.values()
-            if isinstance(r, dict) and r.get("success")
+            1 for r in results.values() if isinstance(r, dict) and r.get("success")
         )
         assert success == 6
 
     def test_fixture_failure_count(self, fixture_data):
         results = fixture_data["results"]
         failed = sum(
-            1 for r in results.values()
-            if isinstance(r, dict) and not r.get("success")
+            1 for r in results.values() if isinstance(r, dict) and not r.get("success")
         )
         assert failed == 1
 
@@ -482,8 +494,13 @@ class TestDecimationPreservesShape:
             "tcv",
             "pf_active",
             {"section": [{"id": "s1", "accessor": "x", "data_source_name": "ds"}]},
-            {"imports_template": "", "connection_template": "pass",
-             "data_template": "None", "time_template": "", "cleanup_template": ""},
+            {
+                "imports_template": "",
+                "connection_template": "pass",
+                "data_template": "None",
+                "time_template": "",
+                "cleanup_template": "",
+            },
             max_points=100,
         )
         assert "100" in script

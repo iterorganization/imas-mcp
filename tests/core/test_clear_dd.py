@@ -109,7 +109,10 @@ class TestClearDdGraph:
             call for call in client.query.call_args_list if "DROP INDEX" in str(call)
         ]
         drop_text = " ".join(str(c) for c in drop_calls)
-        assert "imas_node_embedding" in drop_text or "imas_node_desc_embedding" in drop_text
+        assert (
+            "imas_node_embedding" in drop_text
+            or "imas_node_desc_embedding" in drop_text
+        )
         assert "cluster_embedding" in drop_text
 
     def test_clears_dd_versions(self):

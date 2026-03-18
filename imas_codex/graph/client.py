@@ -241,7 +241,9 @@ class GraphClient:
             self._recreate_driver()
             return True
         except Exception:
-            logger.warning("Driver recreation failed, attempting tunnel reconnection...")
+            logger.warning(
+                "Driver recreation failed, attempting tunnel reconnection..."
+            )
 
         if not reconnect_tunnel():
             logger.error("Tunnel reconnection failed")

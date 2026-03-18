@@ -67,12 +67,8 @@ class StructuredFormatter(logging.Formatter):
         super().__init__(STANDARD_FORMAT, datefmt=DATE_FORMAT)
 
     def format(self, record: logging.LogRecord) -> str:
-        worker = getattr(record, "worker_name", None) or getattr(
-            record, "worker", None
-        )
-        batch = getattr(record, "batch_id", None) or getattr(
-            record, "batch", None
-        )
+        worker = getattr(record, "worker_name", None) or getattr(record, "worker", None)
+        batch = getattr(record, "batch_id", None) or getattr(record, "batch", None)
         signal = getattr(record, "signal_id", None)
 
         if worker or batch or signal:
@@ -329,8 +325,13 @@ def read_log(
     ssh_host = _get_log_ssh_host()
     if ssh_host:
         return _remote_read_log(
-            ssh_host, command=command, facility=facility,
-            lines=lines, level=level, grep=grep, since=since,
+            ssh_host,
+            command=command,
+            facility=facility,
+            lines=lines,
+            level=level,
+            grep=grep,
+            since=since,
         )
 
     log_file = get_log_file(command, facility=facility)
@@ -408,7 +409,9 @@ def tail_log(
     """
     ssh_host = _get_log_ssh_host()
     if ssh_host:
-        return _remote_tail_log(ssh_host, command=command, facility=facility, lines=lines)
+        return _remote_tail_log(
+            ssh_host, command=command, facility=facility, lines=lines
+        )
 
     log_file = get_log_file(command, facility=facility)
     if not log_file.exists():
@@ -505,7 +508,9 @@ def _remote_list_log_files(ssh_host: str) -> list[dict[str, str | int | float]]:
     )
 
     try:
-        output = run_command(f"python3 -c {_shell_quote(script)}", ssh_host=ssh_host, timeout=15)
+        output = run_command(
+            f"python3 -c {_shell_quote(script)}", ssh_host=ssh_host, timeout=15
+        )
         # Parse the JSON output (last line)
         for line in reversed(output.strip().split("\n")):
             line = line.strip()
@@ -521,13 +526,15 @@ def _remote_list_log_files(ssh_host: str) -> list[dict[str, str | int | float]]:
             mtime = f["modified_epoch"]
             modified = datetime.fromtimestamp(mtime, tz=UTC)
             age_hours = (now - mtime) / 3600
-            results.append({
-                "name": f["name"],
-                "path": f["path"],
-                "size_bytes": f["size_bytes"],
-                "modified_iso": modified.isoformat(),
-                "age_hours": round(age_hours, 1),
-            })
+            results.append(
+                {
+                    "name": f["name"],
+                    "path": f["path"],
+                    "size_bytes": f["size_bytes"],
+                    "modified_iso": modified.isoformat(),
+                    "age_hours": round(age_hours, 1),
+                }
+            )
         return results
     except Exception as e:
         logging.getLogger(__name__).warning("Remote log listing failed: %s", e)
@@ -570,7 +577,7 @@ def _remote_read_log(
             # awk: extract timestamp, compare lexicographically
             parts.append(
                 f"awk -v since='{since_str}' '"
-                '{ts=substr($0,1,19); if(ts >= since) print}'
+                "{ts=substr($0,1,19); if(ts >= since) print}"
                 "'"
             )
 
@@ -627,4 +634,5 @@ def _levels_at_or_above(level: str) -> list[str]:
 def _shell_quote(s: str) -> str:
     """Shell-quote a string for remote execution."""
     import shlex
+
     return shlex.quote(s)

@@ -118,9 +118,7 @@ class ClusterLabeler:
             scope = cluster.get("scope", "global")
 
             user_lines.append(f"\n### Cluster `{cluster['id']}`")
-            user_lines.append(
-                f"- Type: {'cross-IDS' if is_cross else 'intra-IDS'}"
-            )
+            user_lines.append(f"- Type: {'cross-IDS' if is_cross else 'intra-IDS'}")
             user_lines.append(f"- Scope: {scope}")
             if cluster.get("scope_detail"):
                 user_lines.append(f"- Scope detail: {cluster['scope_detail']}")
@@ -141,9 +139,7 @@ class ClusterLabeler:
                 user_lines.append("- Member paths:")
                 user_lines.extend(path_lines)
             else:
-                user_lines.append(
-                    f"- Member paths: {', '.join(shown_paths)}"
-                )
+                user_lines.append(f"- Member paths: {', '.join(shown_paths)}")
             if len(paths) > 20:
                 user_lines.append(f"  - ... and {len(paths) - 20} more")
 

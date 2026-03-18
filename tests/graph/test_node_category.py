@@ -110,9 +110,7 @@ class TestClassifyNode:
 
     def test_error_in_name_but_not_suffix(self):
         """Fields with 'error' in name but not the _error_X suffix pattern."""
-        assert _classify_node(
-            "pf_active/coil/current/data", "data"
-        ) == "data"
+        assert _classify_node("pf_active/coil/current/data", "data") == "data"
 
     def test_code_as_first_segment_not_excluded(self):
         """'code' as the IDS name (first segment) should not be metadata."""

@@ -465,20 +465,34 @@ class TestListPathsResult:
     def test_as_dicts_with_details(self):
         """as_dicts() flattens path_details across results."""
         details_1 = [
-            {"id": "equilibrium/time", "name": "time", "data_type": "FLT_1D",
-             "node_type": "leaf", "documentation": "Time", "units": "s"},
+            {
+                "id": "equilibrium/time",
+                "name": "time",
+                "data_type": "FLT_1D",
+                "node_type": "leaf",
+                "documentation": "Time",
+                "units": "s",
+            },
         ]
         details_2 = [
-            {"id": "core_profiles/time", "name": "time", "data_type": "FLT_1D",
-             "node_type": "leaf", "documentation": "Time", "units": "s"},
+            {
+                "id": "core_profiles/time",
+                "name": "time",
+                "data_type": "FLT_1D",
+                "node_type": "leaf",
+                "documentation": "Time",
+                "units": "s",
+            },
         ]
         result = ListPathsResult(
             format="flat",
             results=[
-                ListPathsResultItem(query="equilibrium", path_count=1,
-                                    path_details=details_1),
-                ListPathsResultItem(query="core_profiles", path_count=1,
-                                    path_details=details_2),
+                ListPathsResultItem(
+                    query="equilibrium", path_count=1, path_details=details_1
+                ),
+                ListPathsResultItem(
+                    query="core_profiles", path_count=1, path_details=details_2
+                ),
             ],
         )
         dicts = result.as_dicts()
@@ -491,8 +505,9 @@ class TestListPathsResult:
         result = ListPathsResult(
             format="flat",
             results=[
-                ListPathsResultItem(query="equilibrium", path_count=5,
-                                    paths=["a", "b", "c", "d", "e"]),
+                ListPathsResultItem(
+                    query="equilibrium", path_count=5, paths=["a", "b", "c", "d", "e"]
+                ),
             ],
         )
         assert result.as_dicts() == []
@@ -502,10 +517,10 @@ class TestListPathsResult:
         result = ListPathsResult(
             format="flat",
             results=[
-                ListPathsResultItem(query="equilibrium", path_count=1,
-                                    path_details=[{"id": "a"}]),
-                ListPathsResultItem(query="bad_ids", path_count=0,
-                                    error="not found"),
+                ListPathsResultItem(
+                    query="equilibrium", path_count=1, path_details=[{"id": "a"}]
+                ),
+                ListPathsResultItem(query="bad_ids", path_count=0, error="not found"),
             ],
         )
         assert len(result.as_dicts()) == 1

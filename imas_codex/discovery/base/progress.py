@@ -584,7 +584,11 @@ class ScannerProgress:
         Examples: ``wiki✓``, ``ppf✓ 5.2K``, ``jpf: subsystem DA 3/26``
         """
         if self.status == "done":
-            count = f" {format_count(self.items_discovered)}" if self.items_discovered else ""
+            count = (
+                f" {format_count(self.items_discovered)}"
+                if self.items_discovered
+                else ""
+            )
             return f"{self.name}✓{count}"
         if self.status == "failed":
             return f"{self.name}✗"

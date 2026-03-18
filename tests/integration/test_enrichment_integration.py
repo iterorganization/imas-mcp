@@ -47,9 +47,7 @@ class TestFetchEnrichmentLive:
         """An occurrence_type path should have an IdentifierSchema."""
         tool = self._make_tool(live_client)
         # occurrence_type paths have HAS_IDENTIFIER_SCHEMA in the live graph
-        result = await tool.fetch_imas_paths(
-            "summary/ids_properties/occurrence_type"
-        )
+        result = await tool.fetch_imas_paths("summary/ids_properties/occurrence_type")
         if not result.nodes:
             pytest.skip("Path not found in graph")
         node = result.nodes[0]
@@ -60,9 +58,7 @@ class TestFetchEnrichmentLive:
     async def test_fetch_leaf_no_identifier_schema(self, live_client):
         """A normal leaf path should not have an IdentifierSchema."""
         tool = self._make_tool(live_client)
-        result = await tool.fetch_imas_paths(
-            "equilibrium/time_slice/profiles_1d/psi"
-        )
+        result = await tool.fetch_imas_paths("equilibrium/time_slice/profiles_1d/psi")
         if not result.nodes:
             pytest.skip("Path not found in graph")
         node = result.nodes[0]
@@ -82,9 +78,7 @@ class TestFetchEnrichmentLive:
         # We can't assert changes exist (depends on data), but the field
         # should be a list or None, not raise
         node = result.nodes[0]
-        assert node.version_changes is None or isinstance(
-            node.version_changes, list
-        )
+        assert node.version_changes is None or isinstance(node.version_changes, list)
 
     @pytest.mark.asyncio
     async def test_fetch_version_history_disabled_is_none(self, live_client):
@@ -111,9 +105,7 @@ class TestFetchEnrichmentLive:
         )
         assert len(result.nodes) == 2
         # occurrence_type should have identifier schema
-        occ = [
-            n for n in result.nodes if n.path.endswith("occurrence_type")
-        ]
+        occ = [n for n in result.nodes if n.path.endswith("occurrence_type")]
         if occ:
             assert occ[0].identifier_schema is not None
 
@@ -164,9 +156,7 @@ class TestClustersListingModeLive:
     async def test_path_lookup_still_works(self, live_client):
         """Existing path-based lookup should still work."""
         tool = self._make_tool(live_client)
-        result = await tool.search_imas_clusters(
-            "equilibrium/time_slice/boundary/psi"
-        )
+        result = await tool.search_imas_clusters("equilibrium/time_slice/boundary/psi")
         assert result["query_type"] == "path"
 
 
@@ -194,17 +184,17 @@ class TestVersionContextLive:
 
     @pytest.mark.anyio
     async def test_nonexistent_path(self, version_tool):
-        result = await version_tool.get_dd_version_context(
-            "fake/nonexistent/thing"
-        )
+        result = await version_tool.get_dd_version_context("fake/nonexistent/thing")
         assert "fake/nonexistent/thing" in result["not_found"]
 
     @pytest.mark.anyio
     async def test_multiple_paths(self, version_tool):
-        result = await version_tool.get_dd_version_context([
-            "equilibrium/time_slice/profiles_1d/psi",
-            "core_profiles/profiles_1d/electrons/temperature",
-        ])
+        result = await version_tool.get_dd_version_context(
+            [
+                "equilibrium/time_slice/profiles_1d/psi",
+                "core_profiles/profiles_1d/electrons/temperature",
+            ]
+        )
         assert result["total_paths"] == 2
         assert len(result["paths"]) == 2
 

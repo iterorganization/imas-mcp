@@ -347,7 +347,9 @@ class IDSAssembler:
                     and mapping.source_units != mapping.target_units
                     and isinstance(value, int | float)
                 ):
-                    value = convert_units(value, mapping.source_units, mapping.target_units)
+                    value = convert_units(
+                        value, mapping.source_units, mapping.target_units
+                    )
                 try:
                     set_nested(entry, rel_path, value)
                 except (AttributeError, TypeError):
@@ -405,7 +407,9 @@ class IDSAssembler:
                     and m.source_units != m.target_units
                     and isinstance(element_val, int | float)
                 ):
-                    element_val = convert_units(element_val, m.source_units, m.target_units)
+                    element_val = convert_units(
+                        element_val, m.source_units, m.target_units
+                    )
                 try:
                     set_nested(elem, rel_path, float(element_val))
                 except (AttributeError, TypeError, ValueError):
@@ -548,12 +552,14 @@ def list_recipes(facility: str | None = None) -> list[dict[str, str]]:
                 ORDER BY r.facility_id, r.ids_name
             """
             for row in gc.query(query, **params):
-                recipes.append({
-                    "facility": row["facility"],
-                    "ids_name": row["ids_name"],
-                    "dd_version": row.get("dd_version", ""),
-                    "source": "graph",
-                })
+                recipes.append(
+                    {
+                        "facility": row["facility"],
+                        "ids_name": row["ids_name"],
+                        "dd_version": row.get("dd_version", ""),
+                        "source": "graph",
+                    }
+                )
     except Exception:
         logger.debug("Graph recipe query failed", exc_info=True)
 

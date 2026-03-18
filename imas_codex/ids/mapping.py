@@ -293,7 +293,9 @@ def _format_identifier_schemas(fields: list[dict[str, Any]]) -> str:
                     name = opt.name if hasattr(opt, "name") else ""
                     idx = opt.index if hasattr(opt, "index") else ""
                     desc = opt.description if hasattr(opt, "description") else ""
-                opt_lines.append(f"    - {idx}: {name}" + (f" — {desc}" if desc else ""))
+                opt_lines.append(
+                    f"    - {idx}: {name}" + (f" — {desc}" if desc else "")
+                )
             line += "\n  Valid values:\n" + "\n".join(opt_lines)
         lines.append(line)
     return "\n".join(lines) if lines else "(no identifier schemas)"
@@ -421,6 +423,7 @@ def _format_unit_analysis(
                 elif result.get("error"):
                     lines.append(f"  {signal_unit} → {imas_unit}: {result['error']}")
     return "\n".join(lines) if lines else "(no unit analysis needed)"
+
 
 def _format_wiki_context(wiki_items: list[dict[str, Any]]) -> str:
     """Format wiki context for the signal mapping prompt."""
@@ -584,7 +587,10 @@ def gather_shared_context(
     # Query ALL signal sources for the union of all domains (ONCE)
     if domain_list:
         groups = query_signal_sources(
-            facility, gc=gc, physics_domains=domain_list, status_filter="enriched",
+            facility,
+            gc=gc,
+            physics_domains=domain_list,
+            status_filter="enriched",
         )
     else:
         groups = query_signal_sources(facility, gc=gc, status_filter="enriched")
@@ -602,6 +608,7 @@ def gather_shared_context(
     embeddings = None
     if source_descs:
         from imas_codex.embeddings.encoder import Encoder
+
         encoder = Encoder()
         _emit(f"embedding {len(source_descs)} sources")
         texts = [desc for _, desc in source_descs]
@@ -613,6 +620,7 @@ def gather_shared_context(
     cluster_searcher = None
     try:
         from imas_codex.clusters.search import ClusterSearcher
+
         cluster_searcher = ClusterSearcher.load()
     except Exception:
         logger.debug("Cluster searcher unavailable")
@@ -624,16 +632,22 @@ def gather_shared_context(
     if domain_list:
         try:
             wiki_context = fetch_wiki_context(
-                facility, domain_list,
-                min_imas_relevance=0.5, k=15, gc=gc,
+                facility,
+                domain_list,
+                min_imas_relevance=0.5,
+                k=15,
+                gc=gc,
             )
         except Exception:
             logger.debug("Wiki context fetch failed")
         try:
             code_context = fetch_code_context(
-                facility, domain_list,
+                facility,
+                domain_list,
                 score_dimension="score_data_access",
-                min_score=0.5, k=15, gc=gc,
+                min_score=0.5,
+                k=15,
+                gc=gc,
             )
         except Exception:
             logger.debug("Code context fetch failed")
@@ -730,7 +744,10 @@ def gather_ids_context(
     semantic_hits: list[dict[str, Any]] = []
     try:
         semantic_hits = search_imas_semantic(
-            f"{facility} {ids_name}", ids_name, gc=gc, k=20,
+            f"{facility} {ids_name}",
+            ids_name,
+            gc=gc,
+            k=20,
             dd_version=dd_version,
         )
     except Exception:
@@ -743,9 +760,9 @@ def gather_ids_context(
     semantic_match_matrix: dict[str, list[dict[str, Any]]] = {}
     for source_id, matches in full_matrix.items():
         filtered = [
-            m for m in matches
-            if m["content_type"] != "imas"
-            or m["target_id"].startswith(ids_prefix)
+            m
+            for m in matches
+            if m["content_type"] != "imas" or m["target_id"].startswith(ids_prefix)
         ]
         if filtered:
             semantic_match_matrix[source_id] = filtered
@@ -776,12 +793,15 @@ def gather_ids_context(
                     for hit in cluster_hits:
                         for member_path in hit.paths:
                             if member_path not in existing_ids:
-                                cluster_additions.append({
-                                    "id": member_path,
-                                    "score": hit.similarity_score * cand.get("score", 0.5),
-                                    "via_cluster": hit.label,
-                                    "documentation": f"Cluster member: {hit.description}",
-                                })
+                                cluster_additions.append(
+                                    {
+                                        "id": member_path,
+                                        "score": hit.similarity_score
+                                        * cand.get("score", 0.5),
+                                        "via_cluster": hit.label,
+                                        "documentation": f"Cluster member: {hit.description}",
+                                    }
+                                )
                                 existing_ids.add(member_path)
                 except Exception:
                     pass
@@ -795,10 +815,13 @@ def gather_ids_context(
     section_clusters: list[dict[str, Any]] = []
     try:
         from imas_codex.tools.graph_search import GraphClustersTool
+
         clusters_tool = GraphClustersTool(gc)
         cluster_result = _run_async(
             clusters_tool.search_imas_clusters(
-                ids_filter=ids_name, section_only=True, dd_version=dd_version,
+                ids_filter=ids_name,
+                section_only=True,
+                dd_version=dd_version,
             )
         )
         section_clusters = cluster_result.get("clusters", [])
@@ -847,11 +870,17 @@ def gather_context(
     embedding across IDS targets.
     """
     shared = gather_shared_context(
-        facility, [ids_name], gc=gc, dd_version=dd_version,
+        facility,
+        [ids_name],
+        gc=gc,
+        dd_version=dd_version,
         on_progress=on_progress,
     )
     return gather_ids_context(
-        facility, ids_name, shared, gc=gc,
+        facility,
+        ids_name,
+        shared,
+        gc=gc,
         on_progress=on_progress,
     )
 
@@ -894,9 +923,7 @@ def assign_targets(
         signal_sources=_format_sources(context["groups"]),
         imas_subtree=_format_subtree(context["subtree"]),
         semantic_results=_format_subtree(context["semantic"]),
-        section_clusters=_format_section_clusters(
-            context.get("section_clusters", [])
-        ),
+        section_clusters=_format_section_clusters(context.get("section_clusters", [])),
         cross_facility_mappings=_format_cross_facility_mappings(
             context.get("cross_mappings", [])
         ),
@@ -937,9 +964,7 @@ async def aassign_targets(
         signal_sources=_format_sources(context["groups"]),
         imas_subtree=_format_subtree(context["subtree"]),
         semantic_results=_format_subtree(context["semantic"]),
-        section_clusters=_format_section_clusters(
-            context.get("section_clusters", [])
-        ),
+        section_clusters=_format_section_clusters(context.get("section_clusters", [])),
         cross_facility_mappings=_format_cross_facility_mappings(
             context.get("cross_mappings", [])
         ),
@@ -967,9 +992,7 @@ def map_signals(
     cost: PipelineCost,
 ) -> list[SignalMappingBatch]:
     """Generate signal mappings per section."""
-    logger.info(
-        "Generating signal mappings for %d targets", len(sections.assignments)
-    )
+    logger.info("Generating signal mappings for %d targets", len(sections.assignments))
 
     batches: list[SignalMappingBatch] = []
     dd_ver = context.get("dd_version")
@@ -979,12 +1002,18 @@ def map_signals(
 
         # Get detailed fields for this target
         fields = fetch_imas_fields(
-            ids_name, [target_path], gc=gc, dd_version=dd_ver,
+            ids_name,
+            [target_path],
+            gc=gc,
+            dd_version=dd_ver,
         )
         # Also get leaf fields under this target
         subtree_fields = fetch_imas_subtree(
-            ids_name, target_path.removeprefix(f"{ids_name}/"), gc=gc,
-            leaf_only=True, dd_version=dd_ver,
+            ids_name,
+            target_path.removeprefix(f"{ids_name}/"),
+            gc=gc,
+            leaf_only=True,
+            dd_version=dd_ver,
         )
 
         # Find the signal source details
@@ -1016,8 +1045,7 @@ def map_signals(
             if dd_cocos:
                 parts.append(f"Target DD COCOS convention: {dd_cocos}")
             flip_paths = [
-                p for p in context["cocos_paths"]
-                if p.startswith(target_path)
+                p for p in context["cocos_paths"] if p.startswith(target_path)
             ]
             if flip_paths:
                 parts.append(
@@ -1037,7 +1065,8 @@ def map_signals(
             vt = VersionTool(gc)
             field_paths = [
                 f.get("id", "") or f.get("path", "")
-                for f in all_fields if (f.get("id") or f.get("path"))
+                for f in all_fields
+                if (f.get("id") or f.get("path"))
             ]
             if field_paths:
                 version_ctx = _run_async(vt.get_dd_version_context(paths=field_paths))
@@ -1065,9 +1094,13 @@ def map_signals(
                 else:
                     semantic_lines.append(f"  - {path} (score={score:.2f}): {doc}")
             if semantic_lines:
-                semantic_context = "Semantic search candidates:\n" + "\n".join(semantic_lines)
+                semantic_context = "Semantic search candidates:\n" + "\n".join(
+                    semantic_lines
+                )
             if cluster_lines:
-                cluster_context = "Cluster-derived candidates:\n" + "\n".join(cluster_lines)
+                cluster_context = "Cluster-derived candidates:\n" + "\n".join(
+                    cluster_lines
+                )
 
         # Wiki and code context from gather_context (Phase 3 enrichment)
         wiki_ctx = _format_wiki_context(context.get("wiki_context", []))
@@ -1075,7 +1108,8 @@ def map_signals(
 
         # Semantic match matrix from gather_context (Phase 4 enrichment)
         match_matrix_ctx = _format_semantic_match_matrix(
-            context.get("semantic_match_matrix", {}), source_id,
+            context.get("semantic_match_matrix", {}),
+            source_id,
         )
 
         prompt = _render_prompt(
@@ -1146,7 +1180,12 @@ async def amap_signals(
         # Prepare context — all sync graph/CPU work, run in thread
         prep = await asyncio.to_thread(
             _prepare_section_context,
-            facility, ids_name, assignment, context, gc=gc, dd_version=dd_ver,
+            facility,
+            ids_name,
+            assignment,
+            context,
+            gc=gc,
+            dd_version=dd_ver,
         )
 
         messages = _build_messages("signal_mapping_system", prep["prompt"])
@@ -1177,11 +1216,17 @@ def _prepare_section_context(
     target_path = assignment.imas_target_path
 
     fields = fetch_imas_fields(
-        ids_name, [target_path], gc=gc, dd_version=dd_version,
+        ids_name,
+        [target_path],
+        gc=gc,
+        dd_version=dd_version,
     )
     subtree_fields = fetch_imas_subtree(
-        ids_name, target_path.removeprefix(f"{ids_name}/"), gc=gc,
-        leaf_only=True, dd_version=dd_version,
+        ids_name,
+        target_path.removeprefix(f"{ids_name}/"),
+        gc=gc,
+        leaf_only=True,
+        dd_version=dd_version,
     )
 
     sg_detail = next(
@@ -1209,10 +1254,7 @@ def _prepare_section_context(
             parts.append(f"Signal COCOS convention: {source_cocos}")
         if dd_cocos:
             parts.append(f"Target DD COCOS convention: {dd_cocos}")
-        flip_paths = [
-            p for p in context["cocos_paths"]
-            if p.startswith(target_path)
-        ]
+        flip_paths = [p for p in context["cocos_paths"] if p.startswith(target_path)]
         if flip_paths:
             parts.append(
                 "Target IMAS paths requiring sign flip:\n"
@@ -1229,7 +1271,8 @@ def _prepare_section_context(
         vt = VersionTool(gc)
         field_paths = [
             f.get("id", "") or f.get("path", "")
-            for f in all_fields if (f.get("id") or f.get("path"))
+            for f in all_fields
+            if (f.get("id") or f.get("path"))
         ]
         if field_paths:
             version_ctx = _run_async(vt.get_dd_version_context(paths=field_paths))
@@ -1256,7 +1299,9 @@ def _prepare_section_context(
             else:
                 semantic_lines.append(f"  - {path} (score={score:.2f}): {doc}")
         if semantic_lines:
-            semantic_context = "Semantic search candidates:\n" + "\n".join(semantic_lines)
+            semantic_context = "Semantic search candidates:\n" + "\n".join(
+                semantic_lines
+            )
         if cluster_lines:
             cluster_context = "Cluster-derived candidates:\n" + "\n".join(cluster_lines)
 
@@ -1264,7 +1309,8 @@ def _prepare_section_context(
     code_ctx = _format_code_context(context.get("code_context", []))
 
     match_matrix_ctx = _format_semantic_match_matrix(
-        context.get("semantic_match_matrix", {}), source_id,
+        context.get("semantic_match_matrix", {}),
+        source_id,
     )
 
     prompt = _render_prompt(
@@ -1359,7 +1405,8 @@ def discover_assembly(
         if assignment.target_type in (TargetType.SCALAR, TargetType.PROFILE):
             logger.info(
                 "Auto-generating DIRECT assembly for %s target %s",
-                assignment.target_type, target_path,
+                assignment.target_type,
+                target_path,
             )
             configs.append(
                 AssemblyConfig(
@@ -1380,7 +1427,10 @@ def discover_assembly(
 
         # Fetch fields with identifier schema data for assembly context
         target_fields = fetch_imas_fields(
-            ids_name, [target_path], gc=gc, dd_version=dd_ver,
+            ids_name,
+            [target_path],
+            gc=gc,
+            dd_version=dd_ver,
         )
 
         prompt = _render_prompt(
@@ -1436,7 +1486,8 @@ async def adiscover_assembly(
         if assignment.target_type in (TargetType.SCALAR, TargetType.PROFILE):
             logger.info(
                 "Auto-generating DIRECT assembly for %s target %s",
-                assignment.target_type, target_path,
+                assignment.target_type,
+                target_path,
             )
             config = AssemblyConfig(
                 target_path=target_path,
@@ -1457,7 +1508,10 @@ async def adiscover_assembly(
 
         target_fields = await asyncio.to_thread(
             fetch_imas_fields,
-            ids_name, [target_path], gc=gc, dd_version=dd_ver,
+            ids_name,
+            [target_path],
+            gc=gc,
+            dd_version=dd_ver,
         )
 
         prompt = _render_prompt(
@@ -1533,7 +1587,9 @@ def validate_mappings(
 
     # Coverage threshold check
     coverage_escalations = check_coverage_threshold(
-        ids_name, all_bindings, gc=gc,
+        ids_name,
+        all_bindings,
+        gc=gc,
     )
     all_escalations.extend(coverage_escalations)
 

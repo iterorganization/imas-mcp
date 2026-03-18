@@ -236,7 +236,9 @@ def _installed_service_supports_request(
     return requested.issubset(installed)
 
 
-def _run_systemctl_user(args: list[str], *, check: bool = True) -> subprocess.CompletedProcess:
+def _run_systemctl_user(
+    args: list[str], *, check: bool = True
+) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["systemctl", "--user", *args],
         check=check,
@@ -251,7 +253,9 @@ def _build_foreground_tunnel_command(
 ) -> tuple[list[str], dict[str, str]]:
     autossh = shutil.which("autossh")
     if not autossh:
-        raise click.ClickException("autossh not found. Install with: sudo apt install autossh")
+        raise click.ClickException(
+            "autossh not found. Install with: sudo apt install autossh"
+        )
 
     from imas_codex.remote.tunnel import SSH_TUNNEL_OPTS
 
@@ -324,7 +328,11 @@ def _run_service_supervisor(
                 for remote_port, local_port, _label, remote_bind in ports
             )
 
-            if child is None or child.poll() is not None or signature != current_signature:
+            if (
+                child is None
+                or child.poll() is not None
+                or signature != current_signature
+            ):
                 if current_signature is None:
                     click.echo(f"Starting persistent tunnel supervisor for {host}")
                 elif signature != current_signature:
@@ -387,7 +395,7 @@ def _build_systemd_service_content(
     autossh_log = log_dir / f"autossh-{host}.log"
 
     exec_start = (
-        f'{uv} run --project {_REPO_ROOT} imas-codex tunnel service-run {host}'
+        f"{uv} run --project {_REPO_ROOT} imas-codex tunnel service-run {host}"
         + (f" {flags}" if flags else "")
     )
 
@@ -655,12 +663,15 @@ def tunnel_start(
     """
     target = _resolve_host(host)
 
-    if _installed_service_supports_request(
-        target,
-        neo4j_only,
-        embed_only,
-        llm_only,
-    ) and not keyring_only:
+    if (
+        _installed_service_supports_request(
+            target,
+            neo4j_only,
+            embed_only,
+            llm_only,
+        )
+        and not keyring_only
+    ):
         click.echo(f"Starting systemd tunnel service for {target}:")
         _run_systemctl_user(["start", _service_name(target)])
         click.echo(f"✓ Tunnel service active: {_service_name(target)}")

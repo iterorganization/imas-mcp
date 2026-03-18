@@ -572,13 +572,15 @@ class GraphSchema:
     # Slot names that should be indexed on every class that has them.
     # These are pattern-based: if a class has a `status` slot, it gets
     # a status index automatically.  No need to add each class manually.
-    AUTO_INDEX_SLOTS: frozenset[str] = frozenset({
-        "status",           # claim-loop status filter
-        "claim_token",      # two-step claim verification
-        "content_hash",     # dedup gate lookups
-        "data_source_name", # signal/epoch scoping
-        "url",              # wiki page lookups
-    })
+    AUTO_INDEX_SLOTS: frozenset[str] = frozenset(
+        {
+            "status",  # claim-loop status filter
+            "claim_token",  # two-step claim verification
+            "content_hash",  # dedup gate lookups
+            "data_source_name",  # signal/epoch scoping
+            "url",  # wiki page lookups
+        }
+    )
 
     def index_statements(
         self,

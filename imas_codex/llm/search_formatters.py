@@ -82,6 +82,7 @@ def _stringify_cluster_labels(values: Any) -> list[str]:
 
     return labels
 
+
 # ---------------------------------------------------------------------------
 # search_signals formatter
 # ---------------------------------------------------------------------------
@@ -1007,7 +1008,9 @@ def format_cluster_report(result: Any) -> str:
     parts: list[str] = []
     clusters = _get_value(result, "clusters", []) or []
 
-    parts.append(f"## IMAS Clusters ({_get_value(result, 'clusters_found', 0)} found)\n")
+    parts.append(
+        f"## IMAS Clusters ({_get_value(result, 'clusters_found', 0)} found)\n"
+    )
 
     for cl in clusters:
         label = cl.get("label", "?")

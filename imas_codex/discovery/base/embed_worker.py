@@ -82,7 +82,9 @@ ERROR_BACKOFF_MAX = 60.0
 TARGET_EMBED_TEXT_CHARS = 4000
 
 
-def _split_oversized_text(text: str, max_chars: int = TARGET_EMBED_TEXT_CHARS) -> list[str]:
+def _split_oversized_text(
+    text: str, max_chars: int = TARGET_EMBED_TEXT_CHARS
+) -> list[str]:
     """Split oversized text into embeddable segments.
 
     Splits on newline boundaries to preserve code structure. Each segment
@@ -328,8 +330,12 @@ def embed_batch_sync(
     from imas_codex.embeddings.description import embed_descriptions_batch
 
     items = _fetch_unembedded(
-        label, facility, batch_size, text_field=text_field,
-        min_score=min_score, score_joins=score_joins,
+        label,
+        facility,
+        batch_size,
+        text_field=text_field,
+        min_score=min_score,
+        score_joins=score_joins,
     )
     if not items:
         return 0, 0, []
@@ -353,7 +359,9 @@ def embed_batch_sync(
                 len(text_segments),
             )
         for seg in text_segments:
-            segments.append({"id": f"{item['id']}:seg{len(segments)}", "description": seg})
+            segments.append(
+                {"id": f"{item['id']}:seg{len(segments)}", "description": seg}
+            )
             segment_to_item.append(i)
 
     # Embed all segments
@@ -362,9 +370,7 @@ def embed_batch_sync(
     # Average embeddings for items with multiple segments
     for i, item in enumerate(items):
         item_segments = [
-            segments[j]
-            for j in range(len(segments))
-            if segment_to_item[j] == i
+            segments[j] for j in range(len(segments)) if segment_to_item[j] == i
         ]
         embeddings = [
             seg["embedding"]
@@ -399,8 +405,12 @@ def embed_batch_sync(
                 continue
             # Re-fetch and retry single item
             single_items = _fetch_unembedded(
-                label, facility, 1, text_field=text_field,
-                min_score=min_score, score_joins=score_joins,
+                label,
+                facility,
+                1,
+                text_field=text_field,
+                min_score=min_score,
+                score_joins=score_joins,
             )
             if not single_items:
                 break  # no more items to try
@@ -410,9 +420,15 @@ def embed_batch_sync(
             if len(text_segments) > 1:
                 logger.debug(
                     "Split oversized %s %s (%d chars) into %d segments",
-                    label, single_item["id"], len(text), len(text_segments),
+                    label,
+                    single_item["id"],
+                    len(text),
+                    len(text_segments),
                 )
-            seg_items = [{"id": f"seg{j}", "description": seg} for j, seg in enumerate(text_segments)]
+            seg_items = [
+                {"id": f"seg{j}", "description": seg}
+                for j, seg in enumerate(text_segments)
+            ]
             seg_items = embed_descriptions_batch(seg_items)
             embeddings = [s["embedding"] for s in seg_items if s.get("embedding")]
             if embeddings:
@@ -541,8 +557,12 @@ async def embed_description_worker(
             batch_start = _time.monotonic()
             try:
                 fetched, embedded, _ids = await asyncio.to_thread(
-                    embed_batch_sync, label, facility, batch_size,
-                    min_score=min_score, score_joins=score_joins,
+                    embed_batch_sync,
+                    label,
+                    facility,
+                    batch_size,
+                    min_score=min_score,
+                    score_joins=score_joins,
                 )
             except Exception as e:
                 logger.warning(
@@ -573,10 +593,7 @@ async def embed_description_worker(
                     label,
                 )
                 if on_progress:
-                    results = [
-                        {"id": nid, "label": label}
-                        for nid in _ids[:embedded]
-                    ]
+                    results = [{"id": nid, "label": label} for nid in _ids[:embedded]]
                     on_progress(f"embedded {embedded} {label}", stats, results)
 
         # Backoff logic: distinguish idle (no work) from errors (work but
@@ -602,9 +619,7 @@ async def embed_description_worker(
             # Errors prevented fetching — back off but don't count as idle
             backoff = min(IDLE_SLEEP * (2**error_count), ERROR_BACKOFF_MAX)
             if on_progress:
-                on_progress(
-                    f"embed errors (backing off {backoff:.0f}s)", stats
-                )
+                on_progress(f"embed errors (backing off {backoff:.0f}s)", stats)
             await asyncio.sleep(backoff)
         elif total_embedded == 0:
             # Fetched items but failed to embed any — server is down
@@ -619,9 +634,7 @@ async def embed_description_worker(
                 backoff,
             )
             if on_progress:
-                on_progress(
-                    f"embed failed (backing off {backoff:.0f}s)", stats
-                )
+                on_progress(f"embed failed (backing off {backoff:.0f}s)", stats)
             await asyncio.sleep(backoff)
         else:
             idle_count = 0
@@ -696,9 +709,7 @@ async def embed_text_worker(
         await asyncio.to_thread(_warmup_encoder)
         logger.debug("embed_text_worker %s: encoder warmed up", worker_id)
     except Exception as e:
-        logger.warning(
-            "embed_text_worker %s: encoder warmup failed: %s", worker_id, e
-        )
+        logger.warning("embed_text_worker %s: encoder warmup failed: %s", worker_id, e)
 
     idle_count = 0
     error_count = 0
@@ -715,14 +726,20 @@ async def embed_text_worker(
             batch_start = _time.monotonic()
             try:
                 fetched, embedded, node_ids = await asyncio.to_thread(
-                    embed_batch_sync, label, facility, batch_size,
+                    embed_batch_sync,
+                    label,
+                    facility,
+                    batch_size,
                     text_field="text",
-                    min_score=min_score, score_joins=score_joins,
+                    min_score=min_score,
+                    score_joins=score_joins,
                 )
             except Exception as e:
                 logger.warning(
                     "embed_text_worker %s: error embedding %s: %s",
-                    worker_id, label, e,
+                    worker_id,
+                    label,
+                    e,
                 )
                 stats.errors += 1
                 error_count += 1
@@ -740,16 +757,16 @@ async def embed_text_worker(
                 error_count = 0
                 logger.debug(
                     "embed_text_worker %s: embedded %d/%d %s",
-                    worker_id, embedded, fetched, label,
+                    worker_id,
+                    embedded,
+                    fetched,
+                    label,
                 )
                 if on_progress:
                     results = [
-                        {"id": nid, "label": label}
-                        for nid in node_ids[:embedded]
+                        {"id": nid, "label": label} for nid in node_ids[:embedded]
                     ]
-                    on_progress(
-                        f"embedded {embedded} {label}", stats, results
-                    )
+                    on_progress(f"embedded {embedded} {label}", stats, results)
 
         if total_fetched == 0 and not had_errors:
             idle_count += 1
@@ -768,23 +785,20 @@ async def embed_text_worker(
             # Errors prevented fetching — back off but don't count as idle
             backoff = min(IDLE_SLEEP * (2**error_count), ERROR_BACKOFF_MAX)
             if on_progress:
-                on_progress(
-                    f"embed errors (backing off {backoff:.0f}s)", stats
-                )
+                on_progress(f"embed errors (backing off {backoff:.0f}s)", stats)
             await asyncio.sleep(backoff)
         elif total_embedded == 0:
             error_count += 1
             idle_count = 0
             backoff = min(IDLE_SLEEP * (2**error_count), ERROR_BACKOFF_MAX)
             logger.info(
-                "embed_text_worker %s: fetched %d but embedded 0, "
-                "backing off %.0fs",
-                worker_id, total_fetched, backoff,
+                "embed_text_worker %s: fetched %d but embedded 0, backing off %.0fs",
+                worker_id,
+                total_fetched,
+                backoff,
             )
             if on_progress:
-                on_progress(
-                    f"embed failed (backing off {backoff:.0f}s)", stats
-                )
+                on_progress(f"embed failed (backing off {backoff:.0f}s)", stats)
             await asyncio.sleep(backoff)
         else:
             idle_count = 0

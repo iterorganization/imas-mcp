@@ -2042,9 +2042,7 @@ class TestMCFGPersist:
     def test_persist_creates_calibration_epoch_nodes(self):
         """Individual CalibrationEpoch graph nodes are created for each epoch."""
         _, _, queries = self._run_persist()
-        ce_queries = [
-            (q, kw) for q, kw in queries if "CalibrationEpoch" in q
-        ]
+        ce_queries = [(q, kw) for q, kw in queries if "CalibrationEpoch" in q]
         assert len(ce_queries) == 1
         records = ce_queries[0][1]["records"]
         assert len(records) == 2
@@ -2070,9 +2068,7 @@ class TestMCFGPersist:
     def test_persist_calibration_epoch_relationships(self):
         """CalibrationEpoch nodes have AT_FACILITY and IN_DATA_SOURCE relationships."""
         _, _, queries = self._run_persist()
-        ce_queries = [
-            (q, kw) for q, kw in queries if "CalibrationEpoch" in q
-        ]
+        ce_queries = [(q, kw) for q, kw in queries if "CalibrationEpoch" in q]
         assert len(ce_queries) == 1
         cypher = ce_queries[0][0]
         assert "AT_FACILITY" in cypher
@@ -2292,9 +2288,7 @@ class TestMCFGSensorVersions:
         """Versioned sensors create SignalNode with version_date tags."""
         _, nodes, _ = self._run_persist()
         version_nodes = [
-            dn
-            for dn in nodes.get("SignalNode", [])
-            if "version_date" in dn
+            dn for dn in nodes.get("SignalNode", []) if "version_date" in dn
         ]
         # 2005 version has 1 coil, 2019 has 1 coil + 1 hall probe = 3 total
         assert len(version_nodes) == 3
@@ -2311,7 +2305,8 @@ class TestMCFGSensorVersions:
         """Each version creates its own DataSource node."""
         _, _, queries = self._run_persist()
         ds_queries = [
-            (q, kw) for q, kw in queries
+            (q, kw)
+            for q, kw in queries
             if "MERGE (ds:DataSource" in q and "ds_id" in kw
         ]
         assert len(ds_queries) == 2
@@ -2322,9 +2317,7 @@ class TestMCFGSensorVersions:
     def test_supersedes_chain_created(self):
         """SUPERSEDES relationship links newer → older versions."""
         _, _, queries = self._run_persist()
-        sup_queries = [
-            (q, kw) for q, kw in queries if "SUPERSEDES" in q
-        ]
+        sup_queries = [(q, kw) for q, kw in queries if "SUPERSEDES" in q]
         assert len(sup_queries) == 1
         records = sup_queries[0][1]["records"]
         assert len(records) == 1
@@ -2338,13 +2331,10 @@ class TestMCFGSensorVersions:
         )
         assert stats.get("sensor_versions", 0) == 0
         version_nodes = [
-            dn for dn in nodes.get("SignalNode", [])
-            if "version_date" in dn
+            dn for dn in nodes.get("SignalNode", []) if "version_date" in dn
         ]
         assert len(version_nodes) == 0
-        sup_queries = [
-            (q, kw) for q, kw in queries if "SUPERSEDES" in q
-        ]
+        sup_queries = [(q, kw) for q, kw in queries if "SUPERSEDES" in q]
         assert len(sup_queries) == 0
 
     def test_failed_version_skipped(self):
@@ -2370,9 +2360,7 @@ class TestMCFGSensorVersions:
         # Only 1 version succeeded (the empty one)
         assert stats["sensor_versions"] == 1
         # No SUPERSEDES — need at least 2 valid versions
-        sup_queries = [
-            (q, kw) for q, kw in queries if "SUPERSEDES" in q
-        ]
+        sup_queries = [(q, kw) for q, kw in queries if "SUPERSEDES" in q]
         assert len(sup_queries) == 0
 
 

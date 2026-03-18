@@ -76,7 +76,10 @@ class _FakeClient:
 
         if "UNWIND $ids_names AS ids_name" in compact:
             return []
-        if "MATCH (p:IMASNode)-[:HAS_IDENTIFIER_SCHEMA]->(s:IdentifierSchema)" in compact:
+        if (
+            "MATCH (p:IMASNode)-[:HAS_IDENTIFIER_SCHEMA]->(s:IdentifierSchema)"
+            in compact
+        ):
             return []
         if "MATCH (i:IDS) WHERE i.physics_domain IS NOT NULL" in compact:
             return []

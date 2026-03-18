@@ -1373,57 +1373,67 @@ def mark_paths_triaged(
 
             if evidence_id not in evidence_seen:
                 evidence_seen.add(evidence_id)
-                evidence_items.append({
-                    "id": evidence_id,
-                    "code_indicators": evidence_dict.get("code_indicators", []),
-                    "data_indicators": evidence_dict.get("data_indicators", []),
-                    "doc_indicators": evidence_dict.get("doc_indicators", []),
-                    "imas_indicators": evidence_dict.get("imas_indicators", []),
-                    "physics_indicators": evidence_dict.get("physics_indicators", []),
-                    "quality_indicators": evidence_dict.get("quality_indicators", []),
-                    "now": now,
-                })
+                evidence_items.append(
+                    {
+                        "id": evidence_id,
+                        "code_indicators": evidence_dict.get("code_indicators", []),
+                        "data_indicators": evidence_dict.get("data_indicators", []),
+                        "doc_indicators": evidence_dict.get("doc_indicators", []),
+                        "imas_indicators": evidence_dict.get("imas_indicators", []),
+                        "physics_indicators": evidence_dict.get(
+                            "physics_indicators", []
+                        ),
+                        "quality_indicators": evidence_dict.get(
+                            "quality_indicators", []
+                        ),
+                        "now": now,
+                    }
+                )
 
         should_expand = score_data.get("should_expand", False)
 
-        path_items.append({
-            "id": path_id,
-            "now": now,
-            "triaged": PathStatus.triaged.value,
-            "triage_composite": score_data.get("triage_composite"),
-            "triage_modeling_code": score_data.get("triage_modeling_code"),
-            "triage_analysis_code": score_data.get("triage_analysis_code"),
-            "triage_operations_code": score_data.get("triage_operations_code"),
-            "triage_modeling_data": score_data.get("triage_modeling_data"),
-            "triage_experimental_data": score_data.get("triage_experimental_data"),
-            "triage_data_access": score_data.get("triage_data_access"),
-            "triage_workflow": score_data.get("triage_workflow"),
-            "triage_visualization": score_data.get("triage_visualization"),
-            "triage_documentation": score_data.get("triage_documentation"),
-            "triage_imas": score_data.get("triage_imas"),
-            "triage_convention": score_data.get("triage_convention"),
-            "description": score_data.get("description"),
-            "path_purpose": score_data.get("path_purpose"),
-            "evidence_id": evidence_id,
-            "should_expand": should_expand,
-            "should_enrich": score_data.get("should_enrich", True),
-            "keywords": score_data.get("keywords"),
-            "physics_domain": score_data.get("physics_domain"),
-            "expansion_reason": score_data.get("expansion_reason"),
-            "skip_reason": score_data.get("skip_reason"),
-            "terminal_reason": score_data.get("terminal_reason"),
-            "enrich_skip_reason": score_data.get("enrich_skip_reason"),
-            "score_cost": score_data.get("score_cost", 0.0),
-        })
+        path_items.append(
+            {
+                "id": path_id,
+                "now": now,
+                "triaged": PathStatus.triaged.value,
+                "triage_composite": score_data.get("triage_composite"),
+                "triage_modeling_code": score_data.get("triage_modeling_code"),
+                "triage_analysis_code": score_data.get("triage_analysis_code"),
+                "triage_operations_code": score_data.get("triage_operations_code"),
+                "triage_modeling_data": score_data.get("triage_modeling_data"),
+                "triage_experimental_data": score_data.get("triage_experimental_data"),
+                "triage_data_access": score_data.get("triage_data_access"),
+                "triage_workflow": score_data.get("triage_workflow"),
+                "triage_visualization": score_data.get("triage_visualization"),
+                "triage_documentation": score_data.get("triage_documentation"),
+                "triage_imas": score_data.get("triage_imas"),
+                "triage_convention": score_data.get("triage_convention"),
+                "description": score_data.get("description"),
+                "path_purpose": score_data.get("path_purpose"),
+                "evidence_id": evidence_id,
+                "should_expand": should_expand,
+                "should_enrich": score_data.get("should_enrich", True),
+                "keywords": score_data.get("keywords"),
+                "physics_domain": score_data.get("physics_domain"),
+                "expansion_reason": score_data.get("expansion_reason"),
+                "skip_reason": score_data.get("skip_reason"),
+                "terminal_reason": score_data.get("terminal_reason"),
+                "enrich_skip_reason": score_data.get("enrich_skip_reason"),
+                "score_cost": score_data.get("score_cost", 0.0),
+            }
+        )
 
         # Collect child-skip candidates
         path_purpose = score_data.get("path_purpose")
         data_purposes = {"modeling_data", "experimental_data"}
         if path_purpose in data_purposes and not should_expand:
-            child_skip_ids.append({
-                "id": path_id,
-                "reason": f"parent_{path_purpose}",
-            })
+            child_skip_ids.append(
+                {
+                    "id": path_id,
+                    "reason": f"parent_{path_purpose}",
+                }
+            )
 
     with GraphClient() as gc:
         # Batch MERGE Evidence nodes
@@ -2989,10 +2999,12 @@ def mark_enrichment_complete(
         path_id = f"{facility}:{result['path']}"
 
         if result.get("error"):
-            error_items.append({
-                "id": path_id,
-                "reason": result["error"],
-            })
+            error_items.append(
+                {
+                    "id": path_id,
+                    "reason": result["error"],
+                }
+            )
         else:
             lang_breakdown = result.get("language_breakdown")
             if isinstance(lang_breakdown, dict):
@@ -3001,15 +3013,17 @@ def mark_enrichment_complete(
             warnings = result.get("warnings", [])
             warn_str = ", ".join(warnings) if warnings else None
 
-            success_items.append({
-                "id": path_id,
-                "now": now,
-                "total_bytes": result.get("total_bytes"),
-                "total_lines": result.get("total_lines"),
-                "language_breakdown": lang_breakdown,
-                "is_multiformat": result.get("is_multiformat"),
-                "enrich_warnings": warn_str,
-            })
+            success_items.append(
+                {
+                    "id": path_id,
+                    "now": now,
+                    "total_bytes": result.get("total_bytes"),
+                    "total_lines": result.get("total_lines"),
+                    "language_breakdown": lang_breakdown,
+                    "is_multiformat": result.get("is_multiformat"),
+                    "enrich_warnings": warn_str,
+                }
+            )
 
     updated = 0
     with GraphClient() as gc:

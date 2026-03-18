@@ -7,7 +7,9 @@ from imas_codex.graph.dd_workers import DDBuildState, embed_worker, enrich_worke
 @pytest.mark.asyncio
 async def test_enrich_worker_runs_aux_before_idle_completion(monkeypatch):
     state = DDBuildState(facility="imas")
-    state.enrich_phase = PipelinePhase("enrich", has_work_fn=lambda: False, idle_threshold=1)
+    state.enrich_phase = PipelinePhase(
+        "enrich", has_work_fn=lambda: False, idle_threshold=1
+    )
     state.enrich_phase.refresh_has_work()
 
     order: list[str] = []
@@ -45,7 +47,9 @@ async def test_enrich_worker_runs_aux_before_idle_completion(monkeypatch):
 async def test_embed_worker_runs_aux_before_idle_completion(monkeypatch):
     state = DDBuildState(facility="imas")
     state.enrich_phase.mark_done()
-    state.embed_phase = PipelinePhase("embed", has_work_fn=lambda: False, idle_threshold=1)
+    state.embed_phase = PipelinePhase(
+        "embed", has_work_fn=lambda: False, idle_threshold=1
+    )
     state.embed_phase.refresh_has_work()
 
     order: list[str] = []

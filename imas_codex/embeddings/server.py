@@ -221,7 +221,10 @@ def _claim_gpu() -> int | None:
             _gpu_slot_fds.append(fd)
             logger.info(
                 "Worker PID %d claimed GPU %d (slot %d of %d)",
-                my_pid, gpu_id, slot_idx, len(_gpu_pool),
+                my_pid,
+                gpu_id,
+                slot_idx,
+                len(_gpu_pool),
             )
             return gpu_id
         except OSError:
@@ -235,7 +238,8 @@ def _claim_gpu() -> int | None:
     # All slots taken — should not happen with workers <= pool size.
     logger.error(
         "Worker PID %d: all %d GPU slots occupied, defaulting to pool[0]",
-        my_pid, len(_gpu_pool),
+        my_pid,
+        len(_gpu_pool),
     )
     return _gpu_pool[0]
 
@@ -314,14 +318,10 @@ def _init_worker_gpu() -> None:
     lock_fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
 
     try:
-        logger.info(
-            "Worker PID %d: waiting for CUDA init lock...", os.getpid()
-        )
+        logger.info("Worker PID %d: waiting for CUDA init lock...", os.getpid())
         # Blocking exclusive lock — only one worker initializes at a time.
         fcntl.flock(lock_fd, fcntl.LOCK_EX)
-        logger.info(
-            "Worker PID %d: acquired CUDA init lock", os.getpid()
-        )
+        logger.info("Worker PID %d: acquired CUDA init lock", os.getpid())
 
         # Claim a GPU slot
         if _gpu_pool:
@@ -331,9 +331,7 @@ def _init_worker_gpu() -> None:
                 os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
 
         # Set BEFORE importing torch
-        os.environ.setdefault(
-            "PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True"
-        )
+        os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
         logger.info("Loading embedding model...")
         start = time.time()
@@ -358,9 +356,7 @@ def _init_worker_gpu() -> None:
                 import torch
 
                 mem_fraction = float(
-                    os.environ.get(
-                        "IMAS_CODEX_GPU_MEMORY_FRACTION", default_fraction
-                    )
+                    os.environ.get("IMAS_CODEX_GPU_MEMORY_FRACTION", default_fraction)
                 )
                 torch.cuda.set_per_process_memory_fraction(mem_fraction)
                 free_mb, total_mb = torch.cuda.mem_get_info(0)
@@ -539,9 +535,7 @@ def _encode_batch_safe(
 
     # Last resort: encode one at a time, substituting zero vectors for
     # texts that still OOM (e.g. extremely long individual texts).
-    logger.warning(
-        "Falling back to one-at-a-time encoding for %d texts", len(texts)
-    )
+    logger.warning("Falling back to one-at-a-time encoding for %d texts", len(texts))
     dim = _cached_embedding_dim or 1024
     results = []
     for _j, text in enumerate(texts):
