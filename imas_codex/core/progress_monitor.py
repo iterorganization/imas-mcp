@@ -38,9 +38,12 @@ def _resolve_rich(use_rich: bool | None) -> bool:
     """Determine whether to use Rich display."""
     if use_rich is not None:
         return use_rich and RICH_AVAILABLE
-    from imas_codex.cli.rich_output import should_use_rich
+    try:
+        from imas_codex.cli.rich_output import should_use_rich
 
-    return RICH_AVAILABLE and should_use_rich()
+        return RICH_AVAILABLE and should_use_rich()
+    except (ImportError, Exception):
+        return False
 
 
 class ProgressMonitor:
