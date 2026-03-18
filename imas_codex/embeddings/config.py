@@ -5,16 +5,11 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
-# Load .env file for local development
-from dotenv import load_dotenv
-
 from imas_codex.settings import (
     get_embed_remote_url,
     get_embedding_model,
     is_embedding_remote,
 )
-
-load_dotenv(override=True)  # Load .env file values, overriding existing env vars
 
 
 class EmbeddingBackend(Enum):

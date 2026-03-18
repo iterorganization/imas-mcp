@@ -171,11 +171,13 @@ def infer_domains_with_llm(
 ) -> dict[str, str]:
     """Use LLM to infer physics domains for IDS entries."""
     model = model or get_model("language")
-    api_key = api_key or os.getenv("OPENAI_API_KEY")
+    api_key = api_key or os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENAI_API_KEY")
     base_url = os.getenv("OPENAI_BASE_URL", "https://openrouter.ai/api/v1")
 
     if not api_key:
-        raise ValueError("API key required. Set OPENAI_API_KEY environment variable.")
+        raise ValueError(
+            "API key required. Set OPENROUTER_API_KEY environment variable."
+        )
 
     client = OpenRouterClient(
         model_name=model,
