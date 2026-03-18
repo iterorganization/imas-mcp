@@ -2,11 +2,24 @@
 
 Use terminal for direct operations (`rg`, `fd`, `git`), MCP `python()` for chained processing and graph queries, `uv run` for git/tests/CLI. Conventional commits. **CRITICAL: Always commit and push when files have been modified — no confirmation, no asking, just do it. This is non-negotiable. Every response that modifies files MUST end with `git add`, `git commit`, and `git push`.** **Never use `vscode_askQuestions` or any interactive VS Code popup/dialog tools — present all questions inline in the chat response so the user can answer them in one message.**
 
-**Git sync discipline (multi-instance workflow):** This repo is edited from multiple machines (WSL, ITER host). Always rebase to avoid divergent branches:
-1. **Session start:** `git pull --rebase origin main` before any work.
-2. **Before push:** `git pull --rebase origin main && git push origin main` — never push without pulling first.
-3. **Dirty worktree:** `rebase.autoStash` is enabled — rebase works even with uncommitted changes.
-4. **Conflict resolution:** If rebase conflicts, resolve and `git rebase --continue`. Never force-push without user approval.
+**Git sync discipline (multi-instance workflow):** This repo is edited from multiple machines and by multiple agents concurrently. Always **merge** on pull — never rebase.
+1. **Session start:** `git pull origin main` before any work.
+2. **Before push:** `git pull origin main && git push origin main` — never push without pulling first.
+3. **Dirty worktree:** Commit or stash your own files before pulling. Never stash everything (`git stash`) — only your files: `git stash push -- file1 file2`.
+4. **Conflict resolution:** If merge conflicts, resolve and commit. Never force-push without user approval.
+5. **Repo-local config:** Each clone must run the setup commands below to override any global/system rebase defaults.
+
+### New Clone Setup
+
+Run these commands once after cloning on any machine. They are stored in `.git/config` (local scope) and override global/system settings that vary across installations:
+
+```bash
+git config --local pull.rebase false      # merge on pull, never rebase
+git config --local rebase.autoStash false  # don't silently stash — make dirty worktree visible
+git config --local merge.ff true           # allow fast-forward merges
+```
+
+**Why this matters:** Different machines (WSL, ITER, TCV) may have different global git configs. An ITER system policy might set `pull.rebase=true` globally, which silently converts `git pull` into a rebase. Rebase fails with dirty worktrees (auto-generated files from `uv sync`) and rewrites history that other agents depend on. Local config takes precedence over global/system, ensuring consistent behavior everywhere.
 
 ## Project Philosophy
 
@@ -636,6 +649,7 @@ uv run ruff check --fix .           # Lint (Python only)
 uv run ruff format .                # Format
 git add <file1> <file2> ...         # Stage specific files (never git add -A)
 uv run git commit -m "type: concise summary"  # Conventional format
+git pull --no-rebase origin main    # Merge remote changes first
 git push origin main
 ```
 
@@ -672,10 +686,11 @@ Multiple agents may be working on this repository simultaneously. Assume another
 - **Only stage files you modified** — never `git add -A` or `git add .`
 - **NEVER run `git checkout`, `git restore`, or `git reset` on files you didn't change** — this silently destroys another agent's in-progress work with no way to recover it. Even if a file appears "dirty" or has unexpected changes, leave it alone — another agent put those changes there deliberately.
 - **NEVER run `git checkout -- .` or `git restore .`** — these wipe ALL unstaged changes across the entire repo, including other agents' work
-- **Never rebase** — rebase rewrites history and clobbers parallel agents' work
+- **Never rebase** — rebase rewrites history and clobbers parallel agents' work. Always merge: `git pull --no-rebase origin main`
 - **Pull before push** if push is rejected: `git pull --no-rebase origin main && git push origin main`
 - **Avoid broad formatting runs** (`ruff format .`) unless you are the only agent active — prefer formatting only your changed files
 - **If `git stash` is needed**, only stash your own files: `git stash push -- file1 file2`, never `git stash` (which stashes everything)
+- **Auto-generated files cause dirty worktrees** — `uv sync` regenerates model files that are gitignored. These should never be staged, but their presence will block `git pull --rebase`. This is another reason merge is the correct policy.
 
 ### Session Completion
 
