@@ -9,12 +9,16 @@ Modular CLI structure with command groups split by functionality.
 import logging
 
 import click
-from dotenv import load_dotenv
 
 from imas_codex import __version__
 
 # Load environment variables from .env file
-load_dotenv(override=True)
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(override=True)
+except ModuleNotFoundError:
+    pass
 
 # Configure logging
 logger = logging.getLogger(__name__)
