@@ -42,7 +42,7 @@ ENV PYTHONPATH="/app" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     HATCH_BUILD_NO_HOOKS=true \
-    OPENAI_BASE_URL=https://openrouter.ai/api/v1
+    OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 
 # Labels for image provenance
 LABEL imas_codex.git_sha=${GIT_SHA} \
@@ -208,7 +208,7 @@ ARG IDS_FILTER=""
 ENV PYTHONPATH="/app" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    OPENAI_BASE_URL=https://openrouter.ai/api/v1 \
+    OPENROUTER_BASE_URL=https://openrouter.ai/api/v1 \
     PATH="/app/.venv/bin:${PATH}" \
     IDS_FILTER=${IDS_FILTER} \
     NEO4J_URI="bolt://127.0.0.1:7687" \
