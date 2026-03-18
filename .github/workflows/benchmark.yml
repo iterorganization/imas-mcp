@@ -23,6 +23,24 @@ jobs:
     permissions:
       contents: write  # Need write for gh-pages push
 
+    services:
+      neo4j:
+        image: neo4j:2026.01.4-community
+        ports:
+          - 7474:7474
+          - 7687:7687
+        env:
+          NEO4J_AUTH: neo4j/imas-codex
+          NEO4J_PLUGINS: '["apoc"]'
+          NEO4J_server_memory_heap_initial__size: 512m
+          NEO4J_server_memory_heap_max__size: 1G
+        options: >-
+          --health-cmd "wget -q --spider http://localhost:7474/ || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+          --health-start-period 30s
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -149,12 +167,16 @@ jobs:
           echo "MACHINE_NAME=$MACHINE_NAME" >> $GITHUB_ENV
 
       - name: Run benchmarks
+        env:
+          NEO4J_URI: bolt://localhost:7687
+          NEO4J_USERNAME: neo4j
+          NEO4J_PASSWORD: imas-codex
         run: |
           # Run benchmarks (cached labels only, no API key needed)
           if [ -n "${{ github.event.inputs.benchmark_filter }}" ]; then
-            asv run --python=3.12 --machine "$MACHINE_NAME" -b "${{ github.event.inputs.benchmark_filter }}" --verbose
+            asv run --python=3.12 --machine "$MACHINE_NAME" -b "${{ github.event.inputs.benchmark_filter }}" --verbose --show-stderr
           else
-            asv run --python=3.12 --machine "$MACHINE_NAME" HEAD^! --verbose
+            asv run --python=3.12 --machine "$MACHINE_NAME" HEAD^! --verbose --show-stderr
           fi
 
       - name: Show benchmark results on failure
