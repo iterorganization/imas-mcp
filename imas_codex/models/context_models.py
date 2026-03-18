@@ -24,7 +24,9 @@ class BaseToolResult(BaseModel):
     query: str | list[str] | None = Field(
         default=None, description="Original user query"
     )
-    search_mode: SearchMode | None = Field(default=None, description="Search mode used")
+    search_mode: SearchMode = Field(
+        default=SearchMode.AUTO, description="Search mode used"
+    )
     ids_filter: list[str] | str | None = Field(
         default=None, description="IDS filter applied"
     )
