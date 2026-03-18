@@ -57,8 +57,6 @@ class SearchBenchmarks:
 
     async def _warmup(self):
         """Warm up server components to avoid cold start penalties."""
-        _ = self.fixture.server.tools.document_store
-
         async with self.fixture.client:
             for ids_name in self.fixture.ids_pair:
                 await self.fixture.client.call_tool(
@@ -140,8 +138,6 @@ class ClusterSearchBenchmarks:
 
     async def _warmup(self):
         """Warm up server components."""
-        _ = self.fixture.server.tools.document_store
-
         async with self.fixture.client:
             await self.fixture.client.call_tool(
                 "search_imas_paths",
