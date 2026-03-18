@@ -334,37 +334,31 @@ The project includes GitHub Actions workflows for:
 
 ### GitHub Secrets Configuration
 
-The `OPENAI_API_KEY` secret is **optional** for Docker builds.
+The following repository secrets are used by the CI workflows:
 
-**What runs locally (no API key needed):**
-- Schema building (XML parsing)
-- Path map generation
-- Embeddings (uses Encoder with configured embedding backend)
-- Clustering (HDBSCAN algorithm)
+| Secret | Required | Purpose |
+|--------|----------|--------|
+| `GHCR_TOKEN` | **Yes** (for Docker build) | GitHub token with `packages:read` scope for pulling graph artifacts from GHCR |
+| `OPENROUTER_API_KEY` | No | OpenRouter API key for LLM-based cluster labeling (falls back to cached labels) |
+| `ACR_USERNAME` / `ACR_PASSWORD` | Yes (for deployment) | Azure Container Registry credentials for pushing production images |
 
-**What uses the API key (optional):**
-- **Cluster labeling**: Generates human-readable labels for semantic clusters using an LLM via OpenRouter
-
-**Fallback behavior without API key:**
-1. Uses pre-cached labels from `imas_codex/definitions/clusters/labels.json` (version-controlled)
-2. Falls back to auto-generated labels from path names if no cache exists
-
-**Configuring the secret (optional):**
+**Configuring secrets:**
 1. **Repository Settings**: Go to `Settings` → `Secrets and variables` → `Actions`
-2. **Add Secret**: Create a new repository secret:
-   - **Name**: `OPENAI_API_KEY`
-   - **Value**: Your OpenRouter API key
+2. **Add Secrets**: Create the required repository secrets listed above
 
 **Manual Docker Build:**
 ```bash
-# Build without API key (uses cached/fallback labels)
-docker build -t imas-codex .
+# Build with graph from GHCR
+export GHCR_TOKEN=$(gh auth token)
+docker build --secret id=GHCR_TOKEN,env=GHCR_TOKEN -t imas-codex .
 
-# Build with API key for fresh LLM-generated labels
-docker build --secret id=OPENAI_API_KEY,env=OPENAI_API_KEY -t imas-codex .
+# Build with a specific graph package (e.g., TCV facility)
+docker build --secret id=GHCR_TOKEN,env=GHCR_TOKEN \
+  --build-arg GRAPH_PACKAGE=imas-codex-graph-tcv -t imas-codex .
 
 # Build with minimal IDS for faster iteration
-docker build --build-arg IDS_FILTER="equilibrium" -t imas-codex:test .
+docker build --secret id=GHCR_TOKEN,env=GHCR_TOKEN \
+  --build-arg IDS_FILTER="equilibrium" -t imas-codex:test .
 ```
 
 ## Security

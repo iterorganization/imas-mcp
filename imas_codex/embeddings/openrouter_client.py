@@ -35,19 +35,15 @@ class OpenRouterClient:
         Args:
             model_name: Name of the LLM model to use
             api_key: OpenRouter API key (if None, uses OPENROUTER_API_KEY
-                    or OPENAI_API_KEY environment variable)
-            base_url: Base URL for API (if None, will use OPENAI_BASE_URL env var)
+                    environment variable)
+            base_url: Base URL for API (if None, will use OPENROUTER_BASE_URL env var)
             max_retries: Maximum number of retry attempts for failed requests
             retry_delay: Delay between retry attempts in seconds
         """
         self.model_name = model_name
-        self.api_key = (
-            api_key
-            or os.getenv("OPENROUTER_API_KEY")
-            or os.getenv("OPENAI_API_KEY")
-        )
+        self.api_key = api_key or os.getenv("OPENROUTER_API_KEY")
         self.base_url = base_url or os.getenv(
-            "OPENAI_BASE_URL", "https://openrouter.ai/api/v1"
+            "OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"
         )
         self.max_retries = max_retries
         self.retry_delay = retry_delay
@@ -59,7 +55,7 @@ class OpenRouterClient:
 
         if not self.base_url:
             raise OpenRouterError(
-                "OpenRouter base URL required. Set OPENAI_BASE_URL environment variable or pass base_url parameter."
+                "OpenRouter base URL required. Set OPENROUTER_BASE_URL environment variable or pass base_url parameter."
             )
 
         # Validate API key is not a placeholder

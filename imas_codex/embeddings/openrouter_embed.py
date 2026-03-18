@@ -240,7 +240,7 @@ class OpenRouterEmbeddingClient:
 
         Args:
             api_key: OpenRouter API key. If None, uses OPENROUTER_API_KEY
-                    or OPENAI_API_KEY environment variable.
+                    environment variable.
             model_name: Model name (OpenRouter or HuggingFace format accepted).
                        Defaults to configured model from settings.
             timeout: Request timeout in seconds
@@ -250,9 +250,7 @@ class OpenRouterEmbeddingClient:
         if model_name is None:
             model_name = get_embedding_model()
 
-        self.api_key = (
-            api_key or os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENAI_API_KEY")
-        )
+        self.api_key = api_key or os.getenv("OPENROUTER_API_KEY")
         self.timeout = timeout
         self.dimensions = dimensions or get_embedding_dimension()
         self._client: httpx.Client | None = None
@@ -391,7 +389,7 @@ class OpenRouterEmbeddingClient:
         if not self.is_available():
             raise OpenRouterEmbeddingError(
                 "OpenRouter API key not configured. "
-                "Set OPENROUTER_API_KEY or OPENAI_API_KEY environment variable."
+                "Set OPENROUTER_API_KEY environment variable."
             )
 
         # Check budget before making request

@@ -579,39 +579,31 @@ python -m imas_codex
 
 #### API Key Configuration
 
-For embedding generation capabilities (during build), you'll need an OpenRouter API key:
-
-**For Local Development:**
+For embedding generation (e.g., cluster labeling), you'll need an OpenRouter API key:
 
 ```bash
 # Set up environment variables (create .env file from env.example)
 cp env.example .env
-# Edit .env with your OpenRouter API key
+# Edit .env with your OPENROUTER_API_KEY
 ```
 
 **For CI/CD (GitHub Actions):**
 
 1. Go to your repository settings: `Settings` → `Secrets and variables` → `Actions`
-2. Add a new repository secret:
-   - **Name**: `OPENAI_API_KEY`
-   - **Value**: Your OpenRouter API key
-
-> 📖 **Detailed Setup Guide:** See [.github/SECRETS_SETUP.md](.github/SECRETS_SETUP.md) for complete instructions on configuring GitHub repository secrets and troubleshooting.
-
-**Build Behavior:**
-
-- **With OPENAI_API_KEY**: Full embedding generation during build
-- **Without OPENAI_API_KEY**: Uses local embedding model (Qwen3-Embedding-8B)
-- The container works normally in both cases
+2. Add the following repository secrets:
+   - **`GHCR_TOKEN`**: GitHub token with `packages:read` scope (required for graph pull during Docker build)
+   - **`OPENROUTER_API_KEY`**: OpenRouter API key (optional, for LLM-based cluster labeling)
 
 **Local Docker Build:**
 
 ```bash
-# Build with API key (for API-based embeddings)
-docker build --build-arg OPENAI_API_KEY=your_key_here .
+# Build with graph from GHCR (requires GHCR_TOKEN)
+export GHCR_TOKEN=$(gh auth token)
+docker build --secret id=GHCR_TOKEN,env=GHCR_TOKEN .
 
-# Build without API key (uses local model)
-docker build .
+# Build with a specific graph package
+docker build --secret id=GHCR_TOKEN,env=GHCR_TOKEN \
+  --build-arg GRAPH_PACKAGE=imas-codex-graph-tcv .
 ```
 
 ## Graph Management
