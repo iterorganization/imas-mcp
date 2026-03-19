@@ -14,9 +14,11 @@ is the actual LLM cost from OpenRouter API.
 from __future__ import annotations
 
 import asyncio
+import io
 import logging
 import shlex
 import subprocess
+import tarfile
 import time
 from typing import Any
 
@@ -162,11 +164,6 @@ def _fetch_wiki_calibration(
     return samples
 
 
-# Separator used by batch SSH file reads. Chosen to be
-# extremely unlikely to appear in TWiki markup.
-_BATCH_FILE_SEPARATOR = "===CODEX_FILE_SEP==="
-
-
 def batch_ssh_read_files(
     ssh_urls: list[str],
 ) -> dict[str, str]:
@@ -200,20 +197,14 @@ def batch_ssh_read_files(
     results: dict[str, str] = {}
 
     for host, url_paths in by_host.items():
-        # Build a single command that reads all files with separators
-        # Use printf for the separator to avoid echo portability issues
-        file_cmds = []
-        for _url, filepath in url_paths:
-            safe_path = shlex.quote(filepath)
-            file_cmds.append(
-                f'printf "%s\\n" "{_BATCH_FILE_SEPARATOR}:{safe_path}"; '
-                f"cat {safe_path} 2>/dev/null"
-            )
-        combined_cmd = "; ".join(file_cmds)
+        # Use a tar stream instead of textual separators.
+        # This avoids delimiter collisions and is insensitive to file content.
+        quoted_paths = " ".join(shlex.quote(path) for _url, path in url_paths)
+        remote_cmd = f"tar -cf - -- {quoted_paths} 2>/dev/null"
 
         try:
             result = subprocess.run(
-                ["ssh", "-o", "ClearAllForwardings=yes", host, combined_cmd],
+                ["ssh", "-o", "ClearAllForwardings=yes", host, remote_cmd],
                 capture_output=True,
                 timeout=max(30, len(url_paths) * 2),
             )
@@ -228,32 +219,24 @@ def batch_ssh_read_files(
                     results[url] = ""
                 continue
 
-            output = result.stdout.decode("utf-8", errors="replace")
-
-            # Parse output: split on separator lines
-            # Format: ===CODEX_FILE_SEP===:'/path/to/file'\ncontent...
-            current_url = None
-            current_lines: list[str] = []
+            # Parse tar archive members by path and decode as UTF-8.
             url_by_path = {path: url for url, path in url_paths}
+            stream = io.BytesIO(result.stdout)
+            with tarfile.open(fileobj=stream, mode="r:") as archive:
+                for member in archive:
+                    if not member.isfile():
+                        continue
 
-            for line in output.split("\n"):
-                if line.startswith(_BATCH_FILE_SEPARATOR + ":"):
-                    # Save previous file
-                    if current_url is not None:
-                        results[current_url] = "\n".join(current_lines)
-                    # Parse new file path
-                    raw_path = line[len(_BATCH_FILE_SEPARATOR) + 1 :].strip()
-                    # Remove shell quoting if present
-                    if raw_path.startswith("'") and raw_path.endswith("'"):
-                        raw_path = raw_path[1:-1]
-                    current_url = url_by_path.get(raw_path)
-                    current_lines = []
-                else:
-                    current_lines.append(line)
+                    member_path = "/" + member.name.lstrip("/")
+                    url = url_by_path.get(member_path)
+                    if not url:
+                        continue
 
-            # Save last file
-            if current_url is not None:
-                results[current_url] = "\n".join(current_lines)
+                    extracted = archive.extractfile(member)
+                    if extracted is None:
+                        continue
+                    data = extracted.read()
+                    results[url] = data.decode("utf-8", errors="replace")
 
         except subprocess.TimeoutExpired:
             logger.warning(
@@ -261,6 +244,10 @@ def batch_ssh_read_files(
                 host,
                 len(url_paths),
             )
+            for url, _ in url_paths:
+                results[url] = ""
+        except tarfile.ReadError as e:
+            logger.warning("Batch SSH tar parse error for %s: %s", host, e)
             for url, _ in url_paths:
                 results[url] = ""
         except Exception as e:
