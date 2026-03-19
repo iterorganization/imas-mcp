@@ -922,7 +922,7 @@ class GraphOverviewTool:
             if r["physics_domain"]:
                 physics_domains.add(r["physics_domain"])
 
-        # Build tools list
+        # Build tools list (query_imas_graph and get_dd_graph_schema were removed)
         mcp_tools = [
             "search_imas_paths",
             "check_imas_paths",
@@ -931,8 +931,6 @@ class GraphOverviewTool:
             "get_imas_overview",
             "search_imas_clusters",
             "get_imas_identifiers",
-            "query_imas_graph",
-            "get_dd_graph_schema",
             "get_dd_versions",
         ]
 
