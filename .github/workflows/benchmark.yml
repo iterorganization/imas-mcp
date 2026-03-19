@@ -2,13 +2,15 @@ name: Benchmark
 
 on:
   push:
-    branches: [main, develop]
-  pull_request:
-    branches: [main]
+    tags: ["v*"]
   workflow_dispatch:
     inputs:
+      graph_tag:
+        description: "Graph version tag to test"
+        required: false
+        default: "latest"
       benchmark_filter:
-        description: "Benchmark filter (e.g., SearchBenchmarks)"
+        description: "Benchmark filter (e.g., SearchToolBenchmarks)"
         required: false
         default: ""
 
@@ -18,10 +20,11 @@ concurrency:
 
 jobs:
   run-benchmark:
-    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request'
-    runs-on: ubuntu-22.04 # 4 cores, 16GB RAM, consistent specs
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
     permissions:
-      contents: write  # Need write for gh-pages push
+      contents: write
+      packages: read
 
     services:
       neo4j:
@@ -42,37 +45,27 @@ jobs:
           --health-start-period 30s
 
     steps:
+      # ── Setup ──────────────────────────────────────────────────────────
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # Need full history for ASV
+          fetch-depth: 0
 
-      - name: Checkout gh-pages branch for benchmark history
+      - name: Checkout gh-pages for benchmark history
         run: |
-          # Try to fetch gh-pages branch - it may not exist on first run
           if git ls-remote --exit-code origin gh-pages >/dev/null 2>&1; then
-            echo "gh-pages branch exists, checking out..."
             git fetch origin gh-pages:gh-pages
             git worktree add gh-pages-data gh-pages
           else
-            echo "gh-pages branch does not exist yet (first run)"
             mkdir -p gh-pages-data
           fi
         continue-on-error: true
 
-      - name: Restore previous benchmark results from gh-pages
+      - name: Restore previous benchmark results
         run: |
           if [ -d "gh-pages-data/.asv" ]; then
-            echo "Restoring benchmark history from gh-pages..."
             mkdir -p .asv
             cp -r gh-pages-data/.asv/* .asv/ || true
-            echo "Restored benchmark history"
-            ls -la .asv/results/ || echo "No previous results found"
-            # Count previous result files
-            PREV_COUNT=$(find .asv/results -name "*.json" 2>/dev/null | wc -l)
-            echo "Found $PREV_COUNT previous benchmark result files"
-          else
-            echo "No previous benchmark history found (this may be the first run)"
           fi
 
       - name: Set up Python
@@ -82,88 +75,121 @@ jobs:
 
       - name: Free disk space
         run: |
-          # Remove large pre-installed packages to free disk space
-          # This prevents "No space left on device" errors from PyTorch CUDA deps
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /opt/ghc
-          sudo rm -rf /usr/local/share/boost
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost
           df -h
 
-      - name: Install UV
+      - name: Install UV + ASV
         uses: astral-sh/setup-uv@v5
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Install ASV
-        run: uv tool install asv
+      - name: Install tools
+        run: |
+          uv tool install asv
+          ORAS_VERSION="1.2.0"
+          curl -sLO "https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/oras_${ORAS_VERSION}_linux_amd64.tar.gz"
+          tar -xzf "oras_${ORAS_VERSION}_linux_amd64.tar.gz" oras
+          sudo mv oras /usr/local/bin/
 
       - name: Configure pip for CPU-only PyTorch
         run: |
-          # Create pip config to use CPU-only PyTorch index
-          # This prevents downloading multi-GB CUDA libraries
           mkdir -p ~/.config/pip
           cat > ~/.config/pip/pip.conf << 'EOF'
           [global]
           extra-index-url = https://download.pytorch.org/whl/cpu
           EOF
-          echo "Configured pip to prefer CPU-only PyTorch"
 
-      - name: Configure ASV for PR context
-        if: github.event_name == 'pull_request'
+      # ── Load Graph Data ────────────────────────────────────────────────
+      - name: Resolve graph tag
+        id: graph-tag
         run: |
-          # For PRs, only track the current HEAD to avoid 'main' branch not found errors
-          python -c "
-          import json
-          with open('asv.conf.json', 'r') as f:
-              config = json.load(f)
-          config['branches'] = ['HEAD']
-          with open('asv.conf.json', 'w') as f:
-              json.dump(config, f, indent=4)
-          print('ASV configured for PR context - tracking only HEAD')
-          "
+          TAG="${{ github.event.inputs.graph_tag || 'latest' }}"
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
 
-      - name: Configure ASV for main branch
-        if: github.event_name != 'pull_request'
+      - name: Login to GHCR
         run: |
-          # For main branch and other contexts, track main and HEAD
-          python -c "
-          import json
-          with open('asv.conf.json', 'r') as f:
-              config = json.load(f)
-          config['branches'] = ['main', 'HEAD']
-          with open('asv.conf.json', 'w') as f:
-              json.dump(config, f, indent=4)
-          print('ASV configured for main branch context - tracking main and HEAD')
-          "
+          echo "${{ secrets.GHCR_TOKEN }}" | oras login ghcr.io -u token --password-stdin
 
+      - name: Pull graph dump from GHCR
+        run: |
+          REGISTRY="ghcr.io/iterorganization"
+          PACKAGE="imas-codex-graph"
+          TAG="${{ steps.graph-tag.outputs.tag }}"
+          echo "Pulling: ${REGISTRY}/${PACKAGE}:${TAG}"
+          mkdir -p /tmp/graph-dump
+          oras pull "${REGISTRY}/${PACKAGE}:${TAG}" -o /tmp/graph-dump
+          ls -la /tmp/graph-dump/
+
+      - name: Stop Neo4j for dump load
+        run: |
+          docker stop $(docker ps -q --filter "ancestor=neo4j:2026.01.4-community") || true
+          sleep 3
+
+      - name: Load graph dump
+        run: |
+          set -euo pipefail
+          ARCHIVE=$(ls /tmp/graph-dump/*.tar.gz | head -1)
+          mkdir -p /tmp/graph-extracted
+          tar -xzf "${ARCHIVE}" -C /tmp/graph-extracted
+
+          DUMP_FILE=$(find /tmp/graph-extracted -name "graph.dump" | head -1)
+          if [ -z "${DUMP_FILE}" ]; then
+            echo "ERROR: No graph.dump found in archive"
+            ls -laR /tmp/graph-extracted/
+            exit 1
+          fi
+
+          NEO4J_CONTAINER=$(docker ps -aq --filter "ancestor=neo4j:2026.01.4-community" | head -1)
+          NEO4J_DATA_VOLUME=$(docker inspect "${NEO4J_CONTAINER}" --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Name}}{{end}}{{end}}')
+
+          docker run --rm \
+            -v "${NEO4J_DATA_VOLUME}:/data" \
+            -v "$(dirname ${DUMP_FILE}):/dump" \
+            neo4j:2026.01.4-community \
+            neo4j-admin database load neo4j \
+              --from-path=/dump \
+              --overwrite-destination=true
+
+      - name: Restart Neo4j with loaded data
+        run: |
+          NEO4J_CONTAINER=$(docker ps -aq --filter "ancestor=neo4j:2026.01.4-community" | head -1)
+          docker start "${NEO4J_CONTAINER}"
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:7474/ > /dev/null 2>&1; then
+              echo "Neo4j ready with loaded graph"
+              break
+            fi
+            if [ $i -eq 60 ]; then
+              echo "ERROR: Neo4j did not restart in time"
+              docker logs "${NEO4J_CONTAINER}" --tail 50
+              exit 1
+            fi
+            sleep 2
+          done
+
+      - name: Reset Neo4j password
+        run: |
+          NEO4J_CONTAINER=$(docker ps -q --filter "ancestor=neo4j:2026.01.4-community" | head -1)
+          docker exec "${NEO4J_CONTAINER}" neo4j-admin dbms set-initial-password imas-codex 2>/dev/null || true
+
+      - name: Verify graph loaded
+        run: |
+          NEO4J_CONTAINER=$(docker ps -q --filter "ancestor=neo4j:2026.01.4-community" | head -1)
+          docker exec "${NEO4J_CONTAINER}" cypher-shell \
+            -u neo4j -p imas-codex \
+            "MATCH (n) RETURN count(n) AS nodes, labels(n)[0] AS label ORDER BY nodes DESC LIMIT 10"
+
+      # ── Run Benchmarks ─────────────────────────────────────────────────
       - name: Setup ASV machine
         run: |
-          # Get actual system specifications from the runner
           CPU_INFO=$(lscpu | grep "Model name" | cut -d: -f2 | sed 's/^[ \t]*//' | head -1)
           CPU_COUNT=$(nproc)
-          RAM_MB=$(free -m | grep "Mem:" | awk '{print $2}')
-          RAM_GB=$((RAM_MB / 1024))
+          RAM_GB=$(($(free -m | grep "Mem:" | awk '{print $2}') / 1024))
           ARCH=$(uname -m)
-
-          # Get OS details
           OS_VERSION=$(lsb_release -ds 2>/dev/null | tr -d '"' || echo "Unknown")
-
-          # Create machine name from key specs to detect hardware changes
-          # Format: ghactions-{arch}-{cores}c-{ram}gb
           MACHINE_NAME="ghactions-${ARCH}-${CPU_COUNT}c-${RAM_GB}gb"
-          echo "Machine name: $MACHINE_NAME"
-
-          # Configure machine with detected specs
-          asv machine \
-            --machine "$MACHINE_NAME" \
-            --os "$OS_VERSION" \
-            --arch "$ARCH" \
-            --cpu "$CPU_INFO" \
-            --num_cpu "$CPU_COUNT" \
-            --ram "${RAM_GB}GB" \
-            --yes
-
-          # Store machine name for benchmark run
+          asv machine --machine "$MACHINE_NAME" --os "$OS_VERSION" --arch "$ARCH" \
+            --cpu "$CPU_INFO" --num_cpu "$CPU_COUNT" --ram "${RAM_GB}GB" --yes
           echo "MACHINE_NAME=$MACHINE_NAME" >> $GITHUB_ENV
 
       - name: Run benchmarks
@@ -173,9 +199,9 @@ jobs:
           NEO4J_PASSWORD: imas-codex
           IMAS_CODEX_EMBEDDING_LOCATION: local
         run: |
-          # Run benchmarks (cached labels only, no API key needed)
-          if [ -n "${{ github.event.inputs.benchmark_filter }}" ]; then
-            asv run --python=3.12 --machine "$MACHINE_NAME" -b "${{ github.event.inputs.benchmark_filter }}" --verbose --show-stderr
+          FILTER="${{ github.event.inputs.benchmark_filter }}"
+          if [ -n "$FILTER" ]; then
+            asv run --python=3.12 --machine "$MACHINE_NAME" -b "$FILTER" --verbose --show-stderr
           else
             asv run --python=3.12 --machine "$MACHINE_NAME" HEAD^! --verbose --show-stderr
           fi
@@ -183,53 +209,38 @@ jobs:
       - name: Show benchmark results on failure
         if: failure()
         run: |
-          echo "Benchmark run failed. Checking for logs..."
           find .asv -name "*.log" -exec echo "=== {} ===" \; -exec cat {} \; || true
-          echo "Checking ASV results directory..."
-          ls -la .asv/ || true
-          echo "Checking if schema files exist..."
-          ls -la imas_codex/resources/schemas/ || true
+          ls -laR .asv/ || true
 
+      # ── Regression Detection ───────────────────────────────────────────
+      - name: Check for regressions
+        if: always()
+        run: |
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          if [ -n "$PREV_TAG" ]; then
+            echo "Comparing against previous release: $PREV_TAG"
+            asv compare "$PREV_TAG" HEAD --factor 1.5 --split || true
+          else
+            echo "No previous tag found — skipping comparison"
+          fi
+
+      # ── Publish ────────────────────────────────────────────────────────
       - name: Generate HTML report
         run: asv publish
 
       - name: Deploy to GitHub Pages
-        if: github.ref == 'refs/heads/main'
         run: |
-          # Configure git for pushing
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          
-          # Prepare the gh-pages content
           mkdir -p gh-pages-deploy
-          
-          # Copy HTML report for the website
           cp -r .asv/html/* gh-pages-deploy/
-          
-          # Copy ASV results and machine config for history persistence
-          # This is the critical part - these files accumulate benchmark data over time
           mkdir -p gh-pages-deploy/.asv/results
           cp -r .asv/results/* gh-pages-deploy/.asv/results/ || true
           cp .asv/machine.json gh-pages-deploy/.asv/ || true
-          
-          # Add .nojekyll to prevent GitHub from processing with Jekyll
           touch gh-pages-deploy/.nojekyll
-          
-          # Count result files for logging
-          RESULT_COUNT=$(find gh-pages-deploy/.asv/results -name "*.json" 2>/dev/null | wc -l)
-          echo "Deploying $RESULT_COUNT benchmark result files to gh-pages"
-          
-          # Navigate to deploy directory and push to gh-pages
           cd gh-pages-deploy
-          git init
-          git checkout -b gh-pages
-          # Force add .asv directory which is normally gitignored
-          git add -f .asv/
-          git add -A
-          git commit -m "deploy: ${{ github.sha }}"
-          
-          # Force push to gh-pages branch
+          git init && git checkout -b gh-pages
+          git add -f .asv/ && git add -A
+          git commit -m "benchmark: ${{ github.ref_name }}"
           git remote add origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
           git push -f origin gh-pages
-          
-          echo "✅ Deployed to GitHub Pages with $RESULT_COUNT benchmark results preserved"
