@@ -140,11 +140,17 @@ class TestParseMetaField:
         """TOPICINFO, TOPICPARENT, FORM, etc. should return empty string."""
         from imas_codex.discovery.wiki.pipeline import _parse_meta_field
 
-        assert _parse_meta_field('%META:TOPICINFO{author="admin" date="1234567890"}%') == ""
+        assert (
+            _parse_meta_field('%META:TOPICINFO{author="admin" date="1234567890"}%')
+            == ""
+        )
         assert _parse_meta_field('%META:TOPICPARENT{name="WebHome"}%') == ""
         assert _parse_meta_field('%META:FORM{name="ShotAForm"}%') == ""
         assert _parse_meta_field('%META:FILEATTACHMENT{name="data.csv"}%') == ""
-        assert _parse_meta_field('%META:PREFERENCE{name="VIEW_TEMPLATE" value="ShotA"}%') == ""
+        assert (
+            _parse_meta_field('%META:PREFERENCE{name="VIEW_TEMPLATE" value="ShotA"}%')
+            == ""
+        )
 
     def test_malformed_line(self):
         """Malformed lines should return empty string, not crash."""
