@@ -1485,6 +1485,7 @@ class AgentsServer:
     - Code: search_code()
     """
 
+    read_only: bool = False
     mcp: FastMCP = field(init=False, repr=False)
     _prompts: dict[str, PromptDefinition] = field(init=False, repr=False)
 
@@ -1495,14 +1496,19 @@ class AgentsServer:
         All imports are at module level to avoid deadlocks. Only I/O-bound
         work (Neo4j connection) happens lazily.
         """
-        self.mcp = FastMCP(name="imas-codex-agents")
+        name = "imas-codex-readonly" if self.read_only else "imas-codex"
+        self.mcp = FastMCP(name=name)
         self._prompts = load_prompts()
 
         self._register_tools()
         self._register_prompts()
 
+        tool_count = sum(
+            1 for k in self.mcp._local_provider._components if k.startswith("tool:")
+        )
+        mode = "read-only" if self.read_only else "read-write"
         logger.info(
-            f"Agents MCP server ready with 15 tools and {len(self._prompts)} prompts"
+            f"MCP server ready ({mode}) with {tool_count} tools and {len(self._prompts)} prompts"
         )
 
     def _register_tools(self):
@@ -1513,51 +1519,52 @@ class AgentsServer:
         # the unbound originals).
         api_reference = _generate_api_reference()
 
-        # =====================================================================
-        # Tool 1: python - Persistent REPL (primary interface)
-        # =====================================================================
+        if not self.read_only:
+            # =====================================================================
+            # Tool 1: python - Persistent REPL (primary interface)
+            # =====================================================================
 
-        @self.mcp.tool()
-        def python(code: str) -> str:
-            repl = _get_repl()
+            @self.mcp.tool()
+            def python(code: str) -> str:
+                repl = _get_repl()
 
-            stdout_capture = io.StringIO()
+                stdout_capture = io.StringIO()
 
-            try:
-                with redirect_stdout(stdout_capture):
-                    try:
-                        result = eval(code, repl)
-                        if result is not None:
-                            repl["_"] = result
-                            print(repr(result))
-                    except SyntaxError:
-                        exec(code, repl)
+                try:
+                    with redirect_stdout(stdout_capture):
+                        try:
+                            result = eval(code, repl)
+                            if result is not None:
+                                repl["_"] = result
+                                print(repr(result))
+                        except SyntaxError:
+                            exec(code, repl)
 
-                output = stdout_capture.getvalue()
-                if not output:
-                    output = "(no output)"
-                return output
+                    output = stdout_capture.getvalue()
+                    if not output:
+                        output = "(no output)"
+                    return output
 
-            except Exception as e:
-                import traceback
+                except Exception as e:
+                    import traceback
 
-                tb = traceback.format_exc()
-                return f"Error: {e}\n\n{tb}"
+                    tb = traceback.format_exc()
+                    return f"Error: {e}\n\n{tb}"
 
-        # Set the docstring dynamically so it's always in sync with
-        # the actual registered functions (generated from introspection)
-        python.__doc__ = (
-            "Execute Python in a persistent REPL for custom graph queries "
-            "and operations not covered by the search_* tools. Variables "
-            "persist across calls.\n\n"
-            "Prefer search_signals/search_docs/search_code/search_imas for "
-            "common lookups — they return formatted reports in one call.\n\n"
-            f"{api_reference}\n"
-            "Args:\n"
-            "    code: Python code to execute (multi-line supported)\n\n"
-            "Returns:\n"
-            "    stdout output, or repr of last expression if no print"
-        )
+            # Set the docstring dynamically so it's always in sync with
+            # the actual registered functions (generated from introspection)
+            python.__doc__ = (
+                "Execute Python in a persistent REPL for custom graph queries "
+                "and operations not covered by the search_* tools. Variables "
+                "persist across calls.\n\n"
+                "Prefer search_signals/search_docs/search_code/search_imas for "
+                "common lookups — they return formatted reports in one call.\n\n"
+                f"{api_reference}\n"
+                "Args:\n"
+                "    code: Python code to execute (multi-line supported)\n\n"
+                "Returns:\n"
+                "    stdout output, or repr of last expression if no print"
+            )
 
         # =====================================================================
         # Tool 2: get_graph_schema - Schema introspection
@@ -1590,286 +1597,293 @@ class AgentsServer:
 
             return schema_for(task=scope)
 
-        # =====================================================================
-        # Tool 3: add_to_graph - Schema-validated writes
-        # =====================================================================
+        if not self.read_only:
+            # =====================================================================
+            # Tool 3: add_to_graph - Schema-validated writes
+            # =====================================================================
 
-        @self.mcp.tool()
-        def add_to_graph(
-            node_type: str,
-            data: dict[str, Any] | list[dict[str, Any]],
-            create_facility_relationship: bool = True,
-            batch_size: int = 50,
-        ) -> dict[str, Any]:
-            """
-            Create nodes in the knowledge graph with schema validation.
+            @self.mcp.tool()
+            def add_to_graph(
+                node_type: str,
+                data: dict[str, Any] | list[dict[str, Any]],
+                create_facility_relationship: bool = True,
+                batch_size: int = 50,
+            ) -> dict[str, Any]:
+                """
+                Create nodes in the knowledge graph with schema validation.
 
-            Validates data against Pydantic models, filters out private fields,
-            then writes to the graph. Use this for semantic data (files, codes, nodes).
-            For infrastructure data (paths, tools, OS), use update_infrastructure() instead.
+                Validates data against Pydantic models, filters out private fields,
+                then writes to the graph. Use this for semantic data (files, codes, nodes).
+                For infrastructure data (paths, tools, OS), use update_infrastructure() instead.
 
-            Special handling:
-            - CodeFile: Auto-deduplicates already discovered/ingested files
-            - SignalNode: Auto-creates IN_DATA_SOURCE and ACCESSOR_FUNCTION relationships
-            - FacilityPath: Links to parent Facility
+                Special handling:
+                - CodeFile: Auto-deduplicates already discovered/ingested files
+                - SignalNode: Auto-creates IN_DATA_SOURCE and ACCESSOR_FUNCTION relationships
+                - FacilityPath: Links to parent Facility
 
-            Args:
-                node_type: Node label (use get_graph_schema() to see valid types)
-                data: List of property dicts matching the schema
-                create_facility_relationship: Auto-create AT_FACILITY relationship
-                batch_size: Nodes per batch (default: 50)
+                Args:
+                    node_type: Node label (use get_graph_schema() to see valid types)
+                    data: List of property dicts matching the schema
+                    create_facility_relationship: Auto-create AT_FACILITY relationship
+                    batch_size: Nodes per batch (default: 50)
 
-            Returns:
-                Dict with counts: {"processed": N, "skipped": K, "errors": [...]}
+                Returns:
+                    Dict with counts: {"processed": N, "skipped": K, "errors": [...]}
 
-            Examples:
-                # Queue source files for ingestion
-                add_to_graph("CodeFile", [
-                    {"id": "tcv:/home/codes/liuqe.py", "path": "/home/codes/liuqe.py",
-                     "facility_id": "tcv", "status": "discovered"}
-                ])
+                Examples:
+                    # Queue source files for ingestion
+                    add_to_graph("CodeFile", [
+                        {"id": "tcv:/home/codes/liuqe.py", "path": "/home/codes/liuqe.py",
+                         "facility_id": "tcv", "status": "discovered"}
+                    ])
 
-                # Track discovered directories
-                add_to_graph("FacilityPath", [
-                    {"id": "tcv:/home/codes", "path": "/home/codes",
-                     "facility_id": "tcv", "path_type": "code_directory",
-                     "status": "discovered", "score_composite": 0.8}
-                ])
-            """
-            schema = get_schema()
+                    # Track discovered directories
+                    add_to_graph("FacilityPath", [
+                        {"id": "tcv:/home/codes", "path": "/home/codes",
+                         "facility_id": "tcv", "path_type": "code_directory",
+                         "status": "discovered", "score_composite": 0.8}
+                    ])
+                """
+                schema = get_schema()
 
-            if node_type not in schema.node_labels:
-                msg = f"Unknown node type: {node_type}. Valid: {schema.node_labels}"
-                raise ValueError(msg)
+                if node_type not in schema.node_labels:
+                    msg = f"Unknown node type: {node_type}. Valid: {schema.node_labels}"
+                    raise ValueError(msg)
 
-            items = [data] if isinstance(data, dict) else data
-            if not items:
-                return {"processed": 0, "skipped": 0, "errors": []}
+                items = [data] if isinstance(data, dict) else data
+                if not items:
+                    return {"processed": 0, "skipped": 0, "errors": []}
 
-            private_slots = set(schema.get_private_slots(node_type))
-            model_class = schema.get_model(node_type)
+                private_slots = set(schema.get_private_slots(node_type))
+                model_class = schema.get_model(node_type)
 
-            valid_items: list[dict[str, Any]] = []
-            errors: list[str] = []
+                valid_items: list[dict[str, Any]] = []
+                errors: list[str] = []
 
-            for i, item in enumerate(items):
-                try:
-                    filtered = {k: v for k, v in item.items() if k not in private_slots}
-                    validated = model_class.model_validate(filtered)
-                    props = to_cypher_props(validated)
-                    valid_items.append(props)
-                except Exception as e:
-                    item_id = item.get("id", f"item[{i}]")
-                    errors.append(f"{item_id}: {e}")
-                    logger.warning(f"Validation failed for {node_type} {item_id}: {e}")
-
-            if not valid_items:
-                return {"processed": 0, "skipped": len(errors), "errors": errors}
-
-            try:
-                with GraphClient() as client:
-                    skipped_dedup = 0
-
-                    # Ingestion gating: verify facility is allowed
-                    facility_ids = {
-                        item.get("facility_id")
-                        for item in valid_items
-                        if item.get("facility_id")
-                    }
-                    for fid in facility_ids:
-                        try:
-                            from imas_codex.graph.meta import gate_ingestion
-
-                            gate_ingestion(client, fid)
-                        except ValueError as gate_err:
-                            return {
-                                "processed": 0,
-                                "skipped": len(valid_items),
-                                "errors": [str(gate_err)],
-                            }
-
-                    # CodeFile deduplication
-                    if node_type == "CodeFile":
-                        existing = client.query(
-                            """
-                            UNWIND $items AS item
-                            OPTIONAL MATCH (sf:CodeFile {id: item.id})
-                            OPTIONAL MATCH (ce:CodeExample {source_file: item.path, facility_id: item.facility_id})
-                            RETURN item.id AS id, sf.status AS sf_status, ce.id AS ce_id
-                            """,
-                            items=valid_items,
-                        )
-                        skip_ids = {
-                            row["id"]
-                            for row in existing
-                            if row["sf_status"] in ("discovered", "ingested")
-                            or row["ce_id"]
+                for i, item in enumerate(items):
+                    try:
+                        filtered = {
+                            k: v for k, v in item.items() if k not in private_slots
                         }
-                        if skip_ids:
-                            valid_items = [
-                                i for i in valid_items if i["id"] not in skip_ids
-                            ]
-                            skipped_dedup = len(skip_ids)
-                        if not valid_items:
-                            return {
-                                "processed": 0,
-                                "skipped": len(errors) + skipped_dedup,
-                                "errors": errors,
-                            }
+                        validated = model_class.model_validate(filtered)
+                        props = to_cypher_props(validated)
+                        valid_items.append(props)
+                    except Exception as e:
+                        item_id = item.get("id", f"item[{i}]")
+                        errors.append(f"{item_id}: {e}")
+                        logger.warning(
+                            f"Validation failed for {node_type} {item_id}: {e}"
+                        )
 
-                    result = client.create_nodes(
-                        label=node_type,
-                        items=valid_items,
-                        batch_size=batch_size,
-                        create_relationships=create_facility_relationship,
+                if not valid_items:
+                    return {"processed": 0, "skipped": len(errors), "errors": errors}
+
+                try:
+                    with GraphClient() as client:
+                        skipped_dedup = 0
+
+                        # Ingestion gating: verify facility is allowed
+                        facility_ids = {
+                            item.get("facility_id")
+                            for item in valid_items
+                            if item.get("facility_id")
+                        }
+                        for fid in facility_ids:
+                            try:
+                                from imas_codex.graph.meta import gate_ingestion
+
+                                gate_ingestion(client, fid)
+                            except ValueError as gate_err:
+                                return {
+                                    "processed": 0,
+                                    "skipped": len(valid_items),
+                                    "errors": [str(gate_err)],
+                                }
+
+                        # CodeFile deduplication
+                        if node_type == "CodeFile":
+                            existing = client.query(
+                                """
+                                UNWIND $items AS item
+                                OPTIONAL MATCH (sf:CodeFile {id: item.id})
+                                OPTIONAL MATCH (ce:CodeExample {source_file: item.path, facility_id: item.facility_id})
+                                RETURN item.id AS id, sf.status AS sf_status, ce.id AS ce_id
+                                """,
+                                items=valid_items,
+                            )
+                            skip_ids = {
+                                row["id"]
+                                for row in existing
+                                if row["sf_status"] in ("discovered", "ingested")
+                                or row["ce_id"]
+                            }
+                            if skip_ids:
+                                valid_items = [
+                                    i for i in valid_items if i["id"] not in skip_ids
+                                ]
+                                skipped_dedup = len(skip_ids)
+                            if not valid_items:
+                                return {
+                                    "processed": 0,
+                                    "skipped": len(errors) + skipped_dedup,
+                                    "errors": errors,
+                                }
+
+                        result = client.create_nodes(
+                            label=node_type,
+                            items=valid_items,
+                            batch_size=batch_size,
+                            create_relationships=create_facility_relationship,
+                        )
+
+                        return {
+                            "processed": result["processed"],
+                            "relationships": result.get("relationships", {}),
+                            "skipped": len(errors) + skipped_dedup,
+                            "errors": errors,
+                        }
+
+                except Exception as e:
+                    logger.exception("Failed to ingest nodes")
+                    raise RuntimeError(
+                        f"Failed to ingest nodes: {_neo4j_error_message(e)}"
+                    ) from e
+
+        if not self.read_only:
+            # =====================================================================
+            # Tool 4: update_facility_config - Facility configuration management
+            # =====================================================================
+
+            @self.mcp.tool()
+            def update_facility_config(
+                facility: str,
+                data: dict[str, Any] | None = None,
+                private: bool = True,
+            ) -> dict[str, Any]:
+                """
+                Read or update facility configuration (public or private).
+
+                Use this for infrastructure data (tools, paths, OS) that should NOT
+                go in the graph. For semantic data (files, codes), use add_to_graph().
+
+                Private data (private=True):
+                - Tool versions and availability
+                - File system paths
+                - Hostnames and network info
+                - OS and environment details
+                - Exploration notes
+
+                Public data (private=False):
+                - Facility name and description
+                - Machine name
+                - Data system types
+
+                Args:
+                    facility: Facility identifier (e.g., "tcv", "iter")
+                    data: If provided, update config. If None, just read.
+                    private: If True, update private config. If False, update public.
+
+                Returns:
+                    Current config data (after update if data provided)
+
+                Examples:
+                    # Read private infrastructure
+                    update_facility_config("iter")
+
+                    # Update tool availability (private)
+                    update_facility_config("iter", {"tools": {"rg": "14.1.1"}})
+
+                    # Add exploration notes (private)
+                    update_facility_config("iter", {
+                        "exploration_notes": ["Found IMAS modules"]
+                    })
+
+                    # Update public metadata
+                    update_facility_config("iter", {
+                        "description": "ITER SDCC - Updated"
+                    }, private=False)
+                """
+                try:
+                    if data is not None:
+                        if private:
+                            update_infrastructure(facility, data)
+                        else:
+                            update_metadata(facility, data)
+
+                    if private:
+                        return get_facility_infrastructure(facility) or {}
+                    else:
+                        from imas_codex.discovery import get_facility_metadata
+
+                        return get_facility_metadata(facility) or {}
+                except Exception as e:
+                    logger.exception(f"Failed to access config for {facility}")
+                    raise RuntimeError(f"Failed to access config: {e}") from e
+
+        if not self.read_only:
+            # =====================================================================
+            # Tool 5: update_facility_infrastructure - Update private facility data
+            # =====================================================================
+
+            @self.mcp.tool()
+            def update_facility_infrastructure(
+                facility: str,
+                data: dict[str, Any],
+            ) -> dict[str, Any]:
+                """
+                Update private facility infrastructure data with deep merge.
+
+                Use this for sensitive infrastructure data that should NOT go in the graph:
+                - Tool versions and availability
+                - File system paths and mounts
+                - Hostnames and network info
+                - OS and environment details
+                - Exploration notes
+
+                The data is deep-merged into the existing private YAML file,
+                preserving comments and formatting.
+
+                Args:
+                    facility: Facility identifier (e.g., "tcv", "iter")
+                    data: Data to merge into private file
+
+                Returns:
+                    Updated private infrastructure data
+
+                Examples:
+                    # Update tool availability
+                    update_facility_infrastructure("iter", {
+                        "tools": {"rg": {"version": "14.1.1", "path": "~/bin/rg"}}
+                    })
+
+                    # Update file system paths
+                    update_facility_infrastructure("iter", {
+                        "paths": {
+                            "imas": {"/work/imas": "IMAS installation root"}
+                        }
+                    })
+
+                    # Add multiple fields at once
+                    update_facility_infrastructure("iter", {
+                        "file_systems": [{
+                            "mount_point": "/mnt/HPC_T2",
+                            "type": "GPFS",
+                            "size": "1.5 PB"
+                        }],
+                        "exploration_notes": ["Discovered HPC storage"]
+                    })
+                """
+                try:
+                    from imas_codex.discovery import (
+                        get_facility_infrastructure as _get_infra,
+                        update_infrastructure as _update_infra,
                     )
 
-                    return {
-                        "processed": result["processed"],
-                        "relationships": result.get("relationships", {}),
-                        "skipped": len(errors) + skipped_dedup,
-                        "errors": errors,
-                    }
-
-            except Exception as e:
-                logger.exception("Failed to ingest nodes")
-                raise RuntimeError(
-                    f"Failed to ingest nodes: {_neo4j_error_message(e)}"
-                ) from e
-
-        # =====================================================================
-        # Tool 4: update_facility_config - Facility configuration management
-        # =====================================================================
-
-        @self.mcp.tool()
-        def update_facility_config(
-            facility: str,
-            data: dict[str, Any] | None = None,
-            private: bool = True,
-        ) -> dict[str, Any]:
-            """
-            Read or update facility configuration (public or private).
-
-            Use this for infrastructure data (tools, paths, OS) that should NOT
-            go in the graph. For semantic data (files, codes), use add_to_graph().
-
-            Private data (private=True):
-            - Tool versions and availability
-            - File system paths
-            - Hostnames and network info
-            - OS and environment details
-            - Exploration notes
-
-            Public data (private=False):
-            - Facility name and description
-            - Machine name
-            - Data system types
-
-            Args:
-                facility: Facility identifier (e.g., "tcv", "iter")
-                data: If provided, update config. If None, just read.
-                private: If True, update private config. If False, update public.
-
-            Returns:
-                Current config data (after update if data provided)
-
-            Examples:
-                # Read private infrastructure
-                update_facility_config("iter")
-
-                # Update tool availability (private)
-                update_facility_config("iter", {"tools": {"rg": "14.1.1"}})
-
-                # Add exploration notes (private)
-                update_facility_config("iter", {
-                    "exploration_notes": ["Found IMAS modules"]
-                })
-
-                # Update public metadata
-                update_facility_config("iter", {
-                    "description": "ITER SDCC - Updated"
-                }, private=False)
-            """
-            try:
-                if data is not None:
-                    if private:
-                        update_infrastructure(facility, data)
-                    else:
-                        update_metadata(facility, data)
-
-                if private:
-                    return get_facility_infrastructure(facility) or {}
-                else:
-                    from imas_codex.discovery import get_facility_metadata
-
-                    return get_facility_metadata(facility) or {}
-            except Exception as e:
-                logger.exception(f"Failed to access config for {facility}")
-                raise RuntimeError(f"Failed to access config: {e}") from e
-
-        # =====================================================================
-        # Tool 5: update_facility_infrastructure - Update private facility data
-        # =====================================================================
-
-        @self.mcp.tool()
-        def update_facility_infrastructure(
-            facility: str,
-            data: dict[str, Any],
-        ) -> dict[str, Any]:
-            """
-            Update private facility infrastructure data with deep merge.
-
-            Use this for sensitive infrastructure data that should NOT go in the graph:
-            - Tool versions and availability
-            - File system paths and mounts
-            - Hostnames and network info
-            - OS and environment details
-            - Exploration notes
-
-            The data is deep-merged into the existing private YAML file,
-            preserving comments and formatting.
-
-            Args:
-                facility: Facility identifier (e.g., "tcv", "iter")
-                data: Data to merge into private file
-
-            Returns:
-                Updated private infrastructure data
-
-            Examples:
-                # Update tool availability
-                update_facility_infrastructure("iter", {
-                    "tools": {"rg": {"version": "14.1.1", "path": "~/bin/rg"}}
-                })
-
-                # Update file system paths
-                update_facility_infrastructure("iter", {
-                    "paths": {
-                        "imas": {"/work/imas": "IMAS installation root"}
-                    }
-                })
-
-                # Add multiple fields at once
-                update_facility_infrastructure("iter", {
-                    "file_systems": [{
-                        "mount_point": "/mnt/HPC_T2",
-                        "type": "GPFS",
-                        "size": "1.5 PB"
-                    }],
-                    "exploration_notes": ["Discovered HPC storage"]
-                })
-            """
-            try:
-                from imas_codex.discovery import (
-                    get_facility_infrastructure as _get_infra,
-                    update_infrastructure as _update_infra,
-                )
-
-                _update_infra(facility, data)
-                return _get_infra(facility) or {}
-            except Exception as e:
-                logger.exception(f"Failed to update infrastructure for {facility}")
-                raise RuntimeError(f"Failed to update infrastructure: {e}") from e
+                    _update_infra(facility, data)
+                    return _get_infra(facility) or {}
+                except Exception as e:
+                    logger.exception(f"Failed to update infrastructure for {facility}")
+                    raise RuntimeError(f"Failed to update infrastructure: {e}") from e
 
         # =====================================================================
         # Tool 6: get_facility_infrastructure - Read private facility data
@@ -1905,48 +1919,49 @@ class AgentsServer:
                 logger.exception(f"Failed to get infrastructure for {facility}")
                 raise RuntimeError(f"Failed to get infrastructure: {e}") from e
 
-        # =====================================================================
-        # Tool 7: add_exploration_note - Append timestamped exploration note
-        # =====================================================================
+        if not self.read_only:
+            # =====================================================================
+            # Tool 7: add_exploration_note - Append timestamped exploration note
+            # =====================================================================
 
-        @self.mcp.tool()
-        def add_exploration_note(facility: str, note: str) -> list[str]:
-            """
-            Append a timestamped exploration note to facility's private data.
+            @self.mcp.tool()
+            def add_exploration_note(facility: str, note: str) -> list[str]:
+                """
+                Append a timestamped exploration note to facility's private data.
 
-            Automatically adds ISO timestamp prefix to the note.
+                Automatically adds ISO timestamp prefix to the note.
 
-            Args:
-                facility: Facility identifier (e.g., "tcv", "iter")
-                note: Exploration note to add
+                Args:
+                    facility: Facility identifier (e.g., "tcv", "iter")
+                    note: Exploration note to add
 
-            Returns:
-                Updated exploration_notes list
+                Returns:
+                    Updated exploration_notes list
 
-            Examples:
-                add_exploration_note("iter", "Found IMAS modules at /work/imas")
-                add_exploration_note("iter", "Discovered 50 Python files in /work/codes")
-            """
-            try:
-                from datetime import datetime
+                Examples:
+                    add_exploration_note("iter", "Found IMAS modules at /work/imas")
+                    add_exploration_note("iter", "Discovered 50 Python files in /work/codes")
+                """
+                try:
+                    from datetime import datetime
 
-                from imas_codex.discovery import (
-                    get_facility_infrastructure as _get_infra,
-                )
+                    from imas_codex.discovery import (
+                        get_facility_infrastructure as _get_infra,
+                    )
 
-                infra = _get_infra(facility) or {}
-                notes = infra.get("exploration_notes", [])
+                    infra = _get_infra(facility) or {}
+                    notes = infra.get("exploration_notes", [])
 
-                # Add timestamped note
-                timestamp = datetime.now().strftime("%Y-%m-%d")
-                timestamped_note = f"{timestamp}: {note}"
-                notes.append(timestamped_note)
+                    # Add timestamped note
+                    timestamp = datetime.now().strftime("%Y-%m-%d")
+                    timestamped_note = f"{timestamp}: {note}"
+                    notes.append(timestamped_note)
 
-                update_infrastructure(facility, {"exploration_notes": notes})
-                return notes
-            except Exception as e:
-                logger.exception(f"Failed to add exploration note for {facility}")
-                raise RuntimeError(f"Failed to add exploration note: {e}") from e
+                    update_infrastructure(facility, {"exploration_notes": notes})
+                    return notes
+                except Exception as e:
+                    logger.exception(f"Failed to add exploration note for {facility}")
+                    raise RuntimeError(f"Failed to add exploration note: {e}") from e
 
         # =====================================================================
         # Tool 7b: get_discovery_context - Graph-derived discovery state
@@ -2716,111 +2731,112 @@ class AgentsServer:
             """
             return _fetch(resource)
 
-        # =====================================================================
-        # Log Tools (Phase 3: MCP Logs)
-        # =====================================================================
+        if not self.read_only:
+            # =====================================================================
+            # Log Tools (Phase 3: MCP Logs)
+            # =====================================================================
 
-        @self.mcp.tool()
-        def list_logs() -> str:
-            """List available imas-codex log files with sizes and last-modified times.
+            @self.mcp.tool()
+            def list_logs() -> str:
+                """List available imas-codex log files with sizes and last-modified times.
 
-            Returns a formatted table of log files including file name, size,
-            age, and last modified timestamp. Automatically reads from the
-            configured log location (local or remote via SSH).
+                Returns a formatted table of log files including file name, size,
+                age, and last modified timestamp. Automatically reads from the
+                configured log location (local or remote via SSH).
 
-            Returns:
-                Formatted log file listing.
-            """
-            from imas_codex.cli.logging import list_log_files
+                Returns:
+                    Formatted log file listing.
+                """
+                from imas_codex.cli.logging import list_log_files
 
-            files = list_log_files()
-            if not files:
-                return "No log files found in ~/.local/share/imas-codex/logs/"
+                files = list_log_files()
+                if not files:
+                    return "No log files found in ~/.local/share/imas-codex/logs/"
 
-            lines = ["Available log files:", ""]
-            for f in files:
-                size = f["size_bytes"]
-                if size >= 1_000_000:
-                    size_str = f"{size / 1_000_000:.1f}MB"
-                elif size >= 1_000:
-                    size_str = f"{size / 1_000:.1f}KB"
-                else:
-                    size_str = f"{size}B"
-                lines.append(
-                    f"  {f['name']:<40} {size_str:>8}  "
-                    f"modified {f['modified_iso']}  ({f['age_hours']:.1f}h ago)"
+                lines = ["Available log files:", ""]
+                for f in files:
+                    size = f["size_bytes"]
+                    if size >= 1_000_000:
+                        size_str = f"{size / 1_000_000:.1f}MB"
+                    elif size >= 1_000:
+                        size_str = f"{size / 1_000:.1f}KB"
+                    else:
+                        size_str = f"{size}B"
+                    lines.append(
+                        f"  {f['name']:<40} {size_str:>8}  "
+                        f"modified {f['modified_iso']}  ({f['age_hours']:.1f}h ago)"
+                    )
+                return "\n".join(lines)
+
+            @self.mcp.tool()
+            def get_logs(
+                command: str = "signals",
+                facility: str | None = None,
+                lines: int = 100,
+                level: str = "WARNING",
+                grep: str | None = None,
+                since: str | None = None,
+            ) -> str:
+                """Read imas-codex log files with filtering.
+
+                Reads <command>_<facility>.log with level, text, and time filtering.
+                Automatically reads from the configured log location (local or
+                remote via SSH based on [logs].location in pyproject.toml).
+
+                Args:
+                    command: CLI command name (e.g. "signals", "wiki", "paths",
+                        "code", "documents").
+                    facility: Facility ID (e.g. "jet", "tcv"). If omitted,
+                        reads <command>.log.
+                    lines: Maximum number of matching lines to return (default: 100).
+                    level: Minimum log level to include. One of: DEBUG, INFO,
+                        WARNING, ERROR, CRITICAL (default: WARNING).
+                    grep: Case-insensitive text filter. Only lines containing
+                        this substring are returned.
+                    since: Time filter. Relative: "1h", "30m", "2d".
+                        Absolute: "2024-03-13T10:00".
+
+                Returns:
+                    Filtered log content. Empty if no matching lines.
+                """
+                from imas_codex.cli.logging import read_log
+
+                return read_log(
+                    command=command,
+                    facility=facility,
+                    lines=lines,
+                    level=level,
+                    grep=grep,
+                    since=since,
                 )
-            return "\n".join(lines)
 
-        @self.mcp.tool()
-        def get_logs(
-            command: str = "signals",
-            facility: str | None = None,
-            lines: int = 100,
-            level: str = "WARNING",
-            grep: str | None = None,
-            since: str | None = None,
-        ) -> str:
-            """Read imas-codex log files with filtering.
+            @self.mcp.tool()
+            def tail_logs(
+                command: str = "signals",
+                facility: str | None = None,
+                lines: int = 50,
+            ) -> str:
+                """Get the most recent log entries (tail -n).
 
-            Reads <command>_<facility>.log with level, text, and time filtering.
-            Automatically reads from the configured log location (local or
-            remote via SSH based on [logs].location in pyproject.toml).
+                Returns the last N lines from the log file, regardless of
+                level or content. Automatically reads from the configured
+                log location (local or remote via SSH).
 
-            Args:
-                command: CLI command name (e.g. "signals", "wiki", "paths",
-                    "code", "documents").
-                facility: Facility ID (e.g. "jet", "tcv"). If omitted,
-                    reads <command>.log.
-                lines: Maximum number of matching lines to return (default: 100).
-                level: Minimum log level to include. One of: DEBUG, INFO,
-                    WARNING, ERROR, CRITICAL (default: WARNING).
-                grep: Case-insensitive text filter. Only lines containing
-                    this substring are returned.
-                since: Time filter. Relative: "1h", "30m", "2d".
-                    Absolute: "2024-03-13T10:00".
+                Args:
+                    command: CLI command name (e.g. "signals", "wiki", "paths").
+                    facility: Facility ID (e.g. "jet", "tcv").
+                    lines: Number of lines from the end (default: 50).
 
-            Returns:
-                Filtered log content. Empty if no matching lines.
-            """
-            from imas_codex.cli.logging import read_log
+                Returns:
+                    Last N lines of the log file.
+                """
+                from imas_codex.cli.logging import tail_log
 
-            return read_log(
-                command=command,
-                facility=facility,
-                lines=lines,
-                level=level,
-                grep=grep,
-                since=since,
-            )
-
-        @self.mcp.tool()
-        def tail_logs(
-            command: str = "signals",
-            facility: str | None = None,
-            lines: int = 50,
-        ) -> str:
-            """Get the most recent log entries (tail -n).
-
-            Returns the last N lines from the log file, regardless of
-            level or content. Automatically reads from the configured
-            log location (local or remote via SSH).
-
-            Args:
-                command: CLI command name (e.g. "signals", "wiki", "paths").
-                facility: Facility ID (e.g. "jet", "tcv").
-                lines: Number of lines from the end (default: 50).
-
-            Returns:
-                Last N lines of the log file.
-            """
-            from imas_codex.cli.logging import tail_log
-
-            return tail_log(
-                command=command,
-                facility=facility,
-                lines=lines,
-            )
+                return tail_log(
+                    command=command,
+                    facility=facility,
+                    lines=lines,
+                )
 
     def _register_prompts(self):
         """Register MCP prompts from markdown files.

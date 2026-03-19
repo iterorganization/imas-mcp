@@ -12,8 +12,11 @@ The `imas_codex.llm` module provides LLM prompt infrastructure and MCP server:
 The MCP server provides **4 core tools** with a Python REPL as the primary interface:
 
 ```bash
-# Start the agents server
+# Start the agents server (full mode — all tools)
 imas-codex serve
+
+# Read-only mode (suppresses write tools and Python REPL)
+imas-codex serve --read-only
 ```
 
 **Core Tools:**

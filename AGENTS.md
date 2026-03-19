@@ -350,6 +350,19 @@ Ingestion is interrupt-safe — rerun to continue. Already-ingested files are sk
 - `python()` REPL for chained processing, Cypher queries, IMAS/COCOS operations
 - Terminal for `rg`, `fd`, `git`, `uv run`; SSH for remote single commands
 
+**Read-only mode:** `imas-codex serve --read-only` suppresses all write tools (`python()` REPL, `add_to_graph()`, `update_facility_infrastructure()`, `add_exploration_note()`) and exposes only the search/read tools (`search_signals`, `search_docs`, `search_code`, `search_imas`, `fetch`, `get_graph_schema`, etc.). Use for container deployments, public endpoints, and any context where graph mutation is not desired.
+
+```bash
+# Full mode (default) — all tools including REPL and write operations
+imas-codex serve
+
+# Read-only mode — search and read tools only, no REPL or graph writes
+imas-codex serve --read-only
+
+# Read-only with HTTP transport (typical container deployment)
+imas-codex serve --read-only --transport streamable-http
+```
+
 ## LLM Access
 
 All LLM interaction flows through two canonical modules. Never call `litellm.completion()` directly — the shared functions handle prompt caching flags, cost tracking, retries with exponential backoff, and structured output parsing.
@@ -831,6 +844,27 @@ Extended examples and edge cases for each domain: [agents/](agents/)
 | Develop | Code development (standard + MCP) |
 
 | Graph | Knowledge graph operations (core + MCP) |
+
+## MCP Server Deployment
+
+```bash
+# Default: full mode with all tools (REPL, search, write)
+uv run imas-codex serve
+
+# Read-only: search and read tools only (public/container deployments)
+uv run imas-codex serve --read-only --transport streamable-http
+
+# STDIO transport for MCP clients (VS Code, Claude Desktop)
+uv run imas-codex serve --transport stdio
+```
+
+**Deployment topology:**
+
+| Deployment | Command | Tools Available |
+|------------|---------|-----------------|
+| Development | `imas-codex serve` | All (REPL, search, write, infrastructure) |
+| Public / container | `imas-codex serve --read-only` | Search and read only |
+| HPC / SLURM | `scripts/imas_codex_slurm_stdio.sh` | All (inside allocation) |
 
 ## Fallback: MCP Server Not Running
 

@@ -20,6 +20,13 @@ imas-codex serve
 
 This single server provides IMAS Data Dictionary knowledge, semantic search, and remote facility exploration.
 
+**Read-only mode:** Use `--read-only` to suppress write tools (Python REPL, graph mutation) — ideal for container and public deployments:
+
+```bash
+# Read-only mode (for container deployments)
+imas-codex serve --read-only --transport streamable-http
+```
+
 ## Quick Start
 
 Select the setup method that matches your environment:
@@ -773,6 +780,9 @@ uv run imas-codex serve
 
 # Run with stdio transport for MCP clients
 uv run imas-codex serve --transport stdio
+
+# Read-only mode (suppresses write tools and Python REPL)
+uv run imas-codex serve --read-only
 ```
 
 ### Build Scripts
