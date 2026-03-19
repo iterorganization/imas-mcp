@@ -467,6 +467,7 @@ async def run_parallel_wiki_discovery(
     service_monitor: Any = None,
     max_wiki_connections: int = 10,
     skip_facility_workers: bool = False,
+    min_score: float = 0.5,
 ) -> dict[str, Any]:
     """Run parallel wiki discovery with async workers.
 
@@ -753,6 +754,7 @@ async def run_parallel_wiki_discovery(
             should_stop_fn=state.should_stop_ingesting,
             on_progress=on_ingest_progress,
             group="pages",
+            kwargs={"min_score": min_score},
         )
     )
 

@@ -614,8 +614,8 @@ def has_pending_scan_work(facility: str, *, base_url: str | None = None) -> bool
 def has_pending_ingest_work(facility: str, *, base_url: str | None = None) -> bool:
     """Check if there's pending ingest work in the graph.
 
-    Returns True if there are scored pages with score >= 0.3 awaiting
-    ingestion (unclaimed or orphaned).
+    Returns True if there are scored pages with score >= 0.5 or
+    should_ingest=true awaiting ingestion (unclaimed or orphaned).
 
     When ``base_url`` is provided, only counts pages matching the site
     URL prefix.
@@ -634,7 +634,7 @@ def has_pending_ingest_work(facility: str, *, base_url: str | None = None) -> bo
             f"""
             MATCH (wp:WikiPage {{facility_id: $facility}})
             WHERE wp.status = $scored
-              AND wp.score_composite >= 0.3
+              AND (wp.score_composite >= 0.5 OR wp.should_ingest = true)
               AND (wp.claimed_at IS NULL
                    OR wp.claimed_at < datetime() - duration($cutoff))
               {url_filter}
@@ -813,15 +813,18 @@ def claim_pages_for_scoring(
 @retry_on_deadlock()
 def claim_pages_for_ingesting(
     facility: str,
-    min_score: float = 0.3,
+    min_score: float = 0.5,
     limit: int = 10,
     *,
     base_url: str | None = None,
 ) -> list[dict[str, Any]]:
     """Claim scored pages for ingestion (chunking and embedding).
 
-    Workflow: scored + score >= min_score + unclaimed → set claimed_at
+    Workflow: scored + (score >= min_score OR should_ingest) + unclaimed → set claimed_at
     After ingest: update status to 'ingested'.
+
+    Pages are claimed if their composite score meets the threshold OR if
+    the LLM explicitly flagged them with should_ingest=true.
 
     Uses claim token pattern to handle race conditions between workers.
     When ``base_url`` is provided, only claims pages matching the site
@@ -849,7 +852,7 @@ def claim_pages_for_ingesting(
             f"""
             MATCH (wp:WikiPage {{facility_id: $facility}})
             WHERE wp.status = $scored
-              AND wp.score_composite >= $min_score
+              AND (wp.score_composite >= $min_score OR wp.should_ingest = true)
               AND (wp.claimed_at IS NULL
                    OR wp.claimed_at < datetime() - duration($cutoff))
               {url_filter}
@@ -893,7 +896,7 @@ def claim_pages_for_ingesting(
 def mark_pages_scored(
     facility: str,
     results: list[dict[str, Any]],
-    skip_threshold: float = 0.3,
+    skip_threshold: float = 0.5,
 ) -> int:
     """Mark pages as scored or skipped based on score threshold.
 
