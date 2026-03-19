@@ -14,9 +14,9 @@ class TestToolRegistration:
 
         tools = Tools(graph_client=graph_client)
         names = tools.get_registered_tool_names()
-        assert "query_imas_graph" in names
-        assert "get_dd_graph_schema" in names
+        # query_imas_graph and get_dd_graph_schema were removed in the unified server cleanup
         assert "get_dd_versions" in names
+        assert "search_imas_paths" in names
 
     def test_graph_client_required(self):
         """Tools raises ValueError when no graph_client provided."""

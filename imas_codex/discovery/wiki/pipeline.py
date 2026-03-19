@@ -623,21 +623,21 @@ def html_to_text(html: str) -> tuple[str, dict[str, str]]:
 
 
 # META types that are pure metadata (not content) — always skipped
-_META_SYSTEM_TYPES = frozenset({
-    "TOPICINFO",
-    "TOPICPARENT",
-    "TOPICMOVED",
-    "FORM",
-    "PREFERENCE",
-    "FILEATTACHMENT",
-    "REVINFO",
-    "REVCOMMENT",
-})
+_META_SYSTEM_TYPES = frozenset(
+    {
+        "TOPICINFO",
+        "TOPICPARENT",
+        "TOPICMOVED",
+        "FORM",
+        "PREFERENCE",
+        "FILEATTACHMENT",
+        "REVINFO",
+        "REVCOMMENT",
+    }
+)
 
 # Regex to parse %META:FIELD{name="X" ...value="Y"...}%
-_META_FIELD_RE = re.compile(
-    r'^%META:FIELD\{.*?name="([^"]*)".*?value="([^"]*)".*?\}%$'
-)
+_META_FIELD_RE = re.compile(r'^%META:FIELD\{.*?name="([^"]*)".*?value="([^"]*)".*?\}%$')
 
 
 def _parse_meta_field(line: str) -> str:

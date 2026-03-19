@@ -204,7 +204,7 @@ class TestGraphOverviewTool:
         tool = self._make_tool(graph_client)
         result = await tool.get_imas_overview()
         assert "search_imas_paths" in result.mcp_tools
-        assert "query_imas_graph" in result.mcp_tools
+        # query_imas_graph was removed in the unified server cleanup
 
     @pytest.mark.asyncio
     async def test_overview_has_physics_domains(self, graph_client):
@@ -314,7 +314,7 @@ class TestToolsGraphMode:
     def test_graph_mode_registers_all_tools(self, graph_client):
         tools = self._make_tools(graph_client)
         names = tools.get_registered_tool_names()
-        # Should have all 10 tools (6 graph-backed + cypher + schema + version)
+        # Should have all graph-backed tools (query_imas_graph and get_dd_graph_schema were removed)
         expected = {
             "search_imas_paths",
             "check_imas_paths",
@@ -323,8 +323,6 @@ class TestToolsGraphMode:
             "get_imas_overview",
             "search_imas_clusters",
             "get_imas_identifiers",
-            "query_imas_graph",
-            "get_dd_graph_schema",
             "get_dd_versions",
         }
         assert expected.issubset(set(names))
