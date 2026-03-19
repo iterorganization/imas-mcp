@@ -10,7 +10,7 @@
     },
     "imas-ddv3": {
       "command": "uv",
-      "args": ["run", "imas-codex", "--transport", "stdio"],
+      "args": ["run", "imas-codex", "serve", "imas", "--transport", "stdio"],
       "env": {
         "IMAS_DD_VERSION": "3.42.2"
       },
