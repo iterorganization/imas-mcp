@@ -1,10 +1,17 @@
 # Dynamic Tool Registration & Server Unification
 
-**Status:** Planned
+**Status:** Superseded by `unified-server.md`
 **Created:** 2026-03-18
+**Updated:** 2026-03-19
 **Priority:** High — blocks TCV facility deployment
 **Scope:** `imas_codex/server.py`, `imas_codex/llm/server.py`, `imas_codex/tools/__init__.py`,
 `imas_codex/cli/serve.py`, `.vscode/mcp.json`, `.cursor/mcp.json`
+
+> **Note:** This plan has been absorbed into `unified-server.md` which provides a
+> more comprehensive assessment including tool description bloat analysis, schema
+> context evaluation, and detailed per-tool retention decisions. The implementation
+> phases here map directly to that plan: Phases 1-2 → unified Phase 1, Phase 2 →
+> unified Phase 2, Phase 3 → unified Phase 3 (deferred).
 
 ## Problem Statement
 
