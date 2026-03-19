@@ -9,6 +9,10 @@ on:
         description: "Graph version tag to test"
         required: false
         default: "latest"
+      registry:
+        description: "GHCR registry (default: ghcr.io/iterorganization)"
+        required: false
+        default: "ghcr.io/iterorganization"
       benchmark_filter:
         description: "Benchmark filter (e.g., SearchToolBenchmarks)"
         required: false
@@ -100,8 +104,8 @@ jobs:
           EOF
 
       # ── Load Graph Data ────────────────────────────────────────────────
+      # Packages live in the org registry (iterorganization), not per-fork.
       # GHCR_TOKEN (PAT with read:packages) required for private packages.
-      # GITHUB_TOKEN only works if the package is linked to the repository.
       - name: Login to GHCR
         run: |
           echo "${{ secrets.GHCR_TOKEN }}" | oras login ghcr.io -u token --password-stdin
@@ -109,8 +113,7 @@ jobs:
       - name: Resolve graph tag
         id: graph-tag
         run: |
-          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
-          REGISTRY="ghcr.io/${OWNER}"
+          REGISTRY="${{ github.event.inputs.registry || 'ghcr.io/iterorganization' }}"
           PACKAGE="imas-codex-graph"
           REQUESTED="${{ github.event.inputs.graph_tag || 'latest' }}"
 
