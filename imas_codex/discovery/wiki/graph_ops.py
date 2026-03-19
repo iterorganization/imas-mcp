@@ -1118,6 +1118,90 @@ def mark_pages_insufficient_content(page_ids: list[str]) -> int:
         return 0
 
 
+def revert_pages_to_scored(
+    page_ids: list[str], *, max_ingest_retries: int = 5
+) -> dict[str, int]:
+    """Revert pages to scored status after an ingest-time fetch failure.
+
+    When a page was successfully scored (has preview_text and a composite
+    score) but cannot be fetched at ingest time, the failure is transient
+    rather than permanent.  This function reverts such pages back to
+    ``scored`` so they re-enter the ingest queue on a subsequent cycle.
+
+    An ``ingest_retries`` counter is incremented on each call.  Pages
+    that exceed *max_ingest_retries* are permanently marked as skipped
+    with ``skip_reason='fetch_exhausted'`` to prevent infinite loops.
+
+    Returns:
+        Dict with ``{"reverted": N, "exhausted": M}``.
+    """
+    if not page_ids:
+        return {"reverted": 0, "exhausted": 0}
+
+    try:
+        with GraphClient() as gc:
+            # Increment ingest retry counters first.
+            gc.query(
+                """
+                UNWIND $ids AS id
+                MATCH (wp:WikiPage {id: id})
+                SET wp.ingest_retries = coalesce(wp.ingest_retries, 0) + 1
+                """,
+                ids=page_ids,
+            )
+
+            # Revert pages still below retry cap back to scored.
+            reverted_result = gc.query(
+                """
+                UNWIND $ids AS id
+                MATCH (wp:WikiPage {id: id})
+                WHERE coalesce(wp.ingest_retries, 0) < $max_retries
+                SET wp.status = $scored,
+                    wp.claimed_at = null,
+                    wp.claim_token = null
+                RETURN count(wp) AS reverted
+                """,
+                ids=page_ids,
+                max_retries=max_ingest_retries,
+                scored=WikiPageStatus.scored.value,
+            )
+
+            # Mark exhausted pages as permanently skipped to avoid infinite churn.
+            exhausted_result = gc.query(
+                """
+                UNWIND $ids AS id
+                MATCH (wp:WikiPage {id: id})
+                WHERE coalesce(wp.ingest_retries, 0) >= $max_retries
+                SET wp.status = $skipped,
+                    wp.skip_reason = 'fetch_exhausted',
+                    wp.should_ingest = false,
+                    wp.claimed_at = null,
+                    wp.claim_token = null
+                RETURN count(wp) AS exhausted
+                """,
+                ids=page_ids,
+                max_retries=max_ingest_retries,
+                skipped=WikiPageStatus.skipped.value,
+            )
+
+            reverted = reverted_result[0]["reverted"] if reverted_result else 0
+            exhausted = exhausted_result[0]["exhausted"] if exhausted_result else 0
+            if reverted:
+                logger.info(
+                    "Reverted %d pages to scored for ingest retry", reverted
+                )
+            if exhausted:
+                logger.warning(
+                    "Marked %d pages as fetch_exhausted after %d ingest retries",
+                    exhausted,
+                    max_ingest_retries,
+                )
+            return {"reverted": reverted, "exhausted": exhausted}
+    except Exception as e:
+        logger.warning("Could not revert pages to scored: %s", e)
+        return {"reverted": 0, "exhausted": 0}
+
+
 def _release_claimed_pages(page_ids: list[str], *, max_fetch_retries: int = 10) -> None:
     """Release claimed pages back for reprocessing.
 

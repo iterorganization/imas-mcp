@@ -41,6 +41,7 @@ from .graph_ops import (
     mark_pages_ingested,
     mark_pages_insufficient_content,
     mark_pages_scored,
+    revert_pages_to_scored,
 )
 from .scoring import (
     _extract_document_preview,
@@ -456,9 +457,11 @@ async def ingest_worker(
     # HTTP semaphore (max_wiki_connections) for direct HTTP.
     http_semaphore = state.effective_fetch_semaphore
 
-    # Track pages that returned 0 chunks so we can release them as a batch
-    # for retry instead of permanently marking them failed.
-    empty_page_ids: list[str] = []
+    # Track ingest outcomes for pages that produced no chunks:
+    # - transient_fetch_fail_ids: full content fetch failed (retry later)
+    # - insufficient_page_ids: fetch succeeded but content too small to chunk
+    transient_fetch_fail_ids: list[str] = []
+    insufficient_page_ids: list[str] = []
 
     async def process_single_page(page: dict) -> dict | None:
         """Process a single page with semaphore-limited concurrency."""
@@ -481,16 +484,18 @@ async def ingest_worker(
                     confluence_client=shared_confluence_client,
                     prefetch_cache=getattr(state, "_prefetch_cache", None),
                 )
+                if chunk_count == -1:
+                    logger.warning(
+                        "Page %s could not be fetched during ingest (transient)",
+                        page_id,
+                    )
+                    transient_fetch_fail_ids.append(page_id)
+                    return None
                 if chunk_count == 0:
                     logger.warning(
-                        "Page %s produced 0 chunks (empty or unfetchable)", page_id
+                        "Page %s produced 0 chunks (insufficient content)", page_id
                     )
-                    # Release for retry instead of permanent failure.
-                    # The page was previously scored (had content then), so
-                    # 0 chunks likely means a transient fetch failure.
-                    # _release_claimed_pages tracks fetch_retries and will
-                    # mark as failed after max retries to prevent infinite loops.
-                    empty_page_ids.append(page_id)
+                    insufficient_page_ids.append(page_id)
                     return None
                 return {
                     "id": page_id,
@@ -579,19 +584,36 @@ async def ingest_worker(
         # Filter out None results (failed pages)
         results = [r for r in results_raw if r is not None]
 
-        # Pages that produced 0 chunks (empty_page_ids) are permanently
-        # uningestable — they have some preview text but not enough full
-        # content for useful chunking.  Mark as skipped so they don't
-        # cycle through failed → recovered → claimed → 0 chunks forever.
-        if empty_page_ids:
+        # Pages that failed to fetch at ingest-time are reverted to scored.
+        # This preserves score/threshold flexibility across long gaps between
+        # score and ingest runs without storing full content in the graph.
+        if transient_fetch_fail_ids:
+            retry_result = await asyncio.to_thread(
+                revert_pages_to_scored,
+                transient_fetch_fail_ids,
+            )
+            logger.info(
+                "Reverted %d pages to scored after transient ingest fetch failures"
+                " (exhausted=%d)",
+                retry_result.get("reverted", 0),
+                retry_result.get("exhausted", 0),
+            )
+            transient_fetch_fail_ids.clear()
+
+        # Pages with genuinely insufficient fetched content are permanently
+        # uningestable. Mark as skipped so they don't cycle forever.
+        if insufficient_page_ids:
             logger.info(
                 "Marking %d pages as skipped (insufficient content for chunking)",
-                len(empty_page_ids),
+                len(insufficient_page_ids),
             )
-            await asyncio.to_thread(mark_pages_insufficient_content, empty_page_ids)
-            state.ingest_stats.processed += len(empty_page_ids)
-            state.ingest_stats.record_batch(len(empty_page_ids))
-            empty_page_ids.clear()
+            await asyncio.to_thread(
+                mark_pages_insufficient_content,
+                insufficient_page_ids,
+            )
+            state.ingest_stats.processed += len(insufficient_page_ids)
+            state.ingest_stats.record_batch(len(insufficient_page_ids))
+            insufficient_page_ids.clear()
 
         # Run blocking Neo4j call in thread pool
         await asyncio.to_thread(mark_pages_ingested, state.facility, results)
@@ -1296,7 +1318,8 @@ async def _ingest_page(
         confluence_client: Optional shared ConfluenceClient for Confluence auth
 
     Returns:
-        Number of chunks created
+        Number of chunks created, or -1 if content could not be fetched
+        (transient failure — the page should be retried later).
     """
     from imas_codex.discovery.wiki.pipeline import WikiIngestionPipeline
     from imas_codex.discovery.wiki.scraper import WikiPage
@@ -1324,7 +1347,10 @@ async def _ingest_page(
             raw_markup = await asyncio.to_thread(
                 fetch_twiki_raw_content, raw_ssh_host, filepath
             )
-        if not raw_markup or len(raw_markup) < 50:
+        if not raw_markup:
+            logger.warning("Fetch failure for %s (empty SSH read)", page_id)
+            return -1
+        if len(raw_markup) < 50:
             logger.warning("Insufficient TWiki content for %s", page_id)
             return 0
 
@@ -1342,7 +1368,10 @@ async def _ingest_page(
             basic_auth_client=basic_auth_client,
             confluence_client=confluence_client,
         )
-    if not html or len(html) < 100:
+    if not html:
+        logger.warning("Fetch failure for %s (empty response)", page_id)
+        return -1
+    if len(html) < 100:
         logger.warning("Insufficient content for %s", page_id)
         return 0
 

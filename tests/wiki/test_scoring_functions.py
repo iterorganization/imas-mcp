@@ -432,19 +432,26 @@ class TestBatchSshReadFiles:
         assert batch_ssh_read_files([]) == {}
 
     def test_single_file(self):
-        from imas_codex.discovery.wiki.scoring import (
-            _BATCH_FILE_SEPARATOR,
-            batch_ssh_read_files,
-        )
+        from imas_codex.discovery.wiki.scoring import batch_ssh_read_files
 
         url = "ssh://host1/data/Main/Page.txt"
-        stdout = f"{_BATCH_FILE_SEPARATOR}:'/data/Main/Page.txt'\nline1\nline2\n"
 
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(
-                returncode=0,
-                stdout=stdout.encode(),
-            )
+        def _fake_run(cmd, **kwargs):
+            import io
+            import tarfile
+
+            ssh_cmd = cmd[4]  # Remote shell command
+            assert ssh_cmd.startswith("tar -cf - -- ")
+
+            buf = io.BytesIO()
+            with tarfile.open(fileobj=buf, mode="w") as archive:
+                payload = b"line1\nline2\n"
+                info = tarfile.TarInfo(name="data/Main/Page.txt")
+                info.size = len(payload)
+                archive.addfile(info, io.BytesIO(payload))
+            return MagicMock(returncode=0, stdout=buf.getvalue())
+
+        with patch("subprocess.run", side_effect=_fake_run) as mock_run:
             result = batch_ssh_read_files([url])
 
         assert url in result
@@ -457,25 +464,35 @@ class TestBatchSshReadFiles:
         assert "ClearAllForwardings=yes" in args
 
     def test_multiple_files_same_host(self):
-        from imas_codex.discovery.wiki.scoring import (
-            _BATCH_FILE_SEPARATOR,
-            batch_ssh_read_files,
-        )
+        from imas_codex.discovery.wiki.scoring import batch_ssh_read_files
 
         urls = [
             "ssh://host1/data/Main/PageA.txt",
             "ssh://host1/data/Main/PageB.txt",
         ]
-        stdout = (
-            f"{_BATCH_FILE_SEPARATOR}:'/data/Main/PageA.txt'\nContent A\n"
-            f"{_BATCH_FILE_SEPARATOR}:'/data/Main/PageB.txt'\nContent B\n"
-        )
 
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(
-                returncode=0,
-                stdout=stdout.encode(),
-            )
+        def _fake_run(cmd, **kwargs):
+            import io
+            import tarfile
+
+            ssh_cmd = cmd[4]
+            assert ssh_cmd.startswith("tar -cf - -- ")
+
+            buf = io.BytesIO()
+            with tarfile.open(fileobj=buf, mode="w") as archive:
+                payload_a = b"Content A\n"
+                info_a = tarfile.TarInfo(name="data/Main/PageA.txt")
+                info_a.size = len(payload_a)
+                archive.addfile(info_a, io.BytesIO(payload_a))
+
+                payload_b = b"Content B\n"
+                info_b = tarfile.TarInfo(name="data/Main/PageB.txt")
+                info_b.size = len(payload_b)
+                archive.addfile(info_b, io.BytesIO(payload_b))
+
+            return MagicMock(returncode=0, stdout=buf.getvalue())
+
+        with patch("subprocess.run", side_effect=_fake_run) as mock_run:
             result = batch_ssh_read_files(urls)
 
         assert len(result) == 2
