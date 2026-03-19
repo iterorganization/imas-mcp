@@ -630,6 +630,19 @@ imas-codex graph db shell
 # > MATCH (n:FacilityPath) RETURN n.facility_id, count(n)
 ```
 
+### IMAS-Only Graph
+
+For IMAS Data Dictionary access without facility-specific data:
+
+```bash
+pip install imas-codex
+imas-codex graph init imas
+imas-codex graph pull --imas-only
+imas-codex serve
+```
+
+This pulls a lightweight graph containing only the IMAS Data Dictionary schema, paths, and semantic clusters. Use `--registry ghcr.io/<owner>` to pull from a specific registry.
+
 ### Location-Aware Connections
 
 The `host` field on each profile records where Neo4j physically runs. At connection time, `is_local_host(host)` determines direct vs tunnel access:
