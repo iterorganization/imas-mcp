@@ -141,12 +141,14 @@ class TestIMASNodeExtraction:
     def test_various_ids(self):
         """Extract paths from various IDS."""
         text = """
+        - equilibrium/time_slice/profiles_1d/psi
         - magnetics/flux_loop/flux
         - thomson_scattering/channel/n_e
         - charge_exchange/channel/ti
         """
         paths = extract_imas_paths(text)
-        expected_min = 1  # equilibrium/core_profiles are always available
+        # At least equilibrium should always be available
+        expected_min = 1
         if "magnetics" in get_all_ids_names():
             expected_min += 1
         if "thomson_scattering" in get_all_ids_names():
