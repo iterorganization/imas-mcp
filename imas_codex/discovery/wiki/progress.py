@@ -659,7 +659,7 @@ class WikiProgressDisplay(BaseProgressDisplay):
         # TRIAGE activity
         score = self.state.current_score
         triage_text = ""
-        triage_score: float | None = None
+        triage_score_parts: list[tuple[str, str]] | None = None
         triage_domain = ""
         triage_desc = ""
         triage_desc_fallback = ""
@@ -683,7 +683,10 @@ class WikiProgressDisplay(BaseProgressDisplay):
                 reason = score.skip_reason[:40] if score.skip_reason else ""
                 triage_desc_fallback = f"skipped: {reason}"
             else:
-                triage_score = score.score_composite
+                if score.score_composite is not None:
+                    triage_score_parts = [
+                        (f"{score.score_composite:.2f}", "bold blue")
+                    ]
                 triage_domain = score.physics_domain or (
                     "physics" if score.is_physics else ""
                 )
@@ -692,7 +695,7 @@ class WikiProgressDisplay(BaseProgressDisplay):
         # PAGES activity
         ingest = self.state.current_ingest
         pages_text = ""
-        pages_score: float | None = None
+        pages_score_parts: list[tuple[str, str]] | None = None
         pages_domain = ""
         pages_desc = ""
         pages_complete = False
@@ -706,14 +709,17 @@ class WikiProgressDisplay(BaseProgressDisplay):
             pages_complete = True
         if ingest:
             pages_text = ingest.title
-            pages_score = ingest.score_composite
+            if ingest.score_composite is not None:
+                pages_score_parts = [
+                    (f"{ingest.score_composite:.2f}", "bold blue")
+                ]
             pages_domain = ingest.physics_domain or ""
             pages_desc = ingest.description
 
         # DOCS activity
         document = self.state.current_docs
         docs_text = ""
-        docs_score: float | None = None
+        docs_score_parts: list[tuple[str, str]] | None = None
         docs_domain = ""
         docs_desc = ""
         docs_desc_fallback = ""
@@ -740,7 +746,10 @@ class WikiProgressDisplay(BaseProgressDisplay):
             ):
                 display_name += " (skipped)"
             docs_text = display_name
-            docs_score = document.score_composite
+            if document.score_composite is not None:
+                docs_score_parts = [
+                    (f"{document.score_composite:.2f}", "bold yellow")
+                ]
             docs_domain = document.physics_domain or ""
             docs_desc = document.description
             # Fallback for image-type documents with no description
@@ -756,7 +765,7 @@ class WikiProgressDisplay(BaseProgressDisplay):
         # IMAGES activity
         image = self.state.current_image
         images_text = ""
-        images_score: float | None = None
+        images_score_parts: list[tuple[str, str]] | None = None
         images_domain = ""
         images_desc = ""
         images_desc_fallback = ""
@@ -776,7 +785,10 @@ class WikiProgressDisplay(BaseProgressDisplay):
                 images_complete_label = "cost limit"
         if image:
             images_text = image.display_name
-            images_score = image.score_composite
+            if image.score_composite is not None:
+                images_score_parts = [
+                    (f"{image.score_composite:.2f}", "bold green")
+                ]
             images_domain = image.physics_domain or ""
             images_desc = image.description
             if not images_desc:
@@ -838,7 +850,7 @@ class WikiProgressDisplay(BaseProgressDisplay):
                 worker_count=triage_count,
                 worker_annotation=triage_ann,
                 primary_text=triage_text,
-                score_value=triage_score,
+                score_parts=triage_score_parts,
                 physics_domain=triage_domain,
                 description=triage_desc,
                 description_fallback=triage_desc_fallback,
@@ -864,7 +876,7 @@ class WikiProgressDisplay(BaseProgressDisplay):
                 worker_count=pages_count,
                 worker_annotation=pages_ann,
                 primary_text=pages_text,
-                score_value=pages_score,
+                score_parts=pages_score_parts,
                 physics_domain=pages_domain,
                 description=pages_desc,
                 is_processing=self.state.ingest_processing,
@@ -889,7 +901,7 @@ class WikiProgressDisplay(BaseProgressDisplay):
                 worker_count=docs_count,
                 worker_annotation=docs_ann,
                 primary_text=docs_text,
-                score_value=docs_score,
+                score_parts=docs_score_parts,
                 physics_domain=docs_domain,
                 description=docs_desc,
                 description_fallback=docs_desc_fallback,
@@ -922,7 +934,7 @@ class WikiProgressDisplay(BaseProgressDisplay):
                 worker_count=images_count,
                 worker_annotation=images_ann,
                 primary_text=images_text,
-                score_value=images_score,
+                score_parts=images_score_parts,
                 physics_domain=images_domain,
                 description=images_desc,
                 description_fallback=images_desc_fallback,
@@ -1185,7 +1197,9 @@ class WikiProgressDisplay(BaseProgressDisplay):
                 )
             max_display_rate = 2.0
             display_rate = min(stats.rate, max_display_rate) if stats.rate else 1.0
-            self.state.score_queue.add(items, display_rate)
+            self.state.score_queue.add(
+                items, display_rate, last_batch_time=stats.last_batch_time
+            )
 
         self._refresh()
 
@@ -1232,7 +1246,9 @@ class WikiProgressDisplay(BaseProgressDisplay):
                 )
             max_display_rate = 2.0
             display_rate = min(stats.rate, max_display_rate) if stats.rate else 1.0
-            self.state.ingest_queue.add(items, display_rate)
+            self.state.ingest_queue.add(
+                items, display_rate, last_batch_time=stats.last_batch_time
+            )
 
         self._refresh()
 
@@ -1277,7 +1293,9 @@ class WikiProgressDisplay(BaseProgressDisplay):
                 )
             max_display_rate = 1.0
             display_rate = min(stats.rate, max_display_rate) if stats.rate else 0.5
-            self.state.document_queue.add(items, display_rate)
+            self.state.document_queue.add(
+                items, display_rate, last_batch_time=stats.last_batch_time
+            )
 
         self._refresh()
 
@@ -1321,7 +1339,9 @@ class WikiProgressDisplay(BaseProgressDisplay):
             ]
             max_display_rate = 1.0
             display_rate = min(stats.rate, max_display_rate) if stats.rate else 0.5
-            self.state.document_score_queue.add(items, display_rate)
+            self.state.document_score_queue.add(
+                items, display_rate, last_batch_time=stats.last_batch_time
+            )
 
         self._refresh()
 
@@ -1368,7 +1388,9 @@ class WikiProgressDisplay(BaseProgressDisplay):
             ]
             max_display_rate = 1.0
             display_rate = min(stats.rate, max_display_rate) if stats.rate else 0.5
-            self.state.image_queue.add(items, display_rate)
+            self.state.image_queue.add(
+                items, display_rate, last_batch_time=stats.last_batch_time
+            )
 
         self._refresh()
 
