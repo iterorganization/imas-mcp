@@ -684,9 +684,7 @@ class WikiProgressDisplay(BaseProgressDisplay):
                 triage_desc_fallback = f"skipped: {reason}"
             else:
                 if score.score_composite is not None:
-                    triage_score_parts = [
-                        (f"{score.score_composite:.2f}", "bold blue")
-                    ]
+                    triage_score_parts = [(f"{score.score_composite:.2f}", "bold blue")]
                 triage_domain = score.physics_domain or (
                     "physics" if score.is_physics else ""
                 )
@@ -710,9 +708,7 @@ class WikiProgressDisplay(BaseProgressDisplay):
         if ingest:
             pages_text = ingest.title
             if ingest.score_composite is not None:
-                pages_score_parts = [
-                    (f"{ingest.score_composite:.2f}", "bold blue")
-                ]
+                pages_score_parts = [(f"{ingest.score_composite:.2f}", "bold blue")]
             pages_domain = ingest.physics_domain or ""
             pages_desc = ingest.description
 
@@ -747,9 +743,7 @@ class WikiProgressDisplay(BaseProgressDisplay):
                 display_name += " (skipped)"
             docs_text = display_name
             if document.score_composite is not None:
-                docs_score_parts = [
-                    (f"{document.score_composite:.2f}", "bold yellow")
-                ]
+                docs_score_parts = [(f"{document.score_composite:.2f}", "bold yellow")]
             docs_domain = document.physics_domain or ""
             docs_desc = document.description
             # Fallback for image-type documents with no description
@@ -786,9 +780,7 @@ class WikiProgressDisplay(BaseProgressDisplay):
         if image:
             images_text = image.display_name
             if image.score_composite is not None:
-                images_score_parts = [
-                    (f"{image.score_composite:.2f}", "bold green")
-                ]
+                images_score_parts = [(f"{image.score_composite:.2f}", "bold green")]
             images_domain = image.physics_domain or ""
             images_desc = image.description
             if not images_desc:
