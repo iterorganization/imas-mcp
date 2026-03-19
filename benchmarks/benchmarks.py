@@ -57,16 +57,16 @@ class SearchBenchmarks:
         async with self.fixture.client:
             for ids_name in self.fixture.ids_pair:
                 await self.fixture.client.call_tool(
-                    "search_imas_paths",
+                    "search_imas",
                     {
                         "query": "temperature",
-                        "ids_filter": [ids_name],
-                        "max_results": 1,
+                        "ids_filter": ids_name,
+                        "k": 1,
                     },
                 )
 
             await self.fixture.client.call_tool(
-                "search_imas_paths", {"query": "plasma", "max_results": 1}
+                "search_imas", {"query": "plasma", "k": 1}
             )
 
     def time_search_imas_paths_basic(self):
@@ -75,8 +75,8 @@ class SearchBenchmarks:
         async def run_search():
             async with self.fixture.client:
                 return await self.fixture.client.call_tool(
-                    "search_imas_paths",
-                    {"query": self.fixture.sample_queries[0], "max_results": 5},
+                    "search_imas",
+                    {"query": self.fixture.sample_queries[0], "k": 5},
                 )
 
         return asyncio.run(run_search())
@@ -87,11 +87,11 @@ class SearchBenchmarks:
         async def run_search():
             async with self.fixture.client:
                 return await self.fixture.client.call_tool(
-                    "search_imas_paths",
+                    "search_imas",
                     {
                         "query": self.fixture.sample_queries[1],
-                        "ids_filter": [self.fixture.single_ids],
-                        "max_results": 10,
+                        "ids_filter": self.fixture.single_ids,
+                        "k": 10,
                     },
                 )
 
@@ -103,10 +103,10 @@ class SearchBenchmarks:
         async def run_search():
             async with self.fixture.client:
                 return await self.fixture.client.call_tool(
-                    "search_imas_paths",
+                    "search_imas",
                     {
                         "query": "plasma temperature AND magnetic field",
-                        "max_results": 15,
+                        "k": 15,
                     },
                 )
 
@@ -118,8 +118,8 @@ class SearchBenchmarks:
         async def run_search():
             async with self.fixture.client:
                 return await self.fixture.client.call_tool(
-                    "search_imas_paths",
-                    {"query": self.fixture.sample_queries[0], "max_results": 5},
+                    "search_imas",
+                    {"query": self.fixture.sample_queries[0], "k": 5},
                 )
 
         return asyncio.run(run_search())
@@ -137,16 +137,16 @@ class ClusterSearchBenchmarks:
         """Warm up server components."""
         async with self.fixture.client:
             await self.fixture.client.call_tool(
-                "search_imas_paths",
-                {"query": "relationships", "max_results": 1},
+                "search_imas",
+                {"query": "relationships", "k": 1},
             )
             for ids_name in self.fixture.ids_pair:
                 await self.fixture.client.call_tool(
-                    "search_imas_paths",
+                    "search_imas",
                     {
                         "query": "temperature",
-                        "ids_filter": [ids_name],
-                        "max_results": 1,
+                        "ids_filter": ids_name,
+                        "k": 1,
                     },
                 )
 
