@@ -100,19 +100,38 @@ jobs:
           EOF
 
       # ── Load Graph Data ────────────────────────────────────────────────
-      - name: Resolve graph tag
-        id: graph-tag
-        run: |
-          TAG="${{ github.event.inputs.graph_tag || 'latest' }}"
-          echo "tag=${TAG}" >> $GITHUB_OUTPUT
-
       - name: Login to GHCR
         run: |
           echo "${{ secrets.GHCR_TOKEN || secrets.GITHUB_TOKEN }}" | oras login ghcr.io -u ${{ github.actor }} --password-stdin
 
+      - name: Resolve graph tag
+        id: graph-tag
+        run: |
+          REGISTRY="ghcr.io/${{ github.repository_owner }}"
+          PACKAGE="imas-codex-graph"
+          REQUESTED="${{ github.event.inputs.graph_tag || 'latest' }}"
+
+          if [ "$REQUESTED" != "latest" ]; then
+            echo "tag=${REQUESTED}" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Resolve 'latest': check if tag exists, otherwise pick most recent
+          TAGS=$(oras repo tags "${REGISTRY}/${PACKAGE}" 2>/dev/null || true)
+          if echo "$TAGS" | grep -qx "latest"; then
+            echo "tag=latest" >> $GITHUB_OUTPUT
+          elif [ -n "$TAGS" ]; then
+            BEST=$(echo "$TAGS" | tail -1)
+            echo "No 'latest' tag. Using most recent: $BEST"
+            echo "tag=${BEST}" >> $GITHUB_OUTPUT
+          else
+            echo "::error::No graph tags found in ${REGISTRY}/${PACKAGE}"
+            exit 1
+          fi
+
       - name: Pull graph dump from GHCR
         run: |
-          REGISTRY="ghcr.io/iterorganization"
+          REGISTRY="ghcr.io/${{ github.repository_owner }}"
           PACKAGE="imas-codex-graph"
           TAG="${{ steps.graph-tag.outputs.tag }}"
           echo "Pulling: ${REGISTRY}/${PACKAGE}:${TAG}"
