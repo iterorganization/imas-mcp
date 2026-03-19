@@ -865,7 +865,7 @@ class TestMapCLI:
         )
 
         runner = CliRunner()
-        result = runner.invoke(map_cmd, ["jet", "-i", "pf_active", "--no-persist"])
+        result = runner.invoke(map_cmd, ["jet", "-i", "pf_active", "--dry-run"])
         assert result.exit_code == 0
         assert "jet:pf_active" in result.output
         assert "Bindings: 2" in result.output
@@ -1645,7 +1645,7 @@ class TestMapRunCostLimit:
         runner = CliRunner()
         result = runner.invoke(
             map_cmd,
-            ["jet", "-i", "pf_active", "--cost-limit", "2.0", "--no-persist"],
+            ["jet", "-i", "pf_active", "--cost-limit", "2.0", "--dry-run"],
         )
         assert result.exit_code == 0
         assert "jet:pf_active" in result.output
@@ -1679,7 +1679,7 @@ class TestMapRunTimeLimit:
         runner = CliRunner()
         result = runner.invoke(
             map_cmd,
-            ["jet", "-i", "pf_active", "--time", "10", "--no-persist"],
+            ["jet", "-i", "pf_active", "--time", "10", "--dry-run"],
         )
         assert result.exit_code == 0
         assert "jet:pf_active" in result.output
@@ -1812,11 +1812,11 @@ class TestMappingDiscoveryState:
 
         state = MappingDiscoveryState(
             facility="jet",
-            target_ids="pf_active",
+            target_ids_list=["pf_active"],
             cost_limit=5.0,
         )
         assert state.facility == "jet"
-        assert state.target_ids == "pf_active"
+        assert state.target_ids_list == ["pf_active"]
         assert state.cost_limit == 5.0
         assert not state.should_stop()
         assert state.total_cost == 0.0
@@ -1824,7 +1824,7 @@ class TestMappingDiscoveryState:
     def test_phases_initially_not_done(self):
         from imas_codex.ids.workers import MappingDiscoveryState
 
-        state = MappingDiscoveryState(facility="jet", target_ids="pf_active")
+        state = MappingDiscoveryState(facility="jet", target_ids_list=["pf_active"])
         assert not state.context_phase.done
         assert not state.assign_phase.done
         assert not state.map_phase.done
@@ -1833,7 +1833,7 @@ class TestMappingDiscoveryState:
     def test_phase_mark_done(self):
         from imas_codex.ids.workers import MappingDiscoveryState
 
-        state = MappingDiscoveryState(facility="jet", target_ids="pf_active")
+        state = MappingDiscoveryState(facility="jet", target_ids_list=["pf_active"])
         state.context_phase.mark_done()
         assert state.context_phase.done
         assert not state.assign_phase.done
@@ -1841,7 +1841,7 @@ class TestMappingDiscoveryState:
     def test_should_stop_when_requested(self):
         from imas_codex.ids.workers import MappingDiscoveryState
 
-        state = MappingDiscoveryState(facility="jet", target_ids="pf_active")
+        state = MappingDiscoveryState(facility="jet", target_ids_list=["pf_active"])
         assert not state.should_stop()
         state.stop_requested = True
         assert state.should_stop()
@@ -1851,7 +1851,7 @@ class TestMappingDiscoveryState:
 
         state = MappingDiscoveryState(
             facility="jet",
-            target_ids="pf_active",
+            target_ids_list=["pf_active"],
             cost_limit=1.0,
         )
         state.cost.add("test", 2.0, 1000)
@@ -1883,7 +1883,7 @@ class TestWorkerImports:
             claim_sources_for_mapping,
             context_worker,
             map_worker,
-            release_source_claim,
+            release_mapping_claim,
             run_mapping_engine,
             validate_worker,
         )
@@ -1894,7 +1894,7 @@ class TestWorkerImports:
         assert callable(validate_worker)
         assert callable(run_mapping_engine)
         assert callable(claim_sources_for_mapping)
-        assert callable(release_source_claim)
+        assert callable(release_mapping_claim)
 
 
 class TestSemanticCandidatesInPrompt:

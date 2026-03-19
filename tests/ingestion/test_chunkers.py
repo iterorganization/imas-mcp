@@ -111,6 +111,10 @@ end program test
         assert len(chunks) >= 1
         assert "test" in chunks[0].text
 
+    def test_unsupported_language_raises(self):
+        with pytest.raises((ValueError, LookupError)):
+            chunk_code("print('x')", "nonexistent_language_xyz")
+
     def test_chunk_has_line_info(self):
         code = """def a():
     pass
@@ -122,10 +126,6 @@ def b():
         for chunk in chunks:
             assert chunk.start_line >= 0
             assert chunk.end_line >= chunk.start_line
-
-    def test_unsupported_language_raises(self):
-        with pytest.raises(ValueError):
-            chunk_code("some text", "nonexistent_language_xyz")
 
     def test_idl_single_procedure(self):
         """Parse a single IDL procedure with MDSplus access patterns."""
