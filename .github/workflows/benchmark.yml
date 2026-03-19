@@ -241,12 +241,15 @@ jobs:
           NEO4J_PASSWORD: imas-codex
           IMAS_CODEX_EMBEDDING_LOCATION: local
         run: |
+          set +e
           FILTER="${{ github.event.inputs.benchmark_filter }}"
           if [ -n "$FILTER" ]; then
-            asv run --python=3.12 --machine "$MACHINE_NAME" -b "$FILTER" --verbose --show-stderr; RC=$?
+            asv run --python=3.12 --machine "$MACHINE_NAME" -b "$FILTER" --verbose --show-stderr
           else
-            asv run --python=3.12 --machine "$MACHINE_NAME" HEAD^! --verbose --show-stderr; RC=$?
+            asv run --python=3.12 --machine "$MACHINE_NAME" HEAD^! --verbose --show-stderr
           fi
+          RC=$?
+          set -e
           # Exit code 2 = some benchmarks failed (results still recorded)
           # Only fail the step on exit code 1 (total failure)
           if [ $RC -eq 2 ]; then
