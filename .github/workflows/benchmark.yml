@@ -108,7 +108,7 @@ jobs:
 
       - name: Login to GHCR
         run: |
-          echo "${{ secrets.GHCR_TOKEN }}" | oras login ghcr.io -u token --password-stdin
+          echo "${{ secrets.GHCR_TOKEN || secrets.GITHUB_TOKEN }}" | oras login ghcr.io -u ${{ github.actor }} --password-stdin
 
       - name: Pull graph dump from GHCR
         run: |
