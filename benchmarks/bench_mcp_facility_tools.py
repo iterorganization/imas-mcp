@@ -97,7 +97,7 @@ class FacilityToolBenchmarks:
     def time_fetch_by_id(self):
         """Content retrieval by ID."""
         if not self._fetch_id:
-            raise NotImplementedError("No wiki pages in graph for this facility")
+            return  # No wiki pages in dump — measure nothing
         run_tool("fetch", {"id": self._fetch_id})
 
     # -- get_discovery_context -----------------------------------------------
