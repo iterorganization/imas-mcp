@@ -1,135 +1,81 @@
 # IMAS Codex Performance Benchmarks
 
-This directory contains the performance benchmarking setup for the IMAS Codex server using [ASV (airspeed velocity)](https://asv.readthedocs.io/).
+Performance benchmarking for IMAS Codex using [ASV (airspeed velocity)](https://asv.readthedocs.io/). Benchmarks run against a real GHCR graph dump on tagged releases.
 
-## Key Design Principles
+## Benchmark Modules
 
-### Consistent Embedding Usage
+| Module | Class | Benchmarks | Dependencies |
+|--------|-------|-----------|-------------|
+| `bench_mcp_search.py` | `SearchToolBenchmarks` | 12 | Neo4j + graph dump |
+| `bench_mcp_imas_tools.py` | `IMASToolBenchmarks` | 17 | Neo4j + graph dump |
+| `bench_mcp_facility_tools.py` | `FacilityToolBenchmarks` | 7 | Neo4j + facility data |
+| `bench_mcp_facility_tools.py` | `GraphSchemaToolBenchmarks` | 3 | Neo4j + graph dump |
+| `bench_graph_queries.py` | `GraphQueryBenchmarks` | 8 | Neo4j + graph dump |
+| `bench_embeddings.py` | `EmbeddingBenchmarks` | 6 | None (CPU-only) |
+| `bench_query_builder.py` | `QueryBuilderBenchmarks` | 4 | None (pure Python) |
+| `bench_subsystems.py` | `SubsystemBenchmarks` | 9 | None (pure Python) |
+| `bench_server_startup.py` | `ServerStartupBenchmarks` | 3 | Neo4j for first call |
+| `bench_memory.py` | `MemoryBenchmarks` | 4 | Neo4j + graph dump |
 
-- **All benchmarks use the same IDS pair**: `["core_profiles", "equilibrium"]`
-- **No single-IDS benchmarks** to avoid loading additional embeddings
-- **Comprehensive warmup** ensures embeddings are pre-loaded before timing
-- **Embedding generation excluded from benchmark timing** through proper warmup
+**Total: 72 benchmarks** across 10 classes.
 
-This ensures benchmarks measure tool performance, not embedding generation overhead.
+## Shared Infrastructure
+
+- `conftest_bench.py` — `MCPFixture` (lazy server/client/graph_client), shared constants (`SEARCH_QUERIES`, `IMAS_PATHS`, `IDS_NAMES`, `UNIT_STRINGS`), `run_tool()` async helper
+- `benchmark_runner.py` — `BenchmarkRunner` utility class for programmatic ASV usage
 
 ## Setup
 
-1. **Install benchmark dependencies:**
-
-   ```bash
-   make install-bench
-   # or manually:
-   uv sync --extra bench
-   asv machine --yes
-   ```
-
-2. **Run performance baseline:**
-   ```bash
-   make performance-baseline
-   ```
-
-## Files
-
-- **`asv.conf.json`** - ASV configuration with uv integration
-- **`benchmarks.py`** - Main benchmark suite with all MCP tool benchmarks
-- **`benchmark_runner.py`** - Utility class for running and managing ASV benchmarks
-- **`performance_targets.py`** - Performance targets and validation functions
-- **`__init__.py`** - Package initialization
+```bash
+uv sync --extra bench
+asv machine --yes
+```
 
 ## Usage
 
-### Run all benchmarks
-
 ```bash
-make performance-current
-# or:
+# Run all benchmarks
 asv run --python=3.12
-```
 
-### Run specific benchmarks
+# Run specific suite
+asv run --python=3.12 -b SearchToolBenchmarks
 
-```bash
-asv run --python=3.12 -b SearchBenchmarks.time_search_imas_basic
-```
+# Run only offline benchmarks (no Neo4j needed)
+asv run --python=3.12 -b "EmbeddingBenchmarks|QueryBuilderBenchmarks|SubsystemBenchmarks"
 
-### Compare performance
-
-```bash
-make performance-compare
-# or:
+# Compare against previous commit
 asv compare HEAD~1 HEAD
-```
 
-### Generate HTML report
-
-```bash
+# Generate HTML report
 asv publish
-# Results will be in .asv/html/
 ```
 
-## Benchmark Suites
+## CI Pipeline
 
-### SearchBenchmarks
+Benchmarks run automatically on tagged releases (`v*`) via `.github/workflows/benchmark.yml`:
 
-- `time_search_imas_basic` - Basic search performance
-- `time_search_imas_with_ai` - Search with AI enhancement
-- `time_search_imas_complex_query` - Complex query performance
-- `time_search_imas_ids_filter` - Search with IDS filtering
-- `peakmem_search_imas_basic` - Memory usage for basic search
+1. Pull graph dump from GHCR (`imas-codex-graph:latest`)
+2. Load into Neo4j via `neo4j-admin database load`
+3. Run all ASV benchmarks with CPU-only embeddings
+4. Compare against previous tag for regression detection
+5. Deploy results to GitHub Pages
 
-### ExplainConceptBenchmarks
+Manual trigger via `workflow_dispatch` supports `graph_tag` and `benchmark_filter` inputs.
 
-- `time_explain_concept_basic` - Basic concept explanation
-- `time_explain_concept_advanced` - Advanced concept explanation
+## What We Benchmark
 
-### StructureAnalysisBenchmarks
+- **MCP tools**: All 22 read-only tools through the FastMCP client
+- **Graph queries**: Raw Cypher patterns (vector, fulltext, traversal, aggregation)
+- **Embeddings**: Encode latency (single, batch, long text, cold start)
+- **Query builder**: Cypher generation overhead (no Neo4j execution)
+- **Subsystems**: COCOS computation, unit normalization, schema context
+- **Server startup**: Cold start time, tool registration, first call latency
+- **Memory**: Peak memory for server, search bursts, exports, encoder
 
-- `time_analyze_ids_structure_small` - Small IDS structure analysis
-- `time_analyze_ids_structure_large` - Large IDS structure analysis
+## What We Do NOT Benchmark
 
-### BulkExportBenchmarks
-
-- `time_export_ids_bulk_single` - Single IDS export
-- `time_export_ids_bulk_multiple` - Multiple IDS export
-- `time_export_ids_bulk_with_relationships` - Export with relationships
-- `time_export_physics_domain` - Physics domain export
-- `peakmem_export_ids_bulk_large` - Memory usage for large export
-
-### RelationshipBenchmarks
-
-- `time_explore_relationships_depth_1` - Depth 1 relationship exploration
-- `time_explore_relationships_depth_2` - Depth 2 relationship exploration
-- `time_explore_relationships_depth_3` - Depth 3 relationship exploration
-
-## Performance Targets
-
-Current baseline targets are defined in `performance_targets.py`:
-
-- **search_imas_basic**: <2.0s target, <5.0s max
-- **search_imas_with_ai**: <3.0s target, <8.0s max
-- **explain_concept_basic**: <1.5s target, <4.0s max
-- **analyze_ids_structure**: <2.5s target, <6.0s max
-- **export_ids_bulk_single**: <1.0s target, <3.0s max
-- **export_ids_bulk_multiple**: <3.0s target, <8.0s max
-- **explore_relationships**: <2.0s target, <5.0s max
-
-## Integration with CI/CD
-
-The benchmarks can be integrated into GitHub Actions or other CI systems:
-
-```yaml
-- name: Run performance benchmarks
-  run: |
-    uv sync --extra bench
-    asv machine --yes
-    asv run --python=3.12
-    asv publish
-```
-
-## Tips
-
-- Use `asv run --quick` for faster development iterations
-- Use `asv run --bench <pattern>` to run specific benchmark patterns
-- Use `asv show <commit>` to view results for a specific commit
-- Use `asv find` to find performance regressions between commits
+- LLM API calls (external, variable, costs money)
+- Discovery pipelines (multi-minute, involve SSH/HTTP/LLM)
+- Write tools (side effects, pollutes test graph)
+- CLI commands (system admin, not performance-critical)
+- Remote embedding server (external HTTP service)
