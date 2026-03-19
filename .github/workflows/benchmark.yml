@@ -104,14 +104,14 @@ jobs:
           EOF
 
       # ── Load Graph Data ────────────────────────────────────────────────
-      # Packages live in the org registry (iterorganization), not per-fork.
-      # Try anonymous access first (works for public packages). Only login
-      # with GHCR_TOKEN if anonymous fails (private packages). This avoids
-      # poisoning the credential store with a token that lacks read:packages.
+      # Packages live in the org registry (iterorganization).
+      # GHCR_TOKEN (PAT with read:packages) is required — packages are private.
+      - name: Login to GHCR
+        run: |
+          echo "${{ secrets.GHCR_TOKEN }}" | oras login ghcr.io -u token --password-stdin
+
       - name: Resolve graph tag
         id: graph-tag
-        env:
-          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
         run: |
           REGISTRY="${{ github.event.inputs.registry || 'ghcr.io/iterorganization' }}"
           PACKAGE="imas-codex-graph"
@@ -123,21 +123,9 @@ jobs:
             exit 0
           fi
 
-          resolve_tags() {
-            TAGS=$(oras repo tags "${REGISTRY}/${PACKAGE}" 2>&1) || true
-            echo "$TAGS" | grep -E '^[0-9v]' || true
-          }
-
-          # Try anonymous access first
-          CLEAN_TAGS=$(resolve_tags)
-
-          # If no tags found, try with GHCR_TOKEN
-          if [ -z "$CLEAN_TAGS" ] && [ -n "$GHCR_TOKEN" ]; then
-            echo "Anonymous access failed, trying GHCR_TOKEN..."
-            echo "$GHCR_TOKEN" | oras login ghcr.io -u token --password-stdin
-            CLEAN_TAGS=$(resolve_tags)
-          fi
-
+          # Resolve 'latest': check if tag exists, otherwise pick most recent
+          TAGS=$(oras repo tags "${REGISTRY}/${PACKAGE}" 2>&1) || true
+          CLEAN_TAGS=$(echo "$TAGS" | grep -E '^[0-9v]' || true)
           if echo "$CLEAN_TAGS" | grep -qx "latest"; then
             echo "tag=latest" >> $GITHUB_OUTPUT
           elif [ -n "$CLEAN_TAGS" ]; then
@@ -145,7 +133,7 @@ jobs:
             echo "No 'latest' tag. Using most recent: $BEST"
             echo "tag=${BEST}" >> $GITHUB_OUTPUT
           else
-            echo "::error::No graph tags found in ${REGISTRY}/${PACKAGE}"
+            echo "::error::No graph tags found in ${REGISTRY}/${PACKAGE}. Ensure GHCR_TOKEN secret has read:packages scope."
             exit 1
           fi
           echo "registry=${REGISTRY}" >> $GITHUB_OUTPUT
