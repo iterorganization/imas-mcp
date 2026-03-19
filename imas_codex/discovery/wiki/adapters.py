@@ -3047,20 +3047,26 @@ class TWikiRawAdapter(WikiAdapter):
             data_path: Absolute path to TWiki data/<web>/ directory
             pub_path: Absolute path to TWiki pub/<web>/ directory (for documents)
             web_name: TWiki web name (e.g., "Main", "Code")
-            exclude_patterns: Regex patterns for topic names to skip.
-                Defaults to excluding system pages, watchlists, and TWiki internals.
+            exclude_patterns: Additional regex patterns for topic names to skip.
+                Merged with built-in excludes for TWiki system pages.
         """
         self._ssh_host = ssh_host
         self._data_path = data_path.rstrip("/")
         self._pub_path = pub_path.rstrip("/") if pub_path else None
         self._web_name = web_name
-        self._exclude_patterns = exclude_patterns or [
+        # Always exclude TWiki system pages; merge with custom patterns
+        base_excludes = [
             r"^Web",  # TWiki system pages (WebHome, WebTopicList, etc.)
             r"Watchlist$",  # User watchlists
             r"^TWiki",  # TWiki admin pages
             r"Bookmarks$",  # User bookmarks
             r"Template$",  # Form templates
         ]
+        if exclude_patterns:
+            # Custom patterns extend (not replace) the base system excludes
+            self._exclude_patterns = base_excludes + exclude_patterns
+        else:
+            self._exclude_patterns = base_excludes
         self._compiled_excludes = [re.compile(p) for p in self._exclude_patterns]
 
     def _should_skip(self, topic_name: str) -> bool:

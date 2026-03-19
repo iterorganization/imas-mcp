@@ -622,11 +622,81 @@ def html_to_text(html: str) -> tuple[str, dict[str, str]]:
     return extractor.get_result()
 
 
+# META types that are pure metadata (not content) — always skipped
+_META_SYSTEM_TYPES = frozenset(
+    {
+        "TOPICINFO",
+        "TOPICPARENT",
+        "TOPICMOVED",
+        "FORM",
+        "PREFERENCE",
+        "FILEATTACHMENT",
+        "REVINFO",
+        "REVCOMMENT",
+    }
+)
+
+# Regex to parse %META:FIELD{name="X" ...value="Y"...}%
+_META_FIELD_RE = re.compile(r'^%META:FIELD\{.*?name="([^"]*)".*?value="([^"]*)".*?\}%$')
+
+
+def _parse_meta_field(line: str) -> str:
+    """Parse a %META:...% line, returning HTML for FIELD values.
+
+    TWiki forms store user-entered data in %META:FIELD{name="X" value="Y"}%
+    lines.  These contain real content (shot descriptions, experiment logs,
+    dates, operator notes) that must be preserved for scoring and ingestion.
+
+    System metadata (TOPICINFO, TOPICPARENT, FORM, etc.) is skipped.
+
+    Args:
+        line: A stripped line starting with ``%META:``.
+
+    Returns:
+        HTML fragment for FIELD values, or empty string for system metadata.
+    """
+    # Identify the META type: %META:TYPE{...}%
+    type_match = re.match(r"^%META:(\w+)", line)
+    if not type_match:
+        return ""
+
+    meta_type = type_match.group(1)
+
+    # Skip system metadata
+    if meta_type in _META_SYSTEM_TYPES:
+        return ""
+
+    # Parse FIELD type specifically
+    if meta_type == "FIELD":
+        m = _META_FIELD_RE.match(line)
+        if m:
+            name = m.group(1)
+            value = m.group(2)
+
+            # URL-decode the value (TWiki encodes Japanese text and newlines)
+            from urllib.parse import unquote
+
+            value = unquote(value)
+
+            # Skip fields with empty or whitespace-only values
+            if not value.strip():
+                return ""
+
+            # Convert literal \r\n / encoded newlines to <br> for readability
+            value = value.replace("\r\n", "<br>")
+            value = value.replace("\n", "<br>")
+
+            return f"<p><b>{name}</b>: {value}</p>"
+
+    return ""
+
+
 def twiki_markup_to_html(markup: str) -> str:
     """Convert raw TWiki markup to minimal HTML for the ingestion pipeline.
 
     Handles common TWiki markup patterns:
-    - %META:...% lines (stripped)
+    - %META:FIELD{...}% lines → rendered as content (form data)
+    - %META:...% system lines (TOPICINFO, FORM, etc.) → stripped
     - ---+/---++/---+++ headings → <h1>/<h2>/<h3>
     - *bold*, _italic_ formatting
     - | table | cells | → <table> rows
@@ -651,9 +721,11 @@ def twiki_markup_to_html(markup: str) -> str:
     for line in lines:
         stripped = line.strip()
 
-        # Skip META lines
+        # Handle META lines — extract FIELD values, skip everything else
         if stripped.startswith("%META:"):
-            # Extract title from first heading in TOPICPARENT or keep looking
+            field_html = _parse_meta_field(stripped)
+            if field_html:
+                html_lines.append(field_html)
             continue
 
         # Handle <verbatim> blocks → <pre>

@@ -193,6 +193,7 @@ artifacts = [
     "imas_codex/resources/**",
     "imas_codex/core/physics_domain.py",
     "imas_codex/graph/models.py",
+    "imas_codex/graph/schema_context_data.py",
 ]
 
 [tool.hatch.build.hooks.custom]
