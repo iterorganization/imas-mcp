@@ -75,6 +75,12 @@ logger = logging.getLogger(__name__)
     default=False,
     help="Keep image bytes in graph after VLM scoring (default: clear to save storage)",
 )
+@click.option(
+    "--min-score",
+    type=float,
+    default=0.5,
+    help="Minimum composite score for ingestion (default: 0.5)",
+)
 @reset_to_option("wiki")
 def wiki(
     facility: str,
@@ -92,6 +98,7 @@ def wiki(
     rescan_documents: bool,
     time_limit: int | None,
     store_images: bool,
+    min_score: float,
     reset_to: str | None = None,
 ) -> None:
     """Discover wiki pages and build documentation graph.
@@ -1083,6 +1090,7 @@ def wiki(
                         "on_ingest_progress": on_ingest,
                         "max_wiki_connections": sc.get("max_wiki_connections", 10),
                         "skip_facility_workers": multi_site and not scan_only,
+                        "min_score": min_score,
                     }
 
                     # Rich-only callbacks
