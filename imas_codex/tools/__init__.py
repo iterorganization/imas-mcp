@@ -14,7 +14,6 @@ from imas_codex.graph.client import GraphClient
 from imas_codex.providers import MCPProvider
 
 from .base import BaseTool
-from .cypher_tool import CypherTool
 from .graph_search import (
     GraphClustersTool,
     GraphIdentifiersTool,
@@ -25,7 +24,6 @@ from .graph_search import (
     GraphSearchTool,
     GraphStructureTool,
 )
-from .schema_tool import SchemaTool
 from .version_tool import VersionTool
 
 logger = logging.getLogger(__name__)
@@ -55,8 +53,6 @@ class Tools(MCPProvider):
         self.identifiers_tool = GraphIdentifiersTool(graph_client)
         self.path_context_tool = GraphPathContextTool(graph_client)
         self.structure_tool = GraphStructureTool(graph_client)
-        self.cypher_tool = CypherTool(graph_client)
-        self.schema_tool = SchemaTool()
         self.version_tool = VersionTool(graph_client)
 
         self._tool_instances = [
@@ -68,8 +64,6 @@ class Tools(MCPProvider):
             self.identifiers_tool,
             self.path_context_tool,
             self.structure_tool,
-            self.cypher_tool,
-            self.schema_tool,
             self.version_tool,
         ]
 
@@ -169,8 +163,6 @@ __all__ = [
     "GraphOverviewTool",
     "GraphClustersTool",
     "GraphIdentifiersTool",
-    "CypherTool",
-    "SchemaTool",
     "VersionTool",
     "Tools",
 ]

@@ -80,7 +80,7 @@ The agents MCP server exposes tools for VS Code chat:
 
 ```bash
 # Start agents server
-uv run imas-codex serve agents
+uv run imas-codex serve
 
 # In VS Code, tools available via MCP:
 # - cypher(query)

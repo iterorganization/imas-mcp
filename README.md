@@ -10,14 +10,15 @@
 
 A Model Context Protocol (MCP) server providing AI assistants with access to IMAS (Integrated Modelling & Analysis Suite) data structures through natural language search and optimized path indexing.
 
-## MCP Servers
+## MCP Server
 
-IMAS Codex provides two MCP servers:
+IMAS Codex provides a unified MCP server:
 
-| Server | Command | Purpose |
-|--------|---------|---------|
-| **IMAS DD** | `imas-codex serve imas` | IMAS Data Dictionary knowledge, semantic search |
-| **Agents** | `imas-codex serve agents` | Remote facility exploration via subagents |
+```bash
+imas-codex serve
+```
+
+This single server provides IMAS Data Dictionary knowledge, semantic search, and remote facility exploration.
 
 ## Quick Start
 
@@ -187,7 +188,7 @@ VS Code (`.vscode/mcp.json`):
     "imas-codex-uv": {
       "type": "stdio",
       "command": "uv",
-      "args": ["run", "imas-codex", "serve", "imas", "--transport", "stdio"]
+      "args": ["run", "imas-codex", "serve", "--transport", "stdio"]
     }
   }
 }
@@ -200,31 +201,11 @@ Claude Desktop:
   "mcpServers": {
     "imas-codex-uv": {
       "command": "uv",
-      "args": ["run", "imas-codex", "serve", "imas", "--transport", "stdio"]
+      "args": ["run", "imas-codex", "serve", "--transport", "stdio"]
     }
   }
 }
 ```
-
-#### Agents MCP Server (Local Facility Exploration)
-
-For exploring remote fusion facilities, run the Agents server locally:
-
-VS Code (`.vscode/mcp.json`):
-
-```json
-{
-  "servers": {
-    "imas-agents": {
-      "type": "stdio",
-      "command": "uv",
-      "args": ["run", "imas-codex", "serve", "agents"]
-    }
-  }
-}
-```
-
-This provides the `/explore` prompt for LLM-driven exploration of remote facilities via SSH.
 
 #### SSH ControlMaster Setup (Recommended)
 
@@ -787,14 +768,11 @@ uv run build-schemas
 # Build document store and semantic search embeddings
 uv run build-embeddings
 
-# Run the IMAS DD server locally (default: streamable-http on port 8000)
-uv run imas-codex serve imas
+# Run the server locally (default: streamable-http on port 8000)
+uv run imas-codex serve
 
 # Run with stdio transport for MCP clients
-uv run imas-codex serve imas --transport stdio
-
-# Run the Agents server for facility exploration
-uv run imas-codex serve agents
+uv run imas-codex serve --transport stdio
 ```
 
 ### Build Scripts
@@ -836,12 +814,7 @@ Add to your config file:
   "mcpServers": {
     "imas-local-dev": {
       "command": "uv",
-      "args": ["run", "imas-codex", "serve", "imas", "--transport", "stdio"],
-      "cwd": "/path/to/imas-codex"
-    },
-    "imas-agents-dev": {
-      "command": "uv",
-      "args": ["run", "imas-codex", "serve", "agents"],
+      "args": ["run", "imas-codex", "serve", "--transport", "stdio"],
       "cwd": "/path/to/imas-codex"
     }
   }

@@ -13,7 +13,7 @@ The MCP server provides **4 core tools** with a Python REPL as the primary inter
 
 ```bash
 # Start the agents server
-imas-codex serve agents
+imas-codex serve
 ```
 
 **Core Tools:**

@@ -1,6 +1,6 @@
 # Unified MCP Server Architecture
 
-**Status:** Planned
+**Status:** Implemented
 **Created:** 2026-03-19
 **Priority:** High — blocks facility deployment, reduces context bloat
 **Supersedes:** `dynamic-tool-registration.md` (absorbed and extended)

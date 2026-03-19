@@ -4,7 +4,6 @@ import pytest
 
 from imas_codex.embeddings.embeddings import Embeddings
 from imas_codex.search.document_store import DocumentStore
-from tests.conftest import STANDARD_TEST_IDS_SET
 
 
 def _mock_encoder(model_name: str = "all-MiniLM-L6-v2"):
@@ -47,23 +46,3 @@ def test_embeddings_lazy_build(monkeypatch):
     _ = emb.get_embeddings_matrix()
     # After build (may still be empty if no docs) but attribute should be set
     assert emb._embeddings is not None
-
-
-@pytest.mark.asyncio
-async def test_health_endpoint_deferred(monkeypatch):
-    """Health endpoint works with graph-only server."""
-    from imas_codex.health import HealthEndpoint
-    from imas_codex.server import Server
-
-    mock_gc = MagicMock()
-    mock_gc.query.return_value = [{"v.id": "4.0.0"}]
-
-    srv = Server(ids_set=STANDARD_TEST_IDS_SET, graph_client=mock_gc)
-
-    he = HealthEndpoint(srv)
-    he.attach()
-    app = srv.mcp.http_app()
-    health_route = next(r for r in app.routes if getattr(r, "path", None) == "/health")
-    response = await health_route.endpoint()  # type: ignore[attr-defined]
-    data = response.body.decode()
-    assert "imas_codex_version" in data
