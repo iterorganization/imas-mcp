@@ -11,10 +11,10 @@ from imas_codex.discovery.wiki.entity_extraction import (
     UNIT_PATTERN,
     _build_imas_pattern,
     extract_conventions,
-    get_all_ids_names,
     extract_imas_paths,
     extract_mdsplus_paths,
     extract_units,
+    get_all_ids_names,
 )
 from imas_codex.discovery.wiki.scraper import WikiPage
 
