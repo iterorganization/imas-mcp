@@ -10,7 +10,10 @@ import os
 
 os.environ["IMAS_CODEX_EMBEDDING_LOCATION"] = "local"
 
-from imas_codex.embeddings.encoder import Encoder  # noqa: E402
+try:
+    from imas_codex.embeddings.encoder import Encoder  # noqa: E402
+except ImportError:
+    Encoder = None
 
 SAMPLE_TEXTS = [
     "electron temperature profile",
@@ -52,6 +55,8 @@ class EmbeddingBenchmarks:
 
     def setup(self):
         """Create encoder and warmup."""
+        if Encoder is None:
+            raise NotImplementedError("Encoder not available")
         self.encoder = Encoder()
         self.encoder.embed_texts(["warmup query"])
 

@@ -7,7 +7,10 @@ final ``gc.query()`` call so only the build path is timed.
 
 from __future__ import annotations
 
-from imas_codex.graph.query_builder import graph_search
+try:
+    from imas_codex.graph.query_builder import graph_search
+except ImportError:
+    graph_search = None
 
 
 class _StubGC:
@@ -27,6 +30,8 @@ class QueryBuilderBenchmarks:
 
     def setup(self):
         """Warmup: run a simple query to trigger any lazy init."""
+        if graph_search is None:
+            raise NotImplementedError("graph_search not available")
         graph_search("IMASNode", limit=1, gc=_gc)
 
     def time_basic_query_generation(self):
