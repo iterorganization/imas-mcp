@@ -102,7 +102,7 @@ jobs:
       # ── Load Graph Data ────────────────────────────────────────────────
       - name: Login to GHCR
         run: |
-          echo "${{ secrets.GHCR_TOKEN || secrets.GITHUB_TOKEN }}" | oras login ghcr.io -u ${{ github.actor }} --password-stdin
+          echo "${{ secrets.GITHUB_TOKEN }}" | oras login ghcr.io -u ${{ github.actor }} --password-stdin
 
       - name: Resolve graph tag
         id: graph-tag
