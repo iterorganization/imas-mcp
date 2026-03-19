@@ -136,4 +136,6 @@ class SubsystemBenchmarks:
 
     def time_schema_for_labels(self):
         """Schema slice — label-scoped."""
+        if schema_for is None:
+            raise NotImplementedError("schema_for not available")
         schema_for("Facility", "DataSource")

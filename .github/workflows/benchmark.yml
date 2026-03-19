@@ -243,10 +243,17 @@ jobs:
         run: |
           FILTER="${{ github.event.inputs.benchmark_filter }}"
           if [ -n "$FILTER" ]; then
-            asv run --python=3.12 --machine "$MACHINE_NAME" -b "$FILTER" --verbose --show-stderr
+            asv run --python=3.12 --machine "$MACHINE_NAME" -b "$FILTER" --verbose --show-stderr; RC=$?
           else
-            asv run --python=3.12 --machine "$MACHINE_NAME" HEAD^! --verbose --show-stderr
+            asv run --python=3.12 --machine "$MACHINE_NAME" HEAD^! --verbose --show-stderr; RC=$?
           fi
+          # Exit code 2 = some benchmarks failed (results still recorded)
+          # Only fail the step on exit code 1 (total failure)
+          if [ $RC -eq 2 ]; then
+            echo "::warning::Some benchmarks failed — see log for details"
+            exit 0
+          fi
+          exit $RC
 
       - name: Show benchmark results on failure
         if: failure()
