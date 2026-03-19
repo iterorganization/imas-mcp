@@ -34,6 +34,13 @@ class FacilityToolBenchmarks:
         )
         self.facility = fac[0]["id"]
 
+        # Find a fetchable content ID (WikiPage or CodeChunk)
+        pages = _fixture.graph_client.query(
+            "MATCH (w:WikiPage {facility_id: $fac}) RETURN w.id AS id LIMIT 1",
+            fac=self.facility,
+        )
+        self._fetch_id = pages[0]["id"] if pages else None
+
         # Warmup
         run_tool(
             "search_signals",
@@ -89,16 +96,9 @@ class FacilityToolBenchmarks:
 
     def time_fetch_by_id(self):
         """Content retrieval by ID."""
-        from benchmarks.conftest_bench import _fixture
-
-        # Find a wiki page to fetch
-        pages = _fixture.graph_client.query(
-            "MATCH (w:WikiPage {facility_id: $fac}) RETURN w.id AS id LIMIT 1",
-            fac=self.facility,
-        )
-        if not pages:
-            raise NotImplementedError("No wiki pages")
-        run_tool("fetch", {"id": pages[0]["id"]})
+        if not self._fetch_id:
+            raise NotImplementedError("No wiki pages in graph for this facility")
+        run_tool("fetch", {"id": self._fetch_id})
 
     # -- get_discovery_context -----------------------------------------------
 

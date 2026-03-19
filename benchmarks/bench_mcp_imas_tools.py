@@ -85,29 +85,29 @@ class IMASToolBenchmarks:
 
     def time_overview_all(self):
         """Full IDS summary scan."""
-        run_tool("get_imas_overview", {"ids": IDS_NAMES["large"]})
+        run_tool("get_imas_overview", {"query": IDS_NAMES["large"]})
 
     def time_overview_filtered(self):
         """Filtered overview with vector search."""
-        run_tool("get_imas_overview", {"ids": IDS_NAMES["domain"]})
+        run_tool("get_imas_overview", {"query": IDS_NAMES["domain"]})
 
     # -- get_imas_identifiers ------------------------------------------------
 
     def time_identifiers(self):
         """Identifier schema search."""
-        run_tool("get_imas_identifiers", {"ids": IDS_NAMES["small"]})
+        run_tool("get_imas_identifiers", {"query": IDS_NAMES["small"]})
 
     # -- analyze_imas_structure ----------------------------------------------
 
     def time_structure_analysis(self):
         """Hierarchical analysis."""
-        run_tool("analyze_imas_structure", {"ids": IDS_NAMES["large"]})
+        run_tool("analyze_imas_structure", {"ids_name": IDS_NAMES["large"]})
 
     # -- export --------------------------------------------------------------
 
     def time_export_ids(self):
         """Full IDS export."""
-        run_tool("export_imas_ids", {"ids_list": IDS_NAMES["small"]})
+        run_tool("export_imas_ids", {"ids_name": IDS_NAMES["small"]})
 
     def time_export_domain(self):
         """Domain export."""
@@ -117,7 +117,10 @@ class IMASToolBenchmarks:
 
     def time_dd_version_context(self):
         """Version change history."""
-        run_tool("get_dd_version_context", {"dd_version": 4})
+        run_tool(
+            "get_dd_version_context",
+            {"paths": IMAS_PATHS["leaf"]},
+        )
 
     def time_dd_versions(self):
         """Version metadata."""
@@ -127,4 +130,4 @@ class IMASToolBenchmarks:
 
     def peakmem_export_ids(self):
         """Export memory footprint."""
-        run_tool("export_imas_ids", {"ids_list": IDS_NAMES["large"]})
+        run_tool("export_imas_ids", {"ids_name": IDS_NAMES["large"]})
