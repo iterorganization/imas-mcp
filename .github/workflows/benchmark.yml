@@ -221,6 +221,72 @@ jobs:
             -u neo4j -p imas-codex \
             "MATCH (n) RETURN count(n) AS nodes, labels(n)[0] AS label ORDER BY nodes DESC LIMIT 10"
 
+      - name: Create vector and fulltext indexes
+        run: |
+          # Dimension must match pyproject.toml [tool.imas-codex.embedding] dimension
+          DIM=256
+          NEO4J_CONTAINER=$(docker ps -q --filter "ancestor=neo4j:2026.01.4-community" | head -1)
+
+          # Drop any stale vector indexes from the dump (may have wrong dimension)
+          echo "Dropping stale vector indexes..."
+          docker exec "${NEO4J_CONTAINER}" cypher-shell \
+            -u neo4j -p imas-codex \
+            "SHOW INDEXES YIELD name, type WHERE type = 'VECTOR' RETURN name" \
+            --format plain 2>/dev/null | tail -n +2 | tr -d ' "' | while read -r IDX; do
+              [ -z "$IDX" ] && continue
+              echo "  Dropping $IDX"
+              docker exec "${NEO4J_CONTAINER}" cypher-shell \
+                -u neo4j -p imas-codex "DROP INDEX $IDX IF EXISTS" 2>/dev/null || true
+            done
+
+          echo "Creating vector indexes with dimension $DIM..."
+
+          # Vector indexes — matches schema declarations in imas_codex/schemas/
+          declare -A VECTOR_INDEXES=(
+            ["ids_embedding"]="IDS:embedding"
+            ["imas_node_embedding"]="IMASNode:embedding"
+            ["cluster_embedding"]="IMASSemanticCluster:embedding"
+            ["cluster_label_embedding"]="IMASSemanticCluster:label_embedding"
+            ["cluster_description_embedding"]="IMASSemanticCluster:description_embedding"
+            ["facility_path_desc_embedding"]="FacilityPath:embedding"
+            ["signal_node_desc_embedding"]="SignalNode:embedding"
+            ["signal_source_desc_embedding"]="SignalSource:embedding"
+            ["facility_signal_desc_embedding"]="FacilitySignal:embedding"
+            ["code_example_desc_embedding"]="CodeExample:embedding"
+            ["document_desc_embedding"]="Document:embedding"
+            ["code_chunk_embedding"]="CodeChunk:embedding"
+            ["wiki_chunk_embedding"]="WikiChunk:embedding"
+            ["image_desc_embedding"]="Image:embedding"
+            ["identifier_schema_embedding"]="IMASIdentifier:embedding"
+          )
+
+          for IDX_NAME in "${!VECTOR_INDEXES[@]}"; do
+            IFS=':' read -r LABEL PROP <<< "${VECTOR_INDEXES[$IDX_NAME]}"
+            echo "  Creating $IDX_NAME on $LABEL.$PROP (dim=$DIM)"
+            docker exec "${NEO4J_CONTAINER}" cypher-shell \
+              -u neo4j -p imas-codex \
+              "CREATE VECTOR INDEX $IDX_NAME IF NOT EXISTS
+               FOR (n:$LABEL) ON (n.$PROP)
+               OPTIONS {indexConfig: {\`vector.dimensions\`: $DIM, \`vector.similarity_function\`: 'cosine'}}" \
+              2>/dev/null || echo "    Warning: $IDX_NAME failed"
+          done
+
+          # Fulltext indexes
+          echo "Creating fulltext indexes..."
+          docker exec "${NEO4J_CONTAINER}" cypher-shell \
+            -u neo4j -p imas-codex \
+            "CREATE FULLTEXT INDEX imas_node_text IF NOT EXISTS FOR (n:IMASNode) ON EACH [n.path, n.description, n.documentation]" \
+            2>/dev/null || echo "  Warning: imas_node_text already exists"
+
+          # Wait for indexes to come online
+          echo "Waiting for indexes to populate..."
+          sleep 10
+
+          # Verify indexes
+          docker exec "${NEO4J_CONTAINER}" cypher-shell \
+            -u neo4j -p imas-codex \
+            "SHOW INDEXES YIELD name, type, state WHERE type IN ['VECTOR', 'FULLTEXT'] RETURN name, type, state ORDER BY name"
+
       # ── Run Benchmarks ─────────────────────────────────────────────────
       - name: Setup ASV machine
         run: |
@@ -241,22 +307,12 @@ jobs:
           NEO4J_PASSWORD: imas-codex
           IMAS_CODEX_EMBEDDING_LOCATION: local
         run: |
-          set +e
           FILTER="${{ github.event.inputs.benchmark_filter }}"
           if [ -n "$FILTER" ]; then
             asv run --python=3.12 --machine "$MACHINE_NAME" -b "$FILTER" --verbose --show-stderr
           else
             asv run --python=3.12 --machine "$MACHINE_NAME" HEAD^! --verbose --show-stderr
           fi
-          RC=$?
-          set -e
-          # Exit code 2 = some benchmarks failed (results still recorded)
-          # Only fail the step on exit code 1 (total failure)
-          if [ $RC -eq 2 ]; then
-            echo "::warning::Some benchmarks failed — see log for details"
-            exit 0
-          fi
-          exit $RC
 
       - name: Show benchmark results on failure
         if: failure()

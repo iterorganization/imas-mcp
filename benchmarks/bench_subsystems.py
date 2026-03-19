@@ -8,12 +8,8 @@ from __future__ import annotations
 
 from imas_codex.cocos import cocos_to_parameters, determine_cocos
 from imas_codex.cocos.transforms import path_needs_cocos_transform
+from imas_codex.graph.schema_context import schema_for
 from imas_codex.units import normalize_unit_symbol
-
-try:
-    from imas_codex.graph.schema_context import schema_for
-except ImportError:
-    schema_for = None
 
 UNIT_BATCH = [
     "eV",
@@ -78,8 +74,7 @@ class SubsystemBenchmarks:
         """Warmup each subsystem."""
         cocos_to_parameters(11)
         normalize_unit_symbol("eV")
-        if schema_for is not None:
-            schema_for(task="overview")
+        schema_for(task="overview")
 
     # -- COCOS ---------------------------------------------------------------
 
@@ -124,18 +119,12 @@ class SubsystemBenchmarks:
 
     def time_schema_for_overview(self):
         """Schema slice — overview scope."""
-        if schema_for is None:
-            raise NotImplementedError("schema_for not available")
         schema_for(task="overview")
 
     def time_schema_for_signals(self):
         """Schema slice — task-scoped."""
-        if schema_for is None:
-            raise NotImplementedError("schema_for not available")
         schema_for(task="signals")
 
     def time_schema_for_labels(self):
         """Schema slice — label-scoped."""
-        if schema_for is None:
-            raise NotImplementedError("schema_for not available")
         schema_for("Facility", "DataSource")

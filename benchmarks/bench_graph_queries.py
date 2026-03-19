@@ -26,11 +26,25 @@ class GraphQueryBenchmarks:
             0
         ].tolist()
 
+        # Verify vector index is usable (skip if dimension mismatch from dump)
+        try:
+            self.gc.query(
+                "CALL db.index.vector.queryNodes("
+                "'imas_node_embedding', 1, $embedding) "
+                "YIELD node RETURN node.id LIMIT 1",
+                embedding=self._embedding,
+            )
+            self._vector_ok = True
+        except Exception:
+            self._vector_ok = False
+
         # Warmup: simple query
         self.gc.query("MATCH (n:IMASNode) RETURN n.id LIMIT 1")
 
     def time_vector_search_imas(self):
         """Vector index latency."""
+        if not self._vector_ok:
+            raise NotImplementedError("Vector index not usable (dimension mismatch)")
         self.gc.query(
             "CALL db.index.vector.queryNodes("
             "'imas_node_embedding', $k, $embedding) "
@@ -44,11 +58,11 @@ class GraphQueryBenchmarks:
         """BM25 text search."""
         self.gc.query(
             "CALL db.index.fulltext.queryNodes("
-            "'imas_node_text', $query) "
+            "'imas_node_text', $search_text) "
             "YIELD node, score "
             "RETURN node.id AS id, score "
             "LIMIT 10",
-            query="electron temperature",
+            search_text="electron temperature",
         )
 
     def time_path_traversal_enrichment(self):
