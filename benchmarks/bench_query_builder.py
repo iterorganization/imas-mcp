@@ -37,7 +37,7 @@ class QueryBuilderBenchmarks:
         """Query with where filters and traversals."""
         graph_search(
             "IMASNode",
-            where={"path__starts_with": "equilibrium"},
+            where={"path_doc__starts_with": "equilibrium"},
             traverse=["HAS_UNIT>Unit", "IN_IDS>IDS"],
             limit=25,
             gc=_gc,

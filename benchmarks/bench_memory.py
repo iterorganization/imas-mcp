@@ -51,7 +51,7 @@ class MemoryBenchmarks:
         async def _export():
             async with _fixture.client:
                 return await _fixture.client.call_tool(
-                    "export_imas_ids", {"ids_list": IDS_NAMES["large"]}
+                    "export_imas_ids", {"ids_name": IDS_NAMES["large"]}
                 )
 
         asyncio.run(_export())
