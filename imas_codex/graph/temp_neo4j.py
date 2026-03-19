@@ -63,9 +63,10 @@ def write_temp_neo4j_conf(conf_dir: Path, bolt_port: int, http_port: int) -> Pat
 dbms.security.auth_enabled=false
 server.bolt.listen_address=127.0.0.1:{bolt_port}
 server.http.listen_address=127.0.0.1:{http_port}
-server.memory.heap.initial_size=256m
-server.memory.heap.max_size=1g
-server.memory.pagecache.size=256m
+server.memory.heap.initial_size=1g
+server.memory.heap.max_size=4g
+server.memory.pagecache.size=512m
+dbms.memory.transaction.total.max=3g
 """
     )
     return conf_file
@@ -243,14 +244,20 @@ def create_imas_only_dump(source_dump_path: Path, output_path: Path) -> None:
                 f"bolt://localhost:{temp_bolt_port}",
             )
             with driver.session() as session:
-                result = session.run(
-                    f"MATCH (n) WHERE {label_check} "
-                    "AND NOT n:GraphMeta "
-                    "DETACH DELETE n "
-                    "RETURN count(*) AS deleted"
-                )
-                deleted = result.single()["deleted"]
-                click.echo(f"    Removed {deleted} non-DD nodes")
+                total_deleted = 0
+                while True:
+                    result = session.run(
+                        f"MATCH (n) WHERE {label_check} "
+                        "AND NOT n:GraphMeta "
+                        "WITH n LIMIT 10000 "
+                        "DETACH DELETE n "
+                        "RETURN count(*) AS deleted"
+                    )
+                    batch_deleted = result.single()["deleted"]
+                    if batch_deleted == 0:
+                        break
+                    total_deleted += batch_deleted
+                click.echo(f"    Removed {total_deleted} non-DD nodes")
 
                 # Update GraphMeta to reflect imas-only content
                 session.run(
@@ -302,16 +309,22 @@ def create_facility_dump(
                 f"bolt://localhost:{temp_bolt_port}",
             )
             with driver.session() as session:
-                result = session.run(
-                    "MATCH (n) "
-                    "WHERE n.facility_id IS NOT NULL "
-                    "AND n.facility_id <> $facility "
-                    "DETACH DELETE n "
-                    "RETURN count(*) AS deleted",
-                    facility=facility,
-                )
-                deleted_facility = result.single()["deleted"]
-                click.echo(f"    Removed {deleted_facility} non-{facility} nodes")
+                total_deleted = 0
+                while True:
+                    result = session.run(
+                        "MATCH (n) "
+                        "WHERE n.facility_id IS NOT NULL "
+                        "AND n.facility_id <> $facility "
+                        "WITH n LIMIT 10000 "
+                        "DETACH DELETE n "
+                        "RETURN count(*) AS deleted",
+                        facility=facility,
+                    )
+                    batch_deleted = result.single()["deleted"]
+                    if batch_deleted == 0:
+                        break
+                    total_deleted += batch_deleted
+                click.echo(f"    Removed {total_deleted} non-{facility} nodes")
 
                 result = session.run(
                     "MATCH (n) WHERE NOT (n)--() "
