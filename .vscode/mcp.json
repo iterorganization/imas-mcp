@@ -2,7 +2,7 @@
   "servers": {
     "codex": {
       "command": "uv",
-      "args": ["run", "imas-codex", "serve", "agents"],
+      "args": ["run", "imas-codex", "serve"],
       "type": "stdio"
     }
   },
