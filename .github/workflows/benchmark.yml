@@ -119,11 +119,15 @@ jobs:
           fi
 
           # Resolve 'latest': check if tag exists, otherwise pick most recent
-          TAGS=$(oras repo tags "${REGISTRY}/${PACKAGE}" 2>/dev/null || true)
-          if echo "$TAGS" | grep -qx "latest"; then
+          echo "Listing tags for ${REGISTRY}/${PACKAGE}..."
+          TAGS=$(oras repo tags "${REGISTRY}/${PACKAGE}" 2>&1) || true
+          echo "Tags output: ${TAGS}"
+          # Filter out error lines, keep only version tags
+          CLEAN_TAGS=$(echo "$TAGS" | grep -E '^[0-9v]' || true)
+          if echo "$CLEAN_TAGS" | grep -qx "latest"; then
             echo "tag=latest" >> $GITHUB_OUTPUT
-          elif [ -n "$TAGS" ]; then
-            BEST=$(echo "$TAGS" | tail -1)
+          elif [ -n "$CLEAN_TAGS" ]; then
+            BEST=$(echo "$CLEAN_TAGS" | tail -1)
             echo "No 'latest' tag. Using most recent: $BEST"
             echo "tag=${BEST}" >> $GITHUB_OUTPUT
           else
