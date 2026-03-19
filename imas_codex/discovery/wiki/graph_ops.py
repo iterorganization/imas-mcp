@@ -614,7 +614,7 @@ def has_pending_scan_work(facility: str, *, base_url: str | None = None) -> bool
 def has_pending_ingest_work(facility: str, *, base_url: str | None = None) -> bool:
     """Check if there's pending ingest work in the graph.
 
-    Returns True if there are scored pages with score >= 0.5 awaiting
+    Returns True if there are scored pages with score >= 0.3 awaiting
     ingestion (unclaimed or orphaned).
 
     When ``base_url`` is provided, only counts pages matching the site
@@ -634,7 +634,7 @@ def has_pending_ingest_work(facility: str, *, base_url: str | None = None) -> bo
             f"""
             MATCH (wp:WikiPage {{facility_id: $facility}})
             WHERE wp.status = $scored
-              AND wp.score_composite >= 0.5
+              AND wp.score_composite >= 0.3
               AND (wp.claimed_at IS NULL
                    OR wp.claimed_at < datetime() - duration($cutoff))
               {url_filter}
@@ -813,7 +813,7 @@ def claim_pages_for_scoring(
 @retry_on_deadlock()
 def claim_pages_for_ingesting(
     facility: str,
-    min_score: float = 0.5,
+    min_score: float = 0.3,
     limit: int = 10,
     *,
     base_url: str | None = None,
@@ -893,12 +893,14 @@ def claim_pages_for_ingesting(
 def mark_pages_scored(
     facility: str,
     results: list[dict[str, Any]],
-    skip_threshold: float = 0.5,
+    skip_threshold: float = 0.3,
 ) -> int:
     """Mark pages as scored or skipped based on score threshold.
 
     Pages with score >= skip_threshold get status='scored' (proceed to ingest).
     Pages with score < skip_threshold get status='skipped' (filtered out).
+    Pages where the LLM set should_ingest=True are always scored regardless
+    of composite score.
 
     Uses batched UNWIND for O(1) graph operations instead of O(n) individual queries.
     """
@@ -943,7 +945,7 @@ def mark_pages_scored(
             "score_cost": r.get("score_cost", 0.0),
         }
 
-        if item["score_composite"] >= skip_threshold:
+        if item["score_composite"] >= skip_threshold or item.get("should_ingest"):
             scored_batch.append(item)
         else:
             skipped_batch.append(item)
@@ -1187,9 +1189,7 @@ def revert_pages_to_scored(
             reverted = reverted_result[0]["reverted"] if reverted_result else 0
             exhausted = exhausted_result[0]["exhausted"] if exhausted_result else 0
             if reverted:
-                logger.info(
-                    "Reverted %d pages to scored for ingest retry", reverted
-                )
+                logger.info("Reverted %d pages to scored for ingest retry", reverted)
             if exhausted:
                 logger.warning(
                     "Marked %d pages as fetch_exhausted after %d ingest retries",
