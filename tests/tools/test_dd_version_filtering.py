@@ -485,7 +485,9 @@ class TestErrorFieldContext:
             "equilibrium/time_slice/profiles_1d/psi_error_upper"
         ]
 
-    @pytest.mark.skip(reason="HAS_ERROR enrichment not yet implemented in search_imas_paths")
+    @pytest.mark.skip(
+        reason="HAS_ERROR enrichment not yet implemented in search_imas_paths"
+    )
     def test_search_enrichment_query_includes_has_error(self):
         """search_imas_paths enrichment query must fetch HAS_ERROR."""
         import inspect
@@ -496,7 +498,9 @@ class TestErrorFieldContext:
         assert "HAS_ERROR" in source
         assert "error_fields" in source
 
-    @pytest.mark.skip(reason="HAS_ERROR enrichment not yet implemented in fetch_imas_paths")
+    @pytest.mark.skip(
+        reason="HAS_ERROR enrichment not yet implemented in fetch_imas_paths"
+    )
     def test_fetch_enrichment_query_includes_has_error(self):
         """fetch_imas_paths enrichment query must fetch HAS_ERROR."""
         import inspect
