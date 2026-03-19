@@ -100,9 +100,11 @@ jobs:
           EOF
 
       # ── Load Graph Data ────────────────────────────────────────────────
+      # GHCR_TOKEN (PAT with read:packages) required for private packages.
+      # GITHUB_TOKEN only works if the package is linked to the repository.
       - name: Login to GHCR
         run: |
-          echo "${{ secrets.GITHUB_TOKEN }}" | oras login ghcr.io -u ${{ github.actor }} --password-stdin
+          echo "${{ secrets.GHCR_TOKEN }}" | oras login ghcr.io -u token --password-stdin
 
       - name: Resolve graph tag
         id: graph-tag
@@ -119,10 +121,7 @@ jobs:
           fi
 
           # Resolve 'latest': check if tag exists, otherwise pick most recent
-          echo "Listing tags for ${REGISTRY}/${PACKAGE}..."
           TAGS=$(oras repo tags "${REGISTRY}/${PACKAGE}" 2>&1) || true
-          echo "Tags output: ${TAGS}"
-          # Filter out error lines, keep only version tags
           CLEAN_TAGS=$(echo "$TAGS" | grep -E '^[0-9v]' || true)
           if echo "$CLEAN_TAGS" | grep -qx "latest"; then
             echo "tag=latest" >> $GITHUB_OUTPUT
@@ -131,7 +130,7 @@ jobs:
             echo "No 'latest' tag. Using most recent: $BEST"
             echo "tag=${BEST}" >> $GITHUB_OUTPUT
           else
-            echo "::error::No graph tags found in ${REGISTRY}/${PACKAGE}"
+            echo "::error::No graph tags found in ${REGISTRY}/${PACKAGE}. Ensure GHCR_TOKEN secret has read:packages scope."
             exit 1
           fi
           echo "registry=${REGISTRY}" >> $GITHUB_OUTPUT
