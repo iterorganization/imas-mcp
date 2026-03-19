@@ -107,8 +107,8 @@ jobs:
       # Packages live in the org registry (iterorganization), not per-fork.
       # Anonymous access works for public packages. If GHCR_TOKEN is set
       # but lacks read:packages scope, a successful login poisons the
-      # credential store — oras sends the bad credential instead of using
-      # anonymous access. We verify access after login and logout on failure.
+      # Docker credential store. We verify access and purge credentials
+      # from ~/.docker/config.json on failure to restore anonymous access.
       - name: Login to GHCR
         env:
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
@@ -122,7 +122,17 @@ jobs:
           # Verify the token can actually access the packages
           if ! oras repo tags "${REGISTRY}/imas-codex-graph" > /dev/null 2>&1; then
             echo "::warning::GHCR_TOKEN cannot access ${REGISTRY} packages, falling back to anonymous access"
-            oras logout ghcr.io
+            oras logout ghcr.io || true
+            # Purge any cached credentials that oras logout may not clear
+            if [ -f ~/.docker/config.json ]; then
+              python3 -c "
+          import json, pathlib
+          p = pathlib.Path.home() / '.docker' / 'config.json'
+          cfg = json.loads(p.read_text())
+          cfg.get('auths', {}).pop('ghcr.io', None)
+          p.write_text(json.dumps(cfg, indent=2))
+          "
+            fi
           fi
 
       - name: Resolve graph tag
