@@ -156,23 +156,35 @@ jobs:
       - name: Load graph dump
         run: |
           set -euo pipefail
-          ARCHIVE=$(ls /tmp/graph-dump/*.tar.gz | head -1)
-          mkdir -p /tmp/graph-extracted
-          tar -xzf "${ARCHIVE}" -C /tmp/graph-extracted
-
-          DUMP_FILE=$(find /tmp/graph-extracted -name "graph.dump" | head -1)
+          # Handle both raw .dump files and .tar.gz archives from GHCR
+          DUMP_FILE=$(find /tmp/graph-dump -name "*.dump" | head -1)
           if [ -z "${DUMP_FILE}" ]; then
-            echo "ERROR: No graph.dump found in archive"
-            ls -laR /tmp/graph-extracted/
+            # Try tar.gz archive format
+            ARCHIVE=$(ls /tmp/graph-dump/*.tar.gz 2>/dev/null | head -1)
+            if [ -n "${ARCHIVE}" ]; then
+              mkdir -p /tmp/graph-extracted
+              tar -xzf "${ARCHIVE}" -C /tmp/graph-extracted
+              DUMP_FILE=$(find /tmp/graph-extracted -name "*.dump" | head -1)
+            fi
+          fi
+
+          if [ -z "${DUMP_FILE}" ]; then
+            echo "ERROR: No .dump file found"
+            ls -laR /tmp/graph-dump/
             exit 1
           fi
+          echo "Loading dump: ${DUMP_FILE}"
+
+          # neo4j-admin load expects the dump file named as <database>.dump
+          DUMP_DIR=$(mktemp -d)
+          cp "${DUMP_FILE}" "${DUMP_DIR}/neo4j.dump"
 
           NEO4J_CONTAINER=$(docker ps -aq --filter "ancestor=neo4j:2026.01.4-community" | head -1)
           NEO4J_DATA_VOLUME=$(docker inspect "${NEO4J_CONTAINER}" --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Name}}{{end}}{{end}}')
 
           docker run --rm \
             -v "${NEO4J_DATA_VOLUME}:/data" \
-            -v "$(dirname ${DUMP_FILE}):/dump" \
+            -v "${DUMP_DIR}:/dump" \
             neo4j:2026.01.4-community \
             neo4j-admin database load neo4j \
               --from-path=/dump \
