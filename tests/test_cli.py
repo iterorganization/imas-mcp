@@ -116,12 +116,12 @@ class TestCLICommands:
         assert result.output.strip()  # Some version text present
 
     def test_serve_help(self, runner):
-        """serve group has help."""
+        """serve command has help."""
         from imas_codex.cli import main
 
         result = runner.invoke(main, ["serve", "--help"])
         assert result.exit_code == 0
-        assert "MCP servers" in result.output
+        assert "MCP server" in result.output
 
     def test_facilities_help(self, runner):
         """facilities group has help."""

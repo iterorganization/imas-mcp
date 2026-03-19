@@ -92,6 +92,87 @@ class TestServeCLI:
         assert call_kwargs["port"] == 9000
 
 
+class TestReadOnlyServer:
+    """Tests that read-only mode suppresses write tools at the server level."""
+
+    def test_read_only_suppresses_write_tools(self):
+        """Read-only mode suppresses write tools and REPL."""
+        from imas_codex.llm.server import AgentsServer
+
+        server = AgentsServer(read_only=True)
+        comps = server.mcp._local_provider._components
+        tool_names = [v.name for k, v in comps.items() if k.startswith("tool:")]
+
+        # These should NOT be present in read-only mode
+        assert "python" not in tool_names
+        assert "add_to_graph" not in tool_names
+        assert "update_facility_config" not in tool_names
+        assert "update_facility_infrastructure" not in tool_names
+        assert "add_exploration_note" not in tool_names
+        assert "list_logs" not in tool_names
+        assert "get_logs" not in tool_names
+        assert "tail_logs" not in tool_names
+
+        # These SHOULD be present in read-only mode
+        assert "get_graph_schema" in tool_names
+        assert "get_facility_infrastructure" in tool_names
+        assert "get_discovery_context" in tool_names
+        assert "search_signals" in tool_names
+        assert "search_docs" in tool_names
+        assert "search_code" in tool_names
+        assert "search_imas" in tool_names
+        assert "fetch" in tool_names
+        assert "check_imas_paths" in tool_names
+
+    def test_default_mode_has_all_tools(self):
+        """Default mode includes all tools."""
+        from imas_codex.llm.server import AgentsServer
+
+        server = AgentsServer()
+        comps = server.mcp._local_provider._components
+        tool_names = [v.name for k, v in comps.items() if k.startswith("tool:")]
+
+        # Write tools present
+        assert "python" in tool_names
+        assert "add_to_graph" in tool_names
+        assert "update_facility_config" in tool_names
+        assert "update_facility_infrastructure" in tool_names
+        assert "add_exploration_note" in tool_names
+        assert "list_logs" in tool_names
+        assert "get_logs" in tool_names
+        assert "tail_logs" in tool_names
+
+        # Read tools also present
+        assert "get_graph_schema" in tool_names
+        assert "search_signals" in tool_names
+        assert "fetch" in tool_names
+
+    def test_read_only_server_name(self):
+        """Read-only mode uses distinct server name."""
+        from imas_codex.llm.server import AgentsServer
+
+        ro_server = AgentsServer(read_only=True)
+        rw_server = AgentsServer(read_only=False)
+
+        assert ro_server.mcp.name == "imas-codex-readonly"
+        assert rw_server.mcp.name == "imas-codex"
+
+    def test_read_only_fewer_tools(self):
+        """Read-only mode has strictly fewer tools than default."""
+        from imas_codex.llm.server import AgentsServer
+
+        ro_server = AgentsServer(read_only=True)
+        rw_server = AgentsServer(read_only=False)
+
+        ro_comps = ro_server.mcp._local_provider._components
+        rw_comps = rw_server.mcp._local_provider._components
+        ro_tools = {v.name for k, v in ro_comps.items() if k.startswith("tool:")}
+        rw_tools = {v.name for k, v in rw_comps.items() if k.startswith("tool:")}
+
+        assert ro_tools < rw_tools  # strict subset
+        assert len(rw_tools) - len(ro_tools) == 8  # exactly 8 write tools suppressed
+
+
 class TestFacilitiesCLI:
     """Tests for facilities command group."""
 
