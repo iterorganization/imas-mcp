@@ -1,21 +1,5 @@
 {
   "servers": {
-    "imas-ddv3": {
-      "command": "uv",
-      "args": ["run", "imas-codex", "serve", "imas", "--transport", "stdio"],
-      "env": {
-        "IMAS_DD_VERSION": "3.42.2"
-      },
-      "type": "stdio"
-    },
-    "imas-ddv4": {
-      "command": "uv",
-      "args": ["run", "imas-codex", "serve", "imas", "--transport", "stdio"],
-      "env": {
-        "IMAS_DD_VERSION": "4.1.0"
-      },
-      "type": "stdio"
-    },
     "codex": {
       "command": "uv",
       "args": ["run", "imas-codex", "serve", "agents"],
