@@ -794,6 +794,7 @@ class FacilityWorkerState(DiscoveryStateBase):
 
     # Control
     provider_budget_exhausted: bool = False
+    sites_done: bool = False  # Set True when all per-site workers finish
 
     # Stats
     image_stats: WorkerStats = field(default_factory=WorkerStats)
@@ -831,12 +832,21 @@ class FacilityWorkerState(DiscoveryStateBase):
 
         Unlike the site-scoped version, this doesn't gate on an ingest
         phase — facility-scoped image workers drain the global queue and
-        stop when no pending images remain after a debounce period.
+        stop when no pending images remain after sites finish.
+
+        Images are only created during page ingestion, so the worker must
+        wait for all per-site workers to finish before allowing idle exit.
+        Without this gate, the worker exits in ~6 seconds at startup
+        before any images have been produced.
         """
         if super().should_stop():
             return True
         if self.budget_exhausted:
             return True
+        # Don't exit while site workers are still running — they will
+        # produce images during ingestion.
+        if not self.sites_done:
+            return False
         if (
             self.image_phase.is_idle_or_done
             and not _get_graph_ops().has_pending_image_work(self.facility)

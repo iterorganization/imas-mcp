@@ -1131,6 +1131,7 @@ def wiki(
                         "All sites processed — draining facility workers "
                         "(images, embeddings)"
                     )
+                    facility_state.sites_done = True
                     facility_state.image_phase.record_idle()
                     await run_supervised_loop(
                         facility_group,

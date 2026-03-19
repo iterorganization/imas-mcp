@@ -869,7 +869,8 @@ def claim_pages_for_ingesting(
             """
             MATCH (wp:WikiPage {facility_id: $facility, claim_token: $token})
             RETURN wp.id AS id, wp.title AS title, wp.url AS url,
-                   wp.score_composite AS score, wp.description AS description,
+                   wp.score_composite AS score_composite,
+                   wp.description AS description,
                    wp.physics_domain AS physics_domain,
                    wp.preview_text AS preview,
                    wp.in_degree AS in_degree, wp.out_degree AS out_degree
@@ -1649,8 +1650,10 @@ def claim_documents_for_ingesting(
             """
             MATCH (wa:Document {facility_id: $facility, claim_token: $token})
             RETURN wa.id AS id, wa.url AS url, wa.filename AS filename,
-                   wa.document_type AS document_type, wa.score_composite AS score,
-                   wa.description AS description, wa.physics_domain AS physics_domain
+                   wa.document_type AS document_type,
+                   wa.score_composite AS score_composite,
+                   wa.description AS description,
+                   wa.physics_domain AS physics_domain
             """,
             facility=facility,
             token=claim_token,
