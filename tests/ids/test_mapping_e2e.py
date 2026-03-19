@@ -839,6 +839,7 @@ class TestMapCLI:
         # Group with no subcommand shows usage
         assert "signal mapping pipeline" in result.output.lower()
 
+    @pytest.mark.integration
     @patch("imas_codex.graph.client.GraphClient")
     @patch("imas_codex.ids.tools.discover_mappable_ids")
     @patch("imas_codex.ids.mapping.generate_mapping")
@@ -872,6 +873,7 @@ class TestMapCLI:
         assert "Unassigned signal sources" in result.output
         assert "jet:pf_coils:group3" in result.output
 
+    @pytest.mark.integration
     @patch("imas_codex.graph.client.GraphClient")
     @patch("imas_codex.ids.tools.discover_mappable_ids")
     @patch("imas_codex.ids.mapping.generate_mapping")
@@ -1618,6 +1620,7 @@ class TestStaticFirstOrdering:
 
 
 class TestMapRunCostLimit:
+    @pytest.mark.integration
     @patch("imas_codex.ids.tools.discover_mappable_ids")
     @patch("imas_codex.ids.mapping.generate_mapping")
     def test_cost_limit_flag_accepted(
@@ -1652,6 +1655,7 @@ class TestMapRunCostLimit:
 
 
 class TestMapRunTimeLimit:
+    @pytest.mark.integration
     @patch("imas_codex.ids.tools.discover_mappable_ids")
     @patch("imas_codex.ids.mapping.generate_mapping")
     def test_time_flag_accepted(

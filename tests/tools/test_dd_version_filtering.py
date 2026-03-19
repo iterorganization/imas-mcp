@@ -13,7 +13,7 @@ Also validates that cluster scope queries produce valid Cypher, and that
 overview/export tools use correct query patterns.
 """
 
-from unittest.mock import MagicMock, call
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
@@ -377,39 +377,33 @@ class TestSemanticMatchDDVersion:
 
     def test_dd_version_uses_introduced_in(self):
         """compute_semantic_matches should use INTRODUCED_IN, not n.dd_version."""
+        import numpy as np
+
         from imas_codex.ids.tools import compute_semantic_matches
 
-        gc = MagicMock()
-        gc.query.return_value = [
+        mock_gc = MagicMock()
+        mock_gc.__enter__ = MagicMock(return_value=mock_gc)
+        mock_gc.__exit__ = MagicMock(return_value=False)
+        mock_gc.query.return_value = [
             {
-                "path": "equilibrium/time_slice/profiles_1d/psi",
-                "documentation": "Poloidal flux",
-                "data_type": "FLT_1D",
-                "embedding": [0.0] * 384,
+                "id": "equilibrium/time_slice/profiles_1d/psi",
+                "doc": "Poloidal flux",
+                "score": 0.9,
             }
         ]
 
-        import imas_codex.ids.tools as ids_module
-
-        mock_encoder_cls = MagicMock()
-        mock_encoder = MagicMock()
-
-        import numpy as np
-
-        mock_encoder.embed_texts.return_value = [np.zeros(384)]
-        mock_encoder_cls.return_value = mock_encoder
-
-        with pytest.MonkeyPatch.context() as mp:
-            mp.setattr(ids_module, "Encoder", mock_encoder_cls, raising=False)
+        with patch("imas_codex.ids.tools.GraphClient", return_value=mock_gc):
             compute_semantic_matches(
                 source_descriptions=[("src1", "some description")],
                 target_ids_name="equilibrium",
-                gc=gc,
+                gc=mock_gc,
                 dd_version=4,
+                precomputed_embeddings=[np.zeros(384)],
             )
 
-        imas_call = gc.query.call_args_list[0]
-        cypher = imas_call[0][0]
+        # The per-thread GraphClient calls tgc.query with the constructed cypher
+        assert mock_gc.query.call_count >= 1
+        cypher = mock_gc.query.call_args_list[0][0][0]
         assert "INTRODUCED_IN" in cypher
         assert "n.dd_version" not in cypher
 
