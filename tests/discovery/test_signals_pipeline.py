@@ -27,6 +27,8 @@ from imas_codex.discovery.signals.parallel import (
     run_parallel_data_discovery,
 )
 
+pytestmark = pytest.mark.integration
+
 # ── Fixtures ─────────────────────────────────────────────────────────────
 
 FACILITY = "test_facility"

@@ -208,7 +208,7 @@ class TestCLISubcommands:
 
         result = runner.invoke(main, ["imas", "map", "--help"])
         assert result.exit_code == 0
-        assert "IMAS mapping pipeline" in result.output
+        assert "IMAS signal mapping pipeline" in result.output
 
     def test_imas_list_help(self, runner):
         """imas list subcommand exists."""
