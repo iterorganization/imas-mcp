@@ -105,10 +105,25 @@ jobs:
 
       # ── Load Graph Data ────────────────────────────────────────────────
       # Packages live in the org registry (iterorganization), not per-fork.
-      # GHCR_TOKEN (PAT with read:packages) required for private packages.
+      # Anonymous access works for public packages. If GHCR_TOKEN is set
+      # but lacks read:packages scope, a successful login poisons the
+      # credential store — oras sends the bad credential instead of using
+      # anonymous access. We verify access after login and logout on failure.
       - name: Login to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
         run: |
-          echo "${{ secrets.GHCR_TOKEN }}" | oras login ghcr.io -u token --password-stdin
+          REGISTRY="${{ github.event.inputs.registry || 'ghcr.io/iterorganization' }}"
+          if [ -z "$GHCR_TOKEN" ]; then
+            echo "No GHCR_TOKEN, using anonymous access"
+            exit 0
+          fi
+          echo "$GHCR_TOKEN" | oras login ghcr.io -u token --password-stdin
+          # Verify the token can actually access the packages
+          if ! oras repo tags "${REGISTRY}/imas-codex-graph" > /dev/null 2>&1; then
+            echo "::warning::GHCR_TOKEN cannot access ${REGISTRY} packages, falling back to anonymous access"
+            oras logout ghcr.io
+          fi
 
       - name: Resolve graph tag
         id: graph-tag
