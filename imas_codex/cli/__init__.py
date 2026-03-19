@@ -38,8 +38,7 @@ def main(ctx: click.Context, version: bool) -> None:
     Use subcommands to start servers or manage data:
 
     \b
-      imas-codex serve imas         Start the IMAS DD MCP server
-      imas-codex serve agents       Start the Agents MCP server
+      imas-codex serve              Start the MCP server
       imas-codex graph start        Start Neo4j graph database
       imas-codex embed start        Start GPU embedding server
       imas-codex llm start          Start LiteLLM proxy

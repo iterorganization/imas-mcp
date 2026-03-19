@@ -1,13 +1,10 @@
 """
 Test configuration and fixtures for the MCP-based architecture.
-
-The server fixture creates a graph-backed Server with a mock GraphClient
-that returns fixture data matching the graph_mcp test data structure.
 """
 
 import os
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
@@ -19,13 +16,10 @@ try:
 except ImportError:
     pass
 
-from fastmcp import Client
-
 from imas_codex.clusters.search import ClusterSearchResult
 from imas_codex.embeddings.encoder import Encoder
 from imas_codex.search.document_store import Document, DocumentMetadata, DocumentStore
 from imas_codex.search.engines.base_engine import MockSearchEngine
-from imas_codex.server import Server
 
 
 def pytest_addoption(parser):
@@ -308,76 +302,6 @@ def mock_heavy_operations():
                 mock_clusters_class.return_value = mock_clusters_instance
 
                 yield
-
-
-def _create_mock_graph_client():
-    """Create a mock GraphClient for the server fixture.
-
-    Returns a MagicMock that responds to Cypher queries with fixture data
-    matching the standard test IDS set.
-    """
-    mock_gc = MagicMock()
-
-    # DDVersion query for server name
-    def _query(cypher, **kwargs):
-        # IDS nodes query for overview (match before IMASNode count check)
-        if "MATCH (i:IDS)" in cypher:
-            return [
-                {
-                    "name": "equilibrium",
-                    "description": "Equilibrium quantities",
-                    "physics_domain": "magnetics",
-                    "lifecycle_status": "active",
-                    "path_count": 5,
-                },
-                {
-                    "name": "core_profiles",
-                    "description": "Core plasma profiles",
-                    "physics_domain": "core_transport",
-                    "lifecycle_status": "active",
-                    "path_count": 4,
-                },
-            ]
-        if "DDVersion" in cypher and "is_current" in cypher:
-            # Overview tool aliases: "v.id AS version"
-            if "AS version" in cypher:
-                return [{"version": "4.0.0"}]
-            # Server name query: "RETURN v.id"
-            return [{"v.id": "4.0.0"}]
-        if "RETURN 1" in cypher:
-            return [{"1": 1}]
-        # Health endpoint stats query
-        if "IMASNode" in cypher and "count" in cypher.lower():
-            return [{"paths": 9, "ids_count": 2}]
-        return []
-
-    mock_gc.query = MagicMock(side_effect=_query)
-    return mock_gc
-
-
-@pytest.fixture(scope="session")
-def server() -> Server:
-    """Session-scoped server with mock GraphClient."""
-    mock_gc = _create_mock_graph_client()
-    return Server(ids_set=STANDARD_TEST_IDS_SET, graph_client=mock_gc)
-
-
-@pytest.fixture(scope="session")
-def client(server):
-    """Session-scoped MCP client fixture."""
-    return Client(server.mcp)
-
-
-@pytest.fixture(scope="session")
-def tools(server):
-    """Session-scoped tools composition fixture."""
-    return server.tools
-
-
-@pytest.fixture(scope="session")
-def resources(server):
-    """Session-scoped resources composition fixture."""
-    return server.resources
 
 
 @pytest.fixture

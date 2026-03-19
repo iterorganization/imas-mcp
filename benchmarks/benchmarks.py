@@ -3,9 +3,6 @@ from functools import cached_property
 
 from fastmcp import Client
 
-# Standard test IDS set for consistency across all tests and benchmarks
-STANDARD_TEST_IDS_SET = {"equilibrium", "core_profiles"}
-
 
 class BenchmarkFixture:
     """Composition-based benchmark fixture for performance testing."""
@@ -13,9 +10,9 @@ class BenchmarkFixture:
     @cached_property
     def server(self):
         """Lazy-loaded server instance."""
-        from imas_codex.server import Server
+        from imas_codex.llm.server import AgentsServer
 
-        return Server(ids_set=STANDARD_TEST_IDS_SET)
+        return AgentsServer()
 
     @cached_property
     def client(self):

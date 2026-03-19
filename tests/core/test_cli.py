@@ -37,114 +37,59 @@ class TestCLI:
         assert "serve" in result.output
         assert "facilities" in result.output
 
+
+class TestServeCLI:
+    """Tests for unified serve command."""
+
+    @pytest.fixture
+    def runner(self):
+        return CliRunner()
+
     def test_serve_help(self, runner):
-        """Test serve --help shows subcommands."""
+        """Test serve --help shows options."""
         result = runner.invoke(main, ["serve", "--help"])
         assert result.exit_code == 0
-        assert "imas" in result.output
-        assert "agents" in result.output
-
-    def test_serve_imas_help(self, runner):
-        """Test serve imas --help shows options."""
-        result = runner.invoke(main, ["serve", "imas", "--help"])
-        assert result.exit_code == 0
         assert "--transport" in result.output
-        assert "--host" in result.output
-        assert "--port" in result.output
-        assert "--log-level" in result.output
+        assert "--read-only" in result.output
 
-    @patch("imas_codex.server.Server")
-    def test_serve_imas_default_options(self, mock_server_cls, runner):
-        """Test default options are applied correctly."""
+    @patch("imas_codex.llm.server.AgentsServer")
+    def test_serve_default_options(self, mock_server_cls, runner):
         mock_server = MagicMock()
         mock_server_cls.return_value = mock_server
+        runner.invoke(main, ["serve"], catch_exceptions=False)
+        mock_server_cls.assert_called_once_with(read_only=False)
+        mock_server.run.assert_called_once()
 
-        runner.invoke(main, ["serve", "imas"], catch_exceptions=False)
-
-        # Server should be created with defaults
-        mock_server_cls.assert_called_once()
-        call_kwargs = mock_server_cls.call_args[1]
-        assert call_kwargs["ids_set"] is None
-
-    @patch("imas_codex.server.Server")
-    def test_transport_options(self, mock_server_cls, runner):
-        """Test transport option validation."""
+    @patch("imas_codex.llm.server.AgentsServer")
+    def test_serve_read_only(self, mock_server_cls, runner):
         mock_server = MagicMock()
         mock_server_cls.return_value = mock_server
+        runner.invoke(main, ["serve", "--read-only"], catch_exceptions=False)
+        mock_server_cls.assert_called_once_with(read_only=True)
 
-        # Test valid transports
+    @patch("imas_codex.llm.server.AgentsServer")
+    def test_serve_transport_options(self, mock_server_cls, runner):
+        mock_server = MagicMock()
+        mock_server_cls.return_value = mock_server
         for transport in ["stdio", "sse", "streamable-http"]:
-            result = runner.invoke(main, ["serve", "imas", "--transport", transport])
-            # Just check it doesn't error on invalid choice
-            assert "Invalid value for '--transport'" not in result.output
-
-    def test_invalid_transport(self, runner):
-        """Test invalid transport option is rejected."""
-        result = runner.invoke(main, ["serve", "imas", "--transport", "invalid"])
+            result = runner.invoke(main, ["serve", "--transport", transport])
+            assert result.exit_code == 0
+        result = runner.invoke(main, ["serve", "--transport", "invalid"])
         assert result.exit_code != 0
-        assert "Invalid value for '--transport'" in result.output
 
-    @patch("imas_codex.server.Server")
-    def test_host_port_options(self, mock_server_cls, runner):
-        """Test host and port options."""
+    @patch("imas_codex.llm.server.AgentsServer")
+    def test_serve_host_port(self, mock_server_cls, runner):
         mock_server = MagicMock()
         mock_server_cls.return_value = mock_server
-
         runner.invoke(
             main,
-            ["serve", "imas", "--host", "0.0.0.0", "--port", "9000"],
+            ["serve", "--host", "0.0.0.0", "--port", "9000"],
             catch_exceptions=False,
         )
-
-        # Server.run should be called with custom host/port
         mock_server.run.assert_called_once()
         call_kwargs = mock_server.run.call_args[1]
         assert call_kwargs["host"] == "0.0.0.0"
         assert call_kwargs["port"] == 9000
-
-    @patch("imas_codex.server.Server")
-    def test_log_level_options(self, mock_server_cls, runner):
-        """Test log level options."""
-        mock_server = MagicMock()
-        mock_server_cls.return_value = mock_server
-
-        for level in ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]:
-            result = runner.invoke(main, ["serve", "imas", "--log-level", level])
-            assert "Invalid value for '--log-level'" not in result.output
-
-    def test_invalid_log_level(self, runner):
-        """Test invalid log level is rejected."""
-        result = runner.invoke(main, ["serve", "imas", "--log-level", "INVALID"])
-        assert result.exit_code != 0
-        assert "Invalid value for '--log-level'" in result.output
-
-    @patch("imas_codex.server.Server")
-    def test_stdio_sets_rich_env(self, mock_server_cls, runner):
-        """Test stdio transport sets IMAS_CODEX_RICH=0."""
-        mock_server = MagicMock()
-        mock_server_cls.return_value = mock_server
-
-        runner.invoke(
-            main, ["serve", "imas", "--transport", "stdio"], catch_exceptions=False
-        )
-
-        mock_server_cls.assert_called_once()
-
-    @patch("imas_codex.server.Server")
-    def test_ids_filter_option(self, mock_server_cls, runner):
-        """Test --ids-filter option parses IDS names."""
-        mock_server = MagicMock()
-        mock_server_cls.return_value = mock_server
-
-        runner.invoke(
-            main,
-            ["serve", "imas", "--ids-filter", "core_profiles equilibrium"],
-            catch_exceptions=False,
-        )
-
-        mock_server_cls.assert_called_once()
-        call_kwargs = mock_server_cls.call_args[1]
-        assert call_kwargs["ids_set"] == {"core_profiles", "equilibrium"}
 
 
 class TestFacilitiesCLI:
@@ -172,19 +117,3 @@ class TestFacilitiesCLI:
         """Test facilities show with unknown facility."""
         result = runner.invoke(main, ["facilities", "show", "unknown_facility"])
         assert result.exit_code != 0
-
-
-class TestAgentsCLI:
-    """Tests for agents serve command."""
-
-    @pytest.fixture
-    def runner(self):
-        """Create a CLI test runner."""
-        return CliRunner()
-
-    def test_serve_agents_help(self, runner):
-        """Test serve agents --help shows options."""
-        result = runner.invoke(main, ["serve", "agents", "--help"])
-        assert result.exit_code == 0
-        assert "--transport" in result.output
-        assert "facility exploration" in result.output.lower()

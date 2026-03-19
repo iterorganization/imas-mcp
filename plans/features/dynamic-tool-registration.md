@@ -1,5 +1,7 @@
 # Dynamic Tool Registration & Server Unification
 
+> **Superseded by:** `unified-server.md` (implemented)
+
 **Status:** Superseded by `unified-server.md`
 **Created:** 2026-03-18
 **Updated:** 2026-03-19

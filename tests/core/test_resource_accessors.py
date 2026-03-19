@@ -1,7 +1,7 @@
 """
-Test suite for resource_path_accessor.py and resource_provider.py.
+Test suite for resource_path_accessor.py.
 
-This test suite validates resource path management and MCP resource registration.
+This test suite validates resource path management.
 """
 
 import os
@@ -11,7 +11,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from imas_codex.resource_path_accessor import ResourcePathAccessor
-from imas_codex.resource_provider import Resources
 
 
 class TestResourcePathAccessor:
@@ -250,30 +249,6 @@ class TestResourcePathAccessorBaseDir:
 
             assert isinstance(result, Path)
             assert "resources" in str(result)
-
-
-class TestResourcesGraphOnly:
-    """Tests for Resources (graph-only, no schema files)."""
-
-    def test_no_schema_dir(self):
-        """Resources does not have schema_dir."""
-        resources = Resources()
-        assert not hasattr(resources, "schema_dir")
-
-    def test_registers_only_examples(self):
-        """Resources only registers examples resource."""
-        resources = Resources()
-        mock_mcp = MagicMock()
-        resources.register(mock_mcp)
-
-        registered_uris = [
-            call.kwargs.get("uri", call.args[0] if call.args else None)
-            for call in mock_mcp.resource.call_args_list
-        ]
-        assert "examples://resource-usage" in registered_uris
-        for uri in registered_uris:
-            assert uri not in {"ids://catalog", "ids://identifiers", "ids://clusters"}
-            assert "{ids_name}" not in (uri or "")
 
 
 if __name__ == "__main__":
