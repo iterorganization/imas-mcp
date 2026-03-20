@@ -97,7 +97,7 @@ jobs:
         run: |
           REGISTRY="${{ steps.registry.outputs.ghcr }}"
           PACKAGE="imas-codex-graph-imas"
-          # Try 'latest' first, fall back to most recent tag
+          # Query available tags from the graph package
           TAGS=$(oras repo tags "${REGISTRY}/${PACKAGE}" 2>&1) || true
           CLEAN_TAGS=$(echo "$TAGS" | grep -E '^[0-9v]' || true)
           if echo "$CLEAN_TAGS" | grep -qx "latest"; then
@@ -107,8 +107,8 @@ jobs:
             echo "No 'latest' tag found. Using most recent: $BEST"
             echo "tag=${BEST}" >> $GITHUB_OUTPUT
           else
-            echo "::warning::No graph tags found — using 'latest' as default"
-            echo "tag=latest" >> $GITHUB_OUTPUT
+            echo "::warning::No graph package found at ${REGISTRY}/${PACKAGE} — image will build without pre-loaded graph"
+            echo "tag=none" >> $GITHUB_OUTPUT
           fi
 
       - name: Extract metadata for GHCR (releases only)

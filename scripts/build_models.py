@@ -500,7 +500,7 @@ Usage:
         if verbose:
             logger.exception("Full traceback:")
         click.echo(f"Error: {e}", err=True)
-        return 1
+        raise SystemExit(1) from e
 
 
 if __name__ == "__main__":

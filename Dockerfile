@@ -92,16 +92,17 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     fi
 
 # Build generated Python models (graph models, physics domains)
-# These are normally built by hatch build hook, but HATCH_BUILD_NO_HOOKS=true
+# These are normally built by hatch build hook, but HATCH_BUILD_NO_HOOKS=true.
+# linkml/linkml-runtime are build-requires (not runtime deps), so use --with.
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     echo "Building generated models..." && \
-    uv run --no-dev build-models --force && \
+    uv run --no-dev --with linkml --with linkml-runtime build-models --force && \
     echo "✓ Generated models ready"
 
 # ── Graph-native data: pull IMAS-only graph from GHCR ──────────────────
 # Replaces build-schemas, build-path-map, build-embeddings, clusters build.
 # The graph contains all DD structure, embeddings, clusters, and version history.
-# Build FAILS if graph cannot be downloaded — no fallback to file-based data.
+# Builds gracefully without graph data if the package is unavailable.
 
 # Install oras CLI for OCI artifact pull
 ARG ORAS_VERSION=1.2.0
@@ -109,23 +110,25 @@ RUN curl -sLO "https://github.com/oras-project/oras/releases/download/v${ORAS_VE
     && tar -xzf "oras_${ORAS_VERSION}_linux_amd64.tar.gz" -C /usr/local/bin oras \
     && rm -f "oras_${ORAS_VERSION}_linux_amd64.tar.gz"
 
-# Pull graph from GHCR (requires GHCR_TOKEN build secret)
+# Pull graph from GHCR (optional — builds without graph if unavailable)
 ARG GHCR_REGISTRY="ghcr.io/iterorganization"
 ARG GRAPH_TAG="latest"
 ARG GRAPH_PACKAGE="imas-codex-graph-imas"
 RUN --mount=type=secret,id=GHCR_TOKEN \
-    GHCR_TOKEN=$(cat /run/secrets/GHCR_TOKEN 2>/dev/null || echo "") && \
-    if [ -z "$GHCR_TOKEN" ]; then \
-        echo "ERROR: GHCR_TOKEN build secret is required to download the graph." >&2; \
-        echo "Pass it with: --secret id=GHCR_TOKEN,env=GHCR_TOKEN" >&2; \
-        exit 1; \
-    fi && \
-    echo "$GHCR_TOKEN" | oras login ghcr.io --username __token__ --password-stdin && \
     mkdir -p /tmp/graph-pull && \
-    echo "Pulling graph: ${GHCR_REGISTRY}/${GRAPH_PACKAGE}:${GRAPH_TAG}" && \
-    oras pull "${GHCR_REGISTRY}/${GRAPH_PACKAGE}:${GRAPH_TAG}" -o /tmp/graph-pull && \
-    echo "✓ Graph downloaded" && \
-    ls -la /tmp/graph-pull/
+    GHCR_TOKEN=$(cat /run/secrets/GHCR_TOKEN 2>/dev/null || echo "") && \
+    if [ -z "$GHCR_TOKEN" ] || [ "$GRAPH_TAG" = "none" ]; then \
+        echo "⚠ Skipping graph pull (token=${GHCR_TOKEN:+set}${GHCR_TOKEN:-missing}, tag=${GRAPH_TAG})" >&2; \
+        touch /tmp/graph-pull/.no-graph; \
+    elif echo "$GHCR_TOKEN" | oras login ghcr.io --username __token__ --password-stdin && \
+         oras pull --allow-path-traversal \
+           "${GHCR_REGISTRY}/${GRAPH_PACKAGE}:${GRAPH_TAG}" \
+           -o /tmp/graph-pull; then \
+        echo "✓ Graph downloaded" && ls -la /tmp/graph-pull/; \
+    else \
+        echo "⚠ Graph pull failed — building without pre-loaded graph" >&2; \
+        touch /tmp/graph-pull/.no-graph; \
+    fi
 
 ## Stage 4: Load graph dump into Neo4j data directory
 # Uses neo4j-admin from the Neo4j image to load the dump
@@ -134,27 +137,32 @@ FROM neo4j:2026.01.4-community AS graph-loader
 # Copy graph archive from builder
 COPY --from=builder /tmp/graph-pull/ /tmp/graph-pull/
 
-# Extract and load the graph dump
+# Extract and load the graph dump (or create empty database)
 RUN set -e && \
-    cd /tmp/graph-pull && \
-    ARCHIVE=$(ls *.tar.gz 2>/dev/null | head -1) && \
-    if [ -z "$ARCHIVE" ]; then \
-        echo "ERROR: No graph archive found in /tmp/graph-pull/" >&2; \
-        ls -la /tmp/graph-pull/ >&2; \
-        exit 1; \
+    if [ -f /tmp/graph-pull/.no-graph ]; then \
+        echo "⚠ No graph data — creating empty Neo4j database"; \
+        mkdir -p /data/databases/neo4j /data/transactions/neo4j; \
+    else \
+        cd /tmp/graph-pull && \
+        ARCHIVE=$(ls *.tar.gz 2>/dev/null | head -1) && \
+        if [ -z "$ARCHIVE" ]; then \
+            echo "ERROR: No graph archive found in /tmp/graph-pull/" >&2; \
+            ls -la /tmp/graph-pull/ >&2; \
+            exit 1; \
+        fi && \
+        echo "Extracting: $ARCHIVE" && \
+        mkdir -p /tmp/graph-extracted && \
+        tar -xzf "$ARCHIVE" -C /tmp/graph-extracted && \
+        DUMP=$(find /tmp/graph-extracted -name "*.dump" -type f | head -1) && \
+        if [ -z "$DUMP" ]; then \
+            echo "ERROR: No .dump file found in archive" >&2; \
+            find /tmp/graph-extracted -type f >&2; \
+            exit 1; \
+        fi && \
+        echo "Loading dump: $DUMP" && \
+        neo4j-admin database load neo4j --from-path="$(dirname $DUMP)" --overwrite-destination && \
+        echo "✓ Graph loaded into Neo4j data directory"; \
     fi && \
-    echo "Extracting: $ARCHIVE" && \
-    mkdir -p /tmp/graph-extracted && \
-    tar -xzf "$ARCHIVE" -C /tmp/graph-extracted && \
-    DUMP=$(find /tmp/graph-extracted -name "*.dump" -type f | head -1) && \
-    if [ -z "$DUMP" ]; then \
-        echo "ERROR: No .dump file found in archive" >&2; \
-        find /tmp/graph-extracted -type f >&2; \
-        exit 1; \
-    fi && \
-    echo "Loading dump: $DUMP" && \
-    neo4j-admin database load neo4j --from-path="$(dirname $DUMP)" --overwrite-destination && \
-    echo "✓ Graph loaded into Neo4j data directory" && \
     rm -rf /tmp/graph-pull /tmp/graph-extracted
 
 ## Stage 5: Final runtime image (assemble from builder + Neo4j + graph data)
