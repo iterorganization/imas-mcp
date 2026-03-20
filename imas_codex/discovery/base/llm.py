@@ -256,18 +256,13 @@ def suppress_litellm_noise() -> None:
 def get_api_key() -> str:
     """Get OpenRouter API key from environment.
 
-    Priority: OPENROUTER_API_KEY_IMAS_CODEX → OPENROUTER_API_KEY.
-
     Raises:
-        ValueError: If no OpenRouter API key is set.
+        ValueError: If OPENROUTER_API_KEY_IMAS_CODEX is not set.
     """
-    api_key = os.environ.get("OPENROUTER_API_KEY_IMAS_CODEX") or os.environ.get(
-        "OPENROUTER_API_KEY"
-    )
+    api_key = os.environ.get("OPENROUTER_API_KEY_IMAS_CODEX")
     if not api_key:
         raise ValueError(
-            "OPENROUTER_API_KEY_IMAS_CODEX (or OPENROUTER_API_KEY) not set. "
-            "Set it in .env or export it."
+            "OPENROUTER_API_KEY_IMAS_CODEX not set. Add to .env or export."
         )
     return api_key
 

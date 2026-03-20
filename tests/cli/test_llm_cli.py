@@ -167,10 +167,12 @@ class TestGetApiKey:
         monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
         assert get_api_key() == "sk-imas"
 
-    def test_fallback_key(self, monkeypatch):
+    def test_no_fallback_key(self, monkeypatch):
+        """No backward compat — only OPENROUTER_API_KEY_IMAS_CODEX is accepted."""
         monkeypatch.delenv("OPENROUTER_API_KEY_IMAS_CODEX", raising=False)
         monkeypatch.setenv("OPENROUTER_API_KEY", "sk-fallback")
-        assert get_api_key() == "sk-fallback"
+        with pytest.raises(ValueError, match="OPENROUTER_API_KEY_IMAS_CODEX"):
+            get_api_key()
 
     def test_missing_key(self, monkeypatch):
         monkeypatch.delenv("OPENROUTER_API_KEY_IMAS_CODEX", raising=False)
@@ -178,7 +180,8 @@ class TestGetApiKey:
         with pytest.raises(ValueError, match="OPENROUTER_API_KEY_IMAS_CODEX"):
             get_api_key()
 
-    def test_imas_codex_priority(self, monkeypatch):
+    def test_imas_codex_only(self, monkeypatch):
+        """Legacy OPENROUTER_API_KEY is ignored when _IMAS_CODEX is set."""
         monkeypatch.setenv("OPENROUTER_API_KEY_IMAS_CODEX", "sk-primary")
         monkeypatch.setenv("OPENROUTER_API_KEY", "sk-legacy")
         assert get_api_key() == "sk-primary"

@@ -112,7 +112,7 @@ def llm_start(
     the health check to pass.  Use ``--foreground`` to run the proxy
     directly (for debugging).
 
-    Requires OPENROUTER_API_KEY and LITELLM_MASTER_KEY environment variables.
+    Requires OPENROUTER_API_KEY_IMAS_CODEX and LITELLM_MASTER_KEY environment variables.
 
     \b
     Examples:
@@ -155,12 +155,9 @@ def _start_llm_foreground(
         if not Path(config_path).exists():
             raise click.ClickException(f"Bundled config not found: {config_path}")
 
-    if not os.environ.get("OPENROUTER_API_KEY_IMAS_CODEX") and not os.environ.get(
-        "OPENROUTER_API_KEY"
-    ):
+    if not os.environ.get("OPENROUTER_API_KEY_IMAS_CODEX"):
         raise click.ClickException(
-            "OPENROUTER_API_KEY_IMAS_CODEX (or OPENROUTER_API_KEY) not set. "
-            "Add to .env or export in shell."
+            "OPENROUTER_API_KEY_IMAS_CODEX not set. Add to .env or export."
         )
 
     master_key = os.environ.get("LITELLM_MASTER_KEY")

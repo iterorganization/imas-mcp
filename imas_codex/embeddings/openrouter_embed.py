@@ -250,7 +250,7 @@ class OpenRouterEmbeddingClient:
         if model_name is None:
             model_name = get_embedding_model()
 
-        self.api_key = api_key or os.getenv("OPENROUTER_API_KEY")
+        self.api_key = api_key or os.getenv("OPENROUTER_API_KEY_IMAS_CODEX")
         self.timeout = timeout
         self.dimensions = dimensions or get_embedding_dimension()
         self._client: httpx.Client | None = None
@@ -389,7 +389,7 @@ class OpenRouterEmbeddingClient:
         if not self.is_available():
             raise OpenRouterEmbeddingError(
                 "OpenRouter API key not configured. "
-                "Set OPENROUTER_API_KEY environment variable."
+                "Set OPENROUTER_API_KEY_IMAS_CODEX environment variable."
             )
 
         # Check budget before making request
@@ -414,7 +414,7 @@ class OpenRouterEmbeddingClient:
 
                 if response.status_code == 401:
                     raise OpenRouterEmbeddingError(
-                        "Invalid OpenRouter API key. Check OPENROUTER_API_KEY."
+                        "Invalid OpenRouter API key. Check OPENROUTER_API_KEY_IMAS_CODEX."
                     )
 
                 if response.status_code == 429:
