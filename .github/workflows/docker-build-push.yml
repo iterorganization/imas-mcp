@@ -291,8 +291,9 @@ jobs:
         run: |
           echo "Waiting for MCP server to be ready..."
           for i in $(seq 1 60); do
-            if docker exec smoke-test curl -sf http://127.0.0.1:8000/health > /dev/null 2>&1; then
-              echo "✅ MCP server healthy after ${i}s"
+            # FastMCP streamable-http serves at /mcp — check port is listening
+            if docker exec smoke-test curl -sf -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/mcp 2>/dev/null | grep -q '40[05]\|200\|405'; then
+              echo "✅ MCP server responding after ${i}s"
               break
             fi
             if [ $i -eq 60 ]; then
