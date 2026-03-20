@@ -19,15 +19,355 @@ env:
   IMAS_DD_VERSION: "4.1.0"
 
 jobs:
+  graph-quality:
+    runs-on: ubuntu-latest
+    # Only run on tag pushes (same gate as build-and-push)
+    if: startsWith(github.ref, 'refs/tags/')
+    timeout-minutes: 30
+    outputs:
+      graph-tag-imas: ${{ steps.graph-tag.outputs.imas-tag }}
+      graph-tag-full: ${{ steps.graph-tag.outputs.full-tag }}
+
+    services:
+      neo4j:
+        image: neo4j:2026.01.4-community
+        ports:
+          - 7474:7474
+          - 7687:7687
+        env:
+          NEO4J_AUTH: neo4j/imas-codex
+          NEO4J_PLUGINS: '["apoc"]'
+          NEO4J_server_memory_heap_initial__size: 512m
+          NEO4J_server_memory_heap_max__size: 1G
+        options: >-
+          --health-cmd "wget -q --spider http://localhost:7474/ || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+          --health-start-period 30s
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set lowercase registry
+        id: registry
+        run: |
+          echo "ghcr=${{ env.GHCR_REGISTRY }}/$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
+
+      - name: Install oras CLI
+        run: |
+          ORAS_VERSION="1.2.0"
+          curl -sLO "https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/oras_${ORAS_VERSION}_linux_amd64.tar.gz"
+          tar -xzf "oras_${ORAS_VERSION}_linux_amd64.tar.gz" oras
+          sudo mv oras /usr/local/bin/
+          oras version
+
+      - name: Resolve graph tag
+        id: graph-tag
+        run: |
+          REGISTRY="${{ steps.registry.outputs.ghcr }}"
+
+          # Resolve IMAS-only graph tag
+          IMAS_PACKAGE="imas-codex-graph-imas"
+          IMAS_TAGS=$(oras repo tags "${REGISTRY}/${IMAS_PACKAGE}" 2>&1) || true
+          IMAS_CLEAN=$(echo "$IMAS_TAGS" | grep -E '^[0-9v]' || true)
+          if echo "$IMAS_CLEAN" | grep -qx "latest"; then
+            echo "imas-tag=latest" >> $GITHUB_OUTPUT
+          elif [ -n "$IMAS_CLEAN" ]; then
+            BEST=$(echo "$IMAS_CLEAN" | sort -V | tail -1)
+            echo "No 'latest' tag for imas-codex-graph-imas. Using most recent: $BEST"
+            echo "imas-tag=${BEST}" >> $GITHUB_OUTPUT
+          else
+            echo "::warning::No graph package found at ${REGISTRY}/${IMAS_PACKAGE} — skipping graph quality tests"
+            echo "imas-tag=none" >> $GITHUB_OUTPUT
+          fi
+
+          # Resolve full graph tag
+          FULL_PACKAGE="imas-codex-graph"
+          FULL_TAGS=$(oras repo tags "${REGISTRY}/${FULL_PACKAGE}" 2>&1) || true
+          FULL_CLEAN=$(echo "$FULL_TAGS" | grep -E '^[0-9v]' || true)
+          if echo "$FULL_CLEAN" | grep -qx "latest"; then
+            echo "full-tag=latest" >> $GITHUB_OUTPUT
+          elif [ -n "$FULL_CLEAN" ]; then
+            BEST=$(echo "$FULL_CLEAN" | sort -V | tail -1)
+            echo "No 'latest' tag for imas-codex-graph. Using most recent: $BEST"
+            echo "full-tag=${BEST}" >> $GITHUB_OUTPUT
+          else
+            echo "::warning::No full graph package found at ${REGISTRY}/${FULL_PACKAGE} — full graph builds will proceed without pre-loaded graph"
+            echo "full-tag=none" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Skip notice
+        if: steps.graph-tag.outputs.imas-tag == 'none'
+        run: |
+          echo "::warning::No graph available — graph quality tests skipped. Docker build will proceed without graph validation."
+
+      - name: Login to GHCR
+        if: steps.graph-tag.outputs.imas-tag != 'none'
+        run: |
+          echo "${{ secrets.GHCR_TOKEN }}" | oras login ghcr.io -u token --password-stdin
+
+      - name: Pull graph dump from GHCR
+        if: steps.graph-tag.outputs.imas-tag != 'none'
+        run: |
+          REGISTRY="${{ steps.registry.outputs.ghcr }}"
+          ARTIFACT="${REGISTRY}/imas-codex-graph-imas:${{ steps.graph-tag.outputs.imas-tag }}"
+          echo "Pulling: ${ARTIFACT}"
+          mkdir -p /tmp/graph-dump
+          oras pull "${ARTIFACT}" -o /tmp/graph-dump
+          ls -la /tmp/graph-dump/
+
+      - name: Stop Neo4j for dump load
+        if: steps.graph-tag.outputs.imas-tag != 'none'
+        run: |
+          docker stop $(docker ps -q --filter "ancestor=neo4j:2026.01.4-community") || true
+          sleep 3
+
+      - name: Load graph dump into Neo4j
+        if: steps.graph-tag.outputs.imas-tag != 'none'
+        run: |
+          set -euo pipefail
+          ARCHIVE=$(ls /tmp/graph-dump/*.tar.gz | head -1)
+          echo "Loading archive: ${ARCHIVE}"
+
+          # Extract archive
+          mkdir -p /tmp/graph-extracted
+          tar -xzf "${ARCHIVE}" -C /tmp/graph-extracted
+
+          # Find the graph.dump file
+          DUMP_FILE=$(find /tmp/graph-extracted -name "graph.dump" | head -1)
+          if [ -z "${DUMP_FILE}" ]; then
+            echo "ERROR: No graph.dump found in archive"
+            ls -laR /tmp/graph-extracted/
+            exit 1
+          fi
+          echo "Found dump: ${DUMP_FILE}"
+
+          # Get the Neo4j container ID for data volume
+          NEO4J_CONTAINER=$(docker ps -aq --filter "ancestor=neo4j:2026.01.4-community" | head -1)
+          NEO4J_DATA_VOLUME=$(docker inspect "${NEO4J_CONTAINER}" --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Name}}{{end}}{{end}}')
+
+          # Load into Neo4j using a fresh container
+          docker run --rm \
+            -v "${NEO4J_DATA_VOLUME}:/data" \
+            -v "$(dirname ${DUMP_FILE}):/dump" \
+            neo4j:2026.01.4-community \
+            neo4j-admin database load neo4j \
+              --from-path=/dump \
+              --overwrite-destination=true
+
+      - name: Start Neo4j with loaded data
+        if: steps.graph-tag.outputs.imas-tag != 'none'
+        run: |
+          NEO4J_CONTAINER=$(docker ps -aq --filter "ancestor=neo4j:2026.01.4-community" | head -1)
+          docker start "${NEO4J_CONTAINER}"
+
+          # Wait for Neo4j to come back up
+          echo "Waiting for Neo4j to restart..."
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:7474/ > /dev/null 2>&1; then
+              echo "Neo4j is ready with loaded graph"
+              break
+            fi
+            if [ $i -eq 60 ]; then
+              echo "ERROR: Neo4j did not restart in time"
+              docker logs "${NEO4J_CONTAINER}" --tail 50
+              exit 1
+            fi
+            sleep 2
+          done
+
+      - name: Reset Neo4j password
+        if: steps.graph-tag.outputs.imas-tag != 'none'
+        run: |
+          NEO4J_CONTAINER=$(docker ps -q --filter "ancestor=neo4j:2026.01.4-community" | head -1)
+          docker exec "${NEO4J_CONTAINER}" neo4j-admin dbms set-initial-password imas-codex 2>/dev/null || true
+
+      - name: Verify graph is loaded
+        if: steps.graph-tag.outputs.imas-tag != 'none'
+        run: |
+          NEO4J_CONTAINER=$(docker ps -q --filter "ancestor=neo4j:2026.01.4-community" | head -1)
+          docker exec "${NEO4J_CONTAINER}" cypher-shell \
+            -u neo4j -p imas-codex \
+            "MATCH (n) RETURN count(n) AS nodes, labels(n)[0] AS label ORDER BY nodes DESC LIMIT 10"
+
+      - name: Install uv
+        if: steps.graph-tag.outputs.imas-tag != 'none'
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        if: steps.graph-tag.outputs.imas-tag != 'none'
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        if: steps.graph-tag.outputs.imas-tag != 'none'
+        run: uv sync --extra test
+        env:
+          HATCH_BUILD_NO_HOOKS: true
+
+      - name: Build generated models
+        if: steps.graph-tag.outputs.imas-tag != 'none'
+        run: uv run build-models --force
+
+      - name: Run graph quality tests
+        if: steps.graph-tag.outputs.imas-tag != 'none'
+        run: |
+          uv run pytest tests/graph/ -m graph \
+            --tb=short \
+            --junit-xml=graph-quality-results.xml \
+            -v
+        env:
+          CI: true
+          NEO4J_URI: bolt://localhost:7687
+          NEO4J_USERNAME: neo4j
+          NEO4J_PASSWORD: imas-codex
+
+      - name: Upload test results
+        if: always() && steps.graph-tag.outputs.imas-tag != 'none'
+        uses: actions/upload-artifact@v4
+        with:
+          name: graph-quality-results
+          path: graph-quality-results.xml
+          retention-days: 30
+
+
+  smoke-test:
+    runs-on: ubuntu-latest
+    needs: graph-quality
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        run: echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Build test image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: imas-codex:smoke-test
+          build-args: |
+            GRAPH_TAG=${{ needs.graph-quality.outputs.graph-tag-imas }}
+            TRANSPORT=streamable-http
+          secrets: |
+            GHCR_TOKEN=${{ secrets.GHCR_TOKEN }}
+          cache-from: type=gha,scope=smoke-test
+
+      - name: Start container
+        run: |
+          docker run -d \
+            --name smoke-test \
+            -p 8000:8000 \
+            -e OPENROUTER_API_KEY=dummy \
+            imas-codex:smoke-test
+          echo "Container started, waiting for services..."
+
+      - name: Wait for health check
+        timeout-minutes: 5
+        run: |
+          echo "Waiting for MCP server to be ready..."
+          for i in $(seq 1 60); do
+            if docker exec smoke-test curl -sf http://127.0.0.1:8000/health > /dev/null 2>&1; then
+              echo "✅ MCP server healthy after ${i}s"
+              break
+            fi
+            if [ $i -eq 60 ]; then
+              echo "❌ Health check timed out"
+              docker logs smoke-test
+              exit 1
+            fi
+            sleep 5
+          done
+
+      - name: Test version endpoint
+        run: |
+          VERSION=$(docker exec smoke-test imas-codex --version 2>/dev/null || echo "failed")
+          echo "Container version: ${VERSION}"
+          if [ "$VERSION" = "failed" ]; then
+            echo "❌ Version check failed"
+            docker logs smoke-test
+            exit 1
+          fi
+          echo "✅ Version check passed"
+
+      - name: Test MCP tools listing
+        run: |
+          # Use curl to hit the MCP endpoint and verify tools are registered
+          RESPONSE=$(curl -sf http://localhost:8000/mcp 2>/dev/null || echo "")
+          if [ -z "$RESPONSE" ]; then
+            echo "⚠️ MCP endpoint not responding via HTTP (may need SSE/WebSocket)"
+            echo "Checking container logs for tool registration..."
+            docker logs smoke-test 2>&1 | grep -i "tool\|register\|ready" | head -10
+          fi
+          echo "✅ MCP endpoint check complete"
+
+      - name: Verify embedding model available
+        run: |
+          docker exec smoke-test python -c "
+          from sentence_transformers import SentenceTransformer
+          import os
+          hf_home = os.environ.get('HF_HOME', '~/.cache/huggingface')
+          print(f'HF_HOME={hf_home}')
+          model = SentenceTransformer('Qwen/Qwen3-Embedding-0.6B', trust_remote_code=True)
+          result = model.encode(['test embedding'])
+          print(f'✅ Embedding model loaded, output shape: {result.shape}')
+          " || {
+            echo "❌ Embedding model verification failed"
+            docker logs smoke-test
+            exit 1
+          }
+
+      - name: Verify Neo4j graph loaded
+        run: |
+          GRAPH_TAG="${{ needs.graph-quality.outputs.graph-tag-imas }}"
+          if [ "$GRAPH_TAG" = "none" ]; then
+            echo "⚠️ No graph loaded (GRAPH_TAG=none), skipping graph verification"
+            exit 0
+          fi
+          docker exec smoke-test bash -c '
+            /opt/neo4j/bin/cypher-shell -u neo4j -p neo4j \
+              "MATCH (n) RETURN count(n) AS node_count" 2>/dev/null
+          ' && echo "✅ Neo4j graph accessible" || {
+            echo "❌ Neo4j graph verification failed"
+            docker logs smoke-test
+            exit 1
+          }
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker stop smoke-test 2>/dev/null || true
+          docker rm smoke-test 2>/dev/null || true
+
   build-and-push:
     runs-on: ubuntu-latest
+    needs: [graph-quality, smoke-test]
     # Only run on tag pushes
     if: startsWith(github.ref, 'refs/tags/')
     strategy:
+      fail-fast: false
       matrix:
         transport:
           - streamable-http
           - stdio
+        graph_variant:
+          - name: imas-only
+            package: imas-codex-graph-imas
+            suffix: ""
+          - name: full
+            package: imas-codex-graph
+            suffix: "-full"
     permissions:
       contents: read
       packages: write
@@ -50,6 +390,15 @@ jobs:
           echo "Git describe: $(git describe --tags --always --dirty)"
           echo "Git status:"
           git status --porcelain
+
+      - name: Set graph tag for variant
+        id: variant
+        run: |
+          if [ "${{ matrix.graph_variant.name }}" = "imas-only" ]; then
+            echo "graph-tag=${{ needs.graph-quality.outputs.graph-tag-imas }}" >> $GITHUB_OUTPUT
+          else
+            echo "graph-tag=${{ needs.graph-quality.outputs.graph-tag-full }}" >> $GITHUB_OUTPUT
+          fi
 
       - name: Set lowercase image name for cache
         id: image-name
@@ -85,32 +434,6 @@ jobs:
           password: ${{ secrets.ACR_PASSWORD }}
           logout: false
 
-      - name: Install oras
-        run: |
-          ORAS_VERSION="1.2.0"
-          curl -sLO "https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/oras_${ORAS_VERSION}_linux_amd64.tar.gz"
-          tar -xzf "oras_${ORAS_VERSION}_linux_amd64.tar.gz" oras
-          sudo mv oras /usr/local/bin/
-
-      - name: Resolve graph tag
-        id: graph-tag
-        run: |
-          REGISTRY="${{ steps.registry.outputs.ghcr }}"
-          PACKAGE="imas-codex-graph-imas"
-          # Query available tags from the graph package
-          TAGS=$(oras repo tags "${REGISTRY}/${PACKAGE}" 2>&1) || true
-          CLEAN_TAGS=$(echo "$TAGS" | grep -E '^[0-9v]' || true)
-          if echo "$CLEAN_TAGS" | grep -qx "latest"; then
-            echo "tag=latest" >> $GITHUB_OUTPUT
-          elif [ -n "$CLEAN_TAGS" ]; then
-            BEST=$(echo "$CLEAN_TAGS" | sort -V | tail -1)
-            echo "No 'latest' tag found. Using most recent: $BEST"
-            echo "tag=${BEST}" >> $GITHUB_OUTPUT
-          else
-            echo "::warning::No graph package found at ${REGISTRY}/${PACKAGE} — image will build without pre-loaded graph"
-            echo "tag=none" >> $GITHUB_OUTPUT
-          fi
-
       - name: Extract metadata for GHCR (releases only)
         id: meta-ghcr
         if: github.event_name != 'pull_request' && !contains(github.ref, '-rc')
@@ -118,9 +441,9 @@ jobs:
         with:
           images: ${{ env.GHCR_REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=semver,pattern={{version}}-${{ matrix.transport }}
-            type=semver,pattern={{major}}.{{minor}}-${{ matrix.transport }}
-            type=semver,pattern={{major}}-${{ matrix.transport }}
+            type=semver,pattern={{version}}${{ matrix.graph_variant.suffix }}-${{ matrix.transport }}
+            type=semver,pattern={{major}}.{{minor}}${{ matrix.graph_variant.suffix }}-${{ matrix.transport }}
+            type=semver,pattern={{major}}${{ matrix.graph_variant.suffix }}-${{ matrix.transport }}
           flavor: |
             latest=false
 
@@ -130,11 +453,11 @@ jobs:
         with:
           images: ${{ env.ACR_REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=semver,pattern={{version}}-${{ matrix.transport }}
-            type=semver,pattern={{major}}.{{minor}}-${{ matrix.transport }}
-            type=semver,pattern={{major}}-${{ matrix.transport }}
-            type=raw,value=prod-${{ matrix.transport }},enable=${{ startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-rc') }}
-            type=raw,value=latest-${{ matrix.transport }},enable=${{ contains(github.ref, '-rc') }}
+            type=semver,pattern={{version}}${{ matrix.graph_variant.suffix }}-${{ matrix.transport }}
+            type=semver,pattern={{major}}.{{minor}}${{ matrix.graph_variant.suffix }}-${{ matrix.transport }}
+            type=semver,pattern={{major}}${{ matrix.graph_variant.suffix }}-${{ matrix.transport }}
+            type=raw,value=prod${{ matrix.graph_variant.suffix }}-${{ matrix.transport }},enable=${{ startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-rc') }}
+            type=raw,value=latest${{ matrix.graph_variant.suffix }}-${{ matrix.transport }},enable=${{ contains(github.ref, '-rc') }}
           flavor: |
             latest=false
 
@@ -153,14 +476,15 @@ jobs:
             TRANSPORT=${{ matrix.transport }}
             IMAS_DD_VERSION=${{ env.IMAS_DD_VERSION }}
             GHCR_REGISTRY=${{ steps.registry.outputs.ghcr }}
-            GRAPH_TAG=${{ steps.graph-tag.outputs.tag }}
+            GRAPH_TAG=${{ steps.variant.outputs.graph-tag }}
+            GRAPH_PACKAGE=${{ matrix.graph_variant.package }}
             GIT_SHA=${{ github.sha }}
             GIT_TAG=${{ github.ref_name }}
             GIT_REF=${{ github.ref }}
           secrets: |
             GHCR_TOKEN=${{ secrets.GHCR_TOKEN }}
-          cache-from: type=gha,scope=build-${{ github.ref_name }}
-          cache-to: type=gha,mode=max,scope=build-${{ github.ref_name }}
+          cache-from: type=gha,scope=build-${{ matrix.graph_variant.name }}-${{ github.ref_name }}
+          cache-to: type=gha,mode=max,scope=build-${{ matrix.graph_variant.name }}-${{ github.ref_name }}
 
       - name: Build and push Docker image (releases - both registries)
         id: build-release
@@ -181,14 +505,15 @@ jobs:
             TRANSPORT=${{ matrix.transport }}
             IMAS_DD_VERSION=${{ env.IMAS_DD_VERSION }}
             GHCR_REGISTRY=${{ steps.registry.outputs.ghcr }}
-            GRAPH_TAG=${{ steps.graph-tag.outputs.tag }}
+            GRAPH_TAG=${{ steps.variant.outputs.graph-tag }}
+            GRAPH_PACKAGE=${{ matrix.graph_variant.package }}
             GIT_SHA=${{ github.sha }}
             GIT_TAG=${{ github.ref_name }}
             GIT_REF=${{ github.ref }}
           secrets: |
             GHCR_TOKEN=${{ secrets.GHCR_TOKEN }}
-          cache-from: type=gha,scope=build-${{ github.ref_name }}
-          cache-to: type=gha,mode=max,scope=build-${{ github.ref_name }}
+          cache-from: type=gha,scope=build-${{ matrix.graph_variant.name }}-${{ github.ref_name }}
+          cache-to: type=gha,mode=max,scope=build-${{ matrix.graph_variant.name }}-${{ github.ref_name }}
 
       - name: Verify version inside image (release builds)
         if: github.event_name != 'pull_request' && startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-rc')

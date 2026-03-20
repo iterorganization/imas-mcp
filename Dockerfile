@@ -62,10 +62,13 @@ RUN git config core.sparseCheckout true \
     && echo "Sparse checkout (phase 1) paths:" \
     && git sparse-checkout list
 
+# Configure PyTorch CPU-only to minimize image size
+ENV UV_EXTRA_INDEX_URL="https://download.pytorch.org/whl/cpu"
+
 ## Install only dependencies without installing the local project (frozen = must match committed lock)
 # Lock file already specifies CPU-only PyTorch (no nvidia-* CUDA deps)
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
-    uv sync --no-dev --no-install-project --frozen || \
+    uv sync --no-dev --no-install-project --frozen --extra cpu || \
     (echo "Dependency sync failed (lock mismatch). Run 'uv lock' locally and commit changes." >&2; exit 1) && \
     if [ -n "$(git status --porcelain uv.lock)" ]; then echo "uv.lock changed during dep sync (unexpected)." >&2; exit 1; fi
 
@@ -82,7 +85,7 @@ RUN git sparse-checkout set pyproject.toml uv.lock README.md imas_codex scripts 
 ## Install project. Using --reinstall-package to ensure wheel build picks up version.
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     echo "Pre-install (project) git status (should be clean):" && git status --porcelain && \
-    uv sync --no-dev --reinstall-package imas-codex --no-editable --frozen && \
+    uv sync --no-dev --reinstall-package imas-codex --no-editable --frozen --extra cpu && \
     if [ -n "$(git status --porcelain uv.lock)" ]; then echo "uv.lock changed during project install (lock out of date). Run 'uv lock' and recommit." >&2; exit 1; fi && \
     echo "Post-install git status (should still be clean):" && git status --porcelain && \
     if [ -n "$(git status --porcelain)" ]; then \
@@ -100,6 +103,12 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     echo "Building generated models..." && \
     uv run --no-dev build-models --force && \
     echo "✓ Generated models ready"
+
+# Pre-download embedding model for offline operation
+ENV HF_HOME=/app/.cache/huggingface
+RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
+    uv run python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('Qwen/Qwen3-Embedding-0.6B', trust_remote_code=True)" && \
+    echo "✓ Embedding model cached"
 
 # ── Graph-native data: pull IMAS-only graph from GHCR ──────────────────
 # Replaces build-schemas, build-path-map, build-embeddings, clusters build.
@@ -234,7 +243,9 @@ ENV PYTHONPATH="/app" \
     IDS_FILTER=${IDS_FILTER} \
     NEO4J_URI="bolt://127.0.0.1:7687" \
     NEO4J_USERNAME="neo4j" \
-    NEO4J_PASSWORD="neo4j"
+    NEO4J_PASSWORD="neo4j" \
+    IMAS_CODEX_EMBEDDING_LOCATION=local \
+    HF_HOME=/app/.cache/huggingface
 
 # Expose MCP server port (Neo4j ports are internal only)
 EXPOSE 8000
