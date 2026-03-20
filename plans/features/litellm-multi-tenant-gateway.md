@@ -884,7 +884,7 @@ Create operator and user documentation for the multi-tenant gateway.
    - How to generate and distribute virtual keys
    - Budget monitoring and spend tracking via CLI
    - Troubleshooting (key rotation, budget exhaustion, DB issues)
-2. **`docs/claude-code-setup.md`** — Claude Code user guide:
+2. **`docs/client-setup.md`** — LLM client setup guide (Claude Code, Copilot, OpenAI):
    - ITER remote setup (direct localhost)
    - WSL setup (SSH tunnel)
    - Verifying the connection works
@@ -909,16 +909,21 @@ Create operator and user documentation for the multi-tenant gateway.
 - `docs/llm-gateway.md` covers the full team onboarding workflow
 - Claude Code setup instructions tested on both WSL and ITER
 
-### Phase 8: Operational Tooling (Stretch)
+### Phase 8: Operational Tooling (Stretch) ✅
 
 *Requires: Phases 1-4 complete.*
 
-1. **`imas-codex llm spend`** — query per-team spend from the SQLite DB
-2. **`imas-codex llm keys rotate`** — automated key rotation
-3. **Budget alerts** — webhook/email when team approaches limit
-4. **Failover routing** — if local model is down, fall back to cloud model
-5. **SSO/OAuth** — replace virtual keys with OIDC tokens from ITER IdP
-6. **Request guardrails** — PII detection, content filtering
+1. ✅ **`imas-codex llm spend`** — query per-team spend from the SQLite DB
+2. ✅ **`imas-codex llm keys rotate`** — automated key rotation
+3. ✅ **`imas-codex llm setup`** — initial provisioning (creates imas-codex + claude-code teams/keys)
+4. ✅ **`imas-codex llm security audit`** — security posture check (env vars, permissions, auth, network)
+5. ✅ **`imas-codex llm security harden`** — auto-fix file permissions on sensitive files/logs
+6. ✅ **Unit tests** — 43 tests covering all CLI commands (keys, teams, spend, setup, security)
+7. ✅ **Client setup docs** — `docs/client-setup.md` (Claude Code, VS Code Copilot Chat, OpenAI clients)
+8. **Budget alerts** — webhook/email when team approaches limit (future)
+9. **Failover routing** — if local model is down, fall back to cloud model (future)
+10. **SSO/OAuth** — replace virtual keys with OIDC tokens from ITER IdP (future)
+11. **Request guardrails** — PII detection, content filtering (future)
 
 ---
 
@@ -975,15 +980,11 @@ ANTHROPIC_AUTH_TOKEN=sk-claude-...         # Virtual key for Claude Code
 
 | File | Change | Phase |
 |------|--------|-------|
-| `imas_codex/config/litellm_config.yaml` | YAML anchors, per-team model entries, credential list, DB URL | 1, 2 |
-| `imas_codex/discovery/base/llm.py` | Use `LITELLM_API_KEY` for proxy auth; rename `ensure_openrouter_prefix` | 1, 6 |
-| `imas_codex/cli/llm_cli.py` | Add `keys`, `spend`, `local` subcommands; team creation with `model_group_alias` | 1, 2, 6 |
-| `imas_codex/settings.py` | Add `get_litellm_api_key()` accessor | 1 |
-| `env.example` | Add new env vars with documentation | 2, 7 |
-| `.claude/settings.json` | Add Claude Code proxy env vars | 3 |
-| `pyproject.toml` | Verify model ID formats (dots for OpenRouter) | 5 |
-| `slurm/ollama-llm.sh` | SLURM job script for local model | 6 |
-| `docs/llm-gateway.md` | Operator guide for multi-tenant gateway | 7 |
-| `docs/claude-code-setup.md` | Claude Code configuration guide | 7 |
-| `CLAUDE.md` | Proxy configuration section | 7 |
-| `AGENTS.md` | LLM gateway section in Model & Tool Configuration | 7 |
+| `imas_codex/config/litellm_config.yaml` | Multi-credential config, model list, SQLite DB URL | 1, 2 |
+| `imas_codex/discovery/base/llm.py` | `ensure_model_prefix`, `get_api_key()` with IMAS_CODEX priority | 1 |
+| `imas_codex/cli/llm_cli.py` | `keys`, `teams`, `spend`, `setup`, `security`, `local` subcommands | 1, 2, 6, 8 |
+| `env.example` | Multi-credential vars, DB URL, Claude Code vars | 2, 7 |
+| `pyproject.toml` | Model ID format fixes (hyphens for OpenRouter) | 5 |
+| `slurm/ollama-llm.sh` | SLURM job script for Ollama on Titan cluster | 6 |
+| `docs/client-setup.md` | Multi-client setup guide (Claude Code, VS Code Copilot Chat, OpenAI) | 7, 8 |
+| `tests/cli/test_llm_cli.py` | 43 unit tests for all LLM CLI commands | 8 |

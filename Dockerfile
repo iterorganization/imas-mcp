@@ -248,6 +248,7 @@ ENV PYTHONPATH="/app" \
     NEO4J_URI="bolt://127.0.0.1:7687" \
     NEO4J_USERNAME="neo4j" \
     NEO4J_PASSWORD="neo4j" \
+    IMAS_CODEX_GRAPH_LOCATION=local \
     IMAS_CODEX_EMBEDDING_LOCATION=local \
     HF_HOME=/app/.cache/huggingface
 
