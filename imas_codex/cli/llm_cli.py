@@ -41,24 +41,27 @@ def llm() -> None:
     Runs on the login node via systemd (needs outbound HTTPS for API providers).
 
     \b
-      imas-codex llm start           Start the proxy (systemd or foreground)
-      imas-codex llm stop            Stop the proxy
-      imas-codex llm restart         Restart (stop + start)
-      imas-codex llm status          Check proxy health
-      imas-codex llm logs            View service logs
-      imas-codex llm service         Manage systemd service
-      imas-codex llm keys list       List virtual API keys
-      imas-codex llm keys create     Generate a new virtual key
-      imas-codex llm keys revoke     Revoke (delete) a key
-      imas-codex llm keys rotate     Rotate a key
-      imas-codex llm teams list      List teams
-      imas-codex llm teams create    Create a new team
-      imas-codex llm teams info      Show team details
-      imas-codex llm spend           View per-team spend
-      imas-codex llm local start     Start local LLM on Titan
-      imas-codex llm local stop      Stop local LLM
-      imas-codex llm local status    Check local LLM health
-      imas-codex llm local models    List local models
+      imas-codex llm start              Start the proxy (systemd or foreground)
+      imas-codex llm stop               Stop the proxy
+      imas-codex llm restart            Restart (stop + start)
+      imas-codex llm status             Check proxy health
+      imas-codex llm logs               View service logs
+      imas-codex llm service            Manage systemd service
+      imas-codex llm setup              Initial team/key provisioning
+      imas-codex llm keys list          List virtual API keys
+      imas-codex llm keys create        Generate a new virtual key
+      imas-codex llm keys revoke        Revoke (delete) a key
+      imas-codex llm keys rotate        Rotate a key
+      imas-codex llm teams list         List teams
+      imas-codex llm teams create       Create a new team
+      imas-codex llm teams info         Show team details
+      imas-codex llm spend              View per-team spend
+      imas-codex llm security audit     Audit security posture
+      imas-codex llm security harden    Apply security fixes
+      imas-codex llm local start        Start local LLM on Titan
+      imas-codex llm local stop         Stop local LLM
+      imas-codex llm local status       Check local LLM health
+      imas-codex llm local models       List local models
     """
     pass
 
@@ -1547,6 +1550,426 @@ def llm_spend(team_filter: str | None) -> None:
 
     click.echo("─" * len(header))
     click.echo(f"{'Total':<30} {'':>8} ${total_spend:>7.2f}")
+    click.echo("")
+
+
+# ── Setup command ────────────────────────────────────────────────────────
+
+# Default team definitions for initial provisioning.
+_DEFAULT_TEAMS = [
+    {
+        "alias": "imas-codex",
+        "budget": 500.0,
+        "duration": "30d",
+        "description": "Internal discovery workers, MCP agents, CLI tools",
+        "keys": [
+            {
+                "alias": "imas-codex-workers",
+                "description": "Discovery pipeline workers",
+            },
+            {"alias": "imas-codex-mcp", "description": "MCP server agents"},
+        ],
+    },
+    {
+        "alias": "claude-code",
+        "budget": 200.0,
+        "duration": "30d",
+        "description": "Claude Code IDE clients",
+        "keys": [
+            {"alias": "claude-code-primary", "description": "Primary Claude Code key"},
+        ],
+    },
+]
+
+
+@llm.command("setup")
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Show what would be created without making changes",
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    help="Create teams/keys even if they already exist",
+)
+def llm_setup(dry_run: bool, force: bool) -> None:
+    """Initial setup: create default teams and virtual keys.
+
+    Creates the standard team structure for multi-tenant operation:
+
+    \b
+      imas-codex      Internal use (discovery, agents, MCP)
+        └─ imas-codex-workers    Discovery pipeline key
+        └─ imas-codex-mcp        MCP server key
+
+      claude-code     External Claude Code clients
+        └─ claude-code-primary   Primary client key
+
+    Keys are displayed only once — save them immediately.
+
+    \b
+    Examples:
+        imas-codex llm setup             # Create teams and keys
+        imas-codex llm setup --dry-run   # Preview without creating
+    """
+    click.echo("")
+    click.echo("LiteLLM Gateway Setup")
+    click.echo("═" * 40)
+
+    # Check prerequisites
+    if not dry_run:
+        master_key = os.environ.get("LITELLM_MASTER_KEY", "")
+        if not master_key:
+            raise click.ClickException(
+                "LITELLM_MASTER_KEY not set. Export it or add to .env."
+            )
+
+    # Check existing teams
+    existing_teams: set[str] = set()
+    if not dry_run:
+        try:
+            data = _api_get("/team/list")
+            teams = data if isinstance(data, list) else data.get("teams", [])
+            existing_teams = {t.get("team_alias", "") for t in teams}
+        except click.ClickException:
+            click.echo(
+                click.style("⚠ Cannot connect to proxy. Is it running?", fg="yellow")
+            )
+            click.echo("  Start with: imas-codex llm start")
+            raise
+
+    created_keys: list[dict] = []
+
+    for team_def in _DEFAULT_TEAMS:
+        alias = team_def["alias"]
+        click.echo(f"\n{'─' * 40}")
+        click.echo(f"Team: {click.style(alias, bold=True)}")
+        click.echo(f"  {team_def['description']}")
+        click.echo(f"  Budget: ${team_def['budget']:.0f}/{team_def['duration']}")
+
+        if alias in existing_teams and not force:
+            click.echo(
+                click.style("  → Already exists (use --force to recreate)", fg="yellow")
+            )
+            continue
+
+        if dry_run:
+            click.echo(click.style("  → Would create team", fg="cyan"))
+            for key_def in team_def["keys"]:
+                click.echo(f"    → Would create key: {key_def['alias']}")
+            continue
+
+        # Create team
+        try:
+            team_data = _api_post(
+                "/team/new",
+                json={
+                    "team_alias": alias,
+                    "max_budget": team_def["budget"],
+                    "budget_duration": team_def["duration"],
+                },
+            )
+            team_id = team_data.get("team_id", "")
+            click.echo(
+                click.style(
+                    f"  ✓ Team created (ID: {_truncate(team_id, 12)})", fg="green"
+                )
+            )
+        except click.ClickException as e:
+            click.echo(click.style(f"  ✗ Failed: {e.message}", fg="red"))
+            continue
+
+        # Create keys for this team
+        for key_def in team_def["keys"]:
+            try:
+                key_data = _api_post(
+                    "/key/generate",
+                    json={
+                        "team_id": team_id,
+                        "key_alias": key_def["alias"],
+                    },
+                )
+                key_value = key_data.get("key", key_data.get("token", ""))
+                created_keys.append(
+                    {
+                        "team": alias,
+                        "alias": key_def["alias"],
+                        "key": key_value,
+                        "description": key_def["description"],
+                    }
+                )
+                click.echo(
+                    click.style(f"  ✓ Key created: {key_def['alias']}", fg="green")
+                )
+            except click.ClickException as e:
+                click.echo(click.style(f"  ✗ Key failed: {e.message}", fg="red"))
+
+    # Summary with keys
+    if created_keys:
+        click.echo(f"\n{'═' * 40}")
+        click.echo(
+            click.style(
+                "⚠  SAVE THESE KEYS NOW — they are shown only once!",
+                fg="yellow",
+                bold=True,
+            )
+        )
+        click.echo("")
+        for k in created_keys:
+            click.echo(f"  [{k['team']}] {k['alias']}:")
+            click.echo(f"    {click.style(k['key'], fg='green', bold=True)}")
+            click.echo(f"    {k['description']}")
+            click.echo("")
+
+        click.echo("Next steps:")
+        click.echo("  1. Save keys to your .env or password manager")
+        click.echo("  2. Set LITELLM_API_KEY for imas-codex workers")
+        click.echo("  3. Configure Claude Code: see docs/client-setup.md")
+    elif dry_run:
+        click.echo(f"\n{'═' * 40}")
+        click.echo("Dry run complete. Run without --dry-run to create resources.")
+    else:
+        click.echo(f"\n{'═' * 40}")
+        click.echo("Setup complete — all teams already exist.")
+    click.echo("")
+
+
+# ── Security command ─────────────────────────────────────────────────────
+
+
+@llm.group("security")
+def llm_security() -> None:
+    """Security audit and hardening for the LLM gateway.
+
+    Check and enforce security settings for the multi-tenant proxy.
+    Configurable via environment variables for cross-facility deployment.
+
+    \b
+      imas-codex llm security audit    Check security posture
+      imas-codex llm security harden   Apply security fixes
+    """
+    pass
+
+
+@llm_security.command("audit")
+def security_audit() -> None:
+    """Audit security posture of the LLM gateway.
+
+    Checks file permissions, authentication, network binding,
+    key hygiene, and database security.
+
+    \b
+    Examples:
+        imas-codex llm security audit
+    """
+    import stat
+    from pathlib import Path
+
+    click.echo("")
+    click.echo("LiteLLM Gateway Security Audit")
+    click.echo("═" * 40)
+    issues: list[str] = []
+    warnings: list[str] = []
+
+    # 1. Environment variables
+    click.echo("\n1. Environment Variables")
+    master_key = os.environ.get("LITELLM_MASTER_KEY", "")
+    if master_key:
+        click.echo(f"   {click.style('✓', fg='green')} LITELLM_MASTER_KEY is set")
+        if len(master_key) < 20:
+            warnings.append("LITELLM_MASTER_KEY is short (< 20 chars)")
+            click.echo(
+                f"   {click.style('⚠', fg='yellow')} Key is short — use a longer key"
+            )
+        if master_key.startswith("sk-") and "test" in master_key.lower():
+            warnings.append("LITELLM_MASTER_KEY appears to be a test key")
+            click.echo(f"   {click.style('⚠', fg='yellow')} Appears to be a test key")
+    else:
+        issues.append("LITELLM_MASTER_KEY not set")
+        click.echo(f"   {click.style('✗', fg='red')} LITELLM_MASTER_KEY not set")
+
+    imas_key = os.environ.get("OPENROUTER_API_KEY_IMAS_CODEX", "")
+    if imas_key:
+        click.echo(
+            f"   {click.style('✓', fg='green')} OPENROUTER_API_KEY_IMAS_CODEX is set"
+        )
+    else:
+        warnings.append("OPENROUTER_API_KEY_IMAS_CODEX not set")
+        click.echo(
+            f"   {click.style('⚠', fg='yellow')} OPENROUTER_API_KEY_IMAS_CODEX not set"
+        )
+
+    ext_key = os.environ.get("OPENROUTER_API_KEY_EXTERNAL", "")
+    if ext_key:
+        click.echo(
+            f"   {click.style('✓', fg='green')} OPENROUTER_API_KEY_EXTERNAL is set"
+        )
+    else:
+        click.echo(
+            f"   {click.style('—', fg='cyan')} OPENROUTER_API_KEY_EXTERNAL not set (optional)"
+        )
+
+    # 2. File permissions
+    click.echo("\n2. File Permissions")
+    sensitive_files = {
+        ".env": Path.cwd() / ".env",
+        "litellm.db": Path.home()
+        / ".local"
+        / "share"
+        / "imas-codex"
+        / "services"
+        / "litellm.db",
+    }
+    for name, path in sensitive_files.items():
+        if not path.exists():
+            click.echo(f"   {click.style('—', fg='cyan')} {name} does not exist")
+            continue
+        mode = path.stat().st_mode
+        world_readable = mode & (
+            stat.S_IRGRP | stat.S_IROTH | stat.S_IWGRP | stat.S_IWOTH
+        )
+        if world_readable:
+            issues.append(f"{name} is world/group accessible")
+            click.echo(
+                f"   {click.style('✗', fg='red')} {name} is world/group accessible "
+                f"(mode: {oct(mode & 0o777)})"
+            )
+            click.echo(f"     Fix: chmod 600 {path}")
+        else:
+            click.echo(
+                f"   {click.style('✓', fg='green')} {name} permissions OK "
+                f"(mode: {oct(mode & 0o777)})"
+            )
+
+    # 3. Proxy authentication
+    click.echo("\n3. Proxy Authentication")
+    try:
+        import httpx
+
+        from imas_codex.settings import get_llm_proxy_url
+
+        url = get_llm_proxy_url()
+        resp = httpx.get(f"{url}/v1/models", timeout=5.0)
+        if resp.status_code == 401:
+            click.echo(f"   {click.style('✓', fg='green')} API key required for access")
+        elif resp.status_code == 200:
+            issues.append("Proxy allows unauthenticated access")
+            click.echo(
+                f"   {click.style('✗', fg='red')} UNPROTECTED — no API key required!"
+            )
+            click.echo("     Set LITELLM_MASTER_KEY and restart the proxy")
+        else:
+            click.echo(
+                f"   {click.style('?', fg='yellow')} Unexpected response: HTTP {resp.status_code}"
+            )
+    except Exception:
+        click.echo(f"   {click.style('—', fg='cyan')} Proxy not reachable (skipped)")
+
+    # 4. Network binding
+    click.echo("\n4. Network Binding")
+    bind_host = os.environ.get("LITELLM_HOST", "0.0.0.0")
+    if bind_host == "127.0.0.1" or bind_host == "localhost":
+        click.echo(f"   {click.style('✓', fg='green')} Bound to localhost only")
+    elif bind_host == "0.0.0.0":
+        warnings.append("Proxy bound to 0.0.0.0 (all interfaces)")
+        click.echo(
+            f"   {click.style('⚠', fg='yellow')} Bound to all interfaces (0.0.0.0)"
+        )
+        click.echo("     Set LITELLM_HOST=127.0.0.1 for localhost-only access")
+        click.echo("     Or use SSH tunnels for remote access")
+    else:
+        click.echo(f"   {click.style('—', fg='cyan')} Bound to {bind_host}")
+
+    # 5. Database
+    click.echo("\n5. Database")
+    db_url = os.environ.get("LITELLM_DATABASE_URL", "")
+    if db_url:
+        click.echo(f"   {click.style('✓', fg='green')} Database URL configured")
+        if "sqlite" in db_url:
+            click.echo(
+                f"   {click.style('—', fg='cyan')} Using SQLite (OK for single-node)"
+            )
+    else:
+        warnings.append("No database configured — virtual keys/teams will not persist")
+        click.echo(f"   {click.style('⚠', fg='yellow')} No database configured")
+        click.echo("     Set LITELLM_DATABASE_URL for persistent teams/keys")
+
+    # Summary
+    click.echo(f"\n{'═' * 40}")
+    if issues:
+        click.echo(click.style(f"✗ {len(issues)} issue(s) found:", fg="red", bold=True))
+        for issue in issues:
+            click.echo(f"  • {issue}")
+    if warnings:
+        click.echo(click.style(f"⚠ {len(warnings)} warning(s):", fg="yellow"))
+        for warning in warnings:
+            click.echo(f"  • {warning}")
+    if not issues and not warnings:
+        click.echo(click.style("✓ All checks passed", fg="green", bold=True))
+    elif not issues:
+        click.echo(click.style("✓ No critical issues", fg="green"))
+    click.echo("")
+
+
+@llm_security.command("harden")
+def security_harden() -> None:
+    """Apply security hardening to the LLM gateway.
+
+    Fixes file permissions on sensitive files and validates
+    configuration. Non-destructive — only tightens permissions.
+
+    \b
+    Examples:
+        imas-codex llm security harden
+    """
+    import stat
+    from pathlib import Path
+
+    click.echo("")
+    click.echo("LiteLLM Gateway Security Hardening")
+    click.echo("═" * 40)
+    fixed = 0
+
+    sensitive_files = [
+        Path.cwd() / ".env",
+        Path.home() / ".local" / "share" / "imas-codex" / "services" / "litellm.db",
+    ]
+
+    for path in sensitive_files:
+        if not path.exists():
+            continue
+        mode = path.stat().st_mode
+        if mode & (stat.S_IRGRP | stat.S_IROTH | stat.S_IWGRP | stat.S_IWOTH):
+            path.chmod(stat.S_IRUSR | stat.S_IWUSR)  # 0o600
+            click.echo(
+                f"  {click.style('✓', fg='green')} {path.name}: "
+                f"{oct(mode & 0o777)} → 0o600"
+            )
+            fixed += 1
+        else:
+            click.echo(
+                f"  {click.style('—', fg='cyan')} {path.name}: already secure "
+                f"({oct(mode & 0o777)})"
+            )
+
+    # Check log directory permissions
+    log_dir = Path.home() / ".local" / "share" / "imas-codex" / "logs"
+    if log_dir.exists():
+        for log_file in log_dir.glob("*.log*"):
+            mode = log_file.stat().st_mode
+            if mode & (stat.S_IRGRP | stat.S_IROTH | stat.S_IWGRP | stat.S_IWOTH):
+                log_file.chmod(stat.S_IRUSR | stat.S_IWUSR)
+                click.echo(
+                    f"  {click.style('✓', fg='green')} {log_file.name}: "
+                    f"{oct(mode & 0o777)} → 0o600"
+                )
+                fixed += 1
+
+    if fixed:
+        click.echo(f"\n{click.style(f'✓ Fixed {fixed} file(s)', fg='green')}")
+    else:
+        click.echo(f"\n{click.style('✓ All files already secure', fg='green')}")
     click.echo("")
 
 

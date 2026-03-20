@@ -347,3 +347,96 @@ class TestConnectionErrors:
         with _mock_get("Unauthorized", status_code=401):
             result = runner.invoke(llm, ["teams", "list"])
         assert result.exit_code != 0
+
+
+# ── Setup command tests ──────────────────────────────────────────────────
+
+
+class TestSetupCommand:
+    def test_setup_dry_run(self, runner, mock_env):
+        result = runner.invoke(llm, ["setup", "--dry-run"])
+        assert result.exit_code == 0
+        assert "Would create team" in result.output
+        assert "imas-codex" in result.output
+        assert "claude-code" in result.output
+
+    def test_setup_creates_teams_and_keys(self, runner, mock_env):
+        # Mock /team/list (empty) + /team/new + /key/generate
+        call_count = {"get": 0, "post": 0}
+
+        def mock_get(*args, **kwargs):
+            call_count["get"] += 1
+            resp = MagicMock()
+            resp.status_code = 200
+            resp.json.return_value = []  # no existing teams
+            resp.text = "[]"
+            return resp
+
+        def mock_post(*args, **kwargs):
+            call_count["post"] += 1
+            resp = MagicMock()
+            resp.status_code = 200
+            url = args[0] if args else kwargs.get("url", "")
+            if "/team/new" in str(url):
+                resp.json.return_value = {"team_id": f"tid-{call_count['post']}"}
+            else:
+                resp.json.return_value = {"key": f"sk-generated-{call_count['post']}"}
+            resp.text = "{}"
+            return resp
+
+        with (
+            patch("httpx.get", side_effect=mock_get),
+            patch("httpx.post", side_effect=mock_post),
+        ):
+            result = runner.invoke(llm, ["setup"])
+        assert result.exit_code == 0
+        assert "Team created" in result.output
+        assert "Key created" in result.output
+        assert "SAVE THESE KEYS" in result.output
+
+    def test_setup_skips_existing(self, runner, mock_env):
+        with _mock_get(
+            [
+                {"team_alias": "imas-codex", "team_id": "tid-1"},
+                {"team_alias": "claude-code", "team_id": "tid-2"},
+            ]
+        ):
+            result = runner.invoke(llm, ["setup"])
+        assert result.exit_code == 0
+        assert "Already exists" in result.output
+
+    def test_setup_missing_master_key(self, runner, monkeypatch):
+        monkeypatch.delenv("LITELLM_MASTER_KEY", raising=False)
+        result = runner.invoke(llm, ["setup"])
+        assert result.exit_code != 0
+        assert "LITELLM_MASTER_KEY" in result.output
+
+
+# ── Security command tests ───────────────────────────────────────────────
+
+
+class TestSecurityCommands:
+    def test_security_audit_help(self, runner):
+        result = runner.invoke(llm, ["security", "audit", "--help"])
+        assert result.exit_code == 0
+        assert "Audit security posture" in result.output
+
+    def test_security_harden_help(self, runner):
+        result = runner.invoke(llm, ["security", "harden", "--help"])
+        assert result.exit_code == 0
+        assert "Apply security hardening" in result.output
+
+    def test_security_audit_runs(self, runner, mock_env):
+        with patch("httpx.get") as mock_get:
+            mock_resp = MagicMock()
+            mock_resp.status_code = 401
+            mock_get.return_value = mock_resp
+            result = runner.invoke(llm, ["security", "audit"])
+        assert result.exit_code == 0
+        assert "Security Audit" in result.output
+        assert "Environment Variables" in result.output
+
+    def test_security_harden_runs(self, runner):
+        result = runner.invoke(llm, ["security", "harden"])
+        assert result.exit_code == 0
+        assert "Security Hardening" in result.output
