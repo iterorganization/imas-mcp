@@ -38,10 +38,10 @@ authentication and one OpenRouter key for billing.
 │  ┌─────────────────────────────────────────────────────────────────┐ │
 │  │  LiteLLM Proxy (:18400) + SQLite DB                            │ │
 │  │                                                                 │ │
-│  │  Virtual Keys ─────────────────────────── Credentials           │ │
-│  │  ├─ vk-codex-xxx   → team:codex        → or-codex key          │ │
-│  │  ├─ vk-claude-xxx  → team:claude-code  → or-external key       │ │
-│  │  └─ vk-copilot-xxx → team:copilot-cli  → or-external key       │ │
+│  │  Virtual Keys ──────────────────────── Credentials              │ │
+│  │  ├─ vk-codex-xxx   → team:codex       → openrouter-codex key   │ │
+│  │  ├─ vk-claude-xxx  → team:claude-code → openrouter-external key│ │
+│  │  └─ vk-copilot-xxx → team:copilot-cli → openrouter-external key│ │
 │  │                                                                 │ │
 │  │  Model Router ──────────────────────────────────────────        │ │
 │  │  ├─ claude/*  ───────→ OpenRouter (Anthropic)                   │ │
@@ -58,10 +58,62 @@ authentication and one OpenRouter key for billing.
 
 ---
 
-## Composable Config Design
+## Credential Routing Design
 
-The config uses YAML anchors to avoid repeating model names and credentials.
-Each model is defined once; credentials are referenced by name.
+### Problem
+
+LiteLLM's `litellm_credential_name` is a 1:1 binding — each model entry
+gets exactly one credential. You cannot attach multiple credentials to a
+single model entry and have LiteLLM pick one based on the caller's team.
+The goal is: different users call `model: opus` and get routed to different
+OpenRouter API keys (and thus different billing accounts) based on their
+team identity.
+
+### Options Evaluated
+
+| Approach | Mechanism | Clients call | Credential selection | Verdict |
+|---|---|---|---|---|
+| **A. Team `model_group_alias`** | Duplicate models as `opus-codex` / `opus-external`; teams set `model_group_alias` in per-team router settings | `model: opus` | Automatic via team router settings | **Selected** |
+| B. Access Groups | Two `opus` entries in different access groups | `model: opus` | Uncertain — LiteLLM may not filter within a model group by access group | Rejected (ambiguous) |
+| C. Explicit model names | Define `opus-codex`, `opus-external`; restrict team access | `model: opus-codex` | Explicit — client must know their model name | Rejected (bad UX) |
+
+### Selected Approach: Team `model_group_alias`
+
+LiteLLM supports per-team router settings (docs: "Router Settings for
+Keys and Teams"). The `model_group_alias` router setting remaps model
+names at the team level, allowing transparent credential routing:
+
+```
+Client calls:  model: "opus"
+  ↓
+Team router settings resolve alias:
+  Team codex:       opus → opus-codex       (uses openrouter-codex credential)
+  Team claude-code: opus → opus-external    (uses openrouter-external credential)
+  ↓
+LiteLLM routes to the resolved model group with the correct credential
+```
+
+**How it works:**
+1. Each model is defined twice in `litellm_config.yaml` with credential-
+   suffixed internal names (`opus-codex`, `opus-external`)
+2. Each credential-suffixed model points to the same OpenRouter model ID
+   but uses a different `litellm_credential_name`
+3. When creating teams via the API, `model_group_alias` maps the clean
+   user-facing name to the credential-specific internal name
+4. Clients use clean names (`opus`, `sonnet`, etc.) — the team's router
+   settings transparently resolve to the correct backend
+
+**Advantages:**
+- Clients never need to know about credentials or internal model names
+- Adding a new credential/team just requires a new set of model entries +
+  team config — no client-side changes
+- Spend tracking is automatic: each credential maps to a separate
+  OpenRouter API key, so billing is isolated at the provider level
+- LiteLLM's native credential usage tracking tags requests by credential
+
+---
+
+## Config Design
 
 ### `litellm_config.yaml` (target)
 
@@ -72,26 +124,33 @@ Each model is defined once; credentials are referenced by name.
 #
 # Credentials are env-sourced. Virtual keys (per-team) are managed
 # via the /key/generate API and stored in the SQLite database.
+#
+# CREDENTIAL ROUTING:
+# Each model is defined once per credential. Teams use
+# model_group_alias in their router settings to map clean names
+# (opus, sonnet) to credential-specific names (opus-codex, opus-external).
+# See "Example Teams & Keys" below.
 
 # ── Credentials ──────────────────────────────────────────────
-# Each team's virtual key routes to the team's credential.
-# Create additional OpenRouter keys at https://openrouter.ai/settings/keys
+# Each credential maps to a separate OpenRouter API key for
+# independent billing. Create keys at https://openrouter.ai/settings/keys
 credential_list:
-  - credential_name: or-codex
+  - credential_name: openrouter-codex
     credential_values:
       api_key: os.environ/OPENROUTER_API_KEY_CODEX
     credential_info:
       description: "imas-codex internal use (discovery, agents, MCP)"
 
-  - credential_name: or-external
+  - credential_name: openrouter-external
     credential_values:
       api_key: os.environ/OPENROUTER_API_KEY_EXTERNAL
     credential_info:
       description: "External clients (Claude Code, Copilot CLI, etc.)"
 
 # ── Model Definitions ───────────────────────────────────────
-# Models use the codex credential by default. External clients
-# get routed to or-external via team-scoped virtual keys.
+# Each model appears twice: once per credential. The -codex and
+# -external suffixes are internal names — clients never see them.
+# Teams map clean aliases via model_group_alias router settings.
 #
 # OpenRouter model IDs (March 2026):
 #   anthropic/claude-opus-4-6
@@ -101,68 +160,109 @@ credential_list:
 #   google/gemini-3-pro-preview
 #   openai/gpt-5.4
 #   openai/gpt-5.4-mini
-#
-# Composition: each model defined once; credential selected
-# by the virtual key's team, not duplicated per team.
 
 model_list:
-  # ── Anthropic Claude ───────────────────────────────────
-  - model_name: opus
+  # ── Anthropic Claude (codex credential) ────────────────
+  - model_name: opus-codex
     litellm_params:
       model: openrouter/anthropic/claude-opus-4-6
-      litellm_credential_name: or-codex
+      litellm_credential_name: openrouter-codex
 
-  - model_name: sonnet
+  - model_name: sonnet-codex
     litellm_params:
       model: openrouter/anthropic/claude-sonnet-4-6
-      litellm_credential_name: or-codex
+      litellm_credential_name: openrouter-codex
 
-  - model_name: haiku
+  - model_name: haiku-codex
     litellm_params:
       model: openrouter/anthropic/claude-haiku-4-5-20251001
-      litellm_credential_name: or-codex
+      litellm_credential_name: openrouter-codex
 
-  # ── Google Gemini ──────────────────────────────────────
-  - model_name: gemini-flash
+  # ── Anthropic Claude (external credential) ─────────────
+  - model_name: opus-external
     litellm_params:
-      model: openrouter/google/gemini-3-flash-preview
-      litellm_credential_name: or-codex
+      model: openrouter/anthropic/claude-opus-4-6
+      litellm_credential_name: openrouter-external
 
-  - model_name: gemini-pro
-    litellm_params:
-      model: openrouter/google/gemini-3-pro-preview
-      litellm_credential_name: or-codex
-
-  # ── OpenAI GPT ─────────────────────────────────────────
-  - model_name: gpt
-    litellm_params:
-      model: openrouter/openai/gpt-5.4
-      litellm_credential_name: or-codex
-
-  - model_name: gpt-mini
-    litellm_params:
-      model: openrouter/openai/gpt-5.4-mini
-      litellm_credential_name: or-codex
-
-  # ── Reasoning / Scoring aliases ────────────────────────
-  - model_name: reasoning
+  - model_name: sonnet-external
     litellm_params:
       model: openrouter/anthropic/claude-sonnet-4-6
-      litellm_credential_name: or-codex
+      litellm_credential_name: openrouter-external
 
-  - model_name: scoring
+  - model_name: haiku-external
+    litellm_params:
+      model: openrouter/anthropic/claude-haiku-4-5-20251001
+      litellm_credential_name: openrouter-external
+
+  # ── Google Gemini (codex credential) ───────────────────
+  - model_name: gemini-flash-codex
     litellm_params:
       model: openrouter/google/gemini-3-flash-preview
-      litellm_credential_name: or-codex
+      litellm_credential_name: openrouter-codex
 
-  # ── Passthrough wildcard ───────────────────────────────
-  - model_name: "*"
+  - model_name: gemini-pro-codex
+    litellm_params:
+      model: openrouter/google/gemini-3-pro-preview
+      litellm_credential_name: openrouter-codex
+
+  # ── Google Gemini (external credential) ────────────────
+  - model_name: gemini-flash-external
+    litellm_params:
+      model: openrouter/google/gemini-3-flash-preview
+      litellm_credential_name: openrouter-external
+
+  - model_name: gemini-pro-external
+    litellm_params:
+      model: openrouter/google/gemini-3-pro-preview
+      litellm_credential_name: openrouter-external
+
+  # ── OpenAI GPT (codex credential) ──────────────────────
+  - model_name: gpt-codex
+    litellm_params:
+      model: openrouter/openai/gpt-5.4
+      litellm_credential_name: openrouter-codex
+
+  - model_name: gpt-mini-codex
+    litellm_params:
+      model: openrouter/openai/gpt-5.4-mini
+      litellm_credential_name: openrouter-codex
+
+  # ── OpenAI GPT (external credential) ───────────────────
+  - model_name: gpt-external
+    litellm_params:
+      model: openrouter/openai/gpt-5.4
+      litellm_credential_name: openrouter-external
+
+  - model_name: gpt-mini-external
+    litellm_params:
+      model: openrouter/openai/gpt-5.4-mini
+      litellm_credential_name: openrouter-external
+
+  # ── Reasoning / Scoring (codex only — internal aliases) ─
+  - model_name: reasoning-codex
+    litellm_params:
+      model: openrouter/anthropic/claude-sonnet-4-6
+      litellm_credential_name: openrouter-codex
+
+  - model_name: scoring-codex
+    litellm_params:
+      model: openrouter/google/gemini-3-flash-preview
+      litellm_credential_name: openrouter-codex
+
+  # ── Passthrough wildcard (codex credential) ────────────
+  - model_name: "openrouter-codex-wildcard"
     litellm_params:
       model: "openrouter/*"
-      litellm_credential_name: or-codex
+      litellm_credential_name: openrouter-codex
+
+  - model_name: "openrouter-external-wildcard"
+    litellm_params:
+      model: "openrouter/*"
+      litellm_credential_name: openrouter-external
 
   # ── Local models (Phase 6 — Titan cluster) ────────────
-  # Uncomment when Ollama/llama.cpp is deployed on Titan
+  # Uncomment when Ollama/llama.cpp is deployed on Titan.
+  # Local models don't need credential duplication — no billing.
   # - model_name: qwen3-14b
   #   litellm_params:
   #     model: ollama/qwen3:14b-q4_K_M
@@ -178,35 +278,107 @@ general_settings:
   database_url: os.environ/LITELLM_DATABASE_URL
 ```
 
+### Model Group Alias Mappings
+
+Each team's `model_group_alias` maps clean client-facing names to the
+credential-specific internal names:
+
+| Client calls | Team codex resolves to | Team claude-code resolves to |
+|---|---|---|
+| `opus` | `opus-codex` | `opus-external` |
+| `sonnet` | `sonnet-codex` | `sonnet-external` |
+| `haiku` | `haiku-codex` | `haiku-external` |
+| `gemini-flash` | `gemini-flash-codex` | `gemini-flash-external` |
+| `gemini-pro` | `gemini-pro-codex` | `gemini-pro-external` |
+| `gpt` | `gpt-codex` | `gpt-external` |
+| `gpt-mini` | `gpt-mini-codex` | `gpt-mini-external` |
+| `reasoning` | `reasoning-codex` | *(not available)* |
+| `scoring` | `scoring-codex` | *(not available)* |
+| `*` | `openrouter-codex-wildcard` | `openrouter-external-wildcard` |
+
 ### Example Teams & Keys
 
 ```bash
-# ── Create teams ─────────────────────────────────────────
+# ── Create teams with model_group_alias ──────────────────
+# The model_group_alias in router_settings maps clean model names
+# to credential-specific internal names.
+
+# Codex team (internal — uses openrouter-codex credential)
 curl -X POST http://localhost:18400/team/new \
   -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "team_alias": "codex",
     "max_budget": 500,
-    "budget_duration": "30d"
+    "budget_duration": "30d",
+    "models": ["opus-codex", "sonnet-codex", "haiku-codex",
+               "gemini-flash-codex", "gemini-pro-codex",
+               "gpt-codex", "gpt-mini-codex",
+               "reasoning-codex", "scoring-codex",
+               "openrouter-codex-wildcard"],
+    "router_settings": {
+      "model_group_alias": {
+        "opus": "opus-codex",
+        "sonnet": "sonnet-codex",
+        "haiku": "haiku-codex",
+        "gemini-flash": "gemini-flash-codex",
+        "gemini-pro": "gemini-pro-codex",
+        "gpt": "gpt-codex",
+        "gpt-mini": "gpt-mini-codex",
+        "reasoning": "reasoning-codex",
+        "scoring": "scoring-codex"
+      }
+    }
   }'
 
+# Claude Code team (external — uses openrouter-external credential)
 curl -X POST http://localhost:18400/team/new \
   -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "team_alias": "claude-code",
     "max_budget": 200,
-    "budget_duration": "30d"
+    "budget_duration": "30d",
+    "models": ["opus-external", "sonnet-external", "haiku-external",
+               "gemini-flash-external", "gemini-pro-external",
+               "gpt-external", "gpt-mini-external",
+               "openrouter-external-wildcard"],
+    "router_settings": {
+      "model_group_alias": {
+        "opus": "opus-external",
+        "sonnet": "sonnet-external",
+        "haiku": "haiku-external",
+        "gemini-flash": "gemini-flash-external",
+        "gemini-pro": "gemini-pro-external",
+        "gpt": "gpt-external",
+        "gpt-mini": "gpt-mini-external"
+      }
+    }
   }'
 
+# Copilot CLI team (external — same credential, separate budget)
 curl -X POST http://localhost:18400/team/new \
   -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "team_alias": "copilot-cli",
     "max_budget": 100,
-    "budget_duration": "30d"
+    "budget_duration": "30d",
+    "models": ["opus-external", "sonnet-external", "haiku-external",
+               "gemini-flash-external", "gemini-pro-external",
+               "gpt-external", "gpt-mini-external",
+               "openrouter-external-wildcard"],
+    "router_settings": {
+      "model_group_alias": {
+        "opus": "opus-external",
+        "sonnet": "sonnet-external",
+        "haiku": "haiku-external",
+        "gemini-flash": "gemini-flash-external",
+        "gemini-pro": "gemini-pro-external",
+        "gpt": "gpt-external",
+        "gpt-mini": "gpt-mini-external"
+      }
+    }
   }'
 
 # ── Generate virtual keys ───────────────────────────────
@@ -219,6 +391,7 @@ curl -X POST http://localhost:18400/key/generate \
     "team_id": "<codex-team-id>"
   }'
 # → returns: {"key": "sk-codex-xxxxxxxx"}
+# → client calls: model="opus" → resolved to opus-codex → openrouter-codex key
 
 # Claude Code key
 curl -X POST http://localhost:18400/key/generate \
@@ -231,6 +404,7 @@ curl -X POST http://localhost:18400/key/generate \
     "budget_duration": "30d"
   }'
 # → returns: {"key": "sk-claude-xxxxxxxx"}
+# → client calls: model="opus" → resolved to opus-external → openrouter-external key
 
 # Copilot CLI key
 curl -X POST http://localhost:18400/key/generate \
@@ -244,6 +418,23 @@ curl -X POST http://localhost:18400/key/generate \
   }'
 # → returns: {"key": "sk-copilot-xxxxxxxx"}
 ```
+
+### Adding a New Credential / Team
+
+To add a third OpenRouter key (e.g., for a collaborator's personal billing):
+
+1. Add a credential to `credential_list`:
+   ```yaml
+   - credential_name: openrouter-collaborator
+     credential_values:
+       api_key: os.environ/OPENROUTER_API_KEY_COLLABORATOR
+   ```
+2. Duplicate the model entries with `-collaborator` suffix
+3. Create a team with `model_group_alias` mapping clean names → `-collaborator` names
+4. Generate a virtual key for the team
+
+No client-side changes needed — the collaborator calls `model: opus` and
+gets routed to their own OpenRouter key.
 
 ---
 
@@ -278,24 +469,36 @@ imas-codex workers. No behavior change for existing consumers.
 ### Phase 2: Multi-Credential Routing
 
 Add separate OpenRouter API keys per team for independent spend tracking
-at the OpenRouter billing level.
+at the OpenRouter billing level. Uses the **team `model_group_alias`
+approach** (see "Credential Routing Design" above).
 
 **Tasks:**
 1. Create 2 OpenRouter API keys on openrouter.ai/settings/keys:
    - `OPENROUTER_API_KEY_CODEX` — imas-codex internal ($500/month limit)
    - `OPENROUTER_API_KEY_EXTERNAL` — external clients ($200/month limit)
 2. Add both keys to `.env` and `env.example`
-3. Update `credential_list` in `litellm_config.yaml` (as shown above)
+3. Update `litellm_config.yaml`:
+   - Add `credential_list` with `openrouter-codex` and `openrouter-external`
+   - Duplicate each model entry with `-codex` and `-external` suffixes,
+     each pointing to its respective credential
 4. Rename existing `OPENROUTER_API_KEY` to `OPENROUTER_API_KEY_CODEX`
    - Keep `OPENROUTER_API_KEY` as a backwards-compat fallback in the CLI
-5. Create teams via `/team/new` API and generate team-scoped virtual keys
-6. Test credential isolation: verify that codex team requests appear on the
-   codex OpenRouter key's dashboard, and external requests on the external key
+5. Create teams via `/team/new` API **with `model_group_alias`** in
+   `router_settings` to map clean model names → credential-specific names
+   (see "Example Teams & Keys" above for full curl commands)
+6. Generate team-scoped virtual keys via `/key/generate`
+7. Test credential isolation:
+   - Using a codex virtual key: `model: opus` → resolves to `opus-codex`
+     → uses `openrouter-codex` → appears on codex OpenRouter dashboard
+   - Using an external virtual key: `model: opus` → resolves to
+     `opus-external` → uses `openrouter-external` → appears on external
+     OpenRouter dashboard
 
 **Verification:**
 - `imas-codex llm status` shows 2 credentials
 - Langfuse shows team attribution per request
 - OpenRouter dashboard shows spend split by key
+- Same `model: opus` call routes to different credentials based on caller's team
 
 ### Phase 3: Claude Code Setup
 
@@ -409,6 +612,11 @@ adds the `openrouter/` prefix at call time.
 | `gemini-pro` | `openrouter/google/gemini-3-pro-preview` | Complex structured output |
 | `gpt` | `openrouter/openai/gpt-5.4` | Alternative agentic model |
 | `gpt-mini` | `openrouter/openai/gpt-5.4-mini` | Fast/cheap alternative |
+
+**Note:** Each new model alias needs both `-codex` and `-external`
+entries in `litellm_config.yaml` (per the credential routing design).
+Teams' `model_group_alias` settings must also be updated to include the
+new model mappings.
 
 **Tasks:**
 1. Fix model ID format in `pyproject.toml` (dots → hyphens where needed)
@@ -607,9 +815,9 @@ ANTHROPIC_AUTH_TOKEN=sk-claude-...         # Virtual key for Claude Code
 
 | File | Change | Phase |
 |------|--------|-------|
-| `imas_codex/config/litellm_config.yaml` | Multi-credential, new models, DB URL | 1, 2, 5, 6 |
+| `imas_codex/config/litellm_config.yaml` | Multi-credential, model duplication per credential, DB URL | 1, 2, 5, 6 |
 | `imas_codex/discovery/base/llm.py` | Use `LITELLM_API_KEY` for proxy auth; rename `ensure_openrouter_prefix` | 1, 6 |
-| `imas_codex/cli/llm_cli.py` | Add `keys`, `spend`, `local` subcommands | 1, 6 |
+| `imas_codex/cli/llm_cli.py` | Add `keys`, `spend`, `local` subcommands; team creation with `model_group_alias` | 1, 2, 6 |
 | `imas_codex/settings.py` | Add `get_litellm_api_key()` accessor | 1 |
 | `env.example` | Add new env vars | 1, 2, 3 |
 | `.claude/settings.json` | Add Claude Code proxy env vars | 3 |
