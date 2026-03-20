@@ -13,6 +13,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   GHCR_REGISTRY: ghcr.io
   ACR_REGISTRY: crcommonallfrc.azurecr.io
   IMAGE_NAME: ${{ github.repository }}

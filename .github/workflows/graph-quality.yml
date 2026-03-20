@@ -1,5 +1,8 @@
 name: Graph Quality
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 on:
   repository_dispatch:
     types: [graph-pushed]
