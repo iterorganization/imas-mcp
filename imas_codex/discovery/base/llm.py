@@ -256,20 +256,35 @@ def suppress_litellm_noise() -> None:
 def get_api_key() -> str:
     """Get OpenRouter API key from environment.
 
+    Priority: OPENROUTER_API_KEY_IMAS_CODEX → OPENROUTER_API_KEY.
+
     Raises:
-        ValueError: If OPENROUTER_API_KEY is not set.
+        ValueError: If no OpenRouter API key is set.
     """
-    api_key = os.environ.get("OPENROUTER_API_KEY")
+    api_key = os.environ.get("OPENROUTER_API_KEY_IMAS_CODEX") or os.environ.get(
+        "OPENROUTER_API_KEY"
+    )
     if not api_key:
         raise ValueError(
-            "OPENROUTER_API_KEY environment variable not set. "
+            "OPENROUTER_API_KEY_IMAS_CODEX (or OPENROUTER_API_KEY) not set. "
             "Set it in .env or export it."
         )
     return api_key
 
 
-def ensure_openrouter_prefix(model: str) -> str:
-    """Ensure model ID has openrouter/ prefix for LiteLLM routing."""
+# Prefixes that indicate a local/non-OpenRouter model provider
+_LOCAL_MODEL_PREFIXES = ("ollama/", "hosted_vllm/", "openai/localhost")
+
+
+def ensure_model_prefix(model: str) -> str:
+    """Ensure model ID has the correct provider prefix for LiteLLM routing.
+
+    OpenRouter models get the ``openrouter/`` prefix to preserve
+    ``cache_control`` blocks. Local models (ollama, vLLM) are passed
+    through without modification.
+    """
+    if any(model.startswith(p) for p in _LOCAL_MODEL_PREFIXES):
+        return model
     if not model.startswith("openrouter/"):
         return f"openrouter/{model}"
     return model
@@ -492,8 +507,10 @@ def _build_kwargs(
         # client preserves cache_control breakpoints in message content
         # blocks.  The openai/ prefix strips them (strict OpenAI format),
         # which silently disables prompt caching for all providers.
-        model_id = ensure_openrouter_prefix(model)
-        proxy_key = os.getenv("LITELLM_MASTER_KEY", api_key)
+        model_id = ensure_model_prefix(model)
+        proxy_key = os.getenv("LITELLM_API_KEY") or os.getenv(
+            "LITELLM_MASTER_KEY", api_key
+        )
         kwargs: dict[str, Any] = {
             "model": model_id,
             "api_key": proxy_key,
@@ -505,7 +522,7 @@ def _build_kwargs(
             "messages": messages,
         }
     else:
-        model_id = ensure_openrouter_prefix(model)
+        model_id = ensure_model_prefix(model)
 
         kwargs = {
             "model": model_id,

@@ -232,7 +232,7 @@ def _make_call(
     import litellm
 
     from imas_codex.discovery.base.llm import (
-        ensure_openrouter_prefix,
+        ensure_model_prefix,
         extract_cost,
         get_api_key,
         inject_cache_control,
@@ -240,7 +240,7 @@ def _make_call(
     )
 
     suppress_litellm_noise()
-    model_id = ensure_openrouter_prefix(model)
+    model_id = ensure_model_prefix(model)
     api_key = get_api_key()
 
     messages: list[dict] = [
