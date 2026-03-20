@@ -291,11 +291,8 @@ jobs:
         run: |
           echo "Waiting for MCP server to be ready..."
           for i in $(seq 1 60); do
-            # FastMCP streamable-http returns 405/406 on GET /mcp (expects POST)
-            # Any HTTP response means the server is up
-            HTTP_CODE=$(docker exec smoke-test curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/mcp 2>/dev/null || echo "000")
-            if [ "$HTTP_CODE" != "000" ]; then
-              echo "✅ MCP server responding after ${i}s (HTTP $HTTP_CODE)"
+            if docker exec smoke-test curl -sf http://127.0.0.1:8000/health > /dev/null 2>&1; then
+              echo "✅ MCP server healthy after ${i}s"
               break
             fi
             if [ $i -eq 60 ]; then

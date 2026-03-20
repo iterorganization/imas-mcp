@@ -1502,6 +1502,7 @@ class AgentsServer:
 
         self._register_tools()
         self._register_prompts()
+        self._register_health_check()
 
         tool_count = sum(
             1 for k in self.mcp._local_provider._components if k.startswith("tool:")
@@ -2897,6 +2898,15 @@ class AgentsServer:
                     make_prompt_fn(prompt_def)
                 )
                 logger.debug(f"Registered static prompt: {name}")
+
+    def _register_health_check(self):
+        """Register /health endpoint for container and Azure health probes."""
+        from starlette.requests import Request
+        from starlette.responses import JSONResponse
+
+        @self.mcp.custom_route("/health", methods=["GET"])
+        async def health_check(request: Request) -> JSONResponse:
+            return JSONResponse({"status": "ok"})
 
     def run(
         self,
