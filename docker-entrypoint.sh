@@ -60,7 +60,7 @@ fi
 
 # Start MCP server
 echo "Starting IMAS Codex MCP server..."
-exec imas-codex "$@" &
+imas-codex "$@" &
 MCP_PID=$!
 
 # Wait for either process to exit
