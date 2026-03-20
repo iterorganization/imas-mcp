@@ -487,23 +487,31 @@ class WikiDiscoveryState(DiscoveryStateBase):
         """Check if image score workers should stop.
 
         Image score workers respect the cost budget (VLM calls are expensive).
-        They also wait for ingestion to start producing images before giving up,
+        They also wait for ingestion to fully complete before giving up,
         since images are only created during page ingestion and may not exist
         at the start of a run.
+
+        Uses ``ingest_phase.done`` (not ``is_idle_or_done``) because during
+        the initial scoring phase the ingest worker may briefly go idle
+        when no pages have been scored yet — but new pages will arrive once
+        scoring produces them.  Using ``is_idle_or_done`` would cause a
+        premature exit within seconds of startup.
 
         Stop when:
         1. Explicitly requested or deadline expired
         2. Budget exhausted or provider budget exhausted
-        3. Idle AND ingestion is done AND no pending images
+        3. Idle AND ingestion is *done* AND no pending images
         """
         if super().should_stop():
             return True
         if self.budget_exhausted:
             return True
-        # Wait for ingestion to finish before declaring no work.
+        # Wait for ingestion to fully complete before declaring no work.
         # Images only appear after pages are ingested, so the worker may
-        # see an empty queue early in the run.
-        ingestion_done = self.ingest_phase.is_idle_or_done
+        # see an empty queue early in the run.  Use `done` (not
+        # `is_idle_or_done`) because the ingest phase can be transiently
+        # idle while waiting for the score phase to produce pages.
+        ingestion_done = self.ingest_phase.done
         if (
             self.image_phase.is_idle_or_done
             and ingestion_done
