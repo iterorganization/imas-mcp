@@ -171,10 +171,12 @@ RUN set -e && \
             exit 1; \
         fi && \
         echo "Loading dump: $DUMP" && \
-        neo4j-admin database load neo4j --from-path="$(dirname $DUMP)" --overwrite-destination && \
+        mkdir -p /tmp/dumps && \
+        cp "$DUMP" /tmp/dumps/neo4j.dump && \
+        neo4j-admin database load neo4j --from-path=/tmp/dumps --overwrite-destination && \
         echo "✓ Graph loaded into Neo4j data directory"; \
     fi && \
-    rm -rf /tmp/graph-pull /tmp/graph-extracted
+    rm -rf /tmp/graph-pull /tmp/graph-extracted /tmp/dumps
 
 ## Stage 5: Final runtime image (assemble from builder + Neo4j + graph data)
 FROM python:3.12-slim
