@@ -278,8 +278,7 @@ def graph_push(
                 "oras",
                 "push",
                 artifact_ref,
-                f"{archive_path}:application/gzip",
-                "--disable-path-validation",
+                f"{archive_path.name}:application/gzip",
                 "--annotation",
                 f"org.opencontainers.image.version={version_tag}",
                 "--annotation",
@@ -294,7 +293,7 @@ def graph_push(
                 )
 
             gp.start_phase(f"Pushing to GHCR ({artifact_ref})")
-            run_oras_with_progress(push_cmd, progress=gp)
+            run_oras_with_progress(push_cmd, progress=gp, cwd=archive_path.parent)
             gp.complete_phase()
 
             manifest = get_local_graph_manifest() or {}

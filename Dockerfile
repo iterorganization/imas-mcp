@@ -126,7 +126,16 @@ RUN --mount=type=secret,id=GHCR_TOKEN \
          oras pull --allow-path-traversal \
            "${GHCR_REGISTRY}/${GRAPH_PACKAGE}:${GRAPH_TAG}" \
            -o /tmp/graph-pull; then \
-        echo "✓ Graph downloaded" && ls -la /tmp/graph-pull/; \
+        echo "✓ Graph downloaded"; \
+        # Handle artifacts pushed with absolute paths (oras writes to original path)
+        if ! ls /tmp/graph-pull/*.tar.gz >/dev/null 2>&1; then \
+            FOUND=$(find /tmp -name "*.tar.gz" -not -path "/tmp/graph-pull/*" 2>/dev/null | head -1); \
+            if [ -n "$FOUND" ]; then \
+                echo "Moving archive from $FOUND to /tmp/graph-pull/"; \
+                mv "$FOUND" /tmp/graph-pull/; \
+            fi; \
+        fi; \
+        ls -la /tmp/graph-pull/; \
     else \
         echo "⚠ Graph pull failed — building without pre-loaded graph" >&2; \
         touch /tmp/graph-pull/.no-graph; \

@@ -15,6 +15,7 @@ import subprocess
 import threading
 from collections.abc import Generator
 from contextlib import contextmanager
+from pathlib import Path
 
 from imas_codex.cli.rich_output import should_use_rich
 
@@ -172,6 +173,7 @@ def run_oras_with_progress(
     *,
     progress: GraphProgress | None = None,
     phase_description: str = "ORAS transfer",
+    cwd: str | Path | None = None,
 ) -> subprocess.CompletedProcess:
     """Run an oras command, showing its native progress output.
 
@@ -183,6 +185,7 @@ def run_oras_with_progress(
         cmd: The full oras command (e.g. ``["oras", "push", ...]``).
         progress: Optional :class:`GraphProgress` to pause spinner during oras output.
         phase_description: Description for logging on non-Rich terminals.
+        cwd: Working directory for the oras command.
 
     Returns:
         The completed process.
@@ -199,7 +202,7 @@ def run_oras_with_progress(
 
     # Let oras write directly to the terminal for its progress display.
     # Capture stderr via a pipe so we can report errors.
-    result = subprocess.run(cmd, stderr=subprocess.PIPE, text=True)
+    result = subprocess.run(cmd, stderr=subprocess.PIPE, text=True, cwd=cwd)
 
     if result.returncode != 0:
         raise click.ClickException(
