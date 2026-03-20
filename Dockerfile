@@ -107,8 +107,12 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
 # Pre-download embedding model for offline operation
 ENV HF_HOME=/app/.cache/huggingface
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
-    uv run python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('Qwen/Qwen3-Embedding-0.6B', trust_remote_code=True)" && \
-    echo "✓ Embedding model cached"
+    for i in 1 2 3; do \
+      uv run python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('Qwen/Qwen3-Embedding-0.6B', trust_remote_code=True)" && \
+      echo "✓ Embedding model cached" && break || \
+      echo "⚠ Attempt $i failed, retrying in 10s..." && sleep 10; \
+    done && \
+    test -d /app/.cache/huggingface/hub/models--Qwen--Qwen3-Embedding-0.6B
 
 # ── Graph-native data: pull IMAS-only graph from GHCR ──────────────────
 # Replaces build-schemas, build-path-map, build-embeddings, clusters build.
