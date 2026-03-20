@@ -292,6 +292,7 @@ def _embed_host_from_facility() -> str | None:
 # ─── LLM proxy settings ────────────────────────────────────────────────────
 
 LLM_BASE_PORT = 18400
+POSTGRES_BASE_PORT = 18450
 
 
 def get_llm_proxy_port() -> int:
@@ -312,6 +313,24 @@ def get_llm_proxy_port() -> int:
     from imas_codex.remote.locations import get_port_offset
 
     return LLM_BASE_PORT + get_port_offset(location)
+
+
+def get_postgres_port() -> int:
+    """Get the PostgreSQL port for LiteLLM's database.
+
+    Follows the same convention as other ports:
+    ``pg_port = 18450 + facility_offset``.
+
+    Priority: IMAS_CODEX_POSTGRES_PORT env → convention offset → 18450.
+    """
+    if env := os.getenv("IMAS_CODEX_POSTGRES_PORT"):
+        return int(env)
+    location = get_llm_location()
+    if location == "local":
+        return POSTGRES_BASE_PORT
+    from imas_codex.remote.locations import get_port_offset
+
+    return POSTGRES_BASE_PORT + get_port_offset(location)
 
 
 def get_llm_proxy_url() -> str:

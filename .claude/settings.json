@@ -13,6 +13,7 @@
       "Bash(git *)",
       "Bash(curl *)",
       "Bash(litellm *)",
+      "Bash(apptainer *)",
       "mcp__codex__*",
       "mcp__imas-ddv4__*",
       "Read(.claude/**)"

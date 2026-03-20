@@ -267,21 +267,32 @@ class TestTeamsCommands:
         assert "tid-new-123" in result.output
 
     def test_teams_info(self, runner, mock_env):
-        with _mock_post(
-            {
-                "team_info": {
-                    "team_alias": "imas-codex",
-                    "team_id": "tid-123",
-                    "max_budget": 500,
-                    "spend": 42.50,
-                    "budget_duration": "30d",
-                },
-                "keys": [
-                    {"key_alias": "worker-1", "token": "sk-w1-xxx", "spend": 30},
-                    {"key_alias": "worker-2", "token": "sk-w2-xxx", "spend": 12.50},
-                ],
-            }
-        ):
+        team_list_resp = [{"team_alias": "imas-codex", "team_id": "tid-123"}]
+        team_info_resp = {
+            "team_info": {
+                "team_alias": "imas-codex",
+                "team_id": "tid-123",
+                "max_budget": 500,
+                "spend": 42.50,
+                "budget_duration": "30d",
+            },
+            "keys": [
+                {"key_alias": "worker-1", "token": "sk-w1-xxx", "spend": 30},
+                {"key_alias": "worker-2", "token": "sk-w2-xxx", "spend": 12.50},
+            ],
+        }
+
+        def _side_effect(url, **kwargs):
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            if "/team/list" in str(url):
+                mock_resp.json.return_value = team_list_resp
+            else:
+                mock_resp.json.return_value = team_info_resp
+            mock_resp.text = ""
+            return mock_resp
+
+        with patch(f"{_HTTPX}.get", side_effect=_side_effect):
             result = runner.invoke(llm, ["teams", "info", "imas-codex"])
         assert result.exit_code == 0
         assert "imas-codex" in result.output
@@ -317,17 +328,28 @@ class TestSpendCommand:
         assert "Total" in result.output
 
     def test_spend_team_filter(self, runner, mock_env):
-        with _mock_post(
-            {
-                "team_info": {
-                    "team_alias": "imas-codex",
-                    "max_budget": 500,
-                    "spend": 100,
-                    "budget_duration": "30d",
-                },
-                "keys": [],
-            }
-        ):
+        team_list_resp = [{"team_alias": "imas-codex", "team_id": "tid-123"}]
+        team_info_resp = {
+            "team_info": {
+                "team_alias": "imas-codex",
+                "max_budget": 500,
+                "spend": 100,
+                "budget_duration": "30d",
+            },
+            "keys": [],
+        }
+
+        def _side_effect(url, **kwargs):
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            if "/team/list" in str(url):
+                mock_resp.json.return_value = team_list_resp
+            else:
+                mock_resp.json.return_value = team_info_resp
+            mock_resp.text = ""
+            return mock_resp
+
+        with patch(f"{_HTTPX}.get", side_effect=_side_effect):
             result = runner.invoke(llm, ["spend", "--team", "imas-codex"])
         assert result.exit_code == 0
         assert "Spend report" in result.output

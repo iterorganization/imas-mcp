@@ -14,8 +14,8 @@
 # Each credential maps to a separate OpenRouter API key for
 # independent spend tracking at the billing level.
 #
-# - openrouter-imas-codex: Internal use (discovery workers, MCP agents)
-# - openrouter-external:   External clients (Claude Code, Copilot CLI)
+# - openrouter-imas-codex:    Internal use (discovery workers, MCP agents)
+# - openrouter-claude-code:   Claude Code clients
 #
 # Create additional OpenRouter keys at https://openrouter.ai/settings/keys
 credential_list:
@@ -25,11 +25,11 @@ credential_list:
     credential_info:
       description: "imas-codex internal use (discovery, agents, MCP)"
 
-  - credential_name: openrouter-external
+  - credential_name: openrouter-claude-code
     credential_values:
-      api_key: os.environ/OPENROUTER_API_KEY_EXTERNAL
+      api_key: os.environ/OPENROUTER_API_KEY_CLAUDE_CODE
     credential_info:
-      description: "External clients (Claude Code, Copilot CLI, etc.)"
+      description: "Claude Code clients"
 
 # ── Model Definitions ───────────────────────────────────────
 # Models use the imas-codex credential by default. External clients

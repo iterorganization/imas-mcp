@@ -306,7 +306,11 @@ def llm_status(url: str | None) -> None:
 
 
 def _show_llm_service_status() -> None:
-    """Show systemd service status with resource usage."""
+    """Show systemd service status with resource usage.
+
+    Falls back to process detection when the systemd service is not
+    installed (e.g. proxy started manually or via ``llm start``).
+    """
     try:
         from imas_codex.cli.services import _colored_bar, _run_llm_remote
     except ImportError:
@@ -333,6 +337,40 @@ def _show_llm_service_status() -> None:
     active_state = parsed.get("ActiveState", "unknown")
     sub_state = parsed.get("SubState", "")
     pid = parsed.get("MainPID", "0")
+
+    # Fallback: if systemd doesn't know about the service, check for a
+    # running litellm process directly.
+    if active_state in ("unknown", "inactive") and (pid == "0" or not pid):
+        try:
+            proc_info = _run_llm_remote(
+                "pgrep -af 'litellm.*config' 2>/dev/null | head -1",
+                timeout=5,
+            )
+            if proc_info.strip():
+                # Extract PID from pgrep output (format: "PID command...")
+                proc_pid = proc_info.strip().split()[0]
+                click.echo(f"Service: {click.style('running', fg='green')} (manual)")
+                click.echo(f"  PID: {proc_pid}")
+                # Get uptime via /proc
+                try:
+                    uptime_out = _run_llm_remote(
+                        f"ps -p {proc_pid} -o etimes= 2>/dev/null",
+                        timeout=5,
+                    )
+                    uptime_s = int(uptime_out.strip())
+                    if uptime_s > 86400:
+                        click.echo(f"  Uptime: {uptime_s / 86400:.1f}d")
+                    elif uptime_s > 3600:
+                        click.echo(f"  Uptime: {uptime_s / 3600:.1f}h")
+                    else:
+                        click.echo(f"  Uptime: {uptime_s / 60:.0f}m")
+                except Exception:
+                    pass
+                return
+        except Exception:
+            pass
+        click.echo(f"Service: {click.style('stopped', fg='red')}")
+        return
 
     if active_state == "active":
         state_str = click.style("active", fg="green")
@@ -1117,6 +1155,20 @@ def _truncate(value: str, length: int = 12) -> str:
     return value[:length] + "..."
 
 
+def _resolve_team_id(alias_or_id: str) -> str:
+    """Resolve a team alias to its UUID, passing UUIDs through unchanged."""
+    # If it looks like a UUID, return as-is
+    if len(alias_or_id) > 30 and "-" in alias_or_id:
+        return alias_or_id
+    # Look up by alias
+    data = _api_get("/team/list")
+    teams = data if isinstance(data, list) else data.get("teams", [])
+    for t in teams:
+        if t.get("team_alias") == alias_or_id:
+            return t.get("team_id", alias_or_id)
+    return alias_or_id
+
+
 # ── Keys subgroup ────────────────────────────────────────────────────────
 
 
@@ -1426,8 +1478,9 @@ def teams_info(team: str) -> None:
         imas-codex llm teams info imas-codex-agents
         imas-codex llm teams info <team-id>
     """
-    # Try fetching by team_id first, fall back to alias
-    data = _api_post("/team/info", json={"team_id": team})
+    # Resolve alias to UUID, then fetch via GET
+    team_id = _resolve_team_id(team)
+    data = _api_get("/team/info", params={"team_id": team_id})
 
     info = data.get("team_info", data)
 
@@ -1480,7 +1533,9 @@ def llm_spend(team_filter: str | None) -> None:
     """
     if team_filter:
         # Show detailed spend for a specific team
-        data = _api_post("/team/info", json={"team_id": team_filter})
+        # Resolve alias to UUID, then fetch via GET
+        team_id = _resolve_team_id(team_filter)
+        data = _api_get("/team/info", params={"team_id": team_id})
         info = data.get("team_info", data)
 
         click.echo("")
@@ -1803,14 +1858,14 @@ def security_audit() -> None:
             f"   {click.style('⚠', fg='yellow')} OPENROUTER_API_KEY_IMAS_CODEX not set"
         )
 
-    ext_key = os.environ.get("OPENROUTER_API_KEY_EXTERNAL", "")
+    ext_key = os.environ.get("OPENROUTER_API_KEY_CLAUDE_CODE", "")
     if ext_key:
         click.echo(
-            f"   {click.style('✓', fg='green')} OPENROUTER_API_KEY_EXTERNAL is set"
+            f"   {click.style('✓', fg='green')} OPENROUTER_API_KEY_CLAUDE_CODE is set"
         )
     else:
         click.echo(
-            f"   {click.style('—', fg='cyan')} OPENROUTER_API_KEY_EXTERNAL not set (optional)"
+            f"   {click.style('—', fg='cyan')} OPENROUTER_API_KEY_CLAUDE_CODE not set (optional)"
         )
 
     # 2. File permissions
