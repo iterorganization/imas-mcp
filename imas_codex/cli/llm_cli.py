@@ -9,6 +9,28 @@ import click
 logger = logging.getLogger(__name__)
 
 
+def _check_file_permissions() -> None:
+    """Warn about insecure file permissions on sensitive files."""
+    import stat
+    from pathlib import Path
+
+    sensitive_files = [
+        Path.cwd() / ".env",
+        Path.home() / ".local" / "share" / "imas-codex" / "services" / "litellm.db",
+    ]
+    for path in sensitive_files:
+        if not path.exists():
+            continue
+        mode = path.stat().st_mode
+        if mode & (stat.S_IRGRP | stat.S_IROTH | stat.S_IWGRP | stat.S_IWOTH):
+            click.echo(
+                click.style(
+                    f"  ⚠ {path.name} is world/group readable — run: chmod 600 {path}",
+                    fg="yellow",
+                )
+            )
+
+
 @click.group()
 def llm() -> None:
     """Manage LiteLLM proxy server for centralized LLM routing.
@@ -33,6 +55,10 @@ def llm() -> None:
       imas-codex llm teams create    Create a new team
       imas-codex llm teams info      Show team details
       imas-codex llm spend           View per-team spend
+      imas-codex llm local start     Start local LLM on Titan
+      imas-codex llm local stop      Stop local LLM
+      imas-codex llm local status    Check local LLM health
+      imas-codex llm local models    List local models
     """
     pass
 
@@ -140,6 +166,9 @@ def _start_llm_foreground(
             "LITELLM_MASTER_KEY not set. Add to .env or export in shell."
         )
 
+    # Security: check file permissions on sensitive files
+    _check_file_permissions()
+
     click.echo(f"Starting LiteLLM proxy on {host}:{port}")
     click.echo(f"Config: {config_path}")
     click.echo(f"Master key: {master_key[:10]}...")
@@ -244,6 +273,12 @@ def llm_status(url: str | None) -> None:
                     click.echo(f"    - {m.get('id', 'unknown')}")
             elif models_resp.status_code == 401:
                 click.echo("  Models: auth required (LITELLM_MASTER_KEY not set)")
+
+            # Credential info
+            _show_credential_info()
+
+            # Database and team/key info
+            _show_gateway_info(url)
         else:
             click.echo(f"  ✗ Unhealthy (HTTP {resp.status_code})")
     except httpx.ConnectError:
@@ -374,6 +409,116 @@ def _show_llm_auth_status(url: str) -> None:
             )
         else:
             click.echo(f"  Auth: HTTP {resp.status_code}")
+    except Exception:
+        pass
+
+    # Check database status
+    try:
+        resp = httpx.get(f"{url}/health", timeout=5.0, headers=_llm_headers())
+        if resp.status_code == 200:
+            health = resp.json()
+            db_connected = health.get("db_connected", False)
+            if db_connected:
+                click.echo(f"  DB:   {click.style('✓ Connected', fg='green')}")
+            else:
+                click.echo(
+                    f"  DB:   {click.style('✗ Not connected — virtual keys disabled', fg='yellow')}"
+                )
+    except Exception:
+        pass
+
+
+def _show_credential_info() -> None:
+    """Show configured credential names from litellm_config.yaml."""
+    from pathlib import Path
+
+    import yaml
+
+    config_path = Path(__file__).parent.parent / "config" / "litellm_config.yaml"
+    if not config_path.exists():
+        return
+
+    with config_path.open() as f:
+        config = yaml.safe_load(f)
+
+    credentials = config.get("credential_list", [])
+    if credentials:
+        click.echo(f"  Credentials: {len(credentials)} configured")
+        for cred in credentials:
+            name = cred.get("credential_name", "unknown")
+            desc = cred.get("credential_info", {}).get("description", "")
+            # Check if the env var is set
+            env_key = cred.get("credential_values", {}).get("api_key", "")
+            env_name = (
+                env_key.replace("os.environ/", "")
+                if env_key.startswith("os.environ/")
+                else ""
+            )
+            env_set = bool(os.environ.get(env_name)) if env_name else False
+            status = (
+                click.style("✓", fg="green") if env_set else click.style("✗", fg="red")
+            )
+            click.echo(f"    {status} {name}: {desc}")
+
+
+def _show_gateway_info(url: str) -> None:
+    """Show multi-tenant gateway info (DB, teams, keys)."""
+    import httpx
+
+    master_key = os.environ.get("LITELLM_MASTER_KEY", "")
+    headers = {
+        "Authorization": f"Bearer {master_key}",
+        "Content-Type": "application/json",
+    }
+
+    # Database status
+    try:
+        resp = httpx.get(f"{url}/health", timeout=5.0, headers=headers)
+        if resp.status_code == 200:
+            health = resp.json()
+            db_connected = health.get("db_connected", False)
+            if db_connected:
+                click.echo(f"  Database: {click.style('✓ connected', fg='green')}")
+            else:
+                click.echo(
+                    f"  Database: {click.style('✗ not connected', fg='yellow')} "
+                    "(set LITELLM_DATABASE_URL)"
+                )
+                return  # No point checking teams/keys without DB
+    except Exception:
+        return
+
+    # Team count
+    try:
+        resp = httpx.get(f"{url}/team/list", timeout=5.0, headers=headers)
+        if resp.status_code == 200:
+            teams = resp.json()
+            if isinstance(teams, list):
+                click.echo(f"  Teams: {len(teams)}")
+                for team in teams[:5]:
+                    alias = team.get("team_alias", team.get("team_id", "?")[:12])
+                    budget = team.get("max_budget")
+                    spend = team.get("spend", 0)
+                    budget_str = f"${budget:.0f}" if budget else "unlimited"
+                    click.echo(
+                        f"    - {alias} (budget: {budget_str}, spent: ${spend:.2f})"
+                    )
+    except Exception:
+        pass
+
+    # Key count
+    try:
+        resp = httpx.post(
+            f"{url}/key/info",
+            timeout=5.0,
+            headers=headers,
+            json={},
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            keys = data if isinstance(data, list) else data.get("keys", [])
+            active = [k for k in keys if k.get("key_alias")]  # Filter system keys
+            click.echo(f"  Virtual Keys: {len(active)}")
     except Exception:
         pass
 
@@ -636,6 +781,12 @@ def _deploy_login_llm_direct() -> None:
     )
     click.echo(f"  URL: http://localhost:{port}")
 
+    # Secure database file permissions
+    _run_llm_remote(
+        f"chmod 600 {_SERVICES_DIR}/litellm.db 2>/dev/null || true",
+        timeout=5,
+    )
+
     _stop_stale_llm_instances()
 
 
@@ -697,6 +848,12 @@ def _deploy_login_llm() -> None:
             timeout=10,
         )
         raise click.ClickException(f"Failed to start LLM proxy.\n{log_tail}") from exc
+
+    # Secure database file permissions
+    _run_llm_remote(
+        f"chmod 600 {_SERVICES_DIR}/litellm.db 2>/dev/null || true",
+        timeout=5,
+    )
 
     _stop_stale_llm_instances()
 
@@ -1406,3 +1563,198 @@ def llm_spend(team_filter: str | None) -> None:
     click.echo("─" * len(header))
     click.echo(f"{'Total':<30} {'':>8} ${total_spend:>7.2f}")
     click.echo("")
+
+
+# ── Local LLM inference (Ollama on Titan) ────────────────────────────────
+
+
+@llm.group("local")
+def local() -> None:
+    """Manage local LLM inference server on the Titan cluster.
+
+    Runs Ollama on a Titan GPU node via SLURM for local model inference
+    (no internet required — models must be pre-staged).
+
+    \b
+      imas-codex llm local start     Start local LLM on Titan
+      imas-codex llm local stop      Stop local LLM
+      imas-codex llm local status    Check local LLM health
+      imas-codex llm local models    List local models
+    """
+
+
+@local.command("start")
+@click.option("--gpu", default=6, type=int, help="GPU index to use (default: 6)")
+@click.option(
+    "--script",
+    default=None,
+    type=click.Path(exists=True),
+    help="Custom SLURM script (default: slurm/ollama-llm.sh)",
+)
+def local_start(gpu: int, script: str | None) -> None:
+    """Start local LLM inference server on the Titan cluster.
+
+    Submits a SLURM job running Ollama on the Titan GPU node.
+    Models must be pre-staged (compute nodes have no internet).
+
+    \b
+    Pre-requisites (run on login node):
+        curl -fsSL https://ollama.com/install.sh | sh
+        ollama pull qwen3:14b-q4_K_M
+
+    \b
+    Examples:
+        imas-codex llm local start          # GPU 6 (default)
+        imas-codex llm local start --gpu 7  # Use GPU 7
+    """
+    from pathlib import Path
+
+    if script is None:
+        script_path = Path(__file__).parent.parent.parent / "slurm" / "ollama-llm.sh"
+        if not script_path.exists():
+            raise click.ClickException(f"SLURM script not found: {script_path}")
+        script = str(script_path)
+
+    # Check if already running
+    try:
+        result = _run_llm_remote(
+            "squeue -n codex-llm-local -h -o '%j %T' 2>/dev/null || true",
+            timeout=10,
+        )
+        if "RUNNING" in result:
+            click.echo("Local LLM server already running")
+            return
+        if "PENDING" in result:
+            click.echo("Local LLM server job pending in SLURM queue")
+            return
+    except Exception:
+        pass
+
+    # Submit SLURM job with GPU override
+    click.echo(f"Submitting Ollama SLURM job (GPU {gpu})...")
+    try:
+        result = _run_llm_remote(
+            f"CUDA_VISIBLE_DEVICES={gpu} sbatch {_PROJECT}/slurm/ollama-llm.sh",
+            timeout=15,
+            check=True,
+        )
+        click.echo(f"  {result.strip()}")
+        click.echo("  Monitor: imas-codex llm local status")
+    except subprocess.CalledProcessError as exc:
+        raise click.ClickException(f"Failed to submit SLURM job: {exc}") from exc
+
+
+@local.command("stop")
+def local_stop() -> None:
+    """Stop the local LLM inference server.
+
+    Cancels the SLURM job running Ollama on the Titan cluster.
+
+    \b
+    Examples:
+        imas-codex llm local stop
+    """
+    try:
+        result = _run_llm_remote(
+            "scancel -n codex-llm-local 2>/dev/null && echo cancelled || echo none",
+            timeout=15,
+        )
+        if "cancelled" in result:
+            click.echo("Local LLM server stopped")
+        else:
+            click.echo("Local LLM server not running")
+    except Exception as e:
+        click.echo(f"Failed to stop: {e}")
+
+
+@local.command("status")
+def local_status() -> None:
+    """Check local LLM inference server status.
+
+    Shows SLURM job state, Ollama health, and loaded models.
+
+    \b
+    Examples:
+        imas-codex llm local status
+    """
+    import json
+
+    # SLURM job status
+    try:
+        result = _run_llm_remote(
+            "squeue -n codex-llm-local -h -o '%j %T %N %M %l' 2>/dev/null || true",
+            timeout=10,
+        )
+        if result.strip():
+            parts = result.strip().split()
+            state = parts[1] if len(parts) > 1 else "unknown"
+            node = parts[2] if len(parts) > 2 else "unknown"
+            elapsed = parts[3] if len(parts) > 3 else "?"
+            click.echo(
+                f"SLURM Job: {click.style(state, fg='green' if state == 'RUNNING' else 'yellow')}"
+            )
+            click.echo(f"  Node: {node}")
+            click.echo(f"  Elapsed: {elapsed}")
+        else:
+            click.echo(f"SLURM Job: {click.style('not running', fg='red')}")
+            click.echo("  Start with: imas-codex llm local start")
+            return
+    except Exception:
+        click.echo("SLURM Job: unavailable (cannot reach login node)")
+        return
+
+    # Ollama health check
+    node = "98dci4-gpu-0002"
+    try:
+        result = _run_llm_remote(
+            f"curl -sf http://{node}:11434/api/tags 2>/dev/null || true",
+            timeout=10,
+        )
+        if result.strip():
+            data = json.loads(result)
+            models = data.get("models", [])
+            click.echo(f"\nOllama: {click.style('healthy', fg='green')}")
+            click.echo(f"  Models loaded: {len(models)}")
+            for m in models:
+                name = m.get("name", "unknown")
+                size_gb = m.get("size", 0) / (1024**3)
+                click.echo(f"    - {name} ({size_gb:.1f} GB)")
+        else:
+            click.echo(f"\nOllama: {click.style('not responding', fg='yellow')}")
+            click.echo("  The SLURM job may still be starting up")
+    except Exception:
+        click.echo(f"\nOllama: {click.style('unreachable', fg='red')}")
+
+
+@local.command("models")
+def local_models() -> None:
+    """List models available in local Ollama instance.
+
+    \b
+    Examples:
+        imas-codex llm local models
+    """
+    import json
+
+    node = "98dci4-gpu-0002"
+    try:
+        result = _run_llm_remote(
+            f"curl -sf http://{node}:11434/api/tags 2>/dev/null || echo '{{}}'",
+            timeout=10,
+        )
+        data = json.loads(result)
+        models = data.get("models", [])
+        if not models:
+            click.echo("No models loaded")
+            click.echo("Pull models on login node: ollama pull qwen3:14b-q4_K_M")
+            return
+        click.echo(f"{'Model':<35} {'Size':>8}  {'Modified'}")
+        click.echo("-" * 65)
+        for m in models:
+            name = m.get("name", "unknown")
+            size_gb = m.get("size", 0) / (1024**3)
+            modified = m.get("modified_at", "")[:10]
+            click.echo(f"{name:<35} {size_gb:>6.1f}G  {modified}")
+    except Exception as e:
+        click.echo(f"Cannot reach Ollama: {e}")
+        click.echo("Is the local LLM server running? imas-codex llm local status")
