@@ -884,7 +884,7 @@ Create operator and user documentation for the multi-tenant gateway.
    - How to generate and distribute virtual keys
    - Budget monitoring and spend tracking via CLI
    - Troubleshooting (key rotation, budget exhaustion, DB issues)
-2. **`docs/claude-code-setup.md`** — Claude Code user guide:
+2. **`docs/client-setup.md`** — LLM client setup guide (Claude Code, Copilot, OpenAI):
    - ITER remote setup (direct localhost)
    - WSL setup (SSH tunnel)
    - Verifying the connection works
@@ -984,6 +984,6 @@ ANTHROPIC_AUTH_TOKEN=sk-claude-...         # Virtual key for Claude Code
 | `pyproject.toml` | Verify model ID formats (dots for OpenRouter) | 5 |
 | `slurm/ollama-llm.sh` | SLURM job script for local model | 6 |
 | `docs/llm-gateway.md` | Operator guide for multi-tenant gateway | 7 |
-| `docs/claude-code-setup.md` | Claude Code configuration guide | 7 |
+| `docs/client-setup.md` | LLM client setup guide (Claude Code, Copilot, OpenAI) | 7 |
 | `CLAUDE.md` | Proxy configuration section | 7 |
 | `AGENTS.md` | LLM gateway section in Model & Tool Configuration | 7 |
