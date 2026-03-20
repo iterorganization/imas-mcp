@@ -54,7 +54,7 @@ jobs:
           TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
         run: |
           uv tool install twine
-          uv tool run twine upload dist/*
+          uv tool run twine upload --skip-existing dist/*
 
       - name: Generate changelog
         id: changelog
