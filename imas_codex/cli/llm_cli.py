@@ -19,12 +19,20 @@ def llm() -> None:
     Runs on the login node via systemd (needs outbound HTTPS for API providers).
 
     \b
-      imas-codex llm start      Start the proxy (systemd or foreground)
-      imas-codex llm stop       Stop the proxy
-      imas-codex llm restart    Restart (stop + start)
-      imas-codex llm status     Check proxy health
-      imas-codex llm logs       View service logs
-      imas-codex llm service    Manage systemd service
+      imas-codex llm start           Start the proxy (systemd or foreground)
+      imas-codex llm stop            Stop the proxy
+      imas-codex llm restart         Restart (stop + start)
+      imas-codex llm status          Check proxy health
+      imas-codex llm logs            View service logs
+      imas-codex llm service         Manage systemd service
+      imas-codex llm keys list       List virtual API keys
+      imas-codex llm keys create     Generate a new virtual key
+      imas-codex llm keys revoke     Revoke (delete) a key
+      imas-codex llm keys rotate     Rotate a key
+      imas-codex llm teams list      List teams
+      imas-codex llm teams create    Create a new team
+      imas-codex llm teams info      Show team details
+      imas-codex llm spend           View per-team spend
     """
     pass
 
@@ -118,9 +126,12 @@ def _start_llm_foreground(
         if not Path(config_path).exists():
             raise click.ClickException(f"Bundled config not found: {config_path}")
 
-    if not os.environ.get("OPENROUTER_API_KEY"):
+    if not os.environ.get("OPENROUTER_API_KEY_IMAS_CODEX") and not os.environ.get(
+        "OPENROUTER_API_KEY"
+    ):
         raise click.ClickException(
-            "OPENROUTER_API_KEY not set. Add to .env or export in shell."
+            "OPENROUTER_API_KEY_IMAS_CODEX (or OPENROUTER_API_KEY) not set. "
+            "Add to .env or export in shell."
         )
 
     master_key = os.environ.get("LITELLM_MASTER_KEY")
@@ -877,3 +888,521 @@ def llm_logs(follow: bool, lines: int) -> None:
     """
     log_file = f"{_SERVICES_DIR}/llm.log"
     _tail_log(log_file, follow, lines, ssh_host=_llm_ssh())
+
+
+# ── Admin API helpers ────────────────────────────────────────────────────
+
+
+def _llm_headers() -> dict[str, str]:
+    """Get authorization headers for LiteLLM admin API."""
+    master_key = os.environ.get("LITELLM_MASTER_KEY", "")
+    if not master_key:
+        raise click.ClickException(
+            "LITELLM_MASTER_KEY not set. Export it or add to .env."
+        )
+    return {"Authorization": f"Bearer {master_key}", "Content-Type": "application/json"}
+
+
+def _llm_api_url(path: str) -> str:
+    """Build LiteLLM API URL."""
+    from imas_codex.settings import get_llm_proxy_url
+
+    return f"{get_llm_proxy_url()}{path}"
+
+
+def _api_get(path: str, *, params: dict | None = None) -> dict:
+    """GET request to LiteLLM admin API with error handling."""
+    import httpx
+
+    try:
+        resp = httpx.get(
+            _llm_api_url(path),
+            headers=_llm_headers(),
+            params=params,
+            timeout=15.0,
+        )
+    except httpx.ConnectError as exc:
+        raise click.ClickException(
+            "Cannot connect to LiteLLM proxy. Is it running?\n"
+            "  Start with: imas-codex llm start"
+        ) from exc
+
+    if resp.status_code == 401:
+        raise click.ClickException("Authentication failed. Check LITELLM_MASTER_KEY.")
+    if resp.status_code != 200:
+        raise click.ClickException(
+            f"API error (HTTP {resp.status_code}): {resp.text[:500]}"
+        )
+    return resp.json()
+
+
+def _api_post(path: str, *, json: dict | None = None) -> dict:
+    """POST request to LiteLLM admin API with error handling."""
+    import httpx
+
+    try:
+        resp = httpx.post(
+            _llm_api_url(path),
+            headers=_llm_headers(),
+            json=json or {},
+            timeout=15.0,
+        )
+    except httpx.ConnectError as exc:
+        raise click.ClickException(
+            "Cannot connect to LiteLLM proxy. Is it running?\n"
+            "  Start with: imas-codex llm start"
+        ) from exc
+
+    if resp.status_code == 401:
+        raise click.ClickException("Authentication failed. Check LITELLM_MASTER_KEY.")
+    if resp.status_code not in (200, 201):
+        raise click.ClickException(
+            f"API error (HTTP {resp.status_code}): {resp.text[:500]}"
+        )
+    return resp.json()
+
+
+def _truncate(value: str, length: int = 12) -> str:
+    """Truncate a string and append ellipsis."""
+    if not value:
+        return ""
+    if len(value) <= length:
+        return value
+    return value[:length] + "..."
+
+
+# ── Keys subgroup ────────────────────────────────────────────────────────
+
+
+@llm.group("keys")
+def llm_keys() -> None:
+    """Manage virtual API keys for the LiteLLM proxy.
+
+    Virtual keys enable per-team spend tracking and access control.
+    Requires LITELLM_MASTER_KEY for admin operations.
+
+    \b
+      imas-codex llm keys list       List all virtual keys
+      imas-codex llm keys create     Generate a new key
+      imas-codex llm keys revoke     Delete a key
+      imas-codex llm keys rotate     Rotate (replace) a key
+    """
+    pass
+
+
+@llm_keys.command("list")
+def keys_list() -> None:
+    """List all virtual API keys.
+
+    Displays key alias, truncated token, team, budget, spend, and expiry.
+
+    \b
+    Examples:
+        imas-codex llm keys list
+    """
+    data = _api_get("/key/info")
+
+    keys = data.get("keys", data if isinstance(data, list) else [])
+    if not keys:
+        click.echo("No virtual keys found.")
+        return
+
+    # Table header
+    header = f"{'Alias':<25} {'Key':<16} {'Team':<20} {'Budget':>8} {'Spend':>8} {'Expires':<12}"
+    click.echo(header)
+    click.echo("─" * len(header))
+
+    for k in keys:
+        alias = k.get("key_alias") or k.get("key_name") or "—"
+        token = _truncate(k.get("token", k.get("key", "")), 12)
+        team = k.get("team_alias") or k.get("team_id") or "—"
+        if isinstance(team, str) and len(team) > 20:
+            team = _truncate(team, 17)
+        budget = k.get("max_budget")
+        budget_str = f"${budget:.0f}" if budget is not None else "—"
+        spend = k.get("spend", 0) or 0
+        spend_str = f"${spend:.2f}"
+        expires = k.get("expires") or "—"
+        if isinstance(expires, str) and len(expires) > 12:
+            expires = expires[:10]
+
+        click.echo(
+            f"{alias:<25} {token:<16} {team:<20} {budget_str:>8} {spend_str:>8} {expires:<12}"
+        )
+
+    click.echo(f"\n{len(keys)} key(s) total")
+
+
+@llm_keys.command("create")
+@click.option(
+    "--team", "team_id", required=True, help="Team ID or alias to assign the key to"
+)
+@click.option("--alias", required=True, help="Human-readable name for the key")
+@click.option("--budget", type=float, default=None, help="Max budget in USD (optional)")
+@click.option(
+    "--duration", default=None, help="Key validity duration (e.g. '30d', '1y')"
+)
+def keys_create(
+    team_id: str, alias: str, budget: float | None, duration: str | None
+) -> None:
+    """Generate a new virtual API key.
+
+    The key is displayed only once — save it immediately.
+
+    \b
+    Examples:
+        imas-codex llm keys create --team imas-codex-agents --alias worker-1
+        imas-codex llm keys create --team imas-codex-dev --alias dev-key --budget 50 --duration 30d
+    """
+    payload: dict = {
+        "team_id": team_id,
+        "key_alias": alias,
+    }
+    if budget is not None:
+        payload["max_budget"] = budget
+    if duration is not None:
+        payload["duration"] = duration
+
+    data = _api_post("/key/generate", json=payload)
+
+    key = data.get("key", data.get("token", ""))
+    click.echo("")
+    click.echo(
+        click.style(
+            "⚠  Save this key now — it is shown only once!", fg="yellow", bold=True
+        )
+    )
+    click.echo("")
+    click.echo(f"  Key:   {click.style(key, fg='green', bold=True)}")
+    click.echo(f"  Alias: {alias}")
+    click.echo(f"  Team:  {team_id}")
+    if budget is not None:
+        click.echo(f"  Budget: ${budget:.2f}")
+    if duration is not None:
+        click.echo(f"  Duration: {duration}")
+    expires = data.get("expires")
+    if expires:
+        click.echo(f"  Expires: {expires}")
+    click.echo("")
+
+
+@llm_keys.command("revoke")
+@click.argument("key")
+def keys_revoke(key: str) -> None:
+    """Revoke (delete) a virtual API key.
+
+    Permanently deletes the key. This cannot be undone.
+
+    \b
+    Examples:
+        imas-codex llm keys revoke sk-...
+    """
+    click.echo(f"Key to revoke: {_truncate(key, 20)}")
+    if not click.confirm("Are you sure you want to revoke this key?"):
+        click.echo("Cancelled.")
+        return
+
+    _api_post("/key/delete", json={"keys": [key]})
+    click.echo(click.style("✓ Key revoked", fg="green"))
+
+
+@llm_keys.command("rotate")
+@click.option("--key", "old_key", required=True, help="The key to rotate")
+def keys_rotate(old_key: str) -> None:
+    """Rotate a virtual API key (delete old, create new).
+
+    Deletes the existing key and generates a replacement with the same
+    team and alias. Update all clients using the old key.
+
+    \b
+    Examples:
+        imas-codex llm keys rotate --key sk-...
+    """
+    # Fetch key info to preserve team/alias
+    info = _api_get("/key/info", params={"key": old_key})
+
+    # The response may be a dict with "info" or a list
+    key_info = info.get("info", info) if isinstance(info, dict) else info
+    if isinstance(key_info, list) and key_info:
+        key_info = key_info[0]
+
+    team_id = key_info.get("team_id", "")
+    alias = key_info.get("key_alias") or key_info.get("key_name") or "rotated-key"
+    budget = key_info.get("max_budget")
+
+    click.echo(f"Rotating key: {_truncate(old_key, 20)}")
+    click.echo(f"  Team:  {team_id or '—'}")
+    click.echo(f"  Alias: {alias}")
+
+    if not click.confirm("Proceed with rotation?"):
+        click.echo("Cancelled.")
+        return
+
+    # Delete old key
+    _api_post("/key/delete", json={"keys": [old_key]})
+
+    # Create new key with same metadata
+    payload: dict = {"key_alias": alias}
+    if team_id:
+        payload["team_id"] = team_id
+    if budget is not None:
+        payload["max_budget"] = budget
+
+    data = _api_post("/key/generate", json=payload)
+
+    new_key = data.get("key", data.get("token", ""))
+    click.echo("")
+    click.echo(click.style("✓ Key rotated", fg="green"))
+    click.echo("")
+    click.echo(
+        click.style(
+            "⚠  Save the new key now — it is shown only once!", fg="yellow", bold=True
+        )
+    )
+    click.echo(f"  New key: {click.style(new_key, fg='green', bold=True)}")
+    click.echo("")
+    click.echo(click.style("⚠  Update all clients that used the old key!", fg="yellow"))
+    click.echo("")
+
+
+# ── Teams subgroup ───────────────────────────────────────────────────────
+
+
+@llm.group("teams")
+def llm_teams() -> None:
+    """Manage teams for budget and access control.
+
+    Teams group virtual keys for collective spend tracking.
+    Use the 'imas-codex' prefix for team aliases to avoid collisions.
+
+    \b
+      imas-codex llm teams list      List all teams
+      imas-codex llm teams create    Create a new team
+      imas-codex llm teams info      Show team details
+    """
+    pass
+
+
+@llm_teams.command("list")
+def teams_list() -> None:
+    """List all teams.
+
+    Displays team alias, truncated ID, budget, duration, and spend.
+
+    \b
+    Examples:
+        imas-codex llm teams list
+    """
+    data = _api_get("/team/list")
+
+    teams = data if isinstance(data, list) else data.get("teams", [])
+    if not teams:
+        click.echo("No teams found.")
+        return
+
+    header = (
+        f"{'Alias':<30} {'Team ID':<16} {'Budget':>8} {'Duration':<10} {'Spend':>8}"
+    )
+    click.echo(header)
+    click.echo("─" * len(header))
+
+    for t in teams:
+        alias = t.get("team_alias") or "—"
+        team_id = _truncate(t.get("team_id", ""), 12)
+        budget = t.get("max_budget")
+        budget_str = f"${budget:.0f}" if budget is not None else "—"
+        duration = t.get("budget_duration") or "—"
+        spend = t.get("spend", 0) or 0
+        spend_str = f"${spend:.2f}"
+
+        click.echo(
+            f"{alias:<30} {team_id:<16} {budget_str:>8} {duration:<10} {spend_str:>8}"
+        )
+
+    click.echo(f"\n{len(teams)} team(s) total")
+
+
+@llm_teams.command("create")
+@click.option("--alias", required=True, help="Team alias (use 'imas-codex-' prefix)")
+@click.option(
+    "--budget", type=float, default=100.0, show_default=True, help="Max budget in USD"
+)
+@click.option(
+    "--duration",
+    default="30d",
+    show_default=True,
+    help="Budget reset period (e.g. '30d')",
+)
+def teams_create(alias: str, budget: float, duration: str) -> None:
+    """Create a new team.
+
+    Teams group virtual keys and track collective spend.
+    Use the 'imas-codex-' prefix for aliases to avoid collisions.
+
+    \b
+    Examples:
+        imas-codex llm teams create --alias imas-codex-agents
+        imas-codex llm teams create --alias imas-codex-dev --budget 50 --duration 7d
+    """
+    payload = {
+        "team_alias": alias,
+        "max_budget": budget,
+        "budget_duration": duration,
+    }
+
+    data = _api_post("/team/new", json=payload)
+
+    team_id = data.get("team_id", "")
+    click.echo("")
+    click.echo(click.style("✓ Team created", fg="green"))
+    click.echo(f"  Alias:    {alias}")
+    click.echo(f"  Team ID:  {team_id}")
+    click.echo(f"  Budget:   ${budget:.2f}")
+    click.echo(f"  Duration: {duration}")
+    click.echo("")
+    click.echo("Create keys for this team:")
+    click.echo(f"  imas-codex llm keys create --team {team_id} --alias <key-name>")
+    click.echo("")
+
+
+@llm_teams.command("info")
+@click.argument("team")
+def teams_info(team: str) -> None:
+    """Show detailed info for a team.
+
+    TEAM can be a team_id or team_alias. Shows team metadata,
+    member keys, and spend breakdown.
+
+    \b
+    Examples:
+        imas-codex llm teams info imas-codex-agents
+        imas-codex llm teams info <team-id>
+    """
+    # Try fetching by team_id first, fall back to alias
+    data = _api_post("/team/info", json={"team_id": team})
+
+    info = data.get("team_info", data)
+
+    click.echo("")
+    click.echo(f"Team: {info.get('team_alias', '—')}")
+    click.echo(f"  ID:       {info.get('team_id', '—')}")
+    budget = info.get("max_budget")
+    click.echo(f"  Budget:   {'$' + f'{budget:.2f}' if budget is not None else '—'}")
+    click.echo(f"  Duration: {info.get('budget_duration', '—')}")
+    spend = info.get("spend", 0) or 0
+    click.echo(f"  Spend:    ${spend:.2f}")
+    if budget is not None and budget > 0:
+        remaining = budget - spend
+        click.echo(f"  Remaining: ${remaining:.2f}")
+        pct = (spend / budget) * 100
+        click.echo(f"  Used:     {pct:.1f}%")
+
+    # Show member keys if available
+    members = data.get("keys", [])
+    if members:
+        click.echo(f"\n  Keys ({len(members)}):")
+        for k in members:
+            k_alias = k.get("key_alias") or k.get("key_name") or "—"
+            k_token = _truncate(k.get("token", k.get("key", "")), 12)
+            k_spend = k.get("spend", 0) or 0
+            click.echo(f"    {k_alias:<20} {k_token:<16} ${k_spend:.2f}")
+    click.echo("")
+
+
+# ── Spend command ────────────────────────────────────────────────────────
+
+
+@llm.command("spend")
+@click.option(
+    "--team",
+    "team_filter",
+    default=None,
+    help="Filter to a specific team (alias or ID)",
+)
+def llm_spend(team_filter: str | None) -> None:
+    """View per-team spend summary.
+
+    Shows budget usage across all teams, or detailed key-level spend
+    for a specific team when --team is provided.
+
+    \b
+    Examples:
+        imas-codex llm spend
+        imas-codex llm spend --team imas-codex-agents
+    """
+    if team_filter:
+        # Show detailed spend for a specific team
+        data = _api_post("/team/info", json={"team_id": team_filter})
+        info = data.get("team_info", data)
+
+        click.echo("")
+        click.echo(f"Spend report: {info.get('team_alias', team_filter)}")
+        click.echo("")
+
+        budget = info.get("max_budget")
+        spend = info.get("spend", 0) or 0
+        duration = info.get("budget_duration", "—")
+
+        click.echo(
+            f"  Budget:    {'$' + f'{budget:.2f}' if budget is not None else '—'}"
+        )
+        click.echo(f"  Spent:     ${spend:.2f}")
+        if budget is not None and budget > 0:
+            remaining = budget - spend
+            pct = (spend / budget) * 100
+            click.echo(f"  Remaining: ${remaining:.2f}")
+            click.echo(f"  Used:      {pct:.1f}%")
+        click.echo(f"  Period:    {duration}")
+
+        # Key-level breakdown
+        members = data.get("keys", [])
+        if members:
+            click.echo(f"\n  Key-level spend ({len(members)} keys):")
+            header = f"    {'Alias':<25} {'Key':<16} {'Spend':>8}"
+            click.echo(header)
+            click.echo("    " + "─" * (len(header) - 4))
+            for k in members:
+                k_alias = k.get("key_alias") or k.get("key_name") or "—"
+                k_token = _truncate(k.get("token", k.get("key", "")), 12)
+                k_spend = k.get("spend", 0) or 0
+                click.echo(f"    {k_alias:<25} {k_token:<16} ${k_spend:>7.2f}")
+        click.echo("")
+        return
+
+    # Overview: all teams
+    data = _api_get("/team/list")
+    teams = data if isinstance(data, list) else data.get("teams", [])
+
+    if not teams:
+        click.echo("No teams found.")
+        return
+
+    click.echo("")
+    click.echo("Per-team spend summary")
+    click.echo("")
+    header = f"{'Team':<30} {'Budget':>8} {'Spent':>8} {'Remaining':>10} {'Period':<10}"
+    click.echo(header)
+    click.echo("─" * len(header))
+
+    total_spend = 0.0
+    for t in teams:
+        alias = t.get("team_alias") or "—"
+        budget = t.get("max_budget")
+        budget_str = f"${budget:.0f}" if budget is not None else "—"
+        spend = t.get("spend", 0) or 0
+        total_spend += spend
+        spend_str = f"${spend:.2f}"
+        if budget is not None and budget > 0:
+            remaining = budget - spend
+            remaining_str = f"${remaining:.2f}"
+        else:
+            remaining_str = "—"
+        duration = t.get("budget_duration") or "—"
+
+        click.echo(
+            f"{alias:<30} {budget_str:>8} {spend_str:>8} {remaining_str:>10} {duration:<10}"
+        )
+
+    click.echo("─" * len(header))
+    click.echo(f"{'Total':<30} {'':>8} ${total_spend:>7.2f}")
+    click.echo("")
