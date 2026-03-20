@@ -93,10 +93,12 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
 
 # Build generated Python models (graph models, physics domains)
 # These are normally built by hatch build hook, but HATCH_BUILD_NO_HOOKS=true.
-# linkml/linkml-runtime are build-requires (not runtime deps), so use --with.
+# linkml/linkml-runtime are build-system requires — install temporarily for gen-pydantic.
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
+    echo "Installing build-requires for model generation..." && \
+    uv pip install linkml linkml-runtime && \
     echo "Building generated models..." && \
-    uv run --no-dev --with linkml --with linkml-runtime build-models --force && \
+    uv run --no-dev build-models --force && \
     echo "✓ Generated models ready"
 
 # ── Graph-native data: pull IMAS-only graph from GHCR ──────────────────
