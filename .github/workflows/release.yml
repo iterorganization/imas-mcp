@@ -37,8 +37,9 @@ jobs:
 
       - name: Verify hatch version matches tag
         run: |
-          EXPECTED=${GITHUB_REF_NAME#v}
-            ACTUAL=$(uv run python -c "import importlib.metadata as m; print(m.version('imas-codex'))")
+          RAW=${GITHUB_REF_NAME#v}
+          EXPECTED=$(uv run python -c "from packaging.version import Version; print(Version('$RAW'))")
+          ACTUAL=$(uv run python -c "import importlib.metadata as m; print(m.version('imas-codex'))")
           echo "Expected: $EXPECTED  Actual: $ACTUAL"
           if [ "$EXPECTED" != "$ACTUAL" ]; then
             echo "Version mismatch; aborting release."; exit 1;

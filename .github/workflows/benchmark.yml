@@ -55,6 +55,14 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Ensure main branch exists
+        run: |
+          # On tag checkouts, 'main' doesn't exist as a local branch
+          # ASV needs it for publish
+          if ! git rev-parse --verify main >/dev/null 2>&1; then
+            git branch main origin/main
+          fi
+
       - name: Checkout gh-pages for benchmark history
         run: |
           if git ls-remote --exit-code origin gh-pages >/dev/null 2>&1; then

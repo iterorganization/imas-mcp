@@ -56,6 +56,11 @@ jobs:
         run: |
           echo "lowercase=$(echo '${{ env.IMAGE_NAME }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
 
+      - name: Set lowercase registry
+        id: registry
+        run: |
+          echo "ghcr=${{ env.GHCR_REGISTRY }}/$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
         with:
@@ -79,6 +84,32 @@ jobs:
           username: ${{ secrets.ACR_USERNAME }}
           password: ${{ secrets.ACR_PASSWORD }}
           logout: false
+
+      - name: Install oras
+        run: |
+          ORAS_VERSION="1.2.0"
+          curl -sLO "https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/oras_${ORAS_VERSION}_linux_amd64.tar.gz"
+          tar -xzf "oras_${ORAS_VERSION}_linux_amd64.tar.gz" oras
+          sudo mv oras /usr/local/bin/
+
+      - name: Resolve graph tag
+        id: graph-tag
+        run: |
+          REGISTRY="${{ steps.registry.outputs.ghcr }}"
+          PACKAGE="imas-codex-graph-imas"
+          # Try 'latest' first, fall back to most recent tag
+          TAGS=$(oras repo tags "${REGISTRY}/${PACKAGE}" 2>&1) || true
+          CLEAN_TAGS=$(echo "$TAGS" | grep -E '^[0-9v]' || true)
+          if echo "$CLEAN_TAGS" | grep -qx "latest"; then
+            echo "tag=latest" >> $GITHUB_OUTPUT
+          elif [ -n "$CLEAN_TAGS" ]; then
+            BEST=$(echo "$CLEAN_TAGS" | sort -V | tail -1)
+            echo "No 'latest' tag found. Using most recent: $BEST"
+            echo "tag=${BEST}" >> $GITHUB_OUTPUT
+          else
+            echo "::warning::No graph tags found — using 'latest' as default"
+            echo "tag=latest" >> $GITHUB_OUTPUT
+          fi
 
       - name: Extract metadata for GHCR (releases only)
         id: meta-ghcr
@@ -121,8 +152,8 @@ jobs:
             IDS_FILTER=
             TRANSPORT=${{ matrix.transport }}
             IMAS_DD_VERSION=${{ env.IMAS_DD_VERSION }}
-            GHCR_REGISTRY=${{ env.GHCR_REGISTRY }}/${{ github.repository_owner }}
-            GRAPH_TAG=${{ github.ref_name }}
+            GHCR_REGISTRY=${{ steps.registry.outputs.ghcr }}
+            GRAPH_TAG=${{ steps.graph-tag.outputs.tag }}
             GIT_SHA=${{ github.sha }}
             GIT_TAG=${{ github.ref_name }}
             GIT_REF=${{ github.ref }}
@@ -149,8 +180,8 @@ jobs:
             IDS_FILTER=
             TRANSPORT=${{ matrix.transport }}
             IMAS_DD_VERSION=${{ env.IMAS_DD_VERSION }}
-            GHCR_REGISTRY=${{ env.GHCR_REGISTRY }}/${{ github.repository_owner }}
-            GRAPH_TAG=${{ github.ref_name }}
+            GHCR_REGISTRY=${{ steps.registry.outputs.ghcr }}
+            GRAPH_TAG=${{ steps.graph-tag.outputs.tag }}
             GIT_SHA=${{ github.sha }}
             GIT_TAG=${{ github.ref_name }}
             GIT_REF=${{ github.ref }}
@@ -163,7 +194,7 @@ jobs:
         if: github.event_name != 'pull_request' && startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-rc')
         run: |
           set -euo pipefail
-          EXPECTED=${GITHUB_REF_NAME#v}
+          EXPECTED=$(python3 -c "from packaging.version import Version; print(Version('${GITHUB_REF_NAME#v}'))")
           # Pick one tag to test (first GHCR tag)
           IMAGE=$(echo "${{ steps.meta-ghcr.outputs.tags }}" | head -n1)
           echo "Testing image: $IMAGE expecting version: $EXPECTED"
@@ -185,7 +216,7 @@ jobs:
         if: github.event_name != 'pull_request' && contains(github.ref, '-rc')
         run: |
           set -euo pipefail
-          EXPECTED=${GITHUB_REF_NAME#v}
+          EXPECTED=$(python3 -c "from packaging.version import Version; print(Version('${GITHUB_REF_NAME#v}'))")
           # Pick one tag to test (first ACR tag)
           IMAGE=$(echo "${{ steps.meta-acr.outputs.tags }}" | head -n1)
           echo "Testing image: $IMAGE expecting version: $EXPECTED"
@@ -210,4 +241,3 @@ jobs:
           subject-name: ${{ env.GHCR_REGISTRY }}/${{ env.IMAGE_NAME }}
           subject-digest: ${{ steps.build-release.outputs.digest }}
           push-to-registry: true
-
