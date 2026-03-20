@@ -146,7 +146,7 @@ class TestHealthEndpointResponse:
         assert "version" in data
         assert "uptime" in data
         assert "uptime_seconds" in data
-        assert data["mode"] == "read-write"
+        assert "mode" not in data
 
     @patch("imas_codex.llm.server.load_prompts", return_value={})
     def test_response_with_graph_data(self, _mock_prompts, mock_graph_client):
@@ -170,13 +170,13 @@ class TestHealthEndpointResponse:
         assert data["graph"]["name"] == "codex"
         assert data["graph"]["node_count"] == 50000
         assert data["facilities"] == ["tcv", "jet"]
-        assert data["imas_dd"]["current"] == "4.0.0"
-        assert data["imas_dd"]["min"] == "3.39.0"
-        assert data["imas_dd"]["max"] == "4.0.0"
+        assert data["imas_dd"]["version"] == "4.0.0"
+        assert data["imas_dd"]["min_version"] == "3.39.0"
+        assert "max" not in data["imas_dd"]
         assert data["imas_dd"]["version_count"] == 3
         assert data["imas_dd"]["ids_count"] == 42
         assert data["imas_dd"]["path_count"] == 12345
-        assert data["mode"] == "read-only"
+        assert "mode" not in data
 
     @patch("imas_codex.llm.server.load_prompts", return_value={})
     def test_response_graph_unavailable(self, _mock_prompts):

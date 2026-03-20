@@ -272,10 +272,12 @@ jobs:
           tags: imas-codex:smoke-test
           build-args: |
             GRAPH_TAG=${{ needs.graph-quality.outputs.graph-tag-imas }}
+            GRAPH_PACKAGE=imas-codex-graph-imas
+            GHCR_REGISTRY=${{ format('ghcr.io/{0}', github.repository_owner) }}
             TRANSPORT=streamable-http
           secrets: |
             GHCR_TOKEN=${{ secrets.GHCR_TOKEN }}
-          cache-from: type=gha,scope=smoke-test
+          no-cache: true
 
       - name: Start container
         run: |
@@ -348,14 +350,17 @@ jobs:
             echo "⚠️ No graph loaded (GRAPH_TAG=none), skipping graph verification"
             exit 0
           fi
-          docker exec smoke-test bash -c '
+          NODE_COUNT=$(docker exec smoke-test bash -c '
             /opt/neo4j/bin/cypher-shell -u neo4j -p neo4j \
-              "MATCH (n) RETURN count(n) AS node_count" 2>/dev/null
-          ' && echo "✅ Neo4j graph accessible" || {
-            echo "❌ Neo4j graph verification failed"
+              "MATCH (n) RETURN count(n) AS node_count" 2>/dev/null | tail -1
+          ')
+          echo "Node count: ${NODE_COUNT}"
+          if [ -z "$NODE_COUNT" ] || [ "$NODE_COUNT" = "0" ]; then
+            echo "❌ Graph is empty (node_count=${NODE_COUNT}) despite GRAPH_TAG=${GRAPH_TAG}"
             docker logs smoke-test
             exit 1
-          }
+          fi
+          echo "✅ Neo4j graph loaded with ${NODE_COUNT} nodes"
 
       - name: Cleanup
         if: always()

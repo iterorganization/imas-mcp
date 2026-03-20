@@ -154,6 +154,10 @@ RUN --mount=type=secret,id=GHCR_TOKEN \
 # Uses neo4j-admin from the Neo4j image to load the dump
 FROM neo4j:2026.01.4-community AS graph-loader
 
+# Propagate GRAPH_TAG to bust cache when graph version changes
+ARG GRAPH_TAG="latest"
+RUN echo "Graph tag: ${GRAPH_TAG}" > /dev/null
+
 # Copy graph archive from builder
 COPY --from=builder /tmp/graph-pull/ /tmp/graph-pull/
 

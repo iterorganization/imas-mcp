@@ -2975,9 +2975,8 @@ class AgentsServer:
                         versions = [r["version"] for r in dd_rows]
                         current = [r["version"] for r in dd_rows if r.get("is_current")]
                         result["imas_dd"] = {
-                            "current": current[0] if current else None,
-                            "min": versions[0],
-                            "max": versions[-1],
+                            "version": current[0] if current else versions[-1],
+                            "min_version": versions[0],
                             "version_count": len(versions),
                         }
 
@@ -3000,12 +2999,10 @@ class AgentsServer:
         @self.mcp.custom_route("/health", methods=["GET"])
         async def health_check(request: Request) -> JSONResponse:
             uptime_seconds = time.monotonic() - server._started_at
-            mode = "read-only" if server.read_only else "read-write"
 
             response: dict = {
                 "status": "ok",
                 "version": _get_version(),
-                "mode": mode,
                 "uptime": _format_uptime(uptime_seconds),
                 "uptime_seconds": round(uptime_seconds, 1),
             }
