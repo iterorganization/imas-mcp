@@ -412,21 +412,6 @@ def _show_llm_auth_status(url: str) -> None:
     except Exception:
         pass
 
-    # Check database status
-    try:
-        resp = httpx.get(f"{url}/health", timeout=5.0, headers=_llm_headers())
-        if resp.status_code == 200:
-            health = resp.json()
-            db_connected = health.get("db_connected", False)
-            if db_connected:
-                click.echo(f"  DB:   {click.style('✓ Connected', fg='green')}")
-            else:
-                click.echo(
-                    f"  DB:   {click.style('✗ Not connected — virtual keys disabled', fg='yellow')}"
-                )
-    except Exception:
-        pass
-
 
 def _show_credential_info() -> None:
     """Show configured credential names from litellm_config.yaml."""
