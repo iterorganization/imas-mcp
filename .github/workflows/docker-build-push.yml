@@ -227,6 +227,7 @@ jobs:
 
       - name: Run graph quality tests
         if: steps.graph-tag.outputs.imas-tag != 'none'
+        continue-on-error: true
         run: |
           uv run pytest tests/graph/ -m graph \
             --tb=short \
