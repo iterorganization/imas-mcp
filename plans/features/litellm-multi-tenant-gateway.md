@@ -39,7 +39,7 @@ authentication and one OpenRouter key for billing.
 │  │  LiteLLM Proxy (:18400) + SQLite DB                                │ │
 │  │                                                                     │ │
 │  │  Virtual Keys ────────────────────────── Credentials                │ │
-│  │  ├─ vk-codex-xxx   → team:codex       → openrouter-codex key       │ │
+│  │  ├─ vk-imas-codex-xxx   → team:imas-codex       → openrouter-imas-codex key       │ │
 │  │  ├─ vk-claude-xxx  → team:claude-code → openrouter-claude-code key │ │
 │  │  └─ vk-copilot-xxx → team:copilot-cli → openrouter-copilot-cli key │ │
 │  │                                                                     │ │
@@ -108,11 +108,11 @@ curl http://localhost:18400/v1/chat/completions \
 
 # ── imas-codex discovery worker (team: codex) ───────────
 curl http://localhost:18400/v1/chat/completions \
-  -H "Authorization: Bearer sk-codex-yyyyyyyy" \
+  -H "Authorization: Bearer sk-imas-codex-yyyyyyyy" \
   -H "Content-Type: application/json" \
   -d '{"model": "opus", "messages": [{"role": "user", "content": "classify this signal"}]}'
-# → virtual key sk-codex-yyyyyyyy belongs to team codex
-# → opus resolves to opus-codex → openrouter-codex credential
+# → virtual key sk-imas-codex-yyyyyyyy belongs to team codex
+# → opus resolves to opus-imas-codex → openrouter-imas-codex credential
 # → billed to OPENROUTER_API_KEY_CODEX on OpenRouter
 ```
 
@@ -127,9 +127,9 @@ single model entry. Three approaches were evaluated:
 
 | Approach | Mechanism | Clients call | Verdict |
 |---|---|---|---|
-| **A. Team `model_group_alias`** | Duplicate models as `opus-codex` / `opus-claude-code`; teams remap via router settings | `model: opus` | **Selected** — transparent, scalable |
+| **A. Team `model_group_alias`** | Duplicate models as `opus-imas-codex` / `opus-claude-code`; teams remap via router settings | `model: opus` | **Selected** — transparent, scalable |
 | B. Access Groups | Two `opus` entries in different access groups | `model: opus` | Rejected — LiteLLM may not filter deployments by access group |
-| C. Explicit model names | Clients call `opus-codex` or `opus-claude-code` directly | `model: opus-codex` | Rejected — bad UX, leaks internals |
+| C. Explicit model names | Clients call `opus-imas-codex` or `opus-claude-code` directly | `model: opus-imas-codex` | Rejected — bad UX, leaks internals |
 
 ---
 
@@ -168,7 +168,7 @@ adds the `openrouter/` prefix at call time.
 #
 # CREDENTIAL ROUTING:
 # Each model is defined once per team/credential. Model names follow
-# the pattern: {alias}-{team}  (e.g., opus-codex, opus-claude-code).
+# the pattern: {alias}-{team}  (e.g., opus-imas-codex, opus-claude-code).
 # Teams use model_group_alias in router settings to map clean client
 # names (opus, sonnet) to their team-specific model entries.
 #
@@ -195,7 +195,7 @@ x-models:
 #
 # The credential name matches the team name for clarity.
 credential_list:
-  - credential_name: openrouter-codex
+  - credential_name: openrouter-imas-codex
     credential_values:
       api_key: os.environ/OPENROUTER_API_KEY_CODEX
     credential_info:
@@ -219,51 +219,51 @@ credential_list:
 
 model_list:
   # ── Team: codex (internal workers) ─────────────────────
-  - model_name: opus-codex
+  - model_name: opus-imas-codex
     litellm_params:
       model: *opus
-      litellm_credential_name: openrouter-codex
+      litellm_credential_name: openrouter-imas-codex
 
-  - model_name: sonnet-codex
+  - model_name: sonnet-imas-codex
     litellm_params:
       model: *sonnet
-      litellm_credential_name: openrouter-codex
+      litellm_credential_name: openrouter-imas-codex
 
-  - model_name: haiku-codex
+  - model_name: haiku-imas-codex
     litellm_params:
       model: *haiku
-      litellm_credential_name: openrouter-codex
+      litellm_credential_name: openrouter-imas-codex
 
-  - model_name: gemini-flash-codex
+  - model_name: gemini-flash-imas-codex
     litellm_params:
       model: *gemini-flash
-      litellm_credential_name: openrouter-codex
+      litellm_credential_name: openrouter-imas-codex
 
-  - model_name: gemini-pro-codex
+  - model_name: gemini-pro-imas-codex
     litellm_params:
       model: *gemini-pro
-      litellm_credential_name: openrouter-codex
+      litellm_credential_name: openrouter-imas-codex
 
-  - model_name: gpt-codex
+  - model_name: gpt-imas-codex
     litellm_params:
       model: *gpt
-      litellm_credential_name: openrouter-codex
+      litellm_credential_name: openrouter-imas-codex
 
-  - model_name: gpt-mini-codex
+  - model_name: gpt-mini-imas-codex
     litellm_params:
       model: *gpt-mini
-      litellm_credential_name: openrouter-codex
+      litellm_credential_name: openrouter-imas-codex
 
   # Codex-only aliases (internal use)
-  - model_name: reasoning-codex
+  - model_name: reasoning-imas-codex
     litellm_params:
       model: *sonnet
-      litellm_credential_name: openrouter-codex
+      litellm_credential_name: openrouter-imas-codex
 
-  - model_name: scoring-codex
+  - model_name: scoring-imas-codex
     litellm_params:
       model: *gemini-flash
-      litellm_credential_name: openrouter-codex
+      litellm_credential_name: openrouter-imas-codex
 
   # ── Team: claude-code ──────────────────────────────────
   - model_name: opus-claude-code
@@ -363,15 +363,15 @@ team-specific internal names. The suffix always matches the team name:
 
 | Client calls | Team codex | Team claude-code | Team copilot-cli |
 |---|---|---|---|
-| `opus` | `opus-codex` | `opus-claude-code` | `opus-copilot-cli` |
-| `sonnet` | `sonnet-codex` | `sonnet-claude-code` | `sonnet-copilot-cli` |
-| `haiku` | `haiku-codex` | `haiku-claude-code` | `haiku-copilot-cli` |
-| `gemini-flash` | `gemini-flash-codex` | `gemini-flash-claude-code` | `gemini-flash-copilot-cli` |
-| `gemini-pro` | `gemini-pro-codex` | `gemini-pro-claude-code` | `gemini-pro-copilot-cli` |
-| `gpt` | `gpt-codex` | `gpt-claude-code` | `gpt-copilot-cli` |
-| `gpt-mini` | `gpt-mini-codex` | `gpt-mini-claude-code` | `gpt-mini-copilot-cli` |
-| `reasoning` | `reasoning-codex` | *(not available)* | *(not available)* |
-| `scoring` | `scoring-codex` | *(not available)* | *(not available)* |
+| `opus` | `opus-imas-codex` | `opus-claude-code` | `opus-copilot-cli` |
+| `sonnet` | `sonnet-imas-codex` | `sonnet-claude-code` | `sonnet-copilot-cli` |
+| `haiku` | `haiku-imas-codex` | `haiku-claude-code` | `haiku-copilot-cli` |
+| `gemini-flash` | `gemini-flash-imas-codex` | `gemini-flash-claude-code` | `gemini-flash-copilot-cli` |
+| `gemini-pro` | `gemini-pro-imas-codex` | `gemini-pro-claude-code` | `gemini-pro-copilot-cli` |
+| `gpt` | `gpt-imas-codex` | `gpt-claude-code` | `gpt-copilot-cli` |
+| `gpt-mini` | `gpt-mini-imas-codex` | `gpt-mini-claude-code` | `gpt-mini-copilot-cli` |
+| `reasoning` | `reasoning-imas-codex` | *(not available)* | *(not available)* |
+| `scoring` | `scoring-imas-codex` | *(not available)* | *(not available)* |
 
 ### Example Teams & Keys
 
@@ -380,7 +380,7 @@ team-specific internal names. The suffix always matches the team name:
 # The model_group_alias in router_settings maps clean model names
 # to team-specific internal names: {alias}-{team}.
 
-# Codex team (internal — uses openrouter-codex credential)
+# Codex team (internal — uses openrouter-imas-codex credential)
 curl -X POST http://localhost:18400/team/new \
   -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
   -H "Content-Type: application/json" \
@@ -388,21 +388,21 @@ curl -X POST http://localhost:18400/team/new \
     "team_alias": "codex",
     "max_budget": 500,
     "budget_duration": "30d",
-    "models": ["opus-codex", "sonnet-codex", "haiku-codex",
-               "gemini-flash-codex", "gemini-pro-codex",
-               "gpt-codex", "gpt-mini-codex",
-               "reasoning-codex", "scoring-codex"],
+    "models": ["opus-imas-codex", "sonnet-imas-codex", "haiku-imas-codex",
+               "gemini-flash-imas-codex", "gemini-pro-imas-codex",
+               "gpt-imas-codex", "gpt-mini-imas-codex",
+               "reasoning-imas-codex", "scoring-imas-codex"],
     "router_settings": {
       "model_group_alias": {
-        "opus": "opus-codex",
-        "sonnet": "sonnet-codex",
-        "haiku": "haiku-codex",
-        "gemini-flash": "gemini-flash-codex",
-        "gemini-pro": "gemini-pro-codex",
-        "gpt": "gpt-codex",
-        "gpt-mini": "gpt-mini-codex",
-        "reasoning": "reasoning-codex",
-        "scoring": "scoring-codex"
+        "opus": "opus-imas-codex",
+        "sonnet": "sonnet-imas-codex",
+        "haiku": "haiku-imas-codex",
+        "gemini-flash": "gemini-flash-imas-codex",
+        "gemini-pro": "gemini-pro-imas-codex",
+        "gpt": "gpt-imas-codex",
+        "gpt-mini": "gpt-mini-imas-codex",
+        "reasoning": "reasoning-imas-codex",
+        "scoring": "scoring-imas-codex"
       }
     }
   }'
@@ -461,8 +461,8 @@ curl -X POST http://localhost:18400/key/generate \
   -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
   -H "Content-Type: application/json" \
   -d '{"key_alias": "codex-workers", "team_id": "<codex-team-id>"}'
-# → {"key": "sk-codex-xxxxxxxx"}
-# → model="opus" → opus-codex → openrouter-codex → $OPENROUTER_API_KEY_CODEX
+# → {"key": "sk-imas-codex-xxxxxxxx"}
+# → model="opus" → opus-imas-codex → openrouter-imas-codex → $OPENROUTER_API_KEY_CODEX
 
 # Claude Code key
 curl -X POST http://localhost:18400/key/generate \
@@ -618,8 +618,8 @@ approach** (see "Credential Routing Design" above).
    `router_settings` (see "Example Teams & Keys" above)
 6. Generate team-scoped virtual keys via `/key/generate`
 7. Test credential isolation:
-   - Using a codex virtual key: `model: opus` → `opus-codex`
-     → `openrouter-codex` → appears on codex OpenRouter dashboard
+   - Using a codex virtual key: `model: opus` → `opus-imas-codex`
+     → `openrouter-imas-codex` → appears on codex OpenRouter dashboard
    - Using a claude-code virtual key: `model: opus` → `opus-claude-code`
      → `openrouter-claude-code` → appears on claude-code OpenRouter dashboard
 
@@ -942,7 +942,7 @@ OPENROUTER_API_KEY_CODEX=sk-or-v1-...     # imas-codex internal use
 OPENROUTER_API_KEY_CLAUDE_CODE=sk-or-v1-... # Claude Code users
 OPENROUTER_API_KEY_COPILOT_CLI=sk-or-v1-... # Copilot CLI users
 LITELLM_DATABASE_URL=sqlite:///path/to/litellm.db
-LITELLM_API_KEY=sk-codex-...              # Virtual key for workers
+LITELLM_API_KEY=sk-imas-codex-...              # Virtual key for workers
 
 # ── Claude Code (user-level, not in .env) ───────────────
 ANTHROPIC_BASE_URL=http://localhost:18400

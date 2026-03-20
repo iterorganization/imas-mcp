@@ -192,6 +192,8 @@ def _start_llm_foreground(
         "litellm[proxy]>=1.81.0",
         "--with",
         "langfuse>=2.0.0",
+        "--with",
+        "prisma>=0.15.0",
         "--",
         "litellm",
         "--config",
@@ -459,29 +461,16 @@ def _show_gateway_info(url: str) -> None:
         "Content-Type": "application/json",
     }
 
-    # Database status
-    try:
-        resp = httpx.get(f"{url}/health", timeout=5.0, headers=headers)
-        if resp.status_code == 200:
-            health = resp.json()
-            db_connected = health.get("db_connected", False)
-            if db_connected:
-                click.echo(f"  Database: {click.style('✓ connected', fg='green')}")
-            else:
-                click.echo(
-                    f"  Database: {click.style('✗ not connected', fg='yellow')} "
-                    "(set LITELLM_DATABASE_URL)"
-                )
-                return  # No point checking teams/keys without DB
-    except Exception:
-        return
-
-    # Team count
+    # Database status — detect by attempting to list teams
+    # (the /health endpoint doesn't report DB connection status)
+    db_connected = False
     try:
         resp = httpx.get(f"{url}/team/list", timeout=5.0, headers=headers)
         if resp.status_code == 200:
+            db_connected = True
             teams = resp.json()
             if isinstance(teams, list):
+                click.echo(f"  Database: {click.style('✓ connected', fg='green')}")
                 click.echo(f"  Teams: {len(teams)}")
                 for team in teams[:5]:
                     alias = team.get("team_alias", team.get("team_id", "?")[:12])
@@ -491,21 +480,32 @@ def _show_gateway_info(url: str) -> None:
                     click.echo(
                         f"    - {alias} (budget: {budget_str}, spent: ${spend:.2f})"
                     )
+        else:
+            click.echo(
+                f"  Database: {click.style('✗ not connected', fg='yellow')} "
+                "(set LITELLM_DATABASE_URL)"
+            )
     except Exception:
-        pass
+        click.echo(
+            f"  Database: {click.style('✗ not connected', fg='yellow')} "
+            "(set LITELLM_DATABASE_URL)"
+        )
+
+    if not db_connected:
+        return
 
     # Key count
     try:
-        resp = httpx.post(
-            f"{url}/key/info",
+        resp = httpx.get(
+            f"{url}/key/list",
             timeout=5.0,
             headers=headers,
-            json={},
+            params={"return_full_object": "true", "page_size": "100"},
         )
         if resp.status_code == 200:
             data = resp.json()
             keys = data if isinstance(data, list) else data.get("keys", [])
-            active = [k for k in keys if k.get("key_alias")]  # Filter system keys
+            active = [k for k in keys if isinstance(k, dict) and k.get("key_alias")]
             click.echo(f"  Virtual Keys: {len(active)}")
     except Exception:
         pass
@@ -727,6 +727,7 @@ def _deploy_login_llm_direct() -> None:
         f"mkdir -p {_SERVICES_DIR}\n"
         f"exec $HOME/.local/bin/uv tool run "
         f"  --with 'litellm[proxy]>=1.81.0' --with 'langfuse>=2.0.0' "
+        f"  --with 'prisma>=0.15.0' "
         f"  -- litellm "
         f"  --config {_PROJECT}/imas_codex/config/litellm_config.yaml "
         f"  --host 0.0.0.0 --port {port} --drop_params "
@@ -1145,7 +1146,9 @@ def keys_list() -> None:
     Examples:
         imas-codex llm keys list
     """
-    data = _api_get("/key/info")
+    data = _api_get(
+        "/key/list", params={"return_full_object": "true", "page_size": "100"}
+    )
 
     keys = data.get("keys", data if isinstance(data, list) else [])
     if not keys:
