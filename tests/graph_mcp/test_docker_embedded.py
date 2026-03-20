@@ -127,6 +127,26 @@ class TestDockerfileStructure:
         """build-models step is preserved (needed for generated Python code)."""
         assert "build-models" in self.content
 
+    def test_cpu_extra_installed(self):
+        """Container installs CPU embedding dependencies."""
+        assert "--extra cpu" in self.content
+
+    def test_embedding_model_predownloaded(self):
+        """Embedding model is pre-downloaded for offline operation."""
+        assert "Qwen/Qwen3-Embedding-0.6B" in self.content
+
+    def test_embedding_location_local(self):
+        """Embedding location set to local for container deployment."""
+        assert "IMAS_CODEX_EMBEDDING_LOCATION=local" in self.content
+
+    def test_pytorch_cpu_only(self):
+        """PyTorch CPU-only index configured to minimize image size."""
+        assert "download.pytorch.org/whl/cpu" in self.content
+
+    def test_huggingface_cache_in_app(self):
+        """HuggingFace model cache stored under /app for COPY persistence."""
+        assert "HF_HOME=/app/.cache/huggingface" in self.content
+
 
 class TestEntrypointScript:
     """Validate the docker-entrypoint.sh process supervisor."""
