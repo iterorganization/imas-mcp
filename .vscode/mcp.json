@@ -6,7 +6,6 @@
         "run",
         "imas-codex",
         "serve",
-        "agents"
       ],
       "type": "stdio"
     },
