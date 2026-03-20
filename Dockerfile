@@ -200,7 +200,7 @@ COPY --from=neo4j-src /var/lib/neo4j/conf /opt/neo4j/conf
 COPY --from=graph-loader /data /opt/neo4j/data
 
 # Configure Neo4j for embedded use (read-only, internal bolt only)
-RUN mkdir -p /opt/neo4j/logs && \
+RUN rm -rf /opt/neo4j/logs && mkdir -p /opt/neo4j/logs && \
     echo "server.bolt.listen_address=127.0.0.1:7687" >> /opt/neo4j/conf/neo4j.conf && \
     echo "server.http.listen_address=127.0.0.1:7474" >> /opt/neo4j/conf/neo4j.conf && \
     echo "server.default_listen_address=127.0.0.1" >> /opt/neo4j/conf/neo4j.conf && \
