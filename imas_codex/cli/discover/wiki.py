@@ -438,11 +438,13 @@ def wiki(
             if not ssh_host:
                 ssh_host = config.get("ssh_host")
 
-        # Short name for multi-site display
-        from urllib.parse import urlparse as _urlparse
+        # Short name for multi-site display (prefer YAML name field)
+        short_name = site.get("name")
+        if not short_name:
+            from urllib.parse import urlparse as _urlparse
 
-        parsed_url = _urlparse(base_url)
-        short_name = parsed_url.path.rstrip("/").rsplit("/", 1)[-1] or base_url
+            parsed_url = _urlparse(base_url)
+            short_name = parsed_url.path.rstrip("/").rsplit("/", 1)[-1] or base_url
         site_desc = site.get("description", "")
 
         # Site header
@@ -860,7 +862,7 @@ def wiki(
                     result_dicts = [
                         {
                             "title": r.get("id", "?").split(":")[-1],
-                            "score": r.get("score"),
+                            "score_composite": r.get("score_composite"),
                             "physics_domain": r.get("physics_domain"),
                             "description": r.get("description", ""),
                             "is_physics": r.get("is_physics", False),
@@ -877,7 +879,7 @@ def wiki(
                     result_dicts = [
                         {
                             "title": r.get("id", "?").split(":")[-1],
-                            "score": r.get("score"),
+                            "score_composite": r.get("score_composite"),
                             "description": r.get("description", ""),
                             "physics_domain": r.get("physics_domain"),
                             "chunk_count": r.get("chunk_count", 0),
@@ -893,7 +895,7 @@ def wiki(
                         {
                             "filename": r.get("filename", "unknown"),
                             "document_type": r.get("document_type", ""),
-                            "score": r.get("score"),
+                            "score_composite": r.get("score_composite"),
                             "physics_domain": r.get("physics_domain"),
                             "description": r.get("description", ""),
                             "chunk_count": r.get("chunk_count", 0),
@@ -912,7 +914,7 @@ def wiki(
                         {
                             "filename": r.get("filename", "unknown"),
                             "document_type": r.get("document_type", ""),
-                            "score": r.get("score"),
+                            "score_composite": r.get("score_composite"),
                             "physics_domain": r.get("physics_domain"),
                             "description": r.get("description", ""),
                         }
@@ -929,7 +931,7 @@ def wiki(
                     result_dicts = [
                         {
                             "id": r.get("id", "unknown"),
-                            "score": r.get("score"),
+                            "score_composite": r.get("score_composite"),
                             "physics_domain": r.get("physics_domain"),
                             "description": r.get("description", ""),
                             "purpose": r.get("purpose", ""),
@@ -967,7 +969,7 @@ def wiki(
         # Multi-site display setup
         if display and multi_site:
             display.set_site_info(
-                site_name=site_configs[0]["base_url"],
+                site_name=site_configs[0]["short_name"],
                 site_index=0,
                 total_sites=len(site_configs),
             )
@@ -1027,7 +1029,7 @@ def wiki(
             try:
                 for i, sc in enumerate(site_configs):
                     if i > 0 and multi_site and display:
-                        display.advance_site(sc["base_url"], i)
+                        display.advance_site(sc["short_name"], i)
 
                     if remaining_budget <= 0:
                         wiki_logger.info("Budget exhausted, skipping remaining sites")
