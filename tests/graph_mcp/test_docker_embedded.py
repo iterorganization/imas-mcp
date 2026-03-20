@@ -39,14 +39,14 @@ class TestDockerfileStructure:
             "Missing graph-loader build stage"
         )
 
-    def test_ghcr_token_required(self):
-        """Build secret GHCR_TOKEN is required (no fallback)."""
+    def test_ghcr_token_optional(self):
+        """Build secret GHCR_TOKEN is optional (graceful skip without it)."""
         assert "mount=type=secret,id=GHCR_TOKEN" in self.content
-        assert "GHCR_TOKEN build secret is required" in self.content
+        assert "Skipping graph pull" in self.content
 
-    def test_build_fails_without_token(self):
-        """Script exits with error if GHCR_TOKEN is empty."""
-        assert "exit 1" in self.content
+    def test_no_graph_marker(self):
+        """Creates .no-graph marker when graph pull is skipped."""
+        assert ".no-graph" in self.content
 
     def test_oras_pull_imas_only(self):
         """Pulls IMAS-only graph package, not full graph."""
