@@ -1,4 +1,11 @@
-"""Release command: Version tagging and graph publishing."""
+"""Release command: Semantic version bumps, graph publishing, and tagging.
+
+Single-command release workflow:
+1. Compute next version from bump type (major/minor/patch) + optional --rc
+2. Validate graph and tag DDVersion
+3. Push all graph variants (imas-only + full) to GHCR
+4. Create and push git tag (triggers CI)
+"""
 
 from __future__ import annotations
 
@@ -7,376 +14,549 @@ import subprocess
 
 import click
 
+# ============================================================================
+# Version computation
+# ============================================================================
+
+
+def _get_latest_tag() -> str | None:
+    """Get the most recent semver tag from git."""
+    result = subprocess.run(
+        ["git", "tag", "--sort=-v:refname"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return None
+    for line in result.stdout.strip().splitlines():
+        tag = line.strip()
+        if re.match(r"^v\d+\.\d+\.\d+", tag):
+            return tag
+    return None
+
+
+def _parse_version(tag: str) -> tuple[int, int, int, int | None]:
+    """Parse a version tag into (major, minor, patch, rc_number|None).
+
+    Handles: v5.0.0, v5.0.0-rc1, v5.0.0-rc12
+    """
+    tag = tag.lstrip("v")
+    match = re.match(r"^(\d+)\.(\d+)\.(\d+)(?:-rc(\d+))?$", tag)
+    if not match:
+        raise click.ClickException(f"Cannot parse version: {tag}")
+    major, minor, patch = int(match[1]), int(match[2]), int(match[3])
+    rc = int(match[4]) if match[4] else None
+    return major, minor, patch, rc
+
+
+def _format_git_tag(major: int, minor: int, patch: int, rc: int | None) -> str:
+    """Format version components as a git tag (v5.0.0 or v5.0.0-rc1)."""
+    base = f"v{major}.{minor}.{patch}"
+    return f"{base}-rc{rc}" if rc else base
+
+
+def _format_pep440(major: int, minor: int, patch: int, rc: int | None) -> str:
+    """Format version as PEP 440 string (5.0.0 or 5.0.0rc1)."""
+    base = f"{major}.{minor}.{patch}"
+    return f"{base}rc{rc}" if rc else base
+
+
+def _tag_exists(tag: str) -> bool:
+    """Check if a git tag already exists."""
+    result = subprocess.run(["git", "tag", "-l", tag], capture_output=True, text=True)
+    return bool(result.stdout.strip())
+
+
+def compute_next_version(
+    bump: str | None,
+    *,
+    rc: bool = False,
+    promote: bool = False,
+) -> tuple[str, str]:
+    """Compute the next version from the latest git tag.
+
+    Returns (git_tag, pep440_version) tuple.
+    """
+    latest = _get_latest_tag()
+    if latest is None:
+        raise click.ClickException(
+            "No existing version tags found. Create an initial tag first: "
+            "git tag -a v0.1.0 -m 'Initial release'"
+        )
+
+    major, minor, patch, current_rc = _parse_version(latest)
+
+    if promote:
+        if current_rc is None:
+            raise click.ClickException(
+                f"Cannot promote {latest} — it's not a release candidate."
+            )
+        # Strip RC suffix: v5.0.0-rc1 → v5.0.0
+        return _format_git_tag(major, minor, patch, None), _format_pep440(
+            major, minor, patch, None
+        )
+
+    if bump is None:
+        raise click.ClickException(
+            "Specify a bump type (major, minor, patch) or use --promote."
+        )
+
+    # If latest is an RC and we're bumping the same base, auto-increment RC
+    if rc and current_rc is not None:
+        # Check if this is the same bump level — increment RC
+        next_rc = current_rc + 1
+        tag = _format_git_tag(major, minor, patch, next_rc)
+        while _tag_exists(tag):
+            next_rc += 1
+            tag = _format_git_tag(major, minor, patch, next_rc)
+        return tag, _format_pep440(major, minor, patch, next_rc)
+
+    # Apply bump
+    if bump == "major":
+        major, minor, patch = major + 1, 0, 0
+    elif bump == "minor":
+        minor, patch = minor + 1, 0
+    elif bump == "patch":
+        # If current is an RC, patch bumps to the base version
+        if current_rc is not None:
+            pass  # Already at the right base
+        else:
+            patch += 1
+    else:
+        raise click.ClickException(f"Invalid bump type: {bump}")
+
+    rc_num = 1 if rc else None
+    tag = _format_git_tag(major, minor, patch, rc_num)
+
+    # Check for collision and auto-increment RC
+    if rc:
+        while _tag_exists(tag):
+            rc_num += 1
+            tag = _format_git_tag(major, minor, patch, rc_num)
+
+    return tag, _format_pep440(major, minor, patch, rc_num)
+
+
+# ============================================================================
+# Pre-flight checks
+# ============================================================================
+
+
+def _check_on_main() -> None:
+    result = subprocess.run(
+        ["git", "branch", "--show-current"], capture_output=True, text=True
+    )
+    branch = result.stdout.strip()
+    if branch != "main":
+        raise click.ClickException(
+            f"Not on main branch (current: {branch}). Switch first: git checkout main"
+        )
+    click.echo("  ✓ On main branch")
+
+
+def _check_remote_exists(remote: str) -> None:
+    result = subprocess.run(
+        ["git", "remote", "get-url", remote], capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        raise click.ClickException(
+            f"Remote '{remote}' not found. Add it: git remote add {remote} <url>"
+        )
+    click.echo(f"  ✓ Remote '{remote}' exists")
+
+
+def _check_clean_tree(dry_run: bool) -> None:
+    result = subprocess.run(
+        ["git", "status", "--porcelain"], capture_output=True, text=True
+    )
+    if result.stdout.strip():
+        msg = "Working tree has uncommitted changes. Commit or stash first."
+        if dry_run:
+            click.echo(f"  ⚠ {msg}", err=True)
+        else:
+            raise click.ClickException(msg)
+    else:
+        click.echo("  ✓ Working tree is clean")
+
+
+def _check_synced(remote: str, dry_run: bool) -> None:
+    subprocess.run(["git", "fetch", remote, "main"], capture_output=True)
+    result = subprocess.run(
+        ["git", "rev-list", "--left-right", "--count", f"main...{remote}/main"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        click.echo(f"  ⚠ Could not check sync with {remote}/main", err=True)
+        return
+
+    parts = result.stdout.strip().split()
+    if len(parts) != 2:
+        return
+
+    ahead, behind = int(parts[0]), int(parts[1])
+    if behind > 0:
+        msg = (
+            f"Local is {behind} commits behind {remote}/main. "
+            f"Pull first: git pull {remote} main"
+        )
+        if dry_run:
+            click.echo(f"  ⚠ {msg}", err=True)
+        else:
+            raise click.ClickException(msg)
+    if ahead > 0:
+        msg = (
+            f"Local is {ahead} commits ahead of {remote}/main. "
+            "Ensure PR is merged first."
+        )
+        if dry_run:
+            click.echo(f"  ⚠ {msg}", err=True)
+        else:
+            raise click.ClickException(msg)
+    if ahead == 0 and behind == 0:
+        click.echo(f"  ✓ Synced with {remote}/main")
+
+
+# ============================================================================
+# Graph operations
+# ============================================================================
+
+
+def _validate_graph_privacy() -> None:
+    """Ensure no private fields are stored in graph Facility nodes."""
+    try:
+        from imas_codex.graph import GraphClient, get_schema
+
+        schema = get_schema()
+        private_slots = schema.get_private_slots("Facility")
+        if not private_slots:
+            click.echo("  ✓ No private slots defined in schema")
+            return
+
+        with GraphClient() as client:
+            for slot in private_slots:
+                result = client.query(
+                    f"MATCH (f:Facility) WHERE f.{slot} IS NOT NULL "
+                    f"RETURN f.id AS id, f.{slot} AS value LIMIT 5"
+                )
+                if result:
+                    click.echo(f"  ✗ Private field '{slot}' found in graph!", err=True)
+                    for r in result:
+                        click.echo(f"    - Facility {r['id']}: {slot}={r['value']}")
+                    raise click.ClickException(
+                        "Private data must not be in graph before push. "
+                        "Remove with: MATCH (f:Facility) REMOVE f.<field>"
+                    )
+
+        click.echo(f"  ✓ No private fields found (checked: {private_slots})")
+    except click.ClickException:
+        raise
+    except Exception as e:
+        click.echo(f"  ⚠ Could not validate graph: {e}", err=True)
+        click.echo("    Is Neo4j running? Check with: imas-codex graph status")
+
+
+def _tag_dd_version(version_number: str, message: str) -> None:
+    """Tag the current DDVersion node with release metadata."""
+    try:
+        from imas_codex.graph import GraphClient
+
+        with GraphClient() as client:
+            client.query(
+                """
+                MATCH (d:DDVersion {is_current: true})
+                SET d.release_version = $version,
+                    d.release_message = $message,
+                    d.release_at = datetime()
+                """,
+                version=version_number,
+                message=message,
+            )
+            click.echo(f"  ✓ DDVersion tagged: release_version={version_number}")
+    except Exception as e:
+        click.echo(f"  ⚠ Could not tag DDVersion: {e}", err=True)
+        click.echo("    Is Neo4j running? Check with: imas-codex graph status")
+
+
+def _get_graph_facilities() -> list[str]:
+    """Read facility list from GraphMeta to determine if full variant is needed."""
+    try:
+        from imas_codex.graph import GraphClient
+        from imas_codex.graph.meta import get_graph_meta
+
+        with GraphClient() as client:
+            meta = get_graph_meta(client)
+            if meta:
+                return list(meta.get("facilities") or [])
+    except Exception:
+        pass
+    return []
+
+
+def _push_graph_variant(
+    *,
+    imas_only: bool = False,
+    message: str | None = None,
+    dry_run: bool = False,
+) -> bool:
+    """Push a single graph variant to GHCR via the graph push CLI.
+
+    Returns True on success.
+    """
+    from imas_codex.graph.ghcr import get_package_name
+
+    pkg_name = get_package_name(imas_only=imas_only)
+
+    if dry_run:
+        click.echo(f"  [would push {pkg_name} to GHCR]")
+        return True
+
+    cmd = ["uv", "run", "imas-codex", "graph", "push"]
+    if imas_only:
+        cmd.append("--imas-only")
+    if message:
+        cmd.extend(["-m", message])
+
+    click.echo(f"  Pushing {pkg_name}...")
+    result = subprocess.run(cmd, text=True)
+    if result.returncode != 0:
+        click.echo(f"  ✗ Failed to push {pkg_name}", err=True)
+        return False
+
+    click.echo(f"  ✓ Pushed {pkg_name}")
+    return True
+
+
+def _push_all_graph_variants(message: str, dry_run: bool) -> None:
+    """Push all applicable graph variants: imas-only (always) + full (if facilities)."""
+    # Always push imas-only
+    click.echo("\n  Variant 1: IMAS Data Dictionary only")
+    if not _push_graph_variant(imas_only=True, message=message, dry_run=dry_run):
+        raise click.ClickException(
+            "IMAS-only graph push failed. Check: GHCR_TOKEN set, Neo4j running."
+        )
+
+    # Push full variant if graph has facilities
+    facilities = _get_graph_facilities()
+    if facilities:
+        click.echo(f"\n  Variant 2: Full graph (facilities: {', '.join(facilities)})")
+        if not _push_graph_variant(message=message, dry_run=dry_run):
+            click.echo(
+                "  ⚠ Full graph push failed — imas-only was already pushed.",
+                err=True,
+            )
+    else:
+        click.echo("\n  Variant 2: Full graph — skipped (no facilities in graph)")
+
+
+# ============================================================================
+# Git tag operations
+# ============================================================================
+
+
+def _create_and_push_tag(tag: str, message: str, remote: str, dry_run: bool) -> None:
+    """Create an annotated git tag and push it to the remote."""
+    if dry_run:
+        click.echo(f"  [would create and push tag {tag} to {remote}]")
+        return
+
+    result = subprocess.run(
+        ["git", "tag", "-a", tag, "-m", message],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        if "already exists" in result.stderr:
+            click.echo(f"  ⚠ Tag {tag} already exists — pushing existing tag")
+        else:
+            raise click.ClickException(f"Failed to create tag: {result.stderr}")
+    else:
+        click.echo(f"  ✓ Created tag: {tag}")
+
+    result = subprocess.run(
+        ["git", "push", remote, tag],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise click.ClickException(f"Failed to push tag to {remote}: {result.stderr}")
+    click.echo(f"  ✓ Pushed tag to {remote}")
+
+
+# ============================================================================
+# Main command
+# ============================================================================
+
 
 @click.command("release")
-@click.argument("version")
+@click.argument(
+    "bump",
+    required=False,
+    type=click.Choice(["major", "minor", "patch"]),
+)
 @click.option(
     "-m",
     "--message",
     required=True,
-    help="Release message (used for git tag annotation)",
+    help="Release message (used for git tag annotation and GHCR push).",
+)
+@click.option(
+    "--rc",
+    is_flag=True,
+    help="Create a release candidate (e.g. v5.0.0-rc1).",
+)
+@click.option(
+    "--promote",
+    is_flag=True,
+    help="Promote current RC to release (e.g. v5.0.0-rc1 → v5.0.0).",
+)
+@click.option(
+    "--version",
+    "explicit_version",
+    default=None,
+    help="Explicit version override (e.g. v5.0.0). Bypasses bump computation.",
 )
 @click.option(
     "--remote",
     type=click.Choice(["origin", "upstream"]),
     default="upstream",
-    help="Target remote: 'origin' prepares PR, 'upstream' finalizes release",
+    help="Target remote for git tag push (default: upstream).",
 )
 @click.option(
     "--skip-graph",
     is_flag=True,
-    help="Skip graph dump and push (upstream mode only)",
+    help="Skip graph validation and push (code-only release).",
 )
 @click.option(
     "--skip-git",
     is_flag=True,
-    help="Skip git tag creation and push",
+    help="Skip git tag creation and push.",
 )
 @click.option(
     "--dry-run",
     is_flag=True,
-    help="Show what would be done without making changes",
+    help="Show what would be done without making changes.",
 )
 def release(
-    version: str,
+    bump: str | None,
     message: str,
+    rc: bool,
+    promote: bool,
+    explicit_version: str | None,
     remote: str,
     skip_graph: bool,
     skip_git: bool,
     dry_run: bool,
 ) -> None:
-    """Create a new release with two modes based on remote.
+    """Create a release with semantic version bumps and graph publishing.
 
-    VERSION should be a semantic version with 'v' prefix (e.g., v1.0.0).
-    The project version is derived from git tags via hatch-vcs.
+    Computes the next version from the latest git tag, pushes all graph
+    variants to GHCR, creates a git tag, and pushes it to trigger CI.
 
-    MODE: --remote origin (prepare PR)
-    - Creates and pushes tag to origin
-    - No graph operations (graph is local-only data)
+    BUMP is the version bump type: major, minor, or patch.
+    Omit when using --promote (RC → release).
 
-    MODE: --remote upstream (finalize release - default)
-    - Pre-flight: clean tree, synced with upstream
-    - Tags current DDVersion with release info
-    - Dumps and pushes graph to GHCR
-    - Creates and pushes tag to upstream (triggers CI)
-
-    Workflow:
-    1. imas-codex release vX.Y.Z -m 'message' --remote origin
-    2. Create PR on GitHub, merge to upstream
-    3. git pull upstream main
-    4. imas-codex release vX.Y.Z -m 'message' --remote upstream
-
+    \b
     Examples:
-        # Prepare PR (pushes tag to fork)
-        imas-codex release v1.0.0 -m 'Add EPFL' --remote origin
+        # Major RC (v4.0.0 → v5.0.0-rc1)
+        imas-codex release major --rc -m 'IMAS DD 4.1.0 support'
 
-        # Finalize release (graph to GHCR, tag to upstream)
-        imas-codex release v1.0.0 -m 'Add EPFL' --remote upstream
+        # Increment RC (v5.0.0-rc1 → v5.0.0-rc2)
+        imas-codex release major --rc -m 'Fix CI issues'
+
+        # Promote RC to release (v5.0.0-rc2 → v5.0.0)
+        imas-codex release --promote -m 'Production release'
+
+        # Patch release (v5.0.0 → v5.0.1)
+        imas-codex release patch -m 'Bug fixes'
+
+        # Test on fork
+        imas-codex release minor --rc --remote origin -m 'Test'
+
+        # Code-only release (no graph push)
+        imas-codex release patch --skip-graph -m 'Docs update'
 
         # Dry run
-        imas-codex release v1.0.0 -m 'Test' --dry-run
+        imas-codex release major --rc --dry-run -m 'Test'
     """
-    # Validate version format
-    if not re.match(r"^v\d+\.\d+\.\d+(-[a-zA-Z0-9.]+)?$", version):
-        click.echo(f"Error: Invalid version format: {version}", err=True)
-        click.echo("Expected format: v1.0.0 or v1.0.0-rc1")
-        raise SystemExit(1)
+    # Resolve version
+    if explicit_version:
+        if not re.match(r"^v\d+\.\d+\.\d+(-rc\d+)?$", explicit_version):
+            raise click.ClickException(
+                f"Invalid version format: {explicit_version}. "
+                "Expected: v1.0.0 or v1.0.0-rc1"
+            )
+        git_tag = explicit_version
+        version_number = explicit_version.lstrip("v").replace("-rc", "rc")
+    else:
+        if not bump and not promote:
+            raise click.ClickException(
+                "Specify a bump type (major, minor, patch) or use --promote. "
+                "Use --version for explicit override."
+            )
+        git_tag, version_number = compute_next_version(bump, rc=rc, promote=promote)
 
-    version_number = version.lstrip("v")
+    is_rc = "-rc" in git_tag
+    latest = _get_latest_tag()
 
-    # Determine mode
-    is_origin_mode = remote == "origin"
-    mode_desc = "PR preparation" if is_origin_mode else "release finalization"
-
-    click.echo(f"{'[DRY RUN] ' if dry_run else ''}Release {version} ({mode_desc})")
-    click.echo(f"Message: {message}")
-    click.echo(f"Remote: {remote}")
+    click.echo(f"{'[DRY RUN] ' if dry_run else ''}Release: {git_tag}")
+    click.echo(f"  From: {latest or '(none)'}")
+    click.echo(f"  PEP 440: {version_number}")
+    click.echo(f"  Message: {message}")
+    click.echo(f"  Remote: {remote}")
+    click.echo(f"  RC: {'yes' if is_rc else 'no'}")
     click.echo()
 
     # Pre-flight checks
     click.echo("Pre-flight checks...")
-
-    # Check 1: On main branch
-    branch_result = subprocess.run(
-        ["git", "branch", "--show-current"],
-        capture_output=True,
-        text=True,
-    )
-    current_branch = branch_result.stdout.strip()
-    if current_branch != "main":
-        click.echo(f"  ✗ Not on main branch (current: {current_branch})", err=True)
-        click.echo("    Switch to main: git checkout main")
-        raise SystemExit(1)
-    click.echo("  ✓ On main branch")
-
-    # Check 2: Remote exists
-    remote_result = subprocess.run(
-        ["git", "remote", "get-url", remote],
-        capture_output=True,
-        text=True,
-    )
-    if remote_result.returncode != 0:
-        click.echo(f"  ✗ Remote '{remote}' not found", err=True)
-        click.echo(f"    Add it: git remote add {remote} <url>")
-        raise SystemExit(1)
-    click.echo(f"  ✓ Remote '{remote}' exists")
-
-    # For upstream mode: stricter checks
-    if not is_origin_mode:
-        # Check 3: Clean working tree (required for upstream)
-        status_result = subprocess.run(
-            ["git", "status", "--porcelain"],
-            capture_output=True,
-            text=True,
-        )
-        if status_result.stdout.strip():
-            click.echo("  ✗ Working tree has uncommitted changes", err=True)
-            click.echo("    Commit or stash changes first")
-            if not dry_run:
-                raise SystemExit(1)
-        else:
-            click.echo("  ✓ Working tree is clean")
-
-        # Check 4: Synced with upstream
-        subprocess.run(["git", "fetch", remote, "main"], capture_output=True)
-        ahead_behind = subprocess.run(
-            ["git", "rev-list", "--left-right", "--count", f"main...{remote}/main"],
-            capture_output=True,
-            text=True,
-        )
-        if ahead_behind.returncode == 0:
-            parts = ahead_behind.stdout.strip().split()
-            if len(parts) == 2:
-                ahead, behind = int(parts[0]), int(parts[1])
-                if behind > 0:
-                    click.echo(
-                        f"  ✗ Local is {behind} commits behind {remote}/main", err=True
-                    )
-                    click.echo(f"    Pull first: git pull {remote} main")
-                    if not dry_run:
-                        raise SystemExit(1)
-                if ahead > 0:
-                    click.echo(
-                        f"  ✗ Local is {ahead} commits ahead of {remote}/main",
-                        err=True,
-                    )
-                    click.echo("    Ensure PR is merged first")
-                    if not dry_run:
-                        raise SystemExit(1)
-                if ahead == 0 and behind == 0:
-                    click.echo(f"  ✓ Synced with {remote}/main")
-
+    _check_on_main()
+    _check_remote_exists(remote)
+    _check_clean_tree(dry_run)
+    _check_synced(remote, dry_run)
     click.echo()
 
-    if is_origin_mode:
-        _release_origin_mode(version, message, skip_git, dry_run)
-    else:
-        _release_upstream_mode(
-            version, version_number, message, skip_graph, skip_git, dry_run
-        )
+    step = 0
 
-
-def _release_origin_mode(
-    version: str, message: str, skip_git: bool, dry_run: bool
-) -> None:
-    """Origin mode: Push branch + tag for PR preparation."""
-    # Step 1: Push branch
-    click.echo("Step 1: Pushing branch to origin...")
-    if not dry_run:
-        result = subprocess.run(
-            ["git", "push", "origin", "main"],
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode != 0:
-            click.echo(f"Error pushing branch: {result.stderr}", err=True)
-            raise SystemExit(1)
-        click.echo("  Pushed to origin/main")
-    else:
-        click.echo("  [would push to origin/main]")
-
-    # Step 2: Create and push tag
-    if not skip_git:
-        click.echo("\nStep 2: Creating and pushing tag...")
-        if not dry_run:
-            # Create tag
-            result = subprocess.run(
-                ["git", "tag", "-a", version, "-m", message],
-                capture_output=True,
-                text=True,
-            )
-            if result.returncode != 0:
-                if "already exists" in result.stderr:
-                    click.echo(f"  Warning: Tag {version} already exists")
-                else:
-                    click.echo(f"Error creating tag: {result.stderr}", err=True)
-                    raise SystemExit(1)
-            else:
-                click.echo(f"  Created tag: {version}")
-
-            # Push tag to origin
-            result = subprocess.run(
-                ["git", "push", "origin", version],
-                capture_output=True,
-                text=True,
-            )
-            if result.returncode != 0:
-                click.echo(f"Error pushing tag: {result.stderr}", err=True)
-                raise SystemExit(1)
-            click.echo("  Pushed tag to origin")
-        else:
-            click.echo(f"  [would create and push tag {version} to origin]")
-    else:
-        click.echo("\nStep 2: Skipped (--skip-git)")
-
-    click.echo()
-    if dry_run:
-        click.echo("[DRY RUN] No changes made.")
-    else:
-        click.echo(f"PR preparation complete for {version}!")
-        click.echo("\nNext steps:")
-        click.echo("  1. Create PR on GitHub from origin/main to upstream/main")
-        click.echo("  2. After merge: git pull upstream main")
-        click.echo(f"  3. Run: imas-codex release {version} -m '{message}'")
-
-
-def _release_upstream_mode(
-    version: str,
-    version_number: str,
-    message: str,
-    skip_graph: bool,
-    skip_git: bool,
-    dry_run: bool,
-) -> None:
-    """Upstream mode: Graph operations, push tag."""
-    # Step 1: Validate no private fields in graph
-    click.echo("Step 1: Validating graph contains no private fields...")
-    if not dry_run:
-        try:
-            from imas_codex.graph import GraphClient, get_schema
-
-            schema = get_schema()
-            private_slots = schema.get_private_slots("Facility")
-
-            if private_slots:
-                with GraphClient() as client:
-                    # Check Facility nodes for private fields
-                    for slot in private_slots:
-                        result = client.query(
-                            f"MATCH (f:Facility) WHERE f.{slot} IS NOT NULL "
-                            f"RETURN f.id AS id, f.{slot} AS value LIMIT 5"
-                        )
-                        if result:
-                            click.echo(
-                                f"  ✗ Private field '{slot}' found in graph!",
-                                err=True,
-                            )
-                            for r in result:
-                                click.echo(
-                                    f"    - Facility {r['id']}: {slot}={r['value']}"
-                                )
-                            click.echo(
-                                "\nPrivate data must not be in graph before OCI push."
-                            )
-                            click.echo(
-                                "Remove with: MATCH (f:Facility) REMOVE f.<field>"
-                            )
-                            raise SystemExit(1)
-
-                click.echo(f"  ✓ No private fields found (checked: {private_slots})")
-            else:
-                click.echo("  ✓ No private slots defined in schema")
-        except SystemExit:
-            raise
-        except Exception as e:
-            click.echo(f"Warning: Could not validate graph: {e}", err=True)
-            click.echo("  Is Neo4j running? Check with: imas-codex data db status")
-    else:
-        click.echo("  [would validate no private fields in graph]")
-
-    # Step 2: Tag current DDVersion with release info
+    # Step: Validate graph privacy
     if not skip_graph:
-        click.echo("\nStep 2: Tagging DDVersion with release info...")
+        step += 1
+        click.echo(f"Step {step}: Validating graph contains no private fields...")
         if not dry_run:
-            try:
-                from imas_codex.graph import GraphClient
-
-                with GraphClient() as client:
-                    client.query(
-                        """
-                        MATCH (d:DDVersion {is_current: true})
-                        SET d.release_version = $version,
-                            d.release_message = $message,
-                            d.release_at = datetime()
-                        """,
-                        version=version_number,
-                        message=message,
-                    )
-                    click.echo(f"  DDVersion tagged: release_version={version_number}")
-            except Exception as e:
-                click.echo(f"Warning: Could not tag DDVersion: {e}", err=True)
-                click.echo("  Is Neo4j running? Check with: imas-codex data db status")
+            _validate_graph_privacy()
         else:
-            click.echo("  [would tag DDVersion with release info]")
+            click.echo("  [would validate graph privacy]")
 
-        # Step 3: Dump and push graph (unified via data CLI)
-        click.echo("\nStep 3: Dumping and pushing graph...")
+        # Step: Tag DDVersion
+        step += 1
+        click.echo(f"\nStep {step}: Tagging DDVersion with release info...")
         if not dry_run:
-            # data push handles dump + push with auto stop/start
-            result = subprocess.run(
-                ["uv", "run", "imas-codex", "data", "push"],
-                capture_output=True,
-                text=True,
-            )
-            if result.returncode != 0:
-                click.echo(f"Error pushing graph: {result.stderr}", err=True)
-                click.echo(result.stdout)
-                click.echo("\n  Check: GHCR_TOKEN set, Neo4j running")
-                raise SystemExit(1)
-            click.echo(f"  Pushed to GHCR (version: {version})")
-            click.echo("  (Neo4j was auto-stopped/restarted)")
+            _tag_dd_version(version_number, message)
         else:
-            click.echo("  [would dump and push graph to GHCR]")
-            click.echo("  [Neo4j would be auto-stopped/restarted]")
+            click.echo(f"  [would tag DDVersion: release_version={version_number}]")
+
+        # Step: Push all graph variants
+        step += 1
+        click.echo(f"\nStep {step}: Pushing graph variants to GHCR...")
+        _push_all_graph_variants(message, dry_run)
     else:
-        click.echo("\nStep 2-3: Skipped (--skip-graph)")
+        click.echo("Graph operations: Skipped (--skip-graph)")
 
-    # Step 4: Git tag
+    # Step: Git tag
     if not skip_git:
-        click.echo("\nStep 4: Create and push git tag...")
-        if not dry_run:
-            result = subprocess.run(
-                ["git", "tag", "-a", version, "-m", message],
-                capture_output=True,
-                text=True,
-            )
-            if result.returncode != 0:
-                if "already exists" in result.stderr:
-                    click.echo(f"  Warning: Tag {version} already exists")
-                else:
-                    click.echo(f"Error creating tag: {result.stderr}", err=True)
-                    raise SystemExit(1)
-            else:
-                click.echo(f"  Created tag: {version}")
-
-            result = subprocess.run(
-                ["git", "push", "upstream", version],
-                capture_output=True,
-                text=True,
-            )
-            if result.returncode != 0:
-                click.echo(f"Error pushing tag: {result.stderr}", err=True)
-                raise SystemExit(1)
-            click.echo("  Pushed tag to upstream")
-        else:
-            click.echo(f"  [would create tag: {version}]")
-            click.echo("  [would push tag to: upstream]")
+        step += 1
+        click.echo(f"\nStep {step}: Creating and pushing git tag...")
+        _create_and_push_tag(git_tag, message, remote, dry_run)
     else:
-        click.echo("\nStep 4: Skipped (--skip-git)")
+        click.echo("\nGit tag: Skipped (--skip-git)")
 
+    # Summary
     click.echo()
     if dry_run:
         click.echo("[DRY RUN] No changes made.")
     else:
-        click.echo(f"Release {version} complete!")
-        click.echo("Tag pushed to upstream. CI will build and publish the package.")
+        click.echo(f"✓ Release {git_tag} complete!")
+        click.echo(f"  Tag pushed to {remote} — CI will build and publish.")
+        if is_rc:
+            click.echo(
+                f"\n  To promote: imas-codex release --promote -m 'Release {git_tag.split('-')[0]}'"
+            )

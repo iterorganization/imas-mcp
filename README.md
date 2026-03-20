@@ -720,6 +720,31 @@ imas-codex graph push --facility tcv --dev
 
 This creates `ghcr.io/iterorganization/imas-codex-graph-tcv` containing only TCV data plus the shared IMAS Data Dictionary.
 
+### Releases
+
+The release CLI computes semantic versions from git tags and pushes all graph variants:
+
+```bash
+# Release candidate (v4.0.0 → v5.0.0-rc1)
+imas-codex release major --rc -m 'IMAS DD 4.1.0 support'
+
+# Promote RC to release (v5.0.0-rc1 → v5.0.0)
+imas-codex release --promote -m 'Production release'
+
+# Patch release (v5.0.0 → v5.0.1)
+imas-codex release patch -m 'Bug fixes'
+```
+
+Each release automatically pushes both `imas-codex-graph-imas` (DD-only) and `imas-codex-graph` (full) to GHCR, then creates a git tag that triggers CI to build Docker containers.
+
+**Graph package variants:**
+
+| Package | Contents | Visibility |
+|---------|----------|------------|
+| `imas-codex-graph-imas` | IMAS Data Dictionary only | Public-safe |
+| `imas-codex-graph` | All facilities + DD | Private |
+| `imas-codex-graph-{facility}` | Single facility + DD | Private |
+
 ### Docker Compose
 
 ```bash
