@@ -533,6 +533,14 @@ def _build_kwargs(
         kwargs["response_format"] = response_format
     if temperature is not None:
         kwargs["temperature"] = temperature
+
+    # Identify the app on OpenRouter so calls show as "imas-codex"
+    # instead of "Unknown" in the activity dashboard.
+    kwargs["extra_headers"] = {
+        "X-Title": "imas-codex",
+        "HTTP-Referer": "https://github.com/iterorganization/imas-codex",
+    }
+
     return kwargs
 
 
