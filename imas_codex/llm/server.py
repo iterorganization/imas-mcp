@@ -1488,6 +1488,7 @@ class AgentsServer:
     read_only: bool = False
     mcp: FastMCP = field(init=False, repr=False)
     _prompts: dict[str, PromptDefinition] = field(init=False, repr=False)
+    _started_at: float = field(init=False, repr=False)
 
     def __post_init__(self):
         """Initialize the MCP server with lazy REPL loading.
@@ -1496,6 +1497,9 @@ class AgentsServer:
         All imports are at module level to avoid deadlocks. Only I/O-bound
         work (Neo4j connection) happens lazily.
         """
+        import time
+
+        self._started_at = time.monotonic()
         name = "imas-codex-readonly" if self.read_only else "imas-codex"
         self.mcp = FastMCP(name=name)
         self._prompts = load_prompts()
@@ -2900,13 +2904,129 @@ class AgentsServer:
                 logger.debug(f"Registered static prompt: {name}")
 
     def _register_health_check(self):
-        """Register /health endpoint for container and Azure health probes."""
+        """Register /health endpoint with graph metadata and uptime."""
+        import importlib.metadata
+        import time
+
         from starlette.requests import Request
         from starlette.responses import JSONResponse
 
+        server = self
+
+        def _get_version() -> str:
+            try:
+                return importlib.metadata.version("imas-codex")
+            except Exception:
+                return "unknown"
+
+        def _format_uptime(seconds: float) -> str:
+            if seconds < 0:
+                seconds = 0
+            remainder = int(seconds)
+            days, remainder = divmod(remainder, 86400)
+            hours, remainder = divmod(remainder, 3600)
+            minutes, secs = divmod(remainder, 60)
+            parts: list[str] = []
+            if days:
+                parts.append(f"{days}d")
+            if hours or days:
+                parts.append(f"{hours}h")
+            if minutes or hours or days:
+                parts.append(f"{minutes}m")
+            parts.append(f"{secs}s")
+            return " ".join(parts)
+
+        def _query_graph() -> dict:
+            """Query graph for IMAS DD and facility metadata."""
+            try:
+                from imas_codex.graph.client import GraphClient
+
+                gc = GraphClient.from_profile()
+                result: dict = {}
+
+                # Graph meta (name, facilities, imas flag)
+                try:
+                    from imas_codex.graph.meta import get_graph_meta
+
+                    meta = get_graph_meta(gc)
+                    if meta:
+                        result["graph_name"] = meta.get("name")
+                        result["facilities"] = meta.get("facilities") or []
+                        result["imas"] = meta.get("imas", False)
+                except Exception:
+                    pass
+
+                # Node and relationship counts
+                try:
+                    stats = gc.get_stats()
+                    result["node_count"] = stats.get("nodes", 0)
+                    result["relationship_count"] = stats.get("relationships", 0)
+                except Exception:
+                    pass
+
+                # IMAS DD version info
+                try:
+                    dd_rows = gc.query(
+                        "MATCH (d:DDVersion) "
+                        "RETURN d.id AS version, d.is_current AS is_current "
+                        "ORDER BY d.id"
+                    )
+                    if dd_rows:
+                        versions = [r["version"] for r in dd_rows]
+                        current = [r["version"] for r in dd_rows if r.get("is_current")]
+                        result["imas_dd"] = {
+                            "current": current[0] if current else None,
+                            "min": versions[0],
+                            "max": versions[-1],
+                            "version_count": len(versions),
+                        }
+
+                    # IDS and path counts
+                    imas_rows = gc.query(
+                        "MATCH (p:IMASNode) RETURN count(p) AS paths, "
+                        "count(DISTINCT p.ids) AS ids_count"
+                    )
+                    if imas_rows:
+                        result["ids_count"] = imas_rows[0].get("ids_count", 0)
+                        result["path_count"] = imas_rows[0].get("paths", 0)
+                except Exception:
+                    pass
+
+                gc.close()
+                return result
+            except Exception as exc:
+                return {"error": str(exc)}
+
         @self.mcp.custom_route("/health", methods=["GET"])
         async def health_check(request: Request) -> JSONResponse:
-            return JSONResponse({"status": "ok"})
+            uptime_seconds = time.monotonic() - server._started_at
+            mode = "read-only" if server.read_only else "read-write"
+
+            response: dict = {
+                "status": "ok",
+                "version": _get_version(),
+                "mode": mode,
+                "uptime": _format_uptime(uptime_seconds),
+                "uptime_seconds": round(uptime_seconds, 1),
+            }
+
+            graph = _query_graph()
+            if "error" in graph:
+                response["graph"] = {"status": "unavailable", "error": graph["error"]}
+            else:
+                response["graph"] = {
+                    "status": "ok",
+                    "name": graph.get("graph_name"),
+                    "node_count": graph.get("node_count"),
+                    "relationship_count": graph.get("relationship_count"),
+                }
+                if graph.get("imas_dd"):
+                    response["imas_dd"] = graph["imas_dd"]
+                    response["imas_dd"]["ids_count"] = graph.get("ids_count", 0)
+                    response["imas_dd"]["path_count"] = graph.get("path_count", 0)
+                response["facilities"] = graph.get("facilities", [])
+
+            return JSONResponse(response)
 
     def run(
         self,
