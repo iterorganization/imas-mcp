@@ -1,56 +1,107 @@
-# imas-codex LiteLLM Proxy Configuration
+# imas-codex LiteLLM Proxy — Multi-Tenant Configuration
 #
 # Start: imas-codex llm start
 # Or:    litellm --config imas_codex/config/litellm_config.yaml
 #
-# All agent teams, discovery workers, and MCP tools route through this proxy.
-# Single API key management, centralized cost tracking via Langfuse.
+# Multi-tenant gateway with per-team virtual keys and separate
+# OpenRouter API keys for spend isolation. Teams and keys are
+# managed via the LiteLLM API and stored in the SQLite database.
+#
+# Credentials are env-sourced. Virtual keys (per-team) are managed
+# via `imas-codex llm keys create` or the /key/generate API.
 
-# --- Shared credentials ---
+# ── Credentials ──────────────────────────────────────────────
+# Each credential maps to a separate OpenRouter API key for
+# independent spend tracking at the billing level.
+#
+# - or-imas-codex: Internal use (discovery workers, MCP agents)
+# - or-external:   External clients (Claude Code, Copilot CLI)
+#
+# Create additional OpenRouter keys at https://openrouter.ai/settings/keys
 credential_list:
-  - credential_name: openrouter
+  - credential_name: or-imas-codex
     credential_values:
-      api_key: os.environ/OPENROUTER_API_KEY
+      api_key: os.environ/OPENROUTER_API_KEY_IMAS_CODEX
     credential_info:
-      description: "OpenRouter API key for all model routing"
+      description: "imas-codex internal use (discovery, agents, MCP)"
 
-# --- Model definitions ---
+  - credential_name: or-external
+    credential_values:
+      api_key: os.environ/OPENROUTER_API_KEY_EXTERNAL
+    credential_info:
+      description: "External clients (Claude Code, Copilot CLI, etc.)"
+
+# ── Model Definitions ───────────────────────────────────────
+# Models use the imas-codex credential by default. External clients
+# get routed to or-external via team-scoped virtual keys.
+#
+# OpenRouter model IDs:
+#   anthropic/claude-opus-4-6
+#   anthropic/claude-sonnet-4-6
+#   google/gemini-3-flash-preview
+#   google/gemini-3-pro-preview
+#   openai/gpt-5.4
+#   openai/gpt-5.4-mini
+#
+# Composition: each model defined once; credential selected
+# by the virtual key's team, not duplicated per team.
 model_list:
-  # Opus 4.6 — agent teams, complex reasoning
+  # ── Anthropic Claude ───────────────────────────────────
   - model_name: opus
     litellm_params:
-      model: openrouter/anthropic/claude-opus-4.6
-      litellm_credential_name: openrouter
+      model: openrouter/anthropic/claude-opus-4-6
+      litellm_credential_name: or-imas-codex
 
-  # Sonnet 4.6 — compaction, summarization, focused tasks
   - model_name: sonnet
     litellm_params:
-      model: openrouter/anthropic/claude-sonnet-4.6
-      litellm_credential_name: openrouter
+      model: openrouter/anthropic/claude-sonnet-4-6
+      litellm_credential_name: or-imas-codex
 
-  # Haiku 4.5 — structured output, graph writes, low-reasoning
-  - model_name: haiku
+  # ── Google Gemini ──────────────────────────────────────
+  - model_name: gemini-flash
     litellm_params:
-      model: openrouter/anthropic/claude-haiku-4.5
-      litellm_credential_name: openrouter
+      model: openrouter/google/gemini-3-flash-preview
+      litellm_credential_name: or-imas-codex
 
-  # Sonnet 4.6 — reasoning-heavy tasks (IMAS mapping, complex structured output)
+  - model_name: gemini-pro
+    litellm_params:
+      model: openrouter/google/gemini-3-pro-preview
+      litellm_credential_name: or-imas-codex
+
+  # ── OpenAI GPT ─────────────────────────────────────────
+  - model_name: gpt
+    litellm_params:
+      model: openrouter/openai/gpt-5.4
+      litellm_credential_name: or-imas-codex
+
+  - model_name: gpt-mini
+    litellm_params:
+      model: openrouter/openai/gpt-5.4-mini
+      litellm_credential_name: or-imas-codex
+
+  # ── Task aliases ───────────────────────────────────────
   - model_name: reasoning
     litellm_params:
-      model: openrouter/anthropic/claude-sonnet-4.6
-      litellm_credential_name: openrouter
+      model: openrouter/anthropic/claude-sonnet-4-6
+      litellm_credential_name: or-imas-codex
 
-  # Gemini Flash — scoring, batch classification (auto-caches)
   - model_name: scoring
     litellm_params:
       model: openrouter/google/gemini-3-flash-preview
-      litellm_credential_name: openrouter
+      litellm_credential_name: or-imas-codex
 
-  # Passthrough — any model not explicitly listed
+  # ── Passthrough wildcard ───────────────────────────────
   - model_name: "*"
     litellm_params:
       model: "openrouter/*"
-      litellm_credential_name: openrouter
+      litellm_credential_name: or-imas-codex
+
+  # ── Local models (Phase 6 — Titan cluster) ────────────
+  # Uncomment when Ollama is deployed on Titan
+  # - model_name: qwen3-14b
+  #   litellm_params:
+  #     model: ollama/qwen3:14b-q4_K_M
+  #     api_base: http://98dci4-gpu-0002:11434
 
 litellm_settings:
   drop_params: true
@@ -63,3 +114,4 @@ litellm_settings:
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
+  database_url: os.environ/LITELLM_DATABASE_URL
