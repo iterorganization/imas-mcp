@@ -253,6 +253,12 @@ def _update_env_file(env_file: Path, new_password: str) -> None:
     is_flag=True,
     help="Show full error output from neo4j-admin.",
 )
+@click.option(
+    "--source-dump",
+    type=click.Path(exists=True),
+    default=None,
+    help="Use pre-existing dump file instead of dumping (avoids Neo4j stop/start).",
+)
 def graph_export(
     output: str | None,
     no_restart: bool,
@@ -261,6 +267,7 @@ def graph_export(
     imas_only: bool,
     local: bool,
     verbose: bool = False,
+    source_dump: str | None = None,
 ) -> None:
     """Export graph database to archive.
 
@@ -373,17 +380,14 @@ def graph_export(
 
     require_apptainer()
 
-    with Neo4jOperation("graph dump", require_stopped=True) as op:
-        if no_restart:
-            op.was_running = False
-
-        click.echo(f"Creating archive [{profile.name}]: {output_path}")
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            tmp = Path(tmpdir)
-            archive_dir = tmp / f"{pkg_name}-{version_label}"
-            archive_dir.mkdir()
-
+    def _build_archive(archive_dir: Path) -> None:
+        """Build the archive contents: dump + filter + manifest."""
+        if source_dump:
+            click.echo(f"  Using cached dump: {source_dump}")
+            shutil.copy(source_dump, str(archive_dir / "graph.dump"))
+            size_mb = (archive_dir / "graph.dump").stat().st_size / 1024 / 1024
+            click.echo(f"    Graph: {size_mb:.1f} MB")
+        else:
             click.echo("  Dumping graph database...")
             dumps_dir = profile.data_dir / "dumps"
             dumps_dir.mkdir(parents=True, exist_ok=True)
@@ -398,30 +402,62 @@ def graph_export(
             else:
                 raise click.ClickException("Graph dump file not created")
 
-            # If facilities specified, filter the dump
-            if facilities:
-                for fac in facilities:
-                    click.echo(f"  Filtering dump for facility: {fac}")
-                    _create_facility_dump(
-                        archive_dir / "graph.dump",
-                        fac,
-                        archive_dir / "graph.dump",
-                    )
-
-            # If imas-only, remove all facility nodes
-            if imas_only:
-                _create_imas_only_dump(
+        # If facilities specified, filter the dump
+        if facilities:
+            for fac in facilities:
+                click.echo(f"  Filtering dump for facility: {fac}")
+                _create_facility_dump(
                     archive_dir / "graph.dump",
+                    fac,
                     archive_dir / "graph.dump",
                 )
 
-            manifest = {
-                "version": __version__,
-                "git_commit": git_info["commit"],
-                "git_tag": git_info["tag"],
-                "timestamp": datetime.now(UTC).isoformat(),
-            }
-            (archive_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
+        # If imas-only, remove all facility nodes
+        if imas_only:
+            _create_imas_only_dump(
+                archive_dir / "graph.dump",
+                archive_dir / "graph.dump",
+            )
+
+        manifest = {
+            "version": __version__,
+            "git_commit": git_info["commit"],
+            "git_tag": git_info["tag"],
+            "timestamp": datetime.now(UTC).isoformat(),
+        }
+        (archive_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
+
+    if source_dump:
+        # No Neo4j stop/start needed — work from cached dump
+        click.echo(f"Creating archive [{profile.name}]: {output_path}")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            archive_dir = tmp / f"{pkg_name}-{version_label}"
+            archive_dir.mkdir()
+
+            _build_archive(archive_dir)
+
+            click.echo("  Creating archive...")
+            with tarfile.open(output_path, "w:gz") as tar:
+                tar.add(archive_dir, arcname=archive_dir.name)
+    else:
+        with Neo4jOperation("graph dump", require_stopped=True) as op:
+            if no_restart:
+                op.was_running = False
+
+            click.echo(f"Creating archive [{profile.name}]: {output_path}")
+
+            with tempfile.TemporaryDirectory() as tmpdir:
+                tmp = Path(tmpdir)
+                archive_dir = tmp / f"{pkg_name}-{version_label}"
+                archive_dir.mkdir()
+
+                _build_archive(archive_dir)
+
+                click.echo("  Creating archive...")
+                with tarfile.open(output_path, "w:gz") as tar:
+                    tar.add(archive_dir, arcname=archive_dir.name)
 
             click.echo("  Creating archive...")
             with tarfile.open(output_path, "w:gz") as tar:

@@ -15,7 +15,9 @@ Pipeline steps:
 from __future__ import annotations
 
 import re
+import shutil
 import subprocess
+from pathlib import Path
 
 import click
 
@@ -474,6 +476,7 @@ def _push_graph_variant(
     message: str | None = None,
     registry: str | None = None,
     version_tag: str | None = None,
+    source_dump: str | None = None,
     dry_run: bool = False,
 ) -> bool:
     """Push a single graph variant to GHCR via the graph push CLI.
@@ -501,6 +504,8 @@ def _push_graph_variant(
         cmd.extend(["--registry", registry])
     if version_tag:
         cmd.extend(["--version", version_tag])
+    if source_dump:
+        cmd.extend(["--source-dump", source_dump])
 
     click.echo(f"  Pushing {pkg_name}...")
     result = subprocess.run(cmd, text=True)
@@ -539,22 +544,109 @@ def _resolve_target_registry(remote: str) -> str | None:
     return None
 
 
+def _create_shared_dump() -> str | None:
+    """Create a single Neo4j dump for reuse across multiple graph push variants.
+
+    Returns the path to the dump file, or None on failure.
+    This stops Neo4j once, dumps, and restarts — subsequent pushes
+    use --source-dump to avoid additional stop/start cycles.
+    """
+    from imas_codex.graph.neo4j_ops import Neo4jOperation
+
+    try:
+        from imas_codex.graph.profiles import resolve_neo4j
+
+        profile = resolve_neo4j()
+        dumps_dir = profile.data_dir / "dumps"
+        dumps_dir.mkdir(parents=True, exist_ok=True)
+
+        with Neo4jOperation("release dump", require_stopped=True):
+            from imas_codex.graph.neo4j_ops import run_neo4j_dump
+
+            run_neo4j_dump(profile, dumps_dir)
+
+        dump_file = dumps_dir / "neo4j.dump"
+        if dump_file.exists():
+            # Move to a release-specific location to avoid collisions
+            release_dump = dumps_dir / "release-cache.dump"
+            shutil.move(str(dump_file), str(release_dump))
+            size_mb = release_dump.stat().st_size / 1024 / 1024
+            click.echo(f"  ✓ Shared dump created ({size_mb:.1f} MB)")
+            return str(release_dump)
+        click.echo("  ✗ Dump file not created", err=True)
+        return None
+    except Exception as e:
+        click.echo(f"  ✗ Shared dump failed: {e}", err=True)
+        return None
+
+
 def _push_all_graph_variants(
     message: str, remote: str, dry_run: bool, git_tag: str | None = None
 ) -> None:
     """Push all graph variants: imas-only, full, and per-facility.
 
-    The git_tag (e.g. 'v5.0.0-rc2') is passed through to graph push so
-    version detection doesn't depend on HEAD being exactly on a git tag.
+    Dumps the graph once and reuses the dump for filtered variants to avoid
+    5× Neo4j stop/start cycles. The full graph push creates the dump, then
+    imas-only and per-facility pushes filter from it via --source-dump.
     """
     # Resolve target registry from the release remote (e.g. upstream → iterorganization)
     registry = _resolve_target_registry(remote)
     if registry:
         click.echo(f"  Target registry: {registry}")
 
+    facilities = _get_graph_facilities()
+
+    if not facilities:
+        # No facilities — just push imas-only (the only meaningful variant)
+        click.echo("\n  Variant 1: IMAS Data Dictionary only")
+        if not _push_graph_variant(
+            imas_only=True,
+            message=message,
+            registry=registry,
+            version_tag=git_tag,
+            dry_run=dry_run,
+        ):
+            raise click.ClickException(
+                "IMAS-only graph push failed. Check: GHCR_TOKEN set, Neo4j running."
+            )
+        return
+
+    # Dump once, reuse for all variants.
+    # Step 1: Create the full dump (stops/starts Neo4j once).
+    # Step 2: Push full graph from that dump.
+    # Step 3: Push imas-only and per-facility from cached dump (no Neo4j restart).
+    click.echo("\n  Creating shared graph dump (stops Neo4j once)...")
+
+    if dry_run:
+        cached_dump = None
+    else:
+        cached_dump = _create_shared_dump()
+        if not cached_dump:
+            click.echo(
+                "  ⚠ Failed to create shared dump — falling back to per-variant dumps",
+                err=True,
+            )
+
     variant = 0
 
-    # Always push imas-only
+    # Push full graph (all facilities)
+    variant += 1
+    click.echo(
+        f"\n  Variant {variant}: Full graph (facilities: {', '.join(facilities)})"
+    )
+    if not _push_graph_variant(
+        message=message,
+        registry=registry,
+        version_tag=git_tag,
+        source_dump=cached_dump,
+        dry_run=dry_run,
+    ):
+        click.echo(
+            "  ⚠ Full graph push failed — continuing with other variants.",
+            err=True,
+        )
+
+    # Push imas-only (filtered from cached dump)
     variant += 1
     click.echo(f"\n  Variant {variant}: IMAS Data Dictionary only")
     if not _push_graph_variant(
@@ -562,47 +654,34 @@ def _push_all_graph_variants(
         message=message,
         registry=registry,
         version_tag=git_tag,
+        source_dump=cached_dump,
         dry_run=dry_run,
     ):
         raise click.ClickException(
             "IMAS-only graph push failed. Check: GHCR_TOKEN set, Neo4j running."
         )
 
-    # Push full + per-facility if graph has facilities
-    facilities = _get_graph_facilities()
-    if facilities:
-        # Full graph (all facilities)
+    # Per-facility graphs (filtered from cached dump)
+    for fac in facilities:
         variant += 1
-        click.echo(
-            f"\n  Variant {variant}: Full graph (facilities: {', '.join(facilities)})"
-        )
+        click.echo(f"\n  Variant {variant}: {fac} + IMAS DD")
         if not _push_graph_variant(
+            facility=fac,
             message=message,
             registry=registry,
             version_tag=git_tag,
+            source_dump=cached_dump,
             dry_run=dry_run,
         ):
-            click.echo(
-                "  ⚠ Full graph push failed — continuing with per-facility.",
-                err=True,
-            )
+            click.echo(f"  ⚠ {fac} graph push failed — continuing.", err=True)
 
-        # Per-facility graphs
-        for fac in facilities:
-            variant += 1
-            click.echo(f"\n  Variant {variant}: {fac} + IMAS DD")
-            if not _push_graph_variant(
-                facility=fac,
-                message=message,
-                registry=registry,
-                version_tag=git_tag,
-                dry_run=dry_run,
-            ):
-                click.echo(f"  ⚠ {fac} graph push failed — continuing.", err=True)
-    else:
-        click.echo(
-            "\n  No facilities in graph — skipping full and per-facility variants"
-        )
+    # Clean up cached dump
+    if cached_dump:
+        try:
+            Path(cached_dump).unlink(missing_ok=True)
+            click.echo("\n  Cleaned up shared dump cache.")
+        except OSError:
+            pass
 
 
 # ============================================================================
