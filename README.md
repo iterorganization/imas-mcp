@@ -722,20 +722,17 @@ This creates `ghcr.io/iterorganization/imas-codex-graph-tcv` containing only TCV
 
 ### Releases
 
-The release CLI computes semantic versions from git tags and pushes all graph variants:
+The release CLI uses a state machine derived from the latest git tag — **stable** (`vX.Y.Z`) or **RC mode** (`vX.Y.Z-rcN`):
 
 ```bash
-# Release candidate (v4.0.0 → v5.0.0-rc1)
-imas-codex release major --rc -m 'IMAS DD 4.1.0 support'
-
-# Promote RC to release (v5.0.0-rc1 → v5.0.0)
-imas-codex release --promote -m 'Production release'
-
-# Patch release (v5.0.0 → v5.0.1)
-imas-codex release patch -m 'Bug fixes'
+imas-codex release status                                      # Show state + permitted commands
+imas-codex release --bump major -m 'IMAS DD 4.1.0 support'     # → v6.0.0-rc1 (from stable)
+imas-codex release -m 'Fix CI issues'                          # → v6.0.0-rc2 (increment RC)
+imas-codex release --final -m 'Production release'             # → v6.0.0 (finalize)
+imas-codex release --bump patch --final -m 'Hotfix'            # → v6.0.1 (direct release)
 ```
 
-Each release automatically pushes both `imas-codex-graph-imas` (DD-only) and `imas-codex-graph` (full) to GHCR, then creates a git tag that triggers CI to build Docker containers.
+Each release pushes all graph variants to GHCR, then creates a git tag that triggers CI.
 
 **Graph package variants:**
 
@@ -744,6 +741,8 @@ Each release automatically pushes both `imas-codex-graph-imas` (DD-only) and `im
 | `imas-codex-graph-imas` | IMAS Data Dictionary only | Public-safe |
 | `imas-codex-graph` | All facilities + DD | Private |
 | `imas-codex-graph-{facility}` | Single facility + DD | Private |
+
+**Setup:** Set `GHCR_TOKEN` with `write:packages` scope. Add upstream remote: `git remote add upstream https://github.com/iterorganization/imas-codex.git`
 
 ### Docker Compose
 

@@ -1,7 +1,12 @@
-"""Release command: Semantic version bumps, graph publishing, and tagging.
+"""Release command: State-machine-driven semantic versioning and publishing.
 
-Single-command release workflow:
-1. Compute next version from bump type (major/minor/patch) + optional --rc
+Two-state release workflow (Stable ↔ RC mode):
+  --bump major|minor|patch   Start a new RC series (or direct release with --final)
+  --final                    Finalize current RC to stable release
+  release status             Show current state and available commands
+
+Pipeline steps:
+1. Compute next version from state machine
 2. Validate graph and tag DDVersion
 3. Push all graph variants (imas-only + full) to GHCR
 4. Create and push git tag (triggers CI)
@@ -31,6 +36,22 @@ def _get_latest_tag() -> str | None:
     for line in result.stdout.strip().splitlines():
         tag = line.strip()
         if re.match(r"^v\d+\.\d+\.\d+", tag):
+            return tag
+    return None
+
+
+def _get_latest_stable_tag() -> str | None:
+    """Get the most recent stable (non-RC) semver tag from git."""
+    result = subprocess.run(
+        ["git", "tag", "--sort=-v:refname"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return None
+    for line in result.stdout.strip().splitlines():
+        tag = line.strip()
+        if re.match(r"^v\d+\.\d+\.\d+$", tag):  # No -rc suffix
             return tag
     return None
 
@@ -67,13 +88,84 @@ def _tag_exists(tag: str) -> bool:
     return bool(result.stdout.strip())
 
 
+# ============================================================================
+# State detection
+# ============================================================================
+
+
+def _detect_state() -> dict:
+    """Detect current release state from latest git tag.
+
+    Returns dict with keys:
+        state: 'stable' | 'rc' | None
+        tag: str | None
+        major, minor, patch: int
+        rc: int | None
+    """
+    tag = _get_latest_tag()
+    if tag is None:
+        return {
+            "state": None,
+            "tag": None,
+            "major": 0,
+            "minor": 0,
+            "patch": 0,
+            "rc": None,
+        }
+    major, minor, patch, rc = _parse_version(tag)
+    state = "rc" if rc is not None else "stable"
+    return {
+        "state": state,
+        "tag": tag,
+        "major": major,
+        "minor": minor,
+        "patch": patch,
+        "rc": rc,
+    }
+
+
+def _commits_since_tag(tag: str) -> int:
+    """Count commits since a tag."""
+    result = subprocess.run(
+        ["git", "rev-list", f"{tag}..HEAD", "--count"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return 0
+    return int(result.stdout.strip())
+
+
+def _apply_bump(major: int, minor: int, patch: int, bump: str) -> tuple[int, int, int]:
+    """Apply a version bump to base version components."""
+    if bump == "major":
+        return major + 1, 0, 0
+    elif bump == "minor":
+        return major, minor + 1, 0
+    elif bump == "patch":
+        return major, minor, patch + 1
+    else:
+        raise click.ClickException(f"Invalid bump type: {bump}")
+
+
 def compute_next_version(
     bump: str | None,
     *,
-    rc: bool = False,
-    promote: bool = False,
+    final: bool = False,
 ) -> tuple[str, str]:
-    """Compute the next version from the latest git tag.
+    """Compute the next version from the latest git tag using a state machine.
+
+    State machine transitions:
+
+      STABLE + --bump            → new RC series  (v5.0.0 + patch → v5.0.1-rc1)
+      STABLE + --bump + --final  → direct release (v5.0.0 + patch → v5.0.1)
+      STABLE + no bump           → error
+      STABLE + --final only      → error (not in RC mode)
+      RC + no bump               → increment RC   (v5.0.0-rc1 → v5.0.0-rc2)
+      RC + --final               → finalize        (v5.0.0-rc1 → v5.0.0)
+      RC + --bump                → abandon RC, bump from last stable
+                                   (v6.0.0-rc3 + minor from v5.0.0 → v5.1.0-rc1)
+      RC + --bump + --final      → abandon RC, direct release from last stable
 
     Returns (git_tag, pep440_version) tuple.
     """
@@ -85,34 +177,39 @@ def compute_next_version(
         )
 
     major, minor, patch, current_rc = _parse_version(latest)
+    in_rc = current_rc is not None
 
-    if promote:
-        if current_rc is None:
+    # --- Stable state ---
+    if not in_rc:
+        if bump is None and final:
             raise click.ClickException(
-                f"Cannot promote {latest} — it's not a release candidate."
+                f"Not in RC mode (latest: {latest}). "
+                "Use --bump with --final for a direct release, "
+                "or --bump alone to start an RC series."
             )
-        # Strip RC suffix: v5.0.0-rc1 → v5.0.0
+        if bump is None:
+            raise click.ClickException(
+                f"On stable release {latest}. Specify --bump (major|minor|patch) "
+                "to start a new release candidate series."
+            )
+        new_major, new_minor, new_patch = _apply_bump(major, minor, patch, bump)
+        rc_num = None if final else 1
+        tag = _format_git_tag(new_major, new_minor, new_patch, rc_num)
+        if not final:
+            while _tag_exists(tag):
+                rc_num += 1
+                tag = _format_git_tag(new_major, new_minor, new_patch, rc_num)
+        return tag, _format_pep440(new_major, new_minor, new_patch, rc_num)
+
+    # --- RC mode ---
+    if bump is None and final:
+        # Finalize: strip RC suffix (v5.0.0-rc1 → v5.0.0)
         return _format_git_tag(major, minor, patch, None), _format_pep440(
             major, minor, patch, None
         )
 
-    if bump is None and not promote:
-        # No bump specified — if latest is an RC and --rc is set, increment RC
-        if rc and current_rc is not None:
-            next_rc = current_rc + 1
-            tag = _format_git_tag(major, minor, patch, next_rc)
-            while _tag_exists(tag):
-                next_rc += 1
-                tag = _format_git_tag(major, minor, patch, next_rc)
-            return tag, _format_pep440(major, minor, patch, next_rc)
-        raise click.ClickException(
-            "Specify a bump type (major, minor, patch), use --promote, "
-            "or use --rc to increment an existing release candidate."
-        )
-
-    # If latest is an RC and we're bumping the same level with --rc,
-    # auto-increment RC instead of bumping
-    if rc and current_rc is not None:
+    if bump is None:
+        # Increment RC (v5.0.0-rc1 → v5.0.0-rc2)
         next_rc = current_rc + 1
         tag = _format_git_tag(major, minor, patch, next_rc)
         while _tag_exists(tag):
@@ -120,30 +217,98 @@ def compute_next_version(
             tag = _format_git_tag(major, minor, patch, next_rc)
         return tag, _format_pep440(major, minor, patch, next_rc)
 
-    # Apply bump
-    if bump == "major":
-        major, minor, patch = major + 1, 0, 0
-    elif bump == "minor":
-        minor, patch = minor + 1, 0
-    elif bump == "patch":
-        # If current is an RC, patch bumps to the base version
-        if current_rc is not None:
-            pass  # Already at the right base
-        else:
-            patch += 1
-    else:
-        raise click.ClickException(f"Invalid bump type: {bump}")
-
-    rc_num = 1 if rc else None
-    tag = _format_git_tag(major, minor, patch, rc_num)
-
-    # Check for collision and auto-increment RC
-    if rc:
+    # --bump in RC mode: abandon current RC, bump from last STABLE tag
+    stable_tag = _get_latest_stable_tag()
+    if stable_tag is None:
+        raise click.ClickException(
+            "No stable (non-RC) tags found to bump from. "
+            "Finalize the current RC first with --final."
+        )
+    s_major, s_minor, s_patch, _ = _parse_version(stable_tag)
+    new_major, new_minor, new_patch = _apply_bump(s_major, s_minor, s_patch, bump)
+    rc_num = None if final else 1
+    tag = _format_git_tag(new_major, new_minor, new_patch, rc_num)
+    if not final:
         while _tag_exists(tag):
             rc_num += 1
-            tag = _format_git_tag(major, minor, patch, rc_num)
+            tag = _format_git_tag(new_major, new_minor, new_patch, rc_num)
+    return tag, _format_pep440(new_major, new_minor, new_patch, rc_num)
 
-    return tag, _format_pep440(major, minor, patch, rc_num)
+
+# ============================================================================
+# Release status
+# ============================================================================
+
+
+def _show_release_status() -> None:
+    """Show current release state and available commands."""
+    info = _detect_state()
+
+    if info["state"] is None:
+        click.echo("Release state: No tags found")
+        click.echo("  Create initial tag: git tag -a v0.1.0 -m 'Initial release'")
+        return
+
+    tag = info["tag"]
+    major, minor, patch = info["major"], info["minor"], info["patch"]
+    commits = _commits_since_tag(tag)
+    commits_str = f" ({commits} commits since tag)" if commits else ""
+
+    if info["state"] == "rc":
+        target = _format_git_tag(major, minor, patch, None)
+        next_rc = info["rc"] + 1
+        click.echo("Release state: RC mode")
+        click.echo(f"  Current:  {tag}{commits_str}")
+        click.echo(f"  Target:   {target}")
+
+        # Show bump targets from last stable tag
+        stable_tag = _get_latest_stable_tag()
+        if stable_tag:
+            s_maj, s_min, s_pat, _ = _parse_version(stable_tag)
+            click.echo(f"  Stable:   {stable_tag}")
+        else:
+            s_maj, s_min, s_pat = major, minor, patch
+
+        click.echo()
+        click.echo("Permitted commands:")
+        click.echo(
+            f"  imas-codex release -m '...'                  "
+            f"→ {_format_git_tag(major, minor, patch, next_rc)}"
+        )
+        click.echo(f"  imas-codex release --final -m '...'          → {target}")
+        click.echo(
+            f"  imas-codex release --bump patch -m '...'     "
+            f"→ {_format_git_tag(s_maj, s_min, s_pat + 1, 1)}  (abandon RC, bump from {stable_tag or 'stable'})"
+        )
+        click.echo(
+            f"  imas-codex release --bump minor -m '...'     "
+            f"→ {_format_git_tag(s_maj, s_min + 1, 0, 1)}  (abandon RC, bump from {stable_tag or 'stable'})"
+        )
+        click.echo(
+            f"  imas-codex release --bump major -m '...'     "
+            f"→ {_format_git_tag(s_maj + 1, 0, 0, 1)}  (abandon RC, bump from {stable_tag or 'stable'})"
+        )
+    else:
+        click.echo("Release state: Stable")
+        click.echo(f"  Current:  {tag}{commits_str}")
+        click.echo()
+        click.echo("Permitted commands:")
+        click.echo(
+            f"  imas-codex release --bump patch -m '...'     "
+            f"→ {_format_git_tag(major, minor, patch + 1, 1)}"
+        )
+        click.echo(
+            f"  imas-codex release --bump minor -m '...'     "
+            f"→ {_format_git_tag(major, minor + 1, 0, 1)}"
+        )
+        click.echo(
+            f"  imas-codex release --bump major -m '...'     "
+            f"→ {_format_git_tag(major + 1, 0, 0, 1)}"
+        )
+        click.echo(
+            f"  imas-codex release --bump patch --final -m '...'  "
+            f"→ {_format_git_tag(major, minor, patch + 1, None)}"
+        )
 
 
 # ============================================================================
@@ -459,25 +624,28 @@ def _create_and_push_tag(tag: str, message: str, remote: str, dry_run: bool) -> 
 
 @click.command("release")
 @click.argument(
-    "bump",
+    "action",
     required=False,
+    default=None,
+    type=click.Choice(["status"]),
+)
+@click.option(
+    "--bump",
     type=click.Choice(["major", "minor", "patch"]),
+    default=None,
+    help="Version bump type. Starts a new RC series (default) or direct release (with --final).",
 )
 @click.option(
     "-m",
     "--message",
-    required=True,
+    default=None,
     help="Release message (used for git tag annotation and GHCR push).",
 )
 @click.option(
-    "--rc",
+    "--final",
+    "final",
     is_flag=True,
-    help="Create a release candidate (e.g. v5.0.0-rc1).",
-)
-@click.option(
-    "--promote",
-    is_flag=True,
-    help="Promote current RC to release (e.g. v5.0.0-rc1 → v5.0.0).",
+    help="Finalize: promote current RC to stable, or skip RC with --bump.",
 )
 @click.option(
     "--version",
@@ -507,48 +675,63 @@ def _create_and_push_tag(tag: str, message: str, remote: str, dry_run: bool) -> 
     help="Show what would be done without making changes.",
 )
 def release(
+    action: str | None,
     bump: str | None,
-    message: str,
-    rc: bool,
-    promote: bool,
+    message: str | None,
+    final: bool,
     explicit_version: str | None,
     remote: str,
     skip_graph: bool,
     skip_git: bool,
     dry_run: bool,
 ) -> None:
-    """Create a release with semantic version bumps and graph publishing.
+    """State-machine release: semantic version bumps, graph publishing, tagging.
 
-    Computes the next version from the latest git tag, pushes all graph
-    variants to GHCR, creates a git tag, and pushes it to trigger CI.
+    Detects current state (Stable or RC mode) from the latest git tag and
+    computes the next version automatically. RC mode is the default for new
+    bumps; use --final to skip RC or promote an existing RC to stable.
 
-    BUMP is the version bump type: major, minor, or patch.
-    Omit when using --promote (RC → release).
+    \b
+    States:
+      Stable   Latest tag is vX.Y.Z       → must --bump to start RC
+      RC mode  Latest tag is vX.Y.Z-rcN   → increment RC, --final, or --bump
 
     \b
     Examples:
-        # Major RC (v4.0.0 → v5.0.0-rc1)
-        imas-codex release major --rc -m 'IMAS DD 4.1.0 support'
+        # Show current state and available commands
+        imas-codex release status
 
-        # Increment RC (v5.0.0-rc1 → v5.0.0-rc2)
-        imas-codex release --rc -m 'Fix CI issues'
+        # Start RC series (v5.0.0 → v5.1.0-rc1)
+        imas-codex release --bump minor -m 'New feature'
 
-        # Promote RC to release (v5.0.0-rc2 → v5.0.0)
-        imas-codex release --promote -m 'Production release'
+        # Increment RC (v5.1.0-rc1 → v5.1.0-rc2)
+        imas-codex release -m 'Fix CI issues'
 
-        # Patch release (v5.0.0 → v5.0.1)
-        imas-codex release patch -m 'Bug fixes'
+        # Finalize RC (v5.1.0-rc2 → v5.1.0)
+        imas-codex release --final -m 'Production release'
 
-        # Test on fork (default remote is upstream)
-        imas-codex release minor --rc --remote origin -m 'Test'
+        # Abandon RC, bump from last stable (v5.0.0 → v5.1.0-rc1)
+        imas-codex release --bump minor -m 'Changed scope'
 
-        # Code-only release (no graph push)
-        imas-codex release patch --skip-graph -m 'Docs update'
+        # Direct release, skip RC (v5.0.0 → v5.0.1)
+        imas-codex release --bump patch --final -m 'Hotfix'
 
         # Dry run
-        imas-codex release major --rc --dry-run -m 'Test'
+        imas-codex release --bump major --dry-run -m 'Test'
     """
-    # Resolve version
+    # --- Status subcommand ---
+    if action == "status":
+        _show_release_status()
+        return
+
+    # --- Release requires -m/--message ---
+    if message is None:
+        raise click.ClickException(
+            "Missing required option '-m' / '--message'. "
+            "Provide a release message: imas-codex release --bump patch -m 'description'"
+        )
+
+    # --- Resolve version ---
     if explicit_version:
         if not re.match(r"^v\d+\.\d+\.\d+(-rc\d+)?$", explicit_version):
             raise click.ClickException(
@@ -558,13 +741,37 @@ def release(
         git_tag = explicit_version
         version_number = explicit_version.lstrip("v").replace("-rc", "rc")
     else:
-        if not bump and not promote and not rc:
-            raise click.ClickException(
-                "Specify a bump type (major, minor, patch), use --promote, "
-                "or use --rc to increment an existing RC. "
-                "Use --version for explicit override."
-            )
-        git_tag, version_number = compute_next_version(bump, rc=rc, promote=promote)
+        # Detect state once for error messages and abandonment warning
+        info = _detect_state()
+
+        if not bump and not final:
+            if info["state"] == "rc":
+                git_tag, version_number = compute_next_version(None)
+            else:
+                raise click.ClickException(
+                    f"On stable release {info['tag'] or '(none)'}. "
+                    "Specify --bump (major|minor|patch) to start a new release. "
+                    "Use 'imas-codex release status' to see options."
+                )
+        else:
+            git_tag, version_number = compute_next_version(bump, final=final)
+
+        # Warn when abandoning an active RC series via --bump
+        if bump and info["state"] == "rc":
+            stable_tag = _get_latest_stable_tag()
+            base_ref = stable_tag or "(none)"
+            if final:
+                click.echo(
+                    f"  ⚠ Abandoning {info['tag']} "
+                    f"— releasing {git_tag} directly (bumped from {base_ref})",
+                    err=True,
+                )
+            else:
+                click.echo(
+                    f"  ⚠ Abandoning {info['tag']} "
+                    f"— new RC series at {git_tag} (bumped from {base_ref})",
+                    err=True,
+                )
 
     is_rc = "-rc" in git_tag
     latest = _get_latest_tag()
@@ -628,5 +835,6 @@ def release(
         click.echo(f"  Tag pushed to {remote} — CI will build and publish.")
         if is_rc:
             click.echo(
-                f"\n  To promote: imas-codex release --promote -m 'Release {git_tag.split('-')[0]}'"
+                f"\n  To finalize: imas-codex release --final "
+                f"-m 'Release {git_tag.split('-')[0]}'"
             )
