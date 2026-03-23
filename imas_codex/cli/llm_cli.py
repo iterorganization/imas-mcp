@@ -62,8 +62,18 @@ def llm() -> None:
       imas-codex llm local stop         Stop local LLM
       imas-codex llm local status       Check local LLM health
       imas-codex llm local models       List local models
+      imas-codex llm db init            Initialize PostgreSQL database
+      imas-codex llm db start           Start PostgreSQL server
+      imas-codex llm db stop            Stop PostgreSQL server
+      imas-codex llm db status          Check PostgreSQL status
     """
     pass
+
+
+# Register subgroups
+from imas_codex.cli.llm_db import llm_db  # noqa: E402
+
+llm.add_command(llm_db)
 
 
 @llm.command("start")
@@ -168,6 +178,19 @@ def _start_llm_foreground(
 
     # Security: check file permissions on sensitive files
     _check_file_permissions()
+
+    # Start PostgreSQL if configured
+    if os.environ.get("LITELLM_DATABASE_URL"):
+        from imas_codex.cli.llm_db import start_db
+
+        if not start_db(quiet=False):
+            click.echo(
+                click.style(
+                    "  ⚠ PostgreSQL not available — running without DB", fg="yellow"
+                )
+            )
+            click.echo("    Teams/keys will not persist across restarts")
+            os.environ.pop("LITELLM_DATABASE_URL", None)
 
     click.echo(f"Starting LiteLLM proxy on {host}:{port}")
     click.echo(f"Config: {config_path}")
@@ -737,6 +760,12 @@ def _deploy_login_llm_direct() -> None:
     """
     port = _llm_port()
 
+    # Start PostgreSQL if configured
+    from imas_codex.cli.llm_db import start_db
+
+    if os.environ.get("LITELLM_DATABASE_URL"):
+        start_db(quiet=False)
+
     # Kill any existing proxy process on this port
     _run_llm_remote(
         f"bash -c 'pid=$(lsof -ti:{port} 2>/dev/null || true); "
@@ -760,6 +789,17 @@ def _deploy_login_llm_direct() -> None:
         f"set +a\n"
         f"export LITELLM_CALLBACKS=langfuse\n"
         f"mkdir -p {_SERVICES_DIR}\n"
+        f"\n"
+        f"# Start PostgreSQL if configured and not already running\n"
+        f'if [ -n "$LITELLM_DATABASE_URL" ] && [ -f {_SERVICES_DIR}/pgdata/PG_VERSION ]; then\n'
+        f"  PG_BIN=$(cat {_SERVICES_DIR}/.pg_bin 2>/dev/null)\n"
+        f'  if [ -n "$PG_BIN" ] && [ -x "$PG_BIN/pg_ctl" ]; then\n'
+        f"    $PG_BIN/pg_ctl status -D {_SERVICES_DIR}/pgdata >/dev/null 2>&1 || \\\n"
+        f"      $PG_BIN/pg_ctl start -D {_SERVICES_DIR}/pgdata -w \\\n"
+        f"        -l {_SERVICES_DIR}/pgdata/log/postgresql.log\n"
+        f"  fi\n"
+        f"fi\n"
+        f"\n"
         f"exec $HOME/.local/bin/uv tool run "
         f"  --with 'litellm[proxy]>=1.81.0' --with 'langfuse>=2.0.0' "
         f"  --with 'prisma>=0.15.0' "
@@ -910,6 +950,7 @@ EnvironmentFile=-{_project_h}/.env
 Environment="PATH=%h/.local/bin:/usr/local/bin:/usr/bin"
 Environment="LITELLM_CALLBACKS=langfuse"
 ExecStartPre=/bin/mkdir -p {_services_h}
+ExecStartPre=-/bin/bash -c 'PG_BIN=$(cat {_services_h}/.pg_bin 2>/dev/null); [ -n "$PG_BIN" ] && [ -x "$PG_BIN/pg_ctl" ] && [ -f {_services_h}/pgdata/PG_VERSION ] && ($PG_BIN/pg_ctl status -D {_services_h}/pgdata >/dev/null 2>&1 || $PG_BIN/pg_ctl start -D {_services_h}/pgdata -w -l {_services_h}/pgdata/log/postgresql.log)'
 ExecStart=%h/.local/bin/uv tool run --with 'litellm[proxy]>=1.81.0' --with 'langfuse>=2.0.0' -- litellm --config {_project_h}/imas_codex/config/litellm_config.yaml --host 0.0.0.0 --port {port} --drop_params
 ExecStop=/bin/kill -15 $MAINPID
 StandardOutput=append:{_services_h}/llm.log
@@ -981,12 +1022,14 @@ def _stop_stale_llm_instances() -> None:
 
 
 @llm.command("stop")
-def llm_stop() -> None:
+@click.option("--with-db", is_flag=True, help="Also stop PostgreSQL database")
+def llm_stop(with_db: bool) -> None:
     """Stop the LLM proxy server on the login node.
 
     \b
     Examples:
         imas-codex llm stop
+        imas-codex llm stop --with-db    # Also stop PostgreSQL
     """
     port = _llm_port()
 
@@ -1021,6 +1064,11 @@ def llm_stop() -> None:
             click.echo("LLM proxy not running")
     except subprocess.CalledProcessError:
         click.echo("Failed to stop LLM proxy")
+
+    if with_db:
+        from imas_codex.cli.llm_db import stop_db
+
+        stop_db()
 
 
 @llm.command("restart")
