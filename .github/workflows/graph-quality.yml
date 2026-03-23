@@ -133,18 +133,24 @@ jobs:
           fi
           echo "Found dump: ${DUMP_FILE}"
 
+          # neo4j-admin load expects the file named <database>.dump
+          DUMP_DIR=$(mktemp -d)
+          cp "${DUMP_FILE}" "${DUMP_DIR}/neo4j.dump"
+          chmod -R 777 "${DUMP_DIR}"
+
           # Get the Neo4j container ID for data volume
           NEO4J_CONTAINER=$(docker ps -aq --filter "ancestor=neo4j:2026.01.4-community" | head -1)
           NEO4J_DATA_VOLUME=$(docker inspect "${NEO4J_CONTAINER}" --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Name}}{{end}}{{end}}')
 
           # Load into Neo4j using a fresh container
-          docker run --rm \
+          docker run --rm --user root \
             -v "${NEO4J_DATA_VOLUME}:/data" \
-            -v "$(dirname ${DUMP_FILE}):/dump" \
+            -v "${DUMP_DIR}:/dump" \
             neo4j:2026.01.4-community \
             neo4j-admin database load neo4j \
               --from-path=/dump \
-              --overwrite-destination=true
+              --overwrite-destination=true \
+              --verbose
 
       - name: Start Neo4j with loaded data
         run: |
