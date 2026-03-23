@@ -151,6 +151,34 @@ model_list:
         X-Title: imas-codex
         HTTP-Referer: https://github.com/iterorganization/imas-codex
 
+  # ── Claude Code (separate OpenRouter key for spend isolation) ──
+  # These model entries are targeted by the claude-code team's
+  # model_aliases. Claude Code sends Anthropic model names like
+  # "claude-opus-4-5" — the team alias maps them to "cc:opus", etc.
+  - model_name: cc:opus
+    litellm_params:
+      model: anthropic/claude-opus-4-6
+      litellm_credential_name: openrouter-claude-code-anthropic
+      extra_headers:
+        X-Title: imas-codex-claude-code
+        HTTP-Referer: https://github.com/iterorganization/imas-codex
+
+  - model_name: cc:sonnet
+    litellm_params:
+      model: anthropic/claude-sonnet-4-6
+      litellm_credential_name: openrouter-claude-code-anthropic
+      extra_headers:
+        X-Title: imas-codex-claude-code
+        HTTP-Referer: https://github.com/iterorganization/imas-codex
+
+  - model_name: cc:haiku
+    litellm_params:
+      model: anthropic/claude-haiku-4-5
+      litellm_credential_name: openrouter-claude-code-anthropic
+      extra_headers:
+        X-Title: imas-codex-claude-code
+        HTTP-Referer: https://github.com/iterorganization/imas-codex
+
   # ── Passthrough wildcard (OpenAI-format) ───────────────
   - model_name: "*"
     litellm_params:
