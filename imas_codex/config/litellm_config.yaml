@@ -17,6 +17,12 @@
 #     openrouter/anthropic/claude-opus-4-6 → cx:opus  (from project code)
 #     opus → cc:opus  (from Claude Code, via team model_aliases)
 #
+# Deduplication:
+#   cx: entries define model params as YAML anchors (&opus, &sonnet, etc.).
+#   cc: entries inherit via <<: merge key, overriding only the credential
+#   and X-Title header. Add a new model once to cx:, add a 3-line cc:
+#   entry if Claude Code needs it too.
+#
 # Provider format:
 #   Anthropic uses /api endpoint (preserves cache_control blocks)
 #   All others use /api/v1 endpoint (OpenAI-compatible)
@@ -26,7 +32,6 @@
 #   -anthropic  → /api   (Anthropic-native, preserves cache_control)
 #   (default)   → /api/v1 (OpenAI-compatible, Gemini/GPT)
 credential_list:
-  # imas-codex internal (discovery, scoring, MCP tools)
   - credential_name: imas-codex
     credential_values:
       api_key: os.environ/OPENROUTER_API_KEY_IMAS_CODEX
@@ -41,7 +46,6 @@ credential_list:
     credential_info:
       description: "imas-codex (Anthropic-native, cache_control)"
 
-  # Claude Code clients (separate spend tracking)
   - credential_name: claude-code-anthropic
     credential_values:
       api_key: os.environ/OPENROUTER_API_KEY_CLAUDE_CODE
@@ -54,100 +58,77 @@ credential_list:
 #   anthropic/claude-opus-4-6          anthropic/claude-sonnet-4-6
 #   anthropic/claude-haiku-4-5         google/gemini-3.1-flash-lite-preview
 #   google/gemini-3.1-pro-preview      openai/gpt-4o  openai/gpt-4o-mini
-#
-# All entries are team-prefixed (cx: or cc:). The model_alias_map
-# in litellm_settings resolves incoming model names (from pyproject.toml
-# via ensure_model_prefix) to the correct team-prefixed entry.
 model_list:
 
   # ── cx: imas-codex team ────────────────────────────────
-  # Used by discovery pipelines, MCP tools, scoring, mapping.
-  # Claude models use Anthropic-native /api endpoint.
+  # YAML anchors (&opus, &sonnet, &haiku) define params once;
+  # cc: entries below inherit via <<: merge key.
   - model_name: cx:opus
-    litellm_params:
+    litellm_params: &opus
       model: anthropic/claude-opus-4-6
       litellm_credential_name: imas-codex-anthropic
-      extra_headers:
+      extra_headers: &cx_headers
         X-Title: imas-codex
-        HTTP-Referer: https://github.com/iterorganization/imas-codex
+        HTTP-Referer: &referer https://github.com/iterorganization/imas-codex
 
   - model_name: cx:sonnet
-    litellm_params:
+    litellm_params: &sonnet
       model: anthropic/claude-sonnet-4-6
       litellm_credential_name: imas-codex-anthropic
-      extra_headers:
-        X-Title: imas-codex
-        HTTP-Referer: https://github.com/iterorganization/imas-codex
+      extra_headers: *cx_headers
 
   - model_name: cx:haiku
-    litellm_params:
+    litellm_params: &haiku
       model: anthropic/claude-haiku-4-5
       litellm_credential_name: imas-codex-anthropic
-      extra_headers:
-        X-Title: imas-codex
-        HTTP-Referer: https://github.com/iterorganization/imas-codex
+      extra_headers: *cx_headers
 
-  # Gemini models use OpenAI-compatible /api/v1 endpoint.
   - model_name: cx:gemini-flash
     litellm_params:
       model: openai/google/gemini-3.1-flash-lite-preview
       litellm_credential_name: imas-codex
-      extra_headers:
-        X-Title: imas-codex
-        HTTP-Referer: https://github.com/iterorganization/imas-codex
+      extra_headers: *cx_headers
 
   - model_name: cx:gemini-pro
     litellm_params:
       model: openai/google/gemini-3.1-pro-preview
       litellm_credential_name: imas-codex
-      extra_headers:
-        X-Title: imas-codex
-        HTTP-Referer: https://github.com/iterorganization/imas-codex
+      extra_headers: *cx_headers
 
-  # GPT models use OpenAI-compatible /api/v1 endpoint.
   - model_name: cx:gpt
     litellm_params:
       model: openai/openai/gpt-4o
       litellm_credential_name: imas-codex
-      extra_headers:
-        X-Title: imas-codex
-        HTTP-Referer: https://github.com/iterorganization/imas-codex
+      extra_headers: *cx_headers
 
   - model_name: cx:gpt-mini
     litellm_params:
       model: openai/openai/gpt-4o-mini
       litellm_credential_name: imas-codex
-      extra_headers:
-        X-Title: imas-codex
-        HTTP-Referer: https://github.com/iterorganization/imas-codex
+      extra_headers: *cx_headers
 
-  # ── cc: claude-code team ───────────────────────────────
-  # Separate OpenRouter key for Claude Code spend tracking.
-  # Team model_aliases remap incoming names:
-  #   opus → cc:opus, claude-opus-4-6 → cc:opus, etc.
+  # ── cc: claude-code team (inherits model IDs from cx:) ─
+  # Only credential and X-Title differ. Team model_aliases remap
+  # incoming names: opus → cc:opus, claude-opus-4-6 → cc:opus, etc.
   - model_name: cc:opus
     litellm_params:
-      model: anthropic/claude-opus-4-6
+      <<: *opus
       litellm_credential_name: claude-code-anthropic
-      extra_headers:
+      extra_headers: &cc_headers
         X-Title: imas-codex-claude-code
-        HTTP-Referer: https://github.com/iterorganization/imas-codex
+        HTTP-Referer: *referer
 
   - model_name: cc:sonnet
     litellm_params:
-      model: anthropic/claude-sonnet-4-6
+      <<: *sonnet
       litellm_credential_name: claude-code-anthropic
-      extra_headers:
-        X-Title: imas-codex-claude-code
-        HTTP-Referer: https://github.com/iterorganization/imas-codex
+      extra_headers: *cc_headers
 
   - model_name: cc:haiku
     litellm_params:
-      model: anthropic/claude-haiku-4-5
+      <<: *haiku
       litellm_credential_name: claude-code-anthropic
-      extra_headers:
-        X-Title: imas-codex-claude-code
-        HTTP-Referer: https://github.com/iterorganization/imas-codex
+      extra_headers: *cc_headers
 
   # ── Local models (Phase 6 — Titan cluster) ────────────
   # Uncomment when Ollama is deployed on Titan
