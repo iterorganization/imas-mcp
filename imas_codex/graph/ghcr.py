@@ -71,7 +71,9 @@ def get_git_info() -> dict:
         info["tag"] = result.stdout.strip()
 
     result = subprocess.run(
-        ["git", "status", "--porcelain"], capture_output=True, text=True
+        ["git", "status", "--porcelain", "-uno"],
+        capture_output=True,
+        text=True,
     )
     info["is_dirty"] = bool(result.stdout.strip())
 
