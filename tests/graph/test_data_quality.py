@@ -257,3 +257,127 @@ class TestCodeFilePaths:
         )
         count = result[0]["cnt"] if result else 0
         assert count == 0, f"{count} CodeFile nodes with non-absolute paths"
+
+
+class TestWikiReferenceIntegrity:
+    """Verify URL references on wiki discovery nodes."""
+
+    def test_wiki_pages_have_url(self, graph_client, label_counts):
+        """Every WikiPage must have a non-empty url."""
+        if not label_counts.get("WikiPage"):
+            pytest.skip("No WikiPage nodes in graph")
+
+        result = graph_client.query(
+            "MATCH (n:WikiPage) "
+            "WHERE n.url IS NULL OR n.url = '' "
+            "RETURN count(n) AS cnt"
+        )
+        count = result[0]["cnt"] if result else 0
+        assert count == 0, f"{count} WikiPage nodes missing url"
+
+    def test_documents_have_url(self, graph_client, label_counts):
+        """Every Document must have a non-empty url."""
+        if not label_counts.get("Document"):
+            pytest.skip("No Document nodes in graph")
+
+        result = graph_client.query(
+            "MATCH (n:Document) "
+            "WHERE n.url IS NULL OR n.url = '' "
+            "RETURN count(n) AS cnt"
+        )
+        count = result[0]["cnt"] if result else 0
+        assert count == 0, f"{count} Document nodes missing url"
+
+    def test_images_have_source_url(self, graph_client, label_counts):
+        """Every Image must have a non-empty source_url."""
+        if not label_counts.get("Image"):
+            pytest.skip("No Image nodes in graph")
+
+        result = graph_client.query(
+            "MATCH (n:Image) "
+            "WHERE n.source_url IS NULL OR n.source_url = '' "
+            "RETURN count(n) AS cnt"
+        )
+        count = result[0]["cnt"] if result else 0
+        assert count == 0, f"{count} Image nodes missing source_url"
+
+
+class TestImageScoring:
+    """Verify image scoring consistency."""
+
+    _SCORE_DIMS = [
+        "score_data_documentation",
+        "score_physics_content",
+        "score_code_documentation",
+        "score_data_access",
+        "score_calibration",
+        "score_imas_relevance",
+    ]
+
+    def test_scored_images_have_composite(self, graph_client, label_counts):
+        """Images with individual score dimensions must have score_composite."""
+        if not label_counts.get("Image"):
+            pytest.skip("No Image nodes in graph")
+
+        dims_present = " OR ".join(
+            f"n.{d} IS NOT NULL" for d in self._SCORE_DIMS
+        )
+        result = graph_client.query(
+            f"MATCH (n:Image) "
+            f"WHERE n.score_composite IS NULL AND ({dims_present}) "
+            f"RETURN count(n) AS cnt"
+        )
+        count = result[0]["cnt"] if result else 0
+        assert count == 0, (
+            f"{count} Image nodes have score dimensions but no score_composite"
+        )
+
+    def test_no_stray_score_property(self, graph_client, label_counts):
+        """Images must not have a non-schema 'score' property (legacy bug)."""
+        if not label_counts.get("Image"):
+            pytest.skip("No Image nodes in graph")
+
+        result = graph_client.query(
+            "MATCH (n:Image) WHERE n.score IS NOT NULL "
+            "RETURN count(n) AS cnt"
+        )
+        count = result[0]["cnt"] if result else 0
+        assert count == 0, (
+            f"{count} Image nodes have stray 'score' property (non-schema)"
+        )
+
+
+class TestChunkIntegrity:
+    """Verify chunk parent references."""
+
+    def test_ingested_pages_have_chunks(self, graph_client, label_counts):
+        """Ingested WikiPages should have at least one WikiChunk."""
+        if not label_counts.get("WikiPage"):
+            pytest.skip("No WikiPage nodes in graph")
+
+        result = graph_client.query(
+            "MATCH (n:WikiPage) "
+            "WHERE n.status = 'ingested' "
+            "AND NOT EXISTS { (n)-[:HAS_CHUNK]->(:WikiChunk) } "
+            "RETURN count(n) AS cnt"
+        )
+        count = result[0]["cnt"] if result else 0
+        assert count == 0, (
+            f"{count} ingested WikiPage nodes have no WikiChunk children"
+        )
+
+    def test_ingested_documents_have_chunks(self, graph_client, label_counts):
+        """Ingested Documents should have at least one WikiChunk."""
+        if not label_counts.get("Document"):
+            pytest.skip("No Document nodes in graph")
+
+        result = graph_client.query(
+            "MATCH (n:Document) "
+            "WHERE n.status = 'ingested' "
+            "AND NOT EXISTS { (n)-[:HAS_CHUNK]->(:WikiChunk) } "
+            "RETURN count(n) AS cnt"
+        )
+        count = result[0]["cnt"] if result else 0
+        assert count == 0, (
+            f"{count} ingested Document nodes have no WikiChunk children"
+        )
