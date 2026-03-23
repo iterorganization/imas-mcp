@@ -297,6 +297,7 @@ def _push_graph_variant(
     *,
     imas_only: bool = False,
     message: str | None = None,
+    registry: str | None = None,
     dry_run: bool = False,
 ) -> bool:
     """Push a single graph variant to GHCR via the graph push CLI.
@@ -308,7 +309,8 @@ def _push_graph_variant(
     pkg_name = get_package_name(imas_only=imas_only)
 
     if dry_run:
-        click.echo(f"  [would push {pkg_name} to GHCR]")
+        target = f" → {registry}" if registry else ""
+        click.echo(f"  [would push {pkg_name}{target} to GHCR]")
         return True
 
     cmd = ["uv", "run", "imas-codex", "graph", "push"]
@@ -316,6 +318,8 @@ def _push_graph_variant(
         cmd.append("--imas-only")
     if message:
         cmd.extend(["-m", message])
+    if registry:
+        cmd.extend(["--registry", registry])
 
     click.echo(f"  Pushing {pkg_name}...")
     result = subprocess.run(cmd, text=True)
@@ -327,11 +331,45 @@ def _push_graph_variant(
     return True
 
 
-def _push_all_graph_variants(message: str, dry_run: bool) -> None:
+def _resolve_target_registry(remote: str) -> str | None:
+    """Determine the GHCR registry for graph push based on the target remote.
+
+    When releasing to upstream, graph data must go to the upstream registry
+    (ghcr.io/iterorganization) regardless of what the origin remote is.
+    Returns None to use the default (origin-based) registry.
+    """
+    result = subprocess.run(
+        ["git", "remote", "get-url", remote],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return None
+
+    url = result.stdout.strip()
+    if "github.com" in url:
+        if url.startswith("git@"):
+            parts = url.split(":")[-1].replace(".git", "").split("/")
+        else:
+            parts = url.replace(".git", "").split("/")
+        if len(parts) >= 2:
+            owner = parts[-2].lower()
+            return f"ghcr.io/{owner}"
+    return None
+
+
+def _push_all_graph_variants(message: str, remote: str, dry_run: bool) -> None:
     """Push all applicable graph variants: imas-only (always) + full (if facilities)."""
+    # Resolve target registry from the release remote (e.g. upstream → iterorganization)
+    registry = _resolve_target_registry(remote)
+    if registry:
+        click.echo(f"  Target registry: {registry}")
+
     # Always push imas-only
     click.echo("\n  Variant 1: IMAS Data Dictionary only")
-    if not _push_graph_variant(imas_only=True, message=message, dry_run=dry_run):
+    if not _push_graph_variant(
+        imas_only=True, message=message, registry=registry, dry_run=dry_run
+    ):
         raise click.ClickException(
             "IMAS-only graph push failed. Check: GHCR_TOKEN set, Neo4j running."
         )
@@ -340,7 +378,7 @@ def _push_all_graph_variants(message: str, dry_run: bool) -> None:
     facilities = _get_graph_facilities()
     if facilities:
         click.echo(f"\n  Variant 2: Full graph (facilities: {', '.join(facilities)})")
-        if not _push_graph_variant(message=message, dry_run=dry_run):
+        if not _push_graph_variant(message=message, registry=registry, dry_run=dry_run):
             click.echo(
                 "  ⚠ Full graph push failed — imas-only was already pushed.",
                 err=True,
@@ -537,7 +575,7 @@ def release(
         # Step: Push all graph variants
         step += 1
         click.echo(f"\nStep {step}: Pushing graph variants to GHCR...")
-        _push_all_graph_variants(message, dry_run)
+        _push_all_graph_variants(message, remote, dry_run)
     else:
         click.echo("Graph operations: Skipped (--skip-graph)")
 
