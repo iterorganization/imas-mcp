@@ -41,7 +41,7 @@ class OpenRouterClient:
             retry_delay: Delay between retry attempts in seconds
         """
         self.model_name = model_name
-        self.api_key = api_key or os.getenv("OPENROUTER_API_KEY")
+        self.api_key = api_key or os.getenv("OPENROUTER_API_KEY_IMAS_CODEX")
         self.base_url = base_url or os.getenv(
             "OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"
         )
@@ -50,7 +50,7 @@ class OpenRouterClient:
 
         if not self.api_key:
             raise OpenRouterError(
-                "OpenRouter API key required. Set OPENROUTER_API_KEY environment variable or pass api_key parameter."
+                "OpenRouter API key required. Set OPENROUTER_API_KEY_IMAS_CODEX environment variable or pass api_key parameter."
             )
 
         if not self.base_url:

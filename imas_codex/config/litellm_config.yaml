@@ -14,26 +14,50 @@
 # Each credential maps to a separate OpenRouter API key for
 # independent spend tracking at the billing level.
 #
-# - openrouter-imas-codex:    Internal use (discovery workers, MCP agents)
-# - openrouter-claude-code:   Claude Code clients
+# Two api_base variants per key:
+#   /api/v1  — OpenAI-compatible (Gemini, GPT, wildcard)
+#   /api     — Anthropic-native  (Claude, preserves cache_control)
 #
 # Create additional OpenRouter keys at https://openrouter.ai/settings/keys
 credential_list:
+  # ── imas-codex internal ────────────────────────────────
   - credential_name: openrouter-imas-codex
     credential_values:
       api_key: os.environ/OPENROUTER_API_KEY_IMAS_CODEX
+      api_base: https://openrouter.ai/api/v1
     credential_info:
-      description: "imas-codex internal use (discovery, agents, MCP)"
+      description: "imas-codex internal (OpenAI-format models)"
 
+  - credential_name: openrouter-imas-codex-anthropic
+    credential_values:
+      api_key: os.environ/OPENROUTER_API_KEY_IMAS_CODEX
+      api_base: https://openrouter.ai/api
+    credential_info:
+      description: "imas-codex internal (Anthropic-format, cache_control)"
+
+  # ── Claude Code ────────────────────────────────────────
   - credential_name: openrouter-claude-code
     credential_values:
       api_key: os.environ/OPENROUTER_API_KEY_CLAUDE_CODE
+      api_base: https://openrouter.ai/api/v1
     credential_info:
-      description: "Claude Code clients"
+      description: "Claude Code clients (OpenAI-format models)"
+
+  - credential_name: openrouter-claude-code-anthropic
+    credential_values:
+      api_key: os.environ/OPENROUTER_API_KEY_CLAUDE_CODE
+      api_base: https://openrouter.ai/api
+    credential_info:
+      description: "Claude Code clients (Anthropic-format, cache_control)"
 
 # ── Model Definitions ───────────────────────────────────────
-# Models use the imas-codex credential by default. External clients
-# get routed to openrouter-external via team-scoped virtual keys.
+# Anthropic Claude models use anthropic/ provider prefix with
+# api_base pointing to OpenRouter's /api endpoint. The Anthropic
+# SDK sends to {api_base}/v1/messages, which OpenRouter supports
+# natively — preserving cache_control blocks for prompt caching.
+#
+# Non-Anthropic models (Gemini, GPT) use openai/ provider prefix
+# with api_base pointing to OpenRouter's /api/v1 endpoint.
 #
 # OpenRouter model IDs:
 #   anthropic/claude-opus-4-6
@@ -42,59 +66,99 @@ credential_list:
 #   google/gemini-3-pro-preview
 #   openai/gpt-5.4
 #   openai/gpt-5.4-mini
-#
-# Composition: each model defined once; credential selected
-# by the virtual key's team, not duplicated per team.
 model_list:
-  # ── Anthropic Claude ───────────────────────────────────
+  # ── Anthropic Claude (native format, cache_control) ────
   - model_name: opus
     litellm_params:
-      model: openrouter/anthropic/claude-opus-4-6
-      litellm_credential_name: openrouter-imas-codex
+      model: anthropic/claude-opus-4-6
+      litellm_credential_name: openrouter-imas-codex-anthropic
+      extra_headers:
+        X-Title: imas-codex
+        HTTP-Referer: https://github.com/iterorganization/imas-codex
 
   - model_name: sonnet
     litellm_params:
-      model: openrouter/anthropic/claude-sonnet-4-6
-      litellm_credential_name: openrouter-imas-codex
+      model: anthropic/claude-sonnet-4-6
+      litellm_credential_name: openrouter-imas-codex-anthropic
+      extra_headers:
+        X-Title: imas-codex
+        HTTP-Referer: https://github.com/iterorganization/imas-codex
 
-  # ── Google Gemini ──────────────────────────────────────
+  - model_name: claude-opus-4-6
+    litellm_params:
+      model: anthropic/claude-opus-4-6
+      litellm_credential_name: openrouter-imas-codex-anthropic
+      extra_headers:
+        X-Title: imas-codex
+        HTTP-Referer: https://github.com/iterorganization/imas-codex
+
+  - model_name: claude-sonnet-4-6
+    litellm_params:
+      model: anthropic/claude-sonnet-4-6
+      litellm_credential_name: openrouter-imas-codex-anthropic
+      extra_headers:
+        X-Title: imas-codex
+        HTTP-Referer: https://github.com/iterorganization/imas-codex
+
+  # ── Google Gemini (OpenAI-format) ──────────────────────
   - model_name: gemini-flash
     litellm_params:
-      model: openrouter/google/gemini-3-flash-preview
+      model: openai/google/gemini-3-flash-preview
       litellm_credential_name: openrouter-imas-codex
+      extra_headers:
+        X-Title: imas-codex
+        HTTP-Referer: https://github.com/iterorganization/imas-codex
 
   - model_name: gemini-pro
     litellm_params:
-      model: openrouter/google/gemini-3-pro-preview
+      model: openai/google/gemini-3-pro-preview
       litellm_credential_name: openrouter-imas-codex
+      extra_headers:
+        X-Title: imas-codex
+        HTTP-Referer: https://github.com/iterorganization/imas-codex
 
-  # ── OpenAI GPT ─────────────────────────────────────────
+  # ── OpenAI GPT (OpenAI-format) ────────────────────────
   - model_name: gpt
     litellm_params:
-      model: openrouter/openai/gpt-5.4
+      model: openai/openai/gpt-5.4
       litellm_credential_name: openrouter-imas-codex
+      extra_headers:
+        X-Title: imas-codex
+        HTTP-Referer: https://github.com/iterorganization/imas-codex
 
   - model_name: gpt-mini
     litellm_params:
-      model: openrouter/openai/gpt-5.4-mini
+      model: openai/openai/gpt-5.4-mini
       litellm_credential_name: openrouter-imas-codex
+      extra_headers:
+        X-Title: imas-codex
+        HTTP-Referer: https://github.com/iterorganization/imas-codex
 
   # ── Task aliases ───────────────────────────────────────
   - model_name: reasoning
     litellm_params:
-      model: openrouter/anthropic/claude-sonnet-4-6
-      litellm_credential_name: openrouter-imas-codex
+      model: anthropic/claude-sonnet-4-6
+      litellm_credential_name: openrouter-imas-codex-anthropic
+      extra_headers:
+        X-Title: imas-codex
+        HTTP-Referer: https://github.com/iterorganization/imas-codex
 
   - model_name: scoring
     litellm_params:
-      model: openrouter/google/gemini-3-flash-preview
+      model: openai/google/gemini-3-flash-preview
       litellm_credential_name: openrouter-imas-codex
+      extra_headers:
+        X-Title: imas-codex
+        HTTP-Referer: https://github.com/iterorganization/imas-codex
 
-  # ── Passthrough wildcard ───────────────────────────────
+  # ── Passthrough wildcard (OpenAI-format) ───────────────
   - model_name: "*"
     litellm_params:
-      model: "openrouter/*"
+      model: "openai/*"
       litellm_credential_name: openrouter-imas-codex
+      extra_headers:
+        X-Title: imas-codex
+        HTTP-Referer: https://github.com/iterorganization/imas-codex
 
   # ── Local models (Phase 6 — Titan cluster) ────────────
   # Uncomment when Ollama is deployed on Titan
@@ -107,10 +171,6 @@ litellm_settings:
   drop_params: true
   num_retries: 3
   request_timeout: 120
-  # Langfuse cost tracking — requires: pip install langfuse
-  # and LANGFUSE_PUBLIC_KEY + LANGFUSE_SECRET_KEY env vars.
-  # Callbacks are set dynamically by the llm start command when
-  # langfuse is available, so they are not hardcoded here.
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
