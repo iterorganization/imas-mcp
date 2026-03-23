@@ -2718,7 +2718,7 @@ classes:
       confidence:
         description: Confidence in this evidence (0.0-1.0)
         range: float
-      source_url:
+      url:
         description: URL or path to evidence source (wiki page, code file, etc.)
       source_node_id:
         description: ID of source graph node (WikiChunk, CodeChunk, SignalNode)
