@@ -624,7 +624,7 @@ The release CLI uses semantic bumps (`major`/`minor`/`patch`) and pushes all gra
 uv run imas-codex release major --rc -m 'IMAS DD 4.1.0 support'
 
 # Increment RC (v5.0.0-rc1 → v5.0.0-rc2)
-uv run imas-codex release major --rc -m 'Fix CI issues'
+uv run imas-codex release --rc -m 'Fix CI issues'
 
 # Promote RC to release (v5.0.0-rc2 → v5.0.0)
 uv run imas-codex release --promote -m 'Production release'
@@ -643,7 +643,7 @@ The release command:
 1. Computes the next version from the latest git tag
 2. Validates no private fields in graph
 3. Tags DDVersion node with release metadata
-4. Pushes **all** graph variants to GHCR (imas-only + full)
+4. Pushes **all** graph variants to GHCR (imas-only + full + per-facility)
 5. Creates and pushes git tag → triggers CI
 
 **Constraint:** Must run from the ITER machine where Neo4j runs — CI cannot build graph data.

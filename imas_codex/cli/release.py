@@ -96,14 +96,23 @@ def compute_next_version(
             major, minor, patch, None
         )
 
-    if bump is None:
+    if bump is None and not promote:
+        # No bump specified — if latest is an RC and --rc is set, increment RC
+        if rc and current_rc is not None:
+            next_rc = current_rc + 1
+            tag = _format_git_tag(major, minor, patch, next_rc)
+            while _tag_exists(tag):
+                next_rc += 1
+                tag = _format_git_tag(major, minor, patch, next_rc)
+            return tag, _format_pep440(major, minor, patch, next_rc)
         raise click.ClickException(
-            "Specify a bump type (major, minor, patch) or use --promote."
+            "Specify a bump type (major, minor, patch), use --promote, "
+            "or use --rc to increment an existing release candidate."
         )
 
-    # If latest is an RC and we're bumping the same base, auto-increment RC
+    # If latest is an RC and we're bumping the same level with --rc,
+    # auto-increment RC instead of bumping
     if rc and current_rc is not None:
-        # Check if this is the same bump level — increment RC
         next_rc = current_rc + 1
         tag = _format_git_tag(major, minor, patch, next_rc)
         while _tag_exists(tag):
@@ -296,6 +305,7 @@ def _get_graph_facilities() -> list[str]:
 def _push_graph_variant(
     *,
     imas_only: bool = False,
+    facility: str | None = None,
     message: str | None = None,
     registry: str | None = None,
     dry_run: bool = False,
@@ -306,7 +316,8 @@ def _push_graph_variant(
     """
     from imas_codex.graph.ghcr import get_package_name
 
-    pkg_name = get_package_name(imas_only=imas_only)
+    facilities = [facility] if facility else None
+    pkg_name = get_package_name(facilities=facilities, imas_only=imas_only)
 
     if dry_run:
         target = f" → {registry}" if registry else ""
@@ -316,6 +327,8 @@ def _push_graph_variant(
     cmd = ["uv", "run", "imas-codex", "graph", "push"]
     if imas_only:
         cmd.append("--imas-only")
+    if facility:
+        cmd.extend(["--facility", facility])
     if message:
         cmd.extend(["-m", message])
     if registry:
@@ -359,14 +372,17 @@ def _resolve_target_registry(remote: str) -> str | None:
 
 
 def _push_all_graph_variants(message: str, remote: str, dry_run: bool) -> None:
-    """Push all applicable graph variants: imas-only (always) + full (if facilities)."""
+    """Push all graph variants: imas-only, full, and per-facility."""
     # Resolve target registry from the release remote (e.g. upstream → iterorganization)
     registry = _resolve_target_registry(remote)
     if registry:
         click.echo(f"  Target registry: {registry}")
 
+    variant = 0
+
     # Always push imas-only
-    click.echo("\n  Variant 1: IMAS Data Dictionary only")
+    variant += 1
+    click.echo(f"\n  Variant {variant}: IMAS Data Dictionary only")
     if not _push_graph_variant(
         imas_only=True, message=message, registry=registry, dry_run=dry_run
     ):
@@ -374,17 +390,32 @@ def _push_all_graph_variants(message: str, remote: str, dry_run: bool) -> None:
             "IMAS-only graph push failed. Check: GHCR_TOKEN set, Neo4j running."
         )
 
-    # Push full variant if graph has facilities
+    # Push full + per-facility if graph has facilities
     facilities = _get_graph_facilities()
     if facilities:
-        click.echo(f"\n  Variant 2: Full graph (facilities: {', '.join(facilities)})")
+        # Full graph (all facilities)
+        variant += 1
+        click.echo(
+            f"\n  Variant {variant}: Full graph (facilities: {', '.join(facilities)})"
+        )
         if not _push_graph_variant(message=message, registry=registry, dry_run=dry_run):
             click.echo(
-                "  ⚠ Full graph push failed — imas-only was already pushed.",
+                "  ⚠ Full graph push failed — continuing with per-facility.",
                 err=True,
             )
+
+        # Per-facility graphs
+        for fac in facilities:
+            variant += 1
+            click.echo(f"\n  Variant {variant}: {fac} + IMAS DD")
+            if not _push_graph_variant(
+                facility=fac, message=message, registry=registry, dry_run=dry_run
+            ):
+                click.echo(f"  ⚠ {fac} graph push failed — continuing.", err=True)
     else:
-        click.echo("\n  Variant 2: Full graph — skipped (no facilities in graph)")
+        click.echo(
+            "\n  No facilities in graph — skipping full and per-facility variants"
+        )
 
 
 # ============================================================================
@@ -500,7 +531,7 @@ def release(
         imas-codex release major --rc -m 'IMAS DD 4.1.0 support'
 
         # Increment RC (v5.0.0-rc1 → v5.0.0-rc2)
-        imas-codex release major --rc -m 'Fix CI issues'
+        imas-codex release --rc -m 'Fix CI issues'
 
         # Promote RC to release (v5.0.0-rc2 → v5.0.0)
         imas-codex release --promote -m 'Production release'
@@ -508,7 +539,7 @@ def release(
         # Patch release (v5.0.0 → v5.0.1)
         imas-codex release patch -m 'Bug fixes'
 
-        # Test on fork
+        # Test on fork (default remote is upstream)
         imas-codex release minor --rc --remote origin -m 'Test'
 
         # Code-only release (no graph push)
@@ -527,9 +558,10 @@ def release(
         git_tag = explicit_version
         version_number = explicit_version.lstrip("v").replace("-rc", "rc")
     else:
-        if not bump and not promote:
+        if not bump and not promote and not rc:
             raise click.ClickException(
-                "Specify a bump type (major, minor, patch) or use --promote. "
+                "Specify a bump type (major, minor, patch), use --promote, "
+                "or use --rc to increment an existing RC. "
                 "Use --version for explicit override."
             )
         git_tag, version_number = compute_next_version(bump, rc=rc, promote=promote)
