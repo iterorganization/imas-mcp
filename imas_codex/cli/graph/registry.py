@@ -265,6 +265,8 @@ def graph_push(
                 dump_args.append("--verbose")
             if source_dump:
                 dump_args.extend(["--source-dump", source_dump])
+            if version_tag_override:
+                dump_args.extend(["--version-label", version_tag_override])
             result = runner.invoke(graph_export, dump_args)
             if result.exit_code != 0:
                 if result.exception and not isinstance(result.exception, SystemExit):

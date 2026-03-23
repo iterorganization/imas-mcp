@@ -259,6 +259,11 @@ def _update_env_file(env_file: Path, new_password: str) -> None:
     default=None,
     help="Use pre-existing dump file instead of dumping (avoids Neo4j stop/start).",
 )
+@click.option(
+    "--version-label",
+    default=None,
+    help="Override version label for archive directory name.",
+)
 def graph_export(
     output: str | None,
     no_restart: bool,
@@ -268,6 +273,7 @@ def graph_export(
     local: bool,
     verbose: bool = False,
     source_dump: str | None = None,
+    version_label: str | None = None,
 ) -> None:
     """Export graph database to archive.
 
@@ -280,7 +286,8 @@ def graph_export(
     profile = resolve_neo4j()
 
     git_info = get_git_info()
-    version_label = git_info["tag"] or f"dev-{git_info['commit_short']}"
+    if not version_label:
+        version_label = git_info["tag"] or f"dev-{git_info['commit_short']}"
     pkg_name = get_package_name(
         facilities=list(facilities), no_imas=no_imas, imas_only=imas_only
     )
