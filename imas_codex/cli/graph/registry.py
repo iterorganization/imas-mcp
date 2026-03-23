@@ -77,6 +77,12 @@ from imas_codex.graph.neo4j_ops import (
     default=None,
     help="Override version tag (e.g. v5.0.0-rc2). Bypasses git tag detection.",
 )
+@click.option(
+    "--source-dump",
+    type=click.Path(exists=True),
+    default=None,
+    help="Use pre-existing dump file (avoids Neo4j stop/start per variant).",
+)
 def graph_push(
     dev: bool,
     registry: str | None,
@@ -88,6 +94,7 @@ def graph_push(
     message: str | None,
     verbose: bool = False,
     version_tag_override: str | None = None,
+    source_dump: str | None = None,
 ) -> None:
     """Push graph archive to GHCR.
 
@@ -256,6 +263,8 @@ def graph_push(
                 dump_args.append("--imas-only")
             if verbose:
                 dump_args.append("--verbose")
+            if source_dump:
+                dump_args.extend(["--source-dump", source_dump])
             result = runner.invoke(graph_export, dump_args)
             if result.exit_code != 0:
                 if result.exception and not isinstance(result.exception, SystemExit):
