@@ -288,18 +288,18 @@ class TestWikiReferenceIntegrity:
         count = result[0]["cnt"] if result else 0
         assert count == 0, f"{count} Document nodes missing url"
 
-    def test_images_have_source_url(self, graph_client, label_counts):
-        """Every Image must have a non-empty source_url."""
+    def test_images_have_url(self, graph_client, label_counts):
+        """Every Image must have a non-empty url."""
         if not label_counts.get("Image"):
             pytest.skip("No Image nodes in graph")
 
         result = graph_client.query(
             "MATCH (n:Image) "
-            "WHERE n.source_url IS NULL OR n.source_url = '' "
+            "WHERE n.url IS NULL OR n.url = '' "
             "RETURN count(n) AS cnt"
         )
         count = result[0]["cnt"] if result else 0
-        assert count == 0, f"{count} Image nodes missing source_url"
+        assert count == 0, f"{count} Image nodes missing url"
 
 
 class TestImageScoring:

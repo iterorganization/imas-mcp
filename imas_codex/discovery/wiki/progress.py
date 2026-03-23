@@ -105,7 +105,7 @@ class ImageItem:
     physics_domain: str | None = None
     description: str = ""
     purpose: str = ""
-    source_url: str = ""
+    url: str = ""
     page_title: str = ""
     page_image_count: int = 0  # Total images on this page
     page_image_index: int = 0  # Display index (Nth image shown from this page)
@@ -121,10 +121,10 @@ class ImageItem:
                 label += ":image"
             return label
         # No page title — extract filename from URL
-        if self.source_url:
+        if self.url:
             from urllib.parse import unquote, urlparse
 
-            path = urlparse(self.source_url).path
+            path = urlparse(self.url).path
             filename = unquote(path.rsplit("/", 1)[-1]) if path else ""
             if filename:
                 return filename
@@ -1123,7 +1123,7 @@ class WikiProgressDisplay(BaseProgressDisplay):
                 physics_domain=item.get("physics_domain"),
                 description=item.get("description", ""),
                 purpose=item.get("purpose", ""),
-                source_url=item.get("source_url", ""),
+                url=item.get("url", ""),
                 page_title=page_title,
                 page_image_count=page_image_count,
                 page_image_index=page_image_index,
@@ -1372,7 +1372,7 @@ class WikiProgressDisplay(BaseProgressDisplay):
                     "physics_domain": r.get("physics_domain"),
                     "description": r.get("description", ""),
                     "purpose": r.get("purpose", ""),
-                    "source_url": r.get("source_url", ""),
+                    "url": r.get("url", ""),
                     "page_title": r.get("page_title", ""),
                     "page_image_count": r.get("page_image_count", 0),
                 }

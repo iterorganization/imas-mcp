@@ -3798,7 +3798,7 @@ classes:
       id:
         identifier: true
         description: >-
-          Content-addressed: facility:sha256(source_url)[:16].
+          Content-addressed: facility:sha256(url)[:16].
           Deduplicates images referenced from multiple pages.
         required: true
       facility_id:
@@ -3807,7 +3807,7 @@ classes:
         range: Facility
         annotations:
           relationship_type: AT_FACILITY
-      source_url:
+      url:
         description: Original URL or path where image was found
         required: true
       source_type:

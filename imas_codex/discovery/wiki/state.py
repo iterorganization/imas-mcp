@@ -790,7 +790,7 @@ class FacilityWorkerState(DiscoveryStateBase):
 
     These workers don't need site-specific fields (base_url, auth_type,
     site_type).  They operate on graph data that already contains full
-    URLs and fetch images via source_url stored on each node.
+    URLs and fetch images via url stored on each node.
 
     Used when facility-scoped workers are lifted out of the per-site
     lifecycle to run continuously across all sites.

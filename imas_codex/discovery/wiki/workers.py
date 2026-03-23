@@ -1103,7 +1103,7 @@ async def image_score_worker(
     Transitions: ingested → captioned
 
     Claims images that have been ingested but not yet captioned/scored.
-    Fetches image bytes on-demand from source_url, sends to VLM, receives
+    Fetches image bytes on-demand from url, sends to VLM, receives
     caption + scoring in one pass. Image data is NOT stored in the graph.
     """
     from imas_codex.settings import get_model
@@ -1170,25 +1170,25 @@ async def image_score_worker(
 
         state.image_phase.record_activity()
 
-        # Fetch image bytes on-demand from source_url (not stored in graph)
+        # Fetch image bytes on-demand from url (not stored in graph)
         from imas_codex.discovery.wiki.image import downsample_image
 
         images_ready: list[dict[str, Any]] = []
         images_unfetchable: list[str] = []
 
         for img in images:
-            source_url = img.get("source_url")
+            img_url = img.get("url")
             stored_data = img.get("image_data")
             if stored_data:
                 # Document figures have pre-stored base64 data
                 images_ready.append(img)
                 continue
-            if not source_url:
+            if not img_url:
                 images_unfetchable.append(img["id"])
                 continue
             try:
                 raw_bytes = await _fetch_image_bytes(
-                    source_url, getattr(state, "ssh_host", None)
+                    img_url, getattr(state, "ssh_host", None)
                 )
                 if not raw_bytes or len(raw_bytes) < 512:
                     images_unfetchable.append(img["id"])
@@ -1202,7 +1202,7 @@ async def image_score_worker(
                 images_ready.append(img)
             except Exception as e:
                 logger.debug(
-                    "image_score_worker: failed to fetch %s: %s", source_url, e
+                    "image_score_worker: failed to fetch %s: %s", img_url, e
                 )
                 images_unfetchable.append(img["id"])
 
@@ -1234,7 +1234,7 @@ async def image_score_worker(
             img_lookup = {img["id"]: img for img in images_ready}
             for r in results:
                 src = img_lookup.get(r["id"], {})
-                r.setdefault("source_url", src.get("source_url", ""))
+                r.setdefault("url", src.get("url", ""))
                 r.setdefault("page_title", src.get("page_title", ""))
                 r.setdefault("page_image_count", src.get("page_image_count", 0))
 
@@ -1513,7 +1513,7 @@ async def _ingest_image_document(
             """
             MERGE (i:Image {id: $image_id})
             ON CREATE SET i.facility_id = $facility,
-                          i.source_url = $url,
+                          i.url = $url,
                           i.source_type = 'wiki_file',
                           i.status = 'ingested',
                           i.filename = $filename,
@@ -1907,7 +1907,7 @@ async def _extract_and_persist_images(
                         {
                             "id": image_id,
                             "facility_id": facility,
-                            "source_url": src,
+                            "url": src,
                             "source_type": "wiki_inline",
                             "status": "ingested",
                             "image_format": "webp",
@@ -1933,7 +1933,7 @@ async def _extract_and_persist_images(
                 {
                     "id": image_id,
                     "facility_id": facility,
-                    "source_url": src,
+                    "url": src,
                     "source_type": "wiki_inline",
                     "status": "failed",
                     "image_format": "",
@@ -1957,7 +1957,7 @@ async def _extract_and_persist_images(
                 {
                     "id": image_id,
                     "facility_id": facility,
-                    "source_url": src,
+                    "url": src,
                     "source_type": "wiki_inline",
                     "status": "failed",
                     "image_format": "",
@@ -1983,7 +1983,7 @@ async def _extract_and_persist_images(
             UNWIND $images AS img
             MERGE (i:Image {id: img.id})
             ON CREATE SET i.facility_id = img.facility_id,
-                          i.source_url = img.source_url,
+                          i.url = img.url,
                           i.source_type = img.source_type,
                           i.status = img.status,
                           i.image_format = img.image_format,

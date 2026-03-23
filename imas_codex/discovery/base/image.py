@@ -11,7 +11,7 @@ Source-agnostic image handling used by both wiki and files discovery:
 Design:
 - Images are downsampled to WebP format, max 768px longest side, quality 80
 - Stored as base64-encoded strings in Neo4j (no filesystem dependencies)
-- Content-addressed IDs: facility:sha256(source_url)[:16] for dedup
+- Content-addressed IDs: facility:sha256(url)[:16] for dedup
 - SVG images are rasterized via Pillow's SVG support or stored as-is
 
 Third-party dependencies:
@@ -60,20 +60,20 @@ IMAGE_EXTENSIONS = {
 }
 
 
-def make_image_id(facility_id: str, source_url: str) -> str:
+def make_image_id(facility_id: str, url: str) -> str:
     """Generate content-addressed image ID.
 
-    Format: facility:sha256(source_url)[:16]
+    Format: facility:sha256(url)[:16]
     Deduplicates same image referenced from multiple pages.
 
     Args:
         facility_id: Facility identifier (e.g., "tcv", "jet")
-        source_url: Original URL or path of the image
+        url: Original URL or path of the image
 
     Returns:
         Deterministic ID string
     """
-    url_hash = hashlib.sha256(source_url.encode("utf-8")).hexdigest()[:16]
+    url_hash = hashlib.sha256(url.encode("utf-8")).hexdigest()[:16]
     return f"{facility_id}:{url_hash}"
 
 
@@ -194,7 +194,7 @@ def persist_images(
     via HAS_IMAGE relationship.
 
     Args:
-        images: List of image dicts. Required keys: id, facility_id, source_url,
+        images: List of image dicts. Required keys: id, facility_id, url,
             source_type, status. Optional: image_data, width, height, page_title, etc.
         parent_label: Optional Neo4j label for the parent node (e.g., "CodeFile")
         parent_id_key: Key in image dict that holds the parent node's ID
@@ -211,7 +211,7 @@ def persist_images(
     # Build Cypher — conditionally include parent linking
     set_clause = """
         ON CREATE SET i.facility_id = img.facility_id,
-                      i.source_url = img.source_url,
+                      i.url = img.url,
                       i.source_type = img.source_type,
                       i.status = img.status,
                       i.filename = img.filename,
@@ -309,7 +309,7 @@ def persist_document_figures(
         page_num = img_data.get("page_num")
         slide_num = img_data.get("slide_num")
         name = img_data.get("name", "")
-        source_url = (
+        img_url = (
             f"{parent_id}#{'page' if page_num else 'slide'}{page_num or slide_num or 0}"
         )
 
@@ -317,7 +317,7 @@ def persist_document_figures(
             {
                 "id": image_id,
                 "facility_id": facility,
-                "source_url": source_url,
+                "url": img_url,
                 "source_type": "document_figure",
                 "status": "ingested",
                 "filename": name,
@@ -414,7 +414,7 @@ def claim_images_for_scoring(
               WHERE img.page_title IS NOT NULL
             WITH img, count(sibling) AS page_image_count
             RETURN img.id AS id,
-                   img.source_url AS source_url,
+                   img.url AS url,
                    img.source_type AS source_type,
                    img.image_format AS image_format,
                    img.page_title AS page_title,

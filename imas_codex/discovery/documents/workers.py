@@ -202,7 +202,7 @@ async def image_fetch_worker(
                             {
                                 "id": image_id,
                                 "facility_id": state.facility,
-                                "source_url": remote_path,
+                                "url": remote_path,
                                 "source_type": "filesystem",
                                 "status": "ingested",
                                 "filename": filename,
@@ -259,7 +259,7 @@ async def image_fetch_worker(
                 state.image_stats,
                 [
                     {
-                        "path": img["source_url"],
+                        "path": img["url"],
                         "size": f"{img['width']}x{img['height']}",
                     }
                     for img in images_to_persist[:5]
@@ -344,16 +344,16 @@ async def image_score_worker(
         images_unfetchable: list[str] = []
 
         for img in images:
-            source_url = img.get("source_url")
+            img_url = img.get("url")
             stored_data = img.get("image_data")
             if stored_data:
                 images_ready.append(img)
                 continue
-            if not source_url:
+            if not img_url:
                 images_unfetchable.append(img["id"])
                 continue
             try:
-                raw_bytes = await fetch_image_bytes(source_url, state.ssh_host)
+                raw_bytes = await fetch_image_bytes(img_url, state.ssh_host)
                 if not raw_bytes or len(raw_bytes) < 512:
                     images_unfetchable.append(img["id"])
                     continue
@@ -366,7 +366,7 @@ async def image_score_worker(
                 images_ready.append(img)
             except Exception as e:
                 logger.debug(
-                    "image_score_worker: failed to fetch %s: %s", source_url, e
+                    "image_score_worker: failed to fetch %s: %s", img_url, e
                 )
                 images_unfetchable.append(img["id"])
 
@@ -414,7 +414,7 @@ async def image_score_worker(
                     state.image_score_stats,
                     [
                         {
-                            "path": r.get("source_url", r["id"]),
+                            "path": r.get("url", r["id"]),
                             "score": f"{r.get('score_composite', 0):.2f}",
                         }
                         for r in results[:5]
