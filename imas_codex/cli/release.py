@@ -473,6 +473,7 @@ def _push_graph_variant(
     facility: str | None = None,
     message: str | None = None,
     registry: str | None = None,
+    version_tag: str | None = None,
     dry_run: bool = False,
 ) -> bool:
     """Push a single graph variant to GHCR via the graph push CLI.
@@ -498,6 +499,8 @@ def _push_graph_variant(
         cmd.extend(["-m", message])
     if registry:
         cmd.extend(["--registry", registry])
+    if version_tag:
+        cmd.extend(["--version", version_tag])
 
     click.echo(f"  Pushing {pkg_name}...")
     result = subprocess.run(cmd, text=True)
@@ -536,8 +539,14 @@ def _resolve_target_registry(remote: str) -> str | None:
     return None
 
 
-def _push_all_graph_variants(message: str, remote: str, dry_run: bool) -> None:
-    """Push all graph variants: imas-only, full, and per-facility."""
+def _push_all_graph_variants(
+    message: str, remote: str, dry_run: bool, git_tag: str | None = None
+) -> None:
+    """Push all graph variants: imas-only, full, and per-facility.
+
+    The git_tag (e.g. 'v5.0.0-rc2') is passed through to graph push so
+    version detection doesn't depend on HEAD being exactly on a git tag.
+    """
     # Resolve target registry from the release remote (e.g. upstream → iterorganization)
     registry = _resolve_target_registry(remote)
     if registry:
@@ -549,7 +558,11 @@ def _push_all_graph_variants(message: str, remote: str, dry_run: bool) -> None:
     variant += 1
     click.echo(f"\n  Variant {variant}: IMAS Data Dictionary only")
     if not _push_graph_variant(
-        imas_only=True, message=message, registry=registry, dry_run=dry_run
+        imas_only=True,
+        message=message,
+        registry=registry,
+        version_tag=git_tag,
+        dry_run=dry_run,
     ):
         raise click.ClickException(
             "IMAS-only graph push failed. Check: GHCR_TOKEN set, Neo4j running."
@@ -563,7 +576,12 @@ def _push_all_graph_variants(message: str, remote: str, dry_run: bool) -> None:
         click.echo(
             f"\n  Variant {variant}: Full graph (facilities: {', '.join(facilities)})"
         )
-        if not _push_graph_variant(message=message, registry=registry, dry_run=dry_run):
+        if not _push_graph_variant(
+            message=message,
+            registry=registry,
+            version_tag=git_tag,
+            dry_run=dry_run,
+        ):
             click.echo(
                 "  ⚠ Full graph push failed — continuing with per-facility.",
                 err=True,
@@ -574,7 +592,11 @@ def _push_all_graph_variants(message: str, remote: str, dry_run: bool) -> None:
             variant += 1
             click.echo(f"\n  Variant {variant}: {fac} + IMAS DD")
             if not _push_graph_variant(
-                facility=fac, message=message, registry=registry, dry_run=dry_run
+                facility=fac,
+                message=message,
+                registry=registry,
+                version_tag=git_tag,
+                dry_run=dry_run,
             ):
                 click.echo(f"  ⚠ {fac} graph push failed — continuing.", err=True)
     else:
@@ -829,7 +851,7 @@ def release(
         # Step: Push all graph variants
         step += 1
         click.echo(f"\nStep {step}: Pushing graph variants to GHCR...")
-        _push_all_graph_variants(message, remote, dry_run)
+        _push_all_graph_variants(message, remote, dry_run, git_tag=git_tag)
     else:
         click.echo("Graph operations: Skipped (--skip-graph)")
 
