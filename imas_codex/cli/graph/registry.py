@@ -71,6 +71,12 @@ from imas_codex.graph.neo4j_ops import (
     is_flag=True,
     help="Show full error output from neo4j-admin.",
 )
+@click.option(
+    "--version",
+    "version_tag_override",
+    default=None,
+    help="Override version tag (e.g. v5.0.0-rc2). Bypasses git tag detection.",
+)
 def graph_push(
     dev: bool,
     registry: str | None,
@@ -81,6 +87,7 @@ def graph_push(
     imas_only: bool,
     message: str | None,
     verbose: bool = False,
+    version_tag_override: str | None = None,
 ) -> None:
     """Push graph archive to GHCR.
 
@@ -95,12 +102,15 @@ def graph_push(
     if not dev:
         require_clean_git(git_info)
 
-    # Ensure __version__ reflects current git state (hatch-vcs freezes at
-    # uv sync time — without this, the GHCR tag embeds a stale commit hash).
-    fresh_version = _ensure_fresh_version()
-
     target_registry = get_registry(git_info, registry)
-    version_tag = get_version_tag(git_info, dev, version_override=fresh_version)
+
+    if version_tag_override:
+        version_tag = version_tag_override
+    else:
+        # Ensure __version__ reflects current git state (hatch-vcs freezes at
+        # uv sync time — without this, the GHCR tag embeds a stale commit hash).
+        fresh_version = _ensure_fresh_version()
+        version_tag = get_version_tag(git_info, dev, version_override=fresh_version)
     pkg_name = get_package_name(
         list(facilities) or None, no_imas=no_imas, imas_only=imas_only
     )
