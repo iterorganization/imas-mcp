@@ -1201,9 +1201,7 @@ async def image_score_worker(
                 img["image_data"] = b64_data
                 images_ready.append(img)
             except Exception as e:
-                logger.debug(
-                    "image_score_worker: failed to fetch %s: %s", img_url, e
-                )
+                logger.debug("image_score_worker: failed to fetch %s: %s", img_url, e)
                 images_unfetchable.append(img["id"])
 
         if images_unfetchable:

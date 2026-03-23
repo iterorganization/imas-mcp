@@ -86,3 +86,4 @@ docs/TOOL_IMPROVEMENT_PLAN.md
 imas_codex/graph/dd_models.py
 .aider*
 *.tar.gz
+.mcp.json

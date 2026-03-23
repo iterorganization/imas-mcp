@@ -294,9 +294,7 @@ class TestWikiReferenceIntegrity:
             pytest.skip("No Image nodes in graph")
 
         result = graph_client.query(
-            "MATCH (n:Image) "
-            "WHERE n.url IS NULL OR n.url = '' "
-            "RETURN count(n) AS cnt"
+            "MATCH (n:Image) WHERE n.url IS NULL OR n.url = '' RETURN count(n) AS cnt"
         )
         count = result[0]["cnt"] if result else 0
         assert count == 0, f"{count} Image nodes missing url"
@@ -319,9 +317,7 @@ class TestImageScoring:
         if not label_counts.get("Image"):
             pytest.skip("No Image nodes in graph")
 
-        dims_present = " OR ".join(
-            f"n.{d} IS NOT NULL" for d in self._SCORE_DIMS
-        )
+        dims_present = " OR ".join(f"n.{d} IS NOT NULL" for d in self._SCORE_DIMS)
         result = graph_client.query(
             f"MATCH (n:Image) "
             f"WHERE n.score_composite IS NULL AND ({dims_present}) "
@@ -338,8 +334,7 @@ class TestImageScoring:
             pytest.skip("No Image nodes in graph")
 
         result = graph_client.query(
-            "MATCH (n:Image) WHERE n.score IS NOT NULL "
-            "RETURN count(n) AS cnt"
+            "MATCH (n:Image) WHERE n.score IS NOT NULL RETURN count(n) AS cnt"
         )
         count = result[0]["cnt"] if result else 0
         assert count == 0, (
@@ -362,9 +357,7 @@ class TestChunkIntegrity:
             "RETURN count(n) AS cnt"
         )
         count = result[0]["cnt"] if result else 0
-        assert count == 0, (
-            f"{count} ingested WikiPage nodes have no WikiChunk children"
-        )
+        assert count == 0, f"{count} ingested WikiPage nodes have no WikiChunk children"
 
     def test_ingested_documents_have_chunks(self, graph_client, label_counts):
         """Ingested Documents should have at least one WikiChunk."""
@@ -378,6 +371,4 @@ class TestChunkIntegrity:
             "RETURN count(n) AS cnt"
         )
         count = result[0]["cnt"] if result else 0
-        assert count == 0, (
-            f"{count} ingested Document nodes have no WikiChunk children"
-        )
+        assert count == 0, f"{count} ingested Document nodes have no WikiChunk children"

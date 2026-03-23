@@ -1,8 +1,5 @@
 name: Graph Quality
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
 on:
   repository_dispatch:
     types: [graph-pushed]
@@ -32,6 +29,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   NEO4J_PASSWORD: imas-codex
   NEO4J_URI: bolt://localhost:7687
 
