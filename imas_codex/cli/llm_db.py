@@ -47,6 +47,11 @@ def _pgdata() -> str:
     return f"{_SERVICES_DIR}/{_PGDATA_REL}"
 
 
+# Socket directory under /run/user/<uid> — survives reboots but not
+# /tmp cleanup cron (which purges /tmp every 10 days on ITER).
+_PG_SOCKET_DIR = "/run/user/$(id -u)/imas-codex"
+
+
 def _pg_port() -> int:
     from imas_codex.settings import get_postgres_port
 
@@ -84,7 +89,7 @@ def _ensure_pg_bin() -> str:
     click.echo("  Installing PostgreSQL binaries (pgserver)...")
     b64 = base64.b64encode(_FIND_PG_BIN.encode()).decode()
     result = _run(
-        f"echo {b64} | base64 -d | uv run --with pgserver python3 -",
+        f"echo {b64} | base64 -d | uv run --python 3.12 --with pgserver python3 -",
         timeout=300,
     )
     # Last non-empty line has the path (uv may print progress before it)
@@ -158,6 +163,8 @@ def start_db(quiet: bool = False) -> bool:
             f"rm -f {pgdata}/postmaster.pid; true",
             timeout=5,
         )
+        # Ensure socket dir exists (tmpfs, survives reboot but not /tmp purge)
+        _run(f"mkdir -p {_PG_SOCKET_DIR}", timeout=5)
         _run(
             f"mkdir -p {pgdata}/log && "
             f"{pg_bin}/pg_ctl start -D {pgdata} -w "
@@ -285,11 +292,13 @@ def db_init(
 
     # Configure postgresql.conf — append our settings
     click.echo("  Configuring...")
+    socket_dir = _PG_SOCKET_DIR
     conf_script = (
         f"cat >> {pgdata}/postgresql.conf << 'PGEOF'\n"
         f"# imas-codex managed settings\n"
         f"port = {port}\n"
         f"listen_addresses = 'localhost'\n"
+        f"unix_socket_directories = '{socket_dir}'\n"
         f"logging_collector = on\n"
         f"log_directory = 'log'\n"
         f"PGEOF"
@@ -309,6 +318,7 @@ def db_init(
 
     # Start temporarily for setup
     click.echo("  Creating database and user...")
+    _run(f"mkdir -p {_PG_SOCKET_DIR}", timeout=5)
     _run(
         f"mkdir -p {pgdata}/log && "
         f"{pg_bin}/pg_ctl start -D {pgdata} -w "
@@ -318,14 +328,15 @@ def db_init(
     )
 
     # Create database (may already exist from initdb template)
+    # Connect via unix socket (trust auth) — network auth not set up yet
     _run(
-        f"{pg_bin}/createdb -p {port} -h localhost {database} 2>/dev/null || true",
+        f"{pg_bin}/createdb -p {port} -h {_PG_SOCKET_DIR} {database} 2>/dev/null || true",
         timeout=10,
     )
 
     # Set user password for network connections
     _run(
-        f"{pg_bin}/psql -p {port} -h localhost -c "
+        f"{pg_bin}/psql -p {port} -h {_PG_SOCKET_DIR} -c "
         f""""ALTER USER \\"{user}\\" WITH PASSWORD '{password}';" """,
         timeout=10,
     )
@@ -399,7 +410,7 @@ def db_status_cmd() -> None:
         try:
             pg_bin = _ensure_pg_bin()
             result = _run(
-                f"{pg_bin}/psql -p {port} -h localhost -t -c "
+                f"{pg_bin}/psql -p {port} -h {_PG_SOCKET_DIR} -t -c "
                 f"\"SELECT pg_database_size('litellm')\" 2>/dev/null",
                 timeout=10,
             )
