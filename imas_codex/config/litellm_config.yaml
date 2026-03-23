@@ -1,168 +1,115 @@
-# imas-codex LiteLLM Proxy — Multi-Tenant Configuration
+# LiteLLM Proxy — imas-codex
 #
-# Start: imas-codex llm start
-# Or:    litellm --config imas_codex/config/litellm_config.yaml
+# Client → LiteLLM (localhost:18400) → OpenRouter → provider
 #
-# Architecture:
-#   Client → LiteLLM proxy (localhost:18400) → OpenRouter → provider
+# Spend isolation is key-based:
+#   Master key  → alias map strips openrouter/ prefix → model_list → codex credential
+#   Virtual key → team model_aliases → cc: model_list → claude-code credential
 #
-# Team isolation:
-#   Each team (imas-codex, claude-code) has its own OpenRouter API key
-#   for independent spend tracking. All model entries are team-prefixed:
-#     cx:opus, cx:sonnet  → imas-codex OpenRouter key
-#     cc:opus, cc:sonnet  → claude-code OpenRouter key
+# Why model_alias_map exists:
+#   The litellm client prepends openrouter/ to model names for cache_control
+#   preservation. The alias map strips this prefix to match model_list names.
 #
-# Model routing:
-#   model_alias_map resolves incoming model names to team-prefixed entries:
-#     openrouter/anthropic/claude-opus-4-6 → cx:opus  (from project code)
-#     opus → cc:opus  (from Claude Code, via team model_aliases)
-#
-# Deduplication:
-#   cx: entries define model params as YAML anchors (&opus, &sonnet, etc.).
-#   cc: entries inherit via <<: merge key, overriding only the credential
-#   and X-Title header. Add a new model once to cx:, add a 3-line cc:
-#   entry if Claude Code needs it too.
-#
-# Provider format:
-#   Anthropic uses /api endpoint (preserves cache_control blocks)
-#   All others use /api/v1 endpoint (OpenAI-compatible)
+# Adding a model:
+#   1. Add to model_list with canonical provider/model name
+#   2. Add openrouter/ alias to model_alias_map
+#   3. If Claude Code needs it: add one cc: line via YAML merge
 
-# ── Credentials ──────────────────────────────────────────────
-# Each pair maps to one OpenRouter API key with two api_base variants:
-#   -anthropic  → /api   (Anthropic-native, preserves cache_control)
-#   (default)   → /api/v1 (OpenAI-compatible, Gemini/GPT)
 credential_list:
-  - credential_name: imas-codex
+  - credential_name: codex
     credential_values:
       api_key: os.environ/OPENROUTER_API_KEY_IMAS_CODEX
       api_base: https://openrouter.ai/api/v1
     credential_info:
-      description: "imas-codex (OpenAI-format: Gemini, GPT)"
+      description: "OpenAI-compatible (Gemini, GPT)"
 
-  - credential_name: imas-codex-anthropic
+  - credential_name: codex-anthropic
     credential_values:
       api_key: os.environ/OPENROUTER_API_KEY_IMAS_CODEX
       api_base: https://openrouter.ai/api
     credential_info:
-      description: "imas-codex (Anthropic-native, cache_control)"
+      description: "Anthropic-native (cache_control)"
 
-  - credential_name: claude-code-anthropic
+  - credential_name: claude-code
     credential_values:
       api_key: os.environ/OPENROUTER_API_KEY_CLAUDE_CODE
       api_base: https://openrouter.ai/api
     credential_info:
-      description: "Claude Code (Anthropic-native, cache_control)"
+      description: "Claude Code (separate billing)"
 
-# ── Model Definitions ───────────────────────────────────────
-# Canonical model IDs (verified on OpenRouter 2026-03-23):
-#   anthropic/claude-opus-4-6          anthropic/claude-sonnet-4-6
-#   anthropic/claude-haiku-4-5         google/gemini-3.1-flash-lite-preview
-#   google/gemini-3.1-pro-preview      openai/gpt-4o  openai/gpt-4o-mini
 model_list:
-
-  # ── cx: imas-codex team ────────────────────────────────
-  # YAML anchors (&opus, &sonnet, &haiku) define params once;
-  # cc: entries below inherit via <<: merge key.
-  - model_name: cx:opus
+  # ── Anthropic (/api — preserves cache_control) ────────
+  - model_name: anthropic/claude-opus-4-6
     litellm_params: &opus
       model: anthropic/claude-opus-4-6
-      litellm_credential_name: imas-codex-anthropic
-      extra_headers: &cx_headers
+      litellm_credential_name: codex-anthropic
+      extra_headers: &hdr
         X-Title: imas-codex
-        HTTP-Referer: &referer https://github.com/iterorganization/imas-codex
+        HTTP-Referer: https://github.com/iterorganization/imas-codex
 
-  - model_name: cx:sonnet
+  - model_name: anthropic/claude-sonnet-4-6
     litellm_params: &sonnet
       model: anthropic/claude-sonnet-4-6
-      litellm_credential_name: imas-codex-anthropic
-      extra_headers: *cx_headers
+      litellm_credential_name: codex-anthropic
+      extra_headers: *hdr
 
-  - model_name: cx:haiku
+  - model_name: anthropic/claude-haiku-4-5
     litellm_params: &haiku
       model: anthropic/claude-haiku-4-5
-      litellm_credential_name: imas-codex-anthropic
-      extra_headers: *cx_headers
+      litellm_credential_name: codex-anthropic
+      extra_headers: *hdr
 
-  - model_name: cx:gemini-flash
+  # ── Google Gemini (/api/v1 — OpenAI-compatible) ────────
+  - model_name: google/gemini-3.1-flash-lite-preview
     litellm_params:
       model: openai/google/gemini-3.1-flash-lite-preview
-      litellm_credential_name: imas-codex
-      extra_headers: *cx_headers
+      litellm_credential_name: codex
+      extra_headers: *hdr
 
-  - model_name: cx:gemini-pro
+  - model_name: google/gemini-3.1-pro-preview
     litellm_params:
       model: openai/google/gemini-3.1-pro-preview
-      litellm_credential_name: imas-codex
-      extra_headers: *cx_headers
+      litellm_credential_name: codex
+      extra_headers: *hdr
 
-  - model_name: cx:gpt
+  # ── OpenAI GPT (/api/v1 — OpenAI-compatible) ──────────
+  - model_name: openai/gpt-4o
     litellm_params:
       model: openai/openai/gpt-4o
-      litellm_credential_name: imas-codex
-      extra_headers: *cx_headers
+      litellm_credential_name: codex
+      extra_headers: *hdr
 
-  - model_name: cx:gpt-mini
+  - model_name: openai/gpt-4o-mini
     litellm_params:
       model: openai/openai/gpt-4o-mini
-      litellm_credential_name: imas-codex
-      extra_headers: *cx_headers
+      litellm_credential_name: codex
+      extra_headers: *hdr
 
-  # ── cc: claude-code team (inherits model IDs from cx:) ─
-  # Only credential and X-Title differ. Team model_aliases remap
-  # incoming names: opus → cc:opus, claude-opus-4-6 → cc:opus, etc.
+  # ── Claude Code (separate billing) ─────────────────────
+  # Virtual key → claude-code team → model_aliases → cc:*
   - model_name: cc:opus
-    litellm_params:
-      <<: *opus
-      litellm_credential_name: claude-code-anthropic
-      extra_headers: &cc_headers
-        X-Title: imas-codex-claude-code
-        HTTP-Referer: *referer
+    litellm_params: {<<: *opus, litellm_credential_name: claude-code}
 
   - model_name: cc:sonnet
-    litellm_params:
-      <<: *sonnet
-      litellm_credential_name: claude-code-anthropic
-      extra_headers: *cc_headers
+    litellm_params: {<<: *sonnet, litellm_credential_name: claude-code}
 
   - model_name: cc:haiku
-    litellm_params:
-      <<: *haiku
-      litellm_credential_name: claude-code-anthropic
-      extra_headers: *cc_headers
-
-  # ── Local models (Phase 6 — Titan cluster) ────────────
-  # Uncomment when Ollama is deployed on Titan
-  # - model_name: qwen3-14b
-  #   litellm_params:
-  #     model: ollama/qwen3:14b-q4_K_M
-  #     api_base: http://98dci4-gpu-0002:11434
+    litellm_params: {<<: *haiku, litellm_credential_name: claude-code}
 
 litellm_settings:
   drop_params: true
   num_retries: 3
   request_timeout: 120
   health_check_interval: 0
-  # ── Model alias map ─────────────────────────────────────
-  # Resolves incoming model names to team-prefixed model_list entries.
-  # The project sends openrouter/<provider>/<model> via ensure_model_prefix();
-  # these aliases route through the cx: (imas-codex) credential.
+  # Strip openrouter/ prefix added by litellm client (for cache_control)
   model_alias_map:
-    # Full model IDs sent by project code (openrouter/ prefix from litellm client)
-    openrouter/anthropic/claude-opus-4-6: cx:opus
-    openrouter/anthropic/claude-sonnet-4-6: cx:sonnet
-    openrouter/anthropic/claude-haiku-4-5: cx:haiku
-    openrouter/google/gemini-3.1-flash-lite-preview: cx:gemini-flash
-    openrouter/google/gemini-3.1-pro-preview: cx:gemini-pro
-    openrouter/openai/gpt-4o: cx:gpt
-    openrouter/openai/gpt-4o-mini: cx:gpt-mini
-    # Short aliases (interactive / ad-hoc use with master key)
-    opus: cx:opus
-    sonnet: cx:sonnet
-    haiku: cx:haiku
-    gemini-flash: cx:gemini-flash
-    gemini-pro: cx:gemini-pro
-    gpt: cx:gpt
-    gpt-mini: cx:gpt-mini
+    openrouter/anthropic/claude-opus-4-6: anthropic/claude-opus-4-6
+    openrouter/anthropic/claude-sonnet-4-6: anthropic/claude-sonnet-4-6
+    openrouter/anthropic/claude-haiku-4-5: anthropic/claude-haiku-4-5
+    openrouter/google/gemini-3.1-flash-lite-preview: google/gemini-3.1-flash-lite-preview
+    openrouter/google/gemini-3.1-pro-preview: google/gemini-3.1-pro-preview
+    openrouter/openai/gpt-4o: openai/gpt-4o
+    openrouter/openai/gpt-4o-mini: openai/gpt-4o-mini
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
