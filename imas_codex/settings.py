@@ -79,8 +79,8 @@ MODEL_SECTIONS = frozenset(
 # Default model per section (fallback when not configured)
 _MODEL_DEFAULTS: dict[str, str] = {
     "embedding": "Qwen/Qwen3-Embedding-0.6B",
-    "language": "google/gemini-3-flash-preview",
-    "vision": "google/gemini-3-flash-preview",
+    "language": "google/gemini-3.1-flash-lite-preview",
+    "vision": "google/gemini-3.1-flash-lite-preview",
     "agent": "anthropic/claude-sonnet-4.6",
     "compaction": "anthropic/claude-haiku-4.5",
     "reasoning": "anthropic/claude-sonnet-4.6",

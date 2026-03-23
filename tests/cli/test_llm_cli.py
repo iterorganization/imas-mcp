@@ -144,8 +144,8 @@ class TestEnsureModelPrefix:
 
     def test_google(self):
         assert (
-            ensure_model_prefix("google/gemini-3-flash-preview")
-            == "openrouter/google/gemini-3-flash-preview"
+            ensure_model_prefix("google/gemini-3.1-flash-lite-preview")
+            == "openrouter/google/gemini-3.1-flash-lite-preview"
         )
 
     def test_ollama_passthrough(self):
