@@ -42,6 +42,7 @@ def graph() -> None:
 
 def _register_graph_commands() -> None:
     """Register all graph subcommands from split modules."""
+    from imas_codex.cli.graph.audit import graph_audit
     from imas_codex.cli.graph.data import (
         graph_clear,
         graph_export,
@@ -90,6 +91,9 @@ def _register_graph_commands() -> None:
     graph.add_command(graph_pull, "pull")
     graph.add_command(graph_tags, "tags")
     graph.add_command(graph_prune, "prune")
+
+    # Audit
+    graph.add_command(graph_audit, "audit")
 
 
 _register_graph_commands()

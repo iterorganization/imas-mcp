@@ -470,7 +470,7 @@ def mark_images_scored(
                 img.ocr_tool_mentions = item.ocr_tool_mentions,
                 img.purpose = item.purpose,
                 img.description = item.description,
-                img.score = item.score,
+                img.score_composite = item.score_composite,
                 img.score_data_documentation = item.score_data_documentation,
                 img.score_physics_content = item.score_physics_content,
                 img.score_code_documentation = item.score_code_documentation,
