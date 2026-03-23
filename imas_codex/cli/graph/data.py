@@ -466,10 +466,6 @@ def graph_export(
                 with tarfile.open(output_path, "w:gz") as tar:
                     tar.add(archive_dir, arcname=archive_dir.name)
 
-            click.echo("  Creating archive...")
-            with tarfile.open(output_path, "w:gz") as tar:
-                tar.add(archive_dir, arcname=archive_dir.name)
-
     size_mb = output_path.stat().st_size / 1024 / 1024
     click.echo(f"Archive created: {output_path} ({size_mb:.1f} MB)")
 
