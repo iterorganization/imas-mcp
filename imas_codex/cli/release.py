@@ -588,10 +588,10 @@ def _push_all_graph_variants(message: str, remote: str, dry_run: bool) -> None:
 # ============================================================================
 
 
-def _create_and_push_tag(tag: str, message: str, remote: str, dry_run: bool) -> None:
-    """Create an annotated git tag and push it to the remote."""
+def _create_local_tag(tag: str, message: str, dry_run: bool) -> None:
+    """Create an annotated git tag locally (does not push)."""
     if dry_run:
-        click.echo(f"  [would create and push tag {tag} to {remote}]")
+        click.echo(f"  [would create tag {tag}]")
         return
 
     result = subprocess.run(
@@ -601,11 +601,18 @@ def _create_and_push_tag(tag: str, message: str, remote: str, dry_run: bool) -> 
     )
     if result.returncode != 0:
         if "already exists" in result.stderr:
-            click.echo(f"  ⚠ Tag {tag} already exists — pushing existing tag")
+            click.echo(f"  ⚠ Tag {tag} already exists")
         else:
             raise click.ClickException(f"Failed to create tag: {result.stderr}")
     else:
         click.echo(f"  ✓ Created tag: {tag}")
+
+
+def _push_tag(tag: str, remote: str, dry_run: bool) -> None:
+    """Push an existing git tag to the remote."""
+    if dry_run:
+        click.echo(f"  [would push tag {tag} to {remote}]")
+        return
 
     result = subprocess.run(
         ["git", "push", remote, tag],
@@ -794,10 +801,18 @@ def release(
 
     step = 0
 
+    # Step: Create local git tag (needed by graph push for version detection)
+    if not skip_git:
+        step += 1
+        click.echo(f"Step {step}: Creating local git tag...")
+        _create_local_tag(git_tag, message, dry_run)
+    else:
+        click.echo("Git tag: Skipped (--skip-git)")
+
     # Step: Validate graph privacy
     if not skip_graph:
         step += 1
-        click.echo(f"Step {step}: Validating graph contains no private fields...")
+        click.echo(f"\nStep {step}: Validating graph contains no private fields...")
         if not dry_run:
             _validate_graph_privacy()
         else:
@@ -818,15 +833,11 @@ def release(
     else:
         click.echo("Graph operations: Skipped (--skip-graph)")
 
-    # Step: Git tag
+    # Step: Push git tag to remote (triggers CI)
     if not skip_git:
         step += 1
-        click.echo(f"\nStep {step}: Creating and pushing git tag...")
-        _create_and_push_tag(git_tag, message, remote, dry_run)
-    else:
-        click.echo("\nGit tag: Skipped (--skip-git)")
-
-    # Summary
+        click.echo(f"\nStep {step}: Pushing git tag to {remote}...")
+        _push_tag(git_tag, remote, dry_run)
     click.echo()
     if dry_run:
         click.echo("[DRY RUN] No changes made.")
