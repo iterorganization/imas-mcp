@@ -41,66 +41,76 @@ model_list:
     litellm_params: &opus
       model: anthropic/claude-opus-4-6
       litellm_credential_name: codex-anthropic
-      extra_headers: &hdr
+      extra_headers: &cx_hdr
         X-Title: imas-codex
-        HTTP-Referer: https://github.com/iterorganization/imas-codex
+        HTTP-Referer: &referer https://github.com/iterorganization/imas-codex
 
   - model_name: openrouter/anthropic/claude-sonnet-4-6
     litellm_params: &sonnet
       model: anthropic/claude-sonnet-4-6
       litellm_credential_name: codex-anthropic
-      extra_headers: *hdr
+      extra_headers: *cx_hdr
 
   - model_name: openrouter/anthropic/claude-haiku-4-5
     litellm_params: &haiku
       model: anthropic/claude-haiku-4-5
       litellm_credential_name: codex-anthropic
-      extra_headers: *hdr
+      extra_headers: *cx_hdr
 
   # ── Google Gemini (OpenAI-compatible /api/v1) ──────────
   - model_name: openrouter/google/gemini-3.1-flash-lite-preview
     litellm_params:
       model: openai/google/gemini-3.1-flash-lite-preview
       litellm_credential_name: codex
-      extra_headers: *hdr
+      extra_headers: *cx_hdr
 
   - model_name: openrouter/google/gemini-3.1-pro-preview
     litellm_params:
       model: openai/google/gemini-3.1-pro-preview
       litellm_credential_name: codex
-      extra_headers: *hdr
+      extra_headers: *cx_hdr
 
   # ── OpenAI GPT (OpenAI-compatible /api/v1) ─────────────
   - model_name: openrouter/openai/gpt-4o
     litellm_params:
       model: openai/openai/gpt-4o
       litellm_credential_name: codex
-      extra_headers: *hdr
+      extra_headers: *cx_hdr
 
   - model_name: openrouter/openai/gpt-4o-mini
     litellm_params:
       model: openai/openai/gpt-4o-mini
       litellm_credential_name: codex
-      extra_headers: *hdr
+      extra_headers: *cx_hdr
 
   # ── Claude Code (separate billing, Anthropic only) ─────
   # Claude Code only uses Anthropic models. Virtual key → team
   # model_aliases remap: opus → cc:opus, sonnet → cc:sonnet, etc.
   - model_name: cc:opus
-    litellm_params: {<<: *opus, litellm_credential_name: claude-code}
+    litellm_params:
+      <<: *opus
+      litellm_credential_name: claude-code
+      extra_headers: &cc_hdr
+        X-Title: claude-code
+        HTTP-Referer: *referer
 
   - model_name: cc:sonnet
-    litellm_params: {<<: *sonnet, litellm_credential_name: claude-code}
+    litellm_params:
+      <<: *sonnet
+      litellm_credential_name: claude-code
+      extra_headers: *cc_hdr
 
   - model_name: cc:haiku
-    litellm_params: {<<: *haiku, litellm_credential_name: claude-code}
+    litellm_params:
+      <<: *haiku
+      litellm_credential_name: claude-code
+      extra_headers: *cc_hdr
 
 litellm_settings:
   drop_params: true
   num_retries: 3
   request_timeout: 120
-  health_check_interval: 0
-
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
   database_url: os.environ/LITELLM_DATABASE_URL
+  background_health_checks: false
