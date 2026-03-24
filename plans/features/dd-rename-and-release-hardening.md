@@ -31,13 +31,46 @@ Three features to prepare for v5.0.0 final release:
 ### Docker Container Images (MCP server + embedded graph)
 
 The full graph is the default (no suffix). DD-only gets a `-dd` suffix.
+Transport is **not** baked into tags — it's a runtime configuration.
 
-| Variant (after rename) | Graph embedded | RC tags | Release tags |
-|------------------------|---------------|---------|-------------|
-| **full** (default) | `imas-codex-graph` | `latest-streamable-http` | `prod-streamable-http` |
-| **dd-only** | `imas-codex-graph-dd` | `latest-dd-streamable-http` | `prod-dd-streamable-http` |
+| Variant | Graph embedded | RC tags | Release tags |
+|---------|---------------|---------|-------------|
+| **full** (default) | `imas-codex-graph` | `latest` | `prod`, `5.0.0`, `5.0`, `5` |
+| **dd-only** | `imas-codex-graph-dd` | `latest-dd` | `prod-dd`, `5.0.0-dd`, `5.0-dd`, `5-dd` |
 
 Both → ACR. Releases also → GHCR.
+
+#### Transport is runtime-configurable, not image-specific
+
+The current tags include `-streamable-http` (e.g. `latest-full-streamable-http`).
+This is misleading — only one image is built per graph variant, and transport
+is already configurable at runtime via:
+
+- **`TRANSPORT` env var** — the `imas-codex serve` CLI reads this via Click's
+  `envvar="TRANSPORT"`. Supported values: `stdio`, `sse`, `streamable-http`.
+- **CMD override** — `docker run <image> serve --transport sse`
+
+The current Dockerfile hardcodes transport in CMD:
+
+```dockerfile
+CMD ["serve", "--transport", "streamable-http", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+**Change to:** Let the `TRANSPORT` env var control it, defaulting to
+`streamable-http` for container deployments:
+
+```dockerfile
+ENV TRANSPORT="streamable-http"
+CMD ["serve", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+Since Click reads `TRANSPORT` env var before falling back to its default
+(`stdio`), and we set `ENV TRANSPORT="streamable-http"` in the Dockerfile,
+container deployments get `streamable-http` automatically. Users override
+with `docker run -e TRANSPORT=sse ...` without rebuilding.
+
+This eliminates `-streamable-http` from all tags, giving clean names:
+`latest`, `latest-dd`, `prod`, `prod-dd`, `5.0.0`, `5.0.0-dd`.
 
 ### Why `-graph` stays in package names
 
@@ -49,12 +82,12 @@ variant would collide with the Docker image.
 ### Azure test server
 
 The Azure test server (`app-imas-mcp-server-test-frc`) should use the **DD
-variant** (`latest-dd-streamable-http`). The DD-only graph is public and
-sufficient for the test endpoint. The full graph contains private facility data.
+variant** (`latest-dd`). The DD-only graph is public and sufficient for the
+test endpoint. The full graph contains private facility data.
 
 **Action:** Update Azure App Service container configuration:
 - Image: `crcommonallfrc.azurecr.io/iterorganization/imas-codex`
-- Tag: `latest-dd-streamable-http`
+- Tag: `latest-dd`
 
 This can be done via Azure Portal → App Service → Deployment Center, or:
 
@@ -62,7 +95,7 @@ This can be done via Azure Portal → App Service → Deployment Center, or:
 az webapp config container set \
   --name app-imas-mcp-server-test-frc \
   --resource-group <rg-name> \
-  --container-image-name crcommonallfrc.azurecr.io/iterorganization/imas-codex:latest-dd-streamable-http
+  --container-image-name crcommonallfrc.azurecr.io/iterorganization/imas-codex:latest-dd
 ```
 
 ---
@@ -520,9 +553,11 @@ function parameter, docstring, and usage sites.
 
 ### Step B: CI/Docker (independent — can run in parallel with A)
 
-#### B1. `.github/workflows/docker-build-push.yml` — 11 changes
+#### B1. `.github/workflows/docker-build-push.yml` — ~20 changes
 
-**Matrix suffix swap:** Full becomes the default (no suffix), DD gets `-dd`.
+**Three categories of changes:**
+
+**1. Package name rename** (4 lines):
 
 | Line | Old | New |
 |------|-----|-----|
@@ -530,38 +565,91 @@ function parameter, docstring, and usage sites.
 | 84 | `echo "No 'latest' tag for imas-codex-graph-imas..."` | `imas-codex-graph-dd` |
 | 115 | `ARTIFACT="${REGISTRY}/imas-codex-graph-imas:..."` | `imas-codex-graph-dd` |
 | 311 | `GRAPH_PACKAGE=imas-codex-graph-imas` | `imas-codex-graph-dd` |
+
+**2. Matrix suffix swap** — full is default, DD gets `-dd` (4 lines):
+
+| Line | Old | New |
+|------|-----|-----|
 | 416 | `- name: imas-only` | `- name: dd-only` |
 | 417 | `package: imas-codex-graph-imas` | `package: imas-codex-graph-dd` |
 | 418 | `suffix: ""` | `suffix: "-dd"` |
-| 420 | `package: imas-codex-graph` | (unchanged) |
 | 421 | `suffix: "-full"` | `suffix: ""` |
+
+**3. Drop `-streamable-http` from all tag patterns** (~10 lines):
+
+The metadata-action tag patterns currently append `-streamable-http` to every
+tag. Remove this suffix. The container transport is runtime-configurable via
+`TRANSPORT` env var and should not be encoded in the image tag.
+
+Lines 494–498 (GHCR metadata):
+```yaml
+# OLD:
+tags: |
+  type=semver,pattern={{version}}${{ matrix.graph_variant.suffix }}-streamable-http
+  type=semver,pattern={{major}}.{{minor}}${{ matrix.graph_variant.suffix }}-streamable-http
+  type=semver,pattern={{major}}${{ matrix.graph_variant.suffix }}-streamable-http
+
+# NEW:
+tags: |
+  type=semver,pattern={{version}}${{ matrix.graph_variant.suffix }}
+  type=semver,pattern={{major}}.{{minor}}${{ matrix.graph_variant.suffix }}
+  type=semver,pattern={{major}}${{ matrix.graph_variant.suffix }}
+```
+
+Lines 507–511 (ACR metadata):
+```yaml
+# OLD:
+tags: |
+  type=semver,pattern={{version}}${{ matrix.graph_variant.suffix }}-streamable-http
+  type=semver,pattern={{major}}.{{minor}}${{ matrix.graph_variant.suffix }}-streamable-http
+  type=semver,pattern={{major}}${{ matrix.graph_variant.suffix }}-streamable-http
+  type=raw,value=prod${{ matrix.graph_variant.suffix }}-streamable-http,enable=...
+  type=raw,value=latest${{ matrix.graph_variant.suffix }}-streamable-http,enable=...
+
+# NEW:
+tags: |
+  type=semver,pattern={{version}}${{ matrix.graph_variant.suffix }}
+  type=semver,pattern={{major}}.{{minor}}${{ matrix.graph_variant.suffix }}
+  type=semver,pattern={{major}}${{ matrix.graph_variant.suffix }}
+  type=raw,value=prod${{ matrix.graph_variant.suffix }},enable=...
+  type=raw,value=latest${{ matrix.graph_variant.suffix }},enable=...
+```
+
+Build-args (lines 527, 555): Remove `TRANSPORT=streamable-http` from
+`build-args` — no longer needed since the Dockerfile sets
+`ENV TRANSPORT="streamable-http"` as default.
+
+**4. Variant name check** (1 line):
+
+| Line | Old | New |
+|------|-----|-----|
 | 448 | `= "imas-only"` | `= "dd-only"` |
 
-This changes the generated Docker tags as follows:
+**Resulting tag scheme:**
 
-| Variant | Old RC tag | New RC tag |
-|---------|-----------|-----------|
-| dd-only | `latest-streamable-http` | `latest-dd-streamable-http` |
-| full | `latest-full-streamable-http` | `latest-streamable-http` |
+| Variant | RC tags | Release tags |
+|---------|---------|-------------|
+| full | `latest` | `prod`, `5.0.0`, `5.0`, `5` |
+| dd-only | `latest-dd` | `prod-dd`, `5.0.0-dd`, `5.0-dd`, `5-dd` |
 
-| Variant | Old release tags | New release tags |
-|---------|-----------------|-----------------|
-| dd-only | `5.0.0-streamable-http`, `prod-streamable-http` | `5.0.0-dd-streamable-http`, `prod-dd-streamable-http` |
-| full | `5.0.0-full-streamable-http`, `prod-full-streamable-http` | `5.0.0-streamable-http`, `prod-streamable-http` |
-
-#### B2. `Dockerfile` — 1 change
-
-The default `GRAPH_PACKAGE` stays as the DD variant since that's what gets
-built when no build arg is provided (public/lightweight default):
+#### B2. `Dockerfile` — 3 changes
 
 | Line | Old | New |
 |------|-----|-----|
+| 31 | `ARG TRANSPORT="streamable-http"` | Remove (no longer a build arg) |
+| 41 | `ENV TRANSPORT=${TRANSPORT}` | `ENV TRANSPORT="streamable-http"` (static default) |
 | 131 | `ARG GRAPH_PACKAGE="imas-codex-graph-imas"` | `ARG GRAPH_PACKAGE="imas-codex-graph-dd"` |
+| 275 | `CMD ["serve", "--transport", "streamable-http", "--host", "0.0.0.0", "--port", "8000"]` | `CMD ["serve", "--host", "0.0.0.0", "--port", "8000"]` |
 
-#### B3. `docker-compose.yml` — 1 change
+The CMD no longer hardcodes `--transport`. Click reads the `TRANSPORT` env var
+(set to `streamable-http` by the `ENV` directive). Users override with
+`docker run -e TRANSPORT=sse ...`.
+
+#### B3. `docker-compose.yml` — 2 changes
 
 | Line | Old | New |
 |------|-----|-----|
+| 36 | `- TRANSPORT=${TRANSPORT:-streamable-http}` | Remove (no longer a build arg) |
 | 38 | `GRAPH_PACKAGE=${GRAPH_PACKAGE:-imas-codex-graph-imas}` | `${GRAPH_PACKAGE:-imas-codex-graph-dd}` |
 
 #### B4. `.github/workflows/graph-quality.yml` — 0 changes (verified)
