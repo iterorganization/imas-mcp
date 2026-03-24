@@ -644,7 +644,7 @@ The release command:
 1. Computes the next version from the latest git tag (state machine)
 2. Validates no private fields in graph
 3. Tags DDVersion node with release metadata
-4. Pushes **all** graph variants to GHCR (imas-only + full + per-facility)
+4. Pushes **all** graph variants to GHCR (dd-only + full + per-facility)
 5. Creates and pushes git tag → triggers CI
 
 **Constraint:** Must run from the ITER machine where Neo4j runs — CI cannot build graph data.

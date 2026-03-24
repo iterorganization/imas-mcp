@@ -33,9 +33,8 @@ services:
       args:
         - BUILDKIT_INLINE_CACHE=1
         - IDS_FILTER=${IDS_FILTER}
-        - TRANSPORT=${TRANSPORT:-streamable-http}
         - GRAPH_TAG=${GRAPH_TAG:-latest}
-        - GRAPH_PACKAGE=${GRAPH_PACKAGE:-imas-codex-graph-imas}
+        - GRAPH_PACKAGE=${GRAPH_PACKAGE:-imas-codex-graph-dd}
         - GHCR_REGISTRY=${GHCR_REGISTRY:-ghcr.io/iterorganization}
       secrets:
         - ghcr_token

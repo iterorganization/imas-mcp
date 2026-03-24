@@ -74,14 +74,14 @@ jobs:
           REGISTRY="${{ steps.registry.outputs.ghcr }}"
 
           # Resolve IMAS-only graph tag
-          IMAS_PACKAGE="imas-codex-graph-imas"
+          IMAS_PACKAGE="imas-codex-graph-dd"
           IMAS_TAGS=$(oras repo tags "${REGISTRY}/${IMAS_PACKAGE}" 2>&1) || true
           IMAS_CLEAN=$(echo "$IMAS_TAGS" | grep -E '^[0-9v]' || true)
           if echo "$IMAS_CLEAN" | grep -qx "latest"; then
             echo "imas-tag=latest" >> $GITHUB_OUTPUT
           elif [ -n "$IMAS_CLEAN" ]; then
             BEST=$(echo "$IMAS_CLEAN" | sort -V | tail -1)
-            echo "No 'latest' tag for imas-codex-graph-imas. Using most recent: $BEST"
+            echo "No 'latest' tag for imas-codex-graph-dd. Using most recent: $BEST"
             echo "imas-tag=${BEST}" >> $GITHUB_OUTPUT
           else
             echo "::warning::No graph package found at ${REGISTRY}/${IMAS_PACKAGE} — skipping graph quality tests"
@@ -112,7 +112,7 @@ jobs:
         if: steps.graph-tag.outputs.imas-tag != 'none'
         run: |
           REGISTRY="${{ steps.registry.outputs.ghcr }}"
-          ARTIFACT="${REGISTRY}/imas-codex-graph-imas:${{ steps.graph-tag.outputs.imas-tag }}"
+          ARTIFACT="${REGISTRY}/imas-codex-graph-dd:${{ steps.graph-tag.outputs.imas-tag }}"
           echo "Pulling: ${ARTIFACT}"
           mkdir -p /tmp/graph-dump
           oras pull "${ARTIFACT}" -o /tmp/graph-dump --allow-path-traversal
@@ -308,9 +308,8 @@ jobs:
           tags: imas-codex:smoke-test
           build-args: |
             GRAPH_TAG=${{ needs.graph-quality.outputs.graph-tag-imas }}
-            GRAPH_PACKAGE=imas-codex-graph-imas
+            GRAPH_PACKAGE=imas-codex-graph-dd
             GHCR_REGISTRY=${{ steps.registry.outputs.ghcr }}
-            TRANSPORT=streamable-http
           secrets: |
             GHCR_TOKEN=${{ secrets.GHCR_TOKEN }}
           no-cache: true
@@ -413,12 +412,12 @@ jobs:
       fail-fast: false
       matrix:
         graph_variant:
-          - name: imas-only
-            package: imas-codex-graph-imas
-            suffix: ""
+          - name: dd-only
+            package: imas-codex-graph-dd
+            suffix: "-dd"
           - name: full
             package: imas-codex-graph
-            suffix: "-full"
+            suffix: ""
     permissions:
       contents: read
       packages: write
@@ -445,7 +444,7 @@ jobs:
       - name: Set graph tag for variant
         id: variant
         run: |
-          if [ "${{ matrix.graph_variant.name }}" = "imas-only" ]; then
+          if [ "${{ matrix.graph_variant.name }}" = "dd-only" ]; then
             echo "graph-tag=${{ needs.graph-quality.outputs.graph-tag-imas }}" >> $GITHUB_OUTPUT
           else
             echo "graph-tag=${{ needs.graph-quality.outputs.graph-tag-full }}" >> $GITHUB_OUTPUT
@@ -492,9 +491,9 @@ jobs:
         with:
           images: ${{ env.GHCR_REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=semver,pattern={{version}}${{ matrix.graph_variant.suffix }}-streamable-http
-            type=semver,pattern={{major}}.{{minor}}${{ matrix.graph_variant.suffix }}-streamable-http
-            type=semver,pattern={{major}}${{ matrix.graph_variant.suffix }}-streamable-http
+            type=semver,pattern=v{{version}}${{ matrix.graph_variant.suffix }}
+            type=semver,pattern=v{{major}}.{{minor}}${{ matrix.graph_variant.suffix }}
+            type=semver,pattern=v{{major}}${{ matrix.graph_variant.suffix }}
           flavor: |
             latest=false
 
@@ -504,11 +503,11 @@ jobs:
         with:
           images: ${{ env.ACR_REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=semver,pattern={{version}}${{ matrix.graph_variant.suffix }}-streamable-http
-            type=semver,pattern={{major}}.{{minor}}${{ matrix.graph_variant.suffix }}-streamable-http
-            type=semver,pattern={{major}}${{ matrix.graph_variant.suffix }}-streamable-http
-            type=raw,value=prod${{ matrix.graph_variant.suffix }}-streamable-http,enable=${{ startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-rc') }}
-            type=raw,value=latest${{ matrix.graph_variant.suffix }}-streamable-http,enable=${{ contains(github.ref, '-rc') }}
+            type=semver,pattern=v{{version}}${{ matrix.graph_variant.suffix }}
+            type=semver,pattern=v{{major}}.{{minor}}${{ matrix.graph_variant.suffix }}
+            type=semver,pattern=v{{major}}${{ matrix.graph_variant.suffix }}
+            type=raw,value=production${{ matrix.graph_variant.suffix }},enable=${{ startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-rc') }}
+            type=raw,value=latest${{ matrix.graph_variant.suffix }},enable=${{ contains(github.ref, '-rc') }}
           flavor: |
             latest=false
 
@@ -524,7 +523,6 @@ jobs:
           labels: ${{ steps.meta-acr.outputs.labels }}
           build-args: |
             IDS_FILTER=
-            TRANSPORT=streamable-http
             IMAS_DD_VERSION=${{ env.IMAS_DD_VERSION }}
             GHCR_REGISTRY=${{ steps.registry.outputs.ghcr }}
             GRAPH_TAG=${{ steps.variant.outputs.graph-tag }}
@@ -553,7 +551,6 @@ jobs:
             ${{ steps.meta-acr.outputs.labels }}
           build-args: |
             IDS_FILTER=
-            TRANSPORT=streamable-http
             IMAS_DD_VERSION=${{ env.IMAS_DD_VERSION }}
             GHCR_REGISTRY=${{ steps.registry.outputs.ghcr }}
             GRAPH_TAG=${{ steps.variant.outputs.graph-tag }}

@@ -351,7 +351,7 @@ Run locally in a container (pre-built indexes included):
 docker run -d \
   --name imas-codex \
   -p 8000:8000 \
-  ghcr.io/iterorganization/imas-codex:latest-streamable-http
+  ghcr.io/iterorganization/imas-codex:latest
 
 # Optional: verify
 docker ps --filter name=imas-codex --format "table {{.Names}}\t{{.Status}}"
@@ -637,7 +637,7 @@ For IMAS Data Dictionary access without facility-specific data:
 ```bash
 pip install imas-codex
 imas-codex graph init imas
-imas-codex graph pull --imas-only
+imas-codex graph pull --dd-only
 imas-codex serve
 ```
 
@@ -759,7 +759,7 @@ The release pipeline:
 
 | Package | Contents | Visibility |
 |---------|----------|------------|
-| `imas-codex-graph-imas` | IMAS Data Dictionary only | Public-safe |
+| `imas-codex-graph-dd` | IMAS Data Dictionary only | Public-safe |
 | `imas-codex-graph` | All facilities + DD | Private |
 | `imas-codex-graph-{facility}` | Single facility + DD | Private |
 

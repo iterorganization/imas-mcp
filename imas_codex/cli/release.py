@@ -487,7 +487,7 @@ def _get_graph_facilities() -> list[str]:
 
 def _push_graph_variant(
     *,
-    imas_only: bool = False,
+    dd_only: bool = False,
     facility: str | None = None,
     message: str | None = None,
     registry: str | None = None,
@@ -502,7 +502,7 @@ def _push_graph_variant(
     from imas_codex.graph.ghcr import get_package_name
 
     facilities = [facility] if facility else None
-    pkg_name = get_package_name(facilities=facilities, imas_only=imas_only)
+    pkg_name = get_package_name(facilities=facilities, dd_only=dd_only)
 
     if dry_run:
         target = f" → {registry}" if registry else ""
@@ -510,8 +510,8 @@ def _push_graph_variant(
         return True
 
     cmd = ["uv", "run", "imas-codex", "graph", "push"]
-    if imas_only:
-        cmd.append("--imas-only")
+    if dd_only:
+        cmd.append("--dd-only")
     if facility:
         cmd.extend(["--facility", facility])
     if message:
@@ -619,7 +619,7 @@ def _push_all_graph_variants(
         # No facilities — just push dd-only (the only meaningful variant)
         click.echo("\n  Variant 1: IMAS Data Dictionary only")
         if not _push_graph_variant(
-            imas_only=True,
+            dd_only=True,
             message=message,
             registry=registry,
             version_tag=git_tag,
@@ -664,7 +664,7 @@ def _push_all_graph_variants(
     variant += 1
     click.echo(f"\n  Variant {variant}: IMAS Data Dictionary only")
     if not _push_graph_variant(
-        imas_only=True,
+        dd_only=True,
         message=message,
         registry=registry,
         version_tag=git_tag,

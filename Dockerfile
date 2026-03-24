@@ -26,9 +26,8 @@ COPY --from=uv /uv /bin/
 # Set working directory
 WORKDIR /app
 
-# Add build args for IDS filter and transport
+# Add build args for IDS filter
 ARG IDS_FILTER=""
-ARG TRANSPORT="streamable-http"
 
 # Additional build-time metadata for cache busting & traceability
 ARG GIT_SHA=""
@@ -38,7 +37,7 @@ ARG GIT_REF=""
 # Set environment variables
 ENV PYTHONPATH="/app" \
     IDS_FILTER=${IDS_FILTER} \
-    TRANSPORT=${TRANSPORT} \
+    TRANSPORT="streamable-http" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     HATCH_BUILD_NO_HOOKS=true \
@@ -128,7 +127,7 @@ RUN curl -sLO "https://github.com/oras-project/oras/releases/download/v${ORAS_VE
 # Pull graph from GHCR (optional — builds without graph if unavailable)
 ARG GHCR_REGISTRY="ghcr.io/iterorganization"
 ARG GRAPH_TAG="latest"
-ARG GRAPH_PACKAGE="imas-codex-graph-imas"
+ARG GRAPH_PACKAGE="imas-codex-graph-dd"
 RUN --mount=type=secret,id=GHCR_TOKEN \
     mkdir -p /tmp/graph-pull && \
     GHCR_TOKEN=$(cat /run/secrets/GHCR_TOKEN 2>/dev/null || echo "") && \
@@ -272,4 +271,4 @@ HEALTHCHECK --interval=30s --timeout=10s --retries=3 --start-period=60s \
 
 ## Entrypoint starts Neo4j then MCP server
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
-CMD ["serve", "--transport", "streamable-http", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["serve", "--host", "0.0.0.0", "--port", "8000"]

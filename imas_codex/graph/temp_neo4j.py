@@ -19,7 +19,7 @@ import click
 # Constants
 # ============================================================================
 
-# DD node labels to keep for --imas-only exports
+# DD node labels to keep for --dd-only exports
 IMAS_DD_LABELS = [
     "DDVersion",
     "IDS",
@@ -215,7 +215,7 @@ def dump_temp_neo4j(temp_dir: Path, output_path: Path) -> None:
     click.echo(f"    Filtered dump: {size_mb:.1f} MB")
 
 
-def create_imas_only_dump(source_dump_path: Path, output_path: Path) -> None:
+def create_dd_only_dump(source_dump_path: Path, output_path: Path) -> None:
     """Create an IMAS-only dump by filtering out facility nodes.
 
     Loads the full dump into a temporary Neo4j instance, deletes all
@@ -259,7 +259,7 @@ def create_imas_only_dump(source_dump_path: Path, output_path: Path) -> None:
                     total_deleted += batch_deleted
                 click.echo(f"    Removed {total_deleted} non-DD nodes")
 
-                # Update GraphMeta to reflect imas-only content
+                # Update GraphMeta to reflect dd-only content
                 session.run(
                     'MATCH (m:GraphMeta {id: "meta"}) '
                     "SET m.facilities = [], m.imas = true, "
