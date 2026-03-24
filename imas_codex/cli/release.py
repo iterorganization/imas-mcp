@@ -430,8 +430,7 @@ def _validate_graph_privacy() -> None:
     except Exception as e:
         raise click.ClickException(
             f"Graph privacy validation failed: {e}\n"
-            "  Is Neo4j running? Check: imas-codex graph status\n"
-            "  To release without graph: --skip-graph"
+            "  Is Neo4j running? Check: imas-codex graph status"
         ) from e
 
 
@@ -455,8 +454,7 @@ def _tag_dd_version(version_number: str, message: str) -> None:
     except Exception as e:
         raise click.ClickException(
             f"Failed to tag DDVersion: {e}\n"
-            "  Is Neo4j running? Check: imas-codex graph status\n"
-            "  To release without graph: --skip-graph"
+            "  Is Neo4j running? Check: imas-codex graph status"
         ) from e
 
 
@@ -474,13 +472,12 @@ def _get_graph_facilities() -> list[str]:
     except Exception as e:
         raise click.ClickException(
             f"Cannot read graph facilities: {e}\n"
-            "  Is Neo4j running? Check: imas-codex graph status\n"
-            "  To release without graph: --skip-graph"
+            "  Is Neo4j running? Check: imas-codex graph status"
         ) from e
     if not meta:
         raise click.ClickException(
             "GraphMeta node not found — graph has no metadata.\n"
-            "  Run 'imas-codex graph status' first, or use --skip-graph."
+            "  Run 'imas-codex graph status' first."
         )
     return list(meta.get("facilities") or [])
 
@@ -640,8 +637,7 @@ def _push_all_graph_variants(
         if not cached_dump:
             raise click.ClickException(
                 "Failed to create shared graph dump.\n"
-                "  Is Neo4j running? Check: imas-codex graph status\n"
-                "  To release without graph: --skip-graph"
+                "  Is Neo4j running? Check: imas-codex graph status"
             )
 
     variant = 0
@@ -787,11 +783,6 @@ def _push_tag(tag: str, remote: str, dry_run: bool) -> None:
     help="Target remote for git tag push (default: upstream).",
 )
 @click.option(
-    "--skip-graph",
-    is_flag=True,
-    help="Skip graph validation and push (code-only release).",
-)
-@click.option(
     "--skip-git",
     is_flag=True,
     help="Skip git tag creation and push.",
@@ -808,7 +799,6 @@ def release(
     final: bool,
     explicit_version: str | None,
     remote: str,
-    skip_graph: bool,
     skip_git: bool,
     dry_run: bool,
 ) -> None:
@@ -930,28 +920,25 @@ def release(
         click.echo("Git tag: Skipped (--skip-git)")
 
     # Step: Validate graph privacy
-    if not skip_graph:
-        step += 1
-        click.echo(f"\nStep {step}: Validating graph contains no private fields...")
-        if not dry_run:
-            _validate_graph_privacy()
-        else:
-            click.echo("  [would validate graph privacy]")
-
-        # Step: Tag DDVersion
-        step += 1
-        click.echo(f"\nStep {step}: Tagging DDVersion with release info...")
-        if not dry_run:
-            _tag_dd_version(version_number, message)
-        else:
-            click.echo(f"  [would tag DDVersion: release_version={version_number}]")
-
-        # Step: Push all graph variants
-        step += 1
-        click.echo(f"\nStep {step}: Pushing graph variants to GHCR...")
-        _push_all_graph_variants(message, remote, dry_run, git_tag=git_tag)
+    step += 1
+    click.echo(f"\nStep {step}: Validating graph contains no private fields...")
+    if not dry_run:
+        _validate_graph_privacy()
     else:
-        click.echo("Graph operations: Skipped (--skip-graph)")
+        click.echo("  [would validate graph privacy]")
+
+    # Step: Tag DDVersion
+    step += 1
+    click.echo(f"\nStep {step}: Tagging DDVersion with release info...")
+    if not dry_run:
+        _tag_dd_version(version_number, message)
+    else:
+        click.echo(f"  [would tag DDVersion: release_version={version_number}]")
+
+    # Step: Push all graph variants
+    step += 1
+    click.echo(f"\nStep {step}: Pushing graph variants to GHCR...")
+    _push_all_graph_variants(message, remote, dry_run, git_tag=git_tag)
 
     # Step: Push git tag to remote (triggers CI)
     if not skip_git:

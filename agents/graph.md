@@ -114,10 +114,7 @@ Options:
 # Preview changes
 uv run imas-codex release v4.0.0 -m 'Test' --dry-run
 
-# Skip graph operations
-uv run imas-codex release v4.0.0 -m 'Code only' --skip-graph
-
-# Skip git tag
+# Skip git tag (test graph push without tagging)
 uv run imas-codex release v4.0.0 -m 'Graph only' --skip-git
 ```
 

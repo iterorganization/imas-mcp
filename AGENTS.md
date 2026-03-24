@@ -637,7 +637,7 @@ uv run imas-codex release -m 'Fix CI issues'                          # → v5.0
 uv run imas-codex release --final -m 'Production release'             # → v5.0.0 (finalize)
 uv run imas-codex release --bump patch -m 'Abandon RC, new patch'     # → v5.0.1-rc1 (new RC)
 
-# Options: --remote, --skip-graph, --skip-git, --dry-run, --version
+# Options: --remote, --skip-git, --dry-run, --version
 ```
 
 The release command:
