@@ -47,6 +47,7 @@ coverage.xml
 # IDE files
 .idea/
 .continue/
+.vscode/mcp.json
 *.swp
 *.swo
 
@@ -86,4 +87,4 @@ docs/TOOL_IMPROVEMENT_PLAN.md
 imas_codex/graph/dd_models.py
 .aider*
 *.tar.gz
-.mcp.json
+# .mcp.json is tracked — canonical MCP server config (dual-key for Claude Code + VS Code)

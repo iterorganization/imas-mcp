@@ -870,6 +870,50 @@ Extended examples and edge cases for each domain: [agents/](agents/)
 
 | Graph | Knowledge graph operations (core + MCP) |
 
+## AI Tooling Configuration
+
+This project supports multiple AI coding tools (Claude Code, VS Code Copilot, Cursor, etc.) from **canonical sources** — no duplication.
+
+### Canonical Sources
+
+| What | Canonical File | Read By |
+|------|---------------|---------|
+| **Project instructions** | `AGENTS.md` | Claude Code (via `CLAUDE.md` → `@AGENTS.md`), VS Code Copilot (native `AGENTS.md` support), Cursor (via `.cursorrules` import) |
+| **MCP servers** | `.mcp.json` (dual-key) | Claude Code (`mcpServers` key), VS Code (`.vscode/mcp.json` symlink → `servers` key), Visual Studio 2026 (`.mcp.json` at root) |
+| **Custom agents** | `.claude/agents/*.md` | Claude Code (native) |
+| **Skills/commands** | `.claude/skills/*.md` | Claude Code (native) |
+| **Tool-specific settings** | `.claude/settings.json`, `.vscode/settings.json` | Their respective tools (not shared) |
+
+### Architecture
+
+```
+AGENTS.md                    ← canonical project instructions (all tools)
+CLAUDE.md                    ← Claude Code entry point (@AGENTS.md import)
+.mcp.json                    ← canonical MCP config (dual-key: mcpServers + servers)
+├── .vscode/mcp.json         ← symlink → ../.mcp.json (VS Code reads servers key)
+.claude/
+├── agents/                  ← Claude Code custom agents
+│   ├── facility-explorer.md
+│   └── graph-querier.md
+├── skills/                  ← Claude Code skills (reusable prompts)
+│   ├── facility-access.md
+│   ├── graph-queries.md
+│   ├── schema-summary.md
+│   └── mapping-workflow.md
+└── settings.json            ← Claude Code permissions & env
+.vscode/
+├── settings.json            ← VS Code/Copilot settings
+├── toolsets.jsonc            ← VS Code agent toolset definitions
+└── instructions.json         ← VS Code instruction file patterns
+```
+
+### Rules
+
+1. **Never duplicate instructions** — `AGENTS.md` is the single source of truth for all project guidelines. `CLAUDE.md` imports it via `@AGENTS.md`. For other tools, configure their instruction path to read `AGENTS.md`.
+2. **MCP servers defined once** — `.mcp.json` contains both `mcpServers` (Claude Code format) and `servers` (VS Code format). `.vscode/mcp.json` is a symlink, not a copy.
+3. **Tool-specific config stays tool-specific** — permissions, env vars, and model preferences differ per tool and belong in their respective settings files.
+4. **When adding an MCP server**, edit `.mcp.json` and add the server under **both** keys. The symlink handles VS Code automatically.
+
 ## MCP Server Deployment
 
 ```bash

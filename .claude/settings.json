@@ -15,7 +15,8 @@
       "Bash(litellm *)",
       "Bash(apptainer *)",
       "mcp__codex__*",
-      "mcp__imas-ddv4__*",
+      "mcp__imas__*",
+      "mcp__imas-test__*",
       "Read(.claude/**)"
     ]
   }
