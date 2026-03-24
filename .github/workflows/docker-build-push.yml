@@ -27,7 +27,6 @@ jobs:
     timeout-minutes: 30
     outputs:
       graph-tag-imas: ${{ steps.graph-tag.outputs.imas-tag }}
-      graph-tag-full: ${{ steps.graph-tag.outputs.full-tag }}
 
     services:
       neo4j:
@@ -86,21 +85,6 @@ jobs:
           else
             echo "::warning::No graph package found at ${REGISTRY}/${IMAS_PACKAGE} — skipping graph quality tests"
             echo "imas-tag=none" >> $GITHUB_OUTPUT
-          fi
-
-          # Resolve full graph tag
-          FULL_PACKAGE="imas-codex-graph"
-          FULL_TAGS=$(oras repo tags "${REGISTRY}/${FULL_PACKAGE}" 2>&1) || true
-          FULL_CLEAN=$(echo "$FULL_TAGS" | grep -E '^[0-9v]' || true)
-          if echo "$FULL_CLEAN" | grep -qx "latest"; then
-            echo "full-tag=latest" >> $GITHUB_OUTPUT
-          elif [ -n "$FULL_CLEAN" ]; then
-            BEST=$(echo "$FULL_CLEAN" | sort -V | tail -1)
-            echo "No 'latest' tag for imas-codex-graph. Using most recent: $BEST"
-            echo "full-tag=${BEST}" >> $GITHUB_OUTPUT
-          else
-            echo "::warning::No full graph package found at ${REGISTRY}/${FULL_PACKAGE} — full graph builds will proceed without pre-loaded graph"
-            echo "full-tag=none" >> $GITHUB_OUTPUT
           fi
 
       - name: Skip notice
@@ -414,9 +398,6 @@ jobs:
         graph_variant:
           - name: dd-only
             package: imas-codex-graph-dd
-            suffix: "-dd"
-          - name: full
-            package: imas-codex-graph
             suffix: ""
     permissions:
       contents: read
@@ -444,11 +425,7 @@ jobs:
       - name: Set graph tag for variant
         id: variant
         run: |
-          if [ "${{ matrix.graph_variant.name }}" = "dd-only" ]; then
-            echo "graph-tag=${{ needs.graph-quality.outputs.graph-tag-imas }}" >> $GITHUB_OUTPUT
-          else
-            echo "graph-tag=${{ needs.graph-quality.outputs.graph-tag-full }}" >> $GITHUB_OUTPUT
-          fi
+          echo "graph-tag=${{ needs.graph-quality.outputs.graph-tag-imas }}" >> $GITHUB_OUTPUT
 
       - name: Set lowercase image name for cache
         id: image-name
