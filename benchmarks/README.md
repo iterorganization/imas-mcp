@@ -8,7 +8,7 @@ Performance benchmarking for IMAS Codex using [ASV (airspeed velocity)](https://
 |--------|-------|-----------|-------------|
 | `bench_mcp_search.py` | `SearchToolBenchmarks` | 12 | Neo4j + graph dump |
 | `bench_mcp_imas_tools.py` | `IMASToolBenchmarks` | 17 | Neo4j + graph dump |
-| `bench_mcp_facility_tools.py` | `FacilityToolBenchmarks` | 7 | Neo4j + facility data |
+| `bench_mcp_facility_tools.py` | `FacilityToolBenchmarks` | 5 | Neo4j + facility data |
 | `bench_mcp_facility_tools.py` | `GraphSchemaToolBenchmarks` | 3 | Neo4j + graph dump |
 | `bench_graph_queries.py` | `GraphQueryBenchmarks` | 8 | Neo4j + graph dump |
 | `bench_embeddings.py` | `EmbeddingBenchmarks` | 6 | None (CPU-only) |
@@ -17,7 +17,7 @@ Performance benchmarking for IMAS Codex using [ASV (airspeed velocity)](https://
 | `bench_server_startup.py` | `ServerStartupBenchmarks` | 3 | Neo4j for first call |
 | `bench_memory.py` | `MemoryBenchmarks` | 4 | Neo4j + graph dump |
 
-**Total: 72 benchmarks** across 10 classes.
+**Total: 71 benchmarks** across 10 classes.
 
 ## Shared Infrastructure
 
