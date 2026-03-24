@@ -14,7 +14,7 @@ Three related features to prepare for v5.0.0 final release:
 | Package | Contents | Visibility |
 |---------|----------|------------|
 | `imas-codex-graph` | Full graph (all facilities + DD) | Private |
-| `imas-codex-graph-imas` | DD-only (no facility data) | Public |
+| `imas-codex-graph-dd` | DD-only (no facility data) | Public |
 | `imas-codex-graph-tcv` | TCV facility + DD | Private |
 | `imas-codex-graph-jet` | JET facility + DD | Private |
 | `imas-codex-graph-iter` | ITER facility + DD | Private |
@@ -26,22 +26,41 @@ The CI builds **two Docker container variants**, each containing the full
 
 | Variant | Graph data | Image tags (RC) | Image tags (release) |
 |---------|-----------|-----------------|---------------------|
-| **imas-only** (default) | `imas-codex-graph-imas` | `latest-streamable-http` | `prod-streamable-http`, `5.0.0-streamable-http` |
+| **dd-only** (default) | `imas-codex-graph-dd` | `latest-streamable-http` | `prod-streamable-http`, `5.0.0-streamable-http` |
 | **full** | `imas-codex-graph` | `latest-full-streamable-http` | `prod-full-streamable-http`, `5.0.0-full-streamable-http` |
 
 Both are pushed to ACR (`crcommonallfrc.azurecr.io/iterorganization/imas-codex`).
 Release builds also push to GHCR (`ghcr.io/iterorganization/imas-codex`).
 
-The Azure test server uses the **full** variant (`latest-full-streamable-http`).
+The Azure test server should use the **dd-only** variant (`latest-streamable-http`)
+— the public IMAS DD graph is sufficient for the test endpoint, and the full
+graph contains private facility data.
 
 **Key insight:** The Docker containers are NOT just the graph — they are the
 complete `imas-codex` MCP server with Neo4j + graph data baked in.
 
-### Naming convention: `-graph` is necessary
+### Naming convention: `-graph` is required for the full variant
 
-The `-graph` suffix on GHCR packages disambiguates OCI artifacts (graph dumps)
-from Docker images (application containers). Both use the same GHCR namespace.
-Removing `-graph` would create naming collisions. **Keep it.**
+GHCR uses a single namespace for both Docker images and OCI artifacts.
+The Docker image is `ghcr.io/iterorganization/imas-codex`. The full graph
+OCI artifact is `ghcr.io/iterorganization/imas-codex-graph`. Removing `-graph`
+from the full variant would collide with the Docker image — both would resolve
+to the same GHCR package. **Keep `-graph` for the full variant.**
+
+DD-only and per-facility packages (`imas-codex-graph-dd`, `imas-codex-graph-tcv`)
+have no collision risk. The `-graph` infix also serves as self-documentation —
+any `imas-codex-graph-*` package is a Neo4j dump, not a Docker image.
+
+### Azure test server
+
+The Azure test server (`app-imas-mcp-server-test-frc`) should use the **DD
+variant** (`latest-streamable-http`), not the full variant. The DD-only graph
+is public and contains the IMAS Data Dictionary — sufficient for the public
+test endpoint. The full graph contains private facility data and should only
+run in authenticated environments.
+
+**Action:** Update the Azure App Service container configuration to pull the
+DD variant tag (`latest-streamable-http`) instead of `latest-full-streamable-http`.
 
 ---
 
