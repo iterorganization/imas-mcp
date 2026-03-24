@@ -201,7 +201,7 @@ def check_pull_compatibility(
     meta: dict[str, Any],
     *,
     dd_only: bool = False,
-    no_imas: bool = False,
+    without_dd: bool = False,
     facilities: list[str] | None = None,
 ) -> list[str]:
     """Check whether a pull operation is compatible with the active graph.
@@ -212,7 +212,7 @@ def check_pull_compatibility(
     Args:
         meta: GraphMeta dict from :func:`get_graph_meta`.
         dd_only: Whether pulling the IMAS-only package.
-        no_imas: Whether pulling the no-imas variant.
+        without_dd: Whether pulling the without-dd variant.
         facilities: Facility filter for the pull.
 
     Returns:
@@ -243,12 +243,12 @@ def check_pull_compatibility(
             )
     else:
         # Pulling full graph
-        if no_imas and graph_imas:
+        if without_dd and graph_imas:
             errors.append(
-                f"Pulling no-imas variant into graph '{graph_name}' "
+                f"Pulling without-dd variant into graph '{graph_name}' "
                 f"which has imas=true. DD data will be lost."
             )
-        elif not no_imas and not graph_imas:
+        elif not without_dd and not graph_imas:
             errors.append(
                 f"Pulling package with IMAS DD into graph '{graph_name}' "
                 f"which has imas=false."

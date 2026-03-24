@@ -233,7 +233,7 @@ def _update_env_file(env_file: Path, new_password: str) -> None:
     help="Facility to include (repeatable). Filters out other facilities.",
 )
 @click.option(
-    "--no-imas",
+    "--without-dd",
     is_flag=True,
     help="Exclude IMAS Data Dictionary nodes from export",
 )
@@ -268,7 +268,7 @@ def graph_export(
     output: str | None,
     no_restart: bool,
     facilities: tuple[str, ...],
-    no_imas: bool,
+    without_dd: bool,
     dd_only: bool,
     local: bool,
     verbose: bool = False,
@@ -289,7 +289,7 @@ def graph_export(
     if not version_label:
         version_label = git_info["tag"] or f"dev-{git_info['commit_short']}"
     pkg_name = get_package_name(
-        facilities=list(facilities), no_imas=no_imas, dd_only=dd_only
+        facilities=list(facilities), without_dd=without_dd, dd_only=dd_only
     )
 
     if output:
@@ -933,12 +933,12 @@ def _start_neo4j_after_switch(profile: Neo4jProfile) -> None:
 )
 @click.option("--force", is_flag=True, help="Allow using an existing directory")
 @click.option(
-    "--no-imas",
+    "--without-dd",
     is_flag=True,
     help="Mark graph as not containing IMAS DD data",
 )
 def graph_init(
-    name: str, facilities: tuple[str, ...], force: bool, no_imas: bool
+    name: str, facilities: tuple[str, ...], force: bool, without_dd: bool
 ) -> None:
     """Initialize a new graph instance.
 
@@ -953,12 +953,12 @@ def graph_init(
     Examples:
       imas-codex graph init codex -F iter -F tcv -F jt-60sa
       imas-codex graph init imas              # DD-only, no facilities
-      imas-codex graph init dev -F tcv --no-imas
+      imas-codex graph init dev -F tcv --without-dd
     """
     from imas_codex.graph.profiles import resolve_neo4j
 
     facility_list = sorted(set(facilities))
-    include_imas = not no_imas
+    include_imas = not without_dd
 
     # ── Remote dispatch ──────────────────────────────────────────────────
     from imas_codex.graph.remote import is_remote_location

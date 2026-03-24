@@ -180,12 +180,12 @@ class TestGetPackageName:
     def test_dd_only(self):
         assert get_package_name(dd_only=True) == "imas-codex-graph-dd"
 
-    def test_no_imas(self):
-        assert get_package_name(no_imas=True) == "imas-codex-graph-no-imas"
+    def test_without_dd(self):
+        assert get_package_name(without_dd=True) == "imas-codex-graph-without-dd"
 
-    def test_facilities_with_no_imas(self):
-        name = get_package_name(["jet"], no_imas=True)
-        assert name == "imas-codex-graph-jet-no-imas"
+    def test_facilities_with_without_dd(self):
+        name = get_package_name(["jet"], without_dd=True)
+        assert name == "imas-codex-graph-jet-without-dd"
 
 
 # ============================================================================

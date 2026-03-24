@@ -50,7 +50,7 @@ from imas_codex.graph.neo4j_ops import (
     help="Facility to include (repeatable). Filters the dump.",
 )
 @click.option(
-    "--no-imas",
+    "--without-dd",
     is_flag=True,
     help="Exclude IMAS Data Dictionary nodes",
 )
@@ -89,7 +89,7 @@ def graph_push(
     token: str | None,
     dry_run: bool,
     facilities: tuple[str, ...],
-    no_imas: bool,
+    without_dd: bool,
     dd_only: bool,
     message: str | None,
     verbose: bool = False,
@@ -119,7 +119,7 @@ def graph_push(
         fresh_version = _ensure_fresh_version()
         version_tag = get_version_tag(git_info, dev, version_override=fresh_version)
     pkg_name = get_package_name(
-        list(facilities) or None, no_imas=no_imas, dd_only=dd_only
+        list(facilities) or None, without_dd=without_dd, dd_only=dd_only
     )
 
     click.echo(f"Push target: {target_registry}/{pkg_name}:{version_tag}")
@@ -257,8 +257,8 @@ def graph_push(
             dump_args = ["-o", str(archive_path)]
             for fac in facilities:
                 dump_args.extend(["--facility", fac])
-            if no_imas:
-                dump_args.append("--no-imas")
+            if without_dd:
+                dump_args.append("--without-dd")
             if dd_only:
                 dump_args.append("--dd-only")
             if verbose:
@@ -367,9 +367,9 @@ def graph_push(
     help="Facility to filter (repeatable). Selects GHCR package name.",
 )
 @click.option(
-    "--no-imas",
+    "--without-dd",
     is_flag=True,
-    help="Fetch no-imas variant",
+    help="Fetch without-dd variant (no IMAS Data Dictionary)",
 )
 @click.option(
     "--dd-only",
@@ -387,7 +387,7 @@ def graph_fetch(
     token: str | None,
     output: str | None,
     facilities: tuple[str, ...],
-    no_imas: bool,
+    without_dd: bool,
     dd_only: bool,
     local: bool,
 ) -> Path:
@@ -415,7 +415,7 @@ def graph_fetch(
     git_info = get_git_info()
     target_registry = get_registry(git_info, registry)
     pkg_name = get_package_name(
-        list(facilities) or None, no_imas=no_imas, dd_only=dd_only
+        list(facilities) or None, without_dd=without_dd, dd_only=dd_only
     )
 
     # Resolve version: if "latest" doesn't exist, find most recent tag
@@ -550,9 +550,9 @@ def graph_fetch(
     help="Facility to filter (repeatable). Selects GHCR package name.",
 )
 @click.option(
-    "--no-imas",
+    "--without-dd",
     is_flag=True,
-    help="Pull no-imas variant",
+    help="Pull without-dd variant (no IMAS Data Dictionary)",
 )
 @click.option(
     "--dd-only",
@@ -566,7 +566,7 @@ def graph_pull(
     force: bool,
     no_backup: bool,
     facilities: tuple[str, ...],
-    no_imas: bool,
+    without_dd: bool,
     dd_only: bool,
 ) -> None:
     """Pull graph from GHCR and load it (convenience for fetch + load).
@@ -595,7 +595,7 @@ def graph_pull(
     git_info = get_git_info()
     target_registry = get_registry(git_info, registry)
     pkg_name = get_package_name(
-        list(facilities) or None, no_imas=no_imas, dd_only=dd_only
+        list(facilities) or None, without_dd=without_dd, dd_only=dd_only
     )
 
     # Resolve version: if "latest" doesn't exist, find most recent tag
@@ -618,7 +618,7 @@ def graph_pull(
                 pull_errors = check_pull_compatibility(
                     meta,
                     dd_only=dd_only,
-                    no_imas=no_imas,
+                    without_dd=without_dd,
                     facilities=list(facilities) or None,
                 )
                 if pull_errors:

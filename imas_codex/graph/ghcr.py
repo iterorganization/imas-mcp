@@ -166,26 +166,26 @@ def save_dev_revision(base_version: str, revision: int) -> None:
 def get_package_name(
     facilities: list[str] | None = None,
     *,
-    no_imas: bool = False,
+    without_dd: bool = False,
     dd_only: bool = False,
 ) -> str:
     """Get the GHCR package name, optionally scoped to facilities.
 
     Args:
         facilities: If given, appends sorted facility IDs to the name.
-        no_imas: If True, appends ``-no-imas`` suffix.
+        without_dd: If True, appends ``-without-dd`` suffix.
         dd_only: If True, uses ``imas-codex-graph-dd`` (DD-only graph).
 
     Returns:
-        Package name, e.g. ``"imas-codex-graph-iter-tcv-no-imas"``.
+        Package name, e.g. ``"imas-codex-graph-iter-tcv-without-dd"``.
     """
     if dd_only:
         return "imas-codex-graph-dd"
     parts = ["imas-codex-graph"]
     if facilities:
         parts.extend(sorted(facilities))
-    if no_imas:
-        parts.append("no-imas")
+    if without_dd:
+        parts.append("without-dd")
     return "-".join(parts)
 
 
