@@ -879,7 +879,7 @@ This project supports multiple AI coding tools (Claude Code, VS Code Copilot, Cu
 | What | Canonical File | Read By |
 |------|---------------|---------|
 | **Project instructions** | `AGENTS.md` | Claude Code (via `CLAUDE.md` → `@AGENTS.md`), VS Code Copilot (native `AGENTS.md` support), Cursor (via `.cursorrules` import) |
-| **MCP servers** | `.mcp.json` (dual-key) | Claude Code (`mcpServers` key), VS Code (`.vscode/mcp.json` symlink → `servers` key), Visual Studio 2026 (`.mcp.json` at root) |
+| **MCP servers** | `.mcp.json` + `.vscode/mcp.json` | Claude Code (`.mcp.json`, `mcpServers` key), VS Code (`.vscode/mcp.json`, `servers` key) |
 | **Custom agents** | `.claude/agents/*.md` | Claude Code (native) |
 | **Skills/commands** | `.claude/skills/*.md` | Claude Code (native) |
 | **Tool-specific settings** | `.claude/settings.json`, `.vscode/settings.json` | Their respective tools (not shared) |
@@ -889,8 +889,8 @@ This project supports multiple AI coding tools (Claude Code, VS Code Copilot, Cu
 ```
 AGENTS.md                    ← canonical project instructions (all tools)
 CLAUDE.md                    ← Claude Code entry point (@AGENTS.md import)
-.mcp.json                    ← canonical MCP config (dual-key: mcpServers + servers)
-├── .vscode/mcp.json         ← symlink → ../.mcp.json (VS Code reads servers key)
+.mcp.json                    ← MCP config for Claude Code (mcpServers key)
+.vscode/mcp.json             ← MCP config for VS Code (servers key)
 .claude/
 ├── agents/                  ← Claude Code custom agents
 │   ├── facility-explorer.md
@@ -910,9 +910,9 @@ CLAUDE.md                    ← Claude Code entry point (@AGENTS.md import)
 ### Rules
 
 1. **Never duplicate instructions** — `AGENTS.md` is the single source of truth for all project guidelines. `CLAUDE.md` imports it via `@AGENTS.md`. For other tools, configure their instruction path to read `AGENTS.md`.
-2. **MCP servers defined once** — `.mcp.json` contains both `mcpServers` (Claude Code format) and `servers` (VS Code format). `.vscode/mcp.json` is a symlink, not a copy.
+2. **MCP servers defined in two files** — `.mcp.json` (Claude Code, `mcpServers` key) and `.vscode/mcp.json` (VS Code, `servers` key). Both are tracked in git. VS Code only reads `.vscode/mcp.json`; Claude Code only reads `.mcp.json`.
 3. **Tool-specific config stays tool-specific** — permissions, env vars, and model preferences differ per tool and belong in their respective settings files.
-4. **When adding an MCP server**, edit `.mcp.json` and add the server under **both** keys. The symlink handles VS Code automatically.
+4. **When adding an MCP server**, add it to both `.mcp.json` (`mcpServers`) and `.vscode/mcp.json` (`servers`).
 
 ## MCP Server Deployment
 
