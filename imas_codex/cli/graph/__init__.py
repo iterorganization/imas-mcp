@@ -92,5 +92,4 @@ def _register_graph_commands() -> None:
     graph.add_command(graph_prune, "prune")
 
 
-
 _register_graph_commands()
