@@ -29,8 +29,8 @@ from imas_codex.graph.neo4j_ops import (
     secure_data_directory,
 )
 from imas_codex.graph.temp_neo4j import (
+    create_dd_only_dump as _create_dd_only_dump,
     create_facility_dump as _create_facility_dump,
-    create_imas_only_dump as _create_imas_only_dump,
 )
 
 if TYPE_CHECKING:
@@ -238,7 +238,7 @@ def _update_env_file(env_file: Path, new_password: str) -> None:
     help="Exclude IMAS Data Dictionary nodes from export",
 )
 @click.option(
-    "--imas-only",
+    "--dd-only",
     is_flag=True,
     help="Export only IMAS Data Dictionary nodes (no facility data)",
 )
@@ -269,7 +269,7 @@ def graph_export(
     no_restart: bool,
     facilities: tuple[str, ...],
     no_imas: bool,
-    imas_only: bool,
+    dd_only: bool,
     local: bool,
     verbose: bool = False,
     source_dump: str | None = None,
@@ -289,7 +289,7 @@ def graph_export(
     if not version_label:
         version_label = git_info["tag"] or f"dev-{git_info['commit_short']}"
     pkg_name = get_package_name(
-        facilities=list(facilities), no_imas=no_imas, imas_only=imas_only
+        facilities=list(facilities), no_imas=no_imas, dd_only=dd_only
     )
 
     if output:
@@ -420,8 +420,8 @@ def graph_export(
                 )
 
         # If imas-only, remove all facility nodes
-        if imas_only:
-            _create_imas_only_dump(
+        if dd_only:
+            _create_dd_only_dump(
                 archive_dir / "graph.dump",
                 archive_dir / "graph.dump",
             )

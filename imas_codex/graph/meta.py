@@ -200,7 +200,7 @@ def remove_facility_from_meta(client: Any, facility_id: str) -> None:
 def check_pull_compatibility(
     meta: dict[str, Any],
     *,
-    imas_only: bool = False,
+    dd_only: bool = False,
     no_imas: bool = False,
     facilities: list[str] | None = None,
 ) -> list[str]:
@@ -211,7 +211,7 @@ def check_pull_compatibility(
 
     Args:
         meta: GraphMeta dict from :func:`get_graph_meta`.
-        imas_only: Whether pulling the IMAS-only package.
+        dd_only: Whether pulling the IMAS-only package.
         no_imas: Whether pulling the no-imas variant.
         facilities: Facility filter for the pull.
 
@@ -223,7 +223,7 @@ def check_pull_compatibility(
     graph_facilities = set(meta.get("facilities") or [])
     graph_imas = meta.get("imas", True)  # default True for pre-existing graphs
 
-    if imas_only:
+    if dd_only:
         # Pulling DD-only into a graph that has facilities
         if graph_facilities:
             errors.append(

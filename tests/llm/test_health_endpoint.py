@@ -202,13 +202,13 @@ class TestHealthEndpointResponse:
         assert "Connection refused" in data["graph"]["error"]
 
     @patch("imas_codex.llm.server.load_prompts", return_value={})
-    def test_imas_only_graph_no_facilities(self, _mock_prompts):
-        """IMAS-only graph reports empty facilities list."""
+    def test_dd_only_graph_no_facilities(self, _mock_prompts):
+        """DD-only graph reports empty facilities list."""
         gc = MagicMock()
         gc.get_stats.return_value = {"nodes": 5000, "relationships": 10000}
         gc.close = MagicMock()
 
-        def imas_only_query(query, **kwargs):
+        def dd_only_query(query, **kwargs):
             if "DDVersion" in query:
                 return [{"version": "4.0.0", "is_current": True}]
             if "IMASNode" in query:
@@ -225,7 +225,7 @@ class TestHealthEndpointResponse:
                 ]
             return []
 
-        gc.query.side_effect = imas_only_query
+        gc.query.side_effect = dd_only_query
 
         from imas_codex.llm.server import AgentsServer
 

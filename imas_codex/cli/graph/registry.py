@@ -55,7 +55,7 @@ from imas_codex.graph.neo4j_ops import (
     help="Exclude IMAS Data Dictionary nodes",
 )
 @click.option(
-    "--imas-only",
+    "--dd-only",
     is_flag=True,
     help="Push only IMAS Data Dictionary nodes (no facility data)",
 )
@@ -90,7 +90,7 @@ def graph_push(
     dry_run: bool,
     facilities: tuple[str, ...],
     no_imas: bool,
-    imas_only: bool,
+    dd_only: bool,
     message: str | None,
     verbose: bool = False,
     version_tag_override: str | None = None,
@@ -99,7 +99,7 @@ def graph_push(
     """Push graph archive to GHCR.
 
     Use --facility/-f (repeatable) to push a filtered per-facility graph.
-    Use --imas-only to push only IMAS Data Dictionary nodes.
+    Use --dd-only to push only IMAS Data Dictionary nodes.
     Use -m/--message to attach a short description (like a git commit message).
     """
     from imas_codex.cli.graph_progress import GraphProgress, run_oras_with_progress
@@ -119,7 +119,7 @@ def graph_push(
         fresh_version = _ensure_fresh_version()
         version_tag = get_version_tag(git_info, dev, version_override=fresh_version)
     pkg_name = get_package_name(
-        list(facilities) or None, no_imas=no_imas, imas_only=imas_only
+        list(facilities) or None, no_imas=no_imas, dd_only=dd_only
     )
 
     click.echo(f"Push target: {target_registry}/{pkg_name}:{version_tag}")
@@ -153,7 +153,7 @@ def graph_push(
             )
 
         codex_cli_path: str | None = None
-        if imas_only:
+        if dd_only:
             codex_cli_path = remote_check_imas_codex(profile.host)
             if not codex_cli_path:
                 raise click.ClickException(
@@ -197,7 +197,7 @@ def graph_push(
                 message=message,
                 token=token,
                 is_dev=dev,
-                imas_only=imas_only,
+                dd_only=dd_only,
                 codex_cli_path=codex_cli_path,
             )
 
@@ -259,8 +259,8 @@ def graph_push(
                 dump_args.extend(["--facility", fac])
             if no_imas:
                 dump_args.append("--no-imas")
-            if imas_only:
-                dump_args.append("--imas-only")
+            if dd_only:
+                dump_args.append("--dd-only")
             if verbose:
                 dump_args.append("--verbose")
             if source_dump:
@@ -372,7 +372,7 @@ def graph_push(
     help="Fetch no-imas variant",
 )
 @click.option(
-    "--imas-only",
+    "--dd-only",
     is_flag=True,
     help="Fetch IMAS-only variant (DD nodes only)",
 )
@@ -388,7 +388,7 @@ def graph_fetch(
     output: str | None,
     facilities: tuple[str, ...],
     no_imas: bool,
-    imas_only: bool,
+    dd_only: bool,
     local: bool,
 ) -> Path:
     """Fetch graph archive from GHCR without loading.
@@ -415,7 +415,7 @@ def graph_fetch(
     git_info = get_git_info()
     target_registry = get_registry(git_info, registry)
     pkg_name = get_package_name(
-        list(facilities) or None, no_imas=no_imas, imas_only=imas_only
+        list(facilities) or None, no_imas=no_imas, dd_only=dd_only
     )
 
     # Resolve version: if "latest" doesn't exist, find most recent tag
@@ -555,7 +555,7 @@ def graph_fetch(
     help="Pull no-imas variant",
 )
 @click.option(
-    "--imas-only",
+    "--dd-only",
     is_flag=True,
     help="Pull IMAS-only variant (DD nodes only)",
 )
@@ -567,7 +567,7 @@ def graph_pull(
     no_backup: bool,
     facilities: tuple[str, ...],
     no_imas: bool,
-    imas_only: bool,
+    dd_only: bool,
 ) -> None:
     """Pull graph from GHCR and load it (convenience for fetch + load).
 
@@ -595,7 +595,7 @@ def graph_pull(
     git_info = get_git_info()
     target_registry = get_registry(git_info, registry)
     pkg_name = get_package_name(
-        list(facilities) or None, no_imas=no_imas, imas_only=imas_only
+        list(facilities) or None, no_imas=no_imas, dd_only=dd_only
     )
 
     # Resolve version: if "latest" doesn't exist, find most recent tag
@@ -617,7 +617,7 @@ def graph_pull(
             if meta:
                 pull_errors = check_pull_compatibility(
                     meta,
-                    imas_only=imas_only,
+                    dd_only=dd_only,
                     no_imas=no_imas,
                     facilities=list(facilities) or None,
                 )

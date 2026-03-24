@@ -119,8 +119,8 @@ imas-codex graph push --dev            # Push dev build
 imas-codex graph push --facility tcv   # Push per-facility graph
 imas-codex graph pull                  # Pull latest from GHCR
 imas-codex graph pull --facility tcv   # Pull per-facility graph
-imas-codex graph list                  # List GHCR versions
-imas-codex graph list --facility tcv   # List per-facility versions
+imas-codex graph tags                  # List GHCR versions
+imas-codex graph tags --facility tcv   # List per-facility versions
 
 # Backup and restore
 imas-codex graph backup                # Create neo4j-admin dump backup
@@ -129,9 +129,9 @@ imas-codex graph restore backup.dump   # Restore specific backup
 imas-codex graph clear                 # Clear graph (auto-backup first)
 
 # Cleanup
-imas-codex graph clean tag1 tag2       # Delete GHCR tags
-imas-codex graph clean --dev           # Remove all dev tags
-imas-codex graph clean --backups --older-than 30d  # Clean old backups
+imas-codex graph prune tag1 tag2       # Delete GHCR tags
+imas-codex graph prune --dev           # Remove all dev tags
+imas-codex graph prune --backups --older-than 30d  # Clean old backups
 ```
 
 ### SSH Tunnels

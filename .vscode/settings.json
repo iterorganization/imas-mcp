@@ -32,12 +32,6 @@
     "imas-codex/.vscode/mcp.json: imas": {
       "allowedDuringChat": true
     },
-    "imas-codex/.vscode/mcp.json: imas-ddv3": {
-      "allowedDuringChat": true
-    },
-    "imas-codex/.vscode/mcp.json: imas-ddv4": {
-      "allowedDuringChat": true
-    },
     "imas-codex/.vscode/mcp.json: imas-test": {
       "allowedDuringChat": true
     }

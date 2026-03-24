@@ -1018,7 +1018,7 @@ echo "ARCHIVE_PATH=$ARCHIVE"
 """
 
 
-def _build_remote_imas_only_push_script(
+def _build_remote_dd_only_push_script(
     *,
     artifact_ref: str,
     login_cmd: str,
@@ -1026,7 +1026,7 @@ def _build_remote_imas_only_push_script(
     tag_latest_block: str,
     codex_cli_path: str,
 ) -> str:
-    """Build a push script that delegates to ``imas-codex graph export --imas-only``.
+    """Build a push script that delegates to ``imas-codex graph export --dd-only``.
 
     Instead of reimplementing temp-Neo4j filtering in bash, this calls
     the installed ``imas-codex`` CLI on the remote host which already
@@ -1036,7 +1036,7 @@ def _build_remote_imas_only_push_script(
 set -e
 EXPORTS="{REMOTE_EXPORTS}"
 mkdir -p "$EXPORTS" && chmod 700 "$EXPORTS"
-ARCHIVE="$EXPORTS/imas-codex-graph-imas-push-$$.tar.gz"
+ARCHIVE="$EXPORTS/imas-codex-graph-dd-push-$$.tar.gz"
 
 cleanup() {{
     rm -f "$ARCHIVE"
@@ -1044,7 +1044,7 @@ cleanup() {{
 trap cleanup EXIT
 
 echo "PROGRESS:EXPORTING"
-"{codex_cli_path}" graph export --imas-only -o "$ARCHIVE"
+"{codex_cli_path}" graph export --dd-only -o "$ARCHIVE"
 
 SIZE=$(du -h "$ARCHIVE" | cut -f1)
 
@@ -1074,7 +1074,7 @@ def build_remote_push_script(
     message: str | None = None,
     token: str | None = None,
     is_dev: bool = False,
-    imas_only: bool = False,
+    dd_only: bool = False,
     codex_cli_path: str | None = None,
 ) -> str:
     """Build a bash script for remote graph export + ORAS push.
@@ -1083,8 +1083,8 @@ def build_remote_push_script(
     host, avoiding any SCP transfer back to the local machine.  The
     archive is cleaned up automatically after a successful push.
 
-    When ``imas_only`` is True, delegates to the ``imas-codex`` CLI
-    on the remote host (``imas-codex graph export --imas-only``) which
+    When ``dd_only`` is True, delegates to the ``imas-codex`` CLI
+    on the remote host (``imas-codex graph export --dd-only``) which
     handles filtering via a temp Neo4j instance.
 
     Emits ``PROGRESS:`` markers for phase tracking.
@@ -1110,10 +1110,10 @@ echo "PROGRESS:TAGGING"
 oras tag "{artifact_ref}" latest 2>&1
 """
 
-    # When imas_only, delegate to `imas-codex graph export --imas-only`
+    # When dd_only, delegate to `imas-codex graph export --dd-only`
     # on the remote host instead of reimplementing filtering in bash.
-    if imas_only:
-        return _build_remote_imas_only_push_script(
+    if dd_only:
+        return _build_remote_dd_only_push_script(
             artifact_ref=artifact_ref,
             login_cmd=login_cmd,
             annotation_args=annotation_args,

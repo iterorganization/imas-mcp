@@ -1,0 +1,32 @@
+{
+  "mcpServers": {
+    "codex": {
+      "type": "stdio",
+      "command": "uv",
+      "args": ["run", "imas-codex", "serve"]
+    },
+    "imas": {
+      "type": "http",
+      "url": "https://imas-dd.iter.org/mcp"
+    },
+    "imas-test": {
+      "type": "http",
+      "url": "https://app-imas-mcp-server-test-frc.azurewebsites.net/mcp"
+    }
+  },
+  "servers": {
+    "codex": {
+      "type": "stdio",
+      "command": "uv",
+      "args": ["run", "imas-codex", "serve"]
+    },
+    "imas": {
+      "type": "http",
+      "url": "https://imas-dd.iter.org/mcp"
+    },
+    "imas-test": {
+      "type": "http",
+      "url": "https://app-imas-mcp-server-test-frc.azurewebsites.net/mcp"
+    }
+  }
+}

@@ -170,7 +170,7 @@ _fixture = MCPFixture()
 
 **Tools**: `search_signals`, `signal_analytics`, `search_docs`, `search_code`, `fetch`, `get_discovery_context`, `get_graph_schema`
 
-These tools require **facility data** in the graph. The GHCR IMAS-only graph (`imas-codex-graph-imas`)
+These tools require **facility data** in the graph. The GHCR DD-only graph (`imas-codex-graph-dd`)
 may not contain facility nodes. Two strategies:
 
 1. **If facility data exists in dump**: Benchmark directly
@@ -431,7 +431,7 @@ jobs:
       - name: Pull graph dump from GHCR
         run: |
           REGISTRY="ghcr.io/iterorganization"
-          PACKAGE="imas-codex-graph-imas"
+          PACKAGE="imas-codex-graph-dd"
           TAG="${{ steps.graph-tag.outputs.tag }}"
           echo "Pulling: ${REGISTRY}/${PACKAGE}:${TAG}"
           mkdir -p /tmp/graph-dump

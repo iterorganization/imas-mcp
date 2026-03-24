@@ -177,8 +177,8 @@ class TestGetPackageName:
     def test_with_facilities(self):
         assert get_package_name(["tcv", "iter"]) == "imas-codex-graph-iter-tcv"
 
-    def test_imas_only(self):
-        assert get_package_name(imas_only=True) == "imas-codex-graph-imas"
+    def test_dd_only(self):
+        assert get_package_name(dd_only=True) == "imas-codex-graph-dd"
 
     def test_no_imas(self):
         assert get_package_name(no_imas=True) == "imas-codex-graph-no-imas"

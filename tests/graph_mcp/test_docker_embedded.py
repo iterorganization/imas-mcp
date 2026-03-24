@@ -48,9 +48,9 @@ class TestDockerfileStructure:
         """Creates .no-graph marker when graph pull is skipped."""
         assert ".no-graph" in self.content
 
-    def test_oras_pull_imas_only(self):
-        """Pulls IMAS-only graph package, not full graph."""
-        assert "imas-codex-graph-imas" in self.content
+    def test_oras_pull_dd_only(self):
+        """Pulls DD-only graph package, not full graph."""
+        assert "imas-codex-graph-dd" in self.content
 
     def test_graph_tag_arg_defaults_to_latest(self):
         """GRAPH_TAG build arg defaults to 'latest'."""
