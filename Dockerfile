@@ -254,6 +254,7 @@ ENV PYTHONPATH="/app" \
     OPENROUTER_BASE_URL=https://openrouter.ai/api/v1 \
     PATH="/app/.venv/bin:${PATH}" \
     IDS_FILTER=${IDS_FILTER} \
+    TRANSPORT="streamable-http" \
     NEO4J_URI="bolt://127.0.0.1:7687" \
     NEO4J_USERNAME="neo4j" \
     NEO4J_PASSWORD="neo4j" \
