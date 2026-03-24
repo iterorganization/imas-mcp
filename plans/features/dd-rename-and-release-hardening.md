@@ -35,8 +35,8 @@ Transport is **not** baked into tags — it's a runtime configuration.
 
 | Variant | Graph embedded | RC tags | Release tags |
 |---------|---------------|---------|-------------|
-| **full** (default) | `imas-codex-graph` | `latest` | `prod`, `5.0.0`, `5.0`, `5` |
-| **dd-only** | `imas-codex-graph-dd` | `latest-dd` | `prod-dd`, `5.0.0-dd`, `5.0-dd`, `5-dd` |
+| **full** (default) | `imas-codex-graph` | `latest` | `production`, `v5.0.0`, `v5.0`, `v5` |
+| **dd-only** | `imas-codex-graph-dd` | `latest-dd` | `production-dd`, `v5.0.0-dd`, `v5.0-dd`, `v5-dd` |
 
 Both → ACR. Releases also → GHCR.
 
@@ -70,7 +70,7 @@ container deployments get `streamable-http` automatically. Users override
 with `docker run -e TRANSPORT=sse ...` without rebuilding.
 
 This eliminates `-streamable-http` from all tags, giving clean names:
-`latest`, `latest-dd`, `prod`, `prod-dd`, `5.0.0`, `5.0.0-dd`.
+`latest`, `latest-dd`, `production`, `production-dd`, `v5.0.0`, `v5.0.0-dd`.
 
 ### Why `-graph` stays in package names
 
@@ -591,9 +591,9 @@ tags: |
 
 # NEW:
 tags: |
-  type=semver,pattern={{version}}${{ matrix.graph_variant.suffix }}
-  type=semver,pattern={{major}}.{{minor}}${{ matrix.graph_variant.suffix }}
-  type=semver,pattern={{major}}${{ matrix.graph_variant.suffix }}
+  type=semver,pattern=v{{version}}${{ matrix.graph_variant.suffix }}
+  type=semver,pattern=v{{major}}.{{minor}}${{ matrix.graph_variant.suffix }}
+  type=semver,pattern=v{{major}}${{ matrix.graph_variant.suffix }}
 ```
 
 Lines 507–511 (ACR metadata):
@@ -608,10 +608,10 @@ tags: |
 
 # NEW:
 tags: |
-  type=semver,pattern={{version}}${{ matrix.graph_variant.suffix }}
-  type=semver,pattern={{major}}.{{minor}}${{ matrix.graph_variant.suffix }}
-  type=semver,pattern={{major}}${{ matrix.graph_variant.suffix }}
-  type=raw,value=prod${{ matrix.graph_variant.suffix }},enable=...
+  type=semver,pattern=v{{version}}${{ matrix.graph_variant.suffix }}
+  type=semver,pattern=v{{major}}.{{minor}}${{ matrix.graph_variant.suffix }}
+  type=semver,pattern=v{{major}}${{ matrix.graph_variant.suffix }}
+  type=raw,value=production${{ matrix.graph_variant.suffix }},enable=...
   type=raw,value=latest${{ matrix.graph_variant.suffix }},enable=...
 ```
 
@@ -629,8 +629,8 @@ Build-args (lines 527, 555): Remove `TRANSPORT=streamable-http` from
 
 | Variant | RC tags | Release tags |
 |---------|---------|-------------|
-| full | `latest` | `prod`, `5.0.0`, `5.0`, `5` |
-| dd-only | `latest-dd` | `prod-dd`, `5.0.0-dd`, `5.0-dd`, `5-dd` |
+| full | `latest` | `production`, `v5.0.0`, `v5.0`, `v5` |
+| dd-only | `latest-dd` | `production-dd`, `v5.0.0-dd`, `v5.0-dd`, `v5-dd` |
 
 #### B2. `Dockerfile` — 3 changes
 
