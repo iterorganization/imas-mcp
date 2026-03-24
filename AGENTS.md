@@ -494,7 +494,7 @@ uv run imas-codex graph push --dev           # Push to GHCR (add --facility for 
 uv run imas-codex graph backup               # Create neo4j-admin dump backup
 uv run imas-codex graph restore              # Restore from backup
 uv run imas-codex graph clear                # Clear graph (with auto-backup)
-uv run imas-codex graph clean --dev          # Remove all dev GHCR tags (or --backups --older-than 30d)
+uv run imas-codex graph prune --dev          # Remove all dev GHCR tags (or --backups --older-than 30d)
 uv run imas-codex tunnel start iter          # Start SSH tunnel to remote host
 uv run imas-codex tunnel status              # Show active tunnels
 uv run imas-codex config private push        # Push private YAML to Gist

@@ -701,9 +701,9 @@ imas-codex graph pull              # Pull latest unified graph
 imas-codex graph pull --facility tcv  # Pull per-facility graph
 
 # List and cleanup
-imas-codex graph list              # List available versions
-imas-codex graph remove --dev      # Remove all dev tags
-imas-codex graph remove --backups --older-than 30d  # Clean old backups
+imas-codex graph tags              # List available versions
+imas-codex graph prune --dev      # Remove all dev tags
+imas-codex graph prune --backups --older-than 30d  # Clean old backups
 ```
 
 ### Per-Facility Federation
@@ -712,7 +712,7 @@ The full graph contains all facilities. Per-facility graphs are extracted via du
 
 ```bash
 # Dump filtered to a single facility (keeps IMAS DD nodes)
-imas-codex graph dump --facility tcv
+imas-codex graph export --facility tcv
 
 # Push to per-facility GHCR package
 imas-codex graph push --facility tcv --dev
@@ -720,19 +720,40 @@ imas-codex graph push --facility tcv --dev
 
 This creates `ghcr.io/iterorganization/imas-codex-graph-tcv` containing only TCV data plus the shared IMAS Data Dictionary.
 
-### Releases
+### Release Workflow
 
-The release CLI uses a state machine derived from the latest git tag — **stable** (`vX.Y.Z`) or **RC mode** (`vX.Y.Z-rcN`):
+The release CLI implements a two-state machine (Stable ↔ RC mode) for
+semantic versioning with graph data publishing.
 
 ```bash
-imas-codex release status                                      # Show state + permitted commands
-imas-codex release --bump major -m 'IMAS DD 4.1.0 support'     # → v6.0.0-rc1 (from stable)
-imas-codex release -m 'Fix CI issues'                          # → v6.0.0-rc2 (increment RC)
-imas-codex release --final -m 'Production release'             # → v6.0.0 (finalize)
-imas-codex release --bump patch --final -m 'Hotfix'            # → v6.0.1 (direct release)
+# Check current release state and permitted commands
+imas-codex release status
+
+# Start a major release candidate
+imas-codex release --bump major -m "IMAS DD 4.1.0 support"
+
+# Iterate on the RC after fixes
+imas-codex release -m "Fix signal mapping edge case"
+
+# Finalize: promote RC to stable release
+imas-codex release --final -m "Production release"
+
+# Abandon current RC, start a different bump level
+imas-codex release --bump minor -m "New approach"
+
+# Direct release (skip RC)
+imas-codex release --bump patch --final -m "Hotfix"
+
+# Preview without executing
+imas-codex release --bump major --dry-run -m "Test"
 ```
 
-Each release pushes all graph variants to GHCR, then creates a git tag that triggers CI.
+The release pipeline:
+1. Computes next version from latest git tag (state machine)
+2. Validates graph data contains no private fields
+3. Tags DDVersion node with release metadata
+4. Pushes all graph variants (dd-only, full, per-facility) to GHCR
+5. Creates and pushes git tag (triggers CI build)
 
 **Graph package variants:**
 

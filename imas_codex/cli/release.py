@@ -8,7 +8,7 @@ Two-state release workflow (Stable ↔ RC mode):
 Pipeline steps:
 1. Compute next version from state machine
 2. Validate graph and tag DDVersion
-3. Push all graph variants (imas-only + full) to GHCR
+3. Push all graph variants (dd-only, full, per-facility) to GHCR
 4. Create and push git tag (triggers CI)
 """
 
@@ -428,8 +428,11 @@ def _validate_graph_privacy() -> None:
     except click.ClickException:
         raise
     except Exception as e:
-        click.echo(f"  ⚠ Could not validate graph: {e}", err=True)
-        click.echo("    Is Neo4j running? Check with: imas-codex graph status")
+        raise click.ClickException(
+            f"Graph privacy validation failed: {e}\n"
+            "  Is Neo4j running? Check: imas-codex graph status\n"
+            "  To release without graph: --skip-graph"
+        ) from e
 
 
 def _tag_dd_version(version_number: str, message: str) -> None:
@@ -450,23 +453,36 @@ def _tag_dd_version(version_number: str, message: str) -> None:
             )
             click.echo(f"  ✓ DDVersion tagged: release_version={version_number}")
     except Exception as e:
-        click.echo(f"  ⚠ Could not tag DDVersion: {e}", err=True)
-        click.echo("    Is Neo4j running? Check with: imas-codex graph status")
+        raise click.ClickException(
+            f"Failed to tag DDVersion: {e}\n"
+            "  Is Neo4j running? Check: imas-codex graph status\n"
+            "  To release without graph: --skip-graph"
+        ) from e
 
 
 def _get_graph_facilities() -> list[str]:
-    """Read facility list from GraphMeta to determine if full variant is needed."""
-    try:
-        from imas_codex.graph import GraphClient
-        from imas_codex.graph.meta import get_graph_meta
+    """Read facility list from GraphMeta.
 
+    Raises click.ClickException if Neo4j is unreachable or GraphMeta is missing.
+    """
+    from imas_codex.graph import GraphClient
+    from imas_codex.graph.meta import get_graph_meta
+
+    try:
         with GraphClient() as client:
             meta = get_graph_meta(client)
-            if meta:
-                return list(meta.get("facilities") or [])
-    except Exception:
-        pass
-    return []
+    except Exception as e:
+        raise click.ClickException(
+            f"Cannot read graph facilities: {e}\n"
+            "  Is Neo4j running? Check: imas-codex graph status\n"
+            "  To release without graph: --skip-graph"
+        ) from e
+    if not meta:
+        raise click.ClickException(
+            "GraphMeta node not found — graph has no metadata.\n"
+            "  Run 'imas-codex graph status' first, or use --skip-graph."
+        )
+    return list(meta.get("facilities") or [])
 
 
 def _push_graph_variant(
@@ -508,9 +524,9 @@ def _push_graph_variant(
         cmd.extend(["--source-dump", source_dump])
 
     click.echo(f"  Pushing {pkg_name}...")
-    result = subprocess.run(cmd, text=True)
+    result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
-        click.echo(f"  ✗ Failed to push {pkg_name}", err=True)
+        click.echo(f"  ✗ Failed to push {pkg_name}: {result.stderr.strip()}", err=True)
         return False
 
     click.echo(f"  ✓ Pushed {pkg_name}")
@@ -583,11 +599,13 @@ def _create_shared_dump() -> str | None:
 def _push_all_graph_variants(
     message: str, remote: str, dry_run: bool, git_tag: str | None = None
 ) -> None:
-    """Push all graph variants: imas-only, full, and per-facility.
+    """Push all graph variants: dd-only, full, and per-facility.
 
     Dumps the graph once and reuses the dump for filtered variants to avoid
     5× Neo4j stop/start cycles. The full graph push creates the dump, then
-    imas-only and per-facility pushes filter from it via --source-dump.
+    dd-only and per-facility pushes filter from it via --source-dump.
+
+    Raises click.ClickException if any variant push fails.
     """
     # Resolve target registry from the release remote (e.g. upstream → iterorganization)
     registry = _resolve_target_registry(remote)
@@ -595,9 +613,10 @@ def _push_all_graph_variants(
         click.echo(f"  Target registry: {registry}")
 
     facilities = _get_graph_facilities()
+    failed: list[str] = []
 
     if not facilities:
-        # No facilities — just push imas-only (the only meaningful variant)
+        # No facilities — just push dd-only (the only meaningful variant)
         click.echo("\n  Variant 1: IMAS Data Dictionary only")
         if not _push_graph_variant(
             imas_only=True,
@@ -607,14 +626,11 @@ def _push_all_graph_variants(
             dry_run=dry_run,
         ):
             raise click.ClickException(
-                "IMAS-only graph push failed. Check: GHCR_TOKEN set, Neo4j running."
+                "DD-only graph push failed. Check: GHCR_TOKEN set, Neo4j running."
             )
         return
 
     # Dump once, reuse for all variants.
-    # Step 1: Create the full dump (stops/starts Neo4j once).
-    # Step 2: Push full graph from that dump.
-    # Step 3: Push imas-only and per-facility from cached dump (no Neo4j restart).
     click.echo("\n  Creating shared graph dump (stops Neo4j once)...")
 
     if dry_run:
@@ -622,9 +638,10 @@ def _push_all_graph_variants(
     else:
         cached_dump = _create_shared_dump()
         if not cached_dump:
-            click.echo(
-                "  ⚠ Failed to create shared dump — falling back to per-variant dumps",
-                err=True,
+            raise click.ClickException(
+                "Failed to create shared graph dump.\n"
+                "  Is Neo4j running? Check: imas-codex graph status\n"
+                "  To release without graph: --skip-graph"
             )
 
     variant = 0
@@ -641,12 +658,9 @@ def _push_all_graph_variants(
         source_dump=cached_dump,
         dry_run=dry_run,
     ):
-        click.echo(
-            "  ⚠ Full graph push failed — continuing with other variants.",
-            err=True,
-        )
+        failed.append("full")
 
-    # Push imas-only (filtered from cached dump)
+    # Push dd-only (filtered from cached dump)
     variant += 1
     click.echo(f"\n  Variant {variant}: IMAS Data Dictionary only")
     if not _push_graph_variant(
@@ -657,9 +671,7 @@ def _push_all_graph_variants(
         source_dump=cached_dump,
         dry_run=dry_run,
     ):
-        raise click.ClickException(
-            "IMAS-only graph push failed. Check: GHCR_TOKEN set, Neo4j running."
-        )
+        failed.append("dd-only")
 
     # Per-facility graphs (filtered from cached dump)
     for fac in facilities:
@@ -673,7 +685,7 @@ def _push_all_graph_variants(
             source_dump=cached_dump,
             dry_run=dry_run,
         ):
-            click.echo(f"  ⚠ {fac} graph push failed — continuing.", err=True)
+            failed.append(fac)
 
     # Clean up cached dump
     if cached_dump:
@@ -682,6 +694,13 @@ def _push_all_graph_variants(
             click.echo("\n  Cleaned up shared dump cache.")
         except OSError:
             pass
+
+    if failed:
+        raise click.ClickException(
+            f"Graph push failed for {len(failed)} variant(s): "
+            f"{', '.join(failed)}.\n"
+            "  Check: GHCR_TOKEN set, Neo4j running, network access."
+        )
 
 
 # ============================================================================
