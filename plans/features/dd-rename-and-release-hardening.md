@@ -84,13 +84,17 @@ already covered by `bench_graph_queries.py`).
 
 **File:** `imas_codex/cli/release.py`
 
-### 2a: Warn on empty facility list
+### 2a: Fail on empty facility list
 
 `_get_graph_facilities()` (line 457-469) silently returns `[]` on any exception.
-If Neo4j is unreachable, the release pushes only the dd-only variant without
-warning — an incomplete release.
+All graph variants (dd-only, full, per-facility) are exported from Neo4j — if
+Neo4j is unreachable, none can be pushed. The empty facility list currently
+causes the release to skip full and per-facility pushes, then fail on dd-only
+anyway since the shared dump also requires Neo4j.
 
-**Fix:** Log a warning and require `--skip-graph` to proceed without facilities.
+**Fix:** If `_get_graph_facilities()` returns `[]` and `--skip-graph` is not set,
+fail immediately with a clear error instead of silently proceeding to inevitable
+failure.
 
 ### 2b: Track and report failed variants
 
