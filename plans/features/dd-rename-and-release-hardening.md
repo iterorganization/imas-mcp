@@ -30,10 +30,12 @@ Three features to prepare for v5.0.0 final release:
 
 ### Docker Container Images (MCP server + embedded graph)
 
+The full graph is the default (no suffix). DD-only gets a `-dd` suffix.
+
 | Variant (after rename) | Graph embedded | RC tags | Release tags |
 |------------------------|---------------|---------|-------------|
-| **dd-only** (default) | `imas-codex-graph-dd` | `latest-streamable-http` | `prod-streamable-http` |
-| **full** | `imas-codex-graph` | `latest-full-streamable-http` | `prod-full-streamable-http` |
+| **full** (default) | `imas-codex-graph` | `latest-streamable-http` | `prod-streamable-http` |
+| **dd-only** | `imas-codex-graph-dd` | `latest-dd-streamable-http` | `prod-dd-streamable-http` |
 
 Both → ACR. Releases also → GHCR.
 
@@ -47,11 +49,21 @@ variant would collide with the Docker image.
 ### Azure test server
 
 The Azure test server (`app-imas-mcp-server-test-frc`) should use the **DD
-variant** (`latest-streamable-http`). The DD-only graph is public and sufficient
-for the test endpoint. The full graph contains private facility data.
+variant** (`latest-dd-streamable-http`). The DD-only graph is public and
+sufficient for the test endpoint. The full graph contains private facility data.
 
-**Action:** Update Azure App Service to pull `latest-streamable-http` instead
-of `latest-full-streamable-http`.
+**Action:** Update Azure App Service container configuration:
+- Image: `crcommonallfrc.azurecr.io/iterorganization/imas-codex`
+- Tag: `latest-dd-streamable-http`
+
+This can be done via Azure Portal → App Service → Deployment Center, or:
+
+```bash
+az webapp config container set \
+  --name app-imas-mcp-server-test-frc \
+  --resource-group <rg-name> \
+  --container-image-name crcommonallfrc.azurecr.io/iterorganization/imas-codex:latest-dd-streamable-http
+```
 
 ---
 
@@ -508,7 +520,9 @@ function parameter, docstring, and usage sites.
 
 ### Step B: CI/Docker (independent — can run in parallel with A)
 
-#### B1. `.github/workflows/docker-build-push.yml` — 7 changes
+#### B1. `.github/workflows/docker-build-push.yml` — 11 changes
+
+**Matrix suffix swap:** Full becomes the default (no suffix), DD gets `-dd`.
 
 | Line | Old | New |
 |------|-----|-----|
@@ -518,9 +532,27 @@ function parameter, docstring, and usage sites.
 | 311 | `GRAPH_PACKAGE=imas-codex-graph-imas` | `imas-codex-graph-dd` |
 | 416 | `- name: imas-only` | `- name: dd-only` |
 | 417 | `package: imas-codex-graph-imas` | `package: imas-codex-graph-dd` |
+| 418 | `suffix: ""` | `suffix: "-dd"` |
+| 420 | `package: imas-codex-graph` | (unchanged) |
+| 421 | `suffix: "-full"` | `suffix: ""` |
 | 448 | `= "imas-only"` | `= "dd-only"` |
 
+This changes the generated Docker tags as follows:
+
+| Variant | Old RC tag | New RC tag |
+|---------|-----------|-----------|
+| dd-only | `latest-streamable-http` | `latest-dd-streamable-http` |
+| full | `latest-full-streamable-http` | `latest-streamable-http` |
+
+| Variant | Old release tags | New release tags |
+|---------|-----------------|-----------------|
+| dd-only | `5.0.0-streamable-http`, `prod-streamable-http` | `5.0.0-dd-streamable-http`, `prod-dd-streamable-http` |
+| full | `5.0.0-full-streamable-http`, `prod-full-streamable-http` | `5.0.0-streamable-http`, `prod-streamable-http` |
+
 #### B2. `Dockerfile` — 1 change
+
+The default `GRAPH_PACKAGE` stays as the DD variant since that's what gets
+built when no build arg is provided (public/lightweight default):
 
 | Line | Old | New |
 |------|-----|-----|
