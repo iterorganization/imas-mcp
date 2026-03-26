@@ -704,6 +704,10 @@ git push origin main
 
 Breaking changes use `BREAKING CHANGE:` footer, not `type!:` suffix.
 
+**No AI co-authorship trailers.** Never include `Co-authored-by: Copilot`, `Co-authored-by: Claude`, or any AI assistant co-authorship trailers in commit messages. The `includeCoAuthoredBy` setting is disabled in `~/.copilot/config.json`. All commits are authored solely by the human developer.
+
+**No phase labels or step numbers in commit titles.** Never prefix or embed phase identifiers (e.g., "Phase 1:", "Step 2:", "P3:", "(Phase 4)") in commit messages. Each commit should describe *what* changed, not *which step of a plan* it belongs to. Planning context belongs in session artifacts, not in the permanent git history.
+
 ### Worktrees
 
 Commits in worktrees are NOT on `main` until merged. Always merge immediately:
