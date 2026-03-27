@@ -53,9 +53,8 @@ def write_temp_neo4j_conf(conf_dir: Path, bolt_port: int, http_port: int) -> Pat
     """Write a neo4j.conf for a temporary filtering instance.
 
     Disables authentication and binds to non-standard ports to avoid
-    conflicts with the production instance.  The config file is
-    required because Apptainer does not run the Docker entrypoint that
-    translates ``NEO4J_`` environment variables into config settings.
+    conflicts with the production instance.  Memory settings sized for
+    DD-only export which runs large DETACH DELETE batches.
     """
     conf_file = conf_dir / "neo4j.conf"
     conf_file.write_text(
@@ -63,10 +62,10 @@ def write_temp_neo4j_conf(conf_dir: Path, bolt_port: int, http_port: int) -> Pat
 dbms.security.auth_enabled=false
 server.bolt.listen_address=127.0.0.1:{bolt_port}
 server.http.listen_address=127.0.0.1:{http_port}
-server.memory.heap.initial_size=512m
-server.memory.heap.max_size=2g
-server.memory.pagecache.size=256m
-dbms.memory.transaction.total.max=1g
+server.memory.heap.initial_size=1g
+server.memory.heap.max_size=4g
+server.memory.pagecache.size=512m
+dbms.memory.transaction.total.max=4g
 """
     )
     return conf_file
@@ -249,7 +248,7 @@ def create_dd_only_dump(source_dump_path: Path, output_path: Path) -> None:
                     result = session.run(
                         f"MATCH (n) WHERE {label_check} "
                         "AND NOT n:GraphMeta "
-                        "WITH n LIMIT 10000 "
+                        "WITH n LIMIT 5000 "
                         "DETACH DELETE n "
                         "RETURN count(*) AS deleted"
                     )
