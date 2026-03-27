@@ -355,6 +355,13 @@ classes:
       created_at:
         description: Timestamp when DDVersion node was created in the graph
         range: datetime
+      release_version:
+        description: Software version (e.g. "5.0.0rc19") used when releasing this DD version
+      release_at:
+        description: Timestamp when this DD version was released
+        range: datetime
+      release_message:
+        description: Release message provided when tagging the release
       paths_built_at:
         description: >-
           Timestamp when this version's paths were extracted and written

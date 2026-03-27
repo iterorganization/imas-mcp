@@ -629,6 +629,7 @@ def record_embedding_changes(
             dd_version: c.dd_version
         })
         ON CREATE SET
+            ec.id = c.path_id + ':' + c.dd_version + ':' + c.change_type,
             ec.detected_at = datetime(),
             ec.old_hash = c.old_text_hash,
             ec.new_hash = c.new_text_hash
@@ -1670,21 +1671,17 @@ def phase_build(
     # Clean up orphaned Unit nodes that have no incoming HAS_UNIT relationships.
     # Units from older DD versions may be renamed/removed in later versions.
     if not dry_run:
-        orphan_result = client.query(
-            """
-            MATCH (u:Unit)
-            WHERE NOT (u)<-[:HAS_UNIT]-()
-            DETACH DELETE u
-            RETURN count(u) AS deleted_orphans
-            """
+        count_result = client.query(
+            "MATCH (u:Unit) WHERE NOT (u)<-[:HAS_UNIT]-() RETURN count(u) AS orphans"
         )
-        orphaned = orphan_result[0]["deleted_orphans"] if orphan_result else 0
-        stats["orphaned_units_deleted"] = orphaned
+        orphaned = count_result[0]["orphans"] if count_result else 0
         if orphaned > 0:
+            client.query("MATCH (u:Unit) WHERE NOT (u)<-[:HAS_UNIT]-() DETACH DELETE u")
             logger.info(
                 "Deleted %d orphaned Unit nodes (no HAS_UNIT relationships)",
                 orphaned,
             )
+        stats["orphaned_units_deleted"] = orphaned
 
     return stats
 
