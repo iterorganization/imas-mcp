@@ -36,9 +36,9 @@ echo "Starting Neo4j..."
 "${NEO4J_HOME}/bin/neo4j" console > "$NEO4J_LOG" 2>&1 &
 NEO4J_PID=$!
 
-# Wait for Neo4j to become ready
+# Wait for Neo4j to become ready (120s to handle slow cloud instances)
 echo "Waiting for Neo4j..."
-for i in $(seq 1 60); do
+for i in $(seq 1 120); do
     if curl -sf http://localhost:7474/ > /dev/null 2>&1; then
         echo "Neo4j ready (${i}s)"
         break
@@ -53,7 +53,7 @@ done
 
 # Verify Neo4j is actually responding
 if ! curl -sf http://localhost:7474/ > /dev/null 2>&1; then
-    echo "Neo4j failed to start within 60s. Log:"
+    echo "Neo4j failed to start within 120s. Log:"
     tail -50 "$NEO4J_LOG" 2>/dev/null || true
     exit 1
 fi
