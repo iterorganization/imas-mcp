@@ -203,6 +203,7 @@ RUN set -ex && \
         fi && \
         echo "Loading dump into Neo4j ($(du -sh /tmp/dumps/neo4j.dump | cut -f1))..." && \
         df -h / && \
+        cd / && \
         neo4j-admin database load neo4j --from-path=/tmp/dumps --overwrite-destination 2>&1 && \
         rm -rf /tmp/dumps && \
         echo "✓ Graph loaded into Neo4j data directory"; \
