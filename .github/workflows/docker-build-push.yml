@@ -563,8 +563,8 @@ jobs:
             GIT_REF=${{ github.ref }}
           secrets: |
             GHCR_TOKEN=${{ secrets.GHCR_TOKEN }}
-          cache-from: type=gha,scope=build-${{ matrix.graph_variant.name }}-${{ github.ref_name }}
-          cache-to: type=gha,mode=max,scope=build-${{ matrix.graph_variant.name }}-${{ github.ref_name }}
+          cache-from: type=gha,scope=build-${{ matrix.graph_variant.name }}
+          cache-to: type=gha,mode=min,scope=build-${{ matrix.graph_variant.name }}
 
       - name: Build and push Docker image (releases - both registries)
         id: build-release
@@ -591,8 +591,8 @@ jobs:
             GIT_REF=${{ github.ref }}
           secrets: |
             GHCR_TOKEN=${{ secrets.GHCR_TOKEN }}
-          cache-from: type=gha,scope=build-${{ matrix.graph_variant.name }}-${{ github.ref_name }}
-          cache-to: type=gha,mode=max,scope=build-${{ matrix.graph_variant.name }}-${{ github.ref_name }}
+          cache-from: type=gha,scope=build-${{ matrix.graph_variant.name }}
+          cache-to: type=gha,mode=min,scope=build-${{ matrix.graph_variant.name }}
 
       - name: Verify version inside image (release builds)
         if: github.event_name != 'pull_request' && startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-rc')
