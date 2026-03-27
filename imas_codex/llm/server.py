@@ -3048,16 +3048,16 @@ class AgentsServer:
                         result["graph_name"] = meta.get("name")
                         result["facilities"] = meta.get("facilities") or []
                         result["imas"] = meta.get("imas", False)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("Health: graph meta query failed: %s", exc)
 
                 # Node and relationship counts
                 try:
                     stats = gc.get_stats()
                     result["node_count"] = stats.get("nodes", 0)
                     result["relationship_count"] = stats.get("relationships", 0)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("Health: graph stats query failed: %s", exc)
 
                 # IMAS DD version info
                 try:

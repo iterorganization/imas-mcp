@@ -200,10 +200,11 @@ RUN set -e && \
     fi && \
     rm -rf /tmp/graph-pull /tmp/graph-extracted /tmp/dumps
 
-# Remove transaction logs not needed for read-only container (saves ~2.3 GB)
-# neo4j-admin database copy --compact-node-store is Enterprise-only;
-# for Community edition we simply purge the write-ahead logs.
-RUN rm -rf /data/transactions/neo4j/*
+# NOTE: Do NOT remove transaction logs (/data/transactions/neo4j/*).
+# Neo4j 2026 requires valid WAL state to open the database after
+# neo4j-admin load.  Deleting tx logs causes Neo4j HTTP to start but
+# the bolt database remains offline — all Cypher queries fail silently.
+# The ~2.3 GB cost is acceptable for a working container.
 
 ## Stage 5: Final runtime image (assemble from builder + Neo4j + graph data)
 FROM python:3.12-slim
