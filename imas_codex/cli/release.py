@@ -393,6 +393,282 @@ def _check_synced(remote: str, dry_run: bool) -> None:
         click.echo(f"  ✓ Synced with {remote}/main")
 
 
+def _get_remote_owner(remote: str) -> str | None:
+    """Extract the GitHub owner from a git remote URL.
+
+    Handles both SSH (git@github.com:owner/repo.git) and HTTPS
+    (https://github.com/owner/repo.git) URL formats.
+    """
+    result = subprocess.run(
+        ["git", "remote", "get-url", remote],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return None
+
+    url = result.stdout.strip()
+    if "github.com" in url:
+        if url.startswith("git@"):
+            parts = url.split(":")[-1].replace(".git", "").split("/")
+        else:
+            parts = url.replace(".git", "").split("/")
+        if len(parts) >= 2:
+            return parts[-2].lower()
+    return None
+
+
+def _check_final_targets_upstream(remote: str) -> None:
+    """Verify that final releases target the upstream (iterorganization) repo.
+
+    RC releases are allowed on any remote (forks), but final/stable releases
+    must be pushed to the canonical upstream repository.
+    """
+    owner = _get_remote_owner(remote)
+    if owner is None:
+        click.echo(
+            "  ⚠ Could not determine remote owner — skipping upstream check",
+            err=True,
+        )
+        return
+
+    if owner != "iterorganization":
+        raise click.ClickException(
+            f"Final releases must target upstream (iterorganization). "
+            f"Remote '{remote}' points to '{owner}'. "
+            f"Use --remote upstream"
+        )
+    click.echo("  ✓ Final release targets upstream (iterorganization)")
+
+
+def _check_ci_passed(remote: str, dry_run: bool) -> None:
+    """Verify that CI checks have passed for the HEAD commit.
+
+    Uses the GitHub CLI (gh) to query commit status. Gracefully degrades
+    if gh is not available. For --dry-run, downgrades failures to warnings.
+    """
+    import json as _json
+
+    if not shutil.which("gh"):
+        click.echo("  ⚠ gh CLI not found — skipping CI status check", err=True)
+        return
+
+    owner = _get_remote_owner(remote)
+    if owner is None:
+        click.echo(
+            "  ⚠ Could not determine remote owner — skipping CI check",
+            err=True,
+        )
+        return
+
+    result = subprocess.run(
+        ["git", "remote", "get-url", remote],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        click.echo("  ⚠ Could not read remote URL — skipping CI check", err=True)
+        return
+
+    url = result.stdout.strip()
+    if url.startswith("git@"):
+        repo = url.split(":")[-1].replace(".git", "").split("/")[-1]
+    else:
+        repo = url.replace(".git", "").split("/")[-1]
+
+    sha_result = subprocess.run(
+        ["git", "rev-parse", "HEAD"], capture_output=True, text=True
+    )
+    if sha_result.returncode != 0:
+        click.echo("  ⚠ Could not determine HEAD SHA — skipping CI check", err=True)
+        return
+    sha = sha_result.stdout.strip()
+
+    api_result = subprocess.run(
+        ["gh", "api", f"repos/{owner}/{repo}/commits/{sha}/check-runs"],
+        capture_output=True,
+        text=True,
+    )
+    if api_result.returncode != 0:
+        click.echo("  ⚠ Could not query CI status — skipping CI check", err=True)
+        return
+
+    try:
+        data = _json.loads(api_result.stdout)
+    except _json.JSONDecodeError:
+        click.echo("  ⚠ Could not parse CI response — skipping CI check", err=True)
+        return
+
+    check_runs = data.get("check_runs", [])
+    if not check_runs:
+        click.echo(f"  ⚠ No CI check runs found for {sha[:8]}", err=True)
+        return
+
+    pending = [cr["name"] for cr in check_runs if cr.get("status") != "completed"]
+    failed = [
+        cr["name"]
+        for cr in check_runs
+        if cr.get("status") == "completed"
+        and cr.get("conclusion") not in ("success", "skipped", "neutral")
+    ]
+
+    if not pending and not failed:
+        click.echo(f"  ✓ CI checks passed for {sha[:8]}")
+        return
+
+    details = []
+    if failed:
+        names = ", ".join(failed[:3])
+        if len(failed) > 3:
+            names += f" (+{len(failed) - 3} more)"
+        details.append(f"failed: {names}")
+    if pending:
+        names = ", ".join(pending[:3])
+        if len(pending) > 3:
+            names += f" (+{len(pending) - 3} more)"
+        details.append(f"pending: {names}")
+
+    msg = (
+        f"CI checks not passed for {sha[:8]}. "
+        f"{'; '.join(details)}. "
+        "Push and wait for CI before finalizing."
+    )
+    if dry_run:
+        click.echo(f"  ⚠ {msg}", err=True)
+    else:
+        raise click.ClickException(msg)
+
+
+# ============================================================================
+# Changelog generation
+# ============================================================================
+
+_COMMIT_TYPE_RE = re.compile(
+    r"^(feat|fix|refactor|docs|test|chore|perf|ci)(?:\(.+\))?!?:\s*(.+)$"
+)
+
+_TYPE_HEADINGS: dict[str, str] = {
+    "feat": "Features",
+    "fix": "Bug Fixes",
+    "refactor": "Refactoring",
+    "docs": "Documentation",
+    "perf": "Performance",
+    "ci": "CI / Build",
+    "test": "Tests",
+    "chore": "Maintenance",
+}
+
+
+def _generate_changelog(
+    from_tag: str,
+    to_ref: str = "HEAD",
+    *,
+    version: str = "",
+    message: str = "",
+) -> str:
+    """Generate a changelog from commits and PRs since a previous tag.
+
+    Groups commits by conventional commit type and optionally enriches
+    with merged PR metadata from the GitHub CLI.
+    """
+    # Get commits since last tag
+    result = subprocess.run(
+        ["git", "log", f"{from_tag}..{to_ref}", "--oneline", "--no-decorate"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        return f"## {version}\n\nNo changes since {from_tag}.\n"
+
+    lines = result.stdout.strip().splitlines()
+
+    # Parse conventional commits
+    grouped: dict[str, list[str]] = {}
+    other: list[str] = []
+    for line in lines:
+        # Strip SHA prefix
+        parts = line.split(" ", 1)
+        if len(parts) < 2:
+            continue
+        _, msg = parts[0], parts[1]
+        m = _COMMIT_TYPE_RE.match(msg)
+        if m:
+            ctype, desc = m.group(1), m.group(2)
+            grouped.setdefault(ctype, []).append(desc.strip())
+        else:
+            other.append(msg)
+
+    # Try to get merged PRs for contributor info
+    contributors: set[str] = set()
+    pr_map: dict[str, str] = {}  # title → #number
+    try:
+        import json as _json
+
+        pr_result = subprocess.run(
+            [
+                "gh",
+                "pr",
+                "list",
+                "--state",
+                "merged",
+                "--base",
+                "main",
+                "--limit",
+                "50",
+                "--json",
+                "number,title,author",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if pr_result.returncode == 0:
+            prs = _json.loads(pr_result.stdout)
+            for pr in prs:
+                login = pr.get("author", {}).get("login", "")
+                if login:
+                    contributors.add(f"@{login}")
+                title = pr.get("title", "")
+                number = pr.get("number", "")
+                if title and number:
+                    pr_map[title.lower()] = f"#{number}"
+    except (subprocess.TimeoutExpired, Exception):
+        pass
+
+    # Build markdown
+    parts: list[str] = []
+    heading = f"## {version}" if version else "## Changelog"
+    if message:
+        heading += f" — {message}"
+    parts.append(heading)
+    parts.append("")
+
+    for ctype in ("feat", "fix", "refactor", "perf", "docs", "ci", "test", "chore"):
+        items = grouped.get(ctype, [])
+        if not items:
+            continue
+        parts.append(f"### {_TYPE_HEADINGS[ctype]}")
+        for item in items:
+            pr_ref = pr_map.get(f"{ctype}: {item}".lower(), "")
+            suffix = f" ({pr_ref})" if pr_ref else ""
+            parts.append(f"- {item}{suffix}")
+        parts.append("")
+
+    if other:
+        parts.append("### Other Changes")
+        for item in other:
+            parts.append(f"- {item}")
+        parts.append("")
+
+    if contributors:
+        parts.append("### Contributors")
+        parts.append(", ".join(sorted(contributors)))
+        parts.append("")
+
+    parts.append(f"**Full diff:** `{from_tag}..{to_ref}`")
+    return "\n".join(parts)
+
+
 # ============================================================================
 # Graph operations
 # ============================================================================
@@ -526,6 +802,16 @@ def _push_graph_variant(
         click.echo(f"  ✗ Failed to push {pkg_name}: {result.stderr.strip()}", err=True)
         return False
 
+    # Verify push completed — check for PUSH_COMPLETE marker in output
+    if "PUSH_COMPLETE" not in result.stdout and "pushed" not in result.stdout.lower():
+        click.echo(
+            "  ⚠ Push may have failed silently (no completion marker).", err=True
+        )
+        if result.stdout.strip():
+            click.echo(f"  stdout: {result.stdout.strip()[-500:]}", err=True)
+        if result.stderr.strip():
+            click.echo(f"  stderr: {result.stderr.strip()[-500:]}", err=True)
+
     click.echo(f"  ✓ Pushed {pkg_name}")
     return True
 
@@ -537,23 +823,9 @@ def _resolve_target_registry(remote: str) -> str | None:
     (ghcr.io/iterorganization) regardless of what the origin remote is.
     Returns None to use the default (origin-based) registry.
     """
-    result = subprocess.run(
-        ["git", "remote", "get-url", remote],
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        return None
-
-    url = result.stdout.strip()
-    if "github.com" in url:
-        if url.startswith("git@"):
-            parts = url.split(":")[-1].replace(".git", "").split("/")
-        else:
-            parts = url.replace(".git", "").split("/")
-        if len(parts) >= 2:
-            owner = parts[-2].lower()
-            return f"ghcr.io/{owner}"
+    owner = _get_remote_owner(remote)
+    if owner:
+        return f"ghcr.io/{owner}"
     return None
 
 
@@ -593,14 +865,36 @@ def _create_shared_dump() -> str | None:
         return None
 
 
-def _push_all_graph_variants(
-    message: str, remote: str, dry_run: bool, git_tag: str | None = None
-) -> None:
-    """Push all graph variants: dd-only, full, and per-facility.
+def _resolve_scheduler_for_release(profile) -> str:
+    """Resolve scheduler type from Neo4j profile for release operations."""
+    from imas_codex.remote.locations import resolve_location
 
-    Dumps the graph once and reuses the dump for filtered variants to avoid
-    5× Neo4j stop/start cycles. The full graph push creates the dump, then
-    dd-only and per-facility pushes filter from it via --source-dump.
+    try:
+        loc = resolve_location(profile.host)
+        return loc.scheduler or "none"
+    except Exception:
+        return "none"
+
+
+def _push_all_graph_variants(
+    message: str,
+    remote: str,
+    dry_run: bool,
+    git_tag: str | None = None,
+    is_rc: bool = False,
+) -> None:
+    """Push graph variants to GHCR.
+
+    RC releases push only the full graph and DD-only variant — these are
+    the only two needed for CI validation and container builds.
+    Per-facility variants are deferred to final releases where they serve
+    as production deployment artifacts.
+
+    When the graph is local, dumps once and reuses the dump for filtered
+    variants to avoid repeated Neo4j stop/start cycles.
+
+    When the graph is remote (e.g. running on ITER, accessed via tunnel),
+    each variant push delegates independently to the remote host via SSH.
 
     Raises click.ClickException if any variant push fails.
     """
@@ -609,8 +903,20 @@ def _push_all_graph_variants(
     if registry:
         click.echo(f"  Target registry: {registry}")
 
+    # Detect whether the graph is remote (e.g. ITER via SSH tunnel)
+    is_remote = False
+    try:
+        from imas_codex.graph.profiles import resolve_neo4j
+        from imas_codex.graph.remote import is_remote_location
+
+        profile = resolve_neo4j()
+        is_remote = is_remote_location(profile.host)
+        if is_remote:
+            click.echo(f"  Graph location: {profile.host} (remote)")
+    except Exception:
+        pass
+
     facilities = _get_graph_facilities()
-    failed: list[str] = []
 
     if not facilities:
         # No facilities — just push dd-only (the only meaningful variant)
@@ -627,9 +933,130 @@ def _push_all_graph_variants(
             )
         return
 
-    # Dump once, reuse for all variants.
-    click.echo("\n  Creating shared graph dump (stops Neo4j once)...")
+    # ── Unified remote push — single SSH session, single dump ───────────
+    if is_remote:
+        from imas_codex.cli.graph_progress import (
+            GraphProgress,
+            remote_operation_streaming,
+        )
+        from imas_codex.graph.ghcr import get_package_name
+        from imas_codex.graph.remote import (
+            build_remote_release_push_script,
+            remote_check_imas_codex,
+            remote_check_oras,
+        )
 
+        if not remote_check_oras(profile.host):
+            raise click.ClickException(
+                f"oras not found on {profile.host}. "
+                "Install with: imas-codex tools install"
+            )
+
+        codex_cli_path = remote_check_imas_codex(profile.host)
+        if not codex_cli_path:
+            raise click.ClickException(
+                f"imas-codex CLI not found on {profile.host}. "
+                "Install with: cd ~/Code/imas-codex && uv sync"
+            )
+
+        # Build artifact refs for each variant
+        from imas_codex.graph.ghcr import get_git_info
+
+        git_info = get_git_info()
+        full_pkg = get_package_name()
+        full_ref = f"{registry}/{full_pkg}:{git_tag}"
+
+        dd_pkg = get_package_name(dd_only=True)
+        dd_ref = f"{registry}/{dd_pkg}:{git_tag}"
+
+        facility_refs = None
+        if not is_rc and facilities:
+            facility_refs = {}
+            for fac in facilities:
+                fac_pkg = get_package_name(facilities=[fac])
+                facility_refs[fac] = f"{registry}/{fac_pkg}:{git_tag}"
+
+        if dry_run:
+            click.echo(f"\n  [DRY RUN] Would push from {profile.host}:")
+            click.echo(f"    Full: {full_ref}")
+            click.echo(f"    DD-only: {dd_ref}")
+            if facility_refs:
+                for fac, fac_ref in facility_refs.items():
+                    click.echo(f"    {fac}: {fac_ref}")
+            return
+
+        script = build_remote_release_push_script(
+            profile.name,
+            full_ref,
+            dd_artifact_ref=dd_ref,
+            facility_artifact_refs=facility_refs,
+            version_tag=git_tag,
+            git_commit=git_info["commit"],
+            message=message,
+            token=None,  # Use cached GHCR creds on remote
+            is_dev=False,
+            codex_cli_path=codex_cli_path,
+            scheduler=_resolve_scheduler_for_release(profile),
+        )
+
+        _remote_markers = {
+            "STOPPING": f"Stopping Neo4j on {profile.host}",
+            "DUMPING": "Dumping graph database",
+            "RECOVERY": "Recovery cycle (clean start/stop)",
+            "ARCHIVING_FULL": "Creating full graph archive",
+            "PUSHING_FULL": "Pushing full graph to GHCR",
+            "FILTERING_DD": "Filtering to IMAS DD nodes only",
+            "PUSHING_DD": "Pushing DD-only graph to GHCR",
+            "STARTING": f"Starting Neo4j on {profile.host}",
+            "TAGGING": "Tagging as latest",
+            "COMPLETE": "All variants pushed",
+        }
+        if facility_refs:
+            for fac in facility_refs:
+                _remote_markers[f"FILTERING_FAC_{fac.upper()}"] = f"Filtering for {fac}"
+                _remote_markers[f"PUSHING_FAC_{fac.upper()}"] = f"Pushing {fac} graph"
+
+        with GraphProgress("push") as gp:
+            gp.set_total_phases(1)
+            gp.start_phase(f"Pushing all variants from {profile.host}")
+
+            try:
+                output = remote_operation_streaming(
+                    script,
+                    profile.host,
+                    progress=gp,
+                    progress_markers=_remote_markers,
+                    timeout=1800,  # 30min for all variants
+                )
+            except Exception as e:
+                gp.fail_phase(str(e))
+                raise click.ClickException(
+                    f"Remote release push on {profile.host} failed: {e}"
+                ) from e
+
+            sizes = {}
+            for line in output.strip().splitlines():
+                if line.startswith("SIZE_FULL="):
+                    sizes["full"] = line.split("=", 1)[1].strip()
+                elif line.startswith("SIZE_DD="):
+                    sizes["dd"] = line.split("=", 1)[1].strip()
+
+            size_summary = ", ".join(f"{k}: {v}" for k, v in sizes.items())
+            gp.complete_phase(size_summary or None)
+
+        click.echo("  ✓ All graph variants pushed")
+        for k, v in sizes.items():
+            click.echo(f"    {k}: {v}")
+
+        # Dispatch graph-quality CI check
+        from imas_codex.graph.ghcr import dispatch_graph_quality
+
+        dispatch_graph_quality(git_info, git_tag, registry)
+        return
+
+    # ── Local push path — dump once, reuse for filtered variants ────────
+    cached_dump = None
+    click.echo("\n  Creating shared graph dump (stops Neo4j once)...")
     if dry_run:
         cached_dump = None
     else:
@@ -640,6 +1067,7 @@ def _push_all_graph_variants(
                 "  Is Neo4j running? Check: imas-codex graph status"
             )
 
+    failed: list[str] = []
     variant = 0
 
     # Push full graph (all facilities)
@@ -669,19 +1097,24 @@ def _push_all_graph_variants(
     ):
         failed.append("dd-only")
 
-    # Per-facility graphs (filtered from cached dump)
-    for fac in facilities:
-        variant += 1
-        click.echo(f"\n  Variant {variant}: {fac} + IMAS DD")
-        if not _push_graph_variant(
-            facility=fac,
-            message=message,
-            registry=registry,
-            version_tag=git_tag,
-            source_dump=cached_dump,
-            dry_run=dry_run,
-        ):
-            failed.append(fac)
+    # Per-facility graphs — only for final releases (skip for RC)
+    if is_rc:
+        click.echo(
+            f"\n  Skipping {len(facilities)} per-facility variant(s) (RC release)."
+        )
+    else:
+        for fac in facilities:
+            variant += 1
+            click.echo(f"\n  Variant {variant}: {fac} + IMAS DD")
+            if not _push_graph_variant(
+                facility=fac,
+                message=message,
+                registry=registry,
+                version_tag=git_tag,
+                source_dump=cached_dump,
+                dry_run=dry_run,
+            ):
+                failed.append(fac)
 
     # Clean up cached dump
     if cached_dump:
@@ -779,8 +1212,8 @@ def _push_tag(tag: str, remote: str, dry_run: bool) -> None:
 @click.option(
     "--remote",
     type=click.Choice(["origin", "upstream"]),
-    default="upstream",
-    help="Target remote for git tag push (default: upstream).",
+    default="origin",
+    help="Target remote for git tag push (default: origin).",
 )
 @click.option(
     "--skip-git",
@@ -792,6 +1225,17 @@ def _push_tag(tag: str, remote: str, dry_run: bool) -> None:
     is_flag=True,
     help="Show what would be done without making changes.",
 )
+@click.option(
+    "--changelog/--no-changelog",
+    default=None,
+    help="Generate changelog from commits since last tag. Default: on for --final.",
+)
+@click.option(
+    "--changelog-file",
+    type=click.Path(),
+    default=None,
+    help="Write changelog markdown to a file.",
+)
 def release(
     action: str | None,
     bump: str | None,
@@ -801,6 +1245,8 @@ def release(
     remote: str,
     skip_git: bool,
     dry_run: bool,
+    changelog: bool | None,
+    changelog_file: str | None,
 ) -> None:
     """State-machine release: semantic version bumps, graph publishing, tagging.
 
@@ -907,7 +1353,27 @@ def release(
     _check_remote_exists(remote)
     _check_clean_tree(dry_run)
     _check_synced(remote, dry_run)
+    if final:
+        _check_final_targets_upstream(remote)
+        _check_ci_passed(remote, dry_run)
     click.echo()
+
+    # Changelog generation (before tag creation so it can be reviewed)
+    generate_changelog = changelog if changelog is not None else final
+    if generate_changelog:
+        click.echo("Generating changelog...")
+        cl_text = _generate_changelog(
+            from_tag=latest or "HEAD~10",
+            version=git_tag,
+            message=message,
+        )
+        click.echo(cl_text)
+        if changelog_file:
+            Path(changelog_file).write_text(cl_text)
+            click.echo(f"  Changelog written to {changelog_file}")
+        if final:
+            click.echo("  ℹ Include this changelog in your GitHub Release notes.")
+        click.echo()
 
     step = 0
 
@@ -938,7 +1404,7 @@ def release(
     # Step: Push all graph variants
     step += 1
     click.echo(f"\nStep {step}: Pushing graph variants to GHCR...")
-    _push_all_graph_variants(message, remote, dry_run, git_tag=git_tag)
+    _push_all_graph_variants(message, remote, dry_run, git_tag=git_tag, is_rc=is_rc)
 
     # Step: Push git tag to remote (triggers CI)
     if not skip_git:
