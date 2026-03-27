@@ -35,6 +35,41 @@ from imas_codex.tools.utils import normalize_ids_filter, validate_query
 
 logger = logging.getLogger(__name__)
 
+# Module-level encoder singleton — avoids re-loading the model per query
+_encoder: Any = None
+_encoder_lock: Any = None
+
+
+def _get_encoder():
+    """Get or create the module-level Encoder singleton."""
+    global _encoder, _encoder_lock
+    import threading
+
+    if _encoder_lock is None:
+        _encoder_lock = threading.Lock()
+
+    if _encoder is None:
+        with _encoder_lock:
+            if _encoder is None:
+                from imas_codex.embeddings.encoder import Encoder
+
+                _encoder = Encoder()
+    return _encoder
+
+
+def warmup_encoder():
+    """Pre-warm the encoder by loading the model.
+
+    Call from a background thread at server startup so the first
+    search_imas call doesn't pay the cold-start penalty.
+    """
+    try:
+        encoder = _get_encoder()
+        encoder.embed_texts(["warmup"])
+        logger.info("Encoder warmup complete")
+    except Exception as e:
+        logger.warning(f"Encoder warmup failed (will retry on first query): {e}")
+
 
 def _dd_version_clause(
     alias: str = "p",
@@ -310,10 +345,8 @@ class GraphSearchTool:
         )
 
     def _embed_query(self, query: str) -> list[float]:
-        """Embed query text using the Encoder."""
-        from imas_codex.embeddings.encoder import Encoder
-
-        encoder = Encoder()
+        """Embed query text using the module-level Encoder singleton."""
+        encoder = _get_encoder()
         return encoder.embed_texts([query])[0].tolist()
 
 
@@ -1037,7 +1070,7 @@ class GraphClustersTool:
             WHERE p.ids IN $ids_filter
             {dd_clause}
             {scope_filter}
-            WITH c, collect(DISTINCT p.id) AS section_paths,
+            WITH c, collect(DISTINCT p.id)[..50] AS section_paths,
                  collect(DISTINCT p.ids) AS ids_covered
             {section_filter}
             RETURN c.id AS id, c.label AS label, c.description AS description,
@@ -1076,7 +1109,7 @@ class GraphClustersTool:
             {scope_filter}
             OPTIONAL MATCH (member:IMASNode)-[:IN_CLUSTER]->(c)
             WHERE true {dd_clause}
-            WITH c, collect(DISTINCT member.id) AS paths
+            WITH c, collect(DISTINCT member.id)[..50] AS paths
             RETURN c.id AS id, c.label AS label, c.description AS description,
                    c.scope AS scope, c.cross_ids AS cross_ids,
                    c.ids_names AS ids_names, c.similarity_score AS similarity,
@@ -1127,7 +1160,7 @@ class GraphClustersTool:
             {scope_filter}
             {ids_filter_clause}
             OPTIONAL MATCH (member:IMASNode)-[:IN_CLUSTER]->(cluster)
-            WITH cluster, score, collect(DISTINCT member.id) AS paths
+            WITH cluster, score, collect(DISTINCT member.id)[..50] AS paths
             RETURN cluster.id AS id, cluster.label AS label,
                    cluster.description AS description,
                    cluster.scope AS scope, cluster.cross_ids AS cross_ids,
@@ -1210,10 +1243,8 @@ class GraphClustersTool:
         return clusters
 
     def _embed_query(self, query: str) -> list[float]:
-        """Embed query text using the Encoder."""
-        from imas_codex.embeddings.encoder import Encoder
-
-        encoder = Encoder()
+        """Embed query text using the module-level Encoder singleton."""
+        encoder = _get_encoder()
         return encoder.embed_texts([query])[0].tolist()
 
 
@@ -1409,6 +1440,7 @@ class GraphPathContextTool:
         self,
         path: str,
         relationship_types: str = "all",
+        max_results: int = 20,
         dd_version: int | None = None,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
@@ -1427,8 +1459,10 @@ class GraphPathContextTool:
                 RETURN cl.label AS cluster, sibling.id AS path,
                        sibling.ids AS ids, sibling.documentation AS doc
                 ORDER BY cl.label, sibling.ids
+                LIMIT $limit
                 """,
                 **dd_params,
+                limit=max_results,
             )
             if cluster_siblings:
                 sections["cluster_siblings"] = cluster_siblings
@@ -1443,8 +1477,10 @@ class GraphPathContextTool:
                 RETURN coord.id AS coordinate, sibling.id AS path,
                        sibling.ids AS ids, sibling.data_type AS data_type
                 ORDER BY coord.id, sibling.ids
+                LIMIT $limit
                 """,
                 **dd_params,
+                limit=max_results,
             )
             if coord_partners:
                 sections["coordinate_partners"] = coord_partners
@@ -1460,9 +1496,10 @@ class GraphPathContextTool:
                 RETURN u.id AS unit, sibling.id AS path,
                        sibling.ids AS ids, sibling.documentation AS doc
                 ORDER BY u.id, sibling.ids
-                LIMIT 30
+                LIMIT $limit
                 """,
                 **dd_params,
+                limit=max_results,
             )
             if unit_companions:
                 sections["unit_companions"] = unit_companions
@@ -1477,8 +1514,10 @@ class GraphPathContextTool:
                 RETURN s.name AS schema, sibling.id AS path,
                        sibling.ids AS ids
                 ORDER BY s.name
+                LIMIT $limit
                 """,
                 **dd_params,
+                limit=max_results,
             )
             if ident_links:
                 sections["identifier_links"] = ident_links
@@ -1774,7 +1813,9 @@ def _text_search_imas_paths(
     query_words = [w for w in query_lower.split() if len(w) > 2]
 
     where_parts = ["NOT (p)-[:DEPRECATED_IN]->(:DDVersion)", "p.node_category = 'data'"]
-    params: dict[str, Any] = {"query_lower": query_lower, "limit": limit}
+    # Cap CONTAINS fallback to avoid full scans on large graphs
+    contains_limit = min(limit, 100)
+    params: dict[str, Any] = {"query_lower": query_lower, "limit": contains_limit}
 
     dd_clause = _dd_version_clause("p", dd_version, params)
     if dd_clause:

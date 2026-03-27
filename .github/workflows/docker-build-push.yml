@@ -18,6 +18,11 @@ env:
   ACR_REGISTRY: crcommonallfrc.azurecr.io
   IMAGE_NAME: ${{ github.repository }}
   IMAS_DD_VERSION: "4.1.0"
+  # Graph OCI artifacts: try the repo owner's registry first (where
+  # `imas-codex release` pushes them), fall back to the upstream org
+  # registry for forks that haven't pushed their own graph yet.
+  GRAPH_REGISTRY: ghcr.io/${{ github.repository_owner }}
+  GRAPH_REGISTRY_FALLBACK: ghcr.io/iterorganization
 
 jobs:
   graph-quality:
@@ -27,6 +32,7 @@ jobs:
     timeout-minutes: 30
     outputs:
       graph-tag-imas: ${{ steps.graph-tag.outputs.imas-tag }}
+      graph-registry: ${{ steps.graph-tag.outputs.graph-registry }}
 
     services:
       neo4j:
@@ -50,11 +56,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set lowercase registry
-        id: registry
-        run: |
-          echo "ghcr=${{ env.GHCR_REGISTRY }}/$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
-
       - name: Install oras CLI
         run: |
           ORAS_VERSION="1.2.0"
@@ -70,21 +71,42 @@ jobs:
       - name: Resolve graph tag
         id: graph-tag
         run: |
-          REGISTRY="${{ steps.registry.outputs.ghcr }}"
-
-          # Resolve IMAS-only graph tag
           IMAS_PACKAGE="imas-codex-graph-dd"
-          IMAS_TAGS=$(oras repo tags "${REGISTRY}/${IMAS_PACKAGE}" 2>&1) || true
-          IMAS_CLEAN=$(echo "$IMAS_TAGS" | grep -E '^[0-9v]' || true)
-          if echo "$IMAS_CLEAN" | grep -qx "latest"; then
-            echo "imas-tag=latest" >> $GITHUB_OUTPUT
-          elif [ -n "$IMAS_CLEAN" ]; then
-            BEST=$(echo "$IMAS_CLEAN" | sort -V | tail -1)
-            echo "No 'latest' tag for imas-codex-graph-dd. Using most recent: $BEST"
-            echo "imas-tag=${BEST}" >> $GITHUB_OUTPUT
+          OWNER_REGISTRY=$(echo "${{ env.GRAPH_REGISTRY }}" | tr '[:upper:]' '[:lower:]')
+          FALLBACK_REGISTRY="${{ env.GRAPH_REGISTRY_FALLBACK }}"
+
+          # Try the repo owner's registry first (where release CLI pushes)
+          resolve_tag() {
+            local REGISTRY="$1"
+            local TAGS
+            TAGS=$(oras repo tags "${REGISTRY}/${IMAS_PACKAGE}" 2>&1) || true
+            local CLEAN
+            CLEAN=$(echo "$TAGS" | grep -E '^[0-9v]' || true)
+            if echo "$CLEAN" | grep -qx "latest"; then
+              echo "latest"
+            elif [ -n "$CLEAN" ]; then
+              echo "$CLEAN" | sort -V | tail -1
+            fi
+          }
+
+          TAG=$(resolve_tag "$OWNER_REGISTRY")
+          USED_REGISTRY="$OWNER_REGISTRY"
+
+          # Fall back to upstream if fork has no graph artifacts
+          if [ -z "$TAG" ] && [ "$OWNER_REGISTRY" != "$FALLBACK_REGISTRY" ]; then
+            echo "No graph at ${OWNER_REGISTRY}/${IMAS_PACKAGE}, trying upstream fallback..."
+            TAG=$(resolve_tag "$FALLBACK_REGISTRY")
+            USED_REGISTRY="$FALLBACK_REGISTRY"
+          fi
+
+          if [ -n "$TAG" ]; then
+            echo "Resolved graph tag: ${TAG} from ${USED_REGISTRY}"
+            echo "imas-tag=${TAG}" >> $GITHUB_OUTPUT
+            echo "graph-registry=${USED_REGISTRY}" >> $GITHUB_OUTPUT
           else
-            echo "::warning::No graph package found at ${REGISTRY}/${IMAS_PACKAGE} — skipping graph quality tests"
+            echo "::warning::No graph package found at either registry — skipping graph quality tests"
             echo "imas-tag=none" >> $GITHUB_OUTPUT
+            echo "graph-registry=none" >> $GITHUB_OUTPUT
           fi
 
       - name: Skip notice
@@ -95,7 +117,7 @@ jobs:
       - name: Pull graph dump from GHCR
         if: steps.graph-tag.outputs.imas-tag != 'none'
         run: |
-          REGISTRY="${{ steps.registry.outputs.ghcr }}"
+          REGISTRY="${{ steps.graph-tag.outputs.graph-registry }}"
           ARTIFACT="${REGISTRY}/imas-codex-graph-dd:${{ steps.graph-tag.outputs.imas-tag }}"
           echo "Pulling: ${ARTIFACT}"
           mkdir -p /tmp/graph-dump
@@ -276,11 +298,6 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Set lowercase registry
-        id: registry
-        run: |
-          echo "ghcr=${{ env.GHCR_REGISTRY }}/$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
-
       - name: Login to GHCR
         run: echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
@@ -293,7 +310,7 @@ jobs:
           build-args: |
             GRAPH_TAG=${{ needs.graph-quality.outputs.graph-tag-imas }}
             GRAPH_PACKAGE=imas-codex-graph-dd
-            GHCR_REGISTRY=${{ steps.registry.outputs.ghcr }}
+            GHCR_REGISTRY=${{ needs.graph-quality.outputs.graph-registry }}
           secrets: |
             GHCR_TOKEN=${{ secrets.GHCR_TOKEN }}
           no-cache: true
@@ -369,12 +386,13 @@ jobs:
             echo "⚠️ No graph loaded (GRAPH_TAG=none), skipping graph verification"
             exit 0
           fi
-          NODE_COUNT=$(docker exec smoke-test bash -c '
-            /opt/neo4j/bin/cypher-shell -u neo4j -p neo4j \
-              "MATCH (n) RETURN count(n) AS node_count" 2>/dev/null | tail -1
-          ')
+          # Use the health endpoint (already verified working) instead of cypher-shell
+          # which fails with Neo4j 2026 auth-disabled + explicit credentials
+          HEALTH=$(docker exec smoke-test curl -sf http://127.0.0.1:8000/health)
+          echo "Health response: ${HEALTH}"
+          NODE_COUNT=$(echo "$HEALTH" | python3 -c "import sys,json; print(json.load(sys.stdin).get('graph',{}).get('node_count',0))")
           echo "Node count: ${NODE_COUNT}"
-          if [ -z "$NODE_COUNT" ] || [ "$NODE_COUNT" = "0" ]; then
+          if [ -z "$NODE_COUNT" ] || [ "$NODE_COUNT" = "0" ] || [ "$NODE_COUNT" = "None" ]; then
             echo "❌ Graph is empty (node_count=${NODE_COUNT}) despite GRAPH_TAG=${GRAPH_TAG}"
             docker logs smoke-test
             exit 1
@@ -475,6 +493,18 @@ jobs:
           flavor: |
             latest=false
 
+      - name: Extract metadata for GHCR (RC builds)
+        id: meta-ghcr-rc
+        if: github.event_name != 'pull_request' && contains(github.ref, '-rc')
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.GHCR_REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern=v{{version}}${{ matrix.graph_variant.suffix }}
+            type=raw,value=latest-rc${{ matrix.graph_variant.suffix }}
+          flavor: |
+            latest=false
+
       - name: Extract metadata for ACR
         id: meta-acr
         uses: docker/metadata-action@v5
@@ -489,7 +519,7 @@ jobs:
           flavor: |
             latest=false
 
-      - name: Build and push Docker image (RC builds - ACR only)
+      - name: Build and push Docker image (RC builds - both registries)
         id: build-rc
         if: github.event_name != 'pull_request' && contains(github.ref, '-rc')
         uses: docker/build-push-action@v6
@@ -497,12 +527,16 @@ jobs:
           context: .
           platforms: linux/amd64
           push: true
-          tags: ${{ steps.meta-acr.outputs.tags }}
-          labels: ${{ steps.meta-acr.outputs.labels }}
+          tags: |
+            ${{ steps.meta-acr.outputs.tags }}
+            ${{ steps.meta-ghcr-rc.outputs.tags }}
+          labels: |
+            ${{ steps.meta-acr.outputs.labels }}
+            ${{ steps.meta-ghcr-rc.outputs.labels }}
           build-args: |
             IDS_FILTER=
             IMAS_DD_VERSION=${{ env.IMAS_DD_VERSION }}
-            GHCR_REGISTRY=${{ steps.registry.outputs.ghcr }}
+            GHCR_REGISTRY=${{ needs.graph-quality.outputs.graph-registry }}
             GRAPH_TAG=${{ steps.variant.outputs.graph-tag }}
             GRAPH_PACKAGE=${{ matrix.graph_variant.package }}
             GIT_SHA=${{ github.sha }}
@@ -530,7 +564,7 @@ jobs:
           build-args: |
             IDS_FILTER=
             IMAS_DD_VERSION=${{ env.IMAS_DD_VERSION }}
-            GHCR_REGISTRY=${{ steps.registry.outputs.ghcr }}
+            GHCR_REGISTRY=${{ needs.graph-quality.outputs.graph-registry }}
             GRAPH_TAG=${{ steps.variant.outputs.graph-tag }}
             GRAPH_PACKAGE=${{ matrix.graph_variant.package }}
             GIT_SHA=${{ github.sha }}

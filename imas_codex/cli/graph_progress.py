@@ -241,8 +241,21 @@ def streaming_remote_script(
     path_dirs = ":".join(SSH_PATH_DIRS)
     remote_script = f'export PATH="{path_dirs}:$PATH"\n{script}'
 
+    # Write script to a temp file on the remote host, then execute it.
+    # This prevents child processes (e.g. uv run, apptainer) from
+    # consuming the remaining script via inherited stdin — a known
+    # pitfall of ``bash -s`` where stdin serves double duty as both
+    # the script source and the default fd0 for subprocesses.
     proc = subprocess.Popen(
-        ["ssh", "-T", ssh_host, "bash -s"],
+        [
+            "ssh",
+            "-T",
+            ssh_host,
+            "SCRIPT=$(mktemp /tmp/imas-codex-remote-XXXXXX.sh)"
+            ' && cat > "$SCRIPT"'
+            ' && bash "$SCRIPT"'
+            '; RC=$?; rm -f "$SCRIPT"; exit $RC',
+        ],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -252,7 +265,8 @@ def streaming_remote_script(
     assert proc.stdin is not None  # guaranteed by stdin=PIPE
     assert proc.stdout is not None  # guaranteed by stdout=PIPE
 
-    # Send script and close stdin
+    # Send script and close stdin — cat reads until EOF, then bash
+    # executes the temp file with stdin exhausted (safe).
     proc.stdin.write(remote_script)
     proc.stdin.close()
 

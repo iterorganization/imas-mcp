@@ -63,10 +63,10 @@ def write_temp_neo4j_conf(conf_dir: Path, bolt_port: int, http_port: int) -> Pat
 dbms.security.auth_enabled=false
 server.bolt.listen_address=127.0.0.1:{bolt_port}
 server.http.listen_address=127.0.0.1:{http_port}
-server.memory.heap.initial_size=1g
-server.memory.heap.max_size=4g
-server.memory.pagecache.size=512m
-dbms.memory.transaction.total.max=3g
+server.memory.heap.initial_size=512m
+server.memory.heap.max_size=2g
+server.memory.pagecache.size=256m
+dbms.memory.transaction.total.max=1g
 """
     )
     return conf_file

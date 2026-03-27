@@ -39,6 +39,16 @@ if TYPE_CHECKING:
 NEO4J_IMAGE = neo4j_image()
 
 
+def _resolve_scheduler(profile: Neo4jProfile) -> str:
+    """Resolve the job scheduler for a Neo4j profile's location."""
+    try:
+        from imas_codex.remote.locations import resolve_location
+
+        return resolve_location(profile.location).scheduler
+    except Exception:
+        return "none"
+
+
 # ============================================================================
 # Graph Secure Command
 # ============================================================================
@@ -303,7 +313,7 @@ def graph_export(
     # ── Remote dispatch ──────────────────────────────────────────────────
     from imas_codex.graph.remote import is_remote_location
 
-    if is_remote_location(profile.host):
+    if is_remote_location(profile.host) and not source_dump:
         from imas_codex.cli.graph_progress import (
             GraphProgress,
             remote_operation_streaming,
@@ -333,7 +343,10 @@ def graph_export(
             gp.set_total_phases(2 if (local or output) else 1)
 
             gp.start_phase(f"Exporting graph [{profile.name}] on {profile.host}")
-            script = build_remote_export_script(profile.name)
+            script = build_remote_export_script(
+                profile.name,
+                scheduler=_resolve_scheduler(profile),
+            )
             try:
                 export_output = remote_operation_streaming(
                     script,
@@ -519,6 +532,7 @@ def graph_load(
                 profile.name,
                 profile.host,
                 password=password,
+                scheduler=_resolve_scheduler(profile),
             )
             if "LOAD_COMPLETE" in output:
                 click.echo("✓ Load complete (remote)")

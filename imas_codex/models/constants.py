@@ -33,14 +33,6 @@ VERY_LOW_CONFIDENCE_THRESHOLD = 0.25  # Strongly warn - likely nonsense query
 # ============================================================================
 
 
-class DetailLevel(StrEnum):
-    """Detail levels for explanations."""
-
-    BASIC = "basic"
-    INTERMEDIATE = "intermediate"
-    ADVANCED = "advanced"
-
-
 class ResponseProfile(StrEnum):
     """Response formatting presets for search results."""
 

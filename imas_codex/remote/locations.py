@@ -90,12 +90,29 @@ def resolve_location(location: str) -> LocationInfo:
     if compute_info is not None:
         return compute_info
 
-    # Direct facility location (service on login node)
+    # Direct facility location — check if it has compute locations that
+    # use SLURM so the scheduler is inherited (e.g. location="iter" but
+    # services run on "titan" via SLURM).
     ssh_host = _get_ssh_host(location)
+    scheduler = "none"
+    service_job_name = "codex-neo4j"
+    try:
+        from imas_codex.discovery.base.facility import get_facility
+
+        cfg = get_facility(location)
+        for loc_cfg in cfg.get("compute_locations", {}).values():
+            if loc_cfg.get("scheduler") == "slurm":
+                scheduler = "slurm"
+                service_job_name = loc_cfg.get("service_job_name", service_job_name)
+                break
+    except Exception:
+        pass
     return LocationInfo(
         name=location,
         facility=location,
         ssh_host=ssh_host,
+        scheduler=scheduler,
+        service_job_name=service_job_name,
     )
 
 

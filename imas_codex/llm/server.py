@@ -63,7 +63,7 @@ import sys
 import threading
 from contextlib import redirect_stdout
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
 from fastmcp import FastMCP
 from neo4j.exceptions import ServiceUnavailable
@@ -1486,9 +1486,22 @@ class AgentsServer:
     """
 
     read_only: bool = False
+    dd_only: bool | None = None
     mcp: FastMCP = field(init=False, repr=False)
     _prompts: dict[str, PromptDefinition] = field(init=False, repr=False)
     _started_at: float = field(init=False, repr=False)
+
+    # Tools that require facility data in the graph — hidden in DD-only mode
+    FACILITY_TOOLS: ClassVar[frozenset[str]] = frozenset(
+        {
+            "search_signals",
+            "signal_analytics",
+            "search_docs",
+            "search_code",
+            "get_discovery_context",
+            "get_facility_infrastructure",
+        }
+    )
 
     def __post_init__(self):
         """Initialize the MCP server with lazy REPL loading.
@@ -1500,6 +1513,11 @@ class AgentsServer:
         import time
 
         self._started_at = time.monotonic()
+
+        # Auto-detect DD-only mode from graph content
+        if self.dd_only is None:
+            self.dd_only = self._detect_dd_only()
+
         name = "imas-codex-readonly" if self.read_only else "imas-codex"
         self.mcp = FastMCP(name=name)
         self._prompts = load_prompts()
@@ -1508,13 +1526,72 @@ class AgentsServer:
         self._register_prompts()
         self._register_health_check()
 
+        # Remove facility tools when running in DD-only mode
+        if self.dd_only:
+            components = self.mcp._local_provider._components
+            removed = []
+            for tool_name in self.FACILITY_TOOLS:
+                key = f"tool:{tool_name}"
+                if key in components:
+                    del components[key]
+                    removed.append(tool_name)
+            if removed:
+                logger.info(
+                    f"DD-only mode: removed {len(removed)} facility tools "
+                    f"({', '.join(sorted(removed))})"
+                )
+
         tool_count = sum(
             1 for k in self.mcp._local_provider._components if k.startswith("tool:")
         )
-        mode = "read-only" if self.read_only else "read-write"
+        mode_parts = []
+        if self.read_only:
+            mode_parts.append("read-only")
+        if self.dd_only:
+            mode_parts.append("dd-only")
+        mode = ", ".join(mode_parts) if mode_parts else "read-write"
         logger.info(
             f"MCP server ready ({mode}) with {tool_count} tools and {len(self._prompts)} prompts"
         )
+
+        # Pre-warm the embedding model in a background thread so the first
+        # search_imas call doesn't pay the 30s+ cold-start penalty.
+        # This does not block server startup.
+        import threading
+
+        def _warmup():
+            from imas_codex.tools.graph_search import warmup_encoder
+
+            warmup_encoder()
+
+        threading.Thread(target=_warmup, daemon=True, name="encoder-warmup").start()
+
+    @staticmethod
+    def _detect_dd_only() -> bool:
+        """Detect DD-only mode by checking for Facility nodes in the graph."""
+        try:
+            from imas_codex.graph.client import GraphClient
+            from imas_codex.graph.meta import get_graph_meta
+
+            gc = GraphClient.from_profile()
+            try:
+                meta = get_graph_meta(gc)
+                if meta:
+                    facilities = meta.get("facilities") or []
+                    dd_only = len(facilities) == 0
+                    if dd_only:
+                        logger.info("Auto-detected DD-only graph (no facilities)")
+                    else:
+                        logger.info(
+                            f"Auto-detected full graph with facilities: "
+                            f"{', '.join(facilities)}"
+                        )
+                    return dd_only
+            finally:
+                gc.close()
+        except Exception:
+            logger.warning("Could not detect graph mode, defaulting to full mode")
+        return False
 
     def _register_tools(self):
         """Register all MCP tools."""
@@ -2301,40 +2378,58 @@ class AgentsServer:
                 Formatted report with IMAS paths, clusters, facility
                 cross-references, and version context.
             """
+            from concurrent.futures import ThreadPoolExecutor
+
             from imas_codex.llm.search_formatters import format_search_imas_report
             from imas_codex.models.error_models import ToolError
 
             tools = _get_imas_tools()
-            result = _run_async(
-                tools.search_imas_paths(
-                    query=query,
-                    ids_filter=ids_filter,
-                    max_results=k,
-                    facility=facility,
-                    include_version_context=include_version_context,
-                    dd_version=dd_version,
-                )
-            )
-            if isinstance(result, ToolError):
-                return format_search_imas_report(result)
 
-            # Also search clusters for cross-domain context
-            cluster_result = None
-            try:
-                cluster_result = _run_async(
-                    tools.clusters_tool.search_imas_clusters(
+            # Run path search and cluster search in parallel — they are
+            # independent operations sharing the same encoder singleton.
+            def _path_search():
+                return _run_async(
+                    tools.search_imas_paths(
                         query=query,
                         ids_filter=ids_filter,
+                        max_results=k,
+                        facility=facility,
+                        include_version_context=include_version_context,
                         dd_version=dd_version,
                     )
                 )
-                if isinstance(cluster_result, ToolError):
-                    logger.debug(
-                        "Cluster search returned ToolError, omitting optional cluster context"
+
+            def _cluster_search():
+                try:
+                    cr = _run_async(
+                        tools.clusters_tool.search_imas_clusters(
+                            query=query,
+                            ids_filter=ids_filter,
+                            dd_version=dd_version,
+                        )
                     )
-                    cluster_result = None
-            except Exception:
-                logger.debug("Cluster search failed, continuing without", exc_info=True)
+                    if isinstance(cr, ToolError):
+                        logger.debug(
+                            "Cluster search returned ToolError, "
+                            "omitting optional cluster context"
+                        )
+                        return None
+                    return cr
+                except Exception:
+                    logger.debug(
+                        "Cluster search failed, continuing without",
+                        exc_info=True,
+                    )
+                    return None
+
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                path_future = executor.submit(_path_search)
+                cluster_future = executor.submit(_cluster_search)
+                result = path_future.result()
+                cluster_result = cluster_future.result()
+
+            if isinstance(result, ToolError):
+                return format_search_imas_report(result)
 
             return format_search_imas_report(result, cluster_result)
 
@@ -3022,6 +3117,7 @@ class AgentsServer:
                     response["imas_dd"]["ids_count"] = graph.get("ids_count", 0)
                     response["imas_dd"]["path_count"] = graph.get("path_count", 0)
                 response["facilities"] = graph.get("facilities", [])
+                response["dd_only"] = server.dd_only
 
             return JSONResponse(response)
 

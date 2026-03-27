@@ -522,10 +522,10 @@ class Encoder:
             import torch
 
             # float16 for GPU — P100 doesn't support bfloat16 natively.
-            model_kwargs["torch_dtype"] = torch.float16
+            model_kwargs["dtype"] = torch.float16
             model_kwargs["low_cpu_mem_usage"] = True
         else:
-            model_kwargs["torch_dtype"] = "auto"
+            model_kwargs["dtype"] = "auto"
 
         try:
             cache_folder = str(self._get_cache_directory() / "models")

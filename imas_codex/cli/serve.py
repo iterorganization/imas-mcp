@@ -42,12 +42,18 @@ logger = logging.getLogger(__name__)
     default=False,
     help="Suppress write tools and Python REPL (for container deployments)",
 )
+@click.option(
+    "--dd-only/--no-dd-only",
+    default=None,
+    help="Force DD-only mode (hide facility tools). Auto-detected from graph if omitted.",
+)
 def serve(
     transport: str,
     host: str,
     port: int,
     log_level: str,
     read_only: bool,
+    dd_only: bool | None,
 ) -> None:
     """Start the IMAS Codex MCP server.
 
@@ -85,7 +91,7 @@ def serve(
 
     from imas_codex.llm.server import AgentsServer
 
-    server = AgentsServer(read_only=read_only)
+    server = AgentsServer(read_only=read_only, dd_only=dd_only)
     server.run(
         transport=cast(Literal["stdio", "sse", "streamable-http"], transport),
         host=host,
