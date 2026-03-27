@@ -166,7 +166,7 @@ COPY --from=builder /tmp/graph-pull/ /tmp/graph-pull/
 
 # Extract and load the graph dump (or create empty database)
 # Handles both raw .dump files (oras pull) and .tar.gz archives
-RUN set -e && \
+RUN set -ex && \
     if [ -f /tmp/graph-pull/.no-graph ]; then \
         echo "⚠ No graph data — creating empty Neo4j database"; \
         mkdir -p /data/databases/neo4j /data/transactions/neo4j; \
@@ -182,12 +182,15 @@ RUN set -e && \
             echo "Extracting: $ARCHIVE" && \
             mkdir -p /tmp/graph-extracted && \
             tar -xzf "$ARCHIVE" -C /tmp/graph-extracted && \
+            echo "Archive contents:" && \
+            find /tmp/graph-extracted -type f -ls && \
             DUMP=$(find /tmp/graph-extracted -name "*.dump" -type f | head -1) && \
             if [ -z "$DUMP" ]; then \
                 echo "ERROR: No .dump file found in archive" >&2; \
                 find /tmp/graph-extracted -type f >&2; \
                 exit 1; \
             fi && \
+            echo "Found dump: $DUMP ($(stat -c%s "$DUMP") bytes)" && \
             mkdir -p /tmp/dumps && \
             cp "$DUMP" /tmp/dumps/neo4j.dump; \
         else \
@@ -195,7 +198,9 @@ RUN set -e && \
             ls -la /tmp/graph-pull/ >&2; \
             exit 1; \
         fi && \
-        neo4j-admin database load neo4j --from-path=/tmp/dumps --overwrite-destination && \
+        echo "Loading dump into Neo4j..." && \
+        ls -la /tmp/dumps/ && \
+        neo4j-admin database load neo4j --from-path=/tmp/dumps --overwrite-destination 2>&1 && \
         echo "✓ Graph loaded into Neo4j data directory"; \
     fi && \
     rm -rf /tmp/graph-pull /tmp/graph-extracted /tmp/dumps
