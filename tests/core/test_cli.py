@@ -121,7 +121,7 @@ class TestReadOnlyServer:
         assert "search_docs" in tool_names
         assert "search_code" in tool_names
         assert "search_imas" in tool_names
-        assert "fetch" in tool_names
+        assert "fetch_facility_resource" in tool_names
         assert "check_imas_paths" in tool_names
 
     def test_default_mode_has_all_tools(self):
@@ -145,7 +145,7 @@ class TestReadOnlyServer:
         # Read tools also present
         assert "get_graph_schema" in tool_names
         assert "search_signals" in tool_names
-        assert "fetch" in tool_names
+        assert "fetch_facility_resource" in tool_names
 
     def test_read_only_server_name(self):
         """Read-only mode uses distinct server name."""
@@ -171,6 +171,28 @@ class TestReadOnlyServer:
 
         assert ro_tools < rw_tools  # strict subset
         assert len(rw_tools) - len(ro_tools) == 8  # exactly 8 write tools suppressed
+
+    def test_dd_only_excludes_facility_tools(self):
+        """DD-only mode does not register any facility tools."""
+        from imas_codex.llm.server import AgentsServer
+
+        server = AgentsServer(read_only=True, dd_only=True)
+        comps = server.mcp._local_provider._components
+        tool_names = [v.name for k, v in comps.items() if k.startswith("tool:")]
+
+        # Facility tools must NOT be registered
+        for tool_name in AgentsServer.FACILITY_TOOLS:
+            assert tool_name not in tool_names, (
+                f"{tool_name} should not be in DD-only mode"
+            )
+
+        # DD tools SHOULD still be present
+        assert "search_imas" in tool_names
+        assert "check_imas_paths" in tool_names
+        assert "fetch_imas_paths" in tool_names
+        assert "find_related_imas_paths" in tool_names
+        assert "get_graph_schema" in tool_names
+        assert "get_imas_overview" in tool_names
 
 
 class TestFacilitiesCLI:

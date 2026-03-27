@@ -1491,13 +1491,14 @@ class AgentsServer:
     _prompts: dict[str, PromptDefinition] = field(init=False, repr=False)
     _started_at: float = field(init=False, repr=False)
 
-    # Tools that require facility data in the graph — hidden in DD-only mode
+    # Tools that require facility data — not registered in DD-only mode
     FACILITY_TOOLS: ClassVar[frozenset[str]] = frozenset(
         {
             "search_signals",
             "signal_analytics",
             "search_docs",
             "search_code",
+            "fetch_facility_resource",
             "get_discovery_context",
             "get_facility_infrastructure",
         }
@@ -1526,21 +1527,8 @@ class AgentsServer:
         self._register_prompts()
         self._register_health_check()
 
-        # Remove facility tools when running in DD-only mode
-        if self.dd_only:
-            components = self.mcp._local_provider._components
-            removed = []
-            for tool_name in self.FACILITY_TOOLS:
-                key = f"tool:{tool_name}"
-                if key in components:
-                    del components[key]
-                    removed.append(tool_name)
-            if removed:
-                logger.info(
-                    f"DD-only mode: removed {len(removed)} facility tools "
-                    f"({', '.join(sorted(removed))})"
-                )
-
+        # In DD-only mode, facility tools are never registered (see guards
+        # in _register_tools). Log the active tool count for diagnostics.
         tool_count = sum(
             1 for k in self.mcp._local_provider._components if k.startswith("tool:")
         )
@@ -1971,35 +1959,37 @@ class AgentsServer:
         # Tool 6: get_facility_infrastructure - Read private facility data
         # =====================================================================
 
-        @self.mcp.tool()
-        def get_facility_infrastructure(facility: str) -> dict[str, Any]:
-            """
-            Read private facility infrastructure data.
+        if not self.dd_only:
 
-            Returns only the private infrastructure data (not public config).
-            Use this to check what's already stored before updating.
+            @self.mcp.tool()
+            def get_facility_infrastructure(facility: str) -> dict[str, Any]:
+                """
+                Read private facility infrastructure data.
 
-            Args:
-                facility: Facility identifier (e.g., "tcv", "iter")
+                Returns only the private infrastructure data (not public config).
+                Use this to check what's already stored before updating.
 
-            Returns:
-                Private infrastructure data dict
+                Args:
+                    facility: Facility identifier (e.g., "tcv", "iter")
 
-            Example:
-                # Check current infrastructure
-                infra = get_facility_infrastructure("iter")
-                print(infra.get("tools", {}))
-                print(infra.get("exploration_notes", []))
-            """
-            try:
-                from imas_codex.discovery import (
-                    get_facility_infrastructure as _get_infra,
-                )
+                Returns:
+                    Private infrastructure data dict
 
-                return _get_infra(facility) or {}
-            except Exception as e:
-                logger.exception(f"Failed to get infrastructure for {facility}")
-                raise RuntimeError(f"Failed to get infrastructure: {e}") from e
+                Example:
+                    # Check current infrastructure
+                    infra = get_facility_infrastructure("iter")
+                    print(infra.get("tools", {}))
+                    print(infra.get("exploration_notes", []))
+                """
+                try:
+                    from imas_codex.discovery import (
+                        get_facility_infrastructure as _get_infra,
+                    )
+
+                    return _get_infra(facility) or {}
+                except Exception as e:
+                    logger.exception(f"Failed to get infrastructure for {facility}")
+                    raise RuntimeError(f"Failed to get infrastructure: {e}") from e
 
         if not self.read_only:
             # =====================================================================
@@ -2049,111 +2039,117 @@ class AgentsServer:
         # Tool 7b: get_discovery_context - Graph-derived discovery state
         # =====================================================================
 
-        @self.mcp.tool()
-        def get_discovery_context(facility: str) -> dict[str, Any]:
-            """
-            Get discovery context for a facility including graph-derived state.
+        if not self.dd_only:
 
-            Returns comprehensive discovery state to guide exploration:
-            - Configured roots and their categories
-            - Coverage by category (what's already been discovered)
-            - High-value paths found so far
-            - Gap analysis (underrepresented categories)
-            - Schema for valid category values
+            @self.mcp.tool()
+            def get_discovery_context(facility: str) -> dict[str, Any]:
+                """
+                Get discovery context for a facility including graph-derived state.
 
-            Use this before exploring to identify gaps and avoid duplication.
+                Returns comprehensive discovery state to guide exploration:
+                - Configured roots and their categories
+                - Coverage by category (what's already been discovered)
+                - High-value paths found so far
+                - Gap analysis (underrepresented categories)
+                - Schema for valid category values
 
-            Args:
-                facility: Facility identifier (e.g., "tcv", "iter")
+                Use this before exploring to identify gaps and avoid duplication.
 
-            Returns:
-                Dict with discovery_roots, coverage_by_category, high_value_paths,
-                missing_categories, and schema with valid category values.
+                Args:
+                    facility: Facility identifier (e.g., "tcv", "iter")
 
-            Example:
-                ctx = get_discovery_context("tcv")
-                print("Missing categories:", ctx["missing_categories"])
-                print("Coverage:", ctx["coverage_by_category"])
-            """
-            try:
-                from imas_codex.discovery import (
-                    get_facility_infrastructure as _get_infra,
-                )
-                from imas_codex.graph import GraphClient
-                from imas_codex.llm.prompt_loader import get_schema_for_prompt
+                Returns:
+                    Dict with discovery_roots, coverage_by_category, high_value_paths,
+                    missing_categories, and schema with valid category values.
 
-                # Get configured roots from infrastructure
-                infra = _get_infra(facility) or {}
-                discovery_roots = infra.get("discovery_roots", [])
+                Example:
+                    ctx = get_discovery_context("tcv")
+                    print("Missing categories:", ctx["missing_categories"])
+                    print("Coverage:", ctx["coverage_by_category"])
+                """
+                try:
+                    from imas_codex.discovery import (
+                        get_facility_infrastructure as _get_infra,
+                    )
+                    from imas_codex.graph import GraphClient
+                    from imas_codex.llm.prompt_loader import get_schema_for_prompt
 
-                # Get schema context for valid category values
-                schema_ctx = get_schema_for_prompt(
-                    "discovery/roots", ["discovery_categories"]
-                )
+                    # Get configured roots from infrastructure
+                    infra = _get_infra(facility) or {}
+                    discovery_roots = infra.get("discovery_roots", [])
 
-                # Use GraphClient for graph queries
-                with GraphClient() as client:
-                    # Query coverage by category
-                    coverage_query = """
-                        MATCH (p:FacilityPath {facility_id: $facility})
-                        WHERE p.status = 'scored' AND p.path_purpose IS NOT NULL
-                        RETURN p.path_purpose AS purpose, count(*) AS count
-                        ORDER BY count DESC
-                    """
-                    coverage_results = client.query(coverage_query, facility=facility)
-                    coverage_by_category = {
-                        record["purpose"]: record["count"]
-                        for record in coverage_results
-                    }
-
-                    # Query high-value paths
-                    high_value_query = """
-                        MATCH (p:FacilityPath {facility_id: $facility})
-                        WHERE coalesce(p.score_composite, p.triage_composite) > 0.7
-                        RETURN p.path AS path, p.path_purpose AS purpose,
-                               coalesce(p.score_composite, p.triage_composite) AS score, p.description AS description
-                        ORDER BY score DESC LIMIT 15
-                    """
-                    high_value_paths = client.query(high_value_query, facility=facility)
-
-                    # Determine missing categories (expected but not found)
-                    expected_categories = [
-                        c["value"] for c in schema_ctx["discovery_categories"]
-                    ]
-                    found_categories = set(coverage_by_category.keys())
-                    missing_categories = [
-                        c for c in expected_categories if c not in found_categories
-                    ]
-
-                    # Query containers not yet expanded (potential new roots)
-                    unexplored_query = """
-                        MATCH (p:FacilityPath {facility_id: $facility})
-                        WHERE p.path_purpose = 'container'
-                              AND coalesce(p.score_composite, p.triage_composite) > 0.4
-                              AND p.should_expand = false
-                              AND p.terminal_reason IS NULL
-                        RETURN p.path AS path, coalesce(p.score_composite, p.triage_composite) AS score, p.description AS description
-                        ORDER BY score DESC LIMIT 10
-                    """
-                    unexplored_containers = client.query(
-                        unexplored_query, facility=facility
+                    # Get schema context for valid category values
+                    schema_ctx = get_schema_for_prompt(
+                        "discovery/roots", ["discovery_categories"]
                     )
 
-                return {
-                    "facility": facility,
-                    "discovery_roots": discovery_roots,
-                    "coverage_by_category": coverage_by_category,
-                    "total_scored_paths": sum(coverage_by_category.values()),
-                    "high_value_paths": high_value_paths,
-                    "missing_categories": missing_categories,
-                    "unexplored_containers": unexplored_containers,
-                    "schema": {
-                        "valid_categories": schema_ctx["discovery_categories"],
-                    },
-                }
-            except Exception as e:
-                logger.exception(f"Failed to get discovery context for {facility}")
-                raise RuntimeError(f"Failed to get discovery context: {e}") from e
+                    # Use GraphClient for graph queries
+                    with GraphClient() as client:
+                        # Query coverage by category
+                        coverage_query = """
+                            MATCH (p:FacilityPath {facility_id: $facility})
+                            WHERE p.status = 'scored' AND p.path_purpose IS NOT NULL
+                            RETURN p.path_purpose AS purpose, count(*) AS count
+                            ORDER BY count DESC
+                        """
+                        coverage_results = client.query(
+                            coverage_query, facility=facility
+                        )
+                        coverage_by_category = {
+                            record["purpose"]: record["count"]
+                            for record in coverage_results
+                        }
+
+                        # Query high-value paths
+                        high_value_query = """
+                            MATCH (p:FacilityPath {facility_id: $facility})
+                            WHERE coalesce(p.score_composite, p.triage_composite) > 0.7
+                            RETURN p.path AS path, p.path_purpose AS purpose,
+                                   coalesce(p.score_composite, p.triage_composite) AS score, p.description AS description
+                            ORDER BY score DESC LIMIT 15
+                        """
+                        high_value_paths = client.query(
+                            high_value_query, facility=facility
+                        )
+
+                        # Determine missing categories (expected but not found)
+                        expected_categories = [
+                            c["value"] for c in schema_ctx["discovery_categories"]
+                        ]
+                        found_categories = set(coverage_by_category.keys())
+                        missing_categories = [
+                            c for c in expected_categories if c not in found_categories
+                        ]
+
+                        # Query containers not yet expanded (potential new roots)
+                        unexplored_query = """
+                            MATCH (p:FacilityPath {facility_id: $facility})
+                            WHERE p.path_purpose = 'container'
+                                  AND coalesce(p.score_composite, p.triage_composite) > 0.4
+                                  AND p.should_expand = false
+                                  AND p.terminal_reason IS NULL
+                            RETURN p.path AS path, coalesce(p.score_composite, p.triage_composite) AS score, p.description AS description
+                            ORDER BY score DESC LIMIT 10
+                        """
+                        unexplored_containers = client.query(
+                            unexplored_query, facility=facility
+                        )
+
+                    return {
+                        "facility": facility,
+                        "discovery_roots": discovery_roots,
+                        "coverage_by_category": coverage_by_category,
+                        "total_scored_paths": sum(coverage_by_category.values()),
+                        "high_value_paths": high_value_paths,
+                        "missing_categories": missing_categories,
+                        "unexplored_containers": unexplored_containers,
+                        "schema": {
+                            "valid_categories": schema_ctx["discovery_categories"],
+                        },
+                    }
+                except Exception as e:
+                    logger.exception(f"Failed to get discovery context for {facility}")
+                    raise RuntimeError(f"Failed to get discovery context: {e}") from e
 
         # NOTE: update_facility_paths and update_facility_tools were removed as
         # MCP tools (Phase 5 consolidation). Use update_infrastructure() in the
@@ -2196,152 +2192,154 @@ class AgentsServer:
         except Exception:
             _physics_domains_doc = "(see physics_domains.yaml for valid values)"
 
-        @self.mcp.tool()
-        def search_signals(
-            query: str,
-            facility: str,
-            diagnostic: str | None = None,
-            physics_domain: str | None = None,
-            check_status: str | None = None,
-            error_type: str | None = None,
-            include_check_details: bool = False,
-            k: int = 20,
-        ) -> str:
-            """Search facility signals with full graph enrichment.
+        if not self.dd_only:
 
-            Performs hybrid search (vector + keyword) on signal descriptions,
-            then enriches with data access templates, IMAS mappings, diagnostic
-            context, and related tree nodes.
+            @self.mcp.tool()
+            def search_signals(
+                query: str,
+                facility: str,
+                diagnostic: str | None = None,
+                physics_domain: str | None = None,
+                check_status: str | None = None,
+                error_type: str | None = None,
+                include_check_details: bool = False,
+                k: int = 20,
+            ) -> str:
+                """Search facility signals with full graph enrichment.
 
-            Use this for: "How do I access [quantity] at [facility]?"
+                Performs hybrid search (vector + keyword) on signal descriptions,
+                then enriches with data access templates, IMAS mappings, diagnostic
+                context, and related tree nodes.
 
-            Args:
-                query: Natural language search text (e.g. "plasma current")
-                facility: Facility id (required, e.g. "tcv", "jet")
-                diagnostic: Optional diagnostic filter (e.g. "magnetics")
-                physics_domain: Optional physics domain filter
-                check_status: Filter by check outcome: "passed", "failed", or "unchecked"
-                error_type: Filter by error classification (e.g. "not_available_for_shot")
-                include_check_details: Include CHECKED_WITH relationship data in results
-                k: Number of results (default 20)
+                Use this for: "How do I access [quantity] at [facility]?"
 
-            Returns:
-                Formatted report with signals, data access, IMAS mappings,
-                and related tree nodes.
-            """
-            return _search_signals(
-                query,
-                facility,
-                diagnostic=diagnostic,
-                physics_domain=physics_domain,
-                check_status=check_status,
-                error_type=error_type,
-                include_check_details=include_check_details,
-                k=k,
-            )
+                Args:
+                    query: Natural language search text (e.g. "plasma current")
+                    facility: Facility id (required, e.g. "tcv", "jet")
+                    diagnostic: Optional diagnostic filter (e.g. "magnetics")
+                    physics_domain: Optional physics domain filter
+                    check_status: Filter by check outcome: "passed", "failed", or "unchecked"
+                    error_type: Filter by error classification (e.g. "not_available_for_shot")
+                    include_check_details: Include CHECKED_WITH relationship data in results
+                    k: Number of results (default 20)
 
-        @self.mcp.tool()
-        def signal_analytics(
-            facility: str,
-            group_by: list[str] | None = None,
-            filters: dict[str, str] | None = None,
-        ) -> str:
-            """Aggregate signal counts by specified dimensions.
+                Returns:
+                    Formatted report with signals, data access, IMAS mappings,
+                    and related tree nodes.
+                """
+                return _search_signals(
+                    query,
+                    facility,
+                    diagnostic=diagnostic,
+                    physics_domain=physics_domain,
+                    check_status=check_status,
+                    error_type=error_type,
+                    include_check_details=include_check_details,
+                    k=k,
+                )
 
-            Use this for batch analytics queries like "how many signals
-            pass/fail checks?" or "signal breakdown by physics domain".
+            @self.mcp.tool()
+            def signal_analytics(
+                facility: str,
+                group_by: list[str] | None = None,
+                filters: dict[str, str] | None = None,
+            ) -> str:
+                """Aggregate signal counts by specified dimensions.
 
-            Args:
-                facility: Facility id (required, e.g. "tcv", "jet")
-                group_by: Dimensions to group by (default: ["status"]).
-                    Allowed: status, physics_domain, data_source_name,
-                    discovery_source, diagnostic, check_status, error_type
-                filters: Optional key-value filters to narrow results
-                    (e.g. {"status": "checked", "physics_domain": "magnetics"})
+                Use this for batch analytics queries like "how many signals
+                pass/fail checks?" or "signal breakdown by physics domain".
 
-            Returns:
-                Formatted table with counts and percentages per group.
-            """
-            return _signal_analytics(facility, group_by=group_by, filters=filters)
+                Args:
+                    facility: Facility id (required, e.g. "tcv", "jet")
+                    group_by: Dimensions to group by (default: ["status"]).
+                        Allowed: status, physics_domain, data_source_name,
+                        discovery_source, diagnostic, check_status, error_type
+                    filters: Optional key-value filters to narrow results
+                        (e.g. {"status": "checked", "physics_domain": "magnetics"})
 
-        @self.mcp.tool()
-        def search_docs(
-            query: str,
-            facility: str,
-            k: int = 15,
-            site: str | None = None,
-            physics_domain: str | None = None,
-            min_score: float | None = None,
-            score_dimension: str | None = None,
-        ) -> str:
-            """Search documentation (wiki, documents, images) with cross-links.
+                Returns:
+                    Formatted table with counts and percentages per group.
+                """
+                return _signal_analytics(facility, group_by=group_by, filters=filters)
 
-            Performs hybrid search (vector + keyword) across wiki content,
-            linked documents, and images, enriched with cross-references to
-            signals, tree nodes, and IMAS paths.
+            @self.mcp.tool()
+            def search_docs(
+                query: str,
+                facility: str,
+                k: int = 15,
+                site: str | None = None,
+                physics_domain: str | None = None,
+                min_score: float | None = None,
+                score_dimension: str | None = None,
+            ) -> str:
+                """Search documentation (wiki, documents, images) with cross-links.
 
-            Use this for: "What does the knowledge base say about [topic] at [facility]?"
+                Performs hybrid search (vector + keyword) across wiki content,
+                linked documents, and images, enriched with cross-references to
+                signals, tree nodes, and IMAS paths.
 
-            Args:
-                query: Natural language search text (e.g. "fishbone instabilities")
-                facility: Facility id (required, e.g. "tcv", "jet")
-                k: Results per index (default 15)
-                site: Optional wiki site filter (substring match on wiki URL)
-                physics_domain: Filter by WikiPage physics domain
-                min_score: Minimum score threshold (0.0-1.0) for score_dimension
-                score_dimension: Score dimension to filter on
+                Use this for: "What does the knowledge base say about [topic] at [facility]?"
 
-            Returns:
-                Formatted report with wiki documentation grouped by page,
-                cross-links to signals/IMAS paths, and related documents.
-            """
-            return _search_docs(
-                query,
-                facility,
-                k=k,
-                site=site,
-                physics_domain=physics_domain,
-                min_score=min_score,
-                score_dimension=score_dimension,
-            )
+                Args:
+                    query: Natural language search text (e.g. "fishbone instabilities")
+                    facility: Facility id (required, e.g. "tcv", "jet")
+                    k: Results per index (default 15)
+                    site: Optional wiki site filter (substring match on wiki URL)
+                    physics_domain: Filter by WikiPage physics domain
+                    min_score: Minimum score threshold (0.0-1.0) for score_dimension
+                    score_dimension: Score dimension to filter on
 
-        @self.mcp.tool()
-        def search_code(
-            query: str,
-            facility: str | None = None,
-            k: int = 10,
-            physics_domain: str | None = None,
-            min_score: float | None = None,
-            score_dimension: str | None = None,
-        ) -> str:
-            """Search ingested code with data reference enrichment.
+                Returns:
+                    Formatted report with wiki documentation grouped by page,
+                    cross-links to signals/IMAS paths, and related documents.
+                """
+                return _search_docs(
+                    query,
+                    facility,
+                    k=k,
+                    site=site,
+                    physics_domain=physics_domain,
+                    min_score=min_score,
+                    score_dimension=score_dimension,
+                )
 
-            Performs hybrid search (vector + keyword) on code chunks,
-            enriched with MDSplus paths, TDI function calls, IMAS path
-            references, and directory context.
+            @self.mcp.tool()
+            def search_code(
+                query: str,
+                facility: str | None = None,
+                k: int = 10,
+                physics_domain: str | None = None,
+                min_score: float | None = None,
+                score_dimension: str | None = None,
+            ) -> str:
+                """Search ingested code with data reference enrichment.
 
-            Use this for: "Show me code that does [task] at [facility]"
+                Performs hybrid search (vector + keyword) on code chunks,
+                enriched with MDSplus paths, TDI function calls, IMAS path
+                references, and directory context.
 
-            Args:
-                query: Natural language search text (e.g. "equilibrium reconstruction")
-                facility: Optional facility filter (e.g. "tcv")
-                k: Number of results (default 10)
-                physics_domain: Filter by FacilityPath physics domain
-                min_score: Minimum score threshold (0.0-1.0) for score_dimension
-                score_dimension: Score dimension to filter on
+                Use this for: "Show me code that does [task] at [facility]"
 
-            Returns:
-                Formatted report with code examples, data references,
-                and directory context.
-            """
-            return _search_code(
-                query,
-                facility=facility,
-                k=k,
-                physics_domain=physics_domain,
-                min_score=min_score,
-                score_dimension=score_dimension,
-            )
+                Args:
+                    query: Natural language search text (e.g. "equilibrium reconstruction")
+                    facility: Optional facility filter (e.g. "tcv")
+                    k: Number of results (default 10)
+                    physics_domain: Filter by FacilityPath physics domain
+                    min_score: Minimum score threshold (0.0-1.0) for score_dimension
+                    score_dimension: Score dimension to filter on
+
+                Returns:
+                    Formatted report with code examples, data references,
+                    and directory context.
+                """
+                return _search_code(
+                    query,
+                    facility=facility,
+                    k=k,
+                    physics_domain=physics_domain,
+                    min_score=min_score,
+                    score_dimension=score_dimension,
+                )
 
         @self.mcp.tool()
         def search_imas(
@@ -2664,19 +2662,21 @@ class AgentsServer:
         )
 
         @self.mcp.tool()
-        def get_imas_path_context(
+        def find_related_imas_paths(
             path: str,
             relationship_types: str = "all",
             max_results: int = 20,
             dd_version: int | None = None,
         ) -> str:
-            """Get structural context for an IMAS path via graph traversal and semantic similarity.
+            """Find IMAS paths related to a given path across different IDSs.
 
-            Combines vector embedding similarity, cluster membership, physics coordinate
-            sharing, unit+domain affinity, and identifier schemas to discover meaningful
-            cross-IDS relationships. Produces focused, noise-free results by filtering
-            generic coordinate tokens (e.g. '1...N') that would otherwise match thousands
-            of unrelated paths.
+            Discovers cross-IDS relationships by combining vector embedding
+            similarity, cluster membership, physics coordinate sharing,
+            unit+domain affinity, and identifier schemas. Produces focused,
+            noise-free results by filtering generic coordinate tokens
+            (e.g. '1...N') that would otherwise match thousands of paths.
+
+            Use this for: "What other IMAS paths measure the same quantity?"
 
             Args:
                 path: Exact IMAS path (e.g. 'equilibrium/time_slice/profiles_1d/psi')
@@ -2807,29 +2807,31 @@ class AgentsServer:
             result = _run_async(tools.get_dd_versions())
             return _format_dd_versions_report(result)
 
-        @self.mcp.tool()
-        def fetch(resource: str) -> str:
-            """Fetch the full content of a graph resource by ID or URL.
+        if not self.dd_only:
 
-            Use after search_docs, search_code, or search_signals
-            identifies a resource of interest. Returns all chunks
-            or content for the resource.
+            @self.mcp.tool()
+            def fetch_facility_resource(resource: str) -> str:
+                """Fetch the full content of a facility resource by ID or URL.
 
-            Supported types: WikiPage, Document, CodeFile, Image.
+                Use after search_docs, search_code, or search_signals
+                identifies a resource of interest. Returns all chunks
+                or content for the resource.
 
-            The resource parameter can be:
-            - A graph node ID from search results (e.g. "jet:Fishbone_proposal_2018.ppt")
-            - A URL (e.g. "https://wiki.jetdata.eu/tf/...")
-            - A partial title for fuzzy matching
+                Supported types: WikiPage, Document, CodeFile, Image.
 
-            Args:
-                resource: Node ID, URL, or title substring to fetch.
+                The resource parameter can be:
+                - A graph node ID from search results (e.g. "jet:Fishbone_proposal_2018.ppt")
+                - A URL (e.g. "https://wiki.jetdata.eu/tf/...")
+                - A partial title for fuzzy matching
 
-            Returns:
-                Full content report with all chunks in reading order,
-                or image description/OCR text for images.
-            """
-            return _fetch(resource)
+                Args:
+                    resource: Node ID, URL, or title substring to fetch.
+
+                Returns:
+                    Full content report with all chunks in reading order,
+                    or image description/OCR text for images.
+                """
+                return _fetch(resource)
 
         if not self.read_only:
             # =====================================================================
