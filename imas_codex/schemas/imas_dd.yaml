@@ -163,32 +163,6 @@ enums:
       constant:
         description: IDS containing data constant over a pulse
 
-  PhysicsDomainDD:
-    description: Physics domains for IMAS data paths
-    permissible_values:
-      equilibrium:
-        description: Equilibrium reconstruction and MHD equilibrium
-      core_profiles:
-        description: Core plasma profiles (Te, Ti, ne)
-      edge_profiles:
-        description: Edge and SOL plasma profiles
-      transport:
-        description: Transport coefficients and fluxes
-      mhd:
-        description: MHD stability and instabilities
-      waves:
-        description: Wave heating and current drive
-      particles:
-        description: Energetic particles and neutrals
-      diagnostics:
-        description: Diagnostic measurements
-      engineering:
-        description: Machine and engineering systems
-      control:
-        description: Plasma control systems
-      general:
-        description: General/unclassified
-
   ChangeType:
     description: Types of metadata changes between DD versions
     permissible_values:

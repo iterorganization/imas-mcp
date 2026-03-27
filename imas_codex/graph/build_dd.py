@@ -1434,6 +1434,7 @@ def phase_build(
         "cocos_labels_updated": 0,
         "identifier_schemas_created": 0,
         "error_relationships": 0,
+        "orphaned_units_deleted": 0,
     }
 
     # Create Unit / CoordinateSpec nodes
@@ -1664,6 +1665,25 @@ def phase_build(
         if error_relationships:
             stats["error_relationships"] = _batch_create_error_relationships(
                 client, error_relationships
+            )
+
+    # Clean up orphaned Unit nodes that have no incoming HAS_UNIT relationships.
+    # Units from older DD versions may be renamed/removed in later versions.
+    if not dry_run:
+        orphan_result = client.query(
+            """
+            MATCH (u:Unit)
+            WHERE NOT (u)<-[:HAS_UNIT]-()
+            DETACH DELETE u
+            RETURN count(u) AS deleted_orphans
+            """
+        )
+        orphaned = orphan_result[0]["deleted_orphans"] if orphan_result else 0
+        stats["orphaned_units_deleted"] = orphaned
+        if orphaned > 0:
+            logger.info(
+                "Deleted %d orphaned Unit nodes (no HAS_UNIT relationships)",
+                orphaned,
             )
 
     return stats

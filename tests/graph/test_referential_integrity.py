@@ -14,6 +14,8 @@ class TestFacilityOwnership:
 
     def test_facility_id_edges_exist(self, graph_client, schema, graph_labels):
         """Every node with required facility_id must have an AT_FACILITY edge."""
+        if "Facility" not in graph_labels:
+            pytest.skip("No Facility nodes — DD-only graph")
         violations = []
         for label in sorted(graph_labels):
             if label.startswith("_"):
