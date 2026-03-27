@@ -21,6 +21,7 @@ import click
 
 # DD node labels to keep for --dd-only exports
 IMAS_DD_LABELS = [
+    "COCOS",
     "DDVersion",
     "IDS",
     "IMASNode",
@@ -257,6 +258,16 @@ def create_dd_only_dump(source_dump_path: Path, output_path: Path) -> None:
                         break
                     total_deleted += batch_deleted
                 click.echo(f"    Removed {total_deleted} non-DD nodes")
+
+                # Clean up orphaned Unit nodes left after facility node removal
+                orphan_result = session.run(
+                    "MATCH (u:Unit) WHERE NOT (u)<-[:HAS_UNIT]-() "
+                    "WITH u LIMIT 5000 DETACH DELETE u "
+                    "RETURN count(*) AS deleted"
+                )
+                orphan_deleted = orphan_result.single()["deleted"]
+                if orphan_deleted > 0:
+                    click.echo(f"    Removed {orphan_deleted} orphaned Unit nodes")
 
                 # Update GraphMeta to reflect dd-only content
                 session.run(

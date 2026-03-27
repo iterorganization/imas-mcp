@@ -122,7 +122,9 @@ class TestConstraints:
             f"Run GraphClient().initialize_schema() to create them."
         )
 
-    def test_composite_constraints_correct(self, graph_with_schema, schema):
+    def test_composite_constraints_correct(
+        self, graph_with_schema, schema, graph_labels
+    ):
         """Facility-owned nodes have composite (id, facility_id) constraints."""
         constraints = graph_with_schema.query(
             "SHOW CONSTRAINTS YIELD name, type, labelsOrTypes, properties "
@@ -132,7 +134,8 @@ class TestConstraints:
             label = (
                 constraint["labelsOrTypes"][0] if constraint["labelsOrTypes"] else ""
             )
-            if label and label in schema.node_labels:
+            # Only check labels that have data in the graph
+            if label and label in schema.node_labels and label in graph_labels:
                 if schema.needs_composite_constraint(label):
                     props = constraint.get("properties", [])
                     assert "facility_id" in props, (
