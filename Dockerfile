@@ -165,7 +165,10 @@ RUN echo "Graph tag: ${GRAPH_TAG}" > /dev/null
 COPY --from=builder /tmp/graph-pull/ /tmp/graph-pull/
 
 # Extract and load the graph dump (or create empty database)
-# Handles both raw .dump files (oras pull) and .tar.gz archives
+# Handles both raw .dump files (oras pull) and .tar.gz archives.
+# CRITICAL: clean up intermediate files progressively to minimize peak disk usage.
+# The graph dump is ~5 GB; without cleanup we'd have archive + extracted + copy + loaded
+# data all on disk simultaneously (~15+ GB), exceeding CI runner capacity.
 RUN set -ex && \
     if [ -f /tmp/graph-pull/.no-graph ]; then \
         echo "⚠ No graph data — creating empty Neo4j database"; \
@@ -174,36 +177,36 @@ RUN set -ex && \
         cd /tmp/graph-pull && \
         DUMP=$(ls *.dump 2>/dev/null | head -1) && \
         ARCHIVE=$(ls *.tar.gz 2>/dev/null | head -1) && \
+        mkdir -p /tmp/dumps && \
         if [ -n "$DUMP" ]; then \
             echo "Loading dump directly: $DUMP" && \
-            mkdir -p /tmp/dumps && \
-            cp "$DUMP" /tmp/dumps/neo4j.dump; \
+            mv "$DUMP" /tmp/dumps/neo4j.dump && \
+            rm -rf /tmp/graph-pull; \
         elif [ -n "$ARCHIVE" ]; then \
             echo "Extracting: $ARCHIVE" && \
             mkdir -p /tmp/graph-extracted && \
             tar -xzf "$ARCHIVE" -C /tmp/graph-extracted && \
-            echo "Archive contents:" && \
-            find /tmp/graph-extracted -type f -ls && \
+            rm -rf /tmp/graph-pull && \
             DUMP=$(find /tmp/graph-extracted -name "*.dump" -type f | head -1) && \
             if [ -z "$DUMP" ]; then \
                 echo "ERROR: No .dump file found in archive" >&2; \
                 find /tmp/graph-extracted -type f >&2; \
                 exit 1; \
             fi && \
-            echo "Found dump: $DUMP ($(stat -c%s "$DUMP") bytes)" && \
-            mkdir -p /tmp/dumps && \
-            cp "$DUMP" /tmp/dumps/neo4j.dump; \
+            echo "Found dump: $DUMP ($(du -sh "$DUMP" | cut -f1))" && \
+            mv "$DUMP" /tmp/dumps/neo4j.dump && \
+            rm -rf /tmp/graph-extracted; \
         else \
             echo "ERROR: No .dump or .tar.gz found in /tmp/graph-pull/" >&2; \
             ls -la /tmp/graph-pull/ >&2; \
             exit 1; \
         fi && \
-        echo "Loading dump into Neo4j..." && \
-        ls -la /tmp/dumps/ && \
+        echo "Loading dump into Neo4j ($(du -sh /tmp/dumps/neo4j.dump | cut -f1))..." && \
+        df -h / && \
         neo4j-admin database load neo4j --from-path=/tmp/dumps --overwrite-destination 2>&1 && \
+        rm -rf /tmp/dumps && \
         echo "✓ Graph loaded into Neo4j data directory"; \
-    fi && \
-    rm -rf /tmp/graph-pull /tmp/graph-extracted /tmp/dumps
+    fi
 
 # NOTE: Do NOT remove transaction logs (/data/transactions/neo4j/*).
 # Neo4j 2026 requires valid WAL state to open the database after
