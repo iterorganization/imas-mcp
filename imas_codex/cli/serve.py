@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 @click.option(
     "--dd-only/--no-dd-only",
     default=None,
-    help="Force DD-only mode (hide facility tools). Auto-detected from graph if omitted.",
+    help="Force DD-only mode (hide facility tools, implies --read-only). Auto-detected from graph if omitted.",
 )
 def serve(
     transport: str,

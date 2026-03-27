@@ -1519,6 +1519,10 @@ class AgentsServer:
         if self.dd_only is None:
             self.dd_only = self._detect_dd_only()
 
+        # DD-only implies read-only: no write tools needed for a DD-only deployment
+        if self.dd_only:
+            self.read_only = True
+
         name = "imas-codex-readonly" if self.read_only else "imas-codex"
         self.mcp = FastMCP(name=name)
         self._prompts = load_prompts()

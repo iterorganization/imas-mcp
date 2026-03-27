@@ -350,7 +350,9 @@ Ingestion is interrupt-safe — rerun to continue. Already-ingested files are sk
 - `python()` REPL for chained processing, Cypher queries, IMAS/COCOS operations
 - Terminal for `rg`, `fd`, `git`, `uv run`; SSH for remote single commands
 
-**Read-only mode:** `imas-codex serve --read-only` suppresses all write tools (`python()` REPL, `add_to_graph()`, `update_facility_infrastructure()`, `add_exploration_note()`) and exposes only the search/read tools (`search_signals`, `search_docs`, `search_code`, `search_imas`, `fetch`, `get_graph_schema`, etc.). Use for container deployments, public endpoints, and any context where graph mutation is not desired.
+**Read-only mode:** `imas-codex serve --read-only` suppresses all write tools (`python()` REPL, `add_to_graph()`, `update_facility_infrastructure()`, `add_exploration_note()`) and exposes only the search/read tools (`search_signals`, `search_docs`, `search_code`, `search_imas`, `fetch`, `get_graph_schema`, etc.). Use for any context where graph mutation is not desired.
+
+**DD-only mode:** `imas-codex serve --dd-only` hides facility-specific tools and **implies `--read-only`**. Use for container deployments with a DD-only graph. Auto-detected from graph content if omitted.
 
 ```bash
 # Full mode (default) — all tools including REPL and write operations
@@ -359,8 +361,8 @@ imas-codex serve
 # Read-only mode — search and read tools only, no REPL or graph writes
 imas-codex serve --read-only
 
-# Read-only with HTTP transport (typical container deployment)
-imas-codex serve --read-only --transport streamable-http
+# DD-only mode — DD tools only, implies read-only (typical container deployment)
+imas-codex serve --dd-only --transport streamable-http
 ```
 
 ## LLM Access
@@ -924,7 +926,10 @@ CLAUDE.md                    ← Claude Code entry point (@AGENTS.md import)
 # Default: full mode with all tools (REPL, search, write)
 uv run imas-codex serve
 
-# Read-only: search and read tools only (public/container deployments)
+# DD-only mode: DD tools only, implies read-only (container deployments)
+uv run imas-codex serve --dd-only --transport streamable-http
+
+# Read-only: search and read tools only
 uv run imas-codex serve --read-only --transport streamable-http
 
 # STDIO transport for MCP clients (VS Code, Claude Desktop)
@@ -936,7 +941,8 @@ uv run imas-codex serve --transport stdio
 | Deployment | Command | Tools Available |
 |------------|---------|-----------------|
 | Development | `imas-codex serve` | All (REPL, search, write, infrastructure) |
-| Public / container | `imas-codex serve --read-only` | Search and read only |
+| DD-only container | `imas-codex serve --dd-only` | DD search and read only |
+| Public / read-only | `imas-codex serve --read-only` | Search and read only |
 | HPC / SLURM | `scripts/imas_codex_slurm_stdio.sh` | All (inside allocation) |
 
 ## Fallback: MCP Server Not Running

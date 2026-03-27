@@ -291,4 +291,4 @@ HEALTHCHECK --interval=30s --timeout=10s --retries=5 --start-period=240s \
 
 ## Entrypoint starts Neo4j then MCP server
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
-CMD ["serve", "--read-only", "--dd-only", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["serve", "--dd-only", "--host", "0.0.0.0", "--port", "8000"]

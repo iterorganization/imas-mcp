@@ -176,7 +176,7 @@ class TestReadOnlyServer:
         """DD-only mode does not register any facility tools."""
         from imas_codex.llm.server import AgentsServer
 
-        server = AgentsServer(read_only=True, dd_only=True)
+        server = AgentsServer(dd_only=True)
         comps = server.mcp._local_provider._components
         tool_names = [v.name for k, v in comps.items() if k.startswith("tool:")]
 
@@ -186,6 +186,11 @@ class TestReadOnlyServer:
                 f"{tool_name} should not be in DD-only mode"
             )
 
+        # Write tools must NOT be registered (dd-only implies read-only)
+        assert "python" not in tool_names
+        assert "add_to_graph" not in tool_names
+        assert "update_facility_config" not in tool_names
+
         # DD tools SHOULD still be present
         assert "search_imas" in tool_names
         assert "check_imas_paths" in tool_names
@@ -193,6 +198,14 @@ class TestReadOnlyServer:
         assert "find_related_imas_paths" in tool_names
         assert "get_graph_schema" in tool_names
         assert "get_imas_overview" in tool_names
+
+    def test_dd_only_implies_read_only(self):
+        """DD-only mode automatically sets read_only=True."""
+        from imas_codex.llm.server import AgentsServer
+
+        server = AgentsServer(dd_only=True)
+        assert server.read_only is True
+        assert server.mcp.name == "imas-codex-readonly"
 
 
 class TestFacilitiesCLI:
