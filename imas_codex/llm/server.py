@@ -3132,10 +3132,9 @@ class AgentsServer:
         """Run the agents server."""
         if transport == "stdio":
             logger.debug("Starting Agents server with stdio transport")
+            self.mcp.run(transport=transport)
         else:
             logger.info(f"Starting Agents server on {host}:{port}")
-            # Configure host/port on FastMCP settings — run() uses these
-            # internally via self.settings when starting uvicorn.
-            self.mcp.settings.host = host
-            self.mcp.settings.port = port
-        self.mcp.run(transport=transport)
+            # Pass host/port as transport_kwargs — FastMCP.run() forwards
+            # them to run_http_async() which passes them to uvicorn.
+            self.mcp.run(transport=transport, host=host, port=port)
