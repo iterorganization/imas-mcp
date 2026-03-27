@@ -262,6 +262,25 @@ enums:
       built:
         description: All paths for this version written to graph
 
+  EmbeddingChangeType:
+    description: >-
+      Types of embedding content changes detected between DD versions.
+      Recorded on EmbeddingChange nodes to track what specifically changed
+      in an IMASNode's embedding text.
+    permissible_values:
+      UNITS_CHANGED:
+        description: Physical units changed
+      DOCUMENTATION_CHANGED:
+        description: Documentation text changed
+      COORDINATES_CHANGED:
+        description: Coordinate specification changed
+      DATA_TYPE_CHANGED:
+        description: Data type changed
+      PHYSICS_DOMAIN_CHANGED:
+        description: Physics domain changed
+      IDS_CONTEXT_CHANGED:
+        description: IDS context description changed
+
 # =============================================================================
 # Classes
 # =============================================================================
@@ -342,6 +361,11 @@ classes:
           SHA256 hash of build parameters (DD versions, flags) for idempotency.
           If hash matches on next run, DD build is skipped. Replaces the
           former _GraphMeta.dd_build_hash property.
+      cluster_input_hash:
+        description: >-
+          SHA256 hash of the set of embedded IMASNode path IDs used as input
+          to clustering. If hash matches on next run, cluster rebuild is
+          skipped (embedded path set unchanged).
       build_completed_at:
         description: Timestamp when the last build completed
         range: datetime
@@ -835,6 +859,11 @@ classes:
         multivalued: true
       mapping_relevance:
         description: Relevance for IMAS mapping (high, medium, low)
+      tags:
+        description: >-
+          LLM-generated tags from a controlled vocabulary for this cluster.
+          Used for filtering and faceted search over semantic clusters.
+        multivalued: true
       text_embedding_hash:
         description: Hash of text used for embedding, for change detection during re-embedding
 
@@ -981,3 +1010,33 @@ classes:
       distance:
         description: Distance to cluster center (lower = more central)
         range: float
+
+  EmbeddingChange:
+    description: >-
+      Records a change to embedding content for an IMASNode between DD versions.
+      Created by record_embedding_changes() when embedding text changes due to
+      documentation, units, coordinates, or other metadata updates.
+    class_uri: imas_dd:EmbeddingChange
+    attributes:
+      id:
+        identifier: true
+        description: >-
+          Composite key (path_id:change_type:dd_version) for deduplication
+        required: true
+      path_id:
+        description: IMASNode path ID where the embedding change was detected
+        required: true
+      change_type:
+        description: Type of embedding content change detected
+        range: EmbeddingChangeType
+        required: true
+      dd_version:
+        description: DD version where the change was detected
+        required: true
+      detected_at:
+        description: Timestamp when the change was detected
+        range: datetime
+      old_hash:
+        description: Content hash of the previous embedding text (null if new path)
+      new_hash:
+        description: Content hash of the new embedding text
