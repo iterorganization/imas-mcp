@@ -1240,6 +1240,8 @@ do_dump() {{
 cleanup() {{
     rm -f "$ARCHIVE"
     [ -n "$TMPDIR" ] && rm -rf "$TMPDIR"
+    # Always restart Neo4j — it was stopped for dump and must come back
+    start_neo4j || true
 }}
 trap cleanup EXIT
 
@@ -1457,6 +1459,8 @@ cleanup() {{
     rm -f "$FULL_ARCHIVE" 2>/dev/null || true
     rm -f "${{DD_ARCHIVE:-}}" 2>/dev/null || true
     [ -n "${{TMPDIR:-}}" ] && rm -rf "$TMPDIR" 2>/dev/null || true
+    # Always restart Neo4j — it was stopped for dump and must come back
+    start_neo4j || true
 }}
 trap cleanup EXIT
 
