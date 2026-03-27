@@ -200,6 +200,11 @@ RUN set -e && \
     fi && \
     rm -rf /tmp/graph-pull /tmp/graph-extracted /tmp/dumps
 
+# Remove transaction logs not needed for read-only container (saves ~2.3 GB)
+# neo4j-admin database copy --compact-node-store is Enterprise-only;
+# for Community edition we simply purge the write-ahead logs.
+RUN rm -rf /data/transactions/neo4j/*
+
 ## Stage 5: Final runtime image (assemble from builder + Neo4j + graph data)
 FROM python:3.12-slim
 
@@ -232,9 +237,10 @@ RUN rm -rf /opt/neo4j/logs && mkdir -p /opt/neo4j/logs && \
 
 ENV NEO4J_HOME=/opt/neo4j
 
-# Copy Python app from builder stage
+# Copy Python app from builder stage (exclude .git to save ~21 MB)
 COPY --from=builder /bin/uv /bin/
 COPY --from=builder /app /app
+RUN rm -rf /app/.git
 
 # Copy entrypoint script
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
@@ -263,7 +269,9 @@ ENV PYTHONPATH="/app" \
     HF_HOME=/app/.cache/huggingface
 
 # Expose MCP server port (Neo4j ports are internal only)
+# PORT env var tells Azure App Service / Cloud Run which port to probe
 EXPOSE 8000
+ENV PORT=8000
 
 # Health check verifies both Neo4j and MCP server
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 --start-period=60s \
@@ -272,4 +280,4 @@ HEALTHCHECK --interval=30s --timeout=10s --retries=3 --start-period=60s \
 
 ## Entrypoint starts Neo4j then MCP server
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
-CMD ["serve", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["serve", "--read-only", "--host", "0.0.0.0", "--port", "8000"]
