@@ -57,7 +57,7 @@ class TestServeCLI:
         mock_server = MagicMock()
         mock_server_cls.return_value = mock_server
         runner.invoke(main, ["serve"], catch_exceptions=False)
-        mock_server_cls.assert_called_once_with(read_only=False)
+        mock_server_cls.assert_called_once_with(read_only=False, dd_only=None)
         mock_server.run.assert_called_once()
 
     @patch("imas_codex.llm.server.AgentsServer")
@@ -65,7 +65,7 @@ class TestServeCLI:
         mock_server = MagicMock()
         mock_server_cls.return_value = mock_server
         runner.invoke(main, ["serve", "--read-only"], catch_exceptions=False)
-        mock_server_cls.assert_called_once_with(read_only=True)
+        mock_server_cls.assert_called_once_with(read_only=True, dd_only=None)
 
     @patch("imas_codex.llm.server.AgentsServer")
     def test_serve_transport_options(self, mock_server_cls, runner):

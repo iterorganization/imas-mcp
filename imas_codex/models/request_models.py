@@ -11,7 +11,6 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .constants import (
     AnalysisDepth,
-    DetailLevel,
     OutputFormat,
     ResponseProfile,
     SearchMode,
@@ -93,29 +92,6 @@ class SearchInput(BaseInputSchema):
             return ResponseProfile.STANDARD
         if isinstance(v, str):
             return ResponseProfile(v)
-        return v
-
-
-class ExplainInput(BaseInputSchema):
-    """Input validation schema for explain_concept tool."""
-
-    concept: str = Field(
-        min_length=1,
-        max_length=200,
-        description="Physics concept to explain",
-    )
-    detail_level: DetailLevel = Field(
-        default=DetailLevel.INTERMEDIATE,
-        description="Level of detail for explanation",
-    )
-
-    @field_validator("concept")
-    @classmethod
-    def validate_concept(cls, v):
-        """Validate concept format."""
-        v = v.strip()
-        if not v:
-            raise ValueError("Concept cannot be empty")
         return v
 
 
