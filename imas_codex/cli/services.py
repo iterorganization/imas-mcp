@@ -267,6 +267,19 @@ def _gpu_partition() -> dict:
     raise click.ClickException("No GPU partition found in facility compute config.")
 
 
+def _general_partition_name() -> str:
+    """Get the first non-debug, non-GPU partition for CPU-only services."""
+    compute = _compute_config()
+    for p in compute.get("scheduler", {}).get("partitions", []):
+        if p.get("is_debug"):
+            continue
+        if p.get("gpus_per_node") or p.get("gpu_type"):
+            continue
+        return p["name"]
+    # Fallback: use the default partition
+    return "all"
+
+
 # ── SSH helpers ──────────────────────────────────────────────────────────
 
 
@@ -424,34 +437,41 @@ def _submit_service_job(
     """
     import base64
 
-    partition = _gpu_partition()
-    host = _gpu_entry()["location"]
-    partition_name = partition["name"]
+    if gpus > 0:
+        partition = _gpu_partition()
+        host = _gpu_entry()["location"]
+        partition_name = partition["name"]
+    else:
+        # CPU-only services (e.g. Neo4j) use a general partition —
+        # don't pin to the GPU node where embed runs.
+        partition_name = _general_partition_name()
+        host = None
 
-    # Check node state before submitting
-    node_state, reason = _get_node_state(host)
-    if node_state in ("drained", "draining", "down", "down*", "drain", "drng"):
-        raise click.ClickException(
-            f"Node {host} is {node_state} (reason: {reason}).\n"
-            f"SLURM will not schedule jobs on this node.\n"
-            f"Ask an admin to resume: scontrol update NodeName={host} State=RESUME\n"
-            f"Or bypass SLURM: imas-codex embed start --no-slurm"
-        )
+    if host:
+        node_state, reason = _get_node_state(host)
+        if node_state in ("drained", "draining", "down", "down*", "drain", "drng"):
+            raise click.ClickException(
+                f"Node {host} is {node_state} (reason: {reason}).\n"
+                f"SLURM will not schedule jobs on this node.\n"
+                f"Ask an admin to resume: scontrol update NodeName={host} State=RESUME\n"
+                f"Or bypass SLURM: imas-codex embed start --no-slurm"
+            )
 
     remote_home = _run_remote("echo $HOME", timeout=10).strip()
     services_dir_abs = f"{remote_home}/.local/share/imas-codex/services"
 
     gres_line = f"#SBATCH --gres=gpu:{gpus}\n" if gpus > 0 else ""
+    nodelist_line = f"#SBATCH --nodelist={host}\n" if host else ""
 
     script = (
         "#!/bin/bash\n"
         f"#SBATCH --partition={partition_name}\n"
         f"{gres_line}"
+        f"{nodelist_line}"
         f"#SBATCH --cpus-per-task={cpus}\n"
         f"#SBATCH --mem={mem}\n"
         "#SBATCH --time=UNLIMITED\n"
         f"#SBATCH --job-name={job_name}\n"
-        f"#SBATCH --nodelist={host}\n"
         f"#SBATCH --output={services_dir_abs}/{job_name}.log\n"
         "\n"
         f"cd {_PROJECT}\n"
