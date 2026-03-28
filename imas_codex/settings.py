@@ -209,7 +209,7 @@ def get_embed_remote_url() -> str | None:
     from imas_codex.remote.locations import resolve_service_url
 
     port = get_embed_server_port()
-    return resolve_service_url(location, port)
+    return resolve_service_url(location, port, service_job_name="codex-embed")
 
 
 def get_embed_server_port() -> int:

@@ -208,6 +208,7 @@ def resolve_service_url(
     port: int,
     *,
     protocol: str = "http",
+    service_job_name: str | None = None,
 ) -> str | None:
     """Resolve the URL to reach a service at the given location.
 
@@ -222,6 +223,8 @@ def resolve_service_url(
         location: Location string (e.g. ``"titan"``, ``"iter"``, ``"local"``).
         port: Service port number.
         protocol: URL protocol (default ``"http"``).
+        service_job_name: Override SLURM job name for node discovery.
+            When ``None``, uses the location's default (``codex-neo4j``).
 
     Returns:
         URL string, or None for ``"local"`` locations.
@@ -229,14 +232,16 @@ def resolve_service_url(
     if location == "local":
         return None
 
-    cache_key = (location, port, protocol)
+    cache_key = (location, port, protocol, service_job_name)
     now = time.monotonic()
     if cache_key in _service_url_cache:
         cached_time, cached_url = _service_url_cache[cache_key]
         if now - cached_time < _SERVICE_URL_TTL:
             return cached_url
 
-    url = _resolve_service_url_uncached(location, port, protocol=protocol)
+    url = _resolve_service_url_uncached(
+        location, port, protocol=protocol, service_job_name=service_job_name
+    )
     _service_url_cache[cache_key] = (now, url)
     return url
 
@@ -246,10 +251,12 @@ def _resolve_service_url_uncached(
     port: int,
     *,
     protocol: str = "http",
+    service_job_name: str | None = None,
 ) -> str | None:
     """Actual resolution logic (called by cached wrapper)."""
     info = resolve_location(location)
     local = is_location_local(location)
+    job_name = service_job_name or info.service_job_name
 
     # Mode 1: local, no scheduler → direct localhost
     if local and info.scheduler != "slurm":
@@ -259,9 +266,7 @@ def _resolve_service_url_uncached(
     if local and info.scheduler == "slurm":
         from imas_codex.remote.tunnel import discover_compute_node_local
 
-        compute_node = discover_compute_node_local(
-            service_job_name=info.service_job_name
-        )
+        compute_node = discover_compute_node_local(service_job_name=job_name)
         if not compute_node:
             # squeue found no running service job — try the configured
             # compute host (services may outlive the SLURM allocation).
