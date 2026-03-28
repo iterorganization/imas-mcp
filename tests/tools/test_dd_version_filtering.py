@@ -1,10 +1,10 @@
 """Tests for DD version validity filtering, cluster scope query construction,
 and overview/export tools.
 
-Validates that _dd_version_clause uses prefix-based version filtering:
-- Uses STARTS WITH $dd_version_prefix (e.g. "4.") on INTRODUCED_IN/DEPRECATED_IN
-- A path is valid in DD major N if introduced with version starting with "N."
-  and not deprecated with version starting with "N."
+Validates that _dd_version_clause uses major-version comparison:
+- Uses toInteger(split(id, '.')[0]) <= $dd_major_version on INTRODUCED_IN/DEPRECATED_IN
+- A path is valid in DD major N if introduced in any version with major <= N
+  and not deprecated in any version with major <= N.
 - Paths introduced in DD3 and never deprecated are valid in both DD3 and DD4.
 - Paths deprecated in DD4 are valid in DD3 but not DD4.
 - Paths deprecated in DD3 are invalid in both DD3 and DD4.
@@ -49,29 +49,69 @@ class TestDDVersionClause:
     def test_sets_dd_version_param(self):
         params = {}
         _dd_version_clause("p", dd_version=4, params=params)
-        assert params["dd_version_prefix"] == "4."
+        assert params["dd_major_version"] == 4
 
     def test_uses_correct_alias(self):
         clause = _dd_version_clause("node", dd_version=3)
         assert "(node)-[:INTRODUCED_IN]->" in clause
         assert "(node)-[:DEPRECATED_IN]->" in clause
 
-    def test_uses_starts_with_prefix(self):
-        """The clause uses STARTS WITH $dd_version_prefix for version matching."""
+    def test_uses_major_version_comparison(self):
+        """The clause compares the major version integer, not a string prefix."""
         clause = _dd_version_clause("p", dd_version=4)
-        assert "STARTS WITH $dd_version_prefix" in clause
+        assert "toInteger(split(" in clause
+        assert "$dd_major_version" in clause
 
     def test_checks_introduced_exists(self):
-        """Must check that INTRODUCED_IN relationship exists with matching prefix."""
+        """Must check that INTRODUCED_IN relationship exists with major <= N."""
         clause = _dd_version_clause("p", dd_version=4)
         assert "INTRODUCED_IN" in clause
-        assert "STARTS WITH $dd_version_prefix" in clause
+        assert "<= $dd_major_version" in clause
 
     def test_checks_not_deprecated_lte(self):
-        """Must exclude paths deprecated in any version with matching prefix."""
+        """Must exclude paths deprecated in any version with major <= N."""
         clause = _dd_version_clause("p", dd_version=4)
         assert "NOT EXISTS" in clause
         assert "DEPRECATED_IN" in clause
+
+
+# ============================================================================
+# Renamed path handling tests
+# ============================================================================
+
+
+class TestRenamedPathHandling:
+    """Test that check_imas_paths correctly handles RENAMED_TO relationships."""
+
+    @pytest.mark.asyncio
+    async def test_renamed_path_returns_valid_model(self):
+        """Renamed paths must produce a valid CheckPathsResultItem, not a Pydantic error."""
+        gc = MagicMock()
+        # First query: path not found (no match)
+        # Second query: RENAMED_TO found
+        gc.query.side_effect = [
+            [],  # path lookup returns empty
+            [
+                {
+                    "old_path": "magnetics/bpol_probe/polarisation_angle",
+                    "new_path": "magnetics/bpol_probe/polarization_angle",
+                }
+            ],
+        ]
+        tool = GraphPathTool(gc)
+        result = await tool.check_imas_paths("magnetics/bpol_probe/polarisation_angle")
+
+        assert result.summary["not_found"] == 1
+        item = result.results[0]
+        assert item.exists is False
+        assert item.suggestion == "magnetics/bpol_probe/polarization_angle"
+        assert isinstance(item.renamed_from, list)
+        assert (
+            item.renamed_from[0]["new_path"]
+            == "magnetics/bpol_probe/polarization_angle"
+        )
+        assert isinstance(item.migration, dict)
+        assert item.migration["type"] == "renamed"
 
 
 # ============================================================================
@@ -100,13 +140,13 @@ class TestVersionFilteringSemantics:
         )
         assert result.results[0].exists is True
 
-        # Verify the Cypher includes prefix-based version filtering
+        # Verify the Cypher includes major-version comparison
         cypher = gc.query.call_args_list[0][0][0]
-        assert "STARTS WITH" in cypher
+        assert "toInteger(split(" in cypher
 
     @pytest.mark.asyncio
-    async def test_dd_version_param_is_prefix(self):
-        """The dd_version_prefix parameter passed to Cypher must be a string prefix."""
+    async def test_dd_version_param_is_integer(self):
+        """The dd_major_version parameter passed to Cypher must be an integer."""
         gc = MagicMock()
         gc.query.return_value = [
             {"id": "test/path", "ids": "test", "data_type": "FLT_0D", "units": ""}
@@ -114,10 +154,10 @@ class TestVersionFilteringSemantics:
         tool = GraphPathTool(gc)
         await tool.check_imas_paths("test/path", dd_version=4)
 
-        # Check that dd_version_prefix="4." was passed
+        # Check that dd_major_version=4 was passed
         kwargs = gc.query.call_args_list[0][1]
-        assert "dd_version_prefix" in kwargs
-        assert kwargs["dd_version_prefix"] == "4."
+        assert "dd_major_version" in kwargs
+        assert kwargs["dd_major_version"] == 4
 
     @pytest.mark.asyncio
     async def test_no_dd_version_skips_filter(self):
@@ -183,7 +223,7 @@ class TestClusterScopeQuery:
         assert "INTRODUCED_IN" in cypher
         kwargs = gc.query.call_args[1]
         assert kwargs["scope"] == "ids"
-        assert kwargs["dd_version_prefix"] == "4."
+        assert kwargs["dd_major_version"] == 4
 
     @pytest.mark.asyncio
     async def test_search_imas_clusters_path_with_scope(self):
@@ -256,7 +296,7 @@ class TestOverviewQueryStructure:
         assert "MATCH (i:IDS)" in ids_cypher
         assert "INTRODUCED_IN" in ids_cypher
         kwargs = gc.query.call_args_list[0][1]
-        assert kwargs["dd_version_prefix"] == "4."
+        assert kwargs["dd_major_version"] == 4
 
 
 # ============================================================================
@@ -305,7 +345,7 @@ class TestExportQueryStructure:
         cypher = gc.query.call_args[0][0]
         assert "INTRODUCED_IN" in cypher
         kwargs = gc.query.call_args[1]
-        assert kwargs["dd_version_prefix"] == "4."
+        assert kwargs["dd_major_version"] == 4
 
 
 # ============================================================================

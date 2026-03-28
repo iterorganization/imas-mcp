@@ -79,28 +79,28 @@ def _dd_version_clause(
     """Return a Cypher WHERE fragment for DD major version filtering.
 
     When dd_version is None, returns empty string (no filter).
-    Otherwise generates a clause ensuring the path was introduced in a
-    DD version with the given major prefix and not deprecated before the
-    latest version of that major line.
+    Otherwise generates a clause ensuring the path was introduced in
+    DD version N or earlier, and not deprecated in version N or earlier.
+    This returns all paths **active** in the given major version — not
+    only paths newly introduced in that version.
 
     The DDVersion.id is a semver string like "3.42.2" or "4.0.0".
-    Filtering by major version uses string prefix matching on $dd_version_prefix.
+    Major version is extracted via ``toInteger(split(id, '.')[0])``.
 
-    If *params* dict is provided, adds ``dd_version_prefix`` to it.
+    If *params* dict is provided, adds ``dd_major_version`` to it.
     """
     if dd_version is None:
         return ""
-    prefix = f"{dd_version}."
     if params is not None:
-        params["dd_version_prefix"] = prefix
+        params["dd_major_version"] = dd_version
     return (
         f"AND EXISTS {{ "
         f"  MATCH ({alias})-[:INTRODUCED_IN]->(iv:DDVersion) "
-        f"  WHERE iv.id STARTS WITH $dd_version_prefix "
+        f"  WHERE toInteger(split(iv.id, '.')[0]) <= $dd_major_version "
         f"}} "
         f"AND NOT EXISTS {{ "
         f"  MATCH ({alias})-[:DEPRECATED_IN]->(dv:DDVersion) "
-        f"  WHERE dv.id STARTS WITH $dd_version_prefix "
+        f"  WHERE toInteger(split(dv.id, '.')[0]) <= $dd_major_version "
         f"}}"
     )
 
@@ -422,13 +422,19 @@ class GraphPathTool:
                     path=path,
                 )
                 if renamed:
+                    new_path = renamed[0]["new_path"]
                     results.append(
                         CheckPathsResultItem(
                             path=path,
                             exists=False,
-                            renamed_from=renamed[0]["old_path"],
-                            migration=f"Renamed to {renamed[0]['new_path']}",
-                            suggestion=renamed[0]["new_path"],
+                            renamed_from=[
+                                {
+                                    "old_path": renamed[0]["old_path"],
+                                    "new_path": new_path,
+                                }
+                            ],
+                            migration={"type": "renamed", "target": new_path},
+                            suggestion=new_path,
                         )
                     )
                 else:
@@ -1618,8 +1624,9 @@ class GraphStructureTool:
         basic = metrics[0] if metrics else {}
         total_paths = basic.get("total_paths", 0)
         leaf_count = basic.get("leaf_count", 0)
-        return {
+        result: dict[str, Any] = {
             "ids_name": ids_name,
+            "dd_version": dd_version,
             "total_paths": total_paths,
             "leaf_count": leaf_count,
             "structure_count": total_paths - leaf_count,
@@ -1638,6 +1645,40 @@ class GraphStructureTool:
                 {"path": c["path"], "label": c["cocos_label"]} for c in cocos_fields
             ],
         }
+
+        # When version-filtered, add deprecated/renamed context for this IDS
+        if dd_version is not None:
+            dep_params: dict[str, Any] = {
+                "ids_name": ids_name,
+                "dd_major_version": dd_version,
+            }
+            deprecated = self._gc.query(
+                """
+                MATCH (p:IMASNode)-[:DEPRECATED_IN]->(dv:DDVersion)
+                WHERE p.ids = $ids_name
+                  AND toInteger(split(dv.id, '.')[0]) <= $dd_major_version
+                RETURN count(p) AS count
+                """,
+                **dep_params,
+            )
+            renamed = self._gc.query(
+                """
+                MATCH (old:IMASNode)-[:RENAMED_TO]->(new:IMASNode)
+                WHERE old.ids = $ids_name
+                RETURN count(old) AS count
+                """,
+                ids_name=ids_name,
+            )
+            result["version_context"] = {
+                "note": (
+                    f"Filtered to paths active in DD v{dd_version}. "
+                    f"Counts include paths carried forward from earlier major versions."
+                ),
+                "deprecated_in_or_before": deprecated[0]["count"] if deprecated else 0,
+                "renamed_paths": renamed[0]["count"] if renamed else 0,
+            }
+
+        return result
 
     @mcp_tool(
         "Export full IDS structure with documentation, units, and types. "

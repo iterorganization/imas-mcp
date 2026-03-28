@@ -1228,8 +1228,30 @@ def format_structure_report(result: dict[str, Any]) -> str:
 
     parts: list[str] = []
     ids_name = result.get("ids_name", "")
+    dd_version = result.get("dd_version")
 
-    parts.append(f"## IDS Structure Analysis: {ids_name}\n")
+    header = f"## IDS Structure Analysis: {ids_name}"
+    if dd_version is not None:
+        header += f" (DD v{dd_version})"
+    parts.append(header + "\n")
+
+    # Version context note when filtered
+    version_ctx = result.get("version_context")
+    if version_ctx:
+        parts.append(f"> {version_ctx['note']}")
+        dep = version_ctx.get("deprecated_in_or_before", 0)
+        ren = version_ctx.get("renamed_paths", 0)
+        if dep or ren:
+            ctx_parts = []
+            if dep:
+                ctx_parts.append(f"{dep} deprecated")
+            if ren:
+                ctx_parts.append(f"{ren} renamed")
+            parts.append(
+                f"> Version changes: {', '.join(ctx_parts)} paths in this IDS."
+            )
+        parts.append("")
+
     parts.append(f"- Total paths: {result.get('total_paths', 0)}")
     parts.append(f"- Leaf fields: {result.get('leaf_count', 0)}")
     parts.append(f"- Structures: {result.get('structure_count', 0)}")
