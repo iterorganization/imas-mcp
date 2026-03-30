@@ -519,7 +519,6 @@ jobs:
             type=semver,pattern=v{{major}}${{ matrix.graph_variant.suffix }}
             type=raw,value=latest-stable${{ matrix.graph_variant.suffix }},enable=${{ startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-rc') }}
             type=raw,value=latest-rc${{ matrix.graph_variant.suffix }},enable=${{ contains(github.ref, '-rc') }}
-            type=raw,value=latest${{ matrix.graph_variant.suffix }}
           flavor: |
             latest=false
 
