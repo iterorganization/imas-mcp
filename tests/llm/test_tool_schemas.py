@@ -61,11 +61,11 @@ class TestToolDescriptions:
 
     def test_python_tool_has_description(self, rw_tool_schemas):
         """Regression: FastMCP 3.0 captures docstrings eagerly at decoration time."""
-        python_tools = [t for t in rw_tool_schemas if t["name"] == "python"]
-        assert python_tools, "python tool not found"
-        desc = python_tools[0].get("description", "")
-        assert len(desc) > 100, f"python tool description too short: {len(desc)} chars"
-        assert "REPL" in desc, "python tool description should mention REPL"
+        repl_tools = [t for t in rw_tool_schemas if t["name"] == "repl"]
+        assert repl_tools, "repl tool not found"
+        desc = repl_tools[0].get("description", "")
+        assert len(desc) > 100, f"repl tool description too short: {len(desc)} chars"
+        assert "REPL" in desc, "repl tool description should mention REPL"
 
 
 class TestOutputSchema:

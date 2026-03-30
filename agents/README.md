@@ -45,12 +45,11 @@ All agents have access to Codex MCP tools:
 
 | Tool | Purpose |
 |------|---------|
-| `python()` | Persistent Python REPL with pre-loaded utilities |
+| `repl()` | Persistent Python REPL with pre-loaded utilities |
 | `get_graph_schema()` | Neo4j schema for Cypher generation |
 | `add_to_graph()` | Schema-validated batch node creation |
-| `update_facility_infrastructure()` | Update private facility data |
-| `get_facility_infrastructure()` | Read private facility data |
-| `add_exploration_note()` | Add timestamped exploration note |
+| `update_facility_config()` | Read/update public facility YAML |
+| `get_facility_coverage()` | Scored path coverage and discovery gaps |
 
 ## Handoffs
 

@@ -1558,9 +1558,8 @@ class AgentsServer:
             "signal_analytics",
             "search_docs",
             "search_code",
-            "fetch_facility_resource",
-            "get_discovery_context",
-            "get_facility_infrastructure",
+            "fetch_content",
+            "get_facility_coverage",
         }
     )
 
@@ -1694,7 +1693,7 @@ class AgentsServer:
             # Build description before decoration — FastMCP 3.0 captures
             # the description eagerly at decoration time, so setting
             # __doc__ after @mcp.tool() has no effect on the MCP schema.
-            python_description = (
+            repl_description = (
                 "Execute Python in a persistent REPL with pre-imported graph "
                 "query helpers, embedding functions, and facility config "
                 "accessors. State persists across calls. Use for custom Cypher "
@@ -1713,8 +1712,8 @@ class AgentsServer:
                 "nothing was printed. Returns traceback on error."
             )
 
-            @self.mcp.tool(description=python_description)
-            def python(code: str) -> str:
+            @self.mcp.tool(description=repl_description)
+            def repl(code: str) -> str:
                 repl = _get_repl()
 
                 stdout_capture = io.StringIO()
@@ -1926,171 +1925,48 @@ class AgentsServer:
             def update_facility_config(
                 facility: str,
                 data: dict[str, Any] | None = None,
-                private: bool = True,
             ) -> dict[str, Any]:
-                """Read or update a facility's YAML configuration file.
+                """Read or update a facility's public YAML configuration.
 
-                Reads or deep-merges data into the facility config. Use for
-                infrastructure metadata (tools, hostnames, paths, OS) that should
-                NOT go in the graph. For graph-stored data, use add_to_graph.
+                Reads or deep-merges data into the facility's public metadata
+                (git-tracked, deployed in CLI tools). Use for facility description,
+                data_systems config, wiki sites, and discovery roots. For
+                graph-stored data, use add_to_graph.
 
                 Args:
                     facility (str, required): Facility identifier (e.g. "tcv",
                         "iter", "jet", "jt-60sa", "west", "mast-u").
-                    data (dict | None): Dict to deep-merge into config. If None
-                        (default), returns current config without modification.
-                    private (bool): Target file selector. True (default) reads/writes
-                        the private YAML (hostnames, tools, paths, exploration_notes).
-                        False reads/writes the public YAML (description, data systems).
+                    data (dict | None): Dict to deep-merge into the public config.
+                        If None (default), returns current config without modification.
 
                 Returns:
-                    dict: Current configuration after any update. Private mode returns
-                    private infrastructure data; public mode returns public metadata.
+                    dict: Current public metadata after any update.
                 """
-                _require_warmup()
                 try:
                     if data is not None:
-                        if private:
-                            update_infrastructure(facility, data)
-                        else:
-                            update_metadata(facility, data)
+                        update_metadata(facility, data)
 
-                    if private:
-                        return get_facility_infrastructure(facility) or {}
-                    else:
-                        from imas_codex.discovery import get_facility_metadata
+                    from imas_codex.discovery import get_facility_metadata
 
-                        return get_facility_metadata(facility) or {}
+                    return get_facility_metadata(facility) or {}
                 except Exception as e:
                     logger.exception(f"Failed to access config for {facility}")
                     raise RuntimeError(f"Failed to access config: {e}") from e
 
-        if not self.read_only:
-            # =====================================================================
-            # Tool 5: update_facility_infrastructure - Update private facility data
-            # =====================================================================
-
-            @self.mcp.tool()
-            def update_facility_infrastructure(
-                facility: str,
-                data: dict[str, Any],
-            ) -> dict[str, Any]:
-                """Deep-merge data into a facility's private infrastructure YAML.
-
-                Use for sensitive or environment-specific metadata that should NOT
-                be stored in the graph: tool versions, hostnames, file system mounts,
-                OS details, network info, and exploration notes. Existing keys are
-                recursively merged (not overwritten).
-
-                Args:
-                    facility (str, required): Facility identifier (e.g. "tcv",
-                        "iter", "jet", "jt-60sa", "west", "mast-u").
-                    data (dict, required): Dict to deep-merge. Common top-level
-                        keys: "tools", "paths", "file_systems", "login_nodes",
-                        "local_hosts", "exploration_notes".
-
-                Returns:
-                    dict: Full private infrastructure data after the merge.
-                """
-                try:
-                    from imas_codex.discovery import (
-                        get_facility_infrastructure as _get_infra,
-                        update_infrastructure as _update_infra,
-                    )
-
-                    _update_infra(facility, data)
-                    return _get_infra(facility) or {}
-                except Exception as e:
-                    logger.exception(f"Failed to update infrastructure for {facility}")
-                    raise RuntimeError(f"Failed to update infrastructure: {e}") from e
+        # NOTE: update_facility_infrastructure, get_facility_infrastructure, and
+        # add_exploration_note were removed (private-infra deprecation).
+        # Use the repl tool with update_infrastructure() / get_facility_infrastructure()
+        # from imas_codex.discovery for those operations if still needed.
 
         # =====================================================================
-        # Tool 6: get_facility_infrastructure - Read private facility data
+        # Tool 7b: get_facility_coverage - Scored path coverage and gaps
         # =====================================================================
 
         if not self.dd_only:
 
             @self.mcp.tool()
-            def get_facility_infrastructure(facility: str) -> dict[str, Any]:
-                """Read a facility's private infrastructure YAML (read-only).
-
-                Returns the private config containing hostnames, tool versions,
-                file system mounts, OS details, and exploration notes. Does not
-                include public config. Call before update_facility_infrastructure
-                to inspect current state.
-
-                Args:
-                    facility (str, required): Facility identifier (e.g. "tcv",
-                        "iter", "jet", "jt-60sa", "west", "mast-u").
-
-                Returns:
-                    dict: Private infrastructure data. Empty dict if no private
-                    config exists. Common keys: "tools", "paths", "file_systems",
-                    "login_nodes", "local_hosts", "exploration_notes".
-                """
-                try:
-                    from imas_codex.discovery import (
-                        get_facility_infrastructure as _get_infra,
-                    )
-
-                    return _get_infra(facility) or {}
-                except Exception as e:
-                    logger.exception(f"Failed to get infrastructure for {facility}")
-                    raise RuntimeError(f"Failed to get infrastructure: {e}") from e
-
-        if not self.read_only:
-            # =====================================================================
-            # Tool 7: add_exploration_note - Append timestamped exploration note
-            # =====================================================================
-
-            @self.mcp.tool()
-            def add_exploration_note(facility: str, note: str) -> list[str]:
-                """Append a timestamped note to a facility's exploration_notes list.
-
-                Persists a discovery observation in the facility's private YAML.
-                Automatically prepends today's date (YYYY-MM-DD) to the note text.
-                Use to record findings, timeouts, or constraints during facility
-                exploration so future sessions can avoid repeating work.
-
-                Args:
-                    facility (str, required): Facility identifier (e.g. "tcv",
-                        "iter", "jet", "jt-60sa", "west", "mast-u").
-                    note (str, required): Free-text observation to record.
-
-                Returns:
-                    list[str]: The full exploration_notes list after appending.
-                """
-                try:
-                    from datetime import datetime
-
-                    from imas_codex.discovery import (
-                        get_facility_infrastructure as _get_infra,
-                        update_infrastructure as _update_infra,
-                    )
-
-                    infra = _get_infra(facility) or {}
-                    notes = infra.get("exploration_notes", [])
-
-                    # Add timestamped note
-                    timestamp = datetime.now().strftime("%Y-%m-%d")
-                    timestamped_note = f"{timestamp}: {note}"
-                    notes.append(timestamped_note)
-
-                    _update_infra(facility, {"exploration_notes": notes})
-                    return notes
-                except Exception as e:
-                    logger.exception(f"Failed to add exploration note for {facility}")
-                    raise RuntimeError(f"Failed to add exploration note: {e}") from e
-
-        # =====================================================================
-        # Tool 7b: get_discovery_context - Graph-derived discovery state
-        # =====================================================================
-
-        if not self.dd_only:
-
-            @self.mcp.tool()
-            def get_discovery_context(facility: str) -> dict[str, Any]:
-                """Get discovery progress and gap analysis for a facility.
+            def get_facility_coverage(facility: str) -> dict[str, Any]:
+                """Get scored path coverage and discovery gaps for a facility.
 
                 Queries the graph for scored FacilityPath nodes and compares
                 coverage against expected path_purpose categories. Call before
@@ -2196,8 +2072,8 @@ class AgentsServer:
                         },
                     }
                 except Exception as e:
-                    logger.exception(f"Failed to get discovery context for {facility}")
-                    raise RuntimeError(f"Failed to get discovery context: {e}") from e
+                    logger.exception(f"Failed to get facility coverage for {facility}")
+                    raise RuntimeError(f"Failed to get facility coverage: {e}") from e
 
         # NOTE: update_facility_paths and update_facility_tools were removed as
         # MCP tools (Phase 5 consolidation). Use update_infrastructure() in the
@@ -2820,8 +2696,8 @@ class AgentsServer:
         if not self.dd_only:
 
             @self.mcp.tool()
-            def fetch_facility_resource(resource: str) -> str:
-                """Retrieve full content of a WikiPage, Document, CodeFile, or Image.
+            def fetch_content(resource: str) -> str:
+                """Fetch full text content of a graph resource by ID, URL, or title.
 
                 Use after search_docs/search_code/search_signals returns a
                 resource ID you want to read in full. Resolves the resource,

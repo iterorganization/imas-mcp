@@ -32,7 +32,7 @@ ssh myfacility "hostname && whoami && pwd"
 uv run imas-codex tools check myfacility
 uv run imas-codex tools install myfacility
 
-# 4. Populate infrastructure via MCP (from python() REPL)
+# 4. Populate infrastructure via MCP (from repl() REPL)
 # See Phase 2 below
 
 # 5. Run initial discovery
@@ -183,11 +183,12 @@ ssh myfacility "ls -la /common /work /home 2>/dev/null | head -30"
 
 ### Step 3.2: Persist via MCP Tools
 
-Use the MCP tools to persist infrastructure (creates private YAML automatically):
+Use the MCP repl tool to persist infrastructure (creates private YAML automatically):
 
 ```python
-# Update infrastructure (private, gitignored)
-update_facility_infrastructure("myfacility", {
+# Update infrastructure (private, gitignored) via repl
+repl("""
+update_infrastructure("myfacility", {
     "hostname": "compute-node-001",
     "os": {
         "name": "RHEL",
@@ -201,24 +202,25 @@ update_facility_infrastructure("myfacility", {
     "paths": {
         "imas": {"root": "/common/IMAS"},
         "codes": {"shared": "/common/codes"}
-    }
+    },
+    "exploration_notes": ["Initial setup complete, IMAS at /common/IMAS"]
 })
+""")
 
 # Update tool versions
+repl("""
 update_facility_tools("myfacility", {
     "rg": {"version": "14.1.1", "path": "/home/user/bin/rg", "purpose": "Fast pattern search"},
     "fd": {"version": "10.2.0", "path": "/home/user/bin/fd", "purpose": "Fast file finder"}
 })
-
-# Add exploration notes
-add_exploration_note("myfacility", "Initial setup complete, IMAS at /common/IMAS")
+""")
 ```
 
 ### Step 3.3: Verify Configuration
 
 ```python
-# Read back infrastructure
-get_facility_infrastructure("myfacility")
+# Read back infrastructure via repl
+repl("print(get_facility('myfacility'))")
 ```
 
 ## Phase 4: Discovery Pipeline
@@ -226,7 +228,7 @@ get_facility_infrastructure("myfacility")
 ### Step 4.1: Seed Initial Paths
 
 ```python
-python("""
+repl("""
 add_to_graph('FacilityPath', [
     {'id': 'myfacility:/common/codes', 'path': '/common/codes',
      'facility_id': 'myfacility', 'path_type': 'code_directory', 
@@ -250,7 +252,7 @@ uv run imas-codex discovery status myfacility
 If paths cause timeouts, persist constraints immediately:
 
 ```python
-python("""
+repl("""
 # Record problematic path
 update_infrastructure('jet', {
     'excludes': {
@@ -259,9 +261,9 @@ update_infrastructure('jet', {
             '/home': 3,
             '/work': 2
         }
-    }
+    },
+    'exploration_notes': ['/archive too large - excluded from discovery']
 })
-add_exploration_note('jet', '/archive too large - excluded from discovery')
 """)
 ```
 
@@ -282,7 +284,7 @@ uv run imas-codex mdsplus ingest jet magnetics --shot 12345
 For JET, PPF and JPF require custom ingestion:
 
 ```python
-python("""
+repl("""
 # Query available diagnostics
 result = run('ls /common/ppf/diagnostics', facility='jet')
 print(result)
@@ -319,7 +321,7 @@ uv run imas-codex enrich jet --filter "score > 0.7"
 ### Step 5.2: Generate IMAS Mappings
 
 ```python
-python("""
+repl("""
 # Find potential IMAS mappings
 candidates = search_code('equilibrium psi axis', facility='jet')
 for c in candidates[:5]:

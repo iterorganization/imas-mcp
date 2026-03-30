@@ -36,7 +36,7 @@ stale ◀── (re-scan)
 ### Via MCP (Preferred)
 
 ```python
-python("""
+repl("""
 ingest_nodes("SourceFile", [
     {"id": "tcv:/home/codes/liuqe.py", 
      "path": "/home/codes/liuqe.py",
