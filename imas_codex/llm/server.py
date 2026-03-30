@@ -1611,16 +1611,22 @@ class AgentsServer:
             # the description eagerly at decoration time, so setting
             # __doc__ after @mcp.tool() has no effect on the MCP schema.
             python_description = (
-                "Execute Python in a persistent REPL for custom graph queries "
-                "and operations not covered by the search_* tools. Variables "
-                "persist across calls.\n\n"
-                "Prefer search_signals/search_docs/search_code/search_imas for "
-                "common lookups — they return formatted reports in one call.\n\n"
+                "Execute Python in a persistent REPL with pre-imported graph "
+                "query helpers, embedding functions, and facility config "
+                "accessors. State persists across calls. Use for custom Cypher "
+                "queries, signal-to-IMAS mapping, batch graph writes, and "
+                "chained operations not covered by the dedicated search tools.\n\n"
+                "Prefer search_signals/search_docs/search_code/search_imas "
+                "for standard lookups — they handle embeddings, enrichment, "
+                "and formatting automatically.\n\n"
                 f"{api_reference}\n"
                 "Args:\n"
-                "    code: Python code to execute (multi-line supported)\n\n"
+                "    code (str, required): Python code to execute. Multi-line "
+                "supported. Use print() for output; bare expressions return "
+                "their repr.\n\n"
                 "Returns:\n"
-                "    stdout output, or repr of last expression if no print"
+                "    str: Captured stdout, or repr of the last expression if "
+                "nothing was printed. Returns traceback on error."
             )
 
             @self.mcp.tool(description=python_description)
@@ -1658,24 +1664,30 @@ class AgentsServer:
         def get_graph_schema(
             scope: str = "overview",
         ) -> str:
-            """
-            Get graph schema context for Cypher query generation.
+            """Get graph schema context for Cypher query generation.
 
             Returns compact, task-relevant schema in text format. Use scope to
-            get only the schema slice you need, reducing token usage.
+            get only the schema slice you need, reducing token usage. Call this
+            before writing any raw Cypher to verify node labels, property names,
+            relationship types, and enum values.
 
             Args:
-                scope: One of "overview" (compact summary of all labels),
-                       "signals", "wiki", "imas", "code", "facility", "trees"
-                       (detailed schema for that domain).
+                scope: Schema slice to return. One of:
+                    - "overview": compact summary of all node labels, relationship
+                      types, vector indexes, and task groupings (default).
+                    - "signals": FacilitySignal, DataAccess, Diagnostic, AccessCheck.
+                    - "wiki": WikiPage, WikiChunk, Document, Image.
+                    - "imas": IMASNode, IDS, IMASSemanticCluster, DDVersion, Unit,
+                      IMASNodeChange, IMASCoordinateSpec.
+                    - "code": CodeFile, CodeChunk, CodeExample.
+                    - "facility": Facility, FacilityPath, FacilitySignal, SignalNode,
+                      Diagnostic.
+                    - "trees": tree-related data source nodes and relationships.
 
             Returns:
-                Compact text schema context for LLM consumption.
-
-            Examples:
-                get_graph_schema()  # Overview of all labels
-                get_graph_schema("signals")  # Signal-related schema
-                get_graph_schema("imas")  # IMAS DD schema
+                Formatted text containing property tables (name, type, description),
+                relationship definitions as (From)-[:REL]->(To), available vector
+                indexes, and enum values for the requested scope.
             """
             from imas_codex.graph.schema_context import schema_for
 
@@ -1693,40 +1705,27 @@ class AgentsServer:
                 create_facility_relationship: bool = True,
                 batch_size: int = 50,
             ) -> dict[str, Any]:
-                """
-                Create nodes in the knowledge graph with schema validation.
+                """Create or update nodes in the Neo4j knowledge graph with schema validation.
 
-                Validates data against Pydantic models, filters out private fields,
-                then writes to the graph. Use this for semantic data (files, codes, nodes).
-                For infrastructure data (paths, tools, OS), use update_infrastructure() instead.
+                Validates each item against the Pydantic model for node_type, strips
+                private fields, then MERGEs nodes by id. Use for semantic data (files,
+                signals, paths). For infrastructure metadata, use update_facility_infrastructure.
 
-                Special handling:
-                - CodeFile: Auto-deduplicates already discovered/ingested files
-                - SignalNode: Auto-creates IN_DATA_SOURCE and ACCESSOR_FUNCTION relationships
-                - FacilityPath: Links to parent Facility
+                CodeFile nodes are auto-deduplicated against existing discovered/ingested files.
 
                 Args:
-                    node_type: Node label (use get_graph_schema() to see valid types)
-                    data: List of property dicts matching the schema
-                    create_facility_relationship: Auto-create AT_FACILITY relationship
-                    batch_size: Nodes per batch (default: 50)
+                    node_type (str, required): Graph node label. Must match a schema-defined
+                        type — call get_graph_schema() to list valid labels.
+                    data (dict | list[dict], required): One dict or a list of dicts. Each
+                        dict must include at least "id" and "facility_id". Properties are
+                        validated against the node_type's Pydantic model.
+                    create_facility_relationship (bool): When true (default), auto-creates
+                        an AT_FACILITY relationship to the Facility node.
+                    batch_size (int): Nodes per UNWIND batch. Default 50.
 
                 Returns:
-                    Dict with counts: {"processed": N, "skipped": K, "errors": [...]}
-
-                Examples:
-                    # Queue source files for ingestion
-                    add_to_graph("CodeFile", [
-                        {"id": "tcv:/home/codes/liuqe.py", "path": "/home/codes/liuqe.py",
-                         "facility_id": "tcv", "status": "discovered"}
-                    ])
-
-                    # Track discovered directories
-                    add_to_graph("FacilityPath", [
-                        {"id": "tcv:/home/codes", "path": "/home/codes",
-                         "facility_id": "tcv", "path_type": "code_directory",
-                         "status": "discovered", "score_composite": 0.8}
-                    ])
+                    dict with keys: "processed" (int), "skipped" (int),
+                    "relationships" (dict of rel_type→count), "errors" (list[str]).
                 """
                 schema = get_schema()
 
@@ -1844,48 +1843,24 @@ class AgentsServer:
                 data: dict[str, Any] | None = None,
                 private: bool = True,
             ) -> dict[str, Any]:
-                """
-                Read or update facility configuration (public or private).
+                """Read or update a facility's YAML configuration file.
 
-                Use this for infrastructure data (tools, paths, OS) that should NOT
-                go in the graph. For semantic data (files, codes), use add_to_graph().
-
-                Private data (private=True):
-                - Tool versions and availability
-                - File system paths
-                - Hostnames and network info
-                - OS and environment details
-                - Exploration notes
-
-                Public data (private=False):
-                - Facility name and description
-                - Machine name
-                - Data system types
+                Reads or deep-merges data into the facility config. Use for
+                infrastructure metadata (tools, hostnames, paths, OS) that should
+                NOT go in the graph. For graph-stored data, use add_to_graph.
 
                 Args:
-                    facility: Facility identifier (e.g., "tcv", "iter")
-                    data: If provided, update config. If None, just read.
-                    private: If True, update private config. If False, update public.
+                    facility (str, required): Facility identifier (e.g. "tcv",
+                        "iter", "jet", "jt-60sa", "west", "mast-u").
+                    data (dict | None): Dict to deep-merge into config. If None
+                        (default), returns current config without modification.
+                    private (bool): Target file selector. True (default) reads/writes
+                        the private YAML (hostnames, tools, paths, exploration_notes).
+                        False reads/writes the public YAML (description, data systems).
 
                 Returns:
-                    Current config data (after update if data provided)
-
-                Examples:
-                    # Read private infrastructure
-                    update_facility_config("iter")
-
-                    # Update tool availability (private)
-                    update_facility_config("iter", {"tools": {"rg": "14.1.1"}})
-
-                    # Add exploration notes (private)
-                    update_facility_config("iter", {
-                        "exploration_notes": ["Found IMAS modules"]
-                    })
-
-                    # Update public metadata
-                    update_facility_config("iter", {
-                        "description": "ITER SDCC - Updated"
-                    }, private=False)
+                    dict: Current configuration after any update. Private mode returns
+                    private infrastructure data; public mode returns public metadata.
                 """
                 try:
                     if data is not None:
@@ -1914,48 +1889,22 @@ class AgentsServer:
                 facility: str,
                 data: dict[str, Any],
             ) -> dict[str, Any]:
-                """
-                Update private facility infrastructure data with deep merge.
+                """Deep-merge data into a facility's private infrastructure YAML.
 
-                Use this for sensitive infrastructure data that should NOT go in the graph:
-                - Tool versions and availability
-                - File system paths and mounts
-                - Hostnames and network info
-                - OS and environment details
-                - Exploration notes
-
-                The data is deep-merged into the existing private YAML file,
-                preserving comments and formatting.
+                Use for sensitive or environment-specific metadata that should NOT
+                be stored in the graph: tool versions, hostnames, file system mounts,
+                OS details, network info, and exploration notes. Existing keys are
+                recursively merged (not overwritten).
 
                 Args:
-                    facility: Facility identifier (e.g., "tcv", "iter")
-                    data: Data to merge into private file
+                    facility (str, required): Facility identifier (e.g. "tcv",
+                        "iter", "jet", "jt-60sa", "west", "mast-u").
+                    data (dict, required): Dict to deep-merge. Common top-level
+                        keys: "tools", "paths", "file_systems", "login_nodes",
+                        "local_hosts", "exploration_notes".
 
                 Returns:
-                    Updated private infrastructure data
-
-                Examples:
-                    # Update tool availability
-                    update_facility_infrastructure("iter", {
-                        "tools": {"rg": {"version": "14.1.1", "path": "~/bin/rg"}}
-                    })
-
-                    # Update file system paths
-                    update_facility_infrastructure("iter", {
-                        "paths": {
-                            "imas": {"/work/imas": "IMAS installation root"}
-                        }
-                    })
-
-                    # Add multiple fields at once
-                    update_facility_infrastructure("iter", {
-                        "file_systems": [{
-                            "mount_point": "/mnt/HPC_T2",
-                            "type": "GPFS",
-                            "size": "1.5 PB"
-                        }],
-                        "exploration_notes": ["Discovered HPC storage"]
-                    })
+                    dict: Full private infrastructure data after the merge.
                 """
                 try:
                     from imas_codex.discovery import (
@@ -1977,23 +1926,21 @@ class AgentsServer:
 
             @self.mcp.tool()
             def get_facility_infrastructure(facility: str) -> dict[str, Any]:
-                """
-                Read private facility infrastructure data.
+                """Read a facility's private infrastructure YAML (read-only).
 
-                Returns only the private infrastructure data (not public config).
-                Use this to check what's already stored before updating.
+                Returns the private config containing hostnames, tool versions,
+                file system mounts, OS details, and exploration notes. Does not
+                include public config. Call before update_facility_infrastructure
+                to inspect current state.
 
                 Args:
-                    facility: Facility identifier (e.g., "tcv", "iter")
+                    facility (str, required): Facility identifier (e.g. "tcv",
+                        "iter", "jet", "jt-60sa", "west", "mast-u").
 
                 Returns:
-                    Private infrastructure data dict
-
-                Example:
-                    # Check current infrastructure
-                    infra = get_facility_infrastructure("iter")
-                    print(infra.get("tools", {}))
-                    print(infra.get("exploration_notes", []))
+                    dict: Private infrastructure data. Empty dict if no private
+                    config exists. Common keys: "tools", "paths", "file_systems",
+                    "login_nodes", "local_hosts", "exploration_notes".
                 """
                 try:
                     from imas_codex.discovery import (
@@ -2012,21 +1959,20 @@ class AgentsServer:
 
             @self.mcp.tool()
             def add_exploration_note(facility: str, note: str) -> list[str]:
-                """
-                Append a timestamped exploration note to facility's private data.
+                """Append a timestamped note to a facility's exploration_notes list.
 
-                Automatically adds ISO timestamp prefix to the note.
+                Persists a discovery observation in the facility's private YAML.
+                Automatically prepends today's date (YYYY-MM-DD) to the note text.
+                Use to record findings, timeouts, or constraints during facility
+                exploration so future sessions can avoid repeating work.
 
                 Args:
-                    facility: Facility identifier (e.g., "tcv", "iter")
-                    note: Exploration note to add
+                    facility (str, required): Facility identifier (e.g. "tcv",
+                        "iter", "jet", "jt-60sa", "west", "mast-u").
+                    note (str, required): Free-text observation to record.
 
                 Returns:
-                    Updated exploration_notes list
-
-                Examples:
-                    add_exploration_note("iter", "Found IMAS modules at /work/imas")
-                    add_exploration_note("iter", "Discovered 50 Python files in /work/codes")
+                    list[str]: The full exploration_notes list after appending.
                 """
                 try:
                     from datetime import datetime
@@ -2057,29 +2003,30 @@ class AgentsServer:
 
             @self.mcp.tool()
             def get_discovery_context(facility: str) -> dict[str, Any]:
-                """
-                Get discovery context for a facility including graph-derived state.
+                """Get discovery progress and gap analysis for a facility.
 
-                Returns comprehensive discovery state to guide exploration:
-                - Configured roots and their categories
-                - Coverage by category (what's already been discovered)
-                - High-value paths found so far
-                - Gap analysis (underrepresented categories)
-                - Schema for valid category values
-
-                Use this before exploring to identify gaps and avoid duplication.
+                Queries the graph for scored FacilityPath nodes and compares
+                coverage against expected path_purpose categories. Call before
+                exploring to identify underrepresented areas and avoid duplication.
 
                 Args:
-                    facility: Facility identifier (e.g., "tcv", "iter")
+                    facility (str, required): Facility identifier (e.g. "tcv",
+                        "iter", "jet", "jt-60sa", "west", "mast-u").
 
                 Returns:
-                    Dict with discovery_roots, coverage_by_category, high_value_paths,
-                    missing_categories, and schema with valid category values.
-
-                Example:
-                    ctx = get_discovery_context("tcv")
-                    print("Missing categories:", ctx["missing_categories"])
-                    print("Coverage:", ctx["coverage_by_category"])
+                    dict with keys:
+                    - "facility" (str): Echo of input.
+                    - "discovery_roots" (list[dict]): Configured root paths.
+                    - "coverage_by_category" (dict[str, int]): Scored path counts
+                      per path_purpose value.
+                    - "total_scored_paths" (int): Sum of all coverage counts.
+                    - "high_value_paths" (list[dict]): Top 15 paths with
+                      score > 0.7 (keys: path, purpose, score, description).
+                    - "missing_categories" (list[str]): Expected categories
+                      with zero coverage.
+                    - "unexplored_containers" (list[dict]): Containers scoring
+                      > 0.4 that have not been expanded yet.
+                    - "schema" (dict): Valid path_purpose category values.
                 """
                 try:
                     from imas_codex.discovery import (
@@ -2219,27 +2166,34 @@ class AgentsServer:
                 include_check_details: bool = False,
                 k: int = 20,
             ) -> str:
-                """Search facility signals with full graph enrichment.
+                """Find facility signals by physics concept and return data-access details.
 
-                Performs hybrid search (vector + keyword) on signal descriptions,
-                then enriches with data access templates, IMAS mappings, diagnostic
-                context, and related tree nodes.
-
-                Use this for: "How do I access [quantity] at [facility]?"
+                Hybrid search (vector similarity + keyword) over FacilitySignal
+                descriptions, enriched with DataAccess templates, IMAS mappings,
+                diagnostic context, and related MDSplus/TDI tree nodes.
 
                 Args:
-                    query: Natural language search text (e.g. "plasma current")
-                    facility: Facility id (required, e.g. "tcv", "jet")
-                    diagnostic: Optional diagnostic filter (e.g. "magnetics")
-                    physics_domain: Optional physics domain filter
-                    check_status: Filter by check outcome: "passed", "failed", or "unchecked"
-                    error_type: Filter by error classification (e.g. "not_available_for_shot")
-                    include_check_details: Include CHECKED_WITH relationship data in results
-                    k: Number of results (default 20)
+                    query: Natural-language description of the quantity to find
+                        (e.g. "plasma current", "electron density profile").
+                    facility: Facility identifier (required). One of: tcv, jet,
+                        iter, jt-60sa, west, mast-u, etc.
+                    diagnostic: Keep only signals from this diagnostic system
+                        (e.g. "magnetics", "thomson_scattering").
+                    physics_domain: Keep only signals in this physics domain
+                        (e.g. "magnetics", "kinetics", "equilibrium").
+                    check_status: Filter by data-access check outcome.
+                        Values: "passed", "failed", "unchecked".
+                    error_type: Filter by check error classification
+                        (e.g. "not_available_for_shot"). Implies check_status="failed".
+                    include_check_details: If true, append per-signal check metadata
+                        (shot, shape, error, timestamp) to each result.
+                    k: Maximum results to return (default 20).
 
                 Returns:
-                    Formatted report with signals, data access, IMAS mappings,
-                    and related tree nodes.
+                    Formatted text report. Each signal entry includes: signal id,
+                    description, diagnostic, data-access template, IMAS mapping
+                    path (if mapped), and related tree node paths. A secondary
+                    section lists raw tree-node matches from the SignalNode index.
                 """
                 return _search_signals(
                     query,
@@ -2258,21 +2212,27 @@ class AgentsServer:
                 group_by: list[str] | None = None,
                 filters: dict[str, str] | None = None,
             ) -> str:
-                """Aggregate signal counts by specified dimensions.
+                """Aggregate signal counts grouped by one or more dimensions.
 
-                Use this for batch analytics queries like "how many signals
-                pass/fail checks?" or "signal breakdown by physics domain".
+                Returns a markdown table of counts and percentages. Use this
+                instead of raw Cypher for questions like "how many signals per
+                physics domain?" or "pass/fail breakdown for magnetics?".
 
                 Args:
-                    facility: Facility id (required, e.g. "tcv", "jet")
+                    facility: Facility identifier (required). One of: tcv, jet,
+                        iter, jt-60sa, west, mast-u, etc.
                     group_by: Dimensions to group by (default: ["status"]).
-                        Allowed: status, physics_domain, data_source_name,
-                        discovery_source, diagnostic, check_status, error_type
-                    filters: Optional key-value filters to narrow results
-                        (e.g. {"status": "checked", "physics_domain": "magnetics"})
+                        Allowed values: status, physics_domain, data_source_name,
+                        discovery_source, diagnostic, check_status, error_type.
+                        Multiple values produce a cross-tabulation.
+                    filters: Key-value pairs to restrict the counted population
+                        before grouping. Keys must be from the allowed group_by
+                        set (e.g. {"physics_domain": "magnetics",
+                        "check_status": "failed"}).
 
                 Returns:
-                    Formatted table with counts and percentages per group.
+                    Markdown table with one row per group combination, showing
+                    count and percentage of total. Includes a total signal count.
                 """
                 return _signal_analytics(facility, group_by=group_by, filters=filters)
 
@@ -2286,26 +2246,35 @@ class AgentsServer:
                 min_score: float | None = None,
                 score_dimension: str | None = None,
             ) -> str:
-                """Search documentation (wiki, documents, images) with cross-links.
+                """Search wiki pages, linked documents, and images for a topic.
 
-                Performs hybrid search (vector + keyword) across wiki content,
-                linked documents, and images, enriched with cross-references to
-                signals, tree nodes, and IMAS paths.
-
-                Use this for: "What does the knowledge base say about [topic] at [facility]?"
+                Hybrid search (vector similarity + keyword) across WikiChunk
+                text, plus a secondary vector search on Document and Image
+                nodes. Results are enriched with cross-references to signals,
+                tree nodes, and IMAS paths found on the same wiki page.
 
                 Args:
-                    query: Natural language search text (e.g. "fishbone instabilities")
-                    facility: Facility id (required, e.g. "tcv", "jet")
-                    k: Results per index (default 15)
-                    site: Optional wiki site filter (substring match on wiki URL)
-                    physics_domain: Filter by WikiPage physics domain
-                    min_score: Minimum score threshold (0.0-1.0) for score_dimension
-                    score_dimension: Score dimension to filter on
+                    query: Natural-language description of the topic
+                        (e.g. "fishbone instabilities", "COCOS conventions").
+                    facility: Facility identifier (required). One of: tcv, jet,
+                        iter, jt-60sa, west, mast-u, etc.
+                    k: Maximum results per search index (default 15).
+                    site: Substring filter on the wiki site URL
+                        (e.g. "crpp" to restrict to CRPP wiki pages).
+                    physics_domain: Keep only pages classified under this domain
+                        (e.g. "mhd", "heating", "diagnostics").
+                    min_score: Minimum page-level score (0.0–1.0) on
+                        score_dimension. Pages below this threshold are excluded.
+                    score_dimension: Which page score to apply min_score to.
+                        Values: score_data_documentation, score_physics_content,
+                        score_code_documentation, score_data_access,
+                        score_calibration, score_imas_relevance, score_composite
+                        (default: score_composite).
 
                 Returns:
-                    Formatted report with wiki documentation grouped by page,
-                    cross-links to signals/IMAS paths, and related documents.
+                    Formatted text report. Wiki results are grouped by page with
+                    chunk excerpts, cross-linked signal/IMAS refs, and relevance
+                    scores. A separate section lists matching documents/images.
                 """
                 return _search_docs(
                     query,
@@ -2326,25 +2295,34 @@ class AgentsServer:
                 min_score: float | None = None,
                 score_dimension: str | None = None,
             ) -> str:
-                """Search ingested code with data reference enrichment.
+                """Search ingested source code for relevant functions and snippets.
 
-                Performs hybrid search (vector + keyword) on code chunks,
-                enriched with MDSplus paths, TDI function calls, IMAS path
-                references, and directory context.
-
-                Use this for: "Show me code that does [task] at [facility]"
+                Hybrid search (vector similarity + keyword) over CodeChunk text
+                and CodeExample descriptions, enriched with MDSplus node paths,
+                TDI function calls, IMAS path references, and parent directory
+                context from FacilityPath.
 
                 Args:
-                    query: Natural language search text (e.g. "equilibrium reconstruction")
-                    facility: Optional facility filter (e.g. "tcv")
-                    k: Number of results (default 10)
-                    physics_domain: Filter by FacilityPath physics domain
-                    min_score: Minimum score threshold (0.0-1.0) for score_dimension
-                    score_dimension: Score dimension to filter on
+                    query: Natural-language description of the code to find
+                        (e.g. "equilibrium reconstruction", "read interferometer data").
+                    facility: Facility identifier to scope results. Omit to
+                        search across all facilities. One of: tcv, jet, iter,
+                        jt-60sa, west, mast-u, etc.
+                    k: Maximum results to return (default 10).
+                    physics_domain: Keep only code under paths classified in this
+                        domain (e.g. "equilibrium", "transport").
+                    min_score: Minimum path-level score (0.0–1.0) on
+                        score_dimension. Paths below this threshold are excluded.
+                    score_dimension: Which path score to apply min_score to.
+                        Values: score_modeling_code, score_analysis_code,
+                        score_operations_code, score_data_access, score_workflow,
+                        score_visualization, score_documentation, score_imas,
+                        score_convention, score_composite (default: score_composite).
 
                 Returns:
-                    Formatted report with code examples, data references,
-                    and directory context.
+                    Formatted text report. Each result includes the code snippet,
+                    source file path, data references (MDSplus nodes, TDI calls,
+                    IMAS paths), and relevance score.
                 """
                 return _search_code(
                     query,
@@ -2364,31 +2342,20 @@ class AgentsServer:
             dd_version: int | None = None,
             k: int = 20,
         ) -> str:
-            """Search IMAS Data Dictionary with cross-domain enrichment.
+            """Find IMAS Data Dictionary paths matching a concept. Use when you need to discover which paths store a given physical quantity.
 
-            Performs hybrid search (vector + keyword) across IMAS path and
-            cluster embeddings, enriched with cluster membership, coordinate
-            context, units, and optional facility cross-references and
-            version history.
-
-            Error fields (_error_upper, _error_lower, _error_index) and
-            metadata subtrees (ids_properties/*, code/*) are excluded from
-            search results. To access error fields for a data path, use
-            fetch_imas_paths to get HAS_ERROR relationships.
-
-            Use this for: "What IMAS paths represent [concept]?"
+            Performs hybrid search (vector + keyword) across path and cluster embeddings. Results include data type, units, coordinates, cluster membership, and optional facility signal cross-references. Error fields and metadata subtrees (ids_properties/*, code/*) are excluded — use fetch_error_fields for those.
 
             Args:
-                query: Natural language search text (e.g. "electron temperature")
-                ids_filter: Optional IDS name filter (e.g. "core_profiles")
-                facility: Optional facility for cross-references (e.g. "tcv")
-                include_version_context: Include DD version change history
-                dd_version: Filter by DD major version (e.g., 3 or 4)
-                k: Number of results (default 20)
+                query: Natural-language description of the quantity to find (e.g. "electron temperature", "plasma boundary shape").
+                ids_filter: Restrict results to a single IDS name (e.g. "core_profiles"). Default: search all IDSs.
+                facility: Include cross-references to facility signals (e.g. "tcv", "jet"). Default: no facility enrichment.
+                include_version_context: If true, append DD version change history for each matched path. Default: false.
+                dd_version: Filter by DD major version (3 or 4). Default: latest version.
+                k: Maximum number of results. Default: 20.
 
             Returns:
-                Formatted report with IMAS paths, clusters, facility
-                cross-references, and version context.
+                Formatted text report listing matched paths with types, units, cluster labels, and optional facility cross-references.
             """
             from concurrent.futures import ThreadPoolExecutor
 
@@ -2464,19 +2431,17 @@ class AgentsServer:
             ids: str | None = None,
             dd_version: int | None = None,
         ) -> str:
-            """Validate IMAS paths against the Data Dictionary graph.
+            """Check whether specific IMAS paths exist in the Data Dictionary. Use to validate paths before accessing data or to diagnose typos.
 
-            Checks whether exact paths exist, reports data types and units,
-            and suggests corrections for renamed or misspelled paths.
+            For each path, reports whether it exists, its data type and units, and suggests corrections for misspelled or renamed paths.
 
             Args:
-                paths: Space or comma-delimited IMAS paths to validate
-                    (e.g., "equilibrium/time_slice/profiles_1d/psi core_profiles/profiles_1d/electrons/temperature")
-                ids: Optional IDS prefix to prepend to all paths
-                dd_version: Filter by DD major version (e.g., 3 or 4)
+                paths: Space- or comma-separated IMAS paths to validate (e.g. "equilibrium/time_slice/profiles_1d/psi core_profiles/profiles_1d/electrons/temperature").
+                ids: Optional IDS name to prepend to all paths (e.g. "equilibrium" turns "time_slice/profiles_1d/psi" into "equilibrium/time_slice/profiles_1d/psi"). Default: none.
+                dd_version: Filter by DD major version (3 or 4). Default: latest version.
 
             Returns:
-                Formatted validation report with existence status per path.
+                Formatted text report with existence status, data type, and units per path. Invalid paths include suggested corrections.
             """
             tools = _get_imas_tools()
             result = _run_async(
@@ -2491,22 +2456,18 @@ class AgentsServer:
             dd_version: int | None = None,
             include_version_history: bool = False,
         ) -> str:
-            """Get full documentation for IMAS paths including units, coordinates, cluster membership.
+            """Get full documentation for known IMAS paths. Use after search_imas or check_imas_paths to retrieve detailed metadata for specific paths.
 
-            Returns detailed information for each path: documentation text,
-            data type, units, coordinate specs, semantic cluster labels,
-            physics domain classification, identifier schemas, and
-            optionally version change history.
+            Returns per-path: documentation text, data type, units, coordinate specifications, semantic cluster labels, physics domain, identifier schemas, and optionally version change history.
 
             Args:
-                paths: Space or comma-delimited IMAS paths
-                    (e.g., "equilibrium/time_slice/profiles_1d/psi")
-                ids: Optional IDS prefix to prepend
-                dd_version: Filter by DD major version (e.g., 3 or 4)
-                include_version_history: Include notable version changes
+                paths: Space- or comma-separated IMAS paths (e.g. "equilibrium/time_slice/profiles_1d/psi core_profiles/profiles_1d/electrons/temperature").
+                ids: Optional IDS name to prepend to all paths (e.g. "core_profiles"). Default: none.
+                dd_version: Filter by DD major version (3 or 4). Default: latest version.
+                include_version_history: If true, include notable changes across DD versions for each path. Default: false.
 
             Returns:
-                Formatted path documentation report.
+                Formatted text report with complete documentation per path.
             """
             tools = _get_imas_tools()
             result = _run_async(
@@ -2524,19 +2485,14 @@ class AgentsServer:
             path: str,
             dd_version: int | None = None,
         ) -> str:
-            """Fetch error fields for a data path via HAS_ERROR relationships.
-
-            Returns the error fields (_error_upper, _error_lower,
-            _error_index) associated with a given data path. Error fields
-            are not included in search or list results — use this tool
-            to discover them for a known data path.
+            """Get the uncertainty/error fields associated with a data path. IMAS data paths can have companion error fields (_error_upper, _error_lower, _error_index) that quantify measurement uncertainty. These are excluded from search and list results — use this tool to discover them for a known path.
 
             Args:
-                path: IMAS data path (e.g., "equilibrium/time_slice/profiles_1d/psi")
-                dd_version: Filter by DD major version (e.g., 3 or 4)
+                path: Exact IMAS data path (e.g. "equilibrium/time_slice/profiles_1d/psi").
+                dd_version: Filter by DD major version (3 or 4). Default: latest version.
 
             Returns:
-                Formatted list of error fields with their types.
+                Formatted text listing error fields and their data types, or empty if the path has no error fields.
             """
             tools = _get_imas_tools()
             result = _run_async(
@@ -2551,23 +2507,18 @@ class AgentsServer:
             max_paths: int | None = None,
             dd_version: int | None = None,
         ) -> str:
-            """List data paths within an IMAS IDS or subtree.
+            """Enumerate all paths under an IDS or subtree. Use to browse the structure of an IDS or discover available fields under a path prefix.
 
-            Enumerates all data paths under the given IDS name(s) or
-            path prefix(es). Error fields and metadata subtrees are
-            excluded. Use leaf_only=True to get only data endpoints
-            (excluding structures). Error fields are accessible via
-            HAS_ERROR relationships from their parent data paths.
+            Lists child paths hierarchically. Error fields and metadata subtrees (ids_properties/*, code/*) are excluded — use fetch_error_fields for uncertainty data.
 
             Args:
-                paths: Space-separated IDS names or path prefixes
-                    (e.g., "equilibrium" or "equilibrium/time_slice")
-                leaf_only: If true, return only leaf nodes (data fields)
-                max_paths: Maximum paths per query (None for all)
-                dd_version: Filter by DD major version (e.g., 3 or 4)
+                paths: Space-separated IDS names or path prefixes (e.g. "equilibrium" or "equilibrium/time_slice"). Multiple values list paths from each.
+                leaf_only: If true, return only leaf data fields (skip intermediate structures). Default: false.
+                max_paths: Cap the number of paths returned. Default: no limit.
+                dd_version: Filter by DD major version (3 or 4). Default: latest version.
 
             Returns:
-                Formatted path listing report.
+                Formatted text listing of paths with their data types.
             """
             tools = _get_imas_tools()
             result = _run_async(
@@ -2585,17 +2536,16 @@ class AgentsServer:
             query: str | None = None,
             dd_version: int | None = None,
         ) -> str:
-            """Get overview of available IMAS IDS with statistics and physics domains.
+            """List all available IDSs (Interface Data Structures) with descriptions and statistics. Use as a starting point to discover which IDS contains the data you need.
 
-            Returns a summary of all Interface Data Structures including
-            descriptions, path counts, and physics domain classifications.
+            Each IDS entry includes its description, total path count, and physics domain classification.
 
             Args:
-                query: Optional filter keyword (e.g., "magnetics")
-                dd_version: Filter by DD major version (e.g., 3 or 4)
+                query: Optional keyword to filter IDS names and descriptions (e.g. "magnetics", "transport"). Default: list all IDSs.
+                dd_version: Filter by DD major version (3 or 4). Default: latest version.
 
             Returns:
-                Formatted overview report with IDS statistics.
+                Formatted text report listing each IDS with its description, path count, and physics domain.
             """
             tools = _get_imas_tools()
             result = _run_async(
@@ -2608,17 +2558,16 @@ class AgentsServer:
             query: str | None = None,
             dd_version: int | None = None,
         ) -> str:
-            """Browse IMAS identifier/enumeration schemas.
+            """Browse IMAS enumeration/identifier schemas and their allowed values. Use to find valid options for typed fields like coordinate systems, grid types, or probe types.
 
-            Returns available identifier schemas (coordinate systems,
-            grid types, probe types, etc.) with their valid options.
+            IMAS paths that reference an identifier schema accept only the enumerated values defined in that schema.
 
             Args:
-                query: Optional filter (e.g., "coordinate" or "magnetics")
-                dd_version: Filter by DD major version (e.g., 3 or 4)
+                query: Optional keyword to filter schema names (e.g. "coordinate", "grid_type", "magnetics"). Default: list all schemas.
+                dd_version: Filter by DD major version (3 or 4). Default: latest version.
 
             Returns:
-                Formatted identifiers report with schemas and options.
+                Formatted text report listing each identifier schema with its allowed name/index/description options.
             """
             tools = _get_imas_tools()
             result = _run_async(
@@ -2634,23 +2583,19 @@ class AgentsServer:
             section_only: bool = False,
             dd_version: int | None = None,
         ) -> str:
-            """Search semantic clusters of related IMAS data paths.
+            """Find groups of semantically related IMAS paths (clusters). Clusters group paths that represent the same physical concept across different IDSs — e.g. all "electron temperature" paths regardless of which IDS they live in.
 
-            Finds groups of semantically related paths across IDS
-            boundaries. Can search by natural language, find clusters
-            containing a specific path, or list all clusters for an IDS.
+            Supports three modes: (1) natural-language search for clusters by topic, (2) find which clusters contain a specific path, (3) list all clusters for an IDS (pass ids_filter without query).
 
             Args:
-                query: Natural language description or exact IMAS path
-                    (e.g., "boundary geometry" or "equilibrium/time_slice/boundary/outline/r").
-                    Optional when ids_filter is provided (listing mode).
-                scope: Filter by cluster scope: "global", "domain", or "ids"
-                ids_filter: Limit to clusters from specific IDS
-                section_only: If true, only return clusters containing structural sections
-                dd_version: Filter by DD major version (e.g., 3 or 4)
+                query: Natural-language topic (e.g. "boundary geometry") or exact IMAS path (e.g. "equilibrium/time_slice/boundary/outline/r"). Optional when ids_filter is provided.
+                scope: Filter by cluster scope — "global" (cross-IDS), "domain" (within physics domain), or "ids" (within single IDS). Default: all scopes.
+                ids_filter: Restrict to clusters containing paths from this IDS (e.g. "equilibrium"). Default: all IDSs.
+                section_only: If true, return only clusters that contain structural section nodes. Default: false.
+                dd_version: Filter by DD major version (3 or 4). Default: latest version.
 
             Returns:
-                Formatted cluster report with paths and descriptions.
+                Formatted text report listing matched clusters with their member paths and descriptions.
             """
             from imas_codex.models.error_models import ToolError
 
@@ -2682,25 +2627,18 @@ class AgentsServer:
             max_results: int = 20,
             dd_version: int | None = None,
         ) -> str:
-            """Find IMAS paths related to a given path across different IDSs.
+            """Find paths in other IDSs that are related to a given path. Use to discover cross-IDS connections — e.g. where the same physical quantity appears in different data structures.
 
-            Discovers cross-IDS relationships by combining vector embedding
-            similarity, cluster membership, physics coordinate sharing,
-            unit+domain affinity, and identifier schemas. Produces focused,
-            noise-free results by filtering generic coordinate tokens
-            (e.g. '1...N') that would otherwise match thousands of paths.
-
-            Use this for: "What other IMAS paths measure the same quantity?"
+            Combines multiple relationship signals: vector similarity, shared cluster membership, common physics coordinates, matching units+domain, and shared identifier schemas. Generic coordinate matches (e.g. "1...N") are filtered out.
 
             Args:
-                path: Exact IMAS path (e.g. 'equilibrium/time_slice/profiles_1d/psi')
-                relationship_types: Filter to 'semantic', 'cluster', 'coordinate',
-                    'unit', 'identifier', or 'all' (default)
-                max_results: Maximum results per section (default 20)
-                dd_version: Filter by DD major version (e.g., 3 or 4)
+                path: Exact IMAS path to find relatives for (e.g. "equilibrium/time_slice/profiles_1d/psi").
+                relationship_types: Which relationship types to include — "semantic", "cluster", "coordinate", "unit", "identifier", or "all". Default: "all".
+                max_results: Maximum results per relationship type. Default: 20.
+                dd_version: Filter by DD major version (3 or 4). Default: latest version.
 
             Returns:
-                Formatted report with cross-IDS connections grouped by signal type.
+                Formatted text report with related paths grouped by relationship type, each showing the target path, IDS, and relevance score.
             """
             tools = _get_imas_tools()
             result = _run_async(
@@ -2718,17 +2656,16 @@ class AgentsServer:
             ids_name: str,
             dd_version: int | None = None,
         ) -> str:
-            """Analyze the hierarchical structure of an IMAS IDS.
+            """Analyze the hierarchical structure of an IDS. Use to understand the depth, branching, and organization of an IDS before exploring its paths.
 
-            Returns depth metrics, leaf/structure ratio, array patterns,
-            physics domain distribution, coordinate usage, and COCOS fields.
+            Returns: tree depth metrics, leaf vs structure node ratio, array-of-structures patterns, physics domain distribution across subtrees, coordinate usage summary, and COCOS-dependent fields.
 
             Args:
-                ids_name: IDS name (e.g. 'equilibrium')
-                dd_version: Filter by DD major version (e.g., 3 or 4)
+                ids_name: IDS name to analyze (e.g. "equilibrium", "core_profiles").
+                dd_version: Filter by DD major version (3 or 4). Default: latest version.
 
             Returns:
-                Formatted structural analysis report.
+                Formatted text report with structural statistics and organization overview.
             """
             tools = _get_imas_tools()
             result = _run_async(
@@ -2742,18 +2679,17 @@ class AgentsServer:
             leaf_only: bool = False,
             dd_version: int | None = None,
         ) -> str:
-            """Export full IDS structure with documentation, units, and types.
+            """Export every path in an IDS with full metadata. Use when you need the complete schema of an IDS — all paths with their types, units, coordinates, cluster labels, and COCOS annotations.
 
-            Returns all paths in an IDS with their complete metadata
-            including units, coordinates, clusters, and COCOS labels.
+            Warning: large IDSs can produce very long output. Use leaf_only=true to reduce volume by excluding intermediate structure nodes.
 
             Args:
-                ids_name: IDS name (e.g. 'equilibrium')
-                leaf_only: If true, return only leaf nodes (default false)
-                dd_version: Filter by DD major version (e.g., 3 or 4)
+                ids_name: IDS name to export (e.g. "equilibrium", "core_profiles").
+                leaf_only: If true, return only leaf data fields (skip structures). Default: false.
+                dd_version: Filter by DD major version (3 or 4). Default: latest version.
 
             Returns:
-                Full IDS path listing with documentation.
+                Formatted text listing every path in the IDS with documentation, type, units, and coordinates.
             """
             tools = _get_imas_tools()
             result = _run_async(
@@ -2769,18 +2705,15 @@ class AgentsServer:
             ids_filter: str | None = None,
             dd_version: int | None = None,
         ) -> str:
-            """Export all IMAS paths in a physics domain, grouped by IDS.
-
-            Lists every path classified under the given physics domain,
-            with documentation and units, organized by IDS.
+            """Export all IMAS paths classified under a physics domain, grouped by IDS. Use to see every path in the DD that belongs to a domain like "magnetics" or "transport".
 
             Args:
-                domain: Physics domain name (e.g. 'magnetics', 'equilibrium')
-                ids_filter: Optional IDS name filter
-                dd_version: Filter by DD major version (e.g., 3 or 4)
+                domain: Physics domain name (e.g. "magnetics", "equilibrium", "transport", "core_profiles").
+                ids_filter: Optional IDS name to restrict output to a single IDS. Default: all IDSs in the domain.
+                dd_version: Filter by DD major version (3 or 4). Default: latest version.
 
             Returns:
-                Domain export report grouped by IDS.
+                Formatted text report listing paths with documentation and units, organized by IDS.
             """
             tools = _get_imas_tools()
             result = _run_async(
@@ -2794,17 +2727,15 @@ class AgentsServer:
         def get_dd_version_context(
             paths: str,
         ) -> str:
-            """Get version change history for specific IMAS paths.
+            """Get version change history for specific IMAS paths. Use to understand how a path's definition, units, sign convention, or coordinate convention changed between DD versions.
 
-            Returns notable changes across DD versions for each path,
-            including sign_convention, coordinate_convention, units,
-            and definition_clarification changes.
+            Tracks four change types: sign_convention, coordinate_convention, units, and definition_clarification.
 
             Args:
-                paths: Space or comma-delimited IMAS paths to check
+                paths: Space- or comma-separated IMAS paths (e.g. "equilibrium/time_slice/profiles_1d/psi core_profiles/profiles_1d/electrons/temperature").
 
             Returns:
-                Formatted version context report per path.
+                Formatted text report listing notable changes per path across DD versions, or empty if no changes recorded.
             """
             tools = _get_imas_tools()
             result = _run_async(tools.get_dd_version_context(paths=paths))
@@ -2812,10 +2743,10 @@ class AgentsServer:
 
         @self.mcp.tool()
         def get_dd_versions() -> str:
-            """Get Data Dictionary version metadata from the graph.
+            """Get metadata about available Data Dictionary versions. Use to determine the current DD version, the range of versions available, and the version chain ordering.
 
-            Returns current version, available version range, version count,
-            and the ordered version chain.
+            Returns:
+                Formatted text report with current version, version count, available version range, and ordered version chain.
             """
             tools = _get_imas_tools()
             result = _run_async(tools.get_dd_versions())
@@ -2825,25 +2756,22 @@ class AgentsServer:
 
             @self.mcp.tool()
             def fetch_facility_resource(resource: str) -> str:
-                """Fetch the full content of a facility resource by ID or URL.
+                """Retrieve full content of a WikiPage, Document, CodeFile, or Image.
 
-                Use after search_docs, search_code, or search_signals
-                identifies a resource of interest. Returns all chunks
-                or content for the resource.
-
-                Supported types: WikiPage, Document, CodeFile, Image.
-
-                The resource parameter can be:
-                - A graph node ID from search results (e.g. "jet:Fishbone_proposal_2018.ppt")
-                - A URL (e.g. "https://wiki.jetdata.eu/tf/...")
-                - A partial title for fuzzy matching
+                Use after search_docs/search_code/search_signals returns a
+                resource ID you want to read in full. Resolves the resource,
+                fetches all associated chunks in reading order, and returns
+                concatenated text. For images, returns OCR text or description.
 
                 Args:
-                    resource: Node ID, URL, or title substring to fetch.
+                    resource (str, required): One of:
+                        - Graph node ID from search results (e.g. "jet:Fishbone_proposal_2018.ppt")
+                        - Full URL (e.g. "https://wiki.jetdata.eu/tf/...")
+                        - Partial title for fuzzy matching against indexed pages
 
                 Returns:
-                    Full content report with all chunks in reading order,
-                    or image description/OCR text for images.
+                    str: Full content report with metadata header and all chunks,
+                    or an error message if the resource is not found.
                 """
                 return _fetch(resource)
 
@@ -2854,14 +2782,17 @@ class AgentsServer:
 
             @self.mcp.tool()
             def list_logs() -> str:
-                """List available imas-codex log files with sizes and last-modified times.
+                """List available log files with sizes and modification times.
 
-                Returns a formatted table of log files including file name, size,
-                age, and last modified timestamp. Automatically reads from the
-                configured log location (local or remote via SSH).
+                Scans the imas-codex log directory for log files written by
+                discovery CLI commands (e.g., paths_tcv.log, wiki_jet.log,
+                imas_dd.log). Reads from local disk or remote host via SSH
+                depending on configuration.
 
                 Returns:
-                    Formatted log file listing.
+                    Formatted table of log files with columns: file name,
+                    size (B/KB/MB), last-modified ISO timestamp, and age in
+                    hours. Returns a message if no log files exist.
                 """
                 from imas_codex.cli.logging import list_log_files
 
@@ -2893,27 +2824,32 @@ class AgentsServer:
                 grep: str | None = None,
                 since: str | None = None,
             ) -> str:
-                """Read imas-codex log files with filtering.
+                """Read log files with level, text, and time filtering.
 
-                Reads <command>_<facility>.log with level, text, and time filtering.
-                Automatically reads from the configured log location (local or
-                remote via SSH based on [logs].location in pyproject.toml).
+                Reads the log file for a given CLI command and facility. Log
+                files follow the naming convention {command}_{facility}.log
+                (e.g., signals_tcv.log, wiki_jet.log). Use list_logs() first
+                to see available files.
 
                 Args:
-                    command: CLI command name (e.g. "signals", "wiki", "paths",
-                        "code", "documents").
-                    facility: Facility ID (e.g. "jet", "tcv"). If omitted,
-                        reads <command>.log.
-                    lines: Maximum number of matching lines to return (default: 100).
-                    level: Minimum log level to include. One of: DEBUG, INFO,
-                        WARNING, ERROR, CRITICAL (default: WARNING).
-                    grep: Case-insensitive text filter. Only lines containing
-                        this substring are returned.
-                    since: Time filter. Relative: "1h", "30m", "2d".
-                        Absolute: "2024-03-13T10:00".
+                    command: CLI command name that produced the log. Common
+                        values: "paths", "wiki", "code", "signals",
+                        "documents", "imas_dd", "embed". Default: "signals".
+                    facility: Facility ID (e.g., "tcv", "jet", "iter",
+                        "west", "mast-u"). If omitted, reads {command}.log.
+                    lines: Maximum number of matching lines to return.
+                        Default: 100.
+                    level: Minimum log level filter. One of: "DEBUG", "INFO",
+                        "WARNING", "ERROR", "CRITICAL". Default: "WARNING".
+                    grep: Case-insensitive substring filter. Only lines
+                        containing this text are returned.
+                    since: Time filter. Relative: "30m", "1h", "2d".
+                        Absolute ISO: "2024-03-13T10:00". Lines older than
+                        this threshold are excluded.
 
                 Returns:
-                    Filtered log content. Empty if no matching lines.
+                    Filtered log content as text. Empty string if no lines
+                    match. Error message if the log file does not exist.
                 """
                 from imas_codex.cli.logging import read_log
 
@@ -2932,19 +2868,24 @@ class AgentsServer:
                 facility: str | None = None,
                 lines: int = 50,
             ) -> str:
-                """Get the most recent log entries (tail -n).
+                """Get the most recent log entries without filtering.
 
-                Returns the last N lines from the log file, regardless of
-                level or content. Automatically reads from the configured
-                log location (local or remote via SSH).
+                Returns the last N lines from a log file, regardless of log
+                level or content. Use this for a quick look at recent activity;
+                use get_logs() when you need level/text/time filtering.
 
                 Args:
-                    command: CLI command name (e.g. "signals", "wiki", "paths").
-                    facility: Facility ID (e.g. "jet", "tcv").
-                    lines: Number of lines from the end (default: 50).
+                    command: CLI command name that produced the log. Common
+                        values: "paths", "wiki", "code", "signals",
+                        "documents", "imas_dd", "embed". Default: "signals".
+                    facility: Facility ID (e.g., "tcv", "jet", "iter").
+                        If omitted, reads {command}.log.
+                    lines: Number of lines to return from the end of the
+                        file. Default: 50.
 
                 Returns:
-                    Last N lines of the log file.
+                    The last N lines of the log file as text. Error message
+                    if the log file does not exist.
                 """
                 from imas_codex.cli.logging import tail_log
 
