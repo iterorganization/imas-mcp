@@ -791,27 +791,30 @@ def _migrate_from_node(
     """Kill imas-codex processes and zellij sessions on the old node.
 
     Called automatically when ``--set-default`` switches to a different
-    node.  Sends SIGINT for graceful shutdown, then removes zellij
-    sessions so the next ``cx`` starts fresh on the new node.
+    node.  Uses a single SSH call to:
+    1. Send SIGINT to imas-codex/litellm processes (graceful shutdown)
+    2. SIGTERM stragglers after a grace period
+    3. Delete zellij sessions AND kill orphaned server daemons
+    4. Detect lingering VS Code server sessions that could re-spawn
     """
     old_short = old_hostname.split(".")[0]
     fqdn = old_hostname if "." in old_hostname else f"{old_hostname}.iter.org"
 
     click.echo(f"\n  Migrating from {click.style(old_short, fg='yellow')}…")
 
-    # 1. Kill imas-codex processes with SIGINT (graceful shutdown)
-    #    Build the same pattern regex used by _CODEX_PATTERNS but skip
-    #    neo4j (shared service — leave it running).
+    # Build pattern regex from _CODEX_PATTERNS, skip neo4j (shared service).
     kill_patterns = [p for p in _CODEX_PATTERNS if p != "neo4j"]
     pattern_re = "|".join(kill_patterns)
-    # Use pgrep + kill to avoid matching ssh/grep itself
-    kill_script = (
+
+    # Single SSH call for all cleanup — reduces failure surface vs
+    # multiple independent SSH connections that can each timeout.
+    migrate_script = (
+        # --- Phase 1: Kill imas-codex processes ---
         f"pids=$(pgrep -u $USER -f '{pattern_re}' 2>/dev/null || true); "
         f'if [ -n "$pids" ]; then '
         f'  count=$(echo "$pids" | wc -w); '
         f"  kill -INT $pids 2>/dev/null; "
         f"  sleep 2; "
-        # SIGTERM stragglers that didn't exit on INT
         f"  remaining=$(pgrep -u $USER -f '{pattern_re}' 2>/dev/null || true); "
         f'  if [ -n "$remaining" ]; then '
         f"    kill -TERM $remaining 2>/dev/null; "
@@ -819,11 +822,41 @@ def _migrate_from_node(
         f'  echo "killed:$count"; '
         f"else "
         f"  echo 'killed:0'; "
-        f"fi"
+        f"fi; "
+        # --- Phase 2: Zellij sessions + orphaned server daemons ---
+        "if command -v zellij >/dev/null 2>&1; then "
+        "  sessions=$(zellij list-sessions -s 2>/dev/null || true); "
+        '  if [ -n "$sessions" ]; then '
+        "    zellij delete-all-sessions -y 2>/dev/null; "
+        '    count=$(echo "$sessions" | wc -l); '
+        '    echo "zj:$count"; '
+        "  else "
+        "    echo 'zj:0'; "
+        "  fi; "
+        "else "
+        "  echo 'zj:none'; "
+        "fi; "
+        # Fallback: kill orphaned zellij --server daemons (PPID=1) that
+        # survive delete-all-sessions.  These spin at high CPU doing
+        # nothing and are the main cause of cleanup failure.
+        "zj_servers=$(pgrep -u $USER -f 'zellij --server' 2>/dev/null || true); "
+        'if [ -n "$zj_servers" ]; then '
+        "  kill -TERM $zj_servers 2>/dev/null; "
+        '  echo "zj_servers:$(echo "$zj_servers" | wc -w)"; '
+        "else "
+        "  echo 'zj_servers:0'; "
+        "fi; "
+        # --- Phase 3: Detect VS Code server (warns user) ---
+        "vscode_pids=$(pgrep -u $USER -f 'code-server|vscode-server' 2>/dev/null || true); "
+        'if [ -n "$vscode_pids" ]; then '
+        '  echo "vscode:$(echo "$vscode_pids" | wc -w)"; '
+        "else "
+        "  echo 'vscode:0'; "
+        "fi"
     )
 
     try:
-        result = _ssh_to_node(fqdn, gateway, user, kill_script, timeout)
+        result = _ssh_to_node(fqdn, gateway, user, migrate_script, timeout=30)
         if result.returncode == 0:
             output = result.stdout.strip()
             for line in output.splitlines():
@@ -839,39 +872,7 @@ def _migrate_from_node(
                             f"    {click.style('·', fg='dim')} "
                             f"No imas-codex processes running"
                         )
-        else:
-            click.echo(
-                f"    {click.style('⚠', fg='yellow')} "
-                f"Could not reach {old_short} for process cleanup"
-            )
-    except (subprocess.TimeoutExpired, Exception):
-        click.echo(
-            f"    {click.style('⚠', fg='yellow')} "
-            f"Timeout reaching {old_short} — processes may still be running"
-        )
-
-    # 2. Kill all zellij sessions on the old node
-    zj_script = (
-        "if command -v zellij >/dev/null 2>&1; then "
-        "  sessions=$(zellij list-sessions -s 2>/dev/null || true); "
-        '  if [ -n "$sessions" ]; then '
-        "    zellij delete-all-sessions -y 2>/dev/null; "
-        '    count=$(echo "$sessions" | wc -l); '
-        '    echo "zj:$count"; '
-        "  else "
-        "    echo 'zj:0'; "
-        "  fi; "
-        "else "
-        "  echo 'zj:none'; "
-        "fi"
-    )
-
-    try:
-        result = _ssh_to_node(fqdn, gateway, user, zj_script, timeout)
-        if result.returncode == 0:
-            output = result.stdout.strip()
-            for line in output.splitlines():
-                if line.startswith("zj:"):
+                elif line.startswith("zj:"):
                     val = line.split(":")[1]
                     if val == "none":
                         click.echo(
@@ -888,10 +889,34 @@ def _migrate_from_node(
                             f"    {click.style('✓', fg='green')} "
                             f"Deleted {val} zellij session(s)"
                         )
-    except (subprocess.TimeoutExpired, Exception):
+                elif line.startswith("zj_servers:"):
+                    count = line.split(":")[1]
+                    if count != "0":
+                        click.echo(
+                            f"    {click.style('✓', fg='green')} "
+                            f"Killed {count} orphaned zellij server(s)"
+                        )
+                elif line.startswith("vscode:"):
+                    count = line.split(":")[1]
+                    if count != "0":
+                        click.echo(
+                            f"    {click.style('⚠', fg='yellow')} "
+                            f"VS Code server still running on {old_short} "
+                            f"({count} procs) — may re-spawn MCP servers"
+                        )
+        else:
+            click.echo(
+                f"    {click.style('⚠', fg='yellow')} "
+                f"Could not reach {old_short} for process cleanup"
+            )
+    except subprocess.TimeoutExpired:
         click.echo(
             f"    {click.style('⚠', fg='yellow')} "
-            f"Could not clean up zellij sessions on {old_short}"
+            f"Timeout reaching {old_short} — processes may still be running"
+        )
+    except Exception:
+        click.echo(
+            f"    {click.style('⚠', fg='yellow')} Error during cleanup on {old_short}"
         )
 
     click.echo(
