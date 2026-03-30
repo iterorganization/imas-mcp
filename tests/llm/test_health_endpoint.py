@@ -5,7 +5,25 @@ from __future__ import annotations
 import time
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
+
+DD_ENDPOINT = "https://imas-dd.iter.org"
+
+
+def _endpoint_reachable() -> bool:
+    """Check if the live DD endpoint is reachable."""
+    try:
+        r = httpx.get(f"{DD_ENDPOINT}/health", timeout=5)
+        return r.status_code == 200
+    except (httpx.ConnectError, httpx.TimeoutException):
+        return False
+
+
+_skip_no_endpoint = pytest.mark.skipif(
+    not _endpoint_reachable(),
+    reason=f"{DD_ENDPOINT} not reachable",
+)
 
 
 class TestFormatUptime:
@@ -244,3 +262,75 @@ class TestHealthEndpointResponse:
         data = response.json()
         assert data["facilities"] == []
         assert data["graph"]["name"] == "codex-imas"
+
+
+@pytest.mark.slow
+@pytest.mark.integration
+class TestLiveEndpoint:
+    """Integration tests against the deployed DD-only server at imas-dd.iter.org.
+
+    Run explicitly:
+        uv run pytest tests/llm/test_health_endpoint.py::TestLiveEndpoint -m slow -v
+    """
+
+    @_skip_no_endpoint
+    def test_health_returns_200(self):
+        """GET /health returns 200 with JSON body."""
+        r = httpx.get(f"{DD_ENDPOINT}/health", timeout=10)
+        assert r.status_code == 200
+        assert r.headers["content-type"] == "application/json"
+
+    @_skip_no_endpoint
+    def test_health_response_structure(self):
+        """Health response has required fields for a DD-only deployment."""
+        r = httpx.get(f"{DD_ENDPOINT}/health", timeout=10)
+        data = r.json()
+        assert data["status"] == "ok"
+        assert "uptime" in data
+        assert isinstance(
+            data.get("ids_count", data.get("imas_dd", {}).get("ids_count")), int
+        )
+
+    @_skip_no_endpoint
+    def test_mcp_post_initialize(self):
+        """POST /mcp with initialize succeeds (streamable-http transport)."""
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-03-26",
+                "capabilities": {},
+                "clientInfo": {"name": "pytest", "version": "1.0"},
+            },
+        }
+        r = httpx.post(
+            f"{DD_ENDPOINT}/mcp",
+            json=payload,
+            headers={
+                "Content-Type": "application/json",
+                "Accept": "application/json, text/event-stream",
+            },
+            timeout=10,
+        )
+        assert r.status_code == 200
+        assert "mcp-session-id" in r.headers
+        # Streamable-HTTP returns SSE format
+        assert "text/event-stream" in r.headers["content-type"]
+        assert '"initialize"' not in r.text or '"result"' in r.text
+
+    @_skip_no_endpoint
+    def test_mcp_get_without_session_rejected(self):
+        """GET /mcp without session ID is rejected (SSE not supported)."""
+        r = httpx.get(
+            f"{DD_ENDPOINT}/mcp",
+            headers={"Accept": "text/event-stream"},
+            timeout=10,
+        )
+        assert r.status_code == 400
+
+    @_skip_no_endpoint
+    def test_sse_endpoint_not_available(self):
+        """Old SSE transport endpoint /sse does not exist."""
+        r = httpx.get(f"{DD_ENDPOINT}/sse", timeout=10)
+        assert r.status_code == 404
