@@ -1531,6 +1531,15 @@ class AgentsServer:
         self._register_prompts()
         self._register_health_check()
 
+        # Strip output_schema from all tools for MCP protocol backward
+        # compatibility.  FastMCP 3.0 auto-generates outputSchema from
+        # return type annotations, but the field was introduced in MCP
+        # spec 2025-03-26.  Clients negotiating 2024-11-05 (e.g. GitHub
+        # Copilot) reject the extra field with 400 Bad Request.
+        for key, component in self.mcp._local_provider._components.items():
+            if key.startswith("tool:") and hasattr(component, "output_schema"):
+                component.output_schema = None
+
         # In DD-only mode, facility tools are never registered (see guards
         # in _register_tools). Log the active tool count for diagnostics.
         tool_count = sum(
@@ -1598,7 +1607,23 @@ class AgentsServer:
             # Tool 1: python - Persistent REPL (primary interface)
             # =====================================================================
 
-            @self.mcp.tool()
+            # Build description before decoration — FastMCP 3.0 captures
+            # the description eagerly at decoration time, so setting
+            # __doc__ after @mcp.tool() has no effect on the MCP schema.
+            python_description = (
+                "Execute Python in a persistent REPL for custom graph queries "
+                "and operations not covered by the search_* tools. Variables "
+                "persist across calls.\n\n"
+                "Prefer search_signals/search_docs/search_code/search_imas for "
+                "common lookups — they return formatted reports in one call.\n\n"
+                f"{api_reference}\n"
+                "Args:\n"
+                "    code: Python code to execute (multi-line supported)\n\n"
+                "Returns:\n"
+                "    stdout output, or repr of last expression if no print"
+            )
+
+            @self.mcp.tool(description=python_description)
             def python(code: str) -> str:
                 repl = _get_repl()
 
@@ -1624,21 +1649,6 @@ class AgentsServer:
 
                     tb = traceback.format_exc()
                     return f"Error: {e}\n\n{tb}"
-
-            # Set the docstring dynamically so it's always in sync with
-            # the actual registered functions (generated from introspection)
-            python.__doc__ = (
-                "Execute Python in a persistent REPL for custom graph queries "
-                "and operations not covered by the search_* tools. Variables "
-                "persist across calls.\n\n"
-                "Prefer search_signals/search_docs/search_code/search_imas for "
-                "common lookups — they return formatted reports in one call.\n\n"
-                f"{api_reference}\n"
-                "Args:\n"
-                "    code: Python code to execute (multi-line supported)\n\n"
-                "Returns:\n"
-                "    stdout output, or repr of last expression if no print"
-            )
 
         # =====================================================================
         # Tool 2: get_graph_schema - Schema introspection
