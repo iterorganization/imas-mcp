@@ -55,6 +55,8 @@ Use python() for:
 REPL state is initialized lazily on first use to avoid import deadlocks.
 """
 
+from __future__ import annotations
+
 import asyncio
 import io
 import logging
@@ -69,27 +71,15 @@ from fastmcp import FastMCP
 from neo4j.exceptions import ServiceUnavailable
 from ruamel.yaml import YAML
 
-from imas_codex.discovery import (
-    get_facility as _get_facility_config,
-    get_facility_infrastructure,
-    get_facility_validated,
-    update_infrastructure,
-    update_metadata,
-)
-from imas_codex.embeddings.config import EncoderConfig
-from imas_codex.embeddings.encoder import EmbeddingBackendError, Encoder
-from imas_codex.graph import GraphClient, get_schema
-from imas_codex.graph.schema import to_cypher_props
+from imas_codex.llm._warmup import warmup
 from imas_codex.llm.prompt_loader import (
     PromptDefinition,
     load_prompts,
 )
-from imas_codex.remote.tools import (
-    check_all_tools as _check_all_tools,
-    install_all_tools as _install_all_tools,
-    run as _run,
-)
-from imas_codex.settings import get_embedding_location
+
+# Start background warmup threads immediately so that by the time the first
+# tool call arrives (after the MCP stdio handshake), slow imports are ready.
+warmup.start()
 
 logger = logging.getLogger(__name__)
 
@@ -140,6 +130,75 @@ _repl_globals: dict[str, Any] | None = None
 _repl_lock = threading.Lock()
 _imas_tools_instance = None
 
+# ---------------------------------------------------------------------------
+# Module-level placeholders — populated by _require_warmup() on first tool call
+# ---------------------------------------------------------------------------
+# Type: Any avoids NameError for code that references these names before warmup.
+
+_get_facility_config: Any = None
+get_facility_infrastructure: Any = None
+get_facility_validated: Any = None
+update_infrastructure: Any = None
+update_metadata: Any = None
+EncoderConfig: Any = None
+Encoder: Any = None
+EmbeddingBackendError: Any = None
+GraphClient: Any = None
+get_schema: Any = None
+to_cypher_props: Any = None
+get_embedding_location: Any = None
+_run: Any = None
+_check_all_tools: Any = None
+_install_all_tools: Any = None
+
+_warmup_lock = threading.Lock()
+_warmup_applied = False
+
+
+def _require_warmup() -> None:
+    """Populate module globals from background warmup groups.
+
+    Blocks until all warmup groups are ready (no-op after first call).
+    Call at the top of any tool handler that references the module-level
+    placeholders above.
+    """
+    global _warmup_applied
+    global _get_facility_config, get_facility_infrastructure, get_facility_validated
+    global update_infrastructure, update_metadata
+    global EncoderConfig, Encoder, EmbeddingBackendError, get_embedding_location
+    global GraphClient, get_schema, to_cypher_props
+    global _run, _check_all_tools, _install_all_tools
+
+    if _warmup_applied:  # fast path — avoids lock on every call
+        return
+    with _warmup_lock:
+        if _warmup_applied:
+            return
+        disc = warmup.discovery()
+        _get_facility_config = disc["get_facility"]
+        get_facility_infrastructure = disc["get_facility_infrastructure"]
+        get_facility_validated = disc["get_facility_validated"]
+        update_infrastructure = disc["update_infrastructure"]
+        update_metadata = disc["update_metadata"]
+
+        graph_ns = warmup.graph()
+        GraphClient = graph_ns["GraphClient"]
+        get_schema = graph_ns["get_schema"]
+        to_cypher_props = graph_ns["to_cypher_props"]
+
+        emb_ns = warmup.embeddings()
+        EncoderConfig = emb_ns["EncoderConfig"]
+        Encoder = emb_ns["Encoder"]
+        EmbeddingBackendError = emb_ns["EmbeddingBackendError"]
+        get_embedding_location = emb_ns["get_embedding_location"]
+
+        rem_ns = warmup.remote()
+        _run = rem_ns["run"]
+        _check_all_tools = rem_ns["check_all_tools"]
+        _install_all_tools = rem_ns["install_all_tools"]
+
+        _warmup_applied = True
+
 
 # =============================================================================
 # API Reference — compact task-to-function mapping for python() docstring
@@ -179,6 +238,7 @@ def _generate_api_reference() -> str:
 
 def _get_imas_tools(gc: GraphClient | None = None):
     """Get or create singleton Tools instance with shared GraphClient."""
+    _require_warmup()
     global _imas_tools_instance
     if _imas_tools_instance is None:
         from imas_codex.tools import Tools
@@ -322,14 +382,14 @@ def _format_error_fields_report(result: dict) -> str:
 def _init_repl() -> dict[str, Any]:
     """Initialize the persistent REPL environment with all utilities.
 
-    Called lazily on first python() tool invocation. All heavy imports
-    are at module level to avoid import deadlocks. Only I/O-bound work
-    (Neo4j connection, encoder setup) happens here.
+    Called lazily on first python() tool invocation. Blocks until background
+    warmup completes, then performs I/O-bound setup (Neo4j connection).
     """
     global _repl_globals
     if _repl_globals is not None:
         return _repl_globals
 
+    _require_warmup()
     logger.info("Initializing Python REPL...")
 
     from imas_codex.graph import domain_queries as _dq
@@ -1515,9 +1575,17 @@ class AgentsServer:
 
         self._started_at = time.monotonic()
 
-        # Auto-detect DD-only mode from graph content
+        # Auto-detect DD-only mode from graph content.
+        # Done in a background thread to avoid blocking the MCP handshake.
+        # Default to False (full mode) so tools are registered immediately;
+        # log if detection finds a mismatch (restart with --dd-only to fix).
         if self.dd_only is None:
-            self.dd_only = self._detect_dd_only()
+            self.dd_only = False
+            threading.Thread(
+                target=self._background_detect_dd_only,
+                daemon=True,
+                name="dd-only-detect",
+            ).start()
 
         # DD-only implies read-only: no write tools needed for a DD-only deployment
         if self.dd_only:
@@ -1558,14 +1626,14 @@ class AgentsServer:
         # Pre-warm the embedding model in a background thread so the first
         # search_imas call doesn't pay the 30s+ cold-start penalty.
         # This does not block server startup.
-        import threading
-
-        def _warmup():
+        def _warmup_encoder():
             from imas_codex.tools.graph_search import warmup_encoder
 
             warmup_encoder()
 
-        threading.Thread(target=_warmup, daemon=True, name="encoder-warmup").start()
+        threading.Thread(
+            target=_warmup_encoder, daemon=True, name="encoder-warmup"
+        ).start()
 
     @staticmethod
     def _detect_dd_only() -> bool:
@@ -1593,6 +1661,22 @@ class AgentsServer:
         except Exception:
             logger.warning("Could not detect graph mode, defaulting to full mode")
         return False
+
+    def _background_detect_dd_only(self) -> None:
+        """Run DD-only detection in background; log if result differs from startup default."""
+        try:
+            result = self._detect_dd_only()
+            if result != self.dd_only:
+                logger.info(
+                    "Auto-detected DD-only=%s (server started in full mode). "
+                    "Restart with explicit --dd-only flag to change tool set.",
+                    result,
+                )
+            else:
+                logger.debug("DD-only auto-detection confirmed: %s", result)
+            self.dd_only = result
+        except Exception as e:
+            logger.warning("DD-only background detection failed: %s", e)
 
     def _register_tools(self):
         """Register all MCP tools."""
@@ -1727,6 +1811,7 @@ class AgentsServer:
                     dict with keys: "processed" (int), "skipped" (int),
                     "relationships" (dict of rel_type→count), "errors" (list[str]).
                 """
+                _require_warmup()
                 schema = get_schema()
 
                 if node_type not in schema.node_labels:
@@ -1862,6 +1947,7 @@ class AgentsServer:
                     dict: Current configuration after any update. Private mode returns
                     private infrastructure data; public mode returns public metadata.
                 """
+                _require_warmup()
                 try:
                     if data is not None:
                         if private:
@@ -1979,6 +2065,7 @@ class AgentsServer:
 
                     from imas_codex.discovery import (
                         get_facility_infrastructure as _get_infra,
+                        update_infrastructure as _update_infra,
                     )
 
                     infra = _get_infra(facility) or {}
@@ -1989,7 +2076,7 @@ class AgentsServer:
                     timestamped_note = f"{timestamp}: {note}"
                     notes.append(timestamped_note)
 
-                    update_infrastructure(facility, {"exploration_notes": notes})
+                    _update_infra(facility, {"exploration_notes": notes})
                     return notes
                 except Exception as e:
                     logger.exception(f"Failed to add exploration note for {facility}")
@@ -2120,39 +2207,6 @@ class AgentsServer:
         # Unified search tools — multi-index vector search + graph enrichment
         # =====================================================================
 
-        # Build dynamic docstring fragments for valid parameter values
-        from imas_codex.discovery.base.scoring import (
-            CODE_SCORE_DIMENSIONS,
-            CONTENT_SCORE_DIMENSIONS,
-        )
-        from imas_codex.llm.search_tools import (
-            _fetch,
-            _search_code,
-            _search_docs,
-            _search_signals,
-            _signal_analytics,
-        )
-
-        _content_scores_doc = ", ".join(sorted(CONTENT_SCORE_DIMENSIONS))
-        _code_scores_doc = ", ".join(sorted(CODE_SCORE_DIMENSIONS))
-
-        # Read physics domains from LinkML schema
-        try:
-            from linkml_runtime.utils.schemaview import SchemaView
-
-            _sv = SchemaView(
-                str(
-                    __import__("pathlib").Path(__file__).resolve().parent.parent
-                    / "schemas"
-                    / "physics_domains.yaml"
-                )
-            )
-            _pd_enum = _sv.get_enum("PhysicsDomain")
-            _physics_domains_doc = ", ".join(sorted(_pd_enum.permissible_values.keys()))
-            del _sv, _pd_enum
-        except Exception:
-            _physics_domains_doc = "(see physics_domains.yaml for valid values)"
-
         if not self.dd_only:
 
             @self.mcp.tool()
@@ -2195,7 +2249,9 @@ class AgentsServer:
                     path (if mapped), and related tree node paths. A secondary
                     section lists raw tree-node matches from the SignalNode index.
                 """
-                return _search_signals(
+                from imas_codex.llm.search_tools import _search_signals as _ss
+
+                return _ss(
                     query,
                     facility,
                     diagnostic=diagnostic,
@@ -2234,7 +2290,9 @@ class AgentsServer:
                     Markdown table with one row per group combination, showing
                     count and percentage of total. Includes a total signal count.
                 """
-                return _signal_analytics(facility, group_by=group_by, filters=filters)
+                from imas_codex.llm.search_tools import _signal_analytics as _sa
+
+                return _sa(facility, group_by=group_by, filters=filters)
 
             @self.mcp.tool()
             def search_docs(
@@ -2276,7 +2334,9 @@ class AgentsServer:
                     chunk excerpts, cross-linked signal/IMAS refs, and relevance
                     scores. A separate section lists matching documents/images.
                 """
-                return _search_docs(
+                from imas_codex.llm.search_tools import _search_docs as _sd
+
+                return _sd(
                     query,
                     facility,
                     k=k,
@@ -2324,7 +2384,9 @@ class AgentsServer:
                     source file path, data references (MDSplus nodes, TDI calls,
                     IMAS paths), and relevance score.
                 """
-                return _search_code(
+                from imas_codex.llm.search_tools import _search_code as _sc
+
+                return _sc(
                     query,
                     facility=facility,
                     k=k,
@@ -2416,15 +2478,6 @@ class AgentsServer:
         # Promoted IMAS DD tools — delegate to shared Tools via _get_imas_tools()
         # =====================================================================
 
-        from imas_codex.llm.search_formatters import (
-            format_check_report,
-            format_cluster_report,
-            format_fetch_paths_report,
-            format_identifiers_report,
-            format_list_report,
-            format_overview_report,
-        )
-
         @self.mcp.tool()
         def check_imas_paths(
             paths: str,
@@ -2443,6 +2496,8 @@ class AgentsServer:
             Returns:
                 Formatted text report with existence status, data type, and units per path. Invalid paths include suggested corrections.
             """
+            from imas_codex.llm.search_formatters import format_check_report
+
             tools = _get_imas_tools()
             result = _run_async(
                 tools.check_imas_paths(paths=paths, ids=ids, dd_version=dd_version)
@@ -2469,6 +2524,8 @@ class AgentsServer:
             Returns:
                 Formatted text report with complete documentation per path.
             """
+            from imas_codex.llm.search_formatters import format_fetch_paths_report
+
             tools = _get_imas_tools()
             result = _run_async(
                 tools.fetch_imas_paths(
@@ -2520,6 +2577,8 @@ class AgentsServer:
             Returns:
                 Formatted text listing of paths with their data types.
             """
+            from imas_codex.llm.search_formatters import format_list_report
+
             tools = _get_imas_tools()
             result = _run_async(
                 tools.list_imas_paths(
@@ -2547,6 +2606,8 @@ class AgentsServer:
             Returns:
                 Formatted text report listing each IDS with its description, path count, and physics domain.
             """
+            from imas_codex.llm.search_formatters import format_overview_report
+
             tools = _get_imas_tools()
             result = _run_async(
                 tools.get_imas_overview(query=query, dd_version=dd_version)
@@ -2569,6 +2630,8 @@ class AgentsServer:
             Returns:
                 Formatted text report listing each identifier schema with its allowed name/index/description options.
             """
+            from imas_codex.llm.search_formatters import format_identifiers_report
+
             tools = _get_imas_tools()
             result = _run_async(
                 tools.get_imas_identifiers(query=query, dd_version=dd_version)
@@ -2597,6 +2660,7 @@ class AgentsServer:
             Returns:
                 Formatted text report listing matched clusters with their member paths and descriptions.
             """
+            from imas_codex.llm.search_formatters import format_cluster_report
             from imas_codex.models.error_models import ToolError
 
             tools = _get_imas_tools()
@@ -2612,13 +2676,6 @@ class AgentsServer:
             if isinstance(result, ToolError):
                 return format_cluster_report(result)
             return format_cluster_report(result)
-
-        from imas_codex.llm.search_formatters import (
-            format_export_domain_report,
-            format_export_ids_report,
-            format_path_context_report,
-            format_structure_report,
-        )
 
         @self.mcp.tool()
         def find_related_imas_paths(
@@ -2640,6 +2697,8 @@ class AgentsServer:
             Returns:
                 Formatted text report with related paths grouped by relationship type, each showing the target path, IDS, and relevance score.
             """
+            from imas_codex.llm.search_formatters import format_path_context_report
+
             tools = _get_imas_tools()
             result = _run_async(
                 tools.get_imas_path_context(
@@ -2667,6 +2726,8 @@ class AgentsServer:
             Returns:
                 Formatted text report with structural statistics and organization overview.
             """
+            from imas_codex.llm.search_formatters import format_structure_report
+
             tools = _get_imas_tools()
             result = _run_async(
                 tools.analyze_imas_structure(ids_name=ids_name, dd_version=dd_version)
@@ -2691,6 +2752,8 @@ class AgentsServer:
             Returns:
                 Formatted text listing every path in the IDS with documentation, type, units, and coordinates.
             """
+            from imas_codex.llm.search_formatters import format_export_ids_report
+
             tools = _get_imas_tools()
             result = _run_async(
                 tools.export_imas_ids(
@@ -2715,6 +2778,8 @@ class AgentsServer:
             Returns:
                 Formatted text report listing paths with documentation and units, organized by IDS.
             """
+            from imas_codex.llm.search_formatters import format_export_domain_report
+
             tools = _get_imas_tools()
             result = _run_async(
                 tools.export_imas_domain(
@@ -2773,7 +2838,9 @@ class AgentsServer:
                     str: Full content report with metadata header and all chunks,
                     or an error message if the resource is not found.
                 """
-                return _fetch(resource)
+                from imas_codex.llm.search_tools import _fetch as _f
+
+                return _f(resource)
 
         if not self.read_only:
             # =====================================================================
