@@ -211,11 +211,17 @@ def _require_warmup() -> None:
         get_schema = graph_ns["get_schema"]
         to_cypher_props = graph_ns["to_cypher_props"]
 
-        emb_ns = warmup.embeddings()
-        EncoderConfig = emb_ns["EncoderConfig"]
-        Encoder = emb_ns["Encoder"]
-        EmbeddingBackendError = emb_ns["EmbeddingBackendError"]
-        get_embedding_location = emb_ns["get_embedding_location"]
+        try:
+            emb_ns = warmup.embeddings()
+            EncoderConfig = emb_ns["EncoderConfig"]
+            Encoder = emb_ns["Encoder"]
+            EmbeddingBackendError = emb_ns["EmbeddingBackendError"]
+            get_embedding_location = emb_ns["get_embedding_location"]
+        except Exception:
+            logger.warning(
+                "Embedding warmup failed — DD search tools will use "
+                "text-only fallback via _try_embed_query()"
+            )
 
         rem_ns = warmup.remote()
         _run = rem_ns["run"]
@@ -309,7 +315,7 @@ def _get_imas_tools(gc: GraphClient | None = None, graph_only: bool = False):
         from imas_codex.tools import Tools
 
         if gc is None:
-            gc = _get_graph_client() if graph_only else _get_repl()["gc"]
+            gc = _get_graph_client()
         _imas_tools_instance = Tools(graph_client=gc)
         return _imas_tools_instance
 
@@ -2366,7 +2372,7 @@ class AgentsServer:
             from imas_codex.llm.search_formatters import format_search_imas_report
             from imas_codex.models.error_models import ToolError
 
-            tools = _get_imas_tools(graph_only=True)
+            tools = _get_imas_tools()
 
             # Run path search and cluster search in parallel — they are
             # independent operations sharing the same encoder singleton.
@@ -2606,7 +2612,7 @@ class AgentsServer:
             from imas_codex.llm.search_formatters import format_cluster_report
             from imas_codex.models.error_models import ToolError
 
-            tools = _get_imas_tools(graph_only=True)
+            tools = _get_imas_tools()
             result = _run_async(
                 tools.clusters_tool.search_imas_clusters(
                     query=query,
@@ -2642,7 +2648,7 @@ class AgentsServer:
             """
             from imas_codex.llm.search_formatters import format_path_context_report
 
-            tools = _get_imas_tools(graph_only=True)
+            tools = _get_imas_tools()
             result = _run_async(
                 tools.get_imas_path_context(
                     path=path,
