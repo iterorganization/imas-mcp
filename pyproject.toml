@@ -326,6 +326,7 @@ allow-direct-references = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+timeout = 120
 addopts = [
     "--strict-markers",
     "--strict-config",

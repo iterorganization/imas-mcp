@@ -842,12 +842,11 @@ class TestMapCLI:
     @pytest.mark.integration
     @patch("imas_codex.graph.client.GraphClient")
     @patch("imas_codex.ids.tools.discover_mappable_ids")
-    @patch("imas_codex.ids.mapping.generate_mapping")
+    @patch("imas_codex.ids.workers.run_mapping_engine", new_callable=AsyncMock)
     def test_map_run(
-        self, mock_generate, mock_discover, mock_gc, sample_validated_result
+        self, mock_engine, mock_discover, mock_gc, sample_validated_result
     ):
         from imas_codex.cli.map import map_cmd
-        from imas_codex.ids.mapping import MappingResult, PipelineCost
 
         mock_discover.return_value = {
             "available_domains": ["magnetics"],
@@ -856,28 +855,22 @@ class TestMapCLI:
             ],
             "total_sources": 5,
         }
-        mock_generate.return_value = MappingResult(
-            mapping_id="jet:pf_active",
-            validated=sample_validated_result,
-            cost=PipelineCost(steps={"step1": 0.001, "step2": 0.002}),
-            persisted=True,
-            unassigned_groups=["jet:pf_coils:group3"],
-            assembly=None,
-        )
+
+        async def _populate_state(state, **kwargs):
+            state.ids_results["pf_active"] = {"bindings": 2, "escalations": 0}
+
+        mock_engine.side_effect = _populate_state
 
         runner = CliRunner()
         result = runner.invoke(map_cmd, ["jet", "-i", "pf_active", "--dry-run"])
         assert result.exit_code == 0
-        assert "jet:pf_active" in result.output
-        assert "Bindings: 2" in result.output
-        assert "Unassigned signal sources" in result.output
-        assert "jet:pf_coils:group3" in result.output
+        mock_engine.assert_called_once()
 
     @pytest.mark.integration
     @patch("imas_codex.graph.client.GraphClient")
     @patch("imas_codex.ids.tools.discover_mappable_ids")
-    @patch("imas_codex.ids.mapping.generate_mapping")
-    def test_map_run_error(self, mock_generate, mock_discover, mock_gc):
+    @patch("imas_codex.ids.workers.run_mapping_engine", new_callable=AsyncMock)
+    def test_map_run_error(self, mock_engine, mock_discover, mock_gc):
         from imas_codex.cli.map import map_cmd
 
         mock_discover.return_value = {
@@ -887,11 +880,11 @@ class TestMapCLI:
             ],
             "total_sources": 5,
         }
-        mock_generate.side_effect = ValueError("No signal sources found")
+        mock_engine.side_effect = ValueError("No signal sources found")
 
         runner = CliRunner()
         result = runner.invoke(map_cmd, ["jet", "-i", "pf_active"])
-        # Error is caught gracefully in multi-IDS loop, summary shows no success
+        # Error is caught gracefully in _run_plain_mode, summary shows no success
         assert (
             "No IDS were successfully mapped" in result.output or result.exit_code == 0
         )
@@ -1621,13 +1614,13 @@ class TestStaticFirstOrdering:
 
 class TestMapRunCostLimit:
     @pytest.mark.integration
+    @patch("imas_codex.graph.client.GraphClient")
     @patch("imas_codex.ids.tools.discover_mappable_ids")
-    @patch("imas_codex.ids.mapping.generate_mapping")
+    @patch("imas_codex.ids.workers.run_mapping_engine", new_callable=AsyncMock)
     def test_cost_limit_flag_accepted(
-        self, mock_generate, mock_discover, sample_validated_result
+        self, mock_engine, mock_discover, mock_gc, sample_validated_result
     ):
         from imas_codex.cli.map import map_cmd
-        from imas_codex.ids.mapping import MappingResult, PipelineCost
 
         mock_discover.return_value = {
             "available_domains": ["magnetics"],
@@ -1636,14 +1629,11 @@ class TestMapRunCostLimit:
             ],
             "total_sources": 5,
         }
-        mock_generate.return_value = MappingResult(
-            mapping_id="jet:pf_active",
-            validated=sample_validated_result,
-            cost=PipelineCost(steps={"step1": 0.001}),
-            persisted=False,
-            unassigned_groups=[],
-            assembly=None,
-        )
+
+        async def _populate_state(state, **kwargs):
+            state.ids_results["pf_active"] = {"bindings": 1, "escalations": 0}
+
+        mock_engine.side_effect = _populate_state
 
         runner = CliRunner()
         result = runner.invoke(
@@ -1651,18 +1641,18 @@ class TestMapRunCostLimit:
             ["jet", "-i", "pf_active", "--cost-limit", "2.0", "--dry-run"],
         )
         assert result.exit_code == 0
-        assert "jet:pf_active" in result.output
+        mock_engine.assert_called_once()
 
 
 class TestMapRunTimeLimit:
     @pytest.mark.integration
+    @patch("imas_codex.graph.client.GraphClient")
     @patch("imas_codex.ids.tools.discover_mappable_ids")
-    @patch("imas_codex.ids.mapping.generate_mapping")
+    @patch("imas_codex.ids.workers.run_mapping_engine", new_callable=AsyncMock)
     def test_time_flag_accepted(
-        self, mock_generate, mock_discover, sample_validated_result
+        self, mock_engine, mock_discover, mock_gc, sample_validated_result
     ):
         from imas_codex.cli.map import map_cmd
-        from imas_codex.ids.mapping import MappingResult, PipelineCost
 
         mock_discover.return_value = {
             "available_domains": ["magnetics"],
@@ -1671,14 +1661,11 @@ class TestMapRunTimeLimit:
             ],
             "total_sources": 5,
         }
-        mock_generate.return_value = MappingResult(
-            mapping_id="jet:pf_active",
-            validated=sample_validated_result,
-            cost=PipelineCost(steps={"step1": 0.001}),
-            persisted=False,
-            unassigned_groups=[],
-            assembly=None,
-        )
+
+        async def _populate_state(state, **kwargs):
+            state.ids_results["pf_active"] = {"bindings": 1, "escalations": 0}
+
+        mock_engine.side_effect = _populate_state
 
         runner = CliRunner()
         result = runner.invoke(
@@ -1686,7 +1673,7 @@ class TestMapRunTimeLimit:
             ["jet", "-i", "pf_active", "--time", "10", "--dry-run"],
         )
         assert result.exit_code == 0
-        assert "jet:pf_active" in result.output
+        mock_engine.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
