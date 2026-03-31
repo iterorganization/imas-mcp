@@ -180,15 +180,15 @@ class TestGetGraphClient:
 
 
 # ---------------------------------------------------------------------------
-# _get_imas_tools with graph_only tests
+# _get_imas_tools semantic_search flag tests
 # ---------------------------------------------------------------------------
 
 
-class TestGetImasToolsGraphOnly:
-    """Tests for _get_imas_tools(graph_only=True)."""
+class TestGetImasToolsSemanticSearch:
+    """Tests for _get_imas_tools(semantic_search=...) flag."""
 
-    def test_graph_only_skips_full_warmup(self, mock_graph_warmup):
-        """graph_only=True should not call _require_warmup()."""
+    def test_default_skips_embed_warmup(self, mock_graph_warmup):
+        """Default (no semantic_search) should not call _require_warmup()."""
         import imas_codex.llm.server as srv
 
         mock_warmup = mock_graph_warmup[0]
@@ -199,13 +199,13 @@ class TestGetImasToolsGraphOnly:
         with patch("imas_codex.llm.server._require_warmup") as mock_full:
             with patch("imas_codex.tools.Tools") as MockTools:
                 MockTools.return_value = MagicMock()
-                srv._get_imas_tools(graph_only=True)
+                srv._get_imas_tools()
 
             mock_full.assert_not_called()
             mock_warmup.embeddings.assert_not_called()
 
-    def test_graph_only_uses_standalone_client(self, mock_graph_warmup):
-        """graph_only=True should use _get_graph_client(), not _get_repl()."""
+    def test_default_uses_standalone_client(self, mock_graph_warmup):
+        """Default should use _get_graph_client(), not _get_repl()."""
         import imas_codex.llm.server as srv
 
         srv._graph_warmup_applied = False
@@ -215,12 +215,12 @@ class TestGetImasToolsGraphOnly:
         with patch("imas_codex.llm.server._get_repl") as mock_repl:
             with patch("imas_codex.tools.Tools") as MockTools:
                 MockTools.return_value = MagicMock()
-                srv._get_imas_tools(graph_only=True)
+                srv._get_imas_tools()
 
             mock_repl.assert_not_called()
 
-    def test_full_warmup_when_not_graph_only(self, mock_graph_warmup):
-        """Default (graph_only=False) should call _require_warmup()."""
+    def test_semantic_search_triggers_full_warmup(self, mock_graph_warmup):
+        """semantic_search=True should call _require_warmup()."""
         import imas_codex.llm.server as srv
 
         srv._imas_tools_instance = None
@@ -230,7 +230,7 @@ class TestGetImasToolsGraphOnly:
                 mock_repl.return_value = {"gc": MagicMock()}
                 with patch("imas_codex.tools.Tools") as MockTools:
                     MockTools.return_value = MagicMock()
-                    srv._get_imas_tools(graph_only=False)
+                    srv._get_imas_tools(semantic_search=True)
 
             mock_full.assert_called_once()
 
@@ -239,17 +239,14 @@ class TestGetImasToolsGraphOnly:
 # Tier classification tests
 # ---------------------------------------------------------------------------
 
-# Tier 1 tools: require embeddings (search_imas, search_imas_clusters,
-#               find_related_imas_paths)
-# Tier 2 tools: graph-only (check_imas_paths, fetch_imas_paths, list_imas_paths,
-#               fetch_error_fields, get_imas_overview, get_imas_identifiers,
-#               get_dd_versions, get_dd_version_context, analyze_imas_structure,
-#               export_imas_ids, export_imas_domain)
-
-TIER_1_TOOLS = {"search_imas", "search_imas_clusters", "find_related_imas_paths"}
-TIER_2_TOOLS = {
+# Semantic search tools require the embedding server for vector similarity.
+# search_imas has a lexical fallback but we keep it here so embed failures
+# are surfaced rather than silently degrading result quality.
+SEMANTIC_TOOLS = {"search_imas", "search_imas_clusters"}
+CYPHER_ONLY_TOOLS = {
     "check_imas_paths",
     "fetch_imas_paths",
+    "find_related_imas_paths",
     "list_imas_paths",
     "fetch_error_fields",
     "get_imas_overview",
@@ -265,12 +262,12 @@ TIER_2_TOOLS = {
 class TestToolTierClassification:
     """Verify that tool handlers call the correct warmup path.
 
-    This is a source-level test: it inspects the registered tool functions
-    to confirm Tier 2 tools pass graph_only=True and Tier 1 tools do not.
+    Source-level test: semantic search tools must pass
+    ``semantic_search=True``, Cypher-only tools must not.
     """
 
-    def test_tier2_tools_use_graph_only(self):
-        """All Tier 2 promoted tools should call _get_imas_tools(graph_only=True)."""
+    def test_cypher_only_tools_skip_semantic(self):
+        """Cypher-only tools should NOT pass semantic_search=True."""
         import inspect
 
         from imas_codex.llm.server import AgentsServer
@@ -278,20 +275,19 @@ class TestToolTierClassification:
         server = AgentsServer(dd_only=True)
         components = server.mcp._local_provider._components
 
-        for tool_name in TIER_2_TOOLS:
-            # FastMCP appends '@' to tool keys
+        for tool_name in CYPHER_ONLY_TOOLS:
             key = f"tool:{tool_name}@"
             assert key in components, f"Tool {tool_name} not registered"
 
             fn = components[key].fn
             source = inspect.getsource(fn)
-            assert "graph_only=True" in source, (
-                f"Tier 2 tool '{tool_name}' should call "
-                f"_get_imas_tools(graph_only=True)"
+            assert "semantic_search=True" not in source, (
+                f"Cypher-only tool '{tool_name}' should call "
+                f"_get_imas_tools() without semantic_search"
             )
 
-    def test_tier1_tools_do_not_use_graph_only(self):
-        """Tier 1 search tools should NOT pass graph_only=True."""
+    def test_semantic_tools_request_embeddings(self):
+        """Semantic search tools must pass semantic_search=True."""
         import inspect
 
         from imas_codex.llm.server import AgentsServer
@@ -299,13 +295,13 @@ class TestToolTierClassification:
         server = AgentsServer(dd_only=True)
         components = server.mcp._local_provider._components
 
-        for tool_name in TIER_1_TOOLS:
+        for tool_name in SEMANTIC_TOOLS:
             key = f"tool:{tool_name}@"
             assert key in components, f"Tool {tool_name} not registered"
 
             fn = components[key].fn
             source = inspect.getsource(fn)
-            # search_imas calls _get_imas_tools() without graph_only
-            assert "graph_only=True" not in source, (
-                f"Tier 1 tool '{tool_name}' should NOT use graph_only=True"
+            assert "semantic_search=True" in source, (
+                f"Semantic tool '{tool_name}' must call "
+                f"_get_imas_tools(semantic_search=True)"
             )

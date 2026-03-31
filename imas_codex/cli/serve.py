@@ -47,6 +47,12 @@ logger = logging.getLogger(__name__)
     default=None,
     help="Force DD-only mode (hide facility tools, implies --read-only). Auto-detected from graph if omitted.",
 )
+@click.option(
+    "--no-embed",
+    is_flag=True,
+    default=False,
+    help="Allow startup without embedding server. Semantic search tools will error at call time.",
+)
 def serve(
     transport: str,
     host: str,
@@ -54,6 +60,7 @@ def serve(
     log_level: str,
     read_only: bool,
     dd_only: bool | None,
+    no_embed: bool,
 ) -> None:
     """Start the IMAS Codex MCP server.
 
@@ -82,6 +89,11 @@ def serve(
     if read_only:
         logger.info("Read-only mode: write tools and Python REPL suppressed")
 
+    if no_embed:
+        logger.info(
+            "--no-embed: semantic search tools will error without embedding server"
+        )
+
     match transport:
         case "stdio":
             os.environ["IMAS_CODEX_RICH"] = "0"
@@ -91,7 +103,7 @@ def serve(
 
     from imas_codex.llm.server import AgentsServer
 
-    server = AgentsServer(read_only=read_only, dd_only=dd_only)
+    server = AgentsServer(read_only=read_only, dd_only=dd_only, no_embed=no_embed)
     server.run(
         transport=cast(Literal["stdio", "sse", "streamable-http"], transport),
         host=host,

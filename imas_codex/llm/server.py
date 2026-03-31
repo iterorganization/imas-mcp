@@ -129,6 +129,7 @@ def _neo4j_error_message(e: Exception) -> str:
 _repl_globals: dict[str, Any] | None = None
 _repl_lock = threading.Lock()
 _imas_tools_instance = None
+_no_embed: bool = False  # Set by AgentsServer when --no-embed is passed
 
 # ---------------------------------------------------------------------------
 # Module-level placeholders — populated by _require_warmup() on first tool call
@@ -217,11 +218,18 @@ def _require_warmup() -> None:
             Encoder = emb_ns["Encoder"]
             EmbeddingBackendError = emb_ns["EmbeddingBackendError"]
             get_embedding_location = emb_ns["get_embedding_location"]
-        except Exception:
-            logger.warning(
-                "Embedding warmup failed — DD search tools will use "
-                "text-only fallback via _try_embed_query()"
-            )
+        except Exception as exc:
+            if _no_embed:
+                logger.warning(
+                    "Embedding warmup failed (--no-embed): semantic search "
+                    "tools will error at call time"
+                )
+            else:
+                raise RuntimeError(
+                    "Embedding server unreachable. Start it with "
+                    "'imas-codex embed start', or pass --no-embed to "
+                    "allow startup without semantic search."
+                ) from exc
 
         rem_ns = warmup.remote()
         _run = rem_ns["run"]
@@ -292,13 +300,17 @@ def _get_graph_client():
 _imas_tools_lock = threading.Lock()
 
 
-def _get_imas_tools(gc: GraphClient | None = None, graph_only: bool = False):
+def _get_imas_tools(gc: GraphClient | None = None, semantic_search: bool = False):
     """Get or create singleton Tools instance with shared GraphClient.
+
+    All DD tools require the graph. Tools that perform semantic search
+    also need the embedding server — pass ``semantic_search=True``
+    for those.
 
     Args:
         gc: Optional pre-existing GraphClient to use.
-        graph_only: If True, only require graph warmup (no embeddings).
-            Use for Tier 2 DD tools that need only Neo4j.
+        semantic_search: If True, also warm up the embedding server
+            for vector similarity queries.
     """
     global _imas_tools_instance
     if _imas_tools_instance is not None:
@@ -307,10 +319,10 @@ def _get_imas_tools(gc: GraphClient | None = None, graph_only: bool = False):
         if _imas_tools_instance is not None:
             return _imas_tools_instance
 
-        if graph_only:
-            _require_graph()
-        else:
+        if semantic_search:
             _require_warmup()
+        else:
+            _require_graph()
 
         from imas_codex.tools import Tools
 
@@ -912,7 +924,7 @@ def _init_repl() -> dict[str, Any]:
             Formatted string with matching paths and documentation
         """
         try:
-            tools = _get_imas_tools()
+            tools = _get_imas_tools(semantic_search=True)
             result = _run_async(
                 tools.search_imas_paths(
                     query=query_text,
@@ -1619,6 +1631,7 @@ class AgentsServer:
 
     read_only: bool = False
     dd_only: bool | None = None
+    no_embed: bool = False
     mcp: FastMCP = field(init=False, repr=False)
     _prompts: dict[str, PromptDefinition] = field(init=False, repr=False)
     _started_at: float = field(init=False, repr=False)
@@ -1643,6 +1656,9 @@ class AgentsServer:
         work (Neo4j connection) happens lazily.
         """
         import time
+
+        global _no_embed
+        _no_embed = self.no_embed
 
         self._started_at = time.monotonic()
 
@@ -2372,7 +2388,7 @@ class AgentsServer:
             from imas_codex.llm.search_formatters import format_search_imas_report
             from imas_codex.models.error_models import ToolError
 
-            tools = _get_imas_tools()
+            tools = _get_imas_tools(semantic_search=True)
 
             # Run path search and cluster search in parallel — they are
             # independent operations sharing the same encoder singleton.
@@ -2447,7 +2463,7 @@ class AgentsServer:
             """
             from imas_codex.llm.search_formatters import format_check_report
 
-            tools = _get_imas_tools(graph_only=True)
+            tools = _get_imas_tools()
             result = _run_async(
                 tools.check_imas_paths(paths=paths, ids=ids, dd_version=dd_version)
             )
@@ -2475,7 +2491,7 @@ class AgentsServer:
             """
             from imas_codex.llm.search_formatters import format_fetch_paths_report
 
-            tools = _get_imas_tools(graph_only=True)
+            tools = _get_imas_tools()
             result = _run_async(
                 tools.fetch_imas_paths(
                     paths=paths,
@@ -2500,7 +2516,7 @@ class AgentsServer:
             Returns:
                 Formatted text listing error fields and their data types, or empty if the path has no error fields.
             """
-            tools = _get_imas_tools(graph_only=True)
+            tools = _get_imas_tools()
             result = _run_async(
                 tools.fetch_error_fields(path=path, dd_version=dd_version)
             )
@@ -2528,7 +2544,7 @@ class AgentsServer:
             """
             from imas_codex.llm.search_formatters import format_list_report
 
-            tools = _get_imas_tools(graph_only=True)
+            tools = _get_imas_tools()
             result = _run_async(
                 tools.list_imas_paths(
                     paths=paths,
@@ -2557,7 +2573,7 @@ class AgentsServer:
             """
             from imas_codex.llm.search_formatters import format_overview_report
 
-            tools = _get_imas_tools(graph_only=True)
+            tools = _get_imas_tools()
             result = _run_async(
                 tools.get_imas_overview(query=query, dd_version=dd_version)
             )
@@ -2581,7 +2597,7 @@ class AgentsServer:
             """
             from imas_codex.llm.search_formatters import format_identifiers_report
 
-            tools = _get_imas_tools(graph_only=True)
+            tools = _get_imas_tools()
             result = _run_async(
                 tools.get_imas_identifiers(query=query, dd_version=dd_version)
             )
@@ -2612,7 +2628,7 @@ class AgentsServer:
             from imas_codex.llm.search_formatters import format_cluster_report
             from imas_codex.models.error_models import ToolError
 
-            tools = _get_imas_tools()
+            tools = _get_imas_tools(semantic_search=True)
             result = _run_async(
                 tools.clusters_tool.search_imas_clusters(
                     query=query,
@@ -2677,7 +2693,7 @@ class AgentsServer:
             """
             from imas_codex.llm.search_formatters import format_structure_report
 
-            tools = _get_imas_tools(graph_only=True)
+            tools = _get_imas_tools()
             result = _run_async(
                 tools.analyze_imas_structure(ids_name=ids_name, dd_version=dd_version)
             )
@@ -2703,7 +2719,7 @@ class AgentsServer:
             """
             from imas_codex.llm.search_formatters import format_export_ids_report
 
-            tools = _get_imas_tools(graph_only=True)
+            tools = _get_imas_tools()
             result = _run_async(
                 tools.export_imas_ids(
                     ids_name=ids_name, leaf_only=leaf_only, dd_version=dd_version
@@ -2729,7 +2745,7 @@ class AgentsServer:
             """
             from imas_codex.llm.search_formatters import format_export_domain_report
 
-            tools = _get_imas_tools(graph_only=True)
+            tools = _get_imas_tools()
             result = _run_async(
                 tools.export_imas_domain(
                     domain=domain, ids_filter=ids_filter, dd_version=dd_version
@@ -2751,7 +2767,7 @@ class AgentsServer:
             Returns:
                 Formatted text report listing notable changes per path across DD versions, or empty if no changes recorded.
             """
-            tools = _get_imas_tools(graph_only=True)
+            tools = _get_imas_tools()
             result = _run_async(tools.get_dd_version_context(paths=paths))
             return _format_version_context_report(result)
 
@@ -2762,7 +2778,7 @@ class AgentsServer:
             Returns:
                 Formatted text report with current version, version count, available version range, and ordered version chain.
             """
-            tools = _get_imas_tools(graph_only=True)
+            tools = _get_imas_tools()
             result = _run_async(tools.get_dd_versions())
             return _format_dd_versions_report(result)
 
