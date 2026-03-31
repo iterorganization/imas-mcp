@@ -388,62 +388,82 @@ class GraphPathTool:
 
         results = []
         found = 0
-        for path in path_list:
-            row = self._gc.query(
-                f"""
-                MATCH (p:IMASNode {{id: $path}})
-                WHERE true {dd_clause}
-                OPTIONAL MATCH (p)-[:HAS_UNIT]->(u:Unit)
-                RETURN p.id AS id, p.ids AS ids, p.data_type AS data_type,
-                       u.id AS units
+
+        # Batch validate all paths in a single UNWIND query
+        batch_rows = self._gc.query(
+            f"""
+            UNWIND $paths AS check_path
+            OPTIONAL MATCH (p:IMASNode {{id: check_path}})
+            WHERE true {dd_clause}
+            OPTIONAL MATCH (p)-[:HAS_UNIT]->(u:Unit)
+            RETURN check_path AS requested,
+                   p.id AS id, p.ids AS ids, p.data_type AS data_type,
+                   u.id AS units
+            """,
+            paths=path_list,
+            **dd_params,
+        )
+
+        # Index batch results by requested path
+        batch_map = {r["requested"]: r for r in batch_rows}
+
+        # Collect paths not found for renamed-path batch check
+        missing_paths = [p for p in path_list if batch_map.get(p, {}).get("id") is None]
+
+        # Batch check for renamed/deprecated paths
+        renamed_map: dict[str, dict] = {}
+        if missing_paths:
+            renamed_rows = self._gc.query(
+                """
+                UNWIND $paths AS check_path
+                OPTIONAL MATCH (old:IMASNode {id: check_path})-[:RENAMED_TO]->(new:IMASNode)
+                WITH check_path, old, new
+                WHERE old IS NOT NULL
+                RETURN check_path AS requested,
+                       old.id AS old_path, new.id AS new_path
                 """,
-                path=path,
-                **dd_params,
+                paths=missing_paths,
             )
-            if row:
-                r = row[0]
+            renamed_map = {r["requested"]: r for r in renamed_rows if r["old_path"]}
+
+        # Assemble results preserving original path order
+        for path in path_list:
+            row = batch_map.get(path, {})
+            if row.get("id") is not None:
                 results.append(
                     CheckPathsResultItem(
-                        path=r["id"],
+                        path=row["id"],
                         exists=True,
-                        ids_name=r["ids"],
-                        data_type=r["data_type"],
-                        units=r["units"] or "",
+                        ids_name=row["ids"],
+                        data_type=row["data_type"],
+                        units=row["units"] or "",
                     )
                 )
                 found += 1
-            else:
-                # Check for deprecated/renamed path
-                renamed = self._gc.query(
-                    """
-                    MATCH (old:IMASNode {id: $path})-[:RENAMED_TO]->(new:IMASNode)
-                    RETURN old.id AS old_path, new.id AS new_path
-                    """,
-                    path=path,
+            elif path in renamed_map:
+                r = renamed_map[path]
+                new_path = r["new_path"]
+                results.append(
+                    CheckPathsResultItem(
+                        path=path,
+                        exists=False,
+                        renamed_from=[
+                            {
+                                "old_path": r["old_path"],
+                                "new_path": new_path,
+                            }
+                        ],
+                        migration={"type": "renamed", "target": new_path},
+                        suggestion=new_path,
+                    )
                 )
-                if renamed:
-                    new_path = renamed[0]["new_path"]
-                    results.append(
-                        CheckPathsResultItem(
-                            path=path,
-                            exists=False,
-                            renamed_from=[
-                                {
-                                    "old_path": renamed[0]["old_path"],
-                                    "new_path": new_path,
-                                }
-                            ],
-                            migration={"type": "renamed", "target": new_path},
-                            suggestion=new_path,
-                        )
+            else:
+                results.append(
+                    CheckPathsResultItem(
+                        path=path,
+                        exists=False,
                     )
-                else:
-                    results.append(
-                        CheckPathsResultItem(
-                            path=path,
-                            exists=False,
-                        )
-                    )
+                )
 
         return CheckPathsResult(
             results=results,
@@ -1565,8 +1585,8 @@ class GraphStructureTool:
             MATCH (p:IMASNode)
             WHERE p.ids = $ids_name {dd_clause}
             RETURN count(p) AS total_paths,
-                   max(size(split(p.id, '/')) - 1) AS max_depth,
-                   avg(size(split(p.id, '/')) - 1) AS avg_depth,
+                   max(coalesce(p.depth, size(split(p.id, '/')) - 1)) AS max_depth,
+                   avg(coalesce(p.depth, size(split(p.id, '/')) - 1)) AS avg_depth,
                    count(nullIf(
                        p.data_type IS NULL OR p.data_type IN {_structure_type_list()},
                        true
@@ -1889,7 +1909,7 @@ def _text_search_imas_paths(
             YIELD node AS p, score
             {ft_where}
             WITH p, score
-            WHERE size(coalesce(p.documentation, '')) > 10
+            WHERE coalesce(p.doc_length, size(coalesce(p.documentation, ''))) > 10
                   OR p.description IS NOT NULL
             RETURN p.id AS id, score
             LIMIT $limit
@@ -1913,12 +1933,12 @@ def _text_search_imas_paths(
         WHERE {where_base}
           AND (
             toLower(p.documentation) CONTAINS $query_lower
-            OR toLower(p.id) CONTAINS $query_lower
+            OR coalesce(p.path_lower, toLower(p.id)) CONTAINS $query_lower
             OR toLower(p.name) CONTAINS $query_lower
             OR toLower(coalesce(p.description, '')) CONTAINS $query_lower
             OR any(kw IN coalesce(p.keywords, []) WHERE toLower(kw) CONTAINS $query_lower)
           )
-          AND size(coalesce(p.documentation, '')) > 10
+          AND coalesce(p.doc_length, size(coalesce(p.documentation, ''))) > 10
         WITH p,
              CASE
             WHEN toLower(p.documentation) CONTAINS $query_lower
@@ -1929,7 +1949,7 @@ def _text_search_imas_paths(
                WHEN toLower(p.name) CONTAINS $query_lower
                 AND {_leaf_data_type_clause("p")}
                  THEN 0.93
-               WHEN toLower(p.id) CONTAINS $query_lower
+               WHEN coalesce(p.path_lower, toLower(p.id)) CONTAINS $query_lower
                  THEN 0.90
                ELSE 0.85
              END AS base_score
@@ -1946,9 +1966,9 @@ def _text_search_imas_paths(
             word_cypher = f"""
                 MATCH (p:IMASNode)
                 WHERE {where_base}
-                  AND (toLower(p.name) = $word OR toLower(p.id) CONTAINS $word)
+                  AND (toLower(p.name) = $word OR coalesce(p.path_lower, toLower(p.id)) CONTAINS $word)
                                     AND {_leaf_data_type_clause("p")}
-                  AND size(coalesce(p.documentation, '')) > 10
+                  AND coalesce(p.doc_length, size(coalesce(p.documentation, ''))) > 10
                 RETURN p.id AS id, 0.90 AS score
                 LIMIT 10
             """

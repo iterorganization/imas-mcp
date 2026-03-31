@@ -87,12 +87,21 @@ class TestRenamedPathHandling:
     async def test_renamed_path_returns_valid_model(self):
         """Renamed paths must produce a valid CheckPathsResultItem, not a Pydantic error."""
         gc = MagicMock()
-        # First query: path not found (no match)
-        # Second query: RENAMED_TO found
+        # First query: batch UNWIND path lookup — path not found (null fields)
+        # Second query: batch UNWIND RENAMED_TO check
         gc.query.side_effect = [
-            [],  # path lookup returns empty
             [
                 {
+                    "requested": "magnetics/bpol_probe/polarisation_angle",
+                    "id": None,
+                    "ids": None,
+                    "data_type": None,
+                    "units": None,
+                }
+            ],  # batch path lookup — not found
+            [
+                {
+                    "requested": "magnetics/bpol_probe/polarisation_angle",
                     "old_path": "magnetics/bpol_probe/polarisation_angle",
                     "new_path": "magnetics/bpol_probe/polarization_angle",
                 }
@@ -128,6 +137,7 @@ class TestVersionFilteringSemantics:
         gc = MagicMock()
         gc.query.return_value = [
             {
+                "requested": "equilibrium/time_slice/profiles_1d/psi",
                 "id": "equilibrium/time_slice/profiles_1d/psi",
                 "ids": "equilibrium",
                 "data_type": "FLT_1D",
@@ -149,7 +159,13 @@ class TestVersionFilteringSemantics:
         """The dd_major_version parameter passed to Cypher must be an integer."""
         gc = MagicMock()
         gc.query.return_value = [
-            {"id": "test/path", "ids": "test", "data_type": "FLT_0D", "units": ""}
+            {
+                "requested": "test/path",
+                "id": "test/path",
+                "ids": "test",
+                "data_type": "FLT_0D",
+                "units": "",
+            }
         ]
         tool = GraphPathTool(gc)
         await tool.check_imas_paths("test/path", dd_version=4)
@@ -164,7 +180,13 @@ class TestVersionFilteringSemantics:
         """When dd_version is None, no version filter clause should be in the query."""
         gc = MagicMock()
         gc.query.return_value = [
-            {"id": "test/path", "ids": "test", "data_type": "FLT_0D", "units": ""}
+            {
+                "requested": "test/path",
+                "id": "test/path",
+                "ids": "test",
+                "data_type": "FLT_0D",
+                "units": "",
+            }
         ]
         tool = GraphPathTool(gc)
         await tool.check_imas_paths("test/path", dd_version=None)
