@@ -464,11 +464,15 @@ The guide is rendered as structured markdown with these sections:
 | equilibrium | time_slice/profiles_1d/label | → .../name | Rename reference |
 | ... | ... | ... | ... |
 
-### Unit Changes (45)
-| IDS | Path | Old Unit | New Unit | Conversion |
-|-----|------|----------|----------|------------|
-| core_profiles | .../pressure | Pa | kPa | ÷1000 |
-| ... | ... | ... | ... | ... |
+### Unit Changes
+Only dimensionally-incompatible changes (breaking) and equivalent-symbol changes (advisory)
+are shown — cosmetic notation changes (e.g. `A/m^2` → `A.m^-2`) are filtered at build time.
+
+| IDS | Path | Old Unit | New Unit | Severity | Conversion |
+|-----|------|----------|----------|----------|------------|
+| core_profiles | .../pressure | J.m^-3 | Pa | advisory | Same dimension |
+| spectrometer | .../power | W | Wb | **breaking** | Different dimension! |
+| ... | ... | ... | ... | ... | ... |
 
 ### Type Changes (12)
 | IDS | Path | Old Type | New Type | Action |
@@ -520,10 +524,11 @@ MATCH (old:IMASNode)-[:RENAMED_TO]->(new:IMASNode)
 WHERE EXISTS { (old)-[:DEPRECATED_IN]->(v:DDVersion) WHERE v.id IN $version_range }
 RETURN old.id AS old_path, new.id AS new_path, old.ids AS ids
 
--- 4. Unit changes in range
+-- 4. Unit changes in range (only real changes — cosmetic filtered at build)
 MATCH (c:IMASNodeChange)-[:IN_VERSION]->(v:DDVersion)-[:FOR_IMAS_PATH]->(p:IMASNode)
 WHERE v.id IN $version_range AND c.change_type = 'units'
-RETURN p.ids, p.id, c.old_value, c.new_value
+RETURN p.ids, p.id, c.old_value, c.new_value,
+       c.unit_change_subtype, c.breaking_level
 ```
 
 #### 7d. COCOS Sign Computation
@@ -551,28 +556,175 @@ def compute_sign_flip_table(from_cocos: int, to_cocos: int, labeled_paths: list[
 
 ---
 
-## Phase 8: Breaking Change Classification (Rebuild Required)
+## Phase 8: Pint-Normalized Unit Comparison (Rebuild Required)
 
 ### Problem
 
-`compute_version_changes()` returns raw changes without severity classification. A documentation
-wording tweak and a unit change from `Pa` to `kPa` are treated identically. Migration guides need
-to distinguish **breaking** changes (require code updates) from **advisory** changes (informational).
+`compute_version_changes()` compares raw unit strings with `!=`, producing **6,379 unit
+"changes"** of which **6,002 are in DD 4.1.0 alone**. Investigation reveals a 3-tier noise
+problem:
+
+| Category | Count | % | Example |
+|----------|-------|---|---------|
+| Cosmetic (identical after pint) | 3,867 | 60.6% | `A/m^2` → `A.m^-2`, `Ohm` → `ohm`, `-` → `1` |
+| Sentinel resolved (`as_parent` → real unit) | 2,318 | 36.3% | `as_parent_level_2` → `m^-3` |
+| Dimensionally equivalent | 98 | 1.5% | `J.m^-3` → `Pa` (both are pressure) |
+| **Genuine physics change** | **96** | **1.5%** | `W` → `Wb`, `m` → `rad`, `V.m^-1` → `T` |
+
+DD 4.1.0 performed a **mass unit standardization** — resolving `as_parent*` placeholders,
+switching to UDUNITS-compatible notation (`/` → `.^-1`), and standardizing case. These are
+formatting changes, not physics changes. Only 96 of 6,379 changes represent actual dimensional
+incompatibilities.
+
+Meanwhile, the Unit node graph already has 450 nodes including garbage sentinels like
+`as_parent_level_2` and `Toroidal angle`. We already have `normalize_unit_symbol()` in
+`imas_codex/units/` backed by pint with a custom UDUNITS formatter and DD-specific aliases —
+but it's only used for Unit node creation, not for change detection.
 
 ### Solution
 
-#### 8a. New Schema: BreakingChangeLevel
+Normalize units at build time using pint's base representation so that all DD version paths
+point to the same canonical Unit node regardless of the raw string used in each version's XML.
+
+#### 8a. Normalize Before Comparison in `compute_version_changes()`
+
+**File:** `imas_codex/graph/build_dd.py` (line ~1188)
+
+Replace the naive `old_val != new_val` comparison for the `units` field with pint-based
+comparison at three tiers:
+
+```python
+from imas_codex.units import normalize_unit_symbol, unit_registry
+
+def _units_changed(old_raw: str, new_raw: str) -> tuple[bool, str]:
+    """Compare units via pint normalization.
+    
+    Returns:
+        (changed, change_subtype) where change_subtype is one of:
+        - 'cosmetic'             — same after normalization (not stored)
+        - 'sentinel_resolved'    — as_parent/placeholder → concrete unit
+        - 'dim_equivalent'       — different symbol, same dimension (e.g. J.m^-3 → Pa)
+        - 'dim_incompatible'     — genuinely different physics (e.g. W → Wb)
+    """
+    old_norm = normalize_unit_symbol(old_raw)
+    new_norm = normalize_unit_symbol(new_raw)
+    
+    # Tier 1: Identical after normalization → not a change
+    if old_norm == new_norm:
+        return False, 'cosmetic'
+    
+    # Tier 2: One or both are sentinels/unparseable
+    if old_norm is None or new_norm is None:
+        return True, 'sentinel_resolved'
+    
+    # Tier 3: Both parse — check dimensional compatibility
+    try:
+        old_p = unit_registry.parse_expression(old_norm)
+        new_p = unit_registry.parse_expression(new_norm)
+        if old_p.is_compatible_with(new_p):
+            return True, 'dim_equivalent'
+    except Exception:
+        pass
+    
+    return True, 'dim_incompatible'
+```
+
+Update the comparison loop:
+
+```python
+for field in ("units", "documentation", ...):
+    old_val = old_info.get(field, "")
+    new_val = new_info.get(field, "")
+    
+    if field == "units":
+        changed, subtype = _units_changed(old_val, new_val)
+        if not changed:
+            continue  # cosmetic — don't create IMASNodeChange
+        changes.append({
+            "field": "units",
+            "old_value": str(old_val) if old_val else "",
+            "new_value": str(new_val) if new_val else "",
+            "unit_change_subtype": subtype,  # stored on IMASNodeChange
+        })
+    else:
+        if old_val != new_val:
+            changes.append({...})
+```
+
+#### 8b. Store `unit_change_subtype` on IMASNodeChange
 
 **File:** `imas_codex/schemas/imas_dd.yaml`
+
+Add a new enum and property:
+
+```yaml
+UnitChangeSubtype:
+  description: Classification of unit change based on pint normalization
+  permissible_values:
+    sentinel_resolved:
+      description: Placeholder (as_parent, etc.) resolved to concrete unit
+    dim_equivalent:
+      description: Different symbol, same physical dimension (e.g. J.m^-3 → Pa)
+    dim_incompatible:
+      description: Genuinely different physical dimension (breaking change)
+
+# On IMASNodeChange:
+unit_change_subtype:
+  description: For units changes, the pint-based classification
+  range: UnitChangeSubtype
+```
+
+#### 8c. Canonical Unit Nodes — No Sentinels
+
+**File:** `imas_codex/graph/build_dd.py` (`_create_unit_nodes`, `HAS_UNIT` creation)
+
+Currently, unparseable raw strings like `as_parent_level_2` become Unit node IDs.
+Change: only create Unit nodes for pint-parseable units. Paths with sentinel units get
+no `HAS_UNIT` relationship (they have no physical unit). Paths from older DD versions that
+used `as_parent_level_2` get `HAS_UNIT` to the *resolved* unit from later versions when
+available (forward-port the resolution).
+
+```python
+def _create_unit_nodes(client, units: set[str]) -> None:
+    unit_list = []
+    for u in units:
+        normalized = normalize_unit_symbol(u)
+        if normalized is None:
+            continue  # skip sentinels — no Unit node
+        unit_list.append({"id": normalized, "symbol": normalized})
+    ...
+```
+
+For `HAS_UNIT` relationships, always normalize:
+
+```python
+normalized = normalize_unit_symbol(p["unit"])
+if normalized:
+    unit_paths.append({**p, "unit": normalized})
+# else: no HAS_UNIT for this path (sentinel unit)
+```
+
+This collapses `A/m^2`, `A.m^-2`, and `A/m²` to a single `A.m^-2` Unit node.
+All paths across all DD versions that have the same physical unit will point to the
+same Unit node, enabling proper cross-version comparisons.
+
+**Expected impact:**
+- Unit nodes: ~450 → ~200 (remove sentinels, collapse equivalents)
+- Unit changes: 6,379 → ~2,512 (194 real + 2,318 sentinel resolutions)
+- Cosmetic noise eliminated: 3,867 spurious IMASNodeChange nodes removed
+
+#### 8d. Breaking Change Classification
+
+With clean unit data, breaking change classification becomes reliable:
 
 ```yaml
 BreakingChangeLevel:
   description: Severity classification for DD changes
   permissible_values:
     breaking:
-      description: Requires code changes (type change, unit change, sign flip, removal)
+      description: Requires code changes (type change, incompatible unit, sign flip, removal)
     advisory:
-      description: May affect interpretation (doc clarification, lifecycle change)
+      description: May affect interpretation (doc clarification, lifecycle, equivalent unit)
     informational:
       description: No code impact (doc wording, formatting)
 ```
@@ -585,25 +737,36 @@ breaking_level:
   range: BreakingChangeLevel
 ```
 
-#### 8b. Classification Rules
+Classification rules — now unit-aware:
 
 ```python
 BREAKING_RULES = {
     'path_removed': 'breaking',
     'path_renamed': 'breaking',
-    'units': 'breaking',       # always requires conversion
-    'data_type': 'breaking',   # array shape change
-    'cocos_label_transformation': 'breaking',  # sign convention change
+    'data_type': 'breaking',
+    'cocos_label_transformation': 'breaking',
     'coordinates_changed': 'advisory',
     'lifecycle_status': 'advisory',
     'node_type': 'advisory',
-    'documentation': lambda c: 'advisory' if c.semantic_type in ('sign_convention', 'coordinate_convention') else 'informational',
     'timebasepath': 'informational',
     'maxoccur_changed': 'advisory',
+    'documentation': lambda c: (
+        'advisory' if c.semantic_type in ('sign_convention', 'coordinate_convention')
+        else 'informational'
+    ),
 }
+
+def classify_unit_change(change: dict) -> str:
+    """Unit changes classified by pint subtype."""
+    subtype = change.get('unit_change_subtype')
+    if subtype == 'dim_incompatible':
+        return 'breaking'       # W → Wb: different physics
+    if subtype == 'dim_equivalent':
+        return 'advisory'       # J.m^-3 → Pa: same physics, different symbol
+    return 'informational'      # sentinel resolved: metadata improvement
 ```
 
-#### 8c. Precomputed Aggregates on DDVersion
+#### 8e. Precomputed Aggregates on DDVersion
 
 Add to DDVersion node:
 - `breaking_change_count: int` — count of breaking changes introduced in this version
@@ -611,9 +774,15 @@ Add to DDVersion node:
 - `total_change_count: int`
 
 **Tests:**
-- Verify unit changes are classified as breaking
+- Verify `A/m^2` → `A.m^-2` does NOT produce an IMASNodeChange (cosmetic)
+- Verify `J.m^-3` → `Pa` produces advisory change (dim_equivalent)
+- Verify `W` → `Wb` produces breaking change (dim_incompatible)
+- Verify `as_parent_level_2` → `m^-3` produces informational change (sentinel_resolved)
+- Verify Unit node count drops (~200 real units, no sentinels)
+- Verify all `HAS_UNIT` relationships point to pint-normalized Unit nodes
 - Verify doc wording changes are informational
 - Verify sign_convention doc changes are advisory
+- Verify total unit changes drop from 6,379 to ~2,512
 
 ---
 
@@ -691,20 +860,21 @@ Phase 9 (query optimizations) ─── independent
 
 Phase 2 (COCOS backfill) ──┐
 Phase 3 (path lifecycle) ──┼── require graph rebuild together
-Phase 8 (breaking changes) ─┘
+Phase 8 (pint units +     ─┘
+         breaking changes)
                             │
                             ▼
 Phase 5 (COCOS clusters) ──┐
 Phase 6 (cluster density) ──┼── rebuild on enriched graph
                             │
                             ▼
-Phase 7 (migration guide) ─── builds on phases 2-6, no rebuild itself
+Phase 7 (migration guide) ─── builds on phases 2-6,8 — no rebuild itself
 ```
 
 ### Suggested Execution Order
 
 **Sprint 1 (no rebuild):** Phases 1, 4, 9 — immediate value, unblocks imas-dd testing
-**Sprint 2 (first rebuild):** Phases 2, 3, 8 — enriched change tracking
+**Sprint 2 (first rebuild):** Phases 2, 3, 8 — enriched change tracking with pint-normalized units
 **Sprint 3 (second rebuild):** Phases 5, 6 — cluster improvements
 **Sprint 4 (tool):** Phase 7 — migration guide tool leveraging all prior work
 
