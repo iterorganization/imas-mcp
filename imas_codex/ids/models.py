@@ -519,21 +519,22 @@ def persist_mapping_result(
 
     # 5. Persist escalations as MappingEvidence
     for esc in result.escalations:
+        ev_id = f"{esc.source_id}:{esc.target_id}:escalation"
         gc.query(
             """
             MATCH (sg:SignalSource {id: $sg_id})
-            MERGE (ev:MappingEvidence {
-                source_id: $sg_id,
-                imas_path: $target_id,
-                type: 'escalation'
-            })
-            SET ev.severity = $severity,
-                ev.reason = $reason
+            MERGE (ev:MappingEvidence {id: $ev_id})
+            SET ev.evidence_type = 'escalation',
+                ev.text = $reason,
+                ev.supports_mapping = false,
+                ev.confidence = 0.0,
+                ev.source_node_id = $sg_id,
+                ev.url = $target_id
             MERGE (sg)-[:HAS_EVIDENCE]->(ev)
             """,
+            ev_id=ev_id,
             sg_id=esc.source_id,
             target_id=esc.target_id,
-            severity=esc.severity.value,
             reason=esc.reason,
         )
 

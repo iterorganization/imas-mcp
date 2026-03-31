@@ -202,6 +202,8 @@ enums:
         description: Evidence from array shape/dimension analysis
       expert_knowledge:
         description: Agent reasoning based on domain expertise
+      escalation:
+        description: Mapping flagged for human review due to ambiguity or conflict
 
   IMASMappingStatus:
     description: Status lifecycle for IMAS mapping orchestration
