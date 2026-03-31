@@ -1129,6 +1129,235 @@ class TestCoordinateSameAs:
             f"Expected >=1000 COORDINATE_SAME_AS relationships, got {count}"
         )
 
+
+class TestUnitNormalization:
+    """Tests for pint-normalized unit comparison."""
+
+    def test_cosmetic_unit_change_filtered(self):
+        from imas_codex.graph.build_dd import _units_changed
+
+        changed, subtype = _units_changed("A/m^2", "A.m^-2")
+        assert not changed
+        assert subtype == "cosmetic"
+
+    def test_sentinel_resolved(self):
+        from imas_codex.graph.build_dd import _units_changed
+
+        changed, subtype = _units_changed("as_parent_level_2", "m^-3")
+        assert changed
+        assert subtype == "sentinel_resolved"
+
+    def test_dim_equivalent(self):
+        from imas_codex.graph.build_dd import _units_changed
+
+        # J.m^-3 and Pa are both pressure
+        changed, subtype = _units_changed("J.m^-3", "Pa")
+        assert changed
+        assert subtype == "dim_equivalent"
+
+    def test_dim_incompatible(self):
+        from imas_codex.graph.build_dd import _units_changed
+
+        changed, subtype = _units_changed("W", "Wb")
+        assert changed
+        assert subtype == "dim_incompatible"
+
+    def test_empty_units_not_changed(self):
+        from imas_codex.graph.build_dd import _units_changed
+
+        changed, subtype = _units_changed("", "")
+        assert not changed
+
+    def test_both_sentinels_not_changed(self):
+        from imas_codex.graph.build_dd import _units_changed
+
+        changed, subtype = _units_changed("as_parent", "as_parent")
+        assert not changed
+        assert subtype == "cosmetic"
+
+    def test_same_real_units_not_changed(self):
+        from imas_codex.graph.build_dd import _units_changed
+
+        changed, subtype = _units_changed("m/s", "m.s^-1")
+        assert not changed
+        assert subtype == "cosmetic"
+
+
+class TestBreakingLevel:
+    """Tests for breaking change classification."""
+
+    def test_path_removed_is_breaking(self):
+        from imas_codex.graph.build_dd import _classify_breaking_level
+
+        assert _classify_breaking_level("path_removed", {}) == "breaking"
+
+    def test_doc_wording_is_informational(self):
+        from imas_codex.graph.build_dd import _classify_breaking_level
+
+        assert (
+            _classify_breaking_level("documentation", {"semantic_type": "none"})
+            == "informational"
+        )
+
+    def test_sign_convention_doc_is_advisory(self):
+        from imas_codex.graph.build_dd import _classify_breaking_level
+
+        assert (
+            _classify_breaking_level(
+                "documentation", {"semantic_type": "sign_convention"}
+            )
+            == "advisory"
+        )
+
+    def test_dim_incompatible_unit_is_breaking(self):
+        from imas_codex.graph.build_dd import _classify_breaking_level
+
+        assert (
+            _classify_breaking_level(
+                "units", {"unit_change_subtype": "dim_incompatible"}
+            )
+            == "breaking"
+        )
+
+    def test_dim_equivalent_unit_is_advisory(self):
+        from imas_codex.graph.build_dd import _classify_breaking_level
+
+        assert (
+            _classify_breaking_level("units", {"unit_change_subtype": "dim_equivalent"})
+            == "advisory"
+        )
+
+    def test_sentinel_resolved_unit_is_informational(self):
+        from imas_codex.graph.build_dd import _classify_breaking_level
+
+        assert (
+            _classify_breaking_level(
+                "units", {"unit_change_subtype": "sentinel_resolved"}
+            )
+            == "informational"
+        )
+
+    def test_data_type_is_breaking(self):
+        from imas_codex.graph.build_dd import _classify_breaking_level
+
+        assert _classify_breaking_level("data_type", {}) == "breaking"
+
+    def test_path_added_is_informational(self):
+        from imas_codex.graph.build_dd import _classify_breaking_level
+
+        assert _classify_breaking_level("path_added", {}) == "informational"
+
+
+class TestDetectRenames:
+    """Tests for rename detection via NBC metadata."""
+
+    def test_nbc_rename_detected(self):
+        from imas_codex.graph.build_dd import _detect_renames
+
+        added = {"ids/new_path"}
+        removed = {"ids/old_path"}
+        new_paths = {
+            "ids/new_path": {"change_nbc_previous_name": "ids/old_path"},
+        }
+        renames = _detect_renames(added, removed, new_paths)
+        assert len(renames) == 1
+        assert renames[0]["old_path"] == "ids/old_path"
+        assert renames[0]["new_path"] == "ids/new_path"
+        assert renames[0]["source"] == "nbc_metadata"
+
+    def test_no_rename_without_metadata(self):
+        from imas_codex.graph.build_dd import _detect_renames
+
+        added = {"ids/new_path"}
+        removed = {"ids/old_path"}
+        new_paths = {"ids/new_path": {}}
+        renames = _detect_renames(added, removed, new_paths)
+        assert len(renames) == 0
+
+    def test_no_rename_if_previous_not_in_removed(self):
+        from imas_codex.graph.build_dd import _detect_renames
+
+        added = {"ids/new_path"}
+        removed = set()
+        new_paths = {
+            "ids/new_path": {"change_nbc_previous_name": "ids/old_path"},
+        }
+        renames = _detect_renames(added, removed, new_paths)
+        assert len(renames) == 0
+
+
+class TestComputeVersionChanges:
+    """Tests for compute_version_changes with lifecycle and unit features."""
+
+    def test_path_added_event(self):
+        from imas_codex.graph.build_dd import compute_version_changes
+
+        result = compute_version_changes({}, {"ids/a": {"units": "m"}})
+        assert "ids/a" in result["changed"]
+        events = result["changed"]["ids/a"]
+        assert any(e["field"] == "path_added" for e in events)
+
+    def test_path_removed_event(self):
+        from imas_codex.graph.build_dd import compute_version_changes
+
+        result = compute_version_changes({"ids/a": {"units": "m"}}, {})
+        assert "ids/a" in result["changed"]
+        events = result["changed"]["ids/a"]
+        assert any(e["field"] == "path_removed" for e in events)
+
+    def test_rename_generates_path_renamed_event(self):
+        from imas_codex.graph.build_dd import compute_version_changes
+
+        old = {"ids/old_path": {"units": "m"}}
+        new = {
+            "ids/new_path": {
+                "units": "m",
+                "change_nbc_previous_name": "ids/old_path",
+            }
+        }
+        result = compute_version_changes(old, new)
+        assert "ids/new_path" in result["changed"]
+        events = result["changed"]["ids/new_path"]
+        rename_events = [e for e in events if e["field"] == "path_renamed"]
+        assert len(rename_events) == 1
+        assert rename_events[0]["old_value"] == "ids/old_path"
+        assert rename_events[0]["breaking_level"] == "breaking"
+        # Renamed paths should NOT also appear as added/removed events
+        added_events = [e for e in events if e["field"] == "path_added"]
+        assert len(added_events) == 0
+
+    def test_cosmetic_unit_change_not_in_changes(self):
+        from imas_codex.graph.build_dd import compute_version_changes
+
+        old = {"ids/a": {"units": "A/m^2"}}
+        new = {"ids/a": {"units": "A.m^-2"}}
+        result = compute_version_changes(old, new)
+        assert "ids/a" not in result["changed"]
+
+    def test_real_unit_change_has_breaking_level(self):
+        from imas_codex.graph.build_dd import compute_version_changes
+
+        old = {"ids/a": {"units": "W"}}
+        new = {"ids/a": {"units": "Wb"}}
+        result = compute_version_changes(old, new)
+        assert "ids/a" in result["changed"]
+        unit_changes = [c for c in result["changed"]["ids/a"] if c["field"] == "units"]
+        assert len(unit_changes) == 1
+        assert unit_changes[0]["breaking_level"] == "breaking"
+        assert unit_changes[0]["unit_change_subtype"] == "dim_incompatible"
+
+    def test_coordinates_field_compared(self):
+        from imas_codex.graph.build_dd import compute_version_changes
+
+        old = {"ids/a": {"coordinates": ["1...N"]}}
+        new = {"ids/a": {"coordinates": ["1...3"]}}
+        result = compute_version_changes(old, new)
+        assert "ids/a" in result["changed"]
+        coord_changes = [
+            c for c in result["changed"]["ids/a"] if c["field"] == "coordinates"
+        ]
+        assert len(coord_changes) == 1
+
     def test_coordinate_same_as_dimensions_valid(self, graph_client, label_counts):
         """COORDINATE_SAME_AS dimension should be 1-6."""
         if not label_counts.get("IMASNode"):
