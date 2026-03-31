@@ -333,6 +333,17 @@ discovered → ingested | failed | stale
 
 Ingestion is interrupt-safe — rerun to continue. Already-ingested files are skipped.
 
+## Compute Infrastructure
+
+**Never compile or run compute-intensive tasks on login nodes.** Login nodes are shared — CPU-intensive builds, test suites, and long-running processes cause severe performance degradation for all users.
+
+When connected to an HPC environment with a job scheduler (SLURM, PBS, etc.):
+- **Build on compute nodes** — use debug/interactive partitions for compilation (typically instant access via high-priority QOS)
+- **Run on compute nodes** — use batch partitions for embedding jobs, data processing, and any multi-minute workload
+- **Use portable compiler flags** — avoid `-march=native` on login nodes; prefer `-march=x86-64-v3` (AVX2+FMA) for cross-architecture compatibility
+
+Check for site-specific cluster skills in `~/.agents/skills/` that provide partition names, architecture flags, toolchain modules, and resource request templates for the local environment.
+
 ## Command Execution
 
 **CRITICAL: Always use `uv run` for project Python code.** This project manages dependencies (including `imas`) via `uv`. Running `python` or `python -m pytest` directly will miss project dependencies and fail with `ModuleNotFoundError`. Always use `uv run python`, `uv run pytest`, `uv run imas-codex`, etc.
