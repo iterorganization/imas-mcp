@@ -154,44 +154,47 @@ class GraphSearchTool:
             )
 
         normalized_filter = normalize_ids_filter(ids_filter)
-        embedding = self._embed_query(query)
 
-        # --- Vector search ---
-        filter_clause = ""
-        params: dict[str, Any] = {
-            "embedding": embedding,
-            "k": min(max_results * 5, 500),
-            "vector_limit": min(max_results * 3, 150),
-        }
-        if normalized_filter:
-            filter_clause = "AND path.ids IN $ids_filter"
-            params["ids_filter"] = (
-                normalized_filter
-                if isinstance(normalized_filter, list)
-                else [normalized_filter]
+        # --- Vector search (graceful degradation if embedding unavailable) ---
+        scores: dict[str, float] = {}
+        embed_available = False
+        embedding = self._try_embed_query(query)
+        if embedding is not None:
+            embed_available = True
+            filter_clause = ""
+            params: dict[str, Any] = {
+                "embedding": embedding,
+                "k": min(max_results * 5, 500),
+                "vector_limit": min(max_results * 3, 150),
+            }
+            if normalized_filter:
+                filter_clause = "AND path.ids IN $ids_filter"
+                params["ids_filter"] = (
+                    normalized_filter
+                    if isinstance(normalized_filter, list)
+                    else [normalized_filter]
+                )
+
+            dd_clause = _dd_version_clause("path", dd_version, params)
+
+            vector_results = self._gc.query(
+                f"""
+                CALL db.index.vector.queryNodes('imas_node_embedding', $k, $embedding)
+                YIELD node AS path, score
+                WHERE NOT (path)-[:DEPRECATED_IN]->(:DDVersion)
+                  AND path.node_category = 'data'
+                {filter_clause}
+                {dd_clause}
+                RETURN path.id AS id, score
+                ORDER BY score DESC
+                LIMIT $vector_limit
+                """,
+                **params,
             )
 
-        dd_clause = _dd_version_clause("path", dd_version, params)
-
-        vector_results = self._gc.query(
-            f"""
-            CALL db.index.vector.queryNodes('imas_node_embedding', $k, $embedding)
-            YIELD node AS path, score
-            WHERE NOT (path)-[:DEPRECATED_IN]->(:DDVersion)
-              AND path.node_category = 'data'
-            {filter_clause}
-            {dd_clause}
-            RETURN path.id AS id, score
-            ORDER BY score DESC
-            LIMIT $vector_limit
-            """,
-            **params,
-        )
-
-        scores: dict[str, float] = {}
-        for r in vector_results or []:
-            pid = r["id"]
-            scores[pid] = round(r["score"], 4)
+            for r in vector_results or []:
+                pid = r["id"]
+                scores[pid] = round(r["score"], 4)
 
         # --- Text search ---
         text_results = _text_search_imas_paths(
@@ -231,6 +234,8 @@ class GraphSearchTool:
             if isinstance(search_mode, str) and search_mode in SearchMode.__members__
             else SearchMode.AUTO
         )
+        if not embed_available:
+            mode = SearchMode.LEXICAL
 
         if not sorted_ids:
             return SearchPathsResult(
@@ -348,6 +353,21 @@ class GraphSearchTool:
         """Embed query text using the module-level Encoder singleton."""
         encoder = _get_encoder()
         return encoder.embed_texts([query])[0].tolist()
+
+    def _try_embed_query(self, query: str) -> list[float] | None:
+        """Embed query text, returning None if embedding backend is unavailable.
+
+        Used by search_imas_paths for graceful degradation to text-only
+        search when the embedding server is unreachable (e.g. dd-only
+        container deployments).
+        """
+        try:
+            return self._embed_query(query)
+        except Exception as e:
+            logger.warning(
+                "Embedding unavailable, falling back to text-only search: %s", e
+            )
+            return None
 
 
 class GraphPathTool:

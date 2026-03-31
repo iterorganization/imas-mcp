@@ -2366,7 +2366,7 @@ class AgentsServer:
             from imas_codex.llm.search_formatters import format_search_imas_report
             from imas_codex.models.error_models import ToolError
 
-            tools = _get_imas_tools()
+            tools = _get_imas_tools(graph_only=True)
 
             # Run path search and cluster search in parallel — they are
             # independent operations sharing the same encoder singleton.
@@ -2606,7 +2606,7 @@ class AgentsServer:
             from imas_codex.llm.search_formatters import format_cluster_report
             from imas_codex.models.error_models import ToolError
 
-            tools = _get_imas_tools()
+            tools = _get_imas_tools(graph_only=True)
             result = _run_async(
                 tools.clusters_tool.search_imas_clusters(
                     query=query,
@@ -2642,7 +2642,7 @@ class AgentsServer:
             """
             from imas_codex.llm.search_formatters import format_path_context_report
 
-            tools = _get_imas_tools()
+            tools = _get_imas_tools(graph_only=True)
             result = _run_async(
                 tools.get_imas_path_context(
                     path=path,
