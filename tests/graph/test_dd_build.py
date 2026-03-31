@@ -1373,10 +1373,10 @@ class TestBreakingLevel:
             == "breaking"
         )
 
-    def test_path_renamed_is_advisory(self):
+    def test_path_renamed_is_breaking(self):
         from imas_codex.graph.build_dd import _classify_breaking_level
 
-        assert _classify_breaking_level("path_renamed", {}) == "advisory"
+        assert _classify_breaking_level("path_renamed", {}) == "breaking"
 
     def test_coordinate_convention_doc_is_advisory(self):
         from imas_codex.graph.build_dd import _classify_breaking_level

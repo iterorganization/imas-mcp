@@ -1332,7 +1332,7 @@ def _classify_breaking_level(change_type: str, change: dict) -> str:
     """Classify a change as breaking/advisory/informational."""
     RULES = {
         "path_removed": "breaking",
-        "path_renamed": "advisory",  # renames handled by IMAS access layer
+        "path_renamed": "breaking",  # Non-NBC renames break interfaces
         "data_type": "breaking",
         "cocos_label_transformation": "breaking",
         "coordinates_changed": "advisory",
@@ -1469,7 +1469,7 @@ def compute_version_changes(
     for r in renames:
         changes_for_path = changed.setdefault(r["new_path"], [])
         # NBC-detected renames are handled by IMAS access layer (non-breaking)
-        level = "informational" if r.get("source") == "nbc_metadata" else "advisory"
+        level = "informational" if r.get("source") == "nbc_metadata" else "breaking"
         changes_for_path.append(
             {
                 "field": "path_renamed",
