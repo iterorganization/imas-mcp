@@ -1,6 +1,6 @@
 # Agent Guidelines
 
-Use terminal for direct operations (`rg`, `fd`, `git`), MCP `python()` for chained processing and graph queries, `uv run` for git/tests/CLI. Conventional commits. **CRITICAL: Always commit and push when files have been modified — no confirmation, no asking, just do it. This is non-negotiable. Every response that modifies files MUST end with `git add`, `git commit`, and `git push`.** **Never use `vscode_askQuestions` or any interactive VS Code popup/dialog tools — present all questions inline in the chat response so the user can answer them in one message.**
+Use terminal for direct operations (`rg`, `fd`, `git`), MCP `repl()` for chained processing and graph queries, `uv run` for git/tests/CLI. Conventional commits. **CRITICAL: Always commit and push when files have been modified — no confirmation, no asking, just do it. This is non-negotiable. Every response that modifies files MUST end with `git add`, `git commit`, and `git push`.** **Never use `vscode_askQuestions` or any interactive VS Code popup/dialog tools — present all questions inline in the chat response so the user can answer them in one message.**
 
 **Git sync discipline (multi-instance workflow):** This repo is edited from multiple machines and by multiple agents concurrently. Always **merge** on pull — never rebase.
 1. **Session start:** `git pull origin main` before any work.
@@ -270,9 +270,11 @@ Per-facility YAML configs define discovery roots, wiki sites, data sources, and 
 **Editing configs:** Always use MCP tools rather than direct file editing:
 
 ```python
-# Add seeding paths, wiki URLs, or exploration notes
-update_facility_infrastructure('tcv', {'discovery_roots': ['/new/path']})
-add_exploration_note('tcv', 'Found equilibrium codes at /home/codes/liuqe')
+# Update public facility config (wiki sites, discovery roots, data systems)
+update_facility_config('tcv', {'discovery_roots': ['/new/path']})
+
+# For infrastructure notes, use the repl tool directly
+repl("update_infrastructure('tcv', {'exploration_notes': ['Found equilibrium codes at /home/codes/liuqe']})")
 ```
 
 **Validation:** `validate_facility_config('tcv')` returns a list of error strings. The config schema is also exposed via the `get_graph_schema()` MCP tool.
@@ -353,15 +355,15 @@ Check for site-specific cluster skills in `~/.agents/skills/` that provide parti
 **Decision tree:**
 1. Single command, local → Terminal directly (`rg`, `fd`, `tokei`, `uv run`)
 2. Single command, remote → SSH (`ssh facility "command"`)
-3. Chained processing → `python()` with `run()` (auto-detects local/remote)
-4. Graph queries / MCP → `python()` with `query()`, `add_to_graph()`, etc.
+3. Chained processing → `repl()` with `run()` (auto-detects local/remote)
+4. Graph queries / MCP → `repl()` with `query()`, `add_to_graph()`, etc.
 
 **MCP tool routing:**
-- Dedicated MCP tools for single operations: `add_to_graph()`, `get_graph_schema()`, `update_facility_infrastructure()`, `add_exploration_note()`
-- `python()` REPL for chained processing, Cypher queries, IMAS/COCOS operations
+- Dedicated MCP tools for single operations: `add_to_graph()`, `get_graph_schema()`, `update_facility_config()`
+- `repl()` REPL for chained processing, Cypher queries, IMAS/COCOS operations
 - Terminal for `rg`, `fd`, `git`, `uv run`; SSH for remote single commands
 
-**Read-only mode:** `imas-codex serve --read-only` suppresses all write tools (`python()` REPL, `add_to_graph()`, `update_facility_infrastructure()`, `add_exploration_note()`) and exposes only the search/read tools (`search_signals`, `search_docs`, `search_code`, `search_imas`, `fetch`, `get_graph_schema`, etc.). Use for any context where graph mutation is not desired.
+**Read-only mode:** `imas-codex serve --read-only` suppresses all write tools (`repl()` REPL, `add_to_graph()`, `update_facility_config()`) and exposes only the search/read tools (`search_signals`, `search_docs`, `search_code`, `search_imas`, `fetch_content`, `get_graph_schema`, etc.). Use for any context where graph mutation is not desired.
 
 **DD-only mode:** `imas-codex serve --dd-only` hides facility-specific tools and **implies `--read-only`**. Use for container deployments with a DD-only graph. Auto-detected from graph content if omitted.
 
@@ -443,15 +445,15 @@ print(excludes.get('depth_limits', {}))
 print(info.get('exploration_notes', [])[-3:])
 ```
 
-When a command times out, **persist the constraint immediately** via `update_infrastructure()` and `add_exploration_note()`. Never repeat a timeout.
+When a command times out, **persist the constraint immediately** via `update_infrastructure()` in the repl. Never repeat a timeout.
 
 ### Persistence
 
 | Discovery Type | Destination |
 |----------------|-------------|
 | Source files, paths, codes, trees | `add_to_graph()` (public graph) |
-| Hostnames, IPs, OS, tool versions | `update_infrastructure()` (private YAML) |
-| Context for future sessions | `add_exploration_note()` |
+| Public facility config, wiki sites, discovery roots | `update_facility_config()` |
+| Infrastructure notes (hostnames, tool versions) | `repl("update_infrastructure('tcv', {...})")` |
 
 ### Data Classification
 
@@ -518,7 +520,7 @@ Never use `DETACH DELETE` on production data without user confirmation. For re-e
 
 ### Graph Migrations
 
-**Run migrations as inline Cypher, never as scripts.** Migrations are one-off operations — do not create `scripts/migrate_*.py` or `scripts/repair_*.py` files. Instead, run the migration Cypher directly via `uv run imas-codex graph shell` or the MCP `python()` REPL with `query()`. This keeps the `scripts/` directory clean for reusable tooling only.
+**Run migrations as inline Cypher, never as scripts.** Migrations are one-off operations — do not create `scripts/migrate_*.py` or `scripts/repair_*.py` files. Instead, run the migration Cypher directly via `uv run imas-codex graph shell` or the MCP `repl()` REPL with `query()`. This keeps the `scripts/` directory clean for reusable tooling only.
 
 ```python
 # Example: backfill a new property on existing nodes
@@ -789,13 +791,13 @@ uv run pytest tests/path/to/test.py::test_function  # Specific test
 
 ## Python REPL
 
-The `python()` MCP tool provides a persistent REPL for custom queries not covered by the search tools. Prefer `search_signals`, `search_docs`, `search_code`, and `search_imas` for common lookups — they perform multi-index vector search with graph enrichment and return formatted reports in one call.
+The `repl()` MCP tool provides a persistent REPL for custom queries not covered by the search tools. Prefer `search_signals`, `search_docs`, `search_code`, and `search_imas` for common lookups — they perform multi-index vector search with graph enrichment and return formatted reports in one call.
 
 ### REPL Workflow
 
 1. **Use search_* MCP tools first** for signal, documentation, code, and IMAS lookups. They handle embeddings, multi-index fan-out, enrichment, and formatting automatically.
-2. **Use python() for custom queries** — signal→IMAS mapping, facility overviews, flexible graph_search(), raw Cypher, or chaining multiple domain functions.
-3. **Chain operations** in a single `python()` call to minimize round-trips. Each call has overhead.
+2. **Use repl() for custom queries** — signal→IMAS mapping, facility overviews, flexible graph_search(), raw Cypher, or chaining multiple domain functions.
+3. **Chain operations** in a single `repl()` call to minimize round-trips. Each call has overhead.
 4. **For raw Cypher** (only when no domain function fits), call `schema_for(task='wiki')` first to get node labels, properties, relationships, and enums derived from the LinkML schemas. Never guess property names — they are code-generated.
 5. **Format output** with `as_table(pick(results, 'col1', 'col2'))` for structured results.
 
@@ -820,24 +822,23 @@ All graph node types, properties, enums, and relationships are derived from Link
 | Documentation | `search_docs("fishbone instabilities", facility="jet")` |
 | Code examples | `search_code("equilibrium reconstruction", facility="tcv")` |
 | IMAS DD paths | `search_imas("electron temperature", facility="tcv")` |
-| Full content | `fetch("jet:Fishbone_proposal_2018.ppt")` — use IDs/URLs from search results |
+| Full content | `fetch_content("jet:Fishbone_proposal_2018.ppt")` — use IDs/URLs from search results |
 
-**python() REPL** — for custom queries not covered by the search tools:
+**repl() REPL** — for custom queries not covered by the search tools:
 
 | Task | Command |
 |------|---------|
-| Wiki keyword | `python("print(find_wiki(text_contains='fishbone'))")` |
-| Page chunks | `python("print(wiki_page_chunks('equilibrium', facility='tcv'))")` |
-| Signal→IMAS map | `python("print(map_signals_to_imas(facility='tcv', physics_domain='magnetics'))")` |
-| Graph search | `python("print(graph_search('WikiChunk', where={'text__contains': 'IMAS'}))")` |
-| Format table | `python("print(as_table(find_signals('ip', facility='tcv')))")` |
-| Facility info | `python("print(get_facility('tcv'))")` |
-| Raw Cypher | `python("print(query('MATCH (n) RETURN n.id LIMIT 5'))")` |
+| Wiki keyword | `repl("print(find_wiki(text_contains='fishbone'))")` |
+| Page chunks | `repl("print(wiki_page_chunks('equilibrium', facility='tcv'))")` |
+| Signal→IMAS map | `repl("print(map_signals_to_imas(facility='tcv', physics_domain='magnetics'))")` |
+| Graph search | `repl("print(graph_search('WikiChunk', where={'text__contains': 'IMAS'}))")` |
+| Format table | `repl("print(as_table(find_signals('ip', facility='tcv')))")` |
+| Facility info | `repl("print(get_facility('tcv'))")` |
+| Raw Cypher | `repl("print(query('MATCH (n) RETURN n.id LIMIT 5'))")` |
 | Add to graph | `add_to_graph('SourceFile', [...])` |
-| Update infra | `update_facility_infrastructure('tcv', {...})` |
 | Remote command | `ssh facility "rg pattern /path"` |
 
-Chain multiple operations in a single `python()` call to minimize round-trips.
+Chain multiple operations in a single `repl()` call to minimize round-trips.
 
 ## Embedding Server
 

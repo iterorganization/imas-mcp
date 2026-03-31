@@ -9,7 +9,7 @@ Facility exploration for discovering source files, MDSplus trees, and analysis c
 **Before ANY disk-intensive operation, check facility excludes:**
 
 ```python
-python("""
+repl("""
 info = get_facility('tcv')
 excludes = info.get('excludes', {})
 print(f"Large dirs: {excludes.get('large_dirs', [])}")
@@ -34,8 +34,8 @@ pwd
 
 1. **Single command on local facility?** → Use terminal directly (`rg`, `fd`, `tokei`)
 2. **Single command on remote facility?** → Use direct SSH (`ssh facility "command"`)
-3. **Chained processing with logic?** → Use `python()` with `run()` (auto-detects local/remote)
-4. **Graph queries or MCP functions?** → Use `python()` with `query()`, `ingest_nodes()`, etc.
+3. **Chained processing with logic?** → Use `repl()` with `run()` (auto-detects local/remote)
+4. **Graph queries or MCP functions?** → Use `repl()` with `query()`, `ingest_nodes()`, etc.
 
 ## Setup: Ensure Remote Tools Are Available
 
@@ -43,13 +43,13 @@ Before exploring a new facility, ensure remote CLI tools are installed:
 
 ```python
 # Check tool availability
-python("print(check_tools('tcv'))")
+repl("print(check_tools('tcv'))")
 
 # If tools are missing, install them (uses ReAct agent)
-python("result = setup_tools('tcv'); print(result.summary)")
+repl("result = setup_tools('tcv'); print(result.summary)")
 
 # Or quick install without agent
-python("print(quick_setup('tcv', required_only=True))")
+repl("print(quick_setup('tcv', required_only=True))")
 ```
 
 Tool definitions are in [`imas_codex/config/remote_tools.yaml`](../imas_codex/config/remote_tools.yaml).
@@ -83,14 +83,14 @@ ssh tcv "tokei /home/codes -o json"
 
 ### Chained Processing & Graph Operations
 
-Use `python()` only when you need:
+Use `repl()` only when you need:
 - Multiple operations with intermediate processing
 - Graph queries and data manipulation
 - MCP functions (`add_to_graph`, `update_infrastructure`, `get_facility`)
 
 ```python
 # Chained processing (run() auto-detects local/remote)
-python("""
+repl("""
 files = run('fd -e py /home/codes', facility='tcv').strip().split('\\n')
 for f in files[:10]:
     content = run(f'head -20 {f}', facility='tcv')
@@ -99,11 +99,11 @@ for f in files[:10]:
 """)
 
 # Graph operations
-python("info = get_facility('tcv'); print(info['actionable_paths'][:5])")
-python("print(search_code('equilibrium reconstruction'))")
+repl("info = get_facility('tcv'); print(info['actionable_paths'][:5])")
+repl("print(search_code('equilibrium reconstruction'))")
 
 # Persist discoveries
-python("""
+repl("""
 add_to_graph("FacilityPath", [
     {"id": "tcv:/home/codes/liuqe", "path": "/home/codes/liuqe",
      "facility_id": "tcv", "path_type": "code_directory", "status": "discovered"}
@@ -134,8 +134,8 @@ scc /home/codes/liuqe --format json
 ssh tcv "rg -l 'write_ids|read_ids' /home/codes -g '*.py' | head -20"
 ssh tcv "fd -e py /home/codes | wc -l"
 
-# Chained processing - use python() with run()
-python("""
+# Chained processing - use repl() with run()
+repl("""
 files = run('fd -e py /home/codes', facility='tcv').strip().split('\\n')
 for f in files[:10]:
     content = run(f'head -20 {f}', facility='tcv')
@@ -184,7 +184,7 @@ After every exploration session, persist all discoveries:
 Example persistence:
 
 ```python
-python("""
+repl("""
 # Persist discovered source files
 add_to_graph("SourceFile", [
     {"id": "tcv:/home/codes/liuqe/liuqe.py", 
@@ -194,7 +194,7 @@ add_to_graph("SourceFile", [
 ])
 """)
 
-python("""
+repl("""
 # Update private infrastructure data
 update_infrastructure("tcv", {"tools": {"rg": "14.1.1", "fd": "10.2.0"}})
 """)
@@ -205,7 +205,7 @@ update_infrastructure("tcv", {"tools": {"rg": "14.1.1", "fd": "10.2.0"}})
 When a command times out or hangs, **persist the constraint immediately**:
 
 ```python
-python("""
+repl("""
 # Get current excludes and merge
 info = get_facility('tcv')
 excludes = info.get('excludes', {})
@@ -223,8 +223,8 @@ update_infrastructure('tcv', {
     }
 })
 
-# Add human-readable context
-add_exploration_note('tcv', '/work causes timeouts - use --max-depth 2 or target /work/imas')
+# Add human-readable context as an exploration note in the infrastructure update
+update_infrastructure('tcv', {'exploration_notes': ['/work causes timeouts - use --max-depth 2 or target /work/imas']})
 """)
 ```
 
@@ -252,7 +252,7 @@ Infrastructure (private) - security-sensitive:
 
 ```python
 # Wiki requires -k flag (SSL cert issue)
-python("print(run('curl -skL \"https://spcwiki.epfl.ch/wiki/PageName\"', facility='tcv'))")
+repl("print(run('curl -skL \"https://spcwiki.epfl.ch/wiki/PageName\"', facility='tcv'))")
 ```
 
 ## Handoff to Ingestion

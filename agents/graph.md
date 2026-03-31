@@ -6,20 +6,20 @@ This agent builds on the core rules in [AGENTS.md](../AGENTS.md). The main file 
 
 ## MCP Tools (Primary Interface)
 
-When the Codex MCP server is running, use `python()` REPL:
+When the Codex MCP server is running, use `repl()` REPL:
 
 ```python
 # Query the graph (always project properties, never RETURN n)
-python("result = query('MATCH (f:Facility) RETURN f.id, f.name'); print(result)")
+repl("result = query('MATCH (f:Facility) RETURN f.id, f.name'); print(result)")
 
 # Get schema for Cypher generation
-python("schema = get_graph_schema(); print(schema['node_labels'])")
+repl("schema = get_graph_schema(); print(schema['node_labels'])")
 
 # Semantic search
-python("hits = semantic_search('plasma current', 'code_chunk_embedding', 5); print(hits)")
+repl("hits = semantic_search('plasma current', 'code_chunk_embedding', 5); print(hits)")
 
 # Add nodes with validation
-python("""
+repl("""
 add_to_graph("Facility", [
     {"id": "tcv", "name": "EPFL-SPC", "machine": "TCV"}
 ])
@@ -80,7 +80,7 @@ Policy: Never rename/remove, just add.
 Generate Cypher directly. Use `UNWIND` for batch operations:
 
 ```python
-python("""
+repl("""
 tools = [{"id": "tcv:gcc", "name": "gcc", "available": True, "version": "11.5.0"}]
 query('''
     UNWIND $tools AS tool

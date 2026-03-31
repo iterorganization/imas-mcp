@@ -15,13 +15,15 @@ Example:
     [('MDSplusServer', 'facility_id', 'Facility'), ...]
 """
 
+import threading
 from dataclasses import dataclass
 from enum import Enum
 from functools import cached_property
 from pathlib import Path
 from typing import Any
 
-from linkml_runtime.utils.schemaview import SchemaView
+# SchemaView is imported lazily to avoid 16s+ linkml_runtime import
+# penalty on NFS filesystems (blocks MCP stdio connection timeout).
 
 
 def _get_schema_path() -> Path:
@@ -79,6 +81,8 @@ class GraphSchema:
         Args:
             schema_path: Path to LinkML schema YAML. Defaults to schemas/facility.yaml.
         """
+        from linkml_runtime.utils.schemaview import SchemaView
+
         self._schema_path = Path(schema_path) if schema_path else _get_schema_path()
         self._view = SchemaView(str(self._schema_path))
 
@@ -781,12 +785,42 @@ def merge_relationship_query(
 
 
 # =============================================================================
-# Module-level singleton for convenience
+# Module-level singleton — background preload
 # =============================================================================
+#
+# linkml_runtime takes ~16s to import on NFS.  Instead of blocking the
+# importing thread (which stalls MCP stdio handshake past its 30s
+# timeout), we kick off a daemon thread that loads the schema in the
+# background.  ``get_schema()`` blocks only if the caller actually
+# needs the schema before the background thread finishes.
 
-_schema = GraphSchema()
+_schema: GraphSchema | None = None
+_schema_ready = threading.Event()
+_schema_error: BaseException | None = None
+
+
+def _preload_schema() -> None:
+    """Background thread target: import linkml_runtime and build the schema."""
+    global _schema, _schema_error
+    try:
+        _schema = GraphSchema()
+    except BaseException as exc:
+        _schema_error = exc
+    finally:
+        _schema_ready.set()
+
+
+threading.Thread(target=_preload_schema, daemon=True, name="schema-preload").start()
 
 
 def get_schema() -> GraphSchema:
-    """Get the global GraphSchema instance."""
+    """Get the global GraphSchema instance.
+
+    Returns immediately if background preload has finished, otherwise
+    blocks until the schema is ready.
+    """
+    _schema_ready.wait()
+    if _schema_error is not None:
+        raise RuntimeError("Schema preload failed") from _schema_error
+    assert _schema is not None
     return _schema

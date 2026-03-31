@@ -16,8 +16,6 @@ import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from linkml_runtime.utils.schemaview import SchemaView
-
 from imas_codex.definitions.clusters import (
     CONCEPTS_SCHEMA,
     DATA_TYPES_SCHEMA,
@@ -55,6 +53,8 @@ def _load_vocabulary(schema_path: Path, enum_name: str) -> list[str]:
         return []
 
     try:
+        from linkml_runtime.utils.schemaview import SchemaView
+
         sv = SchemaView(str(schema_path))
         enum_def = sv.get_enum(enum_name)
         if not enum_def or not enum_def.permissible_values:

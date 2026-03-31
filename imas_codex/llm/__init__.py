@@ -7,8 +7,8 @@ Submodules:
 - search_tools: MCP search tool implementations
 - search_formatters: Format search results for MCP responses
 - prompts/: Jinja2 prompt templates
+
+Import AgentsServer directly to avoid loading the full server at package import time:
+
+    from imas_codex.llm.server import AgentsServer
 """
-
-from imas_codex.llm.server import AgentsServer
-
-__all__ = ["AgentsServer"]
