@@ -154,6 +154,31 @@ _install_all_tools: Any = None
 _warmup_lock = threading.Lock()
 _warmup_applied = False
 
+_graph_warmup_lock = threading.Lock()
+_graph_warmup_applied = False
+
+
+def _require_graph() -> None:
+    """Populate graph-related module globals from background warmup.
+
+    Blocks only on the graph warmup group — NOT on embeddings, discovery,
+    or remote.  Use for Tier 2 DD tools that need only Neo4j.
+    No-op after first call (or after ``_require_warmup()`` has run).
+    """
+    global _graph_warmup_applied
+    global GraphClient, get_schema, to_cypher_props
+
+    if _graph_warmup_applied:
+        return
+    with _graph_warmup_lock:
+        if _graph_warmup_applied:
+            return
+        graph_ns = warmup.graph()
+        GraphClient = graph_ns["GraphClient"]
+        get_schema = graph_ns["get_schema"]
+        to_cypher_props = graph_ns["to_cypher_props"]
+        _graph_warmup_applied = True
+
 
 def _require_warmup() -> None:
     """Populate module globals from background warmup groups.
@@ -162,7 +187,7 @@ def _require_warmup() -> None:
     Call at the top of any tool handler that references the module-level
     placeholders above.
     """
-    global _warmup_applied
+    global _warmup_applied, _graph_warmup_applied
     global _get_facility_config, get_facility_infrastructure, get_facility_validated
     global update_infrastructure, update_metadata
     global EncoderConfig, Encoder, EmbeddingBackendError, get_embedding_location
@@ -198,6 +223,7 @@ def _require_warmup() -> None:
         _install_all_tools = rem_ns["install_all_tools"]
 
         _warmup_applied = True
+        _graph_warmup_applied = True  # graph is a subset of full warmup
 
 
 # =============================================================================
@@ -236,17 +262,56 @@ def _generate_api_reference() -> str:
     )
 
 
-def _get_imas_tools(gc: GraphClient | None = None):
-    """Get or create singleton Tools instance with shared GraphClient."""
-    _require_warmup()
+_graph_client: Any = None
+_graph_client_lock = threading.Lock()
+
+
+def _get_graph_client():
+    """Get or create standalone GraphClient singleton (thread-safe).
+
+    Creates a ``GraphClient.from_profile()`` without going through the
+    REPL or requiring embedding warmup.  Only blocks on graph warmup.
+    """
+    global _graph_client
+    if _graph_client is not None:
+        return _graph_client
+    with _graph_client_lock:
+        if _graph_client is not None:
+            return _graph_client
+        _require_graph()
+        _graph_client = GraphClient.from_profile()
+        return _graph_client
+
+
+_imas_tools_lock = threading.Lock()
+
+
+def _get_imas_tools(gc: GraphClient | None = None, graph_only: bool = False):
+    """Get or create singleton Tools instance with shared GraphClient.
+
+    Args:
+        gc: Optional pre-existing GraphClient to use.
+        graph_only: If True, only require graph warmup (no embeddings).
+            Use for Tier 2 DD tools that need only Neo4j.
+    """
     global _imas_tools_instance
-    if _imas_tools_instance is None:
+    if _imas_tools_instance is not None:
+        return _imas_tools_instance
+    with _imas_tools_lock:
+        if _imas_tools_instance is not None:
+            return _imas_tools_instance
+
+        if graph_only:
+            _require_graph()
+        else:
+            _require_warmup()
+
         from imas_codex.tools import Tools
 
         if gc is None:
-            gc = _get_repl()["gc"]
+            gc = _get_graph_client() if graph_only else _get_repl()["gc"]
         _imas_tools_instance = Tools(graph_client=gc)
-    return _imas_tools_instance
+        return _imas_tools_instance
 
 
 def _run_async(coro):
@@ -1485,11 +1550,12 @@ def _reload_repl() -> str:
     Returns:
         Status message
     """
-    global _repl_globals, _imas_tools_instance
+    global _repl_globals, _imas_tools_instance, _graph_client
 
     # Clear REPL state
     _repl_globals = None
     _imas_tools_instance = None
+    _graph_client = None
 
     # Invalidate imas_codex module cache
     modules_to_reload = [name for name in sys.modules if name.startswith("imas_codex")]
@@ -2351,7 +2417,8 @@ class AgentsServer:
             return format_search_imas_report(result, cluster_result)
 
         # =====================================================================
-        # Promoted IMAS DD tools — delegate to shared Tools via _get_imas_tools()
+        # Tier 2 DD tools — graph-only, no embeddings required
+        # =====================================================================
         # =====================================================================
 
         @self.mcp.tool()
@@ -2374,7 +2441,7 @@ class AgentsServer:
             """
             from imas_codex.llm.search_formatters import format_check_report
 
-            tools = _get_imas_tools()
+            tools = _get_imas_tools(graph_only=True)
             result = _run_async(
                 tools.check_imas_paths(paths=paths, ids=ids, dd_version=dd_version)
             )
@@ -2402,7 +2469,7 @@ class AgentsServer:
             """
             from imas_codex.llm.search_formatters import format_fetch_paths_report
 
-            tools = _get_imas_tools()
+            tools = _get_imas_tools(graph_only=True)
             result = _run_async(
                 tools.fetch_imas_paths(
                     paths=paths,
@@ -2427,7 +2494,7 @@ class AgentsServer:
             Returns:
                 Formatted text listing error fields and their data types, or empty if the path has no error fields.
             """
-            tools = _get_imas_tools()
+            tools = _get_imas_tools(graph_only=True)
             result = _run_async(
                 tools.fetch_error_fields(path=path, dd_version=dd_version)
             )
@@ -2455,7 +2522,7 @@ class AgentsServer:
             """
             from imas_codex.llm.search_formatters import format_list_report
 
-            tools = _get_imas_tools()
+            tools = _get_imas_tools(graph_only=True)
             result = _run_async(
                 tools.list_imas_paths(
                     paths=paths,
@@ -2484,7 +2551,7 @@ class AgentsServer:
             """
             from imas_codex.llm.search_formatters import format_overview_report
 
-            tools = _get_imas_tools()
+            tools = _get_imas_tools(graph_only=True)
             result = _run_async(
                 tools.get_imas_overview(query=query, dd_version=dd_version)
             )
@@ -2508,7 +2575,7 @@ class AgentsServer:
             """
             from imas_codex.llm.search_formatters import format_identifiers_report
 
-            tools = _get_imas_tools()
+            tools = _get_imas_tools(graph_only=True)
             result = _run_async(
                 tools.get_imas_identifiers(query=query, dd_version=dd_version)
             )
@@ -2604,7 +2671,7 @@ class AgentsServer:
             """
             from imas_codex.llm.search_formatters import format_structure_report
 
-            tools = _get_imas_tools()
+            tools = _get_imas_tools(graph_only=True)
             result = _run_async(
                 tools.analyze_imas_structure(ids_name=ids_name, dd_version=dd_version)
             )
@@ -2630,7 +2697,7 @@ class AgentsServer:
             """
             from imas_codex.llm.search_formatters import format_export_ids_report
 
-            tools = _get_imas_tools()
+            tools = _get_imas_tools(graph_only=True)
             result = _run_async(
                 tools.export_imas_ids(
                     ids_name=ids_name, leaf_only=leaf_only, dd_version=dd_version
@@ -2656,7 +2723,7 @@ class AgentsServer:
             """
             from imas_codex.llm.search_formatters import format_export_domain_report
 
-            tools = _get_imas_tools()
+            tools = _get_imas_tools(graph_only=True)
             result = _run_async(
                 tools.export_imas_domain(
                     domain=domain, ids_filter=ids_filter, dd_version=dd_version
@@ -2678,7 +2745,7 @@ class AgentsServer:
             Returns:
                 Formatted text report listing notable changes per path across DD versions, or empty if no changes recorded.
             """
-            tools = _get_imas_tools()
+            tools = _get_imas_tools(graph_only=True)
             result = _run_async(tools.get_dd_version_context(paths=paths))
             return _format_version_context_report(result)
 
@@ -2689,7 +2756,7 @@ class AgentsServer:
             Returns:
                 Formatted text report with current version, version count, available version range, and ordered version chain.
             """
-            tools = _get_imas_tools()
+            tools = _get_imas_tools(graph_only=True)
             result = _run_async(tools.get_dd_versions())
             return _format_dd_versions_report(result)
 
