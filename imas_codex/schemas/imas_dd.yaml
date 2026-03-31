@@ -281,11 +281,11 @@ enums:
     description: Severity classification for DD changes
     permissible_values:
       breaking:
-        description: Requires code changes (type change, incompatible unit, sign flip, removal)
+        description: Requires code changes (sign convention flip, type change, incompatible units, COCOS label change)
       advisory:
-        description: May affect interpretation (doc clarification, lifecycle, equivalent unit)
+        description: May affect interpretation but does not break interfaces (path rename, doc clarification, lifecycle, equivalent unit, coordinate convention)
       informational:
-        description: No code impact (doc wording, formatting)
+        description: No code impact (doc wording, NBC-handled renames, new paths, timebase changes)
 
 # =============================================================================
 # Classes

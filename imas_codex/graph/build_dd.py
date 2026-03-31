@@ -1332,7 +1332,7 @@ def _classify_breaking_level(change_type: str, change: dict) -> str:
     """Classify a change as breaking/advisory/informational."""
     RULES = {
         "path_removed": "breaking",
-        "path_renamed": "breaking",
+        "path_renamed": "advisory",  # renames handled by IMAS access layer
         "data_type": "breaking",
         "cocos_label_transformation": "breaking",
         "coordinates_changed": "advisory",
@@ -1354,7 +1354,9 @@ def _classify_breaking_level(change_type: str, change: dict) -> str:
 
     if change_type == "documentation":
         semantic = change.get("semantic_type", "none")
-        if semantic in ("sign_convention", "coordinate_convention"):
+        if semantic == "sign_convention":
+            return "breaking"  # sign convention changes break external codes
+        if semantic == "coordinate_convention":
             return "advisory"
         return "informational"
 
@@ -1466,12 +1468,14 @@ def compute_version_changes(
     # Add rename change events
     for r in renames:
         changes_for_path = changed.setdefault(r["new_path"], [])
+        # NBC-detected renames are handled by IMAS access layer (non-breaking)
+        level = "informational" if r.get("source") == "nbc_metadata" else "advisory"
         changes_for_path.append(
             {
                 "field": "path_renamed",
                 "old_value": r["old_path"],
                 "new_value": r["new_path"],
-                "breaking_level": "breaking",
+                "breaking_level": level,
             }
         )
 
