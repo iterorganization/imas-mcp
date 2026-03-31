@@ -84,6 +84,19 @@ class RemoteEmbeddingClient:
             self._client.close()
             self._client = None
 
+    def update_base_url(self, new_url: str) -> None:
+        """Replace the base URL and reset the HTTP client.
+
+        Used when the service has moved (e.g. SLURM job restarted
+        on a different compute node) and the URL needs re-resolution.
+        """
+        new_url = new_url.rstrip("/")
+        if new_url == self.base_url:
+            return
+        logger.info("Updating embed client URL: %s → %s", self.base_url, new_url)
+        self.close()
+        self.base_url = new_url
+
     def __enter__(self) -> "RemoteEmbeddingClient":
         return self
 

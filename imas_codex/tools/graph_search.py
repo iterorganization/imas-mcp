@@ -63,10 +63,18 @@ def warmup_encoder():
     Call from a background thread at server startup so the first
     search_imas call doesn't pay the cold-start penalty.
     """
+    global _encoder
     try:
         encoder = _get_encoder()
         encoder.embed_texts(["warmup"])
         logger.info("Encoder warmup complete")
+    except ConnectionError:
+        # URL may be stale (SLURM job not yet running or migrated) —
+        # reset singleton so the next call re-resolves.
+        logger.warning(
+            "Encoder warmup failed (connection error), will retry on first query"
+        )
+        _encoder = None
     except Exception as e:
         logger.warning(f"Encoder warmup failed (will retry on first query): {e}")
 

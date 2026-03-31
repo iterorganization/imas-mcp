@@ -263,6 +263,42 @@ class Encoder:
         short = hn.split(".")[0]
         return f"iter-{short}" if "iter" in hn.lower() or "98dci4" in hn else short
 
+    def _reconnect_remote(self) -> bool:
+        """Re-resolve the remote embed URL and update the client.
+
+        Called on ``ConnectionError`` to handle SLURM job migration
+        (service restarted on a different compute node).
+
+        Returns:
+            True if the URL changed and the client was updated.
+        """
+        from imas_codex.remote.locations import invalidate_service_url_cache
+        from imas_codex.settings import get_embed_remote_url
+
+        invalidate_service_url_cache()
+        new_url = get_embed_remote_url()
+        if not new_url:
+            return False
+
+        old_url = self.config.remote_url
+        if new_url != old_url:
+            self.logger.info(
+                "Embed URL changed after re-resolution: %s → %s", old_url, new_url
+            )
+            self.config.remote_url = new_url
+            if self._remote_client:
+                self._remote_client.update_base_url(new_url)
+            else:
+                self._remote_client = RemoteEmbeddingClient(new_url)
+            self._backend_validated = False
+            self._remote_hostname = None
+
+            with Encoder._validated_urls_lock:
+                Encoder._validated_urls.discard(old_url or "")
+
+            return True
+        return False
+
     def build_document_embeddings(
         self,
         texts: list[str],
@@ -309,9 +345,19 @@ class Encoder:
             with self._lock:
                 self._validate_remote_backend()
 
-            embeddings = self._remote_client.embed(  # type: ignore[union-attr]
-                texts, normalize=self.config.normalize_embeddings
-            )
+            try:
+                embeddings = self._remote_client.embed(  # type: ignore[union-attr]
+                    texts, normalize=self.config.normalize_embeddings
+                )
+            except ConnectionError:
+                if self._reconnect_remote():
+                    with self._lock:
+                        self._validate_remote_backend()
+                    embeddings = self._remote_client.embed(  # type: ignore[union-attr]
+                        texts, normalize=self.config.normalize_embeddings
+                    )
+                else:
+                    raise
             return self._truncate_embeddings(embeddings)
 
         # Local backend — truncate_dim set on model at init
@@ -353,9 +399,19 @@ class Encoder:
             with self._lock:
                 self._validate_remote_backend()
 
-            embeddings = self._remote_client.embed(  # type: ignore[union-attr]
-                texts, normalize=self.config.normalize_embeddings
-            )
+            try:
+                embeddings = self._remote_client.embed(  # type: ignore[union-attr]
+                    texts, normalize=self.config.normalize_embeddings
+                )
+            except ConnectionError:
+                if self._reconnect_remote():
+                    with self._lock:
+                        self._validate_remote_backend()
+                    embeddings = self._remote_client.embed(  # type: ignore[union-attr]
+                        texts, normalize=self.config.normalize_embeddings
+                    )
+                else:
+                    raise
             embeddings = self._truncate_embeddings(embeddings)
             elapsed = time.time() - start
             return EmbeddingResult(
@@ -603,9 +659,18 @@ class Encoder:
             self.logger.debug(
                 f"Generating embeddings remotely for {len(texts)} texts..."
             )
-            embeddings = self._remote_client.embed(  # type: ignore[union-attr]
-                texts, normalize=self.config.normalize_embeddings
-            )
+            try:
+                embeddings = self._remote_client.embed(  # type: ignore[union-attr]
+                    texts, normalize=self.config.normalize_embeddings
+                )
+            except ConnectionError:
+                if self._reconnect_remote():
+                    self._validate_remote_backend()
+                    embeddings = self._remote_client.embed(  # type: ignore[union-attr]
+                        texts, normalize=self.config.normalize_embeddings
+                    )
+                else:
+                    raise
             embeddings = self._truncate_embeddings(embeddings)
             if self.config.use_half_precision:
                 embeddings = embeddings.astype(np.float16)
