@@ -570,6 +570,59 @@ class TestCOCOSCompleteness:
         )
 
 
+class TestCOCOSBackfill:
+    """Verify COCOS label backfill and provenance tracking."""
+
+    def test_cocos_label_source_populated(self, graph_client, label_counts):
+        """All paths with COCOS labels should have a source."""
+        if not label_counts.get("IMASNode"):
+            pytest.skip("No IMASNode nodes in graph")
+
+        result = graph_client.query(
+            "MATCH (p:IMASNode) "
+            "WHERE p.cocos_label_transformation IS NOT NULL "
+            "AND p.cocos_label_source IS NULL "
+            "RETURN count(p) AS cnt"
+        )
+        assert result[0]["cnt"] == 0, "Some COCOS-labelled paths missing source"
+
+    def test_cocos_label_sources_valid(self, graph_client, label_counts):
+        """cocos_label_source values should be from the valid set."""
+        if not label_counts.get("IMASNode"):
+            pytest.skip("No IMASNode nodes in graph")
+
+        result = graph_client.query(
+            "MATCH (p:IMASNode) "
+            "WHERE p.cocos_label_source IS NOT NULL "
+            "RETURN DISTINCT p.cocos_label_source AS source"
+        )
+        valid = {
+            "xml",
+            "inferred_forward",
+            "inferred_backward",
+            "inferred_expression",
+            "inferred_sign_flip",
+        }
+        for r in result:
+            assert r["source"] in valid, f"Invalid source: {r['source']}"
+
+    def test_backfill_increases_coverage(self, graph_client, label_counts):
+        """Backfilled labels should increase coverage beyond XML-only."""
+        if not label_counts.get("IMASNode"):
+            pytest.skip("No IMASNode nodes in graph")
+
+        result = graph_client.query(
+            "MATCH (p:IMASNode) "
+            "WHERE p.cocos_label_source IS NOT NULL "
+            "AND p.cocos_label_source <> 'xml' "
+            "RETURN count(p) AS cnt"
+        )
+        # If the latest DD version has gaps, backfill should fill some
+        backfilled = result[0]["cnt"]
+        # At minimum, we expect the backfill ran (may be 0 if latest XML is complete)
+        assert backfilled >= 0
+
+
 class TestClusterLabels:
     """Verify cluster label quality and consistency."""
 

@@ -904,6 +904,140 @@ def extract_cocos_labels_for_version(version: str) -> dict[str, str]:
     return labels
 
 
+def _backfill_cocos_labels(client: "GraphClient", version_data: dict[str, dict]) -> int:
+    """Backfill COCOS labels for DD versions where XML lacks them.
+
+    DD versions 4.0.0–4.1.1 removed ``cocos_label_transformation`` from
+    the XML schema while retaining ``cocos_transformation_expression``.
+    This leaves ~200-250 COCOS-dependent paths unlabelled in 4.x.
+
+    Three inference sources, applied in priority order:
+
+    1. **Forward-port** from the last labelled 3.x version (typically
+       3.42.2 with ~680 labelled fields).
+    2. **Expression parsing** — extract label names from
+       ``cocos_transformation_expression`` (e.g. ``"- {psi_like}"``).
+    3. **imas-python sign flip paths** — paths identified by
+       :func:`get_sign_flip_paths` are ``psi_like`` by definition.
+
+    Every labelled path also receives a ``cocos_label_source`` tag for
+    provenance (``xml``, ``inferred_forward``, ``inferred_expression``,
+    or ``inferred_sign_flip``).
+
+    Returns:
+        Count of labels backfilled.
+    """
+    sorted_versions = sorted(version_data.keys())
+    latest_version = sorted_versions[-1]
+    latest_paths = version_data[latest_version]["paths"]
+
+    # Build reference labels from the latest 3.x version
+    last_3x: str | None = None
+    for v in reversed(sorted_versions):
+        if v.startswith("3."):
+            last_3x = v
+            break
+
+    ref_labels: dict[str, str] = {}
+    if last_3x:
+        for path, info in version_data[last_3x]["paths"].items():
+            label = info.get("cocos_label_transformation")
+            if label:
+                ref_labels[path] = label
+
+    updates: list[dict] = []
+    handled: set[str] = set()
+
+    for path, info in latest_paths.items():
+        if info.get("cocos_label_transformation"):
+            continue  # Already labelled from XML
+
+        # Source 1: Forward-port from 3.x
+        if path in ref_labels:
+            updates.append(
+                {"id": path, "label": ref_labels[path], "source": "inferred_forward"}
+            )
+            handled.add(path)
+            continue
+
+        # Source 2: Parse cocos_transformation_expression
+        expr = info.get("cocos_transformation_expression", "")
+        if expr:
+            match = re.search(r"\{(\w+_like)\}", expr)
+            if match:
+                updates.append(
+                    {
+                        "id": path,
+                        "label": match.group(1),
+                        "source": "inferred_expression",
+                    }
+                )
+                handled.add(path)
+                continue
+
+    # Source 3: imas-python sign flip paths for remaining unlabelled
+    try:
+        from imas_codex.cocos.transforms import (
+            get_sign_flip_paths,
+            list_ids_with_sign_flips,
+        )
+
+        for ids_name in list_ids_with_sign_flips():
+            for rel_path in get_sign_flip_paths(ids_name):
+                full_path = f"{ids_name}/{rel_path}"
+                if full_path in handled:
+                    continue
+                if full_path not in latest_paths:
+                    continue
+                if latest_paths[full_path].get("cocos_label_transformation"):
+                    continue
+                updates.append(
+                    {
+                        "id": full_path,
+                        "label": "psi_like",
+                        "source": "inferred_sign_flip",
+                    }
+                )
+                handled.add(full_path)
+    except ImportError:
+        logger.debug(
+            "imas_codex.cocos.transforms not available, skipping sign flip backfill"
+        )
+
+    # Apply backfilled labels in batches
+    if updates:
+        for i in range(0, len(updates), 1000):
+            batch = updates[i : i + 1000]
+            client.query(
+                """
+                UNWIND $updates AS u
+                MATCH (p:IMASNode {id: u.id})
+                SET p.cocos_label_transformation = u.label,
+                    p.cocos_label_source = u.source
+                """,
+                updates=batch,
+            )
+        logger.info(
+            "Backfilled %d COCOS labels (forward=%d, expression=%d, sign_flip=%d)",
+            len(updates),
+            sum(1 for u in updates if u["source"] == "inferred_forward"),
+            sum(1 for u in updates if u["source"] == "inferred_expression"),
+            sum(1 for u in updates if u["source"] == "inferred_sign_flip"),
+        )
+
+    # Mark XML-sourced labels for provenance tracking
+    client.query(
+        """
+        MATCH (p:IMASNode)
+        WHERE p.cocos_label_transformation IS NOT NULL
+        AND p.cocos_label_source IS NULL
+        SET p.cocos_label_source = 'xml'
+        """
+    )
+
+    return len(updates)
+
+
 def extract_paths_for_version(version: str, ids_filter: set[str] | None = None) -> dict:
     """
     Extract all paths from a DD version.
@@ -1591,6 +1725,7 @@ def phase_build(
         "path_changes_created": 0,
         "definitions_changed": 0,
         "cocos_labels_updated": 0,
+        "cocos_labels_backfilled": 0,
         "identifier_schemas_created": 0,
         "error_relationships": 0,
         "orphaned_units_deleted": 0,
@@ -1704,6 +1839,9 @@ def phase_build(
             """,
             labeled_paths=list(latest_labeled),
         )
+
+        # Backfill COCOS labels for versions where XML lacks them (4.0.0–4.1.x)
+        stats["cocos_labels_backfilled"] = _backfill_cocos_labels(client, version_data)
 
     # Final-pass: field-level metadata from latest version
     if not dry_run and version_data:
