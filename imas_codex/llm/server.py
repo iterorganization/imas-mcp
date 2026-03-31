@@ -2760,6 +2760,35 @@ class AgentsServer:
             result = _run_async(tools.get_dd_versions())
             return _format_dd_versions_report(result)
 
+        @self.mcp.tool()
+        def get_dd_migration_guide(
+            from_version: str,
+            to_version: str,
+            ids_filter: str | None = None,
+            include_recipes: bool = True,
+        ) -> str:
+            """Generate a migration guide between two DD versions. Returns breaking changes, COCOS sign-flip tables, path renames, unit changes, and code update recipes.
+
+            Args:
+                from_version: Source DD version (e.g. "3.39.0").
+                to_version: Target DD version (e.g. "4.0.0").
+                ids_filter: Optional IDS name to restrict output to a single IDS.
+                include_recipes: Whether to include code update snippets. Default: true.
+
+            Returns:
+                Structured markdown migration guide with breaking changes, COCOS tables, renames, and recipes.
+            """
+            from imas_codex.tools.migration_guide import generate_migration_guide
+
+            gc = _get_graph_client()
+            return generate_migration_guide(
+                gc=gc,
+                from_version=from_version,
+                to_version=to_version,
+                ids_filter=ids_filter,
+                include_recipes=include_recipes,
+            )
+
         if not self.dd_only:
 
             @self.mcp.tool()
