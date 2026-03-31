@@ -538,35 +538,47 @@ The `api.openrouter.ai` subdomain returns NXDOMAIN on compute nodes while
 likely a DNS resolver issue with CNAME chains rather than an intentional block,
 since `api.anthropic.com` resolves correctly.
 
-**Option A: /etc/hosts override (per-job, no root needed)**
+**Constraint: All LLM traffic routes through OpenRouter.** We do not hold direct
+Anthropic API tokens — all model access (Claude, Gemini, GPT) is via OpenRouter
+API keys. This makes resolving `api.openrouter.ai` on compute nodes a hard
+requirement, not an optimisation.
+
+**Option A: HOSTALIASES override (per-job, no root needed) — RECOMMENDED**
 
 ```bash
-# In the LiteLLM SLURM script, resolve on login and inject:
-# (Login node can resolve api.openrouter.ai)
-echo "104.18.2.115 api.openrouter.ai" >> /tmp/hosts-override
-export HOSTALIASES=/tmp/hosts-override
+# In the LiteLLM SLURM script, resolve on login (where it works) and inject:
+# The IP is for api.openrouter.ai (Cloudflare). Resolve fresh at job start.
+OPENROUTER_IP=$(ssh sdcc-login-1003 "getent hosts api.openrouter.ai" 2>/dev/null | awk '{print $1}')
+OPENROUTER_IP="${OPENROUTER_IP:-104.18.2.115}"  # Fallback to known Cloudflare IP
+echo "$OPENROUTER_IP api.openrouter.ai" > /tmp/hostaliases-litellm
+export HOSTALIASES=/tmp/hostaliases-litellm
 ```
 
-Note: `HOSTALIASES` only works with glibc `getaddrinfo()`, which Python's
-`socket.getaddrinfo()` uses. This should work for LiteLLM's HTTP client.
+Note: `HOSTALIASES` works with glibc `getaddrinfo()`, which Python's
+`socket.getaddrinfo()` uses. This should work for LiteLLM's HTTP client
+(httpx/aiohttp). Test carefully — some HTTP libraries may bypass glibc
+resolution and use their own DNS (e.g., asyncio resolvers). If HOSTALIASES
+fails, fall back to Option A2.
 
-**Option B: Request IT DNS whitelist**
+**Option A2: /etc/hosts via SLURM Prolog (requires SLURM admin)**
+
+Request IT to add a SLURM prolog script that appends api.openrouter.ai to
+`/etc/hosts` on the allocated node. This is more robust than HOSTALIASES
+as it works for all DNS resolution methods, but requires admin cooperation.
+
+**Option B: Request IT DNS whitelist — RECOMMENDED (medium-term)**
 
 File a ticket requesting `api.openrouter.ai` be added to the DNS resolver
-whitelist. Reference that `openrouter.ai`, `api.anthropic.com`, `github.com`,
-and `pypi.org` already resolve correctly.
+whitelist. Reference that `openrouter.ai` (same domain, different subdomain),
+`api.anthropic.com`, `github.com`, and `pypi.org` already resolve correctly.
+The NXDOMAIN for `api.openrouter.ai` is likely a CNAME chain resolution issue
+with Cloudflare, not an intentional block.
 
-**Option C: Use Anthropic API directly (bypass OpenRouter for Anthropic models)**
+**Recommended: Option A (immediate) + Option B (medium-term)**
 
-Since `api.anthropic.com` resolves on compute nodes, configure LiteLLM with
-a direct Anthropic API key for Claude models, and only use OpenRouter for
-non-Anthropic models. This eliminates the OpenRouter dependency for the
-primary model family.
-
-**Recommended: Option C (immediate) + Option B (medium-term)**
-
-Option C works today with no infrastructure changes. Option B provides full
-OpenRouter access for model diversity.
+Option A works today with no IT involvement. Option B eliminates the workaround
+permanently. Both must target OpenRouter since all LLM credentials are
+OpenRouter-issued.
 
 #### 3.2 LiteLLM SLURM Job
 
@@ -594,11 +606,15 @@ cd ~/Code/imas-codex
 
 echo "Starting LiteLLM proxy on $(hostname) at $(date)"
 
-# DNS workaround for api.openrouter.ai (if needed)
-OPENROUTER_IP=$(getent hosts api.openrouter.ai 2>/dev/null | awk '{print $1}')
-if [ -z "$OPENROUTER_IP" ]; then
-    echo "WARNING: api.openrouter.ai not in DNS, using HOSTALIASES workaround"
-    echo "104.18.2.115 api.openrouter.ai" > /tmp/hostaliases-litellm
+# DNS workaround for api.openrouter.ai
+# All LLM traffic goes through OpenRouter — this resolution is mandatory.
+# Compute DNS returns NXDOMAIN for api.openrouter.ai, so resolve via login.
+OPENROUTER_IP=$(timeout 5 ssh -o BatchMode=yes sdcc-login-1003 \
+    "getent hosts api.openrouter.ai 2>/dev/null" | awk '{print $1}')
+OPENROUTER_IP="${OPENROUTER_IP:-104.18.2.115}"  # Fallback: known Cloudflare IP
+if ! getent hosts api.openrouter.ai &>/dev/null; then
+    echo "WARNING: api.openrouter.ai not in DNS, using HOSTALIASES: $OPENROUTER_IP"
+    echo "$OPENROUTER_IP api.openrouter.ai" > /tmp/hostaliases-litellm
     export HOSTALIASES=/tmp/hostaliases-litellm
 fi
 
@@ -652,7 +668,7 @@ curl http://$LLM_NODE:18400/health
 srun --partition=all --time=00:05:00 --pty bash -c \
     "curl http://$LLM_NODE:18400/health"
 
-# Test 4: LLM call from compute
+# Test 4: LLM call from compute (must work via OpenRouter — no direct Anthropic tokens)
 srun --partition=all --time=00:05:00 --pty bash -c "
     export LITELLM_PROXY_URL=http://$LLM_NODE:18400
     cd ~/Code/imas-codex
@@ -664,10 +680,18 @@ print(r.choices[0].message.content)
 \"
 "
 
-# Test 5: Verify DNS workaround
+# Test 5: Verify HOSTALIASES workaround (critical — all LLM access is via OpenRouter)
 srun --partition=all --time=00:05:00 --pty bash -c "
-    export HOSTALIASES=/tmp/hostaliases-litellm
-    curl -s https://api.openrouter.ai/api/v1/models | head -c 200
+    # Without HOSTALIASES:
+    echo 'Without HOSTALIASES:'
+    getent hosts api.openrouter.ai 2>&1 || echo '  NXDOMAIN (expected)'
+    # With HOSTALIASES:
+    echo '104.18.2.115 api.openrouter.ai' > /tmp/test-hostaliases
+    export HOSTALIASES=/tmp/test-hostaliases
+    echo 'With HOSTALIASES:'
+    python3 -c 'import socket; print(socket.getaddrinfo(\"api.openrouter.ai\", 443)[0][4])' 2>&1
+    # Test actual HTTPS:
+    curl -s --connect-timeout 5 -o /dev/null -w 'api.openrouter.ai: HTTP %{http_code}\n' https://api.openrouter.ai/api/v1/models
 "
 ```
 
@@ -996,7 +1020,7 @@ detailed security/operational analysis.
 | Zellij on GPFS | ✅ Verified (v0.44.0) | None |
 | Compute → compute TCP | ✅ Verified | None |
 | Login → compute TCP | ✅ Verified | None |
-| Compute → api.anthropic.com | ✅ Verified | None |
-| Compute → api.openrouter.ai | ❌ DNS fails | Use HOSTALIASES or direct Anthropic API |
+| Compute → api.anthropic.com | ✅ Verified | None (but not usable — no direct Anthropic tokens) |
+| Compute → api.openrouter.ai | ❌ DNS fails | **Critical**: Use HOSTALIASES workaround + file IT DNS ticket |
 | pam_slurm_adopt | ⚠️ Blocks SSH | Must use srun for compute access |
 | TMPDIR on compute | ⚠️ Permission denied | Set `export TMPDIR=/tmp` in scripts |

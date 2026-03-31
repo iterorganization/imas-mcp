@@ -262,22 +262,21 @@ echo "$(host api.openrouter.ai | awk '/has address/{print $4; exit}') api.openro
 export HOSTALIASES=~/.local/share/imas-codex/services/hostaliases
 ```
 
-### 7.2 Direct Anthropic API (Bypass OpenRouter)
+### 7.2 OpenRouter DNS Resolution via HOSTALIASES
 
-Since `api.anthropic.com` resolves on compute nodes, configure LiteLLM with a
-direct Anthropic API key for Claude models:
+All LLM access is through OpenRouter (we do not hold direct Anthropic API tokens).
+Since `api.openrouter.ai` is the only failing domain, resolve it at job startup:
 
-```yaml
-# In litellm_config.yaml, add direct Anthropic entries:
-- model_name: anthropic/claude-sonnet-4-6
-  litellm_params:
-    model: claude-sonnet-4-6-20250514
-    api_key: os.environ/ANTHROPIC_API_KEY
-    # Direct to Anthropic, no OpenRouter needed
+```bash
+# In LiteLLM SLURM script — resolve on login, inject into compute job
+OPENROUTER_IP=$(ssh sdcc-login-1003 "getent hosts api.openrouter.ai" 2>/dev/null | awk '{print $1}')
+OPENROUTER_IP="${OPENROUTER_IP:-104.18.2.115}"  # Fallback: known Cloudflare IP
+echo "$OPENROUTER_IP api.openrouter.ai" > /tmp/hostaliases-litellm
+export HOSTALIASES=/tmp/hostaliases-litellm
 ```
 
-This eliminates the OpenRouter dependency for the primary model family (Claude),
-which accounts for >90% of LLM calls in imas-codex workflows.
+This is the critical workaround: without it, LiteLLM on compute cannot reach any
+LLM provider since all traffic routes through OpenRouter.
 
 ### 7.3 Login-as-Proxy Pattern
 
@@ -301,10 +300,13 @@ involvement. See Section 2 connectivity matrix.
 
 ### For Immediate Use (AI Agent Development)
 
-1. **Use direct Anthropic API from compute** — `api.anthropic.com` already resolves
-2. **Use HOSTALIASES for OpenRouter** — resolves the DNS issue without IT changes
-3. **File IT ticket for DNS whitelist** — request `api.openrouter.ai` be added
-4. **Move LiteLLM to compute node** — reduces login node load
+1. **Use HOSTALIASES for OpenRouter** — resolves the `api.openrouter.ai` DNS issue
+   without IT changes. All LLM traffic routes through OpenRouter (no direct
+   Anthropic/OpenAI tokens available), making this a hard requirement
+2. **File IT ticket for DNS whitelist** — request `api.openrouter.ai` be added
+   to the resolver whitelist (permanent fix)
+3. **Move LiteLLM to compute node** — reduces login node load, keeps proxy
+   co-located with consuming agents on the compute network
 
 ### For H200 GPU Cluster
 
