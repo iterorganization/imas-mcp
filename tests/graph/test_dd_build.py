@@ -106,6 +106,56 @@ class TestDDVersions:
             f"found {edges}."
         )
 
+    def test_successor_chain_complete(self, graph_client, label_counts):
+        """Every non-latest DDVersion should have exactly one HAS_SUCCESSOR."""
+        total = label_counts.get("DDVersion", 0)
+        if total < 2:
+            pytest.skip("Not enough DDVersion nodes")
+
+        # Count versions without successor (should be exactly 1 — the latest)
+        result = graph_client.query(
+            "MATCH (v:DDVersion) "
+            "WHERE NOT (v)-[:HAS_SUCCESSOR]->(:DDVersion) "
+            "RETURN count(v) AS cnt"
+        )
+        tips = result[0]["cnt"]
+        assert tips == 1, f"Expected 1 tip (latest version), got {tips}"
+
+        # Count successor edges (should be total - 1)
+        result = graph_client.query(
+            "MATCH (:DDVersion)-[r:HAS_SUCCESSOR]->(:DDVersion) RETURN count(r) AS cnt"
+        )
+        edges = result[0]["cnt"]
+        assert edges == total - 1, (
+            f"Expected {total - 1} HAS_SUCCESSOR edges, got {edges}"
+        )
+
+    def test_successor_predecessor_consistency(self, graph_client, label_counts):
+        """Every HAS_SUCCESSOR must have a matching HAS_PREDECESSOR in reverse."""
+        if not label_counts.get("DDVersion"):
+            pytest.skip("No DDVersion nodes in graph")
+
+        result = graph_client.query(
+            "MATCH (a:DDVersion)-[:HAS_SUCCESSOR]->(b:DDVersion) "
+            "WHERE NOT (b)-[:HAS_PREDECESSOR]->(a) "
+            "RETURN a.id AS from_ver, b.id AS to_ver LIMIT 5"
+        )
+        assert len(result) == 0, f"Inconsistent successor/predecessor: {result}"
+
+    def test_major_boundary_versions(self, graph_client, label_counts):
+        """At least one version should be marked as major boundary (4.0.0)."""
+        if not label_counts.get("DDVersion"):
+            pytest.skip("No DDVersion nodes in graph")
+
+        result = graph_client.query(
+            "MATCH (v:DDVersion) "
+            "WHERE v.is_major_boundary = true "
+            "RETURN v.id AS version ORDER BY v.id"
+        )
+        assert len(result) >= 1, "Expected at least one major boundary version"
+        boundary_ids = [r["version"] for r in result]
+        assert "4.0.0" in boundary_ids, f"4.0.0 not in boundaries: {boundary_ids}"
+
     def test_no_version_has_multiple_predecessors(self, graph_client, label_counts):
         """No DDVersion should point to more than one predecessor."""
         if not label_counts.get("DDVersion"):

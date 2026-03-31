@@ -1159,6 +1159,98 @@ def _extract_paths_recursive(
             )
 
 
+def _units_changed(old_raw: str, new_raw: str) -> tuple[bool, str]:
+    """Compare units via pint normalization.
+
+    Returns:
+        (changed, change_subtype) where change_subtype is one of:
+        - 'cosmetic'           — same after normalization (not stored)
+        - 'sentinel_resolved'  — as_parent/placeholder → concrete unit
+        - 'dim_equivalent'     — different symbol, same dimension (e.g. J.m^-3 → Pa)
+        - 'dim_incompatible'   — genuinely different physics (e.g. W → Wb)
+    """
+    from imas_codex.units import normalize_unit_symbol, unit_registry
+
+    old_norm = normalize_unit_symbol(old_raw)
+    new_norm = normalize_unit_symbol(new_raw)
+
+    # Tier 1: Identical after normalization → not a change
+    if old_norm == new_norm:
+        return False, "cosmetic"
+
+    # Tier 2: One or both are sentinels/unparseable
+    if old_norm is None or new_norm is None:
+        return True, "sentinel_resolved"
+
+    # Tier 3: Both parse — check dimensional compatibility
+    try:
+        old_p = unit_registry.parse_expression(old_norm)
+        new_p = unit_registry.parse_expression(new_norm)
+        if old_p.is_compatible_with(new_p):
+            return True, "dim_equivalent"
+    except Exception:
+        pass
+
+    return True, "dim_incompatible"
+
+
+def _classify_breaking_level(change_type: str, change: dict) -> str:
+    """Classify a change as breaking/advisory/informational."""
+    RULES = {
+        "path_removed": "breaking",
+        "path_renamed": "breaking",
+        "data_type": "breaking",
+        "cocos_label_transformation": "breaking",
+        "coordinates_changed": "advisory",
+        "lifecycle_status": "advisory",
+        "node_type": "advisory",
+        "timebasepath": "informational",
+        "maxoccur_changed": "advisory",
+        "structure_changed": "advisory",
+        "path_added": "informational",
+    }
+
+    if change_type == "units":
+        subtype = change.get("unit_change_subtype", "")
+        if subtype == "dim_incompatible":
+            return "breaking"
+        if subtype == "dim_equivalent":
+            return "advisory"
+        return "informational"  # sentinel_resolved
+
+    if change_type == "documentation":
+        semantic = change.get("semantic_type", "none")
+        if semantic in ("sign_convention", "coordinate_convention"):
+            return "advisory"
+        return "informational"
+
+    return RULES.get(change_type, "informational")
+
+
+def _detect_renames(added: set[str], removed: set[str], new_paths: dict) -> list[dict]:
+    """Detect renames using NBC metadata.
+
+    Priority:
+    1. NBC previous_name metadata (ground truth from DD maintainers)
+    """
+    renames = []
+
+    # Priority 1: NBC metadata
+    for path_id in added:
+        path_info = new_paths.get(path_id, {})
+        prev_name = path_info.get("change_nbc_previous_name")
+        if prev_name and prev_name in removed:
+            renames.append(
+                {
+                    "old_path": prev_name,
+                    "new_path": path_id,
+                    "source": "nbc_metadata",
+                }
+            )
+
+    return renames
+
+
 def compute_version_changes(
     old_paths: dict[str, dict],
     new_paths: dict[str, dict],
@@ -1170,7 +1262,8 @@ def compute_version_changes(
         Dict with:
         - added: paths in new but not old
         - removed: paths in old but not new
-        - changed: paths with metadata changes
+        - changed: paths with metadata changes (including renames,
+          path_added, path_removed)
     """
     old_set = set(old_paths.keys())
     new_set = set(new_paths.keys())
@@ -1179,13 +1272,18 @@ def compute_version_changes(
     removed = old_set - new_set
     common = old_set & new_set
 
+    # Detect renames from NBC metadata
+    renames = _detect_renames(added, removed, new_paths)
+    matched_added = {r["new_path"] for r in renames}
+    matched_removed = {r["old_path"] for r in renames}
+
     # Check for metadata changes in common paths
-    changed = {}
+    changed: dict[str, list[dict]] = {}
     for path in common:
         old_info = old_paths[path]
         new_info = new_paths[path]
 
-        changes = []
+        changes: list[dict] = []
         for field in (
             "units",
             "documentation",
@@ -1193,21 +1291,81 @@ def compute_version_changes(
             "node_type",
             "cocos_label_transformation",
             "lifecycle_status",
+            "coordinates",
             "timebasepath",
         ):
             old_val = old_info.get(field, "")
             new_val = new_info.get(field, "")
-            if old_val != new_val:
-                changes.append(
-                    {
+
+            if field == "units":
+                unit_changed, subtype = _units_changed(
+                    str(old_val) if old_val else "",
+                    str(new_val) if new_val else "",
+                )
+                if not unit_changed:
+                    continue
+                change_entry = {
+                    "field": "units",
+                    "old_value": str(old_val) if old_val else "",
+                    "new_value": str(new_val) if new_val else "",
+                    "unit_change_subtype": subtype,
+                }
+                change_entry["breaking_level"] = _classify_breaking_level(
+                    "units", change_entry
+                )
+                changes.append(change_entry)
+            else:
+                if str(old_val) != str(new_val):
+                    change_entry = {
                         "field": field,
                         "old_value": str(old_val) if old_val else "",
                         "new_value": str(new_val) if new_val else "",
                     }
-                )
+                    change_entry["breaking_level"] = _classify_breaking_level(
+                        field, change_entry
+                    )
+                    changes.append(change_entry)
 
         if changes:
             changed[path] = changes
+
+    # Add rename change events
+    for r in renames:
+        changes_for_path = changed.setdefault(r["new_path"], [])
+        changes_for_path.append(
+            {
+                "field": "path_renamed",
+                "old_value": r["old_path"],
+                "new_value": r["new_path"],
+                "breaking_level": "breaking",
+            }
+        )
+
+    # Add path_added events (excluding renames)
+    for path_id in added:
+        if path_id not in matched_added:
+            changes_for_path = changed.setdefault(path_id, [])
+            changes_for_path.append(
+                {
+                    "field": "path_added",
+                    "old_value": "",
+                    "new_value": path_id,
+                    "breaking_level": "informational",
+                }
+            )
+
+    # Add path_removed events (excluding renames)
+    for path_id in removed:
+        if path_id not in matched_removed:
+            changes_for_path = changed.setdefault(path_id, [])
+            changes_for_path.append(
+                {
+                    "field": "path_removed",
+                    "old_value": path_id,
+                    "new_value": "",
+                    "breaking_level": "breaking",
+                }
+            )
 
     return {
         "added": added,
@@ -2010,15 +2168,21 @@ def _create_version_nodes(client: GraphClient, versions: list[str]) -> None:
     """Create DDVersion nodes with predecessor chain and COCOS metadata."""
     sorted_versions = sorted(versions)
 
-    # Build version data with predecessors and COCOS info
+    # Build version data with predecessors, successors, and COCOS info
     version_data = []
     for i, version in enumerate(sorted_versions):
         cocos_val, cocos_labeled = extract_cocos_for_version(version)
+        major = int(version.split(".")[0])
+        prev_major = int(sorted_versions[i - 1].split(".")[0]) if i > 0 else major
         version_data.append(
             {
                 "id": version,
                 "predecessor": sorted_versions[i - 1] if i > 0 else None,
+                "successor": sorted_versions[i + 1]
+                if i < len(sorted_versions) - 1
+                else None,
                 "is_current": version == current_dd_version,
+                "is_major_boundary": (i > 0 and major != prev_major),
                 "cocos": cocos_val,
                 "cocos_labeled_fields": cocos_labeled,
             }
@@ -2030,6 +2194,7 @@ def _create_version_nodes(client: GraphClient, versions: list[str]) -> None:
         UNWIND $versions AS v
         MERGE (ver:DDVersion {id: v.id})
         SET ver.is_current = v.is_current,
+            ver.is_major_boundary = v.is_major_boundary,
             ver.cocos = v.cocos,
             ver.cocos_labeled_fields = v.cocos_labeled_fields,
             ver.created_at = datetime()
@@ -2048,6 +2213,19 @@ def _create_version_nodes(client: GraphClient, versions: list[str]) -> None:
             MERGE (ver)-[:HAS_PREDECESSOR]->(prev)
         """,
             versions=predecessors,
+        )
+
+    # Batch create successor relationships (symmetric with HAS_PREDECESSOR)
+    successors = [v for v in version_data if v["successor"] is not None]
+    if successors:
+        client.query(
+            """
+            UNWIND $versions AS v
+            MATCH (ver:DDVersion {id: v.id})
+            MATCH (next:DDVersion {id: v.successor})
+            MERGE (ver)-[:HAS_SUCCESSOR]->(next)
+        """,
+            versions=successors,
         )
 
     # Create COCOS reference nodes and link to DDVersions
@@ -2166,6 +2344,19 @@ def _ensure_indexes(client: GraphClient) -> None:
         "FOR (c:IMASSemanticCluster) REQUIRE c.id IS UNIQUE"
     )
 
+    # Composite indexes for precomputed query properties
+    client.query(
+        "CREATE INDEX imas_node_category_ids IF NOT EXISTS "
+        "FOR (p:IMASNode) ON (p.node_category, p.ids)"
+    )
+    client.query(
+        "CREATE INDEX imas_node_is_leaf IF NOT EXISTS FOR (p:IMASNode) ON (p.is_leaf)"
+    )
+    client.query(
+        "CREATE INDEX imas_node_path_lower IF NOT EXISTS "
+        "FOR (p:IMASNode) ON (p.path_lower)"
+    )
+
     # Vector indexes for semantic search
     client.ensure_vector_indexes()
 
@@ -2174,15 +2365,21 @@ def _ensure_indexes(client: GraphClient) -> None:
 
 
 def _create_unit_nodes(client: GraphClient, units: set[str]) -> None:
-    """Create Unit nodes with pint-normalized symbols."""
+    """Create Unit nodes with pint-normalized symbols.
+
+    Sentinel/unparseable units are filtered out — only pint-parseable
+    units get Unit nodes.
+    """
     from imas_codex.units import normalize_unit_symbol
 
     unit_list = []
     for u in units:
         if not u:
             continue
-        symbol = normalize_unit_symbol(u) or u
-        unit_list.append({"id": symbol, "symbol": symbol})
+        normalized = normalize_unit_symbol(u)
+        if normalized is None:
+            continue  # skip sentinels
+        unit_list.append({"id": normalized, "symbol": normalized})
 
     if unit_list:
         client.query(
@@ -2406,15 +2603,21 @@ def _batch_create_path_nodes(
         physics_domain = physics_categorizer.get_domain_for_ids(ids_name).value
         name = path_info.get("name", "")
 
+        doc = path_info.get("documentation", "")
+        node_type = path_info.get("node_type")
         path_list.append(
             {
                 "id": path,
                 "name": name,
                 "node_category": _classify_node(path, name),
-                "documentation": path_info.get("documentation", ""),
+                "documentation": doc,
                 "data_type": path_info.get("data_type"),
                 "ndim": path_info.get("ndim", 0),
-                "node_type": path_info.get("node_type"),
+                "node_type": node_type,
+                "depth": path.count("/"),
+                "is_leaf": node_type not in ("structure", "struct_array"),
+                "path_lower": path.lower(),
+                "doc_length": len(doc),
                 "physics_domain": physics_domain,
                 "maxoccur": path_info.get("maxoccur"),
                 "ids_name": ids_name,
@@ -2469,6 +2672,10 @@ def _batch_create_path_nodes(
                 path.physics_domain = p.physics_domain,
                 path.maxoccur = p.maxoccur,
                 path.ids = p.ids_name,
+                path.depth = p.depth,
+                path.is_leaf = p.is_leaf,
+                path.path_lower = p.path_lower,
+                path.doc_length = p.doc_length,
                 path.cocos_label_transformation = p.cocos_label_transformation,
                 path.lifecycle_status = p.lifecycle_status,
                 path.lifecycle_version = p.lifecycle_version,
@@ -2523,15 +2730,16 @@ def _batch_create_path_nodes(
                 paths=parent_paths,
             )
 
-        # Step 4: Create HAS_UNIT relationships (filter out empty units)
+        # Step 4: Create HAS_UNIT relationships (filter out empty/sentinel units)
         # Normalize unit symbols to match pint-normalized Unit nodes
         from imas_codex.units import normalize_unit_symbol
 
         unit_paths = []
         for p in batch:
             if p["unit"] and p["unit"] != "":
-                normalized = normalize_unit_symbol(p["unit"]) or p["unit"]
-                unit_paths.append({**p, "unit": normalized})
+                normalized = normalize_unit_symbol(p["unit"])
+                if normalized:
+                    unit_paths.append({**p, "unit": normalized})
         if unit_paths:
             client.query(
                 """

@@ -79,6 +79,7 @@ DD_VERSIONS = [
         "minor": 42,
         "patch": 0,
         "is_current": False,
+        "is_major_boundary": False,
     },
     {
         "id": "4.0.0",
@@ -86,6 +87,7 @@ DD_VERSIONS = [
         "minor": 0,
         "patch": 0,
         "is_current": False,
+        "is_major_boundary": True,
     },
     {
         "id": "4.1.0",
@@ -93,6 +95,7 @@ DD_VERSIONS = [
         "minor": 1,
         "patch": 0,
         "is_current": True,
+        "is_major_boundary": False,
     },
 ]
 
@@ -316,6 +319,15 @@ def _load_fixture_graph(client) -> None:
     client.query(
         "MATCH (a:DDVersion {id: '4.1.0'}), (b:DDVersion {id: '4.0.0'}) "
         "CREATE (a)-[:HAS_PREDECESSOR]->(b)"
+    )
+    # Chain versions with HAS_SUCCESSOR (symmetric with HAS_PREDECESSOR)
+    client.query(
+        "MATCH (a:DDVersion {id: '3.42.0'}), (b:DDVersion {id: '4.0.0'}) "
+        "CREATE (a)-[:HAS_SUCCESSOR]->(b)"
+    )
+    client.query(
+        "MATCH (a:DDVersion {id: '4.0.0'}), (b:DDVersion {id: '4.1.0'}) "
+        "CREATE (a)-[:HAS_SUCCESSOR]->(b)"
     )
 
     # Create Unit nodes
