@@ -1363,12 +1363,27 @@ class TestBreakingLevel:
             == "informational"
         )
 
-    def test_sign_convention_doc_is_advisory(self):
+    def test_sign_convention_doc_is_breaking(self):
         from imas_codex.graph.build_dd import _classify_breaking_level
 
         assert (
             _classify_breaking_level(
                 "documentation", {"semantic_type": "sign_convention"}
+            )
+            == "breaking"
+        )
+
+    def test_path_renamed_is_advisory(self):
+        from imas_codex.graph.build_dd import _classify_breaking_level
+
+        assert _classify_breaking_level("path_renamed", {}) == "advisory"
+
+    def test_coordinate_convention_doc_is_advisory(self):
+        from imas_codex.graph.build_dd import _classify_breaking_level
+
+        assert (
+            _classify_breaking_level(
+                "documentation", {"semantic_type": "coordinate_convention"}
             )
             == "advisory"
         )
@@ -1485,7 +1500,7 @@ class TestComputeVersionChanges:
         rename_events = [e for e in events if e["field"] == "path_renamed"]
         assert len(rename_events) == 1
         assert rename_events[0]["old_value"] == "ids/old_path"
-        assert rename_events[0]["breaking_level"] == "breaking"
+        assert rename_events[0]["breaking_level"] == "informational"
         # Renamed paths should NOT also appear as added/removed events
         added_events = [e for e in events if e["field"] == "path_added"]
         assert len(added_events) == 0

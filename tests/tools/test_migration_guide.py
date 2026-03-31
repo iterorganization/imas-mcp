@@ -155,7 +155,7 @@ class TestMigrationGuideRendering:
         from imas_codex.tools.migration_guide import _render_guide
 
         summary = [
-            {"type": "path_renamed", "level": "breaking", "cnt": 5},
+            {"type": "path_renamed", "level": "advisory", "cnt": 5},
             {"type": "units", "level": "advisory", "cnt": 3},
             {"type": "path_added", "level": "informational", "cnt": 10},
         ]
@@ -176,8 +176,8 @@ class TestMigrationGuideRendering:
             include_recipes=True,
         )
         assert "Total changes:** 18" in result
-        assert "Breaking changes:** 5" in result
-        assert "Advisory changes:** 3" in result
+        assert "Breaking changes:** 0" in result
+        assert "Advisory changes:** 8" in result
         assert "Informational:** 10" in result
         assert "Versions spanned:** 2" in result
 
@@ -303,14 +303,18 @@ class TestCocosFactors:
 
         paths = [{"ids": "eq", "path": "eq/psi", "label": "psi_like", "source": "xml"}]
         result = _compute_cocos_factors(paths, from_cocos=11, to_cocos=11)
-        assert result == []
+        assert len(result) == 1
+        assert result[0]["factor"] is None
+        assert "Unknown" in result[0]["action"]
 
     def test_cocos_factors_none_convention(self):
         from imas_codex.tools.migration_guide import _compute_cocos_factors
 
         paths = [{"ids": "eq", "path": "eq/psi", "label": "psi_like", "source": "xml"}]
         result = _compute_cocos_factors(paths, from_cocos=None, to_cocos=17)
-        assert result == []
+        assert len(result) == 1
+        assert result[0]["factor"] is None
+        assert "Unknown" in result[0]["action"]
 
     def test_cocos_factors_no_change(self):
         from imas_codex.tools.migration_guide import _compute_cocos_factors
@@ -337,6 +341,38 @@ class TestCocosFactors:
         # cocos_sign returns 1 for unknown labels (with a warning)
         assert result[0]["factor"] == 1
         assert "No change needed" in result[0]["action"]
+
+
+class TestVersionCocos:
+    """Tests for _get_version_cocos fallback logic."""
+
+    def test_dd3_fallback_to_cocos_11(self):
+        from imas_codex.tools.migration_guide import _get_version_cocos
+
+        gc = MagicMock()
+        gc.query.return_value = [{"cocos": None}]
+        assert _get_version_cocos(gc, "3.39.0") == 11
+
+    def test_dd4_fallback_to_cocos_17(self):
+        from imas_codex.tools.migration_guide import _get_version_cocos
+
+        gc = MagicMock()
+        gc.query.return_value = [{"cocos": None}]
+        assert _get_version_cocos(gc, "4.0.0") == 17
+
+    def test_explicit_cocos_from_graph(self):
+        from imas_codex.tools.migration_guide import _get_version_cocos
+
+        gc = MagicMock()
+        gc.query.return_value = [{"cocos": 13}]
+        assert _get_version_cocos(gc, "3.39.0") == 13
+
+    def test_unknown_version_returns_none(self):
+        from imas_codex.tools.migration_guide import _get_version_cocos
+
+        gc = MagicMock()
+        gc.query.return_value = []
+        assert _get_version_cocos(gc, "5.0.0") is None
 
 
 class TestVersionRange:
