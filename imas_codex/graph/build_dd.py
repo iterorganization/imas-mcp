@@ -2271,6 +2271,201 @@ def phase_embed_stale(
     return embedding_stats["updated"]
 
 
+# ---------------------------------------------------------------------------
+# Deterministic cluster definitions
+# ---------------------------------------------------------------------------
+
+CANONICAL_CROSS_IDS = {
+    "electron_temperature": {
+        "pattern": r".*/electrons/temperature$",
+        "description": "Electron temperature profiles across all IDS",
+    },
+    "ion_temperature": {
+        "pattern": r".*/ions.*/temperature$",
+        "description": "Ion temperature profiles across all IDS",
+    },
+    "electron_density": {
+        "pattern": r".*/electrons/density$",
+        "description": "Electron density profiles across all IDS",
+    },
+    "poloidal_flux": {
+        "pattern": r".*/psi$",
+        "description": "Poloidal magnetic flux profiles",
+    },
+    "plasma_current": {
+        "pattern": r".*/ip$",
+        "description": "Total plasma current",
+    },
+    "toroidal_field": {
+        "pattern": r".*/b0$|.*/b_field_tor",
+        "description": "Toroidal magnetic field on axis",
+    },
+    "safety_factor": {
+        "pattern": r".*/q$|.*/q_profile",
+        "description": "Safety factor profile",
+    },
+    "pressure": {
+        "pattern": r".*/pressure$|.*/pressure_thermal$",
+        "description": "Plasma pressure profiles",
+    },
+    "boundary_shape_r": {
+        "pattern": r".*/boundary.*/r$|.*/outline/r$|.*/lcfs/r$",
+        "description": "Plasma boundary R coordinates",
+    },
+    "boundary_shape_z": {
+        "pattern": r".*/boundary.*/z$|.*/outline/z$|.*/lcfs/z$",
+        "description": "Plasma boundary Z coordinates",
+    },
+}
+
+
+def _create_cocos_clusters(client: GraphClient) -> int:
+    """Create deterministic clusters grouping paths by COCOS label type.
+
+    Unlike HDBSCAN clusters (statistical), these are authoritative groupings
+    derived from DD metadata. Tagged with source='cocos_metadata'.
+
+    Returns count of clusters created.
+    """
+    labels = client.query("""
+        MATCH (p:IMASNode)
+        WHERE p.cocos_label_transformation IS NOT NULL
+          AND p.node_category = 'data'
+        RETURN p.cocos_label_transformation AS label,
+               collect(p.id) AS paths,
+               collect(DISTINCT p.ids) AS ids_names,
+               count(p) AS cnt
+        ORDER BY label
+    """)
+
+    if not labels:
+        return 0
+
+    clusters = []
+    for row in labels:
+        label = row["label"]
+        cluster_id = f"cocos_{label}"
+        ids_names = row["ids_names"]
+        clusters.append(
+            {
+                "id": cluster_id,
+                "label": f"{label} COCOS-dependent fields",
+                "description": (
+                    f"Fields with {label} COCOS transformation sensitivity. "
+                    f"These fields change sign or scale under COCOS convention "
+                    f"changes. Spans {len(ids_names)} IDS: "
+                    f"{', '.join(sorted(ids_names)[:10])}."
+                ),
+                "path_count": row["cnt"],
+                "cross_ids": len(ids_names) > 1,
+                "scope": "global",
+                "source": "cocos_metadata",
+                "ids_names": sorted(ids_names),
+            }
+        )
+
+    # Create cluster nodes
+    client.query(
+        """
+        UNWIND $clusters AS c
+        MERGE (cl:IMASSemanticCluster {id: c.id})
+        SET cl.label = c.label,
+            cl.description = c.description,
+            cl.path_count = c.path_count,
+            cl.cross_ids = c.cross_ids,
+            cl.scope = c.scope,
+            cl.source = c.source,
+            cl.ids_names = c.ids_names
+        """,
+        clusters=clusters,
+    )
+
+    # Create IN_CLUSTER relationships
+    for row in labels:
+        label = row["label"]
+        cluster_id = f"cocos_{label}"
+        client.query(
+            """
+            MATCH (p:IMASNode)
+            WHERE p.cocos_label_transformation = $label
+              AND p.node_category = 'data'
+            MATCH (cl:IMASSemanticCluster {id: $cluster_id})
+            MERGE (p)-[:IN_CLUSTER]->(cl)
+            """,
+            label=label,
+            cluster_id=cluster_id,
+        )
+
+    logger.info("Created %d COCOS clusters", len(clusters))
+    return len(clusters)
+
+
+def _create_physics_clusters(client: GraphClient) -> int:
+    """Create deterministic cross-IDS clusters for canonical physics quantities.
+
+    Uses regex patterns from ``CANONICAL_CROSS_IDS`` to match IMASNode paths.
+    Tagged with source='physics_canonical'.
+
+    Returns count of clusters created.
+    """
+    all_paths = client.query("""
+        MATCH (p:IMASNode)
+        WHERE p.node_category = 'data'
+        RETURN p.id AS id, p.ids AS ids
+    """)
+
+    if not all_paths:
+        return 0
+
+    created = 0
+
+    for key, config in CANONICAL_CROSS_IDS.items():
+        pattern = re.compile(config["pattern"])
+        matching = [p for p in all_paths if pattern.search(p["id"])]
+
+        if len(matching) < 2:
+            continue
+
+        ids_names = sorted({p["ids"] for p in matching})
+        cluster_id = f"physics_{key}"
+
+        client.query(
+            """
+            MERGE (cl:IMASSemanticCluster {id: $id})
+            SET cl.label = $label,
+                cl.description = $desc,
+                cl.path_count = $cnt,
+                cl.cross_ids = $cross_ids,
+                cl.scope = 'global',
+                cl.source = 'physics_canonical',
+                cl.ids_names = $ids_names
+            """,
+            id=cluster_id,
+            label=key.replace("_", " "),
+            desc=config["description"],
+            cnt=len(matching),
+            cross_ids=len(ids_names) > 1,
+            ids_names=ids_names,
+        )
+
+        path_ids = [p["id"] for p in matching]
+        client.query(
+            """
+            UNWIND $paths AS pid
+            MATCH (p:IMASNode {id: pid})
+            MATCH (cl:IMASSemanticCluster {id: $cluster_id})
+            MERGE (p)-[:IN_CLUSTER]->(cl)
+            """,
+            paths=path_ids,
+            cluster_id=cluster_id,
+        )
+
+        created += 1
+
+    logger.info("Created %d physics clusters", created)
+    return created
+
+
 def phase_cluster(
     client: GraphClient,
     *,
@@ -2280,6 +2475,9 @@ def phase_cluster(
     stop_check: "Callable[[], bool] | None" = None,
 ) -> int:
     """Import semantic clusters.
+
+    Runs HDBSCAN statistical clustering, then adds deterministic clusters
+    for COCOS-sensitive fields and canonical physics quantities.
 
     Args:
         force_reembed: If True, skip hash checks and re-embed all
@@ -2292,7 +2490,7 @@ def phase_cluster(
     Returns:
         Number of cluster nodes created.
     """
-    return _import_clusters(
+    hdbscan_count = _import_clusters(
         client,
         dry_run,
         use_rich=False,
@@ -2300,6 +2498,20 @@ def phase_cluster(
         on_progress=on_progress,
         stop_check=stop_check,
     )
+
+    if dry_run:
+        return hdbscan_count
+
+    # Deterministic clusters from DD metadata
+    cocos_count = _create_cocos_clusters(client)
+    physics_count = _create_physics_clusters(client)
+    logger.info(
+        "Created %d COCOS clusters and %d physics clusters",
+        cocos_count,
+        physics_count,
+    )
+
+    return hdbscan_count + cocos_count + physics_count
 
 
 def _create_version_nodes(client: GraphClient, versions: list[str]) -> None:
@@ -3394,7 +3606,9 @@ def _import_clusters(
                 return 0
 
             existing_result = client.query(
-                "MATCH (c:IMASSemanticCluster) RETURN c.id AS id"
+                "MATCH (c:IMASSemanticCluster) "
+                "WHERE c.source IS NULL OR c.source = 'hdbscan' "
+                "RETURN c.id AS id"
             )
             existing_ids = (
                 {r["id"] for r in existing_result} if existing_result else set()
@@ -3416,7 +3630,8 @@ def _import_clusters(
                         n.cross_ids = c.cross_ids,
                         n.similarity_score = c.similarity_score,
                         n.scope = c.scope,
-                        n.ids_names = c.ids_names
+                        n.ids_names = c.ids_names,
+                        n.source = 'hdbscan'
                     """,
                     clusters=batch,
                 )
@@ -3517,6 +3732,13 @@ def _import_clusters(
                         ids=batch,
                     )
                 logger.info("Deleted %d stale clusters", len(stale_ids))
+
+            # Backfill source on pre-existing HDBSCAN clusters that lack it
+            client.query("""
+                MATCH (c:IMASSemanticCluster)
+                WHERE c.source IS NULL
+                SET c.source = 'hdbscan'
+            """)
 
             # Update DDVersion with cluster metadata + input hash
             client.query(

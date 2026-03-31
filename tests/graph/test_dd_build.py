@@ -824,6 +824,95 @@ class TestClusterEmbeddings:
         )
 
 
+class TestCOCOSClusters:
+    """Verify COCOS-aware deterministic clusters."""
+
+    def test_cocos_clusters_exist(self, graph_client, label_counts):
+        """COCOS clusters should exist for each label type."""
+        if not label_counts.get("IMASSemanticCluster"):
+            pytest.skip("No IMASSemanticCluster nodes in graph")
+
+        result = graph_client.query(
+            "MATCH (c:IMASSemanticCluster) "
+            "WHERE c.source = 'cocos_metadata' "
+            "RETURN c.id AS id, c.path_count AS cnt"
+        )
+        assert len(result) > 0, "No COCOS clusters found"
+
+    def test_psi_like_cluster_spans_ids(self, graph_client, label_counts):
+        """psi_like cluster should span multiple IDS."""
+        if not label_counts.get("IMASSemanticCluster"):
+            pytest.skip("No IMASSemanticCluster nodes in graph")
+
+        result = graph_client.query(
+            "MATCH (c:IMASSemanticCluster {id: 'cocos_psi_like'}) "
+            "RETURN c.cross_ids AS cross, size(c.ids_names) AS ids_count"
+        )
+        if result:
+            assert result[0]["cross"] is True
+            assert result[0]["ids_count"] >= 3
+
+    def test_cocos_clusters_have_members(self, graph_client, label_counts):
+        """Every COCOS cluster should have IN_CLUSTER relationships."""
+        if not label_counts.get("IMASSemanticCluster"):
+            pytest.skip("No IMASSemanticCluster nodes in graph")
+
+        result = graph_client.query(
+            "MATCH (c:IMASSemanticCluster) "
+            "WHERE c.source = 'cocos_metadata' "
+            "OPTIONAL MATCH (p:IMASNode)-[:IN_CLUSTER]->(c) "
+            "WITH c, count(p) AS members "
+            "WHERE members = 0 "
+            "RETURN count(c) AS empty"
+        )
+        assert result[0]["empty"] == 0, "Some COCOS clusters have no members"
+
+
+class TestPhysicsClusters:
+    """Verify physics canonical cross-IDS clusters."""
+
+    def test_physics_clusters_exist(self, graph_client, label_counts):
+        """Physics canonical clusters should exist."""
+        if not label_counts.get("IMASSemanticCluster"):
+            pytest.skip("No IMASSemanticCluster nodes in graph")
+
+        result = graph_client.query(
+            "MATCH (c:IMASSemanticCluster) "
+            "WHERE c.source = 'physics_canonical' "
+            "RETURN count(c) AS cnt"
+        )
+        assert result[0]["cnt"] > 0, "No physics clusters found"
+
+    def test_physics_clusters_have_members(self, graph_client, label_counts):
+        """Every physics cluster should have IN_CLUSTER relationships."""
+        if not label_counts.get("IMASSemanticCluster"):
+            pytest.skip("No IMASSemanticCluster nodes in graph")
+
+        result = graph_client.query(
+            "MATCH (c:IMASSemanticCluster) "
+            "WHERE c.source = 'physics_canonical' "
+            "OPTIONAL MATCH (p:IMASNode)-[:IN_CLUSTER]->(c) "
+            "WITH c, count(p) AS members "
+            "WHERE members = 0 "
+            "RETURN count(c) AS empty"
+        )
+        assert result[0]["empty"] == 0, "Some physics clusters have no members"
+
+    def test_cluster_sources_valid(self, graph_client, label_counts):
+        """All clusters should have a valid source."""
+        if not label_counts.get("IMASSemanticCluster"):
+            pytest.skip("No IMASSemanticCluster nodes in graph")
+
+        result = graph_client.query(
+            "MATCH (c:IMASSemanticCluster) "
+            "WHERE c.source IS NOT NULL "
+            "RETURN DISTINCT c.source AS source"
+        )
+        valid = {"hdbscan", "cocos_metadata", "physics_canonical"}
+        for r in result:
+            assert r["source"] in valid, f"Invalid source: {r['source']}"
+
+
 class TestDeprecationTracking:
     """Verify path deprecation is tracked correctly."""
 
