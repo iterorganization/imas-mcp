@@ -31,19 +31,30 @@ def _resolve_version_range(gc: GraphClient, from_ver: str, to_ver: str) -> list[
     return [r["version"] for r in result]
 
 
-def _get_change_summary(gc: GraphClient, version_range: list[str]) -> list[dict]:
+def _get_change_summary(
+    gc: GraphClient, version_range: list[str], ids_filter: str | None = None
+) -> list[dict]:
     """Get aggregated change counts by type and breaking level."""
+    ids_clause = ""
+    params: dict = {"versions": version_range}
+    if ids_filter:
+        ids_clause = (
+            "MATCH (c)-[:FOR_IMAS_PATH]->(p:IMASNode) WHERE p.ids = $ids_filter WITH c"
+        )
+        params["ids_filter"] = ids_filter
+
     return gc.query(
-        """
+        f"""
         MATCH (c:IMASNodeChange)-[:IN_VERSION]->(v:DDVersion)
         WHERE v.id IN $versions
+        {ids_clause}
         WITH c.change_type AS type,
              coalesce(c.breaking_level, 'informational') AS level,
              count(c) AS cnt
         RETURN type, level, cnt
         ORDER BY cnt DESC
         """,
-        versions=version_range,
+        **params,
     )
 
 
@@ -52,23 +63,25 @@ def _get_cocos_table(
     to_versions: list[str],
     ids_filter: str | None = None,
 ) -> list[dict]:
-    """Get COCOS-labeled paths, merging from/to version data."""
-    ids_clause = "AND p.ids_name = $ids_filter" if ids_filter else ""
+    """Get COCOS-labeled paths from the graph.
+
+    IMASNode stores COCOS data directly as properties — no version
+    relationship needed (labels don't change between versions).
+    """
+    ids_clause = "AND p.ids = $ids_filter" if ids_filter else ""
 
     result = gc.query(
         f"""
-        MATCH (p:IMASNode)-[:IN_VERSION]->(v:DDVersion)
-        WHERE v.id IN $to_versions
-          AND (p.cocos_label_transformation IS NOT NULL
-               OR p.cocos_label IS NOT NULL
+        MATCH (p:IMASNode)
+        WHERE (p.cocos_label_transformation IS NOT NULL
                OR p.cocos_transformation_expression IS NOT NULL)
           AND p.node_category = 'data'
           {ids_clause}
-        RETURN p.ids_name AS ids, p.path AS path,
-               coalesce(p.cocos_label, p.cocos_label_transformation) AS label,
+        RETURN p.ids AS ids, p.id AS path,
+               p.cocos_label_transformation AS label,
                p.cocos_transformation_expression AS expr,
                coalesce(p.cocos_label_source, 'xml') AS source
-        ORDER BY p.ids_name, p.path
+        ORDER BY p.ids, p.id
         """,
         to_versions=to_versions,
         ids_filter=ids_filter,
@@ -410,7 +423,7 @@ def generate_migration_guide(
     if not version_range:
         return f"Error: No versions found between {from_version} and {to_version}."
 
-    summary = _get_change_summary(gc, version_range)
+    summary = _get_change_summary(gc, version_range, ids_filter)
     cocos_paths = _get_cocos_table(gc, version_range, ids_filter)
     renames = _get_renames(gc, version_range)
     unit_changes = _get_unit_changes(gc, version_range)

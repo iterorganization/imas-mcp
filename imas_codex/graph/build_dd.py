@@ -3270,6 +3270,7 @@ def _batch_create_path_changes(
                 "new_value": change.get("new_value", ""),
                 "semantic_type": None,
                 "keywords_detected": None,
+                "unit_change_subtype": change.get("unit_change_subtype"),
             }
 
             # Classify documentation changes
@@ -3281,6 +3282,12 @@ def _batch_create_path_changes(
                 change_data["semantic_type"] = semantic_type
                 if keywords:
                     change_data["keywords_detected"] = json.dumps(keywords)
+
+            # Persist breaking_level — use pre-computed value from
+            # compute_version_changes(), fall back to classifying here.
+            change_data["breaking_level"] = change.get(
+                "breaking_level"
+            ) or _classify_breaking_level(change["field"], change_data)
 
             change_list.append(change_data)
 
@@ -3296,7 +3303,9 @@ def _batch_create_path_changes(
             change.old_value = c.old_value,
             change.new_value = c.new_value,
             change.semantic_type = c.semantic_type,
-            change.keywords_detected = c.keywords_detected
+            change.keywords_detected = c.keywords_detected,
+            change.breaking_level = c.breaking_level,
+            change.unit_change_subtype = c.unit_change_subtype
     """,
         changes=change_list,
     )
