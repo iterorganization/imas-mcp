@@ -188,6 +188,18 @@ enums:
         description: Lifecycle status changed (e.g., alpha to active)
       timebasepath:
         description: Time base path reference changed
+      path_added:
+        description: Path introduced in this version
+      path_removed:
+        description: Path removed/deprecated in this version
+      path_renamed:
+        description: Path renamed (old_value=previous path, new_value=new path)
+      structure_changed:
+        description: Structural change (array dims, parent hierarchy)
+      coordinates_changed:
+        description: Coordinate specification changed
+      maxoccur_changed:
+        description: Max occurrences changed
 
   SemanticChangeType:
     description: Physics significance of documentation changes
@@ -255,6 +267,26 @@ enums:
       IDS_CONTEXT_CHANGED:
         description: IDS context description changed
 
+  UnitChangeSubtype:
+    description: Classification of unit change based on pint normalization
+    permissible_values:
+      sentinel_resolved:
+        description: Placeholder (as_parent, etc.) resolved to concrete unit
+      dim_equivalent:
+        description: Different symbol, same physical dimension (e.g. J.m^-3 to Pa)
+      dim_incompatible:
+        description: Genuinely different physical dimension (breaking change)
+
+  BreakingChangeLevel:
+    description: Severity classification for DD changes
+    permissible_values:
+      breaking:
+        description: Requires code changes (type change, incompatible unit, sign flip, removal)
+      advisory:
+        description: May affect interpretation (doc clarification, lifecycle, equivalent unit)
+      informational:
+        description: No code impact (doc wording, formatting)
+
 # =============================================================================
 # Classes
 # =============================================================================
@@ -295,6 +327,23 @@ classes:
         range: DDVersion
         annotations:
           relationship_type: HAS_PREDECESSOR
+      successor:
+        description: Next DD version in the chain
+        range: DDVersion
+        annotations:
+          relationship_type: HAS_SUCCESSOR
+      is_major_boundary:
+        description: True if this version starts a new major series (e.g. 4.0.0)
+        range: boolean
+      breaking_change_count:
+        description: Precomputed count of breaking changes introduced in this version
+        range: integer
+      advisory_change_count:
+        description: Precomputed count of advisory changes introduced in this version
+        range: integer
+      total_change_count:
+        description: Precomputed count of all changes introduced in this version
+        range: integer
       # Embedding generation metadata
       embeddings_built_at:
         description: Timestamp when embeddings were generated for this version
@@ -545,6 +594,24 @@ classes:
           "- {psi_like}", "{ip_like} * {b0_like}"). Defines how this field
           transforms under COCOS convention changes in terms of fundamental
           COCOS-sensitive quantities. Null for fields without COCOS sensitivity.
+      cocos_label_source:
+        description: >-
+          Source of the cocos_label_transformation value. 'xml' = from DD XML
+          directly, 'inferred_forward' = carried from prior version,
+          'inferred_backward' = from later version, 'inferred_expression' =
+          parsed from cocos_transformation_expression, 'inferred_sign_flip' =
+          from imas-python sign flip paths.
+      depth:
+        description: Nesting depth (number of '/' separators in path)
+        range: integer
+      is_leaf:
+        description: Whether this is a leaf data node (not STRUCTURE/STRUCT_ARRAY)
+        range: boolean
+      path_lower:
+        description: Lowercase path for case-insensitive CONTAINS queries
+      doc_length:
+        description: Length of documentation string
+        range: integer
       lifecycle_status:
         description: >-
           Lifecycle maturity status from the DD XML (alpha or obsolescent).
@@ -797,6 +864,11 @@ classes:
       representative_path:
         description: Most central path (closest to cluster center)
         range: IMASNode
+      source:
+        description: >-
+          How this cluster was created. 'hdbscan' for statistical clustering,
+          'cocos_metadata' for deterministic COCOS-based grouping,
+          'physics_canonical' for manually-defined physics quantity clusters.
       # Cluster embedding for semantic search
       embedding:
         description: >-
@@ -944,6 +1016,12 @@ classes:
         required: true
         annotations:
           relationship_type: IN_VERSION
+      unit_change_subtype:
+        description: For units changes, the pint-based classification
+        range: UnitChangeSubtype
+      breaking_level:
+        description: Whether this change requires code updates
+        range: BreakingChangeLevel
 
   # Relationship class for coordinates (captures dimension + properties)
   CoordinateRelationship:
