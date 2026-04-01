@@ -159,11 +159,12 @@ _graph_warmup_lock = threading.Lock()
 _graph_warmup_applied = False
 
 
-def _require_graph() -> None:
+def _require_graph_only() -> None:
     """Populate graph-related module globals from background warmup.
 
     Blocks only on the graph warmup group — NOT on embeddings, discovery,
-    or remote.  Use for Tier 2 DD tools that need only Neo4j.
+    or remote.  Use for graph-only tools (Tier 2 DD) that don't need
+    semantic search.
     No-op after first call (or after ``_require_warmup()`` has run).
     """
     global _graph_warmup_applied
@@ -286,7 +287,7 @@ def _get_graph_client():
     with _graph_client_lock:
         if _graph_client is not None:
             return _graph_client
-        _require_graph()
+        _require_graph_only()
         _graph_client = GraphClient.from_profile()
         return _graph_client
 
@@ -316,7 +317,7 @@ def _get_imas_tools(gc: GraphClient | None = None, semantic_search: bool = False
         if semantic_search:
             _require_warmup()
         else:
-            _require_graph()
+            _require_graph_only()
 
         from imas_codex.tools import Tools
 
@@ -1902,7 +1903,7 @@ class AgentsServer:
                     dict with keys: "processed" (int), "skipped" (int),
                     "relationships" (dict of rel_type→count), "errors" (list[str]).
                 """
-                _require_warmup()
+                _require_graph_only()
                 schema = get_schema()
 
                 if node_type not in schema.node_labels:
@@ -2172,7 +2173,7 @@ class AgentsServer:
         # REPL instead: update_infrastructure('facility', {'paths': {...}})
 
         # =====================================================================
-        # Unified search tools — multi-index vector search + graph enrichment
+        # Tier 1 — semantic search (embeddings + graph)
         # =====================================================================
 
         if not self.dd_only:
@@ -2443,8 +2444,7 @@ class AgentsServer:
             return format_search_imas_report(result, cluster_result)
 
         # =====================================================================
-        # Tier 2 DD tools — graph-only, no embeddings required
-        # =====================================================================
+        # Tier 2 — graph-only (no embeddings)
         # =====================================================================
 
         @self.mcp.tool()

@@ -59,15 +59,15 @@ def mock_graph_warmup():
 
 
 # ---------------------------------------------------------------------------
-# _require_graph tests
+# _require_graph_only tests
 # ---------------------------------------------------------------------------
 
 
-class TestRequireGraph:
-    """Tests for _require_graph() — graph-only warmup."""
+class TestRequireGraphOnly:
+    """Tests for _require_graph_only() — graph-only warmup."""
 
     def test_populates_graph_globals(self, mock_graph_warmup):
-        """_require_graph() should populate GraphClient, get_schema, to_cypher_props."""
+        """_require_graph_only() should populate GraphClient, get_schema, to_cypher_props."""
         import imas_codex.llm.server as srv
 
         srv._graph_warmup_applied = False
@@ -75,7 +75,7 @@ class TestRequireGraph:
         srv.get_schema = None
         srv.to_cypher_props = None
 
-        srv._require_graph()
+        srv._require_graph_only()
 
         assert srv.GraphClient is not None
         assert srv.get_schema is not None
@@ -83,13 +83,13 @@ class TestRequireGraph:
         assert srv._graph_warmup_applied is True
 
     def test_does_not_call_embeddings(self, mock_graph_warmup):
-        """_require_graph() must NOT call warmup.embeddings()."""
+        """_require_graph_only() must NOT call warmup.embeddings()."""
         import imas_codex.llm.server as srv
 
         mock_warmup = mock_graph_warmup[0]
         srv._graph_warmup_applied = False
 
-        srv._require_graph()
+        srv._require_graph_only()
 
         mock_warmup.graph.assert_called_once()
         mock_warmup.embeddings.assert_not_called()
@@ -103,8 +103,8 @@ class TestRequireGraph:
         mock_warmup = mock_graph_warmup[0]
         srv._graph_warmup_applied = False
 
-        srv._require_graph()
-        srv._require_graph()
+        srv._require_graph_only()
+        srv._require_graph_only()
 
         mock_warmup.graph.assert_called_once()
 
