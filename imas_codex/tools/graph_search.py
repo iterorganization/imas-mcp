@@ -160,6 +160,63 @@ CHILD_SYNONYMS: dict[str, set[str]] = {
 }
 
 
+def reciprocal_rank_fusion(
+    vector_hits: list[dict], text_hits: list[dict], k: int = 60
+) -> dict[str, float]:
+    """Combine ranked lists using Reciprocal Rank Fusion.
+
+    Score-scale invariant: uses ranks, not scores. Eliminates the problem
+    where BM25 scores (0.7-0.95) drown vector scores (0.82-0.88).
+    """
+    rrf_scores: dict[str, float] = {}
+    for rank, hit in enumerate(
+        sorted(vector_hits, key=lambda x: x["score"], reverse=True), start=1
+    ):
+        rrf_scores[hit["id"]] = rrf_scores.get(hit["id"], 0) + 1 / (k + rank)
+    for rank, hit in enumerate(
+        sorted(text_hits, key=lambda x: x["score"], reverse=True), start=1
+    ):
+        rrf_scores[hit["id"]] = rrf_scores.get(hit["id"], 0) + 1 / (k + rank)
+    return rrf_scores
+
+
+def heuristic_rerank(
+    scores: dict[str, float], query: str, metadata: dict[str, dict] | None = None
+) -> dict[str, float]:
+    """Zero-cost reranking based on metadata signals.
+
+    Applies small boosts for IDS name match, exact path segment match,
+    and well-documented paths.
+    """
+    query_lower = query.lower()
+    query_words = set(query_lower.split())
+    boosted = dict(scores)
+
+    for pid in boosted:
+        segments = pid.lower().split("/")
+        # IDS name appears in query
+        if segments and segments[0] in query_lower:
+            boosted[pid] += 0.02
+
+        # Exact path segment match
+        for seg in segments:
+            if seg.replace("_", " ") in query_lower or seg in query_words:
+                boosted[pid] += 0.01
+                break  # Only one segment boost per path
+
+        # Well-documented paths get a small boost
+        if metadata and pid in metadata:
+            doc_len = len(metadata[pid].get("documentation", "") or "")
+            if doc_len > 100:
+                boosted[pid] += 0.01
+
+    return boosted
+
+
+# Vector confidence gate: below this threshold, vector results are noise
+VECTOR_GATE_THRESHOLD = 0.65
+
+
 def _boost_by_child_match(
     scores: dict[str, float], query: str, gc: "GraphClient"
 ) -> tuple[dict[str, float], dict[str, list[str]]]:
@@ -178,12 +235,12 @@ def _boost_by_child_match(
 
     children = gc.query(
         """
-        UNWIND $path_ids AS pid
+        UNWIND $parent_ids AS pid
         MATCH (child:IMASNode)-[:HAS_PARENT]->(parent:IMASNode {id: pid})
         WHERE child.node_category = 'data'
         RETURN pid AS parent_id, collect(child.name) AS child_names
         """,
-        path_ids=path_ids,
+        parent_ids=path_ids,
     )
 
     for row in children:
@@ -377,11 +434,6 @@ class GraphSearchTool:
                 **params,
             )
 
-            scores: dict[str, float] = {}
-            for r in vector_results or []:
-                pid = r["id"]
-                scores[pid] = round(r["score"], 4)
-
             # --- Text search ---
             text_results = _text_search_imas_paths(
                 self._gc,
@@ -390,26 +442,27 @@ class GraphSearchTool:
                 normalized_filter,
                 dd_version=dd_version,
             )
-            for r in text_results:
-                pid = r["id"]
-                text_score = round(r["score"], 4)
-                if pid in scores:
-                    scores[pid] = round(
-                        min(max(scores[pid], text_score) + 0.05, 1.0), 4
-                    )
-                else:
-                    scores[pid] = text_score
 
-            # --- Path segment boost ---
-            query_words = [w.lower() for w in query.split() if len(w) > 2]
-            if query_words:
-                for pid in scores:
-                    segments = pid.lower().split("/")
-                    match_count = sum(
-                        1 for w in query_words if any(w in seg for seg in segments)
-                    )
-                    if match_count > 0:
-                        scores[pid] = round(scores[pid] + 0.03 * match_count, 4)
+            # --- RRF merge with vector confidence gating ---
+            v_hits = [
+                {"id": r["id"], "score": r["score"]} for r in (vector_results or [])
+            ]
+            t_hits = [{"id": r["id"], "score": r["score"]} for r in text_results]
+
+            best_vector = max((r["score"] for r in v_hits), default=0.0)
+            if best_vector < VECTOR_GATE_THRESHOLD:
+                # Low-confidence vector results: use text scores only
+                scores: dict[str, float] = {
+                    r["id"]: round(r["score"], 4) for r in t_hits
+                }
+            else:
+                scores = {
+                    pid: round(s, 6)
+                    for pid, s in reciprocal_rank_fusion(v_hits, t_hits, k=60).items()
+                }
+
+            # --- Heuristic reranking ---
+            scores = heuristic_rerank(scores, query)
 
         # --- Child name matching boost (accessor query routing) ---
         matched_children_map: dict[str, list[str]] = {}
@@ -2083,7 +2136,7 @@ def _text_search_imas_paths(
         ft_where = (
             "WHERE NOT (p)-[:DEPRECATED_IN]->(:DDVersion) AND p.node_category = 'data'"
         )
-        ft_params: dict[str, Any] = {"query": query, "limit": limit}
+        ft_params: dict[str, Any] = {"search_query": query, "limit": limit}
         if ids_filter is not None:
             filter_list = ids_filter if isinstance(ids_filter, list) else [ids_filter]
             ft_where += " AND p.ids IN $ids_filter"
@@ -2094,7 +2147,7 @@ def _text_search_imas_paths(
             ft_where += f" {ft_dd_clause}"
 
         ft_cypher = f"""
-            CALL db.index.fulltext.queryNodes('imas_node_text', $query)
+            CALL db.index.fulltext.queryNodes('imas_node_text', $search_query)
             YIELD node AS p, score
             {ft_where}
             WITH p, score

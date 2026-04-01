@@ -631,31 +631,70 @@ async def _enrich_batch(
         compute_enrichment_hash,
         gather_path_context,
         generate_template_description,
+        is_accessor_terminal,
         is_boilerplate_path,
     )
 
     updates: list[dict] = []
 
-    # Separate boilerplate vs LLM paths
-    boilerplate = [p for p in paths if is_boilerplate_path(p["id"])]
-    llm_paths = [p for p in paths if not is_boilerplate_path(p["id"])]
+    # Separate boilerplate/accessor terminals vs LLM paths
+    template_paths = [
+        p for p in paths if is_accessor_terminal(p["id"], p["id"].split("/")[-1])
+    ]
+    llm_paths = [
+        p for p in paths if not is_accessor_terminal(p["id"], p["id"].split("/")[-1])
+    ]
 
-    # Template enrichment (no LLM call)
-    for path in boilerplate:
-        template = generate_template_description(path["id"], path)
-        template_hash = compute_enrichment_hash(
-            f"{path.get('documentation', '')}", "template"
-        )
-        updates.append(
-            {
-                "id": path["id"],
-                "description": template["description"],
-                "keywords": template["keywords"],
-                "enrichment_hash": template_hash,
-                "enrichment_model": "template",
-                "enrichment_source": "template",
-            }
-        )
+    # Template enrichment (no LLM call) — boilerplate + accessor terminals
+    if template_paths:
+        # Query parent info for accessor terminals that need parent context
+        accessor_ids = [
+            p["id"] for p in template_paths if not is_boilerplate_path(p["id"])
+        ]
+        parent_map: dict[str, dict] = {}
+        if accessor_ids:
+
+            def _fetch_parents():
+                from imas_codex.graph.client import GraphClient
+
+                with GraphClient() as client:
+                    results = client.query(
+                        """
+                        UNWIND $path_ids AS pid
+                        MATCH (n:IMASNode {id: pid})-[:HAS_PARENT]->(parent:IMASNode)
+                        RETURN pid AS path_id, parent.name AS parent_name,
+                               coalesce(parent.description, parent.documentation) AS parent_doc
+                        """,
+                        path_ids=accessor_ids,
+                    )
+                return {
+                    r["path_id"]: {
+                        "name": r["parent_name"],
+                        "documentation": r["parent_doc"],
+                    }
+                    for r in results
+                }
+
+            parent_map = await asyncio.to_thread(_fetch_parents)
+
+        for path in template_paths:
+            parent_info = parent_map.get(path["id"])
+            template = generate_template_description(
+                path["id"], path, parent_info=parent_info
+            )
+            template_hash = compute_enrichment_hash(
+                f"{path.get('documentation', '')}", "template"
+            )
+            updates.append(
+                {
+                    "id": path["id"],
+                    "description": template["description"],
+                    "keywords": template["keywords"],
+                    "enrichment_hash": template_hash,
+                    "enrichment_model": "template",
+                    "enrichment_source": "template",
+                }
+            )
 
     # LLM enrichment
     if llm_paths:

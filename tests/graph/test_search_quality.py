@@ -364,15 +364,18 @@ class TestBM25ScoringConstants:
         source = inspect.getsource(_text_search_imas_paths)
         assert "max(raw, 0.7)" not in source, "BM25 score floor still present"
 
-    def test_score_cap_at_1(self) -> None:
-        """Verify score merging caps at 1.0."""
+    def test_uses_rrf_merge(self) -> None:
+        """Verify RRF merge replaced naive max+0.05."""
         import inspect
 
         from imas_codex.tools.graph_search import GraphSearchTool
 
         source = inspect.getsource(GraphSearchTool.search_imas_paths)
-        assert "min(" in source and "1.0" in source, (
-            "Score cap at 1.0 not found in search_imas_paths"
+        assert "reciprocal_rank_fusion" in source, (
+            "RRF merge not found in search_imas_paths"
+        )
+        assert "max(scores[pid], text_score) + 0.05" not in source, (
+            "Old naive max+0.05 merge still present"
         )
 
     def test_path_short_circuit(self) -> None:
@@ -386,14 +389,137 @@ class TestBM25ScoringConstants:
             "Path short-circuit not found"
         )
 
+    def test_vector_gate_present(self) -> None:
+        """Verify vector confidence gating is present."""
+        import inspect
+
+        from imas_codex.tools.graph_search import GraphSearchTool
+
+        source = inspect.getsource(GraphSearchTool.search_imas_paths)
+        assert "VECTOR_GATE_THRESHOLD" in source, (
+            "Vector gate not found in search_imas_paths"
+        )
+
+    def test_heuristic_rerank_present(self) -> None:
+        """Verify heuristic reranking is applied."""
+        import inspect
+
+        from imas_codex.tools.graph_search import GraphSearchTool
+
+        source = inspect.getsource(GraphSearchTool.search_imas_paths)
+        assert "heuristic_rerank" in source, (
+            "Heuristic reranking not found in search_imas_paths"
+        )
+
 
 # =============================================================================
-# Phase 5: Child Traversal
+# Phase 9: RRF and Hybrid Tuning
 # =============================================================================
 
 
-class TestChildRoleClassification:
-    """Test child role classification for concept nodes."""
+class TestReciprocalRankFusion:
+    """Test the RRF merge function."""
+
+    def test_rrf_basic_merge(self) -> None:
+        from imas_codex.tools.graph_search import reciprocal_rank_fusion
+
+        v = [{"id": "a", "score": 0.9}, {"id": "b", "score": 0.8}]
+        t = [{"id": "b", "score": 0.95}, {"id": "c", "score": 0.7}]
+        result = reciprocal_rank_fusion(v, t, k=60)
+        # 'b' appears in both lists → highest combined RRF score
+        assert result["b"] > result["a"]
+        assert result["b"] > result["c"]
+
+    def test_rrf_empty_vector(self) -> None:
+        from imas_codex.tools.graph_search import reciprocal_rank_fusion
+
+        result = reciprocal_rank_fusion([], [{"id": "a", "score": 0.9}], k=60)
+        assert "a" in result
+        assert result["a"] > 0
+
+    def test_rrf_empty_text(self) -> None:
+        from imas_codex.tools.graph_search import reciprocal_rank_fusion
+
+        result = reciprocal_rank_fusion([{"id": "a", "score": 0.9}], [], k=60)
+        assert "a" in result
+
+    def test_rrf_score_invariant(self) -> None:
+        """RRF uses ranks, not scores — same ranks produce same RRF scores."""
+        from imas_codex.tools.graph_search import reciprocal_rank_fusion
+
+        r1 = reciprocal_rank_fusion(
+            [{"id": "a", "score": 0.99}], [{"id": "a", "score": 0.99}], k=60
+        )
+        r2 = reciprocal_rank_fusion(
+            [{"id": "a", "score": 0.50}], [{"id": "a", "score": 0.50}], k=60
+        )
+        assert abs(r1["a"] - r2["a"]) < 1e-10
+
+    def test_rrf_k_parameter(self) -> None:
+        """Smaller k gives more weight to top ranks."""
+        from imas_codex.tools.graph_search import reciprocal_rank_fusion
+
+        v = [{"id": "a", "score": 0.9}]
+        t = [{"id": "b", "score": 0.9}]
+        small_k = reciprocal_rank_fusion(v, t, k=10)
+        large_k = reciprocal_rank_fusion(v, t, k=100)
+        # With smaller k, the rank-1 boost is larger relative to total
+        assert small_k["a"] > large_k["a"]
+
+
+class TestVectorGating:
+    """Test vector confidence gating."""
+
+    def test_gate_threshold_exists(self) -> None:
+        from imas_codex.tools.graph_search import VECTOR_GATE_THRESHOLD
+
+        assert 0.5 <= VECTOR_GATE_THRESHOLD <= 0.8
+
+    def test_low_vector_uses_text_only(self) -> None:
+        """When best vector < gate, text-only scores should be used."""
+        import inspect
+
+        from imas_codex.tools.graph_search import GraphSearchTool
+
+        source = inspect.getsource(GraphSearchTool.search_imas_paths)
+        # Should contain logic that gates on vector score
+        assert "best_vector" in source or "VECTOR_GATE" in source
+
+
+class TestHeuristicRerank:
+    """Test heuristic reranking function."""
+
+    def test_ids_name_boost(self) -> None:
+        from imas_codex.tools.graph_search import heuristic_rerank
+
+        scores = {
+            "equilibrium/time_slice/psi": 0.5,
+            "core_profiles/profiles_1d/psi": 0.5,
+        }
+        result = heuristic_rerank(scores, "equilibrium psi")
+        assert (
+            result["equilibrium/time_slice/psi"]
+            > result["core_profiles/profiles_1d/psi"]
+        )
+
+    def test_segment_match_boost(self) -> None:
+        from imas_codex.tools.graph_search import heuristic_rerank
+
+        scores = {
+            "equilibrium/time_slice/profiles_1d/psi": 0.5,
+            "magnetics/flux_loop/psi": 0.5,
+        }
+        result = heuristic_rerank(scores, "psi profile")
+        # Both have 'psi' segment match so both get boosted
+        assert result["equilibrium/time_slice/profiles_1d/psi"] >= 0.5
+        assert result["magnetics/flux_loop/psi"] >= 0.5
+
+    def test_no_boost_for_unrelated_query(self) -> None:
+        from imas_codex.tools.graph_search import heuristic_rerank
+
+        scores = {"equilibrium/time_slice/psi": 0.5}
+        result = heuristic_rerank(scores, "completely unrelated")
+        assert result["equilibrium/time_slice/psi"] == 0.5
 
     @pytest.mark.parametrize(
         "name,expected_role",

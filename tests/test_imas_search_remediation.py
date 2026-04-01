@@ -134,7 +134,7 @@ class TestTextSearchImasPathsDDServer:
         return gc
 
     def test_fulltext_index_path_returns_normalized_scores(self, mock_gc):
-        """When fulltext index returns results, scores are normalized 0-1 with 0.7 floor."""
+        """When fulltext index returns results, scores are normalized 0-1."""
         from imas_codex.tools.graph_search import _text_search_imas_paths
 
         mock_gc.query.side_effect = _route_query(
@@ -149,13 +149,13 @@ class TestTextSearchImasPathsDDServer:
         results = _text_search_imas_paths(mock_gc, "plasma current", 50, None)
 
         assert len(results) == 2
-        # Top result should be normalized to 1.0 (max), floored at 0.7
+        # Top result should be normalized to 1.0 (max)
         top = next(r for r in results if r["id"] == "magnetics/ip/0d/value")
         assert top["score"] == 1.0
 
-        # Lower result should be normalized proportionally, floored at 0.7
+        # Lower result should be normalized proportionally (no floor)
         lower = next(r for r in results if r["id"] == "magnetics/flux_loop/flux/data")
-        assert 0.7 <= lower["score"] <= 1.0
+        assert 0.0 < lower["score"] < 1.0
 
     def test_fulltext_includes_node_category_filter(self, mock_gc):
         """Fulltext query includes node_category='data' in WHERE clause."""
@@ -337,7 +337,7 @@ class TestGraphSearchToolHybrid:
 
     @pytest.mark.asyncio
     async def test_hybrid_boost_dual_match(self, mock_gc):
-        """Paths found by both vector AND text get score boosted by +0.05."""
+        """Paths found by both vector AND text get RRF-merged score."""
         tool = self._make_tool(mock_gc)
 
         mock_gc.query.side_effect = _route_query(
@@ -381,8 +381,8 @@ class TestGraphSearchToolHybrid:
 
         assert len(result.hits) == 1
         hit = result.hits[0]
-        # Dual match: max(0.85, 1.0) + 0.05 = 1.05
-        assert hit.score > 1.0
+        # Dual match via RRF: 1/(60+1) + 1/(60+1) = 2/61 ≈ 0.033
+        assert hit.score > 0
 
     @pytest.mark.asyncio
     async def test_text_only_match_included(self, mock_gc):
