@@ -74,7 +74,7 @@ def suggest_follow_up_tools(
                     {
                         "tool": "search_imas_clusters",
                         "reason": f"Explore relationships within {ids_name} IDS",
-                        "sample_call": f"search_imas_clusters(path='{ids_name}')",
+                        "sample_call": f"search_imas_clusters(ids_filter='{ids_name}')",
                     }
                 )
 
