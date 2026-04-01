@@ -330,13 +330,18 @@ class TestEmbeddingCompleteness:
         )
 
     def test_no_embeddings_without_embedding(self, graph_client, label_counts):
-        """Paths should not have embedding_text without an actual embedding."""
+        """Non-template paths should not have embedding_text without an embedding.
+
+        Template-enriched nodes (accessor terminals) are excluded from embedding
+        by design — they get concise descriptions but don't need vector search.
+        """
         if not label_counts.get("IMASNode"):
             pytest.skip("No IMASNode nodes in graph")
 
         result = graph_client.query(
             "MATCH (p:IMASNode) "
             "WHERE p.embedding IS NULL AND p.embedding_text IS NOT NULL "
+            "  AND (p.enrichment_source IS NULL OR p.enrichment_source <> 'template') "
             "RETURN count(p) AS cnt"
         )
         count = result[0]["cnt"] if result else 0
