@@ -611,6 +611,57 @@ def format_imas_report(
             if structure_ref:
                 parts.append(f"  Structure: {structure_ref}")
 
+            # Children for structure nodes
+            children_groups = p.get("children")
+            if children_groups:
+                parts.append("  Children:")
+                role_display_order = [
+                    "data",
+                    "time",
+                    "coordinates",
+                    "components",
+                    "fit",
+                    "quality",
+                    "interpolation",
+                    "grid",
+                    "normalized",
+                    "error",
+                    "metadata",
+                    "other",
+                ]
+                role_labels = {
+                    "data": "Data",
+                    "time": "Time",
+                    "coordinates": "Coordinates",
+                    "components": "Components",
+                    "fit": "Fit",
+                    "quality": "Quality",
+                    "interpolation": "Interpolation",
+                    "grid": "Grid",
+                    "normalized": "Normalized",
+                    "error": "Error",
+                    "metadata": "Metadata",
+                    "other": "Other",
+                }
+                role_children: dict[str, list] = {}
+                for group in children_groups:
+                    role = group.get("role", "other")
+                    role_children[role] = group.get("children", [])
+                for role in role_display_order:
+                    children_list = role_children.get(role, [])
+                    if children_list:
+                        names = [
+                            f"{c['name']} ({c.get('data_type', '?')})"
+                            for c in children_list
+                        ]
+                        label = role_labels.get(role, role.capitalize())
+                        parts.append(f"    {label}: {', '.join(names)}")
+
+            # Matched children (accessor query routing)
+            matched_ch = p.get("matched_children")
+            if matched_ch:
+                parts.append(f"  Matched via children: {', '.join(matched_ch)}")
+
             # Facility cross-references
             xref = facility_xrefs.get(pid, {})
             if any(

@@ -35,6 +35,181 @@ from imas_codex.tools.utils import normalize_ids_filter, validate_query
 
 logger = logging.getLogger(__name__)
 
+# Child role classification for concept node children
+CHILD_ROLE_MAP: dict[str, str] = {
+    # Data containers
+    "value": "data",
+    "data": "data",
+    "values": "data",
+    # Time bases
+    "time": "time",
+    # Geometric coordinates
+    "r": "coordinates",
+    "z": "coordinates",
+    "phi": "coordinates",
+    "x": "coordinates",
+    "y": "coordinates",
+    # Directional components
+    "parallel": "components",
+    "poloidal": "components",
+    "radial": "components",
+    "toroidal": "components",
+    "diamagnetic": "components",
+    # Interpolation
+    "coefficients": "interpolation",
+    # Grid references
+    "grid_index": "grid",
+    "grid_subset_index": "grid",
+    "index": "grid",
+    # Quality indicators
+    "validity": "quality",
+    "validity_timed": "quality",
+    "chi_squared": "quality",
+    # Fit results
+    "measured": "fit",
+    "reconstructed": "fit",
+    # Labels
+    "label": "metadata",
+}
+
+
+def _classify_child_role(name: str) -> str:
+    """Classify a child node into a role category."""
+    if name in CHILD_ROLE_MAP:
+        return CHILD_ROLE_MAP[name]
+    if name.endswith("_coefficients"):
+        return "interpolation"
+    if name.endswith("_n"):
+        return "normalized"
+    if any(name.endswith(s) for s in ("_error_upper", "_error_lower", "_error_index")):
+        return "error"
+    if name.endswith(("_validity", "_validity_timed")):
+        return "quality"
+    return "other"
+
+
+def _fetch_and_group_children(
+    gc: "GraphClient", concept_ids: list[str]
+) -> dict[str, list[dict[str, Any]]]:
+    """Fetch and group children for structure concept nodes.
+
+    Returns dict mapping parent_id -> list of grouped children.
+    """
+    if not concept_ids:
+        return {}
+
+    children_results = gc.query(
+        """
+        UNWIND $concept_ids AS pid
+        MATCH (concept:IMASNode {id: pid})
+        WHERE concept.data_type IN ['STRUCTURE', 'STRUCT_ARRAY']
+        OPTIONAL MATCH (child:IMASNode {node_category: 'data'})-[:HAS_PARENT]->(concept)
+        WITH pid, collect({
+            name: child.name,
+            id: child.id,
+            data_type: child.data_type,
+            documentation: child.documentation
+        }) AS children
+        WHERE size(children) > 0 AND children[0].name IS NOT NULL
+        RETURN pid AS parent_id, children
+        """,
+        concept_ids=concept_ids,
+    )
+
+    result = {}
+    for row in children_results:
+        pid = row["parent_id"]
+        children = row["children"]
+        # Group by role
+        grouped: dict[str, list[dict]] = {}
+        for child in children:
+            if child.get("name") is None:
+                continue
+            role = _classify_child_role(child["name"])
+            if role not in grouped:
+                grouped[role] = []
+            grouped[role].append(
+                {
+                    "name": child["name"],
+                    "data_type": child.get("data_type"),
+                }
+            )
+        # Sort each group by name
+        for role in grouped:
+            grouped[role].sort(key=lambda c: c["name"])
+        result[pid] = [
+            {"role": role, "children": children}
+            for role, children in sorted(grouped.items())
+        ]
+
+    return result
+
+
+# Child name synonyms for common accessor terminals
+CHILD_SYNONYMS: dict[str, set[str]] = {
+    "r": {"radius", "major_radius", "radial"},
+    "z": {"height", "vertical", "elevation"},
+    "phi": {"toroidal_angle", "azimuthal"},
+    "time": {"timebase", "temporal"},
+    "measured": {"measurement"},
+    "reconstructed": {"reconstruction"},
+    "parallel": {"parallel_component"},
+    "poloidal": {"poloidal_component"},
+    "radial": {"radial_component"},
+    "toroidal": {"toroidal_component"},
+}
+
+
+def _boost_by_child_match(
+    scores: dict[str, float], query: str, gc: "GraphClient"
+) -> tuple[dict[str, float], dict[str, list[str]]]:
+    """Boost concept nodes whose children match query terms.
+
+    Returns updated scores and a map of parent_id -> matched child names.
+    """
+    query_words = {w.lower() for w in query.split() if len(w) > 2}
+    matched_children_map: dict[str, list[str]] = {}
+    if not query_words:
+        return scores, matched_children_map
+
+    path_ids = list(scores.keys())
+    if not path_ids:
+        return scores, matched_children_map
+
+    children = gc.query(
+        """
+        UNWIND $path_ids AS pid
+        MATCH (child:IMASNode)-[:HAS_PARENT]->(parent:IMASNode {id: pid})
+        WHERE child.node_category = 'data'
+        RETURN pid AS parent_id, collect(child.name) AS child_names
+        """,
+        path_ids=path_ids,
+    )
+
+    for row in children:
+        pid = row["parent_id"]
+        child_names = set(row["child_names"])
+        # Expand child names with synonyms
+        expanded: set[str] = set()
+        for cn in child_names:
+            expanded.add(cn)
+            expanded.update(CHILD_SYNONYMS.get(cn, set()))
+
+        matches = query_words & expanded
+        if matches and pid in scores:
+            scores[pid] = round(scores[pid] + 0.03 * len(matches), 4)
+            # Map back to actual child names (not synonyms)
+            actual_matches = []
+            for cn in child_names:
+                cn_expanded = {cn} | CHILD_SYNONYMS.get(cn, set())
+                if cn_expanded & query_words:
+                    actual_matches.append(cn)
+            if actual_matches:
+                matched_children_map[pid] = actual_matches
+
+    return scores, matched_children_map
+
+
 # Module-level encoder singleton — avoids re-loading the model per query
 _encoder: Any = None
 _encoder_lock: Any = None
@@ -63,18 +238,10 @@ def warmup_encoder():
     Call from a background thread at server startup so the first
     search_imas call doesn't pay the cold-start penalty.
     """
-    global _encoder
     try:
         encoder = _get_encoder()
         encoder.embed_texts(["warmup"])
         logger.info("Encoder warmup complete")
-    except ConnectionError:
-        # URL may be stale (SLURM job not yet running or migrated) —
-        # reset singleton so the next call re-resolves.
-        logger.warning(
-            "Encoder warmup failed (connection error), will retry on first query"
-        )
-        _encoder = None
     except Exception as e:
         logger.warning(f"Encoder warmup failed (will retry on first query): {e}")
 
@@ -163,12 +330,22 @@ class GraphSearchTool:
 
         normalized_filter = normalize_ids_filter(ids_filter)
 
-        # --- Vector search (graceful degradation if embedding unavailable) ---
-        scores: dict[str, float] = {}
-        embed_available = False
-        embedding = self._try_embed_query(query)
-        if embedding is not None:
-            embed_available = True
+        # Path query short-circuit: if query contains '/', treat as path lookup
+        if "/" in query:
+            text_results = _text_search_imas_paths(
+                self._gc,
+                query,
+                min(max_results * 3, 150),
+                normalized_filter,
+                dd_version=dd_version,
+            )
+            scores: dict[str, float] = {}
+            for r in text_results:
+                scores[r["id"]] = round(r["score"], 4)
+        else:
+            embedding = self._embed_query(query)
+
+            # --- Vector search ---
             filter_clause = ""
             params: dict[str, Any] = {
                 "embedding": embedding,
@@ -200,37 +377,46 @@ class GraphSearchTool:
                 **params,
             )
 
+            scores: dict[str, float] = {}
             for r in vector_results or []:
                 pid = r["id"]
                 scores[pid] = round(r["score"], 4)
 
-        # --- Text search ---
-        text_results = _text_search_imas_paths(
-            self._gc,
-            query,
-            min(max_results * 3, 150),
-            normalized_filter,
-            dd_version=dd_version,
-        )
-        for r in text_results:
-            pid = r["id"]
-            text_score = round(r["score"], 4)
-            if pid in scores:
-                scores[pid] = round(max(scores[pid], text_score) + 0.05, 4)
-            else:
-                scores[pid] = text_score
+            # --- Text search ---
+            text_results = _text_search_imas_paths(
+                self._gc,
+                query,
+                min(max_results * 3, 150),
+                normalized_filter,
+                dd_version=dd_version,
+            )
+            for r in text_results:
+                pid = r["id"]
+                text_score = round(r["score"], 4)
+                if pid in scores:
+                    scores[pid] = round(
+                        min(max(scores[pid], text_score) + 0.05, 1.0), 4
+                    )
+                else:
+                    scores[pid] = text_score
 
-        # --- Path segment boost ---
-        # Boost paths whose segments match query words for better relevance
-        query_words = [w.lower() for w in query.split() if len(w) > 2]
-        if query_words:
-            for pid in scores:
-                segments = pid.lower().split("/")
-                match_count = sum(
-                    1 for w in query_words if any(w in seg for seg in segments)
-                )
-                if match_count > 0:
-                    scores[pid] = round(scores[pid] + 0.03 * match_count, 4)
+            # --- Path segment boost ---
+            query_words = [w.lower() for w in query.split() if len(w) > 2]
+            if query_words:
+                for pid in scores:
+                    segments = pid.lower().split("/")
+                    match_count = sum(
+                        1 for w in query_words if any(w in seg for seg in segments)
+                    )
+                    if match_count > 0:
+                        scores[pid] = round(scores[pid] + 0.03 * match_count, 4)
+
+        # --- Child name matching boost (accessor query routing) ---
+        matched_children_map: dict[str, list[str]] = {}
+        if scores:
+            scores, matched_children_map = _boost_by_child_match(
+                scores, query, self._gc
+            )
 
         # Rank and limit
         sorted_ids = sorted(scores, key=lambda pid: scores[pid], reverse=True)[
@@ -242,8 +428,6 @@ class GraphSearchTool:
             if isinstance(search_mode, str) and search_mode in SearchMode.__members__
             else SearchMode.AUTO
         )
-        if not embed_available:
-            mode = SearchMode.LEXICAL
 
         if not sorted_ids:
             return SearchPathsResult(
@@ -303,6 +487,16 @@ class GraphSearchTool:
         if include_version_context and sorted_ids:
             version_ctx = _get_version_context(self._gc, sorted_ids)
 
+        # --- Child traversal for structure nodes ---
+        children_map: dict[str, list[dict[str, Any]]] = {}
+        structure_ids = [
+            r["id"]
+            for r in (enriched or [])
+            if r.get("data_type") in ("STRUCTURE", "STRUCT_ARRAY")
+        ]
+        if structure_ids:
+            children_map = _fetch_and_group_children(self._gc, structure_ids)
+
         hits = []
         physics_domains = set()
         for rank, pid in enumerate(sorted_ids, start=1):
@@ -339,6 +533,8 @@ class GraphSearchTool:
                     search_mode=mode,
                     facility_xrefs=xref,
                     version_context=vctx,
+                    children=children_map.get(pid),
+                    matched_children=matched_children_map.get(pid),
                 )
             )
             if r["physics_domain"]:
@@ -361,21 +557,6 @@ class GraphSearchTool:
         """Embed query text using the module-level Encoder singleton."""
         encoder = _get_encoder()
         return encoder.embed_texts([query])[0].tolist()
-
-    def _try_embed_query(self, query: str) -> list[float] | None:
-        """Embed query text, returning None if embedding backend is unavailable.
-
-        Used by search_imas_paths for graceful degradation to text-only
-        search when the embedding server is unreachable (e.g. dd-only
-        container deployments).
-        """
-        try:
-            return self._embed_query(query)
-        except Exception as e:
-            logger.warning(
-                "Embedding unavailable, falling back to text-only search: %s", e
-            )
-            return None
 
 
 class GraphPathTool:
@@ -416,82 +597,62 @@ class GraphPathTool:
 
         results = []
         found = 0
-
-        # Batch validate all paths in a single UNWIND query
-        batch_rows = self._gc.query(
-            f"""
-            UNWIND $paths AS check_path
-            OPTIONAL MATCH (p:IMASNode {{id: check_path}})
-            WHERE true {dd_clause}
-            OPTIONAL MATCH (p)-[:HAS_UNIT]->(u:Unit)
-            RETURN check_path AS requested,
-                   p.id AS id, p.ids AS ids, p.data_type AS data_type,
-                   u.id AS units
-            """,
-            paths=path_list,
-            **dd_params,
-        )
-
-        # Index batch results by requested path
-        batch_map = {r["requested"]: r for r in batch_rows}
-
-        # Collect paths not found for renamed-path batch check
-        missing_paths = [p for p in path_list if batch_map.get(p, {}).get("id") is None]
-
-        # Batch check for renamed/deprecated paths
-        renamed_map: dict[str, dict] = {}
-        if missing_paths:
-            renamed_rows = self._gc.query(
-                """
-                UNWIND $paths AS check_path
-                OPTIONAL MATCH (old:IMASNode {id: check_path})-[:RENAMED_TO]->(new:IMASNode)
-                WITH check_path, old, new
-                WHERE old IS NOT NULL
-                RETURN check_path AS requested,
-                       old.id AS old_path, new.id AS new_path
-                """,
-                paths=missing_paths,
-            )
-            renamed_map = {r["requested"]: r for r in renamed_rows if r["old_path"]}
-
-        # Assemble results preserving original path order
         for path in path_list:
-            row = batch_map.get(path, {})
-            if row.get("id") is not None:
+            row = self._gc.query(
+                f"""
+                MATCH (p:IMASNode {{id: $path}})
+                WHERE true {dd_clause}
+                OPTIONAL MATCH (p)-[:HAS_UNIT]->(u:Unit)
+                RETURN p.id AS id, p.ids AS ids, p.data_type AS data_type,
+                       u.id AS units
+                """,
+                path=path,
+                **dd_params,
+            )
+            if row:
+                r = row[0]
                 results.append(
                     CheckPathsResultItem(
-                        path=row["id"],
+                        path=r["id"],
                         exists=True,
-                        ids_name=row["ids"],
-                        data_type=row["data_type"],
-                        units=row["units"] or "",
+                        ids_name=r["ids"],
+                        data_type=r["data_type"],
+                        units=r["units"] or "",
                     )
                 )
                 found += 1
-            elif path in renamed_map:
-                r = renamed_map[path]
-                new_path = r["new_path"]
-                results.append(
-                    CheckPathsResultItem(
-                        path=path,
-                        exists=False,
-                        renamed_from=[
-                            {
-                                "old_path": r["old_path"],
-                                "new_path": new_path,
-                            }
-                        ],
-                        migration={"type": "renamed", "target": new_path},
-                        suggestion=new_path,
-                    )
-                )
             else:
-                results.append(
-                    CheckPathsResultItem(
-                        path=path,
-                        exists=False,
-                    )
+                # Check for deprecated/renamed path
+                renamed = self._gc.query(
+                    """
+                    MATCH (old:IMASNode {id: $path})-[:RENAMED_TO]->(new:IMASNode)
+                    RETURN old.id AS old_path, new.id AS new_path
+                    """,
+                    path=path,
                 )
+                if renamed:
+                    new_path = renamed[0]["new_path"]
+                    results.append(
+                        CheckPathsResultItem(
+                            path=path,
+                            exists=False,
+                            renamed_from=[
+                                {
+                                    "old_path": renamed[0]["old_path"],
+                                    "new_path": new_path,
+                                }
+                            ],
+                            migration={"type": "renamed", "target": new_path},
+                            suggestion=new_path,
+                        )
+                    )
+                else:
+                    results.append(
+                        CheckPathsResultItem(
+                            path=path,
+                            exists=False,
+                        )
+                    )
 
         return CheckPathsResult(
             results=results,
@@ -1613,8 +1774,8 @@ class GraphStructureTool:
             MATCH (p:IMASNode)
             WHERE p.ids = $ids_name {dd_clause}
             RETURN count(p) AS total_paths,
-                   max(coalesce(p.depth, size(split(p.id, '/')) - 1)) AS max_depth,
-                   avg(coalesce(p.depth, size(split(p.id, '/')) - 1)) AS avg_depth,
+                   max(size(split(p.id, '/')) - 1) AS max_depth,
+                   avg(size(split(p.id, '/')) - 1) AS avg_depth,
                    count(nullIf(
                        p.data_type IS NULL OR p.data_type IN {_structure_type_list()},
                        true
@@ -1937,7 +2098,7 @@ def _text_search_imas_paths(
             YIELD node AS p, score
             {ft_where}
             WITH p, score
-            WHERE coalesce(p.doc_length, size(coalesce(p.documentation, ''))) > 10
+            WHERE size(coalesce(p.documentation, '')) > 10
                   OR p.description IS NOT NULL
             RETURN p.id AS id, score
             LIMIT $limit
@@ -1950,7 +2111,7 @@ def _text_search_imas_paths(
             for r in ft_results:
                 pid = r["id"]
                 raw = r["score"] / max_score if max_score > 0 else 0.0
-                normalized.append({"id": pid, "score": max(raw, 0.7)})
+                normalized.append({"id": pid, "score": raw})
             return normalized
     except Exception:
         pass
@@ -1961,25 +2122,25 @@ def _text_search_imas_paths(
         WHERE {where_base}
           AND (
             toLower(p.documentation) CONTAINS $query_lower
-            OR coalesce(p.path_lower, toLower(p.id)) CONTAINS $query_lower
+            OR toLower(p.id) CONTAINS $query_lower
             OR toLower(p.name) CONTAINS $query_lower
             OR toLower(coalesce(p.description, '')) CONTAINS $query_lower
             OR any(kw IN coalesce(p.keywords, []) WHERE toLower(kw) CONTAINS $query_lower)
           )
-          AND coalesce(p.doc_length, size(coalesce(p.documentation, ''))) > 10
+          AND size(coalesce(p.documentation, '')) > 10
         WITH p,
              CASE
             WHEN toLower(p.documentation) CONTAINS $query_lower
                 AND {_leaf_data_type_clause("p")}
-                 THEN 0.95
-               WHEN toLower(p.documentation) CONTAINS $query_lower
-                 THEN 0.88
+                 THEN 0.80
                WHEN toLower(p.name) CONTAINS $query_lower
                 AND {_leaf_data_type_clause("p")}
-                 THEN 0.93
-               WHEN coalesce(p.path_lower, toLower(p.id)) CONTAINS $query_lower
-                 THEN 0.90
-               ELSE 0.85
+                 THEN 0.75
+               WHEN toLower(p.id) CONTAINS $query_lower
+                 THEN 0.70
+               WHEN toLower(p.documentation) CONTAINS $query_lower
+                 THEN 0.65
+               ELSE 0.55
              END AS base_score
         RETURN p.id AS id, base_score AS score
         ORDER BY base_score DESC, size(p.id) ASC
@@ -1994,10 +2155,10 @@ def _text_search_imas_paths(
             word_cypher = f"""
                 MATCH (p:IMASNode)
                 WHERE {where_base}
-                  AND (toLower(p.name) = $word OR coalesce(p.path_lower, toLower(p.id)) CONTAINS $word)
+                  AND (toLower(p.name) = $word OR toLower(p.id) CONTAINS $word)
                                     AND {_leaf_data_type_clause("p")}
-                  AND coalesce(p.doc_length, size(coalesce(p.documentation, ''))) > 10
-                RETURN p.id AS id, 0.90 AS score
+                  AND size(coalesce(p.documentation, '')) > 10
+                RETURN p.id AS id, 0.70 AS score
                 LIMIT 10
             """
             word_params = {**params, "word": word}

@@ -45,10 +45,9 @@ class IMASPathEnrichmentResult(BaseModel):
     path_index: int = Field(description="1-based index matching the input batch order")
     description: str = Field(
         description=(
-            "Physics-aware description of this IMAS path. "
-            "Explain what the quantity measures, its physical significance, "
-            "how it relates to other quantities, and what diagnostics or "
-            "analyses produce it. "
+            "Concise description (1-2 sentences, under 150 characters) "
+            "that names the physical quantity and what distinguishes "
+            "this node from similar nodes elsewhere in the DD. "
             "Do NOT repeat units, data type, or coordinate information."
         )
     )
@@ -89,7 +88,108 @@ BOILERPLATE_PATTERNS = [
     re.compile(r"_error_upper$"),
     re.compile(r"_validity$"),
     re.compile(r"_validity_timed$"),
+    re.compile(r"^validity$"),
+    re.compile(r"^validity_timed$"),
 ]
+
+# Accessor terminal classification — nodes that derive meaning from their parent
+# and should be template-enriched rather than LLM-enriched.
+ACCESSOR_TERMINAL_NAMES = frozenset(
+    {
+        # Generic data containers
+        "value",
+        "data",
+        "values",
+        # Time bases
+        "time",
+        # Grid references
+        "grid_index",
+        "grid_subset_index",
+        "index",
+        # Interpolation
+        "coefficients",
+        # Geometric components
+        "r",
+        "z",
+        "phi",
+        "x",
+        "y",
+        # Directional components
+        "parallel",
+        "poloidal",
+        "radial",
+        "toroidal",
+        "diamagnetic",
+        # Validity (also covered by BOILERPLATE but explicit here)
+        "validity",
+        "validity_timed",
+        # Fit results
+        "measured",
+        "reconstructed",
+        "chi_squared",
+        # Labels/identifiers
+        "label",
+        # GGD structure
+        "neighbours",
+        "nodes",
+        "measure",
+        "space",
+        "geometry",
+        "geometry_2d",
+        "dim1",
+        "dim2",
+        "closed",
+        # Other common accessors
+        "surface",
+        "weight",
+        "multiplicity",
+        "a",
+        "d",
+        "v",
+    }
+)
+
+ACCESSOR_TERMINAL_SUFFIXES = ("_coefficients", "_n")
+
+# Template descriptions for accessor terminals, keyed by name
+ACCESSOR_TEMPLATES: dict[str, str] = {
+    "value": "{parent_doc_short}",
+    "data": "Data array for {parent_name_readable}.",
+    "values": "Array of values for {parent_name_readable}.",
+    "time": "Time base for {parent_name_readable}.",
+    "coefficients": "Interpolation coefficients for {parent_name_readable}.",
+    "grid_index": "Grid index reference for {parent_name_readable}.",
+    "grid_subset_index": "Grid subset index for {parent_name_readable}.",
+    "index": "Integer index for {parent_name_readable}.",
+    "label": "String label for {parent_name_readable}.",
+    "r": "Major radius (R) coordinate of {parent_name_readable}.",
+    "z": "Vertical (Z) coordinate of {parent_name_readable}.",
+    "phi": "Toroidal angle (φ) coordinate of {parent_name_readable}.",
+    "x": "X coordinate of {parent_name_readable}.",
+    "y": "Y coordinate of {parent_name_readable}.",
+    "parallel": "Parallel component of {parent_name_readable}.",
+    "poloidal": "Poloidal component of {parent_name_readable}.",
+    "radial": "Radial component of {parent_name_readable}.",
+    "toroidal": "Toroidal component of {parent_name_readable}.",
+    "diamagnetic": "Diamagnetic component of {parent_name_readable}.",
+    "validity": "Integer validity flag for {parent_name_readable}.",
+    "validity_timed": "Time-dependent validity array for {parent_name_readable}.",
+    "measured": "Measured value of {parent_name_readable}.",
+    "reconstructed": "Reconstructed value of {parent_name_readable}.",
+    "chi_squared": "Chi-squared goodness of fit for {parent_name_readable}.",
+    "neighbours": "Neighbor indices for {parent_name_readable}.",
+    "nodes": "Node indices for {parent_name_readable}.",
+    "measure": "Measure (area/volume) of {parent_name_readable}.",
+    "space": "Space reference for {parent_name_readable}.",
+    "geometry": "Geometry specification for {parent_name_readable}.",
+    "geometry_2d": "2D geometry specification for {parent_name_readable}.",
+    "dim1": "First dimension of {parent_name_readable}.",
+    "dim2": "Second dimension of {parent_name_readable}.",
+    "closed": "Closed surface flag for {parent_name_readable}.",
+    "surface": "Surface specification of {parent_name_readable}.",
+    "weight": "Weight factor for {parent_name_readable}.",
+    "multiplicity": "Multiplicity count for {parent_name_readable}.",
+}
 
 # Structural metadata subtrees identical across all IDS
 METADATA_PREFIXES = (
@@ -161,10 +261,133 @@ def _is_boilerplate_sibling(name: str) -> bool:
     return any(p.search(name) for p in BOILERPLATE_PATTERNS)
 
 
-def generate_template_description(path_id: str, path_info: dict) -> dict[str, Any]:
-    """Generate a template description for boilerplate paths.
+def is_accessor_terminal(path_id: str, name: str | None = None) -> bool:
+    """Check if a node is an accessor terminal (template-enriched, not embedded).
 
-    Covers three categories:
+    Accessor terminals are leaf nodes whose meaning derives from their parent.
+    They include error/validity fields, metadata subtrees, and generic
+    data containers like 'value', 'time', 'r', 'z', etc.
+    """
+    if name is None:
+        name = path_id.split("/")[-1]
+    return classify_node(path_id, name) == "accessor"
+
+
+# Force-include physics concepts — protects real physics quantities from
+# frequency-based misclassification (Layer 2 of classify_node)
+FORCE_INCLUDE_CONCEPTS = frozenset(
+    {
+        "psi",
+        "density",
+        "temperature",
+        "pressure",
+        "flux",
+        "current",
+        "voltage",
+        "power",
+        "energy",
+        "frequency",
+        "velocity",
+        "momentum",
+        "conductivity",
+        "resistivity",
+        "elongation",
+        "triangularity",
+        "b0",
+        "b_field_r",
+        "b_field_z",
+        "q",
+        "rho_tor_norm",
+        "rho_pol_norm",
+    }
+)
+
+# Regex patterns for unknown future accessor terminals (Layer 4)
+ACCESSOR_REGEX_PATTERNS = [
+    # Error/uncertainty bounds (current + future)
+    re.compile(
+        r"_(error|uncertainty|confidence|reliability)_(upper|lower|index|bound)$"
+    ),
+    # Standalone validity variants
+    re.compile(r"^(error|uncertainty|validity)(_timed)?$"),
+    # Coefficients (interpolation)
+    re.compile(r"_coefficients$"),
+    # Normalized variants
+    re.compile(r"_n$"),
+    # Flag/status patterns (future-proof)
+    re.compile(r"_(flag|status|validate|check)$"),
+    # Scale/offset patterns
+    re.compile(r"_(scale|offset|weight|bias)$"),
+]
+
+
+def classify_node(path_id: str, name: str, node_stats: dict | None = None) -> str:
+    """Classify a data node as 'concept' or 'accessor'.
+
+    Layers evaluated in order. First match wins (short-circuit).
+
+    Layer 1: Error/metadata (absolute, no false positives)
+    Layer 2: Force-include physics concepts (semantic veto)
+    Layer 3: Explicit accessor names (conservative list)
+    Layer 4: Regex suffix/prefix patterns (future-proof)
+    Layer 5: Frequency + structural heuristic (data-driven)
+    Default: concept
+    """
+    # Layer 1: Error/metadata (absolute, no false positives)
+    if _is_error_or_metadata(name, path_id):
+        return "accessor"
+
+    # Layer 2: Force-include physics concepts (semantic veto)
+    if name in FORCE_INCLUDE_CONCEPTS:
+        return "concept"
+
+    # Layer 3: Explicit accessor names (conservative list)
+    if name in ACCESSOR_TERMINAL_NAMES:
+        return "accessor"
+
+    # Layer 4: Regex suffix/prefix patterns (future-proof)
+    if _matches_accessor_pattern(name):
+        return "accessor"
+
+    # Layer 5: Frequency + structural heuristic (data-driven)
+    if node_stats:
+        occ = node_stats.get("occurrence_count", 0)
+        struct_ratio = node_stats.get("structure_parent_ratio", 0.0)
+        if occ >= 20 and struct_ratio >= 0.95:
+            logger.info(
+                "Accessor by heuristic: %s (occ=%d, ratio=%.2f)",
+                name,
+                occ,
+                struct_ratio,
+            )
+            return "accessor"
+
+    # Default: concept
+    return "concept"
+
+
+def _is_error_or_metadata(name: str, path_id: str) -> bool:
+    """Layer 1: Error fields and structural metadata subtrees."""
+    if any(p.search(name) for p in BOILERPLATE_PATTERNS):
+        return True
+    parts = path_id.split("/")
+    if len(parts) >= 2 and parts[1] in ("ids_properties", "code"):
+        return True
+    return False
+
+
+def _matches_accessor_pattern(name: str) -> bool:
+    """Layer 4: Regex patterns for unknown future accessors."""
+    return any(p.search(name) for p in ACCESSOR_REGEX_PATTERNS)
+
+
+def generate_template_description(
+    path_id: str, path_info: dict, parent_info: dict | None = None
+) -> dict[str, Any]:
+    """Generate a template description for boilerplate and accessor terminal paths.
+
+    Covers four categories:
+    - Accessor terminals (value, time, r, z, etc.) — uses parent context
     - Error fields (_error_upper, _error_lower, _error_index)
     - Validity fields (_validity, _validity_timed)
     - Structural metadata (ids_properties/*, code/*)
@@ -175,6 +398,50 @@ def generate_template_description(path_id: str, path_info: dict) -> dict[str, An
     name = path_info.get("name", path_id.split("/")[-1])
     ids_name = path_id.split("/")[0]
     parts = path_id.split("/")
+
+    # --- Accessor terminal templates (with parent context) ---
+    if name in ACCESSOR_TEMPLATES and parent_info:
+        parent_name = parent_info.get("name", "parent")
+        parent_name_readable = parent_name.replace("_", " ")
+        parent_doc = parent_info.get("description", "") or parent_info.get(
+            "documentation", ""
+        )
+        parent_doc_short = (
+            (parent_doc[:150].rstrip(".") + ".")
+            if parent_doc
+            else f"{parent_name_readable}."
+        )
+
+        template = ACCESSOR_TEMPLATES[name]
+        desc = template.format(
+            parent_name_readable=parent_name_readable,
+            parent_doc_short=parent_doc_short,
+        )
+
+        return {
+            "description": desc,
+            "keywords": [name, parent_name],
+            "enrichment_source": "template",
+        }
+
+    # --- Suffix patterns (_coefficients, _n) with parent context ---
+    if any(name.endswith(s) for s in ACCESSOR_TERMINAL_SUFFIXES) and parent_info:
+        parent_name = parent_info.get("name", "parent")
+        parent_name_readable = parent_name.replace("_", " ")
+        if name.endswith("_coefficients"):
+            base = name[: -len("_coefficients")].replace("_", " ")
+            desc = f"Interpolation coefficients for {base} of {parent_name_readable}."
+        elif name.endswith("_n"):
+            base = name[:-2].replace("_", " ")
+            desc = f"Normalized {base} of {parent_name_readable}."
+        else:
+            desc = f"{name.replace('_', ' ').capitalize()} of {parent_name_readable}."
+
+        return {
+            "description": desc,
+            "keywords": [name, parent_name],
+            "enrichment_source": "template",
+        }
 
     # --- Structural metadata (ids_properties/*, code/*) ---
     if len(parts) >= 2 and parts[1] in ("ids_properties", "code"):
@@ -407,7 +674,7 @@ def gather_path_context(
          [node IN nodes(chain)[1..] | {
            id: node.id,
            name: node.name,
-           documentation: node.documentation
+           documentation: coalesce(node.description, node.documentation)
          }] AS ancestors
     RETURN pid AS path_id, ancestors
     """
@@ -710,23 +977,53 @@ def enrich_imas_paths(
     """
     ids_info = {r["id"]: r for r in client.query(ids_query)}
 
-    # Separate boilerplate vs LLM paths
+    # Separate boilerplate/accessor vs LLM paths
     boilerplate_paths = []
     llm_paths = []
     for path in all_paths:
-        if is_boilerplate_path(path["id"]):
+        name = path["id"].split("/")[-1]
+        if is_accessor_terminal(path["id"], name):
             boilerplate_paths.append(path)
         else:
             llm_paths.append(path)
 
-    # Process boilerplate paths (no LLM)
+    # Process boilerplate/accessor paths (no LLM)
     if boilerplate_paths:
         monitor.status(
-            f"Generating template descriptions for {len(boilerplate_paths)} boilerplate paths..."
+            f"Generating template descriptions for {len(boilerplate_paths)} "
+            f"boilerplate/accessor paths..."
         )
+
+        # Query parent info for accessor terminals that need parent context
+        accessor_ids = [
+            p["id"] for p in boilerplate_paths if not is_boilerplate_path(p["id"])
+        ]
+        parent_map: dict[str, dict] = {}
+        if accessor_ids:
+            parent_results = client.query(
+                """
+                UNWIND $path_ids AS pid
+                MATCH (n:IMASNode {id: pid})-[:HAS_PARENT]->(parent:IMASNode)
+                RETURN pid AS path_id, parent.id AS parent_id,
+                       parent.name AS parent_name,
+                       coalesce(parent.description, parent.documentation) AS parent_doc
+                """,
+                path_ids=accessor_ids,
+            )
+            parent_map = {
+                r["path_id"]: {
+                    "name": r["parent_name"],
+                    "documentation": r["parent_doc"],
+                }
+                for r in parent_results
+            }
+
         template_updates = []
         for path in boilerplate_paths:
-            template = generate_template_description(path["id"], path)
+            parent_info = parent_map.get(path["id"])
+            template = generate_template_description(
+                path["id"], path, parent_info=parent_info
+            )
             template_hash = compute_enrichment_hash(
                 f"{path['documentation']}", "template"
             )

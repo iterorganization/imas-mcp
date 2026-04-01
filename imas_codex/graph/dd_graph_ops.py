@@ -61,7 +61,7 @@ def claim_paths_for_enrichment(
         params["ids_filter"] = list(ids_filter)
 
     with GraphClient() as gc:
-        # Step 1: Claim with ORDER BY rand()
+        # Step 1: Claim with ORDER BY depth then rand()
         gc.query(
             f"""
             MATCH (p:IMASNode)
@@ -71,7 +71,7 @@ def claim_paths_for_enrichment(
                    OR p.claimed_at < datetime() - duration($cutoff))
               {ids_clause}
             WITH p
-            ORDER BY rand()
+            ORDER BY size(split(p.id, '/')) ASC, rand()
             LIMIT $limit
             SET p.claimed_at = datetime(), p.claim_token = $token
             """,
@@ -188,12 +188,13 @@ def claim_paths_for_embedding(limit: int = 500) -> list[dict]:
     cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
 
     with GraphClient() as gc:
-        # Step 1: Claim enriched paths
+        # Step 1: Claim enriched concept nodes (skip template-enriched accessors)
         gc.query(
             """
             MATCH (p:IMASNode)
             WHERE p.status = $status
               AND p.node_category = 'data'
+              AND p.enrichment_source <> 'template'
               AND (p.claimed_at IS NULL
                    OR p.claimed_at < datetime() - duration($cutoff))
             WITH p

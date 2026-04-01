@@ -182,6 +182,18 @@ class SearchHit(SearchBase):
         description="Associated error field paths (via HAS_ERROR relationships)",
     )
 
+    # Child node information for structure results
+    children: list[dict[str, Any]] | None = Field(
+        default=None,
+        description="Grouped child nodes for STRUCTURE/STRUCT_ARRAY results",
+    )
+
+    # Accessor terminals that matched the query (for accessor routing)
+    matched_children: list[str] | None = Field(
+        default=None,
+        description="Accessor terminal child names that matched the query",
+    )
+
 
 class SearchMatch(SearchBase):
     """Internal search result with document reference for search processing."""

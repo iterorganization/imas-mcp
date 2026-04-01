@@ -145,16 +145,11 @@ def generate_embedding_text(
     path_info: dict,
     ids_info: dict | None = None,
 ) -> str:
-    """
-    Generate embedding text by concatenating contextual information.
+    """Generate embedding text for an IMAS DD node.
 
-    Produces coherent prose describing the data path, its physics context,
-    and measurement characteristics for better semantic clustering. Uses
-    natural language formatting optimized for sentence transformer embedding.
-
-    When an LLM-generated description is available (from enrichment), it is
-    used as the primary semantic content instead of the raw documentation.
-    This produces significantly richer embeddings for semantic search.
+    Uses the concise LLM-enriched description (preferred) or raw documentation
+    as fallback. No metadata concatenation — the description alone is the
+    embedding text for maximum vector search precision.
 
     Args:
         path: Full path (e.g., "equilibrium/time_slice/profiles_1d/psi")
@@ -162,122 +157,13 @@ def generate_embedding_text(
         ids_info: Optional IDS-level metadata for context
 
     Returns:
-        Natural language prose optimized for sentence transformer embedding
+        Concise text optimized for sentence transformer embedding
     """
-    from imas_codex.core.unit_loader import get_unit_dimensionality, get_unit_name
-
-    sentences = []
-
-    # Extract components
-    ids_name = path.split("/")[0]
-    path_name = path_info.get("name", path.split("/")[-1])
-
-    # Core identity with readable path formatting (convert / to " in ")
-    path_readable = path_name.replace("_", " ")
-    ids_readable = ids_name.replace("_", " ")
-
-    # Include parent context in path name for better semantic context
-    path_parts = path.split("/")
-    if len(path_parts) > 2:
-        parent_context = " in ".join(p.replace("_", " ") for p in path_parts[1:-1] if p)
-        if parent_context:
-            sentences.append(
-                f"The {path_readable} in {parent_context} field in the {ids_readable} IDS."
-            )
-        else:
-            sentences.append(f"The {path_readable} field in the {ids_readable} IDS.")
-    else:
-        sentences.append(f"The {path_readable} field in the {ids_readable} IDS.")
-
-    # IDS-level context if available
-    if ids_info and ids_info.get("description"):
-        ids_desc = ids_info["description"]
-        if len(ids_desc) < 200:
-            sentences.append(f"The {ids_readable} IDS contains {ids_desc.lower()}")
-
-    # Primary semantic content: prefer LLM-enriched description over raw documentation
-    # The enriched description is physics-aware and doesn't repeat metadata
-    enriched_desc = path_info.get("description")
-    if enriched_desc:
-        # Use LLM-generated description as primary content
-        sentences.append(enriched_desc)
-    else:
-        # Fall back to raw documentation
-        doc = path_info.get("documentation", "")
-        if doc:
-            doc_clean = doc.strip()
-            if doc_clean and not doc_clean.endswith("."):
-                doc_clean += "."
-            sentences.append(doc_clean)
-
-    # Units with pint-based expansion for better semantic matching
-    units = path_info.get("units", "")
-    if units and units not in ("", "none", "1", "as_parent"):
-        unit_parts = []
-
-        # Get expanded unit name (e.g., "eV" -> "electron volt")
-        unit_name = get_unit_name(units)
-        if unit_name and unit_name != units:
-            unit_parts.append(f"measured in {unit_name} ({units})")
-        else:
-            unit_parts.append(f"measured in {units}")
-
-        # Add dimensionality for physics context (e.g., "[energy]", "[length]")
-        dimensionality = get_unit_dimensionality(units)
-        if dimensionality and dimensionality != "dimensionless":
-            unit_parts.append(f"representing {dimensionality}")
-
-        if unit_parts:
-            unit_sentence = " ".join(unit_parts)
-            # Capitalize first letter without lowercasing rest (preserves eV, Pa)
-            sentences.append(unit_sentence[0].upper() + unit_sentence[1:] + ".")
-
-    # Physics domain context
-    physics_domain = path_info.get("physics_domain", "")
-    if not physics_domain:
-        # Derive from IDS name if not provided
-        physics_domain = physics_categorizer.get_domain_for_ids(ids_name).value
-
-    if physics_domain and physics_domain != "general":
-        domain_readable = physics_domain.replace("_", " ")
-        sentences.append(f"Related to {domain_readable} physics.")
-
-    # Data type in natural language
-    data_type = path_info.get("data_type", "")
-    if data_type and data_type not in ("STRUCTURE", "STRUCT_ARRAY"):
-        ndim = path_info.get("ndim", 0)
-        if ndim == 0:
-            sentences.append("This is a scalar value.")
-        elif ndim == 1:
-            sentences.append("This is a one-dimensional array.")
-        elif ndim == 2:
-            sentences.append("This is a two-dimensional array.")
-        elif ndim == 3:
-            sentences.append("This is a three-dimensional array.")
-        elif ndim > 3:
-            sentences.append(f"This is a {ndim}-dimensional array.")
-
-    # Coordinate system in natural language
-    coordinates = path_info.get("coordinates", [])
-    if coordinates and isinstance(coordinates, list):
-        valid_coords = [str(c) for c in coordinates if c]
-        if valid_coords:
-            if len(valid_coords) == 1:
-                sentences.append(f"Indexed along the {valid_coords[0]} coordinate.")
-            else:
-                coords_formatted = ", ".join(valid_coords[:-1])
-                sentences.append(
-                    f"Indexed along the {coords_formatted} and {valid_coords[-1]} coordinates."
-                )
-
-    # Include LLM-generated keywords for better semantic search matches
-    keywords = path_info.get("keywords", [])
-    if keywords and isinstance(keywords, list):
-        valid_keywords = [k for k in keywords if k and isinstance(k, str)]
-        if valid_keywords:
-            sentences.append(f"Keywords: {', '.join(valid_keywords)}.")
-
-    return " ".join(sentences)
+    desc = (path_info.get("description") or "").strip()
+    if desc:
+        return desc
+    doc = (path_info.get("documentation") or "").strip()
+    return doc
 
 
 def compute_content_hash(text: str) -> str:

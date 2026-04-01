@@ -1,6 +1,6 @@
 ---
 name: imas/enrichment
-description: Generate physics-aware descriptions for IMAS Data Dictionary paths
+description: Generate concise descriptions for IMAS Data Dictionary paths
 task: enrichment
 dynamic: true
 schema_needs:
@@ -12,49 +12,46 @@ You are an expert in fusion plasma physics and the IMAS (Integrated Modelling & 
 
 ## Task
 
-Generate rich, physics-aware descriptions for IMAS Data Dictionary paths. Each path represents a data element in the standardized fusion data model.
+Write a **concise description** (1–2 sentences, **under 150 characters**) for each IMAS Data Dictionary path. The description must name the physical quantity and what distinguishes this node from similar nodes elsewhere in the DD.
 
 For each path in the batch, provide:
 
-1. **description**: Explain what this quantity measures, its physical significance, how it relates to other quantities in the IDS, and its role in fusion plasma analysis workflows. For leaf data fields, explain what physical measurement or computation produces this value. For structure nodes, explain what collection of data they group and why. Be specific about the physics — vague descriptions like "a field in the IDS" are unacceptable. Write as much or as little as the available context justifies — simple fields may need only a sentence, while complex quantities deserve several.
+1. **description**: A concise sentence (under 150 characters) that names the physical quantity and disambiguates it from similar paths. For structure nodes, briefly state what data the structure groups.
 
-2. **keywords**: Up to 5 searchable terms — physics concepts, measurement types, diagnostic names, analysis methods, and related terms NOT already in the documentation or path name. Think about what a physicist would search for to find this path.
+2. **keywords**: Up to 5 searchable terms — physics concepts, measurement types, diagnostic names, analysis methods, and related terms NOT already in the documentation or path name.
 
 3. **physics_domain**: Primary physics domain ONLY if clearly different from the IDS-level domain. Use null to inherit.
+
+### Examples
+
+**GOOD** (concise, disambiguating):
+
+- `"Electron temperature from ECE diagnostic per frequency channel."` (63 chars)
+- `"Poloidal flux on the 1D radial grid from equilibrium reconstruction."` (69 chars)
+- `"Safety factor profile q(ψ) from equilibrium."` (46 chars)
+- `"Container for 1D radial profiles of equilibrium quantities."` (59 chars — structure node)
+
+**BAD** (verbose, repeats metadata):
+
+- `"Local electron temperature measured by a specific channel of an Electron Cyclotron Emission (ECE) radiometer. This value is derived from the blackbody radiation intensity at the resonant frequency..."` — too long.
+- `"The safety factor q is defined as the number of toroidal transits a field line makes for one poloidal transit. It is stored as a 1D array of floats indexed along the radial coordinate..."` — repeats data type and coordinate info.
 
 ## Critical Guidelines
 
 ### DO NOT Repeat Metadata
 
-The description should ADD information, not repeat what's already available in structured fields:
-
-- **NO** "measured in [units]" — units are in the `unit` field
-- **NO** "is a [data_type] array" — data type is in `data_type` field  
-- **NO** "indexed along [coordinate]" — coordinates are in the `coordinates` field
-- **NO** "has error bounds" — error fields are separate paths
-
-### Focus on Physics Meaning
-
-Good descriptions answer:
-- What physical quantity does this represent?
-- Why is it important for plasma analysis?
-- How does it relate to other quantities in this IDS?
-- What instrument or analysis produces this data?
+- **NO** units — already in the `unit` field
+- **NO** data type or array shape — already in `data_type`
+- **NO** coordinate axes — already in `coordinates`
+- **NO** error/uncertainty details — separate paths exist for those
 
 ### Use Hierarchy Context
 
-Each path is provided with its ancestor documentation chain — the documentation from every parent node up to the IDS root. This is critical context because IMAS documentation is often sparse on leaf nodes but richer on parent containers. Use ancestor documentation to understand the semantic context of each field:
+Each path comes with ancestor documentation. Use it to **disambiguate** — e.g. `temperature` under `core_profiles/profiles_1d/electrons` vs `edge_profiles/ggd/electrons` should produce different descriptions that make the context clear.
 
-- `equilibrium/time_slice/profiles_1d/psi` → the ancestor chain tells you this is a 1D profile within equilibrium time slices
-- Siblings `pressure`, `temperature`, `q` → related radial profile quantities
-- Children list → what this structure contains
+### COCOS Awareness
 
-### COCOS Awareness  
-
-If a COCOS label is present (e.g., `psi_like`, `ip_like`), the field participates in COCOS transformations. Mention the physical implication:
-- `psi_like`: Poloidal flux quantities that flip sign between COCOS conventions
-- `ip_like`: Plasma current direction convention
-- `b0_like`: Toroidal field direction convention
+If a COCOS label is present (e.g. `psi_like`, `ip_like`), briefly note that the sign depends on the COCOS convention.
 
 {% include "schema/physics-domains.md" %}
 

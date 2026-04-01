@@ -35,7 +35,8 @@ class TestBoilerplateDetection:
             # because the regex requires a leading underscore (e.g. _error_index$)
             ("equilibrium/error_index", False),
             ("equilibrium/error_upper", False),
-            ("equilibrium/validity", False),
+            # Standalone validity IS now boilerplate (^validity$ pattern added)
+            ("equilibrium/validity", True),
         ],
     )
     def test_is_boilerplate_path(self, path_id: str, expected: bool) -> None:
@@ -164,7 +165,7 @@ class TestGenerateEmbeddingText:
     """Test generate_embedding_text with enriched descriptions."""
 
     def test_uses_description_when_present(self) -> None:
-        """Test that LLM description is used when available."""
+        """Test that LLM description is used as embedding text directly."""
         from imas_codex.graph.build_dd import generate_embedding_text
 
         path_info = {
@@ -179,11 +180,9 @@ class TestGenerateEmbeddingText:
             path_info,
         )
 
-        # Should contain the LLM description, not raw documentation
-        assert "LLM-generated physics description" in text
+        # New behavior: embedding text IS the concise description directly
+        assert text == "LLM-generated physics description."
         assert "Raw documentation" not in text
-        # Should include keywords
-        assert "flux" in text or "Keywords" in text
 
     def test_falls_back_to_documentation(self) -> None:
         """Test fallback to raw documentation when no description."""
@@ -199,7 +198,14 @@ class TestGenerateEmbeddingText:
             path_info,
         )
 
-        assert "Raw documentation about psi" in text
+        assert text == "Raw documentation about psi."
+
+    def test_empty_returns_empty(self) -> None:
+        """Test that missing description and documentation returns empty."""
+        from imas_codex.graph.build_dd import generate_embedding_text
+
+        text = generate_embedding_text("equilibrium/time_slice/x", {})
+        assert text == ""
 
 
 class TestEnrichImasPaths:
