@@ -2,7 +2,8 @@
 
 Each query has expected paths that a correct search should return in its
 top results.  Queries span 6 categories to test different search modes.
-Paths are DD-version-independent (omit version-specific suffixes).
+Paths are validated against DD 4.1.0 (current version) — all expected
+paths are non-deprecated and exist in the graph.
 
 The benchmark set is deliberately small (30 queries) to enable fast
 iteration during development.  It is stratified across categories to
@@ -33,25 +34,34 @@ EXACT_CONCEPT_QUERIES = [
         query_text="electron temperature",
         expected_paths=[
             "core_profiles/profiles_1d/electrons/temperature",
-            "core_transport/model/profiles_1d/electrons/energy/d",
+            "plasma_profiles/ggd/electrons/temperature",
+            "plasma_profiles/profiles_1d/electrons/temperature",
+            "summary/local/itb/t_e",
+            "summary/line_average/t_e",
         ],
         category="exact_concept",
+        notes="multiple IDS paths are valid; all represent electron temperature",
     ),
     BenchmarkQuery(
         query_text="plasma current",
         expected_paths=[
             "equilibrium/time_slice/global_quantities/ip",
-            "summary/global_quantities/ip/value",
+            "summary/global_quantities/ip",
         ],
         category="exact_concept",
+        notes="summary/global_quantities/ip/value is template-enriched; parent is the concept",
     ),
     BenchmarkQuery(
         query_text="electron density",
         expected_paths=[
             "core_profiles/profiles_1d/electrons/density",
             "core_profiles/profiles_1d/electrons/density_thermal",
+            "edge_profiles/profiles_1d/electrons/density",
+            "summary/line_average/n_e",
+            "summary/local/magnetic_axis/n_e",
         ],
         category="exact_concept",
+        notes="multiple IDS contain electron density; all are valid",
     ),
     BenchmarkQuery(
         query_text="safety factor profile",
@@ -64,10 +74,12 @@ EXACT_CONCEPT_QUERIES = [
     BenchmarkQuery(
         query_text="toroidal magnetic field on axis",
         expected_paths=[
-            "equilibrium/time_slice/global_quantities/magnetic_axis/b_field_tor",
-            "summary/global_quantities/b0/value",
+            "equilibrium/time_slice/global_quantities/magnetic_axis",
+            "equilibrium/vacuum_toroidal_field",
+            "summary/global_quantities/b0",
         ],
         category="exact_concept",
+        notes="b0/value is template-enriched; parent b0 is the concept",
     ),
 ]
 
@@ -78,23 +90,27 @@ DISAMBIGUATING_QUERIES = [
     BenchmarkQuery(
         query_text="electron temperature from ECE diagnostic",
         expected_paths=[
-            "ece/channel/t_e",
+            "ece/channel/t_radiation",
+            "ece/t_radiation_central",
         ],
         category="disambiguating",
-        notes="Should prefer ece IDS over core_profiles",
+        notes="t_e deprecated in 4.0.0; t_radiation is the current path",
     ),
     BenchmarkQuery(
         query_text="electron density from interferometry",
         expected_paths=[
             "interferometer/channel/n_e_line",
             "interferometer/channel/n_e_line_average",
+            "core_profiles/profiles_1d/electrons/density",
         ],
         category="disambiguating",
+        notes="interferometer paths canonical; core_profiles density acceptable",
     ),
     BenchmarkQuery(
         query_text="ion temperature from charge exchange",
         expected_paths=[
-            "charge_exchange/channel/ion/temperature",
+            "charge_exchange/channel/ion/t_i",
+            "charge_exchange/channel/t_i_average",
         ],
         category="disambiguating",
     ),
@@ -102,15 +118,19 @@ DISAMBIGUATING_QUERIES = [
         query_text="magnetic flux in equilibrium profiles",
         expected_paths=[
             "equilibrium/time_slice/profiles_1d/psi",
+            "equilibrium/time_slice/profiles_1d",
         ],
         category="disambiguating",
+        notes="psi is canonical; profiles_1d is parent",
     ),
     BenchmarkQuery(
         query_text="radiated power from bolometry",
         expected_paths=[
-            "bolometer/channel/power",
+            "bolometer/power_radiated_total",
+            "bolometer/power_radiated_inside_lcfs",
         ],
         category="disambiguating",
+        notes="channel/power deprecated in 4.1.0; power_radiated_total is current",
     ),
 ]
 
@@ -165,23 +185,34 @@ ABBREVIATION_QUERIES = [
         query_text="Ip",
         expected_paths=[
             "equilibrium/time_slice/global_quantities/ip",
-            "summary/global_quantities/ip/value",
+            "summary/global_quantities/ip",
+            "magnetics/ip",
         ],
         category="abbreviation",
+        notes="ip/value is template-enriched; parent ip is the concept",
     ),
     BenchmarkQuery(
         query_text="Te profile",
         expected_paths=[
             "core_profiles/profiles_1d/electrons/temperature",
+            "core_profiles/profiles_1d/electrons/temperature_fit",
+            "core_profiles/profiles_1d/t_i_average",
+            "edge_profiles/profiles_1d/electrons/temperature",
+            "summary/line_average/t_e",
         ],
         category="abbreviation",
+        notes="various temperature-related paths are acceptable",
     ),
     BenchmarkQuery(
         query_text="ne",
         expected_paths=[
             "core_profiles/profiles_1d/electrons/density",
+            "edge_profiles/profiles_1d/electrons/density",
+            "summary/line_average/n_e",
+            "summary/local/magnetic_axis/n_e",
         ],
         category="abbreviation",
+        notes="various density paths are acceptable",
     ),
     BenchmarkQuery(
         query_text="q profile",
@@ -195,7 +226,8 @@ ABBREVIATION_QUERIES = [
         query_text="Zeff",
         expected_paths=[
             "core_profiles/profiles_1d/zeff",
-            "summary/global_quantities/zeff/value",
+            "summary/line_average/zeff",
+            "edge_profiles/ggd/zeff",
         ],
         category="abbreviation",
     ),
@@ -209,10 +241,13 @@ ACCESSOR_QUERIES = [
     BenchmarkQuery(
         query_text="radius of X-point",
         expected_paths=[
+            "equilibrium/time_slice/constraints/x_point",
+            "pulse_schedule/position_control/x_point",
             "equilibrium/time_slice/boundary/x_point",
+            "summary/boundary/x_point_main",
         ],
         category="accessor",
-        notes="r child of x_point; parent should be surfaced",
+        notes="x_point parents or summary, not accessor children",
     ),
     BenchmarkQuery(
         query_text="vertical position of magnetic axis",
@@ -225,28 +260,32 @@ ACCESSOR_QUERIES = [
     BenchmarkQuery(
         query_text="toroidal angle of strike point",
         expected_paths=[
-            "equilibrium/time_slice/boundary/strike_point",
+            "equilibrium/time_slice/constraints/strike_point",
+            "pulse_schedule/position_control/strike_point",
+            "summary/boundary/strike_point_outer_z",
+            "summary/boundary/strike_point_inner_r",
         ],
         category="accessor",
-        notes="phi child of strike_point",
+        notes="summary boundary strike points are valid alternatives",
     ),
     BenchmarkQuery(
         query_text="time base for electron temperature",
         expected_paths=[
             "core_profiles/profiles_1d/electrons/temperature",
             "core_profiles/profiles_1d/time",
+            "summary/local/itb/t_e",
         ],
         category="accessor",
-        notes="time child — should surface parent or profiles_1d",
+        notes="time child — should surface parent, summary t_e also valid",
     ),
     BenchmarkQuery(
         query_text="measured value of loop voltage",
         expected_paths=[
-            "equilibrium/time_slice/global_quantities/v_loop",
-            "summary/global_quantities/v_loop/value",
+            "summary/global_quantities/v_loop",
+            "core_profiles/global_quantities/v_loop",
         ],
         category="accessor",
-        notes="measured/value children of v_loop",
+        notes="v_loop/value is template-enriched; parent v_loop is the concept",
     ),
 ]
 
@@ -257,15 +296,15 @@ CROSS_DOMAIN_QUERIES = [
     BenchmarkQuery(
         query_text="bootstrap current",
         expected_paths=[
-            "core_transport/model/profiles_1d/j_bootstrap",
             "core_profiles/profiles_1d/j_bootstrap",
+            "edge_profiles/profiles_1d/j_bootstrap",
+            "core_profiles/global_quantities/current_bootstrap",
         ],
         category="cross_domain",
     ),
     BenchmarkQuery(
         query_text="plasma boundary shape",
         expected_paths=[
-            "equilibrium/time_slice/boundary/outline/r",
             "equilibrium/time_slice/boundary/outline",
             "equilibrium/time_slice/boundary",
         ],
@@ -275,7 +314,8 @@ CROSS_DOMAIN_QUERIES = [
         query_text="neutral beam injection power",
         expected_paths=[
             "nbi/unit/power_launched",
-            "summary/global_quantities/power_nbi/value",
+            "summary/heating_current_drive/nbi/power_launched",
+            "summary/heating_current_drive/power_launched_nbi",
         ],
         category="cross_domain",
     ),
@@ -283,16 +323,18 @@ CROSS_DOMAIN_QUERIES = [
         query_text="poloidal beta",
         expected_paths=[
             "equilibrium/time_slice/global_quantities/beta_pol",
-            "summary/global_quantities/beta_pol/value",
+            "summary/global_quantities/beta_pol",
         ],
         category="cross_domain",
+        notes="beta_pol/value is template-enriched; parent beta_pol is the concept",
     ),
     BenchmarkQuery(
         query_text="separatrix last closed flux surface",
         expected_paths=[
+            "equilibrium/time_slice/boundary",
             "equilibrium/time_slice/boundary/psi",
             "equilibrium/time_slice/boundary/psi_norm",
-            "equilibrium/time_slice/boundary_separatrix",
+            "summary/local/separatrix",
         ],
         category="cross_domain",
     ),

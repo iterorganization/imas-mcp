@@ -147,9 +147,10 @@ def generate_embedding_text(
 ) -> str:
     """Generate embedding text for an IMAS DD node.
 
-    Uses the concise LLM-enriched description (preferred) or raw documentation
-    as fallback. No metadata concatenation — the description alone is the
-    embedding text for maximum vector search precision.
+    Prefixes the concise description with the IDS name to create semantic
+    separation between identically-described nodes in different IDS
+    (e.g., 105 nodes mention "electron temperature" — the IDS prefix
+    lets the embedding model distinguish core_profiles from ece).
 
     Args:
         path: Full path (e.g., "equilibrium/time_slice/profiles_1d/psi")
@@ -160,10 +161,17 @@ def generate_embedding_text(
         Concise text optimized for sentence transformer embedding
     """
     desc = (path_info.get("description") or "").strip()
-    if desc:
-        return desc
-    doc = (path_info.get("documentation") or "").strip()
-    return doc
+    text = desc if desc else (path_info.get("documentation") or "").strip()
+    if not text:
+        return text
+
+    # Add IDS name prefix for semantic separation
+    ids_name = path.split("/")[0] if "/" in path else ""
+    if ids_name:
+        # Convert underscore IDS names to readable form
+        readable_ids = ids_name.replace("_", " ")
+        return f"{readable_ids}: {text}"
+    return text
 
 
 def compute_content_hash(text: str) -> str:
@@ -177,6 +185,60 @@ def compute_content_hash(text: str) -> str:
         First 16 characters of SHA256 hex digest
     """
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+
+
+# Mapping of accessor terminal names to keywords for parent inheritance.
+# When a concept node (STRUCTURE/STRUCT_ARRAY) has children with these names,
+# the keywords are added to the parent to improve BM25/CONTAINS discoverability.
+KEYWORD_WORTHY_CHILDREN: dict[str, list[str]] = {
+    "r": ["radius", "major_radius", "R"],
+    "z": ["height", "vertical", "Z"],
+    "phi": ["toroidal_angle", "azimuthal"],
+    "time": ["timebase", "temporal"],
+    "measured": ["measured", "measurement"],
+    "reconstructed": ["reconstructed", "reconstruction"],
+    "parallel": ["parallel_component"],
+    "poloidal": ["poloidal_component"],
+    "radial": ["radial_component"],
+    "toroidal": ["toroidal_component"],
+    "value": ["value", "scalar"],
+    "data": ["data", "profile_data"],
+    "psi": ["poloidal_flux", "psi"],
+    "rho_tor_norm": ["normalized_toroidal_flux", "rho"],
+}
+
+
+def inherit_child_keywords(gc: "GraphClient") -> int:
+    """Add child accessor names as keywords on parent concept nodes.
+
+    Concept nodes (STRUCTURE/STRUCT_ARRAY) inherit relevant child accessor
+    names so queries like "radius of X-point" match the parent through
+    BM25/CONTAINS keyword search even when the child node itself is excluded
+    from search results (template-enriched accessor terminal).
+
+    Returns:
+        Number of parent nodes updated
+    """
+    mappings = [
+        {"name": k, "extra_keywords": v} for k, v in KEYWORD_WORTHY_CHILDREN.items()
+    ]
+    result = gc.query(
+        """
+        UNWIND $mappings AS m
+        MATCH (child:IMASNode)
+        WHERE child.name = m.name AND child.enrichment_source = 'template'
+        MATCH (child)-[:HAS_PARENT]->(parent:IMASNode)
+        WHERE parent.data_type IN ['STRUCTURE', 'STRUCT_ARRAY']
+        WITH parent, collect(DISTINCT m.extra_keywords) AS kw_lists
+        WITH parent, reduce(acc = [], kws IN kw_lists | acc + kws) AS all_kws
+        SET parent.keywords = [x IN (coalesce(parent.keywords, []) + all_kws) WHERE x IS NOT NULL | x]
+        RETURN count(parent) AS updated
+        """,
+        mappings=mappings,
+    )
+    updated = result[0]["updated"] if result else 0
+    logger.info("inherit_child_keywords: updated %d parent nodes", updated)
+    return updated
 
 
 def compute_embedding_hash(text: str, model_name: str) -> str:

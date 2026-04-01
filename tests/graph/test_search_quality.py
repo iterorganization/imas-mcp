@@ -270,9 +270,13 @@ class TestAccessorTemplates:
 
 
 class TestGenerateEmbeddingTextConcise:
-    """Test the simplified generate_embedding_text function."""
+    """Test the simplified generate_embedding_text function.
 
-    def test_returns_description_directly(self) -> None:
+    Embedding text now includes an IDS prefix for semantic separation:
+    "core profiles: Radial profile of the electron temperature."
+    """
+
+    def test_returns_description_with_ids_prefix(self) -> None:
         from imas_codex.graph.build_dd import generate_embedding_text
 
         text = generate_embedding_text(
@@ -282,7 +286,7 @@ class TestGenerateEmbeddingTextConcise:
                 "documentation": "Old doc",
             },
         )
-        assert text == "Poloidal flux radial profile."
+        assert text == "eq: Poloidal flux radial profile."
 
     def test_fallback_to_documentation(self) -> None:
         from imas_codex.graph.build_dd import generate_embedding_text
@@ -291,7 +295,7 @@ class TestGenerateEmbeddingTextConcise:
             "eq/profiles_1d/psi",
             {"documentation": "Poloidal flux"},
         )
-        assert text == "Poloidal flux"
+        assert text == "eq: Poloidal flux"
 
     def test_empty_description_uses_doc(self) -> None:
         from imas_codex.graph.build_dd import generate_embedding_text
@@ -300,7 +304,7 @@ class TestGenerateEmbeddingTextConcise:
             "eq/profiles_1d/psi",
             {"description": "", "documentation": "Doc text"},
         )
-        assert text == "Doc text"
+        assert text == "eq: Doc text"
 
     def test_empty_both_returns_empty(self) -> None:
         from imas_codex.graph.build_dd import generate_embedding_text
@@ -324,11 +328,21 @@ class TestGenerateEmbeddingTextConcise:
             },
             ids_info={"eq": {"description": "Equilibrium IDS"}},
         )
-        # Should just be the description, not a multi-sentence paragraph
-        assert text == "Short desc."
+        # Should be IDS prefix + description, not a multi-sentence paragraph
+        assert text == "eq: Short desc."
         assert "Wb" not in text
         assert "FLT_1D" not in text
         assert "Keywords" not in text
+
+    def test_ids_prefix_uses_readable_name(self) -> None:
+        """IDS names with underscores are converted to spaces."""
+        from imas_codex.graph.build_dd import generate_embedding_text
+
+        text = generate_embedding_text(
+            "core_profiles/profiles_1d/electrons/temperature",
+            {"description": "Electron temperature."},
+        )
+        assert text == "core profiles: Electron temperature."
 
 
 # =============================================================================

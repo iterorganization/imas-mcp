@@ -607,9 +607,10 @@ class GraphSearchTool:
         )
 
     def _embed_query(self, query: str) -> list[float]:
-        """Embed query text using the module-level Encoder singleton."""
+        """Embed query text, expanding physics abbreviations first."""
+        expanded = _expand_abbreviations(query)
         encoder = _get_encoder()
-        return encoder.embed_texts([query])[0].tolist()
+        return encoder.embed_texts([expanded])[0].tolist()
 
 
 class GraphPathTool:
@@ -1511,9 +1512,10 @@ class GraphClustersTool:
         return clusters
 
     def _embed_query(self, query: str) -> list[float]:
-        """Embed query text using the module-level Encoder singleton."""
+        """Embed query text, expanding physics abbreviations first."""
+        expanded = _expand_abbreviations(query)
         encoder = _get_encoder()
-        return encoder.embed_texts([query])[0].tolist()
+        return encoder.embed_texts([expanded])[0].tolist()
 
 
 class GraphIdentifiersTool:
@@ -2099,6 +2101,139 @@ def _leaf_data_type_clause(alias: str) -> str:
     return f"{alias}.data_type IS NOT NULL AND NOT ({alias}.data_type IN {_structure_type_list()})"
 
 
+# Physics abbreviation/synonym expansion for BM25 query augmentation
+PHYSICS_ABBREVIATIONS: dict[str, str] = {
+    "te": "electron temperature t_e",
+    "ti": "ion temperature t_i",
+    "ne": "electron density n_e",
+    "ni": "ion density n_i",
+    "ip": "plasma current ip",
+    "bt": "toroidal magnetic field b_field_tor",
+    "bp": "poloidal magnetic field b_field_pol",
+    "vp": "loop voltage v_loop",
+    "beta_pol": "poloidal beta beta_pol",
+    "beta_tor": "toroidal beta beta_tor",
+    "beta_n": "normalized beta beta_normal",
+    "bpol": "poloidal beta beta_pol",
+    "btor": "toroidal field b_field_tor",
+    "q95": "safety factor q_95",
+    "q": "safety factor q profile",
+    "zeff": "effective charge zeff impurity",
+    "z_eff": "effective charge zeff impurity",
+    "li": "internal inductance li",
+    "wmhd": "stored energy diamagnetic w_mhd",
+    "nbi": "neutral beam injection nbi",
+    "icrh": "ion cyclotron resonance heating ic_antennas",
+    "ecrh": "electron cyclotron resonance heating ec_launchers",
+    "ece": "electron cyclotron emission ece",
+    "cxrs": "charge exchange spectroscopy charge_exchange",
+    "lcfs": "last closed flux surface boundary separatrix",
+    "psi": "poloidal flux psi magnetic",
+    "rho": "normalized toroidal flux rho_tor_norm",
+    "b0": "toroidal magnetic field vacuum b0",
+}
+
+
+def _expand_abbreviations(query: str) -> str:
+    """Expand physics abbreviations in query for better BM25 matching."""
+    query_lower = query.lower().strip()
+    words = query_lower.split()
+
+    # Single-word abbreviation: expand it
+    if len(words) == 1 and query_lower in PHYSICS_ABBREVIATIONS:
+        return PHYSICS_ABBREVIATIONS[query_lower]
+
+    # Multi-word: expand individual abbreviation words
+    expanded = []
+    for w in words:
+        if w in PHYSICS_ABBREVIATIONS:
+            expanded.append(PHYSICS_ABBREVIATIONS[w])
+        else:
+            expanded.append(w)
+    result = " ".join(expanded)
+    return result if result != query_lower else query
+
+
+def _rerank_bm25_results(
+    results: list[dict[str, Any]], query: str, gc: "GraphClient"
+) -> list[dict[str, Any]]:
+    """Post-BM25 re-ranking using documentation and keyword signals.
+
+    BM25 treats all indexed fields equally, so a node named 'current'
+    scores higher than one documented as 'Plasma current'. This function
+    boosts results where query terms appear in documentation or keywords.
+    """
+    if not results:
+        return results
+
+    query_lower = query.lower()
+    query_words = {w.lower() for w in query.split() if len(w) > 1}
+
+    path_ids = [r["id"] for r in results[:100]]
+    metadata = gc.query(
+        """
+        UNWIND $pids AS pid
+        MATCH (p:IMASNode {id: pid})
+        RETURN p.id AS id, p.documentation AS doc, p.description AS desc,
+               p.keywords AS kw, p.name AS name, p.ids AS ids
+        """,
+        pids=path_ids,
+    )
+    meta_by_id = {r["id"]: r for r in (metadata or [])}
+
+    for r in results:
+        pid = r["id"]
+        m = meta_by_id.get(pid)
+        if not m:
+            continue
+
+        boost = 0.0
+        doc = (m.get("doc") or "").lower()
+        desc = (m.get("desc") or "").lower()
+        kws = [k.lower() for k in (m.get("kw") or [])]
+        ids_name = (m.get("ids") or "").lower()
+
+        # Strong boost: query appears as phrase in documentation/description
+        if query_lower in doc or query_lower in desc:
+            boost += 0.30
+
+        # Medium boost: all query words present in doc+desc+keywords
+        combined_text = f"{doc} {desc} {' '.join(kws)}"
+        word_matches = sum(1 for w in query_words if w in combined_text)
+        if query_words and word_matches == len(query_words):
+            boost += 0.15
+
+        # Keyword match boost
+        for kw in kws:
+            if kw in query_lower or any(w in kw for w in query_words):
+                boost += 0.10
+                break
+
+        # Canonical IDS boost for concept queries
+        canonical_ids = {
+            "equilibrium",
+            "core_profiles",
+            "core_transport",
+            "summary",
+            "nbi",
+            "ece",
+            "magnetics",
+        }
+        if ids_name in canonical_ids:
+            boost += 0.05
+
+        r["score"] = r["score"] + boost
+
+    results.sort(key=lambda r: r["score"], reverse=True)
+    # Re-normalize to 0-1
+    if results:
+        max_score = max(r["score"] for r in results)
+        if max_score > 0:
+            for r in results:
+                r["score"] = round(r["score"] / max_score, 4)
+    return results
+
+
 def _text_search_imas_paths(
     gc: GraphClient,
     query: str,
@@ -2110,12 +2245,19 @@ def _text_search_imas_paths(
     """Text-based search on IMAS paths by query string.
 
     Uses fulltext index for BM25 scoring when available, falls back to
-    CONTAINS matching. Filters out generic metadata paths.
+    CONTAINS matching. Applies abbreviation expansion and post-BM25
+    re-ranking for improved precision.
     """
+    # Expand physics abbreviations before search
+    expanded_query = _expand_abbreviations(query)
     query_lower = query.lower()
     query_words = [w for w in query_lower.split() if len(w) > 2]
 
-    where_parts = ["NOT (p)-[:DEPRECATED_IN]->(:DDVersion)", "p.node_category = 'data'"]
+    where_parts = [
+        "NOT (p)-[:DEPRECATED_IN]->(:DDVersion)",
+        "p.node_category = 'data'",
+        "(p.enrichment_source IS NULL OR p.enrichment_source <> 'template')",
+    ]
     # Cap CONTAINS fallback to avoid full scans on large graphs
     contains_limit = min(limit, 100)
     params: dict[str, Any] = {"query_lower": query_lower, "limit": contains_limit}
@@ -2135,8 +2277,10 @@ def _text_search_imas_paths(
     try:
         ft_where = (
             "WHERE NOT (p)-[:DEPRECATED_IN]->(:DDVersion) AND p.node_category = 'data'"
+            " AND (p.enrichment_source IS NULL OR p.enrichment_source <> 'template')"
         )
-        ft_params: dict[str, Any] = {"search_query": query, "limit": limit}
+        # Use expanded query for BM25 (abbreviations → full terms)
+        ft_params: dict[str, Any] = {"search_query": expanded_query, "limit": limit}
         if ids_filter is not None:
             filter_list = ids_filter if isinstance(ids_filter, list) else [ids_filter]
             ft_where += " AND p.ids IN $ids_filter"
@@ -2154,6 +2298,7 @@ def _text_search_imas_paths(
             WHERE size(coalesce(p.documentation, '')) > 10
                   OR p.description IS NOT NULL
             RETURN p.id AS id, score
+            ORDER BY score DESC
             LIMIT $limit
         """
         ft_results = gc.query(ft_cypher, **ft_params)
@@ -2165,7 +2310,8 @@ def _text_search_imas_paths(
                 pid = r["id"]
                 raw = r["score"] / max_score if max_score > 0 else 0.0
                 normalized.append({"id": pid, "score": raw})
-            return normalized
+            # Re-rank using documentation/keyword signals
+            return _rerank_bm25_results(normalized, query, gc)
     except Exception:
         pass
 
