@@ -339,33 +339,7 @@ Ingestion is interrupt-safe — rerun to continue. Already-ingested files are sk
 
 **Never compile or run compute-intensive tasks on login nodes.** Login nodes are shared — CPU-intensive builds, test suites, and long-running processes cause severe performance degradation for all users.
 
-**Detecting an HPC environment:** Check for SLURM with `which srun` or test `$SLURM_JOB_ID` (set inside an existing allocation). If already inside a SLURM job, run commands directly — no wrapping needed.
-
-**Building on HPC** — use debug/interactive partitions for compilation (typically instant scheduling via high-priority QOS):
-```bash
-# Discover available partitions and their state
-sinfo -o "%P %l %a %D %t"
-
-# Interactive build — short-lived, high priority
-srun --partition=debug --time=01:00:00 --cpus-per-task=8 --pty bash -c 'make -j$(nproc)'
-
-# Or get an interactive shell for iterative work
-salloc --partition=debug --time=01:00:00 --cpus-per-task=8
-srun --pty bash   # then build inside the allocation
-```
-
-**Running on HPC** — use batch partitions for embedding jobs, data processing, tests, and any multi-minute workload:
-```bash
-# Batch submission
-sbatch --partition=all --time=04:00:00 --cpus-per-task=4 --wrap='uv run pytest'
-
-# GPU workload
-sbatch --partition=gpu --gres=gpu:1 --time=08:00:00 my_script.sh
-```
-
-**Portable compiler flags** — avoid `-march=native` on login nodes; prefer `-march=x86-64-v3` (AVX2+FMA) for cross-architecture compatibility.
-
-**Site-specific details** (partition names, modules, arch flags, resource limits) vary per cluster. Check for cluster skills in `~/.agents/skills/` that provide site-specific templates for the local environment.
+When on an HPC system with SLURM (check `which srun`), use debug/interactive partitions for builds and batch partitions for longer workloads. If `$SLURM_JOB_ID` is set, you're already on a compute node — run directly. Use `-march=x86-64-v3` instead of `-march=native` for portable binaries. Check `~/.agents/skills/` for site-specific partition names, modules, and resource templates.
 
 ## Command Execution
 
