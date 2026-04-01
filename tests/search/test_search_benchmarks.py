@@ -59,16 +59,66 @@ def graph_client():
 
 
 @pytest.fixture(scope="module")
-def embed_available() -> bool:
-    """Check whether the embedding server is reachable."""
-    try:
-        from imas_codex.embeddings.encoder import Encoder
+def encoder():
+    """Fresh Encoder that connects to the real remote embedding server.
 
-        enc = Encoder()
+    The session-scoped conftest forces IMAS_CODEX_EMBEDDING_LOCATION=local
+    and uses all-MiniLM-L6-v2 (384-dim) for fast unit tests.  Benchmark
+    tests need the real remote server with 256-dim Qwen3 embeddings, so
+    we temporarily restore the production env vars.
+    """
+    import os
+
+    from imas_codex.settings import _get_section
+
+    # Read the real config from pyproject.toml (not the conftest overrides)
+    embed_config = _get_section("embedding")
+    real_location = embed_config.get("location", "")
+    real_model = embed_config.get("model", "")
+
+    if not real_location or real_location == "local":
+        pytest.skip("No remote embedding location configured in pyproject.toml")
+
+    # Temporarily restore production env vars
+    old_location = os.environ.get("IMAS_CODEX_EMBEDDING_LOCATION")
+    old_model = os.environ.get("IMAS_CODEX_EMBEDDING_MODEL")
+    try:
+        os.environ["IMAS_CODEX_EMBEDDING_LOCATION"] = real_location
+        if real_model:
+            os.environ["IMAS_CODEX_EMBEDDING_MODEL"] = real_model
+        elif "IMAS_CODEX_EMBEDDING_MODEL" in os.environ:
+            del os.environ["IMAS_CODEX_EMBEDDING_MODEL"]
+
+        from imas_codex.embeddings.encoder import Encoder, EncoderConfig
+
+        config = EncoderConfig()
+        enc = Encoder(config=config)
         result = enc.embed_texts(["test"])
-        return result is not None and len(result) > 0
-    except Exception:
-        return False
+        if result is None or len(result) == 0:
+            pytest.skip("Embed server returned empty results")
+        dim = len(result[0])
+        if dim != 256:
+            pytest.skip(
+                f"Embed server returns {dim}-dim, expected 256 "
+                f"(backend={config.backend}, url={config.remote_url})"
+            )
+        yield enc
+    except pytest.skip.Exception:
+        raise
+    except Exception as e:
+        pytest.skip(f"Embed server not available: {e}")
+    finally:
+        # Restore conftest env vars so other tests aren't affected
+        if old_location is not None:
+            os.environ["IMAS_CODEX_EMBEDDING_LOCATION"] = old_location
+        if old_model is not None:
+            os.environ["IMAS_CODEX_EMBEDDING_MODEL"] = old_model
+
+
+@pytest.fixture(scope="module")
+def embed_available(encoder) -> bool:
+    """Whether the embedding server is reachable (True if encoder fixture succeeded)."""
+    return encoder is not None
 
 
 @pytest.fixture(scope="module")
@@ -82,11 +132,10 @@ def search_tool(graph_client):
 # ── Helper: extract path IDs from search results ────────────────────────────
 
 
-def _extract_paths_from_vector(graph_client, query: str, limit: int) -> list[str]:
+def _extract_paths_from_vector(
+    graph_client, encoder, query: str, limit: int
+) -> list[str]:
     """Run vector-only search and return path IDs in ranked order."""
-    from imas_codex.tools.graph_search import _get_encoder
-
-    encoder = _get_encoder()
     embedding = encoder.embed_texts([query])[0].tolist()
 
     try:
@@ -168,38 +217,62 @@ async def _extract_paths_from_hybrid(search_tool, query: str, limit: int) -> lis
 
 # ── Test Classes ─────────────────────────────────────────────────────────────
 
+# TDD thresholds — these are the POST-FIX targets from the plan.
+# Tests SHOULD FAIL on the current broken data and PASS after
+# Phases 1-9 deliver the enrichment + search fixes.
+
 
 class TestVectorSearchBenchmark:
     """Vector/semantic search quality — requires embed server + graph.
 
-    MRR threshold will be raised as search quality improves.
-    Current baseline reflects pre-fix state.
+    Target: MRR ≥ 0.40 after concise LLM descriptions + concept-only embedding.
+    Current (broken): MRR ~ 0.016 (top results are _validity accessor terminals).
     """
 
-    # Pre-fix baseline: 0.016.  Post-fix target: ≥0.40.
-    # Set conservatively at first — raise after Phase 8 validates.
-    MRR_THRESHOLD = 0.01
+    MRR_THRESHOLD = 0.40
+    P_AT_1_THRESHOLD = 0.25
 
-    def test_vector_mrr(self, graph_client, embed_available):
+    def test_vector_mrr(self, graph_client, encoder, embed_available):
         if not embed_available:
             pytest.skip("Embed server not available")
 
         results = run_benchmark(
             method_name="Vector",
             queries=SEMANTIC_QUERIES,
-            search_fn=lambda q, lim: _extract_paths_from_vector(graph_client, q, lim),
+            search_fn=lambda q, lim: _extract_paths_from_vector(
+                graph_client, encoder, q, lim
+            ),
             limit=50,
         )
 
         logger.info(results.summary())
         assert_mrr_above(results, self.MRR_THRESHOLD)
 
-    def test_vector_returns_results(self, graph_client, embed_available):
+    def test_vector_precision_at_1(self, graph_client, encoder, embed_available):
+        """At least 25% of queries should have the correct answer at rank 1."""
+        if not embed_available:
+            pytest.skip("Embed server not available")
+
+        results = run_benchmark(
+            method_name="Vector P@1",
+            queries=SEMANTIC_QUERIES,
+            search_fn=lambda q, lim: _extract_paths_from_vector(
+                graph_client, encoder, q, lim
+            ),
+            limit=50,
+        )
+
+        logger.info(results.summary())
+        assert_precision_at_1_above(results, self.P_AT_1_THRESHOLD)
+
+    def test_vector_returns_results(self, graph_client, encoder, embed_available):
         """Sanity check: vector search should return non-empty results."""
         if not embed_available:
             pytest.skip("Embed server not available")
 
-        paths = _extract_paths_from_vector(graph_client, "electron temperature", 10)
+        paths = _extract_paths_from_vector(
+            graph_client, encoder, "electron temperature", 10
+        )
         assert len(paths) > 0, (
             "Vector search returned no results for 'electron temperature'"
         )
@@ -208,11 +281,11 @@ class TestVectorSearchBenchmark:
 class TestBM25SearchBenchmark:
     """BM25/fulltext search quality — requires graph only (no embed server).
 
-    BM25 is the primary text search method using the fulltext index.
+    Target: MRR ≥ 0.45 after BM25 score floor removal + score compression.
+    Current (broken): MRR ~ 0.21 (score floor at 0.7 drowns signal).
     """
 
-    # Pre-fix baseline: ~0.20.  Post-fix target: ≥0.45.
-    MRR_THRESHOLD = 0.10
+    MRR_THRESHOLD = 0.45
 
     def test_bm25_mrr(self, graph_client):
         results = run_benchmark(
@@ -239,8 +312,14 @@ class TestBM25SearchBenchmark:
 
         # Structural queries should work well with text search
         if "structural" in cat_mrr:
-            assert cat_mrr["structural"] >= 0.30, (
+            assert cat_mrr["structural"] >= 0.80, (
                 f"Structural query MRR too low: {cat_mrr['structural']:.3f}"
+            )
+
+        # Exact concept queries should be findable by keyword
+        if "exact_concept" in cat_mrr:
+            assert cat_mrr["exact_concept"] >= 0.20, (
+                f"Exact concept MRR too low: {cat_mrr['exact_concept']:.3f}"
             )
 
 
@@ -248,9 +327,10 @@ class TestPathLookupBenchmark:
     """Exact path lookup — the simplest search mode.
 
     Path queries containing '/' should always return the exact match.
+    This should work perfectly — it's just string matching.
     """
 
-    ACCURACY_THRESHOLD = 0.80
+    ACCURACY_THRESHOLD = 1.00
 
     def test_path_lookup_accuracy(self, graph_client):
         results = run_benchmark(
@@ -275,13 +355,13 @@ class TestPathLookupBenchmark:
 
 
 class TestHybridSearchBenchmark:
-    """Combined hybrid search — must at least match individual methods.
+    """Combined hybrid search — must exceed best individual method.
 
-    After Phase 9 (hybrid tuning), hybrid MRR should exceed both vector
-    and BM25 individually.  Pre-tuning, we just check it works.
+    Target: MRR ≥ 0.50 after RRF fusion + score gating + heuristic reranking.
+    Current (broken): MRR ~ 0.15 (text drowns vector, naive max+0.05 merge).
     """
 
-    MRR_THRESHOLD = 0.10
+    MRR_THRESHOLD = 0.50
 
     @pytest.mark.asyncio
     async def test_hybrid_mrr(self, search_tool, embed_available):
@@ -295,12 +375,12 @@ class TestHybridSearchBenchmark:
 
             results.query_results.append(QueryResult(query=q, returned_paths=paths))
 
-        # If most queries returned empty, the vector index is incompatible
+        # If most queries returned empty, the search tool is broken
         empty_count = sum(1 for qr in results.query_results if not qr.returned_paths)
         if empty_count > len(ALL_QUERIES) * 0.8:
             pytest.skip(
                 f"Hybrid search returned empty for {empty_count}/{len(ALL_QUERIES)} "
-                "queries — likely vector index dimension mismatch"
+                "queries — search tool is broken (check vector index + embed server)"
             )
 
         logger.info(results.summary())
@@ -315,33 +395,67 @@ class TestHybridSearchBenchmark:
         paths = await _extract_paths_from_hybrid(
             search_tool, "electron temperature", 10
         )
-        if not paths:
-            pytest.skip(
-                "Hybrid search returned empty — likely vector index dimension mismatch"
-            )
+        assert len(paths) > 0, "Hybrid search returned no results"
 
 
 class TestSearchQualityRegression:
     """Cross-cutting regression checks.
 
     These tests catch specific known failure modes rather than measuring
-    aggregate MRR.
+    aggregate MRR.  They define the quality bar for individual queries.
     """
 
     def test_electron_temp_not_dominated_by_accessors(
-        self, graph_client, embed_available
+        self, graph_client, encoder, embed_available
     ):
         """Top results for 'electron temperature' should be concept nodes,
         not accessor terminals like 'value', 'time', 'r', 'z'."""
         if not embed_available:
             pytest.skip("Embed server not available")
 
-        paths = _extract_paths_from_vector(graph_client, "electron temperature", 10)
-        accessor_names = {"value", "time", "r", "z", "phi", "data", "validity"}
+        paths = _extract_paths_from_vector(
+            graph_client, encoder, "electron temperature", 10
+        )
+        accessor_names = {
+            "value",
+            "time",
+            "r",
+            "z",
+            "phi",
+            "data",
+            "validity",
+            "validity_timed",
+            "coefficients",
+        }
         top5_names = [p.split("/")[-1] for p in paths[:5]]
         accessor_count = sum(1 for n in top5_names if n in accessor_names)
-        assert accessor_count <= 2, (
+        assert accessor_count <= 1, (
             f"Top 5 results dominated by accessors: {top5_names}"
+        )
+
+    def test_electron_temp_finds_core_profiles(
+        self, graph_client, encoder, embed_available
+    ):
+        """'electron temperature' MUST find core_profiles/.../electrons/temperature."""
+        if not embed_available:
+            pytest.skip("Embed server not available")
+
+        paths = _extract_paths_from_vector(
+            graph_client, encoder, "electron temperature", 20
+        )
+        expected = "core_profiles/profiles_1d/electrons/temperature"
+        assert expected in paths, (
+            f"Expected '{expected}' in vector results, got: {paths[:5]}"
+        )
+
+    def test_plasma_current_finds_ip(self, graph_client, encoder, embed_available):
+        """'plasma current' MUST find equilibrium/.../ip."""
+        if not embed_available:
+            pytest.skip("Embed server not available")
+
+        paths = _extract_paths_from_vector(graph_client, encoder, "plasma current", 20)
+        assert any("ip" in p.split("/")[-1] for p in paths), (
+            f"Expected a path ending in 'ip', got: {paths[:5]}"
         )
 
     def test_path_query_skips_unrelated(self, graph_client):
