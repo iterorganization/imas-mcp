@@ -309,15 +309,17 @@ def extract_cost(response: Any) -> float:
     Returns:
         Cost in USD.
     """
-    if (
-        hasattr(response, "_hidden_params")
-        and "response_cost" in response._hidden_params
-    ):
-        return response._hidden_params["response_cost"]
+    if hasattr(response, "_hidden_params"):
+        cost = response._hidden_params.get("response_cost")
+        if cost is not None:
+            return float(cost)
 
-    input_tokens = response.usage.prompt_tokens
-    output_tokens = response.usage.completion_tokens
-    return (input_tokens * 3 + output_tokens * 15) / 1_000_000
+    usage = getattr(response, "usage", None)
+    if usage:
+        input_tokens = usage.prompt_tokens or 0
+        output_tokens = usage.completion_tokens or 0
+        return (input_tokens * 3 + output_tokens * 15) / 1_000_000
+    return 0.0
 
 
 def _log_cache_metrics(response: Any, model: str) -> None:
@@ -498,11 +500,13 @@ def _build_kwargs(
 
     if llm_location != "local" or os.getenv("LITELLM_PROXY_URL"):
         proxy_url = get_llm_proxy_url()
-        # Use openrouter/ prefix even through the proxy so that LiteLLM's
-        # client preserves cache_control breakpoints in message content
-        # blocks.  The openai/ prefix strips them (strict OpenAI format),
-        # which silently disables prompt caching for all providers.
-        model_id = ensure_model_prefix(model)
+        # The proxy model names use the openrouter/ prefix (e.g.
+        # openrouter/google/gemini-3.1-flash-lite-preview).  When calling
+        # the proxy, wrap in openai/ so the *client* litellm treats the
+        # proxy as an OpenAI-compatible endpoint and sends the model name
+        # verbatim instead of interpreting the openrouter/ prefix as a
+        # provider hint and bypassing the proxy.
+        model_id = f"openai/{ensure_model_prefix(model)}"
         proxy_key = os.getenv("LITELLM_API_KEY") or os.getenv(
             "LITELLM_MASTER_KEY", api_key
         )
