@@ -45,7 +45,8 @@ _shutdown_event: asyncio.Event | None = None
 _gpu_name: str | None = None  # Cached at startup
 _gpu_memory_mb: int | None = None  # Cached at startup
 _cached_device_info: str = "not loaded"  # Cached at startup
-_cached_embedding_dim: int = 0  # Cached at startup
+_cached_embedding_dim: int = 0  # Cached at startup (native model dimension)
+_default_output_dim: int = 0  # Configured output dimension (Matryoshka truncation)
 _encode_timeout: float = 300.0  # 5 minutes max per embed request
 _location: str | None = None  # Deployment location label (e.g. "titan")
 _worker_gpu: int | None = None  # GPU index claimed by this worker
@@ -154,6 +155,12 @@ class EmbedRequest(BaseModel):
 
     texts: list[str] = Field(..., description="List of texts to embed", min_length=1)
     normalize: bool = Field(True, description="Normalize embeddings to unit length")
+    dimension: int | None = Field(
+        None,
+        description="Output dimension (Matryoshka truncation). "
+        "If omitted, uses the server's configured default. "
+        "Must be <= native model dimension.",
+    )
 
 
 class EmbedResponse(BaseModel):
@@ -300,6 +307,7 @@ def _init_worker_gpu() -> None:
     """
     global _encoder, _worker_gpu
     global _gpu_name, _gpu_memory_mb, _cached_device_info, _cached_embedding_dim
+    global _default_output_dim
 
     # Ensure Python logging works in worker subprocesses.
     # Uvicorn configures its own loggers but not the root logger,
@@ -388,11 +396,27 @@ def _init_worker_gpu() -> None:
         _gpu_name, _gpu_memory_mb = _get_gpu_info()
         _cached_device_info = _encoder.device_info
         try:
-            _cached_embedding_dim = (
-                _encoder.get_model().get_sentence_embedding_dimension() or 0
+            model = _encoder.get_model()
+            # Store native dimension before removing truncation.
+            # Matryoshka models always produce native-dim vectors internally;
+            # truncate_dim only slices the output.  By removing it here and
+            # truncating in the /embed handler, we support per-request
+            # dimension selection (e.g. benchmarking 256 vs 512 vs 1024).
+            _cached_embedding_dim = model.get_sentence_embedding_dimension() or 0
+            from imas_codex.settings import get_embedding_dimension
+
+            _default_output_dim = get_embedding_dimension()
+            model.truncate_dim = None
+            native_dim = model.get_sentence_embedding_dimension() or 0
+            logger.info(
+                "Matryoshka: native_dim=%d, default_output_dim=%d",
+                native_dim,
+                _default_output_dim,
             )
+            _cached_embedding_dim = native_dim
         except Exception:
             _cached_embedding_dim = 0
+            _default_output_dim = 0
 
         load_time = time.time() - start
         logger.info(
@@ -655,11 +679,23 @@ def create_app() -> FastAPI:
 
         Runs encoding in a thread pool to avoid blocking the async event
         loop (which would make /health unresponsive during encoding).
+
+        Supports per-request Matryoshka dimension via ``dimension`` field.
+        The model always encodes at native dimension; truncation and
+        re-normalization happen after encoding.
         """
         global _last_request_time, _request_count, _total_texts, _total_elapsed_ms
 
         if _encoder is None:
             raise HTTPException(status_code=503, detail="Model not loaded")
+
+        target_dim = request.dimension or _default_output_dim or _cached_embedding_dim
+        if target_dim and _cached_embedding_dim and target_dim > _cached_embedding_dim:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Requested dimension {target_dim} exceeds native "
+                f"model dimension {_cached_embedding_dim}",
+            )
 
         _last_request_time = time.time()
         start = time.time()
@@ -674,6 +710,17 @@ def create_app() -> FastAPI:
                 ),
                 timeout=_encode_timeout,
             )
+
+            # Matryoshka truncation: slice to requested dimension and
+            # re-normalize so the truncated vectors remain unit-length.
+            if target_dim and embeddings.ndim == 2 and embeddings.shape[1] > target_dim:
+                import numpy as np
+
+                embeddings = embeddings[:, :target_dim]
+                if request.normalize:
+                    norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+                    norms = np.where(norms == 0, 1.0, norms)
+                    embeddings = embeddings / norms
 
             elapsed_ms = (time.time() - start) * 1000
             _request_count += 1
@@ -737,7 +784,9 @@ def create_app() -> FastAPI:
             "model": {
                 "name": _encoder.config.model_name,
                 "device": _cached_device_info,
-                "embedding_dimension": _cached_embedding_dim,
+                "native_dimension": _cached_embedding_dim,
+                "default_output_dimension": _default_output_dim,
+                "embedding_dimension": _default_output_dim or _cached_embedding_dim,
             },
             "gpu": gpu_info,
             "config": {
