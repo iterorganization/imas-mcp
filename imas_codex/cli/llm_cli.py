@@ -951,7 +951,7 @@ Environment="PATH=%h/.local/bin:/usr/local/bin:/usr/bin"
 Environment="LITELLM_CALLBACKS=langfuse"
 ExecStartPre=/bin/mkdir -p {_services_h}
 ExecStartPre=-/bin/bash -c 'PG_BIN=$(cat {_services_h}/.pg_bin 2>/dev/null); [ -n "$PG_BIN" ] && [ -x "$PG_BIN/pg_ctl" ] && [ -f {_services_h}/pgdata/PG_VERSION ] && ($PG_BIN/pg_ctl status -D {_services_h}/pgdata >/dev/null 2>&1 || $PG_BIN/pg_ctl start -D {_services_h}/pgdata -w -l {_services_h}/pgdata/log/postgresql.log)'
-ExecStart=%h/.local/bin/uv tool run --with 'litellm[proxy]>=1.81.0' --with 'langfuse>=2.0.0' -- litellm --config {_project_h}/imas_codex/config/litellm_config.yaml --host 0.0.0.0 --port {port} --drop_params
+ExecStart=%h/.local/bin/uv tool run --with 'litellm[proxy]>=1.81.0' --with 'langfuse>=2.0.0' --with 'prisma>=0.15.0' -- litellm --config {_project_h}/imas_codex/config/litellm_config.yaml --host 0.0.0.0 --port {port} --drop_params
 ExecStop=/bin/kill -15 $MAINPID
 StandardOutput=append:{_services_h}/llm.log
 StandardError=append:{_services_h}/llm.log
