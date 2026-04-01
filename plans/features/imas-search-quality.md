@@ -418,6 +418,8 @@ MATCH (n:IMASNode {node_category: 'data', enrichment_source: 'template'})
 RETURN count(n)
 ```
 
+**Note**: Phase 2 establishes the initial accessor terminal classification using explicit name lists and suffix patterns. Phase 6 replaces this with a layered classification pipeline that adds force-include physics concepts, regex patterns, and structural heuristics for future-proofing. Phase 2 code will be refactored in Phase 6 — the initial implementation here is deliberately simpler to unblock parallel work.
+
 **Agent instructions**: This phase is self-contained. One agent can implement 2A-2E, run the enrichment pipeline, and verify the gate. No dependency on Phase 1 prompt changes — template enrichment doesn't use the LLM prompt.
 
 ---
@@ -507,7 +509,43 @@ def generate_embedding_text(path: str, path_info: dict, ids_info: dict | None = 
     return doc
 ```
 
-#### 4B. Add concept-node filter to embedding claims
+#### 4B. Keyword inheritance from children to parent descriptions
+
+Concept nodes (STRUCTURE/STRUCT_ARRAY) should inherit relevant child accessor names into their keyword lists. This ensures queries like "radius of X-point" can match the parent through keywords even without the child being embedded:
+
+```python
+def inherit_child_keywords(gc: GraphClient):
+    """Add child accessor names as keywords on parent concept nodes."""
+    KEYWORD_WORTHY_CHILDREN = {
+        'r': ['radius', 'major_radius', 'R'],
+        'z': ['height', 'vertical', 'Z'],
+        'phi': ['toroidal_angle', 'azimuthal'],
+        'time': ['timebase', 'temporal'],
+        'measured': ['measured', 'measurement'],
+        'reconstructed': ['reconstructed', 'reconstruction'],
+        'parallel': ['parallel_component'],
+        'poloidal': ['poloidal_component'],
+        'radial': ['radial_component'],
+        'toroidal': ['toroidal_component'],
+    }
+    
+    gc.query("""
+        UNWIND $mappings AS m
+        MATCH (child:IMASNode {name: m.name, node_category: 'data'})
+              -[:HAS_PARENT]->(parent:IMASNode)
+        WHERE parent.data_type IN ['STRUCTURE', 'STRUCT_ARRAY']
+        WITH parent, m.extra_keywords AS kws
+        SET parent.keywords = apoc.coll.toSet(
+            coalesce(parent.keywords, []) + kws
+        )
+    """, mappings=[
+        {"name": k, "extra_keywords": v} for k, v in KEYWORD_WORTHY_CHILDREN.items()
+    ])
+```
+
+This runs once after enrichment completes. The additional keywords make parent nodes discoverable through keyword/BM25 search for child-oriented queries.
+
+#### 4C. Add concept-node filter to embedding claims
 
 In `claim_paths_for_embedding()` at `dd_graph_ops.py:181-230`, add a filter to skip accessor terminals:
 
@@ -526,7 +564,7 @@ SET p.claimed_at = datetime(), p.claim_token = $token
 
 This leverages the template enrichment from Phase 2: all accessor terminals now have `enrichment_source='template'`, so filtering by `<> 'template'` gives us only concept nodes.
 
-#### 4C. Handle the status transition
+#### 4D. Handle the status transition
 
 Accessor terminals (template-enriched) should transition from `enriched` → `embedded` without actually generating embeddings. Add a bulk status update after Phase 2:
 
@@ -619,45 +657,235 @@ In `search_formatters.py`, render children as a compact tree:
 
 ---
 
-### Phase 6: Full Re-enrichment and Re-embedding
+### Phase 6: Accessor Terminal Classification — Layered Defense
+
+**Goal**: Future-proof classification of accessor terminals using patterns, not just a static list.
+
+**Files**: `imas_codex/graph/dd_enrichment.py`
+
+**Depends on**: Phase 2 (builds on the accessor terminal work)
+
+The static `ACCESSOR_TERMINAL_NAMES` frozenset from Phase 2 is necessary but insufficient. A new DD version could introduce `*_validate`, `*_flag`, `*_uncertainty` patterns that slip through. This phase adds layered pattern-based guards.
+
+#### 6A. Layered classification pipeline (short-circuit on first match)
+
+```python
+def classify_node(path_id: str, name: str, node_stats: dict | None = None) -> str:
+    """Classify a data node as 'concept' or 'accessor'.
+    
+    Layers evaluated in order. First match wins (short-circuit).
+    """
+    # Layer 1: Error/metadata (absolute, no false positives)
+    if _is_error_or_metadata(name, path_id):
+        return 'accessor'
+    
+    # Layer 2: Force-include physics concepts (semantic veto)
+    if name in FORCE_INCLUDE_CONCEPTS:
+        return 'concept'
+    
+    # Layer 3: Explicit accessor names (conservative list from Phase 2)
+    if name in ACCESSOR_TERMINAL_NAMES:
+        return 'accessor'
+    
+    # Layer 4: Regex suffix/prefix patterns (future-proof)
+    if _matches_accessor_pattern(name):
+        return 'accessor'
+    
+    # Layer 5: Frequency + structural heuristic (data-driven)
+    if node_stats:
+        occ = node_stats.get('occurrence_count', 0)
+        struct_ratio = node_stats.get('structure_parent_ratio', 0.0)
+        if occ >= 20 and struct_ratio >= 0.95:
+            logger.info(f"Accessor by heuristic: {name} (occ={occ}, ratio={struct_ratio})")
+            return 'accessor'
+    
+    # Default: concept
+    return 'concept'
+```
+
+#### 6B. Force-include physics concepts (Layer 2)
+
+Protects real physics quantities from frequency-based misclassification:
+
+```python
+FORCE_INCLUDE_CONCEPTS = frozenset({
+    'psi', 'density', 'temperature', 'pressure', 'flux',
+    'current', 'voltage', 'power', 'energy', 'frequency',
+    'velocity', 'momentum', 'conductivity', 'resistivity',
+    'elongation', 'triangularity', 'b0', 'b_field_r', 'b_field_z',
+    'q', 'rho_tor_norm', 'rho_pol_norm',
+})
+```
+
+#### 6C. Regex patterns (Layer 4) — catches unknown future accessors
+
+```python
+ACCESSOR_REGEX_PATTERNS = [
+    # Error/uncertainty bounds (current + future)
+    re.compile(r"_(error|uncertainty|confidence|reliability)_(upper|lower|index|bound)$"),
+    # Standalone validity variants
+    re.compile(r"^(error|uncertainty|validity)(_timed)?$"),
+    # Coefficients (interpolation)
+    re.compile(r"_coefficients$"),
+    # Normalized variants
+    re.compile(r"_n$"),
+    # Flag/status patterns (future-proof)
+    re.compile(r"_(flag|status|validate|check)$"),
+    # Scale/offset patterns
+    re.compile(r"_(scale|offset|weight|bias)$"),
+]
+```
+
+#### 6D. Structural heuristic (Layer 5) — data-driven from graph
+
+Pre-compute per-name statistics at pipeline start:
+```cypher
+MATCH (n:IMASNode {node_category: 'data'})
+WHERE NOT EXISTS { MATCH (c:IMASNode)-[:HAS_PARENT]->(n) }
+WITH n.name AS name, count(n) AS occ,
+     sum(CASE WHEN EXISTS {
+         MATCH (n)-[:HAS_PARENT]->(p:IMASNode)
+         WHERE p.data_type IN ['STRUCTURE', 'STRUCT_ARRAY']
+     } THEN 1 ELSE 0 END) * 1.0 / count(n) AS struct_ratio
+WHERE occ >= 20
+RETURN name, occ, struct_ratio
+```
+
+Any name with ≥20 occurrences AND ≥95% of instances having a STRUCTURE parent is classified as accessor. This catches new patterns automatically without code changes.
+
+**Gate**: Classification must produce ~9,500 accessors and ~5,700 concepts (±500). Verify `psi`, `density`, `temperature`, `pressure` are ALL classified as concepts.
+
+**Agent instructions**: One agent implements 6A-6D and writes classification unit tests. Tests must cover all layers including edge cases.
+
+---
+
+### Phase 7: Accessor Terminal Query Routing
+
+**Goal**: Ensure child-oriented queries ("radius of X-point") surface parent concept nodes even though accessor terminals are not embedded.
+
+**Files**: `imas_codex/tools/graph_search.py`, `imas_codex/search/search_strategy.py`
+
+**Depends on**: Phase 5 (child traversal), Phase 6 (accessor classification)
+
+#### Problem
+
+When accessor terminals are excluded from the vector index, queries like "radius of X-point" won't find `equilibrium/time_slice/boundary/x_point` because the parent's description says "X-point location" not "radius". The `r` child (which means "radius") is not embedded.
+
+#### 7A. Parent-promotion in vector search
+
+Modify the vector search Cypher to check if a hit is an accessor terminal and promote its parent:
+
+```cypher
+CALL db.index.vector.queryNodes('imas_node_embedding', $k, $embedding)
+YIELD node AS path, score
+WHERE NOT (path)-[:DEPRECATED_IN]->(:DDVersion)
+  AND path.node_category = 'data'
+OPTIONAL MATCH (path)-[:HAS_PARENT]->(parent:IMASNode)
+WHERE parent.data_type IN ['STRUCTURE', 'STRUCT_ARRAY']
+WITH CASE
+    WHEN path.data_type IN ['STRUCTURE', 'STRUCT_ARRAY'] THEN path
+    WHEN parent IS NOT NULL AND NOT (path.data_type IN ['STRUCTURE', 'STRUCT_ARRAY'])
+         THEN parent
+    ELSE path
+  END AS result_node,
+  score,
+  CASE WHEN parent IS NOT NULL THEN path.name ELSE null END AS matched_accessor
+RETURN result_node.id AS id, max(score) AS score,
+       collect(matched_accessor) AS matched_children
+```
+
+This way, if the vector search happens to match an accessor terminal that IS embedded (e.g., some borderline nodes), the parent is returned instead with the accessor context.
+
+#### 7B. Post-retrieval child name matching
+
+After the initial search returns concept nodes, do a cheap second pass checking if query terms match any child names:
+
+```python
+def _boost_by_child_match(scores: dict, query: str, gc: GraphClient) -> dict:
+    """Boost concept nodes whose children match query terms."""
+    query_words = {w.lower() for w in query.split() if len(w) > 2}
+    if not query_words:
+        return scores
+    
+    # Child name synonyms for common accessor terminals
+    CHILD_SYNONYMS = {
+        'r': {'radius', 'major_radius', 'radial'},
+        'z': {'height', 'vertical', 'elevation'},
+        'phi': {'toroidal_angle', 'azimuthal'},
+        'time': {'timebase', 'temporal'},
+    }
+    
+    path_ids = list(scores.keys())
+    children = gc.query("""
+        UNWIND $path_ids AS pid
+        MATCH (child:IMASNode)-[:HAS_PARENT]->(parent:IMASNode {id: pid})
+        WHERE child.node_category = 'data'
+        RETURN pid AS parent_id, collect(child.name) AS child_names
+    """, path_ids=path_ids)
+    
+    for row in children:
+        pid = row['parent_id']
+        child_names = set(row['child_names'])
+        # Check if query words match child names or their synonyms
+        expanded = set()
+        for cn in child_names:
+            expanded.add(cn)
+            expanded.update(CHILD_SYNONYMS.get(cn, set()))
+        
+        matches = query_words & expanded
+        if matches and pid in scores:
+            scores[pid] = round(scores[pid] + 0.03 * len(matches), 4)
+    
+    return scores
+```
+
+#### 7C. Add `matched_children` field to SearchHit
+
+```python
+# In search_strategy.py SearchHit class:
+matched_children: list[str] | None = None  # Accessor terminals that matched the query
+```
+
+Display in formatter: when `matched_children` is non-empty, show which children were relevant:
+```
+### equilibrium/time_slice/boundary/x_point (STRUCTURE, score: 0.87)
+  "Location of the X-point on the separatrix boundary."
+  Matched via children: r (radius), z (vertical position)
+```
+
+**Gate**: Query "radius of X-point" must return `equilibrium/time_slice/boundary/x_point` in top 5. Query "time base for electron temperature" must return `core_profiles/.../electrons/temperature` in top 5.
+
+**Agent instructions**: One agent implements 7A-7C. This touches the core search Cypher so needs careful testing. Write integration tests with the specific gate queries.
+
+---
+
+### Phase 8: Full Re-enrichment and Re-embedding
 
 **Goal**: Apply all changes to the full DD graph.
 
 **Files**: Pipeline execution (no code changes)
 
-**Depends on**: Phases 1-4 all complete and validated
+**Depends on**: Phases 1-6 all complete and validated
 
-#### 6A. Reset enrichment status for LLM re-enrichment
+#### 8A. Reset and re-enrich
 
 ```cypher
--- Reset all LLM-enriched data nodes to 'built' for re-processing
 MATCH (n:IMASNode {node_category: 'data', enrichment_source: 'llm'})
 SET n.status = 'built',
-    n.description = null,
-    n.keywords = null,
-    n.enrichment_source = null,
-    n.enrichment_hash = null
+    n.description = null, n.keywords = null,
+    n.enrichment_source = null, n.enrichment_hash = null
 ```
-
-#### 6B. Run enrichment pipeline
 
 ```bash
 uv run imas-codex dd enrich --force
 ```
 
-With hierarchical ordering (Phase 1C), parents are enriched first. Accessor terminals get template descriptions (Phase 2). Concept nodes get concise LLM descriptions (Phase 1).
+Expected: ~9,600 template-enriched, ~10,400 LLM-enriched with avg description ~100-150 chars. Cost: ~$2-5.
 
-Expected outcome:
-- ~9,600 template-enriched (accessor terminals)
-- ~10,400 LLM-enriched (concept nodes) with avg description ~100-150 chars
-- Total cost: ~$2-5 (Google Flash Lite at ~$0.07/M tokens × ~50M tokens)
-
-#### 6C. Clear existing embeddings and re-embed
+#### 8B. Clear and re-embed
 
 ```cypher
--- Clear all existing embeddings
-MATCH (n:IMASNode)
-WHERE n.embedding IS NOT NULL
+MATCH (n:IMASNode) WHERE n.embedding IS NOT NULL
 SET n.embedding = null, n.embedding_text = null, n.embedded_at = null, n.embedding_hash = null
 ```
 
@@ -665,90 +893,315 @@ SET n.embedding = null, n.embedding_text = null, n.embedded_at = null, n.embeddi
 uv run imas-codex dd embed
 ```
 
-Only concept nodes (~10,400) will be claimed for embedding (Phase 4B filter). Each gets its concise description as embedding text (Phase 4A).
+Expected: ~10,400 embedded concept nodes, avg embedding text ~100-150 chars. Time: ~15 min.
 
-Expected outcome:
-- ~10,400 embedded nodes (down from 20,037)
-- Avg embedding text: ~100-150 chars (down from 486)
-- Embedding time: ~15 min with 4×P100 GPUs
+#### 8C. Independent per-method benchmarks
 
-#### 6D. Full benchmark
+Run each search method INDEPENDENTLY before combining:
 
-Run the complete benchmark suite:
+| Method | Benchmark | MRR Target | Current |
+|--------|-----------|------------|---------|
+| Vector-only | 30 queries, vector search only | ≥ 0.40 | 0.016 |
+| BM25-only | 30 queries, fulltext index only | ≥ 0.45 | ~0.20 |
+| CONTAINS-only | 30 queries, string matching only | ≥ 0.30 | ~0.25 |
+| Path lookup | 10 exact path queries | 1.00 | ~0.90 |
 
-| Metric | Target | Current |
-|--------|--------|---------|
-| Vector P@1 | ≥ 15% | 0% |
-| Vector MRR | ≥ 0.25 | 0.016 |
-| Keyword MRR | ≥ 0.30 | ~0.20 (estimated) |
-| Hybrid MRR | ≥ max(vector, keyword) | < min(vector, keyword) |
-| End-to-end MRR | ≥ 0.35 | ~0.15 |
+**Gate**: Each method must pass its individual MRR target before proceeding to hybrid tuning. If any method fails, debug that method in isolation — do NOT combine broken methods.
 
-**Agent instructions**: This phase is pipeline execution. One agent runs the full enrichment, embedding, and benchmark. Must wait for all code changes (Phases 1-5) to be committed and validated.
+**Agent instructions**: One agent runs the full pipeline and benchmarks each method independently. Reports per-method MRR with query-level detail.
 
 ---
 
-### Phase 7: Integration Tests
+### Phase 9: Hybrid Tuning and Score Integration
 
-**Goal**: Ensure all changes are tested and maintainable.
+**Goal**: Find the optimal combination of search methods through systematic experimentation.
+
+**Files**: `imas_codex/tools/graph_search.py`
+
+**Depends on**: Phase 8 (all individual methods validated)
+
+#### 9A. Replace naive score merging with RRF
+
+Replace the current `max(vector, text) + 0.05` formula at `graph_search.py` line ~208 with Reciprocal Rank Fusion:
+
+```python
+def reciprocal_rank_fusion(
+    vector_hits: list[dict], text_hits: list[dict], k: int = 60
+) -> dict[str, float]:
+    """Combine ranked lists using RRF. Score-scale invariant."""
+    rrf_scores = {}
+    for rank, hit in enumerate(sorted(vector_hits, key=lambda x: x['score'], reverse=True), start=1):
+        rrf_scores[hit['id']] = rrf_scores.get(hit['id'], 0) + 1 / (k + rank)
+    for rank, hit in enumerate(sorted(text_hits, key=lambda x: x['score'], reverse=True), start=1):
+        rrf_scores[hit['id']] = rrf_scores.get(hit['id'], 0) + 1 / (k + rank)
+    return rrf_scores
+```
+
+**Why RRF over weighted linear**: RRF is score-scale invariant — it uses ranks, not scores. This eliminates the core problem where BM25 scores (0.7-0.95) drown vector scores (0.82-0.88). No normalization needed.
+
+#### 9B. Add vector confidence gating
+
+If the best vector score is below a threshold, don't include vector results in the merge — they're noise:
+
+```python
+vector_gate = 0.65  # Tunable
+if vector_results and max(r['score'] for r in vector_results) < vector_gate:
+    # Vector search returned low-confidence results — use text only
+    return {r['id']: r['score'] for r in text_results}
+```
+
+#### 9C. Grid search experimentation
+
+Run a systematic experiment over parameter space using the 30-query benchmark set:
+
+| Parameter | Values to Test |
+|-----------|----------------|
+| RRF k | 40, 60, 100 |
+| Vector gate threshold | 0.55, 0.65, 0.75, disabled |
+| Path segment boost | 0.0, 0.02, 0.03, 0.05 |
+| Heuristic rerank | enabled, disabled |
+
+Total: 3 × 4 × 4 × 2 = 96 experiments. Evaluate with MRR on the 30-query set.
+
+#### 9D. Heuristic reranking (zero-cost)
+
+After RRF merge, apply metadata-based boosts:
+
+```python
+def heuristic_rerank(hits: list, query: str) -> list:
+    """Zero-cost reranking based on metadata signals."""
+    query_words = set(query.lower().split())
+    for hit in hits:
+        # Boost: IDS name appears in query
+        if hit.ids_name and hit.ids_name.lower() in query.lower():
+            hit.score += 0.02
+        # Boost: exact path segment match
+        segments = hit.path.lower().split('/')
+        for seg in segments:
+            if seg.replace('_', ' ') in query.lower() or seg in query_words:
+                hit.score += 0.01
+        # Boost: well-documented paths (richer docs = higher confidence)
+        if len(hit.documentation or '') > 100:
+            hit.score += 0.01
+    return sorted(hits, key=lambda h: h.score, reverse=True)
+```
+
+No LLM cost. The MCP agent/subagent consuming the tools can do any further reranking itself based on its task context.
+
+#### 9E. Validate hybrid > individual methods
+
+**Gate**: Hybrid MRR must exceed the best individual method's MRR. If not, iterate on parameters. If after 3 iterations hybrid is still worse, ship the best individual method as default and make hybrid configurable.
+
+| Metric | Target | Rationale |
+|--------|--------|-----------|
+| Hybrid MRR | > max(vector MRR, text MRR) | Must improve, not degrade |
+| Hybrid MRR | ≥ 0.50 | Correct answer in top 2 on average |
+| No regression | Hybrid P@1 ≥ max(individual P@1) | Never lose a result that was #1 |
+
+**Agent instructions**: One agent implements 9A-9D, runs the grid search, and reports the optimal configuration. Must run AFTER Phase 8 benchmarks confirm individual methods are healthy.
+
+---
+
+### Phase 10: Graph-Backed Benchmark Tests
+
+**Goal**: Transform benchmarks into permanent pytest tests that gate on Neo4j availability and protect search quality over time.
+
+**Files**: `tests/search/benchmark_data.py`, `tests/search/benchmark_helpers.py`, `tests/search/test_search_benchmarks.py`
+
+**Depends on**: Phase 9 (hybrid tuning establishes baseline MRR values)
+
+#### 10A. Benchmark query set (`tests/search/benchmark_data.py`)
+
+30 queries across 6 categories, each with gold-standard expected paths:
+
+| Category | Count | Example |
+|----------|-------|---------|
+| Exact concept match | 5 | "electron temperature" → `core_profiles/.../electrons/temperature` |
+| Disambiguating | 5 | "ECE electron temperature" → `ece/channel/t_e` (NOT core_profiles) |
+| Structural/path | 5 | `equilibrium/time_slice/profiles_1d/psi` → exact match |
+| Abbreviation/synonym | 5 | "Ip" → `equilibrium/.../global_quantities/ip` |
+| Accessor-oriented | 5 | "radius of X-point" → parent with `r` child |
+| Cross-domain | 5 | "bootstrap current" → transport + equilibrium paths |
+
+#### 10B. MRR test helpers (`tests/search/benchmark_helpers.py`)
+
+```python
+def calculate_mrr(results: list[tuple[str, list[str], list[str]]]) -> float:
+    """Calculate MRR from (query, expected_paths, returned_paths) triples."""
+    reciprocal_ranks = []
+    for query, expected, returned in results:
+        rr = 0.0
+        for rank, path in enumerate(returned, start=1):
+            if path in expected:
+                rr = 1.0 / rank
+                break
+        reciprocal_ranks.append(rr)
+    return sum(reciprocal_ranks) / len(reciprocal_ranks) if reciprocal_ranks else 0.0
+
+def assert_mrr_above(results, threshold, method_name):
+    """Assert with detailed failure message showing per-query breakdown."""
+    mrr = calculate_mrr(results)
+    if mrr < threshold:
+        failures = [(q, exp, ret[:5]) for q, exp, ret in results
+                     if not any(p in exp for p in ret[:5])]
+        msg = f"{method_name} MRR={mrr:.3f} < {threshold}\nFailed queries:\n"
+        for q, exp, ret in failures[:5]:
+            msg += f"  '{q}': expected {exp[:2]}, got {ret[:3]}\n"
+        raise AssertionError(msg)
+```
+
+#### 10C. Per-method benchmark tests (`tests/search/test_search_benchmarks.py`)
+
+Each search method has an independent test with its own MRR threshold:
+
+```python
+import pytest
+pytestmark = [pytest.mark.graph, pytest.mark.benchmark]
+
+class TestVectorSearchBenchmark:
+    """Vector/semantic search quality — gated on embed server + graph."""
+    
+    MRR_THRESHOLD = 0.40  # Baseline from Phase 8
+    
+    def test_vector_mrr(self, search_tool, benchmark_queries):
+        results = []
+        for q in benchmark_queries:
+            hits = search_tool._vector_search_only(q.query_text, limit=50)
+            results.append((q.query_text, q.expected_paths, [h['id'] for h in hits]))
+        assert_mrr_above(results, self.MRR_THRESHOLD, "Vector")
+
+class TestBM25SearchBenchmark:
+    """BM25/fulltext search quality — gated on graph only."""
+    
+    MRR_THRESHOLD = 0.45
+    
+    def test_bm25_mrr(self, search_tool, benchmark_queries):
+        # ... similar pattern, text search only ...
+
+class TestHybridSearchBenchmark:
+    """Combined hybrid search — must exceed both individual methods."""
+    
+    MRR_THRESHOLD = 0.50
+    
+    def test_hybrid_exceeds_individual(self, search_tool, benchmark_queries):
+        # Run all three, verify hybrid > max(vector, text)
+
+class TestAccessorRouting:
+    """Accessor terminal queries must surface parent concept nodes."""
+    
+    def test_radius_of_xpoint(self, search_tool):
+        hits = search_tool.search_imas_paths("radius of X-point", max_results=10)
+        paths = [h.path for h in hits.hits]
+        assert any('x_point' in p for p in paths[:5])
+    
+    def test_time_base_for_temperature(self, search_tool):
+        hits = search_tool.search_imas_paths("time base for electron temperature", max_results=10)
+        paths = [h.path for h in hits.hits]
+        assert any('temperature' in p for p in paths[:5])
+```
+
+#### 10D. Regression detection
+
+Tests pin MRR baselines. When a change improves search quality, update the threshold:
+
+```python
+# Update baselines after validated improvements:
+# TestVectorSearchBenchmark.MRR_THRESHOLD = 0.45  # was 0.40
+```
+
+If a PR causes MRR to drop by >0.05 from the pinned baseline, the test fails and blocks merge.
+
+#### 10E. Embed server gating
+
+Vector benchmark tests need the embed server running. Add a marker:
+
+```python
+@pytest.fixture
+def requires_embed_server():
+    """Skip if embed server is not running."""
+    try:
+        from imas_codex.tools.graph_search import _get_encoder
+        encoder = _get_encoder()
+        encoder.encode(["test"])
+    except Exception:
+        pytest.skip("Embed server not available")
+```
+
+BM25 and CONTAINS tests do NOT need the embed server — they should always run when the graph is available.
+
+**Gate**: All test classes pass. MRR thresholds match validated baselines from Phase 9.
+
+**Agent instructions**: One agent creates the test files, benchmark data, and helpers. Tests must pass when the graph is available and skip gracefully when it's not.
+
+---
+
+### Phase 11: Integration Tests for Code Changes
+
+**Goal**: Unit and integration tests for all code changes from Phases 1-7.
 
 **Files**: `tests/graph/`, `tests/tools/`
 
-**Depends on**: Phases 1-5 code complete
+**Depends on**: Phases 1-7 code complete
 
-#### 7A. Prompt quality tests
-
-Test that the enrichment prompt produces descriptions matching target criteria:
-- Length: 50-200 chars (reject >300)
+#### 11A. Prompt quality tests
+- Description length: 50-200 chars (reject >300)
 - No metadata repetition (units, data types, coordinates)
 - Starts with quantity name (not "The" or "This" or "Container for")
 
-#### 7B. Accessor terminal classification tests
+#### 11B. Accessor classification tests
+- All 6 layers tested independently
+- Force-include concepts: `psi`, `density`, `temperature`, `pressure` → always concept
+- Regex patterns catch: `_coefficients`, `_n`, `_flag`, `_validate`, `_uncertainty`
+- Structural heuristic: mock node_stats for boundary cases
+- Edge cases: empty name, single-char name, unknown name → default concept
 
-Test `is_accessor_terminal()`:
-- Known accessor names return True
-- Known concept names return False
-- Suffix patterns match correctly
-- Edge cases (empty name, unknown name)
-
-#### 7C. Template enrichment tests
-
-Test `generate_template_description()`:
+#### 11C. Template enrichment tests
 - Each template category produces valid descriptions
-- Parent context is correctly interpolated
-- Descriptions include `enrichment_source: 'template'`
+- Parent context correctly interpolated
+- `enrichment_source: 'template'` always set
 
-#### 7D. BM25 scoring tests (no server needed)
-
-Test the scoring pipeline:
+#### 11D. BM25 scoring tests (no server needed)
 - No score floor (BM25 scores can be < 0.7)
-- CONTAINS fallback scores in correct ranges
-- Merged scores capped at 1.0
+- CONTAINS fallback scores in compressed ranges (0.55-0.80)
+- Score cap at 1.0
 - Path queries skip vector search
 
-#### 7E. Child traversal tests
-
-Test child grouping and formatting:
+#### 11E. Child traversal tests
 - Structure nodes return grouped children
 - Leaf nodes return no children
 - Role classification works correctly
+- Formatter produces expected tree output
 
-**Agent instructions**: This phase is test writing. Can be parallelized across agents — each agent takes one test file.
+#### 11F. RRF merge tests
+- Two ranked lists merge correctly
+- Missing documents handled (partial credit)
+- k parameter affects ranking
+- Vector gating works (low-confidence vector excluded)
+
+**Agent instructions**: Can be parallelized — each test file is independent.
+
+---
 
 ## Parallel Dispatch Plan
 
 ```
 Timeline:
-                                                    
-Phase 1: Prompt redesign + validation    ████████░░░  (sequential — must validate)
-Phase 2: Template enrichment expansion   ████████░░░  (parallel with 1)
-Phase 3: BM25 scoring fix               █████░░░░░░  (parallel with 1, 2)
-Phase 5: Child traversal                 ██████░░░░░  (parallel with 1, 2, 3)
-                                         ↓ gate
-Phase 4: Embedding text redesign         ░░░░░████░░  (after Phase 1 + 2 gates)
-                                              ↓ gate
-Phase 6: Full re-enrich + re-embed       ░░░░░░░████  (after Phase 4 gate)
-Phase 7: Integration tests               ░░░░░██████  (after Phases 1-5 code)
+
+Phase 1:  Prompt redesign + validation     ████████░░░░░░░  (blocking gate: MRR ≥ 0.40)
+Phase 2:  Template enrichment expansion     ████████░░░░░░░  (parallel with 1)
+Phase 3:  BM25 scoring fix                 █████░░░░░░░░░░  (parallel with 1, 2)
+Phase 5:  Child traversal                  ██████░░░░░░░░░  (parallel with 1, 2, 3)
+Phase 6:  Layered accessor classification  ░░██████░░░░░░░  (after Phase 2)
+                                           ↓ gate
+Phase 4:  Embedding text redesign          ░░░░░████░░░░░░  (after Phase 1 + 2)
+Phase 7:  Accessor query routing           ░░░░░░████░░░░░  (after Phase 5 + 6)
+                                                ↓ gate
+Phase 8:  Re-enrich + re-embed + per-method benchmarks  ░░░░░░░░████░░░  (after 1-7)
+                                                             ↓ gate (individual MRRs)
+Phase 9:  Hybrid tuning + grid search      ░░░░░░░░░░░███░  (after Phase 8 gates)
+                                                        ↓ gate (hybrid > individual)
+Phase 10: Graph-backed benchmark tests     ░░░░░░░░░░░░███  (after Phase 9)
+Phase 11: Integration tests                ░░░░░░░██████░░  (after Phases 1-7 code)
 ```
 
 **Group 1** (launch in parallel immediately):
@@ -757,28 +1210,55 @@ Phase 7: Integration tests               ░░░░░██████  (aft
 - Agent C: Phase 3 (BM25 scoring fix)
 - Agent D: Phase 5 (child traversal in search results)
 
-**Group 2** (after Phase 1 + 2 gates pass):
-- Agent E: Phase 4 (embedding text redesign)
-- Agent F: Phase 7 (tests for Phases 1-3, 5 — can start immediately for completed phases)
+**Group 2** (after Group 1 completes):
+- Agent E: Phase 4 (embedding text redesign — after Phase 1 + 2)
+- Agent F: Phase 6 (layered accessor classification — after Phase 2)
+- Agent G: Phase 7 (accessor query routing — after Phase 5 + 6)
+- Agent H: Phase 11 (integration tests — after Phases 1-7 code)
 
-**Group 3** (after Phase 4 gate passes):
-- Agent G: Phase 6 (full re-enrichment, re-embedding, benchmark)
+**Group 3** (after all code phases):
+- Agent I: Phase 8 (full re-enrichment, re-embedding, per-method benchmarks)
+
+**Group 4** (after individual method gates pass):
+- Agent J: Phase 9 (hybrid tuning grid search)
+
+**Group 5** (after hybrid tuning validated):
+- Agent K: Phase 10 (graph-backed benchmark tests)
+
+## MRR Targets (revised upward)
+
+| Metric | Target | Current | Rationale |
+|--------|--------|---------|-----------|
+| Vector P@1 | ≥ 25% | 0% | Correct answer at rank 1 for 1 in 4 queries |
+| Vector MRR | ≥ 0.40 | 0.016 | Correct answer in top 2-3 on average |
+| BM25 MRR | ≥ 0.45 | ~0.20 | Strong keyword matching |
+| CONTAINS MRR | ≥ 0.30 | ~0.25 | Fallback, lower bar acceptable |
+| Path lookup accuracy | 1.00 | ~0.90 | Exact path queries must always work |
+| **Hybrid MRR** | **≥ 0.50** | **~0.15** | **Must exceed best individual method** |
+| End-to-end MRR | ≥ 0.55 | ~0.15 | With accessor routing + child traversal |
 
 ## Risk Mitigation
 
 | Risk | Mitigation |
 |------|------------|
-| Concise prompt produces worse descriptions than raw docs | Phase 1 A/B validation gate — if MRR < 0.20, iterate on prompt before proceeding |
-| Template enrichment misclassifies concept nodes | Conservative accessor terminal list — only names with ≥20 occurrences and clearly generic semantics. Physics quantities like `density`, `pressure`, `psi` are NOT in the list |
-| BM25 score changes break existing keyword search | Phase 3 gate tests keyword-only MRR. Score compression is conservative (0.55-0.80 range still provides clear ranking) |
-| Re-enrichment costs too much | Google Flash Lite at $0.07/M tokens. Full re-enrichment of 10,400 nodes × 50 per batch = 208 calls. Estimated $2-5 total |
-| Embed server capacity | Current 4×P100 handles 20K nodes in ~30 min. 10.4K will take ~15 min |
+| Concise prompt produces worse descriptions than raw docs | Phase 1 A/B validation gate with iteration budget (3 prompt revisions) |
+| Template enrichment misclassifies concept nodes | Layered defense (Phase 6) with force-include physics concepts list |
+| Static accessor list misses future DD patterns | Layer 4 regex patterns + Layer 5 structural heuristic = future-proof |
+| BM25 score changes break existing keyword search | Phase 3 gate tests keyword-only MRR before integration |
+| Hybrid worse than individual methods | Phase 9 grid search with explicit gate: hybrid > max(individual). Fallback: ship best individual |
+| RRF k value wrong | Grid search tests k=40,60,100. RRF is robust — performance varies <5% across k values |
+| Overfitting benchmark queries | 30 queries is small but stratified across 6 categories. Phase 10 tests are regression guards, not the tuning set |
+| Accessor routing adds latency | Post-retrieval child matching is one additional Cypher query. Budget: <50ms additional |
+| Re-enrichment costs too much | Google Flash Lite at $0.07/M tokens. ~$2-5 total for full re-enrichment |
 
 ## Success Criteria
 
 The plan succeeds when:
-1. **Vector P@1 > 0%** (from 0% — any improvement proves the fix works)
-2. **Vector MRR ≥ 0.20** (from 0.016 — 12× improvement)
-3. **Hybrid MRR > max(vector, keyword)** (from "all hybrids worse" — proves merging works)
-4. **Search results show children** for structure nodes
-5. **Accessor terminals** are template-enriched, not embedded, and not returned as top results for physics queries
+1. **Each search method passes its independent MRR gate** (vector ≥ 0.40, BM25 ≥ 0.45, etc.)
+2. **Hybrid MRR > max(vector MRR, BM25 MRR)** — combination must add value, not destroy it
+3. **Hybrid MRR ≥ 0.50** — correct answer in top 2 on average
+4. **Accessor-oriented queries** surface parent concept nodes (verified by specific test cases)
+5. **Search results show grouped children** for structure nodes
+6. **Accessor classification is pattern-based** and catches future DD additions without code changes
+7. **All benchmarks are codified as pytest tests** that protect quality on every commit
+8. **No LLM cost in the search path** — only in the offline enrichment pipeline
