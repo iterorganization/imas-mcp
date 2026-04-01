@@ -337,6 +337,21 @@ def _dd_version_clause(
     )
 
 
+def _deprecated_filter(alias: str, dd_version: int | None) -> str:
+    """Return the correct deprecated-path filter for the given version scope.
+
+    When dd_version is None (default, current version): hard-exclude all
+    deprecated paths.  When dd_version is specified: omit the hard filter
+    entirely — ``_dd_version_clause`` handles version-scoped deprecation.
+    This allows paths deprecated in later versions to appear when searching
+    older DD versions (e.g., ``ece/channel/t_e`` deprecated in 4.0.0 is
+    still valid when searching DD 3.x).
+    """
+    if dd_version is not None:
+        return ""
+    return f"NOT ({alias})-[:DEPRECATED_IN]->(:DDVersion)"
+
+
 class GraphSearchTool:
     """Graph-backed semantic search for IMAS paths."""
 
@@ -418,13 +433,15 @@ class GraphSearchTool:
                 )
 
             dd_clause = _dd_version_clause("path", dd_version, params)
+            dep_filter = _deprecated_filter("path", dd_version)
+            dep_clause = f"AND {dep_filter}" if dep_filter else ""
 
             vector_results = self._gc.query(
                 f"""
                 CALL db.index.vector.queryNodes('imas_node_embedding', $k, $embedding)
                 YIELD node AS path, score
-                WHERE NOT (path)-[:DEPRECATED_IN]->(:DDVersion)
-                  AND path.node_category = 'data'
+                WHERE path.node_category = 'data'
+                {dep_clause}
                 {filter_clause}
                 {dd_clause}
                 RETURN path.id AS id, score
@@ -2253,11 +2270,14 @@ def _text_search_imas_paths(
     query_lower = query.lower()
     query_words = [w for w in query_lower.split() if len(w) > 2]
 
+    # Build version-aware deprecated filter
+    dep_filter = _deprecated_filter("p", dd_version)
     where_parts = [
-        "NOT (p)-[:DEPRECATED_IN]->(:DDVersion)",
         "p.node_category = 'data'",
         "(p.enrichment_source IS NULL OR p.enrichment_source <> 'template')",
     ]
+    if dep_filter:
+        where_parts.insert(0, dep_filter)
     # Cap CONTAINS fallback to avoid full scans on large graphs
     contains_limit = min(limit, 100)
     params: dict[str, Any] = {"query_lower": query_lower, "limit": contains_limit}
@@ -2275,9 +2295,10 @@ def _text_search_imas_paths(
 
     # Try fulltext index first (BM25 scoring)
     try:
+        ft_dep = f"AND {dep_filter} " if dep_filter else ""
         ft_where = (
-            "WHERE NOT (p)-[:DEPRECATED_IN]->(:DDVersion) AND p.node_category = 'data'"
-            " AND (p.enrichment_source IS NULL OR p.enrichment_source <> 'template')"
+            f"WHERE p.node_category = 'data' {ft_dep}"
+            "AND (p.enrichment_source IS NULL OR p.enrichment_source <> 'template')"
         )
         # Use expanded query for BM25 (abbreviations → full terms)
         ft_params: dict[str, Any] = {"search_query": expanded_query, "limit": limit}

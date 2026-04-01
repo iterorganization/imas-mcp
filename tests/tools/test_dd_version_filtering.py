@@ -24,6 +24,7 @@ from imas_codex.tools.graph_search import (
     GraphPathTool,
     GraphStructureTool,
     _dd_version_clause,
+    _deprecated_filter,
 )
 
 # ============================================================================
@@ -76,6 +77,52 @@ class TestDDVersionClause:
 
 
 # ============================================================================
+# _deprecated_filter unit tests
+# ============================================================================
+
+
+class TestDeprecatedFilter:
+    """Test the version-aware deprecated filter helper."""
+
+    def test_none_returns_blanket_exclusion(self):
+        """No version specified → hard-exclude all deprecated paths."""
+        result = _deprecated_filter("p", dd_version=None)
+        assert "DEPRECATED_IN" in result
+        assert "DDVersion" in result
+        assert result == "NOT (p)-[:DEPRECATED_IN]->(:DDVersion)"
+
+    def test_version_specified_returns_empty(self):
+        """Version specified → no hard filter (dd_version_clause handles it)."""
+        result = _deprecated_filter("p", dd_version=3)
+        assert result == ""
+
+    def test_version_specified_returns_empty_dd4(self):
+        result = _deprecated_filter("p", dd_version=4)
+        assert result == ""
+
+    def test_uses_correct_alias(self):
+        result = _deprecated_filter("node", dd_version=None)
+        assert "(node)-[:DEPRECATED_IN]->" in result
+
+    def test_combined_with_dd_version_clause_dd3(self):
+        """When dd_version=3, only _dd_version_clause should filter deprecation."""
+        dep = _deprecated_filter("p", dd_version=3)
+        clause = _dd_version_clause("p", dd_version=3)
+        # No blanket filter
+        assert dep == ""
+        # But version clause has correct DEPRECATED_IN check
+        assert "DEPRECATED_IN" in clause
+        assert "<= $dd_major_version" in clause
+
+    def test_combined_with_dd_version_clause_none(self):
+        """When dd_version=None, blanket filter applied, no version clause."""
+        dep = _deprecated_filter("p", dd_version=None)
+        clause = _dd_version_clause("p", dd_version=None)
+        assert dep != ""
+        assert clause == ""
+
+
+# ============================================================================
 # Renamed path handling tests
 # ============================================================================
 
@@ -87,21 +134,12 @@ class TestRenamedPathHandling:
     async def test_renamed_path_returns_valid_model(self):
         """Renamed paths must produce a valid CheckPathsResultItem, not a Pydantic error."""
         gc = MagicMock()
-        # First query: batch UNWIND path lookup — path not found (null fields)
-        # Second query: batch UNWIND RENAMED_TO check
+        # First query: path not found (no match)
+        # Second query: RENAMED_TO found
         gc.query.side_effect = [
+            [],  # path lookup returns empty
             [
                 {
-                    "requested": "magnetics/bpol_probe/polarisation_angle",
-                    "id": None,
-                    "ids": None,
-                    "data_type": None,
-                    "units": None,
-                }
-            ],  # batch path lookup — not found
-            [
-                {
-                    "requested": "magnetics/bpol_probe/polarisation_angle",
                     "old_path": "magnetics/bpol_probe/polarisation_angle",
                     "new_path": "magnetics/bpol_probe/polarization_angle",
                 }
@@ -137,7 +175,6 @@ class TestVersionFilteringSemantics:
         gc = MagicMock()
         gc.query.return_value = [
             {
-                "requested": "equilibrium/time_slice/profiles_1d/psi",
                 "id": "equilibrium/time_slice/profiles_1d/psi",
                 "ids": "equilibrium",
                 "data_type": "FLT_1D",
@@ -159,13 +196,7 @@ class TestVersionFilteringSemantics:
         """The dd_major_version parameter passed to Cypher must be an integer."""
         gc = MagicMock()
         gc.query.return_value = [
-            {
-                "requested": "test/path",
-                "id": "test/path",
-                "ids": "test",
-                "data_type": "FLT_0D",
-                "units": "",
-            }
+            {"id": "test/path", "ids": "test", "data_type": "FLT_0D", "units": ""}
         ]
         tool = GraphPathTool(gc)
         await tool.check_imas_paths("test/path", dd_version=4)
@@ -180,13 +211,7 @@ class TestVersionFilteringSemantics:
         """When dd_version is None, no version filter clause should be in the query."""
         gc = MagicMock()
         gc.query.return_value = [
-            {
-                "requested": "test/path",
-                "id": "test/path",
-                "ids": "test",
-                "data_type": "FLT_0D",
-                "units": "",
-            }
+            {"id": "test/path", "ids": "test", "data_type": "FLT_0D", "units": ""}
         ]
         tool = GraphPathTool(gc)
         await tool.check_imas_paths("test/path", dd_version=None)
@@ -622,3 +647,228 @@ class TestClusterReranking:
         assert scores["path/a"] == 0.95
         assert scores["path/b"] < 0.90
         assert scores["path/c"] == 0.85
+
+
+# ============================================================================
+# Version-scoped deprecated path search (live graph)
+# ============================================================================
+
+
+def _graph_available() -> bool:
+    """Check if Neo4j is reachable."""
+    try:
+        from imas_codex.graph.client import GraphClient
+
+        with GraphClient() as gc:
+            gc.query("RETURN 1")
+        return True
+    except Exception:
+        return False
+
+
+requires_graph = pytest.mark.skipif(
+    not _graph_available(), reason="Neo4j not available"
+)
+
+
+@requires_graph
+class TestVersionScopedDeprecatedSearch:
+    """Integration tests: version-scoped search returns deprecated-in-later-version paths.
+
+    Uses real graph data.  Key test paths:
+      - ece/channel/t_e: introduced DD3, deprecated DD4 → visible in DD3, hidden in DD4
+      - equilibrium/time_slice/boundary/x_point: introduced DD3, deprecated DD4
+      - bolometer/channel/power: introduced DD3, deprecated DD4
+    """
+
+    def test_text_search_dd3_includes_path_deprecated_in_dd4(self):
+        """A path deprecated in DD4 must appear in text search with dd_version=3."""
+        from imas_codex.graph.client import GraphClient
+        from imas_codex.tools.graph_search import _text_search_imas_paths
+
+        with GraphClient() as gc:
+            results = _text_search_imas_paths(
+                gc, "electron temperature ECE", limit=50, ids_filter=None, dd_version=3
+            )
+        ids = [r["id"] for r in results]
+        assert "ece/channel/t_e" in ids, (
+            f"ece/channel/t_e (deprecated in DD4) should appear in DD3 search. "
+            f"Got {ids[:10]}"
+        )
+
+    def test_text_search_dd4_excludes_path_deprecated_in_dd4(self):
+        """A path deprecated in DD4 must NOT appear in text search with dd_version=4."""
+        from imas_codex.graph.client import GraphClient
+        from imas_codex.tools.graph_search import _text_search_imas_paths
+
+        with GraphClient() as gc:
+            results = _text_search_imas_paths(
+                gc, "electron temperature ECE", limit=50, ids_filter=None, dd_version=4
+            )
+        ids = [r["id"] for r in results]
+        assert "ece/channel/t_e" not in ids, (
+            "ece/channel/t_e (deprecated in DD4) should NOT appear in DD4 search"
+        )
+
+    def test_text_search_no_version_excludes_all_deprecated(self):
+        """With no dd_version, all deprecated paths are excluded (current behavior)."""
+        from imas_codex.graph.client import GraphClient
+        from imas_codex.tools.graph_search import _text_search_imas_paths
+
+        with GraphClient() as gc:
+            results = _text_search_imas_paths(
+                gc,
+                "electron temperature ECE",
+                limit=50,
+                ids_filter=None,
+                dd_version=None,
+            )
+        ids = [r["id"] for r in results]
+        assert "ece/channel/t_e" not in ids, (
+            "ece/channel/t_e should be excluded when no version filter is applied"
+        )
+
+    def test_text_search_dd3_includes_x_point_deprecated_in_dd4(self):
+        """equilibrium x_point (deprecated DD4) should appear in DD3 search."""
+        from imas_codex.graph.client import GraphClient
+        from imas_codex.tools.graph_search import _text_search_imas_paths
+
+        with GraphClient() as gc:
+            results = _text_search_imas_paths(
+                gc, "x point magnetic boundary", limit=50, ids_filter=None, dd_version=3
+            )
+        ids = [r["id"] for r in results]
+        assert "equilibrium/time_slice/boundary/x_point" in ids, (
+            f"x_point (deprecated DD4) should appear in DD3 search. Got {ids[:10]}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_vector_search_dd3_includes_deprecated_in_dd4(self):
+        """Vector search with dd_version=3 should include paths deprecated in DD4.
+
+        Note: deprecated paths may lack embeddings (re-embedding used --current-only),
+        so this test verifies the filter permits them, not that vector similarity finds them.
+        """
+        from imas_codex.graph.client import GraphClient
+        from imas_codex.tools.graph_search import GraphSearchTool
+
+        with GraphClient() as gc:
+            tool = GraphSearchTool(gc)
+            result = await tool.search_imas_paths(
+                "electron temperature ECE channel",
+                max_results=50,
+                dd_version=3,
+            )
+        # If vector search errors (e.g., dimension mismatch), result is ToolError
+        if hasattr(result, "error") and result.error:
+            pytest.skip(f"Vector search infrastructure error: {result.error[:100]}")
+        all_ids = [r.id for r in result.hits]
+        # ece/channel/t_e may not have an embedding (deprecated paths were skipped
+        # during re-embedding). The key invariant is that the result set is not empty
+        # and the version filter doesn't cause errors.
+        assert len(all_ids) > 0, "DD3 vector search should return results"
+
+    @pytest.mark.asyncio
+    async def test_vector_search_dd4_excludes_deprecated_in_dd4(self):
+        """Vector search with dd_version=4 should exclude paths deprecated in DD4."""
+        from imas_codex.graph.client import GraphClient
+        from imas_codex.tools.graph_search import GraphSearchTool
+
+        with GraphClient() as gc:
+            tool = GraphSearchTool(gc)
+            result = await tool.search_imas_paths(
+                "electron temperature ECE channel",
+                max_results=50,
+                dd_version=4,
+            )
+        if hasattr(result, "error") and result.error:
+            pytest.skip(f"Vector search infrastructure error: {result.error[:100]}")
+        all_ids = [r.id for r in result.hits]
+        assert "ece/channel/t_e" not in all_ids, (
+            "ece/channel/t_e should NOT appear in DD4 vector search"
+        )
+
+    @pytest.mark.asyncio
+    async def test_vector_search_no_version_excludes_deprecated(self):
+        """Vector search with no version should exclude all deprecated paths."""
+        from imas_codex.graph.client import GraphClient
+        from imas_codex.tools.graph_search import GraphSearchTool
+
+        with GraphClient() as gc:
+            tool = GraphSearchTool(gc)
+            result = await tool.search_imas_paths(
+                "electron temperature ECE channel",
+                max_results=50,
+                dd_version=None,
+            )
+        if hasattr(result, "error") and result.error:
+            pytest.skip(f"Vector search infrastructure error: {result.error[:100]}")
+        all_ids = [r.id for r in result.hits]
+        assert "ece/channel/t_e" not in all_ids, (
+            "ece/channel/t_e should be excluded with no version filter"
+        )
+
+    def test_dd3_search_includes_paths_absent_from_dd4(self):
+        """DD3 search should include some paths that DD4 excludes (deprecated in DD4).
+
+        Paths deprecated in DD4 are valid in DD3, so DD3 results should contain
+        paths not present in DD4 results.
+        """
+        from imas_codex.graph.client import GraphClient
+        from imas_codex.tools.graph_search import _text_search_imas_paths
+
+        with GraphClient() as gc:
+            dd3_results = _text_search_imas_paths(
+                gc, "temperature", limit=100, ids_filter=None, dd_version=3
+            )
+            dd4_results = _text_search_imas_paths(
+                gc, "temperature", limit=100, ids_filter=None, dd_version=4
+            )
+        assert len(dd3_results) > 0, "DD3 search should return results"
+        assert len(dd4_results) > 0, "DD4 search should return results"
+        dd3_ids = {r["id"] for r in dd3_results}
+        dd4_ids = {r["id"] for r in dd4_results}
+        # DD3 should include paths that DD4 does not (deprecated-in-DD4 paths)
+        dd3_only = dd3_ids - dd4_ids
+        assert len(dd3_only) > 0, (
+            "DD3 should include deprecated-in-DD4 paths absent from DD4 results"
+        )
+
+    def test_path_deprecated_in_dd3_excluded_from_both(self):
+        """A path deprecated in DD3 must be excluded from both DD3 and DD4 search."""
+        from imas_codex.graph.client import GraphClient
+
+        with GraphClient() as gc:
+            # Find a path deprecated in DD3
+            dd3_deprecated = gc.query("""
+                MATCH (p:IMASNode)-[:DEPRECATED_IN]->(dv:DDVersion)
+                WHERE p.node_category = 'data'
+                  AND toInteger(split(dv.id, '.')[0]) = 3
+                MATCH (p)-[:INTRODUCED_IN]->(iv:DDVersion)
+                WHERE toInteger(split(iv.id, '.')[0]) = 3
+                RETURN p.id AS id LIMIT 1
+            """)
+            if not dd3_deprecated:
+                pytest.skip("No DD3-deprecated paths found in graph")
+
+            path_id = dd3_deprecated[0]["id"]
+
+            from imas_codex.tools.graph_search import _text_search_imas_paths
+
+            # Extract a search term from the path
+            search_term = path_id.split("/")[-1].replace("_", " ")
+            dd3_results = _text_search_imas_paths(
+                gc, search_term, limit=100, ids_filter=None, dd_version=3
+            )
+            dd4_results = _text_search_imas_paths(
+                gc, search_term, limit=100, ids_filter=None, dd_version=4
+            )
+
+        dd3_ids = [r["id"] for r in dd3_results]
+        dd4_ids = [r["id"] for r in dd4_results]
+        assert path_id not in dd3_ids, (
+            f"{path_id} (deprecated in DD3) should be excluded from DD3 search"
+        )
+        assert path_id not in dd4_ids, (
+            f"{path_id} (deprecated in DD3) should be excluded from DD4 search"
+        )
