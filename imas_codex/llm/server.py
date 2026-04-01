@@ -219,17 +219,11 @@ def _require_warmup() -> None:
             EmbeddingBackendError = emb_ns["EmbeddingBackendError"]
             get_embedding_location = emb_ns["get_embedding_location"]
         except Exception as exc:
-            if _no_embed:
-                logger.warning(
-                    "Embedding warmup failed (--no-embed): semantic search "
-                    "tools will error at call time"
-                )
-            else:
-                raise RuntimeError(
-                    "Embedding server unreachable. Start it with "
-                    "'imas-codex embed start', or pass --no-embed to "
-                    "allow startup without semantic search."
-                ) from exc
+            logger.warning(
+                "Embedding warmup failed: %s — semantic search will "
+                "error at call time. Use 'imas-codex embed start' to fix.",
+                exc,
+            )
 
         rem_ns = warmup.remote()
         _run = rem_ns["run"]
@@ -484,7 +478,7 @@ def _init_repl() -> dict[str, Any]:
 
     # Create encoder with lazy initialization - respects embedding-backend config
     # This will NOT load the model until actually used
-    backend = get_embedding_location()
+    backend = get_embedding_location() if get_embedding_location else "unavailable"
     logger.info(f"Embedding location: {backend}")
 
     _encoder: Encoder | None = None
@@ -494,13 +488,23 @@ def _init_repl() -> dict[str, Any]:
         nonlocal _encoder
 
         if _encoder is None:
+            if EncoderConfig is None or Encoder is None:
+                raise (
+                    EmbeddingBackendError(
+                        "Embedding classes not loaded — warmup failed. "
+                        "Check 'imas-codex embed status'."
+                    )
+                    if EmbeddingBackendError
+                    else RuntimeError("Embedding subsystem not available")
+                )
             try:
                 config = EncoderConfig()
                 _encoder = Encoder(config)
                 logger.info(f"Encoder initialized (backend={config.backend})")
             except Exception as e:
                 logger.error(f"Embedding initialization failed: {e}")
-                raise EmbeddingBackendError(
+                _err_cls = EmbeddingBackendError or RuntimeError
+                raise _err_cls(
                     f"Embedding backend '{backend}' unavailable: {e}. "
                     f"Check configuration or use a different backend."
                 ) from e

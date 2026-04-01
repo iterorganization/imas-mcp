@@ -38,11 +38,24 @@ logger = logging.getLogger(__name__)
 
 
 class _WarmupGroup:
-    """One import group loaded in a single background thread."""
+    """One import group loaded in a single background thread.
 
-    def __init__(self, name: str, loader: Callable[[], dict[str, Any]]) -> None:
+    Supports explicit dependencies: if ``depends_on`` is provided, the
+    group waits for those groups to finish before running its loader.
+    This prevents concurrent-import races when two groups share a
+    package (e.g. ``embeddings`` and ``search`` both touch
+    ``imas_codex.embeddings``).
+    """
+
+    def __init__(
+        self,
+        name: str,
+        loader: Callable[[], dict[str, Any]],
+        depends_on: list[_WarmupGroup] | None = None,
+    ) -> None:
         self._name = name
         self._loader = loader
+        self._depends_on = depends_on or []
         self._ready = threading.Event()
         self._result: dict[str, Any] | None = None
         self._error: BaseException | None = None
@@ -54,6 +67,8 @@ class _WarmupGroup:
 
     def _run(self) -> None:
         try:
+            for dep in self._depends_on:
+                dep.wait()
             self._result = self._loader()
             logger.debug("warmup: ready %s", self._name)
         except BaseException as exc:
@@ -161,22 +176,31 @@ class ServerWarmup:
         self._started = False
 
     def start(self) -> None:
-        """Start all background import threads.  Idempotent — safe to call multiple times."""
+        """Start all background import threads.  Idempotent — safe to call multiple times.
+
+        The ``search`` group depends on ``embeddings`` because both
+        import from ``imas_codex.embeddings.*``.  Without this ordering
+        the two threads race on the package ``__init__.py``, triggering
+        a circular-import ``ImportError`` on partially-initialized modules.
+        """
         with self._lock:
             if self._started:
                 return
             self._started = True
 
-        _all: dict[str, Callable[[], dict[str, Any]]] = {
-            "discovery": _load_discovery,
-            "graph": _load_graph,
-            "embeddings": _load_embeddings,
-            "remote": _load_remote,
-            "search": _load_search,
-        }
-        for name, loader in _all.items():
-            g = _WarmupGroup(name, loader)
-            self._groups[name] = g
+        # Independent groups — no shared imports, safe to run in parallel.
+        discovery = _WarmupGroup("discovery", _load_discovery)
+        graph = _WarmupGroup("graph", _load_graph)
+        embeddings = _WarmupGroup("embeddings", _load_embeddings)
+        remote = _WarmupGroup("remote", _load_remote)
+
+        # search imports search_tools.py which has a top-level
+        #   from imas_codex.embeddings.encoder import ...
+        # so it must wait for the embeddings group to finish first.
+        search = _WarmupGroup("search", _load_search, depends_on=[embeddings])
+
+        for g in (discovery, graph, embeddings, remote, search):
+            self._groups[g._name] = g
             g.start()
 
     # ---- per-group accessors ------------------------------------------------
