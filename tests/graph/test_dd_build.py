@@ -485,11 +485,21 @@ class TestIMASNodeChanges:
         valid_types = {
             "documentation",
             "units",
+            "type",
+            "coordinates",
+            "lifecycle",
+            "maxoccur",
             "data_type",
             "node_type",
             "cocos_label_transformation",
             "lifecycle_status",
             "timebasepath",
+            "path_added",
+            "path_removed",
+            "path_renamed",
+            "structure_changed",
+            "coordinates_changed",
+            "maxoccur_changed",
         }
         result = graph_client.query(
             "MATCH (pc:IMASNodeChange) RETURN DISTINCT pc.change_type AS change_type"

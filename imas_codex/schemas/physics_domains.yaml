@@ -333,6 +333,29 @@ enums:
             Reproducibility
           related_domains: data_management
 
+      # IDS-level Domains (matching IMAS IDS names directly)
+      magnetics:
+        description: Magnetic measurement systems and data from the magnetics IDS
+        meaning: imas:magnetics
+        annotations:
+          category: diagnostics
+          characteristics: >-
+            Magnetic probes and flux loops,
+            Plasma current measurements,
+            Equilibrium reconstruction inputs
+          related_domains: magnetic_field_diagnostics, equilibrium, plasma_control
+
+      gyrokinetics:
+        description: Gyrokinetic simulation data including wavevectors and eigenmodes
+        meaning: imas:gyrokinetics
+        annotations:
+          category: core_plasma_physics
+          characteristics: >-
+            Linear and nonlinear gyrokinetic modes,
+            Wavevector spectra,
+            Growth rates and frequencies
+          related_domains: turbulence, transport
+
       # Fallback
       general:
         description: General purpose or uncategorized data structures
