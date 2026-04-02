@@ -188,13 +188,17 @@ def claim_paths_for_embedding(limit: int = 500) -> list[dict]:
     cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
 
     with GraphClient() as gc:
-        # Step 1: Claim enriched concept nodes (skip template-enriched accessors)
+        # Step 1: Claim enriched data nodes for embedding.
+        # Prefer LLM-enriched nodes over template-enriched ones, but include
+        # template-enriched nodes that have no embedding (e.g. after
+        # --reset-to enriched) to avoid an infinite spin where the worker
+        # finds zero claimable paths.
         gc.query(
             """
             MATCH (p:IMASNode)
             WHERE p.status = $status
               AND p.node_category = 'data'
-              AND p.enrichment_source <> 'template'
+              AND (p.enrichment_source <> 'template' OR p.embedding IS NULL)
               AND (p.claimed_at IS NULL
                    OR p.claimed_at < datetime() - duration($cutoff))
             WITH p
