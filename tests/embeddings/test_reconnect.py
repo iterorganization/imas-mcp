@@ -53,7 +53,7 @@ class TestEncoderReconnect:
         encoder._backend_validated = True
 
         with (
-            patch("imas_codex.remote.locations.invalidate_service_url_cache"),
+            patch("imas_codex.remote.locations._service_url_cache", {}),
             patch(
                 "imas_codex.settings.get_embed_remote_url",
                 return_value="http://new-node:18765",
@@ -80,7 +80,7 @@ class TestEncoderReconnect:
         encoder._backend_validated = True
 
         with (
-            patch("imas_codex.remote.locations.invalidate_service_url_cache"),
+            patch("imas_codex.remote.locations._service_url_cache", {}),
             patch(
                 "imas_codex.settings.get_embed_remote_url",
                 return_value="http://same-node:18765",

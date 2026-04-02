@@ -203,17 +203,6 @@ def is_location_local(location: str) -> bool:
         return False
 
 
-def invalidate_service_url_cache() -> None:
-    """Clear the service URL TTL cache.
-
-    Call when a previously resolved URL becomes unreachable (e.g. SLURM
-    job restarted on a different compute node) so the next
-    :func:`resolve_service_url` call performs fresh discovery.
-    """
-    _service_url_cache.clear()
-    logger.debug("Service URL cache invalidated")
-
-
 def resolve_service_url(
     location: str,
     port: int,

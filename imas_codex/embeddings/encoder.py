@@ -272,10 +272,10 @@ class Encoder:
         Returns:
             True if the URL changed and the client was updated.
         """
-        from imas_codex.remote.locations import invalidate_service_url_cache
+        from imas_codex.remote.locations import _service_url_cache
         from imas_codex.settings import get_embed_remote_url
 
-        invalidate_service_url_cache()
+        _service_url_cache.clear()
         new_url = get_embed_remote_url()
         if not new_url:
             return False
