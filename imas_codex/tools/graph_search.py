@@ -1102,7 +1102,7 @@ class GraphClustersTool:
         self, path: str, scope: str | None, *, dd_version: int | None = None
     ) -> dict[str, Any]:
         """Find clusters containing a specific path."""
-        scope_filter = "AND c.scope = $scope" if scope else ""
+        scope_filter = "WHERE c.scope = $scope" if scope else ""
         params: dict[str, Any] = {"path": path}
         if scope:
             params["scope"] = scope
