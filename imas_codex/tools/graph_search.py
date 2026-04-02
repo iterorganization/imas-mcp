@@ -255,6 +255,7 @@ class GraphSearchTool:
             OPTIONAL MATCH (path)-[:HAS_COORDINATE]->(coord:IMASCoordinateSpec)
             OPTIONAL MATCH (path)-[:HAS_IDENTIFIER_SCHEMA]->(ident:IdentifierSchema)
             OPTIONAL MATCH (path)-[:INTRODUCED_IN]->(intro:DDVersion)
+            OPTIONAL MATCH (path)-[:HAS_ERROR]->(err:IMASNode)
             RETURN path.id AS id, path.name AS name, path.ids AS ids,
                    path.documentation AS documentation, path.data_type AS data_type,
                    path.physics_domain AS physics_domain, u.id AS units,
@@ -321,6 +322,7 @@ class GraphSearchTool:
                     enrichment_source=r.get("enrichment_source"),
                     has_identifier_schema=bool(r["has_identifier_schema"]),
                     introduced_after_version=r["introduced_after_version"],
+                    error_fields=[e for e in r.get("error_fields", []) if e] or None,
                     score=scores.get(pid, 0.0),
                     rank=rank,
                     search_mode=mode,
@@ -493,14 +495,14 @@ class GraphPathTool:
                 OPTIONAL MATCH (change:IMASNodeChange)-[:FOR_IMAS_PATH]->(p)
                 WHERE change.semantic_change_type IN
                       ['sign_convention', 'coordinate_convention', 'units', 'definition_clarification']
-                WITH p, u, cluster_labels, coordinates, ident, iv,
+                WITH p, u, cluster_labels, coordinates, error_fields, ident, iv,
                      collect(DISTINCT {version: change.version,
                                        type: change.semantic_change_type,
                                        summary: change.summary}) AS version_changes
                 """
             else:
                 version_clause = """
-                WITH p, u, cluster_labels, coordinates, ident, iv,
+                WITH p, u, cluster_labels, coordinates, error_fields, ident, iv,
                      [] AS version_changes
                 """
 
@@ -513,9 +515,11 @@ class GraphPathTool:
                 OPTIONAL MATCH (p)-[:HAS_COORDINATE]->(coord:IMASCoordinateSpec)
                 OPTIONAL MATCH (p)-[:HAS_IDENTIFIER_SCHEMA]->(ident:IdentifierSchema)
                 OPTIONAL MATCH (p)-[:INTRODUCED_IN]->(iv:DDVersion)
+                OPTIONAL MATCH (p)-[:HAS_ERROR]->(err:IMASNode)
                 WITH p, u,
                      collect(DISTINCT c.label) AS cluster_labels,
                      collect(DISTINCT coord.id) AS coordinates,
+                     collect(DISTINCT err.id) AS error_fields,
                      ident, iv
                 {version_clause}
                 RETURN p.id AS id, p.name AS name, p.ids AS ids,
@@ -536,6 +540,7 @@ class GraphPathTool:
                        u.id AS units,
                        cluster_labels,
                        coordinates,
+                       error_fields,
                        ident.name AS identifier_schema_name,
                        ident.documentation AS identifier_schema_documentation,
                        ident.options AS identifier_schema_options,
@@ -608,6 +613,7 @@ class GraphPathTool:
                     lifecycle_status=r.get("lifecycle_status"),
                     lifecycle_version=r.get("lifecycle_version"),
                     structure_reference=r.get("structure_path"),
+                    error_fields=[e for e in r.get("error_fields", []) if e] or None,
                 )
                 nodes.append(node)
             else:
@@ -1685,13 +1691,15 @@ class GraphStructureTool:
         "Export full IDS structure with documentation, units, and types. "
         "Returns all paths in an IDS with their complete metadata. "
         "ids_name (required): IDS name (e.g. 'equilibrium'). "
-        "leaf_only: If true, return only leaf nodes (default false)."
+        "leaf_only: If true, return only leaf nodes (default false). "
+        "include_errors: If true, include error fields and metadata nodes (default false)."
     )
     @handle_errors("export_imas_ids")
     async def export_imas_ids(
         self,
         ids_name: str,
         leaf_only: bool = False,
+        include_errors: bool = False,
         dd_version: int | None = None,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
@@ -1700,11 +1708,12 @@ class GraphStructureTool:
         dd_clause = _dd_version_clause("p", dd_version, dd_params)
 
         leaf_filter = f"AND {_leaf_data_type_clause('p')}" if leaf_only else ""
+        category_filter = "" if include_errors else "AND p.node_category = 'data'"
 
         paths = self._gc.query(
             f"""
             MATCH (p:IMASNode)
-            WHERE p.ids = $ids_name {leaf_filter} {dd_clause}
+            WHERE p.ids = $ids_name {category_filter} {leaf_filter} {dd_clause}
             OPTIONAL MATCH (p)-[:HAS_UNIT]->(u:Unit)
             OPTIONAL MATCH (p)-[:HAS_COORDINATE]->(coord:IMASCoordinateSpec)
             OPTIONAL MATCH (p)-[:IN_CLUSTER]->(cl:IMASSemanticCluster)
@@ -1740,6 +1749,7 @@ class GraphStructureTool:
         self,
         domain: str,
         ids_filter: str | None = None,
+        include_errors: bool = False,
         dd_version: int | None = None,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
@@ -1765,10 +1775,12 @@ class GraphStructureTool:
             ids_clause = "AND p.ids = $ids_filter"
             dd_params["ids_filter"] = ids_filter
 
+        category_filter = "" if include_errors else "AND p.node_category = 'data'"
+
         paths = self._gc.query(
             f"""
             MATCH (p:IMASNode)
-            WHERE p.physics_domain IN $domains {ids_clause} {dd_clause}
+            WHERE p.physics_domain IN $domains {ids_clause} {category_filter} {dd_clause}
             OPTIONAL MATCH (p)-[:HAS_UNIT]->(u:Unit)
             RETURN p.id AS path,
                    p.ids AS ids,

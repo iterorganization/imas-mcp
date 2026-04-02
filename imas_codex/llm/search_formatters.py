@@ -860,6 +860,8 @@ def format_fetch_paths_report(result: Any) -> str:
             parts.append(f"  Physics domain: {node.physics_domain}")
         if node.coordinates:
             parts.append(f"  Coordinates: {', '.join(node.coordinates)}")
+        if hasattr(node, "error_fields") and node.error_fields:
+            parts.append(f"  Error fields: {', '.join(node.error_fields)}")
         labels = _stringify_cluster_labels(getattr(node, "cluster_labels", None))
         if labels:
             parts.append(f"  Clusters: {', '.join(f'"{c}"' for c in labels)}")
@@ -1100,6 +1102,8 @@ def format_search_imas_report(result: Any, cluster_result: Any | None = None) ->
                 parts.append(f"  Introduced: DD {hit.introduced_after_version}")
             if hit.keywords:
                 parts.append(f"  Keywords: {', '.join(hit.keywords)}")
+            if hit.error_fields:
+                parts.append(f"  Error fields: {', '.join(hit.error_fields)}")
 
             # Facility cross-references
             xref = hit.facility_xrefs or {}
