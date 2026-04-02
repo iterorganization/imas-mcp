@@ -1399,3 +1399,18 @@ def format_export_domain_report(result: Any) -> str:
         parts.append("")
 
     return "\n".join(parts)
+
+
+def format_migration_report(result: str | dict) -> str:
+    """Format migration guide result.
+
+    The migration guide already returns formatted markdown from
+    format_migration_guide(). This wrapper handles both string and dict inputs.
+    """
+    if isinstance(result, str):
+        return result
+    if isinstance(result, dict):
+        if "error" in result:
+            return f"Error generating migration guide: {result['error']}"
+        return str(result)
+    return str(result)
