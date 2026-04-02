@@ -881,7 +881,7 @@ class GraphOverviewTool:
             f"""
             MATCH (i:IDS)
             OPTIONAL MATCH (i)<-[:IN_IDS]-(p:IMASNode)
-            WHERE true {dd_clause}
+            WHERE true {dd_clause} AND p.node_category = 'data'
             WITH i, count(p) AS path_count
             RETURN i.name AS name,
                    COALESCE(i.description, i.documentation) AS description,
