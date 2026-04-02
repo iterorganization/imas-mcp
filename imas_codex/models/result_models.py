@@ -392,6 +392,10 @@ class ListPathsResultItem(BaseModel):
 
     query: str = Field(description="The IDS name or prefix queried")
     path_count: int = Field(description="Total number of paths found")
+    total_paths: int | None = Field(
+        default=None,
+        description="Total paths in the IDS/prefix (present when truncated via max_paths)",
+    )
     truncated_to: int | None = Field(
         default=None, description="Number of paths shown (only present when truncated)"
     )

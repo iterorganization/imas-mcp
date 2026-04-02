@@ -899,7 +899,8 @@ def format_list_report(result: Any) -> str:
 
         header = f"### {item.query} ({item.path_count} paths)"
         if item.truncated_to:
-            header += f" — showing first {item.truncated_to}"
+            total = getattr(item, "total_paths", None) or item.path_count
+            header += f" — showing first {item.truncated_to} of {total}"
         parts.append(header)
 
         if item.path_details:
@@ -1414,3 +1415,100 @@ def format_migration_report(result: str | dict) -> str:
             return f"Error generating migration guide: {result['error']}"
         return str(result)
     return str(result)
+
+
+def format_explain_report(result: Any) -> str:
+    """Format explain_concept result into a readable explanation."""
+    if isinstance(result, str):
+        return result
+    if isinstance(result, dict) and "error" in result:
+        return f"Error: {result['error']}"
+
+    concept = _get_value(result, "concept", "Unknown")
+    detail_level = _get_value(result, "detail_level", "intermediate")
+    sections = _get_value(result, "sections", [])
+
+    if not sections:
+        return f"No information found for concept: **{concept}**"
+
+    parts: list[str] = []
+    parts.append(f"# {concept}\n")
+    parts.append(f"*Detail level: {detail_level}*\n")
+
+    for section in sections:
+        s_type = section.get("type", "")
+        title = section.get("title", "")
+        parts.append(f"## {title}\n")
+
+        if s_type == "clusters":
+            for cluster in section.get("clusters", []):
+                label = cluster.get("label", "")
+                desc = cluster.get("description", "")
+                scope = cluster.get("scope", "")
+                ids_list = cluster.get("ids", [])
+                paths = cluster.get("example_paths", [])
+
+                parts.append(
+                    f"**{label}** (scope: {scope}, relevance: {cluster.get('score', '')})"
+                )
+                if desc:
+                    parts.append(f"  {desc}")
+                if ids_list:
+                    parts.append(f"  IDSs: {', '.join(ids_list[:5])}")
+                if paths:
+                    for p in paths[:5]:
+                        parts.append(f"  - `{p}`")
+                parts.append("")
+
+        elif s_type == "cocos":
+            for v in section.get("versions", []):
+                parts.append(
+                    f"- DD version **{v['version']}** uses COCOS **{v['cocos_id']}**"
+                )
+            parts.append("")
+
+        elif s_type == "cocos_paths":
+            for p in section.get("paths", []):
+                line = f"  - `{p['path']}`"
+                if p.get("summary"):
+                    line += f" — {p['summary']}"
+                parts.append(line)
+            parts.append("")
+
+        elif s_type == "identifiers":
+            for schema in section.get("schemas", []):
+                parts.append(f"**{schema['id']}**")
+                if schema.get("description"):
+                    parts.append(f"  {schema['description']}")
+                for opt in schema.get("options", []):
+                    name = opt.get("name", "")
+                    idx = opt.get("index", "")
+                    desc = opt.get("description", "")
+                    parts.append(
+                        f"  - `{name}` (index: {idx}){f' — {desc}' if desc else ''}"
+                    )
+                parts.append("")
+
+        elif s_type == "ids":
+            for ids_info in section.get("ids_list", []):
+                domain = ids_info.get("physics_domain", "")
+                parts.append(
+                    f"- **{ids_info['name']}**"
+                    f"{f' [{domain}]' if domain else ''}"
+                    f": {ids_info.get('description', '')}"
+                )
+            parts.append("")
+
+        elif s_type == "paths":
+            for p in section.get("paths", []):
+                line = f"  - `{p['path']}`"
+                if p.get("data_type"):
+                    line += f" ({p['data_type']})"
+                if p.get("units"):
+                    line += f" [{p['units']}]"
+                parts.append(line)
+                if p.get("documentation"):
+                    parts.append(f"    {p['documentation'][:150]}")
+            parts.append("")
+
+    return "\n".join(parts)

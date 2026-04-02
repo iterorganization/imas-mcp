@@ -2778,6 +2778,31 @@ class AgentsServer:
             return format_export_domain_report(result)
 
         @self.mcp.tool()
+        def explain_concept(
+            concept: str,
+            detail_level: str = "intermediate",
+        ) -> str:
+            """Provide detailed explanations of fusion physics concepts and IMAS terminology.
+
+            Queries cluster descriptions, COCOS metadata, identifier schemas, and path documentation
+            to compose a structured explanation from graph data. No LLM calls — pure graph lookup.
+
+            Args:
+                concept: The concept to explain (e.g. "COCOS", "safety factor", "bootstrap current").
+                detail_level: Level of detail — "basic", "intermediate" (default), or "advanced".
+
+            Returns:
+                Formatted text explanation with related concepts, paths, and metadata.
+            """
+            from imas_codex.llm.search_formatters import format_explain_report
+
+            tools = _get_imas_tools()
+            result = _run_async(
+                tools.explain_concept(concept=concept, detail_level=detail_level)
+            )
+            return format_explain_report(result)
+
+        @self.mcp.tool()
         def get_dd_version_context(
             paths: str,
         ) -> str:

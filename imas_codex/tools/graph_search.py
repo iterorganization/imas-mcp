@@ -1035,6 +1035,43 @@ class GraphListTool:
 
             truncated = max_paths if max_paths and len(path_ids) >= max_paths else None
 
+            # When truncating, get total count so the caller knows the full IDS size
+            total_paths: int | None = None
+            if truncated:
+                count_filter = (
+                    "AND NOT p.data_type IN ['STRUCTURE', 'STRUCT_ARRAY']"
+                    if leaf_only
+                    else ""
+                )
+                if "/" not in prefix:
+                    count_rows = self._gc.query(
+                        f"""
+                        MATCH (p:IMASNode)
+                        WHERE p.ids = $ids_name
+                        AND p.node_category = 'data'
+                        {count_filter}
+                        {dd_clause}
+                        RETURN count(p) AS cnt
+                        """,
+                        ids_name=ids_name,
+                        **dd_params,
+                    )
+                else:
+                    count_rows = self._gc.query(
+                        f"""
+                        MATCH (p:IMASNode)
+                        WHERE p.id STARTS WITH $prefix
+                        AND p.node_category = 'data'
+                        {count_filter}
+                        {dd_clause}
+                        RETURN count(p) AS cnt
+                        """,
+                        prefix=prefix,
+                        **dd_params,
+                    )
+                if count_rows:
+                    total_paths = count_rows[0]["cnt"]
+
             if format == "flat":
                 formatted = sorted(path_ids)
             else:
@@ -1059,6 +1096,7 @@ class GraphListTool:
                 ListPathsResultItem(
                     query=query,
                     path_count=len(path_ids),
+                    total_paths=total_paths,
                     truncated_to=truncated,
                     paths=formatted,
                     path_details=details,
@@ -2326,6 +2364,236 @@ def _get_facility_crossrefs(
     """
     results = gc.query(cypher, path_ids=path_ids, facility=facility)
     return {r["id"]: r for r in results}
+
+
+class GraphExplainTool:
+    """Graph-backed concept explanations using cluster, COCOS, and identifier data."""
+
+    def __init__(self, graph_client: GraphClient):
+        self._gc = graph_client
+
+    @property
+    def tool_name(self) -> str:
+        return "explain_concept"
+
+    def _embed_query(self, text: str) -> list[float]:
+        encoder = _get_encoder()
+        return encoder.encode(text)
+
+    @measure_performance(include_metrics=True, slow_threshold=1.0)
+    @handle_errors(fallback="explain_error")
+    @mcp_tool(
+        "Provide detailed explanations of fusion physics concepts and IMAS terminology. "
+        "concept (required): The concept to explain (e.g. 'COCOS', 'safety factor', 'bootstrap current'). "
+        "detail_level: 'basic', 'intermediate' (default), or 'advanced'."
+    )
+    async def explain_concept(
+        self,
+        concept: str,
+        detail_level: str = "intermediate",
+        ctx: Context | None = None,
+    ) -> dict[str, Any]:
+        """Explain a concept using graph-backed data."""
+        sections: list[dict[str, Any]] = []
+        concept_lower = concept.lower().strip()
+
+        # 1. Search semantic clusters for the concept
+        embedding = self._embed_query(concept)
+        cluster_results = self._gc.query(
+            """
+            CALL db.index.vector.queryNodes(
+                'cluster_embedding', 8, $embedding
+            )
+            YIELD node AS cluster, score
+            WHERE score > 0.4
+            OPTIONAL MATCH (member:IMASNode)-[:IN_CLUSTER]->(cluster)
+            WITH cluster, score, collect(DISTINCT member.id)[..15] AS paths
+            RETURN cluster.id AS id, cluster.label AS label,
+                   cluster.description AS description,
+                   cluster.scope AS scope,
+                   cluster.ids_names AS ids_names,
+                   paths, score
+            ORDER BY score DESC
+            """,
+            embedding=embedding,
+        )
+        if cluster_results:
+            sections.append(
+                {
+                    "type": "clusters",
+                    "title": "Related IMAS Concepts",
+                    "clusters": [
+                        {
+                            "label": r["label"],
+                            "description": r["description"],
+                            "scope": r["scope"],
+                            "ids": r.get("ids_names", []),
+                            "example_paths": r["paths"][:5]
+                            if detail_level == "basic"
+                            else r["paths"][:10],
+                            "score": round(r["score"], 3),
+                        }
+                        for r in cluster_results[:5]
+                    ],
+                }
+            )
+
+        # 2. Check COCOS metadata if concept is COCOS-related
+        cocos_terms = {
+            "cocos",
+            "sign convention",
+            "coordinate convention",
+            "orientation",
+            "toroidal",
+            "poloidal",
+            "flux",
+            "psi",
+            "q",
+        }
+        if any(t in concept_lower for t in cocos_terms):
+            cocos_results = self._gc.query("""
+                MATCH (v:DDVersion)
+                WHERE v.cocos IS NOT NULL
+                RETURN v.version AS version, v.cocos AS cocos_id
+                ORDER BY v.version DESC
+                LIMIT 3
+            """)
+            if cocos_results:
+                sections.append(
+                    {
+                        "type": "cocos",
+                        "title": "COCOS (COordinate COnventionS)",
+                        "versions": [
+                            {"version": r["version"], "cocos_id": r["cocos_id"]}
+                            for r in cocos_results
+                        ],
+                    }
+                )
+
+            # Find COCOS-affected paths
+            cocos_paths = self._gc.query("""
+                MATCH (change:IMASNodeChange)-[:FOR_IMAS_PATH]->(p:IMASNode)
+                WHERE change.semantic_change_type = 'sign_convention'
+                RETURN DISTINCT p.id AS path, p.ids AS ids,
+                       change.summary AS summary
+                ORDER BY p.id
+                LIMIT 15
+            """)
+            if cocos_paths:
+                sections.append(
+                    {
+                        "type": "cocos_paths",
+                        "title": "COCOS-Affected Paths",
+                        "paths": [
+                            {
+                                "path": r["path"],
+                                "ids": r["ids"],
+                                "summary": r.get("summary"),
+                            }
+                            for r in cocos_paths
+                        ],
+                    }
+                )
+
+        # 3. Search identifier schemas for enumeration explanations
+        identifier_results = self._gc.query(
+            """
+            MATCH (schema)-[:HAS_OPTION]->(opt)
+            WHERE toLower(schema.id) CONTAINS $concept
+               OR toLower(schema.description) CONTAINS $concept
+            RETURN DISTINCT schema.id AS schema_id,
+                   schema.description AS schema_desc,
+                   collect({name: opt.name, index: opt.index,
+                           description: opt.description})[..20] AS options
+            LIMIT 5
+            """,
+            concept=concept_lower,
+        )
+        if identifier_results:
+            sections.append(
+                {
+                    "type": "identifiers",
+                    "title": "Identifier Schemas",
+                    "schemas": [
+                        {
+                            "id": r["schema_id"],
+                            "description": r["schema_desc"],
+                            "options": r["options"][:10]
+                            if detail_level == "basic"
+                            else r["options"],
+                        }
+                        for r in identifier_results
+                    ],
+                }
+            )
+
+        # 4. Find relevant IDS descriptions
+        ids_results = self._gc.query(
+            """
+            MATCH (i:IDS)
+            WHERE toLower(i.description) CONTAINS $concept
+               OR toLower(i.name) CONTAINS $concept
+            RETURN i.name AS name, i.description AS description,
+                   i.physics_domain AS physics_domain
+            ORDER BY i.name
+            LIMIT 5
+            """,
+            concept=concept_lower,
+        )
+        if ids_results:
+            sections.append(
+                {
+                    "type": "ids",
+                    "title": "Related IDSs",
+                    "ids_list": [
+                        {
+                            "name": r["name"],
+                            "description": r["description"],
+                            "physics_domain": r.get("physics_domain"),
+                        }
+                        for r in ids_results
+                    ],
+                }
+            )
+
+        # 5. Search path documentation for concept mentions
+        doc_results = self._gc.query(
+            """
+            CALL db.index.vector.queryNodes(
+                'imas_node_desc_embedding', 5, $embedding
+            )
+            YIELD node AS p, score
+            WHERE score > 0.5 AND p.node_category = 'data'
+            OPTIONAL MATCH (p)-[:HAS_UNIT]->(u:Unit)
+            RETURN p.id AS path, p.documentation AS documentation,
+                   p.data_type AS data_type, u.symbol AS units, score
+            ORDER BY score DESC
+            """,
+            embedding=embedding,
+        )
+        if doc_results:
+            sections.append(
+                {
+                    "type": "paths",
+                    "title": "Related Data Paths",
+                    "paths": [
+                        {
+                            "path": r["path"],
+                            "documentation": r["documentation"],
+                            "data_type": r.get("data_type"),
+                            "units": r.get("units"),
+                        }
+                        for r in doc_results
+                    ],
+                }
+            )
+
+        return {
+            "concept": concept,
+            "detail_level": detail_level,
+            "sections": sections,
+            "section_count": len(sections),
+        }
 
 
 def _get_version_context(
