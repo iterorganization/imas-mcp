@@ -1,11 +1,13 @@
 ---
 name: implement
 description: >
-  Focused code implementation for well-defined tasks. Handles bug fixes, feature
-  additions, refactors, schema updates, CLI commands, test additions, and
-  documentation. Best for tasks with clear requirements and bounded scope
-  (1-3 files, specified acceptance criteria). Uses Sonnet for fast, precise
-  execution. Invoke directly or let the fleet orchestrator dispatch to it.
+  Fast, focused code implementation for well-defined tasks with clear
+  requirements. Handles bug fixes, feature additions, refactors, schema updates,
+  CLI commands, test additions, and documentation where the scope is bounded
+  (1-3 files, acceptance criteria specified). Choose this agent over forge when
+  the task is fully specified and doesn't require codebase research or
+  architectural decisions. The /fleet command should route simple, independent
+  subtasks here for maximum throughput.
 model: claude-sonnet-4.6
 tools:
   - "*"

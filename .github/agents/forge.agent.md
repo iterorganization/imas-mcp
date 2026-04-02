@@ -1,11 +1,14 @@
 ---
 name: forge
 description: >
-  Advanced implementation agent for complex, multi-file tasks requiring research
-  and architectural reasoning. Handles new pipelines, cross-cutting changes,
-  performance optimization, ambiguous requirements, and system design. Performs
-  independent codebase exploration before implementing. Uses Opus for deep
-  reasoning. Invoke directly or let the fleet orchestrator dispatch to it.
+  Advanced implementation agent for complex, multi-file tasks requiring
+  independent codebase research and architectural reasoning before coding.
+  Handles new pipelines, cross-cutting changes across 4+ files, performance
+  optimization, ambiguous or underspecified requirements, and system design
+  decisions. Choose this agent over implement when the task says "investigate",
+  "determine", or "design", involves unfamiliar subsystems, or requires
+  understanding multiple modules before making changes. The /fleet command
+  should route complex, research-heavy subtasks here for quality.
 model: claude-opus-4.6
 tools:
   - "*"

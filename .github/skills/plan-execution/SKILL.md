@@ -47,20 +47,31 @@ When breaking a plan into tasks:
 
 ## Complexity Assessment
 
-A task is **straightforward** (→ implement agent) when:
+A task is **straightforward** (→ `@implement` agent) when:
 
 - The plan specifies exact file paths and changes
 - Changes are isolated to 1-3 files
 - Test cases are provided in the plan
 - It follows an established pattern in the codebase
 
-A task is **complex** (→ forge agent) when:
+A task is **complex** (→ `@forge` agent) when:
 
 - The plan says "investigate", "determine", or "design"
 - Changes span 4+ files across multiple modules
 - New patterns or shared infrastructure are needed
 - Integration with unfamiliar subsystems is required
 - The plan has gaps that require codebase research to fill
+
+## Using /fleet for Parallel Execution
+
+The `/fleet` command automatically decomposes work into subtasks and dispatches to
+custom agents based on their descriptions. When a plan has independent tasks:
+
+1. Switch to plan mode (Shift+Tab) and create the plan
+2. Use `/fleet` to execute — it will route simple tasks to `implement` and complex
+   tasks to `forge` based on the agent descriptions
+3. You can also force routing: `@implement fix the dd_version bug` or
+   `@forge design the new pipeline`
 
 ## Scoring Dimensions
 
@@ -74,8 +85,8 @@ Rate each task 0-3 on each dimension:
 | **Testing** | Add to existing | New test file | New test patterns | Integration tests |
 | **Risk** | Local change | Module-scoped | Cross-module | Breaking change |
 
-**Total ≤ 5** → straightforward (implement agent)
-**Total ≥ 6** → complex (forge agent)
+**Total ≤ 5** → `@implement` (Sonnet 4.6 — fast, precise)
+**Total ≥ 6** → `@forge` (Opus 4.6 — researches then builds)
 
 ## Plan Lifecycle
 
