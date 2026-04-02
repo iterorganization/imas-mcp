@@ -35,238 +35,6 @@ from imas_codex.tools.utils import normalize_ids_filter, validate_query
 
 logger = logging.getLogger(__name__)
 
-# Child role classification for concept node children
-CHILD_ROLE_MAP: dict[str, str] = {
-    # Data containers
-    "value": "data",
-    "data": "data",
-    "values": "data",
-    # Time bases
-    "time": "time",
-    # Geometric coordinates
-    "r": "coordinates",
-    "z": "coordinates",
-    "phi": "coordinates",
-    "x": "coordinates",
-    "y": "coordinates",
-    # Directional components
-    "parallel": "components",
-    "poloidal": "components",
-    "radial": "components",
-    "toroidal": "components",
-    "diamagnetic": "components",
-    # Interpolation
-    "coefficients": "interpolation",
-    # Grid references
-    "grid_index": "grid",
-    "grid_subset_index": "grid",
-    "index": "grid",
-    # Quality indicators
-    "validity": "quality",
-    "validity_timed": "quality",
-    "chi_squared": "quality",
-    # Fit results
-    "measured": "fit",
-    "reconstructed": "fit",
-    # Labels
-    "label": "metadata",
-}
-
-
-def _classify_child_role(name: str) -> str:
-    """Classify a child node into a role category."""
-    if name in CHILD_ROLE_MAP:
-        return CHILD_ROLE_MAP[name]
-    if name.endswith("_coefficients"):
-        return "interpolation"
-    if name.endswith("_n"):
-        return "normalized"
-    if any(name.endswith(s) for s in ("_error_upper", "_error_lower", "_error_index")):
-        return "error"
-    if name.endswith(("_validity", "_validity_timed")):
-        return "quality"
-    return "other"
-
-
-def _fetch_and_group_children(
-    gc: "GraphClient", concept_ids: list[str]
-) -> dict[str, list[dict[str, Any]]]:
-    """Fetch and group children for structure concept nodes.
-
-    Returns dict mapping parent_id -> list of grouped children.
-    """
-    if not concept_ids:
-        return {}
-
-    children_results = gc.query(
-        """
-        UNWIND $concept_ids AS pid
-        MATCH (concept:IMASNode {id: pid})
-        WHERE concept.data_type IN ['STRUCTURE', 'STRUCT_ARRAY']
-        OPTIONAL MATCH (child:IMASNode {node_category: 'data'})-[:HAS_PARENT]->(concept)
-        WITH pid, collect({
-            name: child.name,
-            id: child.id,
-            data_type: child.data_type,
-            documentation: child.documentation
-        }) AS children
-        WHERE size(children) > 0 AND children[0].name IS NOT NULL
-        RETURN pid AS parent_id, children
-        """,
-        concept_ids=concept_ids,
-    )
-
-    result = {}
-    for row in children_results:
-        pid = row["parent_id"]
-        children = row["children"]
-        # Group by role
-        grouped: dict[str, list[dict]] = {}
-        for child in children:
-            if child.get("name") is None:
-                continue
-            role = _classify_child_role(child["name"])
-            if role not in grouped:
-                grouped[role] = []
-            grouped[role].append(
-                {
-                    "name": child["name"],
-                    "data_type": child.get("data_type"),
-                }
-            )
-        # Sort each group by name
-        for role in grouped:
-            grouped[role].sort(key=lambda c: c["name"])
-        result[pid] = [
-            {"role": role, "children": children}
-            for role, children in sorted(grouped.items())
-        ]
-
-    return result
-
-
-# Child name synonyms for common accessor terminals
-CHILD_SYNONYMS: dict[str, set[str]] = {
-    "r": {"radius", "major_radius", "radial"},
-    "z": {"height", "vertical", "elevation"},
-    "phi": {"toroidal_angle", "azimuthal"},
-    "time": {"timebase", "temporal"},
-    "measured": {"measurement"},
-    "reconstructed": {"reconstruction"},
-    "parallel": {"parallel_component"},
-    "poloidal": {"poloidal_component"},
-    "radial": {"radial_component"},
-    "toroidal": {"toroidal_component"},
-}
-
-
-def reciprocal_rank_fusion(
-    vector_hits: list[dict], text_hits: list[dict], k: int = 60
-) -> dict[str, float]:
-    """Combine ranked lists using Reciprocal Rank Fusion.
-
-    Score-scale invariant: uses ranks, not scores. Eliminates the problem
-    where BM25 scores (0.7-0.95) drown vector scores (0.82-0.88).
-    """
-    rrf_scores: dict[str, float] = {}
-    for rank, hit in enumerate(
-        sorted(vector_hits, key=lambda x: x["score"], reverse=True), start=1
-    ):
-        rrf_scores[hit["id"]] = rrf_scores.get(hit["id"], 0) + 1 / (k + rank)
-    for rank, hit in enumerate(
-        sorted(text_hits, key=lambda x: x["score"], reverse=True), start=1
-    ):
-        rrf_scores[hit["id"]] = rrf_scores.get(hit["id"], 0) + 1 / (k + rank)
-    return rrf_scores
-
-
-def heuristic_rerank(
-    scores: dict[str, float], query: str, metadata: dict[str, dict] | None = None
-) -> dict[str, float]:
-    """Zero-cost reranking based on metadata signals.
-
-    Applies small boosts for IDS name match, exact path segment match,
-    and well-documented paths.
-    """
-    query_lower = query.lower()
-    query_words = set(query_lower.split())
-    boosted = dict(scores)
-
-    for pid in boosted:
-        segments = pid.lower().split("/")
-        # IDS name appears in query
-        if segments and segments[0] in query_lower:
-            boosted[pid] += 0.02
-
-        # Exact path segment match
-        for seg in segments:
-            if seg.replace("_", " ") in query_lower or seg in query_words:
-                boosted[pid] += 0.01
-                break  # Only one segment boost per path
-
-        # Well-documented paths get a small boost
-        if metadata and pid in metadata:
-            doc_len = len(metadata[pid].get("documentation", "") or "")
-            if doc_len > 100:
-                boosted[pid] += 0.01
-
-    return boosted
-
-
-# Vector confidence gate: below this threshold, vector results are noise
-VECTOR_GATE_THRESHOLD = 0.65
-
-
-def _boost_by_child_match(
-    scores: dict[str, float], query: str, gc: "GraphClient"
-) -> tuple[dict[str, float], dict[str, list[str]]]:
-    """Boost concept nodes whose children match query terms.
-
-    Returns updated scores and a map of parent_id -> matched child names.
-    """
-    query_words = {w.lower() for w in query.split() if len(w) > 2}
-    matched_children_map: dict[str, list[str]] = {}
-    if not query_words:
-        return scores, matched_children_map
-
-    path_ids = list(scores.keys())
-    if not path_ids:
-        return scores, matched_children_map
-
-    children = gc.query(
-        """
-        UNWIND $parent_ids AS pid
-        MATCH (child:IMASNode)-[:HAS_PARENT]->(parent:IMASNode {id: pid})
-        WHERE child.node_category = 'data'
-        RETURN pid AS parent_id, collect(child.name) AS child_names
-        """,
-        parent_ids=path_ids,
-    )
-
-    for row in children:
-        pid = row["parent_id"]
-        child_names = set(row["child_names"])
-        # Expand child names with synonyms
-        expanded: set[str] = set()
-        for cn in child_names:
-            expanded.add(cn)
-            expanded.update(CHILD_SYNONYMS.get(cn, set()))
-
-        matches = query_words & expanded
-        if matches and pid in scores:
-            scores[pid] = round(scores[pid] + 0.03 * len(matches), 4)
-            # Map back to actual child names (not synonyms)
-            actual_matches = []
-            for cn in child_names:
-                cn_expanded = {cn} | CHILD_SYNONYMS.get(cn, set())
-                if cn_expanded & query_words:
-                    actual_matches.append(cn)
-            if actual_matches:
-                matched_children_map[pid] = actual_matches
-
-    return scores, matched_children_map
-
-
 # Module-level encoder singleton — avoids re-loading the model per query
 _encoder: Any = None
 _encoder_lock: Any = None
@@ -303,155 +71,38 @@ def warmup_encoder():
         logger.warning(f"Encoder warmup failed (will retry on first query): {e}")
 
 
-def resolve_dd_version(gc: GraphClient, version_input: str | int | None) -> str | None:
-    """Resolve flexible dd_version input to a concrete semver string.
-
-    Accepts:
-      - None → None (no version filter)
-      - ``"latest"`` → the DDVersion with ``is_current = true``
-      - ``4`` or ``"4"`` → latest version in major 4 (e.g. ``"4.1.0"``)
-      - ``"3.40"`` → latest version in 3.40.x (e.g. ``"3.40.1"``)
-      - ``"3.42.2"`` → exact match (validated against graph)
-
-    Raises ValueError if the version cannot be resolved.
-    """
-    if version_input is None:
-        return None
-
-    v = str(version_input).strip()
-    if v.lower() == "latest":
-        rows = gc.query("MATCH (v:DDVersion {is_current: true}) RETURN v.id AS id")
-        if not rows:
-            msg = "No DDVersion with is_current=true found in graph"
-            raise ValueError(msg)
-        return rows[0]["id"]
-
-    parts = v.split(".")
-    if len(parts) == 1:
-        # Major only: "3" or "4" → latest in that major
-        try:
-            major = int(parts[0])
-        except ValueError:
-            msg = f"Invalid dd_version: {version_input!r}"
-            raise ValueError(msg) from None
-        rows = gc.query(
-            """
-            MATCH (v:DDVersion)
-            WHERE toInteger(split(v.id, '.')[0]) = $major
-            RETURN v.id AS id
-            ORDER BY toInteger(split(v.id, '.')[1]) DESC,
-                     toInteger(split(v.id, '.')[2]) DESC
-            LIMIT 1
-            """,
-            major=major,
-        )
-        if not rows:
-            msg = f"No DDVersion found for major version {major}"
-            raise ValueError(msg)
-        return rows[0]["id"]
-
-    if len(parts) == 2:
-        # Major.minor: "3.40" → latest in 3.40.x
-        try:
-            major, minor = int(parts[0]), int(parts[1])
-        except ValueError:
-            msg = f"Invalid dd_version: {version_input!r}"
-            raise ValueError(msg) from None
-        rows = gc.query(
-            """
-            MATCH (v:DDVersion)
-            WHERE toInteger(split(v.id, '.')[0]) = $major
-              AND toInteger(split(v.id, '.')[1]) = $minor
-            RETURN v.id AS id
-            ORDER BY toInteger(split(v.id, '.')[2]) DESC
-            LIMIT 1
-            """,
-            major=major,
-            minor=minor,
-        )
-        if not rows:
-            msg = f"No DDVersion found for {major}.{minor}.x"
-            raise ValueError(msg)
-        return rows[0]["id"]
-
-    if len(parts) == 3:
-        # Full semver: validate it exists
-        rows = gc.query(
-            "MATCH (v:DDVersion {id: $ver}) RETURN v.id AS id",
-            ver=v,
-        )
-        if not rows:
-            msg = f"DDVersion {v!r} not found in graph"
-            raise ValueError(msg)
-        return rows[0]["id"]
-
-    msg = f"Invalid dd_version format: {version_input!r} (expected N, N.N, N.N.N, or 'latest')"
-    raise ValueError(msg)
-
-
 def _dd_version_clause(
     alias: str = "p",
-    dd_version: str | None = None,
+    dd_version: int | None = None,
     params: dict[str, Any] | None = None,
 ) -> str:
-    """Return a Cypher WHERE fragment for DD version filtering.
+    """Return a Cypher WHERE fragment for DD major version filtering.
 
-    ``dd_version`` must be a resolved semver string (e.g. ``"3.42.0"``)
-    or None.  Use :func:`resolve_dd_version` to convert user input first.
+    When dd_version is None, returns empty string (no filter).
+    Otherwise generates a clause ensuring the path was introduced in
+    DD version N or earlier, and not deprecated in version N or earlier.
+    This returns all paths **active** in the given major version — not
+    only paths newly introduced in that version.
 
-    A path is valid at version V if it was introduced in a version ≤ V
-    and not deprecated in any version ≤ V.  Comparison is numeric on each
-    semver component (major, minor, patch).
+    The DDVersion.id is a semver string like "3.42.2" or "4.0.0".
+    Major version is extracted via ``toInteger(split(id, '.')[0])``.
 
-    If *params* dict is provided, adds ``dd_ver_major``, ``dd_ver_minor``,
-    ``dd_ver_patch`` to it.
+    If *params* dict is provided, adds ``dd_major_version`` to it.
     """
     if dd_version is None:
         return ""
-
-    parts = dd_version.split(".")
-    major, minor, patch = int(parts[0]), int(parts[1]), int(parts[2])
     if params is not None:
-        params["dd_ver_major"] = major
-        params["dd_ver_minor"] = minor
-        params["dd_ver_patch"] = patch
-
-    def _semver_lte(ver_alias: str) -> str:
-        """Build a Cypher expression: version(ver_alias) <= (major, minor, patch)."""
-        return (
-            f"toInteger(split({ver_alias}.id, '.')[0]) < $dd_ver_major "
-            f"OR (toInteger(split({ver_alias}.id, '.')[0]) = $dd_ver_major "
-            f"    AND toInteger(split({ver_alias}.id, '.')[1]) < $dd_ver_minor) "
-            f"OR (toInteger(split({ver_alias}.id, '.')[0]) = $dd_ver_major "
-            f"    AND toInteger(split({ver_alias}.id, '.')[1]) = $dd_ver_minor "
-            f"    AND toInteger(split({ver_alias}.id, '.')[2]) <= $dd_ver_patch)"
-        )
-
+        params["dd_major_version"] = dd_version
     return (
         f"AND EXISTS {{ "
         f"  MATCH ({alias})-[:INTRODUCED_IN]->(iv:DDVersion) "
-        f"  WHERE {_semver_lte('iv')} "
+        f"  WHERE toInteger(split(iv.id, '.')[0]) <= $dd_major_version "
         f"}} "
         f"AND NOT EXISTS {{ "
         f"  MATCH ({alias})-[:DEPRECATED_IN]->(dv:DDVersion) "
-        f"  WHERE {_semver_lte('dv')} "
+        f"  WHERE toInteger(split(dv.id, '.')[0]) <= $dd_major_version "
         f"}}"
     )
-
-
-def _deprecated_filter(alias: str, dd_version: str | None) -> str:
-    """Return the correct deprecated-path filter for the given version scope.
-
-    When dd_version is None (default, current version): hard-exclude all
-    deprecated paths.  When dd_version is specified: omit the hard filter
-    entirely — ``_dd_version_clause`` handles version-scoped deprecation.
-    This allows paths deprecated in later versions to appear when searching
-    older DD versions (e.g., ``ece/channel/t_e`` deprecated in 4.0.0 is
-    still valid when searching DD 3.x).
-    """
-    if dd_version is not None:
-        return ""
-    return f"NOT ({alias})-[:DEPRECATED_IN]->(:DDVersion)"
 
 
 class GraphSearchTool:
@@ -472,7 +123,7 @@ class GraphSearchTool:
         "query (required): Natural language description or physics term (e.g., 'electron temperature', 'magnetic field boundary', 'plasma current'). "
         "Common abbreviations supported: Te (electron temp), Ti (ion temp), ne (electron density), Ip (plasma current). "
         "ids_filter: Limit to specific IDS (space/comma-delimited: 'equilibrium magnetics' or 'equilibrium, core_profiles'). "
-        "dd_version: Filter by DD version. Accepts 'latest', N (major), N.N (major.minor), or N.N.N (exact). None returns current non-deprecated paths. "
+        "dd_version: Filter by DD major version (e.g., 3 or 4). None returns all versions. "
         "facility: Optional facility for cross-references (e.g., 'tcv'). Returns signal, wiki, and code references. "
         "include_version_context: Include DD version change history for each result path. "
         "search_mode: 'auto' (default), 'semantic', 'lexical', or 'hybrid'. "
@@ -485,13 +136,12 @@ class GraphSearchTool:
         max_results: int = 50,
         search_mode: str | SearchMode = "auto",
         response_profile: str = "standard",
-        dd_version: str | int | None = None,
+        dd_version: int | None = None,
         facility: str | None = None,
         include_version_context: bool = False,
         ctx: Context | None = None,
     ) -> SearchPathsResult:
         """Search IMAS paths using hybrid vector + text search."""
-        dd_version = resolve_dd_version(self._gc, dd_version)
         is_valid, error_message = validate_query(query, "search_imas_paths")
         if not is_valid:
             return SearchPathsResult(
@@ -504,92 +154,72 @@ class GraphSearchTool:
             )
 
         normalized_filter = normalize_ids_filter(ids_filter)
+        embedding = self._embed_query(query)
 
-        # Path query short-circuit: if query contains '/', treat as path lookup
-        if "/" in query:
-            text_results = _text_search_imas_paths(
-                self._gc,
-                query,
-                min(max_results * 3, 150),
-                normalized_filter,
-                dd_version=dd_version,
-            )
-            scores: dict[str, float] = {}
-            for r in text_results:
-                scores[r["id"]] = round(r["score"], 4)
-        else:
-            embedding = self._embed_query(query)
-
-            # --- Vector search ---
-            filter_clause = ""
-            params: dict[str, Any] = {
-                "embedding": embedding,
-                "k": min(max_results * 5, 500),
-                "vector_limit": min(max_results * 3, 150),
-            }
-            if normalized_filter:
-                filter_clause = "AND path.ids IN $ids_filter"
-                params["ids_filter"] = (
-                    normalized_filter
-                    if isinstance(normalized_filter, list)
-                    else [normalized_filter]
-                )
-
-            dd_clause = _dd_version_clause("path", dd_version, params)
-            dep_filter = _deprecated_filter("path", dd_version)
-            dep_clause = f"AND {dep_filter}" if dep_filter else ""
-
-            vector_results = self._gc.query(
-                f"""
-                CALL db.index.vector.queryNodes('imas_node_embedding', $k, $embedding)
-                YIELD node AS path, score
-                WHERE path.node_category = 'data'
-                {dep_clause}
-                {filter_clause}
-                {dd_clause}
-                RETURN path.id AS id, score
-                ORDER BY score DESC
-                LIMIT $vector_limit
-                """,
-                **params,
+        # --- Vector search ---
+        filter_clause = ""
+        params: dict[str, Any] = {
+            "embedding": embedding,
+            "k": min(max_results * 5, 500),
+            "vector_limit": min(max_results * 3, 150),
+        }
+        if normalized_filter:
+            filter_clause = "AND path.ids IN $ids_filter"
+            params["ids_filter"] = (
+                normalized_filter
+                if isinstance(normalized_filter, list)
+                else [normalized_filter]
             )
 
-            # --- Text search ---
-            text_results = _text_search_imas_paths(
-                self._gc,
-                query,
-                min(max_results * 3, 150),
-                normalized_filter,
-                dd_version=dd_version,
-            )
+        dd_clause = _dd_version_clause("path", dd_version, params)
 
-            # --- RRF merge with vector confidence gating ---
-            v_hits = [
-                {"id": r["id"], "score": r["score"]} for r in (vector_results or [])
-            ]
-            t_hits = [{"id": r["id"], "score": r["score"]} for r in text_results]
+        vector_results = self._gc.query(
+            f"""
+            CALL db.index.vector.queryNodes('imas_node_embedding', $k, $embedding)
+            YIELD node AS path, score
+            WHERE NOT (path)-[:DEPRECATED_IN]->(:DDVersion)
+              AND path.node_category = 'data'
+            {filter_clause}
+            {dd_clause}
+            RETURN path.id AS id, score
+            ORDER BY score DESC
+            LIMIT $vector_limit
+            """,
+            **params,
+        )
 
-            best_vector = max((r["score"] for r in v_hits), default=0.0)
-            if best_vector < VECTOR_GATE_THRESHOLD:
-                # Low-confidence vector results: use text scores only
-                scores: dict[str, float] = {
-                    r["id"]: round(r["score"], 4) for r in t_hits
-                }
+        scores: dict[str, float] = {}
+        for r in vector_results or []:
+            pid = r["id"]
+            scores[pid] = round(r["score"], 4)
+
+        # --- Text search ---
+        text_results = _text_search_imas_paths(
+            self._gc,
+            query,
+            min(max_results * 3, 150),
+            normalized_filter,
+            dd_version=dd_version,
+        )
+        for r in text_results:
+            pid = r["id"]
+            text_score = round(r["score"], 4)
+            if pid in scores:
+                scores[pid] = round(max(scores[pid], text_score) + 0.05, 4)
             else:
-                scores = {
-                    pid: round(s, 6)
-                    for pid, s in reciprocal_rank_fusion(v_hits, t_hits, k=60).items()
-                }
+                scores[pid] = text_score
 
-            # --- Heuristic reranking ---
-            scores = heuristic_rerank(scores, query)
-
-        # --- Child name matching boost (accessor query routing) ---
-        matched_children_map: dict[str, list[str]] = {}
-        if scores:
-            scores, matched_children_map = _boost_by_child_match(
-                scores, query, self._gc
-            )
+        # --- Path segment boost ---
+        # Boost paths whose segments match query words for better relevance
+        query_words = [w.lower() for w in query.split() if len(w) > 2]
+        if query_words:
+            for pid in scores:
+                segments = pid.lower().split("/")
+                match_count = sum(
+                    1 for w in query_words if any(w in seg for seg in segments)
+                )
+                if match_count > 0:
+                    scores[pid] = round(scores[pid] + 0.03 * match_count, 4)
 
         # Rank and limit
         sorted_ids = sorted(scores, key=lambda pid: scores[pid], reverse=True)[
@@ -660,16 +290,6 @@ class GraphSearchTool:
         if include_version_context and sorted_ids:
             version_ctx = _get_version_context(self._gc, sorted_ids)
 
-        # --- Child traversal for structure nodes ---
-        children_map: dict[str, list[dict[str, Any]]] = {}
-        structure_ids = [
-            r["id"]
-            for r in (enriched or [])
-            if r.get("data_type") in ("STRUCTURE", "STRUCT_ARRAY")
-        ]
-        if structure_ids:
-            children_map = _fetch_and_group_children(self._gc, structure_ids)
-
         hits = []
         physics_domains = set()
         for rank, pid in enumerate(sorted_ids, start=1):
@@ -706,8 +326,6 @@ class GraphSearchTool:
                     search_mode=mode,
                     facility_xrefs=xref,
                     version_context=vctx,
-                    children=children_map.get(pid),
-                    matched_children=matched_children_map.get(pid),
                 )
             )
             if r["physics_domain"]:
@@ -727,10 +345,9 @@ class GraphSearchTool:
         )
 
     def _embed_query(self, query: str) -> list[float]:
-        """Embed query text, expanding physics abbreviations first."""
-        expanded = _expand_abbreviations(query)
+        """Embed query text using the module-level Encoder singleton."""
         encoder = _get_encoder()
-        return encoder.embed_texts([expanded])[0].tolist()
+        return encoder.embed_texts([query])[0].tolist()
 
 
 class GraphPathTool:
@@ -749,17 +366,16 @@ class GraphPathTool:
         "Validate exact IMAS paths and check their existence. "
         "paths (required): One or more exact IMAS paths (e.g., 'equilibrium/time_slice/profiles_1d/psi'). "
         "ids: Optional IDS prefix to prepend (e.g., ids='equilibrium' with paths='time_slice/profiles_1d/psi'). "
-        "dd_version: Filter by DD version. Accepts 'latest', N, N.N, or N.N.N. None checks current."
+        "dd_version: Filter by DD major version (e.g., 3 or 4). None checks all versions."
     )
     async def check_imas_paths(
         self,
         paths: str | list[str],
         ids: str | None = None,
-        dd_version: str | int | None = None,
+        dd_version: int | None = None,
         ctx: Context | None = None,
     ) -> CheckPathsResult:
         """Validate IMAS paths against graph."""
-        dd_version = resolve_dd_version(self._gc, dd_version)
         path_list = _normalize_paths(paths)
         if ids:
             path_list = [
@@ -844,19 +460,18 @@ class GraphPathTool:
         "Retrieve detailed IMAS path data including documentation, units, coordinates, and cluster membership. "
         "paths (required): One or more exact IMAS paths. "
         "ids: Optional IDS prefix to prepend. "
-        "dd_version: Filter by DD version. Accepts 'latest', N (major), N.N (major.minor), or N.N.N (exact). None returns current non-deprecated paths. "
+        "dd_version: Filter by DD major version (e.g., 3 or 4). None returns all versions. "
         "include_version_history: Include notable version changes (sign_convention, units, etc.)."
     )
     async def fetch_imas_paths(
         self,
         paths: str | list[str],
         ids: str | None = None,
-        dd_version: str | int | None = None,
+        dd_version: int | None = None,
         include_version_history: bool = False,
         ctx: Context | None = None,
     ) -> FetchPathsResult:
         """Fetch detailed path information from graph."""
-        dd_version = resolve_dd_version(self._gc, dd_version)
         path_list = _normalize_paths(paths)
         if ids:
             path_list = [
@@ -1015,16 +630,15 @@ class GraphPathTool:
     @mcp_tool(
         "Fetch error fields for a data path via HAS_ERROR relationships. "
         "path (required): Exact IMAS data path. "
-        "dd_version: Filter by DD version. Accepts 'latest', N (major), N.N (major.minor), or N.N.N (exact). None returns current non-deprecated paths."
+        "dd_version: Filter by DD major version (e.g., 3 or 4). None returns all versions."
     )
     async def fetch_error_fields(
         self,
         path: str,
-        dd_version: str | int | None = None,
+        dd_version: int | None = None,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
         """Fetch HAS_ERROR-linked fields for an IMAS data path."""
-        dd_version = resolve_dd_version(self._gc, dd_version)
         clean_path = path.strip()
         dd_params: dict[str, Any] = {"path": clean_path}
         dd_clause = _dd_version_clause("d", dd_version, dd_params)
@@ -1083,7 +697,7 @@ class GraphListTool:
         "format: Output format - 'yaml' (default), 'flat', 'json', or 'tree'. "
         "leaf_only: If true, return only leaf nodes (data endpoints, not structures). "
         "max_paths: Maximum number of paths to return per query. "
-        "dd_version: Filter by DD version. Accepts 'latest', N (major), N.N (major.minor), or N.N.N (exact). None returns current non-deprecated paths. "
+        "dd_version: Filter by DD major version (e.g., 3 or 4). None returns all versions. "
         "response_profile: 'minimal' (default, path IDs only) or 'standard' (includes name, data_type, node_type, documentation, units)."
     )
     async def list_imas_paths(
@@ -1093,12 +707,11 @@ class GraphListTool:
         leaf_only: bool = False,
         include_ids_prefix: bool = True,
         max_paths: int | None = None,
-        dd_version: str | int | None = None,
+        dd_version: int | None = None,
         response_profile: str = "minimal",
         ctx: Context | None = None,
     ) -> ListPathsResult:
         """List paths from graph."""
-        dd_version = resolve_dd_version(self._gc, dd_version)
         queries = paths.strip().split()
         results = []
 
@@ -1249,16 +862,15 @@ class GraphOverviewTool:
         "Get an overview of available IMAS Interface Data Structures (IDS). "
         "Returns IDS names, descriptions, path counts, and physics domains. "
         "query: Optional filter to narrow results (e.g., 'magnetics' or 'plasma equilibrium'). "
-        "dd_version: Filter by DD version. Accepts 'latest', N (major), N.N (major.minor), or N.N.N (exact). None returns current non-deprecated paths."
+        "dd_version: Filter by DD major version (e.g., 3 or 4). None returns all versions."
     )
     async def get_imas_overview(
         self,
         query: str | None = None,
-        dd_version: str | int | None = None,
+        dd_version: int | None = None,
         ctx: Context | None = None,
     ) -> GetOverviewResult:
         """Get overview from graph."""
-        dd_version = resolve_dd_version(self._gc, dd_version)
         import importlib.metadata
 
         dd_params: dict[str, Any] = {}
@@ -1400,7 +1012,7 @@ class GraphClustersTool:
         "scope: Filter by cluster scope - 'global', 'domain', or 'ids'. "
         "ids_filter: Limit to clusters containing paths from specific IDS. "
         "section_only: If true, only return clusters containing structural sections. "
-        "dd_version: Filter by DD version. Accepts 'latest', N (major), N.N (major.minor), or N.N.N (exact). None returns current non-deprecated paths."
+        "dd_version: Filter by DD major version (e.g., 3 or 4). None returns all versions."
     )
     async def search_imas_clusters(
         self,
@@ -1408,11 +1020,10 @@ class GraphClustersTool:
         scope: Literal["global", "domain", "ids"] | None = None,
         ids_filter: str | list[str] | None = None,
         section_only: bool = False,
-        dd_version: str | int | None = None,
+        dd_version: int | None = None,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
         """Search clusters using graph vector indexes."""
-        dd_version = resolve_dd_version(self._gc, dd_version)
         normalized_filter = normalize_ids_filter(ids_filter)
 
         # IDS listing mode: no query, ids_filter provided
@@ -1445,7 +1056,7 @@ class GraphClustersTool:
         scope: str | None,
         *,
         section_only: bool = False,
-        dd_version: str | int | None = None,
+        dd_version: int | None = None,
     ) -> dict[str, Any]:
         """List all clusters for specific IDS without a search query."""
         filter_list = ids_filter if isinstance(ids_filter, list) else [ids_filter]
@@ -1488,7 +1099,7 @@ class GraphClustersTool:
         }
 
     def _search_by_path(
-        self, path: str, scope: str | None, *, dd_version: str | int | None = None
+        self, path: str, scope: str | None, *, dd_version: int | None = None
     ) -> dict[str, Any]:
         """Find clusters containing a specific path."""
         scope_filter = "AND c.scope = $scope" if scope else ""
@@ -1528,7 +1139,7 @@ class GraphClustersTool:
         scope: str | None,
         ids_filter: str | list[str] | None,
         *,
-        dd_version: str | int | None = None,
+        dd_version: int | None = None,
     ) -> dict[str, Any]:
         """Semantic search over cluster embeddings."""
         embedding = self._embed_query(query)
@@ -1638,10 +1249,9 @@ class GraphClustersTool:
         return clusters
 
     def _embed_query(self, query: str) -> list[float]:
-        """Embed query text, expanding physics abbreviations first."""
-        expanded = _expand_abbreviations(query)
+        """Embed query text using the module-level Encoder singleton."""
         encoder = _get_encoder()
-        return encoder.embed_texts([expanded])[0].tolist()
+        return encoder.embed_texts([query])[0].tolist()
 
 
 class GraphIdentifiersTool:
@@ -1661,12 +1271,12 @@ class GraphIdentifiersTool:
         "These define valid values for typed fields like coordinate systems, "
         "probe types, and grid types. "
         "query: Optional filter (e.g., 'coordinate' or 'magnetics'). "
-        "dd_version: Filter by DD version. Accepts 'latest', N (major), N.N (major.minor), or N.N.N (exact). None returns current non-deprecated paths."
+        "dd_version: Filter by DD major version (e.g., 3 or 4). None returns all versions."
     )
     async def get_imas_identifiers(
         self,
         query: str | None = None,
-        dd_version: str | int | None = None,
+        dd_version: int | None = None,
         ctx: Context | None = None,
     ) -> GetIdentifiersResult:
         """Get identifier schemas from graph.
@@ -1677,7 +1287,6 @@ class GraphIdentifiersTool:
 
         Results from both strategies are merged (vector matches first).
         """
-        dd_version = resolve_dd_version(self._gc, dd_version)
         if query:
             return self._search_identifiers(query)
         return self._list_all_identifiers()
@@ -1838,11 +1447,10 @@ class GraphPathContextTool:
         path: str,
         relationship_types: str = "all",
         max_results: int = 20,
-        dd_version: str | int | None = None,
+        dd_version: int | None = None,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
         """Discover cross-IDS relationships for an IMAS path."""
-        dd_version = resolve_dd_version(self._gc, dd_version)
         dd_params: dict[str, Any] = {"path": path}
         dd_clause = _dd_version_clause("sibling", dd_version, dd_params)
         sections: dict[str, list[dict[str, Any]]] = {}
@@ -1944,11 +1552,10 @@ class GraphStructureTool:
     async def analyze_imas_structure(
         self,
         ids_name: str,
-        dd_version: str | int | None = None,
+        dd_version: int | None = None,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
         """Analyze the hierarchical structure of an IMAS IDS."""
-        dd_version = resolve_dd_version(self._gc, dd_version)
         dd_params: dict[str, Any] = {"ids_name": ids_name}
         dd_clause = _dd_version_clause("p", dd_version, dd_params)
 
@@ -2041,23 +1648,15 @@ class GraphStructureTool:
 
         # When version-filtered, add deprecated/renamed context for this IDS
         if dd_version is not None:
-            parts = dd_version.split(".")
             dep_params: dict[str, Any] = {
                 "ids_name": ids_name,
-                "dd_ver_major": int(parts[0]),
-                "dd_ver_minor": int(parts[1]),
-                "dd_ver_patch": int(parts[2]),
+                "dd_major_version": dd_version,
             }
             deprecated = self._gc.query(
                 """
                 MATCH (p:IMASNode)-[:DEPRECATED_IN]->(dv:DDVersion)
                 WHERE p.ids = $ids_name
-                  AND (toInteger(split(dv.id, '.')[0]) < $dd_ver_major
-                       OR (toInteger(split(dv.id, '.')[0]) = $dd_ver_major
-                           AND toInteger(split(dv.id, '.')[1]) < $dd_ver_minor)
-                       OR (toInteger(split(dv.id, '.')[0]) = $dd_ver_major
-                           AND toInteger(split(dv.id, '.')[1]) = $dd_ver_minor
-                           AND toInteger(split(dv.id, '.')[2]) <= $dd_ver_patch))
+                  AND toInteger(split(dv.id, '.')[0]) <= $dd_major_version
                 RETURN count(p) AS count
                 """,
                 **dep_params,
@@ -2092,11 +1691,10 @@ class GraphStructureTool:
         self,
         ids_name: str,
         leaf_only: bool = False,
-        dd_version: str | int | None = None,
+        dd_version: int | None = None,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
         """Export full IDS structure with documentation, units, and types."""
-        dd_version = resolve_dd_version(self._gc, dd_version)
         dd_params: dict[str, Any] = {"ids_name": ids_name}
         dd_clause = _dd_version_clause("p", dd_version, dd_params)
 
@@ -2141,11 +1739,10 @@ class GraphStructureTool:
         self,
         domain: str,
         ids_filter: str | None = None,
-        dd_version: str | int | None = None,
+        dd_version: int | None = None,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
         """Export all IMAS paths in a physics domain, grouped by IDS."""
-        dd_version = resolve_dd_version(self._gc, dd_version)
         resolved_domains, resolution = _resolve_physics_domain(self._gc, domain)
 
         if not resolved_domains:
@@ -2240,166 +1837,23 @@ def _leaf_data_type_clause(alias: str) -> str:
     return f"{alias}.data_type IS NOT NULL AND NOT ({alias}.data_type IN {_structure_type_list()})"
 
 
-# Physics abbreviation/synonym expansion for BM25 query augmentation
-PHYSICS_ABBREVIATIONS: dict[str, str] = {
-    "te": "electron temperature t_e",
-    "ti": "ion temperature t_i",
-    "ne": "electron density n_e",
-    "ni": "ion density n_i",
-    "ip": "plasma current ip",
-    "bt": "toroidal magnetic field b_field_tor",
-    "bp": "poloidal magnetic field b_field_pol",
-    "vp": "loop voltage v_loop",
-    "beta_pol": "poloidal beta beta_pol",
-    "beta_tor": "toroidal beta beta_tor",
-    "beta_n": "normalized beta beta_normal",
-    "bpol": "poloidal beta beta_pol",
-    "btor": "toroidal field b_field_tor",
-    "q95": "safety factor q_95",
-    "q": "safety factor q profile",
-    "zeff": "effective charge zeff impurity",
-    "z_eff": "effective charge zeff impurity",
-    "li": "internal inductance li",
-    "wmhd": "stored energy diamagnetic w_mhd",
-    "nbi": "neutral beam injection nbi",
-    "icrh": "ion cyclotron resonance heating ic_antennas",
-    "ecrh": "electron cyclotron resonance heating ec_launchers",
-    "ece": "electron cyclotron emission ece",
-    "cxrs": "charge exchange spectroscopy charge_exchange",
-    "lcfs": "last closed flux surface boundary separatrix",
-    "psi": "poloidal flux psi magnetic",
-    "rho": "normalized toroidal flux rho_tor_norm",
-    "b0": "toroidal magnetic field vacuum b0",
-}
-
-
-def _expand_abbreviations(query: str) -> str:
-    """Expand physics abbreviations in query for better BM25 matching."""
-    query_lower = query.lower().strip()
-    words = query_lower.split()
-
-    # Single-word abbreviation: expand it
-    if len(words) == 1 and query_lower in PHYSICS_ABBREVIATIONS:
-        return PHYSICS_ABBREVIATIONS[query_lower]
-
-    # Multi-word: expand individual abbreviation words
-    expanded = []
-    for w in words:
-        if w in PHYSICS_ABBREVIATIONS:
-            expanded.append(PHYSICS_ABBREVIATIONS[w])
-        else:
-            expanded.append(w)
-    result = " ".join(expanded)
-    return result if result != query_lower else query
-
-
-def _rerank_bm25_results(
-    results: list[dict[str, Any]], query: str, gc: "GraphClient"
-) -> list[dict[str, Any]]:
-    """Post-BM25 re-ranking using documentation and keyword signals.
-
-    BM25 treats all indexed fields equally, so a node named 'current'
-    scores higher than one documented as 'Plasma current'. This function
-    boosts results where query terms appear in documentation or keywords.
-    """
-    if not results:
-        return results
-
-    query_lower = query.lower()
-    query_words = {w.lower() for w in query.split() if len(w) > 1}
-
-    path_ids = [r["id"] for r in results[:100]]
-    metadata = gc.query(
-        """
-        UNWIND $pids AS pid
-        MATCH (p:IMASNode {id: pid})
-        RETURN p.id AS id, p.documentation AS doc, p.description AS desc,
-               p.keywords AS kw, p.name AS name, p.ids AS ids
-        """,
-        pids=path_ids,
-    )
-    meta_by_id = {r["id"]: r for r in (metadata or [])}
-
-    for r in results:
-        pid = r["id"]
-        m = meta_by_id.get(pid)
-        if not m:
-            continue
-
-        boost = 0.0
-        doc = (m.get("doc") or "").lower()
-        desc = (m.get("desc") or "").lower()
-        kws = [k.lower() for k in (m.get("kw") or [])]
-        ids_name = (m.get("ids") or "").lower()
-
-        # Strong boost: query appears as phrase in documentation/description
-        if query_lower in doc or query_lower in desc:
-            boost += 0.30
-
-        # Medium boost: all query words present in doc+desc+keywords
-        combined_text = f"{doc} {desc} {' '.join(kws)}"
-        word_matches = sum(1 for w in query_words if w in combined_text)
-        if query_words and word_matches == len(query_words):
-            boost += 0.15
-
-        # Keyword match boost
-        for kw in kws:
-            if kw in query_lower or any(w in kw for w in query_words):
-                boost += 0.10
-                break
-
-        # Canonical IDS boost for concept queries
-        canonical_ids = {
-            "equilibrium",
-            "core_profiles",
-            "core_transport",
-            "summary",
-            "nbi",
-            "ece",
-            "magnetics",
-        }
-        if ids_name in canonical_ids:
-            boost += 0.05
-
-        r["score"] = r["score"] + boost
-
-    results.sort(key=lambda r: r["score"], reverse=True)
-    # Re-normalize to 0-1
-    if results:
-        max_score = max(r["score"] for r in results)
-        if max_score > 0:
-            for r in results:
-                r["score"] = round(r["score"] / max_score, 4)
-    return results
-
-
 def _text_search_imas_paths(
     gc: GraphClient,
     query: str,
     limit: int,
     ids_filter: str | list[str] | None,
     *,
-    dd_version: str | int | None = None,
+    dd_version: int | None = None,
 ) -> list[dict[str, Any]]:
     """Text-based search on IMAS paths by query string.
 
     Uses fulltext index for BM25 scoring when available, falls back to
-    CONTAINS matching. Applies abbreviation expansion and post-BM25
-    re-ranking for improved precision.
+    CONTAINS matching. Filters out generic metadata paths.
     """
-    # Expand physics abbreviations before search
-    expanded_query = _expand_abbreviations(query)
     query_lower = query.lower()
     query_words = [w for w in query_lower.split() if len(w) > 2]
 
-    # Build version-aware deprecated filter
-    dep_filter = _deprecated_filter("p", dd_version)
-    where_parts = [
-        "p.node_category = 'data'",
-        "(p.enrichment_source IS NULL OR p.enrichment_source <> 'template')",
-    ]
-    if dep_filter:
-        where_parts.insert(0, dep_filter)
+    where_parts = ["NOT (p)-[:DEPRECATED_IN]->(:DDVersion)", "p.node_category = 'data'"]
     # Cap CONTAINS fallback to avoid full scans on large graphs
     contains_limit = min(limit, 100)
     params: dict[str, Any] = {"query_lower": query_lower, "limit": contains_limit}
@@ -2417,13 +1871,10 @@ def _text_search_imas_paths(
 
     # Try fulltext index first (BM25 scoring)
     try:
-        ft_dep = f"AND {dep_filter} " if dep_filter else ""
         ft_where = (
-            f"WHERE p.node_category = 'data' {ft_dep}"
-            "AND (p.enrichment_source IS NULL OR p.enrichment_source <> 'template')"
+            "WHERE NOT (p)-[:DEPRECATED_IN]->(:DDVersion) AND p.node_category = 'data'"
         )
-        # Use expanded query for BM25 (abbreviations → full terms)
-        ft_params: dict[str, Any] = {"search_query": expanded_query, "limit": limit}
+        ft_params: dict[str, Any] = {"query": query, "limit": limit}
         if ids_filter is not None:
             filter_list = ids_filter if isinstance(ids_filter, list) else [ids_filter]
             ft_where += " AND p.ids IN $ids_filter"
@@ -2434,14 +1885,13 @@ def _text_search_imas_paths(
             ft_where += f" {ft_dd_clause}"
 
         ft_cypher = f"""
-            CALL db.index.fulltext.queryNodes('imas_node_text', $search_query)
+            CALL db.index.fulltext.queryNodes('imas_node_text', $query)
             YIELD node AS p, score
             {ft_where}
             WITH p, score
             WHERE size(coalesce(p.documentation, '')) > 10
                   OR p.description IS NOT NULL
             RETURN p.id AS id, score
-            ORDER BY score DESC
             LIMIT $limit
         """
         ft_results = gc.query(ft_cypher, **ft_params)
@@ -2452,9 +1902,8 @@ def _text_search_imas_paths(
             for r in ft_results:
                 pid = r["id"]
                 raw = r["score"] / max_score if max_score > 0 else 0.0
-                normalized.append({"id": pid, "score": raw})
-            # Re-rank using documentation/keyword signals
-            return _rerank_bm25_results(normalized, query, gc)
+                normalized.append({"id": pid, "score": max(raw, 0.7)})
+            return normalized
     except Exception:
         pass
 
@@ -2474,15 +1923,15 @@ def _text_search_imas_paths(
              CASE
             WHEN toLower(p.documentation) CONTAINS $query_lower
                 AND {_leaf_data_type_clause("p")}
-                 THEN 0.80
+                 THEN 0.95
+               WHEN toLower(p.documentation) CONTAINS $query_lower
+                 THEN 0.88
                WHEN toLower(p.name) CONTAINS $query_lower
                 AND {_leaf_data_type_clause("p")}
-                 THEN 0.75
+                 THEN 0.93
                WHEN toLower(p.id) CONTAINS $query_lower
-                 THEN 0.70
-               WHEN toLower(p.documentation) CONTAINS $query_lower
-                 THEN 0.65
-               ELSE 0.55
+                 THEN 0.90
+               ELSE 0.85
              END AS base_score
         RETURN p.id AS id, base_score AS score
         ORDER BY base_score DESC, size(p.id) ASC
@@ -2500,7 +1949,7 @@ def _text_search_imas_paths(
                   AND (toLower(p.name) = $word OR toLower(p.id) CONTAINS $word)
                                     AND {_leaf_data_type_clause("p")}
                   AND size(coalesce(p.documentation, '')) > 10
-                RETURN p.id AS id, 0.70 AS score
+                RETURN p.id AS id, 0.90 AS score
                 LIMIT 10
             """
             word_params = {**params, "word": word}
