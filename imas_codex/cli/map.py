@@ -74,6 +74,14 @@ def map_cmd() -> None:
       --clear            Clear existing mappings before generating
       --dry-run          Skip graph persistence (dry run)
       --no-activate      Persist as 'generated' without promoting to 'active'
+
+    \b
+    Stage Control:
+      --stage data         Run LLM data mapping only (Stage 1)
+      --stage error        Run error derivation only (Stage 2, requires Stage 1)
+      --stage all          Run all stages (default)
+      --skip-errors        Skip error derivation (same as --stage data)
+      --skip-metadata      Skip metadata population (placeholder)
     """
 
 
@@ -132,6 +140,24 @@ def map_cmd() -> None:
     is_flag=True,
     help="Clear existing mappings for targeted IDS before generating.",
 )
+@click.option(
+    "--stage",
+    type=click.Choice(["all", "data", "error"], case_sensitive=False),
+    default="all",
+    help="Run specific pipeline stage. 'data': LLM mapping only. "
+    "'error': error derivation only (requires existing data mappings). "
+    "'all': full pipeline (default).",
+)
+@click.option(
+    "--skip-errors",
+    is_flag=True,
+    help="Skip Stage 2 error derivation (data mapping only).",
+)
+@click.option(
+    "--skip-metadata",
+    is_flag=True,
+    help="Skip Stage 3 metadata population (placeholder for future).",
+)
 def map_run(
     facility: str,
     domains: tuple[str, ...],
@@ -144,6 +170,9 @@ def map_run(
     time_limit: int | None,
     verbose: bool,
     clear: bool,
+    stage: str,
+    skip_errors: bool,
+    skip_metadata: bool,
 ) -> None:
     """Run the IMAS signal mapping pipeline.
 
@@ -234,6 +263,39 @@ def map_run(
     ids_names_list = [t["ids_name"] for t in targets]
 
     # -------------------------------------------------------------------
+    # Resolve stage flags
+    # --skip-errors is equivalent to --stage data
+    # --stage error means run only error derivation (skip LLM data mapping)
+    # -------------------------------------------------------------------
+    effective_skip_errors = skip_errors or stage == "data"
+    error_only = stage == "error"
+
+    if error_only:
+        from imas_codex.ids.mapping import run_error_derivation_only
+
+        all_results: list[dict] = []
+        for t in targets:
+            ids_name = t["ids_name"]
+            log_print(f"  Deriving error mappings for {ids_name}...")
+            error_bindings = run_error_derivation_only(
+                facility, ids_name, gc=gc, dry_run=dry_run
+            )
+            if error_bindings:
+                log_print(f"  {ids_name}: {len(error_bindings)} error mappings derived")
+                all_results.append(
+                    {
+                        "ids_name": ids_name,
+                        "bindings": len(error_bindings),
+                        "escalations": 0,
+                        "persisted": not dry_run,
+                    }
+                )
+            else:
+                log_print(f"  {ids_name}: no error fields found")
+        _print_summary(all_results, log_print)
+        return
+
+    # -------------------------------------------------------------------
     # Run mapping pipeline
     # -------------------------------------------------------------------
     if not use_rich:
@@ -248,6 +310,7 @@ def map_run(
             clear=clear,
             deadline=deadline,
             log_print=log_print,
+            skip_errors=effective_skip_errors,
         )
     else:
         all_results = _run_rich_mode(
@@ -264,6 +327,7 @@ def map_run(
             verbose=verbose,
             console=console,
             log_print=log_print,
+            skip_errors=effective_skip_errors,
         )
 
     # -------------------------------------------------------------------
@@ -284,6 +348,7 @@ def _run_plain_mode(
     clear: bool,
     deadline: float | None,
     log_print,
+    skip_errors: bool = False,
 ) -> list[dict]:
     """Run mapping for all IDS targets in plain (non-rich) mode."""
     import asyncio
@@ -302,6 +367,7 @@ def _run_plain_mode(
         persist=not dry_run,
         activate=not no_activate,
         clear=clear,
+        skip_errors=skip_errors,
     )
     if deadline:
         engine_state.deadline = deadline
@@ -349,6 +415,7 @@ def _run_rich_mode(
     verbose: bool,
     console,
     log_print,
+    skip_errors: bool = False,
 ) -> list[dict]:
     """Run mapping for all IDS targets with a single Rich progress display.
 
@@ -404,6 +471,7 @@ def _run_rich_mode(
             persist=not dry_run,
             activate=not no_activate,
             clear=clear,
+            skip_errors=skip_errors,
         )
         if deadline:
             engine_state.deadline = deadline

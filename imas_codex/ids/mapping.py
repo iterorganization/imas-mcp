@@ -1720,6 +1720,112 @@ def derive_error_mappings(
 # ---------------------------------------------------------------------------
 
 
+def run_error_derivation_only(
+    facility: str,
+    ids_name: str,
+    *,
+    gc: GraphClient | None = None,
+    dry_run: bool = False,
+) -> list[ValidatedSignalMapping]:
+    """Run Stage 2 error derivation against existing data mappings.
+
+    Fetches existing MAPS_TO_IMAS relationships with mapping_type='direct',
+    then derives error mappings via HAS_ERROR graph traversal.
+
+    Args:
+        facility: Facility identifier (e.g. "tcv", "jet").
+        ids_name: IDS name to derive error mappings for.
+        gc: GraphClient (created if None).
+        dry_run: If True, skip persisting derived mappings to the graph.
+
+    Returns:
+        List of error-derived ValidatedSignalMapping instances.
+    """
+    if gc is None:
+        gc = GraphClient()
+
+    # Fetch existing direct mappings from graph
+    results = gc.query(
+        """
+        MATCH (sg:SignalSource {facility_id: $facility})-[r:MAPS_TO_IMAS]->(ip:IMASNode)
+        WHERE ip.ids = $ids_name
+          AND coalesce(r.mapping_type, 'direct') = 'direct'
+        RETURN sg.id AS source_id,
+               r.source_property AS source_property,
+               ip.id AS target_id,
+               r.transform_expression AS transform_expression,
+               r.source_units AS source_units,
+               r.target_units AS target_units,
+               r.cocos_label AS cocos_label,
+               r.confidence AS confidence
+        """,
+        facility=facility,
+        ids_name=ids_name,
+    )
+
+    if not results:
+        logger.warning("No existing direct mappings for %s:%s", facility, ids_name)
+        return []
+
+    # Reconstruct ValidatedSignalMapping objects
+    data_mappings = [
+        ValidatedSignalMapping(
+            source_id=r["source_id"],
+            source_property=r.get("source_property") or "value",
+            target_id=r["target_id"],
+            transform_expression=r.get("transform_expression") or "value",
+            source_units=r.get("source_units"),
+            target_units=r.get("target_units"),
+            cocos_label=r.get("cocos_label"),
+            confidence=r.get("confidence") or 0.5,
+            mapping_type="direct",
+        )
+        for r in results
+    ]
+
+    error_bindings = derive_error_mappings(data_mappings, gc=gc)
+
+    if error_bindings and not dry_run:
+        for fm in error_bindings:
+            gc.query(
+                """
+                MATCH (sg:SignalSource {id: $sg_id})
+                MATCH (ip:IMASNode {id: $target_id})
+                MERGE (sg)-[r:MAPS_TO_IMAS]->(ip)
+                SET r.source_property = $source_property,
+                    r.transform_expression = $transform_expression,
+                    r.source_units = $source_units,
+                    r.target_units = $target_units,
+                    r.cocos_label = $cocos_label,
+                    r.confidence = $confidence,
+                    r.evidence = $evidence,
+                    r.mapping_type = $mapping_type,
+                    r.error_type = $error_type,
+                    r.derived_from = $derived_from
+                """,
+                sg_id=fm.source_id,
+                target_id=fm.target_id,
+                source_property=fm.source_property,
+                transform_expression=fm.transform_expression,
+                source_units=fm.source_units,
+                target_units=fm.target_units,
+                cocos_label=fm.cocos_label,
+                confidence=fm.confidence,
+                evidence=fm.evidence,
+                mapping_type=fm.mapping_type,
+                error_type=fm.error_type,
+                derived_from=fm.derived_from,
+            )
+        logger.info(
+            "Persisted %d error mappings for %s:%s",
+            len(error_bindings),
+            facility,
+            ids_name,
+        )
+
+    return error_bindings
+
+
 @dataclass
 class MappingResult:
     """Result of the mapping pipeline."""
