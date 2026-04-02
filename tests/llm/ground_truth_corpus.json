@@ -1,0 +1,406 @@
+{
+  "test_corpus": {
+    "semantic": [
+      {
+        "query": "electron temperature",
+        "expected_paths": [
+          "core_profiles/profiles_1d/electrons/temperature",
+          "edge_profiles/ggd/electrons/temperature",
+          "summary/local/separatrix/t_e"
+        ],
+        "expected_ids": ["core_profiles", "edge_profiles", "summary"],
+        "expected_units": "eV"
+      },
+      {
+        "query": "plasma current",
+        "expected_paths": [
+          "equilibrium/time_slice/global_quantities/ip",
+          "magnetics/ip",
+          "summary/global_quantities/ip",
+          "core_profiles/global_quantities/ip"
+        ],
+        "expected_ids": ["equilibrium", "magnetics", "summary", "core_profiles"],
+        "expected_units": "A"
+      },
+      {
+        "query": "safety factor",
+        "expected_paths": [
+          "equilibrium/time_slice/profiles_1d/q",
+          "core_profiles/profiles_1d/q",
+          "summary/local/magnetic_axis/q",
+          "summary/local/separatrix/q"
+        ],
+        "expected_ids": ["equilibrium", "core_profiles", "summary", "edge_profiles"],
+        "expected_units": "1"
+      },
+      {
+        "query": "poloidal magnetic flux",
+        "expected_paths": [
+          "equilibrium/time_slice/profiles_1d/psi",
+          "core_profiles/profiles_1d/grid/psi",
+          "magnetics/flux_loop/flux/data"
+        ],
+        "expected_ids": ["equilibrium", "core_profiles", "magnetics"],
+        "expected_units": "Wb"
+      },
+      {
+        "query": "vacuum toroidal magnetic field",
+        "expected_paths": [
+          "core_profiles/vacuum_toroidal_field/b0",
+          "equilibrium/vacuum_toroidal_field/b0",
+          "summary/global_quantities/b0"
+        ],
+        "expected_ids": ["core_profiles", "equilibrium", "summary"],
+        "expected_units": "T"
+      },
+      {
+        "query": "electron density",
+        "expected_paths": [
+          "core_profiles/profiles_1d/electrons/density",
+          "edge_profiles/ggd/electrons/density"
+        ],
+        "expected_ids": ["core_profiles", "edge_profiles"],
+        "expected_units": "m^-3"
+      },
+      {
+        "query": "plasma boundary shape",
+        "expected_paths": [
+          "equilibrium/time_slice/boundary/outline/r",
+          "equilibrium/time_slice/boundary/outline/z"
+        ],
+        "expected_ids": ["equilibrium", "wall"],
+        "expected_units": "m"
+      },
+      {
+        "query": "ion temperature profile",
+        "expected_paths": [
+          "core_profiles/profiles_1d/ion/temperature"
+        ],
+        "expected_ids": ["core_profiles"],
+        "expected_units": "eV"
+      },
+      {
+        "query": "radiated power",
+        "expected_paths": [
+          "radiation/process/global_quantities/inside_vessel/power_electrons"
+        ],
+        "expected_ids": ["radiation", "bolometer", "summary"],
+        "expected_units": "W"
+      },
+      {
+        "query": "plasma pressure",
+        "expected_paths": [
+          "core_profiles/profiles_1d/ion/pressure",
+          "core_profiles/profiles_1d/pressure_thermal"
+        ],
+        "expected_ids": ["core_profiles", "edge_profiles"],
+        "expected_units": "Pa"
+      }
+    ],
+    "keyword": [
+      {
+        "query": "psi",
+        "expected_paths": [
+          "equilibrium/time_slice/profiles_1d/psi",
+          "core_profiles/profiles_1d/grid/psi"
+        ],
+        "description": "poloidal flux - short physics name"
+      },
+      {
+        "query": "b_field_tor",
+        "expected_paths": [
+          "magnetics/b_field_tor_probe/field/data",
+          "summary/pedestal_fits/mtanh/b_field_tor_pedestal_top_hfs/value"
+        ],
+        "description": "toroidal magnetic field paths"
+      },
+      {
+        "query": "ion_temperature",
+        "expected_paths": [
+          "core_profiles/profiles_1d/ion/temperature"
+        ],
+        "description": "explicit ion temperature path segment"
+      },
+      {
+        "query": "flux_loop",
+        "expected_paths": [
+          "magnetics/flux_loop/flux/data",
+          "magnetics/flux_loop/position/r"
+        ],
+        "description": "magnetics flux loop diagnostic"
+      },
+      {
+        "query": "langmuir_probes",
+        "expected_paths": [
+          "langmuir_probes/reciprocating/plunge/v_plasma"
+        ],
+        "description": "Langmuir probe diagnostic"
+      }
+    ],
+    "acronym": [
+      {
+        "query": "q",
+        "physics_meaning": "safety factor",
+        "expected_paths": [
+          "equilibrium/time_slice/profiles_1d/q",
+          "core_profiles/profiles_1d/q",
+          "summary/local/magnetic_axis/q"
+        ],
+        "expected_units": "1",
+        "ids_count": 9
+      },
+      {
+        "query": "ip",
+        "physics_meaning": "plasma current",
+        "expected_paths": [
+          "magnetics/ip",
+          "equilibrium/time_slice/global_quantities/ip",
+          "core_profiles/global_quantities/ip",
+          "summary/global_quantities/ip"
+        ],
+        "expected_units": "A",
+        "ids_count": 10
+      },
+      {
+        "query": "b0",
+        "physics_meaning": "vacuum toroidal field at R0",
+        "expected_paths": [
+          "core_profiles/vacuum_toroidal_field/b0",
+          "equilibrium/vacuum_toroidal_field/b0",
+          "summary/global_quantities/b0"
+        ],
+        "expected_units": "T",
+        "ids_count": 20
+      },
+      {
+        "query": "psi",
+        "physics_meaning": "poloidal magnetic flux",
+        "expected_paths": [
+          "equilibrium/time_slice/profiles_1d/psi",
+          "core_profiles/profiles_1d/grid/psi"
+        ],
+        "expected_units": "Wb"
+      }
+    ],
+    "path_with_prefix": [
+      {
+        "path": "equilibrium/time_slice/profiles_1d/psi",
+        "expected_exists": true,
+        "expected_type": "FLT_1D",
+        "expected_units": "Wb"
+      },
+      {
+        "path": "core_profiles/profiles_1d/electrons/temperature",
+        "expected_exists": true,
+        "expected_type": "FLT_1D",
+        "expected_units": "eV"
+      },
+      {
+        "path": "magnetics/flux_loop/flux/data",
+        "expected_exists": true,
+        "expected_type": "FLT_1D",
+        "expected_units": "Wb"
+      },
+      {
+        "path": "summary/global_quantities/ip",
+        "expected_exists": true,
+        "expected_type": "STRUCTURE",
+        "expected_units": "A"
+      },
+      {
+        "path": "equilibrium/time_slice/boundary/outline/r",
+        "expected_exists": true,
+        "expected_type": "FLT_1D",
+        "expected_units": "m"
+      },
+      {
+        "path": "core_profiles/global_quantities/beta_pol",
+        "expected_exists": true,
+        "expected_type": "FLT_1D",
+        "expected_units": "1"
+      },
+      {
+        "path": "equilibrium/time_slice/profiles_1d/nonexistent_path",
+        "expected_exists": false,
+        "description": "negative test - path does not exist"
+      }
+    ],
+    "path_without_prefix": [
+      {
+        "path": "time_slice/profiles_1d/psi",
+        "ids": "equilibrium",
+        "expected_full_path": "equilibrium/time_slice/profiles_1d/psi",
+        "expected_exists": true
+      },
+      {
+        "path": "profiles_1d/electrons/temperature",
+        "ids": "core_profiles",
+        "expected_full_path": "core_profiles/profiles_1d/electrons/temperature",
+        "expected_exists": true
+      },
+      {
+        "path": "flux_loop/flux/data",
+        "ids": "magnetics",
+        "expected_full_path": "magnetics/flux_loop/flux/data",
+        "expected_exists": true
+      },
+      {
+        "path": "vacuum_toroidal_field/b0",
+        "ids": "core_profiles",
+        "expected_full_path": "core_profiles/vacuum_toroidal_field/b0",
+        "expected_exists": true
+      }
+    ],
+    "path_with_bracket_notation": [
+      {
+        "path": "equilibrium/time_slice[:]/profiles_1d/psi",
+        "array_of_structures": "equilibrium/time_slice",
+        "description": "time_slice is STRUCT_ARRAY"
+      },
+      {
+        "path": "core_profiles/profiles_1d[:]/electrons/temperature",
+        "array_of_structures": "core_profiles/profiles_1d",
+        "description": "profiles_1d is STRUCT_ARRAY"
+      },
+      {
+        "path": "magnetics/flux_loop[:]/flux/data",
+        "array_of_structures": "magnetics/flux_loop",
+        "description": "flux_loop is STRUCT_ARRAY"
+      },
+      {
+        "path": "core_profiles/profiles_1d[:]/ion[:]/temperature",
+        "array_of_structures": [
+          "core_profiles/profiles_1d",
+          "core_profiles/profiles_1d/ion"
+        ],
+        "description": "nested array-of-structures"
+      }
+    ],
+    "cross_ids": [
+      {
+        "cluster": "physics_toroidal_field",
+        "description": "Toroidal magnetic field on axis",
+        "ids_count": 28,
+        "sample_path": "core_profiles/vacuum_toroidal_field/b0",
+        "expected_related_ids": ["magnetics", "equilibrium", "summary", "sawteeth"]
+      },
+      {
+        "cluster": "physics_poloidal_flux",
+        "description": "Poloidal magnetic flux profiles",
+        "ids_count": 24,
+        "sample_path": "equilibrium/time_slice/profiles_1d/psi",
+        "expected_related_ids": ["core_profiles", "core_transport", "edge_profiles", "plasma_transport"]
+      },
+      {
+        "cluster": "cocos_b0_like",
+        "description": "Fields with b0_like COCOS transformation",
+        "ids_count": 22,
+        "sample_path": "equilibrium/time_slice/global_quantities/magnetic_axis/b_field_phi",
+        "expected_related_ids": ["magnetics", "core_instant_changes", "mhd_linear"]
+      },
+      {
+        "cluster": "cocos_psi_like",
+        "description": "Fields with psi_like COCOS transformation",
+        "ids_count": 22,
+        "sample_path": "edge_profiles/profiles_1d/grid/psi",
+        "expected_related_ids": ["plasma_profiles", "disruption", "radiation"]
+      },
+      {
+        "cluster": "physics_safety_factor",
+        "description": "Safety factor profile",
+        "ids_count": 9,
+        "sample_path": "core_profiles/profiles_1d/q",
+        "expected_related_ids": ["equilibrium", "summary", "edge_profiles", "gyrokinetics_local"]
+      },
+      {
+        "cluster": "physics_pressure",
+        "description": "Plasma pressure profiles",
+        "ids_count": 13,
+        "sample_path": "core_profiles/profiles_1d/ion/pressure",
+        "expected_related_ids": ["edge_profiles", "plasma_profiles", "transport_solver_numerics"]
+      },
+      {
+        "cluster": "physics_boundary_shape_r",
+        "description": "Plasma boundary R coordinates",
+        "ids_count": 14,
+        "sample_path": "equilibrium/time_slice/boundary/outline/r",
+        "expected_related_ids": ["wall", "pf_active", "summary"]
+      }
+    ],
+    "version_context": [
+      {
+        "path": "reflectometer_profile/channel/position/phi",
+        "semantic_type": "sign_convention",
+        "version": "3.29.0",
+        "description": "sign convention change"
+      },
+      {
+        "path": "summary/local/itb/velocity_tor/deuterium",
+        "change_type": "cocos_label_transformation",
+        "version": "3.33.0",
+        "description": "COCOS label added: tor_angle_like"
+      },
+      {
+        "path": "summary/local/magnetic_axis/e_field_parallel",
+        "semantic_type": "definition_clarification",
+        "version": "3.33.0",
+        "description": "definition clarification"
+      },
+      {
+        "path": "plasma_profiles/ggd/ion/element/z_n",
+        "change_type": "data_type",
+        "version": "4.0.0",
+        "old_value": "FLT_0D",
+        "new_value": "INT_0D",
+        "description": "type change at major version boundary"
+      },
+      {
+        "path": "edge_transport/model/flux_multiplier_error_lower",
+        "change_type": "units",
+        "version": "4.1.0",
+        "old_value": "-",
+        "new_value": "1",
+        "description": "units clarification"
+      },
+      {
+        "path": "pf_active/coil/voltage",
+        "semantic_type": "definition_clarification",
+        "version": "3.23.0",
+        "description": "early definition clarification"
+      }
+    ]
+  },
+  "graph_stats": {
+    "total_imas_nodes": 61366,
+    "total_ids": 87,
+    "total_clusters": 3071,
+    "total_dd_versions": 35,
+    "dd_version_range": "3.22.0 - 4.1.1",
+    "current_dd_version": "4.1.0",
+    "total_changes": 137310,
+    "semantic_changes": {
+      "definition_clarification": 704,
+      "sign_convention": 80,
+      "coordinate_convention": 2
+    },
+    "identifier_schemas_top5": [
+      "occurrence_type_identifier (83 paths)",
+      "coordinate_identifier (21)",
+      "ggd_subset_identifier (19)",
+      "ggd_geometry_content_identifier (19)",
+      "materials_identifier (16)"
+    ]
+  },
+  "notable_findings": [
+    "87 IDS covering all fusion physics domains from amns_data to waves",
+    "61,366 IMASNode paths with rich metadata (documentation, units, coordinates, COCOS labels)",
+    "3,071 semantic clusters linking related paths across IDSs",
+    "35 DD versions from 3.22.0 to 4.1.1 with 137K tracked changes",
+    "Cross-IDS clusters like physics_toroidal_field span 28 IDSs - excellent for find_related testing",
+    "COCOS clusters (cocos_b0_like, cocos_psi_like) each cover 22+ IDSs",
+    "Physics acronyms (q, ip, b0, psi) appear across many IDSs - good acronym disambiguation tests",
+    "STRUCT_ARRAY nodes exist for time_slice, profiles_1d, ion, flux_loop - good bracket notation tests",
+    "Semantic change types (sign_convention=80, definition_clarification=704) provide version context test data",
+    "The 4.0.0 major boundary has breaking changes like data_type changes (FLT_0D to INT_0D)"
+  ]
+}
