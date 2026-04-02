@@ -348,6 +348,82 @@ class ValidatedMappingResult(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Stage 3: IDS metadata population (LLM response)
+# ---------------------------------------------------------------------------
+
+
+class MetadataPopulationResponse(BaseModel):
+    """LLM response for IDS metadata fields that require reasoning.
+
+    Used as the structured output target for the metadata population
+    LLM call. Covers the ~8 fields that benefit from LLM reasoning
+    rather than programmatic population.
+    """
+
+    comment: str = Field(
+        description=(
+            "Free-text annotation summarizing the mapping context. "
+            "Should describe what data this IDS contains for this facility, "
+            "key characteristics, and any notable aspects of the mapping."
+        )
+    )
+    occurrence_type_name: str = Field(
+        default="machine_description",
+        description=(
+            "Occurrence type classification from the IMAS identifier schema. "
+            "Valid values: machine_description, experimental, simulation, composite"
+        ),
+    )
+    occurrence_type_index: int = Field(
+        default=0,
+        description=(
+            "Integer index for the occurrence type. "
+            "0=machine_description, 1=experimental, 2=simulation, 3=composite"
+        ),
+    )
+    occurrence_type_description: str = Field(
+        default="",
+        description="Description of why this occurrence type was chosen",
+    )
+    provenance_sources: str = Field(
+        default="",
+        description=(
+            "Data provenance chain description. Should describe the source "
+            "of the data (e.g., 'TCV MDSplus database via tcvpy access layer')"
+        ),
+    )
+    homogeneous_time: int = Field(
+        default=1,
+        description=(
+            "Time homogeneity flag: "
+            "0=heterogeneous (different time bases per signal), "
+            "1=homogeneous (all signals share common time base), "
+            "2=independent (no time dependence)"
+        ),
+    )
+    homogeneous_time_reasoning: str = Field(
+        default="",
+        description="Explanation of why this homogeneous_time value was chosen",
+    )
+
+    @field_validator("homogeneous_time")
+    @classmethod
+    def validate_homogeneous_time(cls, v: int) -> int:
+        """Ensure homogeneous_time is 0, 1, or 2."""
+        if v not in (0, 1, 2):
+            raise ValueError(f"homogeneous_time must be 0, 1, or 2, got {v}")
+        return v
+
+    @field_validator("occurrence_type_index")
+    @classmethod
+    def validate_occurrence_type_index(cls, v: int) -> int:
+        """Ensure occurrence_type_index is valid."""
+        if v not in (0, 1, 2, 3):
+            raise ValueError(f"occurrence_type_index must be 0-3, got {v}")
+        return v
+
+
+# ---------------------------------------------------------------------------
 # Adapter: ValidatedMappingResult → graph operations
 # ---------------------------------------------------------------------------
 
