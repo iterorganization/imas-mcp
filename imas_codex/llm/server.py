@@ -1096,7 +1096,6 @@ def _init_repl() -> dict[str, Any]:
     def export_imas_ids(
         ids_name: str,
         leaf_only: bool = False,
-        include_errors: bool = False,
         dd_version: int | None = None,
     ) -> str:
         """Export full IDS structure with documentation.
@@ -1104,7 +1103,6 @@ def _init_repl() -> dict[str, Any]:
         Args:
             ids_name: IDS name (e.g. 'equilibrium')
             leaf_only: If true, return only leaf nodes
-            include_errors: If true, include error fields and metadata nodes. Default: false.
             dd_version: Filter by DD major version (e.g., 3 or 4)
 
         Returns:
@@ -1116,7 +1114,6 @@ def _init_repl() -> dict[str, Any]:
                 tools.export_imas_ids(
                     ids_name=ids_name,
                     leaf_only=leaf_only,
-                    include_errors=include_errors,
                     dd_version=dd_version,
                 )
             )
@@ -1127,7 +1124,6 @@ def _init_repl() -> dict[str, Any]:
     def export_imas_domain(
         domain: str,
         ids_filter: str | None = None,
-        include_errors: bool = False,
         dd_version: int | None = None,
     ) -> str:
         """Export all IMAS paths in a physics domain.
@@ -1135,7 +1131,6 @@ def _init_repl() -> dict[str, Any]:
         Args:
             domain: Physics domain name (e.g. 'magnetics')
             ids_filter: Optional IDS name filter
-            include_errors: If true, include error fields and metadata nodes. Default: false.
             dd_version: Filter by DD major version (e.g., 3 or 4)
 
         Returns:
@@ -1147,7 +1142,6 @@ def _init_repl() -> dict[str, Any]:
                 tools.export_imas_domain(
                     domain=domain,
                     ids_filter=ids_filter,
-                    include_errors=include_errors,
                     dd_version=dd_version,
                 )
             )
@@ -2717,7 +2711,6 @@ class AgentsServer:
         def export_imas_ids(
             ids_name: str,
             leaf_only: bool = False,
-            include_errors: bool = False,
             dd_version: int | None = None,
         ) -> str:
             """Export every path in an IDS with full metadata. Use when you need the complete schema of an IDS — all paths with their types, units, coordinates, cluster labels, and COCOS annotations.
@@ -2727,7 +2720,6 @@ class AgentsServer:
             Args:
                 ids_name: IDS name to export (e.g. "equilibrium", "core_profiles").
                 leaf_only: If true, return only leaf data fields (skip structures). Default: false.
-                include_errors: If true, include error fields (_error_upper, _error_lower, _error_index) and metadata nodes. Default: false.
                 dd_version: Filter by DD major version (3 or 4). Default: latest version.
 
             Returns:
@@ -2740,7 +2732,6 @@ class AgentsServer:
                 tools.export_imas_ids(
                     ids_name=ids_name,
                     leaf_only=leaf_only,
-                    include_errors=include_errors,
                     dd_version=dd_version,
                 )
             )
@@ -2750,7 +2741,6 @@ class AgentsServer:
         def export_imas_domain(
             domain: str,
             ids_filter: str | None = None,
-            include_errors: bool = False,
             dd_version: int | None = None,
         ) -> str:
             """Export all IMAS paths classified under a physics domain, grouped by IDS. Use to see every path in the DD that belongs to a domain like "magnetics" or "transport".
@@ -2758,7 +2748,6 @@ class AgentsServer:
             Args:
                 domain: Physics domain name (e.g. "magnetics", "equilibrium", "transport", "core_profiles").
                 ids_filter: Optional IDS name to restrict output to a single IDS. Default: all IDSs in the domain.
-                include_errors: If true, include error fields (_error_upper, _error_lower, _error_index) and metadata nodes. Default: false.
                 dd_version: Filter by DD major version (3 or 4). Default: latest version.
 
             Returns:
@@ -2771,7 +2760,6 @@ class AgentsServer:
                 tools.export_imas_domain(
                     domain=domain,
                     ids_filter=ids_filter,
-                    include_errors=include_errors,
                     dd_version=dd_version,
                 )
             )

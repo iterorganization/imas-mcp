@@ -860,8 +860,6 @@ def format_fetch_paths_report(result: Any) -> str:
             parts.append(f"  Physics domain: {node.physics_domain}")
         if node.coordinates:
             parts.append(f"  Coordinates: {', '.join(node.coordinates)}")
-        if hasattr(node, "error_fields") and node.error_fields:
-            parts.append(f"  Error fields: {', '.join(node.error_fields)}")
         labels = _stringify_cluster_labels(getattr(node, "cluster_labels", None))
         if labels:
             parts.append(f"  Clusters: {', '.join(f'"{c}"' for c in labels)}")
@@ -899,8 +897,7 @@ def format_list_report(result: Any) -> str:
 
         header = f"### {item.query} ({item.path_count} paths)"
         if item.truncated_to:
-            total = getattr(item, "total_paths", None) or item.path_count
-            header += f" — showing first {item.truncated_to} of {total}"
+            header += f" — showing first {item.truncated_to}"
         parts.append(header)
 
         if item.path_details:
@@ -1103,8 +1100,6 @@ def format_search_imas_report(result: Any, cluster_result: Any | None = None) ->
                 parts.append(f"  Introduced: DD {hit.introduced_after_version}")
             if hit.keywords:
                 parts.append(f"  Keywords: {', '.join(hit.keywords)}")
-            if hit.error_fields:
-                parts.append(f"  Error fields: {', '.join(hit.error_fields)}")
 
             # Facility cross-references
             xref = hit.facility_xrefs or {}
@@ -1402,113 +1397,123 @@ def format_export_domain_report(result: Any) -> str:
     return "\n".join(parts)
 
 
-def format_migration_report(result: str | dict) -> str:
-    """Format migration guide result.
-
-    The migration guide already returns formatted markdown from
-    format_migration_guide(). This wrapper handles both string and dict inputs.
-    """
-    if isinstance(result, str):
-        return result
-    if isinstance(result, dict):
-        if "error" in result:
-            return f"Error generating migration guide: {result['error']}"
-        return str(result)
-    return str(result)
-
-
 def format_explain_report(result: Any) -> str:
-    """Format explain_concept result into a readable explanation."""
-    if isinstance(result, str):
-        return result
-    if isinstance(result, dict) and "error" in result:
-        return f"Error: {result['error']}"
-
-    concept = _get_value(result, "concept", "Unknown")
-    detail_level = _get_value(result, "detail_level", "intermediate")
-    sections = _get_value(result, "sections", [])
-
-    if not sections:
-        return f"No information found for concept: **{concept}**"
-
+    """Format explain_concept result into readable markdown."""
     parts: list[str] = []
-    parts.append(f"# {concept}\n")
-    parts.append(f"*Detail level: {detail_level}*\n")
+    if isinstance(result, dict):
+        concept = result.get("concept", "")
+        detail_level = result.get("detail_level", "intermediate")
+        sections = result.get("sections", [])
 
-    for section in sections:
-        s_type = section.get("type", "")
-        title = section.get("title", "")
-        parts.append(f"## {title}\n")
+        parts.append(f"# {concept}")
+        parts.append(f"Detail level: {detail_level}\n")
 
-        if s_type == "clusters":
-            for cluster in section.get("clusters", []):
-                label = cluster.get("label", "")
-                desc = cluster.get("description", "")
-                scope = cluster.get("scope", "")
-                ids_list = cluster.get("ids", [])
-                paths = cluster.get("example_paths", [])
+        if not sections:
+            parts.append("No information found for this concept.")
+            return "\n".join(parts)
 
-                parts.append(
-                    f"**{label}** (scope: {scope}, relevance: {cluster.get('score', '')})"
-                )
-                if desc:
-                    parts.append(f"  {desc}")
-                if ids_list:
-                    parts.append(f"  IDSs: {', '.join(ids_list[:5])}")
-                if paths:
-                    for p in paths[:5]:
-                        parts.append(f"  - `{p}`")
+        for section in sections:
+            sec_type = section.get("type", "")
+            title = section.get("title", sec_type)
+            parts.append(f"## {title}\n")
+
+            if sec_type == "clusters":
+                for cluster in section.get("clusters", []):
+                    label = cluster.get("label", "")
+                    desc = cluster.get("description", "")
+                    scope = cluster.get("scope", "")
+                    score = cluster.get("score")
+                    ids_list = cluster.get("ids", [])
+                    parts.append(f"**{label}** (scope: {scope})")
+                    if score is not None:
+                        parts.append(f"  Relevance: {score}")
+                    if desc:
+                        parts.append(f"  {desc}")
+                    if ids_list:
+                        parts.append(f"  IDSs: {', '.join(str(i) for i in ids_list)}")
+                    example_paths = cluster.get("example_paths", [])
+                    if example_paths:
+                        parts.append("  Example paths:")
+                        for p in example_paths:
+                            parts.append(f"    - `{p}`")
+                    parts.append("")
+
+            elif sec_type == "cocos":
+                for v in section.get("versions", []):
+                    version = v.get("version", "")
+                    cocos_id = v.get("cocos_id", "")
+                    parts.append(f"  - DD {version}: COCOS {cocos_id}")
                 parts.append("")
 
-        elif s_type == "cocos":
-            for v in section.get("versions", []):
-                parts.append(
-                    f"- DD version **{v['version']}** uses COCOS **{v['cocos_id']}**"
-                )
-            parts.append("")
-
-        elif s_type == "cocos_paths":
-            for p in section.get("paths", []):
-                line = f"  - `{p['path']}`"
-                if p.get("summary"):
-                    line += f" — {p['summary']}"
-                parts.append(line)
-            parts.append("")
-
-        elif s_type == "identifiers":
-            for schema in section.get("schemas", []):
-                parts.append(f"**{schema['id']}**")
-                if schema.get("description"):
-                    parts.append(f"  {schema['description']}")
-                for opt in schema.get("options", []):
-                    name = opt.get("name", "")
-                    idx = opt.get("index", "")
-                    desc = opt.get("description", "")
-                    parts.append(
-                        f"  - `{name}` (index: {idx}){f' — {desc}' if desc else ''}"
-                    )
+            elif sec_type == "cocos_paths":
+                for p in section.get("paths", []):
+                    path = p.get("path", "")
+                    ids_name = p.get("ids", "")
+                    summary = p.get("summary", "")
+                    parts.append(f"  - `{path}` ({ids_name})")
+                    if summary:
+                        parts.append(f"    {summary}")
                 parts.append("")
 
-        elif s_type == "ids":
-            for ids_info in section.get("ids_list", []):
-                domain = ids_info.get("physics_domain", "")
-                parts.append(
-                    f"- **{ids_info['name']}**"
-                    f"{f' [{domain}]' if domain else ''}"
-                    f": {ids_info.get('description', '')}"
-                )
-            parts.append("")
+            elif sec_type == "identifiers":
+                for schema in section.get("schemas", []):
+                    sid = schema.get("id", "")
+                    sdesc = schema.get("description", "")
+                    parts.append(f"**{sid}**")
+                    if sdesc:
+                        parts.append(f"  {sdesc}")
+                    options = schema.get("options", [])
+                    if options:
+                        for opt in options:
+                            oname = (
+                                opt.get("name", "")
+                                if isinstance(opt, dict)
+                                else str(opt)
+                            )
+                            oidx = opt.get("index", "") if isinstance(opt, dict) else ""
+                            odesc = (
+                                opt.get("description", "")
+                                if isinstance(opt, dict)
+                                else ""
+                            )
+                            idx_str = f" ({oidx})" if oidx else ""
+                            desc_str = f" — {odesc}" if odesc else ""
+                            parts.append(f"  - {oname}{idx_str}{desc_str}")
+                    parts.append("")
 
-        elif s_type == "paths":
-            for p in section.get("paths", []):
-                line = f"  - `{p['path']}`"
-                if p.get("data_type"):
-                    line += f" ({p['data_type']})"
-                if p.get("units"):
-                    line += f" [{p['units']}]"
-                parts.append(line)
-                if p.get("documentation"):
-                    parts.append(f"    {p['documentation'][:150]}")
-            parts.append("")
+            elif sec_type == "ids":
+                for ids_item in section.get("ids_list", []):
+                    name = ids_item.get("name", "")
+                    desc = ids_item.get("description", "")
+                    domain = ids_item.get("physics_domain", "")
+                    domain_str = f" [{domain}]" if domain else ""
+                    parts.append(f"  - **{name}**{domain_str}")
+                    if desc:
+                        parts.append(f"    {desc}")
+                parts.append("")
 
-    return "\n".join(parts)
+            elif sec_type == "paths":
+                for p in section.get("paths", []):
+                    path = p.get("path", "")
+                    doc = p.get("documentation", "")
+                    dtype = p.get("data_type", "")
+                    units = p.get("units", "")
+                    meta_parts = []
+                    if dtype:
+                        meta_parts.append(dtype)
+                    if units:
+                        meta_parts.append(units)
+                    meta_str = f" ({', '.join(meta_parts)})" if meta_parts else ""
+                    parts.append(f"  - `{path}`{meta_str}")
+                    if doc:
+                        parts.append(f"    {doc}")
+                parts.append("")
+
+            else:
+                # Fallback for unknown section types
+                parts.append(f"  {section}")
+                parts.append("")
+
+        return "\n".join(parts)
+
+    return str(result) if result else "No results found."

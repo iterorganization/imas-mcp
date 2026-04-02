@@ -37,6 +37,32 @@ from imas_codex.tools.utils import normalize_ids_filter, validate_query
 
 logger = logging.getLogger(__name__)
 
+# Short physics terms that must not be filtered out of search queries
+_PHYSICS_SHORT_TERMS = frozenset(
+    {
+        "q",
+        "ip",
+        "b0",
+        "te",
+        "ne",
+        "ti",
+        "ni",
+        "psi",
+        "r",
+        "z",
+        "phi",
+        "j",
+        "e",
+        "b",
+        "v",
+        "p",
+        "rho",
+        "li",
+        "wi",
+        "we",
+    }
+)
+
 # Module-level encoder singleton — avoids re-loading the model per query
 _encoder: Any = None
 _encoder_lock: Any = None
@@ -355,7 +381,11 @@ class GraphSearchTool:
                     scores[pid] = text_score
 
             # --- Path segment boost ---
-            query_words = [w.lower() for w in search_query.split() if len(w) > 2]
+            query_words = [
+                w.lower()
+                for w in search_query.split()
+                if len(w) > 2 or w.lower() in _PHYSICS_SHORT_TERMS
+            ]
             if query_words:
                 for pid in scores:
                     segments = pid.lower().split("/")
@@ -1335,7 +1365,8 @@ class GraphClustersTool:
 
         scope_filter = "AND cluster.scope = $scope" if scope else ""
         ids_filter_clause = ""
-        params: dict[str, Any] = {"embedding": embedding, "k": 10}
+        vector_k = 50 if ids_filter else 10  # More candidates when post-filtering
+        params: dict[str, Any] = {"embedding": embedding, "k": vector_k}
         if scope:
             params["scope"] = scope
         if ids_filter:
@@ -1684,7 +1715,7 @@ class GraphPathContextTool:
         if relationship_types in ("all", "coordinate"):
             coord_partners = self._gc.query(
                 f"""
-                MATCH (p:IMASNode {{id: $path}})-[:HAS_COORDINATE]->(coord:IMASCoordinateSpec)
+                MATCH (p:IMASNode {{id: $path}})-[:HAS_COORDINATE]->(coord:IMASNode)
                       <-[:HAS_COORDINATE]-(sibling:IMASNode)
                 WHERE sibling.ids <> p.ids {dd_clause}
                 RETURN coord.id AS coordinate, sibling.id AS path,
@@ -2335,7 +2366,9 @@ def _text_search_imas_paths(
     CONTAINS matching. Filters out generic metadata paths.
     """
     query_lower = query.lower()
-    query_words = [w for w in query_lower.split() if len(w) > 2]
+    query_words = [
+        w for w in query_lower.split() if len(w) > 2 or w in _PHYSICS_SHORT_TERMS
+    ]
 
     where_parts = ["NOT (p)-[:DEPRECATED_IN]->(:DDVersion)", "p.node_category = 'data'"]
     # Cap CONTAINS fallback to avoid full scans on large graphs

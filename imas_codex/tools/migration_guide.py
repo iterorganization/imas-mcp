@@ -202,8 +202,8 @@ def _get_removals(
         MATCH (c:IMASNodeChange)-[:IN_VERSION]->(v:DDVersion)
         WHERE v.id IN $versions AND c.change_type = 'path_removed'
         MATCH (c)-[:FOR_IMAS_PATH]->(p:IMASNode)
-        OPTIONAL MATCH (p)-[:RENAMED_TO]->(replacement:IMASNode)
         WHERE true {ids_clause}
+        OPTIONAL MATCH (p)-[:RENAMED_TO]->(replacement:IMASNode)
         RETURN p.ids AS ids, p.id AS path,
                replacement.id AS replacement
         ORDER BY p.ids, p.id
