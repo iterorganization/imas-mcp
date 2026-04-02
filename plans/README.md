@@ -18,7 +18,6 @@ Gap documents consolidate remaining work from completed implementation phases. T
 
 | Priority | Plan | Scope | Status |
 |----------|------|-------|--------|
-| **P1** | [gaps-dd-graph-quality.md](features/gaps-dd-graph-quality.md) | DD version tool bugs, v5 release operational work, schema compliance (Issue #6) | Release blocker |
 | **P3** | [staged-mapping-pipeline.md](features/staged-mapping-pipeline.md) | 3-stage mapping pipeline: data → error → metadata | Blocked by dependency chain |
 | **P3** | [ids-properties-population.md](features/ids-properties-population.md) | IDS properties and code metadata population | Depends on staged-mapping |
 | **P4** | [gaps-compute-orchestration.md](features/gaps-compute-orchestration.md) | Compute session orchestration remaining gaps | Low priority — Python CLI covers basics |
@@ -29,9 +28,6 @@ These plans are reference material for the gap documents above — not direct wo
 
 | Plan | Consolidated into |
 |------|-------------------|
-| [dd-version-and-tool-filtering.md](features/pending/dd-version-and-tool-filtering.md) | gaps-dd-graph-quality |
-| [graph-quality-v5-release.md](features/pending/graph-quality-v5-release.md) | gaps-dd-graph-quality |
-| [schema-compliance-remediation.md](features/pending/schema-compliance-remediation.md) | gaps-dd-graph-quality |
 | [compute-session-orchestration.md](features/pending/compute-session-orchestration.md) | gaps-compute-orchestration |
 
 ## Documentation Gaps
