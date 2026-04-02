@@ -9,6 +9,7 @@ from facility signal sources:
   discover_assembly:     For each target, LLM discovers assembly patterns
   validate_mappings:     Programmatic validation (source/target existence, transforms, units)
   derive_error_mappings: Derive error field mappings via HAS_ERROR graph traversal (no LLM)
+  populate_metadata:     Populate ids_properties and code metadata (programmatic + LLM)
   persist:               Write to graph
 
 Usage:
@@ -28,6 +29,11 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from imas_codex.graph.client import GraphClient
+from imas_codex.ids.metadata import (
+    IDSMetadataResult,
+    persist_metadata,
+    populate_metadata,
+)
 from imas_codex.ids.models import (
     AssemblyBatch,
     AssemblyConfig,
@@ -2119,6 +2125,7 @@ class MappingResult:
     cost: PipelineCost
     persisted: bool = False
     unassigned_groups: list[str] = field(default_factory=list)
+    metadata: IDSMetadataResult | None = None
 
 
 def generate_mapping(
@@ -2255,6 +2262,43 @@ def generate_mapping(
             ids_name,
         )
 
+    # Step 6: Populate IDS metadata (programmatic + LLM)
+    metadata_result: IDSMetadataResult | None = None
+    try:
+        # Convert validated bindings to signal summary dicts for the LLM
+        mapped_signals = [
+            {
+                "source_id": b.source_id,
+                "target_id": b.target_id,
+                "confidence": b.confidence,
+            }
+            for b in validated.bindings
+        ]
+        metadata_result = populate_metadata(
+            facility,
+            ids_name,
+            gc=gc,
+            dd_version=dd_version,
+            mapped_signals=mapped_signals,
+            model=model,
+        )
+        if metadata_result.cost_usd > 0:
+            cost.add("metadata", metadata_result.cost_usd, metadata_result.tokens)
+        logger.info(
+            "Populated metadata for %s/%s: %d deterministic, %d LLM fields",
+            facility,
+            ids_name,
+            len(metadata_result.deterministic_fields),
+            len(metadata_result.llm_fields),
+        )
+    except Exception:
+        logger.warning(
+            "Metadata population failed for %s/%s — continuing without metadata",
+            facility,
+            ids_name,
+            exc_info=True,
+        )
+
     # Persist
     mapping_id = f"{facility}:{ids_name}"
     persisted = False
@@ -2265,6 +2309,9 @@ def generate_mapping(
         )
         persisted = True
         logger.info("Persisted mapping %s with status '%s'", mapping_id, status)
+        # Persist metadata if available
+        if metadata_result is not None:
+            persist_metadata(metadata_result, mapping_id, gc=gc)
 
     logger.info(
         "Pipeline complete: %d bindings, %d escalations, $%.4f total",
@@ -2280,4 +2327,5 @@ def generate_mapping(
         cost=cost,
         persisted=persisted,
         unassigned_groups=sections.unassigned_groups,
+        metadata=metadata_result,
     )

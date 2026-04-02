@@ -456,3 +456,57 @@ def populate_metadata(
         cost_usd=cost,
         tokens=tokens,
     )
+
+
+def persist_metadata(
+    result: IDSMetadataResult,
+    mapping_id: str,
+    *,
+    gc: GraphClient,
+) -> None:
+    """Persist IDS metadata on the IMASMapping node.
+
+    Stores the complete metadata (deterministic + LLM fields) as JSON
+    properties on the already-existing IMASMapping node created by
+    ``persist_mapping_result()``.
+
+    Args:
+        result: The metadata population result.
+        mapping_id: The IMASMapping node id (e.g. "jet:pf_active").
+        gc: Open GraphClient instance.
+    """
+    # Combine all fields (deterministic + LLM), excluding internal keys
+    all_fields: dict[str, Any] = {}
+    for k, v in result.deterministic_fields.items():
+        if not k.startswith("_"):
+            all_fields[k] = v
+    all_fields.update(result.llm_fields)
+
+    # Separate into ids_properties and code categories
+    ids_properties = {
+        k: v for k, v in all_fields.items() if k.startswith("ids_properties/")
+    }
+    code_fields = {k: v for k, v in all_fields.items() if k.startswith("code/")}
+    library_entries = result.deterministic_fields.get("_library_entries", [])
+
+    gc.query(
+        """
+        MATCH (m:IMASMapping {id: $mapping_id})
+        SET m.ids_properties_metadata = $ids_props,
+            m.code_metadata = $code_meta,
+            m.library_metadata = $library_meta,
+            m.metadata_populated = true
+        """,
+        mapping_id=mapping_id,
+        ids_props=json.dumps(ids_properties),
+        code_meta=json.dumps(code_fields),
+        library_meta=json.dumps(library_entries),
+    )
+
+    logger.info(
+        "Persisted metadata for %s: %d ids_properties fields, %d code fields, %d libraries",
+        mapping_id,
+        len(ids_properties),
+        len(code_fields),
+        len(library_entries),
+    )
