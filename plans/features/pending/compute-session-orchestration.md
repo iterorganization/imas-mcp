@@ -1,3 +1,5 @@
+> **⚠ Reference only** — remaining gaps from this plan are tracked in [`../gaps-compute-orchestration.md`](../gaps-compute-orchestration.md). This file is retained as implementation context.
+
 # Compute Session Orchestration
 
 Move interactive development sessions (zellij, LiteLLM, AI agents) from SDCC login

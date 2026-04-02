@@ -285,3 +285,25 @@ Add `--stage` and `--skip-*` flags to `imas map run` CLI.
 
 **Stage 2 basic error derivation is the highest-value, lowest-cost addition
 to the pipeline** — it maps 31K error fields with zero LLM cost. 
+
+---
+
+## Priority & Dependencies
+
+**Priority: P3 — Medium**
+
+| Depends On | Enables |
+|-----------|---------|
+| error-metadata-filtering (✅ implemented and deleted) | ids-properties-population |
+
+The error-metadata-filtering prerequisite is complete. This plan can proceed.
+
+**Dependency chain:** This plan → ids-properties-population → complete mapping quality.
+
+## Documentation Updates
+
+When this work is complete, update:
+- [ ] `AGENTS.md` — Mapping pipeline description if CLI flags change (e.g., `--stage`)
+- [ ] Prompt templates — new/updated mapping prompts for each stage
+- [ ] `plans/README.md` — mark as complete or move to pending if gaps remain
+- [ ] `ids-properties-population.md` — unblock and update dependency status

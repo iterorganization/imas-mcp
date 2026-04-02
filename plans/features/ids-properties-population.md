@@ -284,3 +284,24 @@ Wire Stage 3 into the `generate_mapping()` flow:
   from Stage 1 search, avoiding circular contamination)
 - **Optional**: Facility configuration system (for programmatic provider/source
   values; can hard-code initially)
+
+---
+
+## Priority & Dependencies
+
+**Priority: P3 — Medium (blocked)**
+
+| Depends On | Enables |
+|-----------|---------|
+| staged-mapping-pipeline (Stage 1 data mappings) | Complete mapping quality, full IDS metadata |
+| error-metadata-filtering (✅ implemented) | — |
+
+This plan cannot start until staged-mapping-pipeline Stage 1 is operational.
+
+## Documentation Updates
+
+When this work is complete, update:
+- [ ] `AGENTS.md` — if new CLI commands or MCP tools are added for metadata population
+- [ ] Prompt templates — new metadata population prompts
+- [ ] `plans/README.md` — mark as complete or move to pending
+- [ ] Schema reference — verify `ids_properties` fields are documented after schema changes

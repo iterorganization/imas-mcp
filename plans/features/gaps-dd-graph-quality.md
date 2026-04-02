@@ -93,3 +93,42 @@ This is a live schema violation that was missed during the remediation work. The
 |------|-------------|-------------------|
 | SignalEpoch error property | Code writes undeclared property | Design decision needed, then fix schema or code |
 | CI deselects | 16 tests bypassed in CI | Rebuild graph, validate, then remove |
+
+---
+
+## Priority & Dependencies
+
+**Priority: P1 — Release blocker**
+
+| Depends On | Enables |
+|-----------|---------|
+| None | v5.0.0 release, container deployments |
+
+### Execution order
+1. Fix Bug 2 (cluster scope syntax) — immediate, small fix
+2. Fix Bug 3 (overview counts) — add `node_category = 'data'` filter
+3. Fix Bug 4 (export filtering) — add `node_category` filter + `include_errors` param
+4. Fix Bug 5 (redundant query) — low priority optimization
+5. Resolve SignalEpoch Issue 6 design decision — add `error` to schema or remove from code
+6. Graph rebuild + GHCR push
+7. Validate and remove 16 CI test deselects
+8. Cut v5.0.0 release tag
+
+## Overlap Notes
+
+This gap document consolidates work from three pending plans:
+- `pending/dd-version-and-tool-filtering.md` — Bugs 2-5 originate here
+- `pending/graph-quality-v5-release.md` — CI deselects and release sequence originate here
+- `pending/schema-compliance-remediation.md` — SignalEpoch Issue 6 originates here
+
+**Conflict resolved:** Schema-compliance plan assumed removing SignalEpoch `error` property; graph-quality plan deferred to a design decision. **This document defers to the design decision approach** — the property should be evaluated before acting.
+
+**Redundancy resolved:** Schema-compliance Issues 1-5 are already fixed in code. Only Issue 6 remains and is tracked here. The pending plans are reference material only.
+
+## Documentation Updates
+
+When this work is complete, update:
+- [ ] `AGENTS.md` — if any new MCP tool parameters are added (e.g., `include_errors` on export)
+- [ ] `plans/README.md` — mark this gap doc as complete, remove from active plans
+- [ ] `.github/workflows/graph-quality.yml` — remove `--deselect` lines (part of implementation)
+- [ ] Release notes for v5.0.0

@@ -1,3 +1,5 @@
+> **⚠ Reference only** — remaining gaps from this plan are tracked in [`../gaps-dd-graph-quality.md`](../gaps-dd-graph-quality.md). This file is retained as implementation context.
+
 # Schema Compliance Remediation
 
 ## Problem

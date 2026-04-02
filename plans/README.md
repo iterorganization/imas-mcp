@@ -14,23 +14,25 @@
 
 ## Active Feature Plans
 
-### Infrastructure
+Gap documents consolidate remaining work from completed implementation phases. These are the canonical work items.
 
-| Plan | Scope | Status |
-|------|-------|--------|
-| [signal-scanner-diagnostics.md](features/signal-scanner-diagnostics.md) | Scanner progress streaming, worker health indicators, MCP log tools | ~75% — infrastructure built, needs wiring to production workers |
+| Priority | Plan | Scope | Status |
+|----------|------|-------|--------|
+| **P1** | [gaps-dd-graph-quality.md](features/gaps-dd-graph-quality.md) | DD version tool bugs, v5 release operational work, schema compliance (Issue #6) | Release blocker |
+| **P3** | [staged-mapping-pipeline.md](features/staged-mapping-pipeline.md) | 3-stage mapping pipeline: data → error → metadata | Blocked by dependency chain |
+| **P3** | [ids-properties-population.md](features/ids-properties-population.md) | IDS properties and code metadata population | Depends on staged-mapping |
+| **P4** | [gaps-compute-orchestration.md](features/gaps-compute-orchestration.md) | Compute session orchestration remaining gaps | Low priority — Python CLI covers basics |
 
-### Scanner Architecture
+### Pending plans (partially implemented)
 
-| Plan | Scope | Status |
-|------|-------|--------|
-| [scanner-architecture-unification.md](features/scanner-architecture-unification.md) | Extract `StaticSourceHandler` base class from device_xml scanner's 7 internal handler pairs to eliminate ~400 lines boilerplate | Medium priority — DX improvement for adding new static sources |
+These plans are reference material for the gap documents above — not direct work items. Gaps were extracted into the active gap docs.
 
-### JET Machine Description
-
-| Plan | Scope | Status |
-|------|-------|--------|
-| [jet-machine-description-completion.md](features/jet-machine-description-completion.md) | Remaining enrichments: historical sensor versions, MCFG calibration epochs, PF circuit JPF addresses | Low priority — core pipeline operational |
+| Plan | Consolidated into |
+|------|-------------------|
+| [dd-version-and-tool-filtering.md](features/pending/dd-version-and-tool-filtering.md) | gaps-dd-graph-quality |
+| [graph-quality-v5-release.md](features/pending/graph-quality-v5-release.md) | gaps-dd-graph-quality |
+| [schema-compliance-remediation.md](features/pending/schema-compliance-remediation.md) | gaps-dd-graph-quality |
+| [compute-session-orchestration.md](features/pending/compute-session-orchestration.md) | gaps-compute-orchestration |
 
 ## Documentation Gaps
 

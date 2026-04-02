@@ -750,6 +750,48 @@ Multiple agents may be working on this repository simultaneously. Assume another
 
 End every response that modifies files with the **full commit message** and a brief summary.
 
+## Feature Plan Documentation
+
+Plans live in `plans/features/`. Delete when fully implemented — the code is the documentation.
+
+**Every feature plan must include a documentation phase** as its final step. Before a plan is considered complete, the implementing agent must update all affected documentation to maintain self-consistency across the project. This is not optional — undocumented features create drift between what the code does and what agents/users expect.
+
+### Required documentation checklist
+
+Each plan must include a section titled "Documentation Updates" listing which of these apply:
+
+| Target | When to update |
+|--------|----------------|
+| `AGENTS.md` | New CLI commands, MCP tools, config sections, workflows, or conventions |
+| `README.md` | User-facing features, installation changes, quick-start examples |
+| `plans/README.md` | Plan added, completed, or moved to pending |
+| `.claude/skills/*.md` | New reusable workflows agents should know |
+| `.claude/agents/*.md` | New agent capabilities or tool access changes |
+| `docs/` | Mature architecture documentation for implemented systems |
+| Prompt templates | New or changed LLM prompts referenced by the feature |
+| Schema reference | Handled automatically by `uv run build-models` — but verify after schema changes |
+
+### Plan lifecycle
+
+```
+plans/features/<name>.md          → Active plan (unstarted or in-progress)
+plans/features/pending/<name>.md  → Partially implemented, gaps documented
+DELETE                            → Fully implemented (code is the documentation)
+```
+
+- **Gap documents** (`gaps-*.md`) consolidate remaining work from multiple related pending plans. These are the canonical handoff documents for agents.
+- **Pending plans** are reference material for gap documents — not direct work items.
+- **Unstarted plans** remain in `features/` until work begins or they are superseded.
+
+### Self-consistency rule
+
+When implementing a feature, check whether your changes contradict or extend existing documentation. A feature is not done until:
+
+1. All code changes are committed and tested
+2. Every documentation target in the checklist above is reviewed and updated if affected
+3. `plans/README.md` is updated to reflect the plan's new status
+4. The plan file itself is deleted (fully implemented) or moved to `pending/` (gaps remain)
+
 ## Code Style
 
 - Python ≥3.12: `list[str]`, `X | Y`, `isinstance(e, ValueError | TypeError)`

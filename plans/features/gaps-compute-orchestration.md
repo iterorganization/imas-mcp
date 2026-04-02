@@ -54,3 +54,28 @@ This plan is large (~1000 lines) and mostly unstarted. Consider whether:
 1. The `imas-codex hpc` Python CLI is sufficient for current needs (it may be)
 2. The session orchestration features warrant a fresh, simplified plan
 3. The LiteLLM-on-compute migration is still desired given current infrastructure
+
+---
+
+## Priority & Dependencies
+
+**Priority: P4 — Low (Python CLI covers basic HPC needs)**
+
+| Depends On | Enables |
+|-----------|---------|
+| None | Developer experience improvement (non-blocking) |
+
+The existing `imas-codex hpc` Python CLI covers job submission, attachment, and status. This plan adds session persistence and LiteLLM migration which are quality-of-life improvements, not functional blockers.
+
+## Overlap Notes
+
+This gap document consolidates work from `pending/compute-session-orchestration.md` (the original detailed specification). The pending plan is reference material for detailed implementation specs.
+
+**Architectural note:** The Python CLI (`imas-codex hpc`) and the shell-based `cx compute` approach solve overlapping problems with different tooling. Consider whether the Python CLI is sufficient before implementing the full shell-based plan.
+
+## Documentation Updates
+
+When this work is complete, update:
+- [ ] `AGENTS.md` — Compute Infrastructure section with new commands/workflows
+- [ ] `.claude/skills/` — Add compute session management skill if cx compute is implemented
+- [ ] `plans/README.md` — mark this gap doc as complete
