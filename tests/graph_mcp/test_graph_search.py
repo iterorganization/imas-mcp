@@ -834,3 +834,38 @@ class TestIdentifierSearch:
         tool = self._make_tool(graph_client)
         result = await tool.get_imas_identifiers(query="zzz_nonexistent_xyz")
         assert result.analytics["total_schemas"] == 0
+
+
+# ── resolve_dd_version tests ─────────────────────────────────────────────
+
+
+class TestResolveDDVersion:
+    """Tests for resolve_dd_version() helper."""
+
+    def test_int(self):
+        from imas_codex.tools.graph_search import resolve_dd_version
+
+        assert resolve_dd_version(3) == 3
+        assert resolve_dd_version(4) == 4
+
+    def test_string_semver(self):
+        from imas_codex.tools.graph_search import resolve_dd_version
+
+        assert resolve_dd_version("3.39.0") == 3
+        assert resolve_dd_version("4.0.0") == 4
+
+    def test_string_major(self):
+        from imas_codex.tools.graph_search import resolve_dd_version
+
+        assert resolve_dd_version("3") == 3
+        assert resolve_dd_version("4") == 4
+
+    def test_latest(self):
+        from imas_codex.tools.graph_search import resolve_dd_version
+
+        assert resolve_dd_version("latest") is None
+
+    def test_none(self):
+        from imas_codex.tools.graph_search import resolve_dd_version
+
+        assert resolve_dd_version(None) is None

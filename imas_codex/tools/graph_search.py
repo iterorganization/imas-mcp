@@ -30,6 +30,7 @@ from imas_codex.search.decorators import (
     mcp_tool,
     measure_performance,
 )
+from imas_codex.search.fuzzy_matcher import suggest_correction
 from imas_codex.search.search_strategy import SearchHit
 from imas_codex.tools.utils import normalize_ids_filter, validate_query
 
@@ -69,6 +70,28 @@ def warmup_encoder():
         logger.info("Encoder warmup complete")
     except Exception as e:
         logger.warning(f"Encoder warmup failed (will retry on first query): {e}")
+
+
+def resolve_dd_version(dd_version: int | str | None) -> int | None:
+    """Resolve flexible dd_version input to integer major version.
+
+    Accepts: int (3, 4), str ("3.39.0", "4", "latest"), or None.
+    Returns: int major version or None (no filter).
+    """
+    if dd_version is None:
+        return None
+    if isinstance(dd_version, int):
+        return dd_version
+    if isinstance(dd_version, str):
+        v = dd_version.strip().lower()
+        if v == "latest":
+            return None  # No filter = latest
+        # "3.39.0" → 3, "4.0.0" → 4, "4" → 4
+        try:
+            return int(v.split(".")[0])
+        except (ValueError, IndexError):
+            return None
+    return None
 
 
 def _dd_version_clause(
@@ -136,12 +159,13 @@ class GraphSearchTool:
         max_results: int = 50,
         search_mode: str | SearchMode = "auto",
         response_profile: str = "standard",
-        dd_version: int | None = None,
+        dd_version: int | str | None = None,
         facility: str | None = None,
         include_version_context: bool = False,
         ctx: Context | None = None,
     ) -> SearchPathsResult:
         """Search IMAS paths using hybrid vector + text search."""
+        dd_version = resolve_dd_version(dd_version)
         is_valid, error_message = validate_query(query, "search_imas_paths")
         if not is_valid:
             return SearchPathsResult(
@@ -374,10 +398,11 @@ class GraphPathTool:
         self,
         paths: str | list[str],
         ids: str | None = None,
-        dd_version: int | None = None,
+        dd_version: int | str | None = None,
         ctx: Context | None = None,
     ) -> CheckPathsResult:
         """Validate IMAS paths against graph."""
+        dd_version = resolve_dd_version(dd_version)
         path_list = _normalize_paths(paths)
         if ids:
             path_list = [
@@ -390,6 +415,28 @@ class GraphPathTool:
 
         results = []
         found = 0
+
+        # Pre-fetch valid IDS and paths for fuzzy matching (used only if paths not found)
+        _fuzzy_ids: list[str] | None = None
+        _fuzzy_paths: list[str] | None = None
+
+        def _get_fuzzy_data():
+            nonlocal _fuzzy_ids, _fuzzy_paths
+            if _fuzzy_ids is None:
+                _fuzzy_ids = [
+                    r["id"]
+                    for r in self._gc.query("MATCH (i:IDS) RETURN i.id AS id") or []
+                ]
+                _fuzzy_paths = [
+                    r["id"]
+                    for r in self._gc.query(
+                        "MATCH (p:IMASNode) WHERE p.node_category = 'data' "
+                        "RETURN p.id AS id LIMIT 10000"
+                    )
+                    or []
+                ]
+            return _fuzzy_ids, _fuzzy_paths
+
         for path in path_list:
             row = self._gc.query(
                 f"""
@@ -440,10 +487,19 @@ class GraphPathTool:
                         )
                     )
                 else:
+                    # Try fuzzy matching for typo correction
+                    suggestion = None
+                    try:
+                        valid_ids, valid_paths = _get_fuzzy_data()
+                        suggestion = suggest_correction(path, valid_ids, valid_paths)
+                    except Exception:
+                        pass  # Fuzzy matching is best-effort
+
                     results.append(
                         CheckPathsResultItem(
                             path=path,
                             exists=False,
+                            suggestion=suggestion,
                         )
                     )
 
@@ -469,11 +525,12 @@ class GraphPathTool:
         self,
         paths: str | list[str],
         ids: str | None = None,
-        dd_version: int | None = None,
+        dd_version: int | str | None = None,
         include_version_history: bool = False,
         ctx: Context | None = None,
     ) -> FetchPathsResult:
         """Fetch detailed path information from graph."""
+        dd_version = resolve_dd_version(dd_version)
         path_list = _normalize_paths(paths)
         if ids:
             path_list = [
@@ -713,11 +770,12 @@ class GraphListTool:
         leaf_only: bool = False,
         include_ids_prefix: bool = True,
         max_paths: int | None = None,
-        dd_version: int | None = None,
+        dd_version: int | str | None = None,
         response_profile: str = "minimal",
         ctx: Context | None = None,
     ) -> ListPathsResult:
         """List paths from graph."""
+        dd_version = resolve_dd_version(dd_version)
         queries = paths.strip().split()
         results = []
 
@@ -1027,10 +1085,11 @@ class GraphClustersTool:
         scope: Literal["global", "domain", "ids"] | None = None,
         ids_filter: str | list[str] | None = None,
         section_only: bool = False,
-        dd_version: int | None = None,
+        dd_version: int | str | None = None,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
         """Search clusters using graph vector indexes."""
+        dd_version = resolve_dd_version(dd_version)
         normalized_filter = normalize_ids_filter(ids_filter)
 
         # IDS listing mode: no query, ids_filter provided
@@ -1454,10 +1513,11 @@ class GraphPathContextTool:
         path: str,
         relationship_types: str = "all",
         max_results: int = 20,
-        dd_version: int | None = None,
+        dd_version: int | str | None = None,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
         """Discover cross-IDS relationships for an IMAS path."""
+        dd_version = resolve_dd_version(dd_version)
         dd_params: dict[str, Any] = {"path": path}
         dd_clause = _dd_version_clause("sibling", dd_version, dd_params)
         sections: dict[str, list[dict[str, Any]]] = {}
@@ -1559,10 +1619,11 @@ class GraphStructureTool:
     async def analyze_imas_structure(
         self,
         ids_name: str,
-        dd_version: int | None = None,
+        dd_version: int | str | None = None,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
         """Analyze the hierarchical structure of an IMAS IDS."""
+        dd_version = resolve_dd_version(dd_version)
         dd_params: dict[str, Any] = {"ids_name": ids_name}
         dd_clause = _dd_version_clause("p", dd_version, dd_params)
 
