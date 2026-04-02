@@ -1,14 +1,19 @@
 {
   "servers": {
-    "imas": {
+    "imas-dd": {
       "type": "stdio",
       "command": "uv",
       "args": ["run", "imas-codex", "serve", "--dd-only"]
     },
-    // "imas": {
-    //   "type": "http",
-    //   "url": "https://imas-dd.iter.org/mcp"
-    // },
+    "codex": {
+      "type": "stdio",
+      "command": "uv",
+      "args": ["run", "imas-codex", "serve"]
+    },
+    "imas": {
+      "type": "http",
+      "url": "https://imas-dd.iter.org/mcp"
+    },
     // "imas-test": {
     //   "type": "http",
     //   "url": "https://app-imas-mcp-server-test-frc.azurewebsites.net/mcp"

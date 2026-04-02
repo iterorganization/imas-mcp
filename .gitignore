@@ -87,3 +87,4 @@ imas_codex/graph/dd_models.py
 .aider*
 *.tar.gz
 # MCP configs: .mcp.json (Claude Code), .vscode/mcp.json (VS Code) — both tracked
+*.out
