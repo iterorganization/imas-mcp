@@ -765,23 +765,8 @@ class GraphListTool:
             else:
                 return_clause = "RETURN p.id AS id"
 
-            path_results = self._gc.query(
-                f"""
-                MATCH (p:IMASNode)
-                WHERE p.id STARTS WITH $prefix
-                AND p.node_category = 'data'
-                {leaf_filter}
-                {dd_clause}
-                {return_clause}
-                ORDER BY p.id
-                {limit_clause}
-                """,
-                prefix=prefix + ("/" if "/" not in prefix else ""),
-                **dd_params,
-            )
-
-            # Also include the prefix itself if it's an exact IDS
             if "/" not in prefix:
+                # IDS-only mode: query by ids property directly
                 path_results = self._gc.query(
                     f"""
                     MATCH (p:IMASNode)
@@ -794,6 +779,22 @@ class GraphListTool:
                     {limit_clause}
                     """,
                     ids_name=ids_name,
+                    **dd_params,
+                )
+            else:
+                # Subtree mode: query by prefix
+                path_results = self._gc.query(
+                    f"""
+                    MATCH (p:IMASNode)
+                    WHERE p.id STARTS WITH $prefix
+                    AND p.node_category = 'data'
+                    {leaf_filter}
+                    {dd_clause}
+                    {return_clause}
+                    ORDER BY p.id
+                    {limit_clause}
+                    """,
+                    prefix=prefix,
                     **dd_params,
                 )
 

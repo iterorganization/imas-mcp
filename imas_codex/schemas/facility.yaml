@@ -1545,6 +1545,12 @@ classes:
           Workers claim versions by setting claimed_at, not by changing status.
         range: IngestionStatus
         ifabsent: "discovered"
+      error:
+        description: >-
+          Error message if status is failed. Set when status transitions
+          to 'failed' via mark_version_failed(). Transient errors (SSH
+          timeout, network) do not populate this field — they release
+          the claim for automatic retry instead.
       claim_token:
         description: UUID token for atomic work claiming between parallel workers
       claimed_at:

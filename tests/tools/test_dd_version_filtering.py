@@ -362,14 +362,13 @@ class TestListPathsQuery:
         gc = MagicMock()
         gc.query.side_effect = [
             [{"i.name": "equilibrium"}],  # IDS exists
-            [{"id": "equilibrium/time_slice"}],  # STARTS WITH query
-            [{"id": "equilibrium/time_slice"}],  # ids = query (overwrites)
+            [{"id": "equilibrium/time_slice"}],  # IDS-only mode: ids = query
         ]
         tool = GraphListTool(gc)
 
         await tool.list_imas_paths("equilibrium")
 
-        assert gc.query.call_count >= 2
+        assert gc.query.call_count == 2
 
     @pytest.mark.asyncio
     async def test_subpath_uses_starts_with(self):
@@ -392,8 +391,7 @@ class TestListPathsQuery:
         gc = MagicMock()
         gc.query.side_effect = [
             [{"i.name": "equilibrium"}],  # IDS exists
-            [],  # STARTS WITH query
-            [  # ids = query (overwrites)
+            [  # IDS-only mode: ids = query
                 {"id": "equilibrium/time_slice"},
                 {"id": "equilibrium/vacuum_toroidal_field"},
             ],
@@ -519,9 +517,6 @@ class TestErrorFieldContext:
             "equilibrium/time_slice/profiles_1d/psi_error_upper"
         ]
 
-    @pytest.mark.skip(
-        reason="HAS_ERROR enrichment not yet implemented in search_imas_paths"
-    )
     def test_search_enrichment_query_includes_has_error(self):
         """search_imas_paths enrichment query must fetch HAS_ERROR."""
         import inspect
@@ -532,9 +527,6 @@ class TestErrorFieldContext:
         assert "HAS_ERROR" in source
         assert "error_fields" in source
 
-    @pytest.mark.skip(
-        reason="HAS_ERROR enrichment not yet implemented in fetch_imas_paths"
-    )
     def test_fetch_enrichment_query_includes_has_error(self):
         """fetch_imas_paths enrichment query must fetch HAS_ERROR."""
         import inspect
