@@ -21,6 +21,8 @@ from __future__ import annotations
 
 import json
 import logging
+import re
+from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -1628,11 +1630,259 @@ def validate_mappings(
 # Stage 2: Error field derivation (zero LLM cost)
 # ---------------------------------------------------------------------------
 
+# Patterns indicating a signal represents measurement uncertainty
+_ERROR_SIGNAL_PATTERNS = re.compile(
+    r"\b(?:error|uncertainty|sigma|std[_ ]?dev|err[_ ]?bar|"
+    r"confidence[_ ]?interval|error[_ ]?bar|"
+    r"delta|±|\bunc\b|rms[_ ]?error)\b",
+    re.IGNORECASE,
+)
+
+# Patterns indicating "error field" in the physics sense (NOT uncertainty)
+# These should NOT be classified as error signals
+_PHYSICS_ERROR_PATTERNS = re.compile(
+    r"\b(?:error[_ ]?field[_ ]?coil|error[_ ]?field[_ ]?correction|"
+    r"resonant[_ ]?magnetic[_ ]?perturbation|rmp|"
+    r"error[_ ]?field[_ ]?(?:amplitude|phase|spectrum))\b",
+    re.IGNORECASE,
+)
+
+# Patterns to strip from a signal description/group_key to find the base
+_STRIP_ERROR_SUFFIX = re.compile(
+    r"[_ ]*(?:error|uncertainty|sigma|err|unc|std[_ ]?dev|rms)[_ ]*$",
+    re.IGNORECASE,
+)
+
+
+def classify_error_signals(
+    facility: str,
+    *,
+    gc: GraphClient | None = None,
+) -> list[dict]:
+    """Identify facility signal sources that represent measurement uncertainties.
+
+    Scans signal source group_keys and descriptions for error/uncertainty
+    patterns, excluding physics "error field" concepts (like error field
+    correction coils which are actual magnetic devices, not uncertainties).
+
+    Args:
+        facility: Facility identifier.
+        gc: GraphClient (created if None).
+
+    Returns:
+        List of dicts with keys: signal_id, group_key, description,
+        physics_domain, probable_error_type ("upper", "lower", or "symmetric").
+    """
+    if gc is None:
+        gc = GraphClient()
+
+    # Query all enriched signal sources with representative member name
+    results = gc.query(
+        """
+        MATCH (sg:SignalSource {facility_id: $facility})
+        WHERE sg.status = 'enriched'
+        OPTIONAL MATCH (rep:FacilitySignal {id: sg.representative_id})
+        RETURN sg.id AS id, sg.group_key AS group_key,
+               sg.description AS description,
+               sg.physics_domain AS physics_domain,
+               coalesce(rep.name, '') AS rep_name
+        """,
+        facility=facility,
+    )
+
+    error_signals: list[dict] = []
+    for r in results:
+        group_key = r.get("group_key", "") or ""
+        desc = r.get("description", "") or ""
+        rep_name = r.get("rep_name", "") or ""
+        text = f"{group_key} {desc} {rep_name}"
+
+        # Skip physics error field concepts
+        if _PHYSICS_ERROR_PATTERNS.search(text):
+            continue
+
+        # Match uncertainty patterns
+        if _ERROR_SIGNAL_PATTERNS.search(text):
+            # Determine probable error type from text
+            lower_text = text.lower()
+            if any(w in lower_text for w in ("lower", "minimum", "min_err", "low")):
+                error_type = "lower"
+            elif any(w in lower_text for w in ("upper", "maximum", "max_err", "high")):
+                error_type = "upper"
+            else:
+                error_type = "symmetric"  # Default: could be upper or lower
+
+            error_signals.append(
+                {
+                    "signal_id": r["id"],
+                    "group_key": group_key,
+                    "description": desc,
+                    "physics_domain": r.get("physics_domain"),
+                    "probable_error_type": error_type,
+                }
+            )
+
+    logger.info(
+        "Classified %d error signals out of %d total for %s",
+        len(error_signals),
+        len(results),
+        facility,
+    )
+    return error_signals
+
+
+def match_error_signals_to_imas(
+    facility: str,
+    error_signals: list[dict],
+    *,
+    gc: GraphClient | None = None,
+) -> list[ValidatedSignalMapping]:
+    """Match error-related signal sources directly to IMAS error fields.
+
+    Cross-references error signals with existing data mappings:
+    if signal source "X Error" exists and signal source "X" maps to
+    data_path, then "X Error" maps to data_path_error_upper/lower.
+
+    Uses group_key and description similarity to find the parent data
+    signal source, then traverses HAS_ERROR to find the target error field.
+
+    Args:
+        facility: Facility identifier.
+        error_signals: Output from classify_error_signals().
+        gc: GraphClient (created if None).
+
+    Returns:
+        List of ValidatedSignalMapping for direct error signal matches.
+    """
+    if gc is None:
+        gc = GraphClient()
+
+    if not error_signals:
+        return []
+
+    # Get all existing direct MAPS_TO_IMAS relationships for this facility
+    existing = gc.query(
+        """
+        MATCH (sg:SignalSource {facility_id: $facility})-[r:MAPS_TO_IMAS]->(ip:IMASNode)
+        WHERE coalesce(r.mapping_type, 'direct') = 'direct'
+        RETURN sg.id AS source_id, sg.group_key AS source_group_key,
+               ip.id AS target_id,
+               r.source_units AS source_units,
+               r.target_units AS target_units,
+               r.confidence AS confidence
+        """,
+        facility=facility,
+    )
+
+    if not existing:
+        logger.info("No existing data mappings to cross-reference for %s", facility)
+        return []
+
+    # Build lookup: group_key (normalized) -> list of mappings
+    key_to_mappings: dict[str, list[dict]] = defaultdict(list)
+    for e in existing:
+        src_key = (e.get("source_group_key") or "").strip().lower()
+        if src_key:
+            key_to_mappings[src_key].append(e)
+
+    # Build lookup: target_path -> error children
+    target_paths = list({e["target_id"] for e in existing})
+    error_children: dict[str, list[dict]] = {}
+    batch_size = 500
+    for i in range(0, len(target_paths), batch_size):
+        batch = target_paths[i : i + batch_size]
+        errors = gc.query(
+            """
+            MATCH (d:IMASNode)-[r:HAS_ERROR]->(e:IMASNode)
+            WHERE d.id IN $paths
+            RETURN d.id AS data_path, e.id AS error_path,
+                   r.error_type AS error_type
+            """,
+            paths=batch,
+        )
+        for row in errors:
+            error_children.setdefault(row["data_path"], []).append(
+                {
+                    "error_path": row["error_path"],
+                    "error_type": row["error_type"],
+                }
+            )
+
+    # Match error signals to error fields
+    mappings: list[ValidatedSignalMapping] = []
+
+    for esig in error_signals:
+        sig_key = (esig.get("group_key") or "").strip().lower()
+        if not sig_key:
+            continue
+
+        # Try to find the base signal by stripping error suffixes
+        base_key = _STRIP_ERROR_SUFFIX.sub("", sig_key).strip()
+
+        # Look up the base signal's data mappings
+        parent_mappings = key_to_mappings.get(base_key, [])
+
+        if not parent_mappings:
+            # Try partial match — base_key might be a substring
+            for known_key, known_mappings in key_to_mappings.items():
+                if base_key and (base_key in known_key or known_key in base_key):
+                    parent_mappings = known_mappings
+                    break
+
+        if not parent_mappings:
+            continue
+
+        for pm in parent_mappings:
+            errors = error_children.get(pm["target_id"], [])
+            if not errors:
+                continue
+
+            # Determine which error type to map to
+            prob_type = esig.get("probable_error_type", "symmetric")
+
+            for err in errors:
+                # For symmetric errors, map to both upper and lower
+                # For specific types, only map to matching type
+                if prob_type == "symmetric" or prob_type == err["error_type"]:
+                    mappings.append(
+                        ValidatedSignalMapping(
+                            source_id=esig["signal_id"],
+                            target_id=err["error_path"],
+                            transform_expression="value",
+                            source_units=pm.get("source_units"),
+                            target_units=pm.get("target_units"),
+                            confidence=min((pm.get("confidence") or 0.5) * 0.9, 1.0),
+                            evidence=(
+                                f"Direct error signal match via parent "
+                                f"{pm['source_id']} -> {pm['target_id']}"
+                            ),
+                            mapping_type="error_derived",
+                            error_type=err["error_type"],
+                            derived_from=pm["target_id"],
+                        )
+                    )
+
+    logger.info(
+        "Matched %d error signals to %d error field mappings for %s",
+        len(
+            [
+                e
+                for e in error_signals
+                if any(m.source_id == e["signal_id"] for m in mappings)
+            ]
+        ),
+        len(mappings),
+        facility,
+    )
+    return mappings
+
 
 def derive_error_mappings(
     data_mappings: list[ValidatedSignalMapping],
     *,
     gc: GraphClient | None = None,
+    facility: str | None = None,
+    include_direct_error_signals: bool = True,
 ) -> list[ValidatedSignalMapping]:
     """Derive error field mappings from validated data mappings via HAS_ERROR.
 
@@ -1641,11 +1891,20 @@ def derive_error_mappings(
     Creates error_derived mappings inheriting transform, units, and confidence
     from the parent data mapping.
 
-    Cost: Zero LLM tokens. One batch graph query (~10ms).
+    When *facility* is provided and *include_direct_error_signals* is True,
+    also runs Phase 2b: identifies facility signal sources that directly
+    represent measurement uncertainties (e.g. "HRTS Electron Density Error")
+    and matches them to IMAS error fields via cross-reference with existing
+    data mappings.
+
+    Cost: Zero LLM tokens. Graph queries only (~10ms).
 
     Args:
         data_mappings: Validated data mappings from Stage 1.
         gc: GraphClient (created if None).
+        facility: Facility identifier (needed for direct error signal matching).
+        include_direct_error_signals: Whether to run Phase 2b direct error
+            signal matching. Default True.
 
     Returns:
         List of error-derived ValidatedSignalMapping instances.
@@ -1712,6 +1971,29 @@ def derive_error_mappings(
         len(direct_mappings),
         len(error_map),
     )
+
+    # Phase 2b: Direct error signal matching
+    if include_direct_error_signals and facility:
+        error_signals = classify_error_signals(facility, gc=gc)
+        if error_signals:
+            direct_error_mappings = match_error_signals_to_imas(
+                facility, error_signals, gc=gc
+            )
+            # Deduplicate: don't create direct mappings that overlap with derived
+            existing_targets = {(m.source_id, m.target_id) for m in error_mappings}
+            added = 0
+            for dm in direct_error_mappings:
+                if (dm.source_id, dm.target_id) not in existing_targets:
+                    error_mappings.append(dm)
+                    existing_targets.add((dm.source_id, dm.target_id))
+                    added += 1
+
+            logger.info(
+                "Added %d direct error signal mappings (after dedup) for %s",
+                added,
+                facility,
+            )
+
     return error_mappings
 
 
@@ -1783,7 +2065,7 @@ def run_error_derivation_only(
         for r in results
     ]
 
-    error_bindings = derive_error_mappings(data_mappings, gc=gc)
+    error_bindings = derive_error_mappings(data_mappings, gc=gc, facility=facility)
 
     if error_bindings and not dry_run:
         for fm in error_bindings:
@@ -1962,7 +2244,7 @@ def generate_mapping(
     )
 
     # Step 5: Derive error field mappings (no LLM call)
-    error_bindings = derive_error_mappings(validated.bindings, gc=gc)
+    error_bindings = derive_error_mappings(validated.bindings, gc=gc, facility=facility)
     if error_bindings:
         validated.bindings.extend(error_bindings)
         logger.info(

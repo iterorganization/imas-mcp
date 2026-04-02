@@ -817,6 +817,7 @@ async def validate_worker(
                     derive_error_mappings,
                     validated.bindings,
                     gc=gc,
+                    facility=state.facility,
                 )
                 if error_bindings:
                     validated.bindings.extend(error_bindings)
