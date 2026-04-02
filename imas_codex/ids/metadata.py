@@ -27,6 +27,8 @@ from pydantic import BaseModel
 
 from imas_codex.graph.client import GraphClient
 
+# settings imported at call-site to avoid circular imports
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -282,3 +284,175 @@ class IDSMetadataResult(BaseModel):
     llm_fields: dict[str, Any]
     cost_usd: float = 0.0
     tokens: int = 0
+
+
+# ---------------------------------------------------------------------------
+# Signals summary helper
+# ---------------------------------------------------------------------------
+
+
+def _format_signals_summary(signals: list[dict] | None) -> str:
+    """Format a list of mapped signal dicts as a human-readable summary.
+
+    Caps output at 50 entries to keep prompts within token budgets.
+
+    Args:
+        signals: List of signal mapping dicts with optional keys
+            ``source_id``, ``target_id``, and ``confidence``.
+
+    Returns:
+        Multi-line string, or ``"No signal mappings available."`` if
+        *signals* is empty or ``None``.
+    """
+    if not signals:
+        return "No signal mappings available."
+    lines: list[str] = []
+    for sig in signals[:50]:
+        src = sig.get("source_id", "unknown")
+        tgt = sig.get("target_id", "unknown")
+        conf = sig.get("confidence", 0)
+        lines.append(f"  - {src} → {tgt} (confidence: {conf:.2f})")
+    summary = "\n".join(lines)
+    if len(signals) > 50:
+        summary += f"\n  ... and {len(signals) - 50} more"
+    return summary
+
+
+# ---------------------------------------------------------------------------
+# Main entry point — Stage 3 of the mapping pipeline
+# ---------------------------------------------------------------------------
+
+
+def populate_metadata(
+    facility: str,
+    ids_name: str,
+    *,
+    gc: GraphClient,
+    dd_version: str,
+    mapped_signals: list[dict[str, Any]] | None = None,
+    model: str | None = None,
+    pipeline_config: dict[str, Any] | None = None,
+) -> IDSMetadataResult:
+    """Orchestrate both programmatic and LLM-based metadata population.
+
+    This is the main entry point for Stage 3 of the mapping pipeline.
+    It builds a :class:`MetadataContext`, populates deterministic fields,
+    then calls the LLM to infer fields that require reasoning about the
+    mapped signals (``comment``, ``occurrence_type``, ``provenance_sources``,
+    ``homogeneous_time``).
+
+    Args:
+        facility: Facility identifier (e.g. ``"jet"``).
+        ids_name: Target IDS name (e.g. ``"pf_active"``).
+        gc: Open :class:`~imas_codex.graph.client.GraphClient` instance.
+        dd_version: IMAS Data Dictionary version string.
+        mapped_signals: Optional list of signal mapping dicts produced by
+            earlier pipeline stages.  Each dict may contain ``source_id``,
+            ``target_id``, and ``confidence`` keys.
+        model: LLM model identifier to use.  Falls back to
+            ``settings.get_model("language")`` when ``None``.
+        pipeline_config: Arbitrary pipeline configuration dict stored in
+            ``code/parameters``.
+
+    Returns:
+        Fully populated :class:`IDSMetadataResult`.  If the LLM call fails,
+        ``llm_fields`` is empty and the result is still returned (with a
+        warning logged).
+    """
+    # 1 — Build context
+    ctx = build_metadata_context(facility, ids_name, gc=gc, dd_version=dd_version)
+    if pipeline_config:
+        ctx.pipeline_config = pipeline_config
+
+    # 2 — Deterministic fields
+    deterministic = populate_deterministic_fields(ctx, ids_name)
+
+    # 3 — Fetch IDS description from graph
+    try:
+        rows = gc.query(
+            "MATCH (ids:IDS {id: $ids_name}) RETURN ids.documentation AS doc",
+            ids_name=ids_name,
+        )
+        ids_description: str = rows[0]["doc"] if rows else f"IMAS IDS: {ids_name}"
+    except Exception:  # noqa: BLE001 — non-fatal graph lookup
+        logger.debug("Could not fetch IDS description for %r from graph", ids_name)
+        ids_description = f"IMAS IDS: {ids_name}"
+
+    # 4 — Format signals summary
+    signals_summary = _format_signals_summary(mapped_signals)
+
+    # 5 — Format deterministic fields summary (skip internal keys)
+    det_summary_lines: list[str] = []
+    for path, value in deterministic.items():
+        if path.startswith("_"):
+            continue  # e.g. _library_entries
+        det_summary_lines.append(f"  - {path}: {value}")
+    det_summary = "\n".join(det_summary_lines)
+
+    # 6 — Render prompts and call LLM (lazy imports to avoid circular deps)
+    llm_fields: dict[str, Any] = {}
+    cost: float = 0.0
+    tokens: int = 0
+    try:
+        from imas_codex.discovery.base.llm import call_llm_structured
+        from imas_codex.ids.models import MetadataPopulationResponse
+        from imas_codex.llm.prompt_loader import render_prompt
+        from imas_codex.settings import get_model
+
+        llm_model = model or get_model("language")
+
+        system_prompt = render_prompt("mapping/metadata_population_system")
+        user_prompt = render_prompt(
+            "mapping/metadata_population",
+            {
+                "facility": facility,
+                "ids_name": ids_name,
+                "ids_description": ids_description,
+                "mapped_signals_summary": signals_summary,
+                "deterministic_fields_summary": det_summary,
+                "dd_version": dd_version,
+            },
+        )
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+
+        llm_response, cost, tokens = call_llm_structured(
+            model=llm_model,
+            messages=messages,
+            response_model=MetadataPopulationResponse,
+        )
+
+        # 7 — Convert LLM response to IMAS path → value dict
+        llm_fields = {
+            "ids_properties/comment": llm_response.comment,
+            "ids_properties/occurrence_type/name": llm_response.occurrence_type_name,
+            "ids_properties/occurrence_type/index": llm_response.occurrence_type_index,
+            "ids_properties/occurrence_type/description": llm_response.occurrence_type_description,
+            "ids_properties/homogeneous_time": llm_response.homogeneous_time,
+        }
+        if llm_response.provenance_sources:
+            llm_fields["ids_properties/provenance/node/sources"] = (
+                llm_response.provenance_sources
+            )
+
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "LLM metadata population failed for %s/%s — returning empty llm_fields",
+            facility,
+            ids_name,
+            exc_info=True,
+        )
+
+    # 8 — Return result
+    return IDSMetadataResult(
+        facility=facility,
+        ids_name=ids_name,
+        dd_version=dd_version,
+        deterministic_fields=deterministic,
+        llm_fields=llm_fields,
+        cost_usd=cost,
+        tokens=tokens,
+    )
