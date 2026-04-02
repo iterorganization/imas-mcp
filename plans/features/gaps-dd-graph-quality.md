@@ -78,12 +78,28 @@ Source: `pending/schema-compliance-remediation.md` (Issue 6)
 - `error` property is **not declared** in the SignalEpoch schema (`facility.yaml`)
 - This is an active schema violation on every failed SignalEpoch write
 
-### Fix options (pick one)
-1. **Add to schema**: Add `error: string` slot to SignalEpoch in `facility.yaml` — if we want to track error messages
-2. **Remove from code**: Stop writing `v.error` in `graph_ops.py` — if error tracking isn't needed
+### ✅ Decision: Add `error` to schema (Option 1)
 
-### ⚠ Shortcut flag
-This is a live schema violation that was missed during the remediation work. The other 5 issues were fixed but this one was skipped — likely because it requires a design decision about whether to keep error tracking on SignalEpoch nodes.
+**Add `error: string` to SignalEpoch in `facility.yaml`.**
+
+The codebase already implements a correct two-tier error handling pattern:
+
+| Error type | Handler | Status change | Retryable? |
+|-----------|---------|---------------|------------|
+| **Transient** (SSH timeout, network) | `release_version_claim()` | None — stays `discovered` | Yes, automatic |
+| **Permanent** (tree not found, corrupt data) | `mark_version_failed()` | → `failed` + `error` recorded | No — terminal |
+
+The `error` field is the observability companion to the already-existing `failed` status in
+`IngestionStatus`. Every other facility node type with a `failed` status has an `error` field
+(CodeFile, WikiPage, FacilityPath). SignalEpoch must follow the same pattern.
+
+**Why not "reset status for retry" on all errors:**
+- Permanent errors (tree file not found on disk) will recur on every retry attempt
+- This creates infinite retry loops — every discovery run wastes SSH connections hitting the same failures
+- The transient retry path already exists via `release_version_claim()` + `claimed_at` timeout recovery
+- Resetting permanently-failed nodes is an operational decision (migration query), not an automatic one
+
+**Implementation:** One-line schema addition + `uv run build-models --force`.
 
 ---
 
@@ -91,7 +107,7 @@ This is a live schema violation that was missed during the remediation work. The
 
 | Item | Description | Recommended Action |
 |------|-------------|-------------------|
-| SignalEpoch error property | Code writes undeclared property | Design decision needed, then fix schema or code |
+| ~~SignalEpoch error property~~ | ~~Code writes undeclared property~~ | **Resolved:** Add `error: string` to schema |
 | CI deselects | 16 tests bypassed in CI | Rebuild graph, validate, then remove |
 
 ---
@@ -109,7 +125,7 @@ This is a live schema violation that was missed during the remediation work. The
 2. Fix Bug 3 (overview counts) — add `node_category = 'data'` filter
 3. Fix Bug 4 (export filtering) — add `node_category` filter + `include_errors` param
 4. Fix Bug 5 (redundant query) — low priority optimization
-5. Resolve SignalEpoch Issue 6 design decision — add `error` to schema or remove from code
+5. Fix SignalEpoch Issue 6 — add `error: string` to schema (decision resolved)
 6. Graph rebuild + GHCR push
 7. Validate and remove 16 CI test deselects
 8. Cut v5.0.0 release tag
