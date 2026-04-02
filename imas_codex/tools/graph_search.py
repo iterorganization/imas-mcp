@@ -32,6 +32,7 @@ from imas_codex.search.decorators import (
 )
 from imas_codex.search.fuzzy_matcher import suggest_correction
 from imas_codex.search.search_strategy import SearchHit
+from imas_codex.tools.query_analysis import QueryAnalyzer, strip_accessor_suffix
 from imas_codex.tools.utils import normalize_ids_filter, validate_query
 
 logger = logging.getLogger(__name__)
@@ -128,6 +129,111 @@ def _dd_version_clause(
     )
 
 
+def _path_search(
+    gc: GraphClient,
+    query: str,
+    max_results: int,
+    ids_filter: str | list[str] | None,
+    *,
+    dd_version: int | None = None,
+) -> list[dict[str, Any]]:
+    """Search by path structure — exact, suffix, and substring matching.
+
+    Used for queries that look like IMAS paths (contain '/').
+    Returns results with scores in [0, 1] range.
+    """
+    query_lower = query.lower().strip()
+    params: dict[str, Any] = {"query": query_lower, "limit": max_results}
+    dd_params: dict[str, Any] = {}
+    dd_clause = _dd_version_clause("p", dd_version, dd_params)
+    params.update(dd_params)
+
+    ids_clause = ""
+    if ids_filter:
+        filter_list = ids_filter if isinstance(ids_filter, list) else [ids_filter]
+        ids_clause = "AND p.ids IN $ids_filter"
+        params["ids_filter"] = filter_list
+
+    results: dict[str, float] = {}
+
+    # Strategy 1: Exact match (highest score)
+    exact = gc.query(
+        f"""
+        MATCH (p:IMASNode)
+        WHERE toLower(p.id) = $query
+          AND p.node_category = 'data'
+          {ids_clause} {dd_clause}
+        RETURN p.id AS id, 1.0 AS score
+        """,
+        **params,
+    )
+    for r in exact or []:
+        results[r["id"]] = 1.0
+
+    # Strategy 2: Suffix match — query is a partial path (no IDS prefix)
+    suffix = gc.query(
+        f"""
+        MATCH (p:IMASNode)
+        WHERE p.node_category = 'data'
+          AND toLower(p.id) ENDS WITH $query
+          {ids_clause} {dd_clause}
+        RETURN p.id AS id, 0.95 AS score
+        LIMIT $limit
+        """,
+        **params,
+    )
+    for r in suffix or []:
+        if r["id"] not in results:
+            results[r["id"]] = 0.95
+
+    # Strategy 3: Contains match
+    contains = gc.query(
+        f"""
+        MATCH (p:IMASNode)
+        WHERE p.node_category = 'data'
+          AND toLower(p.id) CONTAINS $query
+          {ids_clause} {dd_clause}
+        RETURN p.id AS id, 0.85 AS score
+        LIMIT $limit
+        """,
+        **params,
+    )
+    for r in contains or []:
+        if r["id"] not in results:
+            results[r["id"]] = 0.85
+
+    # Strategy 4: If query ends with accessor terminal, strip and search parent
+    stripped = strip_accessor_suffix(query_lower)
+    if stripped != query_lower:
+        parent_params = {**params, "query": stripped}
+        parent_exact = gc.query(
+            f"""
+            MATCH (p:IMASNode)
+            WHERE toLower(p.id) = $query
+              AND p.node_category = 'data'
+              {ids_clause} {dd_clause}
+            RETURN p.id AS id
+            """,
+            **parent_params,
+        )
+        accessor = query_lower.split("/")[-1]
+        for r in parent_exact or []:
+            child_path = f"{r['id']}/{accessor}"
+            child_check = gc.query(
+                "MATCH (c:IMASNode {id: $cpath}) RETURN c.id AS id",
+                cpath=child_path,
+            )
+            if child_check:
+                results[child_path] = 1.0
+            elif r["id"] not in results:
+                results[r["id"]] = 0.92
+
+    return [
+        {"id": pid, "score": score}
+        for pid, score in sorted(results.items(), key=lambda x: -x[1])
+    ][:max_results]
+
+
 class GraphSearchTool:
     """Graph-backed semantic search for IMAS paths."""
 
@@ -178,6 +284,11 @@ class GraphSearchTool:
             )
 
         normalized_filter = normalize_ids_filter(ids_filter)
+
+        # --- Query analysis ---
+        analyzer = QueryAnalyzer()
+        intent = analyzer.analyze(query)
+
         embedding = self._embed_query(query)
 
         # --- Vector search ---
@@ -213,29 +324,72 @@ class GraphSearchTool:
         )
 
         scores: dict[str, float] = {}
+
+        # Path search results get priority for path-like queries
+        if intent.query_type in ("path_exact", "path_partial"):
+            path_results = _path_search(
+                self._gc, query, max_results, normalized_filter, dd_version=dd_version
+            )
+            for r in path_results:
+                scores[r["id"]] = r["score"]
+
+        # Vector scores
+        vector_scores: dict[str, float] = {}
         for r in vector_results or []:
             pid = r["id"]
-            scores[pid] = round(r["score"], 4)
+            vector_scores[pid] = round(r["score"], 4)
 
         # --- Text search ---
+        search_query = query
+        if intent.is_abbreviation and intent.expanded_terms:
+            search_query = " ".join(intent.expanded_terms[:3])
+
         text_results = _text_search_imas_paths(
             self._gc,
-            query,
+            search_query,
             min(max_results * 3, 150),
             normalized_filter,
             dd_version=dd_version,
         )
+        text_scores: dict[str, float] = {}
         for r in text_results:
-            pid = r["id"]
-            text_score = round(r["score"], 4)
-            if pid in scores:
-                scores[pid] = round(max(scores[pid], text_score) + 0.05, 4)
+            text_scores[r["id"]] = round(r["score"], 4)
+
+        # Also search original query if we expanded abbreviations
+        if search_query != query:
+            orig_results = _text_search_imas_paths(
+                self._gc,
+                query,
+                min(max_results * 3, 150),
+                normalized_filter,
+                dd_version=dd_version,
+            )
+            for r in orig_results:
+                pid = r["id"]
+                s = round(r["score"], 4)
+                if pid not in text_scores or s > text_scores[pid]:
+                    text_scores[pid] = s
+
+        # Combine vector + text scores
+        all_pids = set(vector_scores) | set(text_scores)
+        for pid in all_pids:
+            vs = vector_scores.get(pid, 0.0)
+            ts = text_scores.get(pid, 0.0)
+            if vs > 0 and ts > 0:
+                combined = round(0.6 * vs + 0.4 * ts + 0.05, 4)
             else:
-                scores[pid] = text_score
+                combined = max(vs, ts)
+            # Don't overwrite path search results (they score higher)
+            if pid not in scores or combined > scores[pid]:
+                scores[pid] = combined
 
         # --- Path segment boost ---
-        # Boost paths whose segments match query words for better relevance
         query_words = [w.lower() for w in query.split() if len(w) > 2]
+        if intent.expanded_terms:
+            for term in intent.expanded_terms:
+                query_words.extend(w.lower() for w in term.split() if len(w) > 2)
+            query_words = list(set(query_words))
+
         if query_words:
             for pid in scores:
                 segments = pid.lower().split("/")
@@ -243,7 +397,17 @@ class GraphSearchTool:
                     1 for w in query_words if any(w in seg for seg in segments)
                 )
                 if match_count > 0:
-                    scores[pid] = round(scores[pid] + 0.03 * match_count, 4)
+                    scores[pid] = round(scores[pid] + 0.08 * match_count, 4)
+
+                # Exact terminal name match bonus
+                terminal = segments[-1] if segments else ""
+                if any(w == terminal for w in query_words):
+                    scores[pid] = round(scores[pid] + 0.15, 4)
+
+                # IDS name match bonus
+                ids_name = segments[0] if segments else ""
+                if any(w == ids_name for w in query_words):
+                    scores[pid] = round(scores[pid] + 0.10, 4)
 
         # Rank and limit
         sorted_ids = sorted(scores, key=lambda pid: scores[pid], reverse=True)[
@@ -1246,6 +1410,27 @@ class GraphClustersTool:
 
         clusters = self._format_clusters(results or [], include_score=True)
 
+        # Re-rank: penalize overly broad clusters, boost label relevance
+        query_words = set(query.lower().split())
+        for cluster in clusters:
+            label = (cluster.get("label") or "").lower()
+            path_count = len(cluster.get("paths", []))
+            score = cluster.get("relevance_score", 0.5)
+
+            if path_count > 50:
+                score *= 0.5
+            elif path_count > 30:
+                score *= 0.7
+
+            label_words = set(label.split())
+            overlap = query_words & label_words
+            if overlap:
+                score += 0.1 * len(overlap)
+
+            cluster["relevance_score"] = round(score, 4)
+
+        clusters.sort(key=lambda c: c.get("relevance_score", 0), reverse=True)
+
         # Enrich unlabeled clusters with member-derived context
         unlabeled_ids = [
             c["id"] for c in clusters if not c.get("label") and c.get("paths")
@@ -1505,7 +1690,7 @@ class GraphPathContextTool:
         "and identifier schemas across IDS boundaries. "
         "path (required): Exact IMAS path (e.g. 'equilibrium/time_slice/profiles_1d/psi'). "
         "relationship_types: Filter to specific types — 'cluster', 'coordinate', "
-        "'unit', 'identifier', or 'all' (default)."
+        "'unit', 'identifier', 'semantic', or 'all' (default)."
     )
     @handle_errors("get_imas_path_context")
     async def get_imas_path_context(
@@ -1521,6 +1706,41 @@ class GraphPathContextTool:
         dd_params: dict[str, Any] = {"path": path}
         dd_clause = _dd_version_clause("sibling", dd_version, dd_params)
         sections: dict[str, list[dict[str, Any]]] = {}
+
+        # Semantic similarity — vector search for related paths across IDS
+        if relationship_types in ("all", "semantic"):
+            path_data = self._gc.query(
+                """
+                MATCH (p:IMASNode {id: $path})
+                RETURN p.embedding AS embedding, p.ids AS ids
+                """,
+                path=path,
+            )
+            if path_data and path_data[0].get("embedding"):
+                source_ids = path_data[0]["ids"]
+                embedding = path_data[0]["embedding"]
+                semantic_results = self._gc.query(
+                    """
+                    CALL db.index.vector.queryNodes(
+                        'imas_node_embedding', $k, $embedding
+                    ) YIELD node AS similar, score
+                    WHERE similar.id <> $path
+                      AND similar.ids <> $source_ids
+                      AND similar.node_category = 'data'
+                      AND score > 0.5
+                    RETURN similar.id AS path, similar.ids AS ids,
+                           score, 'semantic' AS relationship_type
+                    ORDER BY score DESC
+                    LIMIT $limit
+                    """,
+                    **dd_params,
+                    embedding=embedding,
+                    source_ids=source_ids,
+                    k=min(max_results * 3, 60),
+                    limit=max_results,
+                )
+                if semantic_results:
+                    sections["semantic_similarity"] = semantic_results
 
         # Cluster siblings — paths in same cluster but different IDS
         if relationship_types in ("all", "cluster"):
@@ -1541,18 +1761,23 @@ class GraphPathContextTool:
                 sections["cluster_siblings"] = cluster_siblings
 
         # Coordinate partners — paths sharing coordinate spec
+        # Filter out generic coordinate specs (e.g., "1...N") that match everything
+        _GENERIC_COORDINATES = ["1...N", "1...3", "1...2", "1", "-1"]
         if relationship_types in ("all", "coordinate"):
             coord_partners = self._gc.query(
                 f"""
                 MATCH (p:IMASNode {{id: $path}})-[:HAS_COORDINATE]->(coord:IMASCoordinateSpec)
                       <-[:HAS_COORDINATE]-(sibling:IMASNode)
-                WHERE sibling.ids <> p.ids {dd_clause}
+                WHERE sibling.ids <> p.ids
+                  AND NOT (coord.id IN $generic_coords)
+                  {dd_clause}
                 RETURN coord.id AS coordinate, sibling.id AS path,
                        sibling.ids AS ids, sibling.data_type AS data_type
                 ORDER BY coord.id, sibling.ids
                 LIMIT $limit
                 """,
                 **dd_params,
+                generic_coords=_GENERIC_COORDINATES,
                 limit=max_results,
             )
             if coord_partners:
@@ -1976,7 +2201,7 @@ def _text_search_imas_paths(
             for r in ft_results:
                 pid = r["id"]
                 raw = r["score"] / max_score if max_score > 0 else 0.0
-                normalized.append({"id": pid, "score": max(raw, 0.7)})
+                normalized.append({"id": pid, "score": max(0.3 + 0.7 * raw, 0.0)})
             return normalized
     except Exception:
         pass
