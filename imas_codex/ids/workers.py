@@ -107,6 +107,7 @@ class MappingDiscoveryState(DiscoveryStateBase):
     persist: bool = True
     activate: bool = True
     clear: bool = False
+    skip_errors: bool = False
 
     def __post_init__(self) -> None:
         self.context_phase = PipelinePhase("context")
@@ -807,6 +808,23 @@ async def validate_worker(
                 field_batches,
                 gc=gc,
             )
+
+            # Derive error mappings (Stage 2) unless skipped
+            if not state.skip_errors:
+                from imas_codex.ids.mapping import derive_error_mappings
+
+                error_bindings = await asyncio.to_thread(
+                    derive_error_mappings,
+                    validated.bindings,
+                    gc=gc,
+                )
+                if error_bindings:
+                    validated.bindings.extend(error_bindings)
+                    wlog.info(
+                        "Derived %d error mappings for %s",
+                        len(error_bindings),
+                        ids_name,
+                    )
 
             ids_passed = len(validated.bindings)
             ids_escalations = len(validated.escalations)

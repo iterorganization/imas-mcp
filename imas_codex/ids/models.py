@@ -325,6 +325,12 @@ class ValidatedSignalMapping(BaseModel):
     confidence: float = Field(ge=0, le=1)
     disposition: MappingDisposition = MappingDisposition.MAPPED
     evidence: str = ""
+    # Staged pipeline fields
+    mapping_type: str = (
+        "direct"  # "direct" (LLM-matched) or "error_derived" (graph traversal)
+    )
+    error_type: str | None = None  # "upper", "lower", "index" — only for error_derived
+    derived_from: str | None = None  # Parent data path — only for error_derived
 
 
 class ValidatedMappingResult(BaseModel):
@@ -504,7 +510,10 @@ def persist_mapping_result(
                 r.target_units = $target_units,
                 r.cocos_label = $cocos_label,
                 r.confidence = $confidence,
-                r.evidence = $evidence
+                r.evidence = $evidence,
+                r.mapping_type = $mapping_type,
+                r.error_type = $error_type,
+                r.derived_from = $derived_from
             """,
             sg_id=fm.source_id,
             target_id=fm.target_id,
@@ -515,6 +524,9 @@ def persist_mapping_result(
             cocos_label=fm.cocos_label,
             confidence=fm.confidence,
             evidence=fm.evidence,
+            mapping_type=fm.mapping_type,
+            error_type=fm.error_type,
+            derived_from=fm.derived_from,
         )
 
     # 5. Persist escalations as MappingEvidence

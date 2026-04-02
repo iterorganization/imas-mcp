@@ -3,12 +3,13 @@
 Multi-step LLM pipeline that generates signal-level IMAS mappings
 from facility signal sources:
 
-  gather_context:     Fetch signal sources + DD context (programmatic)
-  assign_targets:     LLM assigns sources to IDS target paths
-  map_signals:        For each target, LLM generates signal mappings
-  discover_assembly:  For each target, LLM discovers assembly patterns
-  validate_mappings:  Programmatic validation (source/target existence, transforms, units)
-  persist:            Write to graph
+  gather_context:        Fetch signal sources + DD context (programmatic)
+  assign_targets:        LLM assigns sources to IDS target paths
+  map_signals:           For each target, LLM generates signal mappings
+  discover_assembly:     For each target, LLM discovers assembly patterns
+  validate_mappings:     Programmatic validation (source/target existence, transforms, units)
+  derive_error_mappings: Derive error field mappings via HAS_ERROR graph traversal (no LLM)
+  persist:               Write to graph
 
 Usage:
     from imas_codex.ids.mapping import generate_mapping
@@ -1624,6 +1625,97 @@ def validate_mappings(
 
 
 # ---------------------------------------------------------------------------
+# Stage 2: Error field derivation (zero LLM cost)
+# ---------------------------------------------------------------------------
+
+
+def derive_error_mappings(
+    data_mappings: list[ValidatedSignalMapping],
+    *,
+    gc: GraphClient | None = None,
+) -> list[ValidatedSignalMapping]:
+    """Derive error field mappings from validated data mappings via HAS_ERROR.
+
+    For each data mapping to an IMASNode, traverses HAS_ERROR relationships
+    to find associated error fields (_error_upper, _error_lower, _error_index).
+    Creates error_derived mappings inheriting transform, units, and confidence
+    from the parent data mapping.
+
+    Cost: Zero LLM tokens. One batch graph query (~10ms).
+
+    Args:
+        data_mappings: Validated data mappings from Stage 1.
+        gc: GraphClient (created if None).
+
+    Returns:
+        List of error-derived ValidatedSignalMapping instances.
+    """
+    if gc is None:
+        gc = GraphClient()
+
+    # Only process direct data mappings (not already-derived error mappings)
+    direct_mappings = [m for m in data_mappings if m.mapping_type == "direct"]
+
+    if not direct_mappings:
+        return []
+
+    # Batch query: get all error fields for all data mapping targets at once
+    target_paths = list({m.target_id for m in direct_mappings})
+
+    error_map: dict[str, list[dict]] = {}
+    # Batch in groups to avoid overly large IN clauses
+    batch_size = 500
+    for i in range(0, len(target_paths), batch_size):
+        batch = target_paths[i : i + batch_size]
+        results = gc.query(
+            """
+            MATCH (d:IMASNode)-[r:HAS_ERROR]->(e:IMASNode)
+            WHERE d.id IN $paths
+            RETURN d.id AS data_path, e.id AS error_path, r.error_type AS error_type
+            """,
+            paths=batch,
+        )
+        for row in results:
+            error_map.setdefault(row["data_path"], []).append(
+                {
+                    "error_path": row["error_path"],
+                    "error_type": row["error_type"],
+                }
+            )
+
+    # Create derived mappings
+    error_mappings: list[ValidatedSignalMapping] = []
+    for dm in direct_mappings:
+        errors = error_map.get(dm.target_id, [])
+        for err in errors:
+            error_mappings.append(
+                ValidatedSignalMapping(
+                    source_id=dm.source_id,
+                    source_property=dm.source_property,
+                    target_id=err["error_path"],
+                    transform_expression=dm.transform_expression,
+                    source_units=dm.source_units,
+                    target_units=dm.target_units,
+                    cocos_label=dm.cocos_label,
+                    confidence=dm.confidence,
+                    disposition=dm.disposition,
+                    evidence=f"Derived from data mapping to {dm.target_id}",
+                    mapping_type="error_derived",
+                    error_type=err["error_type"],
+                    derived_from=dm.target_id,
+                )
+            )
+
+    logger.info(
+        "Derived %d error mappings from %d data mappings (%d targets with errors)",
+        len(error_mappings),
+        len(direct_mappings),
+        len(error_map),
+    )
+    return error_mappings
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -1762,6 +1854,17 @@ def generate_mapping(
         field_batches,
         gc=gc,
     )
+
+    # Step 5: Derive error field mappings (no LLM call)
+    error_bindings = derive_error_mappings(validated.bindings, gc=gc)
+    if error_bindings:
+        validated.bindings.extend(error_bindings)
+        logger.info(
+            "Derived %d error mappings for %s/%s",
+            len(error_bindings),
+            facility,
+            ids_name,
+        )
 
     # Persist
     mapping_id = f"{facility}:{ids_name}"
