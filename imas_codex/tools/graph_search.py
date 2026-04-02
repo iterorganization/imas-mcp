@@ -405,6 +405,20 @@ class GraphSearchTool:
                     if any(w == ids_name for w in query_words):
                         scores[pid] = round(scores[pid] + 0.10, 4)
 
+            # --- Abbreviation exact-match boost ---
+            # When the query is a known physics abbreviation (e.g. "ip",
+            # "q", "b0"), the expanded search ("plasma current ip") pulls
+            # in many semantically similar but wrong paths.  Give a strong
+            # extra boost to paths whose terminal segment exactly matches a
+            # word from the *original* (pre-expansion) query so that
+            # .../ip ranks above .../bootstrap_current, etc.
+            if intent.is_abbreviation:
+                _orig_terms = {w.lower() for w in intent.original_query.split()}
+                for pid in scores:
+                    terminal = pid.rsplit("/", 1)[-1].lower()
+                    if terminal in _orig_terms:
+                        scores[pid] = round(scores[pid] + 0.35, 4)
+
             # Rank and limit
             sorted_ids = sorted(scores, key=lambda pid: scores[pid], reverse=True)[
                 :max_results
@@ -2092,10 +2106,6 @@ class GraphExplainTool:
     def tool_name(self) -> str:
         return "explain_concept"
 
-    def _embed_query(self, text: str) -> list[float]:
-        encoder = _get_encoder()
-        return encoder.encode(text)
-
     @measure_performance(include_metrics=True, slow_threshold=1.0)
     @handle_errors(fallback="explain_error")
     @mcp_tool(
@@ -2109,29 +2119,30 @@ class GraphExplainTool:
         detail_level: str = "intermediate",
         ctx: Context | None = None,
     ) -> dict[str, Any]:
-        """Explain a concept using graph-backed data."""
+        """Explain a concept using graph-backed data (pure Cypher, no embeddings)."""
         sections: list[dict[str, Any]] = []
         concept_lower = concept.lower().strip()
 
-        # 1. Search semantic clusters for the concept
-        embedding = self._embed_query(concept)
+        # 1. Search semantic clusters by text matching on label/description
         cluster_results = self._gc.query(
             """
-            CALL db.index.vector.queryNodes(
-                'cluster_embedding', 8, $embedding
-            )
-            YIELD node AS cluster, score
-            WHERE score > 0.4
+            MATCH (cluster:IMASSemanticCluster)
+            WHERE toLower(cluster.label) CONTAINS $concept
+               OR toLower(cluster.description) CONTAINS $concept
             OPTIONAL MATCH (member:IMASNode)-[:IN_CLUSTER]->(cluster)
-            WITH cluster, score, collect(DISTINCT member.id)[..15] AS paths
+            WITH cluster,
+                 CASE WHEN toLower(cluster.label) CONTAINS $concept
+                      THEN 0 ELSE 1 END AS rank,
+                 collect(DISTINCT member.id)[..15] AS paths
             RETURN cluster.id AS id, cluster.label AS label,
                    cluster.description AS description,
                    cluster.scope AS scope,
                    cluster.ids_names AS ids_names,
-                   paths, score
-            ORDER BY score DESC
+                   paths
+            ORDER BY rank, cluster.label
+            LIMIT 8
             """,
-            embedding=embedding,
+            concept=concept_lower,
         )
         if cluster_results:
             sections.append(
@@ -2147,7 +2158,6 @@ class GraphExplainTool:
                             "example_paths": r["paths"][:5]
                             if detail_level == "basic"
                             else r["paths"][:10],
-                            "score": round(r["score"], 3),
                         }
                         for r in cluster_results[:5]
                     ],
@@ -2275,17 +2285,17 @@ class GraphExplainTool:
         # 5. Search path documentation for concept mentions
         doc_results = self._gc.query(
             """
-            CALL db.index.vector.queryNodes(
-                'imas_node_embedding', 5, $embedding
-            )
-            YIELD node AS p, score
-            WHERE score > 0.5 AND p.node_category = 'data'
+            MATCH (p:IMASNode)
+            WHERE p.node_category = 'data'
+              AND (toLower(p.documentation) CONTAINS $concept
+                   OR toLower(p.id) CONTAINS $concept)
             OPTIONAL MATCH (p)-[:HAS_UNIT]->(u:Unit)
             RETURN p.id AS path, p.documentation AS documentation,
-                   p.data_type AS data_type, u.symbol AS units, score
-            ORDER BY score DESC
+                   p.data_type AS data_type, u.symbol AS units
+            ORDER BY p.id
+            LIMIT 5
             """,
-            embedding=embedding,
+            concept=concept_lower,
         )
         if doc_results:
             sections.append(
