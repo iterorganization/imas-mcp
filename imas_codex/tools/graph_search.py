@@ -303,41 +303,143 @@ def warmup_encoder():
         logger.warning(f"Encoder warmup failed (will retry on first query): {e}")
 
 
+def resolve_dd_version(gc: GraphClient, version_input: str | int | None) -> str | None:
+    """Resolve flexible dd_version input to a concrete semver string.
+
+    Accepts:
+      - None → None (no version filter)
+      - ``"latest"`` → the DDVersion with ``is_current = true``
+      - ``4`` or ``"4"`` → latest version in major 4 (e.g. ``"4.1.0"``)
+      - ``"3.40"`` → latest version in 3.40.x (e.g. ``"3.40.1"``)
+      - ``"3.42.2"`` → exact match (validated against graph)
+
+    Raises ValueError if the version cannot be resolved.
+    """
+    if version_input is None:
+        return None
+
+    v = str(version_input).strip()
+    if v.lower() == "latest":
+        rows = gc.query("MATCH (v:DDVersion {is_current: true}) RETURN v.id AS id")
+        if not rows:
+            msg = "No DDVersion with is_current=true found in graph"
+            raise ValueError(msg)
+        return rows[0]["id"]
+
+    parts = v.split(".")
+    if len(parts) == 1:
+        # Major only: "3" or "4" → latest in that major
+        try:
+            major = int(parts[0])
+        except ValueError:
+            msg = f"Invalid dd_version: {version_input!r}"
+            raise ValueError(msg) from None
+        rows = gc.query(
+            """
+            MATCH (v:DDVersion)
+            WHERE toInteger(split(v.id, '.')[0]) = $major
+            RETURN v.id AS id
+            ORDER BY toInteger(split(v.id, '.')[1]) DESC,
+                     toInteger(split(v.id, '.')[2]) DESC
+            LIMIT 1
+            """,
+            major=major,
+        )
+        if not rows:
+            msg = f"No DDVersion found for major version {major}"
+            raise ValueError(msg)
+        return rows[0]["id"]
+
+    if len(parts) == 2:
+        # Major.minor: "3.40" → latest in 3.40.x
+        try:
+            major, minor = int(parts[0]), int(parts[1])
+        except ValueError:
+            msg = f"Invalid dd_version: {version_input!r}"
+            raise ValueError(msg) from None
+        rows = gc.query(
+            """
+            MATCH (v:DDVersion)
+            WHERE toInteger(split(v.id, '.')[0]) = $major
+              AND toInteger(split(v.id, '.')[1]) = $minor
+            RETURN v.id AS id
+            ORDER BY toInteger(split(v.id, '.')[2]) DESC
+            LIMIT 1
+            """,
+            major=major,
+            minor=minor,
+        )
+        if not rows:
+            msg = f"No DDVersion found for {major}.{minor}.x"
+            raise ValueError(msg)
+        return rows[0]["id"]
+
+    if len(parts) == 3:
+        # Full semver: validate it exists
+        rows = gc.query(
+            "MATCH (v:DDVersion {id: $ver}) RETURN v.id AS id",
+            ver=v,
+        )
+        if not rows:
+            msg = f"DDVersion {v!r} not found in graph"
+            raise ValueError(msg)
+        return rows[0]["id"]
+
+    msg = f"Invalid dd_version format: {version_input!r} (expected N, N.N, N.N.N, or 'latest')"
+    raise ValueError(msg)
+
+
 def _dd_version_clause(
     alias: str = "p",
-    dd_version: int | None = None,
+    dd_version: str | None = None,
     params: dict[str, Any] | None = None,
 ) -> str:
-    """Return a Cypher WHERE fragment for DD major version filtering.
+    """Return a Cypher WHERE fragment for DD version filtering.
 
-    When dd_version is None, returns empty string (no filter).
-    Otherwise generates a clause ensuring the path was introduced in
-    DD version N or earlier, and not deprecated in version N or earlier.
-    This returns all paths **active** in the given major version — not
-    only paths newly introduced in that version.
+    ``dd_version`` must be a resolved semver string (e.g. ``"3.42.0"``)
+    or None.  Use :func:`resolve_dd_version` to convert user input first.
 
-    The DDVersion.id is a semver string like "3.42.2" or "4.0.0".
-    Major version is extracted via ``toInteger(split(id, '.')[0])``.
+    A path is valid at version V if it was introduced in a version ≤ V
+    and not deprecated in any version ≤ V.  Comparison is numeric on each
+    semver component (major, minor, patch).
 
-    If *params* dict is provided, adds ``dd_major_version`` to it.
+    If *params* dict is provided, adds ``dd_ver_major``, ``dd_ver_minor``,
+    ``dd_ver_patch`` to it.
     """
     if dd_version is None:
         return ""
+
+    parts = dd_version.split(".")
+    major, minor, patch = int(parts[0]), int(parts[1]), int(parts[2])
     if params is not None:
-        params["dd_major_version"] = dd_version
+        params["dd_ver_major"] = major
+        params["dd_ver_minor"] = minor
+        params["dd_ver_patch"] = patch
+
+    def _semver_lte(ver_alias: str) -> str:
+        """Build a Cypher expression: version(ver_alias) <= (major, minor, patch)."""
+        return (
+            f"toInteger(split({ver_alias}.id, '.')[0]) < $dd_ver_major "
+            f"OR (toInteger(split({ver_alias}.id, '.')[0]) = $dd_ver_major "
+            f"    AND toInteger(split({ver_alias}.id, '.')[1]) < $dd_ver_minor) "
+            f"OR (toInteger(split({ver_alias}.id, '.')[0]) = $dd_ver_major "
+            f"    AND toInteger(split({ver_alias}.id, '.')[1]) = $dd_ver_minor "
+            f"    AND toInteger(split({ver_alias}.id, '.')[2]) <= $dd_ver_patch)"
+        )
+
     return (
         f"AND EXISTS {{ "
         f"  MATCH ({alias})-[:INTRODUCED_IN]->(iv:DDVersion) "
-        f"  WHERE toInteger(split(iv.id, '.')[0]) <= $dd_major_version "
+        f"  WHERE {_semver_lte('iv')} "
         f"}} "
         f"AND NOT EXISTS {{ "
         f"  MATCH ({alias})-[:DEPRECATED_IN]->(dv:DDVersion) "
-        f"  WHERE toInteger(split(dv.id, '.')[0]) <= $dd_major_version "
+        f"  WHERE {_semver_lte('dv')} "
         f"}}"
     )
 
 
-def _deprecated_filter(alias: str, dd_version: int | None) -> str:
+def _deprecated_filter(alias: str, dd_version: str | None) -> str:
     """Return the correct deprecated-path filter for the given version scope.
 
     When dd_version is None (default, current version): hard-exclude all
@@ -370,7 +472,7 @@ class GraphSearchTool:
         "query (required): Natural language description or physics term (e.g., 'electron temperature', 'magnetic field boundary', 'plasma current'). "
         "Common abbreviations supported: Te (electron temp), Ti (ion temp), ne (electron density), Ip (plasma current). "
         "ids_filter: Limit to specific IDS (space/comma-delimited: 'equilibrium magnetics' or 'equilibrium, core_profiles'). "
-        "dd_version: Filter by DD major version (e.g., 3 or 4). None returns all versions. "
+        "dd_version: Filter by DD version. Accepts 'latest', N (major), N.N (major.minor), or N.N.N (exact). None returns current non-deprecated paths. "
         "facility: Optional facility for cross-references (e.g., 'tcv'). Returns signal, wiki, and code references. "
         "include_version_context: Include DD version change history for each result path. "
         "search_mode: 'auto' (default), 'semantic', 'lexical', or 'hybrid'. "
@@ -383,12 +485,13 @@ class GraphSearchTool:
         max_results: int = 50,
         search_mode: str | SearchMode = "auto",
         response_profile: str = "standard",
-        dd_version: int | None = None,
+        dd_version: str | int | None = None,
         facility: str | None = None,
         include_version_context: bool = False,
         ctx: Context | None = None,
     ) -> SearchPathsResult:
         """Search IMAS paths using hybrid vector + text search."""
+        dd_version = resolve_dd_version(self._gc, dd_version)
         is_valid, error_message = validate_query(query, "search_imas_paths")
         if not is_valid:
             return SearchPathsResult(
@@ -646,16 +749,17 @@ class GraphPathTool:
         "Validate exact IMAS paths and check their existence. "
         "paths (required): One or more exact IMAS paths (e.g., 'equilibrium/time_slice/profiles_1d/psi'). "
         "ids: Optional IDS prefix to prepend (e.g., ids='equilibrium' with paths='time_slice/profiles_1d/psi'). "
-        "dd_version: Filter by DD major version (e.g., 3 or 4). None checks all versions."
+        "dd_version: Filter by DD version. Accepts 'latest', N, N.N, or N.N.N. None checks current."
     )
     async def check_imas_paths(
         self,
         paths: str | list[str],
         ids: str | None = None,
-        dd_version: int | None = None,
+        dd_version: str | int | None = None,
         ctx: Context | None = None,
     ) -> CheckPathsResult:
         """Validate IMAS paths against graph."""
+        dd_version = resolve_dd_version(self._gc, dd_version)
         path_list = _normalize_paths(paths)
         if ids:
             path_list = [
@@ -740,18 +844,19 @@ class GraphPathTool:
         "Retrieve detailed IMAS path data including documentation, units, coordinates, and cluster membership. "
         "paths (required): One or more exact IMAS paths. "
         "ids: Optional IDS prefix to prepend. "
-        "dd_version: Filter by DD major version (e.g., 3 or 4). None returns all versions. "
+        "dd_version: Filter by DD version. Accepts 'latest', N (major), N.N (major.minor), or N.N.N (exact). None returns current non-deprecated paths. "
         "include_version_history: Include notable version changes (sign_convention, units, etc.)."
     )
     async def fetch_imas_paths(
         self,
         paths: str | list[str],
         ids: str | None = None,
-        dd_version: int | None = None,
+        dd_version: str | int | None = None,
         include_version_history: bool = False,
         ctx: Context | None = None,
     ) -> FetchPathsResult:
         """Fetch detailed path information from graph."""
+        dd_version = resolve_dd_version(self._gc, dd_version)
         path_list = _normalize_paths(paths)
         if ids:
             path_list = [
@@ -910,15 +1015,16 @@ class GraphPathTool:
     @mcp_tool(
         "Fetch error fields for a data path via HAS_ERROR relationships. "
         "path (required): Exact IMAS data path. "
-        "dd_version: Filter by DD major version (e.g., 3 or 4). None returns all versions."
+        "dd_version: Filter by DD version. Accepts 'latest', N (major), N.N (major.minor), or N.N.N (exact). None returns current non-deprecated paths."
     )
     async def fetch_error_fields(
         self,
         path: str,
-        dd_version: int | None = None,
+        dd_version: str | int | None = None,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
         """Fetch HAS_ERROR-linked fields for an IMAS data path."""
+        dd_version = resolve_dd_version(self._gc, dd_version)
         clean_path = path.strip()
         dd_params: dict[str, Any] = {"path": clean_path}
         dd_clause = _dd_version_clause("d", dd_version, dd_params)
@@ -977,7 +1083,7 @@ class GraphListTool:
         "format: Output format - 'yaml' (default), 'flat', 'json', or 'tree'. "
         "leaf_only: If true, return only leaf nodes (data endpoints, not structures). "
         "max_paths: Maximum number of paths to return per query. "
-        "dd_version: Filter by DD major version (e.g., 3 or 4). None returns all versions. "
+        "dd_version: Filter by DD version. Accepts 'latest', N (major), N.N (major.minor), or N.N.N (exact). None returns current non-deprecated paths. "
         "response_profile: 'minimal' (default, path IDs only) or 'standard' (includes name, data_type, node_type, documentation, units)."
     )
     async def list_imas_paths(
@@ -987,11 +1093,12 @@ class GraphListTool:
         leaf_only: bool = False,
         include_ids_prefix: bool = True,
         max_paths: int | None = None,
-        dd_version: int | None = None,
+        dd_version: str | int | None = None,
         response_profile: str = "minimal",
         ctx: Context | None = None,
     ) -> ListPathsResult:
         """List paths from graph."""
+        dd_version = resolve_dd_version(self._gc, dd_version)
         queries = paths.strip().split()
         results = []
 
@@ -1142,15 +1249,16 @@ class GraphOverviewTool:
         "Get an overview of available IMAS Interface Data Structures (IDS). "
         "Returns IDS names, descriptions, path counts, and physics domains. "
         "query: Optional filter to narrow results (e.g., 'magnetics' or 'plasma equilibrium'). "
-        "dd_version: Filter by DD major version (e.g., 3 or 4). None returns all versions."
+        "dd_version: Filter by DD version. Accepts 'latest', N (major), N.N (major.minor), or N.N.N (exact). None returns current non-deprecated paths."
     )
     async def get_imas_overview(
         self,
         query: str | None = None,
-        dd_version: int | None = None,
+        dd_version: str | int | None = None,
         ctx: Context | None = None,
     ) -> GetOverviewResult:
         """Get overview from graph."""
+        dd_version = resolve_dd_version(self._gc, dd_version)
         import importlib.metadata
 
         dd_params: dict[str, Any] = {}
@@ -1292,7 +1400,7 @@ class GraphClustersTool:
         "scope: Filter by cluster scope - 'global', 'domain', or 'ids'. "
         "ids_filter: Limit to clusters containing paths from specific IDS. "
         "section_only: If true, only return clusters containing structural sections. "
-        "dd_version: Filter by DD major version (e.g., 3 or 4). None returns all versions."
+        "dd_version: Filter by DD version. Accepts 'latest', N (major), N.N (major.minor), or N.N.N (exact). None returns current non-deprecated paths."
     )
     async def search_imas_clusters(
         self,
@@ -1300,10 +1408,11 @@ class GraphClustersTool:
         scope: Literal["global", "domain", "ids"] | None = None,
         ids_filter: str | list[str] | None = None,
         section_only: bool = False,
-        dd_version: int | None = None,
+        dd_version: str | int | None = None,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
         """Search clusters using graph vector indexes."""
+        dd_version = resolve_dd_version(self._gc, dd_version)
         normalized_filter = normalize_ids_filter(ids_filter)
 
         # IDS listing mode: no query, ids_filter provided
@@ -1336,7 +1445,7 @@ class GraphClustersTool:
         scope: str | None,
         *,
         section_only: bool = False,
-        dd_version: int | None = None,
+        dd_version: str | int | None = None,
     ) -> dict[str, Any]:
         """List all clusters for specific IDS without a search query."""
         filter_list = ids_filter if isinstance(ids_filter, list) else [ids_filter]
@@ -1379,7 +1488,7 @@ class GraphClustersTool:
         }
 
     def _search_by_path(
-        self, path: str, scope: str | None, *, dd_version: int | None = None
+        self, path: str, scope: str | None, *, dd_version: str | int | None = None
     ) -> dict[str, Any]:
         """Find clusters containing a specific path."""
         scope_filter = "AND c.scope = $scope" if scope else ""
@@ -1419,7 +1528,7 @@ class GraphClustersTool:
         scope: str | None,
         ids_filter: str | list[str] | None,
         *,
-        dd_version: int | None = None,
+        dd_version: str | int | None = None,
     ) -> dict[str, Any]:
         """Semantic search over cluster embeddings."""
         embedding = self._embed_query(query)
@@ -1552,12 +1661,12 @@ class GraphIdentifiersTool:
         "These define valid values for typed fields like coordinate systems, "
         "probe types, and grid types. "
         "query: Optional filter (e.g., 'coordinate' or 'magnetics'). "
-        "dd_version: Filter by DD major version (e.g., 3 or 4). None returns all versions."
+        "dd_version: Filter by DD version. Accepts 'latest', N (major), N.N (major.minor), or N.N.N (exact). None returns current non-deprecated paths."
     )
     async def get_imas_identifiers(
         self,
         query: str | None = None,
-        dd_version: int | None = None,
+        dd_version: str | int | None = None,
         ctx: Context | None = None,
     ) -> GetIdentifiersResult:
         """Get identifier schemas from graph.
@@ -1568,6 +1677,7 @@ class GraphIdentifiersTool:
 
         Results from both strategies are merged (vector matches first).
         """
+        dd_version = resolve_dd_version(self._gc, dd_version)
         if query:
             return self._search_identifiers(query)
         return self._list_all_identifiers()
@@ -1728,10 +1838,11 @@ class GraphPathContextTool:
         path: str,
         relationship_types: str = "all",
         max_results: int = 20,
-        dd_version: int | None = None,
+        dd_version: str | int | None = None,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
         """Discover cross-IDS relationships for an IMAS path."""
+        dd_version = resolve_dd_version(self._gc, dd_version)
         dd_params: dict[str, Any] = {"path": path}
         dd_clause = _dd_version_clause("sibling", dd_version, dd_params)
         sections: dict[str, list[dict[str, Any]]] = {}
@@ -1833,10 +1944,11 @@ class GraphStructureTool:
     async def analyze_imas_structure(
         self,
         ids_name: str,
-        dd_version: int | None = None,
+        dd_version: str | int | None = None,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
         """Analyze the hierarchical structure of an IMAS IDS."""
+        dd_version = resolve_dd_version(self._gc, dd_version)
         dd_params: dict[str, Any] = {"ids_name": ids_name}
         dd_clause = _dd_version_clause("p", dd_version, dd_params)
 
@@ -1929,15 +2041,23 @@ class GraphStructureTool:
 
         # When version-filtered, add deprecated/renamed context for this IDS
         if dd_version is not None:
+            parts = dd_version.split(".")
             dep_params: dict[str, Any] = {
                 "ids_name": ids_name,
-                "dd_major_version": dd_version,
+                "dd_ver_major": int(parts[0]),
+                "dd_ver_minor": int(parts[1]),
+                "dd_ver_patch": int(parts[2]),
             }
             deprecated = self._gc.query(
                 """
                 MATCH (p:IMASNode)-[:DEPRECATED_IN]->(dv:DDVersion)
                 WHERE p.ids = $ids_name
-                  AND toInteger(split(dv.id, '.')[0]) <= $dd_major_version
+                  AND (toInteger(split(dv.id, '.')[0]) < $dd_ver_major
+                       OR (toInteger(split(dv.id, '.')[0]) = $dd_ver_major
+                           AND toInteger(split(dv.id, '.')[1]) < $dd_ver_minor)
+                       OR (toInteger(split(dv.id, '.')[0]) = $dd_ver_major
+                           AND toInteger(split(dv.id, '.')[1]) = $dd_ver_minor
+                           AND toInteger(split(dv.id, '.')[2]) <= $dd_ver_patch))
                 RETURN count(p) AS count
                 """,
                 **dep_params,
@@ -1972,10 +2092,11 @@ class GraphStructureTool:
         self,
         ids_name: str,
         leaf_only: bool = False,
-        dd_version: int | None = None,
+        dd_version: str | int | None = None,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
         """Export full IDS structure with documentation, units, and types."""
+        dd_version = resolve_dd_version(self._gc, dd_version)
         dd_params: dict[str, Any] = {"ids_name": ids_name}
         dd_clause = _dd_version_clause("p", dd_version, dd_params)
 
@@ -2020,10 +2141,11 @@ class GraphStructureTool:
         self,
         domain: str,
         ids_filter: str | None = None,
-        dd_version: int | None = None,
+        dd_version: str | int | None = None,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
         """Export all IMAS paths in a physics domain, grouped by IDS."""
+        dd_version = resolve_dd_version(self._gc, dd_version)
         resolved_domains, resolution = _resolve_physics_domain(self._gc, domain)
 
         if not resolved_domains:
@@ -2257,7 +2379,7 @@ def _text_search_imas_paths(
     limit: int,
     ids_filter: str | list[str] | None,
     *,
-    dd_version: int | None = None,
+    dd_version: str | int | None = None,
 ) -> list[dict[str, Any]]:
     """Text-based search on IMAS paths by query string.
 

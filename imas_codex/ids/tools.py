@@ -53,7 +53,7 @@ def fetch_imas_subtree(
     gc: GraphClient | None = None,
     leaf_only: bool = False,
     max_paths: int | None = None,
-    dd_version: int | None = None,
+    dd_version: str | int | None = None,
 ) -> list[dict[str, Any]]:
     """Return IDS tree structure with full metadata.
 
@@ -86,7 +86,7 @@ def fetch_imas_fields(
     paths: list[str],
     *,
     gc: GraphClient | None = None,
-    dd_version: int | None = None,
+    dd_version: str | int | None = None,
 ) -> list[dict[str, Any]]:
     """Return detailed field info for specific IMAS paths.
 
@@ -116,7 +116,7 @@ def search_imas_semantic(
     *,
     gc: GraphClient | None = None,
     k: int = 20,
-    dd_version: int | None = None,
+    dd_version: str | int | None = None,
 ) -> list[dict[str, Any]]:
     """Semantic search for IMAS paths using vector index.
 
@@ -345,7 +345,7 @@ def query_ids_physics_domains(
     ids_name: str,
     *,
     gc: GraphClient | None = None,
-    dd_version: int | None = None,
+    dd_version: str | int | None = None,
 ) -> list[str]:
     """Return distinct physics domains for an IDS from IMASNode paths.
 
@@ -379,7 +379,7 @@ def discover_mappable_ids(
     gc: GraphClient | None = None,
     domains: list[str] | None = None,
     ids_filter: list[str] | None = None,
-    dd_version: int | None = None,
+    dd_version: str | int | None = None,
 ) -> dict[str, Any]:
     """Discover IDS targets achievable from available signal sources.
 
@@ -773,7 +773,7 @@ def compute_semantic_matches(
     k_per_source: int = 5,
     include_wiki: bool = True,
     include_code: bool = True,
-    dd_version: int | None = None,
+    dd_version: str | int | None = None,
     on_progress: Callable[[str], None] | None = None,
     max_workers: int = 8,
     precomputed_embeddings: Any | None = None,

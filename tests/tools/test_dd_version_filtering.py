@@ -1,16 +1,24 @@
 """Tests for DD version validity filtering, cluster scope query construction,
 and overview/export tools.
 
-Validates that _dd_version_clause uses major-version comparison:
-- Uses toInteger(split(id, '.')[0]) <= $dd_major_version on INTRODUCED_IN/DEPRECATED_IN
-- A path is valid in DD major N if introduced in any version with major <= N
-  and not deprecated in any version with major <= N.
-- Paths introduced in DD3 and never deprecated are valid in both DD3 and DD4.
-- Paths deprecated in DD4 are valid in DD3 but not DD4.
-- Paths deprecated in DD3 are invalid in both DD3 and DD4.
+Validates version filtering at full semver granularity:
+- resolve_dd_version accepts N, N.N, N.N.N, or 'latest' and resolves to concrete semver
+- _dd_version_clause uses semver comparison (major.minor.patch) on INTRODUCED_IN/DEPRECATED_IN
+- _deprecated_filter hard-excludes deprecated paths only when no version is specified
+- A path is valid at version V if introduced at or before V and not deprecated at or before V
+- Paths deprecated in 4.0.0 are valid at 3.42.2 but not at 4.0.0
+- Paths deprecated in 3.40.0 are invalid at 3.40.0, 3.42.2, and 4.1.0
 
-Also validates that cluster scope queries produce valid Cypher, and that
-overview/export tools use correct query patterns.
+Also validates cluster scope queries, overview/export tools, and version-scoped
+search with both BM25/CONTAINS (text) and vector search.
+
+Skipped tests (6):
+- test_search_enrichment_query_includes_has_error: HAS_ERROR enrichment not yet in search_imas_paths
+- test_fetch_enrichment_query_includes_has_error: HAS_ERROR enrichment not yet in fetch_imas_paths
+- test_search_enrichment_fetches_cluster_labels: IN_CLUSTER enrichment not yet in search_imas_paths
+- test_vector_search_dd3_includes_deprecated_in_dd4: requires live remote embed server (Qwen3, 256-dim)
+- test_vector_search_dd4_excludes_deprecated_in_dd4: requires live remote embed server
+- test_vector_search_no_version_excludes_deprecated: requires live remote embed server
 """
 
 from unittest.mock import MagicMock, call, patch
@@ -25,6 +33,7 @@ from imas_codex.tools.graph_search import (
     GraphStructureTool,
     _dd_version_clause,
     _deprecated_filter,
+    resolve_dd_version,
 )
 
 # ============================================================================
@@ -44,36 +53,49 @@ class TestDDVersionClause:
         assert params == {}
 
     def test_returns_and_clause(self):
-        clause = _dd_version_clause("p", dd_version=4)
+        clause = _dd_version_clause("p", dd_version="4.1.0")
         assert clause.startswith("AND EXISTS")
 
-    def test_sets_dd_version_param(self):
+    def test_sets_semver_params(self):
         params = {}
-        _dd_version_clause("p", dd_version=4, params=params)
-        assert params["dd_major_version"] == 4
+        _dd_version_clause("p", dd_version="4.1.0", params=params)
+        assert params["dd_ver_major"] == 4
+        assert params["dd_ver_minor"] == 1
+        assert params["dd_ver_patch"] == 0
 
     def test_uses_correct_alias(self):
-        clause = _dd_version_clause("node", dd_version=3)
+        clause = _dd_version_clause("node", dd_version="3.42.0")
         assert "(node)-[:INTRODUCED_IN]->" in clause
         assert "(node)-[:DEPRECATED_IN]->" in clause
 
-    def test_uses_major_version_comparison(self):
-        """The clause compares the major version integer, not a string prefix."""
-        clause = _dd_version_clause("p", dd_version=4)
+    def test_uses_semver_comparison(self):
+        """The clause compares all three semver components numerically."""
+        clause = _dd_version_clause("p", dd_version="4.1.0")
         assert "toInteger(split(" in clause
-        assert "$dd_major_version" in clause
+        assert "$dd_ver_major" in clause
+        assert "$dd_ver_minor" in clause
+        assert "$dd_ver_patch" in clause
 
     def test_checks_introduced_exists(self):
-        """Must check that INTRODUCED_IN relationship exists with major <= N."""
-        clause = _dd_version_clause("p", dd_version=4)
+        """Must check that INTRODUCED_IN relationship exists with version ≤ N.N.N."""
+        clause = _dd_version_clause("p", dd_version="4.0.0")
         assert "INTRODUCED_IN" in clause
-        assert "<= $dd_major_version" in clause
+        assert "<= $dd_ver_patch" in clause
 
     def test_checks_not_deprecated_lte(self):
-        """Must exclude paths deprecated in any version with major <= N."""
-        clause = _dd_version_clause("p", dd_version=4)
+        """Must exclude paths deprecated in any version ≤ N.N.N."""
+        clause = _dd_version_clause("p", dd_version="4.0.0")
         assert "NOT EXISTS" in clause
         assert "DEPRECATED_IN" in clause
+
+    def test_minor_version_discrimination(self):
+        """3.39.0 and 3.40.0 should produce different filter params."""
+        params_39: dict = {}
+        params_40: dict = {}
+        _dd_version_clause("p", dd_version="3.39.0", params=params_39)
+        _dd_version_clause("p", dd_version="3.40.0", params=params_40)
+        assert params_39["dd_ver_minor"] == 39
+        assert params_40["dd_ver_minor"] == 40
 
 
 # ============================================================================
@@ -93,26 +115,24 @@ class TestDeprecatedFilter:
 
     def test_version_specified_returns_empty(self):
         """Version specified → no hard filter (dd_version_clause handles it)."""
-        result = _deprecated_filter("p", dd_version=3)
+        result = _deprecated_filter("p", dd_version="3.42.0")
         assert result == ""
 
     def test_version_specified_returns_empty_dd4(self):
-        result = _deprecated_filter("p", dd_version=4)
+        result = _deprecated_filter("p", dd_version="4.0.0")
         assert result == ""
 
     def test_uses_correct_alias(self):
         result = _deprecated_filter("node", dd_version=None)
         assert "(node)-[:DEPRECATED_IN]->" in result
 
-    def test_combined_with_dd_version_clause_dd3(self):
-        """When dd_version=3, only _dd_version_clause should filter deprecation."""
-        dep = _deprecated_filter("p", dd_version=3)
-        clause = _dd_version_clause("p", dd_version=3)
-        # No blanket filter
+    def test_combined_with_dd_version_clause(self):
+        """When dd_version specified, only _dd_version_clause should filter deprecation."""
+        dep = _deprecated_filter("p", dd_version="3.42.0")
+        clause = _dd_version_clause("p", dd_version="3.42.0")
         assert dep == ""
-        # But version clause has correct DEPRECATED_IN check
         assert "DEPRECATED_IN" in clause
-        assert "<= $dd_major_version" in clause
+        assert "$dd_ver_patch" in clause
 
     def test_combined_with_dd_version_clause_none(self):
         """When dd_version=None, blanket filter applied, no version clause."""
@@ -120,6 +140,118 @@ class TestDeprecatedFilter:
         clause = _dd_version_clause("p", dd_version=None)
         assert dep != ""
         assert clause == ""
+
+
+# ============================================================================
+# resolve_dd_version unit tests
+# ============================================================================
+
+
+def _graph_available() -> bool:
+    """Check if Neo4j is reachable."""
+    try:
+        from imas_codex.graph.client import GraphClient
+
+        with GraphClient() as gc:
+            gc.query("RETURN 1")
+        return True
+    except Exception:
+        return False
+
+
+requires_graph = pytest.mark.skipif(
+    not _graph_available(), reason="Neo4j not available"
+)
+
+
+@requires_graph
+class TestResolveDDVersion:
+    """Test resolve_dd_version against live graph."""
+
+    def test_none_returns_none(self):
+        from imas_codex.graph.client import GraphClient
+
+        with GraphClient() as gc:
+            assert resolve_dd_version(gc, None) is None
+
+    def test_latest_returns_current(self):
+        from imas_codex.graph.client import GraphClient
+
+        with GraphClient() as gc:
+            result = resolve_dd_version(gc, "latest")
+            assert result == "4.1.0"  # current in graph
+
+    def test_major_only_resolves_to_latest_in_major(self):
+        from imas_codex.graph.client import GraphClient
+
+        with GraphClient() as gc:
+            result = resolve_dd_version(gc, 3)
+            assert result == "3.42.2"  # latest 3.x.x
+
+    def test_major_only_string(self):
+        from imas_codex.graph.client import GraphClient
+
+        with GraphClient() as gc:
+            result = resolve_dd_version(gc, "4")
+            assert result in ("4.1.0", "4.1.1")  # latest 4.x.x
+
+    def test_major_minor_resolves(self):
+        from imas_codex.graph.client import GraphClient
+
+        with GraphClient() as gc:
+            result = resolve_dd_version(gc, "3.42")
+            assert result == "3.42.2"  # latest 3.42.x
+
+    def test_major_minor_single_version(self):
+        from imas_codex.graph.client import GraphClient
+
+        with GraphClient() as gc:
+            result = resolve_dd_version(gc, "4.0")
+            assert result == "4.0.0"
+
+    def test_exact_semver(self):
+        from imas_codex.graph.client import GraphClient
+
+        with GraphClient() as gc:
+            result = resolve_dd_version(gc, "3.40.1")
+            assert result == "3.40.1"
+
+    def test_exact_semver_earliest(self):
+        from imas_codex.graph.client import GraphClient
+
+        with GraphClient() as gc:
+            result = resolve_dd_version(gc, "3.22.0")
+            assert result == "3.22.0"
+
+    def test_invalid_version_raises(self):
+        from imas_codex.graph.client import GraphClient
+
+        with GraphClient() as gc:
+            with pytest.raises(ValueError, match="not found"):
+                resolve_dd_version(gc, "99.99.99")
+
+    def test_invalid_major_raises(self):
+        from imas_codex.graph.client import GraphClient
+
+        with GraphClient() as gc:
+            with pytest.raises(ValueError, match="No DDVersion found"):
+                resolve_dd_version(gc, 99)
+
+    def test_invalid_format_raises(self):
+        from imas_codex.graph.client import GraphClient
+
+        with GraphClient() as gc:
+            with pytest.raises(ValueError, match="Invalid dd_version"):
+                resolve_dd_version(gc, "abc")
+
+    def test_int_4_resolves(self):
+        from imas_codex.graph.client import GraphClient
+
+        with GraphClient() as gc:
+            result = resolve_dd_version(gc, 4)
+            parts = result.split(".")
+            assert parts[0] == "4"
+            assert len(parts) == 3
 
 
 # ============================================================================
@@ -170,8 +302,11 @@ class TestVersionFilteringSemantics:
     """Test that check_imas_paths applies version filtering correctly via mocked graph."""
 
     @pytest.mark.asyncio
-    async def test_dd3_path_found_with_dd_version_4(self):
-        """A path introduced in DD3 and never deprecated must be found with dd_version=4."""
+    @patch(
+        "imas_codex.tools.graph_search.resolve_dd_version", side_effect=lambda gc, v: v
+    )
+    async def test_dd3_path_found_with_dd_version_4(self, mock_resolve):
+        """A path introduced in DD3 and never deprecated must be found with dd_version=4.1.0."""
         gc = MagicMock()
         gc.query.return_value = [
             {
@@ -183,28 +318,31 @@ class TestVersionFilteringSemantics:
         ]
         tool = GraphPathTool(gc)
         result = await tool.check_imas_paths(
-            "equilibrium/time_slice/profiles_1d/psi", dd_version=4
+            "equilibrium/time_slice/profiles_1d/psi", dd_version="4.1.0"
         )
         assert result.results[0].exists is True
 
-        # Verify the Cypher includes major-version comparison
+        # Verify the Cypher includes semver comparison
         cypher = gc.query.call_args_list[0][0][0]
         assert "toInteger(split(" in cypher
 
     @pytest.mark.asyncio
-    async def test_dd_version_param_is_integer(self):
-        """The dd_major_version parameter passed to Cypher must be an integer."""
+    @patch(
+        "imas_codex.tools.graph_search.resolve_dd_version", side_effect=lambda gc, v: v
+    )
+    async def test_dd_version_params_are_semver(self, mock_resolve):
+        """The dd_ver_major/minor/patch params passed to Cypher must be integers."""
         gc = MagicMock()
         gc.query.return_value = [
             {"id": "test/path", "ids": "test", "data_type": "FLT_0D", "units": ""}
         ]
         tool = GraphPathTool(gc)
-        await tool.check_imas_paths("test/path", dd_version=4)
+        await tool.check_imas_paths("test/path", dd_version="4.1.0")
 
-        # Check that dd_major_version=4 was passed
         kwargs = gc.query.call_args_list[0][1]
-        assert "dd_major_version" in kwargs
-        assert kwargs["dd_major_version"] == 4
+        assert kwargs["dd_ver_major"] == 4
+        assert kwargs["dd_ver_minor"] == 1
+        assert kwargs["dd_ver_patch"] == 0
 
     @pytest.mark.asyncio
     async def test_no_dd_version_skips_filter(self):
@@ -262,7 +400,7 @@ class TestClusterScopeQuery:
         tool._search_by_path(
             "equilibrium/time_slice/profiles_1d/psi",
             scope="ids",
-            dd_version=4,
+            dd_version="4.1.0",
         )
 
         cypher = gc.query.call_args[0][0]
@@ -270,7 +408,7 @@ class TestClusterScopeQuery:
         assert "INTRODUCED_IN" in cypher
         kwargs = gc.query.call_args[1]
         assert kwargs["scope"] == "ids"
-        assert kwargs["dd_major_version"] == 4
+        assert kwargs["dd_ver_major"] == 4
 
     @pytest.mark.asyncio
     async def test_search_imas_clusters_path_with_scope(self):
@@ -320,7 +458,10 @@ class TestOverviewQueryStructure:
         assert "MATCH (i:IDS)" in ids_cypher
 
     @pytest.mark.asyncio
-    async def test_overview_with_dd_version_includes_filter(self):
+    @patch(
+        "imas_codex.tools.graph_search.resolve_dd_version", side_effect=lambda gc, v: v
+    )
+    async def test_overview_with_dd_version_includes_filter(self, mock_resolve):
         """Overview with dd_version must include version filter."""
         gc = MagicMock()
         gc.query.side_effect = [
@@ -337,13 +478,13 @@ class TestOverviewQueryStructure:
         ]
 
         tool = GraphOverviewTool(gc)
-        await tool.get_imas_overview(dd_version=4)
+        await tool.get_imas_overview(dd_version="4.1.0")
 
         ids_cypher = gc.query.call_args_list[0][0][0]
         assert "MATCH (i:IDS)" in ids_cypher
         assert "INTRODUCED_IN" in ids_cypher
         kwargs = gc.query.call_args_list[0][1]
-        assert kwargs["dd_major_version"] == 4
+        assert kwargs["dd_ver_major"] == 4
 
 
 # ============================================================================
@@ -381,18 +522,21 @@ class TestExportQueryStructure:
         assert "physics_domain" in export_cypher
 
     @pytest.mark.asyncio
-    async def test_export_ids_with_dd_version(self):
+    @patch(
+        "imas_codex.tools.graph_search.resolve_dd_version", side_effect=lambda gc, v: v
+    )
+    async def test_export_ids_with_dd_version(self, mock_resolve):
         """export_imas_ids with dd_version must include version filter."""
         gc = MagicMock()
         gc.query.return_value = []
         tool = GraphStructureTool(gc)
 
-        await tool.export_imas_ids("equilibrium", dd_version=4)
+        await tool.export_imas_ids("equilibrium", dd_version="4.1.0")
 
         cypher = gc.query.call_args[0][0]
         assert "INTRODUCED_IN" in cypher
         kwargs = gc.query.call_args[1]
-        assert kwargs["dd_major_version"] == 4
+        assert kwargs["dd_ver_major"] == 4
 
 
 # ============================================================================
@@ -484,7 +628,7 @@ class TestSemanticMatchDDVersion:
                 source_descriptions=[("src1", "some description")],
                 target_ids_name="equilibrium",
                 gc=mock_gc,
-                dd_version=4,
+                dd_version="4.1.0",
                 precomputed_embeddings=[np.zeros(384)],
             )
 
@@ -654,31 +798,14 @@ class TestClusterReranking:
 # ============================================================================
 
 
-def _graph_available() -> bool:
-    """Check if Neo4j is reachable."""
-    try:
-        from imas_codex.graph.client import GraphClient
-
-        with GraphClient() as gc:
-            gc.query("RETURN 1")
-        return True
-    except Exception:
-        return False
-
-
-requires_graph = pytest.mark.skipif(
-    not _graph_available(), reason="Neo4j not available"
-)
-
-
 @requires_graph
 class TestVersionScopedDeprecatedSearch:
     """Integration tests: version-scoped search returns deprecated-in-later-version paths.
 
     Uses real graph data.  Key test paths:
-      - ece/channel/t_e: introduced DD3, deprecated DD4 → visible in DD3, hidden in DD4
-      - equilibrium/time_slice/boundary/x_point: introduced DD3, deprecated DD4
-      - bolometer/channel/power: introduced DD3, deprecated DD4
+      - ece/channel/t_e: introduced 3.22.0, deprecated 4.0.0 → visible at 3.42.2, hidden at 4.0.0
+      - equilibrium/time_slice/boundary/x_point: introduced 3.22.0, deprecated 4.0.0
+      - bolometer/channel/power: introduced 3.22.0, deprecated 4.1.0
     """
 
     def test_text_search_dd3_includes_path_deprecated_in_dd4(self):
@@ -688,7 +815,11 @@ class TestVersionScopedDeprecatedSearch:
 
         with GraphClient() as gc:
             results = _text_search_imas_paths(
-                gc, "electron temperature ECE", limit=50, ids_filter=None, dd_version=3
+                gc,
+                "electron temperature ECE",
+                limit=50,
+                ids_filter=None,
+                dd_version="3.42.2",
             )
         ids = [r["id"] for r in results]
         assert "ece/channel/t_e" in ids, (
@@ -703,7 +834,11 @@ class TestVersionScopedDeprecatedSearch:
 
         with GraphClient() as gc:
             results = _text_search_imas_paths(
-                gc, "electron temperature ECE", limit=50, ids_filter=None, dd_version=4
+                gc,
+                "electron temperature ECE",
+                limit=50,
+                ids_filter=None,
+                dd_version="4.1.0",
             )
         ids = [r["id"] for r in results]
         assert "ece/channel/t_e" not in ids, (
@@ -735,7 +870,11 @@ class TestVersionScopedDeprecatedSearch:
 
         with GraphClient() as gc:
             results = _text_search_imas_paths(
-                gc, "x point magnetic boundary", limit=50, ids_filter=None, dd_version=3
+                gc,
+                "x point magnetic boundary",
+                limit=50,
+                ids_filter=None,
+                dd_version="3.42.2",
             )
         ids = [r["id"] for r in results]
         assert "equilibrium/time_slice/boundary/x_point" in ids, (
@@ -744,69 +883,158 @@ class TestVersionScopedDeprecatedSearch:
 
     @pytest.mark.asyncio
     async def test_vector_search_dd3_includes_deprecated_in_dd4(self):
-        """Vector search with dd_version=3 should include paths deprecated in DD4.
+        """Vector search with dd_version=3.42.2 should include paths deprecated in 4.0.0.
 
-        Note: deprecated paths may lack embeddings (re-embedding used --current-only),
-        so this test verifies the filter permits them, not that vector similarity finds them.
+        Requires the remote embed server to produce matching-dimension vectors.
+        Skips if the embed server is unavailable or produces incompatible dimensions.
         """
+        import os
+
         from imas_codex.graph.client import GraphClient
         from imas_codex.tools.graph_search import GraphSearchTool
 
-        with GraphClient() as gc:
-            tool = GraphSearchTool(gc)
-            result = await tool.search_imas_paths(
-                "electron temperature ECE channel",
-                max_results=50,
-                dd_version=3,
-            )
-        # If vector search errors (e.g., dimension mismatch), result is ToolError
-        if hasattr(result, "error") and result.error:
-            pytest.skip(f"Vector search infrastructure error: {result.error[:100]}")
-        all_ids = [r.id for r in result.hits]
-        # ece/channel/t_e may not have an embedding (deprecated paths were skipped
-        # during re-embedding). The key invariant is that the result set is not empty
-        # and the version filter doesn't cause errors.
-        assert len(all_ids) > 0, "DD3 vector search should return results"
+        # Override conftest's local model — use the real remote embed server
+        orig_loc = os.environ.get("IMAS_CODEX_EMBEDDING_LOCATION")
+        orig_model = os.environ.get("IMAS_CODEX_EMBEDDING_MODEL")
+        try:
+            os.environ["IMAS_CODEX_EMBEDDING_LOCATION"] = "titan"
+            os.environ["IMAS_CODEX_EMBEDDING_MODEL"] = "Qwen/Qwen3-Embedding-0.6B"
+
+            # Check if remote embed server is available
+            import imas_codex.embeddings.embed as embed_mod
+            import imas_codex.tools.graph_search as gs_mod
+            from imas_codex.embeddings.client import RemoteEmbeddingClient
+
+            client = RemoteEmbeddingClient()
+            if not client.is_available():
+                pytest.skip("Remote embed server not available")
+
+            embed_mod._cached_encoder = None
+            gs_mod._encoder = None
+
+            with GraphClient() as gc:
+                tool = GraphSearchTool(gc)
+                result = await tool.search_imas_paths(
+                    "electron temperature ECE channel",
+                    max_results=50,
+                    dd_version="3.42.2",
+                )
+            if hasattr(result, "error") and result.error:
+                pytest.skip(f"Vector search error: {result.error[:100]}")
+            all_ids = [r.id for r in result.hits]
+            assert len(all_ids) > 0, "DD 3.42.2 vector search should return results"
+        finally:
+            # Restore original env vars and clear caches
+            if orig_loc is not None:
+                os.environ["IMAS_CODEX_EMBEDDING_LOCATION"] = orig_loc
+            else:
+                os.environ.pop("IMAS_CODEX_EMBEDDING_LOCATION", None)
+            if orig_model is not None:
+                os.environ["IMAS_CODEX_EMBEDDING_MODEL"] = orig_model
+            else:
+                os.environ.pop("IMAS_CODEX_EMBEDDING_MODEL", None)
+            embed_mod._cached_encoder = None
+            gs_mod._encoder = None
 
     @pytest.mark.asyncio
     async def test_vector_search_dd4_excludes_deprecated_in_dd4(self):
-        """Vector search with dd_version=4 should exclude paths deprecated in DD4."""
+        """Vector search with dd_version=4.1.0 should exclude paths deprecated in 4.x."""
+        import os
+
         from imas_codex.graph.client import GraphClient
         from imas_codex.tools.graph_search import GraphSearchTool
 
-        with GraphClient() as gc:
-            tool = GraphSearchTool(gc)
-            result = await tool.search_imas_paths(
-                "electron temperature ECE channel",
-                max_results=50,
-                dd_version=4,
+        orig_loc = os.environ.get("IMAS_CODEX_EMBEDDING_LOCATION")
+        orig_model = os.environ.get("IMAS_CODEX_EMBEDDING_MODEL")
+        try:
+            os.environ["IMAS_CODEX_EMBEDDING_LOCATION"] = "titan"
+            os.environ["IMAS_CODEX_EMBEDDING_MODEL"] = "Qwen/Qwen3-Embedding-0.6B"
+
+            import imas_codex.embeddings.embed as embed_mod
+            import imas_codex.tools.graph_search as gs_mod
+            from imas_codex.embeddings.client import RemoteEmbeddingClient
+
+            client = RemoteEmbeddingClient()
+            if not client.is_available():
+                pytest.skip("Remote embed server not available")
+
+            embed_mod._cached_encoder = None
+            gs_mod._encoder = None
+
+            with GraphClient() as gc:
+                tool = GraphSearchTool(gc)
+                result = await tool.search_imas_paths(
+                    "electron temperature ECE channel",
+                    max_results=50,
+                    dd_version="4.1.0",
+                )
+            if hasattr(result, "error") and result.error:
+                pytest.skip(f"Vector search error: {result.error[:100]}")
+            all_ids = [r.id for r in result.hits]
+            assert "ece/channel/t_e" not in all_ids, (
+                "ece/channel/t_e (deprecated 4.0.0) should NOT appear in DD 4.1.0 search"
             )
-        if hasattr(result, "error") and result.error:
-            pytest.skip(f"Vector search infrastructure error: {result.error[:100]}")
-        all_ids = [r.id for r in result.hits]
-        assert "ece/channel/t_e" not in all_ids, (
-            "ece/channel/t_e should NOT appear in DD4 vector search"
-        )
+        finally:
+            if orig_loc is not None:
+                os.environ["IMAS_CODEX_EMBEDDING_LOCATION"] = orig_loc
+            else:
+                os.environ.pop("IMAS_CODEX_EMBEDDING_LOCATION", None)
+            if orig_model is not None:
+                os.environ["IMAS_CODEX_EMBEDDING_MODEL"] = orig_model
+            else:
+                os.environ.pop("IMAS_CODEX_EMBEDDING_MODEL", None)
+            embed_mod._cached_encoder = None
+            gs_mod._encoder = None
 
     @pytest.mark.asyncio
     async def test_vector_search_no_version_excludes_deprecated(self):
         """Vector search with no version should exclude all deprecated paths."""
+        import os
+
         from imas_codex.graph.client import GraphClient
         from imas_codex.tools.graph_search import GraphSearchTool
 
-        with GraphClient() as gc:
-            tool = GraphSearchTool(gc)
-            result = await tool.search_imas_paths(
-                "electron temperature ECE channel",
-                max_results=50,
-                dd_version=None,
+        orig_loc = os.environ.get("IMAS_CODEX_EMBEDDING_LOCATION")
+        orig_model = os.environ.get("IMAS_CODEX_EMBEDDING_MODEL")
+        try:
+            os.environ["IMAS_CODEX_EMBEDDING_LOCATION"] = "titan"
+            os.environ["IMAS_CODEX_EMBEDDING_MODEL"] = "Qwen/Qwen3-Embedding-0.6B"
+
+            import imas_codex.embeddings.embed as embed_mod
+            import imas_codex.tools.graph_search as gs_mod
+            from imas_codex.embeddings.client import RemoteEmbeddingClient
+
+            client = RemoteEmbeddingClient()
+            if not client.is_available():
+                pytest.skip("Remote embed server not available")
+
+            embed_mod._cached_encoder = None
+            gs_mod._encoder = None
+
+            with GraphClient() as gc:
+                tool = GraphSearchTool(gc)
+                result = await tool.search_imas_paths(
+                    "electron temperature ECE channel",
+                    max_results=50,
+                    dd_version=None,
+                )
+            if hasattr(result, "error") and result.error:
+                pytest.skip(f"Vector search error: {result.error[:100]}")
+            all_ids = [r.id for r in result.hits]
+            assert "ece/channel/t_e" not in all_ids, (
+                "ece/channel/t_e should be excluded with no version filter"
             )
-        if hasattr(result, "error") and result.error:
-            pytest.skip(f"Vector search infrastructure error: {result.error[:100]}")
-        all_ids = [r.id for r in result.hits]
-        assert "ece/channel/t_e" not in all_ids, (
-            "ece/channel/t_e should be excluded with no version filter"
-        )
+        finally:
+            if orig_loc is not None:
+                os.environ["IMAS_CODEX_EMBEDDING_LOCATION"] = orig_loc
+            else:
+                os.environ.pop("IMAS_CODEX_EMBEDDING_LOCATION", None)
+            if orig_model is not None:
+                os.environ["IMAS_CODEX_EMBEDDING_MODEL"] = orig_model
+            else:
+                os.environ.pop("IMAS_CODEX_EMBEDDING_MODEL", None)
+            embed_mod._cached_encoder = None
+            gs_mod._encoder = None
 
     def test_dd3_search_includes_paths_absent_from_dd4(self):
         """DD3 search should include some paths that DD4 excludes (deprecated in DD4).
@@ -819,10 +1047,10 @@ class TestVersionScopedDeprecatedSearch:
 
         with GraphClient() as gc:
             dd3_results = _text_search_imas_paths(
-                gc, "temperature", limit=100, ids_filter=None, dd_version=3
+                gc, "temperature", limit=100, ids_filter=None, dd_version="3.42.2"
             )
             dd4_results = _text_search_imas_paths(
-                gc, "temperature", limit=100, ids_filter=None, dd_version=4
+                gc, "temperature", limit=100, ids_filter=None, dd_version="4.1.0"
             )
         assert len(dd3_results) > 0, "DD3 search should return results"
         assert len(dd4_results) > 0, "DD4 search should return results"
@@ -858,10 +1086,10 @@ class TestVersionScopedDeprecatedSearch:
             # Extract a search term from the path
             search_term = path_id.split("/")[-1].replace("_", " ")
             dd3_results = _text_search_imas_paths(
-                gc, search_term, limit=100, ids_filter=None, dd_version=3
+                gc, search_term, limit=100, ids_filter=None, dd_version="3.42.2"
             )
             dd4_results = _text_search_imas_paths(
-                gc, search_term, limit=100, ids_filter=None, dd_version=4
+                gc, search_term, limit=100, ids_filter=None, dd_version="4.1.0"
             )
 
         dd3_ids = [r["id"] for r in dd3_results]
