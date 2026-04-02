@@ -1575,6 +1575,7 @@ def validate_mappings(
                     target_units=m.target_units,
                     cocos_label=m.cocos_label,
                     confidence=m.confidence,
+                    mapping_type="direct",
                 )
             )
         all_unmapped.extend(batch.unmapped)

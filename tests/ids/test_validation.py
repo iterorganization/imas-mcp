@@ -37,6 +37,7 @@ def _make_binding(**overrides):
         "target_units": None,
         "cocos_label": None,
         "confidence": 0.9,
+        "mapping_type": "direct",
     }
     defaults.update(overrides)
     return ValidatedSignalMapping(**defaults)

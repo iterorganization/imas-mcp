@@ -819,7 +819,10 @@ def map_validate(facility: str, ids_name: str) -> None:
 
     from imas_codex.ids.models import ValidatedSignalMapping
 
-    bindings = [ValidatedSignalMapping(**b) for b in result["bindings"]]
+    bindings = []
+    for b in result["bindings"]:
+        b.setdefault("mapping_type", "direct")
+        bindings.append(ValidatedSignalMapping(**b))
     if not bindings:
         click.echo("No bindings to validate.")
         return

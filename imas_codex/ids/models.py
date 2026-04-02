@@ -326,9 +326,7 @@ class ValidatedSignalMapping(BaseModel):
     disposition: MappingDisposition = MappingDisposition.MAPPED
     evidence: str = ""
     # Staged pipeline fields
-    mapping_type: str = (
-        "direct"  # "direct" (LLM-matched) or "error_derived" (graph traversal)
-    )
+    mapping_type: str  # "direct" (LLM-matched) or "error_derived" (graph traversal)
     error_type: str | None = None  # "upper", "lower", "index" — only for error_derived
     derived_from: str | None = None  # Parent data path — only for error_derived
 

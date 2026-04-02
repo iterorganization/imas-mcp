@@ -50,6 +50,7 @@ def _make_direct_mapping(
         source_units=source_units,
         target_units=target_units,
         transform_expression=transform_expression,
+        mapping_type="direct",
     )
 
 
@@ -58,12 +59,25 @@ def _make_direct_mapping(
 # ---------------------------------------------------------------------------
 
 
-def test_validated_signal_mapping_defaults():
-    """New fields have backward-compatible defaults."""
+def test_validated_signal_mapping_requires_mapping_type():
+    """mapping_type is required, not defaulted."""
+    import pydantic
+
+    with pytest.raises(pydantic.ValidationError):
+        ValidatedSignalMapping(
+            source_id="test:source",
+            target_id="equilibrium/time_slice/profiles_1d/psi",
+            confidence=0.9,
+        )
+
+
+def test_validated_signal_mapping_direct():
+    """Direct mapping type."""
     m = ValidatedSignalMapping(
         source_id="test:source",
         target_id="equilibrium/time_slice/profiles_1d/psi",
         confidence=0.9,
+        mapping_type="direct",
     )
     assert m.mapping_type == "direct"
     assert m.error_type is None
@@ -91,6 +105,7 @@ def test_validated_signal_mapping_source_property_default():
         source_id="test:source",
         target_id="equilibrium/time_slice/profiles_1d/psi",
         confidence=0.8,
+        mapping_type="direct",
     )
     assert m.source_property == "value"
 
@@ -101,6 +116,7 @@ def test_validated_signal_mapping_disposition_default():
         source_id="test:source",
         target_id="equilibrium/time_slice/profiles_1d/psi",
         confidence=0.8,
+        mapping_type="direct",
     )
     assert m.disposition == MappingDisposition.MAPPED
 

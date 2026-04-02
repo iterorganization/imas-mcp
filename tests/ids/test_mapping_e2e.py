@@ -220,6 +220,7 @@ def sample_validated_result():
                 source_units="m",
                 target_units="m",
                 confidence=0.95,
+                mapping_type="direct",
             ),
             ValidatedSignalMapping(
                 source_id="jet:pf_coils:group1",
@@ -229,6 +230,7 @@ def sample_validated_result():
                 source_units="m",
                 target_units="m",
                 confidence=0.90,
+                mapping_type="direct",
             ),
         ],
         escalations=[
@@ -1423,12 +1425,14 @@ class TestValidateSameSourceDiffTargetsOk:
             target_id="pf_active/coil/element/geometry/rectangle/r",
             transform_expression="value",
             confidence=0.9,
+            mapping_type="direct",
         )
         b2 = ValidatedSignalMapping(
             source_id="jet:pf_coils:group1",
             target_id="pf_active/coil/element/geometry/rectangle/z",
             transform_expression="value",
             confidence=0.9,
+            mapping_type="direct",
         )
 
         report = validate_mapping([b1, b2], gc=mock_gc)
