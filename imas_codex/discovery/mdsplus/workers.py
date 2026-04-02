@@ -50,6 +50,7 @@ async def extract_worker(
     from .graph_ops import (
         claim_version_for_extraction,
         mark_version_extracted,
+        mark_version_failed,
         release_version_claim,
     )
 
@@ -99,12 +100,13 @@ async def extract_worker(
 
             ver_data = data.get("versions", {}).get(str(extraction_shot), {})
             if "error" in ver_data:
+                error_msg = ver_data["error"]
                 logger.warning(
                     "Extraction returned error for v%d: %s",
                     version,
-                    ver_data["error"][:100],
+                    error_msg[:100],
                 )
-                await asyncio.to_thread(release_version_claim, version_id)
+                await asyncio.to_thread(mark_version_failed, version_id, error_msg)
                 state.extract_stats.errors += 1
                 if on_progress:
                     on_progress(
