@@ -1,8 +1,11 @@
-"""Graph-backed search quality benchmarks for IMAS DD.
+"""Search quality benchmarks for IMAS DD.
 
-Tests are gated on Neo4j availability (``@pytest.mark.graph``) and
-optionally on the embedding server (``requires_embed_server`` fixture).
-When infrastructure is unavailable, tests skip gracefully.
+Unit tests (``TestMRRComputation``, ``TestCategoryMRR``) verify the MRR
+calculation logic and need no external infrastructure.
+
+Integration tests are gated on Neo4j availability
+(``@pytest.mark.graph``) and optionally on the embedding server.  When
+infrastructure is unavailable, those tests skip gracefully.
 
 Each search method is tested independently before combination.  MRR
 thresholds are pinned to validated baselines — a PR that causes a
@@ -10,6 +13,10 @@ regression will fail these tests.
 
 Run with::
 
+    # Unit tests only (no graph needed)
+    uv run pytest tests/search/test_search_benchmarks.py -k "TestMRR or TestCategory" -v
+
+    # All tests (requires Neo4j + embed server)
     uv run pytest tests/search/test_search_benchmarks.py -v
 
 """
@@ -26,6 +33,8 @@ from tests.search.benchmark_data import (
     SEMANTIC_QUERIES,
     TEXT_QUERIES,
     BenchmarkQuery,
+    compute_category_mrr,
+    compute_mrr,
 )
 from tests.search.benchmark_helpers import (
     BenchmarkResults,
@@ -36,8 +45,119 @@ from tests.search.benchmark_helpers import (
 
 logger = logging.getLogger(__name__)
 
-# All tests require Neo4j
-pytestmark = pytest.mark.graph
+
+# ── Unit tests — MRR computation (no graph needed) ───────────────────────────
+
+
+class TestMRRComputation:
+    """Verify reciprocal rank calculation logic."""
+
+    def test_perfect_rank(self):
+        assert compute_mrr(["a", "b", "c"], ["a"]) == 1.0
+
+    def test_second_rank(self):
+        assert compute_mrr(["x", "a", "c"], ["a"]) == 0.5
+
+    def test_third_rank(self):
+        assert compute_mrr(["x", "y", "a"], ["a"]) == pytest.approx(1 / 3)
+
+    def test_not_found(self):
+        assert compute_mrr(["x", "y", "z"], ["a"]) == 0.0
+
+    def test_empty_results(self):
+        assert compute_mrr([], ["a"]) == 0.0
+
+    def test_multiple_expected_first_match_wins(self):
+        """First match among multiple expected paths determines rank."""
+        assert compute_mrr(["b", "a"], ["a", "b"]) == 1.0
+
+    def test_prefix_match_child(self):
+        """Result is a child of expected path — matches with allow_prefix."""
+        assert (
+            compute_mrr(
+                ["equilibrium/time_slice/global_quantities/ip/data"],
+                ["equilibrium/time_slice/global_quantities/ip"],
+                allow_prefix=True,
+            )
+            == 1.0
+        )
+
+    def test_prefix_match_parent(self):
+        """Result is a parent of expected path — matches with allow_prefix."""
+        assert (
+            compute_mrr(
+                ["equilibrium/time_slice/global_quantities/ip"],
+                ["equilibrium/time_slice/global_quantities/ip/data"],
+                allow_prefix=True,
+            )
+            == 1.0
+        )
+
+    def test_prefix_no_match_without_flag(self):
+        """Prefix relationships are ignored without allow_prefix."""
+        assert (
+            compute_mrr(
+                ["equilibrium/time_slice/global_quantities/ip/data"],
+                ["equilibrium/time_slice/global_quantities/ip"],
+                allow_prefix=False,
+            )
+            == 0.0
+        )
+
+    def test_prefix_no_partial_segment_match(self):
+        """Prefix must be at a ``/`` boundary, not mid-segment."""
+        assert (
+            compute_mrr(
+                ["equilibrium/time_slice/profiles_1d/psi_norm"],
+                ["equilibrium/time_slice/profiles_1d/psi"],
+                allow_prefix=True,
+            )
+            == 0.0
+        )
+
+    def test_rank_position_matters(self):
+        """Later positions give smaller reciprocal rank."""
+        assert compute_mrr(["x", "y", "z", "a"], ["a"]) == pytest.approx(0.25)
+
+
+class TestCategoryMRR:
+    """Verify category-level MRR aggregation."""
+
+    def test_perfect_category(self):
+        queries = [
+            BenchmarkQuery("q1", ["a"], "test"),
+            BenchmarkQuery("q2", ["b"], "test"),
+        ]
+        results = {"q1": ["a", "x"], "q2": ["b", "y"]}
+        assert compute_category_mrr(results, queries) == 1.0
+
+    def test_mixed_category(self):
+        queries = [
+            BenchmarkQuery("q1", ["a"], "test"),
+            BenchmarkQuery("q2", ["b"], "test"),
+        ]
+        results = {"q1": ["a"], "q2": ["x", "b"]}
+        assert compute_category_mrr(results, queries) == pytest.approx(0.75)
+
+    def test_empty_queries(self):
+        assert compute_category_mrr({}, []) == 0.0
+
+    def test_missing_query_in_results(self):
+        """Missing query → MRR 0 for that query, averages down."""
+        queries = [
+            BenchmarkQuery("q1", ["a"], "test"),
+            BenchmarkQuery("q2", ["b"], "test"),
+        ]
+        results = {"q1": ["a"]}  # q2 missing
+        assert compute_category_mrr(results, queries) == pytest.approx(0.5)
+
+    def test_all_misses(self):
+        queries = [
+            BenchmarkQuery("q1", ["a"], "test"),
+            BenchmarkQuery("q2", ["b"], "test"),
+        ]
+        results = {"q1": ["x", "y"], "q2": ["x", "y"]}
+        assert compute_category_mrr(results, queries) == 0.0
 
 
 # ── Fixtures ─────────────────────────────────────────────────────────────────
@@ -225,6 +345,7 @@ async def _extract_paths_from_hybrid(search_tool, query: str, limit: int) -> lis
 # Phases 1-9 deliver the enrichment + search fixes.
 
 
+@pytest.mark.graph
 class TestVectorSearchBenchmark:
     """Vector/semantic search quality — requires embed server + graph.
 
@@ -281,6 +402,7 @@ class TestVectorSearchBenchmark:
         )
 
 
+@pytest.mark.graph
 class TestBM25SearchBenchmark:
     """BM25/fulltext search quality — requires graph only (no embed server).
 
@@ -326,6 +448,7 @@ class TestBM25SearchBenchmark:
             )
 
 
+@pytest.mark.graph
 class TestPathLookupBenchmark:
     """Exact path lookup — the simplest search mode.
 
@@ -357,6 +480,7 @@ class TestPathLookupBenchmark:
         )
 
 
+@pytest.mark.graph
 class TestHybridSearchBenchmark:
     """Combined hybrid search — must exceed best individual method.
 
@@ -401,6 +525,7 @@ class TestHybridSearchBenchmark:
         assert len(paths) > 0, "Hybrid search returned no results"
 
 
+@pytest.mark.graph
 class TestSearchQualityRegression:
     """Cross-cutting regression checks.
 

@@ -374,3 +374,65 @@ CATEGORY_NAMES = [
     "accessor",
     "cross_domain",
 ]
+
+
+# ── Standalone MRR computation functions ─────────────────────────────────────
+
+
+def compute_mrr(
+    ranked_results: list[str],
+    expected: list[str],
+    allow_prefix: bool = False,
+) -> float:
+    """Compute reciprocal rank for a single query.
+
+    Parameters
+    ----------
+    ranked_results:
+        List of path IDs in ranked order (best first).
+    expected:
+        List of acceptable correct paths.
+    allow_prefix:
+        If True, a result is considered correct when it starts with an
+        expected path followed by ``/``, or vice-versa.  Useful for
+        accessor paths like ``ip`` → ``ip/data``.
+
+    Returns
+    -------
+    1/rank of the first correct result, or 0.0 if none found.
+    """
+    for rank, result in enumerate(ranked_results, 1):
+        for exp in expected:
+            if result == exp:
+                return 1.0 / rank
+            if allow_prefix and (
+                result.startswith(exp + "/") or exp.startswith(result + "/")
+            ):
+                return 1.0 / rank
+    return 0.0
+
+
+def compute_category_mrr(
+    results: dict[str, list[str]],
+    queries: list[BenchmarkQuery],
+) -> float:
+    """Compute average MRR across a list of benchmark queries.
+
+    Parameters
+    ----------
+    results:
+        Mapping of ``query_text`` → list of ranked result path IDs.
+    queries:
+        Benchmark queries to evaluate.
+
+    Returns
+    -------
+    Average reciprocal rank (0.0–1.0).
+    """
+    if not queries:
+        return 0.0
+
+    mrrs = [
+        compute_mrr(results.get(q.query_text, []), q.expected_paths) for q in queries
+    ]
+    return sum(mrrs) / len(mrrs)
