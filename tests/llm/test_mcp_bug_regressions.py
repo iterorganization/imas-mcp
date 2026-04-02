@@ -311,6 +311,29 @@ class TestShortPhysicsTermsPreserved:
                 f"'{term}' missing from PHYSICS_ABBREVIATIONS"
             )
 
+    def test_abbreviation_exact_match_boost_exists(self):
+        """Abbreviation queries must get a strong terminal-match boost.
+
+        When the original query is a physics abbreviation like "ip", the
+        search must apply a large extra boost (≥0.30) to paths whose
+        terminal segment exactly matches the original (pre-expansion)
+        query.  This ensures .../ip ranks above .../bootstrap_current.
+        """
+        from imas_codex.tools.graph_search import GraphSearchTool
+
+        source = inspect.getsource(GraphSearchTool.search_imas_paths)
+
+        # Must check is_abbreviation from the query intent
+        assert "is_abbreviation" in source, (
+            "search_imas_paths must check intent.is_abbreviation to apply "
+            "an extra boost for abbreviation queries"
+        )
+        # Must reference original_query for the pre-expansion terms
+        assert "original_query" in source, (
+            "search_imas_paths must use intent.original_query for "
+            "abbreviation terminal-match boosting"
+        )
+
 
 # ---------------------------------------------------------------------------
 # Bug 5: Coordinate channel in find_related_imas_paths (get_imas_path_context)
