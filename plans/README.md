@@ -18,8 +18,7 @@ Gap documents consolidate remaining work from completed implementation phases. T
 
 | Priority | Plan | Scope | Status |
 |----------|------|-------|--------|
-| **P3** | [staged-mapping-pipeline.md](features/staged-mapping-pipeline.md) | 3-stage mapping pipeline: data → error → metadata | Blocked by dependency chain |
-| **P3** | [ids-properties-population.md](features/ids-properties-population.md) | IDS properties and code metadata population | Depends on staged-mapping |
+| **P3** | [ids-properties-population.md](features/ids-properties-population.md) | IDS properties and code metadata population | Ready — staged-mapping prerequisite complete |
 | **P4** | [gaps-compute-orchestration.md](features/gaps-compute-orchestration.md) | Compute session orchestration remaining gaps | Low priority — Python CLI covers basics |
 
 ### Pending plans (partially implemented)

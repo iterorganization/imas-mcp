@@ -289,14 +289,14 @@ Wire Stage 3 into the `generate_mapping()` flow:
 
 ## Priority & Dependencies
 
-**Priority: P3 — Medium (blocked)**
+**Priority: P3 — Medium (unblocked)**
 
 | Depends On | Enables |
 |-----------|---------|
-| staged-mapping-pipeline (Stage 1 data mappings) | Complete mapping quality, full IDS metadata |
+| staged-mapping-pipeline (✅ implemented) | Complete mapping quality, full IDS metadata |
 | error-metadata-filtering (✅ implemented) | — |
 
-This plan cannot start until staged-mapping-pipeline Stage 1 is operational.
+The staged-mapping-pipeline prerequisite is complete (Stages 1–2 implemented; Stage 3 deferred to this plan). This plan can now proceed.
 
 ## Documentation Updates
 
