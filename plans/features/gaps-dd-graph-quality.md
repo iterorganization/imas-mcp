@@ -103,6 +103,47 @@ The `error` field is the observability companion to the already-existing `failed
 
 ---
 
+## Group 4: MDSplus Worker Error Handling Inconsistency
+
+Discovered during the SignalEpoch error property investigation.
+
+### Bug 6: Extraction-returned errors released instead of marked failed
+
+**File:** `discovery/mdsplus/workers.py` line 107
+**Comparison:** `discovery/signals/parallel.py` line 2887
+
+Both workers handle the same scenario — the remote extraction script returns an error in `ver_data["error"]`
+(e.g., "tree file not found on disk") — but handle it differently:
+
+| Worker | Handler called | Result |
+|--------|---------------|--------|
+| `signals/parallel.py` | `mark_version_failed(version_id, error_msg)` | Status → `failed`, error recorded ✅ |
+| `mdsplus/workers.py` | `release_version_claim(version_id)` | Claim released, stays `discovered` ❌ |
+
+The `mdsplus/workers.py` path creates a silent retry loop: every discovery run re-claims the same
+broken version, hits the same error, releases it, and moves on — wasting SSH connections each time.
+The error message is logged but never persisted.
+
+**Severity: Medium** — silent performance drain on every rediscovery run for facilities with
+broken tree versions.
+
+### Fix
+
+Change `mdsplus/workers.py` line 107 to call `mark_version_failed(version_id, ver_data["error"])`
+instead of `release_version_claim(version_id)`. This matches the `signals/parallel.py` behavior
+and is consistent with the two-tier error design: extraction-returned errors are permanent
+(the tree file won't appear between runs), so they must be terminal.
+
+### Tests
+
+Add unit tests to `tests/discovery/mdsplus/`:
+- Test that extraction-returned errors call `mark_version_failed()` (not `release_version_claim()`)
+- Test that SSH/network exceptions still call `release_version_claim()` (transient → retry)
+- Test that after `mark_version_failed()`, the node has `status='failed'` and `error` is populated
+- Test that after `release_version_claim()`, the node stays `status='discovered'` with `claimed_at=null`
+
+---
+
 ## Quick-Fix / Shortcut Flags
 
 | Item | Description | Recommended Action |
@@ -126,9 +167,10 @@ The `error` field is the observability companion to the already-existing `failed
 3. Fix Bug 4 (export filtering) — add `node_category` filter + `include_errors` param
 4. Fix Bug 5 (redundant query) — low priority optimization
 5. Fix SignalEpoch Issue 6 — add `error: string` to schema (decision resolved)
-6. Graph rebuild + GHCR push
-7. Validate and remove 16 CI test deselects
-8. Cut v5.0.0 release tag
+6. Fix Bug 6 (mdsplus worker error handling) — call `mark_version_failed` + unit tests
+7. Graph rebuild + GHCR push
+8. Validate and remove 16 CI test deselects
+9. Cut v5.0.0 release tag
 
 ## Overlap Notes
 
