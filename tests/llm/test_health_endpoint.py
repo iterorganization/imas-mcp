@@ -184,7 +184,7 @@ class TestHealthEndpointResponse:
             response = client.get("/health")
 
         data = response.json()
-        assert data["graph"]["status"] == "ok"
+        assert data["graph"]["status"] == "online"
         assert data["graph"]["name"] == "codex"
         assert data["graph"]["node_count"] == 50000
         assert data["facilities"] == ["tcv", "jet"]

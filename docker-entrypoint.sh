@@ -36,11 +36,11 @@ echo "Starting Neo4j..."
 "${NEO4J_HOME}/bin/neo4j" console > "$NEO4J_LOG" 2>&1 &
 NEO4J_PID=$!
 
-# Wait for Neo4j to become ready (120s to handle slow cloud instances)
-echo "Waiting for Neo4j..."
+# Phase 1: Wait for Neo4j DBMS (HTTP)
+echo "Waiting for Neo4j DBMS..."
 for i in $(seq 1 120); do
     if curl -sf http://localhost:7474/ > /dev/null 2>&1; then
-        echo "Neo4j ready (${i}s)"
+        echo "Neo4j DBMS ready (${i}s)"
         break
     fi
     if ! kill -0 "$NEO4J_PID" 2>/dev/null; then
@@ -51,11 +51,34 @@ for i in $(seq 1 120); do
     sleep 1
 done
 
-# Verify Neo4j is actually responding
 if ! curl -sf http://localhost:7474/ > /dev/null 2>&1; then
-    echo "Neo4j failed to start within 120s. Log:"
+    echo "Neo4j DBMS failed to start within 120s. Log:"
     tail -50 "$NEO4J_LOG" 2>/dev/null || true
     exit 1
+fi
+
+# Phase 2: Wait for neo4j database to be ONLINE (queryable via Bolt)
+echo "Waiting for neo4j database..."
+DB_READY=0
+for i in $(seq 1 180); do
+    if "${NEO4J_HOME}/bin/cypher-shell" -a bolt://127.0.0.1:7687 \
+        "RETURN 1" > /dev/null 2>&1; then
+        echo "Neo4j database ready (${i}s)"
+        DB_READY=1
+        break
+    fi
+    if ! kill -0 "$NEO4J_PID" 2>/dev/null; then
+        echo "Neo4j process exited during database recovery. Log:"
+        tail -100 "$NEO4J_LOG" 2>/dev/null || true
+        exit 1
+    fi
+    sleep 1
+done
+
+if [ "$DB_READY" -eq 0 ]; then
+    echo "WARNING: Neo4j database not ready after 180s — starting MCP server anyway"
+    echo "Neo4j log tail:"
+    tail -30 "$NEO4J_LOG" 2>/dev/null || true
 fi
 
 # Start MCP server

@@ -209,6 +209,39 @@ RUN set -ex && \
         echo "✓ Graph loaded into Neo4j data directory"; \
     fi
 
+# Pre-start Neo4j to complete WAL recovery and create system DB.
+# This shifts the expensive recovery from runtime (slow Azure I/O)
+# to build time (fast CI SSD). The database ships fully recovered.
+RUN if [ ! -f /tmp/graph-pull/.no-graph ]; then \
+    echo "Pre-starting Neo4j for database recovery..." && \
+    echo "dbms.security.auth_enabled=false" >> /var/lib/neo4j/conf/neo4j.conf && \
+    /var/lib/neo4j/bin/neo4j console > /tmp/neo4j-recovery.log 2>&1 & \
+    NEO4J_PID=$! && \
+    READY=0 && \
+    for i in $(seq 1 120); do \
+        if /var/lib/neo4j/bin/cypher-shell -a bolt://127.0.0.1:7687 "RETURN 1" > /dev/null 2>&1; then \
+            echo "✓ Database recovered (${i}s)"; \
+            READY=1; \
+            break; \
+        fi; \
+        if ! kill -0 $NEO4J_PID 2>/dev/null; then \
+            echo "ERROR: Neo4j exited during recovery. Log:"; \
+            cat /tmp/neo4j-recovery.log; \
+            exit 1; \
+        fi; \
+        sleep 1; \
+    done && \
+    if [ "$READY" -eq 0 ]; then \
+        echo "ERROR: Recovery did not complete in 120s. Log:"; \
+        tail -50 /tmp/neo4j-recovery.log; \
+        exit 1; \
+    fi && \
+    /var/lib/neo4j/bin/neo4j stop && \
+    sleep 2 && \
+    rm -f /tmp/neo4j-recovery.log && \
+    echo "✓ Neo4j shut down cleanly — database is recovery-free"; \
+fi
+
 # NOTE: Do NOT remove transaction logs (/data/transactions/neo4j/*).
 # Neo4j 2026 requires valid WAL state to open the database after
 # neo4j-admin load.  Deleting tx logs causes Neo4j HTTP to start but
@@ -241,8 +274,8 @@ RUN rm -rf /opt/neo4j/logs && mkdir -p /opt/neo4j/logs && \
     echo "server.bolt.listen_address=127.0.0.1:7687" >> /opt/neo4j/conf/neo4j.conf && \
     echo "server.http.listen_address=127.0.0.1:7474" >> /opt/neo4j/conf/neo4j.conf && \
     echo "server.default_listen_address=127.0.0.1" >> /opt/neo4j/conf/neo4j.conf && \
-    echo "server.memory.heap.initial_size=256m" >> /opt/neo4j/conf/neo4j.conf && \
-    echo "server.memory.heap.max_size=512m" >> /opt/neo4j/conf/neo4j.conf && \
+    echo "server.memory.heap.initial_size=384m" >> /opt/neo4j/conf/neo4j.conf && \
+    echo "server.memory.heap.max_size=768m" >> /opt/neo4j/conf/neo4j.conf && \
     echo "dbms.security.auth_enabled=false" >> /opt/neo4j/conf/neo4j.conf
 
 ENV NEO4J_HOME=/opt/neo4j

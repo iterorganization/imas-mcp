@@ -3092,7 +3092,7 @@ class AgentsServer:
                 from imas_codex.graph.client import GraphClient
 
                 gc = GraphClient.from_profile()
-                result: dict = {}
+                result: dict = {"db_status": "unavailable"}
 
                 # Graph meta (name, facilities, imas flag)
                 try:
@@ -3111,6 +3111,9 @@ class AgentsServer:
                     stats = gc.get_stats()
                     result["node_count"] = stats.get("nodes", 0)
                     result["relationship_count"] = stats.get("relationships", 0)
+                    result["db_status"] = (
+                        "online" if result["node_count"] > 0 else "empty"
+                    )
                 except Exception as exc:
                     logger.warning("Health: graph stats query failed: %s", exc)
 
@@ -3161,8 +3164,9 @@ class AgentsServer:
             if "error" in graph:
                 response["graph"] = {"status": "unavailable", "error": graph["error"]}
             else:
+                db_status = graph.get("db_status", "unavailable")
                 response["graph"] = {
-                    "status": "ok",
+                    "status": db_status,
                     "name": graph.get("graph_name"),
                     "node_count": graph.get("node_count"),
                     "relationship_count": graph.get("relationship_count"),
