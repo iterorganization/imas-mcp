@@ -1,5 +1,8 @@
 # Search Recall, Scoring, and Output Enrichment
 
+> **Note**: Items 2.1 (fuzzy search), 4.2-4.4 (DoE optimization), and 5.1 (corpus expansion)
+> are now covered by [search-cluster-output-and-evaluation.md](search-cluster-output-and-evaluation.md).
+
 ## Problem Statement
 
 The graph-backed IMAS DD search pipeline (codex-*) shows lower recall than the

@@ -858,7 +858,7 @@ All graph node types, properties, enums, and relationships are derived from Link
 | Signal lookup | `search_signals("plasma current", facility="tcv")` |
 | Documentation | `search_docs("fishbone instabilities", facility="jet")` |
 | Code examples | `search_code("equilibrium reconstruction", facility="tcv")` |
-| IMAS DD paths | `search_imas("electron temperature", facility="tcv")` |
+| IMAS DD paths | `search_imas("electron temperature", facility="tcv")` — results include semantic cluster labels and "See Also" cross-IDS siblings for top hits |
 | Full content | `fetch_content("jet:Fishbone_proposal_2018.ppt")` — use IDs/URLs from search results |
 
 **repl() REPL** — for custom queries not covered by the search tools:
