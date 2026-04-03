@@ -1441,6 +1441,29 @@ class TestBreakingLevel:
 
         assert _classify_breaking_level("path_added", {}) == "informational"
 
+    def test_data_format_change_doc_is_breaking(self):
+        """Documentation changes with data_format_change semantic are breaking."""
+        from imas_codex.graph.build_dd import _classify_breaking_level
+
+        level = _classify_breaking_level(
+            "documentation", {"semantic_type": "data_format_change"}
+        )
+        assert level == "breaking"
+
+    def test_convention_change_type_is_breaking(self):
+        """convention_change change type should be classified as breaking."""
+        from imas_codex.graph.build_dd import _classify_breaking_level
+
+        level = _classify_breaking_level("convention_change", {})
+        assert level == "breaking"
+
+    def test_maxoccur_changed_is_advisory(self):
+        """maxoccur_changed should be classified as advisory."""
+        from imas_codex.graph.build_dd import _classify_breaking_level
+
+        level = _classify_breaking_level("maxoccur_changed", {})
+        assert level == "advisory"
+
 
 class TestDetectRenames:
     """Tests for rename detection via NBC metadata."""
@@ -1601,3 +1624,141 @@ class TestComputeVersionChanges:
         assert counts.get(1, 0) >= counts.get(2, 0), (
             f"dim1={counts.get(1, 0)} should be >= dim2={counts.get(2, 0)}"
         )
+
+    def test_sign_convention_doc_change_is_breaking(self):
+        """Documentation changes introducing sign convention keywords must be breaking."""
+        from imas_codex.graph.build_dd import compute_version_changes
+
+        old = {"ids/connections": {"documentation": "Matrix elements are 1 or 0."}}
+        new = {
+            "ids/connections": {
+                "documentation": "Matrix elements are 1 if positive side, -1 if negative side, or 0."
+            }
+        }
+        result = compute_version_changes(old, new)
+        assert "ids/connections" in result["changed"]
+        doc_changes = [
+            c
+            for c in result["changed"]["ids/connections"]
+            if c["field"] == "documentation"
+        ]
+        assert len(doc_changes) == 1
+        assert doc_changes[0]["breaking_level"] == "breaking"
+        assert doc_changes[0]["semantic_type"] == "sign_convention"
+
+    def test_coordinate_convention_doc_change_is_advisory(self):
+        """Documentation changes introducing coordinate convention keywords must be advisory."""
+        from imas_codex.graph.build_dd import compute_version_changes
+
+        old = {"ids/phi": {"documentation": "Toroidal angle"}}
+        new = {
+            "ids/phi": {
+                "documentation": "Toroidal angle (right-handed coordinate system)"
+            }
+        }
+        result = compute_version_changes(old, new)
+        doc_changes = [
+            c for c in result["changed"]["ids/phi"] if c["field"] == "documentation"
+        ]
+        assert doc_changes[0]["breaking_level"] == "advisory"
+        assert doc_changes[0]["semantic_type"] == "coordinate_convention"
+
+    def test_plain_doc_change_is_informational(self):
+        """Documentation changes without convention keywords remain informational."""
+        from imas_codex.graph.build_dd import compute_version_changes
+
+        old = {"ids/a": {"documentation": "Temperature"}}
+        new = {"ids/a": {"documentation": "Temperature of the electrons"}}
+        result = compute_version_changes(old, new)
+        doc_changes = [
+            c for c in result["changed"]["ids/a"] if c["field"] == "documentation"
+        ]
+        assert doc_changes[0]["breaking_level"] == "informational"
+
+    def test_data_format_doc_change_is_breaking(self):
+        """Documentation changes with data format keywords must be breaking."""
+        from imas_codex.graph.build_dd import compute_version_changes
+
+        old = {"ids/matrix": {"documentation": "Connection matrix"}}
+        new = {
+            "ids/matrix": {
+                "documentation": "Connection matrix. Second dimension represents sides."
+            }
+        }
+        result = compute_version_changes(old, new)
+        doc_changes = [
+            c for c in result["changed"]["ids/matrix"] if c["field"] == "documentation"
+        ]
+        assert doc_changes[0]["breaking_level"] == "breaking"
+        assert doc_changes[0]["semantic_type"] == "data_format_change"
+
+    def test_maxoccur_change_detected(self):
+        """Changes in maxoccur should be detected."""
+        from imas_codex.graph.build_dd import compute_version_changes
+
+        old = {"ids/circuit": {"maxoccur": 76, "documentation": "Circuit matrix"}}
+        new = {"ids/circuit": {"maxoccur": 38, "documentation": "Circuit matrix"}}
+        result = compute_version_changes(old, new)
+        assert "ids/circuit" in result["changed"]
+        maxoccur_changes = [
+            c for c in result["changed"]["ids/circuit"] if c["field"] == "maxoccur"
+        ]
+        assert len(maxoccur_changes) == 1
+        assert maxoccur_changes[0]["old_value"] == "76"
+        assert maxoccur_changes[0]["new_value"] == "38"
+        assert maxoccur_changes[0]["breaking_level"] == "advisory"
+
+    def test_maxoccur_none_to_value(self):
+        """maxoccur going from None to a value is a change."""
+        from imas_codex.graph.build_dd import compute_version_changes
+
+        old = {"ids/a": {"maxoccur": None}}
+        new = {"ids/a": {"maxoccur": 10}}
+        result = compute_version_changes(old, new)
+        assert "ids/a" in result["changed"]
+        maxoccur_changes = [
+            c for c in result["changed"]["ids/a"] if c["field"] == "maxoccur"
+        ]
+        assert len(maxoccur_changes) == 1
+        assert maxoccur_changes[0]["old_value"] == "unbounded"
+        assert maxoccur_changes[0]["new_value"] == "10"
+
+    def test_maxoccur_same_value_no_change(self):
+        """maxoccur with same value should not produce a change."""
+        from imas_codex.graph.build_dd import compute_version_changes
+
+        old = {"ids/a": {"maxoccur": 10}}
+        new = {"ids/a": {"maxoccur": 10}}
+        result = compute_version_changes(old, new)
+        if "ids/a" in result.get("changed", {}):
+            maxoccur_changes = [
+                c for c in result["changed"]["ids/a"] if c["field"] == "maxoccur"
+            ]
+            assert len(maxoccur_changes) == 0
+
+    def test_ndim_change_detected(self):
+        """Changes in ndim should be detected as structure_changed."""
+        from imas_codex.graph.build_dd import compute_version_changes
+
+        old = {"ids/a": {"ndim": "1"}}
+        new = {"ids/a": {"ndim": "2"}}
+        result = compute_version_changes(old, new)
+        assert "ids/a" in result["changed"]
+        ndim_changes = [c for c in result["changed"]["ids/a"] if c["field"] == "ndim"]
+        assert len(ndim_changes) == 1
+        assert ndim_changes[0]["breaking_level"] == "advisory"
+
+    def test_identifier_enum_name_change_detected(self):
+        """Changes in identifier_enum_name should be detected."""
+        from imas_codex.graph.build_dd import compute_version_changes
+
+        old = {"ids/a": {"identifier_enum_name": "old_enum"}}
+        new = {"ids/a": {"identifier_enum_name": "new_enum"}}
+        result = compute_version_changes(old, new)
+        assert "ids/a" in result["changed"]
+        id_changes = [
+            c
+            for c in result["changed"]["ids/a"]
+            if c["field"] == "identifier_enum_name"
+        ]
+        assert len(id_changes) == 1

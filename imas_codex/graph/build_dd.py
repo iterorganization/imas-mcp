@@ -99,6 +99,25 @@ COORDINATE_CONVENTION_KEYWORDS = [
     "reference frame",
 ]
 
+FIELD_TO_CHANGE_TYPE = {
+    "ndim": "structure_changed",
+    "identifier_enum_name": "structure_changed",
+    "maxoccur": "maxoccur_changed",
+}
+
+DATA_FORMAT_KEYWORDS = [
+    "dimension",
+    "second dimension",
+    "first dimension",
+    "column",
+    "matrix elements",
+    "encoding",
+    "polarity",
+    "format",
+    "sides",
+    "index convention",
+]
+
 
 def classify_doc_change(old_doc: str, new_doc: str) -> tuple[str, list[str]]:
     """
@@ -127,6 +146,14 @@ def classify_doc_change(old_doc: str, new_doc: str) -> tuple[str, list[str]]:
 
     if keywords_found:
         return "coordinate_convention", keywords_found
+
+    # Check for data format/encoding convention changes
+    format_keywords = []
+    for kw in DATA_FORMAT_KEYWORDS:
+        if kw in new_lower and kw not in old_lower:
+            format_keywords.append(kw)
+    if format_keywords:
+        return "data_format_change", format_keywords
 
     # Check if documentation was significantly expanded (clarification)
     if new_doc and old_doc and len(new_doc) > len(old_doc) * 1.5:
@@ -1306,6 +1333,7 @@ def _classify_breaking_level(change_type: str, change: dict) -> str:
         "maxoccur_changed": "advisory",
         "structure_changed": "advisory",
         "path_added": "informational",
+        "convention_change": "breaking",
     }
 
     if change_type == "units":
@@ -1322,6 +1350,8 @@ def _classify_breaking_level(change_type: str, change: dict) -> str:
             return "breaking"  # sign convention changes break external codes
         if semantic == "coordinate_convention":
             return "advisory"
+        if semantic == "data_format_change":
+            return "breaking"
         return "informational"
 
     return RULES.get(change_type, "informational")
@@ -1393,6 +1423,9 @@ def compute_version_changes(
             "lifecycle_status",
             "coordinates",
             "timebasepath",
+            "maxoccur",
+            "ndim",
+            "identifier_enum_name",
         ):
             old_val = old_info.get(field, "")
             new_val = new_info.get(field, "")
@@ -1414,6 +1447,20 @@ def compute_version_changes(
                     "units", change_entry
                 )
                 changes.append(change_entry)
+            elif field == "maxoccur":
+                old_mo = old_info.get("maxoccur")
+                new_mo = new_info.get("maxoccur")
+                if old_mo == new_mo:
+                    continue
+                change_entry = {
+                    "field": "maxoccur",
+                    "old_value": str(old_mo) if old_mo is not None else "unbounded",
+                    "new_value": str(new_mo) if new_mo is not None else "unbounded",
+                }
+                change_entry["breaking_level"] = _classify_breaking_level(
+                    "maxoccur_changed", change_entry
+                )
+                changes.append(change_entry)
             else:
                 if str(old_val) != str(new_val):
                     change_entry = {
@@ -1421,8 +1468,15 @@ def compute_version_changes(
                         "old_value": str(old_val) if old_val else "",
                         "new_value": str(new_val) if new_val else "",
                     }
+                    # Classify doc changes semantically BEFORE computing breaking level
+                    if field == "documentation":
+                        semantic_type, keywords = classify_doc_change(
+                            change_entry["old_value"], change_entry["new_value"]
+                        )
+                        change_entry["semantic_type"] = semantic_type
+                        change_entry["keywords_detected"] = keywords
                     change_entry["breaking_level"] = _classify_breaking_level(
-                        field, change_entry
+                        FIELD_TO_CHANGE_TYPE.get(field, field), change_entry
                     )
                     changes.append(change_entry)
 
@@ -3229,7 +3283,9 @@ def _batch_create_path_changes(
             change_data = {
                 "id": f"{path}:{change['field']}:{version}",
                 "path": path,
-                "change_type": change["field"],
+                "change_type": FIELD_TO_CHANGE_TYPE.get(
+                    change["field"], change["field"]
+                ),
                 "old_value": change.get("old_value", ""),
                 "new_value": change.get("new_value", ""),
                 "semantic_type": None,
@@ -3237,15 +3293,23 @@ def _batch_create_path_changes(
                 "unit_change_subtype": change.get("unit_change_subtype"),
             }
 
-            # Classify documentation changes
+            # Use pre-computed semantic classification from compute_version_changes()
             if change["field"] == "documentation":
-                semantic_type, keywords = classify_doc_change(
-                    change.get("old_value", ""),
-                    change.get("new_value", ""),
-                )
-                change_data["semantic_type"] = semantic_type
-                if keywords:
-                    change_data["keywords_detected"] = json.dumps(keywords)
+                change_data["semantic_type"] = change.get("semantic_type")
+                kw = change.get("keywords_detected")
+                if kw and not isinstance(kw, str):
+                    change_data["keywords_detected"] = json.dumps(kw)
+                elif kw:
+                    change_data["keywords_detected"] = kw
+                # Fallback for legacy callers that don't pre-compute
+                if change_data["semantic_type"] is None:
+                    semantic_type, keywords = classify_doc_change(
+                        change.get("old_value", ""),
+                        change.get("new_value", ""),
+                    )
+                    change_data["semantic_type"] = semantic_type
+                    if keywords:
+                        change_data["keywords_detected"] = json.dumps(keywords)
 
             # Persist breaking_level — use pre-computed value from
             # compute_version_changes(), fall back to classifying here.

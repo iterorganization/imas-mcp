@@ -200,6 +200,11 @@ enums:
         description: Coordinate specification changed
       maxoccur_changed:
         description: Max occurrences changed
+      convention_change:
+        description: >-
+          Data format or interpretation convention changed without type/path change.
+          The field retains its name and data type but values have different meaning
+          across versions. Requires non-trivial data transformation during conversion.
 
   SemanticChangeType:
     description: Physics significance of documentation changes
@@ -210,6 +215,11 @@ enums:
         description: Coordinate system or reference frame change
       definition_clarification:
         description: More precise definition without semantic change
+      data_format_change:
+        description: >-
+          The numeric encoding or dimensionality convention changed. The field name
+          and data type are preserved but values have fundamentally different meaning
+          across versions. Requires data transformation (not just sign flip).
       none:
         description: No physics significance detected
 

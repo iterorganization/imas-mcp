@@ -234,6 +234,35 @@ def _get_additions(
     )
 
 
+def _get_semantic_doc_changes(
+    gc: GraphClient, version_range: list[str], ids_filter: str | None = None
+) -> list[dict]:
+    """Get documentation changes with physics significance (sign/coordinate/format conventions)."""
+    ids_clause = ""
+    params: dict = {"versions": version_range}
+    if ids_filter:
+        ids_clause = "AND p.ids = $ids_filter"
+        params["ids_filter"] = ids_filter
+    return gc.query(
+        f"""
+        MATCH (c:IMASNodeChange)-[:IN_VERSION]->(v:DDVersion)
+        WHERE v.id IN $versions
+          AND c.change_type = 'documentation'
+          AND c.semantic_type IN ['sign_convention', 'coordinate_convention', 'data_format_change']
+        MATCH (c)-[:FOR_IMAS_PATH]->(p:IMASNode)
+        WHERE true {ids_clause}
+        RETURN p.ids AS ids, p.id AS path,
+               c.semantic_type AS semantic_type,
+               c.old_value AS old_doc, c.new_value AS new_doc,
+               coalesce(c.breaking_level, 'informational') AS level,
+               c.keywords_detected AS keywords,
+               v.id AS version
+        ORDER BY c.breaking_level DESC, c.semantic_type, p.ids, p.id
+        """,
+        **params,
+    )
+
+
 def _compute_cocos_factors(
     labeled_paths: list[dict], from_cocos: int | None, to_cocos: int | None
 ) -> list[dict]:
@@ -696,6 +725,37 @@ def build_migration_guide(
             )
         type_advice = TypeUpdateAdvice(type_changes=tc_list)
 
+    # --- Semantic documentation changes (sign/coordinate conventions) ---
+    semantic_doc_changes = _get_semantic_doc_changes(gc, version_range, ids_filter)
+    for sdc in semantic_doc_changes:
+        path = sdc.get("path", "")
+        ids_name = sdc.get("ids", path.split("/")[0] if "/" in path else "")
+        ids_affected.add(ids_name)
+        patterns = generate_search_patterns(path, "definition_change")
+        search_patterns.setdefault(ids_name, []).extend(patterns)
+        level = sdc.get("level", "informational")
+        semantic = sdc.get("semantic_type", "")
+
+        desc = f"Convention change ({semantic}): {path}"
+        old_excerpt = (sdc.get("old_doc") or "")[:200]
+        new_excerpt = (sdc.get("new_doc") or "")[:200]
+
+        action = CodeUpdateAction(
+            path=path,
+            ids=ids_name,
+            change_type="definition_change",
+            severity="required" if level == "breaking" else "optional",
+            search_patterns=patterns,
+            path_fragments=path.split("/")[1:],
+            description=desc,
+            before=old_excerpt,
+            after=new_excerpt,
+        )
+        if level == "breaking":
+            required_actions.append(action)
+        else:
+            optional_actions.append(action)
+
     # Deduplicate search patterns per IDS
     for ids_name in search_patterns:
         search_patterns[ids_name] = list(dict.fromkeys(search_patterns[ids_name]))
@@ -793,6 +853,39 @@ def format_migration_guide(guide: CodeMigrationGuide) -> str:
             lines.append(
                 "These COCOS-dependent paths have factor=1 (no sign change needed)."
             )
+            lines.append("")
+
+    # -- Convention changes --
+    convention_actions = [
+        a
+        for a in guide.required_actions + guide.optional_actions
+        if a.change_type == "definition_change"
+    ]
+    if convention_actions:
+        lines.append("## Convention Changes")
+        lines.append("")
+        lines.append(
+            "These changes affect data interpretation without changing path names or types."
+        )
+        lines.append(
+            "Code that reads these fields may produce **silently incorrect results**"
+        )
+        lines.append("if not updated.")
+        lines.append("")
+        for action in convention_actions:
+            severity_badge = (
+                "**BREAKING**" if action.severity == "required" else "advisory"
+            )
+            lines.append(f"### `{action.path}` ({severity_badge})")
+            lines.append("")
+            lines.append(f"  {action.description}")
+            if action.before:
+                lines.append(f"  - **Before:** {action.before}")
+            if action.after:
+                lines.append(f"  - **After:** {action.after}")
+            if action.search_patterns:
+                patterns_str = ", ".join(f"`{p}`" for p in action.search_patterns[:3])
+                lines.append(f"  - **Search for:** {patterns_str}")
             lines.append("")
 
     # -- Search strategy --

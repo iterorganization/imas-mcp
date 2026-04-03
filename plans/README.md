@@ -18,7 +18,6 @@ Gap documents consolidate remaining work from completed implementation phases. T
 
 | Priority | Plan | Scope | Status |
 |----------|------|-------|--------|
-| **P0** | [features/dd-change-detection.md](features/dd-change-detection.md) | DD change detection gaps: breaking level bug, maxoccur tracking, migration guide propagation | New |
 | **P2** | [features/search-recall-and-enrichment.md](features/search-recall-and-enrichment.md) | Search recall, scoring, output enrichment | Implemented |
 | **P4** | [gaps-compute-orchestration.md](features/gaps-compute-orchestration.md) | Compute session orchestration remaining gaps | Low priority — Python CLI covers basics |
 

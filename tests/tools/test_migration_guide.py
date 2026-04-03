@@ -719,3 +719,90 @@ class TestGenerateMigrationGuide:
         result = generate_migration_guide(gc, "3.39.0", "3.39.0")
         assert "Error" in result
         assert "No versions found" in result
+
+
+class TestConventionChanges:
+    """Tests for convention change handling in migration guide."""
+
+    def test_format_includes_convention_changes_section(self):
+        """Formatted guide should include Convention Changes section when definition_change actions exist."""
+        guide = CodeMigrationGuide(
+            from_version="3.42.0",
+            to_version="4.0.0",
+            required_actions=[
+                CodeUpdateAction(
+                    path="pf_active/circuit/connections",
+                    ids="pf_active",
+                    change_type="definition_change",
+                    severity="required",
+                    description="Convention change (sign_convention): pf_active/circuit/connections",
+                    before="Matrix elements are 1 or 0.",
+                    after="Matrix elements are 1 if positive side, -1 if negative side, or 0.",
+                    search_patterns=["circuit/connections", "connections"],
+                    path_fragments=["circuit", "connections"],
+                ),
+            ],
+            optional_actions=[],
+            total_actions=1,
+            required_count=1,
+            optional_count=0,
+            ids_affected=["pf_active"],
+        )
+        output = format_migration_guide(guide)
+        assert "Convention Changes" in output
+        assert "pf_active/circuit/connections" in output
+        assert "**BREAKING**" in output
+        assert "silently incorrect results" in output
+
+    def test_format_no_convention_section_when_no_definition_changes(self):
+        """Convention Changes section should not appear when there are no definition_change actions."""
+        guide = CodeMigrationGuide(
+            from_version="3.42.0",
+            to_version="4.0.0",
+            required_actions=[
+                CodeUpdateAction(
+                    path="some/path",
+                    ids="some",
+                    change_type="type_change",
+                    severity="required",
+                    description="Type change",
+                    search_patterns=[],
+                    path_fragments=["path"],
+                ),
+            ],
+            optional_actions=[],
+            total_actions=1,
+            required_count=1,
+            optional_count=0,
+            ids_affected=["some"],
+        )
+        output = format_migration_guide(guide)
+        assert "Convention Changes" not in output
+
+    def test_advisory_convention_change_shows_advisory_badge(self):
+        """Optional convention changes should show 'advisory' badge."""
+        guide = CodeMigrationGuide(
+            from_version="3.42.0",
+            to_version="4.0.0",
+            required_actions=[],
+            optional_actions=[
+                CodeUpdateAction(
+                    path="some/phi",
+                    ids="some",
+                    change_type="definition_change",
+                    severity="optional",
+                    description="Convention change (coordinate_convention): some/phi",
+                    before="Toroidal angle",
+                    after="Toroidal angle (right-handed)",
+                    search_patterns=["phi"],
+                    path_fragments=["phi"],
+                ),
+            ],
+            total_actions=1,
+            required_count=0,
+            optional_count=1,
+            ids_affected=["some"],
+        )
+        output = format_migration_guide(guide)
+        assert "Convention Changes" in output
+        assert "advisory" in output

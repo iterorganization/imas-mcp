@@ -12,7 +12,8 @@ class CodeUpdateAction(BaseModel):
     ids: str = Field(description="IDS name")
     change_type: str = Field(
         description="Type of change: cocos_sign_flip, type_change, path_rename, "
-        "path_removed, unit_change, new_path, definition_clarification"
+        "path_removed, unit_change, new_path, definition_clarification, "
+        "definition_change"
     )
     severity: str = Field(
         description="'required' (will break) or 'optional' (best practice)"
