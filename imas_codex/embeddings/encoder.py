@@ -352,6 +352,7 @@ class Encoder:
                     texts,
                     normalize=self.config.normalize_embeddings,
                     prompt_name=prompt_name,
+                    dimension=get_embedding_dimension(),
                 )
             except ConnectionError:
                 if self._reconnect_remote():
@@ -361,6 +362,7 @@ class Encoder:
                         texts,
                         normalize=self.config.normalize_embeddings,
                         prompt_name=prompt_name,
+                        dimension=get_embedding_dimension(),
                     )
                 else:
                     raise
@@ -414,6 +416,7 @@ class Encoder:
                     texts,
                     normalize=self.config.normalize_embeddings,
                     prompt_name=prompt_name,
+                    dimension=get_embedding_dimension(),
                 )
             except ConnectionError:
                 if self._reconnect_remote():
@@ -423,6 +426,7 @@ class Encoder:
                         texts,
                         normalize=self.config.normalize_embeddings,
                         prompt_name=prompt_name,
+                        dimension=get_embedding_dimension(),
                     )
                 else:
                     raise
@@ -681,13 +685,17 @@ class Encoder:
             )
             try:
                 embeddings = self._remote_client.embed(  # type: ignore[union-attr]
-                    texts, normalize=self.config.normalize_embeddings
+                    texts,
+                    normalize=self.config.normalize_embeddings,
+                    dimension=get_embedding_dimension(),
                 )
             except ConnectionError:
                 if self._reconnect_remote():
                     self._validate_remote_backend()
                     embeddings = self._remote_client.embed(  # type: ignore[union-attr]
-                        texts, normalize=self.config.normalize_embeddings
+                        texts,
+                        normalize=self.config.normalize_embeddings,
+                        dimension=get_embedding_dimension(),
                     )
                 else:
                     raise

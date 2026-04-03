@@ -72,6 +72,96 @@ class TestRemoteEmbeddingClient:
         np.testing.assert_array_almost_equal(result[0], [0.1, 0.2, 0.3])
         np.testing.assert_array_almost_equal(result[1], [0.4, 0.5, 0.6])
 
+    @patch("imas_codex.embeddings.client.httpx.Client")
+    def test_embed_sends_dimension(self, mock_client_cls):
+        """When dimension is passed, it appears in the request body JSON."""
+        import numpy as np
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "embeddings": [[0.1] * 512],
+            "model": "test-model",
+            "dimension": 512,
+        }
+
+        mock_client = MagicMock()
+        mock_client.post.return_value = mock_response
+        mock_client_cls.return_value = mock_client
+
+        client = RemoteEmbeddingClient("http://localhost:18765")
+        client._client = mock_client
+        client.embed(["text1"], dimension=512)
+
+        call_kwargs = mock_client.post.call_args
+        sent_body = call_kwargs[1]["json"]
+        assert sent_body["dimension"] == 512
+
+    @patch("imas_codex.embeddings.client.httpx.Client")
+    def test_embed_omits_dimension_when_none(self, mock_client_cls):
+        """When dimension is not passed, the key is absent from the request body."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "embeddings": [[0.1, 0.2, 0.3]],
+            "model": "test-model",
+            "dimension": 3,
+        }
+
+        mock_client = MagicMock()
+        mock_client.post.return_value = mock_response
+        mock_client_cls.return_value = mock_client
+
+        client = RemoteEmbeddingClient("http://localhost:18765")
+        client._client = mock_client
+        client.embed(["text1"])
+
+        call_kwargs = mock_client.post.call_args
+        sent_body = call_kwargs[1]["json"]
+        assert "dimension" not in sent_body
+
+    @patch("imas_codex.embeddings.client.httpx.Client")
+    def test_embed_sends_configured_dimension(self, mock_client_cls):
+        """Encoder passes get_embedding_dimension() value through to the client."""
+        import numpy as np
+
+        from imas_codex.embeddings.config import EmbeddingBackend, EncoderConfig
+        from imas_codex.embeddings.encoder import Encoder
+        from imas_codex.settings import get_embedding_dimension
+
+        expected_dim = get_embedding_dimension()
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "embeddings": [list(np.ones(expected_dim, dtype=float))],
+            "model": "test-model",
+            "dimension": expected_dim,
+        }
+
+        mock_client = MagicMock()
+        mock_client.post.return_value = mock_response
+        mock_client_cls.return_value = mock_client
+
+        config = EncoderConfig(
+            remote_url="http://localhost:18765",
+            backend=EmbeddingBackend.REMOTE,
+        )
+        encoder = Encoder(config=config)
+        # Inject mock directly so no real HTTP connection is made
+        from imas_codex.embeddings.client import RemoteEmbeddingClient as REC
+
+        encoder._remote_client = REC("http://localhost:18765")
+        encoder._remote_client._client = mock_client
+        # Skip health-check validation — we control the mock
+        encoder._backend_validated = True
+
+        encoder.embed_texts(["hello world"])
+
+        call_kwargs = mock_client.post.call_args
+        sent_body = call_kwargs[1]["json"]
+        assert sent_body["dimension"] == expected_dim
+
 
 class TestEncoderConfigRemote:
     """Tests for remote embedding configuration."""
