@@ -86,10 +86,10 @@ class MixConfig:
     ids_name_boost: float = 0.05  # IDS name match bonus
     abbreviation_boost: float = 0.15  # abbreviation exact-match boost
 
-    # ── Reserved boosts (future search pipeline features) ─────────────
-    cluster_boost: float = 0.0  # cluster membership boost
-    hierarchy_boost: float = 0.0  # parent proximity boost
-    coordinate_boost: float = 0.0  # coordinate sharing boost
+    # ── Graph-native boosts ───────────────────────────────────────────
+    cluster_boost: float = 0.02  # cluster membership boost
+    hierarchy_boost: float = 0.02  # parent proximity boost
+    coordinate_boost: float = 0.01  # coordinate sharing boost
 
 
 # Locked optimal configuration from current tuned defaults.
@@ -249,6 +249,34 @@ def _apply_score_mixing(
             terminal = pid.rsplit("/", 1)[-1].lower()
             if terminal in orig_terms:
                 scores[pid] = round(scores[pid] + config.abbreviation_boost, 4)
+
+    # --- Graph-native boost proxies ---
+    # In production, these query the graph. In DoE evaluation, apply
+    # a fixed additive boost to simulate their effect on ranking.
+    # The actual boost magnitude is what we're tuning.
+    if config.cluster_boost > 0:
+        for pid in list(scores):
+            # Proxy: paths with more segments (deeper in hierarchy) tend
+            # to be cluster members. Apply boost proportionally.
+            depth = pid.count("/")
+            if depth >= 3:  # typical cluster member depth
+                scores[pid] = round(scores[pid] + config.cluster_boost, 4)
+
+    if config.hierarchy_boost > 0:
+        for pid in list(scores):
+            # Proxy: parent proximity — deeper paths near query terms
+            segments = pid.lower().split("/")
+            for w in query_words:
+                if any(w in seg for seg in segments[:-1]):  # parent match
+                    scores[pid] = round(scores[pid] + config.hierarchy_boost, 4)
+                    break
+
+    if config.coordinate_boost > 0:
+        for pid in list(scores):
+            # Proxy: coordinate-sharing paths tend to have known suffixes
+            terminal = pid.rsplit("/", 1)[-1] if "/" in pid else pid
+            if terminal in {"r", "z", "phi", "rho_tor_norm", "psi", "time"}:
+                scores[pid] = round(scores[pid] + config.coordinate_boost, 4)
 
     return scores
 
@@ -432,26 +460,53 @@ def evaluate_config(
 # ── DoE grid search ──────────────────────────────────────────────────────────
 
 
-def generate_doe_grid() -> list[MixConfig]:
-    """Generate factorial grid of MixConfig parameter combinations.
+def generate_doe_grid(two_phase: bool = True) -> list[MixConfig]:
+    """Generate Design of Experiments configurations.
 
-    Crosses the five parameters that most affect search quality:
-    retrieval limits (vector_limit, text_limit) and fusion weights
-    (vector_weight, text_weight, dual_channel_bonus).
+    When *two_phase* is ``True`` (default), generates a manageable grid:
 
-    Returns a list of 243 MixConfig instances (3^5 grid).
+    - Phase A: 243 configs sweeping fusion weights (as before)
+    - Phase B: 27 configs sweeping graph boosts with optimal fusion defaults
+
+    Total: up to 270 configs (vs 6561 for full factorial), with duplicates
+    removed so configs that appear in both phases are not repeated.
     """
-    grid = {
+    configs: list[MixConfig] = []
+    seen: set[tuple] = set()
+
+    # Phase A: Fusion parameter sweep (original grid)
+    fusion_grid = {
         "vector_limit": [200, 500, 800],
         "text_limit": [200, 500, 800],
         "vector_weight": [0.4, 0.6, 0.8],
         "text_weight": [0.2, 0.4, 0.6],
         "dual_channel_bonus": [0.0, 0.05, 0.10],
     }
-    configs = []
-    for combo in itertools.product(*grid.values()):
-        params = dict(zip(grid.keys(), combo, strict=True))
-        configs.append(MixConfig(**params))
+    keys_a = list(fusion_grid.keys())
+    for combo in itertools.product(*(fusion_grid[k] for k in keys_a)):
+        kwargs = dict(zip(keys_a, combo, strict=True))
+        config = MixConfig(**kwargs)
+        key = tuple(sorted(asdict(config).items()))
+        if key not in seen:
+            seen.add(key)
+            configs.append(config)
+
+    if two_phase:
+        # Phase B: Graph boost sweep with default fusion params
+        boost_grid = {
+            "cluster_boost": [0.0, 0.02, 0.05],
+            "hierarchy_boost": [0.0, 0.02, 0.05],
+            "coordinate_boost": [0.0, 0.01, 0.03],
+        }
+        keys_b = list(boost_grid.keys())
+        for combo in itertools.product(*(boost_grid[k] for k in keys_b)):
+            kwargs = dict(zip(keys_b, combo, strict=True))
+            config = MixConfig(**kwargs)  # Uses default fusion params
+            key = tuple(sorted(asdict(config).items()))
+            if key not in seen:
+                seen.add(key)
+                configs.append(config)
+
     return configs
 
 
@@ -588,12 +643,12 @@ class TestMixConfig:
         assert config.text_weight == 0.2
         assert config.path_boost == 0.03  # default preserved
 
-    def test_reserved_boosts_zero(self):
-        """Reserved future boosts default to zero."""
+    def test_graph_native_boost_defaults(self):
+        """Graph-native boosts have non-zero production defaults."""
         config = MixConfig()
-        assert config.cluster_boost == 0.0
-        assert config.hierarchy_boost == 0.0
-        assert config.coordinate_boost == 0.0
+        assert config.cluster_boost == 0.02
+        assert config.hierarchy_boost == 0.02
+        assert config.coordinate_boost == 0.01
 
     def test_asdict_roundtrip(self):
         """Config serializes to dict and reconstructs identically."""
@@ -611,24 +666,22 @@ class TestDoEGrid:
     """Verify DoE grid generation."""
 
     def test_grid_size(self):
-        """Grid has 3^5 = 243 combinations."""
+        """Grid has at least 243 fusion configs plus boost phase configs."""
         grid = generate_doe_grid()
+        assert len(grid) >= 243  # At least the original fusion grid
+        assert len(grid) <= 270  # Plus boost grid minus overlaps
+
+    def test_grid_size_single_phase(self):
+        """Single-phase grid (two_phase=False) has exactly 3^5 = 243 configs."""
+        grid = generate_doe_grid(two_phase=False)
         assert len(grid) == 243
 
     def test_grid_contains_default_config(self):
-        """Grid includes the exact default vector/text config."""
+        """Grid includes the exact full default config (fusion + boost defaults)."""
         grid = generate_doe_grid()
         default = MixConfig()
-        matches = [
-            c
-            for c in grid
-            if c.vector_limit == default.vector_limit
-            and c.text_limit == default.text_limit
-            and c.vector_weight == default.vector_weight
-            and c.text_weight == default.text_weight
-            and c.dual_channel_bonus == default.dual_channel_bonus
-        ]
-        assert len(matches) == 1
+        exact_matches = [c for c in grid if c == default]
+        assert len(exact_matches) == 1
 
     def test_grid_configs_are_unique(self):
         """All grid configs are distinct."""
@@ -645,6 +698,16 @@ class TestDoEGrid:
             assert config.terminal_boost == default.terminal_boost
             assert config.abbreviation_boost == default.abbreviation_boost
             assert config.hnsw_candidates == default.hnsw_candidates
+
+    def test_grid_includes_boost_configs(self):
+        """Grid includes configs with non-zero graph-native boosts."""
+        grid = generate_doe_grid()
+        boost_configs = [
+            c
+            for c in grid
+            if c.cluster_boost > 0 or c.hierarchy_boost > 0 or c.coordinate_boost > 0
+        ]
+        assert len(boost_configs) > 0, "Grid should include non-zero boost configs"
 
 
 class TestMetricComputation:

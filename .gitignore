@@ -88,3 +88,5 @@ imas_codex/graph/dd_models.py
 *.tar.gz
 # MCP configs: .mcp.json (Claude Code), .vscode/mcp.json (VS Code) — both tracked
 *.out
+# Search benchmark cache
+tests/search/.expected_paths_cache.json

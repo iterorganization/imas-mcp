@@ -22,13 +22,18 @@ class QueryResult:
 
     query: BenchmarkQuery
     returned_paths: list[str]
+    expanded_expected: set[str] | None = None
     reciprocal_rank: float = 0.0
 
     def __post_init__(self):
         self.reciprocal_rank = self._compute_rr()
 
     def _compute_rr(self) -> float:
-        """Compute reciprocal rank: 1/rank of first relevant result."""
+        """Compute reciprocal rank: 1/rank of first relevant result.
+
+        Uses expanded_expected if provided (from auto-generated cache),
+        otherwise falls back to hand-curated query.expected_paths.
+        """
         for rank, path in enumerate(self.returned_paths, start=1):
             if path in self.expected_set:
                 return 1.0 / rank
@@ -36,6 +41,8 @@ class QueryResult:
 
     @property
     def expected_set(self) -> set[str]:
+        if self.expanded_expected is not None:
+            return self.expanded_expected
         return set(self.query.expected_paths)
 
     @property
@@ -170,6 +177,7 @@ def run_benchmark(
     queries: list[BenchmarkQuery],
     search_fn,
     limit: int = 50,
+    expanded_expected: dict[str, set[str]] | None = None,
 ) -> BenchmarkResults:
     """Run a benchmark by calling search_fn(query_text, limit) for each query.
 
@@ -184,6 +192,9 @@ def run_benchmark(
         Must return a list of IMAS path IDs in ranked order.
     limit:
         Max results to request from the search function.
+    expanded_expected:
+        Optional dict mapping query_text to expanded expected path sets.
+        When provided, QueryResult uses the expanded set for MRR computation.
 
     Returns
     -------
@@ -192,7 +203,10 @@ def run_benchmark(
     results = BenchmarkResults(method_name=method_name)
     for q in queries:
         returned = search_fn(q.query_text, limit)
-        results.query_results.append(QueryResult(query=q, returned_paths=returned))
+        exp = expanded_expected.get(q.query_text) if expanded_expected else None
+        results.query_results.append(
+            QueryResult(query=q, returned_paths=returned, expanded_expected=exp)
+        )
     return results
 
 
