@@ -34,8 +34,22 @@ embeddings:
 |--------|--------|
 | Overall MRR | ≥ 0.65 |
 | Abbreviation MRR | ≥ 0.55 |
-| Avg embed text length | ~250-400 chars |
+| Avg embed text length | ~200-400 chars |
 | Model capacity utilization | ~0.3-0.5% |
+
+### Enrichment Philosophy Change
+
+The current enrichment prompt focuses on **disambiguation** — forcing the LLM to
+describe what makes a path "different from similar paths elsewhere in the DD."
+This produces artificial phrases like "from equilibrium reconstruction" and wastes
+55% of COCOS-labelled descriptions on convention notes that are already stored as
+structured metadata.
+
+The new approach focuses on **clear physics descriptions** — each description
+should read like a concise physics reference entry. Disambiguation is handled at
+embed-text construction time (Phase 1) where the full IMAS path is prepended,
+naturally separating `core_profiles/.../temperature` from `edge_profiles/.../temperature`
+without polluting the description itself.
 
 ---
 
@@ -255,130 +269,202 @@ compatible.
 
 ---
 
-## Phase 3: Update Enrichment Prompt — Abbreviations and Longer Descriptions
+## Phase 3: Rewrite Enrichment Prompt — Clear Descriptions, Not Disambiguation
 
-**Goal:** Update the LLM enrichment prompt to require physics abbreviations
-in descriptions and allow 200-400 characters instead of the current 150-char
-limit. Also increase keyword count from 5 to 8 and require abbreviation
-symbols in keywords.
+**Goal:** Fundamentally rewrite the enrichment prompt philosophy. The current
+prompt forces the LLM to "disambiguate" similar paths from each other, producing
+artificial phrases like "from equilibrium reconstruction" and wasting description
+chars on COCOS convention notes (55% of COCOS-labelled paths mention it — but
+COCOS is already a separate field). The new prompt focuses on producing **clear,
+human-readable physics descriptions** that are equally useful for humans and
+embedding search. Disambiguation is handled at the embed-text stage (Phase 1)
+by prepending the full IMAS path.
 
 **Agent:** engineer
 
+### Design Principles
+
+1. **Descriptions should read like physics reference text** — not like
+   artificial disambiguation labels. "Electron temperature profile" is better
+   than "Electron temperature from core profile analysis" when the same
+   description would be valid regardless of which IDS it appears in.
+
+2. **Don't mention COCOS** — `cocos_label_transformation` is already a field
+   on the node. Currently 55.2% of COCOS-labelled paths waste description
+   chars on "COCOS dependent" or "sign follows ip_like convention". This is
+   pure noise for both humans and embeddings.
+
+3. **Include abbreviations for searchability** — physics abbreviations (Ip, Te,
+   ne, q, ψ) are critical search terms that don't appear anywhere in the
+   current descriptions.
+
+4. **Don't repeat metadata, but DO include physics context** — units, data type,
+   coordinates are already structured fields. But physical meaning, related
+   concepts, and measurement context ARE valuable.
+
+5. **Disambiguation happens at embed text construction time** — Phase 1
+   prepends the full IMAS path (e.g., `core_profiles/profiles_1d/electrons/temperature`)
+   which naturally disambiguates identical descriptions across different IDS.
+
+### Current Problems (measured from live graph)
+
+| Issue | Impact |
+|-------|--------|
+| 55.2% of COCOS paths mention COCOS in description | ~153 paths with wasted chars |
+| 150-char limit → 44% of descriptions under 50 chars | Low semantic density |
+| "disambiguate" instruction → artificial phrasing | Descriptions less human-readable |
+| No abbreviations anywhere | Abbreviation queries get MRR 0.318 |
+| Template descriptions (14.2%) average 23 chars | "Time base for z." — uninformative |
+
 ### Files to Modify
 
-**`imas_codex/llm/prompts/imas/enrichment.md`**
+**`imas_codex/llm/prompts/imas/enrichment.md`** — Complete rewrite
 
-Key changes to the prompt:
+Replace the entire prompt with:
 
-1. **Lift character limit**: "under 150 characters" → "200–400 characters"
-2. **Require abbreviations**: Add instruction to include standard physics
-   abbreviations in parentheses after first mention
-3. **Update examples**: Replace 46-69 char examples with 150-250 char examples
-   that include abbreviations
-4. **Increase keyword count**: "Up to 5" → "Up to 8" and require abbreviation
-   symbols
-
-New task section:
 ```markdown
+---
+name: imas/enrichment
+description: Generate physics-aware descriptions for IMAS Data Dictionary paths
+task: enrichment
+dynamic: true
+schema_needs:
+  - physics_domains
+  - imas_enrichment_schema
+---
+
+You are an expert in fusion plasma physics and the IMAS (Integrated Modelling
+& Analysis Suite) Data Dictionary.
+
 ## Task
 
-Write a **physics-aware description** (2–4 sentences, **200–400 characters**)
-for each IMAS Data Dictionary path. The description must name the physical
-quantity with its standard abbreviation, and explain what distinguishes this
-node from similar nodes elsewhere in the DD.
+Write a **clear, physics-aware description** (2–3 sentences, **150–300
+characters**) for each IMAS Data Dictionary path. The description should
+read like a concise physics reference entry — naming the physical quantity,
+including its standard abbreviation, and providing enough context for a
+fusion physicist to understand what the data represents.
 
 For each path in the batch, provide:
 
-1. **description**: A physics-aware description (200–400 characters) that:
-   - Names the physical quantity AND its standard abbreviation/symbol in
-     parentheses (e.g., "electron temperature (Te)", "plasma current (Ip)")
-   - Explains what makes this specific path unique (IDS context, dimensionality)
-   - Mentions related physics concepts users might search for
+1. **description**: A clear physics description (150–300 characters) that:
+   - Names the physical quantity and its standard abbreviation/symbol
+     in parentheses where one exists
+     (e.g., "electron temperature (Te)", "plasma current (Ip)")
+   - Explains what this quantity represents physically
+   - For structure nodes, states what data the structure groups
 
 2. **keywords**: Up to 8 searchable terms — including:
    - The standard abbreviation/symbol (e.g., "Ip", "Te", "q", "ψ")
-   - Physics concepts, measurement types, diagnostic names
+   - Physics concepts and related quantities
+   - Diagnostic names and measurement methods when relevant
    - Common alternative names NOT already in the description or path
 
-3. **physics_domain**: Primary physics domain ONLY if clearly different from
-   the IDS-level domain. Use null to inherit.
-```
+3. **physics_domain**: Primary physics domain ONLY if clearly different
+   from the IDS-level domain. Use null to inherit.
 
-Add new section after "Critical Guidelines":
+### Examples
 
-```markdown
+**GOOD** (clear physics descriptions with abbreviations):
+
+- `"Total plasma current (Ip), the net toroidal current flowing through the
+   plasma column. A primary global parameter for confinement and stability."` (145 chars)
+- `"Electron temperature (Te) radial profile. Represents the thermal energy
+   of the bulk electron population as a function of the radial coordinate."` (148 chars)
+- `"Safety factor (q) profile, the ratio of toroidal to poloidal magnetic
+   flux increments. A key MHD stability indicator — rational q surfaces
+   correspond to resonant mode locations."` (177 chars)
+- `"Vacuum toroidal magnetic field (B0, Bt) at the reference major radius R0.
+   Defines the nominal field strength for the device configuration."` (140 chars)
+- `"Container for 1D radial profiles of equilibrium quantities including
+   pressure, current density, safety factor, and flux coordinates."` (130 chars — structure node)
+
+**BAD** (problems to avoid):
+
+- `"Electron temperature radial profile from core profile analysis."` — no
+  abbreviation, no physics explanation
+- `"Total plasma current; the sign follows the ip_like convention."` —
+  mentions COCOS (this is a separate metadata field, not description content)
+- `"Poloidal flux coordinate at the axis, COCOS dependent."` — COCOS noise
+- `"Temperature."` — too vague, no abbreviation, no context
+
+## Critical Guidelines
+
+### DO NOT Repeat Metadata
+
+The following are already stored as separate fields on each node. Including
+them in the description wastes space and adds noise:
+
+- **NO** units — already in the `unit` field
+- **NO** data type or array shape — already in `data_type`
+- **NO** coordinate axes or grid specifications — already in `coordinates`
+- **NO** error/uncertainty details — separate paths exist for those
+- **NO** COCOS sign convention details — already in `cocos_label_transformation`
+  (do NOT mention "COCOS", "ip_like", "psi_like", "sign convention", etc.)
+
+### Use Context to Understand, Not to Differentiate
+
+You receive ancestor documentation and sibling lists as context. Use this
+to **understand what the quantity represents**, not to create artificial
+disambiguation phrases. A good description of electron temperature should
+be valid and clear regardless of which IDS it appears in.
+
 ### Include Standard Physics Abbreviations
 
 If the physical quantity has a standard abbreviation or symbol in fusion
-physics, include it in parentheses after the first mention. These are
-critical for search — users frequently search using abbreviations.
+physics, include it in parentheses after the first mention. Users frequently
+search using abbreviations like "Ip", "Te", "ne", "q", "Zeff".
 
-Common abbreviations (include when relevant):
+Common abbreviations to include when relevant:
 
-| Full Name | Abbreviation/Symbol |
-|-----------|-------------------|
+| Quantity | Symbol |
+|----------|--------|
 | Plasma current | Ip |
-| Electron temperature | Te |
-| Ion temperature | Ti |
-| Electron density | ne |
+| Electron/ion temperature | Te, Ti |
+| Electron/ion density | ne, ni |
 | Safety factor | q |
 | Poloidal flux | ψ, psi |
 | Toroidal magnetic field | Bt, B0 |
-| Poloidal beta | βp, beta_pol |
+| Poloidal beta | βp |
 | Effective charge | Zeff |
 | Loop voltage | Vloop |
 | Stored energy | Wmhd |
-| Major radius | R, R0 |
-| Minor radius | a |
-| Elongation | κ, kappa |
-| Triangularity | δ, delta |
+| Major/minor radius | R0, a |
+| Elongation, triangularity | κ, δ |
 | Internal inductance | li |
-| Normalized beta | βN, beta_N |
-| Bootstrap current | Ibs |
-| Ohmic current | Ioh |
-| Resistivity | η, eta |
-| Collisionality | ν*, nu_star |
-| Greenwald density | nGW |
+| Normalized beta | βN |
 
-Also include the **terminal path segment name** if it uses a known
-abbreviation (e.g., for path ending in `/ip`, mention "Ip" explicitly).
+Also include the **terminal path segment name** if it serves as a common
+abbreviation (e.g., path ending in `/ip` → mention "Ip", path ending in
+`/b0` → mention "B0").
+
+{% include "schema/physics-domains.md" %}
+
+## Output Format
+
+Return a JSON object matching this schema:
+
+```json
+{{ imas_enrichment_schema_example }}
 ```
 
-Update examples:
-```markdown
-### Examples
+### Field Requirements
 
-**GOOD** (rich, includes abbreviations, searchable):
+{{ imas_enrichment_schema_fields }}
 
-- `"Total plasma current (Ip), the toroidal component of current flowing
-   through the plasma. Sign follows ip_like COCOS convention. Primary global
-   parameter for plasma stability and confinement."` (195 chars)
-- `"Electron temperature (Te) radial profile from core profile analysis.
-   Thermal energy of the electron population as a function of the normalized
-   toroidal flux coordinate rho_tor_norm."` (183 chars)
-- `"Safety factor (q) profile from equilibrium reconstruction. Measures the
-   field line helicity — ratio of toroidal to poloidal magnetic flux. Key
-   indicator for MHD stability limits."` (178 chars)
-
-**BAD** (too short, no abbreviations):
-
-- `"Electron temperature radial profile from core profile analysis."` (63 chars) — no abbreviation, too short
-- `"Total plasma current."` (22 chars) — no abbreviation, no context
-- `"Safety factor profile from equilibrium."` (40 chars) — missing physics context
+Note: `path_index` is 1-based and must match the input order exactly.
 ```
 
 **`imas_codex/graph/dd_enrichment.py`** — `IMASPathEnrichmentResult` Pydantic model
 
-Update the field description and constraint:
+Update the field description and constraints:
 ```python
 class IMASPathEnrichmentResult(BaseModel):
-    path_index: int = Field(...)
+    path_index: int = Field(description="1-based index matching the input batch order")
     description: str = Field(
         description=(
-            "Physics-aware description (2-4 sentences, 200-400 characters) "
-            "that names the physical quantity with its standard abbreviation "
-            "and what distinguishes this node. "
-            "Do NOT repeat units, data type, or coordinate information."
+            "Clear physics description (2-3 sentences, 150-300 characters) "
+            "that names the physical quantity with its standard abbreviation. "
+            "Do NOT repeat units, data type, coordinates, or COCOS info."
         )
     )
     keywords: list[str] = Field(
@@ -390,25 +476,55 @@ class IMASPathEnrichmentResult(BaseModel):
             "terms not already in the description or path name"
         ),
     )
+    physics_domain: str | None = Field(
+        default=None,
+        description=(
+            "Primary physics domain for this path. Use ONLY if the path clearly "
+            "belongs to a domain different from the IDS-level physics_domain. "
+            "Leave null to inherit from IDS."
+        ),
+    )
 ```
+
+**`imas_codex/graph/dd_enrichment.py`** — `build_enrichment_messages()` (line 856)
+
+Remove COCOS label from user message context (it was only there to support the
+now-removed "COCOS Awareness" prompt section). The COCOS label is still queried
+and stored on the node — it's just no longer passed to the LLM as a signal to
+mention it in the description:
+
+```python
+# REMOVE this line (856):
+if entry["cocos_label"]:
+    user_lines.append(f"- COCOS label: {entry['cocos_label']}")
+```
+
+Keep all other context — documentation, ancestor chain, parent docs, siblings,
+children, unit, coordinates, cluster label, and IDS description are all valuable
+for the LLM to understand the path. Only the COCOS label should be removed
+because it actively causes the LLM to waste description chars on COCOS notes.
 
 ### Hash Invalidation
 
 The enrichment hash is computed from `f"{path_id}:{documentation}:{siblings}"` +
-model name. Changing the LLM model name or using `--force` will invalidate all
-hashes. The DD rebuild in Phase 6 will use `--force` to re-enrich everything.
+model name. Using `--force` on the DD rebuild (Phase 6) will bypass hash checks
+and re-enrich everything. No hash changes needed.
 
 ### Tests to Add/Update
 
 - Prompt rendering test: verify the new prompt renders correctly with schema includes
-- Validate that `IMASPathEnrichmentResult` accepts 200-400 char descriptions
+- Validate that `IMASPathEnrichmentResult` accepts 150-300 char descriptions
 - Validate that `max_length=8` for keywords is enforced
+- Validate that COCOS label is no longer passed in user message
 
 ### Acceptance Criteria
 
-- [ ] Prompt updated with abbreviation table and 200-400 char target
-- [ ] Examples in prompt are 150-250 chars with abbreviations
-- [ ] Pydantic model accepts longer descriptions and 8 keywords
+- [ ] Prompt rewritten with clear-description philosophy (not disambiguation)
+- [ ] COCOS Awareness section removed from prompt
+- [ ] COCOS label removed from user message construction
+- [ ] "DO NOT Repeat Metadata" now includes COCOS convention details
+- [ ] Examples show 130-180 char descriptions with abbreviations, no COCOS mentions
+- [ ] Pydantic model updated: max_length=8 for keywords, description field updated
 - [ ] Prompt renders correctly (test with `render_prompt()`)
 - [ ] All existing tests pass
 
@@ -660,7 +776,9 @@ uv run imas-codex graph restore
 ### Acceptance Criteria
 
 - [ ] All 20K paths re-enriched with new descriptions containing abbreviations
-- [ ] Embed text for `ip` node contains full path + "Ip" abbreviation
+- [ ] Descriptions no longer mention COCOS, ip_like, psi_like, or sign convention
+- [ ] Embed text for `ip` node contains full path + "Ip" abbreviation + keywords
+- [ ] Average description length > 120 chars (up from 61)
 - [ ] Average embed text length > 200 chars (up from 76)
 - [ ] Overall MRR ≥ 0.60 (up from 0.489)
 - [ ] Abbreviation MRR ≥ 0.45 (up from 0.318)
