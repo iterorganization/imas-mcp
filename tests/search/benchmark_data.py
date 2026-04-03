@@ -1,13 +1,19 @@
 """Gold-standard benchmark queries for IMAS DD search quality.
 
 Each query has expected paths that a correct search should return in its
-top results.  Queries span 6 categories to test different search modes.
+top results.  Queries span 7 categories to test different search modes.
 Paths are validated against DD 4.1.0 (current version) — all expected
 paths are non-deprecated and exist in the graph.
 
-The benchmark set is deliberately small (30 queries) to enable fast
-iteration during development.  It is stratified across categories to
-catch regressions in different search capabilities.
+The benchmark set contains ~200 queries stratified across categories to
+catch regressions in different search capabilities:
+  - EXACT_CONCEPT_QUERIES:    ~40 queries
+  - DISAMBIGUATING_QUERIES:   ~20 queries
+  - STRUCTURAL_QUERIES:       ~20 queries
+  - ABBREVIATION_QUERIES:     ~40 queries
+  - ACCESSOR_QUERIES:         ~20 queries
+  - CROSS_DOMAIN_QUERIES:     ~40 queries
+  - EDGE_CASE_QUERIES:        ~20 queries
 """
 
 from __future__ import annotations
@@ -132,6 +138,259 @@ EXACT_CONCEPT_QUERIES = [
         category="exact_concept",
         notes="elongation in boundary, summary, and pulse schedule",
     ),
+    BenchmarkQuery(
+        query_text="ion temperature",
+        expected_paths=[
+            "core_profiles/profiles_1d/ion/temperature",
+            "edge_profiles/profiles_1d/ion/temperature",
+            "summary/local/itb/t_i",
+        ],
+        category="exact_concept",
+    ),
+    BenchmarkQuery(
+        query_text="toroidal rotation",
+        expected_paths=[
+            "core_profiles/profiles_1d/ion/rotation/toroidal",
+            "core_profiles/profiles_1d/rotation_frequency_tor_sonic",
+        ],
+        category="exact_concept",
+    ),
+    BenchmarkQuery(
+        query_text="effective charge",
+        expected_paths=[
+            "core_profiles/profiles_1d/zeff",
+            "summary/local/itb/zeff",
+            "summary/line_average/zeff",
+        ],
+        category="exact_concept",
+    ),
+    BenchmarkQuery(
+        query_text="poloidal beta",
+        expected_paths=[
+            "equilibrium/time_slice/global_quantities/beta_pol",
+            "summary/global_quantities/beta_pol",
+        ],
+        category="exact_concept",
+    ),
+    BenchmarkQuery(
+        query_text="toroidal beta",
+        expected_paths=[
+            "equilibrium/time_slice/global_quantities/beta_tor",
+            "summary/global_quantities/beta_tor",
+        ],
+        category="exact_concept",
+    ),
+    BenchmarkQuery(
+        query_text="magnetic axis position",
+        expected_paths=[
+            "equilibrium/time_slice/global_quantities/magnetic_axis/r",
+            "equilibrium/time_slice/global_quantities/magnetic_axis/z",
+        ],
+        category="exact_concept",
+    ),
+    BenchmarkQuery(
+        query_text="internal inductance",
+        expected_paths=[
+            "equilibrium/time_slice/global_quantities/li",
+            "summary/global_quantities/li",
+        ],
+        category="exact_concept",
+    ),
+    BenchmarkQuery(
+        query_text="loop voltage",
+        expected_paths=[
+            "summary/global_quantities/v_loop",
+            "equilibrium/time_slice/global_quantities/v_loop",
+        ],
+        category="exact_concept",
+    ),
+    BenchmarkQuery(
+        query_text="diamagnetic flux",
+        expected_paths=[
+            "magnetics/flux_loop/flux/data",
+        ],
+        category="exact_concept",
+    ),
+    BenchmarkQuery(
+        query_text="radiated power",
+        expected_paths=[
+            "summary/global_quantities/power_radiated",
+            "bolometer/channel/radiated_power",
+        ],
+        category="exact_concept",
+    ),
+    BenchmarkQuery(
+        query_text="ohmic power",
+        expected_paths=[
+            "summary/global_quantities/power_ohm",
+            "core_sources/source/profiles_1d/electrons/power_inside",
+        ],
+        category="exact_concept",
+    ),
+    BenchmarkQuery(
+        query_text="stored energy",
+        expected_paths=[
+            "summary/global_quantities/energy_diamagnetic",
+            "equilibrium/time_slice/global_quantities/w_mhd",
+        ],
+        category="exact_concept",
+    ),
+    BenchmarkQuery(
+        query_text="line integrated density",
+        expected_paths=[
+            "interferometer/channel/n_e_line/data",
+            "summary/line_average/n_e",
+        ],
+        category="exact_concept",
+    ),
+    BenchmarkQuery(
+        query_text="neutral beam power",
+        expected_paths=[
+            "nbi/unit/power_launched/data",
+            "summary/heating_current_drive/power_nbi",
+        ],
+        category="exact_concept",
+    ),
+    BenchmarkQuery(
+        query_text="ECRH power",
+        expected_paths=[
+            "ec_launchers/beam/power_launched/data",
+            "summary/heating_current_drive/power_ec",
+        ],
+        category="exact_concept",
+    ),
+    BenchmarkQuery(
+        query_text="ICRH power",
+        expected_paths=[
+            "ic_antennas/antenna/power_launched/data",
+            "summary/heating_current_drive/power_ic",
+        ],
+        category="exact_concept",
+    ),
+    BenchmarkQuery(
+        query_text="plasma volume",
+        expected_paths=[
+            "equilibrium/time_slice/global_quantities/volume",
+            "summary/global_quantities/volume",
+        ],
+        category="exact_concept",
+    ),
+    BenchmarkQuery(
+        query_text="greenwald density",
+        expected_paths=[
+            "summary/global_quantities/n_e_greenwald",
+        ],
+        category="exact_concept",
+    ),
+    BenchmarkQuery(
+        query_text="confinement time",
+        expected_paths=[
+            "summary/global_quantities/tau_energy",
+        ],
+        category="exact_concept",
+    ),
+    BenchmarkQuery(
+        query_text="q95",
+        expected_paths=[
+            "equilibrium/time_slice/global_quantities/q_95",
+            "summary/global_quantities/q_95",
+        ],
+        category="exact_concept",
+    ),
+    BenchmarkQuery(
+        query_text="magnetic shear",
+        expected_paths=[
+            "equilibrium/time_slice/profiles_1d/magnetic_shear",
+        ],
+        category="exact_concept",
+    ),
+    BenchmarkQuery(
+        query_text="pressure profile",
+        expected_paths=[
+            "equilibrium/time_slice/profiles_1d/pressure",
+            "core_profiles/profiles_1d/pressure_thermal",
+        ],
+        category="exact_concept",
+    ),
+    BenchmarkQuery(
+        query_text="current density profile",
+        expected_paths=[
+            "equilibrium/time_slice/profiles_1d/j_tor",
+            "equilibrium/time_slice/profiles_1d/j_parallel",
+            "core_profiles/profiles_1d/j_total",
+        ],
+        category="exact_concept",
+    ),
+    BenchmarkQuery(
+        query_text="pedestal temperature",
+        expected_paths=[
+            "summary/local/pedestal/t_e",
+            "summary/local/pedestal/t_i",
+        ],
+        category="exact_concept",
+    ),
+    BenchmarkQuery(
+        query_text="pedestal density",
+        expected_paths=[
+            "summary/local/pedestal/n_e",
+        ],
+        category="exact_concept",
+    ),
+    BenchmarkQuery(
+        query_text="triangularity",
+        expected_paths=[
+            "equilibrium/time_slice/boundary/triangularity_upper",
+            "equilibrium/time_slice/boundary/triangularity_lower",
+            "summary/boundary/triangularity",
+        ],
+        category="exact_concept",
+    ),
+    BenchmarkQuery(
+        query_text="poloidal flux",
+        expected_paths=[
+            "equilibrium/time_slice/profiles_1d/psi",
+            "equilibrium/time_slice/profiles_2d/psi",
+        ],
+        category="exact_concept",
+    ),
+    BenchmarkQuery(
+        query_text="normalized beta",
+        expected_paths=[
+            "equilibrium/time_slice/global_quantities/beta_normal",
+            "summary/global_quantities/beta_normal",
+        ],
+        category="exact_concept",
+    ),
+    BenchmarkQuery(
+        query_text="electron density profile",
+        expected_paths=[
+            "core_profiles/profiles_1d/electrons/density",
+            "edge_profiles/profiles_1d/electrons/density",
+        ],
+        category="exact_concept",
+    ),
+    BenchmarkQuery(
+        query_text="thermal conductivity",
+        expected_paths=[
+            "core_transport/model/profiles_1d/electrons/energy/conductivity",
+        ],
+        category="exact_concept",
+    ),
+    BenchmarkQuery(
+        query_text="particle diffusivity",
+        expected_paths=[
+            "core_transport/model/profiles_1d/electrons/particles/d",
+        ],
+        category="exact_concept",
+    ),
+    BenchmarkQuery(
+        query_text="minor radius",
+        expected_paths=[
+            "equilibrium/time_slice/boundary/minor_radius",
+            "summary/boundary/minor_radius",
+        ],
+        category="exact_concept",
+    ),
 ]
 
 # ── Category 2: Disambiguating queries ───────────────────────────────────────
@@ -183,6 +442,121 @@ DISAMBIGUATING_QUERIES = [
         category="disambiguating",
         notes="channel/power deprecated in 4.1.0; power_radiated_total is current",
     ),
+    BenchmarkQuery(
+        query_text="NBI beam energy",
+        expected_paths=[
+            "nbi/unit/energy/data",
+        ],
+        category="disambiguating",
+        notes="NBI beam particle energy, not plasma stored energy",
+    ),
+    BenchmarkQuery(
+        query_text="Thomson scattering electron temperature",
+        expected_paths=[
+            "thomson_scattering/channel/t_e/data",
+        ],
+        category="disambiguating",
+        notes="Te specifically from Thomson scattering diagnostic",
+    ),
+    BenchmarkQuery(
+        query_text="Thomson scattering electron density",
+        expected_paths=[
+            "thomson_scattering/channel/n_e/data",
+        ],
+        category="disambiguating",
+        notes="ne specifically from Thomson scattering diagnostic",
+    ),
+    BenchmarkQuery(
+        query_text="magnetic probe field",
+        expected_paths=[
+            "magnetics/b_field_pol_probe/field/data",
+        ],
+        category="disambiguating",
+        notes="B-field from poloidal field probes",
+    ),
+    BenchmarkQuery(
+        query_text="MSE pitch angle",
+        expected_paths=[
+            "mse/channel/polarisation_angle/data",
+        ],
+        category="disambiguating",
+    ),
+    BenchmarkQuery(
+        query_text="soft X-ray brightness",
+        expected_paths=[
+            "soft_x_rays/channel/brightness/data",
+        ],
+        category="disambiguating",
+    ),
+    BenchmarkQuery(
+        query_text="CXRS ion temperature",
+        expected_paths=[
+            "charge_exchange/channel/ion/temperature",
+        ],
+        category="disambiguating",
+        notes="Ti from charge exchange recombination spectroscopy",
+    ),
+    BenchmarkQuery(
+        query_text="equilibrium boundary shape",
+        expected_paths=[
+            "equilibrium/time_slice/boundary/outline/r",
+            "equilibrium/time_slice/boundary/outline/z",
+        ],
+        category="disambiguating",
+    ),
+    BenchmarkQuery(
+        query_text="separatrix position",
+        expected_paths=[
+            "equilibrium/time_slice/boundary_separatrix/outline/r",
+            "equilibrium/time_slice/boundary_separatrix/outline/z",
+        ],
+        category="disambiguating",
+    ),
+    BenchmarkQuery(
+        query_text="X-point position",
+        expected_paths=[
+            "equilibrium/time_slice/boundary/x_point/r",
+            "equilibrium/time_slice/boundary/x_point/z",
+        ],
+        category="disambiguating",
+    ),
+    BenchmarkQuery(
+        query_text="PF coil current",
+        expected_paths=[
+            "pf_active/coil/current/data",
+        ],
+        category="disambiguating",
+    ),
+    BenchmarkQuery(
+        query_text="gas injection rate",
+        expected_paths=[
+            "gas_injection/pipe/flow_rate/data",
+        ],
+        category="disambiguating",
+    ),
+    BenchmarkQuery(
+        query_text="core electron source",
+        expected_paths=[
+            "core_sources/source/profiles_1d/electrons/particles",
+            "core_sources/source/profiles_1d/electrons/energy",
+        ],
+        category="disambiguating",
+    ),
+    BenchmarkQuery(
+        query_text="edge transport coefficients",
+        expected_paths=[
+            "edge_transport/model/ggd/electrons/energy/d",
+            "edge_transport/model/ggd/electrons/particles/d",
+        ],
+        category="disambiguating",
+    ),
+    BenchmarkQuery(
+        query_text="interferometer phase",
+        expected_paths=[
+            "interferometer/channel/phase/data",
+        ],
+        category="disambiguating",
+    ),
 ]
 
 # ── Category 3: Structural / path queries ────────────────────────────────────
@@ -222,6 +596,107 @@ STRUCTURAL_QUERIES = [
         query_text="pf_active/coil/current",
         expected_paths=[
             "pf_active/coil/current",
+        ],
+        category="structural",
+    ),
+    BenchmarkQuery(
+        query_text="equilibrium/time_slice/global_quantities",
+        expected_paths=[
+            "equilibrium/time_slice/global_quantities",
+        ],
+        category="structural",
+        notes="exact subtree path",
+    ),
+    BenchmarkQuery(
+        query_text="core_profiles/profiles_1d/ion",
+        expected_paths=[
+            "core_profiles/profiles_1d/ion",
+        ],
+        category="structural",
+    ),
+    BenchmarkQuery(
+        query_text="magnetics/b_field_pol_probe",
+        expected_paths=[
+            "magnetics/b_field_pol_probe",
+        ],
+        category="structural",
+    ),
+    BenchmarkQuery(
+        query_text="summary/global_quantities",
+        expected_paths=[
+            "summary/global_quantities",
+        ],
+        category="structural",
+    ),
+    BenchmarkQuery(
+        query_text="nbi/unit",
+        expected_paths=[
+            "nbi/unit",
+        ],
+        category="structural",
+    ),
+    BenchmarkQuery(
+        query_text="core_transport/model/profiles_1d",
+        expected_paths=[
+            "core_transport/model/profiles_1d",
+        ],
+        category="structural",
+    ),
+    BenchmarkQuery(
+        query_text="pf_active/coil",
+        expected_paths=[
+            "pf_active/coil",
+        ],
+        category="structural",
+    ),
+    BenchmarkQuery(
+        query_text="ec_launchers/beam",
+        expected_paths=[
+            "ec_launchers/beam",
+        ],
+        category="structural",
+    ),
+    BenchmarkQuery(
+        query_text="core_sources/source",
+        expected_paths=[
+            "core_sources/source",
+        ],
+        category="structural",
+    ),
+    BenchmarkQuery(
+        query_text="profiles_1d/electrons/temperature",
+        expected_paths=[
+            "core_profiles/profiles_1d/electrons/temperature",
+            "edge_profiles/profiles_1d/electrons/temperature",
+        ],
+        category="structural",
+        notes="partial path matching across multiple IDS",
+    ),
+    BenchmarkQuery(
+        query_text="equilibrium/time_slice/profiles_1d",
+        expected_paths=[
+            "equilibrium/time_slice/profiles_1d",
+        ],
+        category="structural",
+    ),
+    BenchmarkQuery(
+        query_text="equilibrium/time_slice/profiles_2d",
+        expected_paths=[
+            "equilibrium/time_slice/profiles_2d",
+        ],
+        category="structural",
+    ),
+    BenchmarkQuery(
+        query_text="equilibrium/time_slice/boundary",
+        expected_paths=[
+            "equilibrium/time_slice/boundary",
+        ],
+        category="structural",
+    ),
+    BenchmarkQuery(
+        query_text="summary/local/pedestal",
+        expected_paths=[
+            "summary/local/pedestal",
         ],
         category="structural",
     ),
@@ -361,6 +836,216 @@ ABBREVIATION_QUERIES = [
         category="abbreviation",
         notes="Elongation via Greek letter kappa — tests abbreviation expansion",
     ),
+    BenchmarkQuery(
+        query_text="li",
+        expected_paths=[
+            "equilibrium/time_slice/global_quantities/li",
+            "summary/global_quantities/li",
+        ],
+        category="abbreviation",
+        notes="internal inductance",
+    ),
+    BenchmarkQuery(
+        query_text="beta_n",
+        expected_paths=[
+            "equilibrium/time_slice/global_quantities/beta_normal",
+            "summary/global_quantities/beta_normal",
+        ],
+        category="abbreviation",
+    ),
+    BenchmarkQuery(
+        query_text="beta_pol",
+        expected_paths=[
+            "equilibrium/time_slice/global_quantities/beta_pol",
+            "summary/global_quantities/beta_pol",
+        ],
+        category="abbreviation",
+    ),
+    BenchmarkQuery(
+        query_text="Vloop",
+        expected_paths=[
+            "summary/global_quantities/v_loop",
+            "equilibrium/time_slice/global_quantities/v_loop",
+        ],
+        category="abbreviation",
+    ),
+    BenchmarkQuery(
+        query_text="Prad",
+        expected_paths=[
+            "summary/global_quantities/power_radiated",
+        ],
+        category="abbreviation",
+    ),
+    BenchmarkQuery(
+        query_text="Wmhd",
+        expected_paths=[
+            "equilibrium/time_slice/global_quantities/w_mhd",
+            "summary/global_quantities/energy_diamagnetic",
+        ],
+        category="abbreviation",
+    ),
+    BenchmarkQuery(
+        query_text="j_tor",
+        expected_paths=[
+            "equilibrium/time_slice/profiles_1d/j_tor",
+        ],
+        category="abbreviation",
+    ),
+    BenchmarkQuery(
+        query_text="j_parallel",
+        expected_paths=[
+            "equilibrium/time_slice/profiles_1d/j_parallel",
+        ],
+        category="abbreviation",
+    ),
+    BenchmarkQuery(
+        query_text="rho_tor",
+        expected_paths=[
+            "core_profiles/profiles_1d/grid/rho_tor",
+            "equilibrium/time_slice/profiles_1d/rho_tor",
+        ],
+        category="abbreviation",
+    ),
+    BenchmarkQuery(
+        query_text="tau_e",
+        expected_paths=[
+            "summary/global_quantities/tau_energy",
+        ],
+        category="abbreviation",
+    ),
+    BenchmarkQuery(
+        query_text="n_e_line",
+        expected_paths=[
+            "interferometer/channel/n_e_line/data",
+        ],
+        category="abbreviation",
+    ),
+    BenchmarkQuery(
+        query_text="R0",
+        expected_paths=[
+            "equilibrium/time_slice/global_quantities/magnetic_axis/r",
+        ],
+        category="abbreviation",
+        notes="major radius / magnetic axis R",
+    ),
+    BenchmarkQuery(
+        query_text="Bt",
+        expected_paths=[
+            "equilibrium/time_slice/global_quantities/magnetic_axis/b_field_tor",
+            "summary/global_quantities/b0",
+            "tf/b_field_tor_vacuum_r/data",
+        ],
+        category="abbreviation",
+        notes="toroidal magnetic field",
+    ),
+    BenchmarkQuery(
+        query_text="Bp",
+        expected_paths=[
+            "magnetics/b_field_pol_probe/field/data",
+        ],
+        category="abbreviation",
+        notes="poloidal magnetic field from probes",
+    ),
+    BenchmarkQuery(
+        query_text="Ti",
+        expected_paths=[
+            "core_profiles/profiles_1d/ion/temperature",
+            "charge_exchange/channel/ion/temperature",
+            "summary/local/itb/t_i",
+        ],
+        category="abbreviation",
+        notes="ion temperature",
+    ),
+    BenchmarkQuery(
+        query_text="vtor",
+        expected_paths=[
+            "core_profiles/profiles_1d/ion/rotation/toroidal",
+            "core_profiles/profiles_1d/rotation_frequency_tor_sonic",
+        ],
+        category="abbreviation",
+        notes="toroidal rotation velocity",
+    ),
+    BenchmarkQuery(
+        query_text="Pnbi",
+        expected_paths=[
+            "nbi/unit/power_launched/data",
+            "summary/heating_current_drive/power_nbi",
+        ],
+        category="abbreviation",
+        notes="NBI power",
+    ),
+    BenchmarkQuery(
+        query_text="Pec",
+        expected_paths=[
+            "ec_launchers/beam/power_launched/data",
+            "summary/heating_current_drive/power_ec",
+        ],
+        category="abbreviation",
+        notes="ECRH power",
+    ),
+    BenchmarkQuery(
+        query_text="Pic",
+        expected_paths=[
+            "ic_antennas/antenna/power_launched/data",
+            "summary/heating_current_drive/power_ic",
+        ],
+        category="abbreviation",
+        notes="ICRH power",
+    ),
+    BenchmarkQuery(
+        query_text="Pohm",
+        expected_paths=[
+            "summary/global_quantities/power_ohm",
+        ],
+        category="abbreviation",
+        notes="ohmic power",
+    ),
+    BenchmarkQuery(
+        query_text="q_min",
+        expected_paths=[
+            "equilibrium/time_slice/global_quantities/q_min/value",
+        ],
+        category="abbreviation",
+    ),
+    BenchmarkQuery(
+        query_text="q_axis",
+        expected_paths=[
+            "equilibrium/time_slice/global_quantities/q_axis",
+        ],
+        category="abbreviation",
+    ),
+    BenchmarkQuery(
+        query_text="n_greenwald",
+        expected_paths=[
+            "summary/global_quantities/n_e_greenwald",
+        ],
+        category="abbreviation",
+    ),
+    BenchmarkQuery(
+        query_text="delta_upper",
+        expected_paths=[
+            "equilibrium/time_slice/boundary/triangularity_upper",
+        ],
+        category="abbreviation",
+        notes="upper triangularity",
+    ),
+    BenchmarkQuery(
+        query_text="delta_lower",
+        expected_paths=[
+            "equilibrium/time_slice/boundary/triangularity_lower",
+        ],
+        category="abbreviation",
+        notes="lower triangularity",
+    ),
+    BenchmarkQuery(
+        query_text="Rgeo",
+        expected_paths=[
+            "equilibrium/time_slice/boundary/geometric_axis/r",
+            "summary/boundary/geometric_axis_r",
+        ],
+        category="abbreviation",
+        notes="geometric major radius",
+    ),
 ]
 
 # ── Category 5: Accessor-oriented queries ────────────────────────────────────
@@ -416,6 +1101,115 @@ ACCESSOR_QUERIES = [
         ],
         category="accessor",
         notes="v_loop/value is template-enriched; parent v_loop is the concept",
+    ),
+    BenchmarkQuery(
+        query_text="major radius of geometric axis",
+        expected_paths=[
+            "equilibrium/time_slice/boundary/geometric_axis/r",
+        ],
+        category="accessor",
+    ),
+    BenchmarkQuery(
+        query_text="value of safety factor at 95% flux",
+        expected_paths=[
+            "equilibrium/time_slice/global_quantities/q_95",
+            "summary/global_quantities/q_95",
+        ],
+        category="accessor",
+    ),
+    BenchmarkQuery(
+        query_text="toroidal field at magnetic axis",
+        expected_paths=[
+            "equilibrium/time_slice/global_quantities/magnetic_axis/b_field_tor",
+        ],
+        category="accessor",
+    ),
+    BenchmarkQuery(
+        query_text="R coordinate of boundary outline",
+        expected_paths=[
+            "equilibrium/time_slice/boundary/outline/r",
+        ],
+        category="accessor",
+    ),
+    BenchmarkQuery(
+        query_text="Z coordinate of magnetic axis",
+        expected_paths=[
+            "equilibrium/time_slice/global_quantities/magnetic_axis/z",
+        ],
+        category="accessor",
+    ),
+    BenchmarkQuery(
+        query_text="time of equilibrium reconstruction",
+        expected_paths=[
+            "equilibrium/time_slice/time",
+            "equilibrium/time",
+        ],
+        category="accessor",
+    ),
+    BenchmarkQuery(
+        query_text="power launched by NBI unit",
+        expected_paths=[
+            "nbi/unit/power_launched/data",
+        ],
+        category="accessor",
+    ),
+    BenchmarkQuery(
+        query_text="data from interferometer channel",
+        expected_paths=[
+            "interferometer/channel/n_e_line/data",
+            "interferometer/channel/n_e_line_average/data",
+        ],
+        category="accessor",
+    ),
+    BenchmarkQuery(
+        query_text="electron temperature from core profiles",
+        expected_paths=[
+            "core_profiles/profiles_1d/electrons/temperature",
+        ],
+        category="accessor",
+    ),
+    BenchmarkQuery(
+        query_text="ion density in edge profiles",
+        expected_paths=[
+            "edge_profiles/profiles_1d/ion/density",
+        ],
+        category="accessor",
+    ),
+    BenchmarkQuery(
+        query_text="vacuum toroidal field reference value",
+        expected_paths=[
+            "tf/b_field_tor_vacuum_r/data",
+        ],
+        category="accessor",
+    ),
+    BenchmarkQuery(
+        query_text="coil current in PF active system",
+        expected_paths=[
+            "pf_active/coil/current/data",
+        ],
+        category="accessor",
+    ),
+    BenchmarkQuery(
+        query_text="wall position in 2D description",
+        expected_paths=[
+            "wall/description_2d/limiter/unit/outline/r",
+            "wall/description_2d/limiter/unit/outline/z",
+        ],
+        category="accessor",
+    ),
+    BenchmarkQuery(
+        query_text="channel brightness from soft X-rays",
+        expected_paths=[
+            "soft_x_rays/channel/brightness/data",
+        ],
+        category="accessor",
+    ),
+    BenchmarkQuery(
+        query_text="polarisation angle from MSE diagnostic",
+        expected_paths=[
+            "mse/channel/polarisation_angle/data",
+        ],
+        category="accessor",
     ),
 ]
 
@@ -517,6 +1311,236 @@ CROSS_DOMAIN_QUERIES = [
         category="cross_domain",
         notes="heat flux on divertor targets from divertors and summary IDS",
     ),
+    BenchmarkQuery(
+        query_text="MHD stability",
+        expected_paths=[
+            "mhd_linear/time_slice/toroidal_mode/n_tor",
+            "mhd_linear/time_slice/toroidal_mode/growth_rate",
+        ],
+        category="cross_domain",
+    ),
+    BenchmarkQuery(
+        query_text="sawtooth crash",
+        expected_paths=[
+            "summary/local/magnetic_axis/t_e",
+            "core_profiles/profiles_1d/electrons/temperature",
+        ],
+        category="cross_domain",
+    ),
+    BenchmarkQuery(
+        query_text="energy confinement scaling",
+        expected_paths=[
+            "summary/global_quantities/tau_energy",
+            "summary/global_quantities/energy_diamagnetic",
+        ],
+        category="cross_domain",
+    ),
+    BenchmarkQuery(
+        query_text="H-mode transition",
+        expected_paths=[
+            "summary/local/pedestal/t_e",
+            "summary/local/pedestal/n_e",
+        ],
+        category="cross_domain",
+    ),
+    BenchmarkQuery(
+        query_text="plasma shape control",
+        expected_paths=[
+            "pulse_schedule/position_control/elongation",
+            "pulse_schedule/position_control/triangularity_lower",
+            "equilibrium/time_slice/boundary/elongation",
+        ],
+        category="cross_domain",
+    ),
+    BenchmarkQuery(
+        query_text="current profile reconstruction",
+        expected_paths=[
+            "equilibrium/time_slice/profiles_1d/j_tor",
+            "equilibrium/time_slice/profiles_1d/j_parallel",
+            "core_profiles/profiles_1d/j_total",
+        ],
+        category="cross_domain",
+    ),
+    BenchmarkQuery(
+        query_text="pellet injection",
+        expected_paths=[
+            "pellets/launcher/frequency",
+            "pellets/launcher/pellet/velocity_initial",
+        ],
+        category="cross_domain",
+    ),
+    BenchmarkQuery(
+        query_text="runaway electrons",
+        expected_paths=[
+            "core_profiles/profiles_1d/electrons/density_fast",
+        ],
+        category="cross_domain",
+    ),
+    BenchmarkQuery(
+        query_text="impurity density",
+        expected_paths=[
+            "core_profiles/profiles_1d/ion/density",
+            "edge_profiles/profiles_1d/ion/density",
+        ],
+        category="cross_domain",
+    ),
+    BenchmarkQuery(
+        query_text="radial electric field",
+        expected_paths=[
+            "core_profiles/profiles_1d/e_field/radial",
+        ],
+        category="cross_domain",
+    ),
+    BenchmarkQuery(
+        query_text="ECCD driven current",
+        expected_paths=[
+            "core_sources/source/profiles_1d/j_parallel",
+        ],
+        category="cross_domain",
+    ),
+    BenchmarkQuery(
+        query_text="flux surface geometry",
+        expected_paths=[
+            "equilibrium/time_slice/profiles_2d/r",
+            "equilibrium/time_slice/profiles_2d/z",
+            "equilibrium/time_slice/profiles_2d/psi",
+        ],
+        category="cross_domain",
+    ),
+    BenchmarkQuery(
+        query_text="plasma composition",
+        expected_paths=[
+            "core_profiles/profiles_1d/ion/element/z_n",
+            "core_profiles/profiles_1d/ion/element/a",
+        ],
+        category="cross_domain",
+    ),
+    BenchmarkQuery(
+        query_text="magnetic equilibrium reconstruction",
+        expected_paths=[
+            "equilibrium/time_slice/profiles_1d/psi",
+            "equilibrium/time_slice/profiles_2d/psi",
+            "equilibrium/time_slice/global_quantities/ip",
+        ],
+        category="cross_domain",
+    ),
+    BenchmarkQuery(
+        query_text="resistive wall mode",
+        expected_paths=[
+            "mhd_linear/time_slice/toroidal_mode/growth_rate",
+        ],
+        category="cross_domain",
+    ),
+    BenchmarkQuery(
+        query_text="disruption prediction",
+        expected_paths=[
+            "summary/global_quantities/ip",
+            "summary/global_quantities/li",
+            "summary/global_quantities/beta_normal",
+        ],
+        category="cross_domain",
+    ),
+    BenchmarkQuery(
+        query_text="particle transport",
+        expected_paths=[
+            "core_transport/model/profiles_1d/electrons/particles/d",
+            "core_transport/model/profiles_1d/electrons/particles/v",
+        ],
+        category="cross_domain",
+    ),
+    BenchmarkQuery(
+        query_text="heat transport coefficients",
+        expected_paths=[
+            "core_transport/model/profiles_1d/electrons/energy/conductivity",
+            "core_transport/model/profiles_1d/ion/energy/conductivity",
+        ],
+        category="cross_domain",
+    ),
+    BenchmarkQuery(
+        query_text="neoclassical transport",
+        expected_paths=[
+            "core_transport/model/profiles_1d/electrons/energy/conductivity",
+        ],
+        category="cross_domain",
+    ),
+    BenchmarkQuery(
+        query_text="plasma fueling",
+        expected_paths=[
+            "gas_injection/pipe/flow_rate/data",
+            "pellets/launcher/frequency",
+        ],
+        category="cross_domain",
+    ),
+    BenchmarkQuery(
+        query_text="toroidal field coil",
+        expected_paths=[
+            "tf/coil/conductor/elements/current",
+            "tf/b_field_tor_vacuum_r/data",
+        ],
+        category="cross_domain",
+    ),
+    BenchmarkQuery(
+        query_text="vacuum vessel",
+        expected_paths=[
+            "wall/description_2d/vessel/unit/outline/r",
+            "wall/description_2d/vessel/unit/outline/z",
+        ],
+        category="cross_domain",
+    ),
+    BenchmarkQuery(
+        query_text="spectroscopy emission",
+        expected_paths=[
+            "spectrometer_visible/channel/intensity/data",
+        ],
+        category="cross_domain",
+    ),
+    BenchmarkQuery(
+        query_text="Shafranov shift",
+        expected_paths=[
+            "equilibrium/time_slice/global_quantities/magnetic_axis/r",
+            "equilibrium/time_slice/boundary/geometric_axis/r",
+        ],
+        category="cross_domain",
+    ),
+    BenchmarkQuery(
+        query_text="fast ion distribution",
+        expected_paths=[
+            "distributions/distribution/profiles_1d/density",
+        ],
+        category="cross_domain",
+    ),
+    BenchmarkQuery(
+        query_text="magnetic island",
+        expected_paths=[
+            "mhd_linear/time_slice/toroidal_mode/n_tor",
+        ],
+        category="cross_domain",
+    ),
+    BenchmarkQuery(
+        query_text="plasma rotation measurement",
+        expected_paths=[
+            "core_profiles/profiles_1d/ion/rotation/toroidal",
+            "charge_exchange/channel/ion/velocity_tor",
+        ],
+        category="cross_domain",
+    ),
+    BenchmarkQuery(
+        query_text="radiation profile",
+        expected_paths=[
+            "bolometer/channel/radiated_power",
+            "core_sources/source/profiles_1d/electrons/power_inside",
+        ],
+        category="cross_domain",
+    ),
+    BenchmarkQuery(
+        query_text="edge localized mode",
+        expected_paths=[
+            "summary/local/pedestal/t_e",
+            "summary/local/pedestal/n_e",
+        ],
+        category="cross_domain",
+        notes="ELMs affect pedestal parameters",
+    ),
 ]
 
 # ── Category 7: Edge-case queries ────────────────────────────────────────────
@@ -570,6 +1594,133 @@ EDGE_CASE_QUERIES = [
         ],
         category="edge_case",
         notes="uppercase query — case-insensitive matching should find elongation",
+    ),
+    BenchmarkQuery(
+        query_text="elctron densty",
+        expected_paths=[
+            "core_profiles/profiles_1d/electrons/density",
+            "edge_profiles/profiles_1d/electrons/density",
+        ],
+        category="edge_case",
+        notes="severe misspelling — fuzzy should recover",
+    ),
+    BenchmarkQuery(
+        query_text="safty factor",
+        expected_paths=[
+            "equilibrium/time_slice/profiles_1d/q",
+        ],
+        category="edge_case",
+        notes="misspelling of 'safety factor'",
+    ),
+    BenchmarkQuery(
+        query_text="equilbrium",
+        expected_paths=[
+            "equilibrium/time_slice/profiles_1d/psi",
+            "equilibrium/time_slice/global_quantities/ip",
+        ],
+        category="edge_case",
+        notes="misspelling of 'equilibrium'",
+    ),
+    BenchmarkQuery(
+        query_text="magntics",
+        expected_paths=[
+            "magnetics/b_field_pol_probe/field/data",
+            "magnetics/flux_loop/flux/data",
+        ],
+        category="edge_case",
+        notes="misspelling of 'magnetics'",
+    ),
+    BenchmarkQuery(
+        query_text="profiles_1d/q",
+        expected_paths=[
+            "equilibrium/time_slice/profiles_1d/q",
+        ],
+        category="edge_case",
+        notes="partial path without IDS prefix",
+    ),
+    BenchmarkQuery(
+        query_text="summary/global_quantities/ip",
+        expected_paths=[
+            "summary/global_quantities/ip",
+        ],
+        category="edge_case",
+        notes="full path as query — exact match",
+    ),
+    BenchmarkQuery(
+        query_text="TE",
+        expected_paths=[
+            "core_profiles/profiles_1d/electrons/temperature",
+            "summary/line_average/t_e",
+        ],
+        category="edge_case",
+        notes="uppercase abbreviation",
+    ),
+    BenchmarkQuery(
+        query_text="ne AND Ti",
+        expected_paths=[
+            "core_profiles/profiles_1d/electrons/density",
+            "core_profiles/profiles_1d/ion/temperature",
+        ],
+        category="edge_case",
+        notes="boolean-style multi-quantity query",
+    ),
+    BenchmarkQuery(
+        query_text="  electron   temperature  ",
+        expected_paths=[
+            "core_profiles/profiles_1d/electrons/temperature",
+        ],
+        category="edge_case",
+        notes="extra whitespace — should be trimmed",
+    ),
+    BenchmarkQuery(
+        query_text="core_profiles.profiles_1d.electrons.temperature",
+        expected_paths=[
+            "core_profiles/profiles_1d/electrons/temperature",
+        ],
+        category="edge_case",
+        notes="dot-separated path notation (Python-style)",
+    ),
+    BenchmarkQuery(
+        query_text="what is the electron temperature?",
+        expected_paths=[
+            "core_profiles/profiles_1d/electrons/temperature",
+        ],
+        category="edge_case",
+        notes="natural language question format",
+    ),
+    BenchmarkQuery(
+        query_text="find me the safety factor profile",
+        expected_paths=[
+            "equilibrium/time_slice/profiles_1d/q",
+        ],
+        category="edge_case",
+        notes="conversational query with filler words",
+    ),
+    BenchmarkQuery(
+        query_text="B_0",
+        expected_paths=[
+            "summary/global_quantities/b0",
+            "equilibrium/time_slice/global_quantities/magnetic_axis/b_field_tor",
+        ],
+        category="edge_case",
+        notes="underscore in abbreviation",
+    ),
+    BenchmarkQuery(
+        query_text="n_e(rho)",
+        expected_paths=[
+            "core_profiles/profiles_1d/electrons/density",
+        ],
+        category="edge_case",
+        notes="mathematical notation in query",
+    ),
+    BenchmarkQuery(
+        query_text="T_e [eV]",
+        expected_paths=[
+            "core_profiles/profiles_1d/electrons/temperature",
+            "summary/line_average/t_e",
+        ],
+        category="edge_case",
+        notes="query with unit annotation",
     ),
 ]
 
