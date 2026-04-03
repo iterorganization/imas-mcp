@@ -116,76 +116,12 @@ DD text. Check for either.
 
 ---
 
-## Phase 2: Design of Experiments (DoE) — Score Mixing
-
-**Goal:** Empirically discover optimal mixing parameters for the three search
-channels (vector, BM25, graph-structural) using a systematic DoE.
-
-### 2.1 Build Evaluation Harness
-
-Create `tests/llm/test_search_evaluation.py` with:
-- 13 benchmark queries from our existing ground truth corpus
-- Automated MRR, P@10, IDS-Recall@10 computation
-- Parameterized test runner accepting mixing configuration
-- Results logged to JSON for analysis
-
-The harness should call the search pipeline directly (not through MCP) to
-avoid network overhead. It should accept configuration like:
-
-```python
-@dataclass
-class MixConfig:
-    rrf_k: int = 60                    # RRF rank decay constant
-    vector_limit: int = 500            # HNSW candidate cap
-    text_limit: int = 200              # BM25 candidate cap
-    vector_weight: float = 1.0         # RRF channel weight multiplier
-    text_weight: float = 1.0           # RRF channel weight multiplier
-    path_boost: float = 0.03           # per-word path segment boost
-    abbreviation_boost: float = 0.35   # abbreviation exact-match boost
-    cluster_boost: float = 0.0         # cluster membership boost (Phase 3)
-    hierarchy_boost: float = 0.0       # parent proximity boost (Phase 3)
-```
-
-### 2.2 Run DoE Grid Search
-
-Test a factorial grid across the key parameters:
-
-| Parameter       | Values to test           |
-|-----------------|--------------------------|
-| `rrf_k`         | 20, 60, 100              |
-| `vector_limit`  | 150, 300, 500            |
-| `text_limit`    | 100, 200, 300            |
-| `vector_weight` | 0.5, 1.0, 1.5            |
-| `text_weight`   | 0.5, 1.0, 1.5            |
-
-This is 3^5 = 243 configurations. Each runs 13 queries. Total: ~3,200 search
-calls. At ~50ms per call, this completes in ~3 minutes. Log all results.
-
-### 2.3 Analyze DoE Results
-
-Identify the Pareto frontier of configurations that maximize MRR while
-maintaining P@10 ≥ 0.70. Select the configuration that maximizes the
-composite metric: `0.5 * MRR + 0.3 * P@10 + 0.2 * IDS_Recall@10`.
-
-### 2.4 Consider Separate Channel Results
-
-Investigate whether returning vector results and text results as separate
-sections in the output (rather than fused) would be more useful for agents.
-This would let the consumer decide which channel to trust.
-
-**Design decision:** Probably not — agents expect a single ranked list. But
-we could add a `search_channel` field to each result indicating whether it
-came from vector, text, or both. This preserves signal provenance without
-polluting the ranking.
-
----
-
-## Phase 3: Graph-Native Search Augmentation
+## Phase 2: Graph-Native Search Augmentation
 
 **Goal:** Exploit graph structure for ranking signals that are impossible in
 flat/file-backed search. This is where we go beyond the old server.
 
-### 3.1 Exploit Lucene Advanced Queries
+### 2.1 Exploit Lucene Advanced Queries
 
 The Neo4j fulltext index is powered by Apache Lucene, which supports features
 we are completely ignoring. Verified working on our graph:
@@ -222,7 +158,7 @@ This gives us **typo tolerance** (a feature neither server has today),
 **field-weighted relevance** (description > name > documentation), and
 **phrase proximity** for multi-word queries.
 
-### 3.2 Cluster-Aware Ranking Boost
+### 2.2 Cluster-Aware Ranking Boost
 
 **Relationship:** `(n:IMASNode)-[:IN_CLUSTER]->(c:IMASSemanticCluster)`
 **Stats:** 3,071 clusters, avg 6.4 members, 452 global clusters
@@ -242,7 +178,7 @@ RETURN pid, clusters,
 Boost paths that share clusters with other top-ranked results. This creates
 a self-reinforcing relevance signal unique to graph-backed search.
 
-### 3.3 Hierarchical Proximity Boost
+### 2.3 Hierarchical Proximity Boost
 
 **Relationship:** `(child:IMASNode)-[:HAS_PARENT]->(parent:IMASNode)`
 **Verified:** `shortestPath` works — psi↔q distance = 2 (share parent
@@ -261,7 +197,7 @@ RETURN sibling.id AS id, 0.02 AS hierarchy_boost
 This helps surface related quantities (e.g., searching for "psi" should
 also surface "q", "phi", "rho_tor_norm" from the same profiles_1d parent).
 
-### 3.4 Coordinate-Based Cross-IDS Discovery
+### 2.4 Coordinate-Based Cross-IDS Discovery
 
 **Relationship:** `(n:IMASNode)-[:HAS_COORDINATE]->(coord:IMASNode)`
 **Stats:** 17,755 paths have IMASNode coordinate targets
@@ -281,7 +217,7 @@ RETURN DISTINCT related.id AS id, related.ids AS ids,
 This enables queries like "show me everything on the same radial grid as
 this profile" — impossible in flat search.
 
-### 3.5 Activate QueryAnalyzer for Intent-Based Routing
+### 2.5 Activate QueryAnalyzer for Intent-Based Routing
 
 **File:** `imas_codex/tools/query_analysis.py` — fully implemented but NOT
 connected to the search pipeline (confirmed: 0 references in graph_search.py).
@@ -300,12 +236,12 @@ ensures abbreviation expansion always happens for short queries.
 
 ---
 
-## Phase 4: Output Enrichment for Agents
+## Phase 3: Output Enrichment for Agents
 
 **Goal:** Transform search results from flat path lists into rich, actionable
 context that helps LLM agents understand IMAS data without follow-up queries.
 
-### 4.1 Children Metadata Preview
+### 3.1 Children Metadata Preview
 
 When a search result is a structure node (STRUCTURE, STRUCT_ARRAY) or a data
 node with children, show immediate children with their types, units, and
@@ -353,7 +289,7 @@ RETURN pid AS id, children
 This is transformative for agents — they immediately see what data lives
 under a structure node without a second tool call.
 
-### 4.2 Templated Description Injection
+### 3.2 Templated Description Injection
 
 For nodes with enriched descriptions, the graph already stores high-quality
 physics text. Currently, the output formatter shows either `description` or
@@ -369,7 +305,7 @@ if hit.description and hit.documentation:
         parts.append(f'  "{hit.description}"')
 ```
 
-### 4.3 Search Channel Provenance
+### 3.3 Search Channel Provenance
 
 Add a `source` field to each result indicating which search channels found
 it: `vector`, `text`, `both`, `cluster`, or `graph`. This helps agents
@@ -384,7 +320,7 @@ class SearchHitSource:
     graph_boost: str | None = None    # "sibling", "coordinate", "cluster_consensus"
 ```
 
-### 4.4 Parent Context in Results
+### 3.4 Parent Context in Results
 
 For leaf data nodes deep in the hierarchy, show the parent chain up to IDS
 level as breadcrumbs:
@@ -397,6 +333,65 @@ level as breadcrumbs:
 
 This helps agents understand WHERE in the IDS hierarchy a result lives
 without having to parse the path string.
+
+---
+
+## Phase 4: Design of Experiments (DoE) — Score Mixing
+
+**Goal:** Empirically discover optimal mixing parameters for the three search
+channels (vector, BM25, graph-structural) using a systematic DoE. Runs after
+Phases 1-2 so all graph-native features are available as tunable parameters.
+
+### 4.1 Build Evaluation Harness
+
+Create `tests/llm/test_search_evaluation.py` with:
+- 50+ benchmark queries from our existing ground truth corpus
+- Automated MRR, P@10, IDS-Recall@10 computation
+- Parameterized test runner accepting mixing configuration
+- Results logged to JSON for analysis
+
+The harness should call the search pipeline directly (not through MCP) to
+avoid network overhead. It should accept configuration like:
+
+```python
+@dataclass
+class MixConfig:
+    rrf_k: int = 60                    # RRF rank decay constant
+    vector_limit: int = 500            # HNSW candidate cap
+    text_limit: int = 200              # BM25 candidate cap
+    vector_weight: float = 1.0         # RRF channel weight multiplier
+    text_weight: float = 1.0           # RRF channel weight multiplier
+    path_boost: float = 0.03           # per-word path segment boost
+    abbreviation_boost: float = 0.35   # abbreviation exact-match boost
+    cluster_boost: float = 0.0         # cluster membership boost (from Phase 2)
+    hierarchy_boost: float = 0.0       # parent proximity boost (from Phase 2)
+```
+
+### 4.2 Run DoE Grid Search
+
+Test a factorial grid across the key parameters:
+
+| Parameter       | Values to test           |
+|-----------------|--------------------------|
+| `rrf_k`         | 20, 60, 100              |
+| `vector_limit`  | 150, 300, 500            |
+| `text_limit`    | 100, 200, 300            |
+| `vector_weight` | 0.5, 1.0, 1.5            |
+| `text_weight`   | 0.5, 1.0, 1.5            |
+
+This is 3^5 = 243 configurations. Each runs 50+ queries. Total: ~12,000 search
+calls. At ~50ms per call, this completes in ~10 minutes. Log all results.
+
+### 4.3 Analyze DoE Results
+
+Identify the Pareto frontier of configurations that maximize MRR while
+maintaining P@10 ≥ 0.70. Select the configuration that maximizes the
+composite metric: `0.5 * MRR + 0.3 * P@10 + 0.2 * IDS_Recall@10`.
+
+### 4.4 Lock Optimal Configuration
+
+Commit the winning configuration as defaults in `graph_search.py`. The
+evaluation harness from 4.1 becomes part of the CI regression gate in Phase 5.
 
 ---
 
@@ -448,39 +443,133 @@ This enables rapid debugging when a change helps one query but hurts another.
 
 ---
 
-## Phase Dependencies
+## Graph Relationship Assessment
+
+### HAS_PARENT — Keep, Already in Graph
+
+`HAS_PARENT` is fully implemented: 60,334 edges (child → parent direction),
+created in `build_dd.py:3030`. Root nodes are depth-1 IDS children (1,032
+nodes); IDS container names like `core_profiles` are stored as `IDS` nodes,
+not `IMASNode`.
+
+**No HAS_CHILD needed.** Neo4j stores relationships in doubly-linked adjacency
+lists — reverse traversal `(parent)<-[:HAS_PARENT]-(child)` is O(1) per
+relationship, identical cost to forward traversal. Benchmarked:
+
+| Query Pattern | Results | Latency |
+|---------------|---------|---------|
+| `(child)-[:HAS_PARENT]->(parent)` | 75 | 18ms |
+| `(parent)<-[:HAS_PARENT]-(child)` | 75 | 15ms |
+| Sibling via shared parent | 20 | 27ms |
+| Ancestor chain `[:HAS_PARENT*]` | 4 hops | 12ms |
+
+Adding a redundant HAS_CHILD relationship would double storage for the
+hierarchy (60K extra edges) with zero performance benefit. All search queries
+in this plan use reverse `HAS_PARENT` traversal.
+
+### Full Relationship Direction Audit
+
+All 17 DD relationships are implemented in the graph. Assessment of each:
+
+| Relationship | Direction | Count | Reverse Needed? | Status |
+|---|---|---|---|---|
+| `HAS_PARENT` | child→parent | 60,334 | **Yes** — children, siblings | ✅ Reverse works, 15ms |
+| `IN_IDS` | path→IDS | 61,366 | Yes — list IDS paths | ✅ Reverse works |
+| `HAS_UNIT` | path→Unit | 27,692 | Rarely — find paths by unit | ✅ OK |
+| `INTRODUCED_IN` | path→DDVersion | 61,366 | Rarely | ✅ OK |
+| `DEPRECATED_IN` | path→DDVersion | 17,324 | Rarely | ✅ OK |
+| `IN_CLUSTER` | path→cluster | 19,649 | **Yes** — cluster members | ✅ Reverse works |
+| `HAS_COORDINATE` | path→IMASNode | 17,755 | **Yes** — coordinate sharing | ✅ Key for Phase 2.4 |
+| `HAS_COORDINATE` | path→CoordSpec | 14,254 | Rarely | ✅ OK |
+| `COORDINATE_SAME_AS` | path→path | 7,437 | Sometimes | ✅ Bidirectional semantics |
+| `HAS_ERROR` | data→error | 31,281 | Yes — find data from error | ✅ OK |
+| `RENAMED_TO` | old→new | 2,696 | Yes — find old from new | ✅ OK |
+| `HAS_IDENTIFIER_SCHEMA` | path→schema | 327 | Rarely | ✅ OK |
+| `FOR_IMAS_PATH` | change→path | 137,310 | Yes — path's changes | ✅ Used in search |
+| `IN_VERSION` | change→version | 137,310 | Rarely | ✅ OK |
+| `HAS_PREDECESSOR` | ver→prev | 34 | Yes — find successor | ✅ HAS_SUCCESSOR exists |
+| `HAS_SUCCESSOR` | ver→next | 34 | Mirror of above | ✅ OK |
+| `HAS_COCOS` | ver→COCOS | 17 | Rarely | ✅ OK |
+
+**Conclusion:** All relationships are correctly directional. Neo4j's O(1)
+reverse traversal means no redundant inverse relationships are needed.
+HAS_PREDECESSOR/HAS_SUCCESSOR is the only bidirectional pair, which is
+correct for the version chain (both traversal directions are common).
+
+### Schema Fixes Needed (Minor)
+
+1. **Add missing annotation** to `renamed_to` slot in `imas_dd.yaml:700`:
+   ```yaml
+   renamed_to:
+     range: IMASNode
+     annotations:
+       relationship_type: RENAMED_TO
+   ```
+
+2. **Link `representative_path`** on `IMASSemanticCluster` — defined in
+   schema but never created as a relationship in `build_dd.py`. Should add:
+   ```cypher
+   MATCH (c:IMASSemanticCluster)
+   WHERE c.representative_path IS NOT NULL
+   MATCH (p:IMASNode {id: c.representative_path})
+   MERGE (c)-[:REPRESENTATIVE_PATH]->(p)
+   ```
+
+3. **Add `DEPRECATED_IN` for IDS nodes** — defined in schema but only
+   implemented for IMASNode paths. Minor gap, not blocking.
+
+---
+
+## Phase Dependencies (Revised)
+
+DoE is moved **after** graph-native optimizations so the study can probe
+the full capability set. This avoids tuning parameters on a subset of
+features and then having to retune after adding Lucene/cluster/hierarchy
+boosts.
 
 ```
-Phase 1 (Scoring Foundation)
+Phase 1 (Scoring Foundation) ← Fix broken basics first
   ├── 1.1 Remove BM25 floor
   ├── 1.2 Implement RRF
   ├── 1.3 Increase vector limit
   └── 1.4 Relax doc filter
         │
-Phase 2 (DoE)
-  ├── 2.1 Build eval harness ← depends on Phase 1
-  ├── 2.2 Grid search
-  ├── 2.3 Analyze results
-  └── 2.4 Channel separation decision
+Phase 2 (Graph-Native Search) ← Build full feature set before tuning
+  ├── 2.1 Lucene advanced queries (field boost, fuzzy, phrase proximity)
+  ├── 2.2 Activate QueryAnalyzer for intent-based routing
+  ├── 2.3 Cluster-aware ranking boost
+  ├── 2.4 Hierarchical sibling proximity boost
+  └── 2.5 Coordinate-based cross-IDS discovery
         │
-Phase 3 (Graph-Native) ← can start 3.1, 3.5 in parallel with Phase 2
-  ├── 3.1 Lucene advanced queries
-  ├── 3.2 Cluster-aware ranking
-  ├── 3.3 Hierarchical proximity
-  ├── 3.4 Coordinate cross-IDS
-  └── 3.5 QueryAnalyzer activation
+Phase 3 (Output Enrichment) ← Independent, can start with Phase 2
+  ├── 3.1 Children metadata preview
+  ├── 3.2 Description + documentation dual display
+  ├── 3.3 Search channel provenance tags
+  └── 3.4 Parent breadcrumb context
         │
-Phase 4 (Output Enrichment) ← independent, can start any time
-  ├── 4.1 Children preview
-  ├── 4.2 Description injection
-  ├── 4.3 Channel provenance
-  └── 4.4 Parent breadcrumbs
+Phase 4 (DoE Study) ← Tune ALL parameters with full feature set
+  ├── 4.1 Build evaluation harness (50+ query corpus)
+  ├── 4.2 Factorial grid search (RRF k, limits, weights, boost magnitudes)
+  ├── 4.3 Pareto analysis: MRR vs P@10 vs IDS-Recall
+  └── 4.4 Lock optimal configuration
         │
-Phase 5 (Evaluation) ← 5.1 should start with Phase 2
-  ├── 5.1 Expand corpus
-  ├── 5.2 CI gate
-  └── 5.3 Diagnostics
+Phase 5 (Evaluation Infrastructure) ← Permanent regression prevention
+  ├── 5.1 CI gate on graph_search.py changes
+  ├── 5.2 Per-query diagnostics logging
+  └── 5.3 Schema fixes (renamed_to annotation, representative_path link)
 ```
+
+**Rationale for reordering:** The DoE has 7+ tunable parameters (RRF k,
+vector_limit, text_limit, vector_weight, text_weight, path_boost,
+abbreviation_boost, cluster_boost, hierarchy_boost). Running the study
+before Phases 2-3 means cluster_boost and hierarchy_boost are always 0,
+producing a suboptimal configuration that must be retuned later. Moving
+DoE after graph-native work means we tune once across the complete feature
+space. The study itself costs ~3 minutes of compute — the expensive part
+is building the evaluation harness (Phase 4.1), which we can prepare in
+parallel with Phase 2.
+
+---
 
 ## Verified Capabilities
 
@@ -491,13 +580,16 @@ Neo4j 2026.01.4 instance:
 - Lucene fuzzy matching: `temperture~2` catches misspellings ✓
 - Lucene phrase proximity: `"electron temperature"~3` ✓
 - Lucene prefix: `name:elonga*` ✓
-- `HAS_PARENT` traversal: sibling discovery in 2 hops ✓
+- `HAS_PARENT` reverse traversal: 15ms for 75 children ✓
+- `HAS_PARENT` sibling discovery: 27ms for 20 siblings ✓
+- `HAS_PARENT*` ancestor chain: 12ms for 4 hops ✓
 - `IN_CLUSTER` membership: 19,649 cluster edges, 452 global clusters ✓
 - `HAS_COORDINATE` cross-IDS: 17,755 coordinate edges ✓
 - `shortestPath`: works for hierarchical distance ✓
-- Children via `HAS_PARENT` reverse: verified on boundary (15 children) ✓
 - Vector cosine scores range: [0.90, 1.00] for related terms ✓
 - BM25 raw scores range: [11.8, 16.0] for "electron temperature" ✓
 - APOC enabled but unused (available for fuzzy matching) ✓
 - GDS NOT available (community edition) — not required for this plan ✓
 - `db.index.fulltext.queryRelationships` available but not yet needed ✓
+- All 17 DD relationships present in graph with correct directionality ✓
+- No redundant inverse relationships needed (Neo4j O(1) reverse) ✓
