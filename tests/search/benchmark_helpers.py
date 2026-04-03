@@ -2,11 +2,16 @@
 
 Provides utilities for computing Mean Reciprocal Rank (MRR) and
 generating detailed failure reports when search quality regresses.
+
+Also provides ``QueryDiagnostics`` / ``collect_diagnostics`` for
+per-query debugging of the search pipeline (Phase 5).
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import Any
 
 from tests.search.benchmark_data import BenchmarkQuery
 
@@ -189,3 +194,90 @@ def run_benchmark(
         returned = search_fn(q.query_text, limit)
         results.query_results.append(QueryResult(query=q, returned_paths=returned))
     return results
+
+
+# ── Per-query diagnostics (Phase 5) ─────────────────────────────────────────
+
+
+@dataclass
+class QueryDiagnostics:
+    """Per-query diagnostic information for debugging search quality."""
+
+    query: str
+    merged_count: int
+    top_5_ids: list[str]
+    top_5_scores: list[float]
+    expected_paths: list[str]
+    reciprocal_rank: float
+    first_match_rank: int | None
+    provenance: dict[str, Any] | None = None
+
+
+def _compute_rr_and_rank(
+    ranked: list[str],
+    expected: list[str],
+    allow_prefix: bool = False,
+) -> tuple[float, int | None]:
+    """Return (reciprocal_rank, first_match_rank) for a result list."""
+    expected_set = set(expected)
+    for rank, path in enumerate(ranked, start=1):
+        if path in expected_set:
+            return 1.0 / rank, rank
+        if allow_prefix and any(
+            path.startswith(e + "/") or e.startswith(path + "/") for e in expected_set
+        ):
+            return 1.0 / rank, rank
+    return 0.0, None
+
+
+def collect_diagnostics(
+    query: str,
+    search_fn: Callable[[str, int], list[str]],
+    expected_paths: list[str],
+    limit: int = 20,
+    *,
+    score_fn: Callable[[str, int], list[tuple[str, float]]] | None = None,
+    allow_prefix: bool = False,
+) -> QueryDiagnostics:
+    """Run a query and collect detailed diagnostics.
+
+    Parameters
+    ----------
+    query:
+        The query string to evaluate.
+    search_fn:
+        ``Callable(query, limit) -> list[str]`` returning ranked path IDs.
+    expected_paths:
+        Gold-standard paths for this query.
+    limit:
+        Max results to request.
+    score_fn:
+        Optional ``Callable(query, limit) -> list[(path, score)]`` that also
+        returns scores.  If *None*, scores default to 0.0.
+    allow_prefix:
+        If True, prefix matching is used for relevance (same semantics as
+        ``compute_mrr(..., allow_prefix=True)``).
+
+    Returns
+    -------
+    QueryDiagnostics with ranked IDs, scores, reciprocal rank, and match info.
+    """
+    if score_fn is not None:
+        pairs = score_fn(query, limit)
+        ranked_ids = [p for p, _ in pairs]
+        scores = [s for _, s in pairs]
+    else:
+        ranked_ids = search_fn(query, limit)
+        scores = [0.0] * len(ranked_ids)
+
+    rr, match_rank = _compute_rr_and_rank(ranked_ids, expected_paths, allow_prefix)
+
+    return QueryDiagnostics(
+        query=query,
+        merged_count=len(ranked_ids),
+        top_5_ids=ranked_ids[:5],
+        top_5_scores=scores[:5],
+        expected_paths=expected_paths,
+        reciprocal_rank=rr,
+        first_match_rank=match_rank,
+    )

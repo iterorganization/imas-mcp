@@ -187,6 +187,10 @@ class SearchHit(SearchBase):
         default=None,
         description="Grouped child nodes for STRUCTURE/STRUCT_ARRAY results",
     )
+    children_total: int | None = Field(
+        default=None,
+        description="Total number of child nodes (may exceed len(children) when truncated)",
+    )
 
     # Accessor terminals that matched the query (for accessor routing)
     matched_children: list[str] | None = Field(

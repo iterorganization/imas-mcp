@@ -305,6 +305,8 @@ class GraphSearchTool:
         intent = analyzer.analyze(query)
 
         # Route path-like queries to structural search
+        vector_results: list[dict[str, Any]] | None = None
+        text_results: list[dict[str, Any]] = []
         if intent.query_type in ("path_exact", "path_partial"):
             path_results = _path_search(
                 self._gc, query, max_results, ids_filter, dd_version=dd_version
@@ -478,6 +480,22 @@ class GraphSearchTool:
         # Index by path ID for score lookup
         enriched_by_id = {r["id"]: r for r in enriched or []}
 
+        # --- Children preview for structure nodes ---
+        children_data: dict[str, dict[str, Any]] = {}
+        if sorted_ids:
+            children_data = _enrich_children(self._gc, sorted_ids)
+
+        # --- Search channel provenance ---
+        provenance: dict[str, dict[str, Any]] = {}
+        for vrank, vr in enumerate(vector_results or []):
+            provenance[vr["id"]] = {"vector_rank": vrank + 1}
+        for trank, tr in enumerate(text_results):
+            pid = tr["id"]
+            if pid in provenance:
+                provenance[pid]["text_rank"] = trank + 1
+            else:
+                provenance[pid] = {"text_rank": trank + 1}
+
         # --- Optional facility cross-references ---
         facility_xrefs: dict[str, dict[str, Any]] = {}
         if facility and sorted_ids:
@@ -496,6 +514,9 @@ class GraphSearchTool:
                 continue
             xref = facility_xrefs.get(pid)
             vctx = version_ctx.get(pid)
+            cd = children_data.get(pid)
+            hit_children = cd["children"] if cd else None
+            hit_children_total = cd["total"] if cd else None
             hits.append(
                 SearchHit(
                     path=r["id"],
@@ -524,6 +545,8 @@ class GraphSearchTool:
                     search_mode=mode,
                     facility_xrefs=xref,
                     version_context=vctx,
+                    children=hit_children,
+                    children_total=hit_children_total,
                 )
             )
             if r["physics_domain"]:
@@ -536,6 +559,7 @@ class GraphSearchTool:
                 "search_mode": str(mode),
                 "hits_returned": len(hits),
                 "ids_coverage": sorted({h.ids_name for h in hits if h.ids_name}),
+                "provenance": provenance,
             },
             query=query,
             search_mode=mode,
@@ -2506,6 +2530,44 @@ def _classify_significance(option_count: int) -> str:
     elif option_count >= 5:
         return "MODERATE"
     return "MINIMAL"
+
+
+def _enrich_children(gc: GraphClient, path_ids: list[str]) -> dict[str, dict[str, Any]]:
+    """Fetch immediate children for structure nodes.
+
+    Returns a dict keyed by path ID with ``{"children": [...], "total": N}``
+    for each STRUCTURE / STRUCT_ARRAY node in *path_ids*.  Non-structure
+    nodes are omitted from the result.
+    """
+    result = gc.query(
+        """
+        UNWIND $path_ids AS pid
+        MATCH (p:IMASNode {id: pid})
+        WHERE p.data_type IN ['STRUCTURE', 'STRUCT_ARRAY']
+        OPTIONAL MATCH (child:IMASNode)-[:HAS_PARENT]->(p)
+        WHERE child.data_type IS NOT NULL
+            AND NOT (child.name ENDS WITH '_error_upper'
+                 OR child.name ENDS WITH '_error_lower'
+                 OR child.name ENDS WITH '_error_index')
+        OPTIONAL MATCH (child)-[:HAS_UNIT]->(u:Unit)
+        WITH pid, child, u
+        ORDER BY child.name
+        WITH pid, collect(DISTINCT {
+            name: child.name,
+            data_type: child.data_type,
+            unit: u.id,
+            description: left(coalesce(child.description, ''), 80)
+        })[..10] AS children,
+        size(collect(DISTINCT child)) AS total_children
+        RETURN pid AS id, children, total_children
+        """,
+        path_ids=path_ids,
+    )
+
+    return {
+        row["id"]: {"children": row["children"], "total": row["total_children"]}
+        for row in result
+    }
 
 
 def _get_facility_crossrefs(

@@ -700,6 +700,8 @@ classes:
       renamed_to:
         description: Successor path if this was renamed (not just removed)
         range: IMASNode
+        annotations:
+          relationship_type: RENAMED_TO
       identifier_schema:
         description: Identifier schema if this is an identifier field
         range: IdentifierSchema
@@ -864,6 +866,8 @@ classes:
       representative_path:
         description: Most central path (closest to cluster center)
         range: IMASNode
+        annotations:
+          relationship_type: REPRESENTATIVE_PATH
       source:
         description: >-
           How this cluster was created. 'hdbscan' for statistical clustering,

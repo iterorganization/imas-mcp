@@ -3654,6 +3654,15 @@ def _import_clusters(
                 len(clusters),
             )
 
+            # Step 8.1: Create REPRESENTATIVE_PATH relationships
+            # Link each cluster to its representative (most central) path node
+            client.query("""
+                MATCH (c:IMASSemanticCluster)
+                WHERE c.representative_path IS NOT NULL
+                MATCH (p:IMASNode {id: c.representative_path})
+                MERGE (c)-[:REPRESENTATIVE_PATH]->(p)
+            """)
+
             # Step 8.5: Generate labels for unlabeled clusters via LLM
             if _stopped():
                 logger.info("Clustering interrupted before LLM labeling")

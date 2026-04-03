@@ -58,6 +58,54 @@ def _format_tool_error(result: Any) -> str | None:
     return "\n".join(lines)
 
 
+def _format_breadcrumbs(path_id: str) -> str:
+    """Format path as breadcrumb trail for deep leaf nodes."""
+    segments = path_id.split("/")
+    if len(segments) <= 2:
+        return ""
+    return "  Path: " + " > ".join(segments)
+
+
+def _format_children_block(hit: Any) -> list[str]:
+    """Render children metadata for a structure node."""
+    children = _get_value(hit, "children")
+    if not children:
+        return []
+
+    children_total = _get_value(hit, "children_total") or len(children)
+    parts: list[str] = []
+    shown = len(children)
+    parts.append(f"  Children ({children_total} total, showing {shown}):")
+    for child in children:
+        if not isinstance(child, dict):
+            continue
+        name = child.get("name", "?")
+        dtype = child.get("data_type", "?")
+        unit = child.get("unit")
+        desc = child.get("description")
+        unit_str = f", {unit}" if unit else ""
+        desc_str = f" — {desc}" if desc else ""
+        parts.append(f"    - {name} ({dtype}{unit_str}){desc_str}")
+    return parts
+
+
+def _format_provenance(path_id: str, provenance: dict[str, dict] | None) -> str:
+    """Render search channel provenance as a compact source tag."""
+    if not provenance:
+        return ""
+    prov = provenance.get(path_id)
+    if not prov:
+        return ""
+    tags = []
+    if "vector_rank" in prov:
+        tags.append(f"vector(#{prov['vector_rank']})")
+    if "text_rank" in prov:
+        tags.append(f"text(#{prov['text_rank']})")
+    if tags:
+        return "  Source: " + " + ".join(tags)
+    return ""
+
+
 def _stringify_cluster_labels(values: Any) -> list[str]:
     """Normalize cluster labels for rendering."""
     if not values:
@@ -563,8 +611,24 @@ def format_imas_report(
             score_str = f" (score: {score:.2f})" if score is not None else ""
             parts.append(f"### {pid}{score_str}")
 
+            # Breadcrumb context for deep paths
+            breadcrumb = _format_breadcrumbs(pid)
+            if breadcrumb:
+                parts.append(breadcrumb)
+
+            # Dual description: enriched description + raw documentation
+            description = p.get("description") or ""
             doc = p.get("documentation") or ""
-            if doc:
+            if description and doc:
+                if description != doc:
+                    parts.append(f'  "{description}"')
+                    if len(doc) > 20:
+                        parts.append(f'  Raw DD: "{doc[:120]}"')
+                else:
+                    parts.append(f'  "{description}"')
+            elif description:
+                parts.append(f'  "{description}"')
+            elif doc:
                 parts.append(f'  "{doc}"')
 
             # Metadata line
@@ -642,6 +706,9 @@ def format_imas_report(
                         ctype = ch.get("type", "")
                         summary = ch.get("summary", "")
                         parts.append(f"    DD {ver} [{ctype}]: {summary}")
+
+            # Children preview for structure nodes
+            parts.extend(_format_children_block(p))
 
             parts.append("")
 
@@ -1065,6 +1132,13 @@ def format_search_imas_report(result: Any, cluster_result: Any | None = None) ->
         parts.append(tool_error)
 
     hits = _get_value(result, "hits", []) or []
+
+    # Extract provenance from result summary (populated by search_imas_paths)
+    summary = _get_value(result, "summary") or {}
+    provenance: dict[str, dict] | None = (
+        summary.get("provenance") if isinstance(summary, dict) else None
+    )
+
     if hits:
         parts.append(f"## IMAS Paths ({len(hits)} matches)\n")
 
@@ -1072,8 +1146,20 @@ def format_search_imas_report(result: Any, cluster_result: Any | None = None) ->
             score_str = f" (score: {hit.score:.2f})" if hit.score else ""
             parts.append(f"### {hit.path}{score_str}")
 
-            # Prefer enriched description over raw documentation
-            if hit.description:
+            # Breadcrumb context for deep paths
+            breadcrumb = _format_breadcrumbs(hit.path)
+            if breadcrumb:
+                parts.append(breadcrumb)
+
+            # Dual description: enriched description + raw documentation
+            if hit.description and hit.documentation:
+                if hit.description != hit.documentation:
+                    parts.append(f'  "{hit.description}"')
+                    if len(hit.documentation) > 20:
+                        parts.append(f'  Raw DD: "{hit.documentation[:120]}"')
+                else:
+                    parts.append(f'  "{hit.description}"')
+            elif hit.description:
                 parts.append(f'  "{hit.description}"')
             elif hit.documentation:
                 parts.append(f'  "{hit.documentation}"')
@@ -1101,6 +1187,11 @@ def format_search_imas_report(result: Any, cluster_result: Any | None = None) ->
             if hit.keywords:
                 parts.append(f"  Keywords: {', '.join(hit.keywords)}")
 
+            # Search channel provenance
+            prov_str = _format_provenance(hit.path, provenance)
+            if prov_str:
+                parts.append(prov_str)
+
             # Facility cross-references
             xref = hit.facility_xrefs or {}
             if any(
@@ -1112,9 +1203,8 @@ def format_search_imas_report(result: Any, cluster_result: Any | None = None) ->
                     parts.append(f"  Signals: {', '.join(sigs)}")
                 wiki = xref.get("wiki_mentions") or []
                 if wiki:
-                    parts.append(
-                        f"  Wiki: mentioned in {', '.join(f'"{s}"' for s in wiki)}"
-                    )
+                    wiki_str = ", ".join(f'"{s}"' for s in wiki)
+                    parts.append(f"  Wiki: mentioned in {wiki_str}")
                 code = xref.get("code_files") or []
                 if code:
                     parts.append(f"  Code: {', '.join(code)}")
@@ -1130,8 +1220,11 @@ def format_search_imas_report(result: Any, cluster_result: Any | None = None) ->
                     if isinstance(ch, dict):
                         ver = ch.get("version", "?")
                         ctype = ch.get("type", "")
-                        summary = ch.get("summary", "")
-                        parts.append(f"    DD {ver} [{ctype}]: {summary}")
+                        ch_summary = ch.get("summary", "")
+                        parts.append(f"    DD {ver} [{ctype}]: {ch_summary}")
+
+            # Children preview for structure nodes
+            parts.extend(_format_children_block(hit))
 
             parts.append("")
 

@@ -28,6 +28,7 @@ import logging
 import pytest
 
 from tests.search.benchmark_data import (
+    ABBREVIATION_QUERIES,
     ALL_QUERIES,
     PATH_QUERIES,
     SEMANTIC_QUERIES,
@@ -611,3 +612,89 @@ class TestSearchQualityRegression:
         """Sanity: text search returns something for a common term."""
         paths = _extract_paths_from_text(graph_client, "temperature", 10)
         assert len(paths) > 0, "Text search returned no results for 'temperature'"
+
+
+# ── Regression gate — CI quality bar ─────────────────────────────────────────
+
+
+@pytest.mark.graph
+class TestSearchQualityGate:
+    """CI regression gate — fail if search quality drops below thresholds.
+
+    These thresholds are locked from DoE study results. Update only after
+    running a full evaluation with ``test_search_evaluation.py``.
+    """
+
+    MRR_THRESHOLD = 0.85
+    PRECISION_AT_10_THRESHOLD = 0.70
+
+    @pytest.mark.asyncio
+    async def test_overall_mrr_gate(self, search_tool, embed_available):
+        """Overall MRR must not drop below threshold."""
+        if not embed_available:
+            pytest.skip("Embed server not available")
+
+        results = BenchmarkResults(method_name="Quality Gate (Overall)")
+        for q in ALL_QUERIES:
+            paths = await _extract_paths_from_hybrid(search_tool, q.query_text, 50)
+            from tests.search.benchmark_helpers import QueryResult
+
+            results.query_results.append(QueryResult(query=q, returned_paths=paths))
+
+        empty_count = sum(1 for qr in results.query_results if not qr.returned_paths)
+        if empty_count > len(ALL_QUERIES) * 0.8:
+            pytest.skip(
+                f"Search returned empty for {empty_count}/{len(ALL_QUERIES)} "
+                "queries — infra issue, not quality regression"
+            )
+
+        logger.info(results.summary())
+        assert results.mrr >= self.MRR_THRESHOLD, (
+            f"Overall MRR {results.mrr:.3f} dropped below gate "
+            f"threshold {self.MRR_THRESHOLD}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_abbreviation_mrr_gate(self, search_tool, embed_available):
+        """Abbreviation queries are historically weakest — dedicated gate."""
+        if not embed_available:
+            pytest.skip("Embed server not available")
+
+        results = BenchmarkResults(method_name="Quality Gate (Abbreviation)")
+        for q in ABBREVIATION_QUERIES:
+            paths = await _extract_paths_from_hybrid(search_tool, q.query_text, 50)
+            from tests.search.benchmark_helpers import QueryResult
+
+            results.query_results.append(QueryResult(query=q, returned_paths=paths))
+
+        empty_count = sum(1 for qr in results.query_results if not qr.returned_paths)
+        if empty_count > len(ABBREVIATION_QUERIES) * 0.8:
+            pytest.skip(
+                f"Abbreviation search returned empty for "
+                f"{empty_count}/{len(ABBREVIATION_QUERIES)} queries"
+            )
+
+        logger.info(results.summary())
+        # Abbreviation gate has a lower bar than overall
+        abbr_threshold = 0.60
+        assert results.mrr >= abbr_threshold, (
+            f"Abbreviation MRR {results.mrr:.3f} dropped below gate "
+            f"threshold {abbr_threshold}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_no_empty_results(self, search_tool, embed_available):
+        """Every benchmark query must return at least 1 result."""
+        if not embed_available:
+            pytest.skip("Embed server not available")
+
+        empty_queries = []
+        for q in ALL_QUERIES:
+            paths = await _extract_paths_from_hybrid(search_tool, q.query_text, 20)
+            if not paths:
+                empty_queries.append(q.query_text)
+
+        assert not empty_queries, (
+            f"{len(empty_queries)} benchmark queries returned zero results: "
+            f"{empty_queries[:10]}"
+        )
