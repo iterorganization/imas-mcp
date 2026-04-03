@@ -13,6 +13,7 @@ from fastmcp import Context
 
 from imas_codex.core.data_model import IdsNode
 from imas_codex.graph.client import GraphClient
+from imas_codex.graph.vector_search import build_vector_search
 from imas_codex.models.constants import SearchMode
 from imas_codex.models.result_models import (
     CheckPathsResult,
@@ -447,14 +448,16 @@ class GraphSearchTool:
             embedding = self._embed_query(search_query)
 
             # --- Vector search ---
-            filter_clause = ""
+            # node_category and ids filter are property-based → move inside SEARCH.
+            # DEPRECATED_IN and dd_clause are relationship-based → keep outside.
+            _search_where: list[str] = ["path.node_category = 'data'"]
             params: dict[str, Any] = {
                 "embedding": embedding,
-                "k": min(max_results * 5, 500),
+                "k": min(max_results * 2, 500),
                 "vector_limit": min(max_results * 5, 500),
             }
             if normalized_filter:
-                filter_clause = "AND path.ids IN $ids_filter"
+                _search_where.append("path.ids IN $ids_filter")
                 params["ids_filter"] = (
                     normalized_filter
                     if isinstance(normalized_filter, list)
@@ -463,13 +466,19 @@ class GraphSearchTool:
 
             dd_clause = _dd_version_clause("path", dd_version, params)
 
+            _path_search_block = build_vector_search(
+                "imas_node_embedding",
+                "IMASNode",
+                where_clauses=_search_where,
+                k="$k",
+                node_alias="path",
+                score_alias="score",
+            )
             vector_results = self._gc.query(
                 f"""
-                CALL db.index.vector.queryNodes('imas_node_embedding', $k, $embedding)
-                YIELD node AS path, score
+                {_path_search_block}
+                WITH path, score
                 WHERE NOT (path)-[:DEPRECATED_IN]->(:DDVersion)
-                  AND path.node_category = 'data'
-                {filter_clause}
                 {dd_clause}
                 RETURN path.id AS id, score
                 ORDER BY score DESC
@@ -1326,11 +1335,18 @@ class GraphOverviewTool:
                     )
                 )
                 query_vec = encoder.embed_texts([query])[0].tolist()
+                _ids_search_block = build_vector_search(
+                    "ids_embedding",
+                    "IDS",
+                    k="$k",
+                    node_alias="node",
+                    score_alias="score",
+                    embedding_param="$query_vec",
+                )
                 sem_results = self._gc.query(
-                    """
-                    CALL db.index.vector.queryNodes(
-                        'ids_embedding', $k, $query_vec
-                    ) YIELD node, score
+                    f"""
+                    {_ids_search_block}
+                    WITH node, score
                     RETURN node.id AS name, score
                     """,
                     k=20,
@@ -1548,28 +1564,35 @@ class GraphClustersTool:
         """Semantic search over cluster embeddings."""
         embedding = self._embed_query(query)
 
-        scope_filter = "AND cluster.scope = $scope" if scope else ""
-        ids_filter_clause = ""
-        vector_k = 50 if ids_filter else 10  # More candidates when post-filtering
+        # Property filters (scope, ids_names) → pre-filter inside SEARCH.
+        # Score threshold → kept outside (not a property).
+        # OPTIONAL MATCH → kept outside (relationship traversal).
+        _cluster_where: list[str] = []
+        vector_k = 30 if ids_filter else 10  # Reduced from 50 with pre-filtering
         params: dict[str, Any] = {"embedding": embedding, "k": vector_k}
         if scope:
+            _cluster_where.append("cluster.scope = $scope")
             params["scope"] = scope
         if ids_filter:
             filter_list = ids_filter if isinstance(ids_filter, list) else [ids_filter]
-            ids_filter_clause = (
-                "AND any(ids_name IN cluster.ids_names WHERE ids_name IN $ids_filter)"
+            _cluster_where.append(
+                "any(ids_name IN cluster.ids_names WHERE ids_name IN $ids_filter)"
             )
             params["ids_filter"] = filter_list
 
+        _cluster_search_block = build_vector_search(
+            "cluster_embedding",
+            "IMASSemanticCluster",
+            where_clauses=_cluster_where if _cluster_where else None,
+            k="$k",
+            node_alias="cluster",
+            score_alias="score",
+        )
         results = self._gc.query(
             f"""
-            CALL db.index.vector.queryNodes(
-                'cluster_embedding', $k, $embedding
-            )
-            YIELD node AS cluster, score
+            {_cluster_search_block}
+            WITH cluster, score
             WHERE score > 0.3
-            {scope_filter}
-            {ids_filter_clause}
             OPTIONAL MATCH (member:IMASNode)-[:IN_CLUSTER]->(cluster)
             WITH cluster, score, collect(DISTINCT member.id)[..50] AS paths
             RETURN cluster.id AS id, cluster.label AS label,
@@ -1761,11 +1784,18 @@ class GraphIdentifiersTool:
             )
             query_embedding = encoder.encode([query])[0].tolist()
 
+            _ident_search_block = build_vector_search(
+                "identifier_schema_embedding",
+                "IdentifierSchema",
+                k="$k",
+                node_alias="node",
+                score_alias="score",
+                embedding_param="$embedding",
+            )
             vector_results = self._gc.query(
-                """
-                CALL db.index.vector.queryNodes(
-                    'identifier_schema_embedding', $k, $embedding
-                ) YIELD node, score
+                f"""
+                {_ident_search_block}
+                WITH node, score
                 WHERE score >= $threshold
                 RETURN node.name AS name,
                        COALESCE(node.description, node.documentation) AS description,
@@ -1972,13 +2002,26 @@ class GraphPathContextTool:
                 )
                 if src and src[0].get("emb"):
                     source_ids = src[0]["ids"]
+                    # sibling.ids and sibling.id are property filters → pre-filter.
+                    # dd_clause contains INTRODUCED_IN/DEPRECATED_IN relationships → keep outside.
+                    _sem_search_block = build_vector_search(
+                        "imas_node_embedding",
+                        "IMASNode",
+                        where_clauses=[
+                            "sibling.ids <> $src_ids",
+                            "sibling.id <> $path",
+                        ],
+                        k="$k",
+                        node_alias="sibling",
+                        score_alias="score",
+                        embedding_param="$emb",
+                    )
+                    _dd_where = f"WHERE true {dd_clause}" if dd_clause else ""
                     sem_results = self._gc.query(
                         f"""
-                        CALL db.index.vector.queryNodes(
-                            'imas_node_embedding', $k, $emb
-                        ) YIELD node AS sibling, score
-                        WHERE sibling.ids <> $src_ids
-                          AND sibling.id <> $path {dd_clause}
+                        {_sem_search_block}
+                        WITH sibling, score
+                        {_dd_where}
                         RETURN sibling.id AS path, sibling.ids AS ids,
                                sibling.documentation AS doc, score
                         ORDER BY score DESC
