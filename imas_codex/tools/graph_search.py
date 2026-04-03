@@ -6,6 +6,7 @@ GraphClient queries against Neo4j vector indexes and Cypher traversals.
 
 import json
 import logging
+import re
 from typing import Any, Literal
 
 from fastmcp import Context
@@ -118,6 +119,123 @@ def resolve_dd_version(dd_version: int | str | None) -> int | None:
         except (ValueError, IndexError):
             return None
     return None
+
+
+def _reciprocal_rank_fusion(
+    vector_results: list[dict],
+    text_results: list[dict],
+    k: int = 60,
+) -> dict[str, float]:
+    """Reciprocal Rank Fusion — rank-based, score-normalization-free.
+
+    Standard RRF from Cormack et al. (2009). Immune to score normalization
+    issues because it uses rank positions, not raw scores. The ``k``
+    constant (default 60) controls how quickly relevance decays with rank.
+    """
+    scores: dict[str, float] = {}
+    for rank, r in enumerate(vector_results):
+        scores[r["id"]] = scores.get(r["id"], 0.0) + 1.0 / (k + rank + 1)
+    for rank, r in enumerate(text_results):
+        scores[r["id"]] = scores.get(r["id"], 0.0) + 1.0 / (k + rank + 1)
+    return scores
+
+
+def _apply_cluster_boost(
+    gc: "GraphClient",
+    scores: dict[str, float],
+    top_n: int = 10,
+    boost: float = 0.02,
+) -> dict[str, float]:
+    """Boost paths sharing clusters with top-ranked results."""
+    top_ids = sorted(scores, key=scores.get, reverse=True)[:top_n]
+    if not top_ids:
+        return scores
+
+    all_ids = list(scores.keys())
+    result = gc.query(
+        """
+        UNWIND $top_ids AS tid
+        MATCH (top:IMASNode {id: tid})-[:IN_CLUSTER]->(c:IMASSemanticCluster)
+        WITH collect(DISTINCT c.id) AS top_clusters
+        UNWIND $all_ids AS aid
+        MATCH (a:IMASNode {id: aid})-[:IN_CLUSTER]->(c2:IMASSemanticCluster)
+        WHERE c2.id IN top_clusters
+        RETURN aid AS id, count(DISTINCT c2) AS cluster_overlap
+        """,
+        top_ids=top_ids,
+        all_ids=all_ids,
+    )
+
+    boosted = dict(scores)
+    for row in result:
+        pid = row["id"]
+        if pid in boosted:
+            boosted[pid] += boost * row["cluster_overlap"]
+    return boosted
+
+
+def _apply_hierarchy_boost(
+    gc: "GraphClient",
+    scores: dict[str, float],
+    top_n: int = 10,
+    boost: float = 0.02,
+) -> dict[str, float]:
+    """Boost siblings of top-ranked results via shared HAS_PARENT."""
+    top_ids = sorted(scores, key=scores.get, reverse=True)[:top_n]
+    if not top_ids:
+        return scores
+
+    all_ids = list(scores.keys())
+    result = gc.query(
+        """
+        UNWIND $top_ids AS tid
+        MATCH (top:IMASNode {id: tid})-[:HAS_PARENT]->(parent)
+            <-[:HAS_PARENT]-(sibling:IMASNode)
+        WHERE sibling.id IN $all_ids AND sibling.id <> tid
+        RETURN DISTINCT sibling.id AS id
+        """,
+        top_ids=top_ids,
+        all_ids=all_ids,
+    )
+
+    boosted = dict(scores)
+    for row in result:
+        pid = row["id"]
+        if pid in boosted:
+            boosted[pid] += boost
+    return boosted
+
+
+def _apply_coordinate_boost(
+    gc: "GraphClient",
+    scores: dict[str, float],
+    top_n: int = 5,
+    boost: float = 0.01,
+) -> dict[str, float]:
+    """Boost paths sharing coordinate bases with top results."""
+    top_ids = sorted(scores, key=scores.get, reverse=True)[:top_n]
+    if not top_ids:
+        return scores
+
+    all_ids = list(scores.keys())
+    result = gc.query(
+        """
+        UNWIND $top_ids AS tid
+        MATCH (top:IMASNode {id: tid})-[:HAS_COORDINATE]->(coord:IMASNode)
+            <-[:HAS_COORDINATE]-(related:IMASNode)
+        WHERE related.id IN $all_ids AND related.id <> tid
+        RETURN DISTINCT related.id AS id
+        """,
+        top_ids=top_ids,
+        all_ids=all_ids,
+    )
+
+    boosted = dict(scores)
+    for row in result:
+        pid = row["id"]
+        if pid in boosted:
+            boosted[pid] += boost
+    return boosted
 
 
 def _dd_version_clause(
@@ -333,7 +451,7 @@ class GraphSearchTool:
             params: dict[str, Any] = {
                 "embedding": embedding,
                 "k": min(max_results * 5, 500),
-                "vector_limit": min(max_results * 3, 150),
+                "vector_limit": min(max_results * 5, 500),
             }
             if normalized_filter:
                 filter_clause = "AND path.ids IN $ids_filter"
@@ -360,27 +478,17 @@ class GraphSearchTool:
                 **params,
             )
 
-            scores: dict[str, float] = {}
-            for r in vector_results or []:
-                pid = r["id"]
-                scores[pid] = round(r["score"], 4)
-
             # --- Text search ---
             text_results = _text_search_imas_paths(
                 self._gc,
                 search_query,
-                min(max_results * 3, 150),
+                min(max_results * 5, 500),
                 normalized_filter,
                 dd_version=dd_version,
             )
-            for r in text_results:
-                pid = r["id"]
-                text_score = round(r["score"], 4)
-                if pid in scores:
-                    # Weighted combination instead of max — preserves discrimination
-                    scores[pid] = round(0.6 * scores[pid] + 0.4 * text_score + 0.05, 4)
-                else:
-                    scores[pid] = text_score
+
+            # --- Reciprocal Rank Fusion ---
+            scores = _reciprocal_rank_fusion(vector_results or [], text_results, k=60)
 
             # --- Path segment boost ---
             query_words = [
@@ -420,6 +528,11 @@ class GraphSearchTool:
                     terminal = pid.rsplit("/", 1)[-1].lower()
                     if terminal in _orig_terms:
                         scores[pid] = round(scores[pid] + 0.35, 4)
+
+            # --- Graph-native boosts ---
+            scores = _apply_cluster_boost(self._gc, scores)
+            scores = _apply_hierarchy_boost(self._gc, scores)
+            scores = _apply_coordinate_boost(self._gc, scores)
 
             # Rank and limit
             sorted_ids = sorted(scores, key=lambda pid: scores[pid], reverse=True)[
@@ -2386,6 +2499,36 @@ def _leaf_data_type_clause(alias: str) -> str:
     return f"{alias}.data_type IS NOT NULL AND NOT ({alias}.data_type IN {_structure_type_list()})"
 
 
+_LUCENE_SPECIAL_RE = re.compile(r'([+\-&|!(){}[\]^"~*?:\\/])')
+
+
+def _escape_lucene(term: str) -> str:
+    """Escape Lucene special characters in a search term."""
+    return _LUCENE_SPECIAL_RE.sub(r"\\\1", term)
+
+
+def _build_lucene_query(query: str) -> str:
+    """Build a Lucene query with field boosting and fuzzy matching.
+
+    Uses field boosting to weight description > keywords > name > documentation,
+    and adds fuzzy variants for typo tolerance on terms > 3 chars.
+    """
+    terms = query.split()
+    parts = []
+    for term in terms:
+        escaped = _escape_lucene(term)
+        parts.append(
+            f"(description:{escaped}^3 OR name:{escaped}^2 "
+            f"OR documentation:{escaped} OR keywords:{escaped}^2)"
+        )
+    base = " AND ".join(parts)
+    fuzzy_terms = [f"{_escape_lucene(t)}~1" for t in terms if len(t) > 3]
+    if fuzzy_terms:
+        fuzzy = " OR ".join(fuzzy_terms)
+        return f"({base}) OR ({fuzzy})"
+    return base
+
+
 def _text_search_imas_paths(
     gc: GraphClient,
     query: str,
@@ -2425,7 +2568,10 @@ def _text_search_imas_paths(
         ft_where = (
             "WHERE NOT (p)-[:DEPRECATED_IN]->(:DDVersion) AND p.node_category = 'data'"
         )
-        ft_params: dict[str, Any] = {"query": query, "limit": limit}
+        ft_params: dict[str, Any] = {
+            "query": _build_lucene_query(query),
+            "limit": limit,
+        }
         if ids_filter is not None:
             filter_list = ids_filter if isinstance(ids_filter, list) else [ids_filter]
             ft_where += " AND p.ids IN $ids_filter"
@@ -2440,8 +2586,7 @@ def _text_search_imas_paths(
             YIELD node AS p, score
             {ft_where}
             WITH p, score
-            WHERE size(coalesce(p.documentation, '')) > 10
-                  OR p.description IS NOT NULL
+            WHERE (p.description IS NOT NULL OR size(coalesce(p.documentation, '')) > 0)
             RETURN p.id AS id, score
             LIMIT $limit
         """
@@ -2453,7 +2598,7 @@ def _text_search_imas_paths(
             for r in ft_results:
                 pid = r["id"]
                 raw = r["score"] / max_score if max_score > 0 else 0.0
-                normalized.append({"id": pid, "score": max(0.3 + 0.7 * raw, 0.0)})
+                normalized.append({"id": pid, "score": raw})
             return normalized
     except Exception:
         pass
@@ -2469,7 +2614,7 @@ def _text_search_imas_paths(
             OR toLower(coalesce(p.description, '')) CONTAINS $query_lower
             OR any(kw IN coalesce(p.keywords, []) WHERE toLower(kw) CONTAINS $query_lower)
           )
-          AND size(coalesce(p.documentation, '')) > 10
+          AND (p.description IS NOT NULL OR size(coalesce(p.documentation, '')) > 0)
         WITH p,
              CASE
             WHEN toLower(p.documentation) CONTAINS $query_lower
@@ -2499,7 +2644,7 @@ def _text_search_imas_paths(
                 WHERE {where_base}
                   AND (toLower(p.name) = $word OR toLower(p.id) CONTAINS $word)
                                     AND {_leaf_data_type_clause("p")}
-                  AND size(coalesce(p.documentation, '')) > 10
+                  AND (p.description IS NOT NULL OR size(coalesce(p.documentation, '')) > 0)
                 RETURN p.id AS id, 0.90 AS score
                 LIMIT 10
             """
