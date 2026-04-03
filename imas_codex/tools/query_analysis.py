@@ -33,25 +33,57 @@ ACCESSOR_TERMINALS: frozenset[str] = frozenset(
 
 # Physics abbreviations commonly used in fusion research
 PHYSICS_ABBREVIATIONS: dict[str, list[str]] = {
+    # Currents and voltages
     "ip": ["plasma current", "ip"],
+    "vloop": ["loop voltage", "v_loop", "vloop"],
+    # Temperatures
     "te": ["electron temperature", "te"],
     "ti": ["ion temperature", "ti"],
+    "te0": ["central electron temperature", "te", "te0"],
+    "ti0": ["central ion temperature", "ti", "ti0"],
+    # Densities
     "ne": ["electron density", "ne"],
     "ni": ["ion density", "ni"],
+    "ne0": ["central electron density", "ne", "ne0"],
+    "n_e_line": ["line-integrated density", "nel", "n_e_line"],
+    # Magnetic fields
     "bt": ["toroidal magnetic field", "b_field_tor", "bt", "b0"],
     "bp": ["poloidal magnetic field", "b_field_pol", "bp"],
+    "bpol": ["poloidal magnetic field", "b_field_pol", "bpol"],
+    "btor": ["toroidal magnetic field", "b_field_tor", "btor"],
+    "b0": ["vacuum toroidal field", "toroidal magnetic field", "b0", "bt"],
+    # Equilibrium quantities
     "q": ["safety factor", "q"],
     "psi": ["poloidal flux", "psi"],
     "beta": ["plasma beta", "beta_pol", "beta_tor", "beta_normal", "beta"],
     "li": ["internal inductance", "li"],
     "wmhd": ["stored energy", "w_mhd", "wmhd"],
     "zeff": ["effective charge", "z_eff", "zeff"],
-    "vloop": ["loop voltage", "v_loop", "vloop"],
-    "bpol": ["poloidal magnetic field", "b_field_pol", "bpol"],
-    "btor": ["toroidal magnetic field", "b_field_tor", "btor"],
-    "te0": ["central electron temperature", "te", "te0"],
-    "ti0": ["central ion temperature", "ti", "ti0"],
-    "ne0": ["central electron density", "ne", "ne0"],
+    # Geometry
+    "r0": ["reference major radius", "magnetic axis radius", "r0"],
+    "a": ["minor radius", "plasma minor radius", "a"],
+    "kappa": ["elongation", "plasma elongation", "kappa"],
+    "delta": ["triangularity", "plasma triangularity", "delta"],
+    # Coordinates
+    "rho": ["normalized radius", "rho_tor_norm", "rho"],
+    "phi": ["toroidal flux", "toroidal angle", "phi"],
+    "theta": ["poloidal angle", "geometric angle", "theta"],
+    # Current density
+    "j_tor": ["toroidal current density", "j_tor"],
+    "j_parallel": ["parallel current density", "j_parallel"],
+    # Heating systems
+    "nbi": ["neutral beam injection", "beam heating", "nbi"],
+    "ecrh": ["electron cyclotron heating", "ech", "ecrh"],
+    "icrh": ["ion cyclotron heating", "icrf", "icrh"],
+    "lh": ["lower hybrid", "lower hybrid heating", "lh"],
+    # Diagnostics
+    "ece": ["electron cyclotron emission", "ece"],
+    "mse": ["motional stark effect", "mse"],
+    "bol": ["bolometry", "radiated power", "bol"],
+    "sxr": ["soft x-ray", "sxr"],
+    # Power and confinement
+    "p_ohm": ["ohmic power", "p_ohmic", "p_ohm"],
+    "tau_e": ["energy confinement time", "tau_e"],
 }
 
 

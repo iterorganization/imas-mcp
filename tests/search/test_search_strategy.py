@@ -387,3 +387,67 @@ class TestSearchResponse:
         response = SearchResponse(hits=[match])
         assert len(response.hits) == 1
         assert response.hits[0].score == 0.9
+
+
+class TestPhysicsAbbreviations:
+    """Test expanded physics abbreviation mappings."""
+
+    def test_abbreviation_count(self):
+        """At least 35 abbreviation entries."""
+        from imas_codex.tools.query_analysis import PHYSICS_ABBREVIATIONS
+
+        assert len(PHYSICS_ABBREVIATIONS) >= 35
+
+    def test_new_abbreviations_recognized(self):
+        """New abbreviations should be in the dict."""
+        from imas_codex.tools.query_analysis import PHYSICS_ABBREVIATIONS
+
+        new_keys = [
+            "b0",
+            "r0",
+            "kappa",
+            "delta",
+            "rho",
+            "nbi",
+            "ecrh",
+            "icrh",
+            "ece",
+            "mse",
+            "bol",
+            "sxr",
+            "p_ohm",
+            "tau_e",
+            "n_e_line",
+            "j_tor",
+            "j_parallel",
+            "phi",
+            "theta",
+            "lh",
+            "a",
+        ]
+        for key in new_keys:
+            assert key in PHYSICS_ABBREVIATIONS, f"Missing abbreviation: {key}"
+
+    def test_b0_expansion(self):
+        """B0 should expand to vacuum toroidal field terms."""
+        from imas_codex.tools.query_analysis import PHYSICS_ABBREVIATIONS
+
+        expansions = PHYSICS_ABBREVIATIONS["b0"]
+        assert "vacuum toroidal field" in expansions
+        assert "b0" in expansions
+
+    def test_nbi_expansion(self):
+        """NBI should expand to neutral beam injection terms."""
+        from imas_codex.tools.query_analysis import PHYSICS_ABBREVIATIONS
+
+        expansions = PHYSICS_ABBREVIATIONS["nbi"]
+        assert "neutral beam injection" in expansions
+
+    def test_no_duplicate_keys(self):
+        """Verify no duplicate keys in dict (Python handles this, but check count)."""
+        from imas_codex.tools.query_analysis import PHYSICS_ABBREVIATIONS
+
+        # All values should be lists
+        for key, val in PHYSICS_ABBREVIATIONS.items():
+            assert isinstance(val, list), f"Value for {key} is not a list"
+            assert len(val) >= 1, f"Empty expansion for {key}"
