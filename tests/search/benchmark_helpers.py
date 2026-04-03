@@ -22,7 +22,6 @@ class QueryResult:
 
     query: BenchmarkQuery
     returned_paths: list[str]
-    expanded_expected: set[str] | None = None
     reciprocal_rank: float = 0.0
 
     def __post_init__(self):
@@ -30,20 +29,14 @@ class QueryResult:
 
     def _compute_rr(self) -> float:
         """Compute reciprocal rank: 1/rank of first relevant result."""
-        expected = self.expanded_expected or self.expected_set
         for rank, path in enumerate(self.returned_paths, start=1):
-            if path in expected:
+            if path in self.expected_set:
                 return 1.0 / rank
         return 0.0
 
     @property
     def expected_set(self) -> set[str]:
         return set(self.query.expected_paths)
-
-    @property
-    def effective_expected(self) -> set[str]:
-        """The full set of acceptable paths (expanded or hand-curated)."""
-        return self.expanded_expected or self.expected_set
 
     @property
     def hit(self) -> bool:
@@ -89,7 +82,7 @@ class BenchmarkResults:
         hits = sum(
             1
             for qr in self.query_results
-            if any(p in qr.effective_expected for p in qr.returned_paths[:5])
+            if any(p in qr.expected_set for p in qr.returned_paths[:5])
         )
         return hits / len(self.query_results)
 
@@ -177,7 +170,6 @@ def run_benchmark(
     queries: list[BenchmarkQuery],
     search_fn,
     limit: int = 50,
-    cluster_members: dict[str, list[str]] | None = None,
 ) -> BenchmarkResults:
     """Run a benchmark by calling search_fn(query_text, limit) for each query.
 
@@ -192,26 +184,15 @@ def run_benchmark(
         Must return a list of IMAS path IDs in ranked order.
     limit:
         Max results to request from the search function.
-    cluster_members:
-        Optional mapping of cluster_id → list of member paths.  When
-        provided, expected paths are expanded with cluster members via
-        :func:`~tests.search.benchmark_data.expand_expected_paths`.
 
     Returns
     -------
     BenchmarkResults with per-query reciprocal ranks and aggregate MRR.
     """
-    from tests.search.benchmark_data import expand_expected_paths
-
     results = BenchmarkResults(method_name=method_name)
     for q in queries:
         returned = search_fn(q.query_text, limit)
-        expanded = (
-            expand_expected_paths(q, cluster_members or {}) if cluster_members else None
-        )
-        results.query_results.append(
-            QueryResult(query=q, returned_paths=returned, expanded_expected=expanded)
-        )
+        results.query_results.append(QueryResult(query=q, returned_paths=returned))
     return results
 
 

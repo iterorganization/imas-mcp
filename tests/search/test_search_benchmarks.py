@@ -36,7 +36,6 @@ from tests.search.benchmark_data import (
     BenchmarkQuery,
     compute_category_mrr,
     compute_mrr,
-    expand_expected_paths,
 )
 from tests.search.benchmark_helpers import (
     BenchmarkResults,
@@ -495,7 +494,7 @@ class TestHybridSearchBenchmark:
     MRR_THRESHOLD = 0.20
 
     @pytest.mark.asyncio
-    async def test_hybrid_mrr(self, search_tool, embed_available, cluster_members):
+    async def test_hybrid_mrr(self, search_tool, embed_available):
         if not embed_available:
             pytest.skip("Embed server not available for hybrid search")
 
@@ -504,10 +503,7 @@ class TestHybridSearchBenchmark:
             paths = await _extract_paths_from_hybrid(search_tool, q.query_text, 50)
             from tests.search.benchmark_helpers import QueryResult
 
-            expanded = expand_expected_paths(q, cluster_members)
-            results.query_results.append(
-                QueryResult(query=q, returned_paths=paths, expanded_expected=expanded)
-            )
+            results.query_results.append(QueryResult(query=q, returned_paths=paths))
 
         # If most queries returned empty, the search tool is broken
         empty_count = sum(1 for qr in results.query_results if not qr.returned_paths)
@@ -641,9 +637,7 @@ class TestSearchQualityGate:
     ABBREVIATION_MRR_THRESHOLD = 0.20
 
     @pytest.mark.asyncio
-    async def test_overall_mrr_gate(
-        self, search_tool, embed_available, cluster_members
-    ):
+    async def test_overall_mrr_gate(self, search_tool, embed_available):
         """Overall MRR must not drop below threshold."""
         if not embed_available:
             pytest.skip("Embed server not available")
@@ -653,10 +647,7 @@ class TestSearchQualityGate:
             paths = await _extract_paths_from_hybrid(search_tool, q.query_text, 50)
             from tests.search.benchmark_helpers import QueryResult
 
-            expanded = expand_expected_paths(q, cluster_members)
-            results.query_results.append(
-                QueryResult(query=q, returned_paths=paths, expanded_expected=expanded)
-            )
+            results.query_results.append(QueryResult(query=q, returned_paths=paths))
 
         empty_count = sum(1 for qr in results.query_results if not qr.returned_paths)
         if empty_count > len(ALL_QUERIES) * 0.8:
@@ -672,9 +663,7 @@ class TestSearchQualityGate:
         )
 
     @pytest.mark.asyncio
-    async def test_abbreviation_mrr_gate(
-        self, search_tool, embed_available, cluster_members
-    ):
+    async def test_abbreviation_mrr_gate(self, search_tool, embed_available):
         """Abbreviation queries are historically weakest — dedicated gate."""
         if not embed_available:
             pytest.skip("Embed server not available")
@@ -684,10 +673,7 @@ class TestSearchQualityGate:
             paths = await _extract_paths_from_hybrid(search_tool, q.query_text, 50)
             from tests.search.benchmark_helpers import QueryResult
 
-            expanded = expand_expected_paths(q, cluster_members)
-            results.query_results.append(
-                QueryResult(query=q, returned_paths=paths, expanded_expected=expanded)
-            )
+            results.query_results.append(QueryResult(query=q, returned_paths=paths))
 
         empty_count = sum(1 for qr in results.query_results if not qr.returned_paths)
         if empty_count > len(ABBREVIATION_QUERIES) * 0.8:
@@ -719,66 +705,3 @@ class TestSearchQualityGate:
             f"{len(empty_queries)} benchmark queries returned zero results: "
             f"{empty_queries[:10]}"
         )
-
-
-# ── Cluster expansion validation ─────────────────────────────────────────────
-
-
-@pytest.mark.graph
-class TestExpectedPathCompleteness:
-    """Validate that hand-curated expected_paths are subsets of cluster members."""
-
-    def test_curated_paths_in_clusters(self, cluster_members):
-        """Every hand-curated path should appear in its referenced clusters."""
-        if not cluster_members:
-            pytest.skip("No cluster data available")
-
-        violations = []
-        for q in ALL_QUERIES:
-            if not q.expected_clusters:
-                continue
-            cluster_paths: set[str] = set()
-            for cid in q.expected_clusters:
-                cluster_paths.update(cluster_members.get(cid, []))
-            if not cluster_paths:
-                continue
-            # Hand-curated paths should be in clusters (warns about stale curation)
-            for p in q.expected_paths:
-                if p not in cluster_paths:
-                    violations.append(
-                        f"'{q.query_text}': {p} not in clusters {q.expected_clusters}"
-                    )
-
-        if violations:
-            # This is a warning, not a hard failure — hand-curated paths may
-            # include diagnostic-specific paths not in the global cluster
-            import warnings
-
-            for v in violations:
-                warnings.warn(v, stacklevel=2)
-
-    def test_cluster_expansion_adds_paths(self, cluster_members):
-        """Cluster expansion should add paths beyond hand-curated set."""
-        if not cluster_members:
-            pytest.skip("No cluster data available")
-
-        expanded_any = False
-        for q in ALL_QUERIES:
-            if not q.expected_clusters:
-                continue
-            expanded = expand_expected_paths(q, cluster_members)
-            if len(expanded) > len(q.expected_paths):
-                expanded_any = True
-                break
-
-        assert expanded_any, "Cluster expansion should add paths for at least one query"
-
-    def test_all_cluster_ids_exist(self, cluster_members):
-        """Every referenced cluster ID should resolve to members."""
-        missing = []
-        for q in ALL_QUERIES:
-            for cid in q.expected_clusters:
-                if cid not in cluster_members or not cluster_members[cid]:
-                    missing.append(f"'{q.query_text}': cluster {cid} has no members")
-
-        assert not missing, "Missing clusters:\n" + "\n".join(missing)

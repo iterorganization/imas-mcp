@@ -12,63 +12,17 @@ catch regressions in different search capabilities.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
 class BenchmarkQuery:
-    """A single benchmark query with gold-standard expected paths.
-
-    Parameters
-    ----------
-    query_text:
-        The user query string (e.g. "electron temperature", "Ip").
-    expected_paths:
-        Hand-curated list of acceptable result paths.  This is the
-        *minimum* set — many IMAS concepts have 10–30+ valid paths
-        across different IDSs and diagnostics.
-    category:
-        Query category for stratified evaluation.
-    notes:
-        Free-text notes for benchmark maintainers.
-    expected_clusters:
-        Optional list of ``IMASSemanticCluster.id`` values.  When
-        provided, all cluster members are unioned with
-        ``expected_paths`` at evaluation time via
-        :func:`expand_expected_paths`.  This solves the one-to-many
-        problem: a single physics concept maps to dozens of valid
-        IMAS paths, and hand-curating all of them is fragile.
-    """
+    """A single benchmark query with gold-standard expected paths."""
 
     query_text: str
     expected_paths: list[str]
     category: str
     notes: str = ""
-    expected_clusters: list[str] = field(default_factory=list)
-
-
-def expand_expected_paths(
-    query: BenchmarkQuery,
-    cluster_members: dict[str, list[str]],
-) -> set[str]:
-    """Union hand-curated expected paths with cluster members.
-
-    Parameters
-    ----------
-    query:
-        The benchmark query.
-    cluster_members:
-        Mapping of cluster_id → list of member paths, pre-fetched
-        from the graph.
-
-    Returns
-    -------
-    Set of all acceptable result paths for this query.
-    """
-    paths = set(query.expected_paths)
-    for cid in query.expected_clusters:
-        paths.update(cluster_members.get(cid, []))
-    return paths
 
 
 # ── Category 1: Exact concept match ──────────────────────────────────────────
@@ -87,7 +41,6 @@ EXACT_CONCEPT_QUERIES = [
         ],
         category="exact_concept",
         notes="multiple IDS paths are valid; all represent electron temperature",
-        expected_clusters=["physics_electron_temperature"],
     ),
     BenchmarkQuery(
         query_text="plasma current",
@@ -97,7 +50,6 @@ EXACT_CONCEPT_QUERIES = [
         ],
         category="exact_concept",
         notes="summary/global_quantities/ip/value is template-enriched; parent is the concept",
-        expected_clusters=["physics_plasma_current"],
     ),
     BenchmarkQuery(
         query_text="electron density",
@@ -110,7 +62,6 @@ EXACT_CONCEPT_QUERIES = [
         ],
         category="exact_concept",
         notes="multiple IDS contain electron density; all are valid",
-        expected_clusters=["physics_electron_density"],
     ),
     BenchmarkQuery(
         query_text="safety factor profile",
@@ -119,7 +70,6 @@ EXACT_CONCEPT_QUERIES = [
             "core_profiles/profiles_1d/q",
         ],
         category="exact_concept",
-        expected_clusters=["physics_safety_factor"],
     ),
     BenchmarkQuery(
         query_text="toroidal magnetic field on axis",
@@ -130,7 +80,6 @@ EXACT_CONCEPT_QUERIES = [
         ],
         category="exact_concept",
         notes="b0/value is template-enriched; parent b0 is the concept",
-        expected_clusters=["ef529d4bf67b1448"],
     ),
     BenchmarkQuery(
         query_text="toroidal magnetic field",
@@ -142,7 +91,6 @@ EXACT_CONCEPT_QUERIES = [
         ],
         category="exact_concept",
         notes="b0 and b_field_tor are canonical toroidal field paths",
-        expected_clusters=["ef529d4bf67b1448"],
     ),
     BenchmarkQuery(
         query_text="bootstrap current density",
@@ -163,7 +111,6 @@ EXACT_CONCEPT_QUERIES = [
         ],
         category="exact_concept",
         notes="conductivity_parallel is the inverse; wall/pf resistivity also valid",
-        expected_clusters=["3abb4316ac8b380c"],
     ),
     BenchmarkQuery(
         query_text="safety factor",
@@ -174,7 +121,6 @@ EXACT_CONCEPT_QUERIES = [
         ],
         category="exact_concept",
         notes="q profile in equilibrium and core_profiles; scalar at axis",
-        expected_clusters=["physics_safety_factor"],
     ),
     BenchmarkQuery(
         query_text="elongation",
@@ -185,7 +131,6 @@ EXACT_CONCEPT_QUERIES = [
         ],
         category="exact_concept",
         notes="elongation in boundary, summary, and pulse schedule",
-        expected_clusters=["36dd1b38cafaf2e2"],
     ),
 ]
 
@@ -296,7 +241,6 @@ ABBREVIATION_QUERIES = [
         ],
         category="abbreviation",
         notes="ip/value is template-enriched; parent ip is the concept",
-        expected_clusters=["physics_plasma_current"],
     ),
     BenchmarkQuery(
         query_text="Te profile",
@@ -309,7 +253,6 @@ ABBREVIATION_QUERIES = [
         ],
         category="abbreviation",
         notes="various temperature-related paths are acceptable",
-        expected_clusters=["physics_electron_temperature"],
     ),
     BenchmarkQuery(
         query_text="ne",
@@ -321,7 +264,6 @@ ABBREVIATION_QUERIES = [
         ],
         category="abbreviation",
         notes="various density paths are acceptable",
-        expected_clusters=["physics_electron_density"],
     ),
     BenchmarkQuery(
         query_text="q profile",
@@ -330,7 +272,6 @@ ABBREVIATION_QUERIES = [
             "core_profiles/profiles_1d/q",
         ],
         category="abbreviation",
-        expected_clusters=["physics_safety_factor"],
     ),
     BenchmarkQuery(
         query_text="Zeff",
@@ -340,7 +281,6 @@ ABBREVIATION_QUERIES = [
             "edge_profiles/ggd/zeff",
         ],
         category="abbreviation",
-        expected_clusters=["fe521c0ff94665f7"],
     ),
     BenchmarkQuery(
         query_text="b0",
@@ -351,7 +291,6 @@ ABBREVIATION_QUERIES = [
         ],
         category="abbreviation",
         notes="b0 is the vacuum toroidal field on axis",
-        expected_clusters=["ef529d4bf67b1448"],
     ),
     BenchmarkQuery(
         query_text="bt",
@@ -362,7 +301,6 @@ ABBREVIATION_QUERIES = [
         ],
         category="abbreviation",
         notes="bt commonly refers to the toroidal magnetic field",
-        expected_clusters=["ef529d4bf67b1448"],
     ),
     BenchmarkQuery(
         query_text="jt",
@@ -382,7 +320,6 @@ ABBREVIATION_QUERIES = [
         ],
         category="abbreviation",
         notes="lowercase variant; same as Zeff",
-        expected_clusters=["fe521c0ff94665f7"],
     ),
     BenchmarkQuery(
         query_text="psi",
@@ -393,7 +330,6 @@ ABBREVIATION_QUERIES = [
         ],
         category="abbreviation",
         notes="psi is the poloidal magnetic flux",
-        expected_clusters=["physics_poloidal_flux"],
     ),
     BenchmarkQuery(
         query_text="B0",
@@ -404,7 +340,6 @@ ABBREVIATION_QUERIES = [
         ],
         category="abbreviation",
         notes="Uppercase variant of b0 — tests case-insensitive matching for vacuum toroidal field",
-        expected_clusters=["ef529d4bf67b1448"],
     ),
     BenchmarkQuery(
         query_text="nbi power",
@@ -504,7 +439,6 @@ CROSS_DOMAIN_QUERIES = [
             "equilibrium/time_slice/boundary",
         ],
         category="cross_domain",
-        expected_clusters=["physics_boundary_shape_r"],
     ),
     BenchmarkQuery(
         query_text="neutral beam injection power",
@@ -523,7 +457,6 @@ CROSS_DOMAIN_QUERIES = [
         ],
         category="cross_domain",
         notes="beta_pol/value is template-enriched; parent beta_pol is the concept",
-        expected_clusters=["c632785ed0683843"],
     ),
     BenchmarkQuery(
         query_text="separatrix last closed flux surface",
@@ -545,7 +478,6 @@ CROSS_DOMAIN_QUERIES = [
         ],
         category="cross_domain",
         notes="radiated power from bolometry, summary, and wall IDS",
-        expected_clusters=["04549683c172753e"],
     ),
     BenchmarkQuery(
         query_text="line integrated density",
@@ -574,7 +506,6 @@ CROSS_DOMAIN_QUERIES = [
         ],
         category="cross_domain",
         notes="magnetic axis position in equilibrium and summary",
-        expected_clusters=["24a228837a3a55d6"],
     ),
     BenchmarkQuery(
         query_text="divertor heat flux",
@@ -585,7 +516,6 @@ CROSS_DOMAIN_QUERIES = [
         ],
         category="cross_domain",
         notes="heat flux on divertor targets from divertors and summary IDS",
-        expected_clusters=["0ce1e3f21a79c92d"],
     ),
 ]
 
@@ -602,7 +532,6 @@ EDGE_CASE_QUERIES = [
         ],
         category="edge_case",
         notes="misspelling of 'temperature' — fuzzy matching should recover",
-        expected_clusters=["physics_electron_temperature"],
     ),
     BenchmarkQuery(
         query_text="rho_tor_norm",
@@ -631,7 +560,6 @@ EDGE_CASE_QUERIES = [
         ],
         category="edge_case",
         notes="boolean-style query — should find electron temperature and density",
-        expected_clusters=["physics_electron_temperature", "physics_electron_density"],
     ),
     BenchmarkQuery(
         query_text="ELONGATION",
@@ -642,7 +570,6 @@ EDGE_CASE_QUERIES = [
         ],
         category="edge_case",
         notes="uppercase query — case-insensitive matching should find elongation",
-        expected_clusters=["36dd1b38cafaf2e2"],
     ),
 ]
 
