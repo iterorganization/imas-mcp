@@ -331,6 +331,36 @@ ABBREVIATION_QUERIES = [
         category="abbreviation",
         notes="psi is the poloidal magnetic flux",
     ),
+    BenchmarkQuery(
+        query_text="B0",
+        expected_paths=[
+            "equilibrium/vacuum_toroidal_field/b0",
+            "summary/global_quantities/b0",
+            "core_profiles/vacuum_toroidal_field/b0",
+        ],
+        category="abbreviation",
+        notes="Uppercase variant of b0 — tests case-insensitive matching for vacuum toroidal field",
+    ),
+    BenchmarkQuery(
+        query_text="nbi power",
+        expected_paths=[
+            "nbi/unit/power_launched",
+            "summary/heating_current_drive/nbi/power_launched",
+            "summary/heating_current_drive/power_launched_nbi",
+        ],
+        category="abbreviation",
+        notes="Neutral beam injection power — tests abbreviation expansion for NBI",
+    ),
+    BenchmarkQuery(
+        query_text="kappa",
+        expected_paths=[
+            "equilibrium/time_slice/boundary/elongation",
+            "summary/boundary/elongation",
+            "pulse_schedule/position_control/elongation",
+        ],
+        category="abbreviation",
+        notes="Elongation via Greek letter kappa — tests abbreviation expansion",
+    ),
 ]
 
 # ── Category 5: Accessor-oriented queries ────────────────────────────────────

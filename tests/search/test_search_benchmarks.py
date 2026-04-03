@@ -630,6 +630,9 @@ class TestSearchQualityGate:
       Overall MRR ≈ 0.49, Abbreviation MRR ≈ 0.32
     """
 
+    # Pre-optimization baselines (2025-07): Overall MRR ≈ 0.49, Abbreviation MRR ≈ 0.32
+    # Target post-optimization: Overall MRR ≥ 0.65, Abbreviation MRR ≥ 0.55
+    # Thresholds kept conservative until Phase 6 DD rebuild validates improvements
     MRR_THRESHOLD = 0.40
     ABBREVIATION_MRR_THRESHOLD = 0.25
 

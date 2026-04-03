@@ -1050,3 +1050,79 @@ class TestDoEEvaluation:
         logger.info("Pareto-optimal: %d / %d configs", len(pareto), len(results))
 
         save_doe_results(results)
+
+
+class TestEmbedTextQuality:
+    """Verify embed text generation includes path, abbreviations, and keywords.
+
+    These are unit tests that validate generate_embedding_text() produces
+    rich text suitable for embedding. They do NOT require a live graph.
+    """
+
+    def test_embed_text_contains_full_path(self):
+        """Embed text should contain the full IMAS path."""
+        from imas_codex.graph.build_dd import generate_embedding_text
+
+        text = generate_embedding_text(
+            "equilibrium/time_slice/global_quantities/ip",
+            {
+                "description": "Total plasma current",
+                "documentation": "",
+                "keywords": ["Ip"],
+            },
+        )
+        assert "equilibrium/time_slice/global_quantities/ip" in text
+
+    def test_embed_text_contains_keywords(self):
+        """Embed text should contain keywords when provided."""
+        from imas_codex.graph.build_dd import generate_embedding_text
+
+        text = generate_embedding_text(
+            "core_profiles/profiles_1d/electrons/temperature",
+            {
+                "description": "Electron temperature profile",
+                "documentation": "",
+                "keywords": ["Te", "thermal energy"],
+            },
+        )
+        assert "Keywords:" in text
+        assert "Te" in text
+
+    def test_embed_text_includes_documentation(self):
+        """Embed text should include documentation when different from description."""
+        from imas_codex.graph.build_dd import generate_embedding_text
+
+        text = generate_embedding_text(
+            "equilibrium/time_slice/profiles_1d/psi",
+            {
+                "description": "Poloidal flux profile",
+                "documentation": "The poloidal magnetic flux function used as the radial coordinate for 1D equilibrium profiles.",
+                "keywords": ["psi", "flux"],
+            },
+        )
+        assert (
+            "poloidal magnetic flux function" in text.lower()
+            or "Poloidal flux profile" in text
+        )
+
+    def test_embed_text_empty_returns_empty(self):
+        """Empty description and documentation should return empty string."""
+        from imas_codex.graph.build_dd import generate_embedding_text
+
+        text = generate_embedding_text(
+            "some/path",
+            {"description": "", "documentation": "", "keywords": []},
+        )
+        assert text == ""
+
+    def test_embed_text_caps_long_documentation(self):
+        """Very long documentation should be capped at 300 chars."""
+        from imas_codex.graph.build_dd import generate_embedding_text
+
+        long_doc = "A" * 500
+        text = generate_embedding_text(
+            "some/path",
+            {"description": "Short desc", "documentation": long_doc, "keywords": []},
+        )
+        # The doc portion should be capped
+        assert "A" * 301 not in text
