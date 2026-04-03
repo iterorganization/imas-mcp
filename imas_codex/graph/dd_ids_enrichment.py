@@ -454,7 +454,8 @@ def embed_ids_nodes(
         OPTIONS {{
             indexConfig: {{
                 `vector.dimensions`: {dim},
-                `vector.similarity_function`: 'cosine'
+                `vector.similarity_function`: 'cosine',
+                `vector.quantization.enabled`: true
             }}
         }}
     """)

@@ -332,7 +332,8 @@ def embed_identifier_schemas(
         OPTIONS {{
             indexConfig: {{
                 `vector.dimensions`: {dim},
-                `vector.similarity_function`: 'cosine'
+                `vector.similarity_function`: 'cosine',
+                `vector.quantization.enabled`: true
             }}
         }}
     """)

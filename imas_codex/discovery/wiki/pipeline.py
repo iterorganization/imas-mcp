@@ -1345,7 +1345,8 @@ def ensure_wiki_vector_index() -> bool:
             OPTIONS {{
                 indexConfig: {{
                     `vector.dimensions`: {dim},
-                    `vector.similarity_function`: 'cosine'
+                    `vector.similarity_function`: 'cosine',
+                    `vector.quantization.enabled`: true
                 }}
             }}
             """

@@ -341,19 +341,41 @@ class GraphClient:
         self.ensure_fulltext_indexes()
 
     def ensure_vector_indexes(self) -> None:
-        """Create vector indexes for semantic search if they don't exist.
+        """Create or recreate vector indexes with quantization.
 
         Creates all vector indexes derived from LinkML schemas (classes with
         embedding or centroid slots). Index configuration comes from:
         - GraphSchema.vector_indexes property (schema-derived)
         - vector_index_name annotation for custom index names
 
+        Detects dimension mismatches (e.g. after upgrading from 256 to 1024)
+        and drops stale indexes before recreation.
+
         Requires Neo4j 5.x+ with vector index support.
         """
         dim = get_embedding_dimension()
 
         with self.session() as sess:
-            # Get existing indexes
+            # Check for dimension mismatches on existing vector indexes
+            try:
+                mismatch_result = sess.run(
+                    "SHOW INDEXES YIELD name, type, options "
+                    "WHERE type = 'VECTOR' "
+                    "RETURN name, options.indexConfig.`vector.dimensions` AS dim"
+                )
+                for idx in mismatch_result:
+                    if idx["dim"] != dim:
+                        logger.info(
+                            "Dropping vector index %s (dim %s != configured %d)",
+                            idx["name"],
+                            idx["dim"],
+                            dim,
+                        )
+                        sess.run(f"DROP INDEX `{idx['name']}`")
+            except Exception as e:
+                logger.warning("Could not check vector index dimensions: %s", e)
+
+            # Get existing indexes (after any drops above)
             result = sess.run(
                 "SHOW INDEXES YIELD name WHERE name IN $names RETURN name",
                 names=[idx[0] for idx in EXPECTED_VECTOR_INDEXES],
@@ -371,7 +393,8 @@ class GraphClient:
                         OPTIONS {{
                             indexConfig: {{
                                 `vector.dimensions`: {dim},
-                                `vector.similarity_function`: 'cosine'
+                                `vector.similarity_function`: 'cosine',
+                                `vector.quantization.enabled`: true
                             }}
                         }}
                     """)

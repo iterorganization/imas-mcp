@@ -4006,7 +4006,8 @@ def _embed_cluster_text(
             OPTIONS {{
                 indexConfig: {{
                     `vector.dimensions`: {dim},
-                    `vector.similarity_function`: 'cosine'
+                    `vector.similarity_function`: 'cosine',
+                    `vector.quantization.enabled`: true
                 }}
             }}
         """)
