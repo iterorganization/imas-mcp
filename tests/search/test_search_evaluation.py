@@ -1388,6 +1388,744 @@ class TestDimensionComparison:
                 logger.info("  → Keep dim 512 (1024 gain < 0.05)")
 
 
+# ── Cross-domain, cross-lingual dimension evaluation ──────────────────────────
+
+
+# Source documents for multilingual evaluation.
+# Each entry: (query_lang, query_text, expected_doc_lang, doc_keyword)
+# doc_keyword is a substring that should appear in the correct result.
+CROSS_LINGUAL_QUERIES: list[dict[str, str]] = [
+    # English queries → English documents
+    {
+        "query_lang": "en",
+        "query": "electron temperature profile",
+        "doc_lang": "en",
+        "domain": "imas_dd",
+    },
+    {
+        "query_lang": "en",
+        "query": "plasma current measurement",
+        "doc_lang": "en",
+        "domain": "imas_dd",
+    },
+    {
+        "query_lang": "en",
+        "query": "equilibrium reconstruction code",
+        "doc_lang": "en",
+        "domain": "code",
+    },
+    {
+        "query_lang": "en",
+        "query": "safety factor q profile",
+        "doc_lang": "en",
+        "domain": "imas_dd",
+    },
+    {
+        "query_lang": "en",
+        "query": "Thomson scattering calibration",
+        "doc_lang": "en",
+        "domain": "wiki",
+    },
+    {
+        "query_lang": "en",
+        "query": "COCOS sign conventions",
+        "doc_lang": "en",
+        "domain": "wiki",
+    },
+    {
+        "query_lang": "en",
+        "query": "magnetic field measurement",
+        "doc_lang": "en",
+        "domain": "signal",
+    },
+    {
+        "query_lang": "en",
+        "query": "poloidal flux function",
+        "doc_lang": "en",
+        "domain": "imas_dd",
+    },
+    # English queries → Japanese documents (cross-lingual retrieval)
+    {
+        "query_lang": "en",
+        "query": "plasma diagnostics system",
+        "doc_lang": "ja",
+        "domain": "wiki",
+    },
+    {
+        "query_lang": "en",
+        "query": "experiment database",
+        "doc_lang": "ja",
+        "domain": "wiki",
+    },
+    {
+        "query_lang": "en",
+        "query": "data acquisition system",
+        "doc_lang": "ja",
+        "domain": "wiki",
+    },
+    {
+        "query_lang": "en",
+        "query": "vacuum vessel structure",
+        "doc_lang": "ja",
+        "domain": "wiki",
+    },
+    # Japanese queries → Japanese documents
+    {
+        "query_lang": "ja",
+        "query": "プラズマ電流測定",
+        "doc_lang": "ja",
+        "domain": "wiki",
+    },
+    {
+        "query_lang": "ja",
+        "query": "電子温度プロファイル",
+        "doc_lang": "ja",
+        "domain": "wiki",
+    },
+    {
+        "query_lang": "ja",
+        "query": "磁気計測システム",
+        "doc_lang": "ja",
+        "domain": "wiki",
+    },
+    {
+        "query_lang": "ja",
+        "query": "実験データベース",
+        "doc_lang": "ja",
+        "domain": "wiki",
+    },
+    {
+        "query_lang": "ja",
+        "query": "トムソン散乱計測",
+        "doc_lang": "ja",
+        "domain": "wiki",
+    },
+    # Japanese queries → English documents (cross-lingual retrieval)
+    {
+        "query_lang": "ja",
+        "query": "プラズマ電流",
+        "doc_lang": "en",
+        "domain": "imas_dd",
+    },
+    {
+        "query_lang": "ja",
+        "query": "電子密度プロファイル",
+        "doc_lang": "en",
+        "domain": "imas_dd",
+    },
+    {"query_lang": "ja", "query": "安全係数", "doc_lang": "en", "domain": "imas_dd"},
+    {"query_lang": "ja", "query": "磁場測定", "doc_lang": "en", "domain": "signal"},
+    # French queries → English documents (cross-lingual retrieval)
+    {
+        "query_lang": "fr",
+        "query": "température électronique du plasma",
+        "doc_lang": "en",
+        "domain": "imas_dd",
+    },
+    {
+        "query_lang": "fr",
+        "query": "profil de densité électronique",
+        "doc_lang": "en",
+        "domain": "imas_dd",
+    },
+    {
+        "query_lang": "fr",
+        "query": "courant plasma mesuré",
+        "doc_lang": "en",
+        "domain": "imas_dd",
+    },
+    {
+        "query_lang": "fr",
+        "query": "reconstruction d'équilibre",
+        "doc_lang": "en",
+        "domain": "code",
+    },
+    {
+        "query_lang": "fr",
+        "query": "facteur de sécurité",
+        "doc_lang": "en",
+        "domain": "imas_dd",
+    },
+    # French queries → French documents (in-language)
+    {
+        "query_lang": "fr",
+        "query": "système de diagnostic plasma",
+        "doc_lang": "fr",
+        "domain": "wiki",
+    },
+    {
+        "query_lang": "fr",
+        "query": "acquisition de données",
+        "doc_lang": "fr",
+        "domain": "wiki",
+    },
+    # English queries → French documents (cross-lingual)
+    {
+        "query_lang": "en",
+        "query": "plasma diagnostic system",
+        "doc_lang": "fr",
+        "domain": "wiki",
+    },
+    {
+        "query_lang": "en",
+        "query": "data acquisition procedure",
+        "doc_lang": "fr",
+        "domain": "wiki",
+    },
+    # Abbreviation queries (stress test — same across languages)
+    {"query_lang": "en", "query": "Ip", "doc_lang": "en", "domain": "abbreviation"},
+    {"query_lang": "en", "query": "Te", "doc_lang": "en", "domain": "abbreviation"},
+    {
+        "query_lang": "en",
+        "query": "ne profile",
+        "doc_lang": "en",
+        "domain": "abbreviation",
+    },
+    {"query_lang": "en", "query": "q95", "doc_lang": "en", "domain": "abbreviation"},
+    {"query_lang": "en", "query": "Zeff", "doc_lang": "en", "domain": "abbreviation"},
+]
+
+# All language pair combinations for the cross-product matrix
+LANGUAGE_PAIRS = [
+    ("en", "en"),
+    ("en", "ja"),
+    ("en", "fr"),
+    ("ja", "en"),
+    ("ja", "ja"),
+    ("fr", "en"),
+    ("fr", "fr"),
+]
+
+# Content domain categories for per-domain MRR breakdown
+CONTENT_DOMAINS = ["imas_dd", "wiki", "code", "signal", "abbreviation"]
+
+
+@pytest.mark.graph
+@pytest.mark.slow
+class TestMultiDomainDimensionEval:
+    """Cross-domain, cross-lingual dimension evaluation.
+
+    Extends TestDimensionComparison with:
+    - Multi-domain corpus (IMAS DD, wiki chunks, code, signals)
+    - Multi-language coverage (English, Japanese, French)
+    - Cross-lingual query evaluation (EN→JA, JA→EN, FR→EN, etc.)
+    - Per-domain and per-language MRR breakdown
+    - Language pair cross-product matrix
+
+    Requires live Neo4j + embedding server.
+    """
+
+    DIMENSIONS = [256, 512, 1024]
+
+    @pytest.fixture(scope="class")
+    def graph_client(self):
+        """Class-scoped GraphClient."""
+        from imas_codex.graph.client import GraphClient
+
+        try:
+            client = GraphClient()
+            client.get_stats()
+        except Exception as e:
+            pytest.skip(f"Neo4j not available: {e}")
+        yield client
+        client.close()
+
+    @pytest.fixture(scope="class")
+    def multi_domain_corpus(self, graph_client):
+        """Sample representative content across all domains and languages.
+
+        Returns dict with keys per domain, each a list of
+        {id, text, lang, domain} dicts.
+        """
+        corpus: dict[str, list[dict[str, str]]] = defaultdict(list)
+
+        # IMAS DD nodes (English, from enriched descriptions)
+        imas_nodes = graph_client.query("""
+            MATCH (n:IMASNode)
+            WHERE n.description IS NOT NULL
+              AND n.node_category = 'data'
+              AND n.embedding IS NOT NULL
+            WITH n, rand() AS r ORDER BY r LIMIT 50
+            RETURN n.id AS id,
+                   (n.id + '. ' + n.description) AS text
+        """)
+        for n in imas_nodes or []:
+            corpus["imas_dd"].append(
+                {"id": n["id"], "text": n["text"], "lang": "en", "domain": "imas_dd"}
+            )
+
+        # English wiki chunks
+        en_wiki = graph_client.query("""
+            MATCH (p:WikiPage)-[:HAS_CHUNK]->(c:WikiChunk)
+            WHERE c.text IS NOT NULL AND c.embedding IS NOT NULL
+              AND (p.content_language IS NULL OR p.content_language = 'en')
+            WITH c, rand() AS r ORDER BY r LIMIT 30
+            RETURN c.id AS id, substring(c.text, 0, 500) AS text
+        """)
+        for w in en_wiki or []:
+            corpus["wiki"].append(
+                {"id": w["id"], "text": w["text"], "lang": "en", "domain": "wiki"}
+            )
+
+        # Japanese wiki chunks (JT-60SA)
+        ja_wiki = graph_client.query("""
+            MATCH (p:WikiPage {content_language: 'ja'})-[:HAS_CHUNK]->(c:WikiChunk)
+            WHERE c.text IS NOT NULL AND c.embedding IS NOT NULL
+            WITH c, rand() AS r ORDER BY r LIMIT 30
+            RETURN c.id AS id, substring(c.text, 0, 500) AS text
+        """)
+        for w in ja_wiki or []:
+            corpus["wiki"].append(
+                {"id": w["id"], "text": w["text"], "lang": "ja", "domain": "wiki"}
+            )
+
+        # French-containing wiki chunks (TCV/ITER — detected by character patterns)
+        fr_wiki = graph_client.query("""
+            MATCH (c:WikiChunk)
+            WHERE c.text IS NOT NULL AND c.embedding IS NOT NULL
+              AND c.text =~ '.*[àâéèêëîïôùûüç].*'
+            WITH c, rand() AS r ORDER BY r LIMIT 15
+            RETURN c.id AS id, substring(c.text, 0, 500) AS text
+        """)
+        for w in fr_wiki or []:
+            corpus["wiki"].append(
+                {"id": w["id"], "text": w["text"], "lang": "fr", "domain": "wiki"}
+            )
+
+        # Code chunks (English — code is almost always English)
+        code_chunks = graph_client.query("""
+            MATCH (cc:CodeChunk)
+            WHERE cc.text IS NOT NULL AND cc.embedding IS NOT NULL
+            WITH cc, rand() AS r ORDER BY r LIMIT 20
+            RETURN cc.id AS id, substring(cc.text, 0, 500) AS text
+        """)
+        for c in code_chunks or []:
+            corpus["code"].append(
+                {"id": c["id"], "text": c["text"], "lang": "en", "domain": "code"}
+            )
+
+        # Signal descriptions (English)
+        signals = graph_client.query("""
+            MATCH (s:FacilitySignal)
+            WHERE s.description IS NOT NULL AND s.embedding IS NOT NULL
+            WITH s, rand() AS r ORDER BY r LIMIT 20
+            RETURN s.id AS id, s.description AS text
+        """)
+        for s in signals or []:
+            corpus["signal"].append(
+                {"id": s["id"], "text": s["text"], "lang": "en", "domain": "signal"}
+            )
+
+        total = sum(len(v) for v in corpus.values())
+        if total < 20:
+            pytest.skip(f"Only {total} corpus docs available, need ≥20")
+
+        lang_counts = defaultdict(int)
+        for docs in corpus.values():
+            for d in docs:
+                lang_counts[d["lang"]] += 1
+        logger.info(
+            "Multi-domain corpus: %d docs — %s",
+            total,
+            ", ".join(f"{lang}={cnt}" for lang, cnt in sorted(lang_counts.items())),
+        )
+
+        return dict(corpus)
+
+    @pytest.fixture(scope="class")
+    def multilingual_embeddings(self, multi_domain_corpus):
+        """Embed corpus and queries at each dimension.
+
+        Returns dict[int, dict] with:
+            - 'doc_embeddings': dict[doc_id, list[float]]
+            - 'doc_metadata': dict[doc_id, {lang, domain}]
+            - 'query_embeddings': dict[query_text, list[float]]
+            - 'actual_dim': int
+        """
+        from imas_codex.embeddings.encoder import Encoder, EncoderConfig
+        from imas_codex.settings import _get_section
+
+        embed_config = _get_section("embedding")
+        real_location = embed_config.get("location", "")
+        real_model = embed_config.get("model", "")
+
+        if not real_location or real_location == "local":
+            pytest.skip("No remote embedding location configured")
+
+        old_env = {
+            k: os.environ.get(k)
+            for k in [
+                "IMAS_CODEX_EMBEDDING_LOCATION",
+                "IMAS_CODEX_EMBEDDING_MODEL",
+                "IMAS_CODEX_EMBEDDING_DIMENSION",
+            ]
+        }
+
+        # Flatten corpus
+        all_docs: list[dict[str, str]] = []
+        for docs in multi_domain_corpus.values():
+            all_docs.extend(docs)
+        doc_texts = [d["text"] for d in all_docs]
+        doc_ids = [d["id"] for d in all_docs]
+        doc_metadata = {
+            d["id"]: {"lang": d["lang"], "domain": d["domain"]} for d in all_docs
+        }
+
+        # Collect all query texts
+        query_texts = [q["query"] for q in CROSS_LINGUAL_QUERIES]
+
+        results = {}
+        try:
+            os.environ["IMAS_CODEX_EMBEDDING_LOCATION"] = real_location
+            if real_model:
+                os.environ["IMAS_CODEX_EMBEDDING_MODEL"] = real_model
+
+            for dim in self.DIMENSIONS:
+                os.environ["IMAS_CODEX_EMBEDDING_DIMENSION"] = str(dim)
+                config = EncoderConfig()
+                enc = Encoder(config=config)
+
+                # Embed documents (passage mode)
+                doc_vecs = enc.embed_texts(doc_texts, prompt_name="passage")
+                if doc_vecs is None or len(doc_vecs) == 0:
+                    pytest.skip(f"Embed server returned empty for dim {dim}")
+
+                actual_dim = len(doc_vecs[0])
+                if actual_dim != dim:
+                    logger.warning(
+                        "Requested dim %d but got %d — server may not support Matryoshka",
+                        dim,
+                        actual_dim,
+                    )
+
+                doc_embs = {
+                    doc_ids[i]: doc_vecs[i].tolist() for i in range(len(doc_ids))
+                }
+
+                # Embed queries (query mode)
+                query_vecs = enc.embed_texts(query_texts, prompt_name="query")
+                query_embs = {
+                    query_texts[i]: query_vecs[i].tolist()
+                    for i in range(len(query_texts))
+                }
+
+                results[dim] = {
+                    "doc_embeddings": doc_embs,
+                    "doc_metadata": doc_metadata,
+                    "query_embeddings": query_embs,
+                    "actual_dim": actual_dim,
+                }
+
+        except pytest.skip.Exception:
+            raise
+        except Exception as e:
+            pytest.skip(f"Embed server not available: {e}")
+        finally:
+            for key, val in old_env.items():
+                if val is not None:
+                    os.environ[key] = val
+                elif key in os.environ:
+                    del os.environ[key]
+
+        return results
+
+    @staticmethod
+    def _cosine_similarity(a: list[float], b: list[float]) -> float:
+        """Cosine similarity between two vectors."""
+        import math
+
+        dot = sum(x * y for x, y in zip(a, b, strict=False))
+        norm_a = math.sqrt(sum(x * x for x in a))
+        norm_b = math.sqrt(sum(x * x for x in b))
+        if norm_a == 0 or norm_b == 0:
+            return 0.0
+        return dot / (norm_a * norm_b)
+
+    def _rank_docs(
+        self,
+        query_emb: list[float],
+        doc_embeddings: dict[str, list[float]],
+        doc_metadata: dict[str, dict[str, str]],
+        *,
+        filter_lang: str | None = None,
+        filter_domain: str | None = None,
+        limit: int = 50,
+    ) -> list[tuple[str, float]]:
+        """Rank documents by cosine similarity, optionally filtering."""
+        candidates = []
+        for doc_id, emb in doc_embeddings.items():
+            meta = doc_metadata.get(doc_id, {})
+            if filter_lang and meta.get("lang") != filter_lang:
+                continue
+            if filter_domain and meta.get("domain") != filter_domain:
+                continue
+            sim = self._cosine_similarity(query_emb, emb)
+            candidates.append((doc_id, sim))
+        candidates.sort(key=lambda x: x[1], reverse=True)
+        return candidates[:limit]
+
+    @pytest.mark.parametrize("dim", [256, 512, 1024])
+    def test_per_domain_mrr(self, multilingual_embeddings, dim):
+        """MRR breakdown by content domain at each dimension."""
+        if dim not in multilingual_embeddings:
+            pytest.skip(f"Dimension {dim} not available")
+
+        data = multilingual_embeddings[dim]
+        doc_embs = data["doc_embeddings"]
+        doc_meta = data["doc_metadata"]
+        query_embs = data["query_embeddings"]
+
+        domain_rrs: dict[str, list[float]] = defaultdict(list)
+
+        for q_info in CROSS_LINGUAL_QUERIES:
+            q_text = q_info["query"]
+            domain = q_info["domain"]
+            if q_text not in query_embs:
+                continue
+
+            ranked = self._rank_docs(
+                query_embs[q_text],
+                doc_embs,
+                doc_meta,
+                filter_domain=domain if domain != "abbreviation" else None,
+            )
+            # For this eval, RR = 1/rank of first result with matching language
+            target_lang = q_info["doc_lang"]
+            rr = 0.0
+            for rank, (doc_id, _score) in enumerate(ranked, start=1):
+                if doc_meta.get(doc_id, {}).get("lang") == target_lang:
+                    rr = 1.0 / rank
+                    break
+            domain_rrs[domain].append(rr)
+
+        logger.info("=== Per-Domain MRR at dim %d ===", dim)
+        for domain in CONTENT_DOMAINS:
+            rrs = domain_rrs.get(domain, [])
+            mrr = sum(rrs) / len(rrs) if rrs else 0.0
+            logger.info("  %-14s: MRR = %.3f  (%d queries)", domain, mrr, len(rrs))
+
+    @pytest.mark.parametrize("dim", [256, 512, 1024])
+    def test_cross_lingual_mrr_matrix(self, multilingual_embeddings, dim):
+        """Cross-lingual MRR matrix: query_lang × doc_lang at each dimension.
+
+        Evaluates the cross-product of all language pairs to measure
+        how well the model handles cross-lingual retrieval at each
+        embedding dimension.
+        """
+        if dim not in multilingual_embeddings:
+            pytest.skip(f"Dimension {dim} not available")
+
+        data = multilingual_embeddings[dim]
+        doc_embs = data["doc_embeddings"]
+        doc_meta = data["doc_metadata"]
+        query_embs = data["query_embeddings"]
+
+        pair_rrs: dict[tuple[str, str], list[float]] = defaultdict(list)
+
+        for q_info in CROSS_LINGUAL_QUERIES:
+            q_text = q_info["query"]
+            q_lang = q_info["query_lang"]
+            doc_lang = q_info["doc_lang"]
+            if q_text not in query_embs:
+                continue
+
+            ranked = self._rank_docs(query_embs[q_text], doc_embs, doc_meta)
+            rr = 0.0
+            for rank, (doc_id, _score) in enumerate(ranked, start=1):
+                if doc_meta.get(doc_id, {}).get("lang") == doc_lang:
+                    rr = 1.0 / rank
+                    break
+            pair_rrs[(q_lang, doc_lang)].append(rr)
+
+        logger.info("=== Cross-Lingual MRR Matrix at dim %d ===", dim)
+        header = "query\\doc  " + "  ".join(f"{lang:>6}" for lang in ["en", "ja", "fr"])
+        logger.info("  %s", header)
+        for q_lang in ["en", "ja", "fr"]:
+            row_parts = []
+            for d_lang in ["en", "ja", "fr"]:
+                rrs = pair_rrs.get((q_lang, d_lang), [])
+                mrr = sum(rrs) / len(rrs) if rrs else float("nan")
+                row_parts.append(f"{mrr:6.3f}" if rrs else "   N/A")
+            logger.info("  %-9s %s", q_lang, "  ".join(row_parts))
+
+    def test_multilingual_dimension_summary(self, multilingual_embeddings):
+        """Cross-domain + cross-lingual dimension comparison with evidence.
+
+        Reports overall MRR, per-domain MRR deltas, and cross-lingual
+        MRR deltas across dimensions. Provides an evidence-based
+        recommendation for the target embedding dimension.
+        """
+        overall_mrr: dict[int, float] = {}
+        domain_mrr: dict[int, dict[str, float]] = {}
+        xlingual_mrr: dict[int, dict[str, float]] = {}
+
+        for dim in self.DIMENSIONS:
+            if dim not in multilingual_embeddings:
+                continue
+
+            data = multilingual_embeddings[dim]
+            doc_embs = data["doc_embeddings"]
+            doc_meta = data["doc_metadata"]
+            query_embs = data["query_embeddings"]
+
+            all_rrs: list[float] = []
+            domain_rrs: dict[str, list[float]] = defaultdict(list)
+            in_lang_rrs: list[float] = []
+            cross_lang_rrs: list[float] = []
+
+            for q_info in CROSS_LINGUAL_QUERIES:
+                q_text = q_info["query"]
+                q_lang = q_info["query_lang"]
+                doc_lang = q_info["doc_lang"]
+                domain = q_info["domain"]
+                if q_text not in query_embs:
+                    continue
+
+                ranked = self._rank_docs(query_embs[q_text], doc_embs, doc_meta)
+                rr = 0.0
+                for rank, (doc_id, _score) in enumerate(ranked, start=1):
+                    if doc_meta.get(doc_id, {}).get("lang") == doc_lang:
+                        rr = 1.0 / rank
+                        break
+
+                all_rrs.append(rr)
+                domain_rrs[domain].append(rr)
+                if q_lang == doc_lang:
+                    in_lang_rrs.append(rr)
+                else:
+                    cross_lang_rrs.append(rr)
+
+            overall_mrr[dim] = sum(all_rrs) / len(all_rrs) if all_rrs else 0.0
+            domain_mrr[dim] = {
+                d: sum(rrs) / len(rrs) if rrs else 0.0 for d, rrs in domain_rrs.items()
+            }
+            xlingual_mrr[dim] = {
+                "in_language": sum(in_lang_rrs) / len(in_lang_rrs)
+                if in_lang_rrs
+                else 0.0,
+                "cross_lingual": sum(cross_lang_rrs) / len(cross_lang_rrs)
+                if cross_lang_rrs
+                else 0.0,
+            }
+
+        # Log comprehensive results
+        logger.info("=" * 70)
+        logger.info("MULTI-DOMAIN DIMENSION EVALUATION SUMMARY")
+        logger.info("=" * 70)
+
+        logger.info("\n  Overall MRR:")
+        for dim in sorted(overall_mrr):
+            logger.info("    dim %4d: %.3f", dim, overall_mrr[dim])
+
+        logger.info("\n  Per-Domain MRR:")
+        for domain in CONTENT_DOMAINS:
+            parts = []
+            for dim in sorted(domain_mrr):
+                val = domain_mrr[dim].get(domain, 0.0)
+                parts.append(f"{dim}={val:.3f}")
+            logger.info("    %-14s: %s", domain, "  ".join(parts))
+
+        logger.info("\n  Cross-Lingual MRR:")
+        for dim in sorted(xlingual_mrr):
+            xl = xlingual_mrr[dim]
+            logger.info(
+                "    dim %4d: in-lang=%.3f  cross-lang=%.3f",
+                dim,
+                xl["in_language"],
+                xl["cross_lingual"],
+            )
+
+        # Decision logic
+        logger.info("\n  === DIMENSION DECISION ===")
+        dims_sorted = sorted(overall_mrr.keys())
+        if len(dims_sorted) < 2:
+            logger.info("  Insufficient dimensions to compare")
+            return
+
+        base_dim = dims_sorted[0]
+        recommendation = base_dim
+
+        for dim in dims_sorted[1:]:
+            delta = overall_mrr[dim] - overall_mrr[base_dim]
+            logger.info(
+                "  Δ(%d vs %d) overall: %.3f",
+                dim,
+                base_dim,
+                delta,
+            )
+
+            # Check cross-lingual improvement
+            xl_base = xlingual_mrr.get(base_dim, {}).get("cross_lingual", 0.0)
+            xl_dim = xlingual_mrr.get(dim, {}).get("cross_lingual", 0.0)
+            xl_delta = xl_dim - xl_base
+            logger.info(
+                "  Δ(%d vs %d) cross-lingual: %.3f",
+                dim,
+                base_dim,
+                xl_delta,
+            )
+
+            # Decision criteria:
+            # - Overall MRR gain ≥ 0.05 across domains → upgrade
+            # - Cross-lingual MRR gain ≥ 0.03 → upgrade (multilingual is
+            #   disproportionately helped by higher dims)
+            # - Any domain shows MRR gain ≥ 0.08 → upgrade
+            domain_max_delta = 0.0
+            for domain in CONTENT_DOMAINS:
+                d_base = domain_mrr.get(base_dim, {}).get(domain, 0.0)
+                d_dim = domain_mrr.get(dim, {}).get(domain, 0.0)
+                d_delta = d_dim - d_base
+                if d_delta > domain_max_delta:
+                    domain_max_delta = d_delta
+
+            if delta >= 0.05 or xl_delta >= 0.03 or domain_max_delta >= 0.08:
+                recommendation = dim
+                reason = []
+                if delta >= 0.05:
+                    reason.append(f"overall Δ={delta:.3f}≥0.05")
+                if xl_delta >= 0.03:
+                    reason.append(f"cross-lingual Δ={xl_delta:.3f}≥0.03")
+                if domain_max_delta >= 0.08:
+                    reason.append(f"domain max Δ={domain_max_delta:.3f}≥0.08")
+                logger.info(
+                    "  → EVIDENCE supports dim %d: %s",
+                    dim,
+                    ", ".join(reason),
+                )
+            else:
+                logger.info(
+                    "  → Insufficient evidence for dim %d (Δ=%.3f<0.05, "
+                    "xl_Δ=%.3f<0.03, domain_max_Δ=%.3f<0.08)",
+                    dim,
+                    delta,
+                    xl_delta,
+                    domain_max_delta,
+                )
+
+        logger.info("\n  RECOMMENDATION: dimension = %d", recommendation)
+        logger.info(
+            "  (quantization makes %d-dim storage equivalent to %d-dim unquantized)",
+            recommendation,
+            recommendation // 4,
+        )
+        logger.info("=" * 70)
+
+    def test_dimension_validates_actual_output(self, multilingual_embeddings):
+        """Verify the embedding server respects the dimension request.
+
+        After Phase 0 bug fix, the actual dimension should match the
+        requested dimension. If not, the bug fix is incomplete.
+        """
+        for dim in self.DIMENSIONS:
+            if dim not in multilingual_embeddings:
+                continue
+            actual = multilingual_embeddings[dim]["actual_dim"]
+            assert actual == dim, (
+                f"Bug not fixed: requested dim {dim} but got {actual}. "
+                f"Check that RemoteEmbeddingClient sends dimension in request body."
+            )
+
+
 class TestEmbedTextQuality:
     """Verify embed text generation produces path + description format.
 
