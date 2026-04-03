@@ -161,6 +161,11 @@ class EmbedRequest(BaseModel):
         "If omitted, uses the server's configured default. "
         "Must be <= native model dimension.",
     )
+    prompt_name: str | None = Field(
+        None,
+        description="Named prompt for instruction-aware models (e.g., 'query'). "
+        "Applied only for local encoding.",
+    )
 
 
 class EmbedResponse(BaseModel):
@@ -500,6 +505,7 @@ def _encode_batch_safe(
     texts: list[str],
     normalize: bool,
     batch_size: int,
+    prompt_name: str | None = None,
 ) -> Any:
     """Encode a batch with CUDA OOM recovery.
 
@@ -514,6 +520,10 @@ def _encode_batch_safe(
     import numpy as np
     import torch
 
+    extra_kwargs: dict = {}
+    if prompt_name is not None:
+        extra_kwargs["prompt_name"] = prompt_name
+
     while batch_size >= 1:
         try:
             if len(texts) <= batch_size:
@@ -523,6 +533,7 @@ def _encode_batch_safe(
                     normalize_embeddings=normalize,
                     batch_size=batch_size,
                     show_progress_bar=False,
+                    **extra_kwargs,
                 )
                 return result
 
@@ -535,6 +546,7 @@ def _encode_batch_safe(
                     normalize_embeddings=normalize,
                     batch_size=batch_size,
                     show_progress_bar=False,
+                    **extra_kwargs,
                 )
                 results.append(embeddings)
                 _release_gpu_cache()
@@ -570,6 +582,7 @@ def _encode_batch_safe(
                 normalize_embeddings=normalize,
                 batch_size=1,
                 show_progress_bar=False,
+                **extra_kwargs,
             )
             results.append(emb)
         except torch.cuda.OutOfMemoryError:
@@ -588,6 +601,7 @@ def _encode_texts_sync(
     texts: list[str],
     normalize: bool,
     batch_size: int,
+    prompt_name: str | None = None,
 ) -> Any:
     """Synchronous encoding helper (runs in thread pool via asyncio.to_thread).
 
@@ -616,7 +630,7 @@ def _encode_texts_sync(
     model = _encoder.get_model()
 
     try:
-        return _encode_batch_safe(model, texts, normalize, batch_size)
+        return _encode_batch_safe(model, texts, normalize, batch_size, prompt_name)
     finally:
         # Always release GPU cache — critical on error paths
         # where partial allocations remain in PyTorch's caching allocator.
@@ -707,6 +721,7 @@ def create_app() -> FastAPI:
                     request.texts,
                     request.normalize,
                     _encoder.config.batch_size,
+                    request.prompt_name,
                 ),
                 timeout=_encode_timeout,
             )

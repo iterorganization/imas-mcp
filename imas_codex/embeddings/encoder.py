@@ -331,7 +331,9 @@ class Encoder:
                 self._create_cache(embeddings, identifiers, source_data_dir)
             return embeddings, identifiers, False
 
-    def embed_texts(self, texts: list[str], **kwargs) -> np.ndarray:
+    def embed_texts(
+        self, texts: list[str], *, prompt_name: str | None = None, **kwargs
+    ) -> np.ndarray:
         """Embed ad-hoc texts (no caching).
 
         Uses the configured backend (local or remote).
@@ -347,14 +349,18 @@ class Encoder:
 
             try:
                 embeddings = self._remote_client.embed(  # type: ignore[union-attr]
-                    texts, normalize=self.config.normalize_embeddings
+                    texts,
+                    normalize=self.config.normalize_embeddings,
+                    prompt_name=prompt_name,
                 )
             except ConnectionError:
                 if self._reconnect_remote():
                     with self._lock:
                         self._validate_remote_backend()
                     embeddings = self._remote_client.embed(  # type: ignore[union-attr]
-                        texts, normalize=self.config.normalize_embeddings
+                        texts,
+                        normalize=self.config.normalize_embeddings,
+                        prompt_name=prompt_name,
                     )
                 else:
                     raise
@@ -369,9 +375,13 @@ class Encoder:
             "show_progress_bar": False,
             **kwargs,
         }
+        if prompt_name is not None:
+            encode_kwargs["prompt_name"] = prompt_name
         return model.encode(texts, **encode_kwargs)
 
-    def embed_texts_with_result(self, texts: list[str], **kwargs) -> EmbeddingResult:
+    def embed_texts_with_result(
+        self, texts: list[str], *, prompt_name: str | None = None, **kwargs
+    ) -> EmbeddingResult:
         """Embed ad-hoc texts and return result with source tracking.
 
         Returns EmbeddingResult with:
@@ -401,14 +411,18 @@ class Encoder:
 
             try:
                 embeddings = self._remote_client.embed(  # type: ignore[union-attr]
-                    texts, normalize=self.config.normalize_embeddings
+                    texts,
+                    normalize=self.config.normalize_embeddings,
+                    prompt_name=prompt_name,
                 )
             except ConnectionError:
                 if self._reconnect_remote():
                     with self._lock:
                         self._validate_remote_backend()
                     embeddings = self._remote_client.embed(  # type: ignore[union-attr]
-                        texts, normalize=self.config.normalize_embeddings
+                        texts,
+                        normalize=self.config.normalize_embeddings,
+                        prompt_name=prompt_name,
                     )
                 else:
                     raise
@@ -432,6 +446,8 @@ class Encoder:
             "show_progress_bar": False,
             **kwargs,
         }
+        if prompt_name is not None:
+            encode_kwargs["prompt_name"] = prompt_name
         embeddings = model.encode(texts, **encode_kwargs)
         elapsed = time.time() - start
         return EmbeddingResult(
@@ -620,6 +636,10 @@ class Encoder:
                 self.config.model_name,
                 self._model.device,
             )
+            # Register instruction-aware prompts for Qwen3-Embedding
+            self._model.prompts = {
+                "query": "Instruct: Given a fusion physics search query, retrieve the most relevant IMAS Data Dictionary path.\nQuery: ",
+            }
         except Exception as e:  # pragma: no cover
             self.logger.error("Failed to load model %s: %s", self.config.model_name, e)
             raise EmbeddingBackendError(

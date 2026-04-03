@@ -186,6 +186,7 @@ class RemoteEmbeddingClient:
         texts: list[str],
         normalize: bool = True,
         max_retries: int = 3,
+        prompt_name: str | None = None,
     ) -> np.ndarray:
         """Embed texts using remote server with retry logic.
 
@@ -197,6 +198,7 @@ class RemoteEmbeddingClient:
             texts: List of texts to embed
             normalize: Whether to normalize embeddings
             max_retries: Maximum retry attempts for transient errors
+            prompt_name: Named prompt for instruction-aware models (e.g., 'query').
 
         Returns:
             Numpy array of embeddings
@@ -210,15 +212,16 @@ class RemoteEmbeddingClient:
 
         # Chunk large batches into sub-requests
         if len(texts) > MAX_TEXTS_PER_REQUEST:
-            return self._embed_chunked(texts, normalize, max_retries)
+            return self._embed_chunked(texts, normalize, max_retries, prompt_name)
 
-        return self._embed_single(texts, normalize, max_retries)
+        return self._embed_single(texts, normalize, max_retries, prompt_name)
 
     def _embed_chunked(
         self,
         texts: list[str],
         normalize: bool,
         max_retries: int,
+        prompt_name: str | None = None,
     ) -> np.ndarray:
         """Embed a large batch by splitting into chunked HTTP requests."""
         from imas_codex.core.progress_monitor import create_progress_monitor
@@ -247,7 +250,7 @@ class RemoteEmbeddingClient:
         results = []
         for i, chunk in enumerate(chunks):
             progress.set_current_item(chunk_names[i])
-            result = self._embed_single(chunk, normalize, max_retries)
+            result = self._embed_single(chunk, normalize, max_retries, prompt_name)
             results.append(result)
             progress.update_progress(chunk_names[i])
         elapsed = time.time() - start
@@ -265,17 +268,22 @@ class RemoteEmbeddingClient:
         texts: list[str],
         normalize: bool,
         max_retries: int,
+        prompt_name: str | None = None,
     ) -> np.ndarray:
         """Embed a single batch of texts with retry logic."""
         client = self._get_client()
         start = time.time()
         last_error: Exception | None = None
 
+        request_body: dict = {"texts": texts, "normalize": normalize}
+        if prompt_name is not None:
+            request_body["prompt_name"] = prompt_name
+
         for attempt in range(max_retries):
             try:
                 response = client.post(
                     "/embed",
-                    json={"texts": texts, "normalize": normalize},
+                    json=request_body,
                 )
 
                 if response.status_code != 200:

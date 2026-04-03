@@ -688,9 +688,9 @@ class GraphSearchTool:
         )
 
     def _embed_query(self, query: str) -> list[float]:
-        """Embed query text using the module-level Encoder singleton."""
+        """Embed query text with instruction prefix for retrieval."""
         encoder = _get_encoder()
-        return encoder.embed_texts([query])[0].tolist()
+        return encoder.embed_texts([query], prompt_name="query")[0].tolist()
 
 
 class GraphPathTool:
@@ -1645,9 +1645,9 @@ class GraphClustersTool:
         return clusters
 
     def _embed_query(self, query: str) -> list[float]:
-        """Embed query text using the module-level Encoder singleton."""
+        """Embed query text with instruction prefix for retrieval."""
         encoder = _get_encoder()
-        return encoder.embed_texts([query])[0].tolist()
+        return encoder.embed_texts([query], prompt_name="query")[0].tolist()
 
 
 class GraphIdentifiersTool:
