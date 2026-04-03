@@ -69,20 +69,22 @@ class MixConfig:
     """
 
     # ── Retrieval limits ──────────────────────────────────────────────
-    vector_limit: int = 150  # max vector results (LIMIT clause)
-    text_limit: int = 150  # max text/BM25 results
+    vector_limit: int = 500  # max vector results (LIMIT clause)
+    text_limit: int = 500  # max text/BM25 results
     hnsw_candidates: int = 500  # HNSW candidate pool (k for vector.queryNodes)
 
     # ── Score fusion weights ──────────────────────────────────────────
+    # Production uses RRF (rank-based fusion, not weighted).
+    # These weights only apply in the DoE standalone scoring model.
     vector_weight: float = 0.6  # weight for vector score in linear fusion
     text_weight: float = 0.4  # weight for text score in linear fusion
     dual_channel_bonus: float = 0.05  # additive bonus for dual-channel hits
 
     # ── Reranking boosts ──────────────────────────────────────────────
-    path_boost: float = 0.08  # per-word path segment match boost
-    terminal_boost: float = 0.15  # exact terminal segment bonus
-    ids_name_boost: float = 0.10  # IDS name match bonus
-    abbreviation_boost: float = 0.35  # abbreviation exact-match boost
+    path_boost: float = 0.03  # per-word path segment match boost
+    terminal_boost: float = 0.08  # exact terminal segment bonus
+    ids_name_boost: float = 0.05  # IDS name match bonus
+    abbreviation_boost: float = 0.15  # abbreviation exact-match boost
 
     # ── Reserved boosts (future search pipeline features) ─────────────
     cluster_boost: float = 0.0  # cluster membership boost
@@ -440,8 +442,8 @@ def generate_doe_grid() -> list[MixConfig]:
     Returns a list of 243 MixConfig instances (3^5 grid).
     """
     grid = {
-        "vector_limit": [100, 150, 300],
-        "text_limit": [100, 150, 300],
+        "vector_limit": [200, 500, 800],
+        "text_limit": [200, 500, 800],
         "vector_weight": [0.4, 0.6, 0.8],
         "text_weight": [0.2, 0.4, 0.6],
         "dual_channel_bonus": [0.0, 0.05, 0.10],
@@ -557,18 +559,18 @@ class TestMixConfig:
     def test_defaults_match_production(self):
         """Default MixConfig values match graph_search.py inline constants."""
         config = MixConfig()
-        # Score fusion (matches 0.6 * vector + 0.4 * text + 0.05)
+        # Score fusion (production uses RRF, these are for DoE standalone model)
         assert config.vector_weight == 0.6
         assert config.text_weight == 0.4
         assert config.dual_channel_bonus == 0.05
         # Path boosts (match inline literals in search_imas_paths)
-        assert config.path_boost == 0.08
-        assert config.terminal_boost == 0.15
-        assert config.ids_name_boost == 0.10
-        assert config.abbreviation_boost == 0.35
-        # Retrieval limits (match min(max_results*3, 150) and min(max_results*5, 500))
-        assert config.vector_limit == 150
-        assert config.text_limit == 150
+        assert config.path_boost == 0.03
+        assert config.terminal_boost == 0.08
+        assert config.ids_name_boost == 0.05
+        assert config.abbreviation_boost == 0.15
+        # Retrieval limits
+        assert config.vector_limit == 500
+        assert config.text_limit == 500
         assert config.hnsw_candidates == 500
 
     def test_optimal_config_is_default(self):
@@ -584,7 +586,7 @@ class TestMixConfig:
         config = MixConfig(vector_weight=0.8, text_weight=0.2)
         assert config.vector_weight == 0.8
         assert config.text_weight == 0.2
-        assert config.path_boost == 0.08  # default preserved
+        assert config.path_boost == 0.03  # default preserved
 
     def test_reserved_boosts_zero(self):
         """Reserved future boosts default to zero."""

@@ -286,7 +286,7 @@ def _path_search(
     Returns results with scores in [0, 1] range.
     """
     query_lower = query.lower().strip()
-    params: dict[str, Any] = {"query": query_lower, "limit": max_results}
+    params: dict[str, Any] = {"search_query": query_lower, "limit": max_results}
     dd_params: dict[str, Any] = {}
     dd_clause = _dd_version_clause("p", dd_version, dd_params)
     params.update(dd_params)
@@ -303,7 +303,7 @@ def _path_search(
     exact = gc.query(
         f"""
         MATCH (p:IMASNode)
-        WHERE toLower(p.id) = $query
+        WHERE toLower(p.id) = $search_query
           AND p.node_category = 'data'
           {ids_clause} {dd_clause}
         RETURN p.id AS id, 1.0 AS score
@@ -318,7 +318,7 @@ def _path_search(
         f"""
         MATCH (p:IMASNode)
         WHERE p.node_category = 'data'
-          AND toLower(p.id) ENDS WITH $query
+          AND toLower(p.id) ENDS WITH $search_query
           {ids_clause} {dd_clause}
         RETURN p.id AS id, 0.95 AS score
         LIMIT $limit
@@ -335,7 +335,7 @@ def _path_search(
             f"""
             MATCH (p:IMASNode)
             WHERE p.node_category = 'data'
-              AND toLower(p.id) CONTAINS $query
+              AND toLower(p.id) CONTAINS $search_query
               {ids_clause} {dd_clause}
             RETURN p.id AS id, 0.80 AS score
             LIMIT $limit
@@ -487,10 +487,18 @@ class GraphSearchTool:
                 dd_version=dd_version,
             )
 
-            # --- Reciprocal Rank Fusion ---
+            # --- Score fusion (Reciprocal Rank Fusion) ---
+            # RRF is rank-based and immune to score normalization issues.
+            # Normalized to [0, 1] so additive boosts are proportional.
             scores = _reciprocal_rank_fusion(vector_results or [], text_results, k=60)
+            if scores:
+                max_rrf = max(scores.values())
+                if max_rrf > 0:
+                    scores = {pid: s / max_rrf for pid, s in scores.items()}
 
             # --- Path segment boost ---
+            # Conservative: these help when query terms legitimately appear
+            # in path names, but must not overwhelm embedding scores.
             query_words = [
                 w.lower()
                 for w in search_query.split()
@@ -503,17 +511,17 @@ class GraphSearchTool:
                         1 for w in query_words if any(w in seg for seg in segments)
                     )
                     if match_count > 0:
-                        scores[pid] = round(scores[pid] + 0.08 * match_count, 4)
+                        scores[pid] = round(scores[pid] + 0.03 * match_count, 4)
 
                     # Exact terminal segment bonus
                     terminal = segments[-1] if segments else ""
                     if any(w == terminal for w in query_words):
-                        scores[pid] = round(scores[pid] + 0.15, 4)
+                        scores[pid] = round(scores[pid] + 0.08, 4)
 
                     # IDS name bonus
                     ids_name = segments[0] if segments else ""
                     if any(w == ids_name for w in query_words):
-                        scores[pid] = round(scores[pid] + 0.10, 4)
+                        scores[pid] = round(scores[pid] + 0.05, 4)
 
             # --- Abbreviation exact-match boost ---
             # When the query is a known physics abbreviation (e.g. "ip",
@@ -527,7 +535,7 @@ class GraphSearchTool:
                 for pid in scores:
                     terminal = pid.rsplit("/", 1)[-1].lower()
                     if terminal in _orig_terms:
-                        scores[pid] = round(scores[pid] + 0.35, 4)
+                        scores[pid] = round(scores[pid] + 0.15, 4)
 
             # --- Graph-native boosts ---
             scores = _apply_cluster_boost(self._gc, scores)
@@ -2569,7 +2577,7 @@ def _text_search_imas_paths(
             "WHERE NOT (p)-[:DEPRECATED_IN]->(:DDVersion) AND p.node_category = 'data'"
         )
         ft_params: dict[str, Any] = {
-            "query": _build_lucene_query(query),
+            "ft_query": query,
             "limit": limit,
         }
         if ids_filter is not None:
@@ -2582,7 +2590,7 @@ def _text_search_imas_paths(
             ft_where += f" {ft_dd_clause}"
 
         ft_cypher = f"""
-            CALL db.index.fulltext.queryNodes('imas_node_text', $query)
+            CALL db.index.fulltext.queryNodes('imas_node_text', $ft_query)
             YIELD node AS p, score
             {ft_where}
             WITH p, score
