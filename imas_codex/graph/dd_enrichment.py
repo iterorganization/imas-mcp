@@ -45,18 +45,18 @@ class IMASPathEnrichmentResult(BaseModel):
     path_index: int = Field(description="1-based index matching the input batch order")
     description: str = Field(
         description=(
-            "Concise description (1-2 sentences, under 150 characters) "
-            "that names the physical quantity and what distinguishes "
-            "this node from similar nodes elsewhere in the DD. "
-            "Do NOT repeat units, data type, or coordinate information."
+            "Clear physics description (2-3 sentences, 150-300 characters) "
+            "that names the physical quantity with its standard abbreviation. "
+            "Do NOT repeat units, data type, coordinates, or COCOS info."
         )
     )
     keywords: list[str] = Field(
         default_factory=list,
-        max_length=5,
+        max_length=8,
         description=(
-            "Searchable keywords (up to 5) — physics concepts, measurement types, "
-            "and related terms not already in the documentation"
+            "Searchable keywords (up to 8) — physics abbreviations/symbols, "
+            "concepts, measurement types, diagnostic names, and related "
+            "terms not already in the description or path name"
         ),
     )
     physics_domain: str | None = Field(
@@ -852,8 +852,6 @@ def build_enrichment_messages(
             user_lines.append(f"- Coordinates: {', '.join(entry['coordinates'])}")
         if entry["cluster_label"]:
             user_lines.append(f"- Cluster: {entry['cluster_label']}")
-        if entry["cocos_label"]:
-            user_lines.append(f"- COCOS label: {entry['cocos_label']}")
         # Only emit IDS description once per IDS to avoid repetition
         if entry["ids_description"] and ids_name not in emitted_ids_descriptions:
             user_lines.append(f"- IDS description: {entry['ids_description']}")
