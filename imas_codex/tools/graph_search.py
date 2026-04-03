@@ -576,6 +576,8 @@ class GraphSearchTool:
             OPTIONAL MATCH (path)-[:HAS_COORDINATE]->(coord:IMASCoordinateSpec)
             OPTIONAL MATCH (path)-[:HAS_IDENTIFIER_SCHEMA]->(ident:IdentifierSchema)
             OPTIONAL MATCH (path)-[:INTRODUCED_IN]->(intro:DDVersion)
+            OPTIONAL MATCH (path)-[:IN_CLUSTER]->(cl:IMASSemanticCluster)
+              WHERE cl.scope = 'global'
             RETURN path.id AS id, path.name AS name, path.ids AS ids,
                    path.documentation AS documentation, path.data_type AS data_type,
                    path.physics_domain AS physics_domain, u.id AS units,
@@ -593,7 +595,8 @@ class GraphSearchTool:
                    path.enrichment_source AS enrichment_source,
                    collect(DISTINCT coord.id) AS coordinates,
                    ident IS NOT NULL AS has_identifier_schema,
-                   intro.id AS introduced_after_version
+                   intro.id AS introduced_after_version,
+                   collect(DISTINCT cl.label) AS cluster_labels
             """,
             path_ids=sorted_ids,
         )
@@ -659,6 +662,7 @@ class GraphSearchTool:
                     description=r.get("description"),
                     keywords=r.get("keywords"),
                     enrichment_source=r.get("enrichment_source"),
+                    cluster_labels=r.get("cluster_labels") or [],
                     has_identifier_schema=bool(r["has_identifier_schema"]),
                     introduced_after_version=r["introduced_after_version"],
                     score=scores.get(pid, 0.0),
@@ -672,6 +676,28 @@ class GraphSearchTool:
             )
             if r["physics_domain"]:
                 physics_domains.add(r["physics_domain"])
+
+        # --- "See Also" cross-IDS siblings for top results ---
+        top_ids = [h.path for h in hits[:3]]
+        if top_ids:
+            siblings_data = self._gc.query(
+                """
+                UNWIND $top_ids AS tid
+                MATCH (t:IMASNode {id: tid})-[:IN_CLUSTER]->(c:IMASSemanticCluster {scope: 'global'})
+                      <-[:IN_CLUSTER]-(sibling:IMASNode)
+                WHERE sibling.ids <> t.ids AND sibling.id <> tid
+                  AND sibling.node_category = 'data'
+                RETURN tid AS source, collect(DISTINCT sibling.id)[..10] AS siblings
+                """,
+                top_ids=top_ids,
+            )
+            siblings_by_source = {
+                r["source"]: r["siblings"] for r in (siblings_data or [])
+            }
+            for hit in hits[:3]:
+                sibs = siblings_by_source.get(hit.path, [])
+                if sibs:
+                    hit.see_also = sibs
 
         return SearchPathsResult(
             hits=hits,
@@ -2519,8 +2545,14 @@ def _build_lucene_query(query: str) -> str:
     """Build a Lucene query with field boosting and fuzzy matching.
 
     Uses field boosting to weight description > keywords > name > documentation,
-    and adds fuzzy variants for typo tolerance on terms > 3 chars.
+    and adds fuzzy variants for typo tolerance. Fuzzy distance scales with
+    term length:
+    - 4-6 chars: ~1 (edit distance 1)
+    - 7+ chars: ~2 (edit distance 2)
+    - ≤3 chars: no fuzzy (too short, would match everything)
     """
+    if not query or not query.strip():
+        return ""
     terms = query.split()
     parts = []
     for term in terms:
@@ -2530,7 +2562,16 @@ def _build_lucene_query(query: str) -> str:
             f"OR documentation:{escaped} OR keywords:{escaped}^2)"
         )
     base = " AND ".join(parts)
-    fuzzy_terms = [f"{_escape_lucene(t)}~1" for t in terms if len(t) > 3]
+
+    # Fuzzy variants with distance scaled by term length
+    fuzzy_terms = []
+    for t in terms:
+        escaped = _escape_lucene(t)
+        if len(t) >= 7:
+            fuzzy_terms.append(f"{escaped}~2")
+        elif len(t) > 3:
+            fuzzy_terms.append(f"{escaped}~1")
+
     if fuzzy_terms:
         fuzzy = " OR ".join(fuzzy_terms)
         return f"({base}) OR ({fuzzy})"
@@ -2576,8 +2617,11 @@ def _text_search_imas_paths(
         ft_where = (
             "WHERE NOT (p)-[:DEPRECATED_IN]->(:DDVersion) AND p.node_category = 'data'"
         )
+        lucene_query = _build_lucene_query(query)
+        if not lucene_query:
+            raise ValueError("Empty query; fall through to CONTAINS")
         ft_params: dict[str, Any] = {
-            "ft_query": query,
+            "ft_query": lucene_query,
             "limit": limit,
         }
         if ids_filter is not None:
