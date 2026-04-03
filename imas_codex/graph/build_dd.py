@@ -145,12 +145,12 @@ def generate_embedding_text(
     path_info: dict,
     ids_info: dict | None = None,
 ) -> str:
-    """Generate embedding text for an IMAS DD node.
+    """Generate rich embedding text for an IMAS DD node.
 
-    Prefixes the concise description with the IDS name to create semantic
-    separation between identically-described nodes in different IDS
-    (e.g., 105 nodes mention "electron temperature" — the IDS prefix
-    lets the embedding model distinguish core_profiles from ece).
+    Includes the full IMAS path (for terminal segment matching like
+    'ip', 'b0', 'q'), the enriched description, documentation excerpt,
+    and keywords. Targets ~250-400 chars to improve vector search recall
+    while staying well under the Qwen3 model's 32K token limit.
 
     Args:
         path: Full path (e.g., "equilibrium/time_slice/profiles_1d/psi")
@@ -158,20 +158,36 @@ def generate_embedding_text(
         ids_info: Optional IDS-level metadata for context
 
     Returns:
-        Concise text optimized for sentence transformer embedding
+        Rich text optimized for sentence transformer embedding
     """
     desc = (path_info.get("description") or "").strip()
-    text = desc if desc else (path_info.get("documentation") or "").strip()
-    if not text:
-        return text
+    doc = (path_info.get("documentation") or "").strip()
+    keywords = path_info.get("keywords") or []
 
-    # Add IDS name prefix for semantic separation
-    ids_name = path.split("/")[0] if "/" in path else ""
-    if ids_name:
-        # Convert underscore IDS names to readable form
-        readable_ids = ids_name.replace("_", " ")
-        return f"{readable_ids}: {text}"
-    return text
+    # Primary text: prefer enriched description, fall back to documentation
+    primary = desc if desc else doc
+    if not primary:
+        return ""
+
+    parts: list[str] = []
+
+    # 1. Full IMAS path — injects terminal segments (ip, b0, psi, t_e)
+    #    and hierarchy into the embedding space
+    parts.append(path)
+
+    # 2. Primary description
+    parts.append(primary)
+
+    # 3. Documentation excerpt (if different from description and adds info)
+    if doc and doc != desc and len(doc) > 20:
+        # Cap at 300 chars to avoid noise from very long documentation
+        parts.append(doc[:300])
+
+    # 4. Keywords — searchable terms not in description or path
+    if keywords:
+        parts.append(f"Keywords: {', '.join(keywords)}")
+
+    return ". ".join(parts)
 
 
 def compute_content_hash(text: str) -> str:

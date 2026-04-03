@@ -165,7 +165,7 @@ class TestGenerateEmbeddingText:
     """Test generate_embedding_text with enriched descriptions."""
 
     def test_uses_description_when_present(self) -> None:
-        """Test that LLM description is used as embedding text directly."""
+        """Test that description is used as primary text with path prepended."""
         from imas_codex.graph.build_dd import generate_embedding_text
 
         path_info = {
@@ -180,9 +180,10 @@ class TestGenerateEmbeddingText:
             path_info,
         )
 
-        # New behavior: embedding text IS the concise description directly
-        assert text == "LLM-generated physics description."
-        assert "Raw documentation" not in text
+        assert "equilibrium/time_slice/profiles_1d/psi" in text
+        assert "LLM-generated physics description." in text
+        # keywords are now included
+        assert "Keywords: flux, equilibrium" in text
 
     def test_falls_back_to_documentation(self) -> None:
         """Test fallback to raw documentation when no description."""
@@ -198,7 +199,8 @@ class TestGenerateEmbeddingText:
             path_info,
         )
 
-        assert text == "Raw documentation about psi."
+        assert "equilibrium/time_slice/profiles_1d/psi" in text
+        assert "Raw documentation about psi." in text
 
     def test_empty_returns_empty(self) -> None:
         """Test that missing description and documentation returns empty."""

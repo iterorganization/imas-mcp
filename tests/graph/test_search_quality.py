@@ -264,13 +264,13 @@ class TestAccessorTemplates:
 
 
 class TestGenerateEmbeddingTextConcise:
-    """Test the simplified generate_embedding_text function.
+    """Test the enriched generate_embedding_text function.
 
-    Embedding text now includes an IDS prefix for semantic separation:
-    "core profiles: Radial profile of the electron temperature."
+    Embedding text now includes the full IMAS path, primary description,
+    optional documentation excerpt, and keywords joined by ". ".
     """
 
-    def test_returns_description_with_ids_prefix(self) -> None:
+    def test_returns_description_with_full_path(self) -> None:
         from imas_codex.graph.build_dd import generate_embedding_text
 
         text = generate_embedding_text(
@@ -280,7 +280,8 @@ class TestGenerateEmbeddingTextConcise:
                 "documentation": "Old doc",
             },
         )
-        assert text == "eq: Poloidal flux radial profile."
+        assert text.startswith("eq/profiles_1d/psi. ")
+        assert "Poloidal flux radial profile." in text
 
     def test_fallback_to_documentation(self) -> None:
         from imas_codex.graph.build_dd import generate_embedding_text
@@ -289,7 +290,8 @@ class TestGenerateEmbeddingTextConcise:
             "eq/profiles_1d/psi",
             {"documentation": "Poloidal flux"},
         )
-        assert text == "eq: Poloidal flux"
+        assert text.startswith("eq/profiles_1d/psi. ")
+        assert "Poloidal flux" in text
 
     def test_empty_description_uses_doc(self) -> None:
         from imas_codex.graph.build_dd import generate_embedding_text
@@ -298,7 +300,8 @@ class TestGenerateEmbeddingTextConcise:
             "eq/profiles_1d/psi",
             {"description": "", "documentation": "Doc text"},
         )
-        assert text == "eq: Doc text"
+        assert text.startswith("eq/profiles_1d/psi. ")
+        assert "Doc text" in text
 
     def test_empty_both_returns_empty(self) -> None:
         from imas_codex.graph.build_dd import generate_embedding_text
@@ -306,8 +309,8 @@ class TestGenerateEmbeddingTextConcise:
         text = generate_embedding_text("eq/x", {})
         assert text == ""
 
-    def test_no_metadata_concatenation(self) -> None:
-        """Verify the old 8-component concatenation is gone."""
+    def test_no_raw_metadata_in_output(self) -> None:
+        """Verify units and data_type are NOT included; keywords ARE included."""
         from imas_codex.graph.build_dd import generate_embedding_text
 
         text = generate_embedding_text(
@@ -322,21 +325,99 @@ class TestGenerateEmbeddingTextConcise:
             },
             ids_info={"eq": {"description": "Equilibrium IDS"}},
         )
-        # Should be IDS prefix + description, not a multi-sentence paragraph
-        assert text == "eq: Short desc."
+        assert "eq/profiles_1d/psi" in text
+        assert "Short desc." in text
         assert "Wb" not in text
         assert "FLT_1D" not in text
-        assert "Keywords" not in text
+        # keywords ARE now included (unlike the old format)
+        assert "Keywords" in text
 
-    def test_ids_prefix_uses_readable_name(self) -> None:
-        """IDS names with underscores are converted to spaces."""
+    def test_full_path_replaces_readable_ids_prefix(self) -> None:
+        """Full path is used instead of a readable IDS prefix."""
         from imas_codex.graph.build_dd import generate_embedding_text
 
         text = generate_embedding_text(
             "core_profiles/profiles_1d/electrons/temperature",
             {"description": "Electron temperature."},
         )
-        assert text == "core profiles: Electron temperature."
+        assert "core_profiles/profiles_1d/electrons/temperature" in text
+        assert "Electron temperature." in text
+        # old IDS-prefix format is gone
+        assert not text.startswith("core profiles:")
+
+    def test_output_contains_full_imas_path(self) -> None:
+        from imas_codex.graph.build_dd import generate_embedding_text
+
+        text = generate_embedding_text(
+            "equilibrium/time_slice/profiles_1d/psi",
+            {"description": "Poloidal flux."},
+        )
+        assert "equilibrium/time_slice/profiles_1d/psi" in text
+
+    def test_documentation_included_when_different_and_long(self) -> None:
+        from imas_codex.graph.build_dd import generate_embedding_text
+
+        text = generate_embedding_text(
+            "equilibrium/time_slice/profiles_1d/psi",
+            {
+                "description": "Poloidal flux.",
+                "documentation": "This is a long documentation string with details.",
+            },
+        )
+        assert "This is a long documentation string with details." in text
+
+    def test_documentation_not_included_when_identical_to_description(self) -> None:
+        from imas_codex.graph.build_dd import generate_embedding_text
+
+        desc = "Poloidal flux description."
+        text = generate_embedding_text(
+            "equilibrium/time_slice/profiles_1d/psi",
+            {"description": desc, "documentation": desc},
+        )
+        # doc identical to desc — should appear only once
+        assert text.count(desc) == 1
+
+    def test_documentation_capped_at_300_chars(self) -> None:
+        from imas_codex.graph.build_dd import generate_embedding_text
+
+        long_doc = "x" * 500
+        text = generate_embedding_text(
+            "equilibrium/time_slice/profiles_1d/psi",
+            {"description": "Short desc.", "documentation": long_doc},
+        )
+        # doc portion must not exceed 300 'x' chars
+        assert "x" * 301 not in text
+        assert "x" * 300 in text
+
+    def test_keywords_appended(self) -> None:
+        from imas_codex.graph.build_dd import generate_embedding_text
+
+        text = generate_embedding_text(
+            "equilibrium/time_slice/profiles_1d/psi",
+            {
+                "description": "Poloidal flux.",
+                "keywords": ["flux", "equilibrium", "psi"],
+            },
+        )
+        assert "Keywords: flux, equilibrium, psi" in text
+
+    def test_no_keywords_when_absent(self) -> None:
+        from imas_codex.graph.build_dd import generate_embedding_text
+
+        text = generate_embedding_text(
+            "equilibrium/time_slice/profiles_1d/psi",
+            {"description": "Poloidal flux."},
+        )
+        assert "Keywords" not in text
+
+    def test_separator_is_period_space(self) -> None:
+        from imas_codex.graph.build_dd import generate_embedding_text
+
+        text = generate_embedding_text(
+            "eq/psi",
+            {"description": "Desc.", "keywords": ["k1"]},
+        )
+        assert ". " in text
 
 
 # =============================================================================
