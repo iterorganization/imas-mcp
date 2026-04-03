@@ -474,6 +474,7 @@ def _init_repl() -> dict[str, Any]:
     from imas_codex.graph.formatters import as_summary, as_table, pick
     from imas_codex.graph.query_builder import graph_search as _graph_search
     from imas_codex.graph.schema_context import schema_for as _schema_for
+    from imas_codex.graph.schema_context_data import VECTOR_INDEXES as _VECTOR_INDEXES
 
     gc = GraphClient.from_profile()
 
@@ -582,21 +583,40 @@ def _init_repl() -> dict[str, Any]:
             return _search_code_chunks(embedding, k)
 
         # Filter deprecated paths for imas_node_embedding unless explicitly included
-        where_clause = ""
+        post_where = ""
         if index == "imas_node_embedding" and not include_deprecated:
-            where_clause = "WHERE NOT (node)-[:DEPRECATED_IN]->(:DDVersion) "
+            post_where = "WHERE NOT (node)-[:DEPRECATED_IN]->(:DDVersion) "
 
-        results = gc.query(
-            f'CALL db.index.vector.queryNodes("{index}", $k, $embedding) '
-            "YIELD node, score "
-            f"{where_clause}"
-            "RETURN [k IN keys(node) "
-            "WHERE NOT k ENDS WITH 'embedding' | [k, node[k]]] "
-            "AS properties, labels(node) AS labels, score "
-            "ORDER BY score DESC",
-            k=k,
-            embedding=embedding,
-        )
+        # Look up label for the given index to use SEARCH clause
+        index_meta = _VECTOR_INDEXES.get(index)
+        if index_meta is None:
+            # Unknown index — fall back to generic MATCH
+            results = gc.query(
+                "MATCH (node) WHERE any(lbl IN labels(node) WHERE true) "
+                "RETURN [k IN keys(node) "
+                "WHERE NOT k ENDS WITH 'embedding' | [k, node[k]]] "
+                "AS properties, labels(node) AS labels, 0.0 AS score "
+                "LIMIT $k",
+                k=k,
+            )
+        else:
+            node_label, emb_prop = index_meta
+            results = gc.query(
+                f"CALL () {{\n"
+                f"  SEARCH node:{node_label}\n"
+                f"  USING VECTOR INDEX {index}\n"
+                f"  WITH node, vector.similarity.cosine(node.{emb_prop}, $embedding) AS score\n"
+                "  ORDER BY score DESC\n"
+                "  LIMIT $k\n"
+                "}\n"
+                f"{post_where}"
+                "RETURN [k IN keys(node) "
+                "WHERE NOT k ENDS WITH 'embedding' | [k, node[k]]] "
+                "AS properties, labels(node) AS labels, score "
+                "ORDER BY score DESC",
+                k=k,
+                embedding=embedding,
+            )
         # Flatten: properties at top level alongside score and labels
         return [
             {
@@ -610,8 +630,13 @@ def _init_repl() -> dict[str, Any]:
     def _search_wiki_chunks(embedding: list[float], k: int) -> list[dict[str, Any]]:
         """Wiki-specific search that enriches results with parent page context."""
         results = gc.query(
-            'CALL db.index.vector.queryNodes("wiki_chunk_embedding", $k, $embedding) '
-            "YIELD node, score "
+            "CALL () {\n"
+            "  SEARCH node:WikiChunk\n"
+            "  USING VECTOR INDEX wiki_chunk_embedding\n"
+            "  WITH node, vector.similarity.cosine(node.embedding, $embedding) AS score\n"
+            "  ORDER BY score DESC\n"
+            "  LIMIT $k\n"
+            "}\n"
             "OPTIONAL MATCH (p:WikiPage)-[:HAS_CHUNK]->(node) "
             "OPTIONAL MATCH (wa:Document)-[:HAS_CHUNK]->(node) "
             "RETURN [k IN keys(node) "
@@ -644,8 +669,13 @@ def _init_repl() -> dict[str, Any]:
     def _search_code_chunks(embedding: list[float], k: int) -> list[dict[str, Any]]:
         """Code-specific search that enriches results with source file context."""
         results = gc.query(
-            'CALL db.index.vector.queryNodes("code_chunk_embedding", $k, $embedding) '
-            "YIELD node, score "
+            "CALL () {\n"
+            "  SEARCH node:CodeChunk\n"
+            "  USING VECTOR INDEX code_chunk_embedding\n"
+            "  WITH node, vector.similarity.cosine(node.embedding, $embedding) AS score\n"
+            "  ORDER BY score DESC\n"
+            "  LIMIT $k\n"
+            "}\n"
             "OPTIONAL MATCH (sf:CodeFile)-[:HAS_CHUNK]->(node) "
             "RETURN [k IN keys(node) "
             "WHERE NOT k ENDS WITH 'embedding' | [k, node[k]]] "

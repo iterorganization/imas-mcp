@@ -519,17 +519,15 @@ def imas_search(
     encoder = Encoder(config=config)
     embedding = encoder.embed_texts([query])[0].tolist()
 
-    # Build filter clause
-    # By default, exclude deprecated paths unless --include-deprecated flag is used
-    where_clauses = ["node.node_category = 'data'"]
-    if not include_deprecated:
-        where_clauses.append("NOT (node)-[:DEPRECATED_IN]->(:DDVersion)")
+    # Build property-based pre-filters for SEARCH block
+    search_where: list[str] = ["node.node_category = 'data'"]
     if ids:
-        where_clauses.append(f"node.id STARTS WITH '{ids}/'")
+        search_where.append(f"node.id STARTS WITH '{ids}/'")
 
-    where_clause = ""
-    if where_clauses:
-        where_clause = "WHERE " + " AND ".join(where_clauses)
+    # Build relationship-based post-filters (cannot go inside SEARCH)
+    post_where = ""
+    if not include_deprecated:
+        post_where = "WHERE NOT (node)-[:DEPRECATED_IN]->(:DDVersion)"
 
     # Build version filter using relationship-based INTRODUCED_IN
     dd_version_join = ""
@@ -543,18 +541,29 @@ def imas_search(
         )
         extra_params["dd_version"] = dd_major
 
+    search_block = (
+        "CALL () {\n"
+        "  SEARCH node:IMASNode\n"
+        "  USING VECTOR INDEX imas_node_embedding\n"
+        f"  WHERE {' AND '.join(search_where)}\n"
+        "  WITH node, vector.similarity.cosine(node.embedding, $embedding) AS score\n"
+        "  ORDER BY score DESC\n"
+        "  LIMIT $search_k\n"
+        "}"
+    )
+
     with GraphClient() as gc:
         results = gc.query(
             f"""
-            CALL db.index.vector.queryNodes("imas_node_embedding", $limit * 2, $embedding)
-            YIELD node, score
-            {where_clause}
+            {search_block}
+            {post_where}
             {dd_version_join}
             RETURN node.id AS path, score, node.unit AS unit, node.documentation AS doc
             LIMIT $limit
         """,
             embedding=embedding,
             limit=limit,
+            search_k=limit * 2,
             **extra_params,
         )
 

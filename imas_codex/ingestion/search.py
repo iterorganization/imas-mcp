@@ -8,6 +8,7 @@ from dataclasses import dataclass
 
 from imas_codex.embeddings import Encoder
 from imas_codex.graph import GraphClient
+from imas_codex.graph.vector_search import build_vector_search
 
 logger = logging.getLogger(__name__)
 
@@ -60,15 +61,17 @@ def search_code_chunks(
         where_clauses.append("any(ids IN node.related_ids WHERE ids IN $ids_filter)")
         params["ids_filter"] = ids_filter
 
-    where = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+    search_block = build_vector_search(
+        "code_chunk_embedding",
+        "CodeChunk",
+        where_clauses=where_clauses or None,
+        node_alias="node",
+    )
 
     with GraphClient() as gc:
         results = gc.query(
             f"""
-            CALL db.index.vector.queryNodes(
-                'code_chunk_embedding', $k, $embedding
-            ) YIELD node, score
-            {where}
+            {search_block}
             RETURN node.id AS chunk_id,
                    node.text AS content,
                    node.function_name AS function_name,

@@ -33,8 +33,14 @@ _EXAMPLE_PATTERNS: dict[str, list[str]] = {
         ),
         (
             "# Semantic search for signals\n"
-            'CALL db.index.vector.queryNodes("facility_signal_desc_embedding", $k, $embedding)\n'
-            "YIELD node AS signal, score\n"
+            "CALL () {\n"
+            "  SEARCH signal:FacilitySignal\n"
+            "  USING VECTOR INDEX facility_signal_desc_embedding\n"
+            "  WHERE signal.facility_id = $facility\n"
+            "  WITH signal, vector.similarity.cosine(signal.embedding, $embedding) AS score\n"
+            "  ORDER BY score DESC\n"
+            "  LIMIT $k\n"
+            "}\n"
             "MATCH (signal)-[:DATA_ACCESS]->(da:DataAccess)\n"
             "RETURN signal.id, signal.description, da.template_python, score\n"
             "ORDER BY score DESC"
@@ -43,8 +49,13 @@ _EXAMPLE_PATTERNS: dict[str, list[str]] = {
     "wiki": [
         (
             "# Search wiki chunks with page context\n"
-            'CALL db.index.vector.queryNodes("wiki_chunk_embedding", $k, $embedding)\n'
-            "YIELD node, score\n"
+            "CALL () {\n"
+            "  SEARCH node:WikiChunk\n"
+            "  USING VECTOR INDEX wiki_chunk_embedding\n"
+            "  WITH node, vector.similarity.cosine(node.embedding, $embedding) AS score\n"
+            "  ORDER BY score DESC\n"
+            "  LIMIT $k\n"
+            "}\n"
             "MATCH (p:WikiPage)-[:HAS_CHUNK]->(node)\n"
             "RETURN node.text, p.title, p.url, score\n"
             "ORDER BY score DESC"
@@ -53,8 +64,13 @@ _EXAMPLE_PATTERNS: dict[str, list[str]] = {
     "imas": [
         (
             "# Search IMAS paths\n"
-            'CALL db.index.vector.queryNodes("imas_node_embedding", $k, $embedding)\n'
-            "YIELD node, score\n"
+            "CALL () {\n"
+            "  SEARCH node:IMASNode\n"
+            "  USING VECTOR INDEX imas_node_embedding\n"
+            "  WITH node, vector.similarity.cosine(node.embedding, $embedding) AS score\n"
+            "  ORDER BY score DESC\n"
+            "  LIMIT $k\n"
+            "}\n"
             "WHERE NOT (node)-[:DEPRECATED_IN]->(:DDVersion)\n"
             "RETURN node.id, node.documentation, node.units, score\n"
             "ORDER BY score DESC"
@@ -69,8 +85,13 @@ _EXAMPLE_PATTERNS: dict[str, list[str]] = {
     "code": [
         (
             "# Search code chunks\n"
-            'CALL db.index.vector.queryNodes("code_chunk_embedding", $k, $embedding)\n'
-            "YIELD node, score\n"
+            "CALL () {\n"
+            "  SEARCH node:CodeChunk\n"
+            "  USING VECTOR INDEX code_chunk_embedding\n"
+            "  WITH node, vector.similarity.cosine(node.embedding, $embedding) AS score\n"
+            "  ORDER BY score DESC\n"
+            "  LIMIT $k\n"
+            "}\n"
             "MATCH (cf:CodeFile)-[:HAS_CHUNK]->(node)\n"
             "RETURN node.text, cf.path, cf.facility_id, score\n"
             "ORDER BY score DESC"

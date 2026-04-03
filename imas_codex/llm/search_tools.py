@@ -19,6 +19,7 @@ from neo4j.exceptions import ServiceUnavailable
 
 from imas_codex.embeddings.encoder import EmbeddingBackendError, Encoder
 from imas_codex.graph.client import GraphClient
+from imas_codex.graph.vector_search import build_vector_search
 from imas_codex.llm.search_formatters import (
     format_code_report,
     format_docs_report,
@@ -439,11 +440,9 @@ def _vector_search_signals(
     Uses property-based facility filter with over-fetching to avoid
     facility starvation when one facility dominates the index.
     """
-    # Over-fetch to avoid facility starvation
-    internal_k = max(k * 5, 200)
     where_parts = ["s.facility_id = $facility"]
     params: dict[str, Any] = {
-        "k": internal_k,
+        "k": max(k * 2, 50),
         "embedding": embedding,
         "facility": facility,
         "limit": k,
@@ -456,11 +455,15 @@ def _vector_search_signals(
         where_parts.append("s.physics_domain = $physics_domain")
         params["physics_domain"] = physics_domain
 
-    where_clause = " AND ".join(where_parts)
-
     cypher = (
-        'CALL db.index.vector.queryNodes("facility_signal_desc_embedding", $k, $embedding) '
-        f"YIELD node AS s, score WHERE {where_clause} "
+        build_vector_search(
+            "facility_signal_desc_embedding",
+            "FacilitySignal",
+            where_clauses=where_parts,
+            k="$k",
+            node_alias="s",
+        )
+        + "\n"
         "RETURN s.id AS id, score "
         "ORDER BY score DESC LIMIT $limit"
     )
@@ -590,11 +593,15 @@ def _vector_search_data_nodes(
 
     Uses property-based facility filter with over-fetching.
     """
-    internal_k = max(k * 5, 200)
+    internal_k = max(k * 2, 50)
     cypher = (
-        'CALL db.index.vector.queryNodes("signal_node_desc_embedding", $k, $embedding) '
-        "YIELD node AS n, score "
-        "WHERE n.facility_id = $facility "
+        build_vector_search(
+            "signal_node_desc_embedding",
+            "SignalNode",
+            where_clauses=["n.facility_id = $facility"],
+            k="$k",
+        )
+        + "\n"
         "RETURN n.id AS id, n.path AS path, n.data_source_name AS data_source_name, "
         "n.description AS description, n.unit AS unit, score "
         "ORDER BY score DESC LIMIT $limit"
@@ -746,7 +753,7 @@ def _vector_search_wiki_chunks(
     Optionally filters by wiki site URL substring, physics domain,
     and score dimension thresholds.
     """
-    internal_k = max(k * 5, 200)
+    internal_k = max(k * 2, 50)
     # Build dynamic WHERE clauses for WikiPage join
     page_filters: list[str] = []
     params: dict[str, Any] = {
@@ -768,13 +775,17 @@ def _vector_search_wiki_chunks(
         page_filters.append(f"p.{dim} >= $min_score")
         params["min_score"] = min_score
 
+    search_block = build_vector_search(
+        "wiki_chunk_embedding",
+        "WikiChunk",
+        where_clauses=["c.facility_id = $facility"],
+        k="$k",
+        node_alias="c",
+    )
     if page_filters:
         page_where = " AND ".join(page_filters)
         cypher = (
-            'CALL db.index.vector.queryNodes("wiki_chunk_embedding", $k, $embedding) '
-            "YIELD node AS c, score "
-            "WHERE c.facility_id = $facility "
-            "WITH c, score "
+            f"{search_block}\n"
             "MATCH (p:WikiPage)-[:HAS_CHUNK]->(c) "
             f"WHERE {page_where} "
             "RETURN c.id AS id, score "
@@ -782,11 +793,7 @@ def _vector_search_wiki_chunks(
         )
     else:
         cypher = (
-            'CALL db.index.vector.queryNodes("wiki_chunk_embedding", $k, $embedding) '
-            "YIELD node AS c, score "
-            "WHERE c.facility_id = $facility "
-            "RETURN c.id AS id, score "
-            "ORDER BY score DESC LIMIT $limit"
+            f"{search_block}\nRETURN c.id AS id, score ORDER BY score DESC LIMIT $limit"
         )
 
     results = gc.query(cypher, **params)
@@ -878,14 +885,19 @@ def _vector_search_documents(
     """
     results: list[dict[str, Any]] = []
     scores: dict[str, float] = {}
-    internal_k = max(k * 5, 200)
+    internal_k = max(k * 2, 50)
 
     # Search documents
     try:
         document_cypher = (
-            'CALL db.index.vector.queryNodes("document_desc_embedding", $k, $embedding) '
-            "YIELD node AS a, score "
-            "WHERE a.facility_id = $facility "
+            build_vector_search(
+                "document_desc_embedding",
+                "Document",
+                where_clauses=["a.facility_id = $facility"],
+                k="$k",
+                node_alias="a",
+            )
+            + "\n"
             "OPTIONAL MATCH (p:WikiPage)-[:HAS_DOCUMENT]->(a) "
             "RETURN a.id AS id, a.title AS title, a.description AS description, "
             "a.url AS url, p.title AS page_title, score "
@@ -907,9 +919,14 @@ def _vector_search_documents(
     # Search images
     try:
         image_cypher = (
-            'CALL db.index.vector.queryNodes("image_desc_embedding", $k, $embedding) '
-            "YIELD node AS img, score "
-            "WHERE img.facility_id = $facility "
+            build_vector_search(
+                "image_desc_embedding",
+                "Image",
+                where_clauses=["img.facility_id = $facility"],
+                k="$k",
+                node_alias="img",
+            )
+            + "\n"
             "OPTIONAL MATCH (p:WikiPage)-[:HAS_IMAGE]->(img) "
             "RETURN img.id AS id, img.title AS title, img.description AS description, "
             "p.title AS page_title, score "
@@ -1373,16 +1390,14 @@ def _vector_search_code_chunks(
     Facility filtering uses CodeChunk's ``facility_id`` property directly.
     Optionally filters by FacilityPath physics domain and score dimensions.
     """
-    # Over-fetch to avoid facility starvation when one facility dominates
-    internal_k = max(k * 5, 200)
+    # With property pre-filtering inside SEARCH, reduce oversampling
+    internal_k = max(k * 2, 50)
     params: dict[str, Any] = {"k": internal_k, "embedding": embedding, "limit": k}
 
-    where_parts: list[str] = []
+    search_where: list[str] = []
     if facility is not None:
-        where_parts.append("cc.facility_id = $facility")
+        search_where.append("cc.facility_id = $facility")
         params["facility"] = facility
-
-    where_clause = " AND ".join(where_parts) if where_parts else "true"
 
     # Build optional path-level filter join for physics_domain/score
     path_join = ""
@@ -1403,9 +1418,15 @@ def _vector_search_code_chunks(
             f"WHERE {path_where} "
         )
 
+    search_block = build_vector_search(
+        "code_chunk_embedding",
+        "CodeChunk",
+        where_clauses=search_where or None,
+        k="$k",
+        node_alias="cc",
+    )
     cypher = (
-        'CALL db.index.vector.queryNodes("code_chunk_embedding", $k, $embedding) '
-        f"YIELD node AS cc, score WHERE {where_clause} "
+        f"{search_block}\n"
         f"{path_join}"
         "RETURN cc.id AS id, score "
         "ORDER BY score DESC LIMIT $limit"
@@ -1431,20 +1452,25 @@ def _vector_search_code_examples(
     """
     try:
         params: dict[str, Any] = {"k": max(k, 20), "embedding": embedding}
-        facility_filter = ""
+        search_where: list[str] = []
         if facility is not None:
-            facility_filter = "AND ce.facility_id = $facility"
+            search_where.append("ce.facility_id = $facility")
             params["facility"] = facility
 
-        cypher = f"""
-            CALL db.index.vector.queryNodes('code_example_desc_embedding', $k, $embedding)
-            YIELD node AS ce, score
-            WHERE true {facility_filter}
-            MATCH (ce)-[:HAS_CHUNK]->(cc:CodeChunk)
-            RETURN cc.id AS id, score
-            ORDER BY score DESC
-            LIMIT $limit
-        """
+        search_block = build_vector_search(
+            "code_example_desc_embedding",
+            "CodeExample",
+            where_clauses=search_where or None,
+            k="$k",
+            node_alias="ce",
+        )
+        cypher = (
+            f"{search_block}\n"
+            "MATCH (ce)-[:HAS_CHUNK]->(cc:CodeChunk)\n"
+            "RETURN cc.id AS id, score\n"
+            "ORDER BY score DESC\n"
+            "LIMIT $limit\n"
+        )
         params["limit"] = k * 2
         return gc.query(cypher, **params)
     except Exception:

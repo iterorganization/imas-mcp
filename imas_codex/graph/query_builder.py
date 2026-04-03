@@ -35,6 +35,7 @@ from __future__ import annotations
 from typing import Any
 
 from imas_codex.graph.schema_context_data import NODE_LABEL_PROPS, VECTOR_INDEXES
+from imas_codex.graph.vector_search import build_vector_search
 
 # Build reverse lookup: label -> index name
 _LABEL_TO_INDEX: dict[str, str] = {
@@ -120,6 +121,24 @@ def graph_search(
                     f"Valid: {', '.join(sorted(valid_props))}"
                 )
 
+    # --- pre-compute where conditions (needed before semantic block) --------
+    where_conditions: list[str] = []
+    if where:
+        for i, (key, value) in enumerate(where.items()):
+            prop, op = _parse_filter_key(key)
+            pname = f"w_{i}"
+            if op == "eq":
+                where_conditions.append(f"n.{prop} = ${pname}")
+            elif op == "in":
+                where_conditions.append(f"n.{prop} IN ${pname}")
+            elif op in ("contains", "starts_with", "ends_with"):
+                cypher_op = _FILTER_OPS[op]
+                where_conditions.append(f"n.{prop} {cypher_op} ${pname}")
+            else:
+                cypher_op = _FILTER_OPS[op]
+                where_conditions.append(f"n.{prop} {cypher_op} ${pname}")
+            params[pname] = value
+
     # --- semantic search -------------------------------------------------
     if semantic:
         index_name = _LABEL_TO_INDEX.get(label)
@@ -135,32 +154,19 @@ def graph_search(
         params["embedding"] = embedding
         params["k"] = limit
 
+        _label_val, emb_prop = VECTOR_INDEXES[index_name]
+        search_block = build_vector_search(
+            index_name,
+            label,
+            embedding_property=emb_prop,
+            where_clauses=where_conditions or None,
+        )
         # Vector search as the base
-        lines = [
-            f'CALL db.index.vector.queryNodes("{index_name}", $k, $embedding)',
-            "YIELD node AS n, score",
-        ]
+        lines = [search_block]
     else:
         lines = [f"MATCH (n:{label})"]
-
-    # --- where clause ----------------------------------------------------
-    if where:
-        conditions = []
-        for i, (key, value) in enumerate(where.items()):
-            prop, op = _parse_filter_key(key)
-            pname = f"w_{i}"
-            if op == "eq":
-                conditions.append(f"n.{prop} = ${pname}")
-            else:
-                cypher_op = _FILTER_OPS[op]
-                if op == "in":
-                    conditions.append(f"n.{prop} IN ${pname}")
-                elif op in ("contains", "starts_with", "ends_with"):
-                    conditions.append(f"n.{prop} {cypher_op} ${pname}")
-                else:
-                    conditions.append(f"n.{prop} {cypher_op} ${pname}")
-            params[pname] = value
-        lines.append("WHERE " + " AND ".join(conditions))
+        if where_conditions:
+            lines.append("WHERE " + " AND ".join(where_conditions))
 
     # --- traversals ------------------------------------------------------
     if traverse:

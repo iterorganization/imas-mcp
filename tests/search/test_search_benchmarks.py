@@ -267,10 +267,15 @@ def _extract_paths_from_vector(
     try:
         results = graph_client.query(
             """
-            CALL db.index.vector.queryNodes('imas_node_embedding', $k, $embedding)
-            YIELD node AS path, score
+            CALL () {
+              SEARCH path:IMASNode
+              USING VECTOR INDEX imas_node_embedding
+              WHERE path.node_category = 'data'
+              WITH path, vector.similarity.cosine(path.embedding, $embedding) AS score
+              ORDER BY score DESC
+              LIMIT $k
+            }
             WHERE NOT (path)-[:DEPRECATED_IN]->(:DDVersion)
-              AND path.node_category = 'data'
             RETURN path.id AS id, score
             ORDER BY score DESC
             LIMIT $vector_limit

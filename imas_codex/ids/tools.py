@@ -823,10 +823,10 @@ def compute_semantic_matches(
         embeddings = encoder.embed_texts(texts)
 
     # Pre-compute shared Cypher fragments
-    imas_where = "WHERE n.node_category = 'data' "
+    imas_search_where = ["n.node_category = 'data'"]
     imas_extra_params: dict[str, Any] = {}
     if target_ids_name:
-        imas_where += "AND n.id STARTS WITH $ids_prefix "
+        imas_search_where.append("n.id STARTS WITH $ids_prefix")
         imas_extra_params["ids_prefix"] = f"{target_ids_name}/"
 
     dd_version_join = ""
@@ -837,9 +837,16 @@ def compute_semantic_matches(
         )
         imas_extra_params["dd_version"] = dd_version
 
+    _imas_search_where_str = " AND ".join(imas_search_where)
     imas_cypher = (
-        'CALL db.index.vector.queryNodes("imas_node_embedding", $k, $embedding) '
-        f"YIELD node AS n, score {imas_where}"
+        "CALL () {\n"
+        "  SEARCH n:IMASNode\n"
+        "  USING VECTOR INDEX imas_node_embedding\n"
+        f"  WHERE {_imas_search_where_str}\n"
+        "  WITH n, vector.similarity.cosine(n.embedding, $embedding) AS score\n"
+        "  ORDER BY score DESC\n"
+        "  LIMIT $k\n"
+        "}\n"
         f"WITH n, score {dd_version_join}"
         "RETURN n.id AS id, n.documentation AS doc, score "
         "ORDER BY score DESC LIMIT $limit"
@@ -860,7 +867,7 @@ def compute_semantic_matches(
             # 1. IMAS node embeddings (primary)
             try:
                 imas_params = {
-                    "k": k_per_source * 3,
+                    "k": k_per_source * 2,
                     "embedding": embedding,
                     "limit": k_per_source,
                     **imas_extra_params,
@@ -883,13 +890,17 @@ def compute_semantic_matches(
             if include_wiki:
                 try:
                     wiki_hits = tgc.query(
-                        'CALL db.index.vector.queryNodes("wiki_chunk_embedding", $k, $embedding) '
-                        "YIELD node AS c, score "
-                        "WITH c, score "
+                        "CALL () {\n"
+                        "  SEARCH c:WikiChunk\n"
+                        "  USING VECTOR INDEX wiki_chunk_embedding\n"
+                        "  WITH c, vector.similarity.cosine(c.embedding, $embedding) AS score\n"
+                        "  ORDER BY score DESC\n"
+                        "  LIMIT $k\n"
+                        "}\n"
                         "MATCH (p:WikiPage)-[:HAS_CHUNK]->(c) "
                         "RETURN p.title AS title, c.text AS text, score "
                         "ORDER BY score DESC LIMIT $limit",
-                        k=k_per_source * 3,
+                        k=k_per_source * 2,
                         embedding=embedding,
                         limit=k_per_source,
                     )
@@ -912,12 +923,17 @@ def compute_semantic_matches(
             if include_code:
                 try:
                     code_hits = tgc.query(
-                        'CALL db.index.vector.queryNodes("code_chunk_embedding", $k, $embedding) '
-                        "YIELD node AS cc, score "
+                        "CALL () {\n"
+                        "  SEARCH cc:CodeChunk\n"
+                        "  USING VECTOR INDEX code_chunk_embedding\n"
+                        "  WITH cc, vector.similarity.cosine(cc.embedding, $embedding) AS score\n"
+                        "  ORDER BY score DESC\n"
+                        "  LIMIT $k\n"
+                        "}\n"
                         "RETURN cc.source_file AS source_file, cc.function_name AS func, "
                         "cc.text AS text, score "
                         "ORDER BY score DESC LIMIT $limit",
-                        k=k_per_source * 3,
+                        k=k_per_source * 2,
                         embedding=embedding,
                         limit=k_per_source,
                     )

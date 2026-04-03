@@ -301,8 +301,13 @@ def fetch_semantic_wiki_context(
         with GraphClient() as gc:
             results = gc.query(
                 """
-                CALL db.index.vector.queryNodes('wiki_chunk_embedding', $k, $embedding)
-                YIELD node, score
+                CALL () {
+                  SEARCH node:WikiChunk
+                  USING VECTOR INDEX wiki_chunk_embedding
+                  WITH node, vector.similarity.cosine(node.embedding, $embedding) AS score
+                  ORDER BY score DESC
+                  LIMIT $k
+                }
                 MATCH (p:WikiPage)-[:HAS_CHUNK]->(node)
                 WHERE p.facility_id = $facility AND score >= $min_score
                 RETURN node.text AS text,
