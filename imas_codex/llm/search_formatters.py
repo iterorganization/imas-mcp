@@ -1186,6 +1186,15 @@ def format_search_imas_report(result: Any, cluster_result: Any | None = None) ->
                 parts.append(f"  Introduced: DD {hit.introduced_after_version}")
             if hit.keywords:
                 parts.append(f"  Keywords: {', '.join(hit.keywords)}")
+            if hit.cluster_labels:
+                parts.append(f"  Clusters: {', '.join(hit.cluster_labels)}")
+            if hit.see_also:
+                shown = hit.see_also[:3]
+                remaining = len(hit.see_also) - 3
+                see_str = ", ".join(shown)
+                if remaining > 0:
+                    see_str += f" (+{remaining} more)"
+                parts.append(f"  See also: {see_str}")
 
             # Search channel provenance
             prov_str = _format_provenance(hit.path, provenance)

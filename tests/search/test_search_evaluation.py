@@ -1052,6 +1052,279 @@ class TestDoEEvaluation:
         save_doe_results(results)
 
 
+@pytest.mark.graph
+@pytest.mark.slow
+class TestDimensionComparison:
+    """Compare vector search quality across Matryoshka dimensions.
+
+    Strategy: Re-embed a sample of graph nodes at each dimension,
+    embed benchmark queries at each dimension, compute cosine similarity
+    directly (bypassing the vector index), and report MRR.
+
+    This requires:
+    - A live Neo4j instance with IMAS DD data
+    - A running embedding server that supports Matryoshka dimensions
+    """
+
+    SAMPLE_SIZE = 100
+    DIMENSIONS = [256, 512, 1024]
+
+    @pytest.fixture(scope="class")
+    def graph_client(self):
+        """Class-scoped GraphClient."""
+        from imas_codex.graph.client import GraphClient
+
+        try:
+            client = GraphClient()
+            client.get_stats()
+        except Exception as e:
+            pytest.skip(f"Neo4j not available: {e}")
+        yield client
+        client.close()
+
+    @pytest.fixture(scope="class")
+    def sample_nodes(self, graph_client):
+        """Sample representative nodes from the graph for re-embedding.
+
+        Selects nodes that appear in benchmark expected paths plus
+        random high-quality nodes to ensure coverage.
+        """
+        # Collect expected paths from benchmarks
+        expected_ids = set()
+        for q in ALL_QUERIES:
+            expected_ids.update(q.expected_paths)
+
+        # Fetch nodes with their embed text
+        expected_nodes = graph_client.query(
+            """
+            UNWIND $ids AS pid
+            MATCH (n:IMASNode {id: pid})
+            WHERE n.description IS NOT NULL
+            RETURN n.id AS id, n.description AS description
+            """,
+            ids=list(expected_ids),
+        )
+
+        # Fill remaining sample with random enriched nodes
+        remaining = self.SAMPLE_SIZE - len(expected_nodes or [])
+        if remaining > 0:
+            random_nodes = graph_client.query(
+                """
+                MATCH (n:IMASNode)
+                WHERE n.description IS NOT NULL
+                  AND n.node_category = 'data'
+                  AND n.embedding IS NOT NULL
+                WITH n, rand() AS r
+                ORDER BY r
+                LIMIT $limit
+                RETURN n.id AS id, n.description AS description
+                """,
+                limit=remaining,
+            )
+            all_nodes = (expected_nodes or []) + (random_nodes or [])
+        else:
+            all_nodes = expected_nodes or []
+
+        if len(all_nodes) < 10:
+            pytest.skip(f"Only {len(all_nodes)} sample nodes available")
+
+        return all_nodes[: self.SAMPLE_SIZE]
+
+    @pytest.fixture(scope="class")
+    def dimension_embeddings(self, sample_nodes):
+        """Embed sample nodes and benchmark queries at each Matryoshka dimension.
+
+        Returns dict[int, dict] with keys:
+            - 'node_embeddings': dict[str, list[float]] for sample nodes
+            - 'query_embeddings': dict[str, list[float]] for benchmark queries
+        """
+        from imas_codex.embeddings.encoder import Encoder, EncoderConfig
+        from imas_codex.settings import _get_section
+
+        embed_config = _get_section("embedding")
+        real_location = embed_config.get("location", "")
+        real_model = embed_config.get("model", "")
+
+        if not real_location or real_location == "local":
+            pytest.skip("No remote embedding location configured")
+
+        old_location = os.environ.get("IMAS_CODEX_EMBEDDING_LOCATION")
+        old_model = os.environ.get("IMAS_CODEX_EMBEDDING_MODEL")
+
+        results = {}
+        try:
+            os.environ["IMAS_CODEX_EMBEDDING_LOCATION"] = real_location
+            if real_model:
+                os.environ["IMAS_CODEX_EMBEDDING_MODEL"] = real_model
+
+            node_texts = [f"{n['id']} {n['description']}" for n in sample_nodes]
+            query_texts = [q.query_text for q in ALL_QUERIES]
+
+            for dim in self.DIMENSIONS:
+                os.environ["IMAS_CODEX_EMBEDDING_DIMENSION"] = str(dim)
+                config = EncoderConfig()
+                enc = Encoder(config=config)
+
+                # Embed nodes (document mode)
+                node_vecs = enc.embed_texts(node_texts, prompt_name="passage")
+                if node_vecs is None or len(node_vecs) == 0:
+                    pytest.skip(f"Embed server returned empty for dim {dim}")
+
+                actual_dim = len(node_vecs[0])
+                if actual_dim != dim:
+                    logger.warning(
+                        "Requested dim %d but got %d — using actual",
+                        dim,
+                        actual_dim,
+                    )
+
+                node_embs = {
+                    sample_nodes[i]["id"]: node_vecs[i].tolist()
+                    for i in range(len(sample_nodes))
+                }
+
+                # Embed queries (query mode)
+                query_vecs = enc.embed_texts(query_texts, prompt_name="query")
+                query_embs = {
+                    ALL_QUERIES[i].query_text: query_vecs[i].tolist()
+                    for i in range(len(ALL_QUERIES))
+                }
+
+                results[dim] = {
+                    "node_embeddings": node_embs,
+                    "query_embeddings": query_embs,
+                    "actual_dim": actual_dim,
+                }
+
+        except pytest.skip.Exception:
+            raise
+        except Exception as e:
+            pytest.skip(f"Embed server not available: {e}")
+        finally:
+            if old_location is not None:
+                os.environ["IMAS_CODEX_EMBEDDING_LOCATION"] = old_location
+            elif "IMAS_CODEX_EMBEDDING_LOCATION" in os.environ:
+                del os.environ["IMAS_CODEX_EMBEDDING_LOCATION"]
+            if old_model is not None:
+                os.environ["IMAS_CODEX_EMBEDDING_MODEL"] = old_model
+            elif "IMAS_CODEX_EMBEDDING_MODEL" in os.environ:
+                del os.environ["IMAS_CODEX_EMBEDDING_MODEL"]
+            if "IMAS_CODEX_EMBEDDING_DIMENSION" in os.environ:
+                del os.environ["IMAS_CODEX_EMBEDDING_DIMENSION"]
+
+        return results
+
+    @staticmethod
+    def _cosine_similarity(a: list[float], b: list[float]) -> float:
+        """Compute cosine similarity between two vectors."""
+        import math
+
+        dot = sum(x * y for x, y in zip(a, b, strict=False))
+        norm_a = math.sqrt(sum(x * x for x in a))
+        norm_b = math.sqrt(sum(x * x for x in b))
+        if norm_a == 0 or norm_b == 0:
+            return 0.0
+        return dot / (norm_a * norm_b)
+
+    def _vector_search(
+        self,
+        query_embedding: list[float],
+        node_embeddings: dict[str, list[float]],
+        limit: int = 50,
+    ) -> list[str]:
+        """Rank nodes by cosine similarity to query embedding."""
+        similarities = [
+            (nid, self._cosine_similarity(query_embedding, emb))
+            for nid, emb in node_embeddings.items()
+        ]
+        similarities.sort(key=lambda x: x[1], reverse=True)
+        return [nid for nid, _ in similarities[:limit]]
+
+    @pytest.mark.parametrize("dim", [256, 512, 1024])
+    def test_vector_mrr_by_dimension(self, dimension_embeddings, dim):
+        """Measure raw vector MRR at a specific Matryoshka dimension."""
+        if dim not in dimension_embeddings:
+            pytest.skip(f"Dimension {dim} embeddings not available")
+
+        dim_data = dimension_embeddings[dim]
+        node_embs = dim_data["node_embeddings"]
+        query_embs = dim_data["query_embeddings"]
+
+        rrs = []
+        for q in ALL_QUERIES:
+            if q.query_text not in query_embs:
+                continue
+            ranked = self._vector_search(query_embs[q.query_text], node_embs)
+            expected = set(q.expected_paths)
+            rr = 0.0
+            for rank, pid in enumerate(ranked, start=1):
+                if pid in expected:
+                    rr = 1.0 / rank
+                    break
+            rrs.append(rr)
+
+        mrr = sum(rrs) / len(rrs) if rrs else 0.0
+        actual_dim = dim_data.get("actual_dim", dim)
+        logger.info(
+            "Vector MRR at dim %d (actual %d): %.3f (%d queries)",
+            dim,
+            actual_dim,
+            mrr,
+            len(rrs),
+        )
+
+        # No hard assertion — this is diagnostic
+        # Decision criteria from plan:
+        # Upgrade to 512 if vector MRR improves by >=0.10 (from ~0.15 to >=0.25)
+        # Upgrade to 1024 only if additional gain over 512 is >=0.05
+
+    def test_dimension_comparison_summary(self, dimension_embeddings):
+        """Compare MRR across all dimensions and log recommendation."""
+        mrr_by_dim = {}
+        for dim in self.DIMENSIONS:
+            if dim not in dimension_embeddings:
+                continue
+            dim_data = dimension_embeddings[dim]
+            node_embs = dim_data["node_embeddings"]
+            query_embs = dim_data["query_embeddings"]
+
+            rrs = []
+            for q in ALL_QUERIES:
+                if q.query_text not in query_embs:
+                    continue
+                ranked = self._vector_search(query_embs[q.query_text], node_embs)
+                expected = set(q.expected_paths)
+                rr = 0.0
+                for rank, pid in enumerate(ranked, start=1):
+                    if pid in expected:
+                        rr = 1.0 / rank
+                        break
+                rrs.append(rr)
+
+            mrr = sum(rrs) / len(rrs) if rrs else 0.0
+            mrr_by_dim[dim] = mrr
+
+        logger.info("=== Dimension Comparison Summary ===")
+        for dim, mrr in sorted(mrr_by_dim.items()):
+            logger.info("  dim %4d: MRR = %.3f", dim, mrr)
+
+        if 256 in mrr_by_dim and 512 in mrr_by_dim:
+            delta_512 = mrr_by_dim[512] - mrr_by_dim[256]
+            logger.info("  Δ(512 vs 256): %.3f", delta_512)
+            if delta_512 >= 0.10:
+                logger.info("  → RECOMMEND upgrade to dim 512")
+            else:
+                logger.info("  → Keep dim 256 (512 gain < 0.10)")
+
+        if 512 in mrr_by_dim and 1024 in mrr_by_dim:
+            delta_1024 = mrr_by_dim[1024] - mrr_by_dim[512]
+            logger.info("  Δ(1024 vs 512): %.3f", delta_1024)
+            if delta_1024 >= 0.05:
+                logger.info("  → RECOMMEND upgrade to dim 1024")
+            else:
+                logger.info("  → Keep dim 512 (1024 gain < 0.05)")
+
+
 class TestEmbedTextQuality:
     """Verify embed text generation produces path + description format.
 

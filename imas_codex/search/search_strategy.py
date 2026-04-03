@@ -150,6 +150,14 @@ class SearchHit(SearchBase):
         default=None,
         description="Source of enrichment: 'llm' or 'template'",
     )
+    cluster_labels: list[str] = Field(
+        default_factory=list,
+        description="Global semantic cluster labels this path belongs to",
+    )
+    see_also: list[str] = Field(
+        default_factory=list,
+        description="Cross-IDS sibling paths from shared semantic clusters",
+    )
 
     # Additional fields from raw_data
     validation_rules: dict[str, Any] | None = Field(
