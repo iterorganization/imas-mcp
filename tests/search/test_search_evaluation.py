@@ -2127,10 +2127,10 @@ class TestMultiDomainDimensionEval:
 
 
 class TestEmbedTextQuality:
-    """Verify embed text generation produces path + description format.
+    """Verify embed text generation produces dimension-appropriate format.
 
-    At dim 256 (Matryoshka), embed text is kept concise: full path + description
-    only. Doc excerpts and keywords are excluded to preserve cosine quality.
+    At dim < 512, embed text is kept concise (path + description only).
+    At dim ≥ 512, doc excerpts and keywords are included for richer context.
     """
 
     def test_embed_text_contains_full_path(self):
@@ -2147,8 +2147,9 @@ class TestEmbedTextQuality:
         )
         assert "equilibrium/time_slice/global_quantities/ip" in text
 
-    def test_embed_text_is_path_plus_description(self):
-        """Embed text should be exactly path + description, nothing else."""
+    def test_embed_text_at_dim_256(self, monkeypatch):
+        """At dim 256, text is path + description only."""
+        monkeypatch.setenv("IMAS_CODEX_EMBEDDING_DIMENSION", "256")
         from imas_codex.graph.build_dd import generate_embedding_text
 
         text = generate_embedding_text(
@@ -2164,8 +2165,60 @@ class TestEmbedTextQuality:
             == "core_profiles/profiles_1d/electrons/temperature. Electron temperature (Te) profile"
         )
         # Keywords and doc are excluded at dim 256
-        assert "Keywords" not in text
         assert "Long documentation" not in text
+        assert "thermal energy" not in text
+
+    def test_embed_text_at_dim_512_includes_doc(self, monkeypatch):
+        """At dim ≥ 512, doc excerpts are included."""
+        monkeypatch.setenv("IMAS_CODEX_EMBEDDING_DIMENSION", "512")
+        from imas_codex.graph.build_dd import generate_embedding_text
+
+        text = generate_embedding_text(
+            "core_profiles/profiles_1d/electrons/temperature",
+            {
+                "description": "Electron temperature (Te) profile",
+                "documentation": "The electron temperature measured by Thomson scattering.",
+                "keywords": ["Te", "thermal energy"],
+            },
+        )
+        assert "core_profiles/profiles_1d/electrons/temperature" in text
+        assert "Electron temperature (Te) profile" in text
+        assert "Thomson scattering" in text
+        assert "Te, thermal energy" in text
+
+    def test_embed_text_at_dim_1024_includes_doc_and_keywords(self, monkeypatch):
+        """At dim 1024, full doc excerpt + keywords are included."""
+        monkeypatch.setenv("IMAS_CODEX_EMBEDDING_DIMENSION", "1024")
+        from imas_codex.graph.build_dd import generate_embedding_text
+
+        text = generate_embedding_text(
+            "equilibrium/time_slice/profiles_1d/psi",
+            {
+                "description": "Poloidal flux profile",
+                "documentation": "The poloidal magnetic flux function used as the radial coordinate.",
+                "keywords": ["psi", "flux", "poloidal"],
+            },
+        )
+        assert "equilibrium/time_slice/profiles_1d/psi" in text
+        assert "Poloidal flux profile" in text
+        assert "poloidal magnetic flux function" in text
+        assert "psi, flux, poloidal" in text
+
+    def test_embed_text_no_dup_when_doc_matches_desc(self, monkeypatch):
+        """At high dim, don't duplicate when doc == desc."""
+        monkeypatch.setenv("IMAS_CODEX_EMBEDDING_DIMENSION", "1024")
+        from imas_codex.graph.build_dd import generate_embedding_text
+
+        text = generate_embedding_text(
+            "some/path",
+            {
+                "description": "Same text",
+                "documentation": "Same text",
+                "keywords": [],
+            },
+        )
+        # doc == desc, so only appears once
+        assert text == "some/path. Same text"
 
     def test_embed_text_uses_description_over_documentation(self):
         """Prefer description; doc is only used as fallback."""
@@ -2179,7 +2232,7 @@ class TestEmbedTextQuality:
                 "keywords": ["psi", "flux"],
             },
         )
-        assert text == "equilibrium/time_slice/profiles_1d/psi. Poloidal flux profile"
+        assert "Poloidal flux profile" in text
 
     def test_embed_text_empty_returns_empty(self):
         """Empty description and documentation should return empty string."""

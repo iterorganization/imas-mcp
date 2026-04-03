@@ -179,10 +179,9 @@ def generate_embedding_text(
     hierarchy context; the description provides physics semantics
     with abbreviations from the enrichment prompt.
 
-    Documentation excerpts and keywords are deliberately excluded —
-    at dim 256 (Matryoshka), longer text dilutes the primary signal
-    and degrades retrieval quality. The enriched descriptions already
-    contain abbreviations and physics context from the LLM enrichment.
+    At higher embedding dimensions (≥512), the model can encode more
+    semantic nuance without signal dilution, so documentation excerpts
+    and keywords are included for richer retrieval context.
 
     Args:
         path: Full path (e.g., "equilibrium/time_slice/profiles_1d/psi")
@@ -190,8 +189,10 @@ def generate_embedding_text(
         ids_info: Optional IDS-level metadata for context
 
     Returns:
-        Concise text optimized for dim-256 sentence transformer embedding
+        Embedding text whose richness scales with configured dimension
     """
+    from imas_codex.settings import get_embedding_dimension
+
     desc = (path_info.get("description") or "").strip()
     doc = (path_info.get("documentation") or "").strip()
 
@@ -200,9 +201,19 @@ def generate_embedding_text(
     if not primary:
         return ""
 
-    # Full IMAS path + primary description only
-    # At dim 256, adding doc excerpts/keywords dilutes cosine similarity
-    return f"{path}. {primary}"
+    parts = [f"{path}. {primary}"]
+
+    dim = get_embedding_dimension()
+    if dim >= 512:
+        # Higher dims can encode more semantic nuance without signal dilution
+        if doc and doc != desc:
+            doc_excerpt = doc[:300] if len(doc) > 300 else doc
+            parts.append(doc_excerpt)
+        keywords = path_info.get("keywords", [])
+        if keywords:
+            parts.append(", ".join(keywords[:8]))
+
+    return ". ".join(parts)
 
 
 def compute_content_hash(text: str) -> str:

@@ -550,23 +550,27 @@ Neo4j uses several lock file types. Mishandling them **causes data loss**.
 
 ### Vector Indexes
 
-Embeddings require a vector index for `db.index.vector.queryNodes()` to work:
+Vector indexes use Neo4j 2026.01's native `SEARCH` clause for in-index pre-filtering.
+All indexes include quantization for ~4× memory savings:
 
 ```python
 from imas_codex.settings import get_embedding_dimension
 
-dim = get_embedding_dimension()  # 1024 for Qwen3, 384 for MiniLM
+dim = get_embedding_dimension()
 gc.query(f"""
     CREATE VECTOR INDEX my_index IF NOT EXISTS
     FOR (n:MyNodeType) ON n.embedding
     OPTIONS {{
         indexConfig: {{
             `vector.dimensions`: {dim},
-            `vector.similarity_function`: 'cosine'
+            `vector.similarity_function`: 'cosine',
+            `vector.quantization.enabled`: true
         }}
     }}
 """)
 ```
+
+`ensure_vector_indexes()` auto-detects dimension mismatches and drops/recreates stale indexes.
 
 **Existing indexes:** See [agents/schema-reference.md](agents/schema-reference.md) for the full list of vector indexes derived from the LinkML schema.
 
@@ -582,20 +586,29 @@ semantic_search("COCOS sign conventions", index="wiki_chunk_embedding", k=5)
 semantic_search("plasma current measurement", index="facility_signal_desc_embedding", k=10)
 ```
 
-Combine vector similarity with link traversal for richer context:
+Combine vector similarity with link traversal using SEARCH clause:
 
 ```python
 results = query("""
-    CALL db.index.vector.queryNodes('facility_signal_desc_embedding', 5, $embedding)
-    YIELD node AS signal, score
+    CALL () {
+      SEARCH signal:FacilitySignal
+      USING VECTOR INDEX facility_signal_desc_embedding
+      WHERE signal.facility_id = $facility
+      WITH signal, vector.similarity.cosine(signal.embedding, $embedding) AS score
+      ORDER BY score DESC
+      LIMIT 5
+    }
     MATCH (signal)-[:DATA_ACCESS]->(da:DataAccess)
     OPTIONAL MATCH (signal)-[:HAS_DATA_SOURCE_NODE]->(dn:SignalNode)
         <-[:SOURCE_PATH]-(m:IMASMapping)-[:TARGET_PATH]->(imas:IMASNode)
     RETURN signal.id, signal.description, da.data_template,
            collect(imas.id) AS imas_paths, score
     ORDER BY score DESC
-""", embedding=embed("electron density profile"))
+""", embedding=embed("electron density profile"), facility="tcv")
 ```
+
+Use `build_vector_search()` from `imas_codex.graph.vector_search` to generate
+SEARCH clauses programmatically with property pre-filtering.
 
 **Key relationships for traversal:**
 
