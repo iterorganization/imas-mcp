@@ -172,12 +172,17 @@ def generate_embedding_text(
     path_info: dict,
     ids_info: dict | None = None,
 ) -> str:
-    """Generate rich embedding text for an IMAS DD node.
+    """Generate embedding text for an IMAS DD node.
 
-    Includes the full IMAS path (for terminal segment matching like
-    'ip', 'b0', 'q'), the enriched description, documentation excerpt,
-    and keywords. Targets ~250-400 chars to improve vector search recall
-    while staying well under the Qwen3 model's 32K token limit.
+    Concatenates the full IMAS path with the enriched description.
+    The path provides terminal segment matching (ip, b0, psi) and
+    hierarchy context; the description provides physics semantics
+    with abbreviations from the enrichment prompt.
+
+    Documentation excerpts and keywords are deliberately excluded —
+    at dim 256 (Matryoshka), longer text dilutes the primary signal
+    and degrades retrieval quality. The enriched descriptions already
+    contain abbreviations and physics context from the LLM enrichment.
 
     Args:
         path: Full path (e.g., "equilibrium/time_slice/profiles_1d/psi")
@@ -185,36 +190,19 @@ def generate_embedding_text(
         ids_info: Optional IDS-level metadata for context
 
     Returns:
-        Rich text optimized for sentence transformer embedding
+        Concise text optimized for dim-256 sentence transformer embedding
     """
     desc = (path_info.get("description") or "").strip()
     doc = (path_info.get("documentation") or "").strip()
-    keywords = path_info.get("keywords") or []
 
     # Primary text: prefer enriched description, fall back to documentation
     primary = desc if desc else doc
     if not primary:
         return ""
 
-    parts: list[str] = []
-
-    # 1. Full IMAS path — injects terminal segments (ip, b0, psi, t_e)
-    #    and hierarchy into the embedding space
-    parts.append(path)
-
-    # 2. Primary description
-    parts.append(primary)
-
-    # 3. Documentation excerpt (if different from description and adds info)
-    if doc and doc != desc and len(doc) > 20:
-        # Cap at 300 chars to avoid noise from very long documentation
-        parts.append(doc[:300])
-
-    # 4. Keywords — searchable terms not in description or path
-    if keywords:
-        parts.append(f"Keywords: {', '.join(keywords)}")
-
-    return ". ".join(parts)
+    # Full IMAS path + primary description only
+    # At dim 256, adding doc excerpts/keywords dilutes cosine similarity
+    return f"{path}. {primary}"
 
 
 def compute_content_hash(text: str) -> str:

@@ -1053,10 +1053,10 @@ class TestDoEEvaluation:
 
 
 class TestEmbedTextQuality:
-    """Verify embed text generation includes path, abbreviations, and keywords.
+    """Verify embed text generation produces path + description format.
 
-    These are unit tests that validate generate_embedding_text() produces
-    rich text suitable for embedding. They do NOT require a live graph.
+    At dim 256 (Matryoshka), embed text is kept concise: full path + description
+    only. Doc excerpts and keywords are excluded to preserve cosine quality.
     """
 
     def test_embed_text_contains_full_path(self):
@@ -1073,37 +1073,39 @@ class TestEmbedTextQuality:
         )
         assert "equilibrium/time_slice/global_quantities/ip" in text
 
-    def test_embed_text_contains_keywords(self):
-        """Embed text should contain keywords when provided."""
+    def test_embed_text_is_path_plus_description(self):
+        """Embed text should be exactly path + description, nothing else."""
         from imas_codex.graph.build_dd import generate_embedding_text
 
         text = generate_embedding_text(
             "core_profiles/profiles_1d/electrons/temperature",
             {
-                "description": "Electron temperature profile",
-                "documentation": "",
+                "description": "Electron temperature (Te) profile",
+                "documentation": "Long documentation text here.",
                 "keywords": ["Te", "thermal energy"],
             },
         )
-        assert "Keywords:" in text
-        assert "Te" in text
+        assert (
+            text
+            == "core_profiles/profiles_1d/electrons/temperature. Electron temperature (Te) profile"
+        )
+        # Keywords and doc are excluded at dim 256
+        assert "Keywords" not in text
+        assert "Long documentation" not in text
 
-    def test_embed_text_includes_documentation(self):
-        """Embed text should include documentation when different from description."""
+    def test_embed_text_uses_description_over_documentation(self):
+        """Prefer description; doc is only used as fallback."""
         from imas_codex.graph.build_dd import generate_embedding_text
 
         text = generate_embedding_text(
             "equilibrium/time_slice/profiles_1d/psi",
             {
                 "description": "Poloidal flux profile",
-                "documentation": "The poloidal magnetic flux function used as the radial coordinate for 1D equilibrium profiles.",
+                "documentation": "The poloidal magnetic flux function used as the radial coordinate.",
                 "keywords": ["psi", "flux"],
             },
         )
-        assert (
-            "poloidal magnetic flux function" in text.lower()
-            or "Poloidal flux profile" in text
-        )
+        assert text == "equilibrium/time_slice/profiles_1d/psi. Poloidal flux profile"
 
     def test_embed_text_empty_returns_empty(self):
         """Empty description and documentation should return empty string."""
@@ -1115,14 +1117,12 @@ class TestEmbedTextQuality:
         )
         assert text == ""
 
-    def test_embed_text_caps_long_documentation(self):
-        """Very long documentation should be capped at 300 chars."""
+    def test_embed_text_fallback_to_documentation(self):
+        """When no description, use documentation as fallback."""
         from imas_codex.graph.build_dd import generate_embedding_text
 
-        long_doc = "A" * 500
         text = generate_embedding_text(
             "some/path",
-            {"description": "Short desc", "documentation": long_doc, "keywords": []},
+            {"description": "", "documentation": "Fallback doc text", "keywords": []},
         )
-        # The doc portion should be capped
-        assert "A" * 301 not in text
+        assert text == "some/path. Fallback doc text"

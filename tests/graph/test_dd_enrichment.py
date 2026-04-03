@@ -162,7 +162,10 @@ class TestPydanticModels:
 
 
 class TestGenerateEmbeddingText:
-    """Test generate_embedding_text with enriched descriptions."""
+    """Test generate_embedding_text with enriched descriptions.
+
+    At dim 256, embed text is path + description only (no doc/keywords).
+    """
 
     def test_uses_description_when_present(self) -> None:
         """Test that description is used as primary text with path prepended."""
@@ -180,10 +183,13 @@ class TestGenerateEmbeddingText:
             path_info,
         )
 
-        assert "equilibrium/time_slice/profiles_1d/psi" in text
-        assert "LLM-generated physics description." in text
-        # keywords are now included
-        assert "Keywords: flux, equilibrium" in text
+        assert (
+            text
+            == "equilibrium/time_slice/profiles_1d/psi. LLM-generated physics description."
+        )
+        # Doc excerpts and keywords excluded at dim 256
+        assert "Keywords" not in text
+        assert "Raw documentation" not in text
 
     def test_falls_back_to_documentation(self) -> None:
         """Test fallback to raw documentation when no description."""
@@ -199,8 +205,10 @@ class TestGenerateEmbeddingText:
             path_info,
         )
 
-        assert "equilibrium/time_slice/profiles_1d/psi" in text
-        assert "Raw documentation about psi." in text
+        assert (
+            text
+            == "equilibrium/time_slice/profiles_1d/psi. Raw documentation about psi."
+        )
 
     def test_empty_returns_empty(self) -> None:
         """Test that missing description and documentation returns empty."""
