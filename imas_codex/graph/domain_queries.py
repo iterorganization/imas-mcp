@@ -14,6 +14,7 @@ from __future__ import annotations
 from typing import Any
 
 from imas_codex.graph.client import GraphClient
+from imas_codex.graph.vector_search import build_vector_search
 
 # ---------------------------------------------------------------------------
 # Signal discovery
@@ -125,35 +126,45 @@ def _find_signals_semantic(
     """Semantic search branch for find_signals."""
     embedding = embed_fn(query)
 
-    where_parts = ["(s)-[:AT_FACILITY]->(:Facility {id: $facility})"]
+    # Pre-filters: property-based, pushed into SEARCH block
+    pre_filter_parts: list[str] = []
     params: dict[str, Any] = {
         "facility": facility,
         "k": limit,
         "embedding": embedding,
     }
     if diagnostic is not None:
-        where_parts.append("s.diagnostic = $diagnostic")
+        pre_filter_parts.append("s.diagnostic = $diagnostic")
         params["diagnostic"] = diagnostic
     if physics_domain is not None:
-        where_parts.append("s.physics_domain = $physics_domain")
+        pre_filter_parts.append("s.physics_domain = $physics_domain")
         params["physics_domain"] = physics_domain
     if has_data is not None:
-        where_parts.append("s.checked = $has_data")
+        pre_filter_parts.append("s.checked = $has_data")
         params["has_data"] = has_data
 
-    where_clause = " AND ".join(where_parts)
+    search_block = build_vector_search(
+        "facility_signal_desc_embedding",
+        "FacilitySignal",
+        where_clauses=pre_filter_parts or None,
+        node_alias="s",
+        score_alias="score",
+    )
+
+    # Post-filter: relationship-based, must remain outside SEARCH
+    post_where = "WHERE (s)-[:AT_FACILITY]->(:Facility {id: $facility})\n"
 
     access_clause = ""
     access_return = ""
     if include_access:
-        access_clause = "OPTIONAL MATCH (s)-[:DATA_ACCESS]->(da:DataAccess) "
+        access_clause = "OPTIONAL MATCH (s)-[:DATA_ACCESS]->(da:DataAccess)\n"
         access_return = (
             ", da.data_template AS template_python, da.access_type AS access_type"
         )
 
     cypher = (
-        'CALL db.index.vector.queryNodes("facility_signal_desc_embedding", $k, $embedding) '
-        f"YIELD node AS s, score WHERE {where_clause} "
+        f"{search_block}\n"
+        f"{post_where}"
         f"{access_clause}"
         "RETURN s.id AS id, s.name AS name, s.diagnostic AS diagnostic, "
         "s.description AS description, s.physics_domain AS physics_domain, "
@@ -260,6 +271,15 @@ def _find_wiki_semantic(
     embedding = embed_fn(query)
     params: dict[str, Any] = {"k": k, "embedding": embedding}
 
+    # No property pre-filters: facility uses AT_FACILITY relationship,
+    # text CONTAINS is a substring match — both stay as post-filters.
+    search_block = build_vector_search(
+        "wiki_chunk_embedding",
+        "WikiChunk",
+        node_alias="c",
+        score_alias="score",
+    )
+
     # Build post-filter conditions on the vector search results
     post_filters: list[str] = []
     if facility is not None:
@@ -269,20 +289,20 @@ def _find_wiki_semantic(
         post_filters.append("toLower(c.text) CONTAINS toLower($text_kw)")
         params["text_kw"] = text_contains
 
-    filter_clause = ""
+    post_where = ""
     if post_filters:
-        filter_clause = "AND " + " AND ".join(post_filters) + " "
+        post_where = "WHERE " + " AND ".join(post_filters) + "\n"
 
-    # Page title filter needs to happen after the page join
+    # Page title filter is applied after the OPTIONAL MATCH join
     title_filter = ""
     if page_title_contains is not None:
-        title_filter = "WHERE toLower(p.title) CONTAINS toLower($title_kw) "
+        title_filter = "WHERE toLower(p.title) CONTAINS toLower($title_kw)\n"
         params["title_kw"] = page_title_contains
 
     cypher = (
-        'CALL db.index.vector.queryNodes("wiki_chunk_embedding", $k, $embedding) '
-        f"YIELD node AS c, score WHERE true {filter_clause}"
-        "OPTIONAL MATCH (p:WikiPage)-[:HAS_CHUNK]->(c) "
+        f"{search_block}\n"
+        f"{post_where}"
+        "OPTIONAL MATCH (p:WikiPage)-[:HAS_CHUNK]->(c)\n"
         f"{title_filter}"
         "RETURN c.text AS text, c.section AS section, "
         "p.title AS page_title, p.url AS page_url, score "
@@ -377,18 +397,28 @@ def find_imas(
 
     params: dict[str, Any] = {"k": limit, "embedding": embedding}
 
-    where_parts: list[str] = ["p.node_category = 'data'"]
-    if not include_deprecated:
-        where_parts.append("NOT (p)-[:DEPRECATED_IN]->(:DDVersion)")
+    # Pre-filters: property-based, pushed into SEARCH block
+    pre_filter_parts: list[str] = ["p.node_category = 'data'"]
     if ids_filter is not None:
-        where_parts.append("p.ids = $ids_filter")
+        pre_filter_parts.append("p.ids = $ids_filter")
         params["ids_filter"] = ids_filter
 
-    where_clause = "WHERE " + " AND ".join(where_parts) + " "
+    search_block = build_vector_search(
+        "imas_node_embedding",
+        "IMASNode",
+        where_clauses=pre_filter_parts,
+        node_alias="p",
+        score_alias="score",
+    )
+
+    # Post-filter: relationship-based deprecated check stays outside SEARCH
+    deprecated_filter = ""
+    if not include_deprecated:
+        deprecated_filter = "WHERE NOT (p)-[:DEPRECATED_IN]->(:DDVersion)\n"
 
     cypher = (
-        'CALL db.index.vector.queryNodes("imas_node_embedding", $k, $embedding) '
-        f"YIELD node AS p, score {where_clause}"
+        f"{search_block}\n"
+        f"{deprecated_filter}"
         "OPTIONAL MATCH (p)-[:IN_CLUSTER]->(cl:IMASSemanticCluster) "
         "OPTIONAL MATCH (p)-[:HAS_UNIT]->(u:Unit) "
         "RETURN p.id AS id, p.name AS name, p.ids AS ids, "
@@ -430,24 +460,33 @@ def find_code(
 
     params: dict[str, Any] = {"k": limit, "embedding": embedding}
 
+    # No pre-filters: facility is accessed via CodeFile join, not a property on CodeChunk
+    search_block = build_vector_search(
+        "code_chunk_embedding",
+        "CodeChunk",
+        node_alias="cc",
+        score_alias="score",
+    )
+
     facility_filter = ""
     if facility is not None:
         facility_filter = (
             "MATCH (cf:CodeFile) WHERE cf.id = ce.source_file "
-            "AND cf.facility_id = $facility "
+            "AND cf.facility_id = $facility\n"
         )
         params["facility"] = facility
 
     cypher = (
-        'CALL db.index.vector.queryNodes("code_chunk_embedding", $k, $embedding) '
-        "YIELD node AS cc, score "
-        "OPTIONAL MATCH (cc)-[:CODE_EXAMPLE_ID]->(ce:CodeExample) "
+        f"{search_block}\n"
+        "OPTIONAL MATCH (cc)-[:CODE_EXAMPLE_ID]->(ce:CodeExample)\n"
         f"{facility_filter}"
         "RETURN substring(cc.text, 0, 500) AS text, "
         "cc.function_name AS function_name, "
         "ce.source_file AS source_file, score "
         "ORDER BY score DESC"
     )
+
+    return gc.query(cypher, **params)
 
     return gc.query(cypher, **params)
 
@@ -540,29 +579,40 @@ def _find_data_nodes_semantic(
     """Semantic search branch for find_data_nodes."""
     embedding = embed_fn(query)
 
-    where_parts: list[str] = []
+    # Pre-filters: property-based, pushed into SEARCH block
+    pre_filter_parts: list[str] = []
+    # Post-filters: relationship-based, must remain outside SEARCH
+    post_filter_parts: list[str] = []
     params: dict[str, Any] = {"k": limit, "embedding": embedding}
 
     if facility is not None:
-        where_parts.append("(n)-[:AT_FACILITY]->(:Facility {id: $facility})")
+        post_filter_parts.append("(n)-[:AT_FACILITY]->(:Facility {id: $facility})")
         params["facility"] = facility
     if data_source_name is not None:
-        where_parts.append("n.data_source_name = $data_source_name")
+        pre_filter_parts.append("n.data_source_name = $data_source_name")
         params["data_source_name"] = data_source_name
     if path_prefix is not None:
-        where_parts.append("n.path STARTS WITH $path_prefix")
+        pre_filter_parts.append("n.path STARTS WITH $path_prefix")
         params["path_prefix"] = path_prefix
     if physics_domain is not None:
-        where_parts.append("n.physics_domain = $physics_domain")
+        pre_filter_parts.append("n.physics_domain = $physics_domain")
         params["physics_domain"] = physics_domain
 
-    where_clause = ""
-    if where_parts:
-        where_clause = "WHERE " + " AND ".join(where_parts) + " "
+    search_block = build_vector_search(
+        "signal_node_desc_embedding",
+        "SignalNode",
+        where_clauses=pre_filter_parts or None,
+        node_alias="n",
+        score_alias="score",
+    )
+
+    post_where = ""
+    if post_filter_parts:
+        post_where = "WHERE " + " AND ".join(post_filter_parts) + "\n"
 
     cypher = (
-        'CALL db.index.vector.queryNodes("signal_node_desc_embedding", $k, $embedding) '
-        f"YIELD node AS n, score {where_clause}"
+        f"{search_block}\n"
+        f"{post_where}"
         "RETURN n.id AS id, n.path AS path, n.data_source_name AS data_source_name, "
         "n.description AS description, n.unit AS unit, "
         "n.physics_domain AS physics_domain, n.node_type AS node_type, score "

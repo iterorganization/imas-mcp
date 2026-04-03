@@ -142,7 +142,7 @@ class TestFindWiki:
         )
         mock_embed.assert_called_once()
         cypher = mock_gc.query.call_args[0][0]
-        assert "queryNodes" in cypher
+        assert "SEARCH" in cypher
         assert "CONTAINS" in cypher
 
     def test_semantic_with_title_filter(self, mock_gc, mock_embed):
@@ -154,7 +154,7 @@ class TestFindWiki:
             embed_fn=mock_embed,
         )
         cypher = mock_gc.query.call_args[0][0]
-        assert "queryNodes" in cypher
+        assert "SEARCH" in cypher
         assert "title" in cypher.lower()
 
 

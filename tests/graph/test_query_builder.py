@@ -88,7 +88,7 @@ class TestGraphSearchSemantic:
         )
         mock_embed.assert_called_once_with("plasma current")
         cypher = mock_gc.query.call_args[0][0]
-        assert "vector" in cypher.lower() or "queryNodes" in cypher
+        assert "vector" in cypher.lower() or "SEARCH" in cypher
 
     def test_semantic_on_label_without_index_raises(self, mock_gc, mock_embed):
         with pytest.raises(ValueError, match="vector index"):
@@ -108,7 +108,7 @@ class TestGraphSearchSemantic:
             embed_fn=mock_embed,
         )
         cypher = mock_gc.query.call_args[0][0]
-        assert "queryNodes" in cypher
+        assert "SEARCH" in cypher
         assert "diagnostic" in cypher
 
 
@@ -244,7 +244,7 @@ class TestGraphSearchFilterOps:
             embed_fn=mock_embed,
         )
         cypher = mock_gc.query.call_args[0][0]
-        assert "queryNodes" in cypher
+        assert "SEARCH" in cypher
         assert "CONTAINS" in cypher
 
     def test_multiple_operators(self, mock_gc, mock_embed):
