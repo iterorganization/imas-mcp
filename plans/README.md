@@ -20,7 +20,7 @@ Gap documents consolidate remaining work from completed implementation phases. T
 |----------|------|-------|--------|
 | **P2** | [features/search-recall-and-enrichment.md](features/search-recall-and-enrichment.md) | Search recall, scoring, output enrichment | Implemented |
 | **P3** | [features/search-cluster-output-and-evaluation.md](features/search-cluster-output-and-evaluation.md) | Search cluster output, auto-eval, dim comparison | Implemented |
-| **P3** | [features/embedding-upgrade-and-search-migration.md](features/embedding-upgrade-and-search-migration.md) | Fix embed bug, dim eval, SEARCH clause, quantization | Active |
+| **P3** | ~~embedding-upgrade-and-search-migration~~ | Fix embed bug, dim eval, SEARCH clause, quantization | **Done** — dim stays 256, SEARCH migrated, quantization enabled |
 | **P4** | [gaps-compute-orchestration.md](features/gaps-compute-orchestration.md) | Compute session orchestration remaining gaps | Low priority — Python CLI covers basics |
 
 ### Pending plans (partially implemented)
