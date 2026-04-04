@@ -600,16 +600,22 @@ def _init_repl() -> dict[str, Any]:
                 k=k,
             )
         else:
-            node_label, emb_prop = index_meta
+            node_label, _emb_prop = index_meta
+            where_clauses = []
+            if post_where:
+                where_clauses.append("NOT (node)-[:DEPRECATED_IN]->(:DDVersion)")
+            where_str = (
+                ("\nWHERE " + " AND ".join(where_clauses)) if where_clauses else ""
+            )
             results = gc.query(
-                f"CALL () {{\n"
-                f"  SEARCH node:{node_label}\n"
-                f"  USING VECTOR INDEX {index}\n"
-                f"  WITH node, vector.similarity.cosine(node.{emb_prop}, $embedding) AS score\n"
-                "  ORDER BY score DESC\n"
-                "  LIMIT $k\n"
-                "}\n"
-                f"{post_where}"
+                f"CYPHER 25\n"
+                f"MATCH (node:{node_label})\n"
+                f"SEARCH node IN (\n"
+                f"  VECTOR INDEX {index}\n"
+                f"  FOR $embedding\n"
+                f"  LIMIT $k\n"
+                f") SCORE AS score"
+                f"{where_str}\n"
                 "RETURN [k IN keys(node) "
                 "WHERE NOT k ENDS WITH 'embedding' | [k, node[k]]] "
                 "AS properties, labels(node) AS labels, score "
@@ -630,13 +636,13 @@ def _init_repl() -> dict[str, Any]:
     def _search_wiki_chunks(embedding: list[float], k: int) -> list[dict[str, Any]]:
         """Wiki-specific search that enriches results with parent page context."""
         results = gc.query(
-            "CALL () {\n"
-            "  SEARCH node:WikiChunk\n"
-            "  USING VECTOR INDEX wiki_chunk_embedding\n"
-            "  WITH node, vector.similarity.cosine(node.embedding, $embedding) AS score\n"
-            "  ORDER BY score DESC\n"
+            "CYPHER 25\n"
+            "MATCH (node:WikiChunk)\n"
+            "SEARCH node IN (\n"
+            "  VECTOR INDEX wiki_chunk_embedding\n"
+            "  FOR $embedding\n"
             "  LIMIT $k\n"
-            "}\n"
+            ") SCORE AS score\n"
             "OPTIONAL MATCH (p:WikiPage)-[:HAS_CHUNK]->(node) "
             "OPTIONAL MATCH (wa:Document)-[:HAS_CHUNK]->(node) "
             "RETURN [k IN keys(node) "
@@ -669,13 +675,13 @@ def _init_repl() -> dict[str, Any]:
     def _search_code_chunks(embedding: list[float], k: int) -> list[dict[str, Any]]:
         """Code-specific search that enriches results with source file context."""
         results = gc.query(
-            "CALL () {\n"
-            "  SEARCH node:CodeChunk\n"
-            "  USING VECTOR INDEX code_chunk_embedding\n"
-            "  WITH node, vector.similarity.cosine(node.embedding, $embedding) AS score\n"
-            "  ORDER BY score DESC\n"
+            "CYPHER 25\n"
+            "MATCH (node:CodeChunk)\n"
+            "SEARCH node IN (\n"
+            "  VECTOR INDEX code_chunk_embedding\n"
+            "  FOR $embedding\n"
             "  LIMIT $k\n"
-            "}\n"
+            ") SCORE AS score\n"
             "OPTIONAL MATCH (sf:CodeFile)-[:HAS_CHUNK]->(node) "
             "RETURN [k IN keys(node) "
             "WHERE NOT k ENDS WITH 'embedding' | [k, node[k]]] "

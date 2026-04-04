@@ -448,9 +448,12 @@ class GraphSearchTool:
             embedding = self._embed_query(search_query)
 
             # --- Vector search ---
-            # node_category and ids filter are property-based → move inside SEARCH.
-            # DEPRECATED_IN and dd_clause are relationship-based → keep outside.
-            _search_where: list[str] = ["path.node_category = 'data'"]
+            # node_category, ids filter, and deprecated check are consolidated
+            # into where_clauses; dd_clause (relationship-based EXISTS) stays outside.
+            _search_where: list[str] = [
+                "path.node_category = 'data'",
+                "NOT (path)-[:DEPRECATED_IN]->(:DDVersion)",
+            ]
             params: dict[str, Any] = {
                 "embedding": embedding,
                 "k": min(max_results * 2, 500),
@@ -474,12 +477,13 @@ class GraphSearchTool:
                 node_alias="path",
                 score_alias="score",
             )
+            _dd_filter = (
+                f"WITH path, score\nWHERE true {dd_clause}" if dd_clause else ""
+            )
             vector_results = self._gc.query(
                 f"""
                 {_path_search_block}
-                WITH path, score
-                WHERE NOT (path)-[:DEPRECATED_IN]->(:DDVersion)
-                {dd_clause}
+                {_dd_filter}
                 RETURN path.id AS id, score
                 ORDER BY score DESC
                 LIMIT $vector_limit
@@ -1580,6 +1584,9 @@ class GraphClustersTool:
             )
             params["ids_filter"] = filter_list
 
+        # Score threshold consolidated into where_clauses
+        _cluster_where.append("score > 0.3")
+
         _cluster_search_block = build_vector_search(
             "cluster_embedding",
             "IMASSemanticCluster",
@@ -1591,8 +1598,6 @@ class GraphClustersTool:
         results = self._gc.query(
             f"""
             {_cluster_search_block}
-            WITH cluster, score
-            WHERE score > 0.3
             OPTIONAL MATCH (member:IMASNode)-[:IN_CLUSTER]->(cluster)
             WITH cluster, score, collect(DISTINCT member.id)[..50] AS paths
             RETURN cluster.id AS id, cluster.label AS label,

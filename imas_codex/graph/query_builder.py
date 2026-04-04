@@ -154,11 +154,9 @@ def graph_search(
         params["embedding"] = embedding
         params["k"] = limit
 
-        _label_val, emb_prop = VECTOR_INDEXES[index_name]
         search_block = build_vector_search(
             index_name,
             label,
-            embedding_property=emb_prop,
             where_clauses=where_conditions or None,
         )
         # Vector search as the base

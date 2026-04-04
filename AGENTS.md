@@ -586,18 +586,19 @@ semantic_search("COCOS sign conventions", index="wiki_chunk_embedding", k=5)
 semantic_search("plasma current measurement", index="facility_signal_desc_embedding", k=10)
 ```
 
-Combine vector similarity with link traversal using SEARCH clause:
+Combine vector similarity with link traversal using the Cypher 25 SEARCH clause:
 
 ```python
 results = query("""
-    CALL () {
-      SEARCH signal:FacilitySignal
-      USING VECTOR INDEX facility_signal_desc_embedding
-      WHERE signal.facility_id = $facility
-      WITH signal, vector.similarity.cosine(signal.embedding, $embedding) AS score
-      ORDER BY score DESC
+    CYPHER 25
+    MATCH (signal:FacilitySignal)
+    SEARCH signal IN (
+      VECTOR INDEX facility_signal_desc_embedding
+      FOR $embedding
       LIMIT 5
-    }
+    ) SCORE AS score
+    WHERE signal.facility_id = $facility
+    WITH signal, score
     MATCH (signal)-[:DATA_ACCESS]->(da:DataAccess)
     OPTIONAL MATCH (signal)-[:HAS_DATA_SOURCE_NODE]->(dn:SignalNode)
         <-[:SOURCE_PATH]-(m:IMASMapping)-[:TARGET_PATH]->(imas:IMASNode)
@@ -608,7 +609,8 @@ results = query("""
 ```
 
 Use `build_vector_search()` from `imas_codex.graph.vector_search` to generate
-SEARCH clauses programmatically with property pre-filtering.
+SEARCH clauses programmatically. All WHERE conditions are post-filters (in-index
+pre-filtering requires properties registered as additional vector index properties).
 
 **Key relationships for traversal:**
 

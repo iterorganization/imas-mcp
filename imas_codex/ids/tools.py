@@ -839,14 +839,14 @@ def compute_semantic_matches(
 
     _imas_search_where_str = " AND ".join(imas_search_where)
     imas_cypher = (
-        "CALL () {\n"
-        "  SEARCH n:IMASNode\n"
-        "  USING VECTOR INDEX imas_node_embedding\n"
-        f"  WHERE {_imas_search_where_str}\n"
-        "  WITH n, vector.similarity.cosine(n.embedding, $embedding) AS score\n"
-        "  ORDER BY score DESC\n"
+        "CYPHER 25\n"
+        "MATCH (n:IMASNode)\n"
+        "SEARCH n IN (\n"
+        "  VECTOR INDEX imas_node_embedding\n"
+        "  FOR $embedding\n"
         "  LIMIT $k\n"
-        "}\n"
+        ") SCORE AS score\n"
+        f"WHERE {_imas_search_where_str}\n"
         f"WITH n, score {dd_version_join}"
         "RETURN n.id AS id, n.documentation AS doc, score "
         "ORDER BY score DESC LIMIT $limit"
@@ -890,13 +890,13 @@ def compute_semantic_matches(
             if include_wiki:
                 try:
                     wiki_hits = tgc.query(
-                        "CALL () {\n"
-                        "  SEARCH c:WikiChunk\n"
-                        "  USING VECTOR INDEX wiki_chunk_embedding\n"
-                        "  WITH c, vector.similarity.cosine(c.embedding, $embedding) AS score\n"
-                        "  ORDER BY score DESC\n"
+                        "CYPHER 25\n"
+                        "MATCH (c:WikiChunk)\n"
+                        "SEARCH c IN (\n"
+                        "  VECTOR INDEX wiki_chunk_embedding\n"
+                        "  FOR $embedding\n"
                         "  LIMIT $k\n"
-                        "}\n"
+                        ") SCORE AS score\n"
                         "MATCH (p:WikiPage)-[:HAS_CHUNK]->(c) "
                         "RETURN p.title AS title, c.text AS text, score "
                         "ORDER BY score DESC LIMIT $limit",
@@ -923,13 +923,13 @@ def compute_semantic_matches(
             if include_code:
                 try:
                     code_hits = tgc.query(
-                        "CALL () {\n"
-                        "  SEARCH cc:CodeChunk\n"
-                        "  USING VECTOR INDEX code_chunk_embedding\n"
-                        "  WITH cc, vector.similarity.cosine(cc.embedding, $embedding) AS score\n"
-                        "  ORDER BY score DESC\n"
+                        "CYPHER 25\n"
+                        "MATCH (cc:CodeChunk)\n"
+                        "SEARCH cc IN (\n"
+                        "  VECTOR INDEX code_chunk_embedding\n"
+                        "  FOR $embedding\n"
                         "  LIMIT $k\n"
-                        "}\n"
+                        ") SCORE AS score\n"
                         "RETURN cc.source_file AS source_file, cc.function_name AS func, "
                         "cc.text AS text, score "
                         "ORDER BY score DESC LIMIT $limit",

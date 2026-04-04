@@ -326,15 +326,14 @@ def _search_with_config(
     try:
         vector_results = gc.query(
             """
-            CALL () {
-              SEARCH path:IMASNode
-              USING VECTOR INDEX imas_node_embedding
-              WHERE path.node_category = 'data'
-              WITH path, vector.similarity.cosine(path.embedding, $embedding) AS score
-              ORDER BY score DESC
+            CYPHER 25
+            MATCH (path:IMASNode)
+            SEARCH path IN (
+              VECTOR INDEX imas_node_embedding
+              FOR $embedding
               LIMIT $k
-            }
-            WHERE NOT (path)-[:DEPRECATED_IN]->(:DDVersion)
+            ) SCORE AS score
+            WHERE path.node_category = 'data' AND NOT (path)-[:DEPRECATED_IN]->(:DDVersion)
             RETURN path.id AS id, score
             ORDER BY score DESC
             LIMIT $vector_limit

@@ -9,27 +9,27 @@ class TestBuildVectorSearch:
     """Tests for build_vector_search()."""
 
     def test_basic_search_no_filters(self):
-        """Generates valid SEARCH clause without filters."""
+        """Generates valid Cypher 25 SEARCH clause without filters."""
         result = build_vector_search("imas_node_embedding", "IMASNode")
-        assert "SEARCH n:IMASNode" in result
-        assert "USING VECTOR INDEX imas_node_embedding" in result
-        assert "vector.similarity.cosine(n.embedding, $embedding)" in result
-        assert "ORDER BY score DESC" in result
+        assert "CYPHER 25" in result
+        assert "MATCH (n:IMASNode)" in result
+        assert "SEARCH n IN (" in result
+        assert "VECTOR INDEX imas_node_embedding" in result
+        assert "FOR $embedding" in result
         assert "LIMIT $k" in result
-        assert "CALL () {" in result
-        assert result.endswith("}")
+        assert ") SCORE AS score" in result
         # No WHERE clause
         assert "WHERE" not in result
 
     def test_single_where_clause(self):
-        """Single property filter is included in SEARCH WHERE."""
+        """Single property filter is included as post-filter WHERE."""
         result = build_vector_search(
             "facility_signal_desc_embedding",
             "FacilitySignal",
             where_clauses=["n.facility_id = $facility"],
         )
         assert "WHERE n.facility_id = $facility" in result
-        assert "SEARCH n:FacilitySignal" in result
+        assert "MATCH (n:FacilitySignal)" in result
 
     def test_multiple_where_clauses(self):
         """Multiple filters are AND-joined."""
@@ -53,9 +53,9 @@ class TestBuildVectorSearch:
             node_alias="chunk",
             score_alias="sim",
         )
-        assert "SEARCH chunk:WikiChunk" in result
-        assert "vector.similarity.cosine(chunk.embedding, $embedding) AS sim" in result
-        assert "ORDER BY sim DESC" in result
+        assert "MATCH (chunk:WikiChunk)" in result
+        assert "SEARCH chunk IN (" in result
+        assert ") SCORE AS sim" in result
 
     def test_custom_k_expression(self):
         """Custom k expression (literal or parameter)."""
@@ -72,16 +72,7 @@ class TestBuildVectorSearch:
             "CodeChunk",
             embedding_param="$query_vec",
         )
-        assert "vector.similarity.cosine(n.embedding, $query_vec)" in result
-
-    def test_custom_embedding_property(self):
-        """Non-default embedding property name."""
-        result = build_vector_search(
-            "cluster_embedding",
-            "IMASSemanticCluster",
-            embedding_property="label_embedding",
-        )
-        assert "vector.similarity.cosine(n.label_embedding, $embedding)" in result
+        assert "FOR $query_vec" in result
 
     def test_empty_where_clauses(self):
         """Empty list of where clauses produces no WHERE."""
@@ -95,15 +86,29 @@ class TestBuildVectorSearch:
         search = build_vector_search("imas_node_embedding", "IMASNode")
         full_query = f"{search}\nRETURN n.id AS id, score"
         assert "RETURN n.id AS id, score" in full_query
-        assert "CALL () {" in full_query
+        assert "CYPHER 25" in full_query
+
+    def test_relationship_filters_in_where(self):
+        """Relationship pattern predicates are valid in where_clauses."""
+        result = build_vector_search(
+            "imas_node_embedding",
+            "IMASNode",
+            where_clauses=[
+                "n.node_category = 'data'",
+                "NOT (n)-[:DEPRECATED_IN]->(:DDVersion)",
+            ],
+        )
+        assert (
+            "WHERE n.node_category = 'data' AND NOT (n)-[:DEPRECATED_IN]->(:DDVersion)"
+            in result
+        )
 
     def test_all_vector_indexes_from_schema(self):
         """Verify builder works with all known vector indexes."""
-        # VECTOR_INDEXES values are (label, property) tuples
         from imas_codex.graph.schema_context_data import VECTOR_INDEXES
 
-        for index_name, (label, prop) in VECTOR_INDEXES.items():
-            result = build_vector_search(index_name, label, embedding_property=prop)
-            assert f"SEARCH n:{label}" in result
-            assert f"USING VECTOR INDEX {index_name}" in result
-            assert f"vector.similarity.cosine(n.{prop}, $embedding)" in result
+        for index_name, (label, _prop) in VECTOR_INDEXES.items():
+            result = build_vector_search(index_name, label)
+            assert f"MATCH (n:{label})" in result
+            assert f"VECTOR INDEX {index_name}" in result
+            assert "CYPHER 25" in result

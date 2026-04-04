@@ -143,16 +143,16 @@ def _find_signals_semantic(
         pre_filter_parts.append("s.checked = $has_data")
         params["has_data"] = has_data
 
+    # Facility relationship filter consolidated into where_clauses
+    pre_filter_parts.append("(s)-[:AT_FACILITY]->(:Facility {id: $facility})")
+
     search_block = build_vector_search(
         "facility_signal_desc_embedding",
         "FacilitySignal",
-        where_clauses=pre_filter_parts or None,
+        where_clauses=pre_filter_parts,
         node_alias="s",
         score_alias="score",
     )
-
-    # Post-filter: relationship-based, must remain outside SEARCH
-    post_where = "WHERE (s)-[:AT_FACILITY]->(:Facility {id: $facility})\n"
 
     access_clause = ""
     access_return = ""
@@ -164,7 +164,6 @@ def _find_signals_semantic(
 
     cypher = (
         f"{search_block}\n"
-        f"{post_where}"
         f"{access_clause}"
         "RETURN s.id AS id, s.name AS name, s.diagnostic AS diagnostic, "
         "s.description AS description, s.physics_domain AS physics_domain, "
@@ -271,27 +270,23 @@ def _find_wiki_semantic(
     embedding = embed_fn(query)
     params: dict[str, Any] = {"k": k, "embedding": embedding}
 
-    # No property pre-filters: facility uses AT_FACILITY relationship,
-    # text CONTAINS is a substring match — both stay as post-filters.
+    # Build pre-filter conditions: both property and relationship filters
+    # go into where_clauses with the new builder (WHERE is after SEARCH).
+    where_filters: list[str] = []
+    if facility is not None:
+        where_filters.append("(c)-[:AT_FACILITY]->(:Facility {id: $facility})")
+        params["facility"] = facility
+    if text_contains is not None:
+        where_filters.append("toLower(c.text) CONTAINS toLower($text_kw)")
+        params["text_kw"] = text_contains
+
     search_block = build_vector_search(
         "wiki_chunk_embedding",
         "WikiChunk",
+        where_clauses=where_filters or None,
         node_alias="c",
         score_alias="score",
     )
-
-    # Build post-filter conditions on the vector search results
-    post_filters: list[str] = []
-    if facility is not None:
-        post_filters.append("(c)-[:AT_FACILITY]->(:Facility {id: $facility})")
-        params["facility"] = facility
-    if text_contains is not None:
-        post_filters.append("toLower(c.text) CONTAINS toLower($text_kw)")
-        params["text_kw"] = text_contains
-
-    post_where = ""
-    if post_filters:
-        post_where = "WHERE " + " AND ".join(post_filters) + "\n"
 
     # Page title filter is applied after the OPTIONAL MATCH join
     title_filter = ""
@@ -301,7 +296,6 @@ def _find_wiki_semantic(
 
     cypher = (
         f"{search_block}\n"
-        f"{post_where}"
         "OPTIONAL MATCH (p:WikiPage)-[:HAS_CHUNK]->(c)\n"
         f"{title_filter}"
         "RETURN c.text AS text, c.section AS section, "
@@ -403,6 +397,10 @@ def find_imas(
         pre_filter_parts.append("p.ids = $ids_filter")
         params["ids_filter"] = ids_filter
 
+    # Deprecated check consolidated into where_clauses
+    if not include_deprecated:
+        pre_filter_parts.append("NOT (p)-[:DEPRECATED_IN]->(:DDVersion)")
+
     search_block = build_vector_search(
         "imas_node_embedding",
         "IMASNode",
@@ -411,14 +409,8 @@ def find_imas(
         score_alias="score",
     )
 
-    # Post-filter: relationship-based deprecated check stays outside SEARCH
-    deprecated_filter = ""
-    if not include_deprecated:
-        deprecated_filter = "WHERE NOT (p)-[:DEPRECATED_IN]->(:DDVersion)\n"
-
     cypher = (
         f"{search_block}\n"
-        f"{deprecated_filter}"
         "OPTIONAL MATCH (p)-[:IN_CLUSTER]->(cl:IMASSemanticCluster) "
         "OPTIONAL MATCH (p)-[:HAS_UNIT]->(u:Unit) "
         "RETURN p.id AS id, p.name AS name, p.ids AS ids, "
@@ -579,14 +571,12 @@ def _find_data_nodes_semantic(
     """Semantic search branch for find_data_nodes."""
     embedding = embed_fn(query)
 
-    # Pre-filters: property-based, pushed into SEARCH block
+    # Pre-filters: property-based and relationship-based — all go into where_clauses.
     pre_filter_parts: list[str] = []
-    # Post-filters: relationship-based, must remain outside SEARCH
-    post_filter_parts: list[str] = []
     params: dict[str, Any] = {"k": limit, "embedding": embedding}
 
     if facility is not None:
-        post_filter_parts.append("(n)-[:AT_FACILITY]->(:Facility {id: $facility})")
+        pre_filter_parts.append("(n)-[:AT_FACILITY]->(:Facility {id: $facility})")
         params["facility"] = facility
     if data_source_name is not None:
         pre_filter_parts.append("n.data_source_name = $data_source_name")
@@ -606,13 +596,8 @@ def _find_data_nodes_semantic(
         score_alias="score",
     )
 
-    post_where = ""
-    if post_filter_parts:
-        post_where = "WHERE " + " AND ".join(post_filter_parts) + "\n"
-
     cypher = (
         f"{search_block}\n"
-        f"{post_where}"
         "RETURN n.id AS id, n.path AS path, n.data_source_name AS data_source_name, "
         "n.description AS description, n.unit AS unit, "
         "n.physics_domain AS physics_domain, n.node_type AS node_type, score "

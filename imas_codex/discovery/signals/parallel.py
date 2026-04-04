@@ -3505,13 +3505,13 @@ async def enrich_worker(
             with GraphClient() as gc:
                 results = gc.query(
                     """
-                    CALL () {
-                      SEARCH node:CodeChunk
-                      USING VECTOR INDEX code_chunk_embedding
-                      WITH node, vector.similarity.cosine(node.embedding, $embedding) AS score
-                      ORDER BY score DESC
+                    CYPHER 25
+                    MATCH (node:CodeChunk)
+                    SEARCH node IN (
+                      VECTOR INDEX code_chunk_embedding
+                      FOR $embedding
                       LIMIT 3
-                    }
+                    ) SCORE AS score
                     WHERE score >= $min_score
                     OPTIONAL MATCH (src)-[:HAS_CHUNK]->(node)
                     WHERE src.facility_id = $facility

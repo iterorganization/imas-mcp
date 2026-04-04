@@ -29,13 +29,13 @@ class GraphQueryBenchmarks:
         # Verify vector index is usable (skip if dimension mismatch from dump)
         try:
             self.gc.query(
-                "CALL () {\n"
-                "  SEARCH node:IMASNode\n"
-                "  USING VECTOR INDEX imas_node_embedding\n"
-                "  WITH node, vector.similarity.cosine(node.embedding, $embedding) AS score\n"
-                "  ORDER BY score DESC\n"
+                "CYPHER 25\n"
+                "MATCH (node:IMASNode)\n"
+                "SEARCH node IN (\n"
+                "  VECTOR INDEX imas_node_embedding\n"
+                "  FOR $embedding\n"
                 "  LIMIT 1\n"
-                "}\n"
+                ") SCORE AS score\n"
                 "RETURN node.id LIMIT 1",
                 embedding=self._embedding,
             )
@@ -51,13 +51,13 @@ class GraphQueryBenchmarks:
         if not self._vector_ok:
             raise NotImplementedError("Vector index not usable (dimension mismatch)")
         self.gc.query(
-            "CALL () {\n"
-            "  SEARCH node:IMASNode\n"
-            "  USING VECTOR INDEX imas_node_embedding\n"
-            "  WITH node, vector.similarity.cosine(node.embedding, $embedding) AS score\n"
-            "  ORDER BY score DESC\n"
+            "CYPHER 25\n"
+            "MATCH (node:IMASNode)\n"
+            "SEARCH node IN (\n"
+            "  VECTOR INDEX imas_node_embedding\n"
+            "  FOR $embedding\n"
             "  LIMIT $k\n"
-            "}\n"
+            ") SCORE AS score\n"
             "RETURN node.id AS id, score",
             k=10,
             embedding=self._embedding,

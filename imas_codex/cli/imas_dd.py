@@ -519,15 +519,12 @@ def imas_search(
     encoder = Encoder(config=config)
     embedding = encoder.embed_texts([query])[0].tolist()
 
-    # Build property-based pre-filters for SEARCH block
-    search_where: list[str] = ["node.node_category = 'data'"]
+    # Build all WHERE conditions as post-filters after SCORE AS score
+    all_where: list[str] = ["node.node_category = 'data'"]
     if ids:
-        search_where.append(f"node.id STARTS WITH '{ids}/'")
-
-    # Build relationship-based post-filters (cannot go inside SEARCH)
-    post_where = ""
+        all_where.append(f"node.id STARTS WITH '{ids}/'")
     if not include_deprecated:
-        post_where = "WHERE NOT (node)-[:DEPRECATED_IN]->(:DDVersion)"
+        all_where.append("NOT (node)-[:DEPRECATED_IN]->(:DDVersion)")
 
     # Build version filter using relationship-based INTRODUCED_IN
     dd_version_join = ""
@@ -542,21 +539,20 @@ def imas_search(
         extra_params["dd_version"] = dd_major
 
     search_block = (
-        "CALL () {\n"
-        "  SEARCH node:IMASNode\n"
-        "  USING VECTOR INDEX imas_node_embedding\n"
-        f"  WHERE {' AND '.join(search_where)}\n"
-        "  WITH node, vector.similarity.cosine(node.embedding, $embedding) AS score\n"
-        "  ORDER BY score DESC\n"
+        "CYPHER 25\n"
+        "MATCH (node:IMASNode)\n"
+        "SEARCH node IN (\n"
+        "  VECTOR INDEX imas_node_embedding\n"
+        "  FOR $embedding\n"
         "  LIMIT $search_k\n"
-        "}"
+        f") SCORE AS score\n"
+        f"WHERE {' AND '.join(all_where)}"
     )
 
     with GraphClient() as gc:
         results = gc.query(
             f"""
             {search_block}
-            {post_where}
             {dd_version_join}
             RETURN node.id AS path, score, node.unit AS unit, node.documentation AS doc
             LIMIT $limit
