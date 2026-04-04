@@ -1584,9 +1584,6 @@ class GraphClustersTool:
             )
             params["ids_filter"] = filter_list
 
-        # Score threshold consolidated into where_clauses
-        _cluster_where.append("score > 0.3")
-
         _cluster_search_block = build_vector_search(
             "cluster_embedding",
             "IMASSemanticCluster",
@@ -1595,9 +1592,12 @@ class GraphClustersTool:
             node_alias="cluster",
             score_alias="score",
         )
+        # Score threshold applied after SEARCH block to avoid Neo4j 2026
+        # query planner error (score alias not valid in SEARCH WHERE clause)
         results = self._gc.query(
             f"""
             {_cluster_search_block}
+            WITH cluster, score WHERE score > 0.3
             OPTIONAL MATCH (member:IMASNode)-[:IN_CLUSTER]->(cluster)
             WITH cluster, score, collect(DISTINCT member.id)[..50] AS paths
             RETURN cluster.id AS id, cluster.label AS label,
