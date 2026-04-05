@@ -16,7 +16,6 @@ from imas_codex.providers import MCPProvider
 from .base import BaseTool
 from .graph_search import (
     GraphClustersTool,
-    GraphExplainTool,
     GraphIdentifiersTool,
     GraphListTool,
     GraphOverviewTool,
@@ -54,7 +53,6 @@ class Tools(MCPProvider):
         self.identifiers_tool = GraphIdentifiersTool(graph_client)
         self.path_context_tool = GraphPathContextTool(graph_client)
         self.structure_tool = GraphStructureTool(graph_client)
-        self.explain_tool = GraphExplainTool(graph_client)
         self.version_tool = VersionTool(graph_client)
 
         self._tool_instances = [
@@ -66,7 +64,6 @@ class Tools(MCPProvider):
             self.identifiers_tool,
             self.path_context_tool,
             self.structure_tool,
-            self.explain_tool,
             self.version_tool,
         ]
 
@@ -157,10 +154,6 @@ class Tools(MCPProvider):
         """Delegate to path tool."""
         return await self.path_tool.fetch_error_fields(*args, **kwargs)
 
-    async def explain_concept(self, *args, **kwargs):
-        """Delegate to explain tool."""
-        return await self.explain_tool.explain_concept(*args, **kwargs)
-
 
 __all__ = [
     "BaseTool",
@@ -170,7 +163,6 @@ __all__ = [
     "GraphOverviewTool",
     "GraphClustersTool",
     "GraphIdentifiersTool",
-    "GraphExplainTool",
     "VersionTool",
     "Tools",
 ]
