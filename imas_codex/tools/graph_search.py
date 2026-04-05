@@ -1096,16 +1096,7 @@ class GraphOverviewTool:
         semantic_scores: dict[str, float] = {}
         if query:
             try:
-                from imas_codex.embeddings.config import EncoderConfig
-                from imas_codex.embeddings.encoder import Encoder
-                from imas_codex.settings import get_embedding_model
-
-                encoder = Encoder(
-                    config=EncoderConfig(
-                        model_name=get_embedding_model(),
-                        normalize_embeddings=True,
-                    )
-                )
+                encoder = _get_encoder()
                 query_vec = encoder.embed_texts([query])[0].tolist()
                 sem_results = self._gc.query(
                     """

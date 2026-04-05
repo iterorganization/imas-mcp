@@ -1309,13 +1309,13 @@ def format_structure_report(result: dict[str, Any]) -> str:
         for c in cocos:
             parts.append(f"  - `{c['path']}` ({c['label']})")
 
-    lifecycle = result.get("lifecycle_distribution", {})
+    lifecycle = result.get("lifecycle_distribution", [])
     if lifecycle:
         parts.append("\n### Lifecycle Status")
         parts.append("| Status | Count |")
         parts.append("| --- | --- |")
-        for status, count in sorted(lifecycle.items()):
-            parts.append(f"| {status} | {count} |")
+        for entry in sorted(lifecycle, key=lambda e: e.get("status", "")):
+            parts.append(f"| {entry['status']} | {entry['count']} |")
 
     return "\n".join(parts)
 
@@ -1629,7 +1629,12 @@ def format_dd_units_report(result: Any) -> str:
         parts.append("✅ No unit inconsistencies found.")
         return "\n".join(parts)
 
-    for cluster_data in clusters:
+    # Cap output to avoid multi-MB responses when unfiltered
+    max_clusters = 25
+    shown_clusters = clusters[:max_clusters]
+    remaining_clusters = len(clusters) - len(shown_clusters)
+
+    for cluster_data in shown_clusters:
         cluster_name = cluster_data.get("cluster", "Unknown")
         items = cluster_data.get("inconsistencies", [])
         parts.append(
@@ -1639,7 +1644,8 @@ def format_dd_units_report(result: Any) -> str:
         parts.append("| Path 1 | Unit 1 | Path 2 | Unit 2 | Severity |")
         parts.append("|--------|--------|--------|--------|----------|")
 
-        for item in items:
+        # Show up to 20 items per cluster
+        for item in items[:20]:
             p1 = f"`{item['path1']}`"
             u1 = item.get("unit1", "?")
             p2 = f"`{item['path2']}`"
@@ -1648,7 +1654,16 @@ def format_dd_units_report(result: Any) -> str:
             sev_icon = "⚠️" if sev == "incompatible" else "ℹ️"
             parts.append(f"| {p1} | {u1} | {p2} | {u2} | {sev_icon} {sev} |")
 
+        if len(items) > 20:
+            parts.append(f"\n... and {len(items) - 20} more in this cluster")
+
         parts.append("")
+
+    if remaining_clusters > 0:
+        parts.append(
+            f"\n... and {remaining_clusters} more cluster(s) not shown. "
+            "Use `ids_filter` or `severity` to narrow results."
+        )
 
     return "\n".join(parts)
 
