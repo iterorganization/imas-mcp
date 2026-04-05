@@ -20,6 +20,7 @@ Gap documents consolidate remaining work from completed implementation phases. T
 |----------|------|-------|--------|
 | **P2** | [features/search-recall-and-enrichment.md](features/search-recall-and-enrichment.md) | Search recall, scoring, output enrichment | Implemented |
 | **P2** | [features/dd-server-capability-gaps.md](features/dd-server-capability-gaps.md) | DD server capability gaps from A/B testing — COCOS fields, lifecycle filter, migration summary | Active |
+| **P2** | [features/dd-opportunity-gap-tools.md](features/dd-opportunity-gap-tools.md) | New DD analytics tools: changelog, coverage, unit consistency, change impact | Active |
 | **P3** | [features/search-cluster-output-and-evaluation.md](features/search-cluster-output-and-evaluation.md) | Search cluster output, auto-eval, dim comparison | Implemented |
 | **P3** | ~~embedding-upgrade-and-search-migration~~ | Fix embed bug, dim eval, SEARCH clause, quantization | **Done** — dim stays 256, SEARCH migrated, quantization enabled |
 | **P4** | [gaps-compute-orchestration.md](features/gaps-compute-orchestration.md) | Compute session orchestration remaining gaps | Low priority — Python CLI covers basics |
