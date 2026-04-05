@@ -2950,6 +2950,7 @@ class AgentsServer:
             ids_filter: str | None = None,
             from_version: str | None = None,
             to_version: str | None = None,
+            follow_rename_chains: bool = False,
         ) -> str:
             """Get version change history for specific IMAS paths, or list all changes of a specific type across the Data Dictionary.
 
@@ -2967,10 +2968,13 @@ class AgentsServer:
                 ids_filter: Limit results to a specific IDS (e.g. 'equilibrium').
                 from_version: Start of version range filter (exclusive).
                 to_version: End of version range filter (inclusive).
+                follow_rename_chains: When True, traverse RENAMED_TO graph edges to return
+                    full multi-hop rename lineages alongside the normal version context output.
 
             Returns:
                 Formatted text report listing notable changes per path across DD versions,
                 or a bulk change listing when change_type_filter is used without paths.
+                When follow_rename_chains is True, a '### Rename Chains' section is appended.
             """
             tools = _get_imas_tools()
             result = _run_async(
@@ -2980,6 +2984,7 @@ class AgentsServer:
                     ids_filter=ids_filter,
                     from_version=from_version,
                     to_version=to_version,
+                    follow_rename_chains=follow_rename_chains,
                 )
             )
             return _format_version_context_report(result)
