@@ -2713,7 +2713,7 @@ async def epoch_worker(
                                 state.facility,
                                 sub_name,
                                 epoch_versions,
-                                [],
+                                epochs,
                             )
                     logger.info(
                         "Seeded %d epoch versions across %d subtrees of %s",
@@ -2727,7 +2727,7 @@ async def epoch_worker(
                         state.facility,
                         data_source_name,
                         epoch_versions,
-                        [],
+                        epochs,
                     )
 
                 if on_progress:

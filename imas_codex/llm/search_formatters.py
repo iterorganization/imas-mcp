@@ -587,9 +587,8 @@ def format_imas_report(
 
             clusters_list = p.get("clusters") or []
             if clusters_list:
-                parts.append(
-                    f"  Clusters: {', '.join(f'"{c}"' for c in clusters_list)}"
-                )
+                cluster_str = ", ".join(f'"{c}"' for c in clusters_list)
+                parts.append(f"  Clusters: {cluster_str}")
 
             coords = p.get("coordinates") or []
             if coords:
@@ -622,9 +621,8 @@ def format_imas_report(
                     parts.append(f"  Signals: {', '.join(facility_sigs)}")
                 wiki_mentions = xref.get("wiki_mentions") or []
                 if wiki_mentions:
-                    parts.append(
-                        f"  Wiki: mentioned in {', '.join(f'"{s}"' for s in wiki_mentions)}"
-                    )
+                    wiki_str = ", ".join(f'"{s}"' for s in wiki_mentions)
+                    parts.append(f"  Wiki: mentioned in {wiki_str}")
                 code_files = xref.get("code_files") or []
                 if code_files:
                     parts.append(f"  Code: {', '.join(code_files)}")
@@ -862,7 +860,8 @@ def format_fetch_paths_report(result: Any) -> str:
             parts.append(f"  Coordinates: {', '.join(node.coordinates)}")
         labels = _stringify_cluster_labels(getattr(node, "cluster_labels", None))
         if labels:
-            parts.append(f"  Clusters: {', '.join(f'"{c}"' for c in labels)}")
+            label_str = ", ".join(f'"{c}"' for c in labels)
+            parts.append(f"  Clusters: {label_str}")
         parts.append("")
 
     for nf in _get_value(result, "not_found_paths", []) or []:
@@ -1100,6 +1099,15 @@ def format_search_imas_report(result: Any, cluster_result: Any | None = None) ->
                 parts.append(f"  Introduced: DD {hit.introduced_after_version}")
             if hit.keywords:
                 parts.append(f"  Keywords: {', '.join(hit.keywords)}")
+            if hit.cluster_labels:
+                parts.append(f"  Clusters: {', '.join(hit.cluster_labels)}")
+            if hit.see_also:
+                shown = hit.see_also[:3]
+                remaining = len(hit.see_also) - 3
+                see_str = ", ".join(shown)
+                if remaining > 0:
+                    see_str += f" (+{remaining} more)"
+                parts.append(f"  See also: {see_str}")
 
             # Facility cross-references
             xref = hit.facility_xrefs or {}
@@ -1112,9 +1120,8 @@ def format_search_imas_report(result: Any, cluster_result: Any | None = None) ->
                     parts.append(f"  Signals: {', '.join(sigs)}")
                 wiki = xref.get("wiki_mentions") or []
                 if wiki:
-                    parts.append(
-                        f"  Wiki: mentioned in {', '.join(f'"{s}"' for s in wiki)}"
-                    )
+                    wiki_str = ", ".join(f'"{s}"' for s in wiki)
+                    parts.append(f"  Wiki: mentioned in {wiki_str}")
                 code = xref.get("code_files") or []
                 if code:
                     parts.append(f"  Code: {', '.join(code)}")

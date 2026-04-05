@@ -615,13 +615,15 @@ def persist_mapping_result(
                 ev.supports_mapping = false,
                 ev.confidence = 0.0,
                 ev.source_node_id = $sg_id,
-                ev.url = $target_id
+                ev.url = $target_id,
+                ev.severity = $severity
             MERGE (sg)-[:HAS_EVIDENCE]->(ev)
             """,
             ev_id=ev_id,
             sg_id=esc.source_id,
             target_id=esc.target_id,
             reason=esc.reason,
+            severity=esc.severity.value,
         )
 
     # 6. Persist unmapped signal dispositions

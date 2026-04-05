@@ -2759,6 +2759,8 @@ classes:
         description: URL or path to evidence source (wiki page, code file, etc.)
       source_node_id:
         description: ID of source graph node (WikiChunk, CodeChunk, SignalNode)
+      severity:
+        description: Severity level for escalation evidence (warning, error, etc.)
       created_at:
         description: When this evidence was created
         range: datetime

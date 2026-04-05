@@ -209,6 +209,17 @@ enums:
             Thomson scattering particle measurements
           related_domains: transport, auxiliary_heating, edge_plasma_physics
 
+      plasma_measurement_diagnostics:
+        description: Plasma measurement diagnostic systems covering multiple measurement techniques
+        meaning: imas:plasma_measurement_diagnostics
+        annotations:
+          category: diagnostics
+          characteristics: >-
+            Combined plasma diagnostics,
+            Multi-technique measurement systems,
+            Integrated plasma monitoring
+          related_domains: particle_measurement_diagnostics, electromagnetic_wave_diagnostics, radiation_measurement_diagnostics
+
       electromagnetic_wave_diagnostics:
         description: Electromagnetic wave and field diagnostic systems
         meaning: imas:electromagnetic_wave_diagnostics

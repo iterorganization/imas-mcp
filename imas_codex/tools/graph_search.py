@@ -6,6 +6,7 @@ GraphClient queries against Neo4j vector indexes and Cypher traversals.
 
 import json
 import logging
+import re
 from typing import Any, Literal
 
 from fastmcp import Context
@@ -34,6 +35,31 @@ from imas_codex.search.search_strategy import SearchHit
 from imas_codex.tools.utils import normalize_ids_filter, validate_query
 
 logger = logging.getLogger(__name__)
+
+_PHYSICS_SHORT_TERMS = frozenset(
+    {
+        "q",
+        "ip",
+        "b0",
+        "te",
+        "ne",
+        "ti",
+        "ni",
+        "psi",
+        "r",
+        "z",
+        "phi",
+        "j",
+        "e",
+        "b",
+        "v",
+        "p",
+        "rho",
+        "li",
+        "wi",
+        "we",
+    }
+)
 
 # Module-level encoder singleton — avoids re-loading the model per query
 _encoder: Any = None
@@ -105,6 +131,25 @@ def _dd_version_clause(
     )
 
 
+def _lifecycle_clause(
+    alias: str = "p",
+    lifecycle_filter: str | None = None,
+    params: dict[str, Any] | None = None,
+) -> str:
+    """Return a Cypher WHERE fragment for lifecycle status filtering.
+
+    ``"active"`` matches both ``lifecycle_status = 'active'`` and NULL
+    (the default for most DD paths). Other values match exactly.
+    """
+    if not lifecycle_filter:
+        return ""
+    if lifecycle_filter == "active":
+        return f"AND (coalesce({alias}.lifecycle_status, 'active') = 'active')"
+    if params is not None:
+        params["lifecycle"] = lifecycle_filter
+    return f"AND {alias}.lifecycle_status = $lifecycle"
+
+
 class GraphSearchTool:
     """Graph-backed semantic search for IMAS paths."""
 
@@ -158,110 +203,137 @@ class GraphSearchTool:
             )
 
         normalized_filter = normalize_ids_filter(ids_filter)
-        embedding = self._embed_query(query)
-
-        # --- Vector search ---
-        filter_clause = ""
-        params: dict[str, Any] = {
-            "embedding": embedding,
-            "k": min(max_results * 5, 500),
-            "vector_limit": min(max_results * 3, 150),
-        }
-        if normalized_filter:
-            filter_clause = "AND path.ids IN $ids_filter"
-            params["ids_filter"] = (
-                normalized_filter
-                if isinstance(normalized_filter, list)
-                else [normalized_filter]
-            )
-
-        dd_clause = _dd_version_clause("path", dd_version, params)
-
-        domain_clause = ""
-        if physics_domain:
-            domain_clause = "AND path.physics_domain = $domain"
-            params["domain"] = physics_domain
-
-        lifecycle_vec_clause = ""
-        if lifecycle_filter:
-            lifecycle_vec_clause = "AND path.lifecycle_status = $lifecycle"
-            params["lifecycle"] = lifecycle_filter
-
-        vector_results = self._gc.query(
-            f"""
-            CALL db.index.vector.queryNodes('imas_node_embedding', $k, $embedding)
-            YIELD node AS path, score
-            WHERE NOT (path)-[:DEPRECATED_IN]->(:DDVersion)
-              AND path.node_category = 'data'
-            {filter_clause}
-            {dd_clause}
-            {domain_clause}
-            {lifecycle_vec_clause}
-            RETURN path.id AS id, score
-            ORDER BY score DESC
-            LIMIT $vector_limit
-            """,
-            **params,
-        )
 
         scores: dict[str, float] = {}
-        for r in vector_results or []:
-            pid = r["id"]
-            scores[pid] = round(r["score"], 4)
 
-        # --- Text search ---
-        text_results = _text_search_imas_paths(
-            self._gc,
-            query,
-            min(max_results * 3, 150),
-            normalized_filter,
-            dd_version=dd_version,
-        )
-        for r in text_results:
-            pid = r["id"]
-            text_score = round(r["score"], 4)
-            if pid in scores:
-                scores[pid] = round(max(scores[pid], text_score) + 0.05, 4)
-            else:
-                scores[pid] = text_score
+        # Route path-like queries to structural search (skip vector+text)
+        if "/" in query and " " not in query:
+            path_results = _path_search(
+                self._gc,
+                query,
+                max_results,
+                normalized_filter,
+                dd_version=dd_version,
+            )
+            for r in path_results:
+                scores[r["id"]] = r["score"]
 
-        # --- Path segment boost ---
-        # Boost paths whose segments match query words for better relevance
-        query_words = [w.lower() for w in query.split() if len(w) > 2]
-        if query_words:
-            for pid in scores:
-                segments = pid.lower().split("/")
-                match_count = sum(
-                    1 for w in query_words if any(w in seg for seg in segments)
+        if not scores:
+            embedding = self._embed_query(query)
+
+            # --- Vector search ---
+            filter_clause = ""
+            params: dict[str, Any] = {
+                "embedding": embedding,
+                "k": min(max_results * 5, 500),
+                "vector_limit": min(max_results * 3, 150),
+            }
+            if normalized_filter:
+                filter_clause = "AND path.ids IN $ids_filter"
+                params["ids_filter"] = (
+                    normalized_filter
+                    if isinstance(normalized_filter, list)
+                    else [normalized_filter]
                 )
-                if match_count > 0:
-                    scores[pid] = round(scores[pid] + 0.03 * match_count, 4)
 
-        # --- Physics domain post-filter for text search results ---
-        if physics_domain:
-            domain_check = self._gc.query(
-                "UNWIND $ids AS pid "
-                "MATCH (p:IMASNode {id: pid}) "
-                "WHERE p.physics_domain = $domain "
-                "RETURN p.id AS id",
-                ids=list(scores.keys()),
-                domain=physics_domain,
-            )
-            valid_ids = {r["id"] for r in domain_check}
-            scores = {pid: s for pid, s in scores.items() if pid in valid_ids}
+            dd_clause = _dd_version_clause("path", dd_version, params)
 
-        # --- Lifecycle post-filter for text search results ---
-        if lifecycle_filter:
-            lifecycle_check = self._gc.query(
-                "UNWIND $ids AS pid "
-                "MATCH (p:IMASNode {id: pid}) "
-                "WHERE p.lifecycle_status = $lifecycle "
-                "RETURN p.id AS id",
-                ids=list(scores.keys()),
-                lifecycle=lifecycle_filter,
+            domain_clause = ""
+            if physics_domain:
+                domain_clause = "AND path.physics_domain = $domain"
+                params["domain"] = physics_domain
+
+            lifecycle_vec_clause = _lifecycle_clause("path", lifecycle_filter, params)
+
+            vector_results = self._gc.query(
+                f"""
+                CALL db.index.vector.queryNodes('imas_node_embedding', $k, $embedding)
+                YIELD node AS path, score
+                WHERE NOT (path)-[:DEPRECATED_IN]->(:DDVersion)
+                  AND path.node_category = 'data'
+                {filter_clause}
+                {dd_clause}
+                {domain_clause}
+                {lifecycle_vec_clause}
+                RETURN path.id AS id, score
+                ORDER BY score DESC
+                LIMIT $vector_limit
+                """,
+                **params,
             )
-            valid_lifecycle_ids = {r["id"] for r in lifecycle_check}
-            scores = {pid: s for pid, s in scores.items() if pid in valid_lifecycle_ids}
+
+            for r in vector_results or []:
+                pid = r["id"]
+                scores[pid] = round(r["score"], 4)
+
+            # --- Text search ---
+            text_results = _text_search_imas_paths(
+                self._gc,
+                query,
+                min(max_results * 3, 150),
+                normalized_filter,
+                dd_version=dd_version,
+            )
+            for r in text_results:
+                pid = r["id"]
+                text_score = round(r["score"], 4)
+                if pid in scores:
+                    scores[pid] = round(max(scores[pid], text_score) + 0.05, 4)
+                else:
+                    scores[pid] = text_score
+
+            # --- Path segment boost ---
+            # Boost paths whose segments match query words for better relevance
+            query_words = [
+                w.lower()
+                for w in query.split()
+                if len(w) > 2 or w.lower() in _PHYSICS_SHORT_TERMS
+            ]
+            if query_words:
+                for pid in scores:
+                    segments = pid.lower().split("/")
+                    match_count = sum(
+                        1 for w in query_words if any(w in seg for seg in segments)
+                    )
+                    if match_count > 0:
+                        scores[pid] = round(scores[pid] + 0.03 * match_count, 4)
+
+            # --- Physics domain post-filter for text search results ---
+            if physics_domain:
+                domain_check = self._gc.query(
+                    "UNWIND $ids AS pid "
+                    "MATCH (p:IMASNode {id: pid}) "
+                    "WHERE p.physics_domain = $domain "
+                    "RETURN p.id AS id",
+                    ids=list(scores.keys()),
+                    domain=physics_domain,
+                )
+                valid_ids = {r["id"] for r in domain_check}
+                scores = {pid: s for pid, s in scores.items() if pid in valid_ids}
+
+            # --- Lifecycle post-filter for text search results ---
+            if lifecycle_filter:
+                if lifecycle_filter == "active":
+                    lifecycle_check = self._gc.query(
+                        "UNWIND $ids AS pid "
+                        "MATCH (p:IMASNode {id: pid}) "
+                        "WHERE coalesce(p.lifecycle_status, 'active') = 'active' "
+                        "RETURN p.id AS id",
+                        ids=list(scores.keys()),
+                    )
+                else:
+                    lifecycle_check = self._gc.query(
+                        "UNWIND $ids AS pid "
+                        "MATCH (p:IMASNode {id: pid}) "
+                        "WHERE p.lifecycle_status = $lifecycle "
+                        "RETURN p.id AS id",
+                        ids=list(scores.keys()),
+                        lifecycle=lifecycle_filter,
+                    )
+                valid_lifecycle_ids = {r["id"] for r in lifecycle_check}
+                scores = {
+                    pid: s for pid, s in scores.items() if pid in valid_lifecycle_ids
+                }
 
         # Rank and limit
         sorted_ids = sorted(scores, key=lambda pid: scores[pid], reverse=True)[
@@ -389,7 +461,7 @@ class GraphSearchTool:
     def _embed_query(self, query: str) -> list[float]:
         """Embed query text using the module-level Encoder singleton."""
         encoder = _get_encoder()
-        return encoder.embed_texts([query])[0].tolist()
+        return encoder.embed_texts([query], prompt_name="query")[0].tolist()
 
 
 class GraphPathTool:
@@ -830,10 +902,7 @@ class GraphListTool:
                 node_type_clause = "AND p.node_type = $node_type"
                 dd_params["node_type"] = node_type
 
-            lifecycle_clause = ""
-            if lifecycle_filter:
-                lifecycle_clause = "AND p.lifecycle_status = $lifecycle"
-                dd_params["lifecycle"] = lifecycle_filter
+            lifecycle_clause = _lifecycle_clause("p", lifecycle_filter, dd_params)
 
             include_metadata = response_profile != "minimal"
 
@@ -1259,7 +1328,9 @@ class GraphClustersTool:
 
         scope_filter = "AND cluster.scope = $scope" if scope else ""
         ids_filter_clause = ""
-        params: dict[str, Any] = {"embedding": embedding, "k": 10}
+        # Increase k when ids_filter narrows results, to compensate for post-retrieval filtering
+        base_k = 10
+        params: dict[str, Any] = {"embedding": embedding, "k": base_k}
         if scope:
             params["scope"] = scope
         if ids_filter:
@@ -1268,6 +1339,9 @@ class GraphClustersTool:
                 "AND any(ids_name IN cluster.ids_names WHERE ids_name IN $ids_filter)"
             )
             params["ids_filter"] = filter_list
+            params["k"] = (
+                base_k * 3
+            )  # Fetch more candidates to compensate for filtering
 
         results = self._gc.query(
             f"""
@@ -1364,7 +1438,7 @@ class GraphClustersTool:
     def _embed_query(self, query: str) -> list[float]:
         """Embed query text using the module-level Encoder singleton."""
         encoder = _get_encoder()
-        return encoder.embed_texts([query])[0].tolist()
+        return encoder.embed_texts([query], prompt_name="query")[0].tolist()
 
 
 class GraphIdentifiersTool:
@@ -2052,6 +2126,135 @@ def _leaf_data_type_clause(alias: str) -> str:
     return f"{alias}.data_type IS NOT NULL AND NOT ({alias}.data_type IN {_structure_type_list()})"
 
 
+def _path_search(
+    gc: GraphClient,
+    query: str,
+    max_results: int,
+    ids_filter: str | list[str] | None,
+    *,
+    dd_version: int | None = None,
+) -> list[dict[str, Any]]:
+    """Search by path structure — exact, suffix, and substring matching.
+
+    Used for queries that look like IMAS paths (contain '/').
+    Returns results with scores in [0, 1] range.
+    """
+    from imas_codex.tools.query_analysis import strip_accessor_suffix
+
+    query_lower = query.lower().strip()
+    params: dict[str, Any] = {"search_query": query_lower, "limit": max_results}
+    dd_params: dict[str, Any] = {}
+    dd_clause = _dd_version_clause("p", dd_version, dd_params)
+    params.update(dd_params)
+
+    ids_clause = ""
+    if ids_filter:
+        filter_list = ids_filter if isinstance(ids_filter, list) else [ids_filter]
+        ids_clause = "AND p.ids IN $ids_filter"
+        params["ids_filter"] = filter_list
+
+    results: dict[str, float] = {}
+
+    exact = gc.query(
+        f"""
+        MATCH (p:IMASNode)
+        WHERE toLower(p.id) = $search_query
+          AND p.node_category = 'data'
+          {ids_clause} {dd_clause}
+        RETURN p.id AS id, 1.0 AS score
+        """,
+        **params,
+    )
+    for r in exact or []:
+        results[r["id"]] = 1.0
+
+    suffix = gc.query(
+        f"""
+        MATCH (p:IMASNode)
+        WHERE p.node_category = 'data'
+          AND toLower(p.id) ENDS WITH $search_query
+          {ids_clause} {dd_clause}
+        RETURN p.id AS id, 0.95 AS score
+        LIMIT $limit
+        """,
+        **params,
+    )
+    for r in suffix or []:
+        if r["id"] not in results:
+            results[r["id"]] = r["score"]
+
+    if len(results) < max_results:
+        contains = gc.query(
+            f"""
+            MATCH (p:IMASNode)
+            WHERE p.node_category = 'data'
+              AND toLower(p.id) CONTAINS $search_query
+              {ids_clause} {dd_clause}
+            RETURN p.id AS id, 0.80 AS score
+            LIMIT $limit
+            """,
+            **params,
+        )
+        for r in contains or []:
+            if r["id"] not in results:
+                results[r["id"]] = r["score"]
+
+    stripped = strip_accessor_suffix(query_lower)
+    if stripped != query_lower and len(results) < max_results:
+        params["stripped"] = stripped
+        accessor_match = gc.query(
+            f"""
+            MATCH (p:IMASNode)
+            WHERE p.node_category = 'data'
+              AND toLower(p.id) CONTAINS $stripped
+              {ids_clause} {dd_clause}
+            RETURN p.id AS id, 0.75 AS score
+            LIMIT $limit
+            """,
+            **params,
+        )
+        for r in accessor_match or []:
+            if r["id"] not in results:
+                results[r["id"]] = r["score"]
+
+    sorted_results = sorted(results.items(), key=lambda x: x[1], reverse=True)
+    return [{"id": pid, "score": score} for pid, score in sorted_results[:max_results]]
+
+
+_LUCENE_SPECIAL_RE = re.compile(r'([+\-&|!(){}[\]^"~*?:\\/])')
+
+
+def _escape_lucene(term: str) -> str:
+    """Escape Lucene special characters in a search term."""
+    return _LUCENE_SPECIAL_RE.sub(r"\\\1", term)
+
+
+def _build_lucene_query(query: str) -> str:
+    """Build a Lucene query with field boosting and fuzzy matching."""
+    if not query or not query.strip():
+        return ""
+    terms = query.split()
+    parts = []
+    for term in terms:
+        escaped = _escape_lucene(term)
+        parts.append(
+            f"(description:{escaped}^3 OR name:{escaped}^2 "
+            f"OR documentation:{escaped} OR keywords:{escaped}^2)"
+        )
+    base = " AND ".join(parts)
+    fuzzy_terms = []
+    for t in terms:
+        escaped = _escape_lucene(t)
+        if len(t) >= 7:
+            fuzzy_terms.append(f"{escaped}~2")
+        elif len(t) > 3:
+            fuzzy_terms.append(f"{escaped}~1")
+    if fuzzy_terms:
+        fuzzy = " OR ".join(fuzzy_terms)
+        return f"({base}) OR ({fuzzy})"
+    return base
+
+
 def _text_search_imas_paths(
     gc: GraphClient,
     query: str,
@@ -2066,7 +2269,11 @@ def _text_search_imas_paths(
     CONTAINS matching. Filters out generic metadata paths.
     """
     query_lower = query.lower()
-    query_words = [w for w in query_lower.split() if len(w) > 2]
+    query_words = [
+        w
+        for w in query_lower.split()
+        if len(w) > 2 or w.lower() in _PHYSICS_SHORT_TERMS
+    ]
 
     where_parts = ["NOT (p)-[:DEPRECATED_IN]->(:DDVersion)", "p.node_category = 'data'"]
     # Cap CONTAINS fallback to avoid full scans on large graphs
@@ -2117,7 +2324,7 @@ def _text_search_imas_paths(
             for r in ft_results:
                 pid = r["id"]
                 raw = r["score"] / max_score if max_score > 0 else 0.0
-                normalized.append({"id": pid, "score": max(raw, 0.7)})
+                normalized.append({"id": pid, "score": raw})
             return normalized
     except Exception:
         pass

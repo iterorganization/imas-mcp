@@ -3,13 +3,15 @@
 Tests verify that graph-backed tools correctly query Neo4j and return
 properly structured result models, matching the same interfaces as
 file-backed tools.
+
+Skipped on production graphs (uses fixture-specific assertions).
 """
 
 import pytest
 
 from tests.graph_mcp.conftest import CLUSTERS, IDS_NODES, IMAS_PATHS
 
-pytestmark = pytest.mark.graph_mcp
+pytestmark = [pytest.mark.graph_mcp, pytest.mark.fixture_only]
 
 
 # ── GraphPathTool tests ──────────────────────────────────────────────────

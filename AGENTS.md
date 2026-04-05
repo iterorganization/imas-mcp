@@ -817,6 +817,10 @@ When implementing a feature, check whether your changes contradict or extend exi
 - Never use `git add -A`
 - The `.env` file contains secrets — never expose or commit it
 
+### Naming
+
+**Never name files after implementation plans.** File names (tests, modules, scripts) must be understandable without knowledge of any plan document. Once a plan is deleted (per project rules), names like `test_capability_gaps` become meaningless. Instead, name files after what they test or implement: `test_dd_tool_features`, `test_lifecycle_filtering`, `test_migration_guide`.
+
 ## CLI Logs
 
 All discovery and DD CLI commands write DEBUG-level rotating logs to disk. The rich progress display suppresses most log output to keep the TUI clean, but full details are always available in the log files.
@@ -1008,6 +1012,44 @@ uv run imas-codex serve --transport stdio
 | DD-only container | `imas-codex serve --dd-only` | DD search and read only |
 | Public / read-only | `imas-codex serve --read-only` | Search and read only |
 | HPC / SLURM | `scripts/imas_codex_slurm_stdio.sh` | All (inside allocation) |
+
+## Service Availability
+
+**The Neo4j graph and embedding server are always running.** Both services run as SLURM jobs and should be assumed available at all times on all development machines (ITER, WSL). If a service is down, restart it — do not work around it.
+
+### Connecting from ITER
+
+On ITER login/compute nodes, connections resolve automatically via the graph profile system. `GraphClient()` (no arguments) discovers the SLURM compute node running Neo4j and connects directly. Never hardcode `bolt://localhost:7687` — use the profile-aware accessors:
+
+```python
+from imas_codex.graph.client import GraphClient
+from imas_codex.settings import get_graph_uri, get_graph_username, get_graph_password
+
+# Preferred: uses profile resolution (handles SLURM, tunnels, env overrides)
+gc = GraphClient()
+
+# Explicit (still profile-aware):
+gc = GraphClient(uri=get_graph_uri(), username=get_graph_username(), password=get_graph_password())
+```
+
+### Connecting from WSL / remote machines
+
+From machines outside the ITER network, start an SSH tunnel first:
+
+```bash
+uv run imas-codex tunnel start iter    # Tunnel Neo4j bolt port to localhost
+uv run imas-codex tunnel status        # Verify tunnel is active
+```
+
+The profile system auto-detects remote hosts and creates tunnels on demand. If auto-tunneling fails, set the tunnel port explicitly:
+
+```bash
+export IMAS_CODEX_TUNNEL_BOLT_ITER=17687
+```
+
+### Authentication
+
+**Always use the Python client methods for graph and embedding connections** — never call Neo4j or the embedding server directly via raw HTTP/bolt. The Python methods (`GraphClient`, `get_graph_uri()`, `Encoder`) handle authentication, SLURM node discovery, tunnel setup, and retry logic automatically. The `.env` file provides credentials that raw connections would miss.
 
 ## Fallback: MCP Server Not Running
 

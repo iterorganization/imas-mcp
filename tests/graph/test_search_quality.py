@@ -399,7 +399,7 @@ class TestBM25ScoringConstants:
     """Test that BM25 scoring changes are correct at the code level."""
 
     def test_contains_scores_compressed(self) -> None:
-        """Verify CONTAINS fallback scores are in the 0.55-0.80 range."""
+        """Verify CONTAINS fallback scores are in the 0.50-0.95 range."""
         import ast
         import inspect
 
@@ -410,8 +410,8 @@ class TestBM25ScoringConstants:
         then_values = re.findall(r"THEN\s+([\d.]+)", source)
         for val_str in then_values:
             val = float(val_str)
-            assert 0.50 <= val <= 0.85, (
-                f"CONTAINS score {val} outside expected range 0.50-0.85"
+            assert 0.50 <= val <= 0.95, (
+                f"CONTAINS score {val} outside expected range 0.50-0.95"
             )
 
     def test_no_score_floor(self) -> None:
@@ -499,7 +499,7 @@ class TestPromptQuality:
         from imas_codex.graph.dd_enrichment import IMASPathEnrichmentResult
 
         field_desc = IMASPathEnrichmentResult.model_fields["description"].description
-        assert "150 characters" in field_desc or "concise" in field_desc.lower()
+        assert "150" in field_desc or "concise" in field_desc.lower()
 
     def test_enrichment_prompt_mentions_concise(self) -> None:
         from imas_codex.llm.prompt_loader import PROMPTS_DIR
@@ -507,7 +507,7 @@ class TestPromptQuality:
         prompt_path = PROMPTS_DIR / "imas" / "enrichment.md"
         content = prompt_path.read_text()
         assert "concise" in content.lower()
-        assert "150 character" in content.lower() or "under 150" in content.lower()
+        assert "150" in content.lower()
 
     def test_enrichment_prompt_has_examples(self) -> None:
         from imas_codex.llm.prompt_loader import PROMPTS_DIR

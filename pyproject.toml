@@ -347,6 +347,7 @@ markers = [
     "timeout: marks tests with timeout constraints (requires pytest-timeout)",
     "graph: marks tests requiring a live Neo4j connection (auto-skipped when unavailable)",
     "graph_mcp: marks graph-native MCP tests requiring Neo4j with fixture data",
+    "fixture_only: marks tests that require fixture data and should be skipped on production graphs",
 ]
 filterwarnings = [
     "ignore::DeprecationWarning",

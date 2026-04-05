@@ -3,11 +3,13 @@
 These tests verify the hand-crafted DD graph fixture data is present
 and structurally correct in Neo4j. They serve as the foundation for
 all subsequent graph-native MCP tests.
+
+Skipped on production graphs (fixture data only loaded on clean graphs).
 """
 
 import pytest
 
-pytestmark = pytest.mark.graph_mcp
+pytestmark = [pytest.mark.graph_mcp, pytest.mark.fixture_only]
 
 
 class TestFixtureGraphStructure:

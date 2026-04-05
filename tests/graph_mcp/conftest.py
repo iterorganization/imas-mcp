@@ -4,15 +4,12 @@ Provides a small hand-crafted DD graph loaded into a test Neo4j instance.
 Tests auto-skip when Neo4j is not reachable. The fixture graph contains
 a minimal but complete DD structure: DDVersion nodes, IDS, IMASNode hierarchy,
 units, clusters, identifier schemas, and path changes.
+
+Connection uses the project's profile-aware resolution (handles SLURM
+compute nodes, tunnels, env overrides) via ``get_graph_uri()`` etc.
 """
 
-import os
-
 import pytest
-from dotenv import load_dotenv
-
-# Load .env file for local Neo4j credentials
-load_dotenv(override=False)
 
 # Mark all tests in this directory as requiring graph
 pytestmark = pytest.mark.graph_mcp
@@ -22,24 +19,24 @@ pytestmark = pytest.mark.graph_mcp
 _neo4j_available: bool | None = None
 
 
-def _get_neo4j_params() -> dict[str, str]:
-    """Get Neo4j connection parameters from environment or defaults."""
-    return {
-        "uri": os.environ.get("NEO4J_URI", "bolt://localhost:7687"),
-        "username": os.environ.get("NEO4J_USERNAME", "neo4j"),
-        "password": os.environ.get("NEO4J_PASSWORD", "imas-codex"),
-    }
-
-
 def _make_client():
-    """Create a GraphClient with explicit connection parameters."""
-    from imas_codex.graph.client import GraphClient
+    """Create a GraphClient using profile-aware connection resolution.
 
-    params = _get_neo4j_params()
+    Uses ``get_graph_uri()`` / ``get_graph_username()`` / ``get_graph_password()``
+    from ``imas_codex.settings`` which handle SLURM node discovery, SSH tunnels,
+    and env var overrides automatically.
+    """
+    from imas_codex.graph.client import GraphClient
+    from imas_codex.settings import (
+        get_graph_password,
+        get_graph_uri,
+        get_graph_username,
+    )
+
     return GraphClient(
-        uri=params["uri"],
-        username=params["username"],
-        password=params["password"],
+        uri=get_graph_uri(),
+        username=get_graph_username(),
+        password=get_graph_password(),
         graph_name="test",
     )
 
@@ -67,6 +64,13 @@ def pytest_collection_modifyitems(config, items):  # noqa: ARG001
     for item in items:
         if item.get_closest_marker("graph_mcp"):
             item.add_marker(skip_marker)
+
+
+@pytest.fixture(autouse=True)
+def _skip_fixture_only_on_production(request):
+    """Auto-skip tests marked ``fixture_only`` when running against production data."""
+    if request.node.get_closest_marker("fixture_only") and is_production_graph():
+        pytest.skip("Test requires fixture data (CI mode only)")
 
 
 # ── Fixture graph data ────────────────────────────────────────────────────
@@ -323,22 +327,34 @@ IDENTIFIER_SCHEMAS = [
 ]
 
 
+_is_production_graph: bool = False
+
+
+def is_production_graph() -> bool:
+    """Return True if the test session is running against a production graph."""
+    return _is_production_graph
+
+
 def _load_fixture_graph(client) -> None:
     """Load the fixture DD graph data into Neo4j.
 
-    Only runs on a clean or small graph (< 100 nodes) to avoid
-    accidentally wiping production data. In CI, the Neo4j service
-    starts empty, so this always runs. Locally, tests that need
-    fixture data will skip if the graph is too large.
+    Two modes:
+    - **CI mode** (< 100 nodes): wipes graph and loads fixtures. Tests use
+      exact fixture assertions.
+    - **Production mode** (>= 100 nodes): skips fixture loading, sets the
+      ``_is_production_graph`` flag. Tests that need exact fixture data
+      should use ``@pytest.mark.fixture_only`` and will be auto-skipped.
+      Tests for new capabilities should use relaxed assertions (``>=``).
     """
+    global _is_production_graph
     stats = client.get_stats()
-    if stats["nodes"] > 100:
-        pytest.skip(
-            f"Neo4j has {stats['nodes']} nodes — refusing to clear production data. "
-            "Graph-native MCP tests require a clean Neo4j instance (e.g., CI)."
-        )
+    if stats["nodes"] >= 100:
+        _is_production_graph = True
+        return
 
-    # Clear existing data
+    _is_production_graph = False
+
+    # Clear existing data (CI mode only)
     client.query("MATCH (n) DETACH DELETE n")
 
     # Create DDVersion nodes and chain them

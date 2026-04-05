@@ -296,6 +296,8 @@ class TestBuildMigrationGuide:
                 [],
                 # _get_type_changes
                 [],
+                # _get_semantic_doc_changes
+                [],
             ]
         )
         guide = build_migration_guide(gc, "3.39.0", "4.0.0")
@@ -330,6 +332,8 @@ class TestBuildMigrationGuide:
                 # _get_unit_changes
                 [],
                 # _get_type_changes
+                [],
+                # _get_semantic_doc_changes
                 [],
             ]
         )
