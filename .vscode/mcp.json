@@ -10,13 +10,13 @@
       "command": "uv",
       "args": ["run", "imas-codex", "serve"]
     },
-    "imas": {
+    "imas-prod": {
       "type": "http",
       "url": "https://imas-dd.iter.org/mcp"
     },
-    // "imas-test": {
-    //   "type": "http",
-    //   "url": "https://app-imas-mcp-server-test-frc.azurewebsites.net/mcp"
-    // }
+    "imas-test": {
+      "type": "http",
+      "url": "https://app-imas-mcp-server-test-frc.azurewebsites.net/mcp"
+    }
   }
 }

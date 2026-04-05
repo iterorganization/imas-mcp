@@ -862,6 +862,15 @@ def format_fetch_paths_report(result: Any) -> str:
         if labels:
             label_str = ", ".join(f'"{c}"' for c in labels)
             parts.append(f"  Clusters: {label_str}")
+        version_changes = getattr(node, "version_changes", None)
+        if version_changes:
+            parts.append("  Version history:")
+            for vc in version_changes:
+                if isinstance(vc, dict):
+                    v = vc.get("version", "?")
+                    t = vc.get("type", "?")
+                    s = vc.get("summary", "")
+                    parts.append(f"    - DD {v}: {t}" + (f" — {s}" if s else ""))
         parts.append("")
 
     for nf in _get_value(result, "not_found_paths", []) or []:
@@ -954,6 +963,14 @@ def format_overview_report(result: Any) -> str:
 
     if result.mcp_tools:
         parts.append(f"\n**Available tools**: {', '.join(result.mcp_tools)}")
+
+    unit_stats = _get_value(result, "unit_statistics")
+    if unit_stats:
+        top_units = unit_stats.get("top_units", [])
+        if top_units:
+            parts.append(f"\n### Unit Distribution (top {len(top_units)} units)\n")
+            for entry in top_units:
+                parts.append(f"  {entry['unit']}: {entry['count']} paths")
 
     return "\n".join(parts)
 

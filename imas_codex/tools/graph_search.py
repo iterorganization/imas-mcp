@@ -552,10 +552,33 @@ class GraphPathTool:
                         )
                     )
                 else:
+                    # Try to find similar paths for typo correction
+                    suggestion = None
+                    # Extract IDS name and leaf from the path
+                    parts_split = path.split("/")
+                    if len(parts_split) >= 2:
+                        ids_name = parts_split[0]
+                        leaf = parts_split[-1]
+                        # Find paths in same IDS with similar leaf name
+                        similar = self._gc.query(
+                            """
+                            MATCH (p:IMASNode)
+                            WHERE p.ids = $ids
+                              AND p.name CONTAINS $leaf_fragment
+                              AND p.data_type IS NOT NULL
+                            RETURN p.id AS id
+                            LIMIT 5
+                            """,
+                            ids=ids_name,
+                            leaf_fragment=leaf[: max(3, len(leaf) - 2)],
+                        )
+                        if similar:
+                            suggestion = similar[0]["id"]
                     results.append(
                         CheckPathsResultItem(
                             path=path,
                             exists=False,
+                            suggestion=suggestion,
                         )
                     )
 
@@ -1667,6 +1690,8 @@ class GraphPathContextTool:
                 MATCH (p:IMASNode {{id: $path}})-[:HAS_COORDINATE]->(coord:IMASCoordinateSpec)
                       <-[:HAS_COORDINATE]-(sibling:IMASNode)
                 WHERE sibling.ids <> p.ids {dd_clause}
+                  AND NOT coord.id CONTAINS '1...N'
+                  AND NOT coord.id CONTAINS 'i...'
                 RETURN coord.id AS coordinate, sibling.id AS path,
                        sibling.ids AS ids, sibling.data_type AS data_type
                 ORDER BY coord.id, sibling.ids

@@ -1949,7 +1949,7 @@ class AgentsServer:
                     - "code": CodeFile, CodeChunk, CodeExample.
                     - "facility": Facility, FacilityPath, FacilitySignal, SignalNode,
                       Diagnostic.
-                    - "trees": tree-related data source nodes and relationships.
+                    - "data_sources": data source nodes and tree-related relationships.
 
             Returns:
                 Formatted text containing property tables (name, type, description),
