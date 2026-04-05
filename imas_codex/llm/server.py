@@ -343,6 +343,30 @@ def _run_async(coro):
         return asyncio.run(coro)
 
 
+def _format_rename_chains_section(rename_chains: list[dict]) -> list[str]:
+    """Render rename chain records as a list of formatted lines.
+
+    Each entry in rename_chains must have keys 'chain' (list of path IDs)
+    and 'hops' (int).
+
+    Returns:
+        List of string lines (no trailing newline) representing the section.
+    """
+    if not rename_chains:
+        return ["### Rename Chains", "No rename chains found."]
+
+    lines = [f"### Rename Chains ({len(rename_chains)} chain(s))"]
+    for entry in rename_chains:
+        chain = entry.get("chain") or []
+        hops = entry.get("hops", len(chain) - 1)
+        if not chain:
+            continue
+        chain_str = " → ".join(f"`{p}`" for p in chain)
+        hop_label = f"{hops} hop{'s' if hops != 1 else ''}"
+        lines.append(f"- {chain_str} ({hop_label})")
+    return lines
+
+
 def _format_version_context_report(result: dict) -> str:
     """Format version context result into a readable report."""
     if result.get("error"):
@@ -390,7 +414,20 @@ def _format_version_context_report(result: dict) -> str:
                 val_str = ""
             suffix = f" — {summary}" if summary else ""
             lines.append(f"  - v{version} [{severity}] **{path}**{val_str}{suffix}")
+
+        rename_chains = result.get("rename_chains")
+        if rename_chains:
+            lines.append("")
+            lines.extend(_format_rename_chains_section(rename_chains))
+
         return "\n".join(lines)
+
+    # ── Rename-chain-only mode ────────────────────────────────────────────────
+    if "rename_chains" in result and "mode" not in result and "paths" not in result:
+        lines: list[str] = []
+        rename_chains = result.get("rename_chains", [])
+        lines.extend(_format_rename_chains_section(rename_chains))
+        return "\n".join(lines) if lines else "No rename chains found."
 
     # ── Per-path mode ─────────────────────────────────────────────────────────
     paths_data = result.get("paths", {})
