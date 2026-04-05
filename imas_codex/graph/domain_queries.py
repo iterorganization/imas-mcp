@@ -364,7 +364,7 @@ def wiki_page_chunks(
 # ---------------------------------------------------------------------------
 
 
-def find_imas(
+def find_dd_paths(
     query: str,
     *,
     ids_filter: str | None = None,

@@ -117,12 +117,12 @@ class TestNodeCategoryFiltering:
 
 
 # ---------------------------------------------------------------------------
-# Phase 2: Text search - DD server (_text_search_imas_paths)
+# Phase 2: Text search - DD server (_text_search_dd_paths)
 # ---------------------------------------------------------------------------
 
 
 class TestTextSearchImasPathsDDServer:
-    """Tests for _text_search_imas_paths in graph_search.py.
+    """Tests for _text_search_dd_paths in graph_search.py.
 
     Verifies BM25 fulltext path with CONTAINS fallback.
     """
@@ -135,7 +135,7 @@ class TestTextSearchImasPathsDDServer:
 
     def test_fulltext_index_path_returns_normalized_scores(self, mock_gc):
         """When fulltext index returns results, scores are normalized 0-1."""
-        from imas_codex.tools.graph_search import _text_search_imas_paths
+        from imas_codex.tools.graph_search import _text_search_dd_paths
 
         mock_gc.query.side_effect = _route_query(
             {
@@ -146,7 +146,7 @@ class TestTextSearchImasPathsDDServer:
             }
         )
 
-        results = _text_search_imas_paths(mock_gc, "plasma current", 50, None)
+        results = _text_search_dd_paths(mock_gc, "plasma current", 50, None)
 
         assert len(results) == 2
         # Top result should be normalized to 1.0 (max)
@@ -159,7 +159,7 @@ class TestTextSearchImasPathsDDServer:
 
     def test_fulltext_includes_node_category_filter(self, mock_gc):
         """Fulltext query includes node_category='data' in WHERE clause."""
-        from imas_codex.tools.graph_search import _text_search_imas_paths
+        from imas_codex.tools.graph_search import _text_search_dd_paths
 
         mock_gc.query.side_effect = _route_query(
             {
@@ -169,7 +169,7 @@ class TestTextSearchImasPathsDDServer:
             }
         )
 
-        _text_search_imas_paths(mock_gc, "plasma current", 50, None)
+        _text_search_dd_paths(mock_gc, "plasma current", 50, None)
 
         # Verify the fulltext query was called with node_category filter
         calls = mock_gc.query.call_args_list
@@ -178,7 +178,7 @@ class TestTextSearchImasPathsDDServer:
 
     def test_contains_fallback_when_fulltext_fails(self, mock_gc):
         """When fulltext index raises, falls back to CONTAINS matching."""
-        from imas_codex.tools.graph_search import _text_search_imas_paths
+        from imas_codex.tools.graph_search import _text_search_dd_paths
 
         call_count = 0
 
@@ -193,14 +193,14 @@ class TestTextSearchImasPathsDDServer:
 
         mock_gc.query.side_effect = side_effect
 
-        results = _text_search_imas_paths(mock_gc, "plasma current", 50, None)
+        results = _text_search_dd_paths(mock_gc, "plasma current", 50, None)
 
         assert len(results) >= 1
         assert results[0]["id"] == "magnetics/ip/0d/value"
 
     def test_ids_filter_applied(self, mock_gc):
         """ids_filter is passed to fulltext search WHERE clause."""
-        from imas_codex.tools.graph_search import _text_search_imas_paths
+        from imas_codex.tools.graph_search import _text_search_dd_paths
 
         mock_gc.query.side_effect = _route_query(
             {
@@ -210,7 +210,7 @@ class TestTextSearchImasPathsDDServer:
             }
         )
 
-        _text_search_imas_paths(mock_gc, "current", 50, "magnetics")
+        _text_search_dd_paths(mock_gc, "current", 50, "magnetics")
 
         # Check fulltext call includes ids_filter
         for call in mock_gc.query.call_args_list:
@@ -221,15 +221,15 @@ class TestTextSearchImasPathsDDServer:
 
 
 # ---------------------------------------------------------------------------
-# Phase 2: Text search - Codex server (_text_search_imas_paths_by_query)
+# Phase 2: Text search - Codex server (_text_search_dd_paths_by_query)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.skip(
-    reason="_text_search_imas_paths_by_query removed; unified in GraphSearchTool"
+    reason="_text_search_dd_paths_by_query removed; unified in GraphSearchTool"
 )
 class TestTextSearchImasPathsCodexServer:
-    """Tests for _text_search_imas_paths_by_query in search_tools.py.
+    """Tests for _text_search_dd_paths_by_query in search_tools.py.
 
     Verifies BM25 fulltext path with CONTAINS fallback.
     """
@@ -242,7 +242,7 @@ class TestTextSearchImasPathsCodexServer:
 
     def test_fulltext_returns_normalized_scores(self, mock_gc):
         """BM25 scores are normalized 0-1 with 0.7 floor."""
-        from imas_codex.llm.search_tools import _text_search_imas_paths_by_query
+        from imas_codex.llm.search_tools import _text_search_dd_paths_by_query
 
         mock_gc.query.side_effect = _route_query(
             {
@@ -259,7 +259,7 @@ class TestTextSearchImasPathsCodexServer:
             }
         )
 
-        results = _text_search_imas_paths_by_query(
+        results = _text_search_dd_paths_by_query(
             mock_gc, "electron temperature", 20, None
         )
 
@@ -272,7 +272,7 @@ class TestTextSearchImasPathsCodexServer:
 
     def test_fulltext_filters_generic_paths(self, mock_gc):
         """Generic metadata paths are filtered from fulltext results."""
-        from imas_codex.llm.search_tools import _text_search_imas_paths_by_query
+        from imas_codex.llm.search_tools import _text_search_dd_paths_by_query
 
         mock_gc.query.side_effect = _route_query(
             {
@@ -286,7 +286,7 @@ class TestTextSearchImasPathsCodexServer:
             }
         )
 
-        results = _text_search_imas_paths_by_query(mock_gc, "psi", 20, None)
+        results = _text_search_dd_paths_by_query(mock_gc, "psi", 20, None)
         ids = {r["id"] for r in results}
 
         assert "equilibrium/time_slice/profiles_1d/psi" in ids
@@ -294,7 +294,7 @@ class TestTextSearchImasPathsCodexServer:
 
     def test_contains_fallback(self, mock_gc):
         """Falls back to CONTAINS when fulltext raises."""
-        from imas_codex.llm.search_tools import _text_search_imas_paths_by_query
+        from imas_codex.llm.search_tools import _text_search_dd_paths_by_query
 
         def side_effect(cypher: str, **kwargs):
             if "db.index.fulltext.queryNodes" in cypher:
@@ -305,7 +305,7 @@ class TestTextSearchImasPathsCodexServer:
 
         mock_gc.query.side_effect = side_effect
 
-        results = _text_search_imas_paths_by_query(mock_gc, "plasma current", 20, None)
+        results = _text_search_dd_paths_by_query(mock_gc, "plasma current", 20, None)
 
         assert len(results) >= 1
         assert any(r["id"] == "magnetics.ip.0d[:].value" for r in results)
@@ -317,7 +317,7 @@ class TestTextSearchImasPathsCodexServer:
 
 
 class TestGraphSearchToolHybrid:
-    """Tests for GraphSearchTool.search_imas_paths hybrid scoring and metadata.
+    """Tests for GraphSearchTool.search_dd_paths hybrid scoring and metadata.
 
     Mocks the Encoder and GraphClient to avoid requiring Neo4j/embedding.
     """
@@ -377,7 +377,7 @@ class TestGraphSearchToolHybrid:
             }
         )
 
-        result = await tool.search_imas_paths(query="plasma current")
+        result = await tool.search_dd_paths(query="plasma current")
 
         assert len(result.hits) == 1
         hit = result.hits[0]
@@ -424,7 +424,7 @@ class TestGraphSearchToolHybrid:
             }
         )
 
-        result = await tool.search_imas_paths(query="plasma current")
+        result = await tool.search_dd_paths(query="plasma current")
 
         assert len(result.hits) >= 1
         assert result.hits[0].path == "magnetics/ip/0d/value"
@@ -470,7 +470,7 @@ class TestGraphSearchToolHybrid:
             }
         )
 
-        result = await tool.search_imas_paths(query="poloidal flux")
+        result = await tool.search_dd_paths(query="poloidal flux")
 
         assert len(result.hits) == 1
         hit = result.hits[0]
@@ -538,7 +538,7 @@ class TestGraphSearchToolHybrid:
             }
         )
 
-        await tool.search_imas_paths(query="profiles")
+        await tool.search_dd_paths(query="profiles")
 
         # Verify the vector query includes node_category filter
         calls = mock_gc.query.call_args_list
@@ -550,7 +550,7 @@ class TestGraphSearchToolHybrid:
         """Empty query returns structured error."""
         tool = self._make_tool(mock_gc)
 
-        result = await tool.search_imas_paths(query="")
+        result = await tool.search_dd_paths(query="")
 
         assert result.hits == []
         assert "error" in result.summary
@@ -562,7 +562,7 @@ class TestGraphSearchToolHybrid:
 
         mock_gc.query.side_effect = _route_query({})
 
-        result = await tool.search_imas_paths(query="zzz_nonexistent_zzz")
+        result = await tool.search_dd_paths(query="zzz_nonexistent_zzz")
 
         assert result.hits == []
         assert result.summary["hits_returned"] == 0
@@ -634,7 +634,7 @@ class TestGraphSearchToolHybrid:
             }
         )
 
-        result = await tool.search_imas_paths(query="profiles")
+        result = await tool.search_dd_paths(query="profiles")
 
         assert "core_profiles" in result.summary["ids_coverage"]
         assert "equilibrium" in result.summary["ids_coverage"]

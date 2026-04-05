@@ -181,6 +181,6 @@ class TestValidateQuery:
 
     def test_error_includes_guidance(self):
         """Test that error message includes helpful guidance."""
-        is_valid, error = validate_query("", "search_imas_paths")
+        is_valid, error = validate_query("", "search_dd_paths")
         assert is_valid is False
-        assert "get_imas_overview" in error
+        assert "get_dd_overview" in error

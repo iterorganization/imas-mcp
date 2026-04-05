@@ -38,10 +38,10 @@ RETURN n
 
 ### IMAS Search
 
-Use `search_imas_paths` for semantic search over the Data Dictionary:
+Use `search_dd_paths` for semantic search over the Data Dictionary:
 ```
-search_imas("electron temperature")
-search_imas("magnetic field boundary", ids_filter="equilibrium")
+search_dd_paths("electron temperature")
+search_dd_paths("magnetic field boundary", ids_filter="equilibrium")
 ```
 
 ### Persisting Discoveries

@@ -60,7 +60,7 @@ class TestClusterLabelFormatting:
     """Verify cluster labels appear in formatted output."""
 
     def test_cluster_labels_in_report(self):
-        from imas_codex.llm.search_formatters import format_search_imas_report
+        from imas_codex.llm.search_formatters import format_search_dd_report
         from imas_codex.models.result_models import SearchPathsResult
 
         hit = SearchHit(
@@ -84,12 +84,12 @@ class TestClusterLabelFormatting:
             search_mode=SearchMode.HYBRID,
             physics_domains=["core_profiles"],
         )
-        report = format_search_imas_report(result)
+        report = format_search_dd_report(result)
         assert "Clusters:" in report
         assert "electron temperature" in report
 
     def test_see_also_in_report(self):
-        from imas_codex.llm.search_formatters import format_search_imas_report
+        from imas_codex.llm.search_formatters import format_search_dd_report
         from imas_codex.models.result_models import SearchPathsResult
 
         hit = SearchHit(
@@ -118,12 +118,12 @@ class TestClusterLabelFormatting:
             search_mode=SearchMode.HYBRID,
             physics_domains=["core_profiles"],
         )
-        report = format_search_imas_report(result)
+        report = format_search_dd_report(result)
         assert "See also:" in report
         assert "+1 more" in report
 
     def test_no_cluster_labels_no_output(self):
-        from imas_codex.llm.search_formatters import format_search_imas_report
+        from imas_codex.llm.search_formatters import format_search_dd_report
         from imas_codex.models.result_models import SearchPathsResult
 
         hit = SearchHit(
@@ -146,6 +146,6 @@ class TestClusterLabelFormatting:
             search_mode=SearchMode.HYBRID,
             physics_domains=["core_profiles"],
         )
-        report = format_search_imas_report(result)
+        report = format_search_dd_report(result)
         assert "Clusters:" not in report
         assert "See also:" not in report

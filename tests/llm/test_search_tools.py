@@ -945,17 +945,17 @@ class TestFormatCodeReport:
 
 
 # ---------------------------------------------------------------------------
-# search_imas
+# search_dd_paths
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.skip(
-    reason="search_imas moved to shared GraphSearchTool; tests in tests/graph_mcp/"
+    reason="search_dd_paths moved to shared GraphSearchTool; tests in tests/graph_mcp/"
 )
 class TestSearchImas:
-    """Unit tests for search_imas tool.
+    """Unit tests for search_dd_paths tool.
 
-    Uses query routing because _text_search_imas_paths_by_query makes
+    Uses query routing because _text_search_dd_paths_by_query makes
     a variable number of sub-queries depending on the query words.
     """
 
@@ -1678,7 +1678,7 @@ class TestSchemaGuard:
 
         tool = GraphSearchTool(mock_gc)
         tool._embed_query = lambda q: [0.1] * 1024
-        asyncio.run(tool.search_imas_paths(query="ip"))
+        asyncio.run(tool.search_dd_paths(query="ip"))
         for call in mock_gc.query.call_args_list:
             cypher = call[0][0]
             if "UNWIND $path_ids" in cypher:
@@ -1702,7 +1702,7 @@ class TestSchemaGuard:
 
         tool = GraphSearchTool(mock_gc)
         tool._embed_query = lambda q: [0.1] * 1024
-        asyncio.run(tool.search_imas_paths(query="ip", facility="tcv"))
+        asyncio.run(tool.search_dd_paths(query="ip", facility="tcv"))
         for call in mock_gc.query.call_args_list:
             cypher = call[0][0]
             if "FacilitySignal" in cypher and "WikiChunk" in cypher:

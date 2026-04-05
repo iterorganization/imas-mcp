@@ -82,12 +82,12 @@ class TestClustersTool:
     async def test_tool_instantiation(self, tools):
         """Test that the tool can be instantiated."""
         assert tools.clusters_tool is not None
-        assert hasattr(tools.clusters_tool, "search_imas_clusters")
+        assert hasattr(tools.clusters_tool, "search_dd_clusters")
 
     @pytest.mark.asyncio
     async def test_path_query(self, tools):
         """Test path-based query."""
-        result = await tools.clusters_tool.search_imas_clusters(
+        result = await tools.clusters_tool.search_dd_clusters(
             query="core_profiles/profiles_1d/electrons/density",
         )
         # Should return result or error
@@ -96,7 +96,7 @@ class TestClustersTool:
     @pytest.mark.asyncio
     async def test_natural_language_query(self, tools):
         """Test natural language query."""
-        result = await tools.clusters_tool.search_imas_clusters(
+        result = await tools.clusters_tool.search_dd_clusters(
             query="electron temperature",
         )
         assert result is not None
@@ -104,7 +104,7 @@ class TestClustersTool:
     @pytest.mark.asyncio
     async def test_semantic_query(self, tools):
         """Test semantic query."""
-        result = await tools.clusters_tool.search_imas_clusters(
+        result = await tools.clusters_tool.search_dd_clusters(
             query="magnetic field",
         )
         assert result is not None

@@ -181,44 +181,44 @@ Semantic code search over ingested code examples.
 
 ## IMAS Data Dictionary
 
-### search_imas()
+### search_dd_paths()
 ```python
-search_imas(query_text: str, ids_filter: str | None = None, max_results: int = 10) -> str
+search_dd_paths(query_text: str, ids_filter: str | None = None, max_results: int = 10) -> str
 ```
 Search IMAS Data Dictionary using semantic search.
 
 **Examples:**
 ```python
-search_imas('electron temperature profile')
-search_imas('plasma current', ids_filter='core_profiles equilibrium')
+search_dd_paths('electron temperature profile')
+search_dd_paths('plasma current', ids_filter='core_profiles equilibrium')
 ```
 
-### fetch_imas()
+### fetch_dd_paths()
 ```python
-fetch_imas(paths: str) -> str
+fetch_dd_paths(paths: str) -> str
 ```
 Get full documentation for IMAS paths.
 
 **Examples:**
 ```python
-fetch_imas('equilibrium/time_slice/global_quantities/ip')
+fetch_dd_paths('equilibrium/time_slice/global_quantities/ip')
 ```
 
-### list_imas()
+### list_dd_paths()
 ```python
-list_imas(paths: str, leaf_only: bool = True, max_paths: int = 100) -> str
+list_dd_paths(paths: str, leaf_only: bool = True, max_paths: int = 100) -> str
 ```
 List data paths in IDS with minimal overhead.
 
-### check_imas()
+### check_dd_paths()
 ```python
-check_imas(paths: str) -> str
+check_dd_paths(paths: str) -> str
 ```
 Validate IMAS paths for existence in the Data Dictionary.
 
-### get_imas_overview()
+### get_dd_overview()
 ```python
-get_imas_overview(query: str | None = None) -> str
+get_dd_overview(query: str | None = None) -> str
 ```
 Get high-level overview of IMAS Data Dictionary structure.
 
@@ -362,14 +362,14 @@ update_infrastructure('iter', {
 
 ```python
 # 1. Search for relevant paths
-results = search_imas('electron temperature profile')
+results = search_dd_paths('electron temperature profile')
 print(results)
 
 # 2. Get detailed documentation
-docs = fetch_imas('core_profiles/profiles_1d/electrons/temperature')
+docs = fetch_dd_paths('core_profiles/profiles_1d/electrons/temperature')
 print(docs)
 
 # 3. Check path existence
-check = check_imas('core_profiles/profiles_1d/electrons/temperature')
+check = check_dd_paths('core_profiles/profiles_1d/electrons/temperature')
 print(check)
 ```

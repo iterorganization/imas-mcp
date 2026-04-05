@@ -16,32 +16,32 @@ class TestSuggestFollowUpTools:
                 {"path": "equilibrium/boundary/psi", "score": 0.88},
             ]
         }
-        suggestions = suggest_follow_up_tools(results, "search_imas_paths")
+        suggestions = suggest_follow_up_tools(results, "search_dd_paths")
 
         assert len(suggestions) > 0
-        assert any(s["tool"] == "get_imas_overview" for s in suggestions)
-        assert any(s["tool"] == "list_imas_paths" for s in suggestions)
+        assert any(s["tool"] == "get_dd_overview" for s in suggestions)
+        assert any(s["tool"] == "list_dd_paths" for s in suggestions)
 
     def test_overview_results_suggest_search(self):
         """Overview results suggest search tool."""
         results = {"concept": "plasma temperature"}
-        suggestions = suggest_follow_up_tools(results, "get_imas_overview")
+        suggestions = suggest_follow_up_tools(results, "get_dd_overview")
 
         assert len(suggestions) > 0
-        assert any(s["tool"] == "search_imas_paths" for s in suggestions)
+        assert any(s["tool"] == "search_dd_paths" for s in suggestions)
 
     def test_list_paths_results_suggest_clusters(self):
         """List paths results suggest clusters tool."""
         results = {"ids_name": "equilibrium"}
-        suggestions = suggest_follow_up_tools(results, "list_imas_paths")
+        suggestions = suggest_follow_up_tools(results, "list_dd_paths")
 
         assert len(suggestions) > 0
-        assert any(s["tool"] == "search_imas_clusters" for s in suggestions)
+        assert any(s["tool"] == "search_dd_clusters" for s in suggestions)
 
     def test_fetch_export_results(self):
         """Fetch/export results may have suggestions."""
         results = {"exported": True}
-        suggestions = suggest_follow_up_tools(results, "fetch_imas_paths")
+        suggestions = suggest_follow_up_tools(results, "fetch_dd_paths")
 
         assert isinstance(suggestions, list)
 
@@ -54,7 +54,7 @@ class TestSuggestFollowUpTools:
 
     def test_none_results_returns_empty_list(self):
         """None results returns empty list (error handling)."""
-        suggestions = suggest_follow_up_tools(None, "search_imas_paths")
+        suggestions = suggest_follow_up_tools(None, "search_dd_paths")
 
         assert suggestions == []
 

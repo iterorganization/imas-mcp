@@ -54,7 +54,7 @@ class MixConfig:
     """Tunable parameters for search score mixing.
 
     Defaults match the current tuned values in
-    ``imas_codex.tools.graph_search.GraphSearchTool.search_imas_paths``.
+    ``imas_codex.tools.graph_search.GraphSearchTool.search_dd_paths``.
 
     The parameters are organized into three groups:
 
@@ -191,7 +191,7 @@ def _apply_score_mixing(
 ) -> dict[str, float]:
     """Combine vector + text results using configurable parameters.
 
-    Reimplements the scoring logic from ``search_imas_paths`` with every
+    Reimplements the scoring logic from ``search_dd_paths`` with every
     constant drawn from *config* instead of being inline.  This allows
     the DoE grid to sweep across the full parameter space.
     """
@@ -290,7 +290,7 @@ def _search_with_config(
 ) -> list[str]:
     """Run search with configurable parameters, return ranked path IDs.
 
-    Uses the same building blocks as ``search_imas_paths`` (vector index
+    Uses the same building blocks as ``search_dd_paths`` (vector index
     query, fulltext/BM25 query, QueryAnalyzer) but with all constants
     drawn from *config*.
 
@@ -307,7 +307,7 @@ def _search_with_config(
     max_results : int
         Maximum result paths to return.
     """
-    from imas_codex.tools.graph_search import _text_search_imas_paths
+    from imas_codex.tools.graph_search import _text_search_dd_paths
     from imas_codex.tools.query_analysis import QueryAnalyzer
 
     analyzer = QueryAnalyzer()
@@ -362,7 +362,7 @@ def _search_with_config(
             raise
 
     # --- Text search with config limit ---
-    text_results = _text_search_imas_paths(
+    text_results = _text_search_dd_paths(
         gc,
         expanded,
         config.text_limit,
@@ -634,7 +634,7 @@ class TestMixConfig:
         assert config.vector_weight == 0.6
         assert config.text_weight == 0.4
         assert config.dual_channel_bonus == 0.05
-        # Path boosts (match inline literals in search_imas_paths)
+        # Path boosts (match inline literals in search_dd_paths)
         assert config.path_boost == 0.03
         assert config.terminal_boost == 0.08
         assert config.ids_name_boost == 0.05

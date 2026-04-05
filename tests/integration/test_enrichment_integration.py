@@ -31,11 +31,11 @@ def live_client():
     gc.close()
 
 
-# ── T1: fetch_imas_paths enrichment ──────────────────────────────────────
+# ── T1: fetch_dd_paths enrichment ──────────────────────────────────────
 
 
 class TestFetchEnrichmentLive:
-    """Test fetch_imas_paths identifier schemas + version history on live data."""
+    """Test fetch_dd_paths identifier schemas + version history on live data."""
 
     def _make_tool(self, client):
         from imas_codex.tools.graph_search import GraphPathTool
@@ -47,7 +47,7 @@ class TestFetchEnrichmentLive:
         """An occurrence_type path should have an IdentifierSchema."""
         tool = self._make_tool(live_client)
         # occurrence_type paths have HAS_IDENTIFIER_SCHEMA in the live graph
-        result = await tool.fetch_imas_paths("summary/ids_properties/occurrence_type")
+        result = await tool.fetch_dd_paths("summary/ids_properties/occurrence_type")
         if not result.nodes:
             pytest.skip("Path not found in graph")
         node = result.nodes[0]
@@ -58,7 +58,7 @@ class TestFetchEnrichmentLive:
     async def test_fetch_leaf_no_identifier_schema(self, live_client):
         """A normal leaf path should not have an IdentifierSchema."""
         tool = self._make_tool(live_client)
-        result = await tool.fetch_imas_paths("equilibrium/time_slice/profiles_1d/psi")
+        result = await tool.fetch_dd_paths("equilibrium/time_slice/profiles_1d/psi")
         if not result.nodes:
             pytest.skip("Path not found in graph")
         node = result.nodes[0]
@@ -69,7 +69,7 @@ class TestFetchEnrichmentLive:
         """include_version_history=True should populate version_changes."""
         tool = self._make_tool(live_client)
         # Fetch a path likely to have changes
-        result = await tool.fetch_imas_paths(
+        result = await tool.fetch_dd_paths(
             "equilibrium/time_slice/profiles_1d/psi",
             include_version_history=True,
         )
@@ -84,7 +84,7 @@ class TestFetchEnrichmentLive:
     async def test_fetch_version_history_disabled_is_none(self, live_client):
         """include_version_history=False should leave version_changes None."""
         tool = self._make_tool(live_client)
-        result = await tool.fetch_imas_paths(
+        result = await tool.fetch_dd_paths(
             "equilibrium/time_slice/profiles_1d/psi",
             include_version_history=False,
         )
@@ -96,7 +96,7 @@ class TestFetchEnrichmentLive:
     async def test_fetch_multiple_with_enrichment(self, live_client):
         """Fetching multiple paths should populate enrichment for each."""
         tool = self._make_tool(live_client)
-        result = await tool.fetch_imas_paths(
+        result = await tool.fetch_dd_paths(
             [
                 "summary/ids_properties/occurrence_type",
                 "equilibrium/time_slice/profiles_1d/psi",
@@ -110,11 +110,11 @@ class TestFetchEnrichmentLive:
             assert occ[0].identifier_schema is not None
 
 
-# ── T2: search_imas_clusters listing mode ────────────────────────────────
+# ── T2: search_dd_clusters listing mode ────────────────────────────────
 
 
 class TestClustersListingModeLive:
-    """Test search_imas_clusters IDS listing mode on live data."""
+    """Test search_dd_clusters IDS listing mode on live data."""
 
     def _make_tool(self, client):
         from imas_codex.tools.graph_search import GraphClustersTool
@@ -125,7 +125,7 @@ class TestClustersListingModeLive:
     async def test_list_by_ids_returns_clusters(self, live_client):
         """Listing clusters for equilibrium should find some."""
         tool = self._make_tool(live_client)
-        result = await tool.search_imas_clusters(
+        result = await tool.search_dd_clusters(
             ids_filter="equilibrium",
         )
         assert result["query_type"] == "ids_listing"
@@ -135,7 +135,7 @@ class TestClustersListingModeLive:
     async def test_list_by_ids_section_only(self, live_client):
         """section_only=True should filter to section-level clusters."""
         tool = self._make_tool(live_client)
-        result = await tool.search_imas_clusters(
+        result = await tool.search_dd_clusters(
             ids_filter="equilibrium",
             section_only=True,
         )
@@ -149,14 +149,14 @@ class TestClustersListingModeLive:
     async def test_list_no_query_no_ids_error(self, live_client):
         """No query and no ids_filter should return an error."""
         tool = self._make_tool(live_client)
-        result = await tool.search_imas_clusters()
+        result = await tool.search_dd_clusters()
         assert "error" in result
 
     @pytest.mark.asyncio
     async def test_path_lookup_still_works(self, live_client):
         """Existing path-based lookup should still work."""
         tool = self._make_tool(live_client)
-        result = await tool.search_imas_clusters("equilibrium/time_slice/boundary/psi")
+        result = await tool.search_dd_clusters("equilibrium/time_slice/boundary/psi")
         assert result["query_type"] == "path"
 
 
@@ -218,7 +218,7 @@ class TestToolsDelegationLive:
     @pytest.mark.asyncio
     async def test_fetch_with_version_history(self, live_client):
         tools = self._make_tools(live_client)
-        result = await tools.fetch_imas_paths(
+        result = await tools.fetch_dd_paths(
             "equilibrium/time_slice/profiles_1d/psi",
             include_version_history=True,
         )

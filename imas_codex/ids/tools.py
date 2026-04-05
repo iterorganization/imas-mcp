@@ -60,7 +60,7 @@ def fetch_imas_subtree(
     Each row contains ``id``, ``name``, ``data_type``, ``node_type``,
     ``documentation``, ``units``.
 
-    Delegates to ``GraphListTool.list_imas_paths(response_profile="standard")``.
+    Delegates to ``GraphListTool.list_dd_paths(response_profile="standard")``.
     """
     if gc is None:
         gc = GraphClient()
@@ -70,7 +70,7 @@ def fetch_imas_subtree(
     query = f"{ids_name}/{path}" if path else ids_name
     tool = GraphListTool(gc)
     result = _run_async(
-        tool.list_imas_paths(
+        tool.list_dd_paths(
             paths=query,
             leaf_only=leaf_only,
             max_paths=max_paths,
@@ -90,7 +90,7 @@ def fetch_imas_fields(
 ) -> list[dict[str, Any]]:
     """Return detailed field info for specific IMAS paths.
 
-    Delegates to ``GraphPathTool.fetch_imas_paths()``.
+    Delegates to ``GraphPathTool.fetch_dd_paths()``.
     """
     if gc is None:
         gc = GraphClient()
@@ -104,7 +104,7 @@ def fetch_imas_fields(
     ]
 
     tool = GraphPathTool(gc)
-    result = _run_async(tool.fetch_imas_paths(paths=qualified, dd_version=dd_version))
+    result = _run_async(tool.fetch_dd_paths(paths=qualified, dd_version=dd_version))
     if isinstance(result, ToolError):
         return []
     return result.as_dicts()
@@ -120,7 +120,7 @@ def search_imas_semantic(
 ) -> list[dict[str, Any]]:
     """Semantic search for IMAS paths using vector index.
 
-    Delegates to ``GraphSearchTool.search_imas_paths()``.
+    Delegates to ``GraphSearchTool.search_dd_paths()``.
     """
     if gc is None:
         gc = GraphClient()
@@ -130,7 +130,7 @@ def search_imas_semantic(
 
     tool = GraphSearchTool(gc)
     result = _run_async(
-        tool.search_imas_paths(
+        tool.search_dd_paths(
             query=query,
             ids_filter=ids_name,
             max_results=k,

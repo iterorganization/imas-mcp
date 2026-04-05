@@ -98,37 +98,37 @@ class Tools(MCPProvider):
         return sorted(tool_names)
 
     # Primary method delegation
-    async def search_imas_paths(self, *args, **kwargs):
+    async def search_dd_paths(self, *args, **kwargs):
         """Delegate to search tool."""
-        return await self.search_tool.search_imas_paths(*args, **kwargs)
+        return await self.search_tool.search_dd_paths(*args, **kwargs)
 
-    async def check_imas_paths(self, *args, **kwargs):
+    async def check_dd_paths(self, *args, **kwargs):
         """Delegate to path tool."""
-        return await self.path_tool.check_imas_paths(*args, **kwargs)
+        return await self.path_tool.check_dd_paths(*args, **kwargs)
 
-    async def fetch_imas_paths(self, *args, **kwargs):
+    async def fetch_dd_paths(self, *args, **kwargs):
         """Delegate to path tool."""
-        return await self.path_tool.fetch_imas_paths(*args, **kwargs)
+        return await self.path_tool.fetch_dd_paths(*args, **kwargs)
 
-    async def list_imas_paths(self, *args, **kwargs):
+    async def list_dd_paths(self, *args, **kwargs):
         """Delegate to list tool."""
-        return await self.list_tool.list_imas_paths(*args, **kwargs)
+        return await self.list_tool.list_dd_paths(*args, **kwargs)
 
-    async def get_imas_overview(self, *args, **kwargs):
+    async def get_dd_overview(self, *args, **kwargs):
         """Delegate to overview tool."""
-        return await self.overview_tool.get_imas_overview(*args, **kwargs)
+        return await self.overview_tool.get_dd_overview(*args, **kwargs)
 
-    async def get_imas_identifiers(self, *args, **kwargs):
+    async def get_dd_identifiers(self, *args, **kwargs):
         """Delegate to identifiers tool."""
-        return await self.identifiers_tool.get_imas_identifiers(*args, **kwargs)
+        return await self.identifiers_tool.get_dd_identifiers(*args, **kwargs)
 
-    async def get_imas_path_context(self, *args, **kwargs):
+    async def get_dd_path_context(self, *args, **kwargs):
         """Delegate to path context tool."""
-        return await self.path_context_tool.get_imas_path_context(*args, **kwargs)
+        return await self.path_context_tool.get_dd_path_context(*args, **kwargs)
 
-    async def analyze_imas_structure(self, *args, **kwargs):
+    async def analyze_dd_structure(self, *args, **kwargs):
         """Delegate to structure tool."""
-        return await self.structure_tool.analyze_imas_structure(*args, **kwargs)
+        return await self.structure_tool.analyze_dd_structure(*args, **kwargs)
 
     async def export_imas_ids(self, *args, **kwargs):
         """Delegate to structure tool."""
@@ -142,17 +142,17 @@ class Tools(MCPProvider):
         """Delegate to version tool."""
         return await self.version_tool.get_dd_versions(*args, **kwargs)
 
-    async def search_imas_clusters(self, *args, **kwargs):
+    async def search_dd_clusters(self, *args, **kwargs):
         """Delegate to clusters tool."""
-        return await self.clusters_tool.search_imas_clusters(*args, **kwargs)
+        return await self.clusters_tool.search_dd_clusters(*args, **kwargs)
 
     async def get_dd_version_context(self, *args, **kwargs):
         """Delegate to version tool."""
         return await self.version_tool.get_dd_version_context(*args, **kwargs)
 
-    async def fetch_error_fields(self, *args, **kwargs):
+    async def fetch_dd_error_fields(self, *args, **kwargs):
         """Delegate to path tool."""
-        return await self.path_tool.fetch_error_fields(*args, **kwargs)
+        return await self.path_tool.fetch_dd_error_fields(*args, **kwargs)
 
 
 __all__ = [

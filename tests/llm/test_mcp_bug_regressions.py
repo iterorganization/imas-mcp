@@ -96,29 +96,29 @@ class TestShortPhysicsTermsPreserved:
                 f"'{term}' missing from _PHYSICS_SHORT_TERMS"
             )
 
-    def test_search_imas_paths_path_segment_boost_preserves_short_terms(self):
-        """query_words in search_imas_paths must exempt _PHYSICS_SHORT_TERMS."""
+    def test_search_dd_paths_path_segment_boost_preserves_short_terms(self):
+        """query_words in search_dd_paths must exempt _PHYSICS_SHORT_TERMS."""
         from imas_codex.tools.graph_search import GraphSearchTool
 
-        source = inspect.getsource(GraphSearchTool.search_imas_paths)
+        source = inspect.getsource(GraphSearchTool.search_dd_paths)
 
         # The bug was: [w.lower() for w in ... if len(w) > 2]
         # The fix adds: or w.lower() in _PHYSICS_SHORT_TERMS
         # Verify the exemption is present wherever query_words is built
         assert "_PHYSICS_SHORT_TERMS" in source, (
-            "search_imas_paths must reference _PHYSICS_SHORT_TERMS to "
+            "search_dd_paths must reference _PHYSICS_SHORT_TERMS to "
             "exempt short physics abbreviations from length filtering"
         )
 
     def test_text_search_query_words_preserves_short_terms(self):
-        """_text_search_imas_paths query_words must exempt short physics terms."""
-        from imas_codex.tools.graph_search import _text_search_imas_paths
+        """_text_search_dd_paths query_words must exempt short physics terms."""
+        from imas_codex.tools.graph_search import _text_search_dd_paths
 
-        source = inspect.getsource(_text_search_imas_paths)
+        source = inspect.getsource(_text_search_dd_paths)
 
         # Same check: must reference the exemption set
         assert "_PHYSICS_SHORT_TERMS" in source, (
-            "_text_search_imas_paths must reference _PHYSICS_SHORT_TERMS to "
+            "_text_search_dd_paths must reference _PHYSICS_SHORT_TERMS to "
             "exempt short physics abbreviations from length filtering"
         )
 
@@ -142,22 +142,22 @@ class TestShortPhysicsTermsPreserved:
         """
         from imas_codex.tools.graph_search import GraphSearchTool
 
-        source = inspect.getsource(GraphSearchTool.search_imas_paths)
+        source = inspect.getsource(GraphSearchTool.search_dd_paths)
 
         # Must check is_abbreviation from the query intent
         assert "is_abbreviation" in source, (
-            "search_imas_paths must check intent.is_abbreviation to apply "
+            "search_dd_paths must check intent.is_abbreviation to apply "
             "an extra boost for abbreviation queries"
         )
         # Must reference original_query for the pre-expansion terms
         assert "original_query" in source, (
-            "search_imas_paths must use intent.original_query for "
+            "search_dd_paths must use intent.original_query for "
             "abbreviation terminal-match boosting"
         )
 
 
 # ---------------------------------------------------------------------------
-# Bug 5: Coordinate channel in find_related_imas_paths (get_imas_path_context)
+# Bug 5: Coordinate channel in find_related_dd_paths (get_dd_path_context)
 # must traverse through IMASCoordinateSpec for coordinate partner discovery.
 # The HAS_COORDINATE relationship now correctly points to IMASCoordinateSpec
 # nodes, which hold coordinate specifications used across IDSs.
@@ -171,7 +171,7 @@ class TestCoordinateChannelTargetsIMASCoordinateSpec:
         """The HAS_COORDINATE Cypher must traverse (coord:IMASCoordinateSpec)."""
         from imas_codex.tools.graph_search import GraphPathContextTool
 
-        source = inspect.getsource(GraphPathContextTool.get_imas_path_context)
+        source = inspect.getsource(GraphPathContextTool.get_dd_path_context)
 
         # Find the coordinate partners query
         coord_section = source[source.index("Coordinate partners") :]
@@ -192,7 +192,7 @@ class TestCoordinateChannelTargetsIMASCoordinateSpec:
         gc.query.return_value = []
         tool = GraphPathContextTool(gc)
 
-        await tool.get_imas_path_context(
+        await tool.get_dd_path_context(
             path="equilibrium/time_slice/profiles_1d/psi",
             relationship_types="coordinate",
         )

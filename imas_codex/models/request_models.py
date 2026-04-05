@@ -31,7 +31,7 @@ class BaseInputSchema(BaseModel):
 
 
 class SearchInput(BaseInputSchema):
-    """Input validation schema for search_imas tool."""
+    """Input validation schema for search_dd_paths tool."""
 
     query: str = Field(
         min_length=1,
@@ -122,7 +122,7 @@ class AnalysisInput(BaseInputSchema):
 
 
 class ClustersInput(BaseInputSchema):
-    """Input validation schema for search_imas_clusters tool."""
+    """Input validation schema for search_dd_clusters tool."""
 
     query: str = Field(
         min_length=1,
@@ -141,7 +141,7 @@ class ClustersInput(BaseInputSchema):
 
 
 class IdentifiersInput(BaseInputSchema):
-    """Input validation schema for list_imas_identifiers tool."""
+    """Input validation schema for get_dd_identifiers tool."""
 
     query: str | None = Field(
         default=None,
@@ -265,7 +265,7 @@ class ExportPhysicsDomainInput(BaseInputSchema):
 
 
 class ListFormat(StrEnum):
-    """Output format for list_imas_paths tool."""
+    """Output format for list_dd_paths tool."""
 
     YAML = "yaml"
     LIST = "list"
@@ -274,7 +274,7 @@ class ListFormat(StrEnum):
 
 
 class ListPathsInput(BaseInputSchema):
-    """Input validation schema for list_imas_paths tool."""
+    """Input validation schema for list_dd_paths tool."""
 
     paths: str = Field(
         min_length=1,

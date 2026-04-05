@@ -28,7 +28,7 @@ async def test_shared_fetch_error_fields_returns_structured_results():
     ]
     tool = GraphPathTool(gc)
 
-    result = await tool.fetch_error_fields("equilibrium/time_slice/profiles_1d/psi")
+    result = await tool.fetch_dd_error_fields("equilibrium/time_slice/profiles_1d/psi")
 
     assert result["path"] == "equilibrium/time_slice/profiles_1d/psi"
     assert result["count"] == 1
@@ -42,7 +42,7 @@ async def test_shared_fetch_error_fields_returns_not_found():
     gc.query.return_value = []
     tool = GraphPathTool(gc)
 
-    result = await tool.fetch_error_fields("fake/path")
+    result = await tool.fetch_dd_error_fields("fake/path")
 
     assert result["path"] == "fake/path"
     assert result["count"] == 0

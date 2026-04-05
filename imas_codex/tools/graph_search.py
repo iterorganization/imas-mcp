@@ -87,7 +87,7 @@ def warmup_encoder():
     """Pre-warm the encoder by loading the model.
 
     Call from a background thread at server startup so the first
-    search_imas call doesn't pay the cold-start penalty.
+    search_dd_paths call doesn't pay the cold-start penalty.
     """
     try:
         encoder = _get_encoder()
@@ -158,7 +158,7 @@ class GraphSearchTool:
 
     @property
     def tool_name(self) -> str:
-        return "search_imas_paths"
+        return "search_dd_paths"
 
     @cache_results(ttl=300, key_strategy="semantic")
     @measure_performance(include_metrics=True, slow_threshold=1.0)
@@ -176,7 +176,7 @@ class GraphSearchTool:
         "physics_domain: Filter by physics domain (e.g., 'magnetics', 'equilibrium', 'transport'). "
         "lifecycle_filter: Filter by lifecycle status ('active', 'alpha', 'obsolescent'). "
     )
-    async def search_imas_paths(
+    async def search_dd_paths(
         self,
         query: str,
         ids_filter: str | list[str] | None = None,
@@ -191,7 +191,7 @@ class GraphSearchTool:
         ctx: Context | None = None,
     ) -> SearchPathsResult:
         """Search IMAS paths using hybrid vector + text search."""
-        is_valid, error_message = validate_query(query, "search_imas_paths")
+        is_valid, error_message = validate_query(query, "search_dd_paths")
         if not is_valid:
             return SearchPathsResult(
                 hits=[],
@@ -267,7 +267,7 @@ class GraphSearchTool:
                 scores[pid] = round(r["score"], 4)
 
             # --- Text search ---
-            text_results = _text_search_imas_paths(
+            text_results = _text_search_dd_paths(
                 self._gc,
                 query,
                 min(max_results * 3, 150),
@@ -482,7 +482,7 @@ class GraphPathTool:
         "ids: Optional IDS prefix to prepend (e.g., ids='equilibrium' with paths='time_slice/profiles_1d/psi'). "
         "dd_version: Filter by DD major version (e.g., 3 or 4). None checks all versions."
     )
-    async def check_imas_paths(
+    async def check_dd_paths(
         self,
         paths: str | list[str],
         ids: str | None = None,
@@ -601,7 +601,7 @@ class GraphPathTool:
         "include_version_history: Include notable version changes (sign_convention, units, etc.). "
         "include_children: If true, include a preview of child paths for structure nodes. "
     )
-    async def fetch_imas_paths(
+    async def fetch_dd_paths(
         self,
         paths: str | list[str],
         ids: str | None = None,
@@ -790,7 +790,7 @@ class GraphPathTool:
         "path (required): Exact IMAS data path. "
         "dd_version: Filter by DD major version (e.g., 3 or 4). None returns all versions."
     )
-    async def fetch_error_fields(
+    async def fetch_dd_error_fields(
         self,
         path: str,
         dd_version: int | None = None,
@@ -845,7 +845,7 @@ class GraphListTool:
 
     @property
     def tool_name(self) -> str:
-        return "list_imas_paths"
+        return "list_dd_paths"
 
     @measure_performance(include_metrics=True, slow_threshold=1.0)
     @handle_errors(fallback="list_suggestions")
@@ -861,7 +861,7 @@ class GraphListTool:
         "node_type: Filter by node type ('dynamic', 'static', 'constant'). "
         "lifecycle_filter: Filter by lifecycle status ('active', 'alpha', 'obsolescent'). "
     )
-    async def list_imas_paths(
+    async def list_dd_paths(
         self,
         paths: str,
         format: str = "yaml",
@@ -1036,7 +1036,7 @@ class GraphOverviewTool:
 
     @property
     def tool_name(self) -> str:
-        return "get_imas_overview"
+        return "get_dd_overview"
 
     @cache_results(ttl=3600)
     @handle_errors(fallback="overview_error")
@@ -1047,7 +1047,7 @@ class GraphOverviewTool:
         "dd_version: Filter by DD major version (e.g., 3 or 4). None returns all versions. "
         "include_unit_stats: If true, include unit distribution statistics in the response. "
     )
-    async def get_imas_overview(
+    async def get_dd_overview(
         self,
         query: str | None = None,
         dd_version: int | None = None,
@@ -1147,14 +1147,14 @@ class GraphOverviewTool:
 
         # Build tools list (query_imas_graph and get_dd_graph_schema were removed)
         mcp_tools = [
-            "search_imas_paths",
-            "check_imas_paths",
-            "fetch_imas_paths",
-            "list_imas_paths",
-            "get_imas_overview",
-            "search_imas_clusters",
-            "get_imas_identifiers",
-            "get_cocos_fields",
+            "search_dd_paths",
+            "check_dd_paths",
+            "fetch_dd_paths",
+            "list_dd_paths",
+            "get_dd_overview",
+            "search_dd_clusters",
+            "get_dd_identifiers",
+            "get_dd_cocos_fields",
             "get_dd_versions",
         ]
 
@@ -1206,7 +1206,7 @@ class GraphClustersTool:
 
     @property
     def tool_name(self) -> str:
-        return "search_imas_clusters"
+        return "search_dd_clusters"
 
     @cache_results(ttl=600)
     @handle_errors(fallback="cluster_error")
@@ -1219,7 +1219,7 @@ class GraphClustersTool:
         "section_only: If true, only return clusters containing structural sections. "
         "dd_version: Filter by DD major version (e.g., 3 or 4). None returns all versions."
     )
-    async def search_imas_clusters(
+    async def search_dd_clusters(
         self,
         query: str | None = None,
         scope: Literal["global", "domain", "ids"] | None = None,
@@ -1472,7 +1472,7 @@ class GraphIdentifiersTool:
 
     @property
     def tool_name(self) -> str:
-        return "get_imas_identifiers"
+        return "get_dd_identifiers"
 
     @cache_results(ttl=3600)
     @handle_errors(fallback="identifiers_error")
@@ -1483,7 +1483,7 @@ class GraphIdentifiersTool:
         "query: Optional filter (e.g., 'coordinate' or 'magnetics'). "
         "dd_version: Filter by DD major version (e.g., 3 or 4). None returns all versions."
     )
-    async def get_imas_identifiers(
+    async def get_dd_identifiers(
         self,
         query: str | None = None,
         dd_version: int | None = None,
@@ -1651,8 +1651,8 @@ class GraphPathContextTool:
         "relationship_types: Filter to specific types — 'cluster', 'coordinate', "
         "'unit', 'identifier', or 'all' (default)."
     )
-    @handle_errors("get_imas_path_context")
-    async def get_imas_path_context(
+    @handle_errors("get_dd_path_context")
+    async def get_dd_path_context(
         self,
         path: str,
         relationship_types: str = "all",
@@ -1760,8 +1760,8 @@ class GraphStructureTool:
         "physics domain distribution, coordinate usage, and COCOS-labeled fields. "
         "ids_name (required): IDS name (e.g. 'equilibrium')."
     )
-    @handle_errors("analyze_imas_structure")
-    async def analyze_imas_structure(
+    @handle_errors("analyze_dd_structure")
+    async def analyze_dd_structure(
         self,
         ids_name: str,
         dd_version: int | None = None,
@@ -2030,8 +2030,8 @@ class GraphStructureTool:
         "ids_filter: Limit to specific IDS (e.g., 'equilibrium'). "
         "dd_version: Filter by DD major version (3 or 4)."
     )
-    @handle_errors("get_cocos_fields")
-    async def get_cocos_fields(
+    @handle_errors("get_dd_cocos_fields")
+    async def get_dd_cocos_fields(
         self,
         transformation_type: str | None = None,
         ids_filter: str | None = None,
@@ -2280,7 +2280,7 @@ def _build_lucene_query(query: str) -> str:
     return base
 
 
-def _text_search_imas_paths(
+def _text_search_dd_paths(
     gc: GraphClient,
     query: str,
     limit: int,

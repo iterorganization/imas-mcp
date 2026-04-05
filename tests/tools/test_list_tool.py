@@ -1,7 +1,7 @@
 """
-Test suite for list_imas_paths tool functionality.
+Test suite for list_dd_paths tool functionality.
 
-This test suite validates that the list_imas_paths tool works correctly,
+This test suite validates that the list_dd_paths tool works correctly,
 covering all output formats and filtering options.
 """
 
@@ -265,18 +265,18 @@ class TestListToolMCPIntegration:
         return ListTool()
 
     @pytest.mark.asyncio
-    async def test_list_imas_paths_yaml_format(self, list_tool):
+    async def test_list_dd_paths_yaml_format(self, list_tool):
         """List paths in YAML format."""
-        result = await list_tool.list_imas_paths("equilibrium", format="yaml")
+        result = await list_tool.list_dd_paths("equilibrium", format="yaml")
 
         assert isinstance(result, ListPathsResult)
         assert result.format == "yaml"
         assert len(result.results) > 0
 
     @pytest.mark.asyncio
-    async def test_list_imas_paths_list_format(self, list_tool):
+    async def test_list_dd_paths_list_format(self, list_tool):
         """List paths in list format."""
-        result = await list_tool.list_imas_paths("equilibrium", format="list")
+        result = await list_tool.list_dd_paths("equilibrium", format="list")
 
         assert isinstance(result, ListPathsResult)
         assert result.format == "list"
@@ -288,17 +288,17 @@ class TestListToolMCPIntegration:
             assert isinstance(first_result.paths, list)
 
     @pytest.mark.asyncio
-    async def test_list_imas_paths_json_format(self, list_tool):
+    async def test_list_dd_paths_json_format(self, list_tool):
         """List paths in JSON format."""
-        result = await list_tool.list_imas_paths("equilibrium", format="json")
+        result = await list_tool.list_dd_paths("equilibrium", format="json")
 
         assert isinstance(result, ListPathsResult)
         assert result.format == "json"
 
     @pytest.mark.asyncio
-    async def test_list_imas_paths_dict_format(self, list_tool):
+    async def test_list_dd_paths_dict_format(self, list_tool):
         """List paths in dict format."""
-        result = await list_tool.list_imas_paths("equilibrium", format="dict")
+        result = await list_tool.list_dd_paths("equilibrium", format="dict")
 
         assert isinstance(result, ListPathsResult)
         assert result.format == "dict"
@@ -309,45 +309,43 @@ class TestListToolMCPIntegration:
             assert isinstance(first_result.paths, dict)
 
     @pytest.mark.asyncio
-    async def test_list_imas_paths_multiple_ids(self, list_tool):
+    async def test_list_dd_paths_multiple_ids(self, list_tool):
         """List paths for multiple IDS."""
-        result = await list_tool.list_imas_paths("equilibrium core_profiles")
+        result = await list_tool.list_dd_paths("equilibrium core_profiles")
 
         assert isinstance(result, ListPathsResult)
         assert len(result.results) == 2
 
     @pytest.mark.asyncio
-    async def test_list_imas_paths_with_path_prefix(self, list_tool):
+    async def test_list_dd_paths_with_path_prefix(self, list_tool):
         """List paths with path prefix filter."""
-        result = await list_tool.list_imas_paths(
-            "equilibrium/time_slice", format="list"
-        )
+        result = await list_tool.list_dd_paths("equilibrium/time_slice", format="list")
 
         assert isinstance(result, ListPathsResult)
         assert len(result.results) > 0
 
     @pytest.mark.asyncio
-    async def test_list_imas_paths_leaf_only(self, list_tool):
+    async def test_list_dd_paths_leaf_only(self, list_tool):
         """List only leaf paths."""
-        result = await list_tool.list_imas_paths(
+        result = await list_tool.list_dd_paths(
             "equilibrium", format="list", leaf_only=True
         )
 
         assert isinstance(result, ListPathsResult)
 
     @pytest.mark.asyncio
-    async def test_list_imas_paths_without_ids_prefix(self, list_tool):
+    async def test_list_dd_paths_without_ids_prefix(self, list_tool):
         """List paths without IDS prefix."""
-        result = await list_tool.list_imas_paths(
+        result = await list_tool.list_dd_paths(
             "equilibrium", format="list", include_ids_prefix=False
         )
 
         assert isinstance(result, ListPathsResult)
 
     @pytest.mark.asyncio
-    async def test_list_imas_paths_with_max_paths(self, list_tool):
+    async def test_list_dd_paths_with_max_paths(self, list_tool):
         """List paths with max_paths limit."""
-        result = await list_tool.list_imas_paths(
+        result = await list_tool.list_dd_paths(
             "equilibrium", format="list", max_paths=10
         )
 
@@ -357,18 +355,18 @@ class TestListToolMCPIntegration:
             assert len(first_result.paths) <= 10
 
     @pytest.mark.asyncio
-    async def test_list_imas_paths_invalid_ids(self, list_tool):
+    async def test_list_dd_paths_invalid_ids(self, list_tool):
         """Invalid IDS returns error in result."""
-        result = await list_tool.list_imas_paths("nonexistent_ids_xyz")
+        result = await list_tool.list_dd_paths("nonexistent_ids_xyz")
 
         assert isinstance(result, ListPathsResult)
         assert len(result.results) == 1
         assert result.results[0].error is not None
 
     @pytest.mark.asyncio
-    async def test_list_imas_paths_summary(self, list_tool):
+    async def test_list_dd_paths_summary(self, list_tool):
         """Summary contains expected fields."""
-        result = await list_tool.list_imas_paths("equilibrium")
+        result = await list_tool.list_dd_paths("equilibrium")
 
         assert isinstance(result, ListPathsResult)
         assert "total_queries" in result.summary
@@ -377,11 +375,11 @@ class TestListToolMCPIntegration:
         assert "format" in result.summary
 
     @pytest.mark.asyncio
-    async def test_list_imas_paths_empty_query(self, list_tool):
+    async def test_list_dd_paths_empty_query(self, list_tool):
         """Empty query handled gracefully."""
         from imas_codex.models.error_models import ToolError
 
-        result = await list_tool.list_imas_paths("   ")
+        result = await list_tool.list_dd_paths("   ")
 
         # Should return error for empty query
         assert isinstance(result, ToolError | ListPathsResult)

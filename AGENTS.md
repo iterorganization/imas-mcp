@@ -358,7 +358,7 @@ When on an HPC system with SLURM (check `which srun`), use debug/interactive par
 - `repl()` REPL for chained processing, Cypher queries, IMAS/COCOS operations
 - Terminal for `rg`, `fd`, `git`, `uv run`; SSH for remote single commands
 
-**Read-only mode:** `imas-codex serve --read-only` suppresses all write tools (`repl()` REPL, `add_to_graph()`, `update_facility_config()`) and exposes only the search/read tools (`search_signals`, `search_docs`, `search_code`, `search_imas`, `fetch_content`, `get_graph_schema`, etc.). Use for any context where graph mutation is not desired.
+**Read-only mode:** `imas-codex serve --read-only` suppresses all write tools (`repl()` REPL, `add_to_graph()`, `update_facility_config()`) and exposes only the search/read tools (`search_signals`, `search_docs`, `search_code`, `search_dd_paths`, `fetch_content`, `get_graph_schema`, etc.). Use for any context where graph mutation is not desired.
 
 **DD-only mode:** `imas-codex serve --dd-only` hides facility-specific tools and **implies `--read-only`**. Use for container deployments with a DD-only graph. Auto-detected from graph content if omitted.
 
@@ -847,7 +847,7 @@ uv run pytest tests/path/to/test.py::test_function  # Specific test
 
 ## Python REPL
 
-The `repl()` MCP tool provides a persistent REPL for custom queries not covered by the search tools. Prefer `search_signals`, `search_docs`, `search_code`, and `search_imas` for common lookups — they perform multi-index vector search with graph enrichment and return formatted reports in one call.
+The `repl()` MCP tool provides a persistent REPL for custom queries not covered by the search tools. Prefer `search_signals`, `search_docs`, `search_code`, and `search_dd_paths` for common lookups — they perform multi-index vector search with graph enrichment and return formatted reports in one call.
 
 ### REPL Workflow
 
@@ -877,7 +877,7 @@ All graph node types, properties, enums, and relationships are derived from Link
 | Signal lookup | `search_signals("plasma current", facility="tcv")` |
 | Documentation | `search_docs("fishbone instabilities", facility="jet")` |
 | Code examples | `search_code("equilibrium reconstruction", facility="tcv")` |
-| IMAS DD paths | `search_imas("electron temperature", facility="tcv")` — results include semantic cluster labels and "See Also" cross-IDS siblings for top hits |
+| IMAS DD paths | `search_dd_paths("electron temperature", facility="tcv")` — results include semantic cluster labels and "See Also" cross-IDS siblings for top hits |
 | Full content | `fetch_content("jet:Fishbone_proposal_2018.ppt")` — use IDs/URLs from search results |
 
 **repl() REPL** — for custom queries not covered by the search tools:

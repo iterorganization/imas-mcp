@@ -56,7 +56,7 @@ class IdentifiersTool(BaseTool):
     @property
     def tool_name(self) -> str:
         """Return the name of this tool."""
-        return "get_imas_identifiers"
+        return "get_dd_identifiers"
 
     def _filter_schemas_by_query(self, query: str) -> list[str]:
         """Filter identifier schemas based on query terms using OR logic for multiple keywords."""
@@ -147,17 +147,17 @@ class IdentifiersTool(BaseTool):
 
         if query:
             recommendations.append(
-                f"🔍 Use search_imas_paths('{query}') to find paths using these identifiers"
+                f"🔍 Use search_dd_paths('{query}') to find paths using these identifiers"
             )
 
             if any("coordinate" in name.lower() for name in schemas.keys()):
                 recommendations.append(
-                    "📐 Use list_imas_paths() to see how coordinate identifiers affect data structure"
+                    "📐 Use list_dd_paths() to see how coordinate identifiers affect data structure"
                 )
 
             if any("type" in name.lower() for name in schemas.keys()):
                 recommendations.append(
-                    "🔧 Use search_imas_clusters() to find related paths using these type identifiers"
+                    "🔧 Use search_dd_clusters() to find related paths using these type identifiers"
                 )
 
         if schemas:
@@ -165,18 +165,18 @@ class IdentifiersTool(BaseTool):
             if len(schema_names) > 0:
                 first_schema = schema_names[0]
                 recommendations.append(
-                    f"📋 Use search_imas_paths() with specific values from '{first_schema}' schema"
+                    f"📋 Use search_dd_paths() with specific values from '{first_schema}' schema"
                 )
 
             if len(schema_names) > 3:
                 recommendations.append(
-                    "Use search_imas_clusters() to see how these identifiers connect different IDS"
+                    "Use search_dd_clusters() to see how these identifiers connect different IDS"
                 )
 
         recommendations.extend(
             [
-                "💡 Use get_imas_overview() to understand overall IMAS structure",
-                "🌐 Use search_imas_clusters() to find related path clusters",
+                "💡 Use get_dd_overview() to understand overall IMAS structure",
+                "🌐 Use search_dd_clusters() to find related path clusters",
             ]
         )
 
@@ -192,7 +192,7 @@ class IdentifiersTool(BaseTool):
         "Key schemas: coordinate_identifier (35 options), core_source_identifier (53 options), ggd_subset_identifier (61 options). "
         "Use for: array indices, coordinate systems, source types, measurement configurations."
     )
-    async def get_imas_identifiers(
+    async def get_dd_identifiers(
         self,
         query: str | None = None,
         ctx: Context | None = None,
@@ -214,9 +214,9 @@ class IdentifiersTool(BaseTool):
             GetIdentifiersResult containing schemas, paths, and analytics
 
         Examples:
-            get_imas_identifiers()  # All schemas
-            get_imas_identifiers(query="material")  # Material-related schemas
-            get_imas_identifiers(query="coordinate transport")  # OR search
+            get_dd_identifiers()  # All schemas
+            get_dd_identifiers(query="material")  # Material-related schemas
+            get_dd_identifiers(query="coordinate transport")  # OR search
         """
         try:
             if not self._identifier_catalog:
@@ -225,10 +225,10 @@ class IdentifiersTool(BaseTool):
                     suggestions=[
                         "Check if identifier_catalog.json exists in resources/schemas/",
                         "Try restarting the MCP server",
-                        "Use search_imas_paths() for direct data access",
+                        "Use search_dd_paths() for direct data access",
                     ],
                     context={
-                        "tool": "get_imas_identifiers",
+                        "tool": "get_dd_identifiers",
                         "operation": "catalog_access",
                     },
                 )
@@ -307,12 +307,12 @@ class IdentifiersTool(BaseTool):
                 error=str(e),
                 suggestions=[
                     "Try a simpler query",
-                    "Use get_imas_overview() for general IMAS exploration",
+                    "Use get_dd_overview() for general IMAS exploration",
                     "Check identifier catalog file availability",
                 ],
                 context={
                     "query": query,
-                    "tool": "get_imas_identifiers",
+                    "tool": "get_dd_identifiers",
                     "operation": "catalog_identifiers",
                     "identifier_catalog_loaded": bool(self._identifier_catalog),
                 },

@@ -50,7 +50,7 @@ class ToolResult(BaseToolResult, ABC):
 class DeprecatedPathInfo(BaseModel):
     """Migration info for a deprecated path.
 
-    Returned when fetch_imas_paths encounters a path that doesn't exist
+    Returned when fetch_dd_paths encounters a path that doesn't exist
     in the current DD version but has a known migration.
     """
 
@@ -74,7 +74,7 @@ class DeprecatedPathInfo(BaseModel):
 class NotFoundPathInfo(BaseModel):
     """Details about a path that was not found.
 
-    Returned when check_imas_paths or fetch_imas_paths encounters a path
+    Returned when check_dd_paths or fetch_dd_paths encounters a path
     that doesn't exist and isn't deprecated. Includes suggestions for typos.
     """
 
@@ -92,7 +92,7 @@ class NotFoundPathInfo(BaseModel):
 class ExcludedPathInfo(BaseModel):
     """Information about a path that exists but is excluded from search index.
 
-    Returned when check_imas_paths or fetch_imas_paths encounters a path
+    Returned when check_dd_paths or fetch_dd_paths encounters a path
     that is valid in the DD but excluded from indexing.
     """
 
@@ -129,7 +129,7 @@ class FetchPathsResult(WithPhysics, ToolResult, IdsResult):
     @property
     def tool_name(self) -> str:
         """Name of the tool that generated this result."""
-        return "fetch_imas_paths"
+        return "fetch_dd_paths"
 
     # Summary information
     summary: dict[str, Any] = Field(
@@ -284,7 +284,7 @@ class SearchPathsResult(WithPhysics, ToolResult, SearchHits):
     @property
     def tool_name(self) -> str:
         """Name of the tool that generated this result."""
-        return "search_imas_paths"
+        return "search_dd_paths"
 
     # Search-specific fields
     search_mode: SearchMode = Field(
@@ -313,7 +313,7 @@ class GetOverviewResult(WithPhysics, ToolResult, SearchHits):
     @property
     def tool_name(self) -> str:
         """Name of the tool that generated this result."""
-        return "get_imas_overview"
+        return "get_dd_overview"
 
     content: str
     available_ids: list[str] = Field(default_factory=list)
@@ -362,7 +362,7 @@ class GetIdentifiersResult(WithPhysics, ToolResult):
     @property
     def tool_name(self) -> str:
         """Name of the tool that generated this result."""
-        return "get_imas_identifiers"
+        return "get_dd_identifiers"
 
     schemas: list[dict[str, Any]] = Field(default_factory=list)
     paths: list[dict[str, Any]] = Field(default_factory=list)
@@ -375,7 +375,7 @@ class SearchClustersResult(ToolResult):
     @property
     def tool_name(self) -> str:
         """Name of the tool that generated this result."""
-        return "search_imas_clusters"
+        return "search_dd_clusters"
 
     query: str = Field(description="The search query (path or natural language)")
     query_type: str = Field(description="Type of query: 'path' or 'semantic'")
@@ -392,7 +392,7 @@ class SearchClustersResult(ToolResult):
 
 
 class ListPathsResultItem(BaseModel):
-    """Result for a single IDS/prefix query in list_imas_paths."""
+    """Result for a single IDS/prefix query in list_dd_paths."""
 
     query: str = Field(description="The IDS name or prefix queried")
     path_count: int = Field(description="Total number of paths found")
@@ -416,7 +416,7 @@ class ListPathsResultItem(BaseModel):
 
 
 class ListPathsResult(BaseModel):
-    """Result from list_imas_paths tool with minimal path enumeration.
+    """Result from list_dd_paths tool with minimal path enumeration.
 
     Uses minimal BaseModel instead of ToolResult to avoid unnecessary search-related fields.
     """
@@ -470,7 +470,7 @@ class CheckPathsResultItem(BaseModel):
 
 
 class CheckPathsResult(BaseModel):
-    """Result from check_imas_paths tool for batch path validation."""
+    """Result from check_dd_paths tool for batch path validation."""
 
     summary: dict[str, int] = Field(
         description="Counts: total, found, not_found, invalid"

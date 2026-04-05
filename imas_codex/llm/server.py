@@ -7,7 +7,7 @@ Unified Search (primary interface):
 - search_signals: Signal search with data access and IMAS enrichment
 - search_docs: Wiki/document/image search with cross-links
 - search_code: Code search with data reference enrichment
-- search_imas: IMAS DD search with cluster and facility cross-refs
+- search_dd_paths: IMAS DD search with cluster and facility cross-refs
 
 Retrieval:
 - fetch: Full content retrieval by ID or URL (WikiPage, Document, CodeFile, Image)
@@ -35,10 +35,10 @@ Advanced:
 
 The python() REPL provides advanced operations not covered by search tools:
 - Graph: query(), semantic_search(), embed()
-- Domain: find_signals(), find_wiki(), find_imas(), find_code(), graph_search()
+- Domain: find_signals(), find_wiki(), find_dd_paths(), find_code(), graph_search()
 - Remote: run(), check_tools() (auto-detects local vs SSH)
 - Facility: get_facility(), get_exploration_targets(), get_tree_structure()
-- IMAS DD: search_imas(), fetch_imas(), list_imas(), check_imas()
+- IMAS DD: search_dd_paths(), fetch_dd_paths(), list_dd_paths(), check_dd_paths()
 - COCOS: validate_cocos(), determine_cocos(), cocos_sign_flip_paths(), cocos_info()
 
 Use search_* MCP tools for:
@@ -248,14 +248,14 @@ def _generate_api_reference() -> str:
     """
     return "\n".join(
         [
-            "Use search_signals/search_docs/search_code/search_imas for common lookups.",
+            "Use search_signals/search_docs/search_code/search_dd_paths for common lookups.",
             "Use python() for custom queries not covered by the search tools.",
             "",
             "REPL functions (for custom queries in python()):",
             "  find_wiki(query, facility=, text_contains=, page_title_contains=, k=10)",
             "  wiki_page_chunks(title_contains, facility=, text_contains=, limit=50)",
             "  find_signals(query, facility=, diagnostic=, physics_domain=, limit=20)",
-            "  find_imas(query) | find_code(query, facility=, limit=10)",
+            "  find_dd_paths(query) | find_code(query, facility=, limit=10)",
             "  find_data_nodes(query, facility=, data_source_name=)",
             "  map_signals_to_imas(facility, diagnostic=, physics_domain=)",
             "  facility_overview(facility)",
@@ -989,7 +989,7 @@ def _init_repl() -> dict[str, Any]:
     # IMAS DD utilities
     # =========================================================================
 
-    def search_imas(
+    def search_dd_paths(
         query_text: str,
         ids_filter: str | None = None,
         max_results: int = 10,
@@ -998,7 +998,7 @@ def _init_repl() -> dict[str, Any]:
         """Search IMAS Data Dictionary using semantic search.
 
         Excludes error fields and metadata subtrees from results.
-        Use fetch_imas_paths to access error fields via HAS_ERROR relationships.
+        Use fetch_dd_paths to access error fields via HAS_ERROR relationships.
 
         Args:
             query_text: Natural language query
@@ -1012,7 +1012,7 @@ def _init_repl() -> dict[str, Any]:
         try:
             tools = _get_imas_tools(semantic_search=True)
             result = _run_async(
-                tools.search_imas_paths(
+                tools.search_dd_paths(
                     query=query_text,
                     ids_filter=ids_filter,
                     max_results=max_results,
@@ -1033,7 +1033,7 @@ def _init_repl() -> dict[str, Any]:
         except Exception as e:
             return f"IMAS search error: {e}"
 
-    def fetch_imas(paths: str, dd_version: int | None = None) -> str:
+    def fetch_dd_paths(paths: str, dd_version: int | None = None) -> str:
         """Get full documentation for IMAS paths.
 
         Args:
@@ -1046,13 +1046,13 @@ def _init_repl() -> dict[str, Any]:
         try:
             tools = _get_imas_tools()
             result = _run_async(
-                tools.fetch_imas_paths(paths=paths, dd_version=dd_version)
+                tools.fetch_dd_paths(paths=paths, dd_version=dd_version)
             )
             return str(result)
         except Exception as e:
             return f"Fetch error: {e}"
 
-    def list_imas(
+    def list_dd_paths(
         paths: str,
         leaf_only: bool = True,
         max_paths: int = 100,
@@ -1072,7 +1072,7 @@ def _init_repl() -> dict[str, Any]:
         try:
             tools = _get_imas_tools()
             result = _run_async(
-                tools.list_imas_paths(
+                tools.list_dd_paths(
                     paths=paths,
                     leaf_only=leaf_only,
                     max_paths=max_paths,
@@ -1083,7 +1083,7 @@ def _init_repl() -> dict[str, Any]:
         except Exception as e:
             return f"List error: {e}"
 
-    def check_imas(paths: str, dd_version: int | None = None) -> str:
+    def check_dd_paths(paths: str, dd_version: int | None = None) -> str:
         """Validate IMAS paths for existence.
 
         Args:
@@ -1096,13 +1096,13 @@ def _init_repl() -> dict[str, Any]:
         try:
             tools = _get_imas_tools()
             result = _run_async(
-                tools.check_imas_paths(paths=paths, dd_version=dd_version)
+                tools.check_dd_paths(paths=paths, dd_version=dd_version)
             )
             return str(result)
         except Exception as e:
             return f"Check error: {e}"
 
-    def get_imas_overview(
+    def get_dd_overview(
         query_text: str | None = None,
         dd_version: int | None = None,
         include_unit_stats: bool = False,
@@ -1120,7 +1120,7 @@ def _init_repl() -> dict[str, Any]:
         try:
             tools = _get_imas_tools()
             result = _run_async(
-                tools.get_imas_overview(
+                tools.get_dd_overview(
                     query=query_text,
                     dd_version=dd_version,
                     include_unit_stats=include_unit_stats,
@@ -1130,7 +1130,7 @@ def _init_repl() -> dict[str, Any]:
         except Exception as e:
             return f"Overview error: {e}"
 
-    def get_imas_path_context(
+    def get_dd_path_context(
         path: str,
         relationship_types: str = "all",
         dd_version: int | None = None,
@@ -1148,7 +1148,7 @@ def _init_repl() -> dict[str, Any]:
         try:
             tools = _get_imas_tools()
             result = _run_async(
-                tools.get_imas_path_context(
+                tools.get_dd_path_context(
                     path=path,
                     relationship_types=relationship_types,
                     dd_version=dd_version,
@@ -1158,7 +1158,7 @@ def _init_repl() -> dict[str, Any]:
         except Exception as e:
             return f"Path context error: {e}"
 
-    def analyze_imas_structure(
+    def analyze_dd_structure(
         ids_name: str,
         dd_version: int | None = None,
     ) -> str:
@@ -1174,7 +1174,7 @@ def _init_repl() -> dict[str, Any]:
         try:
             tools = _get_imas_tools()
             result = _run_async(
-                tools.analyze_imas_structure(ids_name=ids_name, dd_version=dd_version)
+                tools.analyze_dd_structure(ids_name=ids_name, dd_version=dd_version)
             )
             return str(result)
         except Exception as e:
@@ -1464,7 +1464,7 @@ def _init_repl() -> dict[str, Any]:
     find_signals = _bind_dq(_dq.find_signals)
     find_wiki = _bind_dq(_dq.find_wiki)
     wiki_page_chunks = _bind_dq(_dq.wiki_page_chunks)
-    find_imas = _bind_dq(_dq.find_imas)
+    find_dd_paths = _bind_dq(_dq.find_dd_paths)
     find_code = _bind_dq(_dq.find_code)
     find_data_nodes = _bind_dq(_dq.find_data_nodes)
     map_signals_to_imas = _bind_dq(_dq.map_signals_to_imas)
@@ -1489,7 +1489,7 @@ def _init_repl() -> dict[str, Any]:
                 ("find_wiki", find_wiki),
                 ("wiki_page_chunks", wiki_page_chunks),
                 ("find_code", find_code),
-                ("find_imas", find_imas),
+                ("find_dd_paths", find_dd_paths),
                 ("find_data_nodes", find_data_nodes),
                 ("map_signals_to_imas", map_signals_to_imas),
                 ("facility_overview", facility_overview),
@@ -1542,13 +1542,13 @@ def _init_repl() -> dict[str, Any]:
         (
             "IMAS DD",
             [
-                ("search_imas", search_imas),
-                ("fetch_imas", fetch_imas),
-                ("list_imas", list_imas),
-                ("check_imas", check_imas),
-                ("get_imas_overview", get_imas_overview),
-                ("get_imas_path_context", get_imas_path_context),
-                ("analyze_imas_structure", analyze_imas_structure),
+                ("search_dd_paths", search_dd_paths),
+                ("fetch_dd_paths", fetch_dd_paths),
+                ("list_dd_paths", list_dd_paths),
+                ("check_dd_paths", check_dd_paths),
+                ("get_dd_overview", get_dd_overview),
+                ("get_dd_path_context", get_dd_path_context),
+                ("analyze_dd_structure", analyze_dd_structure),
                 ("export_imas_ids", export_imas_ids),
                 ("export_imas_domain", export_imas_domain),
             ],
@@ -1621,7 +1621,7 @@ def _init_repl() -> dict[str, Any]:
             "update_metadata": update_metadata,
             "install_tools": install_tools,
             "search_code": search_code,
-            "get_imas_overview": get_imas_overview,
+            "get_dd_overview": get_dd_overview,
             "cocos_sign_flip_paths": cocos_sign_flip_paths,
             # REPL management
             "reload": _reload_repl,
@@ -1705,7 +1705,7 @@ class AgentsServer:
     - search_signals: Signal search with data access and IMAS enrichment
     - search_docs: Wiki/document/image search with cross-links
     - search_code: Code search with data reference enrichment
-    - search_imas: IMAS DD search with cluster and facility cross-refs
+    - search_dd_paths: IMAS DD search with cluster and facility cross-refs
     - python: Persistent REPL for custom queries not covered above
     - get_graph_schema: Schema introspection for query generation
     - add_to_graph: Schema-validated node creation with privacy filtering
@@ -1716,11 +1716,11 @@ class AgentsServer:
 
     The python() REPL provides access to:
     - Graph: query(), semantic_search(), embed(), graph_search()
-    - Domain: find_signals(), find_wiki(), wiki_page_chunks(), find_imas(), find_code()
+    - Domain: find_signals(), find_wiki(), wiki_page_chunks(), find_dd_paths(), find_code()
     - Formatters: as_table(), as_summary(), pick()
     - Remote: run(), check_tools() (auto-detects local vs SSH)
     - Facility: get_facility(), get_exploration_targets(), get_tree_structure()
-    - IMAS DD: search_imas(), fetch_imas(), list_imas(), check_imas()
+    - IMAS DD: search_dd_paths(), fetch_dd_paths(), list_dd_paths(), check_dd_paths()
     - COCOS: validate_cocos(), determine_cocos(), cocos_sign_flip_paths(), cocos_info()
     - Code: search_code()
     """
@@ -1807,7 +1807,7 @@ class AgentsServer:
         )
 
         # Pre-warm the embedding model in a background thread so the first
-        # search_imas call doesn't pay the 30s+ cold-start penalty.
+        # search_dd_paths call doesn't pay the 30s+ cold-start penalty.
         # This does not block server startup.
         def _warmup_encoder():
             from imas_codex.tools.graph_search import warmup_encoder
@@ -1883,7 +1883,7 @@ class AgentsServer:
                 "accessors. State persists across calls. Use for custom Cypher "
                 "queries, signal-to-IMAS mapping, batch graph writes, and "
                 "chained operations not covered by the dedicated search tools.\n\n"
-                "Prefer search_signals/search_docs/search_code/search_imas "
+                "Prefer search_signals/search_docs/search_code/search_dd_paths "
                 "for standard lookups — they handle embeddings, enrichment, "
                 "and formatting automatically.\n\n"
                 f"{api_reference}\n"
@@ -2456,7 +2456,7 @@ class AgentsServer:
                 )
 
         @self.mcp.tool()
-        def search_imas(
+        def search_dd_paths(
             query: str,
             ids_filter: str | None = None,
             facility: str | None = None,
@@ -2468,7 +2468,7 @@ class AgentsServer:
         ) -> str:
             """Find IMAS Data Dictionary paths matching a concept. Use when you need to discover which paths store a given physical quantity.
 
-            Performs hybrid search (vector + keyword) across path and cluster embeddings. Results include data type, units, coordinates, cluster membership, and optional facility signal cross-references. Error fields and metadata subtrees (ids_properties/*, code/*) are excluded — use fetch_error_fields for those.
+            Performs hybrid search (vector + keyword) across path and cluster embeddings. Results include data type, units, coordinates, cluster membership, and optional facility signal cross-references. Error fields and metadata subtrees (ids_properties/*, code/*) are excluded — use fetch_dd_error_fields for those.
 
             Args:
                 query: Natural-language description of the quantity to find (e.g. "electron temperature", "plasma boundary shape").
@@ -2485,7 +2485,7 @@ class AgentsServer:
             """
             from concurrent.futures import ThreadPoolExecutor
 
-            from imas_codex.llm.search_formatters import format_search_imas_report
+            from imas_codex.llm.search_formatters import format_search_dd_report
             from imas_codex.models.error_models import ToolError
 
             tools = _get_imas_tools(semantic_search=True)
@@ -2494,7 +2494,7 @@ class AgentsServer:
             # independent operations sharing the same encoder singleton.
             def _path_search():
                 return _run_async(
-                    tools.search_imas_paths(
+                    tools.search_dd_paths(
                         query=query,
                         ids_filter=ids_filter,
                         max_results=k,
@@ -2509,7 +2509,7 @@ class AgentsServer:
             def _cluster_search():
                 try:
                     cr = _run_async(
-                        tools.clusters_tool.search_imas_clusters(
+                        tools.clusters_tool.search_dd_clusters(
                             query=query,
                             ids_filter=ids_filter,
                             dd_version=dd_version,
@@ -2536,16 +2536,16 @@ class AgentsServer:
                 cluster_result = cluster_future.result()
 
             if isinstance(result, ToolError):
-                return format_search_imas_report(result)
+                return format_search_dd_report(result)
 
-            return format_search_imas_report(result, cluster_result)
+            return format_search_dd_report(result, cluster_result)
 
         # =====================================================================
         # Tier 2 — graph-only (no embeddings)
         # =====================================================================
 
         @self.mcp.tool()
-        def check_imas_paths(
+        def check_dd_paths(
             paths: str,
             ids: str | None = None,
             dd_version: int | None = None,
@@ -2566,19 +2566,19 @@ class AgentsServer:
 
             tools = _get_imas_tools()
             result = _run_async(
-                tools.check_imas_paths(paths=paths, ids=ids, dd_version=dd_version)
+                tools.check_dd_paths(paths=paths, ids=ids, dd_version=dd_version)
             )
             return format_check_report(result)
 
         @self.mcp.tool()
-        def fetch_imas_paths(
+        def fetch_dd_paths(
             paths: str,
             ids: str | None = None,
             dd_version: int | None = None,
             include_version_history: bool = False,
             include_children: bool = False,
         ) -> str:
-            """Get full documentation for known IMAS paths. Use after search_imas or check_imas_paths to retrieve detailed metadata for specific paths.
+            """Get full documentation for known IMAS paths. Use after search_dd_paths or check_dd_paths to retrieve detailed metadata for specific paths.
 
             Returns per-path: documentation text, data type, units, coordinate specifications, semantic cluster labels, physics domain, identifier schemas, and optionally version change history.
 
@@ -2596,7 +2596,7 @@ class AgentsServer:
 
             tools = _get_imas_tools()
             result = _run_async(
-                tools.fetch_imas_paths(
+                tools.fetch_dd_paths(
                     paths=paths,
                     ids=ids,
                     dd_version=dd_version,
@@ -2607,7 +2607,7 @@ class AgentsServer:
             return format_fetch_paths_report(result)
 
         @self.mcp.tool()
-        def fetch_error_fields(
+        def fetch_dd_error_fields(
             path: str,
             dd_version: int | None = None,
         ) -> str:
@@ -2622,12 +2622,12 @@ class AgentsServer:
             """
             tools = _get_imas_tools()
             result = _run_async(
-                tools.fetch_error_fields(path=path, dd_version=dd_version)
+                tools.fetch_dd_error_fields(path=path, dd_version=dd_version)
             )
             return _format_error_fields_report(result)
 
         @self.mcp.tool()
-        def list_imas_paths(
+        def list_dd_paths(
             paths: str,
             leaf_only: bool = False,
             max_paths: int | None = None,
@@ -2638,7 +2638,7 @@ class AgentsServer:
         ) -> str:
             """Enumerate all paths under an IDS or subtree. Use to browse the structure of an IDS or discover available fields under a path prefix.
 
-            Lists child paths hierarchically. Error fields and metadata subtrees (ids_properties/*, code/*) are excluded — use fetch_error_fields for uncertainty data.
+            Lists child paths hierarchically. Error fields and metadata subtrees (ids_properties/*, code/*) are excluded — use fetch_dd_error_fields for uncertainty data.
 
             Args:
                 paths: Space-separated IDS names or path prefixes (e.g. "equilibrium" or "equilibrium/time_slice"). Multiple values list paths from each.
@@ -2656,7 +2656,7 @@ class AgentsServer:
 
             tools = _get_imas_tools()
             result = _run_async(
-                tools.list_imas_paths(
+                tools.list_dd_paths(
                     paths=paths,
                     leaf_only=leaf_only,
                     max_paths=max_paths,
@@ -2669,7 +2669,7 @@ class AgentsServer:
             return format_list_report(result)
 
         @self.mcp.tool()
-        def get_imas_overview(
+        def get_dd_overview(
             query: str | None = None,
             dd_version: int | None = None,
             include_unit_stats: bool = False,
@@ -2690,7 +2690,7 @@ class AgentsServer:
 
             tools = _get_imas_tools()
             result = _run_async(
-                tools.get_imas_overview(
+                tools.get_dd_overview(
                     query=query,
                     dd_version=dd_version,
                     include_unit_stats=include_unit_stats,
@@ -2699,7 +2699,7 @@ class AgentsServer:
             return format_overview_report(result)
 
         @self.mcp.tool()
-        def get_imas_identifiers(
+        def get_dd_identifiers(
             query: str | None = None,
             dd_version: int | None = None,
         ) -> str:
@@ -2718,12 +2718,12 @@ class AgentsServer:
 
             tools = _get_imas_tools()
             result = _run_async(
-                tools.get_imas_identifiers(query=query, dd_version=dd_version)
+                tools.get_dd_identifiers(query=query, dd_version=dd_version)
             )
             return format_identifiers_report(result)
 
         @self.mcp.tool()
-        def search_imas_clusters(
+        def search_dd_clusters(
             query: str | None = None,
             scope: str | None = None,
             ids_filter: str | None = None,
@@ -2749,7 +2749,7 @@ class AgentsServer:
 
             tools = _get_imas_tools(semantic_search=True)
             result = _run_async(
-                tools.clusters_tool.search_imas_clusters(
+                tools.clusters_tool.search_dd_clusters(
                     query=query,
                     scope=scope,
                     ids_filter=ids_filter,
@@ -2762,7 +2762,7 @@ class AgentsServer:
             return format_cluster_report(result)
 
         @self.mcp.tool()
-        def find_related_imas_paths(
+        def find_related_dd_paths(
             path: str,
             relationship_types: str = "all",
             max_results: int = 20,
@@ -2785,7 +2785,7 @@ class AgentsServer:
 
             tools = _get_imas_tools()
             result = _run_async(
-                tools.get_imas_path_context(
+                tools.get_dd_path_context(
                     path=path,
                     relationship_types=relationship_types,
                     max_results=max_results,
@@ -2795,7 +2795,7 @@ class AgentsServer:
             return format_path_context_report(result)
 
         @self.mcp.tool()
-        def analyze_imas_structure(
+        def analyze_dd_structure(
             ids_name: str,
             dd_version: int | None = None,
         ) -> str:
@@ -2814,7 +2814,7 @@ class AgentsServer:
 
             tools = _get_imas_tools()
             result = _run_async(
-                tools.analyze_imas_structure(ids_name=ids_name, dd_version=dd_version)
+                tools.analyze_dd_structure(ids_name=ids_name, dd_version=dd_version)
             )
             return format_structure_report(result)
 
@@ -2877,7 +2877,7 @@ class AgentsServer:
             return format_export_domain_report(result)
 
         @self.mcp.tool()
-        def get_cocos_fields(
+        def get_dd_cocos_fields(
             transformation_type: str | None = None,
             ids_filter: str | None = None,
             dd_version: int | None = None,
@@ -2898,7 +2898,7 @@ class AgentsServer:
 
             tools = _get_imas_tools()
             result = _run_async(
-                tools.structure_tool.get_cocos_fields(
+                tools.structure_tool.get_dd_cocos_fields(
                     transformation_type=transformation_type,
                     ids_filter=ids_filter,
                     dd_version=dd_version,

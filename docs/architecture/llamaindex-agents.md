@@ -54,7 +54,7 @@ uv run imas-codex agent mark-stale "\\RESULTS::*"
 | `ssh_command` | Run SSH commands on facility |
 | `ssh_mdsplus_query` | Query MDSplus data |
 | `search_code_examples` | Semantic code search |
-| `search_imas_paths` | Search IMAS DD |
+| `search_dd_paths` | Search IMAS DD |
 | `ingest_nodes` | Batch create graph nodes |
 
 ## ReAct Workflow

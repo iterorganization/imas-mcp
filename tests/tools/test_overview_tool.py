@@ -173,10 +173,10 @@ class TestOverviewToolInternals:
         assert len(recs) > 0
 
     def test_generate_recommendations_single_ids(self, overview_tool):
-        """Single IDS generates list_imas_paths recommendation."""
+        """Single IDS generates list_dd_paths recommendation."""
         recs = overview_tool._generate_recommendations(None, ["equilibrium"])
 
-        assert any("list_imas_paths" in str(r) for r in recs)
+        assert any("list_dd_paths" in str(r) for r in recs)
 
     def test_generate_recommendations_limited_to_six(self, overview_tool):
         """Recommendations are limited to 6 items."""

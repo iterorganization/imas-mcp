@@ -1,8 +1,8 @@
 """Tests for graceful degradation: Tier 2 DD tools work without embeddings.
 
-Verifies that graph-only DD tools (check_imas_paths, list_imas_paths, etc.)
-can initialize when embedding warmup fails, while search tools (search_imas,
-search_imas_clusters, find_related_imas_paths) still require full warmup.
+Verifies that graph-only DD tools (check_dd_paths, list_dd_paths, etc.)
+can initialize when embedding warmup fails, while search tools (search_dd_paths,
+search_dd_clusters, find_related_dd_paths) still require full warmup.
 """
 
 from __future__ import annotations
@@ -240,20 +240,20 @@ class TestGetImasToolsSemanticSearch:
 # ---------------------------------------------------------------------------
 
 # Semantic search tools require the embedding server for vector similarity.
-# search_imas has a lexical fallback but we keep it here so embed failures
+# search_dd_paths has a lexical fallback but we keep it here so embed failures
 # are surfaced rather than silently degrading result quality.
-SEMANTIC_TOOLS = {"search_imas", "search_imas_clusters"}
+SEMANTIC_TOOLS = {"search_dd_paths", "search_dd_clusters"}
 CYPHER_ONLY_TOOLS = {
-    "check_imas_paths",
-    "fetch_imas_paths",
-    "find_related_imas_paths",
-    "list_imas_paths",
-    "fetch_error_fields",
-    "get_imas_overview",
-    "get_imas_identifiers",
+    "check_dd_paths",
+    "fetch_dd_paths",
+    "find_related_dd_paths",
+    "list_dd_paths",
+    "fetch_dd_error_fields",
+    "get_dd_overview",
+    "get_dd_identifiers",
     "get_dd_versions",
     "get_dd_version_context",
-    "analyze_imas_structure",
+    "analyze_dd_structure",
     "export_imas_ids",
     "export_imas_domain",
 }

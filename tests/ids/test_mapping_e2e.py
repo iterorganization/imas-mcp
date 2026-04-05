@@ -294,7 +294,7 @@ class TestFetchImasFields:
         assert result[0]["units"] == "m"
 
     @patch(
-        "imas_codex.tools.graph_search.GraphPathTool.fetch_imas_paths",
+        "imas_codex.tools.graph_search.GraphPathTool.fetch_dd_paths",
         new_callable=AsyncMock,
     )
     def test_returns_stable_dict_output_for_string_cluster_labels(
@@ -331,7 +331,7 @@ class TestFetchImasFields:
 
 class TestSearchImasSemantic:
     @patch(
-        "imas_codex.tools.graph_search.GraphSearchTool.search_imas_paths",
+        "imas_codex.tools.graph_search.GraphSearchTool.search_dd_paths",
         new_callable=AsyncMock,
     )
     def test_degrades_cleanly_on_tool_error(self, mock_search, mock_gc):

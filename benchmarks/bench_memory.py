@@ -22,7 +22,7 @@ class MemoryBenchmarks:
         async def _warmup():
             async with _fixture.client:
                 await _fixture.client.call_tool(
-                    "search_imas", {"query": "warmup", "k": 1}
+                    "search_dd_paths", {"query": "warmup", "k": 1}
                 )
 
         asyncio.run(_warmup())
@@ -34,13 +34,13 @@ class MemoryBenchmarks:
         AgentsServer()
 
     def peakmem_search_burst(self):
-        """Memory under load: 20 sequential search_imas calls."""
+        """Memory under load: 20 sequential search_dd_paths calls."""
 
         async def _burst():
             async with _fixture.client:
                 for q in list(SEARCH_QUERIES.values()) * 4:
                     await _fixture.client.call_tool(
-                        "search_imas", {"query": q, "k": 10}
+                        "search_dd_paths", {"query": q, "k": 10}
                     )
 
         asyncio.run(_burst())

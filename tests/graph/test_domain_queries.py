@@ -1,7 +1,7 @@
 """Tests for domain query functions.
 
 These tests validate the domain query functions (find_signals, find_wiki,
-find_imas, find_code, find_data_nodes, map_signals_to_imas, facility_overview)
+find_dd_paths, find_code, find_data_nodes, map_signals_to_imas, facility_overview)
 without requiring Neo4j — they test structure and error handling using mocks.
 """
 
@@ -13,7 +13,7 @@ from imas_codex.graph.domain_queries import (
     facility_overview,
     find_code,
     find_data_nodes,
-    find_imas,
+    find_dd_paths,
     find_signals,
     find_wiki,
     map_signals_to_imas,
@@ -202,21 +202,21 @@ class TestWikiPageChunks:
 
 
 class TestFindImas:
-    """Test find_imas domain query."""
+    """Test find_dd_paths domain query."""
 
     def test_returns_list(self, mock_gc, mock_embed):
-        result = find_imas(
+        result = find_dd_paths(
             query="electron temperature", gc=mock_gc, embed_fn=mock_embed
         )
         assert isinstance(result, list)
 
     def test_semantic_search(self, mock_gc, mock_embed):
-        find_imas(query="electron temperature", gc=mock_gc, embed_fn=mock_embed)
+        find_dd_paths(query="electron temperature", gc=mock_gc, embed_fn=mock_embed)
         mock_embed.assert_called_once()
         assert mock_gc.query.called
 
     def test_filters_deprecated(self, mock_gc, mock_embed):
-        find_imas(query="test", gc=mock_gc, embed_fn=mock_embed)
+        find_dd_paths(query="test", gc=mock_gc, embed_fn=mock_embed)
         cypher = mock_gc.query.call_args[0][0]
         assert "DEPRECATED_IN" in cypher
 
@@ -319,14 +319,14 @@ class TestFunctionSignatures:
         assert find_wiki.__doc__ is not None
 
     def test_find_imas_has_docstring(self):
-        assert find_imas.__doc__ is not None
+        assert find_dd_paths.__doc__ is not None
 
     def test_all_functions_importable(self):
         from imas_codex.graph.domain_queries import (
             facility_overview,
             find_code,
             find_data_nodes,
-            find_imas,
+            find_dd_paths,
             find_signals,
             find_wiki,
             map_signals_to_imas,

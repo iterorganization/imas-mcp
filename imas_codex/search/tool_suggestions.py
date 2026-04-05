@@ -30,14 +30,14 @@ def suggest_follow_up_tools(
 
     try:
         # Tool-specific suggestions using clear switch-like logic
-        if func_name == "search_imas_paths":
+        if func_name == "search_dd_paths":
             # For search results, suggest concept explanation and structure analysis
             if results.get("results"):
                 suggestions.append(
                     {
-                        "tool": "get_imas_overview",
+                        "tool": "get_dd_overview",
                         "reason": "Get detailed explanation of physics concepts found in search results",
-                        "sample_call": "get_imas_overview(query='plasma temperature')",
+                        "sample_call": "get_dd_overview(query='plasma temperature')",
                     }
                 )
 
@@ -47,61 +47,61 @@ def suggest_follow_up_tools(
                         ids_name = result["path"].split("/")[0]
                         suggestions.append(
                             {
-                                "tool": "list_imas_paths",
+                                "tool": "list_dd_paths",
                                 "reason": f"Analyze structure of {ids_name} IDS for better understanding",
-                                "sample_call": f"list_imas_paths(paths='{ids_name}')",
+                                "sample_call": f"list_dd_paths(paths='{ids_name}')",
                             }
                         )
                         break
 
-        elif func_name == "get_imas_overview":
+        elif func_name == "get_dd_overview":
             # After concept explanation, suggest searching for related data
             concept = results.get("concept", "")
             if concept:
                 suggestions.append(
                     {
-                        "tool": "search_imas_paths",
+                        "tool": "search_dd_paths",
                         "reason": f"Search for data paths related to {concept}",
-                        "sample_call": f"search_imas_paths(query='{concept}')",
+                        "sample_call": f"search_dd_paths(query='{concept}')",
                     }
                 )
 
-        elif func_name == "list_imas_paths":
+        elif func_name == "list_dd_paths":
             # After structure analysis, suggest exploring relationships
             ids_name = results.get("ids_name", "")
             if ids_name:
                 suggestions.append(
                     {
-                        "tool": "search_imas_clusters",
+                        "tool": "search_dd_clusters",
                         "reason": f"Explore relationships within {ids_name} IDS",
-                        "sample_call": f"search_imas_clusters(ids_filter='{ids_name}')",
+                        "sample_call": f"search_dd_clusters(ids_filter='{ids_name}')",
                     }
                 )
 
-        elif func_name == "get_imas_overview":
+        elif func_name == "get_dd_overview":
             # After overview, suggest searching for specific topics
             suggestions.extend(
                 [
                     {
-                        "tool": "search_imas_paths",
+                        "tool": "search_dd_paths",
                         "reason": "Search for specific physics concepts or data paths",
-                        "sample_call": "search_imas_paths(query='plasma temperature')",
+                        "sample_call": "search_dd_paths(query='plasma temperature')",
                     },
                     {
-                        "tool": "list_imas_identifiers",
+                        "tool": "get_dd_identifiers",
                         "reason": "Explore identifier schemas and enumeration options",
-                        "sample_call": "list_imas_identifiers(query='summary')",
+                        "sample_call": "get_dd_identifiers(query='summary')",
                     },
                 ]
             )
 
-        elif func_name in ["fetch_imas_paths", "export_physics_domain"]:
+        elif func_name in ["fetch_dd_paths", "export_physics_domain"]:
             # After exports, suggest analysis tools
             suggestions.append(
                 {
-                    "tool": "search_imas_paths",
+                    "tool": "search_dd_paths",
                     "reason": "Search for specific data within exported domains",
-                    "sample_call": "search_imas_paths(query='specific concept')",
+                    "sample_call": "search_dd_paths(query='specific concept')",
                 }
             )
 
@@ -131,7 +131,7 @@ def tool_suggestions(func: Callable) -> Callable:
 
     Usage:
         @tool_suggestions
-        async def search_imas(self, query: str, ctx: Optional[Context] = None):
+        async def search_dd_paths(self, query: str, ctx: Optional[Context] = None):
             # Tool implementation returns base response
             results = self.perform_search(query)
             return {"results": results}

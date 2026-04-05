@@ -81,7 +81,7 @@ class TestDDVersionClause:
 
 
 class TestRenamedPathHandling:
-    """Test that check_imas_paths correctly handles RENAMED_TO relationships."""
+    """Test that check_dd_paths correctly handles RENAMED_TO relationships."""
 
     @pytest.mark.asyncio
     async def test_renamed_path_returns_valid_model(self):
@@ -99,7 +99,7 @@ class TestRenamedPathHandling:
             ],
         ]
         tool = GraphPathTool(gc)
-        result = await tool.check_imas_paths("magnetics/bpol_probe/polarisation_angle")
+        result = await tool.check_dd_paths("magnetics/bpol_probe/polarisation_angle")
 
         assert result.summary["not_found"] == 1
         item = result.results[0]
@@ -120,7 +120,7 @@ class TestRenamedPathHandling:
 
 
 class TestVersionFilteringSemantics:
-    """Test that check_imas_paths applies version filtering correctly via mocked graph."""
+    """Test that check_dd_paths applies version filtering correctly via mocked graph."""
 
     @pytest.mark.asyncio
     async def test_dd3_path_found_with_dd_version_4(self):
@@ -135,7 +135,7 @@ class TestVersionFilteringSemantics:
             }
         ]
         tool = GraphPathTool(gc)
-        result = await tool.check_imas_paths(
+        result = await tool.check_dd_paths(
             "equilibrium/time_slice/profiles_1d/psi", dd_version=4
         )
         assert result.results[0].exists is True
@@ -152,7 +152,7 @@ class TestVersionFilteringSemantics:
             {"id": "test/path", "ids": "test", "data_type": "FLT_0D", "units": ""}
         ]
         tool = GraphPathTool(gc)
-        await tool.check_imas_paths("test/path", dd_version=4)
+        await tool.check_dd_paths("test/path", dd_version=4)
 
         # Check that dd_major_version=4 was passed
         kwargs = gc.query.call_args_list[0][1]
@@ -167,7 +167,7 @@ class TestVersionFilteringSemantics:
             {"id": "test/path", "ids": "test", "data_type": "FLT_0D", "units": ""}
         ]
         tool = GraphPathTool(gc)
-        await tool.check_imas_paths("test/path", dd_version=None)
+        await tool.check_dd_paths("test/path", dd_version=None)
 
         cypher = gc.query.call_args_list[0][0][0]
         assert "INTRODUCED_IN" not in cypher
@@ -226,13 +226,13 @@ class TestClusterScopeQuery:
         assert kwargs["dd_major_version"] == 4
 
     @pytest.mark.asyncio
-    async def test_search_imas_clusters_path_with_scope(self):
+    async def test_search_dd_clusters_path_with_scope(self):
         """Full tool call with scope must not raise."""
         gc = MagicMock()
         gc.query.return_value = []
         tool = GraphClustersTool(gc)
 
-        result = await tool.search_imas_clusters(
+        result = await tool.search_dd_clusters(
             query="equilibrium/time_slice/profiles_1d/psi",
             scope="global",
         )
@@ -247,7 +247,7 @@ class TestClusterScopeQuery:
 
 
 class TestOverviewQueryStructure:
-    """Test that get_imas_overview uses correct query patterns."""
+    """Test that get_dd_overview uses correct query patterns."""
 
     @pytest.mark.asyncio
     async def test_overview_queries_ids_nodes(self):
@@ -267,7 +267,7 @@ class TestOverviewQueryStructure:
         ]
 
         tool = GraphOverviewTool(gc)
-        await tool.get_imas_overview()
+        await tool.get_dd_overview()
 
         ids_cypher = gc.query.call_args_list[0][0][0]
         assert "MATCH (i:IDS)" in ids_cypher
@@ -290,7 +290,7 @@ class TestOverviewQueryStructure:
         ]
 
         tool = GraphOverviewTool(gc)
-        await tool.get_imas_overview(dd_version=4)
+        await tool.get_dd_overview(dd_version=4)
 
         ids_cypher = gc.query.call_args_list[0][0][0]
         assert "MATCH (i:IDS)" in ids_cypher
@@ -349,12 +349,12 @@ class TestExportQueryStructure:
 
 
 # ============================================================================
-# Phase 3: list_imas_paths query tests
+# Phase 3: list_dd_paths query tests
 # ============================================================================
 
 
 class TestListPathsQuery:
-    """Verify list_imas_paths query patterns."""
+    """Verify list_dd_paths query patterns."""
 
     @pytest.mark.asyncio
     async def test_ids_level_queries_graph(self):
@@ -367,7 +367,7 @@ class TestListPathsQuery:
         ]
         tool = GraphListTool(gc)
 
-        await tool.list_imas_paths("equilibrium")
+        await tool.list_dd_paths("equilibrium")
 
         assert gc.query.call_count >= 2
 
@@ -381,7 +381,7 @@ class TestListPathsQuery:
         ]
         tool = GraphListTool(gc)
 
-        await tool.list_imas_paths("equilibrium/time_slice")
+        await tool.list_dd_paths("equilibrium/time_slice")
 
         path_cypher = gc.query.call_args_list[1][0][0]
         assert "STARTS WITH $prefix" in path_cypher
@@ -400,7 +400,7 @@ class TestListPathsQuery:
         ]
         tool = GraphListTool(gc)
 
-        result = await tool.list_imas_paths("equilibrium")
+        result = await tool.list_dd_paths("equilibrium")
 
         assert result.results[0].path_count == 2
         assert "equilibrium/time_slice" in result.results[0].paths
@@ -520,28 +520,28 @@ class TestErrorFieldContext:
         ]
 
     @pytest.mark.skip(
-        reason="HAS_ERROR enrichment not yet implemented in search_imas_paths"
+        reason="HAS_ERROR enrichment not yet implemented in search_dd_paths"
     )
     def test_search_enrichment_query_includes_has_error(self):
-        """search_imas_paths enrichment query must fetch HAS_ERROR."""
+        """search_dd_paths enrichment query must fetch HAS_ERROR."""
         import inspect
 
         from imas_codex.tools.graph_search import GraphSearchTool
 
-        source = inspect.getsource(GraphSearchTool.search_imas_paths)
+        source = inspect.getsource(GraphSearchTool.search_dd_paths)
         assert "HAS_ERROR" in source
         assert "error_fields" in source
 
     @pytest.mark.skip(
-        reason="HAS_ERROR enrichment not yet implemented in fetch_imas_paths"
+        reason="HAS_ERROR enrichment not yet implemented in fetch_dd_paths"
     )
     def test_fetch_enrichment_query_includes_has_error(self):
-        """fetch_imas_paths enrichment query must fetch HAS_ERROR."""
+        """fetch_dd_paths enrichment query must fetch HAS_ERROR."""
         import inspect
 
         from imas_codex.tools.graph_search import GraphPathTool
 
-        source = inspect.getsource(GraphPathTool.fetch_imas_paths)
+        source = inspect.getsource(GraphPathTool.fetch_dd_paths)
         assert "HAS_ERROR" in source
         assert "error_fields" in source
 
@@ -554,14 +554,14 @@ class TestErrorFieldContext:
 class TestClusterReranking:
     """Verify cluster-aware reranking suppresses duplicate cluster hits."""
 
-    @pytest.mark.skip(reason="IN_CLUSTER enrichment not yet in search_imas_paths")
+    @pytest.mark.skip(reason="IN_CLUSTER enrichment not yet in search_dd_paths")
     def test_search_enrichment_fetches_cluster_labels(self):
-        """search_imas_paths enrichment must fetch IN_CLUSTER labels."""
+        """search_dd_paths enrichment must fetch IN_CLUSTER labels."""
         import inspect
 
         from imas_codex.tools.graph_search import GraphSearchTool
 
-        source = inspect.getsource(GraphSearchTool.search_imas_paths)
+        source = inspect.getsource(GraphSearchTool.search_dd_paths)
         assert "IN_CLUSTER" in source
         assert "cluster_labels" in source
 

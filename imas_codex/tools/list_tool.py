@@ -225,9 +225,9 @@ class ListTool(BaseTool):
         "format: 'yaml' (default, token-efficient tree), 'list' (flat array), 'json', 'dict'. "
         "leaf_only: True returns only data fields, not intermediate structure nodes. "
         "max_paths: Limit output size. "
-        "Use for structure exploration; use fetch_imas_paths for documentation."
+        "Use for structure exploration; use fetch_dd_paths for documentation."
     )
-    async def list_imas_paths(
+    async def list_dd_paths(
         self,
         paths: str,
         format: str = "yaml",
@@ -281,26 +281,26 @@ class ListTool(BaseTool):
 
         Examples:
             List multiple IDS in YAML format (default, most token-efficient):
-                list_imas_paths("equilibrium magnetics")
+                list_dd_paths("equilibrium magnetics")
                 → Returns YAML indented tree for both IDS
 
             List specific subtree:
-                list_imas_paths("equilibrium/time_slice/global_quantities")
+                list_dd_paths("equilibrium/time_slice/global_quantities")
                 → Returns only paths under that prefix
 
             Simple array of leaf paths only:
-                list_imas_paths("equilibrium", format="list", leaf_only=True, include_ids_prefix=False)
+                list_dd_paths("equilibrium", format="list", leaf_only=True, include_ids_prefix=False)
                 → Returns:
                   ["time_slice/boundary/psi", "time_slice/boundary/psi_norm", ...]
 
             Multiple prefixes:
-                list_imas_paths("equilibrium/time_slice magnetics/flux_loop")
+                list_dd_paths("equilibrium/time_slice magnetics/flux_loop")
                 → Returns paths for both specific subtrees
 
         Note:
             This tool is optimized for minimal token usage. For full documentation
-            and metadata, use fetch_imas_paths. For path discovery by concept,
-            use search_imas.
+            and metadata, use fetch_dd_paths. For path discovery by concept,
+            use search_dd_paths.
         """
         # Input validation is handled by @validate_input decorator
         # Parse input - split by spaces
@@ -310,7 +310,7 @@ class ListTool(BaseTool):
             return self._create_error_response(
                 "No IDS or path prefix specified. "
                 "Provide IDS names like 'equilibrium magnetics' or path prefixes like "
-                "'equilibrium/time_slice'. Use get_imas_overview() to see available IDS.",
+                "'equilibrium/time_slice'. Use get_dd_overview() to see available IDS.",
                 paths,
             )
 

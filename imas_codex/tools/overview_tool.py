@@ -40,8 +40,8 @@ class OverviewTool(BaseTool):
     IDS structures and physics domains.
 
     Other specialized tools handle:
-    - search_imas_clusters() -> clusters.json
-    - get_imas_identifiers() -> identifier_catalog.json
+    - search_dd_clusters() -> clusters.json
+    - get_dd_identifiers() -> identifier_catalog.json
     """
 
     @property
@@ -204,7 +204,7 @@ class OverviewTool(BaseTool):
 
         if query:
             recommendations.append(
-                f"🔍 Use search_imas_paths('{query}') to find specific data paths"
+                f"🔍 Use search_dd_paths('{query}') to find specific data paths"
             )
 
             # Domain-specific recommendations
@@ -212,26 +212,26 @@ class OverviewTool(BaseTool):
                 term in query.lower() for term in ["magnetic", "field", "equilibrium"]
             ):
                 recommendations.append(
-                    "⚡ Try search_imas_clusters('equilibrium boundary') for related magnetic field data"
+                    "⚡ Try search_dd_clusters('equilibrium boundary') for related magnetic field data"
                 )
 
             if any(
                 term in query.lower() for term in ["temperature", "density", "pressure"]
             ):
                 recommendations.append(
-                    "🌡️ Use search_imas_clusters('transport profiles') for temperature and density data"
+                    "🌡️ Use search_dd_clusters('transport profiles') for temperature and density data"
                 )
 
             if any(term in query.lower() for term in ["diagnostic", "measurement"]):
                 recommendations.append(
-                    "📊 Try list_imas_paths('thomson_scattering') to explore diagnostic structure"
+                    "📊 Try list_dd_paths('thomson_scattering') to explore diagnostic structure"
                 )
 
             if any(
                 term in query.lower() for term in ["identifier", "enum", "enumeration"]
             ):
                 recommendations.append(
-                    "🔢 Use get_imas_identifiers() to browse identifier schemas and enumerations"
+                    "🔢 Use get_dd_identifiers() to browse identifier schemas and enumerations"
                 )
 
         if relevant_ids:
@@ -239,22 +239,22 @@ class OverviewTool(BaseTool):
             match len(relevant_ids):
                 case 1:
                     recommendations.append(
-                        f"📋 Use list_imas_paths('{relevant_ids[0]}') to explore this IDS structure"
+                        f"📋 Use list_dd_paths('{relevant_ids[0]}') to explore this IDS structure"
                     )
                 case 2:
                     recommendations.append(
-                        f"📋 Use list_imas_paths('{relevant_ids[0]}') for detailed structure"
+                        f"📋 Use list_dd_paths('{relevant_ids[0]}') for detailed structure"
                     )
                 case 3:
                     recommendations.append(
-                        "🌐 Use search_imas_clusters() to find related path clusters"
+                        "🌐 Use search_dd_clusters() to find related path clusters"
                     )
 
         # Always include general recommendations
         recommendations.extend(
             [
-                "🔗 Use get_imas_identifiers() to browse available enumerations",
-                "🌐 Use search_imas_clusters() to find semantically related paths",
+                "🔗 Use get_dd_identifiers() to browse available enumerations",
+                "🌐 Use search_dd_clusters() to find semantically related paths",
             ]
         )
 
@@ -270,7 +270,7 @@ class OverviewTool(BaseTool):
         "Returns dataset statistics, IDS list sorted by complexity, physics domains, and next-step recommendations. "
         "Use this tool first to understand what data structures are available."
     )
-    async def get_imas_overview(
+    async def get_dd_overview(
         self,
         query: str | None = None,
         ctx: Context | None = None,
@@ -298,10 +298,10 @@ class OverviewTool(BaseTool):
                     suggestions=[
                         "Check if ids_catalog.json exists in resources/schemas/",
                         "Try restarting the MCP server",
-                        "Use search_imas_paths() for direct data access",
+                        "Use search_dd_paths() for direct data access",
                     ],
                     context={
-                        "tool": "get_imas_overview",
+                        "tool": "get_dd_overview",
                         "operation": "catalog_access",
                     },
                 )
@@ -462,15 +462,15 @@ class OverviewTool(BaseTool):
             # Build usage guidance
             usage_guidance = {
                 "tools_available": [
-                    "search_imas_paths - Find specific data paths with semantic search",
-                    "list_imas_paths - List all paths in IDS with minimal overhead (yaml/list/json/dict formats)",
-                    "fetch_imas_paths - Retrieve full path documentation and metadata",
-                    "check_imas_paths - Fast batch validation of IMAS paths",
-                    "search_imas_clusters - Find semantically related path clusters",
-                    "get_imas_identifiers - Browse identifier schemas and enumerations",
+                    "search_dd_paths - Find specific data paths with semantic search",
+                    "list_dd_paths - List all paths in IDS with minimal overhead (yaml/list/json/dict formats)",
+                    "fetch_dd_paths - Retrieve full path documentation and metadata",
+                    "check_dd_paths - Fast batch validation of IMAS paths",
+                    "search_dd_clusters - Find semantically related path clusters",
+                    "get_dd_identifiers - Browse identifier schemas and enumerations",
                 ],
                 "getting_started": recommendations,
-                "catalog_focus": "This tool serves the IDS catalog - use search_imas_clusters() and get_imas_identifiers() for specialized searches",
+                "catalog_focus": "This tool serves the IDS catalog - use search_dd_clusters() and get_dd_identifiers() for specialized searches",
             }
 
             return GetOverviewResult(
@@ -494,12 +494,12 @@ class OverviewTool(BaseTool):
                 error=str(e),
                 suggestions=[
                     "Try a simpler query or general overview",
-                    "Use search_imas_paths() for direct data exploration",
+                    "Use search_dd_paths() for direct data exploration",
                     "Check catalog file availability",
                 ],
                 context={
                     "query": query,
-                    "tool": "get_imas_overview",
+                    "tool": "get_dd_overview",
                     "operation": "catalog_overview",
                     "ids_catalog_loaded": bool(self._ids_catalog),
                 },

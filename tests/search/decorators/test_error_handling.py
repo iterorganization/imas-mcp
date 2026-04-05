@@ -108,7 +108,7 @@ class TestGenerateErrorRecoverySuggestions:
     def test_not_found_error_suggestions(self):
         """Test suggestions for not found errors."""
         suggestions = generate_error_recovery_suggestions(
-            "No results found", "temperature", "search_imas_paths"
+            "No results found", "temperature", "search_dd_paths"
         )
         assert len(suggestions) > 0
         assert any(

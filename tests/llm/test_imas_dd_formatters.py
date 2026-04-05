@@ -5,7 +5,7 @@ from imas_codex.llm.search_formatters import (
     format_cluster_report,
     format_export_domain_report,
     format_fetch_paths_report,
-    format_search_imas_report,
+    format_search_dd_report,
 )
 from imas_codex.models.constants import SearchMode
 from imas_codex.models.error_models import ToolError
@@ -13,14 +13,14 @@ from imas_codex.models.result_models import FetchPathsResult, SearchPathsResult
 from imas_codex.search.search_strategy import SearchHit
 
 
-def test_format_search_imas_report_handles_tool_error():
+def test_format_search_dd_report_handles_tool_error():
     result = ToolError(
         error="Unexpected error: backend unavailable",
         suggestions=["Retry the operation"],
         fallback_data={"message": "Search failed"},
     )
 
-    formatted = format_search_imas_report(result)
+    formatted = format_search_dd_report(result)
 
     assert "Error: Unexpected error: backend unavailable" in formatted
     assert "Suggestions:" in formatted
@@ -107,7 +107,7 @@ def test_format_export_domain_report_shows_no_match_reason():
     assert "No physics domain found matching 'unknown_domain'." in formatted
 
 
-def test_format_search_imas_report_handles_success_result():
+def test_format_search_dd_report_handles_success_result():
     hit = SearchHit(
         score=0.92,
         rank=1,
@@ -128,7 +128,7 @@ def test_format_search_imas_report_handles_success_result():
         physics_domains=["core_transport"],
     )
 
-    formatted = format_search_imas_report(result)
+    formatted = format_search_dd_report(result)
 
     assert "## IMAS Paths (1 matches)" in formatted
     assert "core_profiles/profiles_1d/electrons/temperature" in formatted

@@ -28,7 +28,7 @@ class TestGraphPathTool:
     @pytest.mark.asyncio
     async def test_check_existing_path(self, graph_client):
         tool = self._make_tool(graph_client)
-        result = await tool.check_imas_paths("equilibrium/time_slice/profiles_1d/psi")
+        result = await tool.check_dd_paths("equilibrium/time_slice/profiles_1d/psi")
         assert result.summary["found"] == 1
         assert result.results[0].exists is True
         assert result.results[0].data_type == "FLT_1D"
@@ -36,14 +36,14 @@ class TestGraphPathTool:
     @pytest.mark.asyncio
     async def test_check_nonexistent_path(self, graph_client):
         tool = self._make_tool(graph_client)
-        result = await tool.check_imas_paths("equilibrium/nonexistent/path")
+        result = await tool.check_dd_paths("equilibrium/nonexistent/path")
         assert result.summary["found"] == 0
         assert result.results[0].exists is False
 
     @pytest.mark.asyncio
     async def test_check_with_ids_prefix(self, graph_client):
         tool = self._make_tool(graph_client)
-        result = await tool.check_imas_paths(
+        result = await tool.check_dd_paths(
             "time_slice/profiles_1d/psi", ids="equilibrium"
         )
         assert result.summary["found"] == 1
@@ -52,7 +52,7 @@ class TestGraphPathTool:
     @pytest.mark.asyncio
     async def test_check_multiple_paths(self, graph_client):
         tool = self._make_tool(graph_client)
-        result = await tool.check_imas_paths(
+        result = await tool.check_dd_paths(
             "equilibrium/time_slice/profiles_1d/psi core_profiles/profiles_1d/electrons/temperature"
         )
         assert result.summary["total"] == 2
@@ -61,7 +61,7 @@ class TestGraphPathTool:
     @pytest.mark.asyncio
     async def test_check_mixed_found_notfound(self, graph_client):
         tool = self._make_tool(graph_client)
-        result = await tool.check_imas_paths(
+        result = await tool.check_dd_paths(
             [
                 "equilibrium/time_slice/profiles_1d/psi",
                 "fake/nonexistent/path",
@@ -73,7 +73,7 @@ class TestGraphPathTool:
     @pytest.mark.asyncio
     async def test_fetch_existing_path(self, graph_client):
         tool = self._make_tool(graph_client)
-        result = await tool.fetch_imas_paths("equilibrium/time_slice/profiles_1d/psi")
+        result = await tool.fetch_dd_paths("equilibrium/time_slice/profiles_1d/psi")
         assert len(result.nodes) == 1
         node = result.nodes[0]
         assert node.path == "equilibrium/time_slice/profiles_1d/psi"
@@ -84,7 +84,7 @@ class TestGraphPathTool:
     async def test_fetch_with_cluster_labels(self, graph_client):
         """Paths in clusters should return cluster labels."""
         tool = self._make_tool(graph_client)
-        result = await tool.fetch_imas_paths("equilibrium/time_slice/boundary/psi")
+        result = await tool.fetch_dd_paths("equilibrium/time_slice/boundary/psi")
         assert len(result.nodes) == 1
         node = result.nodes[0]
         # This path is in cluster_equilibrium_boundary
@@ -95,14 +95,14 @@ class TestGraphPathTool:
     @pytest.mark.asyncio
     async def test_fetch_nonexistent_path(self, graph_client):
         tool = self._make_tool(graph_client)
-        result = await tool.fetch_imas_paths("fake/nonexistent/thing")
+        result = await tool.fetch_dd_paths("fake/nonexistent/thing")
         assert len(result.nodes) == 0
         assert len(result.not_found_paths) == 1
 
     @pytest.mark.asyncio
     async def test_fetch_multiple_paths(self, graph_client):
         tool = self._make_tool(graph_client)
-        result = await tool.fetch_imas_paths(
+        result = await tool.fetch_dd_paths(
             [
                 "equilibrium/time_slice/profiles_1d/psi",
                 "core_profiles/profiles_1d/electrons/temperature",
@@ -128,7 +128,7 @@ class TestGraphListTool:
     @pytest.mark.asyncio
     async def test_list_ids(self, graph_client):
         tool = self._make_tool(graph_client)
-        result = await tool.list_imas_paths("equilibrium")
+        result = await tool.list_dd_paths("equilibrium")
         assert len(result.results) == 1
         item = result.results[0]
         assert item.path_count > 0
@@ -139,20 +139,20 @@ class TestGraphListTool:
     @pytest.mark.asyncio
     async def test_list_nonexistent_ids(self, graph_client):
         tool = self._make_tool(graph_client)
-        result = await tool.list_imas_paths("nonexistent_ids")
+        result = await tool.list_dd_paths("nonexistent_ids")
         assert result.results[0].error is not None
 
     @pytest.mark.asyncio
     async def test_list_multiple_ids(self, graph_client):
         tool = self._make_tool(graph_client)
-        result = await tool.list_imas_paths("equilibrium core_profiles")
+        result = await tool.list_dd_paths("equilibrium core_profiles")
         assert len(result.results) == 2
         assert result.summary["total_paths"] > 0
 
     @pytest.mark.asyncio
     async def test_list_with_path_prefix(self, graph_client):
         tool = self._make_tool(graph_client)
-        result = await tool.list_imas_paths("equilibrium/time_slice/boundary")
+        result = await tool.list_dd_paths("equilibrium/time_slice/boundary")
         assert len(result.results) == 1
         item = result.results[0]
         # Only boundary paths should be returned
@@ -175,7 +175,7 @@ class TestGraphOverviewTool:
     @pytest.mark.asyncio
     async def test_overview_returns_all_ids(self, graph_client):
         tool = self._make_tool(graph_client)
-        result = await tool.get_imas_overview()
+        result = await tool.get_dd_overview()
         assert len(result.available_ids) == len(IDS_NODES)
         for ids in IDS_NODES:
             assert ids["name"] in result.available_ids
@@ -183,14 +183,14 @@ class TestGraphOverviewTool:
     @pytest.mark.asyncio
     async def test_overview_has_statistics(self, graph_client):
         tool = self._make_tool(graph_client)
-        result = await tool.get_imas_overview()
+        result = await tool.get_dd_overview()
         assert len(result.ids_statistics) > 0
         assert "equilibrium" in result.ids_statistics
 
     @pytest.mark.asyncio
     async def test_overview_with_query_filter(self, graph_client):
         tool = self._make_tool(graph_client)
-        result = await tool.get_imas_overview(query="equilibrium")
+        result = await tool.get_dd_overview(query="equilibrium")
         assert "equilibrium" in result.available_ids
         # core_profiles should be filtered out
         assert "core_profiles" not in result.available_ids
@@ -198,20 +198,20 @@ class TestGraphOverviewTool:
     @pytest.mark.asyncio
     async def test_overview_has_dd_version(self, graph_client):
         tool = self._make_tool(graph_client)
-        result = await tool.get_imas_overview()
+        result = await tool.get_dd_overview()
         assert result.dd_version == "4.1.0"
 
     @pytest.mark.asyncio
     async def test_overview_has_mcp_tools(self, graph_client):
         tool = self._make_tool(graph_client)
-        result = await tool.get_imas_overview()
-        assert "search_imas_paths" in result.mcp_tools
+        result = await tool.get_dd_overview()
+        assert "search_dd_paths" in result.mcp_tools
         # query_imas_graph was removed in the unified server cleanup
 
     @pytest.mark.asyncio
     async def test_overview_has_physics_domains(self, graph_client):
         tool = self._make_tool(graph_client)
-        result = await tool.get_imas_overview()
+        result = await tool.get_dd_overview()
         assert len(result.physics_domains) > 0
 
 
@@ -229,7 +229,7 @@ class TestGraphClustersTool:
     @pytest.mark.asyncio
     async def test_search_by_path(self, graph_client):
         tool = self._make_tool(graph_client)
-        result = await tool.search_imas_clusters("equilibrium/time_slice/boundary/psi")
+        result = await tool.search_dd_clusters("equilibrium/time_slice/boundary/psi")
         assert result["query_type"] == "path"
         assert result["clusters_found"] >= 1
         # Should find cluster_equilibrium_boundary
@@ -240,9 +240,7 @@ class TestGraphClustersTool:
     async def test_search_by_path_not_in_cluster(self, graph_client):
         """Paths not in any cluster return 0 results."""
         tool = self._make_tool(graph_client)
-        result = await tool.search_imas_clusters(
-            "equilibrium/time_slice/profiles_1d/psi"
-        )
+        result = await tool.search_dd_clusters("equilibrium/time_slice/profiles_1d/psi")
         assert result["query_type"] == "path"
         assert result["clusters_found"] == 0
 
@@ -250,7 +248,7 @@ class TestGraphClustersTool:
     async def test_cluster_paths_populated(self, graph_client):
         """Clusters should include member path IDs."""
         tool = self._make_tool(graph_client)
-        result = await tool.search_imas_clusters(
+        result = await tool.search_dd_clusters(
             "core_profiles/profiles_1d/electrons/temperature"
         )
         assert result["clusters_found"] >= 1
@@ -260,7 +258,7 @@ class TestGraphClustersTool:
     @pytest.mark.asyncio
     async def test_empty_query_returns_error(self, graph_client):
         tool = self._make_tool(graph_client)
-        result = await tool.search_imas_clusters("")
+        result = await tool.search_dd_clusters("")
         assert "error" in result
 
 
@@ -278,13 +276,13 @@ class TestGraphIdentifiersTool:
     @pytest.mark.asyncio
     async def test_get_identifiers(self, graph_client):
         tool = self._make_tool(graph_client)
-        result = await tool.get_imas_identifiers()
+        result = await tool.get_dd_identifiers()
         assert len(result.schemas) >= 1
 
     @pytest.mark.asyncio
     async def test_identifiers_have_options(self, graph_client):
         tool = self._make_tool(graph_client)
-        result = await tool.get_imas_identifiers()
+        result = await tool.get_dd_identifiers()
         # Our fixture has boundary_type with 2 options
         schema = result.schemas[0]
         assert schema["option_count"] >= 1
@@ -292,13 +290,13 @@ class TestGraphIdentifiersTool:
     @pytest.mark.asyncio
     async def test_identifiers_with_query_filter(self, graph_client):
         tool = self._make_tool(graph_client)
-        result = await tool.get_imas_identifiers(query="boundary")
+        result = await tool.get_dd_identifiers(query="boundary")
         assert len(result.schemas) >= 1
 
     @pytest.mark.asyncio
     async def test_identifiers_no_match(self, graph_client):
         tool = self._make_tool(graph_client)
-        result = await tool.get_imas_identifiers(query="zzz_nomatch_zzz")
+        result = await tool.get_dd_identifiers(query="zzz_nomatch_zzz")
         assert len(result.schemas) == 0
 
 
@@ -318,13 +316,13 @@ class TestToolsGraphMode:
         names = tools.get_registered_tool_names()
         # Should have all graph-backed tools (query_imas_graph and get_dd_graph_schema were removed)
         expected = {
-            "search_imas_paths",
-            "check_imas_paths",
-            "fetch_imas_paths",
-            "list_imas_paths",
-            "get_imas_overview",
-            "search_imas_clusters",
-            "get_imas_identifiers",
+            "search_dd_paths",
+            "check_dd_paths",
+            "fetch_dd_paths",
+            "list_dd_paths",
+            "get_dd_overview",
+            "search_dd_clusters",
+            "get_dd_identifiers",
             "get_dd_versions",
         }
         assert expected.issubset(set(names))
@@ -337,39 +335,39 @@ class TestToolsGraphMode:
     @pytest.mark.asyncio
     async def test_delegation_check_paths(self, graph_client):
         tools = self._make_tools(graph_client)
-        result = await tools.check_imas_paths("equilibrium/time_slice/profiles_1d/psi")
+        result = await tools.check_dd_paths("equilibrium/time_slice/profiles_1d/psi")
         assert result.summary["found"] == 1
 
     @pytest.mark.asyncio
     async def test_delegation_fetch_paths(self, graph_client):
         tools = self._make_tools(graph_client)
-        result = await tools.fetch_imas_paths("equilibrium/time_slice/profiles_1d/psi")
+        result = await tools.fetch_dd_paths("equilibrium/time_slice/profiles_1d/psi")
         assert len(result.nodes) == 1
 
     @pytest.mark.asyncio
     async def test_delegation_list_paths(self, graph_client):
         tools = self._make_tools(graph_client)
-        result = await tools.list_imas_paths("equilibrium")
+        result = await tools.list_dd_paths("equilibrium")
         assert result.results[0].path_count > 0
 
     @pytest.mark.asyncio
     async def test_delegation_overview(self, graph_client):
         tools = self._make_tools(graph_client)
-        result = await tools.get_imas_overview()
+        result = await tools.get_dd_overview()
         assert len(result.available_ids) > 0
 
     @pytest.mark.asyncio
     async def test_delegation_identifiers(self, graph_client):
         tools = self._make_tools(graph_client)
-        result = await tools.get_imas_identifiers()
+        result = await tools.get_dd_identifiers()
         assert len(result.schemas) >= 1
 
 
-# ── T1: fetch_imas_paths enrichment tests ────────────────────────────────
+# ── T1: fetch_dd_paths enrichment tests ────────────────────────────────
 
 
 class TestFetchImasPathsEnrichment:
-    """Tests for fetch_imas_paths with identifier schemas and version history."""
+    """Tests for fetch_dd_paths with identifier schemas and version history."""
 
     def _make_tool(self, graph_client):
         from imas_codex.tools.graph_search import GraphPathTool
@@ -380,7 +378,7 @@ class TestFetchImasPathsEnrichment:
     async def test_fetch_includes_identifier_schema(self, graph_client):
         """Path with IdentifierSchema should populate identifier_schema."""
         tool = self._make_tool(graph_client)
-        result = await tool.fetch_imas_paths("equilibrium/time_slice/boundary/type")
+        result = await tool.fetch_dd_paths("equilibrium/time_slice/boundary/type")
         assert len(result.nodes) == 1
         node = result.nodes[0]
         assert node.identifier_schema is not None
@@ -390,7 +388,7 @@ class TestFetchImasPathsEnrichment:
     async def test_fetch_no_identifier_schema(self, graph_client):
         """Path without IdentifierSchema should have None."""
         tool = self._make_tool(graph_client)
-        result = await tool.fetch_imas_paths("equilibrium/time_slice/profiles_1d/psi")
+        result = await tool.fetch_dd_paths("equilibrium/time_slice/profiles_1d/psi")
         node = result.nodes[0]
         assert node.identifier_schema is None
 
@@ -398,7 +396,7 @@ class TestFetchImasPathsEnrichment:
     async def test_fetch_version_history_enabled(self, graph_client):
         """include_version_history=True should populate version_changes."""
         tool = self._make_tool(graph_client)
-        result = await tool.fetch_imas_paths(
+        result = await tool.fetch_dd_paths(
             "core_profiles/profiles_1d/electrons/pressure",
             include_version_history=True,
         )
@@ -414,7 +412,7 @@ class TestFetchImasPathsEnrichment:
     async def test_fetch_version_history_disabled(self, graph_client):
         """include_version_history=False should leave version_changes as None."""
         tool = self._make_tool(graph_client)
-        result = await tool.fetch_imas_paths(
+        result = await tool.fetch_dd_paths(
             "core_profiles/profiles_1d/electrons/pressure",
             include_version_history=False,
         )
@@ -425,7 +423,7 @@ class TestFetchImasPathsEnrichment:
     async def test_fetch_version_history_no_changes(self, graph_client):
         """Path with no IMASNodeChange should return None even with flag."""
         tool = self._make_tool(graph_client)
-        result = await tool.fetch_imas_paths(
+        result = await tool.fetch_dd_paths(
             "equilibrium/time_slice/profiles_1d/psi",
             include_version_history=True,
         )
@@ -434,11 +432,11 @@ class TestFetchImasPathsEnrichment:
         assert node.version_changes is None
 
 
-# ── T2: search_imas_clusters listing mode tests ──────────────────────────
+# ── T2: search_dd_clusters listing mode tests ──────────────────────────
 
 
 class TestSearchImaClustersListingMode:
-    """Tests for search_imas_clusters with IDS listing mode."""
+    """Tests for search_dd_clusters with IDS listing mode."""
 
     def _make_tool(self, graph_client):
         from imas_codex.tools.graph_search import GraphClustersTool
@@ -449,7 +447,7 @@ class TestSearchImaClustersListingMode:
     async def test_list_clusters_by_ids(self, graph_client):
         """No query + ids_filter should list all clusters for that IDS."""
         tool = self._make_tool(graph_client)
-        result = await tool.search_imas_clusters(
+        result = await tool.search_dd_clusters(
             ids_filter="equilibrium",
         )
         assert result["query_type"] == "ids_listing"
@@ -461,7 +459,7 @@ class TestSearchImaClustersListingMode:
     async def test_list_clusters_section_only(self, graph_client):
         """section_only=True should filter to IDS-scoped clusters."""
         tool = self._make_tool(graph_client)
-        result = await tool.search_imas_clusters(
+        result = await tool.search_dd_clusters(
             ids_filter="equilibrium",
             section_only=True,
         )
@@ -475,14 +473,14 @@ class TestSearchImaClustersListingMode:
     async def test_list_clusters_no_ids_no_query(self, graph_client):
         """No query and no ids_filter returns error."""
         tool = self._make_tool(graph_client)
-        result = await tool.search_imas_clusters()
+        result = await tool.search_dd_clusters()
         assert "error" in result
 
     @pytest.mark.asyncio
     async def test_list_clusters_includes_paths(self, graph_client):
         """Listed clusters should include member paths."""
         tool = self._make_tool(graph_client)
-        result = await tool.search_imas_clusters(
+        result = await tool.search_dd_clusters(
             ids_filter="core_profiles",
         )
         assert result["clusters_found"] >= 1
@@ -614,7 +612,7 @@ class TestClusterPathLookup:
     async def test_path_in_cluster(self, graph_client):
         """Path that is a cluster member should return its cluster."""
         tool = self._make_tool(graph_client)
-        result = await tool.search_imas_clusters(
+        result = await tool.search_dd_clusters(
             query="equilibrium/time_slice/boundary/psi"
         )
         assert result["query_type"] == "path"
@@ -626,7 +624,7 @@ class TestClusterPathLookup:
     async def test_path_not_in_cluster(self, graph_client):
         """Path not in any cluster should return 0 clusters."""
         tool = self._make_tool(graph_client)
-        result = await tool.search_imas_clusters(
+        result = await tool.search_dd_clusters(
             query="equilibrium/time_slice/profiles_1d/psi"
         )
         assert result["query_type"] == "path"
@@ -733,7 +731,7 @@ class TestExportDomain:
 
 
 class TestFetchMetadataParity:
-    """Verify fetch_imas_paths returns introduced_after_version and version_changes."""
+    """Verify fetch_dd_paths returns introduced_after_version and version_changes."""
 
     def _make_tool(self, graph_client):
         from imas_codex.tools.graph_search import GraphPathTool
@@ -744,7 +742,7 @@ class TestFetchMetadataParity:
     async def test_introduced_after_version_populated(self, graph_client):
         """Paths with INTRODUCED_IN should expose introduced_after_version."""
         tool = self._make_tool(graph_client)
-        result = await tool.fetch_imas_paths("equilibrium/time_slice/profiles_1d/psi")
+        result = await tool.fetch_dd_paths("equilibrium/time_slice/profiles_1d/psi")
         node = result.nodes[0]
         assert node.introduced_after_version == "3.42.0"
 
@@ -752,7 +750,7 @@ class TestFetchMetadataParity:
     async def test_introduced_version_newer_path(self, graph_client):
         """A path introduced in 4.0.0 should reflect that version."""
         tool = self._make_tool(graph_client)
-        result = await tool.fetch_imas_paths(
+        result = await tool.fetch_dd_paths(
             "core_profiles/profiles_1d/electrons/pressure"
         )
         node = result.nodes[0]
@@ -762,7 +760,7 @@ class TestFetchMetadataParity:
     async def test_version_changes_included(self, graph_client):
         """include_version_history=True should return version_changes."""
         tool = self._make_tool(graph_client)
-        result = await tool.fetch_imas_paths(
+        result = await tool.fetch_dd_paths(
             "core_profiles/profiles_1d/electrons/pressure",
             include_version_history=True,
         )
@@ -776,7 +774,7 @@ class TestFetchMetadataParity:
     async def test_version_changes_empty_without_flag(self, graph_client):
         """Without include_version_history, version_changes should be None."""
         tool = self._make_tool(graph_client)
-        result = await tool.fetch_imas_paths(
+        result = await tool.fetch_dd_paths(
             "core_profiles/profiles_1d/electrons/pressure",
             include_version_history=False,
         )
@@ -799,7 +797,7 @@ class TestIdentifierSearch:
     async def test_list_all_identifiers(self, graph_client):
         """No query should return all schemas."""
         tool = self._make_tool(graph_client)
-        result = await tool.get_imas_identifiers()
+        result = await tool.get_dd_identifiers()
         assert result.analytics["total_schemas"] >= 1
         schema = result.schemas[0]
         assert schema["path"] == "boundary_type"
@@ -808,7 +806,7 @@ class TestIdentifierSearch:
     async def test_keyword_match_description(self, graph_client):
         """Query matching LLM description should return schema."""
         tool = self._make_tool(graph_client)
-        result = await tool.get_imas_identifiers(query="topology")
+        result = await tool.get_dd_identifiers(query="topology")
         assert result.analytics["total_schemas"] >= 1
         names = [s["path"] for s in result.schemas]
         assert "boundary_type" in names
@@ -817,7 +815,7 @@ class TestIdentifierSearch:
     async def test_keyword_match_keywords_field(self, graph_client):
         """Query matching keywords list should return schema."""
         tool = self._make_tool(graph_client)
-        result = await tool.get_imas_identifiers(query="separatrix")
+        result = await tool.get_dd_identifiers(query="separatrix")
         assert result.analytics["total_schemas"] >= 1
         names = [s["path"] for s in result.schemas]
         assert "boundary_type" in names
@@ -826,7 +824,7 @@ class TestIdentifierSearch:
     async def test_description_preferred(self, graph_client):
         """Description should contain LLM-enriched content when available."""
         tool = self._make_tool(graph_client)
-        result = await tool.get_imas_identifiers()
+        result = await tool.get_dd_identifiers()
         schema = result.schemas[0]
         assert "topology" in schema["description"]
 
@@ -834,7 +832,7 @@ class TestIdentifierSearch:
     async def test_no_match(self, graph_client):
         """Query with no match should return empty."""
         tool = self._make_tool(graph_client)
-        result = await tool.get_imas_identifiers(query="zzz_nonexistent_xyz")
+        result = await tool.get_dd_identifiers(query="zzz_nonexistent_xyz")
         assert result.analytics["total_schemas"] == 0
 
 

@@ -134,7 +134,7 @@ def generate_error_recovery_suggestions(
             "Check spelling and terminology - verify scientific terms and IMAS-specific vocabulary"
         )
 
-        if tool_name == "search_imas_paths":
+        if tool_name == "search_dd_paths":
             suggestions.append(
                 "Try different search mode - switch between semantic, lexical, or hybrid search"
             )
@@ -187,17 +187,17 @@ def get_fallback_response(
             "query": query,
             "suggestions": [
                 {
-                    "tool": "get_imas_overview",
+                    "tool": "get_dd_overview",
                     "reason": "Get overview of available IMAS data",
                     "description": "Explore data structure and capabilities",
                 },
                 {
-                    "tool": "list_imas_identifiers",
+                    "tool": "get_dd_identifiers",
                     "reason": "Find related terms and identifiers",
                     "description": "Discover alternative search terms",
                 },
                 {
-                    "tool": "get_imas_overview",
+                    "tool": "get_dd_overview",
                     "reason": f'Learn about "{query}" in fusion physics',
                     "description": "Get conceptual understanding",
                 },
@@ -210,12 +210,12 @@ def get_fallback_response(
             "query": query,
             "suggestions": [
                 {
-                    "tool": "search_imas_paths",
+                    "tool": "search_dd_paths",
                     "reason": f'Search for data related to "{query}"',
                     "description": "Find specific measurements and data paths",
                 },
                 {
-                    "tool": "get_imas_overview",
+                    "tool": "get_dd_overview",
                     "reason": "Get general overview of IMAS concepts",
                     "description": "Explore available physics domains",
                 },

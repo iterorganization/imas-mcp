@@ -7,7 +7,7 @@ import pytest
 from imas_codex.tools.graph_search import (
     GraphStructureTool,
     _leaf_data_type_clause,
-    _text_search_imas_paths,
+    _text_search_dd_paths,
 )
 
 
@@ -29,7 +29,7 @@ def test_text_search_fallback_uses_uppercase_structure_types():
 
     gc.query.side_effect = side_effect
 
-    _text_search_imas_paths(gc, "plasma current", 10, None)
+    _text_search_dd_paths(gc, "plasma current", 10, None)
 
     fallback_calls = [
         call.args[0]
@@ -45,7 +45,7 @@ def test_text_search_fallback_uses_uppercase_structure_types():
 
 
 @pytest.mark.asyncio
-async def test_analyze_imas_structure_uses_uppercase_structure_types():
+async def test_analyze_dd_structure_uses_uppercase_structure_types():
     gc = MagicMock()
     gc.query.side_effect = [
         [{"total_paths": 0, "leaf_count": 0, "max_depth": 0, "avg_depth": 0}],
@@ -56,7 +56,7 @@ async def test_analyze_imas_structure_uses_uppercase_structure_types():
     ]
     tool = GraphStructureTool(gc)
 
-    await tool.analyze_imas_structure("equilibrium")
+    await tool.analyze_dd_structure("equilibrium")
 
     metrics_query = gc.query.call_args_list[0].args[0]
     assert "nullIf" in metrics_query

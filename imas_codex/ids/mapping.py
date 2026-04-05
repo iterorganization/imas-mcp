@@ -827,7 +827,7 @@ def gather_ids_context(
 
         clusters_tool = GraphClustersTool(gc)
         cluster_result = _run_async(
-            clusters_tool.search_imas_clusters(
+            clusters_tool.search_dd_clusters(
                 ids_filter=ids_name,
                 section_only=True,
                 dd_version=dd_version,

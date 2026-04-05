@@ -526,7 +526,7 @@ def format_code_report(
 
 
 # ---------------------------------------------------------------------------
-# search_imas formatter
+# search_dd_paths formatter
 # ---------------------------------------------------------------------------
 
 
@@ -1068,7 +1068,7 @@ def format_cluster_report(result: Any) -> str:
     return "\n".join(parts)
 
 
-def format_search_imas_report(result: Any, cluster_result: Any | None = None) -> str:
+def format_search_dd_report(result: Any, cluster_result: Any | None = None) -> str:
     """Format SearchPathsResult + optional clusters into a combined report.
 
     This is the typed-result version of format_imas_report(), used when
@@ -1174,7 +1174,7 @@ def format_search_imas_report(result: Any, cluster_result: Any | None = None) ->
 
 
 def format_path_context_report(result: dict[str, Any]) -> str:
-    """Format get_imas_path_context result into readable text."""
+    """Format get_dd_path_context result into readable text."""
     tool_error = _format_tool_error(result)
     if tool_error:
         return tool_error
@@ -1245,7 +1245,7 @@ def format_path_context_report(result: dict[str, Any]) -> str:
 
 
 def format_structure_report(result: dict[str, Any]) -> str:
-    """Format analyze_imas_structure result into readable text."""
+    """Format analyze_dd_structure result into readable text."""
     tool_error = _format_tool_error(result)
     if tool_error:
         return tool_error
@@ -1422,7 +1422,7 @@ def format_export_domain_report(result: Any) -> str:
 
 
 def format_cocos_fields_report(result: Any) -> str:
-    """Format get_cocos_fields result into readable text."""
+    """Format get_dd_cocos_fields result into readable text."""
     tool_error = _format_tool_error(result)
     if tool_error:
         return tool_error

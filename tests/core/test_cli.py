@@ -121,9 +121,9 @@ class TestReadOnlyServer:
         assert "search_signals" in tool_names
         assert "search_docs" in tool_names
         assert "search_code" in tool_names
-        assert "search_imas" in tool_names
+        assert "search_dd_paths" in tool_names
         assert "fetch_content" in tool_names
-        assert "check_imas_paths" in tool_names
+        assert "check_dd_paths" in tool_names
 
     def test_default_mode_has_all_tools(self):
         """Default mode includes all tools."""
@@ -191,12 +191,12 @@ class TestReadOnlyServer:
         assert "update_facility_config" not in tool_names
 
         # DD tools SHOULD still be present
-        assert "search_imas" in tool_names
-        assert "check_imas_paths" in tool_names
-        assert "fetch_imas_paths" in tool_names
-        assert "find_related_imas_paths" in tool_names
+        assert "search_dd_paths" in tool_names
+        assert "check_dd_paths" in tool_names
+        assert "fetch_dd_paths" in tool_names
+        assert "find_related_dd_paths" in tool_names
         assert "get_graph_schema" in tool_names
-        assert "get_imas_overview" in tool_names
+        assert "get_dd_overview" in tool_names
 
     def test_dd_only_implies_read_only(self):
         """DD-only mode automatically sets read_only=True."""

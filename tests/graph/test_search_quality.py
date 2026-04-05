@@ -403,9 +403,9 @@ class TestBM25ScoringConstants:
         import ast
         import inspect
 
-        from imas_codex.tools.graph_search import _text_search_imas_paths
+        from imas_codex.tools.graph_search import _text_search_dd_paths
 
-        source = inspect.getsource(_text_search_imas_paths)
+        source = inspect.getsource(_text_search_dd_paths)
         # Extract all THEN score values from the CASE expression
         then_values = re.findall(r"THEN\s+([\d.]+)", source)
         for val_str in then_values:
@@ -418,9 +418,9 @@ class TestBM25ScoringConstants:
         """Verify the BM25 score floor has been removed."""
         import inspect
 
-        from imas_codex.tools.graph_search import _text_search_imas_paths
+        from imas_codex.tools.graph_search import _text_search_dd_paths
 
-        source = inspect.getsource(_text_search_imas_paths)
+        source = inspect.getsource(_text_search_dd_paths)
         assert "max(raw, 0.7)" not in source, "BM25 score floor still present"
 
     def test_path_short_circuit(self) -> None:
@@ -429,7 +429,7 @@ class TestBM25ScoringConstants:
 
         from imas_codex.tools.graph_search import GraphSearchTool
 
-        source = inspect.getsource(GraphSearchTool.search_imas_paths)
+        source = inspect.getsource(GraphSearchTool.search_dd_paths)
         assert '"/" in query' in source or "'/' in query" in source, (
             "Path short-circuit not found"
         )

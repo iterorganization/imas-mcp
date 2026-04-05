@@ -292,9 +292,9 @@ def _extract_paths_from_vector(
 
 def _extract_paths_from_text(graph_client, query: str, limit: int) -> list[str]:
     """Run text-only search (BM25 + CONTAINS) and return path IDs."""
-    from imas_codex.tools.graph_search import _text_search_imas_paths
+    from imas_codex.tools.graph_search import _text_search_dd_paths
 
-    results = _text_search_imas_paths(graph_client, query, limit, ids_filter=None)
+    results = _text_search_dd_paths(graph_client, query, limit, ids_filter=None)
     sorted_results = sorted(results, key=lambda r: r["score"], reverse=True)
     return [r["id"] for r in sorted_results]
 
@@ -336,7 +336,7 @@ def _extract_paths_from_path_lookup(graph_client, query: str, limit: int) -> lis
 async def _extract_paths_from_hybrid(search_tool, query: str, limit: int) -> list[str]:
     """Run full hybrid search via the tool and return path IDs."""
     try:
-        result = await search_tool.search_imas_paths(query=query, max_results=limit)
+        result = await search_tool.search_dd_paths(query=query, max_results=limit)
         # The decorator chain may return a ToolError instead of SearchPathsResult
         if hasattr(result, "hits"):
             return [hit.path for hit in result.hits]

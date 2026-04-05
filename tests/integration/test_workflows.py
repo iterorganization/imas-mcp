@@ -26,13 +26,13 @@ class TestUserWorkflows:
     async def test_discovery_workflow(self, tools, workflow_test_data):
         """Test: overview → search workflow."""
         # Step 1: Get overview to understand what's available
-        overview = await tools.get_imas_overview()
+        overview = await tools.get_dd_overview()
         assert isinstance(overview, GetOverviewResult)
 
         if overview.available_ids:
             # Step 2: Search for specific content from test dataset IDS
             search_query = "core_profiles temperature"  # Target our test dataset
-            search_result = await tools.search_imas_paths(
+            search_result = await tools.search_dd_paths(
                 query=search_query, max_results=5
             )
             assert isinstance(search_result, SearchPathsResult)
@@ -42,9 +42,7 @@ class TestUserWorkflows:
         """Test: search → relationships → deep analysis workflow."""
         # Step 1: Search for physics concept
         search_query = workflow_test_data["search_query"]
-        search_result = await tools.search_imas_paths(
-            query=search_query, max_results=10
-        )
+        search_result = await tools.search_dd_paths(query=search_query, max_results=10)
         assert isinstance(search_result, SearchPathsResult)
 
         if search_result.hits:
@@ -59,14 +57,14 @@ class TestUserWorkflows:
                 # Fallback to test data
                 ids_name = workflow_test_data["analysis_target"]
 
-            relationships_result = await tools.search_imas_clusters(
+            relationships_result = await tools.search_dd_clusters(
                 path=f"{ids_name}/profiles_1d/time"
             )
             # Accept either SearchClustersResult or ToolError (when clusters.json is missing)
             assert isinstance(relationships_result, SearchClustersResult | ToolError)
 
             # Step 3: Explore identifiers for comprehensive understanding
-            identifiers_result = await tools.get_imas_identifiers()
+            identifiers_result = await tools.get_dd_identifiers()
             assert isinstance(identifiers_result, GetIdentifiersResult)
 
     @pytest.mark.asyncio
@@ -75,18 +73,18 @@ class TestUserWorkflows:
         ids_name = "core_profiles"  # Well-known IDS for testing
 
         # Step 1: Explore relationships
-        relationships = await tools.search_imas_clusters(
+        relationships = await tools.search_dd_clusters(
             path=f"{ids_name}/profiles_1d/time"
         )
         # Accept either SearchClustersResult or ToolError (when clusters.json is missing)
         assert isinstance(relationships, SearchClustersResult | ToolError)
 
         # Step 2: Explore identifiers
-        identifiers = await tools.get_imas_identifiers()
+        identifiers = await tools.get_dd_identifiers()
         assert isinstance(identifiers, GetIdentifiersResult)
 
         # Step 3: Search within this IDS
-        search = await tools.search_imas_paths(
+        search = await tools.search_dd_paths(
             query=f"{ids_name} temperature", max_results=5
         )
         assert isinstance(search, SearchPathsResult)
@@ -101,8 +99,8 @@ class TestWorkflowPerformance:
         start_time = time.time()
 
         # Execute a typical workflow
-        overview = await tools.get_imas_overview()
-        search = await tools.search_imas_paths(query="temperature", max_results=3)
+        overview = await tools.get_dd_overview()
+        search = await tools.search_dd_paths(query="temperature", max_results=3)
 
         end_time = time.time()
 
@@ -118,8 +116,8 @@ class TestWorkflowPerformance:
         """Test tools can be used concurrently without interference."""
         # Run multiple tools concurrently
         tasks = [
-            tools.get_imas_overview(),
-            tools.search_imas_paths(query="temperature", max_results=3),
+            tools.get_dd_overview(),
+            tools.search_dd_paths(query="temperature", max_results=3),
         ]
 
         results = await asyncio.gather(*tasks)
@@ -137,11 +135,11 @@ class TestWorkflowErrorRecovery:
     async def test_workflow_continues_after_error(self, tools):
         """Test workflow can continue after one step fails."""
         # Step 1: Valid operation
-        overview = await tools.get_imas_overview()
+        overview = await tools.get_dd_overview()
         assert isinstance(overview, GetOverviewResult)
 
         # Step 2: Continue with valid operation
-        search = await tools.search_imas_paths(query="temperature", max_results=3)
+        search = await tools.search_dd_paths(query="temperature", max_results=3)
         assert isinstance(search, SearchPathsResult)
 
         # Workflow should complete without errors
@@ -154,7 +152,7 @@ class TestWorkflowDataConsistency:
     async def test_search_consistency(self, tools):
         """Test data is consistent between search calls."""
         # Search for content
-        search_result = await tools.search_imas_paths(
+        search_result = await tools.search_dd_paths(
             query="core_profiles temperature", max_results=5
         )
 

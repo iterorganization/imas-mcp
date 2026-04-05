@@ -100,7 +100,7 @@ class TestGenerateSearchSuggestions:
         suggestions = generate_search_suggestions("query", context)
 
         tool_names = [s["tool"] for s in suggestions]
-        assert "search_imas_clusters" in tool_names
+        assert "search_dd_clusters" in tool_names
 
     def test_suggests_ids_analysis(self):
         """Test that IDS analysis is suggested for specific IDS."""
@@ -113,7 +113,7 @@ class TestGenerateSearchSuggestions:
         suggestions = generate_search_suggestions("query", context)
 
         tool_names = [s["tool"] for s in suggestions]
-        assert "list_imas_paths" in tool_names
+        assert "list_dd_paths" in tool_names
 
     def test_no_results_suggestions(self):
         """Test suggestions when no results found."""
@@ -127,8 +127,8 @@ class TestGenerateSearchSuggestions:
 
         assert len(suggestions) > 0
         tool_names = [s["tool"] for s in suggestions]
-        assert "get_imas_overview" in tool_names
-        assert "list_imas_identifiers" in tool_names
+        assert "get_dd_overview" in tool_names
+        assert "get_dd_identifiers" in tool_names
 
 
 class TestGenerateConceptSuggestions:
@@ -140,8 +140,8 @@ class TestGenerateConceptSuggestions:
 
         assert len(suggestions) >= 2
         tool_names = [s["tool"] for s in suggestions]
-        assert "search_imas_paths" in tool_names
-        assert "list_imas_identifiers" in tool_names
+        assert "search_dd_paths" in tool_names
+        assert "get_dd_identifiers" in tool_names
 
     def test_temperature_density_pressure_suggestions(self):
         """Test suggestions for temperature/density/pressure concepts."""
@@ -156,14 +156,14 @@ class TestGenerateConceptSuggestions:
         suggestions = generate_concept_suggestions("magnetic equilibrium")
 
         tool_names = [s["tool"] for s in suggestions]
-        assert "list_imas_paths" in tool_names
+        assert "list_dd_paths" in tool_names
 
     def test_transport_flux_suggestions(self):
         """Test suggestions for transport/flux concepts."""
         suggestions = generate_concept_suggestions("transport flux")
 
         tool_names = [s["tool"] for s in suggestions]
-        assert "search_imas_clusters" in tool_names
+        assert "search_dd_clusters" in tool_names
 
 
 class TestGenerateToolRecommendations:
@@ -176,7 +176,7 @@ class TestGenerateToolRecommendations:
 
         assert len(recommendations) > 0
         tool_names = [r["tool"] for r in recommendations]
-        assert "get_imas_overview" in tool_names
+        assert "get_dd_overview" in tool_names
 
     def test_search_result_suggestions(self):
         """Test suggestions for search results."""
@@ -218,8 +218,8 @@ class TestGenerateToolRecommendations:
 
         assert len(recommendations) > 0
         tool_names = [r["tool"] for r in recommendations]
-        assert "search_imas_paths" in tool_names
-        assert "get_imas_overview" in tool_names
+        assert "search_dd_paths" in tool_names
+        assert "get_dd_overview" in tool_names
 
 
 class TestRecommendToolsDecorator:

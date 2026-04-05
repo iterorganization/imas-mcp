@@ -33,7 +33,7 @@ class ServerStartupBenchmarks:
         server._register_tools()
 
     def time_first_tool_call(self):
-        """First search_imas after cold start (lazy init triggers)."""
+        """First search_dd_paths after cold start (lazy init triggers)."""
         import asyncio
 
         from fastmcp import Client
@@ -46,7 +46,7 @@ class ServerStartupBenchmarks:
         async def _call():
             async with client:
                 return await client.call_tool(
-                    "search_imas", {"query": "temperature", "k": 1}
+                    "search_dd_paths", {"query": "temperature", "k": 1}
                 )
 
         asyncio.run(_call())

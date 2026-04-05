@@ -48,11 +48,11 @@ The `python()` REPL includes rich pre-loaded utilities:
 - `search_code(query, top_k, facility, min_score)` - Semantic code search
 
 **IMAS Data Dictionary:**
-- `search_imas(query, ids_filter, max_results)` - Semantic DD search
-- `fetch_imas(paths)` - Full documentation for paths
-- `list_imas(paths, leaf_only, max_paths)` - List IDS structure
-- `check_imas(paths)` - Validate path existence
-- `get_imas_overview(query)` - High-level DD summary
+- `search_dd_paths(query, ids_filter, max_results)` - Semantic DD search
+- `fetch_dd_paths(paths)` - Full documentation for paths
+- `list_dd_paths(paths, leaf_only, max_paths)` - List IDS structure
+- `check_dd_paths(paths)` - Validate path existence
+- `get_dd_overview(query)` - High-level DD summary
 
 ### CLI Agent Usage
 
@@ -104,7 +104,7 @@ python("hits = semantic_search('plasma current', 'code_chunk_embedding', 3)")
 python("print(ssh('ls /home/codes | head -5'))")
 
 # IMAS search
-python("print(search_imas('electron temperature profile'))")
+python("print(search_dd_paths('electron temperature profile'))")
 
 # Facility info
 python("info = get_facility('tcv'); print(info['graph_summary'])")

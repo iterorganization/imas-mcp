@@ -16,7 +16,7 @@ class TestToolRegistration:
         names = tools.get_registered_tool_names()
         # query_imas_graph and get_dd_graph_schema were removed in the unified server cleanup
         assert "get_dd_versions" in names
-        assert "search_imas_paths" in names
+        assert "search_dd_paths" in names
 
     def test_graph_client_required(self):
         """Tools raises ValueError when no graph_client provided."""
@@ -31,10 +31,10 @@ class TestToolRegistration:
 
         tools = Tools(graph_client=graph_client)
         names = tools.get_registered_tool_names()
-        assert "search_imas_paths" in names
-        assert "fetch_imas_paths" in names
-        assert "list_imas_paths" in names
-        assert "get_imas_overview" in names
+        assert "search_dd_paths" in names
+        assert "fetch_dd_paths" in names
+        assert "list_dd_paths" in names
+        assert "get_dd_overview" in names
 
     def test_total_tool_count(self, graph_client):
         """Total tool count matches expected number of graph-backed tools."""

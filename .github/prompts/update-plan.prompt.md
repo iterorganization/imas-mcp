@@ -60,7 +60,7 @@ Key files to check when updating:
 
 Usage examples:
 - "Phase 0.2" and "DEVELOPMENT_PLAN_MCP_TOOLS.md" to update ASV Performance Monitoring Setup
-- "Phase 1.1" and "DEVELOPMENT_PLAN_MCP_TOOLS.md" to update Enhanced search_imas Tool
+- "Phase 1.1" and "DEVELOPMENT_PLAN_MCP_TOOLS.md" to update Enhanced search_dd_paths Tool
 - "Phase 2" and "DEVELOPMENT_PLAN_MCP_TOOLS.md" to update entire MCP Resources Implementation phase
 - "Phase 3.1" and "PROJECT_ROADMAP.md" to update a different development plan
 ```

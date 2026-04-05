@@ -377,13 +377,13 @@ def mcp_test_context():
         "test_query": "plasma temperature",
         "test_ids": "core_profiles",
         "expected_tools": [
-            "check_imas_paths",
-            "fetch_imas_paths",
-            "get_imas_overview",
-            "get_imas_identifiers",
-            "list_imas_paths",
-            "search_imas_clusters",
-            "search_imas_paths",
+            "check_dd_paths",
+            "fetch_dd_paths",
+            "get_dd_overview",
+            "get_dd_identifiers",
+            "list_dd_paths",
+            "search_dd_clusters",
+            "search_dd_paths",
         ],
     }
 
