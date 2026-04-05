@@ -64,26 +64,58 @@ class VersionTool:
         }
 
     @mcp_tool(
-        "Get version change history for specific IMAS paths. "
-        "Returns notable changes (sign_convention, coordinate_convention, units, "
-        "definition_clarification) across DD versions for each path. "
-        "paths (required): One or more IMAS paths to check."
+        "Get version change history for specific IMAS paths, or list all changes of a specific type across the Data Dictionary. "
+        "Mode 1 (per-path): Provide paths to get version history for specific paths. "
+        "Mode 2 (bulk query): Omit paths and set change_type_filter to list all changes of that type. "
+        "paths: One or more IMAS paths to check version history. Optional when change_type_filter is set. "
+        "change_type_filter: Filter to specific change type when querying without paths "
+        "(e.g., 'path_renamed', 'units', 'data_type', 'cocos_label_transformation', 'added'). "
+        "ids_filter: Limit to specific IDS. "
+        "from_version: Start version for range filter (exclusive). "
+        "to_version: End version for range filter (inclusive)."
     )
     async def get_dd_version_context(
         self,
-        paths: str | list[str],
+        paths: str | list[str] | None = None,
+        change_type_filter: str | None = None,
+        ids_filter: str | None = None,
+        from_version: str | None = None,
+        to_version: str | None = None,
     ) -> dict[str, Any]:
-        """Get version change context for IMAS paths."""
-        if isinstance(paths, str):
-            path_list = [
-                p.strip() for p in paths.replace(",", " ").split() if p.strip()
-            ]
+        """Get version change context for IMAS paths.
+
+        Mode 1 (per-path): Provide paths to get version history per path.
+        Mode 2 (bulk query): Omit paths and set change_type_filter to list all
+        changes of that type across the Data Dictionary.
+        """
+        # Normalise paths into a list
+        if paths is not None:
+            if isinstance(paths, str):
+                path_list: list[str] = [
+                    p.strip() for p in paths.replace(",", " ").split() if p.strip()
+                ]
+            else:
+                path_list = list(paths)
         else:
-            path_list = list(paths)
+            path_list = []
 
+        # ── Mode 2: bulk query ────────────────────────────────────────────────
         if not path_list:
-            return {"error": "No paths provided.", "paths": {}}
+            if not change_type_filter:
+                return {
+                    "error": (
+                        "Provide either 'paths' for per-path history, "
+                        "or 'change_type_filter' for a bulk query."
+                    )
+                }
+            return await self._bulk_query(
+                change_type_filter=change_type_filter,
+                ids_filter=ids_filter,
+                from_version=from_version,
+                to_version=to_version,
+            )
 
+        # ── Mode 1: per-path ─────────────────────────────────────────────────
         try:
             results = self.graph_client.query(
                 """
@@ -141,4 +173,67 @@ class VersionTool:
             ),
             "graph_change_nodes_seen": graph_change_nodes_seen,
             "not_found": not_found,
+        }
+
+    async def _bulk_query(
+        self,
+        change_type_filter: str,
+        ids_filter: str | None,
+        from_version: str | None,
+        to_version: str | None,
+    ) -> dict[str, Any]:
+        """Execute a bulk query for all changes of a specific type."""
+        # Build WHERE clauses
+        where_clauses = ["c.change_type = $change_type"]
+        params: dict[str, Any] = {"change_type": change_type_filter}
+
+        if from_version:
+            where_clauses.append("v.id > $from_version")
+            params["from_version"] = from_version
+        if to_version:
+            where_clauses.append("v.id <= $to_version")
+            params["to_version"] = to_version
+
+        ids_where = ""
+        if ids_filter:
+            ids_where = "WHERE p.ids = $ids_filter"
+            params["ids_filter"] = ids_filter
+
+        where_str = "WHERE " + " AND ".join(where_clauses)
+
+        cypher = f"""
+        MATCH (c:IMASNodeChange)-[:IN_VERSION]->(v:DDVersion)
+        {where_str}
+        MATCH (c)-[:FOR_IMAS_PATH]->(p:IMASNode)
+        {ids_where}
+        RETURN p.id AS path, p.ids AS ids,
+               c.old_value AS old_value, c.new_value AS new_value,
+               v.id AS version, c.change_type AS change_type,
+               coalesce(c.breaking_level, 'informational') AS severity,
+               c.summary AS summary
+        ORDER BY v.id, p.ids, p.id
+        LIMIT 200
+        """
+
+        try:
+            rows = self.graph_client.query(cypher, **params)
+        except Exception as e:
+            return {"error": f"Failed to execute bulk query: {e}"}
+
+        changes = [dict(r) for r in (rows or [])]
+        ids_affected = sorted({r["ids"] for r in changes if r.get("ids")})
+        version_range: dict[str, str] | None = None
+        if from_version or to_version:
+            version_range = {
+                "from": from_version or "",
+                "to": to_version or "",
+            }
+
+        return {
+            "mode": "bulk_query",
+            "change_type_filter": change_type_filter,
+            "change_count": len(changes),
+            "changes": changes,
+            "ids_affected": ids_affected,
+            "version_range": version_range,
         }

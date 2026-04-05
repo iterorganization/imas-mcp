@@ -942,6 +942,7 @@ def generate_migration_guide(
     to_version: str,
     ids_filter: str | None = None,
     include_recipes: bool = True,
+    summary_only: bool = False,
 ) -> str:
     """Generate a DD migration guide between two versions.
 
@@ -951,6 +952,7 @@ def generate_migration_guide(
         to_version: Target DD version (e.g. "4.0.0")
         ids_filter: Optional IDS name to restrict output
         include_recipes: Whether to include code update snippets
+        summary_only: If True, return only aggregate statistics without per-path details
 
     Returns:
         Structured markdown migration guide
@@ -963,6 +965,77 @@ def generate_migration_guide(
     version_range = _resolve_version_range(gc, from_version, to_version)
     if not version_range:
         return f"Error: No versions found between {from_version} and {to_version}."
+
+    if summary_only:
+        change_summary = _get_change_summary(gc, version_range, ids_filter)
+        from_cocos = _get_version_cocos(gc, from_version)
+        to_cocos = _get_version_cocos(gc, to_version)
+
+        # Aggregate change statistics
+        by_type: dict[str, dict] = {}
+        total_changes = 0
+        breaking_total = 0
+        for row in change_summary:
+            ctype = row["type"]
+            level = row["level"]
+            cnt = row["cnt"]
+            total_changes += cnt
+            if ctype not in by_type:
+                by_type[ctype] = {"count": 0, "breaking": 0}
+            by_type[ctype]["count"] += cnt
+            if level in ("required", "breaking"):
+                by_type[ctype]["breaking"] += cnt
+                breaking_total += cnt
+
+        # Get affected IDS list
+        ids_query = gc.query(
+            """
+            MATCH (c:IMASNodeChange)-[:IN_VERSION]->(v:DDVersion)
+            WHERE v.id IN $versions
+            MATCH (c)-[:FOR_IMAS_PATH]->(p:IMASNode)
+            RETURN DISTINCT p.ids AS ids
+            ORDER BY ids
+            """,
+            versions=version_range,
+        )
+        ids_affected = [r["ids"] for r in ids_query]
+
+        cocos_change = None
+        if from_cocos and to_cocos and from_cocos != to_cocos:
+            cocos_change = f"{from_cocos} → {to_cocos}"
+
+        # Format as readable summary
+        lines = [
+            f"# Migration Summary: {from_version} → {to_version}",
+            "",
+            f"**COCOS change:** {cocos_change or 'None'}",
+            f"**Total changes:** {total_changes:,}",
+            f"**Breaking changes:** {breaking_total:,}",
+            f"**IDS affected:** {len(ids_affected)}",
+            "",
+            "## Changes by Type",
+            "",
+            "| Change Type | Count | Breaking |",
+            "|------------|------:|--------:|",
+        ]
+        for ctype in sorted(by_type, key=lambda t: by_type[t]["count"], reverse=True):
+            info = by_type[ctype]
+            lines.append(f"| {ctype} | {info['count']:,} | {info['breaking']:,} |")
+
+        if ids_affected:
+            lines.extend(["", "## IDS Affected", ""])
+            lines.append(", ".join(ids_affected))
+
+        if breaking_total > 1000:
+            lines.extend(
+                [
+                    "",
+                    f"**Recommendation:** Major migration — {breaking_total:,} breaking changes. "
+                    f"Use full guide with `ids_filter` for per-IDS migration.",
+                ]
+            )
+
+        return "\n".join(lines)
 
     guide = build_migration_guide(
         gc, from_version, to_version, ids_filter, include_recipes

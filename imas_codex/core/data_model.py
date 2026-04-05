@@ -98,6 +98,9 @@ class IdsNode(BaseModel):
     # Error fields (associated via HAS_ERROR relationships)
     error_fields: list[str] | None = None  # Error field paths linked to this data path
 
+    # Children preview (populated when include_children=True for structure nodes)
+    children_preview: list[dict] | None = None
+
     # Additional XML attributes
     coordinate1: str | None = None
     coordinate2: str | None = None

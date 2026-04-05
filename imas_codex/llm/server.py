@@ -348,6 +348,51 @@ def _format_version_context_report(result: dict) -> str:
     if result.get("error"):
         return f"Error: {result['error']}"
 
+    # ── Bulk query mode ───────────────────────────────────────────────────────
+    if result.get("mode") == "bulk_query":
+        change_type = result.get("change_type_filter", "?")
+        change_count = result.get("change_count", 0)
+        ids_affected = result.get("ids_affected", [])
+        version_range = result.get("version_range")
+        changes = result.get("changes", [])
+
+        range_str = ""
+        if version_range:
+            frm = version_range.get("from", "")
+            to = version_range.get("to", "")
+            if frm and to:
+                range_str = f" (versions {frm} → {to})"
+            elif to:
+                range_str = f" (up to v{to})"
+            elif frm:
+                range_str = f" (after v{frm})"
+
+        lines = [
+            f"Bulk Change Query — type: **{change_type}**{range_str}",
+            f"{change_count} change(s) found across {len(ids_affected)} IDS: "
+            + (", ".join(ids_affected) if ids_affected else "none"),
+            "",
+        ]
+        for c in changes:
+            path = c.get("path", "?")
+            version = c.get("version", "?")
+            severity = c.get("severity", "informational")
+            old_val = c.get("old_value") or ""
+            new_val = c.get("new_value") or ""
+            summary = c.get("summary") or ""
+            if old_val and new_val:
+                val_str = f": `{old_val}` → `{new_val}`"
+            elif new_val:
+                val_str = f": added `{new_val}`"
+            elif old_val:
+                val_str = f": removed `{old_val}`"
+            else:
+                val_str = ""
+            suffix = f" — {summary}" if summary else ""
+            lines.append(f"  - v{version} [{severity}] **{path}**{val_str}{suffix}")
+        return "\n".join(lines)
+
+    # ── Per-path mode ─────────────────────────────────────────────────────────
     paths_data = result.get("paths", {})
     lines = [
         f"Version Context Report: {result.get('total_paths', 0)} paths queried, "
@@ -1060,12 +1105,14 @@ def _init_repl() -> dict[str, Any]:
     def get_imas_overview(
         query_text: str | None = None,
         dd_version: int | None = None,
+        include_unit_stats: bool = False,
     ) -> str:
         """Get high-level overview of IMAS Data Dictionary.
 
         Args:
             query_text: Optional keyword filter
             dd_version: Filter by DD major version (e.g., 3 or 4)
+            include_unit_stats: If true, include unit distribution statistics
 
         Returns:
             Overview with IDS list, physics domains, statistics
@@ -1073,7 +1120,11 @@ def _init_repl() -> dict[str, Any]:
         try:
             tools = _get_imas_tools()
             result = _run_async(
-                tools.get_imas_overview(query=query_text, dd_version=dd_version)
+                tools.get_imas_overview(
+                    query=query_text,
+                    dd_version=dd_version,
+                    include_unit_stats=include_unit_stats,
+                )
             )
             return str(result)
         except Exception as e:
@@ -2412,6 +2463,8 @@ class AgentsServer:
             include_version_context: bool = False,
             dd_version: int | None = None,
             k: int = 20,
+            physics_domain: str | None = None,
+            lifecycle_filter: str | None = None,
         ) -> str:
             """Find IMAS Data Dictionary paths matching a concept. Use when you need to discover which paths store a given physical quantity.
 
@@ -2424,6 +2477,8 @@ class AgentsServer:
                 include_version_context: If true, append DD version change history for each matched path. Default: false.
                 dd_version: Filter by DD major version (3 or 4). Default: latest version.
                 k: Maximum number of results. Default: 20.
+                physics_domain: Filter by physics domain (e.g., "magnetics", "equilibrium", "transport"). Default: no filter.
+                lifecycle_filter: Filter by lifecycle status ('active', 'alpha', 'obsolescent'). Default: no filter.
 
             Returns:
                 Formatted text report listing matched paths with types, units, cluster labels, and optional facility cross-references.
@@ -2446,6 +2501,8 @@ class AgentsServer:
                         facility=facility,
                         include_version_context=include_version_context,
                         dd_version=dd_version,
+                        physics_domain=physics_domain,
+                        lifecycle_filter=lifecycle_filter,
                     )
                 )
 
@@ -2519,6 +2576,7 @@ class AgentsServer:
             ids: str | None = None,
             dd_version: int | None = None,
             include_version_history: bool = False,
+            include_children: bool = False,
         ) -> str:
             """Get full documentation for known IMAS paths. Use after search_imas or check_imas_paths to retrieve detailed metadata for specific paths.
 
@@ -2529,6 +2587,7 @@ class AgentsServer:
                 ids: Optional IDS name to prepend to all paths (e.g. "core_profiles"). Default: none.
                 dd_version: Filter by DD major version (3 or 4). Default: latest version.
                 include_version_history: If true, include notable changes across DD versions for each path. Default: false.
+                include_children: If true, include a preview of child paths for structure nodes. Default: false.
 
             Returns:
                 Formatted text report with complete documentation per path.
@@ -2542,6 +2601,7 @@ class AgentsServer:
                     ids=ids,
                     dd_version=dd_version,
                     include_version_history=include_version_history,
+                    include_children=include_children,
                 )
             )
             return format_fetch_paths_report(result)
@@ -2572,6 +2632,9 @@ class AgentsServer:
             leaf_only: bool = False,
             max_paths: int | None = None,
             dd_version: int | None = None,
+            physics_domain: str | None = None,
+            node_type: str | None = None,
+            lifecycle_filter: str | None = None,
         ) -> str:
             """Enumerate all paths under an IDS or subtree. Use to browse the structure of an IDS or discover available fields under a path prefix.
 
@@ -2582,6 +2645,9 @@ class AgentsServer:
                 leaf_only: If true, return only leaf data fields (skip intermediate structures). Default: false.
                 max_paths: Cap the number of paths returned. Default: no limit.
                 dd_version: Filter by DD major version (3 or 4). Default: latest version.
+                physics_domain: Filter by physics domain (e.g., "magnetics", "equilibrium", "transport"). Default: no filter.
+                node_type: Filter by node type ('dynamic', 'static', 'constant'). Default: no filter.
+                lifecycle_filter: Filter by lifecycle status ('active', 'alpha', 'obsolescent'). Default: no filter.
 
             Returns:
                 Formatted text listing of paths with their data types.
@@ -2595,6 +2661,9 @@ class AgentsServer:
                     leaf_only=leaf_only,
                     max_paths=max_paths,
                     dd_version=dd_version,
+                    physics_domain=physics_domain,
+                    node_type=node_type,
+                    lifecycle_filter=lifecycle_filter,
                 )
             )
             return format_list_report(result)
@@ -2603,6 +2672,7 @@ class AgentsServer:
         def get_imas_overview(
             query: str | None = None,
             dd_version: int | None = None,
+            include_unit_stats: bool = False,
         ) -> str:
             """List all available IDSs (Interface Data Structures) with descriptions and statistics. Use as a starting point to discover which IDS contains the data you need.
 
@@ -2611,6 +2681,7 @@ class AgentsServer:
             Args:
                 query: Optional keyword to filter IDS names and descriptions (e.g. "magnetics", "transport"). Default: list all IDSs.
                 dd_version: Filter by DD major version (3 or 4). Default: latest version.
+                include_unit_stats: If true, include unit distribution statistics in the response. Default: false.
 
             Returns:
                 Formatted text report listing each IDS with its description, path count, and physics domain.
@@ -2619,7 +2690,11 @@ class AgentsServer:
 
             tools = _get_imas_tools()
             result = _run_async(
-                tools.get_imas_overview(query=query, dd_version=dd_version)
+                tools.get_imas_overview(
+                    query=query,
+                    dd_version=dd_version,
+                    include_unit_stats=include_unit_stats,
+                )
             )
             return format_overview_report(result)
 
@@ -2802,21 +2877,74 @@ class AgentsServer:
             return format_export_domain_report(result)
 
         @self.mcp.tool()
-        def get_dd_version_context(
-            paths: str,
+        def get_cocos_fields(
+            transformation_type: str | None = None,
+            ids_filter: str | None = None,
+            dd_version: int | None = None,
         ) -> str:
-            """Get version change history for specific IMAS paths. Use to understand how a path's definition, units, sign convention, or coordinate convention changed between DD versions.
-
-            Tracks four change types: sign_convention, coordinate_convention, units, and definition_clarification.
+            """Get all COCOS-dependent fields across the Data Dictionary, grouped by
+            transformation type. Use when migrating code between COCOS conventions
+            or verifying sign handling.
 
             Args:
-                paths: Space- or comma-separated IMAS paths (e.g. "equilibrium/time_slice/profiles_1d/psi core_profiles/profiles_1d/electrons/temperature").
+                transformation_type: Filter to specific type (e.g., 'psi_like', 'ip_like', 'b0_like'). Default: all types.
+                ids_filter: Limit to specific IDS (e.g., 'equilibrium'). Default: all IDSs.
+                dd_version: Filter by DD major version (3 or 4). Default: latest version.
 
             Returns:
-                Formatted text report listing notable changes per path across DD versions, or empty if no changes recorded.
+                Formatted text report listing COCOS-dependent fields grouped by transformation type.
+            """
+            from imas_codex.llm.search_formatters import format_cocos_fields_report
+
+            tools = _get_imas_tools()
+            result = _run_async(
+                tools.structure_tool.get_cocos_fields(
+                    transformation_type=transformation_type,
+                    ids_filter=ids_filter,
+                    dd_version=dd_version,
+                )
+            )
+            return format_cocos_fields_report(result)
+
+        @self.mcp.tool()
+        def get_dd_version_context(
+            paths: str | None = None,
+            change_type_filter: str | None = None,
+            ids_filter: str | None = None,
+            from_version: str | None = None,
+            to_version: str | None = None,
+        ) -> str:
+            """Get version change history for specific IMAS paths, or list all changes of a specific type across the Data Dictionary.
+
+            Mode 1 (per-path): Provide paths to get version history for specific paths.
+            Mode 2 (bulk query): Omit paths and set change_type_filter to list all changes of that type.
+
+            Tracks change types: sign_convention, coordinate_convention, units, definition_clarification,
+            path_renamed, data_type, cocos_label_transformation, added.
+
+            Args:
+                paths: Space- or comma-separated IMAS paths (e.g. "equilibrium/time_slice/profiles_1d/psi").
+                    Optional when change_type_filter is set.
+                change_type_filter: Filter to a specific change type for bulk queries
+                    (e.g. 'path_renamed', 'units', 'cocos_label_transformation', 'added').
+                ids_filter: Limit results to a specific IDS (e.g. 'equilibrium').
+                from_version: Start of version range filter (exclusive).
+                to_version: End of version range filter (inclusive).
+
+            Returns:
+                Formatted text report listing notable changes per path across DD versions,
+                or a bulk change listing when change_type_filter is used without paths.
             """
             tools = _get_imas_tools()
-            result = _run_async(tools.get_dd_version_context(paths=paths))
+            result = _run_async(
+                tools.get_dd_version_context(
+                    paths=paths,
+                    change_type_filter=change_type_filter,
+                    ids_filter=ids_filter,
+                    from_version=from_version,
+                    to_version=to_version,
+                )
+            )
             return _format_version_context_report(result)
 
         @self.mcp.tool()
@@ -2835,6 +2963,7 @@ class AgentsServer:
             from_version: str,
             to_version: str,
             ids_filter: str | None = None,
+            summary_only: bool = False,
             include_recipes: bool = True,
         ) -> str:
             """Generate a migration guide between two DD versions. Returns breaking changes, COCOS sign-flip tables, path renames, unit changes, and code update recipes.
@@ -2843,6 +2972,7 @@ class AgentsServer:
                 from_version: Source DD version (e.g. "3.39.0").
                 to_version: Target DD version (e.g. "4.0.0").
                 ids_filter: Optional IDS name to restrict output to a single IDS.
+                summary_only: If true, return only aggregate statistics without per-path details. Much faster and smaller response.
                 include_recipes: Whether to include code update snippets. Default: true.
 
             Returns:
@@ -2857,6 +2987,7 @@ class AgentsServer:
                 to_version=to_version,
                 ids_filter=ids_filter,
                 include_recipes=include_recipes,
+                summary_only=summary_only,
             )
 
         if not self.dd_only:

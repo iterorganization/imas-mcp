@@ -142,6 +142,8 @@ IMAS_PATHS = [
         "node_type": "leaf",
         "physics_domain": "equilibrium",
         "introduced_in": "3.42.0",
+        "cocos_label_transformation": "psi_like",
+        "lifecycle_status": "active",
     },
     {
         "id": "equilibrium/time_slice/profiles_1d/pressure",
@@ -154,6 +156,8 @@ IMAS_PATHS = [
         "node_type": "leaf",
         "physics_domain": "equilibrium",
         "introduced_in": "3.42.0",
+        "cocos_label_transformation": "psi_like",
+        "lifecycle_status": "active",
     },
     {
         "id": "equilibrium/time_slice/boundary/psi",
@@ -166,6 +170,8 @@ IMAS_PATHS = [
         "node_type": "leaf",
         "physics_domain": "equilibrium",
         "introduced_in": "3.42.0",
+        "cocos_label_transformation": "psi_like",
+        "lifecycle_status": "active",
     },
     {
         "id": "equilibrium/time_slice/boundary/psi_norm",
@@ -178,6 +184,7 @@ IMAS_PATHS = [
         "node_type": "leaf",
         "physics_domain": "equilibrium",
         "introduced_in": "3.42.0",
+        "lifecycle_status": "active",
     },
     {
         "id": "equilibrium/time_slice/boundary/type",
@@ -190,6 +197,7 @@ IMAS_PATHS = [
         "node_type": "leaf",
         "physics_domain": "equilibrium",
         "introduced_in": "3.42.0",
+        "lifecycle_status": "active",
     },
     # core_profiles paths
     {
@@ -203,6 +211,7 @@ IMAS_PATHS = [
         "node_type": "leaf",
         "physics_domain": "transport",
         "introduced_in": "3.42.0",
+        "lifecycle_status": "active",
     },
     {
         "id": "core_profiles/profiles_1d/electrons/density",
@@ -215,6 +224,7 @@ IMAS_PATHS = [
         "node_type": "leaf",
         "physics_domain": "transport",
         "introduced_in": "3.42.0",
+        "lifecycle_status": "active",
     },
     {
         "id": "core_profiles/profiles_1d/electrons/pressure",
@@ -227,6 +237,7 @@ IMAS_PATHS = [
         "node_type": "leaf",
         "physics_domain": "transport",
         "introduced_in": "4.0.0",
+        "lifecycle_status": "alpha",
     },
     {
         "id": "core_profiles/profiles_1d/ion/temperature",
@@ -239,6 +250,20 @@ IMAS_PATHS = [
         "node_type": "leaf",
         "physics_domain": "transport",
         "introduced_in": "3.42.0",
+        "lifecycle_status": "active",
+    },
+    {
+        "id": "equilibrium/time_slice/profiles_1d",
+        "path": "equilibrium/time_slice/profiles_1d",
+        "name": "profiles_1d",
+        "ids_name": "equilibrium",
+        "documentation": "Equilibrium 1D profiles structure",
+        "data_type": "STRUCTURE",
+        "units": "-",
+        "node_type": "static",
+        "physics_domain": "equilibrium",
+        "introduced_in": "3.42.0",
+        "lifecycle_status": "active",
     },
 ]
 
@@ -270,6 +295,19 @@ PATH_CHANGES = [
         "semantic_change_type": "units",
         "description": "New electron pressure path added in 4.0.0",
         "summary": "New electron pressure path added in 4.0.0",
+        "breaking_level": None,
+    },
+    {
+        "id": "change_psi_cocos",
+        "path_id": "equilibrium/time_slice/profiles_1d/psi",
+        "from_version": "3.42.0",
+        "to_version": "4.0.0",
+        "version": "4.0.0",
+        "change_type": "cocos_label_transformation",
+        "semantic_change_type": "sign_convention",
+        "description": "COCOS convention changed from 11 to 17",
+        "summary": "Sign convention change",
+        "breaking_level": "required",
     },
 ]
 
@@ -350,8 +388,20 @@ def _load_fixture_graph(client) -> None:
             "name: $name, "
             "documentation: $documentation, data_type: $data_type, units: $units, "
             "node_type: $node_type, physics_domain: $physics_domain, "
-            "node_category: 'data'})",
-            **p,
+            "node_category: 'data', "
+            "lifecycle_status: $lifecycle_status, "
+            "cocos_label_transformation: $cocos_label_transformation})",
+            id=p["id"],
+            path=p["path"],
+            ids_name=p["ids_name"],
+            name=p["name"],
+            documentation=p["documentation"],
+            data_type=p["data_type"],
+            units=p["units"],
+            node_type=p["node_type"],
+            physics_domain=p["physics_domain"],
+            lifecycle_status=p.get("lifecycle_status"),
+            cocos_label_transformation=p.get("cocos_label_transformation"),
         )
         # Link to IDS
         client.query(
@@ -410,7 +460,8 @@ def _load_fixture_graph(client) -> None:
             "from_version: $from_version, to_version: $to_version, "
             "version: $version, "
             "change_type: $change_type, semantic_change_type: $semantic_change_type, "
-            "description: $description, summary: $summary})",
+            "description: $description, summary: $summary, "
+            "breaking_level: $breaking_level})",
             **ch,
         )
         # Link to path and versions

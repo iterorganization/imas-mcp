@@ -345,6 +345,10 @@ class GetOverviewResult(WithPhysics, ToolResult, SearchHits):
         default_factory=dict,
         description="Usage guidance and getting started information",
     )
+    unit_statistics: dict[str, Any] | None = Field(
+        default=None,
+        description="Unit distribution statistics (top units by path count)",
+    )
 
 
 # ============================================================================

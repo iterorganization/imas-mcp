@@ -58,54 +58,6 @@ def _format_tool_error(result: Any) -> str | None:
     return "\n".join(lines)
 
 
-def _format_breadcrumbs(path_id: str) -> str:
-    """Format path as breadcrumb trail for deep leaf nodes."""
-    segments = path_id.split("/")
-    if len(segments) <= 2:
-        return ""
-    return "  Path: " + " > ".join(segments)
-
-
-def _format_children_block(hit: Any) -> list[str]:
-    """Render children metadata for a structure node."""
-    children = _get_value(hit, "children")
-    if not children:
-        return []
-
-    children_total = _get_value(hit, "children_total") or len(children)
-    parts: list[str] = []
-    shown = len(children)
-    parts.append(f"  Children ({children_total} total, showing {shown}):")
-    for child in children:
-        if not isinstance(child, dict):
-            continue
-        name = child.get("name", "?")
-        dtype = child.get("data_type", "?")
-        unit = child.get("unit")
-        desc = child.get("description")
-        unit_str = f", {unit}" if unit else ""
-        desc_str = f" — {desc}" if desc else ""
-        parts.append(f"    - {name} ({dtype}{unit_str}){desc_str}")
-    return parts
-
-
-def _format_provenance(path_id: str, provenance: dict[str, dict] | None) -> str:
-    """Render search channel provenance as a compact source tag."""
-    if not provenance:
-        return ""
-    prov = provenance.get(path_id)
-    if not prov:
-        return ""
-    tags = []
-    if "vector_rank" in prov:
-        tags.append(f"vector(#{prov['vector_rank']})")
-    if "text_rank" in prov:
-        tags.append(f"text(#{prov['text_rank']})")
-    if tags:
-        return "  Source: " + " + ".join(tags)
-    return ""
-
-
 def _stringify_cluster_labels(values: Any) -> list[str]:
     """Normalize cluster labels for rendering."""
     if not values:
@@ -611,24 +563,8 @@ def format_imas_report(
             score_str = f" (score: {score:.2f})" if score is not None else ""
             parts.append(f"### {pid}{score_str}")
 
-            # Breadcrumb context for deep paths
-            breadcrumb = _format_breadcrumbs(pid)
-            if breadcrumb:
-                parts.append(breadcrumb)
-
-            # Dual description: enriched description + raw documentation
-            description = p.get("description") or ""
             doc = p.get("documentation") or ""
-            if description and doc:
-                if description != doc:
-                    parts.append(f'  "{description}"')
-                    if len(doc) > 20:
-                        parts.append(f'  Raw DD: "{doc[:120]}"')
-                else:
-                    parts.append(f'  "{description}"')
-            elif description:
-                parts.append(f'  "{description}"')
-            elif doc:
+            if doc:
                 parts.append(f'  "{doc}"')
 
             # Metadata line
@@ -706,9 +642,6 @@ def format_imas_report(
                         ctype = ch.get("type", "")
                         summary = ch.get("summary", "")
                         parts.append(f"    DD {ver} [{ctype}]: {summary}")
-
-            # Children preview for structure nodes
-            parts.extend(_format_children_block(p))
 
             parts.append("")
 
@@ -1132,13 +1065,6 @@ def format_search_imas_report(result: Any, cluster_result: Any | None = None) ->
         parts.append(tool_error)
 
     hits = _get_value(result, "hits", []) or []
-
-    # Extract provenance from result summary (populated by search_imas_paths)
-    summary = _get_value(result, "summary") or {}
-    provenance: dict[str, dict] | None = (
-        summary.get("provenance") if isinstance(summary, dict) else None
-    )
-
     if hits:
         parts.append(f"## IMAS Paths ({len(hits)} matches)\n")
 
@@ -1146,20 +1072,8 @@ def format_search_imas_report(result: Any, cluster_result: Any | None = None) ->
             score_str = f" (score: {hit.score:.2f})" if hit.score else ""
             parts.append(f"### {hit.path}{score_str}")
 
-            # Breadcrumb context for deep paths
-            breadcrumb = _format_breadcrumbs(hit.path)
-            if breadcrumb:
-                parts.append(breadcrumb)
-
-            # Dual description: enriched description + raw documentation
-            if hit.description and hit.documentation:
-                if hit.description != hit.documentation:
-                    parts.append(f'  "{hit.description}"')
-                    if len(hit.documentation) > 20:
-                        parts.append(f'  Raw DD: "{hit.documentation[:120]}"')
-                else:
-                    parts.append(f'  "{hit.description}"')
-            elif hit.description:
+            # Prefer enriched description over raw documentation
+            if hit.description:
                 parts.append(f'  "{hit.description}"')
             elif hit.documentation:
                 parts.append(f'  "{hit.documentation}"')
@@ -1186,20 +1100,6 @@ def format_search_imas_report(result: Any, cluster_result: Any | None = None) ->
                 parts.append(f"  Introduced: DD {hit.introduced_after_version}")
             if hit.keywords:
                 parts.append(f"  Keywords: {', '.join(hit.keywords)}")
-            if hit.cluster_labels:
-                parts.append(f"  Clusters: {', '.join(hit.cluster_labels)}")
-            if hit.see_also:
-                shown = hit.see_also[:3]
-                remaining = len(hit.see_also) - 3
-                see_str = ", ".join(shown)
-                if remaining > 0:
-                    see_str += f" (+{remaining} more)"
-                parts.append(f"  See also: {see_str}")
-
-            # Search channel provenance
-            prov_str = _format_provenance(hit.path, provenance)
-            if prov_str:
-                parts.append(prov_str)
 
             # Facility cross-references
             xref = hit.facility_xrefs or {}
@@ -1212,8 +1112,9 @@ def format_search_imas_report(result: Any, cluster_result: Any | None = None) ->
                     parts.append(f"  Signals: {', '.join(sigs)}")
                 wiki = xref.get("wiki_mentions") or []
                 if wiki:
-                    wiki_str = ", ".join(f'"{s}"' for s in wiki)
-                    parts.append(f"  Wiki: mentioned in {wiki_str}")
+                    parts.append(
+                        f"  Wiki: mentioned in {', '.join(f'"{s}"' for s in wiki)}"
+                    )
                 code = xref.get("code_files") or []
                 if code:
                     parts.append(f"  Code: {', '.join(code)}")
@@ -1229,11 +1130,8 @@ def format_search_imas_report(result: Any, cluster_result: Any | None = None) ->
                     if isinstance(ch, dict):
                         ver = ch.get("version", "?")
                         ctype = ch.get("type", "")
-                        ch_summary = ch.get("summary", "")
-                        parts.append(f"    DD {ver} [{ctype}]: {ch_summary}")
-
-            # Children preview for structure nodes
-            parts.extend(_format_children_block(hit))
+                        summary = ch.get("summary", "")
+                        parts.append(f"    DD {ver} [{ctype}]: {summary}")
 
             parts.append("")
 
@@ -1499,123 +1397,45 @@ def format_export_domain_report(result: Any) -> str:
     return "\n".join(parts)
 
 
-def format_explain_report(result: Any) -> str:
-    """Format explain_concept result into readable markdown."""
-    parts: list[str] = []
-    if isinstance(result, dict):
-        concept = result.get("concept", "")
-        detail_level = result.get("detail_level", "intermediate")
-        sections = result.get("sections", [])
+def format_cocos_fields_report(result: Any) -> str:
+    """Format get_cocos_fields result into readable text."""
+    tool_error = _format_tool_error(result)
+    if tool_error:
+        return tool_error
 
-        parts.append(f"# {concept}")
-        parts.append(f"Detail level: {detail_level}\n")
+    if not isinstance(result, dict):
+        return str(result)
 
-        if not sections:
-            parts.append("No information found for this concept.")
-            return "\n".join(parts)
+    if result.get("error"):
+        return f"Error: {result['error']}"
 
-        for section in sections:
-            sec_type = section.get("type", "")
-            title = section.get("title", sec_type)
-            parts.append(f"## {title}\n")
+    total = result.get("total_fields", 0)
+    type_count = result.get("transformation_type_count", 0)
+    transformation_types = result.get("transformation_types", []) or []
 
-            if sec_type == "clusters":
-                for cluster in section.get("clusters", []):
-                    label = cluster.get("label", "")
-                    desc = cluster.get("description", "")
-                    scope = cluster.get("scope", "")
-                    score = cluster.get("score")
-                    ids_list = cluster.get("ids", [])
-                    parts.append(f"**{label}** (scope: {scope})")
-                    if score is not None:
-                        parts.append(f"  Relevance: {score}")
-                    if desc:
-                        parts.append(f"  {desc}")
-                    if ids_list:
-                        parts.append(f"  IDSs: {', '.join(str(i) for i in ids_list)}")
-                    example_paths = cluster.get("example_paths", [])
-                    if example_paths:
-                        parts.append("  Example paths:")
-                        for p in example_paths:
-                            parts.append(f"    - `{p}`")
-                    parts.append("")
+    parts = [
+        "## COCOS-Dependent Fields",
+        f"Total fields: {total} across {type_count} transformation type(s)",
+        "",
+    ]
 
-            elif sec_type == "cocos":
-                for v in section.get("versions", []):
-                    version = v.get("version", "")
-                    cocos_id = v.get("cocos_id", "")
-                    parts.append(f"  - DD {version}: COCOS {cocos_id}")
-                parts.append("")
-
-            elif sec_type == "cocos_paths":
-                for p in section.get("paths", []):
-                    path = p.get("path", "")
-                    ids_name = p.get("ids", "")
-                    summary = p.get("summary", "")
-                    parts.append(f"  - `{path}` ({ids_name})")
-                    if summary:
-                        parts.append(f"    {summary}")
-                parts.append("")
-
-            elif sec_type == "identifiers":
-                for schema in section.get("schemas", []):
-                    sid = schema.get("id", "")
-                    sdesc = schema.get("description", "")
-                    parts.append(f"**{sid}**")
-                    if sdesc:
-                        parts.append(f"  {sdesc}")
-                    options = schema.get("options", [])
-                    if options:
-                        for opt in options:
-                            oname = (
-                                opt.get("name", "")
-                                if isinstance(opt, dict)
-                                else str(opt)
-                            )
-                            oidx = opt.get("index", "") if isinstance(opt, dict) else ""
-                            odesc = (
-                                opt.get("description", "")
-                                if isinstance(opt, dict)
-                                else ""
-                            )
-                            idx_str = f" ({oidx})" if oidx else ""
-                            desc_str = f" — {odesc}" if odesc else ""
-                            parts.append(f"  - {oname}{idx_str}{desc_str}")
-                    parts.append("")
-
-            elif sec_type == "ids":
-                for ids_item in section.get("ids_list", []):
-                    name = ids_item.get("name", "")
-                    desc = ids_item.get("description", "")
-                    domain = ids_item.get("physics_domain", "")
-                    domain_str = f" [{domain}]" if domain else ""
-                    parts.append(f"  - **{name}**{domain_str}")
-                    if desc:
-                        parts.append(f"    {desc}")
-                parts.append("")
-
-            elif sec_type == "paths":
-                for p in section.get("paths", []):
-                    path = p.get("path", "")
-                    doc = p.get("documentation", "")
-                    dtype = p.get("data_type", "")
-                    units = p.get("units", "")
-                    meta_parts = []
-                    if dtype:
-                        meta_parts.append(dtype)
-                    if units:
-                        meta_parts.append(units)
-                    meta_str = f" ({', '.join(meta_parts)})" if meta_parts else ""
-                    parts.append(f"  - `{path}`{meta_str}")
-                    if doc:
-                        parts.append(f"    {doc}")
-                parts.append("")
-
-            else:
-                # Fallback for unknown section types
-                parts.append(f"  {section}")
-                parts.append("")
-
+    if not transformation_types:
+        parts.append("No COCOS-dependent fields found.")
         return "\n".join(parts)
 
-    return str(result) if result else "No results found."
+    for group in transformation_types:
+        ttype = group.get("type", "unknown")
+        count = group.get("field_count", 0)
+        ids_affected = group.get("ids_affected", []) or []
+        sample_paths = group.get("sample_paths", []) or []
+
+        parts.append(f"### {ttype} ({count} fields)")
+        if ids_affected:
+            parts.append(f"IDS affected: {', '.join(ids_affected)}")
+        if sample_paths:
+            parts.append("Sample paths:")
+            for p in sample_paths:
+                parts.append(f"  - `{p}`")
+        parts.append("")
+
+    return "\n".join(parts)
