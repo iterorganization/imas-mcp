@@ -26,7 +26,7 @@ noise filtering).
 
 ## Naming Convention (Updated)
 
-**All DD tools use the `dd` prefix.** This replaces the previous `imas` prefix.
+**DD query tools use the `dd` prefix.** IMAS model export tools keep `imas`.
 The rename is a breaking change shipped with the major release.
 
 | Prefix | Verb semantics | Scope |
@@ -37,7 +37,7 @@ The rename is a breaking change shipped with the major release.
 | `list_dd_*` | Enumerate/browse | IDS subtree or cross-IDS |
 | `get_dd_*` | Retrieve catalogs/metadata/versions | DD-wide |
 | `analyze_dd_*` | Compute derived analytics | Single IDS or cross-IDS |
-| `export_dd_*` | Bulk export | Single IDS or domain |
+| `export_imas_*` | Bulk export of IMAS model content | Single IDS or domain |
 
 **NOT renamed** (facility tools, infrastructure):
 `search_signals`, `signal_analytics`, `search_docs`, `search_code`, `fetch_content`,
@@ -116,28 +116,39 @@ contract change that all subsequent work depends on.
 | 7 | `search_imas_clusters` | `search_dd_clusters` | |
 | 8 | `find_related_imas_paths` | `find_related_dd_paths` | |
 | 9 | `analyze_imas_structure` | `analyze_dd_structure` | |
-| 10 | `export_imas_ids` | `export_dd_ids` | |
-| 11 | `export_imas_domain` | `export_dd_domain` | |
+| 10 | `export_imas_ids` | `export_imas_ids` | **NO CHANGE** — IDS is an IMAS concept |
+| 11 | `export_imas_domain` | `export_imas_domain` | **NO CHANGE** — domain within IMAS model |
 | 12 | `fetch_error_fields` | `fetch_dd_error_fields` | Added `dd_` prefix |
 | 13 | `get_cocos_fields` | `get_dd_cocos_fields` | Added `dd_` prefix |
 | — | `get_dd_versions` | `get_dd_versions` | Already `dd` — no change |
 | — | `get_dd_version_context` | `get_dd_version_context` | Already `dd` — no change |
 | — | `get_dd_migration_guide` | `get_dd_migration_guide` | Already `dd` — no change |
 
+**Why exports keep `imas`:** `export_imas_ids` exports the content of an IDS
+(Interface Data Structure) — an IMAS data model concept. `export_imas_domain`
+exports paths classified by physics domain within the IMAS model. In both cases
+the user is exporting a slice of the IMAS standard, not "exporting the DD."
+The `dd` prefix means "query/analyze the dictionary itself" — exports deliver
+IMAS model content.
+
 ### Canonical Rename Mapping — REPL Helpers
+
+REPL functions get `_paths` suffix where they operate on paths, matching
+their MCP tool counterparts. Functions that operate on higher-level concepts
+(overview, structure, IDS, domain) keep descriptive names.
 
 | Current | New | Notes |
 |---------|-----|-------|
-| `search_imas` | `search_dd` | REPL shorthand (no `_paths` suffix) |
-| `fetch_imas` | `fetch_dd` | |
-| `list_imas` | `list_dd` | |
-| `check_imas` | `check_dd` | |
-| `get_imas_overview` | `get_dd_overview` | |
-| `get_imas_path_context` | `get_dd_path_context` | |
-| `analyze_imas_structure` | `analyze_dd_structure` | |
-| `export_imas_ids` | `export_dd_ids` | |
-| `export_imas_domain` | `export_dd_domain` | |
-| `find_imas` | `find_dd` | Domain query — searches DD by concept |
+| `search_imas` | `search_dd_paths` | Operates on paths |
+| `fetch_imas` | `fetch_dd_paths` | Operates on paths |
+| `list_imas` | `list_dd_paths` | Operates on paths |
+| `check_imas` | `check_dd_paths` | Operates on paths |
+| `find_imas` | `find_dd_paths` | Domain query — finds paths by concept |
+| `get_imas_overview` | `get_dd_overview` | Overview, not paths |
+| `get_imas_path_context` | `get_dd_path_context` | Already explicit |
+| `analyze_imas_structure` | `analyze_dd_structure` | Structure, not paths |
+| `export_imas_ids` | `export_imas_ids` | **NO CHANGE** — IMAS model export |
+| `export_imas_domain` | `export_imas_domain` | **NO CHANGE** — IMAS model export |
 | `map_signals_to_imas` | **NO CHANGE** | Maps to IMAS model, not a DD query |
 
 ### Canonical Rename Mapping — Internal Methods
@@ -159,17 +170,19 @@ internal calls to use the renamed tool methods.
 | `GraphPathContextTool.get_imas_path_context` | `.get_dd_path_context` | graph_search.py |
 | `GraphPathContextTool.find_related_imas_paths` | `.find_related_dd_paths` | graph_search.py |
 | `GraphStructureTool.analyze_imas_structure` | `.analyze_dd_structure` | graph_search.py |
-| `GraphStructureTool.export_imas_ids` | `.export_dd_ids` | graph_search.py |
-| `GraphStructureTool.export_imas_domain` | `.export_dd_domain` | graph_search.py |
+| `GraphStructureTool.export_imas_ids` | **NO CHANGE** | graph_search.py |
+| `GraphStructureTool.export_imas_domain` | **NO CHANGE** | graph_search.py |
 | `GraphStructureTool.get_cocos_fields` | `.get_dd_cocos_fields` | graph_search.py |
 | `_text_search_imas_paths` | `_text_search_dd_paths` | graph_search.py |
-| `IMASTools` delegation (13 methods) | Updated names | __init__.py |
+| `IMASTools` delegation (11 renamed) | Updated names | __init__.py |
 | `format_search_imas_report` | `format_search_dd_report` | search_formatters.py |
-| `DomainQueries.find_imas` | `.find_dd` | domain_queries.py |
+| `DomainQueries.find_imas` | `.find_dd_paths` | domain_queries.py |
 
-**NOT renamed** (internal IMAS model references):
+**NOT renamed** (IMAS model references):
 | Function | File | Reason |
 |----------|------|--------|
+| `export_imas_ids` | graph_search.py | Exports IMAS IDS content |
+| `export_imas_domain` | graph_search.py | Exports IMAS domain content |
 | `fetch_imas_subtree` | ids/tools.py | IDS assembly helper |
 | `fetch_imas_fields` | ids/tools.py | IDS assembly helper |
 | `search_imas_semantic` | ids/tools.py | IDS mapping search |
@@ -180,14 +193,15 @@ internal calls to use the renamed tool methods.
 ### Files in Scope (Phase 0)
 
 **Layer 1 — Tool implementations** (rename method names):
-- `imas_codex/tools/graph_search.py` — 15 method renames + 1 helper
-- `imas_codex/tools/__init__.py` — 13 delegation methods
+- `imas_codex/tools/graph_search.py` — 13 method renames + 1 helper (exports unchanged)
+- `imas_codex/tools/__init__.py` — 11 delegation methods (exports unchanged)
 - `imas_codex/tools/identifiers_tool.py` — `get_imas_identifiers` → `get_dd_identifiers`
 - `imas_codex/tools/list_tool.py` — `list_imas_paths` → `list_dd_paths`
 - `imas_codex/tools/overview_tool.py` — `get_imas_overview` → `get_dd_overview`
 
 **Layer 2 — MCP server** (rename function defs + REPL bindings):
-- `imas_codex/llm/server.py` — 13 MCP tool functions + 10 REPL functions + docstrings
+- `imas_codex/llm/server.py` — 11 MCP tool functions + 8 REPL functions + docstrings
+  (exports + map_signals_to_imas unchanged)
 
 **Layer 3 — Search/recommendation infrastructure** (hardcoded tool name strings):
 - `imas_codex/search/tool_suggestions.py` — ~12 tool name string references
@@ -196,7 +210,7 @@ internal calls to use the renamed tool methods.
 - `imas_codex/models/result_models.py` — 5 `tool_name` property returns
 
 **Layer 4 — Domain queries** (REPL backend):
-- `imas_codex/graph/domain_queries.py` — `find_imas` → `find_dd` only
+- `imas_codex/graph/domain_queries.py` — `find_imas` → `find_dd_paths` only
 
 **Layer 5 — Formatters** (one function name):
 - `imas_codex/llm/search_formatters.py` — `format_search_imas_report` → `format_search_dd_report`
