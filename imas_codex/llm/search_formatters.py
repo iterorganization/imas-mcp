@@ -1526,3 +1526,128 @@ def format_cocos_fields_report(result: Any) -> str:
         parts.append("")
 
     return "\n".join(parts)
+
+
+def format_dd_coverage_report(result: Any) -> str:
+    """Format analyze_dd_coverage result into a ranked table."""
+    tool_error = _format_tool_error(result)
+    if tool_error:
+        return tool_error
+
+    if not isinstance(result, dict):
+        return str(result)
+
+    if result.get("error"):
+        return f"Error: {result['error']}"
+
+    results = result.get("results", []) or []
+    total = result.get("total", 0)
+    min_ids = result.get("min_ids_count", 3)
+    dd_version = result.get("dd_version")
+    domain_filter = result.get("physics_domain_filter")
+
+    scope_parts = []
+    if dd_version is not None:
+        scope_parts.append(f"DD v{dd_version}")
+    if domain_filter:
+        scope_parts.append(f"domain: {domain_filter}")
+    scope_str = f" ({', '.join(scope_parts)})" if scope_parts else ""
+
+    parts = [
+        f"## DD Coverage Analysis — Cross-IDS Concepts{scope_str}",
+        f"Showing {total} concept(s) spanning ≥{min_ids} IDS.",
+        "",
+        "| # | Concept | IDS Count | Paths | IDS List | Rep. Path |",
+        "|---|---------|-----------|-------|----------|-----------|",
+    ]
+
+    if not results:
+        parts.append("| — | No concepts found at this threshold | | | | |")
+    else:
+        for rank, row in enumerate(results, 1):
+            label = row.get("label", "?")
+            ids_count = row.get("ids_count", 0)
+            path_count = row.get("path_count", 0)
+            ids_list = ", ".join(row.get("ids_list", [])[:5])
+            if len(row.get("ids_list", [])) > 5:
+                ids_list += "…"
+            rep = row.get("representative_path") or "—"
+            if rep != "—":
+                rep = f"`{rep}`"
+            parts.append(
+                f"| {rank} | {label} | **{ids_count}** | {path_count} "
+                f"| {ids_list} | {rep} |"
+            )
+
+    # Add description details for top entries
+    described = [r for r in results[:5] if r.get("description")]
+    if described:
+        parts.append("")
+        parts.append("### Top Concept Descriptions")
+        for r in described:
+            parts.append(f"- **{r['label']}**: {r['description']}")
+
+    return "\n".join(parts)
+
+
+def format_dd_units_report(result: Any) -> str:
+    """Format check_dd_units result grouped by cluster with severity."""
+    tool_error = _format_tool_error(result)
+    if tool_error:
+        return tool_error
+
+    if not isinstance(result, dict):
+        return str(result)
+
+    if result.get("error"):
+        return f"Error: {result['error']}"
+
+    clusters = result.get("clusters", []) or []
+    total = result.get("total_inconsistencies", 0)
+    clusters_affected = result.get("clusters_affected", 0)
+    dd_version = result.get("dd_version")
+    sev_filter = result.get("severity_filter", "all")
+    ids_filter = result.get("ids_filter")
+
+    scope_parts = []
+    if dd_version is not None:
+        scope_parts.append(f"DD v{dd_version}")
+    if ids_filter:
+        scope_parts.append(f"IDS: {ids_filter}")
+    if sev_filter and sev_filter != "all":
+        scope_parts.append(f"severity: {sev_filter}")
+    scope_str = f" ({', '.join(scope_parts)})" if scope_parts else ""
+
+    parts = [
+        f"## DD Unit Consistency Check{scope_str}",
+        f"Found {total} inconsistenc{'y' if total == 1 else 'ies'} "
+        f"across {clusters_affected} cluster(s).",
+        "",
+    ]
+
+    if not clusters:
+        parts.append("✅ No unit inconsistencies found.")
+        return "\n".join(parts)
+
+    for cluster_data in clusters:
+        cluster_name = cluster_data.get("cluster", "Unknown")
+        items = cluster_data.get("inconsistencies", [])
+        parts.append(
+            f"### {cluster_name} ({len(items)} issue{'s' if len(items) != 1 else ''})"
+        )
+        parts.append("")
+        parts.append("| Path 1 | Unit 1 | Path 2 | Unit 2 | Severity |")
+        parts.append("|--------|--------|--------|--------|----------|")
+
+        for item in items:
+            p1 = f"`{item['path1']}`"
+            u1 = item.get("unit1", "?")
+            p2 = f"`{item['path2']}`"
+            u2 = item.get("unit2", "?")
+            sev = item.get("severity", "advisory")
+            sev_icon = "⚠️" if sev == "incompatible" else "ℹ️"
+            parts.append(f"| {p1} | {u1} | {p2} | {u2} | {sev_icon} {sev} |")
+
+        parts.append("")
+
+    return "\n".join(parts)

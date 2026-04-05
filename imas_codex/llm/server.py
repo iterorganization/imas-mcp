@@ -3001,6 +3001,70 @@ class AgentsServer:
             return _format_dd_versions_report(result)
 
         @self.mcp.tool()
+        def analyze_dd_coverage(
+            physics_domain: str | None = None,
+            min_ids_count: int = 3,
+            dd_version: int | None = None,
+            limit: int = 30,
+        ) -> str:
+            """Analyze which physical quantities span the most IDS in the Data Dictionary. Uses semantic cluster membership to rank concepts by cross-IDS coverage.
+
+            Args:
+                physics_domain: Optional filter (e.g., "equilibrium", "transport").
+                min_ids_count: Minimum number of distinct IDS a concept must span (default 3).
+                dd_version: Filter by DD major version (3 or 4). Default: latest.
+                limit: Maximum results to return (default 30).
+
+            Returns:
+                Formatted ranked table of concepts with IDS counts and representative paths.
+            """
+            from imas_codex.llm.search_formatters import format_dd_coverage_report
+
+            tools = _get_imas_tools()
+            result = _run_async(
+                tools.analyze_dd_coverage(
+                    physics_domain=physics_domain,
+                    min_ids_count=min_ids_count,
+                    dd_version=dd_version,
+                    limit=limit,
+                )
+            )
+            return format_dd_coverage_report(result)
+
+        @self.mcp.tool()
+        def check_dd_units(
+            ids_filter: str | None = None,
+            physics_domain: str | None = None,
+            dd_version: int | None = None,
+            severity: str = "all",
+        ) -> str:
+            """Check unit consistency for the same physical concept across IDS. Finds paths in the same semantic cluster with different units.
+
+            Flags incompatible dimensions as errors and same-dimension differences as advisory.
+
+            Args:
+                ids_filter: Restrict to clusters containing paths from this IDS.
+                physics_domain: Restrict to a physics domain.
+                dd_version: Filter by DD major version (3 or 4). Default: latest.
+                severity: Filter results — 'all' (default), 'incompatible', or 'advisory'.
+
+            Returns:
+                Formatted report of unit inconsistencies grouped by cluster with severity.
+            """
+            from imas_codex.llm.search_formatters import format_dd_units_report
+
+            tools = _get_imas_tools()
+            result = _run_async(
+                tools.check_dd_units(
+                    ids_filter=ids_filter,
+                    physics_domain=physics_domain,
+                    dd_version=dd_version,
+                    severity=severity,
+                )
+            )
+            return format_dd_units_report(result)
+
+        @self.mcp.tool()
         def get_dd_changelog(
             ids_filter: str | None = None,
             from_version: str | None = None,
