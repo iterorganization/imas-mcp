@@ -1169,7 +1169,7 @@ def _init_repl() -> dict[str, Any]:
             dd_version: Filter by DD major version (e.g., 3 or 4)
 
         Returns:
-            Structural analysis with depth, types, domains
+            Structural analysis with depth, types, domains, and lifecycle status distribution
         """
         try:
             tools = _get_imas_tools()
@@ -2801,14 +2801,14 @@ class AgentsServer:
         ) -> str:
             """Analyze the hierarchical structure of an IDS. Use to understand the depth, branching, and organization of an IDS before exploring its paths.
 
-            Returns: tree depth metrics, leaf vs structure node ratio, array-of-structures patterns, physics domain distribution across subtrees, coordinate usage summary, and COCOS-dependent fields.
+            Returns: tree depth metrics, leaf vs structure node ratio, array-of-structures patterns, physics domain distribution across subtrees, coordinate usage summary, COCOS-dependent fields, and lifecycle status distribution.
 
             Args:
                 ids_name: IDS name to analyze (e.g. "equilibrium", "core_profiles").
                 dd_version: Filter by DD major version (3 or 4). Default: latest version.
 
             Returns:
-                Formatted text report with structural statistics and organization overview.
+                Formatted text report with structural statistics and organization overview, including lifecycle status distribution.
             """
             from imas_codex.llm.search_formatters import format_structure_report
 
@@ -2957,6 +2957,42 @@ class AgentsServer:
             tools = _get_imas_tools()
             result = _run_async(tools.get_dd_versions())
             return _format_dd_versions_report(result)
+
+        @self.mcp.tool()
+        def get_dd_changelog(
+            ids_filter: str | None = None,
+            from_version: str | None = None,
+            to_version: str | None = None,
+            limit: int = 50,
+        ) -> str:
+            """Rank IMAS Data Dictionary paths by how much they have changed across DD versions.
+
+            Returns a volatility-scored table showing which paths changed most often,
+            what types of changes occurred, and whether they were renamed. Useful for
+            answering "which paths change the most?" or identifying unstable paths.
+
+            Args:
+                ids_filter: Restrict to one IDS (e.g. 'equilibrium'). Default: all IDSs.
+                from_version: Start of version range filter (exclusive, e.g. '3.30.0').
+                to_version: End of version range filter (inclusive, e.g. '3.39.0').
+                limit: Maximum number of results to return (default 50).
+
+            Returns:
+                Formatted ranked table with volatility scores, change type breakdown,
+                and rename history per path.
+            """
+            from imas_codex.llm.search_formatters import format_dd_changelog_report
+
+            tools = _get_imas_tools()
+            result = _run_async(
+                tools.get_dd_changelog(
+                    ids_filter=ids_filter,
+                    from_version=from_version,
+                    to_version=to_version,
+                    limit=limit,
+                )
+            )
+            return format_dd_changelog_report(result)
 
         @self.mcp.tool()
         def get_dd_migration_guide(

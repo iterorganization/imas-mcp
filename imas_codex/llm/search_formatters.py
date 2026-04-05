@@ -1309,6 +1309,14 @@ def format_structure_report(result: dict[str, Any]) -> str:
         for c in cocos:
             parts.append(f"  - `{c['path']}` ({c['label']})")
 
+    lifecycle = result.get("lifecycle_distribution", {})
+    if lifecycle:
+        parts.append("\n### Lifecycle Status")
+        parts.append("| Status | Count |")
+        parts.append("| --- | --- |")
+        for status, count in sorted(lifecycle.items()):
+            parts.append(f"| {status} | {count} |")
+
     return "\n".join(parts)
 
 
@@ -1417,6 +1425,61 @@ def format_export_domain_report(result: Any) -> str:
             if doc:
                 parts.append(f"    {doc}")
         parts.append("")
+
+    return "\n".join(parts)
+
+
+def format_dd_changelog_report(result: Any) -> str:
+    """Format get_dd_changelog result into a ranked volatility table."""
+    if not isinstance(result, dict):
+        return str(result)
+
+    if result.get("error"):
+        return f"Error: {result['error']}"
+
+    results = result.get("results", []) or []
+    total = result.get("total", 0)
+    ids_filter = result.get("ids_filter")
+    version_range = result.get("version_range")
+
+    scope_parts = []
+    if ids_filter:
+        scope_parts.append(f"IDS: {ids_filter}")
+    if version_range:
+        frm = version_range.get("from", "")
+        to = version_range.get("to", "")
+        if frm and to:
+            scope_parts.append(f"versions {frm} → {to}")
+        elif to:
+            scope_parts.append(f"up to v{to}")
+        elif frm:
+            scope_parts.append(f"after v{frm}")
+    scope_str = f" ({', '.join(scope_parts)})" if scope_parts else ""
+
+    parts = [
+        f"## DD Path Changelog — Volatility Ranking{scope_str}",
+        f"Showing {total} path(s) ranked by volatility score.",
+        "",
+        "| # | Path | IDS | Changes | Types | Renamed | Score |",
+        "|---|------|-----|---------|-------|---------|-------|",
+    ]
+
+    if not results:
+        parts.append("| — | No results found | | | | | |")
+    else:
+        for rank, row in enumerate(results, 1):
+            path = row.get("path", "?")
+            ids = row.get("ids", "?")
+            change_count = row.get("change_count", 0)
+            change_types = row.get("change_types") or []
+            was_renamed = row.get("was_renamed", 0)
+            score = row.get("volatility_score", 0)
+            renamed_str = "yes" if was_renamed else "no"
+            types_str = ", ".join(t for t in change_types if t) or "—"
+            parts.append(
+                f"| {rank} | `{path}` | {ids} | {change_count} "
+                f"| {types_str} | {renamed_str} | **{score}** |"
+            )
 
     return "\n".join(parts)
 
