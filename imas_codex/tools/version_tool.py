@@ -72,7 +72,8 @@ class VersionTool:
         "(e.g., 'path_renamed', 'units', 'data_type', 'cocos_label_transformation', 'added'). "
         "ids_filter: Limit to specific IDS. "
         "from_version: Start version for range filter (exclusive). "
-        "to_version: End version for range filter (inclusive)."
+        "to_version: End version for range filter (inclusive). "
+        "follow_rename_chains: When True, traverse RENAMED_TO graph edges to return full multi-hop rename lineages."
     )
     async def get_dd_version_context(
         self,
@@ -81,12 +82,16 @@ class VersionTool:
         ids_filter: str | None = None,
         from_version: str | None = None,
         to_version: str | None = None,
+        follow_rename_chains: bool = False,
     ) -> dict[str, Any]:
         """Get version change context for IMAS paths.
 
         Mode 1 (per-path): Provide paths to get version history per path.
         Mode 2 (bulk query): Omit paths and set change_type_filter to list all
         changes of that type across the Data Dictionary.
+
+        When follow_rename_chains is True, an additional query traverses
+        RENAMED_TO edges to return multi-hop rename lineages.
         """
         # Normalise paths into a list
         if paths is not None:
@@ -101,19 +106,26 @@ class VersionTool:
 
         # ── Mode 2: bulk query ────────────────────────────────────────────────
         if not path_list:
-            if not change_type_filter:
+            if not change_type_filter and not follow_rename_chains:
                 return {
                     "error": (
                         "Provide either 'paths' for per-path history, "
                         "or 'change_type_filter' for a bulk query."
                     )
                 }
-            return await self._bulk_query(
+            if follow_rename_chains and not change_type_filter:
+                # Rename-chain only mode
+                return await self._rename_chain_query(ids_filter=ids_filter)
+            result = await self._bulk_query(
                 change_type_filter=change_type_filter,
                 ids_filter=ids_filter,
                 from_version=from_version,
                 to_version=to_version,
             )
+            if follow_rename_chains:
+                chain_result = await self._rename_chain_query(ids_filter=ids_filter)
+                result["rename_chains"] = chain_result.get("rename_chains", [])
+            return result
 
         # ── Mode 1: per-path ─────────────────────────────────────────────────
         try:
@@ -173,6 +185,128 @@ class VersionTool:
             ),
             "graph_change_nodes_seen": graph_change_nodes_seen,
             "not_found": not_found,
+        }
+
+    async def _rename_chain_query(
+        self, ids_filter: str | None = None
+    ) -> dict[str, Any]:
+        """Traverse RENAMED_TO edges to return multi-hop rename lineages.
+
+        Finds all root nodes (no incoming RENAMED_TO) and follows the chain
+        up to 10 hops deep, returning the full path lineage per chain.
+
+        Args:
+            ids_filter: Restrict chains to paths belonging to this IDS.
+
+        Returns:
+            Dict with 'rename_chains' list of {chain, hops} dicts.
+        """
+        if ids_filter:
+            cypher = """
+            MATCH chain = (old:IMASNode)-[:RENAMED_TO*1..10]->(current:IMASNode)
+            WHERE old.ids = $ids_filter
+              AND NOT EXISTS { ()-[:RENAMED_TO]->(old) }
+            RETURN [n IN nodes(chain) | n.id] AS rename_chain,
+                   length(chain) AS hops
+            ORDER BY hops DESC
+            """
+            params: dict[str, Any] = {"ids_filter": ids_filter}
+        else:
+            cypher = """
+            MATCH chain = (old:IMASNode)-[:RENAMED_TO*1..10]->(current:IMASNode)
+            WHERE NOT EXISTS { ()-[:RENAMED_TO]->(old) }
+            RETURN [n IN nodes(chain) | n.id] AS rename_chain,
+                   length(chain) AS hops
+            ORDER BY hops DESC
+            """
+            params = {}
+
+        try:
+            rows = self.graph_client.query(cypher, **params)
+        except Exception as e:
+            return {"error": f"Failed to query rename chains: {e}", "rename_chains": []}
+
+        chains = [
+            {"chain": list(r["rename_chain"]), "hops": r["hops"]}
+            for r in (rows or [])
+            if r.get("rename_chain")
+        ]
+        return {"rename_chains": chains}
+
+    @mcp_tool(
+        "Rank IMAS Data Dictionary paths by how much they have changed across DD versions. "
+        "Returns a volatility-scored table showing which paths changed most often, "
+        "what types of changes occurred, and whether they were renamed. "
+        "ids_filter: restrict to one IDS. "
+        "from_version: start of version range (exclusive). "
+        "to_version: end of version range (inclusive). "
+        "limit: max results (default 50)."
+    )
+    async def get_dd_changelog(
+        self,
+        ids_filter: str | None = None,
+        from_version: str | None = None,
+        to_version: str | None = None,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        """Rank paths by change frequency and type diversity across DD versions.
+
+        Returns a volatility-scored ranking. Volatility score = change_count
+        + (type_variety * 2) + (was_renamed * 3).
+
+        Args:
+            ids_filter: Restrict to one IDS (e.g. 'equilibrium').
+            from_version: Start of version range filter (exclusive).
+            to_version: End of version range filter (inclusive).
+            limit: Maximum number of results to return (default 50).
+
+        Returns:
+            Dict with 'results' list and metadata.
+        """
+        cypher = """
+        MATCH (change:IMASNodeChange)-[:FOR_IMAS_PATH]->(p:IMASNode)
+        WHERE ($ids_filter IS NULL OR p.ids = $ids_filter)
+          AND ($from_version IS NULL OR change.version > $from_version)
+          AND ($to_version IS NULL OR change.version <= $to_version)
+        WITH p, count(change) AS change_count,
+             count(DISTINCT change.semantic_change_type) AS type_variety,
+             collect(DISTINCT change.semantic_change_type) AS change_types
+        OPTIONAL MATCH (p)-[:RENAMED_TO]->()
+        WITH p, change_count, type_variety, change_types,
+             CASE WHEN EXISTS { (p)-[:RENAMED_TO]->() } THEN 1 ELSE 0 END AS was_renamed
+        RETURN p.id AS path, p.ids AS ids,
+               change_count, type_variety, change_types, was_renamed,
+               change_count + (type_variety * 2) + (was_renamed * 3) AS volatility_score
+        ORDER BY volatility_score DESC
+        LIMIT $limit
+        """
+        params: dict[str, Any] = {
+            "ids_filter": ids_filter,
+            "from_version": from_version,
+            "to_version": to_version,
+            "limit": limit,
+        }
+
+        try:
+            rows = self.graph_client.query(cypher, **params)
+        except Exception as e:
+            return {"error": f"Failed to query changelog: {e}"}
+
+        results = [dict(r) for r in (rows or [])]
+
+        version_range: dict[str, str] | None = None
+        if from_version or to_version:
+            version_range = {
+                "from": from_version or "",
+                "to": to_version or "",
+            }
+
+        return {
+            "results": results,
+            "total": len(results),
+            "ids_filter": ids_filter,
+            "version_range": version_range,
+            "limit": limit,
         }
 
     async def _bulk_query(

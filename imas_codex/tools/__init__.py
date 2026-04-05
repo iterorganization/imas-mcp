@@ -150,6 +150,10 @@ class Tools(MCPProvider):
         """Delegate to version tool."""
         return await self.version_tool.get_dd_version_context(*args, **kwargs)
 
+    async def get_dd_changelog(self, *args, **kwargs):
+        """Delegate to version tool."""
+        return await self.version_tool.get_dd_changelog(*args, **kwargs)
+
     async def fetch_dd_error_fields(self, *args, **kwargs):
         """Delegate to path tool."""
         return await self.path_tool.fetch_dd_error_fields(*args, **kwargs)
