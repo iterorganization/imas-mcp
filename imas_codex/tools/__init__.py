@@ -169,6 +169,10 @@ class Tools(MCPProvider):
         """Delegate to DD analytics tool."""
         return await self.dd_analytics_tool.check_dd_units(*args, **kwargs)
 
+    async def analyze_dd_changes(self, *args, **kwargs):
+        """Delegate to DD analytics tool."""
+        return await self.dd_analytics_tool.analyze_dd_changes(*args, **kwargs)
+
 
 __all__ = [
     "BaseTool",

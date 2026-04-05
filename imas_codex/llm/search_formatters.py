@@ -1651,3 +1651,104 @@ def format_dd_units_report(result: Any) -> str:
         parts.append("")
 
     return "\n".join(parts)
+
+
+def format_dd_changes_report(result: Any) -> str:
+    """Format analyze_dd_changes impact analysis result into a readable report."""
+    tool_error = _format_tool_error(result)
+    if tool_error:
+        return tool_error
+
+    if not isinstance(result, dict):
+        return str(result)
+
+    if result.get("error"):
+        return f"Error: {result['error']}"
+
+    path = result.get("path", "?")
+    from_v = result.get("from_version")
+    to_v = result.get("to_version")
+    dd_version = result.get("dd_version")
+    has_breaking = result.get("has_breaking_changes", False)
+    summary = result.get("summary", {})
+
+    own_changes = result.get("own_changes") or []
+    siblings = result.get("co_changing_siblings") or []
+    related = result.get("related_paths") or []
+
+    scope_parts = []
+    if dd_version is not None:
+        scope_parts.append(f"DD v{dd_version}")
+    if from_v:
+        scope_parts.append(f"from {from_v}")
+    if to_v:
+        scope_parts.append(f"to {to_v}")
+    scope_str = f" ({', '.join(scope_parts)})" if scope_parts else ""
+
+    breaking_note = (
+        " ⚠️ **Breaking changes detected** — risk scores multiplied by 1.5×."
+        if has_breaking
+        else ""
+    )
+
+    parts = [
+        f"## DD Change Impact Analysis — `{path}`{scope_str}",
+        f"Own changes: {summary.get('own_change_count', 0)} | "
+        f"Co-changing siblings: {summary.get('sibling_count', 0)} | "
+        f"Coordinate-related: {summary.get('related_count', 0)}." + breaking_note,
+        "",
+    ]
+
+    # Section 1 — Own change history
+    parts.append("### 1. Own Change History")
+    if not own_changes:
+        parts.append("No changes recorded in this version range.")
+    else:
+        parts.append("")
+        parts.append("| Version | Change Type | Summary | Breaking Level |")
+        parts.append("|---------|-------------|---------|----------------|")
+        for c in own_changes:
+            version = c.get("version") or "?"
+            ctype = c.get("change_type") or "—"
+            csummary = c.get("summary") or "—"
+            blevel = c.get("breaking_level")
+            blevel_str = f"⚠️ {blevel}" if blevel is not None else "—"
+            parts.append(f"| {version} | {ctype} | {csummary} | {blevel_str} |")
+    parts.append("")
+
+    # Section 2 — Co-changing cluster siblings
+    parts.append("### 2. Co-Changing Cluster Siblings")
+    if not siblings:
+        parts.append("No co-changing siblings found in this version range.")
+    else:
+        parts.append("")
+        parts.append("| Path | IDS | Cluster | Changes | Risk Score |")
+        parts.append("|------|-----|---------|---------|------------|")
+        for s in siblings:
+            spath = f"`{s['path']}`"
+            ids = s.get("ids") or "?"
+            cluster = s.get("cluster_label") or "—"
+            changes = s.get("co_change_count", 0)
+            risk = s.get("risk_score", 0)
+            parts.append(f"| {spath} | {ids} | {cluster} | {changes} | **{risk}** |")
+    parts.append("")
+
+    # Section 3 — Related paths via shared coordinates
+    parts.append("### 3. Related Paths (Shared Coordinates)")
+    if not related:
+        parts.append("No related paths found via shared coordinates.")
+    else:
+        parts.append("")
+        parts.append("| Path | IDS | Shared Coordinates | Risk Score |")
+        parts.append("|------|-----|--------------------|------------|")
+        for r in related:
+            rpath = f"`{r['path']}`"
+            ids = r.get("ids") or "?"
+            coords = r.get("shared_coordinates") or []
+            coords_str = ", ".join(coords[:3])
+            if len(coords) > 3:
+                coords_str += "…"
+            risk = r.get("risk_score", 0)
+            parts.append(f"| {rpath} | {ids} | {coords_str} | **{risk}** |")
+
+    return "\n".join(parts)
