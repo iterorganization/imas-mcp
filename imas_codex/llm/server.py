@@ -1195,28 +1195,6 @@ def _init_repl() -> dict[str, Any]:
         except Exception as e:
             return f"Path context error: {e}"
 
-    def analyze_dd_structure(
-        ids_name: str,
-        dd_version: int | None = None,
-    ) -> str:
-        """Analyze the hierarchical structure of an IMAS IDS.
-
-        Args:
-            ids_name: IDS name (e.g. 'equilibrium')
-            dd_version: Filter by DD major version (e.g., 3 or 4)
-
-        Returns:
-            Structural analysis with depth, types, domains, and lifecycle status distribution
-        """
-        try:
-            tools = _get_imas_tools()
-            result = _run_async(
-                tools.analyze_dd_structure(ids_name=ids_name, dd_version=dd_version)
-            )
-            return str(result)
-        except Exception as e:
-            return f"Structure analysis error: {e}"
-
     def export_imas_ids(
         ids_name: str,
         leaf_only: bool = False,
@@ -1585,7 +1563,6 @@ def _init_repl() -> dict[str, Any]:
                 ("check_dd_paths", check_dd_paths),
                 ("get_dd_overview", get_dd_overview),
                 ("get_dd_path_context", get_dd_path_context),
-                ("analyze_dd_structure", analyze_dd_structure),
                 ("export_imas_ids", export_imas_ids),
                 ("export_imas_domain", export_imas_domain),
             ],
@@ -2832,30 +2809,6 @@ class AgentsServer:
             return format_path_context_report(result)
 
         @self.mcp.tool()
-        def analyze_dd_structure(
-            ids_name: str,
-            dd_version: int | None = None,
-        ) -> str:
-            """Analyze the hierarchical structure of an IDS. Use to understand the depth, branching, and organization of an IDS before exploring its paths.
-
-            Returns: tree depth metrics, leaf vs structure node ratio, array-of-structures patterns, physics domain distribution across subtrees, coordinate usage summary, COCOS-dependent fields, and lifecycle status distribution.
-
-            Args:
-                ids_name: IDS name to analyze (e.g. "equilibrium", "core_profiles").
-                dd_version: Filter by DD major version (3 or 4). Default: latest version.
-
-            Returns:
-                Formatted text report with structural statistics and organization overview, including lifecycle status distribution.
-            """
-            from imas_codex.llm.search_formatters import format_structure_report
-
-            tools = _get_imas_tools()
-            result = _run_async(
-                tools.analyze_dd_structure(ids_name=ids_name, dd_version=dd_version)
-            )
-            return format_structure_report(result)
-
-        @self.mcp.tool()
         def export_imas_ids(
             ids_name: str,
             leaf_only: bool = False,
@@ -3001,70 +2954,6 @@ class AgentsServer:
             return _format_dd_versions_report(result)
 
         @self.mcp.tool()
-        def analyze_dd_coverage(
-            physics_domain: str | None = None,
-            min_ids_count: int = 3,
-            dd_version: int | None = None,
-            limit: int = 30,
-        ) -> str:
-            """Analyze which physical quantities span the most IDS in the Data Dictionary. Uses semantic cluster membership to rank concepts by cross-IDS coverage.
-
-            Args:
-                physics_domain: Optional filter (e.g., "equilibrium", "transport").
-                min_ids_count: Minimum number of distinct IDS a concept must span (default 3).
-                dd_version: Filter by DD major version (3 or 4). Default: latest.
-                limit: Maximum results to return (default 30).
-
-            Returns:
-                Formatted ranked table of concepts with IDS counts and representative paths.
-            """
-            from imas_codex.llm.search_formatters import format_dd_coverage_report
-
-            tools = _get_imas_tools()
-            result = _run_async(
-                tools.analyze_dd_coverage(
-                    physics_domain=physics_domain,
-                    min_ids_count=min_ids_count,
-                    dd_version=dd_version,
-                    limit=limit,
-                )
-            )
-            return format_dd_coverage_report(result)
-
-        @self.mcp.tool()
-        def check_dd_units(
-            ids_filter: str | None = None,
-            physics_domain: str | None = None,
-            dd_version: int | None = None,
-            severity: str = "all",
-        ) -> str:
-            """Check unit consistency for the same physical concept across IDS. Finds paths in the same semantic cluster with different units.
-
-            Flags incompatible dimensions as errors and same-dimension differences as advisory.
-
-            Args:
-                ids_filter: Restrict to clusters containing paths from this IDS.
-                physics_domain: Restrict to a physics domain.
-                dd_version: Filter by DD major version (3 or 4). Default: latest.
-                severity: Filter results — 'all' (default), 'incompatible', or 'advisory'.
-
-            Returns:
-                Formatted report of unit inconsistencies grouped by cluster with severity.
-            """
-            from imas_codex.llm.search_formatters import format_dd_units_report
-
-            tools = _get_imas_tools()
-            result = _run_async(
-                tools.check_dd_units(
-                    ids_filter=ids_filter,
-                    physics_domain=physics_domain,
-                    dd_version=dd_version,
-                    severity=severity,
-                )
-            )
-            return format_dd_units_report(result)
-
-        @self.mcp.tool()
         def get_dd_changelog(
             ids_filter: str | None = None,
             from_version: str | None = None,
@@ -3131,45 +3020,6 @@ class AgentsServer:
                 include_recipes=include_recipes,
                 summary_only=summary_only,
             )
-
-        @self.mcp.tool()
-        def analyze_dd_changes(
-            path: str,
-            from_version: str | None = None,
-            to_version: str | None = None,
-            dd_version: int | None = None,
-        ) -> str:
-            """Impact analysis: given an IMAS path, find what else should be checked when it changes.
-
-            Returns the path's own change history, co-changing cluster siblings (paths in the same
-            semantic cluster from different IDS that also changed in the version range), and related
-            paths sharing coordinate specifications. Each result includes a deterministic risk score.
-
-            Risk formula: co_change_count * 3 + cluster_overlap * 2 + coordinate_shared * 1.
-            If any own change has a breaking_level, a 1.5× multiplier is applied to all scores.
-
-            Args:
-                path: IMAS path to analyze (e.g. "equilibrium/time_slice/profiles_1d/psi").
-                from_version: Start of version range (exclusive, e.g. "3.30.0"). Default: all versions.
-                to_version: End of version range (inclusive, e.g. "3.39.0"). Default: all versions.
-                dd_version: Filter by DD major version (3 or 4). Default: latest.
-
-            Returns:
-                Formatted report with own change history, co-changing siblings,
-                and coordinate-related paths each with risk scores.
-            """
-            from imas_codex.llm.search_formatters import format_dd_changes_report
-
-            tools = _get_imas_tools()
-            result = _run_async(
-                tools.analyze_dd_changes(
-                    path=path,
-                    from_version=from_version,
-                    to_version=to_version,
-                    dd_version=dd_version,
-                )
-            )
-            return format_dd_changes_report(result)
 
         if not self.dd_only:
 

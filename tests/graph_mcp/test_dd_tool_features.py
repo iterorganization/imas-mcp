@@ -229,19 +229,6 @@ class TestLifecycleFiltering:
         assert total_active <= total_all
         assert total_active >= 1
 
-    @pytest.mark.asyncio
-    async def test_analyze_structure_has_lifecycle(self, graph_client):
-        """analyze_dd_structure includes lifecycle_distribution."""
-        from imas_codex.tools.graph_search import GraphStructureTool
-
-        tool = GraphStructureTool(graph_client)
-        result = await tool.analyze_dd_structure("equilibrium")
-        assert "lifecycle_distribution" in result
-        assert len(result["lifecycle_distribution"]) >= 1
-        statuses = {ld["status"] for ld in result["lifecycle_distribution"]}
-        # Production graph stores active as NULL — only explicit values are reported
-        assert len(statuses) >= 1
-
 
 # ── Phase 5: Migration guide summary mode ────────────────────────────────
 

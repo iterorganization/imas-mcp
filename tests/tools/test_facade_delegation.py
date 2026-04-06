@@ -32,7 +32,6 @@ FACADE_DELEGATION_MAP = {
     "get_dd_overview": ("overview_tool", "get_dd_overview"),
     "get_dd_identifiers": ("identifiers_tool", "get_dd_identifiers"),
     "get_dd_path_context": ("path_context_tool", "get_dd_path_context"),
-    "analyze_dd_structure": ("structure_tool", "analyze_dd_structure"),
     "get_dd_cocos_fields": ("structure_tool", "get_cocos_fields"),
     "search_dd_clusters": ("clusters_tool", "search_dd_clusters"),
     "get_dd_versions": ("version_tool", "get_dd_versions"),
@@ -40,9 +39,6 @@ FACADE_DELEGATION_MAP = {
     "get_dd_changelog": ("version_tool", "get_dd_changelog"),
     "export_imas_ids": ("structure_tool", "export_imas_ids"),
     "export_imas_domain": ("structure_tool", "export_imas_domain"),
-    "analyze_dd_coverage": ("dd_analytics_tool", "analyze_dd_coverage"),
-    "check_dd_units": ("dd_analytics_tool", "check_dd_units"),
-    "analyze_dd_changes": ("dd_analytics_tool", "analyze_dd_changes"),
 }
 
 # Backend class for each tool attribute
@@ -79,12 +75,7 @@ class TestFacadeDelegation:
         """The backend method that the facade delegates to must exist."""
         backend_attr, backend_method = backend_info
         backend_class = BACKEND_CLASSES.get(backend_attr)
-
-        if backend_class is None:
-            # dd_analytics_tool — imported separately, just check it exists
-            from imas_codex.tools.dd_analytics_tool import DDAnalyticsTool
-
-            backend_class = DDAnalyticsTool
+        assert backend_class is not None, f"Unknown backend attribute: {backend_attr}"
 
         assert hasattr(backend_class, backend_method), (
             f"Facade {facade_method} delegates to "

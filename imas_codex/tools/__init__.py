@@ -14,7 +14,6 @@ from imas_codex.graph.client import GraphClient
 from imas_codex.providers import MCPProvider
 
 from .base import BaseTool
-from .dd_analytics_tool import DDAnalyticsTool
 from .graph_search import (
     GraphClustersTool,
     GraphIdentifiersTool,
@@ -55,7 +54,6 @@ class Tools(MCPProvider):
         self.path_context_tool = GraphPathContextTool(graph_client)
         self.structure_tool = GraphStructureTool(graph_client)
         self.version_tool = VersionTool(graph_client)
-        self.dd_analytics_tool = DDAnalyticsTool(graph_client)
 
         self._tool_instances = [
             self.search_tool,
@@ -67,7 +65,6 @@ class Tools(MCPProvider):
             self.path_context_tool,
             self.structure_tool,
             self.version_tool,
-            self.dd_analytics_tool,
         ]
 
     @property
@@ -130,10 +127,6 @@ class Tools(MCPProvider):
         """Delegate to path context tool."""
         return await self.path_context_tool.get_dd_path_context(*args, **kwargs)
 
-    async def analyze_dd_structure(self, *args, **kwargs):
-        """Delegate to structure tool."""
-        return await self.structure_tool.analyze_dd_structure(*args, **kwargs)
-
     async def get_dd_cocos_fields(self, *args, **kwargs):
         """Delegate to structure tool."""
         return await self.structure_tool.get_cocos_fields(*args, **kwargs)
@@ -166,22 +159,9 @@ class Tools(MCPProvider):
         """Delegate to path tool."""
         return await self.path_tool.fetch_dd_error_fields(*args, **kwargs)
 
-    async def analyze_dd_coverage(self, *args, **kwargs):
-        """Delegate to DD analytics tool."""
-        return await self.dd_analytics_tool.analyze_dd_coverage(*args, **kwargs)
-
-    async def check_dd_units(self, *args, **kwargs):
-        """Delegate to DD analytics tool."""
-        return await self.dd_analytics_tool.check_dd_units(*args, **kwargs)
-
-    async def analyze_dd_changes(self, *args, **kwargs):
-        """Delegate to DD analytics tool."""
-        return await self.dd_analytics_tool.analyze_dd_changes(*args, **kwargs)
-
 
 __all__ = [
     "BaseTool",
-    "DDAnalyticsTool",
     "GraphSearchTool",
     "GraphPathTool",
     "GraphListTool",

@@ -97,12 +97,6 @@ class IMASToolBenchmarks:
         """Identifier schema search."""
         run_tool("get_dd_identifiers", {"query": IDS_NAMES["small"]})
 
-    # -- analyze_dd_structure ----------------------------------------------
-
-    def time_structure_analysis(self):
-        """Hierarchical analysis."""
-        run_tool("analyze_dd_structure", {"ids_name": IDS_NAMES["large"]})
-
     # -- export --------------------------------------------------------------
 
     def time_export_ids(self):
