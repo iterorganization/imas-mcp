@@ -2935,7 +2935,7 @@ class AgentsServer:
 
             tools = _get_imas_tools()
             result = _run_async(
-                tools.structure_tool.get_dd_cocos_fields(
+                tools.get_dd_cocos_fields(
                     transformation_type=transformation_type,
                     ids_filter=ids_filter,
                     dd_version=dd_version,

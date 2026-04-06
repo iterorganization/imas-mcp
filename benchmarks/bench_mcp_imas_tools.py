@@ -57,7 +57,7 @@ class IMASToolBenchmarks:
 
     # -- fetch_dd_error_fields --------------------------------------------------
 
-    def time_fetch_error_fields(self):
+    def time_fetch_dd_error_fields(self):
         """Error field traversal."""
         run_tool(
             "fetch_dd_error_fields",

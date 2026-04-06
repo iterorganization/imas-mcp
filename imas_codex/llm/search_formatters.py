@@ -526,7 +526,7 @@ def format_code_report(
 
 
 # ---------------------------------------------------------------------------
-# search_dd_paths formatter
+# search_imas formatter
 # ---------------------------------------------------------------------------
 
 
@@ -587,8 +587,9 @@ def format_imas_report(
 
             clusters_list = p.get("clusters") or []
             if clusters_list:
-                cluster_str = ", ".join(f'"{c}"' for c in clusters_list)
-                parts.append(f"  Clusters: {cluster_str}")
+                parts.append(
+                    f"  Clusters: {', '.join(f'"{c}"' for c in clusters_list)}"
+                )
 
             coords = p.get("coordinates") or []
             if coords:
@@ -621,8 +622,9 @@ def format_imas_report(
                     parts.append(f"  Signals: {', '.join(facility_sigs)}")
                 wiki_mentions = xref.get("wiki_mentions") or []
                 if wiki_mentions:
-                    wiki_str = ", ".join(f'"{s}"' for s in wiki_mentions)
-                    parts.append(f"  Wiki: mentioned in {wiki_str}")
+                    parts.append(
+                        f"  Wiki: mentioned in {', '.join(f'"{s}"' for s in wiki_mentions)}"
+                    )
                 code_files = xref.get("code_files") or []
                 if code_files:
                     parts.append(f"  Code: {', '.join(code_files)}")
@@ -860,17 +862,7 @@ def format_fetch_paths_report(result: Any) -> str:
             parts.append(f"  Coordinates: {', '.join(node.coordinates)}")
         labels = _stringify_cluster_labels(getattr(node, "cluster_labels", None))
         if labels:
-            label_str = ", ".join(f'"{c}"' for c in labels)
-            parts.append(f"  Clusters: {label_str}")
-        version_changes = getattr(node, "version_changes", None)
-        if version_changes:
-            parts.append("  Version history:")
-            for vc in version_changes:
-                if isinstance(vc, dict):
-                    v = vc.get("version", "?")
-                    t = vc.get("type", "?")
-                    s = vc.get("summary", "")
-                    parts.append(f"    - DD {v}: {t}" + (f" — {s}" if s else ""))
+            parts.append(f"  Clusters: {', '.join(f'"{c}"' for c in labels)}")
         parts.append("")
 
     for nf in _get_value(result, "not_found_paths", []) or []:
@@ -963,14 +955,6 @@ def format_overview_report(result: Any) -> str:
 
     if result.mcp_tools:
         parts.append(f"\n**Available tools**: {', '.join(result.mcp_tools)}")
-
-    unit_stats = _get_value(result, "unit_statistics")
-    if unit_stats:
-        top_units = unit_stats.get("top_units", [])
-        if top_units:
-            parts.append(f"\n### Unit Distribution (top {len(top_units)} units)\n")
-            for entry in top_units:
-                parts.append(f"  {entry['unit']}: {entry['count']} paths")
 
     return "\n".join(parts)
 
@@ -1116,15 +1100,6 @@ def format_search_dd_report(result: Any, cluster_result: Any | None = None) -> s
                 parts.append(f"  Introduced: DD {hit.introduced_after_version}")
             if hit.keywords:
                 parts.append(f"  Keywords: {', '.join(hit.keywords)}")
-            if hit.cluster_labels:
-                parts.append(f"  Clusters: {', '.join(hit.cluster_labels)}")
-            if hit.see_also:
-                shown = hit.see_also[:3]
-                remaining = len(hit.see_also) - 3
-                see_str = ", ".join(shown)
-                if remaining > 0:
-                    see_str += f" (+{remaining} more)"
-                parts.append(f"  See also: {see_str}")
 
             # Facility cross-references
             xref = hit.facility_xrefs or {}
@@ -1137,8 +1112,9 @@ def format_search_dd_report(result: Any, cluster_result: Any | None = None) -> s
                     parts.append(f"  Signals: {', '.join(sigs)}")
                 wiki = xref.get("wiki_mentions") or []
                 if wiki:
-                    wiki_str = ", ".join(f'"{s}"' for s in wiki)
-                    parts.append(f"  Wiki: mentioned in {wiki_str}")
+                    parts.append(
+                        f"  Wiki: mentioned in {', '.join(f'"{s}"' for s in wiki)}"
+                    )
                 code = xref.get("code_files") or []
                 if code:
                     parts.append(f"  Code: {', '.join(code)}")
@@ -1309,14 +1285,6 @@ def format_structure_report(result: dict[str, Any]) -> str:
         for c in cocos:
             parts.append(f"  - `{c['path']}` ({c['label']})")
 
-    lifecycle = result.get("lifecycle_distribution", [])
-    if lifecycle:
-        parts.append("\n### Lifecycle Status")
-        parts.append("| Status | Count |")
-        parts.append("| --- | --- |")
-        for entry in sorted(lifecycle, key=lambda e: e.get("status", "")):
-            parts.append(f"| {entry['status']} | {entry['count']} |")
-
     return "\n".join(parts)
 
 
@@ -1429,341 +1397,195 @@ def format_export_domain_report(result: Any) -> str:
     return "\n".join(parts)
 
 
-def format_dd_changelog_report(result: Any) -> str:
-    """Format get_dd_changelog result into a ranked volatility table."""
-    if not isinstance(result, dict):
-        return str(result)
-
-    if result.get("error"):
-        return f"Error: {result['error']}"
-
-    results = result.get("results", []) or []
-    total = result.get("total", 0)
-    ids_filter = result.get("ids_filter")
-    version_range = result.get("version_range")
-
-    scope_parts = []
-    if ids_filter:
-        scope_parts.append(f"IDS: {ids_filter}")
-    if version_range:
-        frm = version_range.get("from", "")
-        to = version_range.get("to", "")
-        if frm and to:
-            scope_parts.append(f"versions {frm} → {to}")
-        elif to:
-            scope_parts.append(f"up to v{to}")
-        elif frm:
-            scope_parts.append(f"after v{frm}")
-    scope_str = f" ({', '.join(scope_parts)})" if scope_parts else ""
-
-    parts = [
-        f"## DD Path Changelog — Volatility Ranking{scope_str}",
-        f"Showing {total} path(s) ranked by volatility score.",
-        "",
-        "| # | Path | IDS | Changes | Types | Renamed | Score |",
-        "|---|------|-----|---------|-------|---------|-------|",
-    ]
-
-    if not results:
-        parts.append("| — | No results found | | | | | |")
-    else:
-        for rank, row in enumerate(results, 1):
-            path = row.get("path", "?")
-            ids = row.get("ids", "?")
-            change_count = row.get("change_count", 0)
-            change_types = row.get("change_types") or []
-            was_renamed = row.get("was_renamed", 0)
-            score = row.get("volatility_score", 0)
-            renamed_str = "yes" if was_renamed else "no"
-            types_str = ", ".join(t for t in change_types if t) or "—"
-            parts.append(
-                f"| {rank} | `{path}` | {ids} | {change_count} "
-                f"| {types_str} | {renamed_str} | **{score}** |"
-            )
-
-    return "\n".join(parts)
-
-
-def format_cocos_fields_report(result: Any) -> str:
-    """Format get_dd_cocos_fields result into readable text."""
+def format_cocos_fields_report(result: dict[str, Any]) -> str:
+    """Format get_cocos_fields result into readable text."""
     tool_error = _format_tool_error(result)
     if tool_error:
         return tool_error
 
-    if not isinstance(result, dict):
-        return str(result)
+    parts: list[str] = []
 
-    if result.get("error"):
-        return f"Error: {result['error']}"
+    header = "## COCOS-Dependent Fields"
+    if result.get("ids_filter"):
+        header += f" (IDS: {result['ids_filter']})"
+    if result.get("transformation_type_filter"):
+        header += f" (type: {result['transformation_type_filter']})"
+    if result.get("dd_version"):
+        header += f" (DD v{result['dd_version']})"
+    parts.append(header)
+    parts.append(f"\nTotal: {result.get('total_count', 0)} fields\n")
 
-    total = result.get("total_fields", 0)
-    type_count = result.get("transformation_type_count", 0)
-    transformation_types = result.get("transformation_types", []) or []
-
-    parts = [
-        "## COCOS-Dependent Fields",
-        f"Total fields: {total} across {type_count} transformation type(s)",
-        "",
-    ]
-
-    if not transformation_types:
-        parts.append("No COCOS-dependent fields found.")
-        return "\n".join(parts)
-
-    for group in transformation_types:
-        ttype = group.get("type", "unknown")
-        count = group.get("field_count", 0)
-        ids_affected = group.get("ids_affected", []) or []
-        sample_paths = group.get("sample_paths", []) or []
-
-        parts.append(f"### {ttype} ({count} fields)")
-        if ids_affected:
-            parts.append(f"IDS affected: {', '.join(ids_affected)}")
-        if sample_paths:
-            parts.append("Sample paths:")
-            for p in sample_paths:
-                parts.append(f"  - `{p}`")
+    for group in result.get("transformation_types", []):
+        tt = group["type"]
+        paths = group["paths"]
+        parts.append(f"### {tt} ({len(paths)} fields)")
+        for p in paths:
+            line = f"  - `{p['path']}`"
+            doc = p.get("documentation", "")
+            if doc:
+                line += f" — {doc[:80]}"
+            parts.append(line)
         parts.append("")
 
     return "\n".join(parts)
 
 
-def format_dd_coverage_report(result: Any) -> str:
-    """Format analyze_dd_coverage result into a ranked table."""
+def format_dd_coverage_report(result: dict[str, Any]) -> str:
+    """Format analyze_dd_coverage result into readable text."""
     tool_error = _format_tool_error(result)
     if tool_error:
         return tool_error
 
-    if not isinstance(result, dict):
-        return str(result)
-
-    if result.get("error"):
-        return f"Error: {result['error']}"
-
-    results = result.get("results", []) or []
-    total = result.get("total", 0)
-    min_ids = result.get("min_ids_count", 3)
-    dd_version = result.get("dd_version")
-    domain_filter = result.get("physics_domain_filter")
-
-    scope_parts = []
-    if dd_version is not None:
-        scope_parts.append(f"DD v{dd_version}")
-    if domain_filter:
-        scope_parts.append(f"domain: {domain_filter}")
-    scope_str = f" ({', '.join(scope_parts)})" if scope_parts else ""
-
-    parts = [
-        f"## DD Coverage Analysis — Cross-IDS Concepts{scope_str}",
-        f"Showing {total} concept(s) spanning ≥{min_ids} IDS.",
-        "",
-        "| # | Concept | IDS Count | Paths | IDS List | Rep. Path |",
-        "|---|---------|-----------|-------|----------|-----------|",
-    ]
-
-    if not results:
-        parts.append("| — | No concepts found at this threshold | | | | |")
-    else:
-        for rank, row in enumerate(results, 1):
-            label = row.get("label", "?")
-            ids_count = row.get("ids_count", 0)
-            path_count = row.get("path_count", 0)
-            ids_list = ", ".join(row.get("ids_list", [])[:5])
-            if len(row.get("ids_list", [])) > 5:
-                ids_list += "…"
-            rep = row.get("representative_path") or "—"
-            if rep != "—":
-                rep = f"`{rep}`"
-            parts.append(
-                f"| {rank} | {label} | **{ids_count}** | {path_count} "
-                f"| {ids_list} | {rep} |"
-            )
-
-    # Add description details for top entries
-    described = [r for r in results[:5] if r.get("description")]
-    if described:
-        parts.append("")
-        parts.append("### Top Concept Descriptions")
-        for r in described:
-            parts.append(f"- **{r['label']}**: {r['description']}")
-
-    return "\n".join(parts)
-
-
-def format_dd_units_report(result: Any) -> str:
-    """Format check_dd_units result grouped by cluster with severity."""
-    tool_error = _format_tool_error(result)
-    if tool_error:
-        return tool_error
-
-    if not isinstance(result, dict):
-        return str(result)
-
-    if result.get("error"):
-        return f"Error: {result['error']}"
-
-    clusters = result.get("clusters", []) or []
-    total = result.get("total_inconsistencies", 0)
-    clusters_affected = result.get("clusters_affected", 0)
-    dd_version = result.get("dd_version")
-    sev_filter = result.get("severity_filter", "all")
-    ids_filter = result.get("ids_filter")
-
-    scope_parts = []
-    if dd_version is not None:
-        scope_parts.append(f"DD v{dd_version}")
-    if ids_filter:
-        scope_parts.append(f"IDS: {ids_filter}")
-    if sev_filter and sev_filter != "all":
-        scope_parts.append(f"severity: {sev_filter}")
-    scope_str = f" ({', '.join(scope_parts)})" if scope_parts else ""
-
-    parts = [
-        f"## DD Unit Consistency Check{scope_str}",
-        f"Found {total} inconsistenc{'y' if total == 1 else 'ies'} "
-        f"across {clusters_affected} cluster(s).",
-        "",
-    ]
-
-    if not clusters:
-        parts.append("✅ No unit inconsistencies found.")
-        return "\n".join(parts)
-
-    # Cap output to avoid multi-MB responses when unfiltered
-    max_clusters = 25
-    shown_clusters = clusters[:max_clusters]
-    remaining_clusters = len(clusters) - len(shown_clusters)
-
-    for cluster_data in shown_clusters:
-        cluster_name = cluster_data.get("cluster", "Unknown")
-        items = cluster_data.get("inconsistencies", [])
-        parts.append(
-            f"### {cluster_name} ({len(items)} issue{'s' if len(items) != 1 else ''})"
-        )
-        parts.append("")
-        parts.append("| Path 1 | Unit 1 | Path 2 | Unit 2 | Severity |")
-        parts.append("|--------|--------|--------|--------|----------|")
-
-        # Show up to 20 items per cluster
-        for item in items[:20]:
-            p1 = f"`{item['path1']}`"
-            u1 = item.get("unit1", "?")
-            p2 = f"`{item['path2']}`"
-            u2 = item.get("unit2", "?")
-            sev = item.get("severity", "advisory")
-            sev_icon = "⚠️" if sev == "incompatible" else "ℹ️"
-            parts.append(f"| {p1} | {u1} | {p2} | {u2} | {sev_icon} {sev} |")
-
-        if len(items) > 20:
-            parts.append(f"\n... and {len(items) - 20} more in this cluster")
-
-        parts.append("")
-
-    if remaining_clusters > 0:
-        parts.append(
-            f"\n... and {remaining_clusters} more cluster(s) not shown. "
-            "Use `ids_filter` or `severity` to narrow results."
-        )
-
-    return "\n".join(parts)
-
-
-def format_dd_changes_report(result: Any) -> str:
-    """Format analyze_dd_changes impact analysis result into a readable report."""
-    tool_error = _format_tool_error(result)
-    if tool_error:
-        return tool_error
-
-    if not isinstance(result, dict):
-        return str(result)
-
-    if result.get("error"):
-        return f"Error: {result['error']}"
-
-    path = result.get("path", "?")
-    from_v = result.get("from_version")
-    to_v = result.get("to_version")
-    dd_version = result.get("dd_version")
-    has_breaking = result.get("has_breaking_changes", False)
-    summary = result.get("summary", {})
-
-    own_changes = result.get("own_changes") or []
-    siblings = result.get("co_changing_siblings") or []
-    related = result.get("related_paths") or []
-
-    scope_parts = []
-    if dd_version is not None:
-        scope_parts.append(f"DD v{dd_version}")
-    if from_v:
-        scope_parts.append(f"from {from_v}")
-    if to_v:
-        scope_parts.append(f"to {to_v}")
-    scope_str = f" ({', '.join(scope_parts)})" if scope_parts else ""
-
-    breaking_note = (
-        " ⚠️ **Breaking changes detected** — risk scores multiplied by 1.5×."
-        if has_breaking
-        else ""
+    parts: list[str] = []
+    header = "## Cross-IDS Concept Coverage"
+    if result.get("physics_domain_filter"):
+        header += f" (domain: {result['physics_domain_filter']})"
+    if result.get("dd_version"):
+        header += f" (DD v{result['dd_version']})"
+    parts.append(header)
+    parts.append(
+        f"\n{result.get('total', 0)} concepts spanning "
+        f"≥{result.get('min_ids_count', 3)} IDS\n"
     )
 
-    parts = [
-        f"## DD Change Impact Analysis — `{path}`{scope_str}",
-        f"Own changes: {summary.get('own_change_count', 0)} | "
+    for r in result.get("results", []):
+        label = r.get("label", "Unknown")
+        ids_count = r.get("ids_count", 0)
+        path_count = r.get("path_count", 0)
+        ids_list = ", ".join(r.get("ids_list", []))
+        parts.append(f"### {label} ({ids_count} IDS, {path_count} paths)")
+        if r.get("description"):
+            parts.append(f"  {r['description']}")
+        parts.append(f"  IDS: {ids_list}")
+        if r.get("representative_path"):
+            parts.append(f"  Representative: `{r['representative_path']}`")
+        parts.append("")
+
+    return "\n".join(parts)
+
+
+def format_dd_units_report(result: dict[str, Any]) -> str:
+    """Format check_dd_units result into readable text."""
+    tool_error = _format_tool_error(result)
+    if tool_error:
+        return tool_error
+
+    parts: list[str] = []
+    header = "## Unit Consistency Check"
+    if result.get("ids_filter"):
+        header += f" (IDS: {result['ids_filter']})"
+    if result.get("severity_filter") and result["severity_filter"] != "all":
+        header += f" (severity: {result['severity_filter']})"
+    parts.append(header)
+    parts.append(
+        f"\n{result.get('total_inconsistencies', 0)} inconsistencies across "
+        f"{result.get('clusters_affected', 0)} clusters\n"
+    )
+
+    for cluster in result.get("clusters", []):
+        label = cluster.get("cluster") or cluster.get("cluster_id", "Unknown")
+        items = cluster.get("inconsistencies", [])
+        parts.append(f"### {label} ({len(items)} mismatches)")
+        for item in items:
+            sev = item.get("severity", "advisory")
+            icon = "⚠️" if sev == "incompatible" else "ℹ️"
+            parts.append(
+                f"  {icon} `{item['path1']}` [{item['unit1']}] vs "
+                f"`{item['path2']}` [{item['unit2']}] — {sev}"
+            )
+        parts.append("")
+
+    return "\n".join(parts)
+
+
+def format_dd_changelog_report(result: dict[str, Any]) -> str:
+    """Format get_dd_changelog result into readable text."""
+    tool_error = _format_tool_error(result)
+    if tool_error:
+        return tool_error
+
+    parts: list[str] = []
+    header = "## DD Path Volatility Ranking"
+    if result.get("ids_filter"):
+        header += f" (IDS: {result['ids_filter']})"
+    vr = result.get("version_range")
+    if vr:
+        header += f" ({vr.get('from', '')}–{vr.get('to', '')})"
+    parts.append(header)
+    parts.append(f"\nTop {result.get('total', 0)} most volatile paths\n")
+
+    parts.append("| Rank | Path | IDS | Changes | Types | Renamed | Score |")
+    parts.append("|------|------|-----|---------|-------|---------|-------|")
+    for i, r in enumerate(result.get("results", []), 1):
+        path = r.get("path", "")
+        ids_name = r.get("ids", "")
+        changes = r.get("change_count", 0)
+        types = ", ".join(r.get("change_types", []))
+        renamed = "✓" if r.get("was_renamed") else ""
+        score = r.get("volatility_score", 0)
+        parts.append(
+            f"| {i} | `{path}` | {ids_name} | {changes} | {types} "
+            f"| {renamed} | {score} |"
+        )
+
+    return "\n".join(parts)
+
+
+def format_dd_changes_report(result: dict[str, Any]) -> str:
+    """Format analyze_dd_changes result into readable text."""
+    tool_error = _format_tool_error(result)
+    if tool_error:
+        return tool_error
+
+    parts: list[str] = []
+    path = result.get("path", "")
+    header = f"## Impact Analysis: `{path}`"
+    parts.append(header)
+
+    summary = result.get("summary", {})
+    parts.append(
+        f"\nOwn changes: {summary.get('own_change_count', 0)} | "
         f"Co-changing siblings: {summary.get('sibling_count', 0)} | "
-        f"Coordinate-related: {summary.get('related_count', 0)}." + breaking_note,
-        "",
-    ]
-
-    # Section 1 — Own change history
-    parts.append("### 1. Own Change History")
-    if not own_changes:
-        parts.append("No changes recorded in this version range.")
-    else:
-        parts.append("")
-        parts.append("| Version | Change Type | Summary | Breaking Level |")
-        parts.append("|---------|-------------|---------|----------------|")
-        for c in own_changes:
-            version = c.get("version") or "?"
-            ctype = c.get("change_type") or "—"
-            csummary = c.get("summary") or "—"
-            blevel = c.get("breaking_level")
-            blevel_str = f"⚠️ {blevel}" if blevel is not None else "—"
-            parts.append(f"| {version} | {ctype} | {csummary} | {blevel_str} |")
+        f"Coordinate-related: {summary.get('related_count', 0)}"
+    )
+    if result.get("has_breaking_changes"):
+        parts.append(
+            "⚠️ **Breaking changes detected** — risk scores have 1.5× multiplier"
+        )
     parts.append("")
 
-    # Section 2 — Co-changing cluster siblings
-    parts.append("### 2. Co-Changing Cluster Siblings")
-    if not siblings:
-        parts.append("No co-changing siblings found in this version range.")
-    else:
+    own = result.get("own_changes", [])
+    if own:
+        parts.append("### Own Change History")
+        for c in own:
+            breaking = " ⚠️ BREAKING" if c.get("breaking_level") else ""
+            parts.append(
+                f"  - **{c.get('version', '?')}** [{c.get('change_type', '')}]{breaking}"
+            )
+            if c.get("summary"):
+                parts.append(f"    {c['summary']}")
         parts.append("")
-        parts.append("| Path | IDS | Cluster | Changes | Risk Score |")
-        parts.append("|------|-----|---------|---------|------------|")
+
+    siblings = result.get("co_changing_siblings", [])
+    if siblings:
+        parts.append("### Co-Changing Cluster Siblings")
         for s in siblings:
-            spath = f"`{s['path']}`"
-            ids = s.get("ids") or "?"
-            cluster = s.get("cluster_label") or "—"
-            changes = s.get("co_change_count", 0)
-            risk = s.get("risk_score", 0)
-            parts.append(f"| {spath} | {ids} | {cluster} | {changes} | **{risk}** |")
-    parts.append("")
-
-    # Section 3 — Related paths via shared coordinates
-    parts.append("### 3. Related Paths (Shared Coordinates)")
-    if not related:
-        parts.append("No related paths found via shared coordinates.")
-    else:
+            parts.append(
+                f"  - `{s['path']}` ({s.get('ids', '')}) — "
+                f"{s.get('co_change_count', 0)} co-changes, "
+                f"risk: {s.get('risk_score', 0)}"
+            )
         parts.append("")
-        parts.append("| Path | IDS | Shared Coordinates | Risk Score |")
-        parts.append("|------|-----|--------------------|------------|")
+
+    related = result.get("related_paths", [])
+    if related:
+        parts.append("### Coordinate-Related Paths")
         for r in related:
-            rpath = f"`{r['path']}`"
-            ids = r.get("ids") or "?"
-            coords = r.get("shared_coordinates") or []
-            coords_str = ", ".join(coords[:3])
-            if len(coords) > 3:
-                coords_str += "…"
-            risk = r.get("risk_score", 0)
-            parts.append(f"| {rpath} | {ids} | {coords_str} | **{risk}** |")
+            coords = ", ".join(r.get("shared_coordinates", []))
+            parts.append(
+                f"  - `{r['path']}` ({r.get('ids', '')}) — "
+                f"shared: [{coords}], risk: {r.get('risk_score', 0)}"
+            )
+        parts.append("")
 
     return "\n".join(parts)

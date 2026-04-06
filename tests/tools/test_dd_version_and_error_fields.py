@@ -10,7 +10,7 @@ from imas_codex.tools.version_tool import VersionTool
 
 
 @pytest.mark.asyncio
-async def test_shared_fetch_error_fields_returns_structured_results():
+async def test_shared_fetch_dd_error_fields_returns_structured_results():
     gc = MagicMock()
     gc.query.return_value = [
         {
@@ -37,7 +37,7 @@ async def test_shared_fetch_error_fields_returns_structured_results():
 
 
 @pytest.mark.asyncio
-async def test_shared_fetch_error_fields_returns_not_found():
+async def test_shared_fetch_dd_error_fields_returns_not_found():
     gc = MagicMock()
     gc.query.return_value = []
     tool = GraphPathTool(gc)

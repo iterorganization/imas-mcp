@@ -100,7 +100,8 @@ class Tools(MCPProvider):
                     continue
         return sorted(tool_names)
 
-    # Primary method delegation
+    # Primary method delegation — facade uses dd_ names matching
+    # the backend methods in graph_search.py and version_tool.py.
     async def search_dd_paths(self, *args, **kwargs):
         """Delegate to search tool."""
         return await self.search_tool.search_dd_paths(*args, **kwargs)
@@ -132,6 +133,10 @@ class Tools(MCPProvider):
     async def analyze_dd_structure(self, *args, **kwargs):
         """Delegate to structure tool."""
         return await self.structure_tool.analyze_dd_structure(*args, **kwargs)
+
+    async def get_dd_cocos_fields(self, *args, **kwargs):
+        """Delegate to structure tool."""
+        return await self.structure_tool.get_cocos_fields(*args, **kwargs)
 
     async def export_imas_ids(self, *args, **kwargs):
         """Delegate to structure tool."""
