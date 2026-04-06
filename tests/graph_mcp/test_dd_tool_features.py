@@ -1,7 +1,7 @@
 """Functional tests for capability-gap additions to the DD MCP server.
 
 Covers:
-  - get_dd_cocos_fields (GraphStructureTool)
+  - get_cocos_fields (GraphStructureTool)
   - Enhanced get_dd_version_context bulk-query mode (VersionTool)
   - Unit statistics in overview (GraphOverviewTool)
   - Lifecycle filtering in list/analyze (GraphListTool / GraphStructureTool)
@@ -18,7 +18,7 @@ import pytest
 pytestmark = pytest.mark.graph_mcp
 
 
-# ── Phase 1: get_dd_cocos_fields ─────────────────────────────────────────────
+# ── Phase 1: get_cocos_fields ─────────────────────────────────────────────
 
 
 class TestCocosFields:
@@ -31,7 +31,7 @@ class TestCocosFields:
     async def test_get_all_cocos_fields(self, graph_client):
         """Retrieve all COCOS fields without filters."""
         tool = self._make_tool(graph_client)
-        result = await tool.get_dd_cocos_fields()
+        result = await tool.get_cocos_fields()
         assert result["total_fields"] >= 1
         assert result["transformation_type_count"] >= 1
         types = result["transformation_types"]
@@ -47,7 +47,7 @@ class TestCocosFields:
     async def test_filter_by_transformation_type(self, graph_client):
         """Filtering by transformation type returns only matching entries."""
         tool = self._make_tool(graph_client)
-        result = await tool.get_dd_cocos_fields(transformation_type="psi_like")
+        result = await tool.get_cocos_fields(transformation_type="psi_like")
         assert result["total_fields"] >= 1
         for t in result["transformation_types"]:
             assert t["type"] == "psi_like"
@@ -56,7 +56,7 @@ class TestCocosFields:
     async def test_filter_nonexistent_type(self, graph_client):
         """Non-existent transformation type returns 0 fields."""
         tool = self._make_tool(graph_client)
-        result = await tool.get_dd_cocos_fields(transformation_type="nonexistent_zz")
+        result = await tool.get_cocos_fields(transformation_type="nonexistent_zz")
         assert result["total_fields"] == 0
         assert result["transformation_types"] == []
 
@@ -64,7 +64,7 @@ class TestCocosFields:
     async def test_filter_by_ids(self, graph_client):
         """Filtering by IDS name returns only paths from that IDS."""
         tool = self._make_tool(graph_client)
-        result = await tool.get_dd_cocos_fields(ids_filter="equilibrium")
+        result = await tool.get_cocos_fields(ids_filter="equilibrium")
         assert result["total_fields"] >= 1
         for t in result["transformation_types"]:
             assert "equilibrium" in t["ids_affected"]
@@ -74,14 +74,14 @@ class TestCocosFields:
         """IDS with no COCOS fields returns empty results."""
         tool = self._make_tool(graph_client)
         # controllers IDS has no COCOS-dependent fields
-        result = await tool.get_dd_cocos_fields(ids_filter="controllers")
+        result = await tool.get_cocos_fields(ids_filter="controllers")
         assert result["total_fields"] == 0
 
     @pytest.mark.asyncio
     async def test_sample_paths_populated(self, graph_client):
         """sample_paths are populated and capped at 10."""
         tool = self._make_tool(graph_client)
-        result = await tool.get_dd_cocos_fields()
+        result = await tool.get_cocos_fields()
         for t in result["transformation_types"]:
             assert len(t["sample_paths"]) > 0
             assert len(t["sample_paths"]) <= 10  # max 10 samples

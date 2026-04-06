@@ -1101,6 +1101,21 @@ def format_search_dd_report(result: Any, cluster_result: Any | None = None) -> s
             if hit.keywords:
                 parts.append(f"  Keywords: {', '.join(hit.keywords)}")
 
+            # Cluster labels
+            cluster_labels = getattr(hit, "cluster_labels", None) or []
+            if cluster_labels:
+                parts.append(f"  Clusters: {', '.join(cluster_labels)}")
+
+            # See also cross-references
+            see_also = getattr(hit, "see_also", None) or []
+            if see_also:
+                shown = see_also[:3]
+                extra = len(see_also) - len(shown)
+                refs = ", ".join(shown)
+                if extra > 0:
+                    refs += f", +{extra} more"
+                parts.append(f"  See also: {refs}")
+
             # Facility cross-references
             xref = hit.facility_xrefs or {}
             if any(

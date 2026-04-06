@@ -424,7 +424,7 @@ class TestFetchImasPathsEnrichment:
         """Path with no IMASNodeChange should return None even with flag."""
         tool = self._make_tool(graph_client)
         result = await tool.fetch_dd_paths(
-            "equilibrium/time_slice/profiles_1d/psi",
+            "core_profiles/profiles_1d/ion/temperature",
             include_version_history=True,
         )
         node = result.nodes[0]
@@ -515,9 +515,9 @@ class TestGetDDVersionContext:
     async def test_path_without_changes(self, version_tool):
         """Path with no changes should have 0 change_count."""
         result = await version_tool.get_dd_version_context(
-            "equilibrium/time_slice/profiles_1d/psi"
+            "core_profiles/profiles_1d/ion/temperature"
         )
-        path_data = result["paths"]["equilibrium/time_slice/profiles_1d/psi"]
+        path_data = result["paths"]["core_profiles/profiles_1d/ion/temperature"]
         assert path_data["change_count"] == 0
         assert path_data["changes"] == []
 
@@ -526,13 +526,14 @@ class TestGetDDVersionContext:
         result = await version_tool.get_dd_version_context(
             [
                 "core_profiles/profiles_1d/electrons/pressure",
-                "equilibrium/time_slice/profiles_1d/psi",
+                "core_profiles/profiles_1d/ion/temperature",
             ]
         )
         assert result["total_paths"] == 2
         assert result["paths_with_changes"] == 1
         assert (
-            "equilibrium/time_slice/profiles_1d/psi" in result["paths_without_changes"]
+            "core_profiles/profiles_1d/ion/temperature"
+            in result["paths_without_changes"]
         )
 
     @pytest.mark.anyio
@@ -834,38 +835,3 @@ class TestIdentifierSearch:
         tool = self._make_tool(graph_client)
         result = await tool.get_dd_identifiers(query="zzz_nonexistent_xyz")
         assert result.analytics["total_schemas"] == 0
-
-
-# ── resolve_dd_version tests ─────────────────────────────────────────────
-
-
-class TestResolveDDVersion:
-    """Tests for resolve_dd_version() helper."""
-
-    def test_int(self):
-        from imas_codex.tools.graph_search import resolve_dd_version
-
-        assert resolve_dd_version(3) == 3
-        assert resolve_dd_version(4) == 4
-
-    def test_string_semver(self):
-        from imas_codex.tools.graph_search import resolve_dd_version
-
-        assert resolve_dd_version("3.39.0") == 3
-        assert resolve_dd_version("4.0.0") == 4
-
-    def test_string_major(self):
-        from imas_codex.tools.graph_search import resolve_dd_version
-
-        assert resolve_dd_version("3") == 3
-        assert resolve_dd_version("4") == 4
-
-    def test_latest(self):
-        from imas_codex.tools.graph_search import resolve_dd_version
-
-        assert resolve_dd_version("latest") is None
-
-    def test_none(self):
-        from imas_codex.tools.graph_search import resolve_dd_version
-
-        assert resolve_dd_version(None) is None

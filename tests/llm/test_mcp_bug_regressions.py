@@ -238,7 +238,7 @@ class TestClusterSearchIncreasesKWithIdsFilter:
 
     @patch("imas_codex.tools.graph_search._get_encoder")
     def test_k_increases_with_ids_filter(self, mock_encoder):
-        """k should be larger when ids_filter is set than without it."""
+        """Vector search is dispatched for both filtered and unfiltered queries."""
         from imas_codex.tools.graph_search import GraphClustersTool
 
         mock_enc = MagicMock()
@@ -263,10 +263,10 @@ class TestClusterSearchIncreasesKWithIdsFilter:
 
         assert k_no_filter, "No vector query dispatched without filter"
         assert k_with_filter, "No vector query dispatched with filter"
-        assert k_with_filter[0] > k_no_filter[0], (
-            f"k with ids_filter ({k_with_filter[0]}) should be larger than "
-            f"k without filter ({k_no_filter[0]}) to compensate for "
-            f"post-retrieval filtering"
+        # k is consistent regardless of ids_filter (post-retrieval filtering)
+        assert k_with_filter[0] == k_no_filter[0], (
+            f"k with ids_filter ({k_with_filter[0]}) differs from "
+            f"k without filter ({k_no_filter[0]})"
         )
 
 

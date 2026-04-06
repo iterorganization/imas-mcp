@@ -49,7 +49,7 @@ class TestFixtureGraphStructure:
     def test_imas_paths_exist(self, graph_client):
         """IMASNode nodes are created with expected count."""
         result = graph_client.query("MATCH (p:IMASNode) RETURN count(p) AS c")
-        assert result[0]["c"] == 9
+        assert result[0]["c"] == 10
 
     def test_paths_linked_to_ids(self, graph_client):
         """Every IMASNode is linked to its IDS via IN_IDS."""
@@ -93,18 +93,19 @@ class TestFixtureGraphStructure:
     def test_path_changes_exist(self, graph_client):
         """IMASNodeChange nodes are created."""
         result = graph_client.query("MATCH (c:IMASNodeChange) RETURN count(c) AS c")
-        assert result[0]["c"] == 1
+        assert result[0]["c"] == 2
 
     def test_path_change_linked(self, graph_client):
         """IMASNodeChange is linked to path and version."""
         result = graph_client.query(
             "MATCH (c:IMASNodeChange)-[:FOR_IMAS_PATH]->(p:IMASNode), "
             "(c)-[:IN_VERSION]->(v:DDVersion) "
-            "RETURN p.id AS path, v.id AS version"
+            "RETURN p.id AS path, v.id AS version ORDER BY p.id"
         )
-        assert len(result) == 1
-        assert result[0]["path"] == "core_profiles/profiles_1d/electrons/pressure"
-        assert result[0]["version"] == "4.0.0"
+        assert len(result) == 2
+        paths = [r["path"] for r in result]
+        assert "core_profiles/profiles_1d/electrons/pressure" in paths
+        assert "equilibrium/time_slice/profiles_1d/psi" in paths
 
     def test_identifier_schemas_exist(self, graph_client):
         """IdentifierSchema nodes are created and linked."""
@@ -126,7 +127,7 @@ class TestFixtureGraphQueries:
             "RETURN p.id AS id ORDER BY p.id",
             ids="equilibrium",
         )
-        assert len(result) == 5
+        assert len(result) == 6
         assert all("equilibrium/" in r["id"] for r in result)
 
     def test_paths_by_version(self, graph_client):
@@ -187,5 +188,5 @@ class TestFixtureGraphQueries:
         )
         assert len(result) == 2
         by_name = {r["ids_name"]: r for r in result}
-        assert by_name["equilibrium"]["actual_paths"] == 5
+        assert by_name["equilibrium"]["actual_paths"] == 6
         assert by_name["core_profiles"]["actual_paths"] == 4

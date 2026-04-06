@@ -179,44 +179,48 @@ class GraphSearchTool:
             )
 
         normalized_filter = normalize_ids_filter(ids_filter)
-        embedding = self._embed_query(query)
+
+        # Path short-circuit: skip vector search when query looks like an IMAS path
+        is_path_query = "/" in query and " " not in query
+        embedding = self._embed_query(query) if not is_path_query else None
 
         # --- Vector search ---
         filter_clause = ""
-        params: dict[str, Any] = {
-            "embedding": embedding,
-            "k": min(max_results * 5, 500),
-            "vector_limit": min(max_results * 3, 150),
-        }
-        if normalized_filter:
-            filter_clause = "AND path.ids IN $ids_filter"
-            params["ids_filter"] = (
-                normalized_filter
-                if isinstance(normalized_filter, list)
-                else [normalized_filter]
+        scores: dict[str, float] = {}
+        if not is_path_query:
+            params: dict[str, Any] = {
+                "embedding": embedding,
+                "k": min(max_results * 5, 500),
+                "vector_limit": min(max_results * 3, 150),
+            }
+            if normalized_filter:
+                filter_clause = "AND path.ids IN $ids_filter"
+                params["ids_filter"] = (
+                    normalized_filter
+                    if isinstance(normalized_filter, list)
+                    else [normalized_filter]
+                )
+
+            dd_clause = _dd_version_clause("path", dd_version, params)
+
+            vector_results = self._gc.query(
+                f"""
+                CALL db.index.vector.queryNodes('imas_node_embedding', $k, $embedding)
+                YIELD node AS path, score
+                WHERE NOT (path)-[:DEPRECATED_IN]->(:DDVersion)
+                  AND path.node_category = 'data'
+                {filter_clause}
+                {dd_clause}
+                RETURN path.id AS id, score
+                ORDER BY score DESC
+                LIMIT $vector_limit
+                """,
+                **params,
             )
 
-        dd_clause = _dd_version_clause("path", dd_version, params)
-
-        vector_results = self._gc.query(
-            f"""
-            CALL db.index.vector.queryNodes('imas_node_embedding', $k, $embedding)
-            YIELD node AS path, score
-            WHERE NOT (path)-[:DEPRECATED_IN]->(:DDVersion)
-              AND path.node_category = 'data'
-            {filter_clause}
-            {dd_clause}
-            RETURN path.id AS id, score
-            ORDER BY score DESC
-            LIMIT $vector_limit
-            """,
-            **params,
-        )
-
-        scores: dict[str, float] = {}
-        for r in vector_results or []:
-            pid = r["id"]
-            scores[pid] = round(r["score"], 4)
+            for r in vector_results or []:
+                pid = r["id"]
+                scores[pid] = round(r["score"], 4)
 
         # --- Text search ---
         text_results = _text_search_dd_paths(
@@ -376,7 +380,7 @@ class GraphSearchTool:
     def _embed_query(self, query: str) -> list[float]:
         """Embed query text using the module-level Encoder singleton."""
         encoder = _get_encoder()
-        return encoder.embed_texts([query])[0].tolist()
+        return encoder.embed_texts([query], prompt_name="query")[0].tolist()
 
 
 class GraphPathTool:
@@ -1280,7 +1284,7 @@ class GraphClustersTool:
     def _embed_query(self, query: str) -> list[float]:
         """Embed query text using the module-level Encoder singleton."""
         encoder = _get_encoder()
-        return encoder.embed_texts([query])[0].tolist()
+        return encoder.embed_texts([query], prompt_name="query")[0].tolist()
 
 
 class GraphIdentifiersTool:
@@ -1861,7 +1865,7 @@ def _text_search_dd_paths(
             for r in ft_results:
                 pid = r["id"]
                 raw = r["score"] / max_score if max_score > 0 else 0.0
-                normalized.append({"id": pid, "score": max(raw, 0.7)})
+                normalized.append({"id": pid, "score": raw})
             return normalized
     except Exception:
         pass
