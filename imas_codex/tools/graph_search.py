@@ -35,6 +35,31 @@ from imas_codex.tools.utils import normalize_ids_filter, validate_query
 
 logger = logging.getLogger(__name__)
 
+_PHYSICS_SHORT_TERMS = frozenset(
+    {
+        "q",
+        "ip",
+        "b0",
+        "te",
+        "ne",
+        "ti",
+        "ni",
+        "psi",
+        "r",
+        "z",
+        "phi",
+        "j",
+        "e",
+        "b",
+        "v",
+        "p",
+        "rho",
+        "li",
+        "wi",
+        "we",
+    }
+)
+
 # Module-level encoder singleton — avoids re-loading the model per query
 _encoder: Any = None
 _encoder_lock: Any = None
@@ -211,7 +236,11 @@ class GraphSearchTool:
 
         # --- Path segment boost ---
         # Boost paths whose segments match query words for better relevance
-        query_words = [w.lower() for w in query.split() if len(w) > 2]
+        query_words = [
+            w.lower()
+            for w in query.split()
+            if len(w) > 2 or w.lower() in _PHYSICS_SHORT_TERMS
+        ]
         if query_words:
             for pid in scores:
                 segments = pid.lower().split("/")
@@ -1779,7 +1808,9 @@ def _text_search_dd_paths(
     CONTAINS matching. Filters out generic metadata paths.
     """
     query_lower = query.lower()
-    query_words = [w for w in query_lower.split() if len(w) > 2]
+    query_words = [
+        w for w in query_lower.split() if len(w) > 2 or w in _PHYSICS_SHORT_TERMS
+    ]
 
     where_parts = ["NOT (p)-[:DEPRECATED_IN]->(:DDVersion)", "p.node_category = 'data'"]
     # Cap CONTAINS fallback to avoid full scans on large graphs
