@@ -15,7 +15,6 @@ from fastmcp import FastMCP
 from imas_codex.graph.client import GraphClient
 from imas_codex.providers import MCPProvider
 
-from .base import BaseTool
 from .graph_search import (
     GraphClustersTool,
     GraphIdentifiersTool,
@@ -106,7 +105,6 @@ class Tools(MCPProvider):
 
 
 __all__ = [
-    "BaseTool",
     "GraphSearchTool",
     "GraphPathTool",
     "GraphListTool",
