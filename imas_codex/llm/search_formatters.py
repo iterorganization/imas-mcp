@@ -1052,7 +1052,7 @@ def format_cluster_report(result: Any) -> str:
     return "\n".join(parts)
 
 
-def format_search_imas_report(result: Any, cluster_result: Any | None = None) -> str:
+def format_search_dd_report(result: Any, cluster_result: Any | None = None) -> str:
     """Format SearchPathsResult + optional clusters into a combined report.
 
     This is the typed-result version of format_imas_report(), used when
@@ -1150,7 +1150,7 @@ def format_search_imas_report(result: Any, cluster_result: Any | None = None) ->
 
 
 def format_path_context_report(result: dict[str, Any]) -> str:
-    """Format get_imas_path_context result into readable text."""
+    """Format get_dd_path_context result into readable text."""
     tool_error = _format_tool_error(result)
     if tool_error:
         return tool_error
@@ -1221,7 +1221,7 @@ def format_path_context_report(result: dict[str, Any]) -> str:
 
 
 def format_structure_report(result: dict[str, Any]) -> str:
-    """Format analyze_imas_structure result into readable text."""
+    """Format analyze_dd_structure result into readable text."""
     tool_error = _format_tool_error(result)
     if tool_error:
         return tool_error
@@ -1429,5 +1429,41 @@ def format_cocos_fields_report(result: Any) -> str:
             ids = f.get("ids", "")
             parts.append(f"  - `{path}` ({ids})")
         parts.append("")
+
+    return "\n".join(parts)
+
+
+def format_dd_changelog_report(result: Any) -> str:
+    """Format get_dd_changelog result into readable text."""
+    err = _format_tool_error(result)
+    if err:
+        return err
+
+    parts: list[str] = []
+    header = "## DD Path Volatility Ranking"
+    ids_filter = result.get("ids_filter")
+    if ids_filter:
+        header += f" (IDS: {ids_filter})"
+    version_range = result.get("version_range")
+    if version_range:
+        vr = version_range
+        header += f" ({vr.get('from', '')} → {vr.get('to', '')})"
+    parts.append(header)
+    parts.append(
+        f"\nTotal: {result.get('total', 0)} paths (limit {result.get('limit', 50)})\n"
+    )
+
+    for row in result.get("results", []):
+        path = row.get("path", "")
+        score = row.get("volatility_score", 0)
+        changes = row.get("change_count", 0)
+        types = row.get("change_types", [])
+        renamed = row.get("was_renamed", 0)
+        line = f"  - `{path}` — score={score}, changes={changes}"
+        if types:
+            line += f", types=[{', '.join(types)}]"
+        if renamed:
+            line += " (renamed)"
+        parts.append(line)
 
     return "\n".join(parts)

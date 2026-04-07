@@ -106,7 +106,6 @@ class TestToolMethodExistence:
             "search_imas_paths",
             "check_imas_paths",
             "fetch_imas_paths",
-            "fetch_error_fields",
             "list_imas_paths",
             "get_imas_overview",
             "search_imas_clusters",

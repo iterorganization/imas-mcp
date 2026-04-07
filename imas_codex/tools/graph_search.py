@@ -1717,7 +1717,6 @@ class GraphStructureTool:
             **dd_params,
         )
 
-        # Group by transformation type
         grouped: dict[str, list[dict]] = {}
         for row in rows:
             tt = row["transformation_type"]

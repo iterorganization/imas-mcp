@@ -1212,8 +1212,8 @@ def _push_tag(tag: str, remote: str, dry_run: bool) -> None:
 @click.option(
     "--remote",
     type=click.Choice(["origin", "upstream"]),
-    default="origin",
-    help="Target remote for git tag push (default: origin).",
+    default="upstream",
+    help="Target remote for git tag push (default: upstream).",
 )
 @click.option(
     "--skip-git",
