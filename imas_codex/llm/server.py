@@ -2504,6 +2504,11 @@ class AgentsServer:
 
             tools = _get_imas_tools(semantic_search=True)
 
+            if physics_domain is not None or lifecycle_filter is not None:
+                logger.debug(
+                    "physics_domain/lifecycle_filter not yet implemented in backend, ignoring"
+                )
+
             # Run path search and cluster search in parallel — they are
             # independent operations sharing the same encoder singleton.
             def _path_search():
@@ -2515,8 +2520,7 @@ class AgentsServer:
                         facility=facility,
                         include_version_context=include_version_context,
                         dd_version=dd_version,
-                        physics_domain=physics_domain,
-                        lifecycle_filter=lifecycle_filter,
+                        # physics_domain and lifecycle_filter not yet implemented in backend
                     )
                 )
 
@@ -2608,6 +2612,10 @@ class AgentsServer:
             """
             from imas_codex.llm.search_formatters import format_fetch_paths_report
 
+            if include_children:
+                logger.debug(
+                    "include_children not yet implemented in backend, ignoring"
+                )
             tools = _get_imas_tools()
             result = _run_async(
                 tools.fetch_dd_paths(
@@ -2615,7 +2623,7 @@ class AgentsServer:
                     ids=ids,
                     dd_version=dd_version,
                     include_version_history=include_version_history,
-                    include_children=include_children,
+                    # include_children not yet implemented in backend
                 )
             )
             return format_fetch_paths_report(result)
@@ -2668,6 +2676,14 @@ class AgentsServer:
             """
             from imas_codex.llm.search_formatters import format_list_report
 
+            if (
+                physics_domain is not None
+                or node_type is not None
+                or lifecycle_filter is not None
+            ):
+                logger.debug(
+                    "physics_domain/node_type/lifecycle_filter not yet implemented in backend, ignoring"
+                )
             tools = _get_imas_tools()
             result = _run_async(
                 tools.list_dd_paths(
@@ -2675,9 +2691,7 @@ class AgentsServer:
                     leaf_only=leaf_only,
                     max_paths=max_paths,
                     dd_version=dd_version,
-                    physics_domain=physics_domain,
-                    node_type=node_type,
-                    lifecycle_filter=lifecycle_filter,
+                    # physics_domain, node_type, lifecycle_filter not yet implemented in backend
                 )
             )
             return format_list_report(result)
@@ -2702,12 +2716,16 @@ class AgentsServer:
             """
             from imas_codex.llm.search_formatters import format_overview_report
 
+            if include_unit_stats:
+                logger.debug(
+                    "include_unit_stats not yet implemented in backend, ignoring"
+                )
             tools = _get_imas_tools()
             result = _run_async(
                 tools.get_dd_overview(
                     query=query,
                     dd_version=dd_version,
-                    include_unit_stats=include_unit_stats,
+                    # include_unit_stats not yet implemented in backend
                 )
             )
             return format_overview_report(result)
