@@ -1270,13 +1270,14 @@ class GraphIdentifiersTool:
         "Get IMAS identifier/enumeration schemas. "
         "These define valid values for typed fields like coordinate systems, "
         "probe types, and grid types. "
-        "query: Optional filter (e.g., 'coordinate' or 'magnetics'). "
-        "dd_version: Filter by DD major version (e.g., 3 or 4). None returns all versions."
+        "query: Optional filter (e.g., 'coordinate', 'grid_type', 'magnetics'). "
+        "Supports multi-word queries with OR logic: 'coordinate transport'. "
+        "Underscores are treated as word separators: 'grid_type' matches schemas "
+        "containing 'grid' or 'type'."
     )
     async def get_dd_identifiers(
         self,
         query: str | None = None,
-        dd_version: int | None = None,
         ctx: Context | None = None,
     ) -> GetIdentifiersResult:
         """Get identifier schemas from graph.
@@ -1285,7 +1286,7 @@ class GraphIdentifiersTool:
         1. Vector similarity search on enriched description embeddings
         2. Keyword matching on name, description, keywords, and options
 
-        Results from both strategies are merged (vector matches first).
+        Results from both strategies are merged, then ranked by relevance.
         """
         if query:
             return self._search_identifiers(query)
@@ -1318,26 +1319,82 @@ class GraphIdentifiersTool:
             },
         )
 
+    @staticmethod
+    def _tokenize_query(query: str) -> list[str]:
+        """Split query into keywords on underscores, commas, and whitespace."""
+        import re
+
+        return [kw for kw in re.split(r"[_\s,]+", query.strip().lower()) if kw]
+
+    @staticmethod
+    def _score_keyword_match(
+        keywords: list[str],
+        original_query: str,
+        name: str,
+        description: str,
+        parsed_options: list[dict],
+        schema_keywords: list[str],
+    ) -> int:
+        """Score a schema against query keywords with tiered relevance.
+
+        Scoring tiers (higher = more relevant):
+        - 6: exact original query substring in name
+        - 5: normalized query (spaces for underscores) in name
+        - 4: all keywords match name
+        - 3: keyword in name
+        - 2: keyword in description or schema keywords
+        - 1: keyword in option names/descriptions
+        """
+        score = 0
+        query_lower = original_query.lower()
+        name_lower = name.lower()
+        desc_lower = description.lower()
+
+        # Tier 6: exact original query in name
+        if query_lower in name_lower:
+            score += 6
+
+        # Tier 5: normalized query (underscores → spaces) in name
+        normalized = query_lower.replace("_", " ")
+        name_spaced = name_lower.replace("_", " ")
+        if normalized in name_spaced:
+            score += 5
+
+        # Tier 4: all keywords match name
+        if all(kw in name_lower for kw in keywords):
+            score += 4
+
+        # Per-keyword scoring
+        for kw in keywords:
+            if kw in name_lower:
+                score += 3
+            if kw in desc_lower:
+                score += 2
+            if any(kw in skw.lower() for skw in schema_keywords):
+                score += 2
+            # Tier 1: keyword in parsed option names/descriptions
+            for opt in parsed_options:
+                opt_name = (opt.get("name") or "").lower()
+                opt_desc = (opt.get("description") or "").lower()
+                if kw in opt_name or kw in opt_desc:
+                    score += 1
+                    break  # one match per keyword is enough
+
+        return score
+
     def _search_identifiers(self, query: str) -> GetIdentifiersResult:
         """Search identifier schemas by vector similarity + keyword match."""
+        keywords = self._tokenize_query(query)
+        if not keywords:
+            return self._list_all_identifiers()
+
         seen: set[str] = set()
-        schemas: list[dict] = []
+        scored: list[tuple[dict, int]] = []
 
         # Strategy 1: Vector similarity search
         try:
-            from imas_codex.embeddings.config import EncoderConfig
-            from imas_codex.embeddings.encoder import Encoder
-            from imas_codex.settings import (
-                get_embedding_dimension,
-                get_embedding_model,
-            )
-
-            model_name = get_embedding_model()
-            dim = get_embedding_dimension()
-            encoder = Encoder(
-                config=EncoderConfig(model_name=model_name, dimension=dim)
-            )
-            query_embedding = encoder.encode([query])[0].tolist()
+            encoder = _get_encoder()
+            query_embedding = encoder.embed_texts([query])[0].tolist()
 
             vector_results = self._gc.query(
                 """
@@ -1362,9 +1419,21 @@ class GraphIdentifiersTool:
                 name = r["name"]
                 if name not in seen:
                     seen.add(name)
-                    schemas.append(self._format_schema(r))
-        except Exception:
-            pass  # Vector index may not exist yet
+                    schema = self._format_schema(r)
+                    # Vector matches get a bonus on top of keyword score
+                    kw_score = self._score_keyword_match(
+                        keywords,
+                        query,
+                        name,
+                        r.get("description") or "",
+                        schema.get("options") or [],
+                        r.get("keywords") or [],
+                    )
+                    scored.append((schema, kw_score + 10))
+        except Exception as exc:
+            # Vector search is optional — log and fall through to keyword matching.
+            # Expected failures: EmbeddingBackendError, ConnectionError, missing index.
+            logger.debug("Vector search unavailable for identifiers: %s", exc)
 
         # Strategy 2: Keyword matching on remaining schemas
         keyword_results = self._gc.query(
@@ -1378,20 +1447,27 @@ class GraphIdentifiersTool:
             ORDER BY s.name
             """
         )
-        query_lower = query.lower()
         for r in keyword_results or []:
             name = r["name"]
             if name in seen:
                 continue
-            name_match = query_lower in (name or "").lower()
-            desc_match = query_lower in (r["description"] or "").lower()
-            opts_match = query_lower in (r["options"] or "").lower()
-            kw_match = any(
-                query_lower in kw.lower() for kw in (r.get("keywords") or [])
+
+            schema = self._format_schema(r)
+            kw_score = self._score_keyword_match(
+                keywords,
+                query,
+                name,
+                r.get("description") or "",
+                schema.get("options") or [],
+                r.get("keywords") or [],
             )
-            if name_match or desc_match or opts_match or kw_match:
+            if kw_score > 0:
                 seen.add(name)
-                schemas.append(self._format_schema(r))
+                scored.append((schema, kw_score))
+
+        # Sort by score descending
+        scored.sort(key=lambda x: x[1], reverse=True)
+        schemas = [s for s, _ in scored]
 
         total_options = sum(s["option_count"] for s in schemas)
         return GetIdentifiersResult(

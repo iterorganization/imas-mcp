@@ -2747,7 +2747,6 @@ class AgentsServer:
         @self.mcp.tool()
         def get_dd_identifiers(
             query: str | None = None,
-            dd_version: int | None = None,
         ) -> str:
             """Browse IMAS enumeration/identifier schemas and their allowed values. Use to find valid options for typed fields like coordinate systems, grid types, or probe types.
 
@@ -2755,7 +2754,6 @@ class AgentsServer:
 
             Args:
                 query: Optional keyword to filter schema names (e.g. "coordinate", "grid_type", "magnetics"). Default: list all schemas.
-                dd_version: Filter by DD major version (3 or 4). Default: latest version.
 
             Returns:
                 Formatted text report listing each identifier schema with its allowed name/index/description options.
@@ -2763,11 +2761,7 @@ class AgentsServer:
             from imas_codex.llm.search_formatters import format_identifiers_report
 
             tools = _get_imas_tools()
-            result = _run_async(
-                tools.identifiers_tool.get_dd_identifiers(
-                    query=query, dd_version=dd_version
-                )
-            )
+            result = _run_async(tools.identifiers_tool.get_dd_identifiers(query=query))
             return format_identifiers_report(result)
 
         @self.mcp.tool()
