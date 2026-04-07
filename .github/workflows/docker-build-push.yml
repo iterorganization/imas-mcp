@@ -631,3 +631,17 @@ jobs:
           subject-name: ${{ env.GHCR_REGISTRY }}/${{ env.IMAGE_NAME }}
           subject-digest: ${{ steps.build-release.outputs.digest }}
           push-to-registry: true
+
+      - name: Trigger Azure Web App deployment
+        if: >-
+          github.event_name != 'pull_request'
+          && startsWith(github.ref, 'refs/tags/v')
+          && secrets.AZURE_WEBAPP_WEBHOOK != ''
+        run: |
+          echo "Triggering Azure Web App deployment webhook..."
+          STATUS=$(curl -sf -o /dev/null -w '%{http_code}' -X POST "${{ secrets.AZURE_WEBAPP_WEBHOOK }}" 2>&1) || true
+          if [ "$STATUS" = "200" ] || [ "$STATUS" = "204" ]; then
+            echo "✅ Webhook triggered successfully (HTTP $STATUS)"
+          else
+            echo "⚠️ Webhook returned HTTP $STATUS — Web App may need manual restart"
+          fi
