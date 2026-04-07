@@ -87,17 +87,26 @@ jobs:
           echo "Deleting RC images from ACR..."
           IFS=',' read -ra TAGS <<< "${{ steps.list-rc.outputs.tags }}"
           
+          DELETED=0
+          SKIPPED=0
           for TAG in "${TAGS[@]}"; do
-            echo "Deleting: $IMAGE_NAME:$TAG"
-            az acr repository delete \
+            echo "Untagging: $IMAGE_NAME:$TAG"
+            # Use untag (not delete) to remove only the tag reference.
+            # delete --image removes the entire manifest, which destroys
+            # ALL tags sharing that manifest (e.g., latest, latest-rc).
+            if az acr repository untag \
               --name $ACR_NAME \
               --image "$IMAGE_NAME:$TAG" \
               --username "$ACR_USERNAME" \
-              --password "$ACR_PASSWORD" \
-              --yes
+              --password "$ACR_PASSWORD" 2>/dev/null; then
+              DELETED=$((DELETED + 1))
+            else
+              echo "  ⚠ Tag $TAG not found or already removed"
+              SKIPPED=$((SKIPPED + 1))
+            fi
           done
           
-          echo "✓ RC image cleanup complete"
+          echo "✓ RC tag cleanup complete ($DELETED removed, $SKIPPED skipped)"
 
       - name: Dry run summary
         if: github.event_name == 'workflow_dispatch' && inputs.dry_run == 'true'

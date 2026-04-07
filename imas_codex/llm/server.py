@@ -1155,12 +1155,15 @@ def _init_repl() -> dict[str, Any]:
             Overview with IDS list, physics domains, statistics
         """
         try:
+            if include_unit_stats:
+                logger.debug(
+                    "include_unit_stats not yet implemented in backend, ignoring"
+                )
             tools = _get_imas_tools()
             result = _run_async(
                 tools.get_dd_overview(
                     query=query_text,
                     dd_version=dd_version,
-                    include_unit_stats=include_unit_stats,
                 )
             )
             return str(result)
