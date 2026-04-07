@@ -1049,7 +1049,7 @@ def _init_repl() -> dict[str, Any]:
         try:
             tools = _get_imas_tools(semantic_search=True)
             result = _run_async(
-                tools.search_dd_paths(
+                tools.search_tool.search_dd_paths(
                     query=query_text,
                     ids_filter=ids_filter,
                     max_results=max_results,
@@ -1083,7 +1083,7 @@ def _init_repl() -> dict[str, Any]:
         try:
             tools = _get_imas_tools()
             result = _run_async(
-                tools.fetch_dd_paths(paths=paths, dd_version=dd_version)
+                tools.path_tool.fetch_dd_paths(paths=paths, dd_version=dd_version)
             )
             return str(result)
         except Exception as e:
@@ -1109,7 +1109,7 @@ def _init_repl() -> dict[str, Any]:
         try:
             tools = _get_imas_tools()
             result = _run_async(
-                tools.list_dd_paths(
+                tools.list_tool.list_dd_paths(
                     paths=paths,
                     leaf_only=leaf_only,
                     max_paths=max_paths,
@@ -1133,7 +1133,7 @@ def _init_repl() -> dict[str, Any]:
         try:
             tools = _get_imas_tools()
             result = _run_async(
-                tools.check_dd_paths(paths=paths, dd_version=dd_version)
+                tools.path_tool.check_dd_paths(paths=paths, dd_version=dd_version)
             )
             return str(result)
         except Exception as e:
@@ -1161,7 +1161,7 @@ def _init_repl() -> dict[str, Any]:
                 )
             tools = _get_imas_tools()
             result = _run_async(
-                tools.get_dd_overview(
+                tools.overview_tool.get_dd_overview(
                     query=query_text,
                     dd_version=dd_version,
                 )
@@ -1188,7 +1188,7 @@ def _init_repl() -> dict[str, Any]:
         try:
             tools = _get_imas_tools()
             result = _run_async(
-                tools.get_dd_path_context(
+                tools.path_context_tool.get_dd_path_context(
                     path=path,
                     relationship_types=relationship_types,
                     dd_version=dd_version,
@@ -1216,7 +1216,7 @@ def _init_repl() -> dict[str, Any]:
         try:
             tools = _get_imas_tools()
             result = _run_async(
-                tools.export_imas_ids(
+                tools.structure_tool.export_imas_ids(
                     ids_name=ids_name,
                     leaf_only=leaf_only,
                     dd_version=dd_version,
@@ -1244,7 +1244,7 @@ def _init_repl() -> dict[str, Any]:
         try:
             tools = _get_imas_tools()
             result = _run_async(
-                tools.export_imas_domain(
+                tools.structure_tool.export_imas_domain(
                     domain=domain,
                     ids_filter=ids_filter,
                     dd_version=dd_version,
@@ -1823,16 +1823,18 @@ class AgentsServer:
             f"MCP server ready ({mode}) with {tool_count} tools and {len(self._prompts)} prompts"
         )
 
-        # Pre-warm the embedding model in a background thread so the first
-        # search_dd_paths call doesn't pay the 30s+ cold-start penalty.
-        # Import Encoder directly to avoid circular import through tools/__init__.
+        # Pre-warm heavy imports in a background thread so the first
+        # search_dd_paths call doesn't pay the full cold-start penalty.
+        # Only imports modules — does NOT load the model, to avoid OOM
+        # from two concurrent model instances on memory-constrained containers.
         def _warmup_encoder():
             try:
-                from imas_codex.embeddings.encoder import Encoder
+                import torch  # noqa: F401
+                from sentence_transformers import SentenceTransformer  # noqa: F401
 
-                encoder = Encoder()
-                encoder.embed_texts(["warmup"])
-                logger.info("Encoder warmup complete")
+                from imas_codex.embeddings.encoder import Encoder  # noqa: F401
+
+                logger.info("Encoder warmup complete (imports only)")
             except Exception as e:
                 logger.warning(
                     f"Encoder warmup failed (will retry on first query): {e}"
@@ -2523,7 +2525,7 @@ class AgentsServer:
             # independent operations sharing the same encoder singleton.
             def _path_search():
                 return _run_async(
-                    tools.search_dd_paths(
+                    tools.search_tool.search_dd_paths(
                         query=query,
                         ids_filter=ids_filter,
                         max_results=k,
@@ -2594,7 +2596,9 @@ class AgentsServer:
 
             tools = _get_imas_tools()
             result = _run_async(
-                tools.check_dd_paths(paths=paths, ids=ids, dd_version=dd_version)
+                tools.path_tool.check_dd_paths(
+                    paths=paths, ids=ids, dd_version=dd_version
+                )
             )
             return format_check_report(result)
 
@@ -2628,7 +2632,7 @@ class AgentsServer:
                 )
             tools = _get_imas_tools()
             result = _run_async(
-                tools.fetch_dd_paths(
+                tools.path_tool.fetch_dd_paths(
                     paths=paths,
                     ids=ids,
                     dd_version=dd_version,
@@ -2654,7 +2658,7 @@ class AgentsServer:
             """
             tools = _get_imas_tools()
             result = _run_async(
-                tools.fetch_dd_error_fields(path=path, dd_version=dd_version)
+                tools.path_tool.fetch_dd_error_fields(path=path, dd_version=dd_version)
             )
             return _format_error_fields_report(result)
 
@@ -2696,7 +2700,7 @@ class AgentsServer:
                 )
             tools = _get_imas_tools()
             result = _run_async(
-                tools.list_dd_paths(
+                tools.list_tool.list_dd_paths(
                     paths=paths,
                     leaf_only=leaf_only,
                     max_paths=max_paths,
@@ -2732,7 +2736,7 @@ class AgentsServer:
                 )
             tools = _get_imas_tools()
             result = _run_async(
-                tools.get_dd_overview(
+                tools.overview_tool.get_dd_overview(
                     query=query,
                     dd_version=dd_version,
                     # include_unit_stats not yet implemented in backend
@@ -2760,7 +2764,9 @@ class AgentsServer:
 
             tools = _get_imas_tools()
             result = _run_async(
-                tools.get_dd_identifiers(query=query, dd_version=dd_version)
+                tools.identifiers_tool.get_dd_identifiers(
+                    query=query, dd_version=dd_version
+                )
             )
             return format_identifiers_report(result)
 
@@ -2827,7 +2833,7 @@ class AgentsServer:
 
             tools = _get_imas_tools()
             result = _run_async(
-                tools.get_dd_path_context(
+                tools.path_context_tool.get_dd_path_context(
                     path=path,
                     relationship_types=relationship_types,
                     max_results=max_results,
@@ -2858,7 +2864,7 @@ class AgentsServer:
 
             tools = _get_imas_tools()
             result = _run_async(
-                tools.export_imas_ids(
+                tools.structure_tool.export_imas_ids(
                     ids_name=ids_name,
                     leaf_only=leaf_only,
                     dd_version=dd_version,
@@ -2886,7 +2892,7 @@ class AgentsServer:
 
             tools = _get_imas_tools()
             result = _run_async(
-                tools.export_imas_domain(
+                tools.structure_tool.export_imas_domain(
                     domain=domain,
                     ids_filter=ids_filter,
                     dd_version=dd_version,
@@ -2916,7 +2922,7 @@ class AgentsServer:
 
             tools = _get_imas_tools()
             result = _run_async(
-                tools.get_dd_cocos_fields(
+                tools.structure_tool.get_cocos_fields(
                     transformation_type=transformation_type,
                     ids_filter=ids_filter,
                     dd_version=dd_version,
@@ -2959,7 +2965,7 @@ class AgentsServer:
             """
             tools = _get_imas_tools()
             result = _run_async(
-                tools.get_dd_version_context(
+                tools.version_tool.get_dd_version_context(
                     paths=paths,
                     change_type_filter=change_type_filter,
                     ids_filter=ids_filter,
@@ -2978,7 +2984,7 @@ class AgentsServer:
                 Formatted text report with current version, version count, available version range, and ordered version chain.
             """
             tools = _get_imas_tools()
-            result = _run_async(tools.get_dd_versions())
+            result = _run_async(tools.version_tool.get_dd_versions())
             return _format_dd_versions_report(result)
 
         @self.mcp.tool()
@@ -3008,7 +3014,7 @@ class AgentsServer:
 
             tools = _get_imas_tools()
             result = _run_async(
-                tools.get_dd_changelog(
+                tools.version_tool.get_dd_changelog(
                     ids_filter=ids_filter,
                     from_version=from_version,
                     to_version=to_version,
