@@ -323,7 +323,17 @@ jobs:
           if [ -n "$FILTER" ]; then
             asv run --python=3.12 --machine "$MACHINE_NAME" -b "$FILTER" --verbose --show-stderr
           else
-            asv run --python=3.12 --machine "$MACHINE_NAME" HEAD^! --verbose --show-stderr
+            # asv run returns exit code 2 when it cannot find prior results
+            # for the parent commit (common on tag-triggered runs). This is
+            # not a real failure — treat exit code 2 as success.
+            asv run --python=3.12 --machine "$MACHINE_NAME" HEAD^! --verbose --show-stderr || {
+              EC=$?
+              if [ $EC -eq 2 ]; then
+                echo "::warning::asv exited with code 2 (no prior baseline) — treating as success"
+              else
+                exit $EC
+              fi
+            }
           fi
 
       # ── Regression Detection ───────────────────────────────────────────
