@@ -1825,11 +1825,18 @@ class AgentsServer:
 
         # Pre-warm the embedding model in a background thread so the first
         # search_dd_paths call doesn't pay the 30s+ cold-start penalty.
-        # This does not block server startup.
+        # Import Encoder directly to avoid circular import through tools/__init__.
         def _warmup_encoder():
-            from imas_codex.tools.graph_search import warmup_encoder
+            try:
+                from imas_codex.embeddings.encoder import Encoder
 
-            warmup_encoder()
+                encoder = Encoder()
+                encoder.embed_texts(["warmup"])
+                logger.info("Encoder warmup complete")
+            except Exception as e:
+                logger.warning(
+                    f"Encoder warmup failed (will retry on first query): {e}"
+                )
 
         threading.Thread(
             target=_warmup_encoder, daemon=True, name="encoder-warmup"
