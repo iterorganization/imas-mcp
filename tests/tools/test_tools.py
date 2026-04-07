@@ -26,8 +26,9 @@ class TestToolsComposition:
         """Test all tools have consistent interfaces and can be called."""
         expected_tools = mcp_test_context["expected_tools"]
 
-        for tool_name in expected_tools:
-            tool_method = getattr(tools, tool_name)
+        for sub_tool_name, tool_name in expected_tools:
+            sub_tool = getattr(tools, sub_tool_name)
+            tool_method = getattr(sub_tool, tool_name)
             assert callable(tool_method)
 
             # All tools should be async methods
@@ -36,7 +37,9 @@ class TestToolsComposition:
     @pytest.mark.asyncio
     async def test_search_tool_interface(self, tools):
         """Test search tool interface and basic functionality."""
-        result = await tools.search_dd_paths(query="plasma temperature", max_results=5)
+        result = await tools.search_tool.search_dd_paths(
+            query="plasma temperature", max_results=5
+        )
 
         assert isinstance(result, SearchPathsResult)
         assert hasattr(result, "hits")
@@ -48,7 +51,7 @@ class TestToolsComposition:
     @pytest.mark.asyncio
     async def test_overview_tool_interface(self, tools):
         """Test overview tool interface and basic functionality."""
-        result = await tools.get_dd_overview()
+        result = await tools.overview_tool.get_dd_overview()
 
         # Test interface contract
         assert isinstance(result, GetOverviewResult)
@@ -61,7 +64,9 @@ class TestToolsComposition:
     async def test_clusters_tool_interface(self, tools, mcp_test_context):
         """Test clusters tool interface and basic functionality."""
         ids_name = mcp_test_context["test_ids"]
-        result = await tools.search_dd_clusters(query=f"{ids_name}/profiles_1d/time")
+        result = await tools.clusters_tool.search_dd_clusters(
+            query=f"{ids_name}/profiles_1d/time"
+        )
 
         # Test interface contract - accept either dict result or ToolError
         assert isinstance(result, dict | ToolError)
@@ -73,7 +78,7 @@ class TestToolsComposition:
     @pytest.mark.asyncio
     async def test_identifiers_tool_interface(self, tools, mcp_test_context):
         """Test identifiers tool interface and basic functionality."""
-        result = await tools.get_dd_identifiers()
+        result = await tools.identifiers_tool.get_dd_identifiers()
 
         # Test interface contract
         assert isinstance(result, GetIdentifiersResult)
@@ -88,7 +93,7 @@ class TestToolsErrorHandling:
     async def test_search_tool_invalid_parameters(self, tools):
         """Test search tool handles invalid parameters gracefully."""
         # Test with invalid max_results — tool handles gracefully
-        result = await tools.search_dd_paths(query="test", max_results=-1)
+        result = await tools.search_tool.search_dd_paths(query="test", max_results=-1)
         assert isinstance(result, SearchPathsResult | ToolError)
 
 
@@ -99,11 +104,11 @@ class TestToolsParameterValidation:
     async def test_search_tool_parameter_validation(self, tools):
         """Test search tool parameter validation."""
         # Test required parameter
-        result = await tools.search_dd_paths(query="test")
+        result = await tools.search_tool.search_dd_paths(query="test")
         assert isinstance(result, SearchPathsResult)
 
         # Test optional parameters
-        result = await tools.search_dd_paths(
+        result = await tools.search_tool.search_dd_paths(
             query="test", max_results=10, ids_filter=["core_profiles"]
         )
         assert isinstance(result, SearchPathsResult)

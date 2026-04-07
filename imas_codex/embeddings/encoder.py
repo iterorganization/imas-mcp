@@ -605,12 +605,13 @@ class Encoder:
             model_kwargs["low_cpu_mem_usage"] = True
         else:
             # Qwen3-Embedding stores weights as bfloat16 in safetensors.
-            # On CPU-only deployments (Docker/Azure), loading bfloat16
-            # weights without explicit dtype can trigger meta-device
-            # lazy loading, failing with "Cannot copy out of meta tensor".
-            # Force float32 and disable low-memory loading to ensure
-            # weights are loaded eagerly onto CPU.
-            model_kwargs["dtype"] = torch.float32
+            # On CPU-only deployments (Docker/Azure), loading without an
+            # explicit dtype can trigger meta-device lazy loading, failing
+            # with "Cannot copy out of meta tensor".  Use bfloat16 to
+            # match the native weight format (no conversion, ~1.2 GB for
+            # 0.6B params) — float32 would double memory and OOM on
+            # constrained Azure containers.
+            model_kwargs["dtype"] = torch.bfloat16
             model_kwargs["low_cpu_mem_usage"] = False
 
         try:

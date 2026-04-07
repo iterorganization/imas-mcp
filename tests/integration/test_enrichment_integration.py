@@ -218,7 +218,7 @@ class TestToolsDelegationLive:
     @pytest.mark.asyncio
     async def test_fetch_with_version_history(self, live_client):
         tools = self._make_tools(live_client)
-        result = await tools.fetch_dd_paths(
+        result = await tools.path_tool.fetch_dd_paths(
             "equilibrium/time_slice/profiles_1d/psi",
             include_version_history=True,
         )
@@ -227,7 +227,7 @@ class TestToolsDelegationLive:
     @pytest.mark.asyncio
     async def test_get_dd_version_context(self, live_client):
         tools = self._make_tools(live_client)
-        result = await tools.get_dd_version_context(
+        result = await tools.version_tool.get_dd_version_context(
             "equilibrium/time_slice/profiles_1d/psi"
         )
         assert result["total_paths"] == 1

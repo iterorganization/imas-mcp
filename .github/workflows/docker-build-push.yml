@@ -378,7 +378,7 @@ jobs:
               resolved,
               device=None,
               truncate_dim=256,
-              model_kwargs={'dtype': torch.float32, 'low_cpu_mem_usage': False},
+              model_kwargs={'dtype': torch.bfloat16, 'low_cpu_mem_usage': False},
               trust_remote_code=True,
           )
           result = model.encode(['test embedding'])
