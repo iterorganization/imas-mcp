@@ -358,13 +358,32 @@ jobs:
       - name: Verify embedding model available
         run: |
           docker exec smoke-test python -c "
+          import torch
           from sentence_transformers import SentenceTransformer
+          from huggingface_hub import try_to_load_from_cache
+          from pathlib import Path
           import os
+
           hf_home = os.environ.get('HF_HOME', '~/.cache/huggingface')
           print(f'HF_HOME={hf_home}')
-          model = SentenceTransformer('Qwen/Qwen3-Embedding-0.6B', trust_remote_code=True)
+          print(f'torch={torch.__version__}, cuda={torch.cuda.is_available()}')
+
+          # Use the same loading path as the runtime Encoder._load_model()
+          model_name = 'Qwen/Qwen3-Embedding-0.6B'
+          path = try_to_load_from_cache(model_name, 'config.json')
+          resolved = str(Path(path).parent) if path else model_name
+          print(f'Resolved path: {resolved}')
+
+          model = SentenceTransformer(
+              resolved,
+              device=None,
+              truncate_dim=256,
+              model_kwargs={'dtype': torch.float32, 'low_cpu_mem_usage': False},
+              trust_remote_code=True,
+          )
           result = model.encode(['test embedding'])
           print(f'✅ Embedding model loaded, output shape: {result.shape}')
+          assert result.shape == (1, 256), f'Expected (1, 256) but got {result.shape}'
           " || {
             echo "❌ Embedding model verification failed"
             docker logs smoke-test

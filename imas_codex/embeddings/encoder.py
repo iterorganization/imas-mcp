@@ -597,18 +597,21 @@ class Encoder:
         # Qwen3-Embedding uses custom modeling code from HuggingFace
         trust_remote = "qwen" in self.config.model_name.lower()
 
-        if device and "cuda" in device:
-            import torch
+        import torch
 
+        if device and "cuda" in device:
             # float16 for GPU — P100 doesn't support bfloat16 natively.
             model_kwargs["dtype"] = torch.float16
             model_kwargs["low_cpu_mem_usage"] = True
         else:
-            # On CPU, dtype="auto" triggers safetensors lazy loading onto meta
-            # device, then fails with "Cannot copy out of meta tensor" when
-            # materialising.  Omitting dtype lets sentence-transformers default
-            # to float32, which loads weights directly to CPU.
-            pass
+            # Qwen3-Embedding stores weights as bfloat16 in safetensors.
+            # On CPU-only deployments (Docker/Azure), loading bfloat16
+            # weights without explicit dtype can trigger meta-device
+            # lazy loading, failing with "Cannot copy out of meta tensor".
+            # Force float32 and disable low-memory loading to ensure
+            # weights are loaded eagerly onto CPU.
+            model_kwargs["dtype"] = torch.float32
+            model_kwargs["low_cpu_mem_usage"] = False
 
         try:
             cache_folder = str(self._get_cache_directory() / "models")
