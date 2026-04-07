@@ -1052,7 +1052,7 @@ def format_cluster_report(result: Any) -> str:
     return "\n".join(parts)
 
 
-def format_search_dd_report(result: Any, cluster_result: Any | None = None) -> str:
+def format_search_imas_report(result: Any, cluster_result: Any | None = None) -> str:
     """Format SearchPathsResult + optional clusters into a combined report.
 
     This is the typed-result version of format_imas_report(), used when
@@ -1100,21 +1100,6 @@ def format_search_dd_report(result: Any, cluster_result: Any | None = None) -> s
                 parts.append(f"  Introduced: DD {hit.introduced_after_version}")
             if hit.keywords:
                 parts.append(f"  Keywords: {', '.join(hit.keywords)}")
-
-            # Cluster labels
-            cluster_labels = getattr(hit, "cluster_labels", None) or []
-            if cluster_labels:
-                parts.append(f"  Clusters: {', '.join(cluster_labels)}")
-
-            # See also cross-references
-            see_also = getattr(hit, "see_also", None) or []
-            if see_also:
-                shown = see_also[:3]
-                extra = len(see_also) - len(shown)
-                refs = ", ".join(shown)
-                if extra > 0:
-                    refs += f", +{extra} more"
-                parts.append(f"  See also: {refs}")
 
             # Facility cross-references
             xref = hit.facility_xrefs or {}
@@ -1165,7 +1150,7 @@ def format_search_dd_report(result: Any, cluster_result: Any | None = None) -> s
 
 
 def format_path_context_report(result: dict[str, Any]) -> str:
-    """Format get_dd_path_context result into readable text."""
+    """Format get_imas_path_context result into readable text."""
     tool_error = _format_tool_error(result)
     if tool_error:
         return tool_error
@@ -1231,6 +1216,74 @@ def format_path_context_report(result: dict[str, Any]) -> str:
 
     if not sections:
         parts.append("No cross-IDS connections found for this path.")
+
+    return "\n".join(parts)
+
+
+def format_structure_report(result: dict[str, Any]) -> str:
+    """Format analyze_imas_structure result into readable text."""
+    tool_error = _format_tool_error(result)
+    if tool_error:
+        return tool_error
+
+    parts: list[str] = []
+    ids_name = result.get("ids_name", "")
+    dd_version = result.get("dd_version")
+
+    header = f"## IDS Structure Analysis: {ids_name}"
+    if dd_version is not None:
+        header += f" (DD v{dd_version})"
+    parts.append(header + "\n")
+
+    # Version context note when filtered
+    version_ctx = result.get("version_context")
+    if version_ctx:
+        parts.append(f"> {version_ctx['note']}")
+        dep = version_ctx.get("deprecated_in_or_before", 0)
+        ren = version_ctx.get("renamed_paths", 0)
+        if dep or ren:
+            ctx_parts = []
+            if dep:
+                ctx_parts.append(f"{dep} deprecated")
+            if ren:
+                ctx_parts.append(f"{ren} renamed")
+            parts.append(
+                f"> Version changes: {', '.join(ctx_parts)} paths in this IDS."
+            )
+        parts.append("")
+
+    parts.append(f"- Total paths: {result.get('total_paths', 0)}")
+    parts.append(f"- Leaf fields: {result.get('leaf_count', 0)}")
+    parts.append(f"- Structures: {result.get('structure_count', 0)}")
+    parts.append(f"- Max depth: {result.get('max_depth', 0)}")
+    parts.append(f"- Avg depth: {result.get('avg_depth', 0)}")
+
+    domains = result.get("physics_domains", [])
+    if domains:
+        parts.append("\n### Physics Domains")
+        for d in domains:
+            parts.append(f"  - {d['domain']}: {d['count']} paths")
+
+    types = result.get("data_types", [])
+    if types:
+        parts.append("\n### Data Types")
+        for t in types:
+            parts.append(f"  - {t['type']}: {t['count']}")
+
+    arrays = result.get("array_structures", [])
+    if arrays:
+        parts.append(f"\n### Array Structures ({len(arrays)})")
+        for a in arrays[:20]:
+            coords = ", ".join(a.get("coordinates", []))
+            parts.append(f"  - `{a['path']}` → [{coords}]")
+        if len(arrays) > 20:
+            parts.append(f"  ... and {len(arrays) - 20} more")
+
+    cocos = result.get("cocos_fields", [])
+    if cocos:
+        parts.append(f"\n### COCOS-Labeled Fields ({len(cocos)})")
+        for c in cocos:
+            parts.append(f"  - `{c['path']}` ({c['label']})")
 
     return "\n".join(parts)
 
@@ -1344,67 +1397,37 @@ def format_export_domain_report(result: Any) -> str:
     return "\n".join(parts)
 
 
-def format_cocos_fields_report(result: dict[str, Any]) -> str:
+def format_cocos_fields_report(result: Any) -> str:
     """Format get_cocos_fields result into readable text."""
-    tool_error = _format_tool_error(result)
-    if tool_error:
-        return tool_error
+    err = _format_tool_error(result)
+    if err:
+        return err
 
-    parts: list[str] = []
+    tt_map = result.get("transformation_types", {})
+    total = result.get("total_fields", 0)
+    filters = result.get("filters", {})
 
-    header = "## COCOS-Dependent Fields"
-    if result.get("ids_filter"):
-        header += f" (IDS: {result['ids_filter']})"
-    if result.get("transformation_type_filter"):
-        header += f" (type: {result['transformation_type_filter']})"
-    if result.get("dd_version"):
-        header += f" (DD v{result['dd_version']})"
-    parts.append(header)
-    parts.append(f"\nTotal: {result.get('total_count', 0)} fields\n")
+    parts = [f"## COCOS-Dependent Fields ({total} total)"]
 
-    for group in result.get("transformation_types", []):
-        tt = group["type"]
-        paths = group["paths"]
-        parts.append(f"### {tt} ({len(paths)} fields)")
-        for p in paths:
-            line = f"  - `{p['path']}`"
-            doc = p.get("documentation", "")
-            if doc:
-                line += f" — {doc[:80]}"
-            parts.append(line)
+    filter_parts = []
+    if filters.get("transformation_type"):
+        filter_parts.append(f"type={filters['transformation_type']}")
+    if filters.get("ids_filter"):
+        filter_parts.append(f"ids={filters['ids_filter']}")
+    if filters.get("dd_version"):
+        filter_parts.append(f"dd_version={filters['dd_version']}")
+    if filter_parts:
+        parts.append(f"Filters: {', '.join(filter_parts)}")
+    parts.append("")
+
+    for tt, info in sorted(tt_map.items()):
+        count = info.get("count", 0)
+        fields = info.get("fields", [])
+        parts.append(f"### {tt} ({count} fields)")
+        for f in fields:
+            path = f.get("path", "")
+            ids = f.get("ids", "")
+            parts.append(f"  - `{path}` ({ids})")
         parts.append("")
-
-    return "\n".join(parts)
-
-
-def format_dd_changelog_report(result: dict[str, Any]) -> str:
-    """Format get_dd_changelog result into readable text."""
-    tool_error = _format_tool_error(result)
-    if tool_error:
-        return tool_error
-
-    parts: list[str] = []
-    header = "## DD Path Volatility Ranking"
-    if result.get("ids_filter"):
-        header += f" (IDS: {result['ids_filter']})"
-    vr = result.get("version_range")
-    if vr:
-        header += f" ({vr.get('from', '')}–{vr.get('to', '')})"
-    parts.append(header)
-    parts.append(f"\nTop {result.get('total', 0)} most volatile paths\n")
-
-    parts.append("| Rank | Path | IDS | Changes | Types | Renamed | Score |")
-    parts.append("|------|------|-----|---------|-------|---------|-------|")
-    for i, r in enumerate(result.get("results", []), 1):
-        path = r.get("path", "")
-        ids_name = r.get("ids", "")
-        changes = r.get("change_count", 0)
-        types = ", ".join(r.get("change_types", []))
-        renamed = "✓" if r.get("was_renamed") else ""
-        score = r.get("volatility_score", 0)
-        parts.append(
-            f"| {i} | `{path}` | {ids_name} | {changes} | {types} "
-            f"| {renamed} | {score} |"
-        )
 
     return "\n".join(parts)

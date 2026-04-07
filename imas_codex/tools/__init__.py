@@ -2,8 +2,10 @@
 
 The supported IMAS DD tool surface is graph-backed and implemented via
 the Graph*Tool classes exported from graph_search.py plus VersionTool.
-Legacy file-backed IMAS tool implementations remain in the repository only
-until the clean-break removal phase and must not be wired into this provider.
+
+Callers access tool methods directly on the tool instances:
+    tools.path_tool.check_dd_paths(...)
+    tools.version_tool.get_dd_versions(...)
 """
 
 import logging
@@ -30,7 +32,13 @@ logger = logging.getLogger(__name__)
 
 
 class Tools(MCPProvider):
-    """MCP tools backed by Neo4j."""
+    """Container for graph-backed DD tool instances.
+
+    No facade methods — callers access tool instances directly:
+        tools.path_tool.check_dd_paths(...)
+        tools.search_tool.search_dd_paths(...)
+        tools.version_tool.get_dd_versions(...)
+    """
 
     _tool_instances: list = []
 
@@ -44,7 +52,6 @@ class Tools(MCPProvider):
 
         self.ids_set = ids_set
 
-        # Graph-backed IMAS DD tools are the only supported provider path.
         self.search_tool = GraphSearchTool(graph_client)
         self.path_tool = GraphPathTool(graph_client)
         self.list_tool = GraphListTool(graph_client)
@@ -96,68 +103,6 @@ class Tools(MCPProvider):
                 except AttributeError:
                     continue
         return sorted(tool_names)
-
-    # Primary method delegation — facade uses dd_ names matching
-    # the backend methods in graph_search.py and version_tool.py.
-    async def search_dd_paths(self, *args, **kwargs):
-        """Delegate to search tool."""
-        return await self.search_tool.search_dd_paths(*args, **kwargs)
-
-    async def check_dd_paths(self, *args, **kwargs):
-        """Delegate to path tool."""
-        return await self.path_tool.check_dd_paths(*args, **kwargs)
-
-    async def fetch_dd_paths(self, *args, **kwargs):
-        """Delegate to path tool."""
-        return await self.path_tool.fetch_dd_paths(*args, **kwargs)
-
-    async def list_dd_paths(self, *args, **kwargs):
-        """Delegate to list tool."""
-        return await self.list_tool.list_dd_paths(*args, **kwargs)
-
-    async def get_dd_overview(self, *args, **kwargs):
-        """Delegate to overview tool."""
-        return await self.overview_tool.get_dd_overview(*args, **kwargs)
-
-    async def get_dd_identifiers(self, *args, **kwargs):
-        """Delegate to identifiers tool."""
-        return await self.identifiers_tool.get_dd_identifiers(*args, **kwargs)
-
-    async def get_dd_path_context(self, *args, **kwargs):
-        """Delegate to path context tool."""
-        return await self.path_context_tool.get_dd_path_context(*args, **kwargs)
-
-    async def get_dd_cocos_fields(self, *args, **kwargs):
-        """Delegate to structure tool."""
-        return await self.structure_tool.get_cocos_fields(*args, **kwargs)
-
-    async def export_imas_ids(self, *args, **kwargs):
-        """Delegate to structure tool."""
-        return await self.structure_tool.export_imas_ids(*args, **kwargs)
-
-    async def export_imas_domain(self, *args, **kwargs):
-        """Delegate to structure tool."""
-        return await self.structure_tool.export_imas_domain(*args, **kwargs)
-
-    async def get_dd_versions(self, *args, **kwargs):
-        """Delegate to version tool."""
-        return await self.version_tool.get_dd_versions(*args, **kwargs)
-
-    async def search_dd_clusters(self, *args, **kwargs):
-        """Delegate to clusters tool."""
-        return await self.clusters_tool.search_dd_clusters(*args, **kwargs)
-
-    async def get_dd_version_context(self, *args, **kwargs):
-        """Delegate to version tool."""
-        return await self.version_tool.get_dd_version_context(*args, **kwargs)
-
-    async def get_dd_changelog(self, *args, **kwargs):
-        """Delegate to version tool."""
-        return await self.version_tool.get_dd_changelog(*args, **kwargs)
-
-    async def fetch_dd_error_fields(self, *args, **kwargs):
-        """Delegate to path tool."""
-        return await self.path_tool.fetch_dd_error_fields(*args, **kwargs)
 
 
 __all__ = [

@@ -1,11 +1,9 @@
-"""Regression tests for Tools facade delegation consistency.
+"""Regression tests for Tools registered tool name consistency.
 
-Ensures that every facade method on the Tools class delegates to
-a real method on its backend tool instance. Catches rename mismatches
-where the facade was renamed but the backend was not (or vice versa).
+Ensures that all expected DD tool methods exist on the backend
+tool instances and are discoverable via the Tools container.
+No facade layer — callers access tool instances directly.
 """
-
-import inspect
 
 import pytest
 
@@ -22,79 +20,103 @@ from imas_codex.tools.graph_search import (
 )
 from imas_codex.tools.version_tool import VersionTool
 
-# Canonical mapping: facade method -> (backend attribute, backend method)
-FACADE_DELEGATION_MAP = {
-    "search_dd_paths": ("search_tool", "search_dd_paths"),
-    "check_dd_paths": ("path_tool", "check_dd_paths"),
-    "fetch_dd_paths": ("path_tool", "fetch_dd_paths"),
-    "fetch_dd_error_fields": ("path_tool", "fetch_dd_error_fields"),
-    "list_dd_paths": ("list_tool", "list_dd_paths"),
-    "get_dd_overview": ("overview_tool", "get_dd_overview"),
-    "get_dd_identifiers": ("identifiers_tool", "get_dd_identifiers"),
-    "get_dd_path_context": ("path_context_tool", "get_dd_path_context"),
-    "get_dd_cocos_fields": ("structure_tool", "get_cocos_fields"),
-    "search_dd_clusters": ("clusters_tool", "search_dd_clusters"),
-    "get_dd_versions": ("version_tool", "get_dd_versions"),
-    "get_dd_version_context": ("version_tool", "get_dd_version_context"),
-    "get_dd_changelog": ("version_tool", "get_dd_changelog"),
-    "export_imas_ids": ("structure_tool", "export_imas_ids"),
-    "export_imas_domain": ("structure_tool", "export_imas_domain"),
-}
-
-# Backend class for each tool attribute
-BACKEND_CLASSES = {
-    "search_tool": GraphSearchTool,
-    "path_tool": GraphPathTool,
-    "list_tool": GraphListTool,
-    "overview_tool": GraphOverviewTool,
-    "clusters_tool": GraphClustersTool,
-    "identifiers_tool": GraphIdentifiersTool,
-    "path_context_tool": GraphPathContextTool,
-    "structure_tool": GraphStructureTool,
-    "version_tool": VersionTool,
+# Canonical mapping: tool_instance_attr -> (backend_class, expected_methods)
+TOOL_METHOD_MAP = {
+    "search_tool": (GraphSearchTool, ["search_dd_paths"]),
+    "path_tool": (
+        GraphPathTool,
+        ["check_dd_paths", "fetch_dd_paths", "fetch_dd_error_fields"],
+    ),
+    "list_tool": (GraphListTool, ["list_dd_paths"]),
+    "overview_tool": (GraphOverviewTool, ["get_dd_overview"]),
+    "clusters_tool": (GraphClustersTool, ["search_dd_clusters"]),
+    "identifiers_tool": (GraphIdentifiersTool, ["get_dd_identifiers"]),
+    "path_context_tool": (GraphPathContextTool, ["get_dd_path_context"]),
+    "structure_tool": (
+        GraphStructureTool,
+        [
+            "analyze_dd_structure",
+            "get_cocos_fields",
+            "export_imas_ids",
+            "export_imas_domain",
+        ],
+    ),
+    "version_tool": (
+        VersionTool,
+        ["get_dd_versions", "get_dd_version_context", "get_dd_changelog"],
+    ),
 }
 
 
-class TestFacadeDelegation:
-    """Verify facade methods exist and delegate to real backend methods."""
+def _all_method_params():
+    """Yield (tool_attr, class, method_name) for parametrize."""
+    for tool_attr, (cls, methods) in TOOL_METHOD_MAP.items():
+        for method in methods:
+            yield tool_attr, cls, method
 
-    @pytest.mark.parametrize("facade_method", sorted(FACADE_DELEGATION_MAP.keys()))
-    def test_facade_method_exists(self, facade_method):
-        """Every mapped facade method must exist on Tools."""
-        assert hasattr(Tools, facade_method), f"Tools.{facade_method} does not exist"
-        method = getattr(Tools, facade_method)
-        assert inspect.iscoroutinefunction(method), (
-            f"Tools.{facade_method} must be async"
-        )
+
+class TestToolMethodExistence:
+    """Verify backend tool methods exist and are async."""
 
     @pytest.mark.parametrize(
-        "facade_method,backend_info",
-        sorted(FACADE_DELEGATION_MAP.items()),
+        "tool_attr,backend_class,method_name",
+        list(_all_method_params()),
+        ids=[f"{a}.{m}" for a, _, m in _all_method_params()],
     )
-    def test_backend_method_exists(self, facade_method, backend_info):
-        """The backend method that the facade delegates to must exist."""
-        backend_attr, backend_method = backend_info
-        backend_class = BACKEND_CLASSES.get(backend_attr)
-        assert backend_class is not None, f"Unknown backend attribute: {backend_attr}"
-
-        assert hasattr(backend_class, backend_method), (
-            f"Facade {facade_method} delegates to "
-            f"{backend_attr}.{backend_method}() but "
-            f"{backend_class.__name__}.{backend_method} does not exist. "
-            f"This is a rename mismatch — check that both layers use "
-            f"consistent method names."
+    def test_backend_method_exists(self, tool_attr, backend_class, method_name):
+        """Every expected method must exist on its backend class."""
+        assert hasattr(backend_class, method_name), (
+            f"{backend_class.__name__}.{method_name} does not exist. "
+            f"Check that the method was renamed correctly."
         )
 
-    @pytest.mark.parametrize(
-        "facade_method,backend_info",
-        sorted(FACADE_DELEGATION_MAP.items()),
-    )
-    def test_facade_source_references_backend(self, facade_method, backend_info):
-        """The facade method source must reference the correct backend call."""
-        backend_attr, backend_method = backend_info
-        source = inspect.getsource(getattr(Tools, facade_method))
-        expected_call = f"self.{backend_attr}.{backend_method}"
-        assert expected_call in source, (
-            f"Tools.{facade_method} source does not contain "
-            f"'{expected_call}'. The delegation may be broken."
-        )
+    def test_no_facade_methods_on_tools(self):
+        """Tools class must not have async facade delegation methods."""
+        import inspect
+
+        facade_names = {
+            "search_dd_paths",
+            "check_dd_paths",
+            "fetch_dd_paths",
+            "list_dd_paths",
+            "get_dd_overview",
+            "get_dd_identifiers",
+            "get_dd_path_context",
+            "get_dd_cocos_fields",
+            "export_imas_ids",
+            "export_imas_domain",
+            "get_dd_versions",
+            "search_dd_clusters",
+            "get_dd_version_context",
+            "get_dd_changelog",
+            "fetch_dd_error_fields",
+        }
+        for name in facade_names:
+            if hasattr(Tools, name):
+                method = getattr(Tools, name)
+                assert not inspect.iscoroutinefunction(method), (
+                    f"Tools.{name} is an async facade method — "
+                    f"these should be removed. Callers should use "
+                    f"tools.<tool_instance>.{name}() directly."
+                )
+
+    def test_no_imas_named_methods(self):
+        """No backend tool class should have _imas_ named methods (old naming)."""
+        old_names = [
+            "search_imas_paths",
+            "check_imas_paths",
+            "fetch_imas_paths",
+            "fetch_error_fields",
+            "list_imas_paths",
+            "get_imas_overview",
+            "search_imas_clusters",
+            "get_imas_identifiers",
+            "get_imas_path_context",
+            "analyze_imas_structure",
+        ]
+        for _tool_attr, (cls, _) in TOOL_METHOD_MAP.items():
+            for old_name in old_names:
+                assert not hasattr(cls, old_name), (
+                    f"{cls.__name__} still has old method {old_name}. "
+                    f"Rename to _dd_ convention."
+                )

@@ -59,7 +59,7 @@ async def test_tools_delegate_get_dd_versions():
     ]
     tools = Tools(graph_client=gc)
 
-    result = await tools.get_dd_versions()
+    result = await tools.version_tool.get_dd_versions()
 
     assert result["current_version"] == "4.1.0"
     assert result["version_count"] == 2

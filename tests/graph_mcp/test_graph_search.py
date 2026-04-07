@@ -335,31 +335,35 @@ class TestToolsGraphMode:
     @pytest.mark.asyncio
     async def test_delegation_check_paths(self, graph_client):
         tools = self._make_tools(graph_client)
-        result = await tools.check_dd_paths("equilibrium/time_slice/profiles_1d/psi")
+        result = await tools.path_tool.check_dd_paths(
+            "equilibrium/time_slice/profiles_1d/psi"
+        )
         assert result.summary["found"] == 1
 
     @pytest.mark.asyncio
     async def test_delegation_fetch_paths(self, graph_client):
         tools = self._make_tools(graph_client)
-        result = await tools.fetch_dd_paths("equilibrium/time_slice/profiles_1d/psi")
+        result = await tools.path_tool.fetch_dd_paths(
+            "equilibrium/time_slice/profiles_1d/psi"
+        )
         assert len(result.nodes) == 1
 
     @pytest.mark.asyncio
     async def test_delegation_list_paths(self, graph_client):
         tools = self._make_tools(graph_client)
-        result = await tools.list_dd_paths("equilibrium")
+        result = await tools.list_tool.list_dd_paths("equilibrium")
         assert result.results[0].path_count > 0
 
     @pytest.mark.asyncio
     async def test_delegation_overview(self, graph_client):
         tools = self._make_tools(graph_client)
-        result = await tools.get_dd_overview()
+        result = await tools.overview_tool.get_dd_overview()
         assert len(result.available_ids) > 0
 
     @pytest.mark.asyncio
     async def test_delegation_identifiers(self, graph_client):
         tools = self._make_tools(graph_client)
-        result = await tools.get_dd_identifiers()
+        result = await tools.identifiers_tool.get_dd_identifiers()
         assert len(result.schemas) >= 1
 
 
