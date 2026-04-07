@@ -4,9 +4,6 @@ on:
   push:
     tags:
       - "v*"      # Semantic version releases (v1.0.0) and release candidates (v1.0.0-rc1)
-  pull_request:
-    branches:
-      - main
   workflow_dispatch:
 
 concurrency:
