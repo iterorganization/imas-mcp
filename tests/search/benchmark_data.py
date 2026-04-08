@@ -1722,6 +1722,42 @@ EDGE_CASE_QUERIES = [
         category="edge_case",
         notes="query with unit annotation",
     ),
+    BenchmarkQuery(
+        query_text="magnetic flux poloidal",
+        expected_paths=[
+            "equilibrium/time_slice/profiles_1d/psi",
+            "core_profiles/profiles_1d/grid/psi",
+            "core_transport/model/profiles_1d/grid_flux/psi",
+        ],
+        category="disambiguating",
+        notes="Poloidal magnetic flux should return psi profiles, not momentum transport flux",
+    ),
+    BenchmarkQuery(
+        query_text="TF coil current",
+        expected_paths=[
+            "tf/coil/current",
+            "tf/coil/current/data",
+        ],
+        category="structural",
+        notes="TF coil current should return the structure and its leaf children",
+    ),
+    BenchmarkQuery(
+        query_text="ion cyclotron heating power",
+        expected_paths=[
+            "ic_antennas/antenna/power_launched",
+            "ic_antennas/antenna",
+        ],
+        category="exact_concept",
+        notes="Ion cyclotron heating should surface ic_antennas IDS paths",
+    ),
+    BenchmarkQuery(
+        query_text="poloidal flux profile",
+        expected_paths=[
+            "equilibrium/time_slice/profiles_1d/psi",
+        ],
+        category="exact_concept",
+        notes="Poloidal flux profile is a common way to ask for psi radial profile",
+    ),
 ]
 
 # ── Assembled query sets ─────────────────────────────────────────────────────
