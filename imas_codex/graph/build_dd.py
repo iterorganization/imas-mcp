@@ -3562,12 +3562,48 @@ def _import_clusters(
                     )
                     if cl_count and cl_count[0]["cnt"] > 0:
                         count = cl_count[0]["cnt"]
+
+                        # Check if labeling/embedding is incomplete
+                        incomplete = client.query("""
+                            MATCH (c:IMASSemanticCluster)
+                            WITH count(c) AS total,
+                                 count(CASE WHEN c.label IS NULL THEN 1 END) AS unlabeled,
+                                 count(CASE WHEN c.label_embedding IS NULL
+                                       AND c.label IS NOT NULL THEN 1 END) AS unembedded
+                            RETURN total, unlabeled, unembedded
+                        """)
+                        inc = incomplete[0] if incomplete else {}
+                        unlabeled = inc.get("unlabeled", 0)
+                        unembedded = inc.get("unembedded", 0)
+
+                        if unlabeled == 0 and unembedded == 0:
+                            logger.info(
+                                "Clustering skipped — %d embedded paths unchanged "
+                                "(hash %s), %d clusters in graph (all labeled+embedded)",
+                                len(path_ids),
+                                cluster_input_hash[:8],
+                                count,
+                            )
+                            if on_progress:
+                                on_progress(count, count)
+                            return count
+
+                        # Clusters exist but labeling/embedding incomplete —
+                        # skip HDBSCAN recomputation, jump to labeling
                         logger.info(
-                            "Clustering skipped — %d embedded paths unchanged "
-                            "(hash %s), %d clusters in graph",
-                            len(path_ids),
+                            "Cluster structure unchanged (hash %s, %d clusters) "
+                            "but %d unlabeled, %d unembedded — completing",
                             cluster_input_hash[:8],
                             count,
+                            unlabeled,
+                            unembedded,
+                        )
+                        _label_unlabeled_clusters(client, batch_size=50)
+                        _embed_cluster_text(
+                            client,
+                            embedding_batch_size=256,
+                            use_rich=use_rich,
+                            force_reembed=force_reembed,
                         )
                         if on_progress:
                             on_progress(count, count)
