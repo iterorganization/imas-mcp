@@ -341,3 +341,46 @@ class TestMigrationRemovalsWhereClause:
             f"Positions: FOR_IMAS_PATH={match2_pos}, "
             f"ids_filter={ids_ref_pos}, OPTIONAL={optional_pos}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Bug: Server formatter imports must resolve.
+#
+# The MCP server lazy-imports formatter functions by name. If a formatter
+# is renamed without updating all call sites, the server returns an
+# ImportError at runtime. This test validates every formatter import used
+# by the server resolves correctly.
+# ---------------------------------------------------------------------------
+
+
+class TestServerFormatterImports:
+    """All formatter functions imported by server.py must exist."""
+
+    @pytest.mark.parametrize(
+        "func_name",
+        [
+            "format_search_dd_report",
+            "format_check_report",
+            "format_fetch_paths_report",
+            "format_list_report",
+            "format_overview_report",
+            "format_identifiers_report",
+            "format_cluster_report",
+            "format_path_context_report",
+            "format_export_ids_report",
+            "format_export_domain_report",
+            "format_cocos_fields_report",
+            "format_dd_changelog_report",
+            "format_structure_report",
+        ],
+    )
+    def test_formatter_import_resolves(self, func_name: str):
+        """Each formatter used by server.py must be importable."""
+        from imas_codex.llm import search_formatters
+
+        func = getattr(search_formatters, func_name, None)
+        assert func is not None, (
+            f"search_formatters.{func_name} not found — "
+            f"server.py imports this; renaming it breaks MCP tools"
+        )
+        assert callable(func)
