@@ -170,8 +170,8 @@ class GraphSearchTool:
         "dd_version: Filter by DD major version (e.g., 3 or 4). None returns all versions. "
         "facility: Optional facility for cross-references (e.g., 'tcv'). Returns signal, wiki, and code references. "
         "include_version_context: Include DD version change history for each result path. "
-        "include_summary_ids: Include summary IDS paths in results (default: false). "
-        "Summary IDS contains aggregate quantities from primary IDSs. "
+        "include_summary_ids: Include paths from the 'summary' IDS in results (default: false). "
+        "The summary IDS contains aggregate quantities duplicated from primary IDSs. "
         "search_mode: 'auto' (default), 'semantic', 'lexical', or 'hybrid'. "
         "response_profile: 'minimal', 'standard' (default), or 'detailed'."
     )
@@ -1160,7 +1160,8 @@ class GraphClustersTool:
         "scope: Filter by cluster scope - 'global', 'domain', or 'ids'. "
         "ids_filter: Limit to clusters containing paths from specific IDS. "
         "section_only: If true, only return clusters containing structural sections. "
-        "include_summary_ids: Include summary IDS paths in cluster member lists (default: false). "
+        "include_summary_ids: Include paths from the 'summary' IDS in cluster member lists (default: false). "
+        "The summary IDS contains aggregate quantities duplicated from primary IDSs. "
         "dd_version: Filter by DD major version (e.g., 3 or 4). None returns all versions."
     )
     async def search_dd_clusters(

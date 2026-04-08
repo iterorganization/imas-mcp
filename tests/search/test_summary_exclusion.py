@@ -58,7 +58,7 @@ class TestTextSearchSummaryExclusion:
             f"Expected no summary paths with exclude_summary=True, got: {summary_hits[:5]}"
         )
 
-    def test_text_search_include_summary_can_return_summary(self, graph_client):
+    def test_text_search_include_summary_ids_can_return_summary(self, graph_client):
         """_text_search_dd_paths with exclude_summary=False may return summary/ paths."""
         from imas_codex.tools.graph_search import _text_search_dd_paths
 
@@ -67,7 +67,7 @@ class TestTextSearchSummaryExclusion:
         )
         ids_incl = [r["id"] for r in results_incl]
         # The include run should return at least some results
-        assert ids_incl, "Expected results when include_summary_ids=False"
+        assert ids_incl, "Expected results when exclude_summary=False"
         # Summary paths should appear in the include run
         summary_in_incl = [p for p in ids_incl if p.startswith("summary/")]
         assert summary_in_incl, (
