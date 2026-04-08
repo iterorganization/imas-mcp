@@ -54,8 +54,9 @@ def write_temp_neo4j_conf(conf_dir: Path, bolt_port: int, http_port: int) -> Pat
     """Write a neo4j.conf for a temporary filtering instance.
 
     Disables authentication and binds to non-standard ports to avoid
-    conflicts with the production instance.  Memory settings sized for
-    DD-only export which runs large DETACH DELETE batches.
+    conflicts with the production instance.  Memory is kept low to
+    coexist with the production JVM within user cgroup limits — the
+    temp instance only runs batched DETACH DELETE, not query workloads.
     """
     conf_file = conf_dir / "neo4j.conf"
     conf_file.write_text(
@@ -63,10 +64,10 @@ def write_temp_neo4j_conf(conf_dir: Path, bolt_port: int, http_port: int) -> Pat
 dbms.security.auth_enabled=false
 server.bolt.listen_address=127.0.0.1:{bolt_port}
 server.http.listen_address=127.0.0.1:{http_port}
-server.memory.heap.initial_size=1g
-server.memory.heap.max_size=4g
-server.memory.pagecache.size=512m
-dbms.memory.transaction.total.max=4g
+server.memory.heap.initial_size=256m
+server.memory.heap.max_size=512m
+server.memory.pagecache.size=256m
+dbms.memory.transaction.total.max=1g
 """
     )
     return conf_file

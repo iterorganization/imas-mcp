@@ -3366,18 +3366,43 @@ class AgentsServer:
                 response["graph"] = {"status": "unavailable", "error": graph["error"]}
             else:
                 db_status = graph.get("db_status", "unavailable")
-                response["graph"] = {
+                graph_section: dict = {
                     "status": db_status,
                     "name": graph.get("graph_name"),
                     "node_count": graph.get("node_count"),
                     "relationship_count": graph.get("relationship_count"),
                 }
+                if server.dd_only:
+                    graph_section["variant"] = "dd-only"
+                elif graph.get("facilities"):
+                    graph_section["variant"] = "full"
+                response["graph"] = graph_section
+
                 if graph.get("imas_dd"):
                     response["imas_dd"] = graph["imas_dd"]
                     response["imas_dd"]["ids_count"] = graph.get("ids_count", 0)
                     response["imas_dd"]["path_count"] = graph.get("path_count", 0)
-                response["facilities"] = graph.get("facilities", [])
-                response["dd_only"] = server.dd_only
+
+                # Only show facilities when not in dd-only mode
+                if not server.dd_only:
+                    response["facilities"] = graph.get("facilities", [])
+
+            # Tool inventory
+            tool_names = sorted(
+                k.removeprefix("tool:")
+                for k in server.mcp._local_provider._components
+                if k.startswith("tool:")
+            )
+            mode_parts = []
+            if server.read_only:
+                mode_parts.append("read-only")
+            if server.dd_only:
+                mode_parts.append("dd-only")
+            response["tools"] = {
+                "count": len(tool_names),
+                "mode": ", ".join(mode_parts) if mode_parts else "read-write",
+                "available": tool_names,
+            }
 
             return JSONResponse(response)
 
