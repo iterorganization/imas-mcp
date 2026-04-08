@@ -2155,12 +2155,13 @@ class TestMultiDomainDimensionEval:
 class TestEmbedTextQuality:
     """Verify embed text generation produces dimension-appropriate format.
 
-    At dim < 512, embed text is kept concise (path + description only).
+    At dim < 512, embed text is kept concise (description only).
     At dim ≥ 512, doc excerpts and keywords are included for richer context.
+    Path prefixes are deliberately excluded from all embedding text.
     """
 
-    def test_embed_text_contains_full_path(self):
-        """Embed text should contain the full IMAS path."""
+    def test_embed_text_excludes_path(self):
+        """Embed text should NOT contain the IMAS path (path causes score compression)."""
         from imas_codex.graph.build_dd import generate_embedding_text
 
         text = generate_embedding_text(
@@ -2171,10 +2172,10 @@ class TestEmbedTextQuality:
                 "keywords": ["Ip"],
             },
         )
-        assert "equilibrium/time_slice/global_quantities/ip" in text
+        assert "equilibrium/time_slice/global_quantities/ip" not in text
 
     def test_embed_text_at_dim_256(self, monkeypatch):
-        """At dim 256, text is path + description only."""
+        """At dim 256, text is description only (no path prefix)."""
         monkeypatch.setenv("IMAS_CODEX_EMBEDDING_DIMENSION", "256")
         from imas_codex.graph.build_dd import generate_embedding_text
 
@@ -2186,16 +2187,13 @@ class TestEmbedTextQuality:
                 "keywords": ["Te", "thermal energy"],
             },
         )
-        assert (
-            text
-            == "core_profiles/profiles_1d/electrons/temperature. Electron temperature (Te) profile"
-        )
+        assert text == "Electron temperature (Te) profile"
         # Keywords and doc are excluded at dim 256
         assert "Long documentation" not in text
         assert "thermal energy" not in text
 
     def test_embed_text_at_dim_512_includes_doc(self, monkeypatch):
-        """At dim ≥ 512, doc excerpts are included."""
+        """At dim ≥ 512, doc excerpts are included (no path prefix)."""
         monkeypatch.setenv("IMAS_CODEX_EMBEDDING_DIMENSION", "512")
         from imas_codex.graph.build_dd import generate_embedding_text
 
@@ -2207,13 +2205,13 @@ class TestEmbedTextQuality:
                 "keywords": ["Te", "thermal energy"],
             },
         )
-        assert "core_profiles/profiles_1d/electrons/temperature" in text
+        assert "core_profiles/profiles_1d/electrons/temperature" not in text
         assert "Electron temperature (Te) profile" in text
         assert "Thomson scattering" in text
         assert "Te, thermal energy" in text
 
     def test_embed_text_at_dim_1024_includes_doc_and_keywords(self, monkeypatch):
-        """At dim 1024, full doc excerpt + keywords are included."""
+        """At dim 1024, full doc excerpt + keywords are included (no path prefix)."""
         monkeypatch.setenv("IMAS_CODEX_EMBEDDING_DIMENSION", "1024")
         from imas_codex.graph.build_dd import generate_embedding_text
 
@@ -2225,7 +2223,7 @@ class TestEmbedTextQuality:
                 "keywords": ["psi", "flux", "poloidal"],
             },
         )
-        assert "equilibrium/time_slice/profiles_1d/psi" in text
+        assert "equilibrium/time_slice/profiles_1d/psi" not in text
         assert "Poloidal flux profile" in text
         assert "poloidal magnetic flux function" in text
         assert "psi, flux, poloidal" in text
@@ -2243,8 +2241,8 @@ class TestEmbedTextQuality:
                 "keywords": [],
             },
         )
-        # doc == desc, so only appears once
-        assert text == "some/path. Same text"
+        # doc == desc, so only appears once (no path prefix)
+        assert text == "Same text"
 
     def test_embed_text_uses_description_over_documentation(self):
         """Prefer description; doc is only used as fallback."""
@@ -2271,11 +2269,11 @@ class TestEmbedTextQuality:
         assert text == ""
 
     def test_embed_text_fallback_to_documentation(self):
-        """When no description, use documentation as fallback."""
+        """When no description, use documentation as fallback (no path prefix)."""
         from imas_codex.graph.build_dd import generate_embedding_text
 
         text = generate_embedding_text(
             "some/path",
             {"description": "", "documentation": "Fallback doc text", "keywords": []},
         )
-        assert text == "some/path. Fallback doc text"
+        assert text == "Fallback doc text"
