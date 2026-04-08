@@ -163,8 +163,14 @@ class GraphSearchTool:
 
         # Path-like queries (contain "/") should skip expensive vector search
         # and rely on text/path matching instead.
+        # Short physics abbreviations (e.g. "ip", "q", "b0") also skip vector
+        # search: the embedding model maps them to unrelated concepts (e.g.
+        # "ip" → internet protocol) while BM25 returns exact segment matches.
         is_path_query = "/" in query and " " not in query
-        if is_path_query:
+        is_short_physics_term = " " not in query.strip() and (
+            len(query.strip()) <= 3 or query.strip().lower() in _PHYSICS_SHORT_TERMS
+        )
+        if is_path_query or is_short_physics_term:
             embedding = None
         else:
             embedding = self._embed_query(query)
@@ -220,6 +226,10 @@ class GraphSearchTool:
             text_scores[r["id"]] = round(r["score"], 4)
 
         # --- Weighted blend (preserves both signals) ---
+        # When vector search was skipped (path query or short physics term),
+        # text results use full weight (1.0) rather than the reduced TEXT_WEIGHT
+        # to avoid artificially penalising the only available signal.
+        text_only_mode = embedding is None
         _VEC_WEIGHT = 0.6
         _TEXT_WEIGHT = 0.4
         all_ids = set(vec_scores) | set(text_scores)
@@ -227,7 +237,9 @@ class GraphSearchTool:
         for pid in all_ids:
             vs = vec_scores.get(pid, 0.0)
             ts = text_scores.get(pid, 0.0)
-            if vs > 0 and ts > 0:
+            if text_only_mode:
+                scores[pid] = round(ts, 4)
+            elif vs > 0 and ts > 0:
                 scores[pid] = round(_VEC_WEIGHT * vs + _TEXT_WEIGHT * ts, 4)
             elif vs > 0:
                 scores[pid] = round(vs * _VEC_WEIGHT, 4)
@@ -1175,44 +1187,104 @@ class GraphClustersTool:
         *,
         dd_version: int | None = None,
     ) -> dict[str, Any]:
-        """Semantic search over cluster embeddings."""
-        embedding = self._embed_query(query)
-
-        scope_filter = "AND cluster.scope = $scope" if scope else ""
-        ids_filter_clause = ""
-        params: dict[str, Any] = {"embedding": embedding, "k": 10}
-        if scope:
-            params["scope"] = scope
-        if ids_filter:
-            filter_list = ids_filter if isinstance(ids_filter, list) else [ids_filter]
-            ids_filter_clause = (
-                "AND any(ids_name IN cluster.ids_names WHERE ids_name IN $ids_filter)"
-            )
-            params["ids_filter"] = filter_list
-
-        results = self._gc.query(
-            f"""
-            CALL db.index.vector.queryNodes(
-                'cluster_embedding', $k, $embedding
-            )
-            YIELD node AS cluster, score
-            WHERE score > 0.3
-            {scope_filter}
-            {ids_filter_clause}
-            OPTIONAL MATCH (member:IMASNode)-[:IN_CLUSTER]->(cluster)
-            WITH cluster, score, collect(DISTINCT member.id)[..50] AS paths
-            RETURN cluster.id AS id, cluster.label AS label,
-                   cluster.description AS description,
-                   cluster.scope AS scope, cluster.cross_ids AS cross_ids,
-                   cluster.ids_names AS ids_names,
-                   cluster.similarity_score AS similarity,
-                   score AS relevance_score, paths
-            ORDER BY relevance_score DESC
-            """,
-            **params,
+        """Semantic search over cluster embeddings with text fallback for short terms."""
+        is_short_physics_term = " " not in query.strip() and (
+            len(query.strip()) <= 3 or query.strip().lower() in _PHYSICS_SHORT_TERMS
         )
 
-        clusters = self._format_clusters(results or [], include_score=True)
+        # --- Text-based CONTAINS search (always run as supplement) ---
+        text_scope_filter = "AND cluster.scope = $scope" if scope else ""
+        text_ids_clause = ""
+        text_params: dict[str, Any] = {"text_query": query.lower()}
+        if scope:
+            text_params["scope"] = scope
+        if ids_filter:
+            filter_list = ids_filter if isinstance(ids_filter, list) else [ids_filter]
+            text_ids_clause = (
+                "AND any(ids_name IN cluster.ids_names WHERE ids_name IN $ids_filter)"
+            )
+            text_params["ids_filter"] = filter_list
+
+        text_results: list[dict[str, Any]] = (
+            self._gc.query(
+                f"""
+                MATCH (cluster:IMASSemanticCluster)
+                WHERE (toLower(cluster.label) CONTAINS $text_query
+                       OR toLower(cluster.description) CONTAINS $text_query)
+                {text_scope_filter}
+                {text_ids_clause}
+                OPTIONAL MATCH (member:IMASNode)-[:IN_CLUSTER]->(cluster)
+                WITH cluster, 0.9 AS score, collect(DISTINCT member.id)[..50] AS paths
+                RETURN cluster.id AS id, cluster.label AS label,
+                       cluster.description AS description,
+                       cluster.scope AS scope, cluster.cross_ids AS cross_ids,
+                       cluster.ids_names AS ids_names,
+                       cluster.similarity_score AS similarity,
+                       score AS relevance_score, paths
+                ORDER BY size(cluster.label) ASC
+                LIMIT 10
+                """,
+                **text_params,
+            )
+            or []
+        )
+
+        # --- Vector search (skip for short/ambiguous physics terms) ---
+        vector_results: list[dict[str, Any]] = []
+        if not is_short_physics_term:
+            embedding = self._embed_query(query)
+            scope_filter = "AND cluster.scope = $scope" if scope else ""
+            ids_filter_clause = ""
+            params: dict[str, Any] = {"embedding": embedding, "k": 10}
+            if scope:
+                params["scope"] = scope
+            if ids_filter:
+                filter_list = (
+                    ids_filter if isinstance(ids_filter, list) else [ids_filter]
+                )
+                ids_filter_clause = "AND any(ids_name IN cluster.ids_names WHERE ids_name IN $ids_filter)"
+                params["ids_filter"] = filter_list
+
+            vector_results = (
+                self._gc.query(
+                    f"""
+                    CALL db.index.vector.queryNodes(
+                        'cluster_label_embedding', $k, $embedding
+                    )
+                    YIELD node AS cluster, score
+                    WHERE score > 0.3
+                    {scope_filter}
+                    {ids_filter_clause}
+                    OPTIONAL MATCH (member:IMASNode)-[:IN_CLUSTER]->(cluster)
+                    WITH cluster, score, collect(DISTINCT member.id)[..50] AS paths
+                    RETURN cluster.id AS id, cluster.label AS label,
+                           cluster.description AS description,
+                           cluster.scope AS scope, cluster.cross_ids AS cross_ids,
+                           cluster.ids_names AS ids_names,
+                           cluster.similarity_score AS similarity,
+                           score AS relevance_score, paths
+                    ORDER BY relevance_score DESC
+                    """,
+                    **params,
+                )
+                or []
+            )
+
+        # --- Merge: text results take priority (dedup by cluster id, keep higher score) ---
+        seen: dict[str, Any] = {}
+        for r in text_results:
+            seen[r["id"]] = r
+        for r in vector_results:
+            existing = seen.get(r["id"])
+            if existing is None or (
+                r.get("relevance_score", 0) > existing.get("relevance_score", 0)
+            ):
+                seen[r["id"]] = r
+
+        merged = sorted(
+            seen.values(), key=lambda x: x.get("relevance_score", 0), reverse=True
+        )
+        clusters = self._format_clusters(merged, include_score=True)
 
         # Enrich unlabeled clusters with member-derived context
         unlabeled_ids = [

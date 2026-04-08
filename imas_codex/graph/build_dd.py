@@ -174,10 +174,10 @@ def generate_embedding_text(
 ) -> str:
     """Generate embedding text for an IMAS DD node.
 
-    Concatenates the full IMAS path with the enriched description.
-    The path provides terminal segment matching (ip, b0, psi) and
-    hierarchy context; the description provides physics semantics
-    with abbreviations from the enrichment prompt.
+    Uses the enriched description for physics semantics. Path information
+    is deliberately excluded — it causes score compression (5× reduction
+    in discriminative range) and lexical interference in the 256d embedding
+    space. Path matching is handled by the BM25 fulltext index instead.
 
     At higher embedding dimensions (≥512), the model can encode more
     semantic nuance without signal dilution, so documentation excerpts
@@ -201,7 +201,7 @@ def generate_embedding_text(
     if not primary:
         return ""
 
-    parts = [f"{path}. {primary}"]
+    parts = [primary]
 
     dim = get_embedding_dimension()
     if dim >= 512:

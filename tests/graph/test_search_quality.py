@@ -264,11 +264,12 @@ class TestAccessorTemplates:
 
 
 class TestGenerateEmbeddingTextConcise:
-    """Test generate_embedding_text produces path + description format.
+    """Test generate_embedding_text produces description-only format.
 
-    At dim 256 (Matryoshka), shorter text preserves cosine similarity.
-    Embedding text is: "{full_path}. {description}" — no doc excerpts
-    or keywords, which dilute the primary signal at low dimensions.
+    At dim 256 (Matryoshka), path prefixes are excluded to avoid score
+    compression and lexical interference. Embedding text is just the
+    enriched description (or documentation fallback).
+    Path matching is handled by the BM25 fulltext index instead.
     """
 
     def test_returns_description_with_full_path(self) -> None:
@@ -281,7 +282,7 @@ class TestGenerateEmbeddingTextConcise:
                 "documentation": "Old doc",
             },
         )
-        assert text == "eq/profiles_1d/psi. Poloidal flux radial profile."
+        assert text == "Poloidal flux radial profile."
 
     def test_fallback_to_documentation(self) -> None:
         from imas_codex.graph.build_dd import generate_embedding_text
@@ -290,7 +291,7 @@ class TestGenerateEmbeddingTextConcise:
             "eq/profiles_1d/psi",
             {"documentation": "Poloidal flux"},
         )
-        assert text == "eq/profiles_1d/psi. Poloidal flux"
+        assert text == "Poloidal flux"
 
     def test_empty_description_uses_doc(self) -> None:
         from imas_codex.graph.build_dd import generate_embedding_text
@@ -299,7 +300,7 @@ class TestGenerateEmbeddingTextConcise:
             "eq/profiles_1d/psi",
             {"description": "", "documentation": "Doc text"},
         )
-        assert text == "eq/profiles_1d/psi. Doc text"
+        assert text == "Doc text"
 
     def test_empty_both_returns_empty(self) -> None:
         from imas_codex.graph.build_dd import generate_embedding_text
@@ -323,34 +324,34 @@ class TestGenerateEmbeddingTextConcise:
             },
             ids_info={"eq": {"description": "Equilibrium IDS"}},
         )
-        assert text == "eq/profiles_1d/psi. Short desc."
+        assert text == "Short desc."
         assert "Wb" not in text
         assert "FLT_1D" not in text
         assert "Keywords" not in text
         assert "Long doc" not in text
 
     def test_full_path_replaces_readable_ids_prefix(self) -> None:
-        """Full path is used instead of a readable IDS prefix."""
+        """Path is excluded entirely (not reformatted as a readable prefix)."""
         from imas_codex.graph.build_dd import generate_embedding_text
 
         text = generate_embedding_text(
             "core_profiles/profiles_1d/electrons/temperature",
             {"description": "Electron temperature."},
         )
-        assert (
-            text
-            == "core_profiles/profiles_1d/electrons/temperature. Electron temperature."
-        )
+        assert text == "Electron temperature."
+        assert "core_profiles" not in text
         assert not text.startswith("core profiles:")
 
     def test_output_contains_full_imas_path(self) -> None:
+        """Path is excluded from embedding text to avoid score compression."""
         from imas_codex.graph.build_dd import generate_embedding_text
 
         text = generate_embedding_text(
             "equilibrium/time_slice/profiles_1d/psi",
             {"description": "Poloidal flux."},
         )
-        assert "equilibrium/time_slice/profiles_1d/psi" in text
+        assert "equilibrium/time_slice/profiles_1d/psi" not in text
+        assert text == "Poloidal flux."
 
     def test_documentation_excluded_even_when_different(self) -> None:
         """Doc excerpts are excluded to preserve cosine quality at dim 256."""
@@ -363,7 +364,7 @@ class TestGenerateEmbeddingTextConcise:
                 "documentation": "This is a long documentation string with details.",
             },
         )
-        assert text == "equilibrium/time_slice/profiles_1d/psi. Poloidal flux."
+        assert text == "Poloidal flux."
         assert "long documentation" not in text
 
     def test_keywords_excluded(self) -> None:
@@ -378,16 +379,17 @@ class TestGenerateEmbeddingTextConcise:
             },
         )
         assert "Keywords" not in text
-        assert text == "equilibrium/time_slice/profiles_1d/psi. Poloidal flux."
+        assert text == "Poloidal flux."
 
     def test_separator_is_period_space(self) -> None:
+        """When both description and (at ≥512 dim) extras are included, separator is '. '."""
         from imas_codex.graph.build_dd import generate_embedding_text
 
         text = generate_embedding_text(
             "eq/psi",
             {"description": "Desc."},
         )
-        assert text == "eq/psi. Desc."
+        assert text == "Desc."
 
 
 # =============================================================================

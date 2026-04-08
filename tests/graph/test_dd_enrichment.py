@@ -168,7 +168,7 @@ class TestGenerateEmbeddingText:
     """
 
     def test_uses_description_when_present(self) -> None:
-        """Test that description is used as primary text with path prepended."""
+        """Test that description is used as primary text without path prepended."""
         from imas_codex.graph.build_dd import generate_embedding_text
 
         path_info = {
@@ -183,10 +183,9 @@ class TestGenerateEmbeddingText:
             path_info,
         )
 
-        assert (
-            text
-            == "equilibrium/time_slice/profiles_1d/psi. LLM-generated physics description."
-        )
+        assert text == "LLM-generated physics description."
+        # Path is excluded to avoid score compression and lexical interference
+        assert "equilibrium/time_slice/profiles_1d/psi" not in text
         # Doc excerpts and keywords excluded at dim 256
         assert "Keywords" not in text
         assert "Raw documentation" not in text
@@ -205,10 +204,8 @@ class TestGenerateEmbeddingText:
             path_info,
         )
 
-        assert (
-            text
-            == "equilibrium/time_slice/profiles_1d/psi. Raw documentation about psi."
-        )
+        assert text == "Raw documentation about psi."
+        assert "equilibrium/time_slice/profiles_1d/psi" not in text
 
     def test_empty_returns_empty(self) -> None:
         """Test that missing description and documentation returns empty."""
