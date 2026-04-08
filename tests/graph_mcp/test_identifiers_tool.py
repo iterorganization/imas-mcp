@@ -9,6 +9,8 @@ import pytest
 from imas_codex.models.result_models import GetIdentifiersResult
 from imas_codex.tools.graph_search import GraphIdentifiersTool
 
+pytestmark = pytest.mark.graph_mcp
+
 
 class TestGraphIdentifiersTokenization:
     """Tests for GraphIdentifiersTool keyword tokenization and scoring."""
