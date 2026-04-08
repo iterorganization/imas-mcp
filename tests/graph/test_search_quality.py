@@ -399,7 +399,7 @@ class TestBM25ScoringConstants:
     """Test that BM25 scoring changes are correct at the code level."""
 
     def test_contains_scores_compressed(self) -> None:
-        """Verify CONTAINS fallback scores are in the 0.50-0.95 range."""
+        """Verify CONTAINS/exact-match fallback scores are in the 0.50-0.98 range."""
         import ast
         import inspect
 
@@ -410,8 +410,8 @@ class TestBM25ScoringConstants:
         then_values = re.findall(r"THEN\s+([\d.]+)", source)
         for val_str in then_values:
             val = float(val_str)
-            assert 0.50 <= val <= 0.95, (
-                f"CONTAINS score {val} outside expected range 0.50-0.95"
+            assert 0.50 <= val <= 0.98, (
+                f"CONTAINS score {val} outside expected range 0.50-0.98"
             )
 
     def test_no_score_floor(self) -> None:

@@ -160,44 +160,52 @@ class GraphSearchTool:
             )
 
         normalized_filter = normalize_ids_filter(ids_filter)
-        embedding = self._embed_query(query)
+
+        # Path-like queries (contain "/") should skip expensive vector search
+        # and rely on text/path matching instead.
+        is_path_query = "/" in query and " " not in query
+        if is_path_query:
+            embedding = None
+        else:
+            embedding = self._embed_query(query)
 
         # --- Vector search ---
-        filter_clause = ""
-        params: dict[str, Any] = {
-            "embedding": embedding,
-            "k": min(max_results * 5, 500),
-            "vector_limit": min(max_results * 3, 150),
-        }
-        if normalized_filter:
-            filter_clause = "AND path.ids IN $ids_filter"
-            params["ids_filter"] = (
-                normalized_filter
-                if isinstance(normalized_filter, list)
-                else [normalized_filter]
+        vec_scores: dict[str, float] = {}
+        if embedding is not None:
+            filter_clause = ""
+            params: dict[str, Any] = {
+                "embedding": embedding,
+                "k": min(max_results * 5, 500),
+                "vector_limit": min(max_results * 3, 150),
+            }
+            if normalized_filter:
+                filter_clause = "AND path.ids IN $ids_filter"
+                params["ids_filter"] = (
+                    normalized_filter
+                    if isinstance(normalized_filter, list)
+                    else [normalized_filter]
+                )
+
+            dd_clause = _dd_version_clause("path", dd_version, params)
+
+            vector_results = self._gc.query(
+                f"""
+                CALL db.index.vector.queryNodes('imas_node_embedding', $k, $embedding)
+                YIELD node AS path, score
+                WHERE NOT (path)-[:DEPRECATED_IN]->(:DDVersion)
+                  AND path.node_category = 'data'
+                {filter_clause}
+                {dd_clause}
+                RETURN path.id AS id, score
+                ORDER BY score DESC
+                LIMIT $vector_limit
+                """,
+                **params,
             )
 
-        dd_clause = _dd_version_clause("path", dd_version, params)
-
-        vector_results = self._gc.query(
-            f"""
-            CALL db.index.vector.queryNodes('imas_node_embedding', $k, $embedding)
-            YIELD node AS path, score
-            WHERE NOT (path)-[:DEPRECATED_IN]->(:DDVersion)
-              AND path.node_category = 'data'
-            {filter_clause}
-            {dd_clause}
-            RETURN path.id AS id, score
-            ORDER BY score DESC
-            LIMIT $vector_limit
-            """,
-            **params,
-        )
-
-        scores: dict[str, float] = {}
-        for r in vector_results or []:
-            pid = r["id"]
-            scores[pid] = round(r["score"], 4)
+            for r in vector_results or []:
+                pid = r["id"]
+                vec_scores[pid] = round(r["score"], 4)
 
         # --- Text search ---
         text_results = _text_search_dd_paths(
@@ -207,16 +215,29 @@ class GraphSearchTool:
             normalized_filter,
             dd_version=dd_version,
         )
+        text_scores: dict[str, float] = {}
         for r in text_results:
-            pid = r["id"]
-            text_score = round(r["score"], 4)
-            if pid in scores:
-                scores[pid] = round(max(scores[pid], text_score) + 0.05, 4)
-            else:
-                scores[pid] = text_score
+            text_scores[r["id"]] = round(r["score"], 4)
 
-        # --- Path segment boost ---
-        # Boost paths whose segments match query words for better relevance
+        # --- Weighted blend (preserves both signals) ---
+        _VEC_WEIGHT = 0.6
+        _TEXT_WEIGHT = 0.4
+        all_ids = set(vec_scores) | set(text_scores)
+        scores: dict[str, float] = {}
+        for pid in all_ids:
+            vs = vec_scores.get(pid, 0.0)
+            ts = text_scores.get(pid, 0.0)
+            if vs > 0 and ts > 0:
+                scores[pid] = round(_VEC_WEIGHT * vs + _TEXT_WEIGHT * ts, 4)
+            elif vs > 0:
+                scores[pid] = round(vs * _VEC_WEIGHT, 4)
+            else:
+                scores[pid] = round(ts * _TEXT_WEIGHT, 4)
+
+        # --- Path segment tiebreaker ---
+        # Multiplicative boost for paths whose segments exactly match query
+        # words.  Use exact segment match to avoid substring false positives
+        # (e.g. "ip" matching "pipe" or "description").
         query_words = [
             w.lower()
             for w in query.split()
@@ -226,10 +247,13 @@ class GraphSearchTool:
             for pid in scores:
                 segments = pid.lower().split("/")
                 match_count = sum(
-                    1 for w in query_words if any(w in seg for seg in segments)
+                    1
+                    for w in query_words
+                    if any(w == seg for seg in segments)
+                    or (len(w) > 3 and any(w in seg for seg in segments))
                 )
                 if match_count > 0:
-                    scores[pid] = round(scores[pid] + 0.03 * match_count, 4)
+                    scores[pid] = round(scores[pid] * (1 + 0.015 * match_count), 4)
 
         # Rank and limit
         sorted_ids = sorted(scores, key=lambda pid: scores[pid], reverse=True)[
@@ -357,7 +381,7 @@ class GraphSearchTool:
     def _embed_query(self, query: str) -> list[float]:
         """Embed query text using the module-level Encoder singleton."""
         encoder = _get_encoder()
-        return encoder.embed_texts([query])[0].tolist()
+        return encoder.embed_texts([query], prompt_name="query")[0].tolist()
 
 
 class GraphPathTool:
@@ -1261,7 +1285,7 @@ class GraphClustersTool:
     def _embed_query(self, query: str) -> list[float]:
         """Embed query text using the module-level Encoder singleton."""
         encoder = _get_encoder()
-        return encoder.embed_texts([query])[0].tolist()
+        return encoder.embed_texts([query], prompt_name="query")[0].tolist()
 
 
 class GraphIdentifiersTool:
@@ -2048,62 +2072,109 @@ def _text_search_dd_paths(
         """
         ft_results = gc.query(ft_cypher, **ft_params)
         if ft_results:
-            # Normalize BM25 scores to 0-1 range
+            # Normalize BM25 scores to 0-1 range preserving relative ranking.
+            # No floor — low-ranked BM25 hits should score low so vector
+            # results can outrank them in the weighted blend.
             max_score = max(r["score"] for r in ft_results) if ft_results else 1.0
             normalized = []
             for r in ft_results:
                 pid = r["id"]
                 raw = r["score"] / max_score if max_score > 0 else 0.0
-                normalized.append({"id": pid, "score": max(raw, 0.7)})
+                normalized.append({"id": pid, "score": raw})
             return normalized
     except Exception:
         pass
 
-    # Fallback: CONTAINS matching with scored results
-    cypher = f"""
-        MATCH (p:IMASNode)
-        WHERE {where_base}
-          AND (
-            toLower(p.documentation) CONTAINS $query_lower
-            OR toLower(p.id) CONTAINS $query_lower
-            OR toLower(p.name) CONTAINS $query_lower
-            OR toLower(coalesce(p.description, '')) CONTAINS $query_lower
-            OR any(kw IN coalesce(p.keywords, []) WHERE toLower(kw) CONTAINS $query_lower)
-          )
-          AND size(coalesce(p.documentation, '')) > 10
-        WITH p,
-             CASE
-            WHEN toLower(p.documentation) CONTAINS $query_lower
-                AND {_leaf_data_type_clause("p")}
-                 THEN 0.95
-               WHEN toLower(p.documentation) CONTAINS $query_lower
-                 THEN 0.88
-               WHEN toLower(p.name) CONTAINS $query_lower
-                AND {_leaf_data_type_clause("p")}
-                 THEN 0.93
-               WHEN toLower(p.id) CONTAINS $query_lower
-                 THEN 0.90
-               ELSE 0.85
-             END AS base_score
-        RETURN p.id AS id, base_score AS score
-        ORDER BY base_score DESC, size(p.id) ASC
-        LIMIT $limit
-    """
+    # Fallback: CONTAINS matching with scored results.
+    # For short queries (<=3 chars), use exact name/segment matching instead
+    # of CONTAINS to avoid substring false positives (e.g. "ip" in "description").
+    is_short_query = len(query_lower) <= 3 or query_lower in _PHYSICS_SHORT_TERMS
+    if is_short_query:
+        # Short term: match exact path segments or exact name
+        cypher = f"""
+            MATCH (p:IMASNode)
+            WHERE {where_base}
+              AND (
+                toLower(p.name) = $query_lower
+                OR any(seg IN split(p.id, '/') WHERE toLower(seg) = $query_lower)
+                OR any(kw IN coalesce(p.keywords, []) WHERE toLower(kw) = $query_lower)
+              )
+            WITH p,
+                 CASE
+                   WHEN toLower(p.name) = $query_lower
+                     AND {_leaf_data_type_clause("p")}
+                    THEN 0.98
+                   WHEN toLower(p.name) = $query_lower
+                    THEN 0.95
+                   WHEN any(seg IN split(p.id, '/') WHERE toLower(seg) = $query_lower)
+                    THEN 0.93
+                   ELSE 0.88
+                 END AS base_score
+            RETURN p.id AS id, base_score AS score
+            ORDER BY base_score DESC, size(p.id) ASC
+            LIMIT $limit
+        """
+    else:
+        cypher = f"""
+            MATCH (p:IMASNode)
+            WHERE {where_base}
+              AND (
+                toLower(p.documentation) CONTAINS $query_lower
+                OR toLower(p.id) CONTAINS $query_lower
+                OR toLower(p.name) CONTAINS $query_lower
+                OR toLower(coalesce(p.description, '')) CONTAINS $query_lower
+                OR any(kw IN coalesce(p.keywords, []) WHERE toLower(kw) CONTAINS $query_lower)
+              )
+              AND size(coalesce(p.documentation, '')) > 10
+            WITH p,
+                 CASE
+                WHEN toLower(p.documentation) CONTAINS $query_lower
+                    AND {_leaf_data_type_clause("p")}
+                     THEN 0.95
+                   WHEN toLower(p.documentation) CONTAINS $query_lower
+                     THEN 0.88
+                   WHEN toLower(p.name) CONTAINS $query_lower
+                    AND {_leaf_data_type_clause("p")}
+                     THEN 0.93
+                   WHEN toLower(p.id) CONTAINS $query_lower
+                     THEN 0.90
+                   ELSE 0.85
+                 END AS base_score
+            RETURN p.id AS id, base_score AS score
+            ORDER BY base_score DESC, size(p.id) ASC
+            LIMIT $limit
+        """
     results = gc.query(cypher, **params)
 
-    # Also search individual words for abbreviations like "ip"
+    # Also search individual words for abbreviations like "ip".
+    # Use exact segment matching to avoid substring false positives.
     if query_words:
         word_results = []
         for word in query_words[:3]:
-            word_cypher = f"""
-                MATCH (p:IMASNode)
-                WHERE {where_base}
-                  AND (toLower(p.name) = $word OR toLower(p.id) CONTAINS $word)
-                                    AND {_leaf_data_type_clause("p")}
-                  AND size(coalesce(p.documentation, '')) > 10
-                RETURN p.id AS id, 0.90 AS score
-                LIMIT 10
-            """
+            is_short = len(word) <= 3 or word in _PHYSICS_SHORT_TERMS
+            if is_short:
+                # Exact segment or name match only
+                word_cypher = f"""
+                    MATCH (p:IMASNode)
+                    WHERE {where_base}
+                      AND (
+                        toLower(p.name) = $word
+                        OR any(seg IN split(p.id, '/') WHERE toLower(seg) = $word)
+                      )
+                    RETURN p.id AS id, 0.95 AS score
+                    LIMIT 15
+                """
+            else:
+                word_cypher = f"""
+                    MATCH (p:IMASNode)
+                    WHERE {where_base}
+                      AND (toLower(p.name) CONTAINS $word
+                           OR toLower(p.id) CONTAINS $word)
+                      AND {_leaf_data_type_clause("p")}
+                      AND size(coalesce(p.documentation, '')) > 10
+                    RETURN p.id AS id, 0.90 AS score
+                    LIMIT 10
+                """
             word_params = {**params, "word": word}
             word_results.extend(gc.query(word_cypher, **word_params))
 
