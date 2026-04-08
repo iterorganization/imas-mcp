@@ -296,14 +296,21 @@ def create_dd_only_dump(source_dump_path: Path, output_path: Path) -> None:
                 click.echo(f"    Removed {total_deleted} non-DD nodes")
 
                 # Clean up orphaned Unit nodes left after facility node removal
-                orphan_result = session.run(
-                    "MATCH (u:Unit) WHERE NOT (u)<-[:HAS_UNIT]-() "
-                    "WITH u LIMIT 200 DETACH DELETE u "
-                    "RETURN count(*) AS deleted"
-                )
-                orphan_deleted = orphan_result.single()["deleted"]
-                if orphan_deleted > 0:
-                    click.echo(f"    Removed {orphan_deleted} orphaned Unit nodes")
+                orphan_deleted_total = 0
+                while True:
+                    orphan_result = session.run(
+                        "MATCH (u:Unit) WHERE NOT (u)<-[:HAS_UNIT]-() "
+                        "WITH u LIMIT 200 DETACH DELETE u "
+                        "RETURN count(*) AS deleted"
+                    )
+                    batch = orphan_result.single()["deleted"]
+                    if batch == 0:
+                        break
+                    orphan_deleted_total += batch
+                if orphan_deleted_total > 0:
+                    click.echo(
+                        f"    Removed {orphan_deleted_total} orphaned Unit nodes"
+                    )
 
                 # Update GraphMeta to reflect dd-only content
                 session.run(
