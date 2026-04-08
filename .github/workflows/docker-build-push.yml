@@ -648,19 +648,5 @@ jobs:
           subject-digest: ${{ steps.build-release.outputs.digest }}
           push-to-registry: true
 
-      - name: Trigger Azure Web App deployment
-        if: startsWith(github.ref, 'refs/tags/v')
-        env:
-          WEBHOOK_URL: ${{ secrets.AZURE_WEBAPP_WEBHOOK }}
-        run: |
-          if [ -z "$WEBHOOK_URL" ]; then
-            echo "ℹ️ AZURE_WEBAPP_WEBHOOK secret not configured — skipping"
-            exit 0
-          fi
-          echo "Triggering Azure Web App deployment webhook..."
-          STATUS=$(curl -sf -o /dev/null -w '%{http_code}' -X POST "$WEBHOOK_URL" 2>&1) || true
-          if [ "$STATUS" = "200" ] || [ "$STATUS" = "204" ]; then
-            echo "✅ Webhook triggered successfully (HTTP $STATUS)"
-          else
-            echo "⚠️ Webhook returned HTTP $STATUS — Web App may need manual restart"
-          fi
+      # Azure Web App has continuous deployment enabled on ACR —
+      # new images are auto-deployed without a webhook trigger.

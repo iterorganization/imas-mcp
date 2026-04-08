@@ -667,26 +667,38 @@ uv run imas-codex release --bump patch -m 'Abandon RC, new patch'     # → v5.0
 # Options: --remote origin|upstream, --skip-git, --dry-run, --version
 ```
 
+**What the release CLI does (no manual steps needed):**
+
+1. Computes the next version from the latest git tag (state machine)
+2. Creates a local git tag
+3. Validates no private fields in graph
+4. Tags DDVersion node with release metadata
+5. Pushes graph variants to GHCR (dd-only + full for RC; + per-facility for final)
+6. Pushes git tag to the target remote → triggers CI
+
+**What CI does (automatically triggered by the tag push):**
+
+1. `graph-quality` — pulls dd-only graph from GHCR, runs `tests/graph/` against it
+2. `smoke-test` — builds container, starts it, verifies health endpoint
+3. `build-and-push` — pushes container image to Azure Container Registry (ACR)
+
+**How Azure deploys (automatic, no webhook needed):**
+
+Azure Web App has continuous deployment enabled on ACR. When a new image appears, Azure pulls and restarts the container automatically. There is no webhook — deployment is triggered by ACR image push. Allow 5–15 minutes for the new version to appear on the test URL.
+
 **Fork-based development workflow:**
 
 1. **Develop on fork's `main`** — all work happens on `origin` (your fork)
-2. **RC releases → fork** — `imas-codex release -m "..."` tags origin, fork CI validates
+2. **RC releases → fork** — `imas-codex release -m "..."` pushes graph + tag to origin, fork CI validates and deploys to Azure test URL
 3. **Verify RC** — exercise tools on test deployment, run A/B tests
 4. **PR to upstream** — when RC is confirmed working, PR fork/main → upstream/main
 5. **Final release → upstream** — after PR merges: `imas-codex release --final -m "..."` tags upstream, production CI deploys
 
 **Rules:**
-- Never push directly to `upstream/main` — always PR
+- **Never push directly to `upstream/main`** — always PR. Use `git push origin main` for day-to-day work.
 - RC tags on fork are disposable — iterate freely
-- Final releases require upstream CI to have passed (`--final` enforces this)
 - Graph push runs from the ITER machine where Neo4j runs — CI cannot build graph data
-
-The release command:
-1. Computes the next version from the latest git tag (state machine)
-2. Validates no private fields in graph
-3. Tags DDVersion node with release metadata
-4. Pushes **all** graph variants to GHCR (dd-only + full + per-facility)
-5. Creates and pushes git tag → triggers CI
+- The release CLI handles everything — do not manually push graphs or tags separately
 
 ## Remote Tools
 
