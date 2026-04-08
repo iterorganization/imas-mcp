@@ -35,11 +35,36 @@ from imas_codex.tools.utils import normalize_ids_filter, validate_query
 
 logger = logging.getLogger(__name__)
 
-# Short physics abbreviations (<=2 chars) that must survive word-length filtering.
-# Without this, queries like "ip" or "q" get silently dropped by `len(w) > 2` guards.
-_PHYSICS_SHORT_TERMS = frozenset(
-    {"ip", "q", "b0", "te", "ne", "ti", "ni", "li", "ze", "j", "pf", "tf", "ec", "nz"}
-)
+# Short physics abbreviations mapped to their expanded physics concepts.
+# Keys survive word-length filtering (`len(w) > 2` guards).
+# Values are used as vector-search queries — the embedding model maps
+# "plasma current" correctly even though "ip" would map to "internet protocol".
+_PHYSICS_SHORT_TERMS: dict[str, str] = {
+    # Currents & fields
+    "ip": "plasma current",
+    "j": "current density",
+    "jt": "toroidal current density",
+    "bt": "toroidal magnetic field",
+    "bp": "poloidal magnetic field",
+    "b0": "vacuum toroidal magnetic field",
+    # Kinetic profiles
+    "te": "electron temperature",
+    "ne": "electron density",
+    "ti": "ion temperature",
+    "ni": "ion density",
+    "nz": "impurity density",
+    "ze": "effective charge",
+    # Global / geometry
+    "li": "internal inductance",
+    "q": "safety factor",
+    "r0": "magnetic axis major radius",
+    # Coils & heating
+    "pf": "poloidal field coil",
+    "tf": "toroidal field coil",
+    "ec": "electron cyclotron",
+    "ic": "ion cyclotron",
+    "lh": "lower hybrid",
+}
 
 # Lucene special characters that must be escaped in user queries
 _LUCENE_SPECIAL = frozenset('+-&&||!(){}[]^"~*?:\\/')
@@ -215,15 +240,18 @@ class GraphSearchTool:
 
         # Path-like queries (contain "/") should skip expensive vector search
         # and rely on text/path matching instead.
-        # Short physics abbreviations (e.g. "ip", "q", "b0") also skip vector
-        # search: the embedding model maps them to unrelated concepts (e.g.
-        # "ip" → internet protocol) while BM25 returns exact segment matches.
+        # Short physics abbreviations (e.g. "ip", "q", "b0") use their expanded
+        # form for vector search: the embedding model maps "plasma current"
+        # correctly even though "ip" would map to "internet protocol".
         is_path_query = "/" in query and " " not in query
         is_short_physics_term = " " not in query.strip() and (
             len(query.strip()) <= 3 or query.strip().lower() in _PHYSICS_SHORT_TERMS
         )
-        if is_path_query or is_short_physics_term:
+        if is_path_query:
             embedding = None
+        elif is_short_physics_term:
+            expansion = _PHYSICS_SHORT_TERMS.get(query.strip().lower())
+            embedding = self._embed_query(expansion) if expansion else None
         else:
             embedding = self._embed_query(query)
 
@@ -1313,6 +1341,11 @@ class GraphClustersTool:
         is_short_physics_term = " " not in query.strip() and (
             len(query.strip()) <= 3 or query.strip().lower() in _PHYSICS_SHORT_TERMS
         )
+        expansion = (
+            _PHYSICS_SHORT_TERMS.get(query.strip().lower())
+            if is_short_physics_term
+            else None
+        )
 
         # --- Text-based CONTAINS search (always run as supplement) ---
         text_scope_filter = "AND cluster.scope = $scope" if scope else ""
@@ -1351,10 +1384,11 @@ class GraphClustersTool:
             or []
         )
 
-        # --- Vector search (skip for short/ambiguous physics terms) ---
+        # --- Vector search (use expansion for short physics terms) ---
         vector_results: list[dict[str, Any]] = []
-        if not is_short_physics_term:
-            embedding = self._embed_query(query)
+        vector_query = expansion if expansion else query
+        embedding = self._embed_query(vector_query)
+        if embedding is not None:
             scope_filter = "AND cluster.scope = $scope" if scope else ""
             ids_filter_clause = ""
             vector_k = (
