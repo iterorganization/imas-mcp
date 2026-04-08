@@ -275,9 +275,11 @@ def _show_release_status() -> None:
         click.echo("Permitted commands:")
         click.echo(
             f"  imas-codex release -m '...'                  "
-            f"→ {_format_git_tag(major, minor, patch, next_rc)}"
+            f"→ {_format_git_tag(major, minor, patch, next_rc)}  (origin)"
         )
-        click.echo(f"  imas-codex release --final -m '...'          → {target}")
+        click.echo(
+            f"  imas-codex release --final -m '...'          → {target}  (upstream)"
+        )
         click.echo(
             f"  imas-codex release --bump patch -m '...'     "
             f"→ {_format_git_tag(s_maj, s_min, s_pat + 1, 1)}  (abandon RC, bump from {stable_tag or 'stable'})"
@@ -1212,8 +1214,8 @@ def _push_tag(tag: str, remote: str, dry_run: bool) -> None:
 @click.option(
     "--remote",
     type=click.Choice(["origin", "upstream"]),
-    default="upstream",
-    help="Target remote for git tag push (default: upstream).",
+    default=None,
+    help="Target remote for git tag push. Default: origin for RC, upstream for --final.",
 )
 @click.option(
     "--skip-git",
@@ -1242,7 +1244,7 @@ def release(
     message: str | None,
     final: bool,
     explicit_version: str | None,
-    remote: str,
+    remote: str | None,
     skip_git: bool,
     dry_run: bool,
     changelog: bool | None,
@@ -1338,6 +1340,10 @@ def release(
 
     is_rc = "-rc" in git_tag
     latest = _get_latest_tag()
+
+    # Resolve remote: origin for RC (fork testing), upstream for final (production)
+    if remote is None:
+        remote = "origin" if is_rc else "upstream"
 
     click.echo(f"{'[DRY RUN] ' if dry_run else ''}Release: {git_tag}")
     click.echo(f"  From: {latest or '(none)'}")

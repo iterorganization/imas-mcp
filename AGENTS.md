@@ -647,23 +647,39 @@ The release CLI is state-machine driven. State is derived from the latest git ta
 - **Stable** (`vX.Y.Z`) — on a release
 - **RC mode** (`vX.Y.Z-rcN`) — testing a release candidate
 
+**Remote defaults:** RC releases target `origin` (fork), final releases target `upstream` (iterorganization). Override with `--remote`.
+
 ```bash
 # Check current state and permitted commands
 uv run imas-codex release status
 
 # From stable (e.g., v5.0.0):
-uv run imas-codex release --bump major -m 'IMAS DD 4.1.0 support'    # → v6.0.0-rc1
-uv run imas-codex release --bump minor -m 'New discovery features'    # → v5.1.0-rc1
-uv run imas-codex release --bump patch -m 'Bug fixes'                 # → v5.0.1-rc1
-uv run imas-codex release --bump major --final -m 'Direct release'    # → v6.0.0 (skip RC)
+uv run imas-codex release --bump major -m 'IMAS DD 4.1.0 support'    # → v6.0.0-rc1 (origin)
+uv run imas-codex release --bump minor -m 'New discovery features'    # → v5.1.0-rc1 (origin)
+uv run imas-codex release --bump patch -m 'Bug fixes'                 # → v5.0.1-rc1 (origin)
+uv run imas-codex release --bump major --final -m 'Direct release'    # → v6.0.0 (upstream)
 
 # From RC mode (e.g., v5.0.0-rc1):
-uv run imas-codex release -m 'Fix CI issues'                          # → v5.0.0-rc2 (increment)
-uv run imas-codex release --final -m 'Production release'             # → v5.0.0 (finalize)
-uv run imas-codex release --bump patch -m 'Abandon RC, new patch'     # → v5.0.1-rc1 (new RC)
+uv run imas-codex release -m 'Fix CI issues'                          # → v5.0.0-rc2 (origin)
+uv run imas-codex release --final -m 'Production release'             # → v5.0.0 (upstream)
+uv run imas-codex release --bump patch -m 'Abandon RC, new patch'     # → v5.0.1-rc1 (origin)
 
-# Options: --remote, --skip-git, --dry-run, --version
+# Options: --remote origin|upstream, --skip-git, --dry-run, --version
 ```
+
+**Fork-based development workflow:**
+
+1. **Develop on fork's `main`** — all work happens on `origin` (your fork)
+2. **RC releases → fork** — `imas-codex release -m "..."` tags origin, fork CI validates
+3. **Verify RC** — exercise tools on test deployment, run A/B tests
+4. **PR to upstream** — when RC is confirmed working, PR fork/main → upstream/main
+5. **Final release → upstream** — after PR merges: `imas-codex release --final -m "..."` tags upstream, production CI deploys
+
+**Rules:**
+- Never push directly to `upstream/main` — always PR
+- RC tags on fork are disposable — iterate freely
+- Final releases require upstream CI to have passed (`--final` enforces this)
+- Graph push runs from the ITER machine where Neo4j runs — CI cannot build graph data
 
 The release command:
 1. Computes the next version from the latest git tag (state machine)
@@ -671,8 +687,6 @@ The release command:
 3. Tags DDVersion node with release metadata
 4. Pushes **all** graph variants to GHCR (dd-only + full + per-facility)
 5. Creates and pushes git tag → triggers CI
-
-**Constraint:** Must run from the ITER machine where Neo4j runs — CI cannot build graph data.
 
 ## Remote Tools
 
