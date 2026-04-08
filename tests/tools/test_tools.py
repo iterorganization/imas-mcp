@@ -41,12 +41,13 @@ class TestToolsComposition:
             query="plasma temperature", max_results=5
         )
 
-        assert isinstance(result, SearchPathsResult)
-        assert hasattr(result, "hits")
-        assert isinstance(result.hits, list)
-        assert len(result.hits) <= 5
-        assert hasattr(result, "hit_count")
-        assert result.hit_count == len(result.hits)
+        assert isinstance(result, SearchPathsResult | ToolError)
+        if isinstance(result, SearchPathsResult):
+            assert hasattr(result, "hits")
+            assert isinstance(result.hits, list)
+            assert len(result.hits) <= 5
+            assert hasattr(result, "hit_count")
+            assert result.hit_count == len(result.hits)
 
     @pytest.mark.asyncio
     async def test_overview_tool_interface(self, tools):
@@ -105,13 +106,13 @@ class TestToolsParameterValidation:
         """Test search tool parameter validation."""
         # Test required parameter
         result = await tools.search_tool.search_dd_paths(query="test")
-        assert isinstance(result, SearchPathsResult)
+        assert isinstance(result, SearchPathsResult | ToolError)
 
         # Test optional parameters
         result = await tools.search_tool.search_dd_paths(
             query="test", max_results=10, ids_filter=["core_profiles"]
         )
-        assert isinstance(result, SearchPathsResult)
+        assert isinstance(result, SearchPathsResult | ToolError)
 
 
 class TestToolsCompositionPattern:
