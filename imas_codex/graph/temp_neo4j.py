@@ -8,9 +8,12 @@ Provides functions to:
 
 from __future__ import annotations
 
+import os
 import shutil
+import signal
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 import click
@@ -54,9 +57,8 @@ def write_temp_neo4j_conf(conf_dir: Path, bolt_port: int, http_port: int) -> Pat
     """Write a neo4j.conf for a temporary filtering instance.
 
     Disables authentication and binds to non-standard ports to avoid
-    conflicts with the production instance.  Memory is kept low to
-    coexist with the production JVM within user cgroup limits — the
-    temp instance only runs batched DETACH DELETE, not query workloads.
+    conflicts with the production instance.  Memory sized for filtering
+    a full graph dump (~200K+ nodes) via batched DETACH DELETE.
     """
     conf_file = conf_dir / "neo4j.conf"
     conf_file.write_text(
@@ -64,10 +66,10 @@ def write_temp_neo4j_conf(conf_dir: Path, bolt_port: int, http_port: int) -> Pat
 dbms.security.auth_enabled=false
 server.bolt.listen_address=127.0.0.1:{bolt_port}
 server.http.listen_address=127.0.0.1:{http_port}
-server.memory.heap.initial_size=256m
-server.memory.heap.max_size=512m
-server.memory.pagecache.size=256m
-dbms.memory.transaction.total.max=1g
+server.memory.heap.initial_size=1g
+server.memory.heap.max_size=4g
+server.memory.pagecache.size=1g
+dbms.memory.transaction.total.max=4g
 """
     )
     return conf_file
@@ -83,7 +85,6 @@ def start_temp_neo4j(
     Returns the process handle and log file path.  The caller is
     responsible for terminating the process.
     """
-    import time
     import urllib.request
 
     neo4j_image = _neo4j_image()
@@ -159,8 +160,7 @@ def start_temp_neo4j(
 
     if not ready:
         log_fh.flush()
-        proc.terminate()
-        proc.wait(timeout=15)
+        stop_temp_neo4j(proc)
         log_fh.close()
         tail = neo4j_log.read_text()[-500:] if neo4j_log.exists() else ""
         raise click.ClickException(
@@ -171,14 +171,47 @@ def start_temp_neo4j(
     return proc, neo4j_log
 
 
+def _cleanup_stale_temp_neo4j(bolt_port: int, http_port: int) -> None:
+    """Kill any stale processes bound to the temp Neo4j ports.
+
+    Previous temp instances may leave orphaned Java processes when
+    apptainer exits but the JVM keeps running in the background.
+    """
+    for port in (bolt_port, http_port):
+        try:
+            result = subprocess.run(
+                ["ss", "-tlnp", f"sport = :{port}"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            for line in result.stdout.splitlines():
+                if f":{port}" in line and "pid=" in line:
+                    pid_str = line.split("pid=")[1].split(",")[0]
+                    pid = int(pid_str)
+                    click.echo(f"  Killing stale process on port {port} (PID {pid})")
+                    os.kill(pid, signal.SIGKILL)
+        except (subprocess.TimeoutExpired, ValueError, OSError):
+            pass
+
+    # Brief wait for port release
+    time.sleep(2)
+
+
 def stop_temp_neo4j(proc: subprocess.Popen) -> None:
-    """Terminate a temporary Neo4j process."""
-    proc.terminate()
+    """Terminate a temporary Neo4j process and its entire process group."""
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+    except (ProcessLookupError, PermissionError):
+        pass
     try:
         proc.wait(timeout=15)
     except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.wait()
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            proc.kill()
+        proc.wait(timeout=10)
 
 
 def dump_temp_neo4j(temp_dir: Path, output_path: Path) -> None:
@@ -226,6 +259,8 @@ def create_dd_only_dump(source_dump_path: Path, output_path: Path) -> None:
     temp_bolt_port = 27687
     temp_http_port = 27474
 
+    _cleanup_stale_temp_neo4j(temp_bolt_port, temp_http_port)
+
     with tempfile.TemporaryDirectory() as tmpdir:
         temp_dir = Path(tmpdir) / "neo4j-temp"
         for subdir in ("data", "logs", "dumps"):
@@ -250,7 +285,7 @@ def create_dd_only_dump(source_dump_path: Path, output_path: Path) -> None:
                     result = session.run(
                         f"MATCH (n) WHERE {label_check} "
                         "AND NOT n:GraphMeta "
-                        "WITH n LIMIT 5000 "
+                        "WITH n LIMIT 200 "
                         "DETACH DELETE n "
                         "RETURN count(*) AS deleted"
                     )
@@ -263,7 +298,7 @@ def create_dd_only_dump(source_dump_path: Path, output_path: Path) -> None:
                 # Clean up orphaned Unit nodes left after facility node removal
                 orphan_result = session.run(
                     "MATCH (u:Unit) WHERE NOT (u)<-[:HAS_UNIT]-() "
-                    "WITH u LIMIT 5000 DETACH DELETE u "
+                    "WITH u LIMIT 200 DETACH DELETE u "
                     "RETURN count(*) AS deleted"
                 )
                 orphan_deleted = orphan_result.single()["deleted"]
@@ -302,6 +337,8 @@ def create_facility_dump(
     temp_bolt_port = 27687
     temp_http_port = 27474
 
+    _cleanup_stale_temp_neo4j(temp_bolt_port, temp_http_port)
+
     with tempfile.TemporaryDirectory() as tmpdir:
         temp_dir = Path(tmpdir) / "neo4j-temp"
         for subdir in ("data", "logs", "dumps"):
@@ -326,7 +363,7 @@ def create_facility_dump(
                         "MATCH (n) "
                         "WHERE n.facility_id IS NOT NULL "
                         "AND n.facility_id <> $facility "
-                        "WITH n LIMIT 10000 "
+                        "WITH n LIMIT 200 "
                         "DETACH DELETE n "
                         "RETURN count(*) AS deleted",
                         facility=facility,
