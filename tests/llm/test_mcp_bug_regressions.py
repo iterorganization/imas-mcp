@@ -86,10 +86,10 @@ class TestShortPhysicsTermsPreserved:
     """Bug 4: Physics abbreviations <=2 chars must survive word filtering."""
 
     def test_physics_short_terms_set_exists(self):
-        """A frozenset of short physics terms must be defined for exemption."""
+        """A mapping of short physics terms to expansions must be defined."""
         from imas_codex.tools.graph_search import _PHYSICS_SHORT_TERMS
 
-        assert isinstance(_PHYSICS_SHORT_TERMS, frozenset)
+        assert isinstance(_PHYSICS_SHORT_TERMS, dict)
         # Must contain the canonical short physics abbreviations
         for term in ("ip", "q", "b0", "te", "ne", "ti", "ni", "li"):
             assert term in _PHYSICS_SHORT_TERMS, (
