@@ -1133,6 +1133,14 @@ class GraphOverviewTool:
         )
 
 
+def _filter_summary_from_clusters(result: dict[str, Any]) -> None:
+    """Remove summary IDS paths from cluster member lists in-place."""
+    for cluster in result.get("clusters", []):
+        paths = cluster.get("paths")
+        if paths:
+            cluster["paths"] = [p for p in paths if not p.startswith("summary/")]
+
+
 class GraphClustersTool:
     """Graph-backed cluster search using vector indexes."""
 
@@ -1152,6 +1160,7 @@ class GraphClustersTool:
         "scope: Filter by cluster scope - 'global', 'domain', or 'ids'. "
         "ids_filter: Limit to clusters containing paths from specific IDS. "
         "section_only: If true, only return clusters containing structural sections. "
+        "include_summary: Include summary IDS paths in cluster member lists (default: false). "
         "dd_version: Filter by DD major version (e.g., 3 or 4). None returns all versions."
     )
     async def search_dd_clusters(
@@ -1161,19 +1170,31 @@ class GraphClustersTool:
         ids_filter: str | list[str] | None = None,
         section_only: bool = False,
         dd_version: int | None = None,
+        include_summary: bool = False,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
         """Search clusters using graph vector indexes."""
         normalized_filter = normalize_ids_filter(ids_filter)
 
+        # Determine whether to filter summary paths from cluster member lists.
+        _filter_list = (
+            normalized_filter
+            if isinstance(normalized_filter, list)
+            else ([normalized_filter] if normalized_filter else [])
+        )
+        _exclude_summary = not include_summary and "summary" not in _filter_list
+
         # IDS listing mode: no query, ids_filter provided
         if not query and normalized_filter:
-            return self._list_by_ids(
+            result = self._list_by_ids(
                 normalized_filter,
                 scope,
                 section_only=section_only,
                 dd_version=dd_version,
             )
+            if _exclude_summary:
+                _filter_summary_from_clusters(result)
+            return result
 
         if not query:
             return {
@@ -1184,11 +1205,17 @@ class GraphClustersTool:
 
         # Detect query type: path lookup vs semantic search
         if "/" in query and " " not in query:
-            return self._search_by_path(query, scope, dd_version=dd_version)
+            result = self._search_by_path(query, scope, dd_version=dd_version)
+            if _exclude_summary:
+                _filter_summary_from_clusters(result)
+            return result
 
-        return self._search_by_text(
+        result = self._search_by_text(
             query, scope, normalized_filter, dd_version=dd_version
         )
+        if _exclude_summary:
+            _filter_summary_from_clusters(result)
+        return result
 
     def _list_by_ids(
         self,
@@ -2236,6 +2263,9 @@ def _text_search_dd_paths(
             filter_list = ids_filter if isinstance(ids_filter, list) else [ids_filter]
             ft_where += " AND p.ids IN $ids_filter"
             ft_params["ids_filter"] = filter_list
+
+        if exclude_summary:
+            ft_where += " AND p.ids <> 'summary'"
 
         ft_dd_clause = _dd_version_clause("p", dd_version, ft_params)
         if ft_dd_clause:
