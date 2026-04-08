@@ -8,9 +8,12 @@ Provides functions to:
 
 from __future__ import annotations
 
+import os
 import shutil
+import signal
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 import click
@@ -83,7 +86,6 @@ def start_temp_neo4j(
     Returns the process handle and log file path.  The caller is
     responsible for terminating the process.
     """
-    import time
     import urllib.request
 
     neo4j_image = _neo4j_image()
@@ -159,8 +161,7 @@ def start_temp_neo4j(
 
     if not ready:
         log_fh.flush()
-        proc.terminate()
-        proc.wait(timeout=15)
+        stop_temp_neo4j(proc)
         log_fh.close()
         tail = neo4j_log.read_text()[-500:] if neo4j_log.exists() else ""
         raise click.ClickException(
@@ -171,14 +172,47 @@ def start_temp_neo4j(
     return proc, neo4j_log
 
 
+def _cleanup_stale_temp_neo4j(bolt_port: int, http_port: int) -> None:
+    """Kill any stale processes bound to the temp Neo4j ports.
+
+    Previous temp instances may leave orphaned Java processes when
+    apptainer exits but the JVM keeps running in the background.
+    """
+    for port in (bolt_port, http_port):
+        try:
+            result = subprocess.run(
+                ["ss", "-tlnp", f"sport = :{port}"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            for line in result.stdout.splitlines():
+                if f":{port}" in line and "pid=" in line:
+                    pid_str = line.split("pid=")[1].split(",")[0]
+                    pid = int(pid_str)
+                    click.echo(f"  Killing stale process on port {port} (PID {pid})")
+                    os.kill(pid, signal.SIGKILL)
+        except (subprocess.TimeoutExpired, ValueError, OSError):
+            pass
+
+    # Brief wait for port release
+    time.sleep(2)
+
+
 def stop_temp_neo4j(proc: subprocess.Popen) -> None:
-    """Terminate a temporary Neo4j process."""
-    proc.terminate()
+    """Terminate a temporary Neo4j process and its entire process group."""
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+    except (ProcessLookupError, PermissionError):
+        pass
     try:
         proc.wait(timeout=15)
     except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.wait()
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            proc.kill()
+        proc.wait(timeout=10)
 
 
 def dump_temp_neo4j(temp_dir: Path, output_path: Path) -> None:
@@ -225,6 +259,8 @@ def create_dd_only_dump(source_dump_path: Path, output_path: Path) -> None:
     """
     temp_bolt_port = 27687
     temp_http_port = 27474
+
+    _cleanup_stale_temp_neo4j(temp_bolt_port, temp_http_port)
 
     with tempfile.TemporaryDirectory() as tmpdir:
         temp_dir = Path(tmpdir) / "neo4j-temp"
@@ -301,6 +337,8 @@ def create_facility_dump(
     """
     temp_bolt_port = 27687
     temp_http_port = 27474
+
+    _cleanup_stale_temp_neo4j(temp_bolt_port, temp_http_port)
 
     with tempfile.TemporaryDirectory() as tmpdir:
         temp_dir = Path(tmpdir) / "neo4j-temp"
