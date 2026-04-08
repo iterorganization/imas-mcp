@@ -41,6 +41,44 @@ _PHYSICS_SHORT_TERMS = frozenset(
     {"ip", "q", "b0", "te", "ne", "ti", "ni", "li", "ze", "j", "pf", "tf", "ec", "nz"}
 )
 
+# Lucene special characters that must be escaped in user queries
+_LUCENE_SPECIAL = frozenset('+-&&||!(){}[]^"~*?:\\/')
+
+
+def _escape_lucene(term: str) -> str:
+    """Escape Lucene special characters in a search term."""
+    return "".join(f"\\{c}" if c in _LUCENE_SPECIAL else c for c in term)
+
+
+def _build_phrase_aware_query(query: str) -> str:
+    """Build a Lucene query with adjacent-bigram phrases + OR fallback.
+
+    For multi-word queries, creates bigram phrases from adjacent words
+    and combines with individual terms using OR. Lucene naturally boosts
+    phrase matches via position-aware scoring.
+
+    Examples:
+        "magnetic flux poloidal" → '"magnetic flux" OR "flux poloidal" OR magnetic OR flux OR poloidal'
+        "electron temperature" → '"electron temperature" OR electron OR temperature'
+        "ip" → 'ip'  (single word unchanged)
+    """
+    words = query.strip().split()
+    if len(words) <= 1:
+        return _escape_lucene(query.strip())
+
+    escaped = [_escape_lucene(w) for w in words]
+    parts = []
+
+    # Adjacent bigram phrases (highest weight in Lucene scoring)
+    for i in range(len(escaped) - 1):
+        parts.append(f'"{escaped[i]} {escaped[i + 1]}"')
+
+    # Individual terms as OR fallback
+    parts.extend(escaped)
+
+    return " OR ".join(parts)
+
+
 # Module-level encoder singleton — avoids re-loading the model per query
 _encoder: Any = None
 _encoder_lock: Any = None
@@ -132,6 +170,8 @@ class GraphSearchTool:
         "dd_version: Filter by DD major version (e.g., 3 or 4). None returns all versions. "
         "facility: Optional facility for cross-references (e.g., 'tcv'). Returns signal, wiki, and code references. "
         "include_version_context: Include DD version change history for each result path. "
+        "include_summary: Include summary IDS paths in results (default: false). "
+        "Summary IDS contains aggregate quantities from primary IDSs. "
         "search_mode: 'auto' (default), 'semantic', 'lexical', or 'hybrid'. "
         "response_profile: 'minimal', 'standard' (default), or 'detailed'."
     )
@@ -145,6 +185,7 @@ class GraphSearchTool:
         dd_version: int | None = None,
         facility: str | None = None,
         include_version_context: bool = False,
+        include_summary: bool = False,
         ctx: Context | None = None,
     ) -> SearchPathsResult:
         """Search IMAS paths using hybrid vector + text search."""
@@ -160,6 +201,17 @@ class GraphSearchTool:
             )
 
         normalized_filter = normalize_ids_filter(ids_filter)
+
+        # Determine whether to exclude summary IDS paths.
+        # Only exclude when the user has not explicitly requested summary paths
+        # via ids_filter and has not opted in via include_summary=True.
+        _filter_list = (
+            normalized_filter
+            if isinstance(normalized_filter, list)
+            else ([normalized_filter] if normalized_filter else [])
+        )
+        _exclude_summary = not include_summary and "summary" not in _filter_list
+        summary_clause = "AND path.ids <> 'summary'" if _exclude_summary else ""
 
         # Path-like queries (contain "/") should skip expensive vector search
         # and rely on text/path matching instead.
@@ -201,6 +253,7 @@ class GraphSearchTool:
                 WHERE NOT (path)-[:DEPRECATED_IN]->(:DDVersion)
                   AND path.node_category = 'data'
                 {filter_clause}
+                {summary_clause}
                 {dd_clause}
                 RETURN path.id AS id, score
                 ORDER BY score DESC
@@ -220,6 +273,7 @@ class GraphSearchTool:
             min(max_results * 3, 150),
             normalized_filter,
             dd_version=dd_version,
+            exclude_summary=_exclude_summary,
         )
         text_scores: dict[str, float] = {}
         for r in text_results:
@@ -376,6 +430,46 @@ class GraphSearchTool:
             )
             if r["physics_domain"]:
                 physics_domains.add(r["physics_domain"])
+
+        # --- Expand STRUCTURE hits with leaf children ---
+        _STRUCTURE_TYPES = {"structure", "struct_array", "STRUCTURE"}
+        structure_hits = [h for h in hits if h.data_type in _STRUCTURE_TYPES][:5]
+
+        if structure_hits:
+            parent_ids = [h.path for h in structure_hits]
+            child_results = self._gc.query(
+                """
+                UNWIND $parent_ids AS parent_id
+                MATCH (child:IMASNode)
+                WHERE child.id STARTS WITH parent_id + '/'
+                  AND NOT (child)-[:DEPRECATED_IN]->(:DDVersion)
+                  AND child.node_category = 'data'
+                  AND child.data_type IS NOT NULL
+                  AND NOT (toLower(child.data_type) IN ['structure', 'struct_array'])
+                  AND NOT (child.id CONTAINS '_error_')
+                WITH parent_id, child
+                ORDER BY child.id
+                WITH parent_id, collect({
+                    id: child.id,
+                    name: child.name,
+                    data_type: child.data_type,
+                    units: child.units
+                })[..10] AS children, count(child) AS total
+                RETURN parent_id, children, total
+                """,
+                parent_ids=parent_ids,
+            )
+
+            children_by_parent: dict[str, tuple[list, int]] = {
+                r["parent_id"]: (r["children"], r["total"]) for r in child_results or []
+            }
+
+            for hit in structure_hits:
+                child_data = children_by_parent.get(hit.path)
+                if child_data:
+                    children_list, total = child_data
+                    hit.children = children_list
+                    hit.children_total = total
 
         return SearchPathsResult(
             hits=hits,
@@ -1235,7 +1329,10 @@ class GraphClustersTool:
             embedding = self._embed_query(query)
             scope_filter = "AND cluster.scope = $scope" if scope else ""
             ids_filter_clause = ""
-            params: dict[str, Any] = {"embedding": embedding, "k": 10}
+            vector_k = (
+                5 if text_results else 10
+            )  # Fewer vector results when text already found matches
+            params: dict[str, Any] = {"embedding": embedding, "k": vector_k}
             if scope:
                 params["scope"] = scope
             if ids_filter:
@@ -1245,6 +1342,11 @@ class GraphClustersTool:
                 ids_filter_clause = "AND any(ids_name IN cluster.ids_names WHERE ids_name IN $ids_filter)"
                 params["ids_filter"] = filter_list
 
+            # Calculate adaptive threshold based on query complexity
+            query_word_count = len(query.strip().split())
+            min_vector_score = 0.35 if query_word_count > 3 else 0.3
+            params["min_score"] = min_vector_score
+
             vector_results = (
                 self._gc.query(
                     f"""
@@ -1252,7 +1354,7 @@ class GraphClustersTool:
                         'cluster_label_embedding', $k, $embedding
                     )
                     YIELD node AS cluster, score
-                    WHERE score > 0.3
+                    WHERE score > $min_score
                     {scope_filter}
                     {ids_filter_clause}
                     OPTIONAL MATCH (member:IMASNode)-[:IN_CLUSTER]->(cluster)
@@ -2088,6 +2190,7 @@ def _text_search_dd_paths(
     ids_filter: str | list[str] | None,
     *,
     dd_version: int | None = None,
+    exclude_summary: bool = False,
 ) -> list[dict[str, Any]]:
     """Text-based search on IMAS paths by query string.
 
@@ -2115,6 +2218,9 @@ def _text_search_dd_paths(
         where_parts.append("p.ids IN $ids_filter")
         params["ids_filter"] = filter_list
 
+    if exclude_summary:
+        where_parts.append("p.ids <> 'summary'")
+
     where_base = " AND ".join(where_parts)
 
     # Try fulltext index first (BM25 scoring)
@@ -2122,7 +2228,10 @@ def _text_search_dd_paths(
         ft_where = (
             "WHERE NOT (p)-[:DEPRECATED_IN]->(:DDVersion) AND p.node_category = 'data'"
         )
-        ft_params: dict[str, Any] = {"query": query, "limit": limit}
+        ft_params: dict[str, Any] = {
+            "query": _build_phrase_aware_query(query),
+            "limit": limit,
+        }
         if ids_filter is not None:
             filter_list = ids_filter if isinstance(ids_filter, list) else [ids_filter]
             ft_where += " AND p.ids IN $ids_filter"
