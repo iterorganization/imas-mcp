@@ -179,7 +179,8 @@ RUN set -ex && \
             mkdir -p /tmp/dumps && \
             mv "$DUMP" /tmp/dumps/neo4j.dump && \
             rm -rf /tmp/graph-pull && \
-            neo4j-admin database load neo4j --from-path=/tmp/dumps --overwrite-destination 2>&1 && \
+            cd / && \
+            neo4j-admin database load neo4j --from-path=/tmp/dumps --overwrite-destination=true 2>&1 && \
             rm -rf /tmp/dumps && \
             echo "Graph loaded from dump"; \
         elif [ -n "$ARCHIVE" ]; then \
@@ -197,7 +198,8 @@ RUN set -ex && \
             mkdir -p /tmp/dumps && \
             mv "$DUMP_FILE" /tmp/dumps/neo4j.dump && \
             rm -rf /tmp/graph-extracted && \
-            neo4j-admin database load neo4j --from-path=/tmp/dumps --overwrite-destination 2>&1 && \
+            cd / && \
+            neo4j-admin database load neo4j --from-path=/tmp/dumps --overwrite-destination=true 2>&1 && \
             rm -rf /tmp/dumps && \
             echo "Graph loaded from dump"; \
         else \
