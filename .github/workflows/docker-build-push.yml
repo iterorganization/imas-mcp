@@ -234,17 +234,29 @@ jobs:
           NEO4J_CONTAINER=$(docker ps -q --filter "ancestor=neo4j:2026.01.4-community" | head -1)
           echo "Executing DDL index statements..."
           DDL_COUNT=0
+          DDL_FAIL=0
           while IFS= read -r stmt; do
             [ -z "$stmt" ] && continue
-            docker exec "${NEO4J_CONTAINER}" cypher-shell -u neo4j -p neo4j "$stmt" 2>&1 || true
-            DDL_COUNT=$((DDL_COUNT + 1))
+            if docker exec "${NEO4J_CONTAINER}" cypher-shell \
+                -u neo4j -p imas-codex "$stmt" 2>&1; then
+              DDL_COUNT=$((DDL_COUNT + 1))
+            else
+              echo "WARNING: DDL failed: $stmt"
+              DDL_FAIL=$((DDL_FAIL + 1))
+            fi
           done < /tmp/ddl.cypher
-          echo "Executed $DDL_COUNT DDL statements"
+          echo "Executed $DDL_COUNT DDL statements ($DDL_FAIL failed)"
+
+          if [ "$DDL_FAIL" -gt 0 ] && [ "$DDL_COUNT" -eq 0 ]; then
+            echo "ERROR: All DDL statements failed"
+            exit 1
+          fi
 
           # Wait for indexes to come online
           echo "Waiting for indexes to come online..."
           for i in $(seq 1 300); do
-            PENDING=$(docker exec "${NEO4J_CONTAINER}" cypher-shell -u neo4j -p neo4j \
+            PENDING=$(docker exec "${NEO4J_CONTAINER}" cypher-shell \
+              -u neo4j -p imas-codex \
               "SHOW INDEXES YIELD state WHERE state <> 'ONLINE' RETURN count(*) AS c" 2>/dev/null | tail -1 | tr -d ' ')
             if [ "$PENDING" = "0" ]; then
               echo "All indexes ONLINE (${i}s)"
