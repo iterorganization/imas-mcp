@@ -114,8 +114,7 @@ dev = [
     # --- Interactive dev ---
     "ipython>=9.2.0",
     "ipykernel>=6.29.5",
-    # --- Standard Names catalog ---
-    "imas-standard-names",
+    # --- Standard Names catalog (install manually: uv pip install -e ../imas-standard-names) ---
     # --- LLM & Discovery ---
     "litellm>=1.81.0",
     # --- Graph build & schema ---
@@ -432,7 +431,6 @@ torch = [
   { index = "pytorch-cpu", extra = "test" },
   { index = "pytorch-gpu", extra = "gpu" },
 ]
-imas-standard-names = { path = "../imas-standard-names", editable = true }
 
 [tool.uv]
 # cpu, gpu, and test extras for torch are mutually exclusive with gpu
