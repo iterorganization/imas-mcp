@@ -788,14 +788,16 @@ def _migrate_from_node(
     user: str,
     timeout: int,
 ) -> None:
-    """Kill imas-codex processes and zellij sessions on the old node.
+    """Kill imas-codex serve processes on the old node.
 
     Called automatically when ``--set-default`` switches to a different
     node.  Uses a single SSH call to:
     1. Send SIGINT to imas-codex/litellm processes (graceful shutdown)
     2. SIGTERM stragglers after a grace period
-    3. Delete zellij sessions AND kill orphaned server daemons
-    4. Detect lingering VS Code server sessions that could re-spawn
+    3. Detect lingering VS Code server sessions that could re-spawn
+
+    Zellij sessions are intentionally preserved — they contain user
+    workspace state (tabs, connections) that should survive host switches.
     """
     old_short = old_hostname.split(".")[0]
     fqdn = old_hostname if "." in old_hostname else f"{old_hostname}.iter.org"
@@ -823,35 +825,23 @@ def _migrate_from_node(
         f"else "
         f"  echo 'killed:0'; "
         f"fi; "
-        # --- Phase 2: Zellij sessions + orphaned server daemons ---
-        "if command -v zellij >/dev/null 2>&1; then "
-        "  sessions=$(zellij list-sessions -s 2>/dev/null || true); "
-        '  if [ -n "$sessions" ]; then '
-        "    zellij delete-all-sessions -y 2>/dev/null; "
-        '    count=$(echo "$sessions" | wc -l); '
-        '    echo "zj:$count"; '
-        "  else "
-        "    echo 'zj:0'; "
-        "  fi; "
-        "else "
-        "  echo 'zj:none'; "
-        "fi; "
-        # Fallback: kill orphaned zellij --server daemons (PPID=1) that
-        # survive delete-all-sessions.  These spin at high CPU doing
-        # nothing and are the main cause of cleanup failure.
-        "zj_servers=$(pgrep -u $USER -f 'zellij --server' 2>/dev/null || true); "
-        'if [ -n "$zj_servers" ]; then '
-        "  kill -TERM $zj_servers 2>/dev/null; "
-        '  echo "zj_servers:$(echo "$zj_servers" | wc -w)"; '
-        "else "
-        "  echo 'zj_servers:0'; "
-        "fi; "
-        # --- Phase 3: Detect VS Code server (warns user) ---
+        # --- Phase 2: Detect VS Code server (warns user) ---
         "vscode_pids=$(pgrep -u $USER -f 'code-server|vscode-server' 2>/dev/null || true); "
         'if [ -n "$vscode_pids" ]; then '
         '  echo "vscode:$(echo "$vscode_pids" | wc -w)"; '
         "else "
         "  echo 'vscode:0'; "
+        "fi; "
+        # --- Phase 3: Report zellij sessions (informational only) ---
+        "if command -v zellij >/dev/null 2>&1; then "
+        "  sessions=$(zellij list-sessions -s 2>/dev/null || true); "
+        '  if [ -n "$sessions" ]; then '
+        '    echo "zj:$(echo "$sessions" | wc -l)"; '
+        "  else "
+        "    echo 'zj:0'; "
+        "  fi; "
+        "else "
+        "  echo 'zj:none'; "
         "fi"
     )
 
@@ -872,30 +862,6 @@ def _migrate_from_node(
                             f"    {click.style('·', fg='dim')} "
                             f"No imas-codex processes running"
                         )
-                elif line.startswith("zj:"):
-                    val = line.split(":")[1]
-                    if val == "none":
-                        click.echo(
-                            f"    {click.style('·', fg='dim')} "
-                            f"zellij not found on {old_short}"
-                        )
-                    elif val == "0":
-                        click.echo(
-                            f"    {click.style('·', fg='dim')} "
-                            f"No zellij sessions to clean up"
-                        )
-                    else:
-                        click.echo(
-                            f"    {click.style('✓', fg='green')} "
-                            f"Deleted {val} zellij session(s)"
-                        )
-                elif line.startswith("zj_servers:"):
-                    count = line.split(":")[1]
-                    if count != "0":
-                        click.echo(
-                            f"    {click.style('✓', fg='green')} "
-                            f"Killed {count} orphaned zellij server(s)"
-                        )
                 elif line.startswith("vscode:"):
                     count = line.split(":")[1]
                     if count != "0":
@@ -903,6 +869,13 @@ def _migrate_from_node(
                             f"    {click.style('⚠', fg='yellow')} "
                             f"VS Code server still running on {old_short} "
                             f"({count} procs) — may re-spawn MCP servers"
+                        )
+                elif line.startswith("zj:"):
+                    val = line.split(":")[1]
+                    if val not in ("none", "0"):
+                        click.echo(
+                            f"    {click.style('ℹ', fg='cyan')} "
+                            f"{val} zellij session(s) preserved on {old_short}"
                         )
         else:
             click.echo(
@@ -1191,7 +1164,17 @@ def host_survey(
             if current == target_fqdn:
                 click.echo(f"  Already set: {facility} → {target_fqdn}")
             else:
-                # Kill ControlMaster sockets BEFORE config update so
+                # Migrate FIRST — SSH to old node while control sockets
+                # and gateway connections are still alive.
+                if current:
+                    _migrate_from_node(
+                        current,
+                        gateway,
+                        user,
+                        timeout,
+                    )
+
+                # Kill ControlMaster sockets AFTER migration so
                 # ssh -O exit resolves to the old (current) HostName.
                 sockets_to_kill = [facility]
                 llm_alias = f"{facility}-llm"
@@ -1221,16 +1204,6 @@ def host_survey(
                         + "Stopped stale tunnels (restart with "
                         + click.style("imas-codex tunnel start", bold=True)
                         + ")"
-                    )
-
-                # Migrate: clean up processes and zellij sessions
-                # on the old node
-                if current:
-                    _migrate_from_node(
-                        current,
-                        gateway,
-                        user,
-                        timeout,
                     )
 
         # LLM alias: --set-llm pins to explicit node, otherwise follows default
