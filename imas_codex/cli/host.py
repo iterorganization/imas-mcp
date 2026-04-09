@@ -937,7 +937,7 @@ def _migrate_from_node(
                         )
                     else:
                         click.echo(
-                            f"    {click.style('·', fg='dim')} "
+                            f"    {click.style('·', dim=True)} "
                             f"No imas-codex processes running"
                         )
                 elif line.startswith("vscode:"):
@@ -952,7 +952,7 @@ def _migrate_from_node(
                     val = line.split(":")[1]
                     if val == "none":
                         click.echo(
-                            f"    {click.style('·', fg='dim')} "
+                            f"    {click.style('·', dim=True)} "
                             f"zellij not found on {old_short}"
                         )
                     elif val != "0":
@@ -1037,7 +1037,7 @@ def _handle_llm_alias(
     existing = _get_ssh_hostname(llm_alias)
     if existing == llm_fqdn:
         click.echo(
-            click.style("  · ", fg="dim")
+            click.style("  · ", dim=True)
             + f"LLM already set: {llm_alias} → "
             + click.style(existing, fg="cyan")
         )
@@ -1307,6 +1307,17 @@ def host_survey(
         elif target_fqdn:
             # No --set-llm: LLM travels with the new default
             _handle_llm_alias(facility, target_fqdn, results)
+
+        # Show processes on the new target node after migration
+        if target_fqdn and current != target_fqdn:
+            target_short = target_fqdn.split(".")[0]
+            click.echo()
+            _, new_info = _query_node(target_short, gateway, user, timeout)
+            if new_info is not None:
+                procs = {target_short: new_info.get("codex_procs", [])}
+                _show_processes(procs, title=f"Processes on {target_short}")
+            else:
+                click.echo(f"  Could not query {target_short} for process list")
 
         return
 
