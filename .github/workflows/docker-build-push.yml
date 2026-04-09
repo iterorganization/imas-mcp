@@ -152,27 +152,16 @@ jobs:
           NEO4J_DATA_VOLUME=$(docker inspect "${NEO4J_CONTAINER}" --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Name}}{{end}}{{end}}')
 
           if [ -f "${CONTENT_DIR}/import.sh" ] && [ -d "${CONTENT_DIR}/csv" ]; then
-            echo "CSV-based archive detected"
+            echo "CSV-based archive detected — using generated import.sh"
 
-            # Run neo4j-admin import via Docker
-            CSV_DIR="${CONTENT_DIR}/csv"
-
-            # Build import command from import.sh
-            IMPORT_ARGS="--overwrite-destination=true --id-type=string --array-delimiter=; --multiline-fields=true --skip-bad-relationships=true"
-            for f in "${CSV_DIR}"/nodes_*.csv; do
-              LABEL=$(basename "$f" | sed 's/^nodes_//;s/\.csv$//')
-              IMPORT_ARGS="${IMPORT_ARGS} --nodes=${LABEL}=/import/$(basename $f)"
-            done
-            for f in "${CSV_DIR}"/rels_*.csv; do
-              TYPE=$(basename "$f" | sed 's/^rels_//;s/\.csv$//')
-              IMPORT_ARGS="${IMPORT_ARGS} --relationships=${TYPE}=/import/$(basename $f)"
-            done
-
+            # Use the archive's import.sh which has correct relationship types
             docker run --rm \
               -v "${NEO4J_DATA_VOLUME}:/data" \
-              -v "${CSV_DIR}:/import" \
+              -v "${CONTENT_DIR}/csv:/import" \
+              -v "${CONTENT_DIR}/import.sh:/import.sh:ro" \
+              -e CSV_DIR=/import \
               neo4j:2026.01.4-community \
-              neo4j-admin database import full neo4j ${IMPORT_ARGS}
+              bash /import.sh
 
             # Save DDL for post-start execution
             if [ -f "${CONTENT_DIR}/ddl.cypher" ]; then
