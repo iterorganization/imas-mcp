@@ -1056,45 +1056,50 @@ def _push_all_graph_variants(
         dispatch_graph_quality(git_info, git_tag, registry)
         return
 
-    # ── Local push path — dump once, reuse for filtered variants ────────
+    # ── Local push path — export+rebuild for filtered, dump for full ───
+    # Full graph variant still needs a traditional dump (pushes the whole DB).
+    # DD-only and per-facility variants use export+rebuild from the live graph
+    # — zero downtime, compact output, ~2 min instead of 10-20 min.
     cached_dump = None
-    click.echo("\n  Creating shared graph dump (stops Neo4j once)...")
-    if dry_run:
-        cached_dump = None
-    else:
-        cached_dump = _create_shared_dump()
-        if not cached_dump:
-            raise click.ClickException(
-                "Failed to create shared graph dump.\n"
-                "  Is Neo4j running? Check: imas-codex graph status"
-            )
+    if not is_rc or len(facilities) == 0:
+        # Only create shared dump when we need the full variant
+        click.echo("\n  Creating shared graph dump (stops Neo4j once)...")
+        if dry_run:
+            cached_dump = None
+        else:
+            cached_dump = _create_shared_dump()
+            if not cached_dump:
+                raise click.ClickException(
+                    "Failed to create shared graph dump.\n"
+                    "  Is Neo4j running? Check: imas-codex graph status"
+                )
 
     failed: list[str] = []
     variant = 0
 
-    # Push full graph (all facilities)
-    variant += 1
-    click.echo(
-        f"\n  Variant {variant}: Full graph (facilities: {', '.join(facilities)})"
-    )
-    if not _push_graph_variant(
-        message=message,
-        registry=registry,
-        version_tag=git_tag,
-        source_dump=cached_dump,
-        dry_run=dry_run,
-    ):
-        failed.append("full")
+    # Push full graph (all facilities) — needs traditional dump
+    if cached_dump or dry_run:
+        variant += 1
+        click.echo(
+            f"\n  Variant {variant}: Full graph (facilities: {', '.join(facilities)})"
+        )
+        if not _push_graph_variant(
+            message=message,
+            registry=registry,
+            version_tag=git_tag,
+            source_dump=cached_dump,
+            dry_run=dry_run,
+        ):
+            failed.append("full")
 
-    # Push dd-only (filtered from cached dump)
+    # Push dd-only — export+rebuild from live graph (no source dump needed)
     variant += 1
-    click.echo(f"\n  Variant {variant}: IMAS Data Dictionary only")
+    click.echo(f"\n  Variant {variant}: IMAS Data Dictionary only (export+rebuild)")
     if not _push_graph_variant(
         dd_only=True,
         message=message,
         registry=registry,
         version_tag=git_tag,
-        source_dump=cached_dump,
         dry_run=dry_run,
     ):
         failed.append("dd-only")
@@ -1107,13 +1112,12 @@ def _push_all_graph_variants(
     else:
         for fac in facilities:
             variant += 1
-            click.echo(f"\n  Variant {variant}: {fac} + IMAS DD")
+            click.echo(f"\n  Variant {variant}: {fac} + IMAS DD (export+rebuild)")
             if not _push_graph_variant(
                 facility=fac,
                 message=message,
                 registry=registry,
                 version_tag=git_tag,
-                source_dump=cached_dump,
                 dry_run=dry_run,
             ):
                 failed.append(fac)

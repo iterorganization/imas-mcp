@@ -153,8 +153,10 @@ RUN --mount=type=secret,id=GHCR_TOKEN \
         touch /tmp/graph-pull/.no-graph; \
     fi
 
-## Stage 4: Load graph dump into Neo4j data directory
-# Uses neo4j-admin from the Neo4j image to load the dump
+## Stage 4: Load graph data into Neo4j data directory
+# Handles both CSV-based archives (new) and dump-based archives (legacy).
+# CSV format: csv/ dir + import.json + ddl.cypher + import.sh
+# Dump format: graph.dump
 FROM neo4j:2026.01.4-community AS graph-loader
 
 # Propagate GRAPH_TAG to bust cache when graph version changes
@@ -164,54 +166,63 @@ RUN echo "Graph tag: ${GRAPH_TAG}" > /dev/null
 # Copy graph archive from builder
 COPY --from=builder /tmp/graph-pull/ /tmp/graph-pull/
 
-# Extract and load the graph dump (or create empty database)
-# Handles both raw .dump files (oras pull) and .tar.gz archives.
+# Extract and load the graph data (or create empty database)
 # CRITICAL: clean up intermediate files progressively to minimize peak disk usage.
-# The graph dump is ~5 GB; without cleanup we'd have archive + extracted + copy + loaded
-# data all on disk simultaneously (~15+ GB), exceeding CI runner capacity.
 RUN set -ex && \
     if [ -f /tmp/graph-pull/.no-graph ]; then \
-        echo "⚠ No graph data — creating empty Neo4j database"; \
+        echo "No graph data — creating empty Neo4j database"; \
         mkdir -p /data/databases/neo4j /data/transactions/neo4j; \
     else \
         cd /tmp/graph-pull && \
         DUMP=$(ls *.dump 2>/dev/null | head -1) && \
         ARCHIVE=$(ls *.tar.gz 2>/dev/null | head -1) && \
-        mkdir -p /tmp/dumps && \
         if [ -n "$DUMP" ]; then \
             echo "Loading dump directly: $DUMP" && \
+            mkdir -p /tmp/dumps && \
             mv "$DUMP" /tmp/dumps/neo4j.dump && \
-            rm -rf /tmp/graph-pull; \
+            rm -rf /tmp/graph-pull && \
+            neo4j-admin database load neo4j --from-path=/tmp/dumps --overwrite-destination 2>&1 && \
+            rm -rf /tmp/dumps && \
+            echo "Graph loaded from dump"; \
         elif [ -n "$ARCHIVE" ]; then \
             echo "Extracting: $ARCHIVE" && \
             mkdir -p /tmp/graph-extracted && \
             tar -xzf "$ARCHIVE" -C /tmp/graph-extracted && \
             rm -rf /tmp/graph-pull && \
-            DUMP=$(find /tmp/graph-extracted -name "*.dump" -type f | head -1) && \
-            if [ -z "$DUMP" ]; then \
-                echo "ERROR: No .dump file found in archive" >&2; \
-                find /tmp/graph-extracted -type f >&2; \
-                exit 1; \
-            fi && \
-            echo "Found dump: $DUMP ($(du -sh "$DUMP" | cut -f1))" && \
-            mv "$DUMP" /tmp/dumps/neo4j.dump && \
-            rm -rf /tmp/graph-extracted; \
+            CONTENT_DIR=$(find /tmp/graph-extracted -maxdepth 1 -mindepth 1 -type d | head -1) && \
+            if [ -f "$CONTENT_DIR/import.sh" ] && [ -d "$CONTENT_DIR/csv" ]; then \
+                echo "CSV-based archive — running import.sh" && \
+                CSV_DIR="$CONTENT_DIR/csv" bash "$CONTENT_DIR/import.sh" && \
+                if [ -f "$CONTENT_DIR/ddl.cypher" ]; then \
+                    cp "$CONTENT_DIR/ddl.cypher" /tmp/ddl.cypher; \
+                fi && \
+                rm -rf /tmp/graph-extracted && \
+                echo "Graph imported from CSV"; \
+            else \
+                DUMP_FILE=$(find /tmp/graph-extracted -name "*.dump" -type f | head -1) && \
+                if [ -z "$DUMP_FILE" ]; then \
+                    echo "ERROR: No csv/ + import.sh or .dump found in archive" >&2; \
+                    find /tmp/graph-extracted -type f >&2; \
+                    exit 1; \
+                fi && \
+                echo "Found dump: $DUMP_FILE ($(du -sh "$DUMP_FILE" | cut -f1))" && \
+                mkdir -p /tmp/dumps && \
+                mv "$DUMP_FILE" /tmp/dumps/neo4j.dump && \
+                rm -rf /tmp/graph-extracted && \
+                neo4j-admin database load neo4j --from-path=/tmp/dumps --overwrite-destination 2>&1 && \
+                rm -rf /tmp/dumps && \
+                echo "Graph loaded from dump"; \
+            fi; \
         else \
             echo "ERROR: No .dump or .tar.gz found in /tmp/graph-pull/" >&2; \
             ls -la /tmp/graph-pull/ >&2; \
             exit 1; \
-        fi && \
-        echo "Loading dump into Neo4j ($(du -sh /tmp/dumps/neo4j.dump | cut -f1))..." && \
-        df -h / && \
-        cd / && \
-        neo4j-admin database load neo4j --from-path=/tmp/dumps --overwrite-destination 2>&1 && \
-        rm -rf /tmp/dumps && \
-        echo "✓ Graph loaded into Neo4j data directory"; \
+        fi; \
     fi
 
-# Pre-start Neo4j to complete WAL recovery and create system DB.
-# This shifts the expensive recovery from runtime (slow Azure I/O)
-# to build time (fast CI SSD). The database ships fully recovered.
+# Pre-start Neo4j to: (1) complete WAL recovery, (2) create system DB,
+# and (3) execute DDL index statements for CSV-based imports.
+# This shifts expensive work from runtime (slow Azure I/O) to build time (fast CI SSD).
 RUN if [ ! -f /tmp/graph-pull/.no-graph ]; then \
     echo "Pre-starting Neo4j for database recovery..." && \
     echo "dbms.security.auth_enabled=false" >> /var/lib/neo4j/conf/neo4j.conf && \
@@ -220,7 +231,7 @@ RUN if [ ! -f /tmp/graph-pull/.no-graph ]; then \
     READY=0 && \
     for i in $(seq 1 120); do \
         if /var/lib/neo4j/bin/cypher-shell -a bolt://127.0.0.1:7687 "RETURN 1" > /dev/null 2>&1; then \
-            echo "✓ Database recovered (${i}s)"; \
+            echo "Database ready (${i}s)"; \
             READY=1; \
             break; \
         fi; \
@@ -236,10 +247,30 @@ RUN if [ ! -f /tmp/graph-pull/.no-graph ]; then \
         tail -50 /tmp/neo4j-recovery.log; \
         exit 1; \
     fi && \
+    if [ -f /tmp/ddl.cypher ]; then \
+        echo "Executing DDL index statements..." && \
+        DDL_COUNT=0 && \
+        while IFS= read -r stmt; do \
+            [ -z "$stmt" ] && continue; \
+            /var/lib/neo4j/bin/cypher-shell -a bolt://127.0.0.1:7687 "$stmt" 2>&1 || true; \
+            DDL_COUNT=$((DDL_COUNT + 1)); \
+        done < /tmp/ddl.cypher && \
+        echo "Executed $DDL_COUNT DDL statements — waiting for indexes..." && \
+        for i in $(seq 1 300); do \
+            PENDING=$(/var/lib/neo4j/bin/cypher-shell -a bolt://127.0.0.1:7687 \
+                "SHOW INDEXES YIELD state WHERE state <> 'ONLINE' RETURN count(*) AS c" 2>/dev/null | tail -1 | tr -d ' ') && \
+            if [ "$PENDING" = "0" ]; then \
+                echo "All indexes ONLINE (${i}s)"; \
+                break; \
+            fi; \
+            sleep 1; \
+        done && \
+        rm -f /tmp/ddl.cypher; \
+    fi && \
     /var/lib/neo4j/bin/neo4j stop && \
     sleep 2 && \
     rm -f /tmp/neo4j-recovery.log && \
-    echo "✓ Neo4j shut down cleanly — database is recovery-free"; \
+    echo "Neo4j shut down cleanly — database is recovery-free"; \
 fi
 
 # NOTE: Do NOT remove transaction logs (/data/transactions/neo4j/*).

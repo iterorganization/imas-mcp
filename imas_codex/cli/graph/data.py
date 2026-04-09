@@ -15,6 +15,10 @@ from typing import TYPE_CHECKING
 import click
 
 from imas_codex import __version__
+from imas_codex.graph.export_rebuild import (
+    export_dd_only_csv,
+    export_facility_csv,
+)
 from imas_codex.graph.ghcr import (
     get_git_info,
     get_package_name,
@@ -401,13 +405,40 @@ def graph_export(
     require_apptainer()
 
     def _build_archive(archive_dir: Path) -> None:
-        """Build the archive contents: dump + filter + manifest."""
-        if source_dump:
+        """Build the archive contents: CSV export or dump + manifest."""
+        use_csv = not source_dump and (dd_only or facilities)
+
+        if use_csv:
+            # CSV export from live graph — zero downtime, no dump needed
+            if dd_only:
+                click.echo("  Exporting DD-only graph to CSV...")
+                export_dd_only_csv(archive_dir)
+            elif facilities:
+                for fac in facilities:
+                    click.echo(f"  Exporting {fac}+DD graph to CSV...")
+                    export_facility_csv(fac, archive_dir)
+        elif source_dump:
+            # Use existing dump with optional legacy filtering
             click.echo(f"  Using cached dump: {source_dump}")
             shutil.copy(source_dump, str(archive_dir / "graph.dump"))
             size_mb = (archive_dir / "graph.dump").stat().st_size / 1024 / 1024
             click.echo(f"    Graph: {size_mb:.1f} MB")
+
+            if facilities:
+                for fac in facilities:
+                    click.echo(f"  Filtering dump for facility: {fac}")
+                    _create_facility_dump(
+                        archive_dir / "graph.dump",
+                        fac,
+                        archive_dir / "graph.dump",
+                    )
+            if dd_only:
+                _create_dd_only_dump(
+                    archive_dir / "graph.dump",
+                    archive_dir / "graph.dump",
+                )
         else:
+            # Full graph dump (no filtering)
             click.echo("  Dumping graph database...")
             dumps_dir = profile.data_dir / "dumps"
             dumps_dir.mkdir(parents=True, exist_ok=True)
@@ -422,33 +453,19 @@ def graph_export(
             else:
                 raise click.ClickException("Graph dump file not created")
 
-        # If facilities specified, filter the dump
-        if facilities:
-            for fac in facilities:
-                click.echo(f"  Filtering dump for facility: {fac}")
-                _create_facility_dump(
-                    archive_dir / "graph.dump",
-                    fac,
-                    archive_dir / "graph.dump",
-                )
-
-        # If imas-only, remove all facility nodes
-        if dd_only:
-            _create_dd_only_dump(
-                archive_dir / "graph.dump",
-                archive_dir / "graph.dump",
-            )
-
         manifest = {
             "version": __version__,
             "git_commit": git_info["commit"],
             "git_tag": git_info["tag"],
             "timestamp": datetime.now(UTC).isoformat(),
+            "format": "csv" if (archive_dir / "csv").is_dir() else "dump",
         }
         (archive_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
 
-    if source_dump:
-        # No Neo4j stop/start needed — work from cached dump
+    use_csv = not source_dump and (dd_only or facilities)
+
+    if source_dump or use_csv:
+        # No Neo4j stop/start needed — either cached dump or live CSV export
         click.echo(f"Creating archive [{profile.name}]: {output_path}")
 
         # Use GPFS-visible temp dir when SLURM dispatch is possible,
@@ -592,13 +609,26 @@ def graph_load(
             archive_dir = extracted_dirs[0]
 
             manifest_file = archive_dir / "manifest.json"
+            manifest = {}
             if manifest_file.exists():
                 manifest = json.loads(manifest_file.read_text())
                 click.echo(f"  Version: {manifest.get('version')}")
                 click.echo(f"  Commit: {manifest.get('git_commit', 'unknown')[:7]}")
 
+            csv_dir = archive_dir / "csv"
+            import_manifest_file = archive_dir / "import.json"
             dump_file = archive_dir / "graph.dump"
-            if dump_file.exists():
+
+            if csv_dir.is_dir() and import_manifest_file.exists():
+                # CSV-based archive: import + create indexes
+                from imas_codex.graph.export_rebuild import import_from_csv
+
+                data_dir = profile.data_dir / "data"
+                data_dir.mkdir(parents=True, exist_ok=True)
+                import_from_csv(archive_dir, data_dir)
+
+            elif dump_file.exists():
+                # Legacy dump-based archive
                 click.echo("  Loading graph database...")
                 dumps_dir = profile.data_dir / "dumps"
                 dumps_dir.mkdir(parents=True, exist_ok=True)
@@ -623,6 +653,10 @@ def graph_load(
                 result = subprocess.run(cmd, capture_output=True, text=True)
                 if result.returncode != 0:
                     raise click.ClickException(f"Graph load failed: {result.stderr}")
+            else:
+                raise click.ClickException(
+                    "Archive contains neither csv/ + import.json nor graph.dump"
+                )
 
             if manifest_file.exists():
                 manifest = json.loads(manifest_file.read_text())
