@@ -343,8 +343,7 @@ class VersionTool:
         RETURN p.id AS path, p.ids AS ids,
                c.old_value AS old_value, c.new_value AS new_value,
                v.id AS version, c.change_type AS change_type,
-               coalesce(c.breaking_level, 'informational') AS severity,
-               c.summary AS summary
+               coalesce(c.breaking_level, 'informational') AS severity
         ORDER BY v.id, p.ids, p.id
         LIMIT 200
         """
