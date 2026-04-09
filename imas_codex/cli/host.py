@@ -852,21 +852,40 @@ def _migrate_from_node(
     kill_patterns = [p for p in _CODEX_PATTERNS if p != "neo4j"]
     pattern_re = "|".join(kill_patterns)
 
+    # CRITICAL: pgrep -f matches the command line of ALL processes,
+    # including the SSH shell running this script (its argv contains
+    # the pattern string).  We must exclude $$ (shell) and $PPID
+    # (sshd) from the kill list, otherwise kill -INT destroys our own
+    # SSH connection (exit 255, empty output).
     migrate_script = (
-        # Kill imas-codex processes
-        f"pids=$(pgrep -u $USER -f '{pattern_re}' 2>/dev/null || true); "
-        f'if [ -n "$pids" ]; then '
-        f'  count=$(echo "$pids" | wc -w); '
-        f"  kill -INT $pids 2>/dev/null; "
-        f"  sleep 2; "
-        f"  remaining=$(pgrep -u $USER -f '{pattern_re}' 2>/dev/null || true); "
-        f'  if [ -n "$remaining" ]; then '
-        f"    kill -TERM $remaining 2>/dev/null; "
-        f"  fi; "
-        f'  echo "killed:$count"; '
-        f"else "
-        f"  echo 'killed:0'; "
-        f"fi; "
+        # Collect PIDs, then filter out our own process tree
+        f"all_pids=$(pgrep -u $USER -f '{pattern_re}' 2>/dev/null || true); "
+        "pids=''; "
+        "for p in $all_pids; do "
+        '  if [ "$p" != "$$" ] && [ "$p" != "$PPID" ]; then '
+        '    pids="$pids $p"; '
+        "  fi; "
+        "done; "
+        "pids=$(echo $pids | xargs); "
+        'if [ -n "$pids" ]; then '
+        '  count=$(echo "$pids" | wc -w); '
+        "  kill -INT $pids 2>/dev/null; "
+        "  sleep 2; "
+        f"  all_rem=$(pgrep -u $USER -f '{pattern_re}' 2>/dev/null || true); "
+        "  remaining=''; "
+        "  for p in $all_rem; do "
+        '    if [ "$p" != "$$" ] && [ "$p" != "$PPID" ]; then '
+        '      remaining="$remaining $p"; '
+        "    fi; "
+        "  done; "
+        "  remaining=$(echo $remaining | xargs); "
+        '  if [ -n "$remaining" ]; then '
+        "    kill -TERM $remaining 2>/dev/null; "
+        "  fi; "
+        '  echo "killed:$count"; '
+        "else "
+        "  echo 'killed:0'; "
+        "fi; "
         # Detect VS Code server (warns user)
         "vscode_pids=$(pgrep -u $USER -f 'code-server|vscode-server' 2>/dev/null || true); "
         'if [ -n "$vscode_pids" ]; then '
@@ -888,7 +907,14 @@ def _migrate_from_node(
         "  echo 'zj:none'; "
         "fi; "
         # Kill orphaned zellij server daemons (PPID=1)
-        "zj_servers=$(pgrep -u $USER -f 'zellij --server' 2>/dev/null || true); "
+        "all_zj=$(pgrep -u $USER -f 'zellij --server' 2>/dev/null || true); "
+        "zj_servers=''; "
+        "for p in $all_zj; do "
+        '  if [ "$p" != "$$" ] && [ "$p" != "$PPID" ]; then '
+        '    zj_servers="$zj_servers $p"; '
+        "  fi; "
+        "done; "
+        "zj_servers=$(echo $zj_servers | xargs); "
         'if [ -n "$zj_servers" ]; then '
         "  kill -TERM $zj_servers 2>/dev/null; "
         '  echo "zj_servers:$(echo "$zj_servers" | wc -w)"; '
