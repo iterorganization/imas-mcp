@@ -83,7 +83,7 @@ jobs:
           fi
           echo "tag=${TAG:-latest}" >> $GITHUB_OUTPUT
           echo "registry=${REGISTRY:-ghcr.io/iterorganization}" >> $GITHUB_OUTPUT
-          echo "Graph: ${REGISTRY}/imas-codex-graph-dd:${TAG}"
+          echo "Graph: ${REGISTRY}/imas-codex-graph:${TAG}"
 
       - name: Login to GHCR
         run: |
@@ -91,7 +91,7 @@ jobs:
 
       - name: Pull graph from GHCR
         run: |
-          ARTIFACT="${{ steps.resolve-tag.outputs.registry }}/imas-codex-graph-dd:${{ steps.resolve-tag.outputs.tag }}"
+          ARTIFACT="${{ steps.resolve-tag.outputs.registry }}/imas-codex-graph:${{ steps.resolve-tag.outputs.tag }}"
           echo "Pulling: ${ARTIFACT}"
           mkdir -p /tmp/graph-dump
           oras pull "${ARTIFACT}" -o /tmp/graph-dump --allow-path-traversal

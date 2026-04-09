@@ -1056,23 +1056,20 @@ def _push_all_graph_variants(
         dispatch_graph_quality(git_info, git_tag, registry)
         return
 
-    # ── Local push path — export+rebuild for filtered, dump for full ───
-    # Full graph variant still needs a traditional dump (pushes the whole DB).
-    # DD-only and per-facility variants use export+rebuild from the live graph
-    # — zero downtime, compact output, ~2 min instead of 10-20 min.
+    # ── Local push path — dump for full, export+rebuild for filtered ───
+    # Full graph is always pushed (RC and final) — CI tests against it.
+    # DD-only and per-facility variants use export+rebuild from the live graph.
     cached_dump = None
-    if not is_rc or len(facilities) == 0:
-        # Only create shared dump when we need the full variant
-        click.echo("\n  Creating shared graph dump (stops Neo4j once)...")
-        if dry_run:
-            cached_dump = None
-        else:
-            cached_dump = _create_shared_dump()
-            if not cached_dump:
-                raise click.ClickException(
-                    "Failed to create shared graph dump.\n"
-                    "  Is Neo4j running? Check: imas-codex graph status"
-                )
+    click.echo("\n  Creating shared graph dump (stops Neo4j once)...")
+    if dry_run:
+        cached_dump = None
+    else:
+        cached_dump = _create_shared_dump()
+        if not cached_dump:
+            raise click.ClickException(
+                "Failed to create shared graph dump.\n"
+                "  Is Neo4j running? Check: imas-codex graph status"
+            )
 
     failed: list[str] = []
     variant = 0
