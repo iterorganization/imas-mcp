@@ -6,7 +6,12 @@ import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from imas_standard_names.grammar import compose_standard_name, parse_standard_name
+
+imas_standard_names = pytest.importorskip("imas_standard_names")
+from imas_standard_names.grammar import (  # noqa: E402
+    compose_standard_name,
+    parse_standard_name,
+)
 
 # -----------------------------------------------------------------------
 # Reference dataset tests
