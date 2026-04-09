@@ -34,6 +34,7 @@ default_range: string
 imports:
   - linkml:types
   - common
+  - standard_name
 
 # =============================================================================
 # Enums
@@ -816,6 +817,13 @@ classes:
         range: IMASSemanticCluster
         annotations:
           relationship_type: IN_CLUSTER
+      standard_name:
+        description: >-
+          Canonical physics quantity name for cross-facility semantic
+          unification. Links DD paths to StandardName nodes.
+        range: StandardName
+        annotations:
+          relationship_type: HAS_STANDARD_NAME
       coordinates:
         description: >-
           Coordinate specifications for this path (axis definitions).

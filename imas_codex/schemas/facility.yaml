@@ -181,6 +181,8 @@ enums:
       imas:
         description: IMAS data format
 
+  # StandardNameSource enum moved to standard_name.yaml
+
   # Note: IngestionStatus, PathStatus, SourceFileStatus, AgentRunStatus,
   # EnrichmentStatus are defined in common.yaml with unified terminology.
   # See common.yaml for the design philosophy and value definitions.
@@ -2085,29 +2087,7 @@ classes:
         description: Number of FacilitySignal nodes linked to this diagnostic
         range: integer
 
-  StandardName:
-    description: >-
-      A canonical physics or geometric quantity name. Part of the standard_names
-      vocabulary used to unify signal semantics across facilities.
-      
-      Relationships:
-        - HAS_UNIT -> Unit (canonical units for this quantity)
-        - IN_DOMAIN -> PhysicsDomainNode (optional grouping)
-      
-      Example: plasma_current, electron_density_core, major_radius
-    class_uri: facility:StandardName
-    attributes:
-      id:
-        identifier: true
-        description: >-
-          The standard name in snake_case.
-          E.g., plasma_current, electron_temperature, major_radius
-        required: true
-      description:
-        description: Human-readable definition of this quantity
-      canonical_units:
-        description: Expected SI units for this quantity
-        range: Unit
+  # StandardName class moved to standard_name.yaml
 
   FacilitySignal:
     description: >-

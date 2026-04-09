@@ -238,13 +238,15 @@ def build_models(
 
         # Check if output already exists
         if output_file.exists() and not force:
-            # Check if any schema (facility or common) is newer than output
+            # Check if any schema (facility, common, standard_name) is newer
             facility_mtime = schema_file.stat().st_mtime
             common_mtime = (
                 common_schema_file.stat().st_mtime if common_schema_file.exists() else 0
             )
+            sn_schema = schemas_dir / "standard_name.yaml"
+            sn_mtime = sn_schema.stat().st_mtime if sn_schema.exists() else 0
             output_mtime = output_file.stat().st_mtime
-            if max(facility_mtime, common_mtime) <= output_mtime:
+            if max(facility_mtime, common_mtime, sn_mtime) <= output_mtime:
                 logger.info(f"Models up to date at {output_file}")
                 click.echo(f"Models up to date: {output_file}")
             else:
@@ -307,15 +309,17 @@ To regenerate:
         if imas_schema_file.exists():
             needs_regen = not imas_output_file.exists() or force
             if imas_output_file.exists() and not force:
-                # Check both imas_dd.yaml and common.yaml timestamps
+                # Check imas_dd.yaml, common.yaml, and standard_name.yaml timestamps
                 imas_mtime = imas_schema_file.stat().st_mtime
                 common_mtime = (
                     common_schema_file.stat().st_mtime
                     if common_schema_file.exists()
                     else 0
                 )
+                sn_schema = schemas_dir / "standard_name.yaml"
+                sn_mtime = sn_schema.stat().st_mtime if sn_schema.exists() else 0
                 output_mtime = imas_output_file.stat().st_mtime
-                if max(imas_mtime, common_mtime) > output_mtime:
+                if max(imas_mtime, common_mtime, sn_mtime) > output_mtime:
                     needs_regen = True
                     logger.info(
                         "IMAS DD or common schema newer than models, regenerating..."

@@ -70,6 +70,7 @@ def register_commands() -> None:
     from imas_codex.cli.llm_cli import llm
     from imas_codex.cli.release import release
     from imas_codex.cli.serve import serve
+    from imas_codex.cli.sn import sn
     from imas_codex.cli.tools import tools
     from imas_codex.cli.tunnel import tunnel
 
@@ -82,6 +83,7 @@ def register_commands() -> None:
     main.add_command(discover)
     main.add_command(embed)
     main.add_command(imas)
+    main.add_command(sn)
     main.add_command(tools)
     main.add_command(host)
     main.add_command(facilities)
