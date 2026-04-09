@@ -905,9 +905,15 @@ def _migrate_from_node(
                             f"({count} procs) — may re-spawn MCP servers"
                         )
         else:
+            stderr_hint = ""
+            if result.stderr:
+                # Show first line of stderr for diagnosis
+                first_line = result.stderr.strip().splitlines()[0]
+                stderr_hint = f" ({first_line})"
             click.echo(
                 f"    {click.style('⚠', fg='yellow')} "
                 f"Could not reach {old_short} for process cleanup"
+                f"{stderr_hint}"
             )
     except subprocess.TimeoutExpired:
         click.echo(
@@ -1191,6 +1197,19 @@ def host_survey(
             if current == target_fqdn:
                 click.echo(f"  Already set: {facility} → {target_fqdn}")
             else:
+                # Migrate FIRST — clean up processes on the old node
+                # while SSH connections are still warm.  Must happen
+                # before we kill ControlMaster sockets, update config,
+                # or stop tunnels, all of which can break connectivity
+                # to the old node.
+                if current:
+                    _migrate_from_node(
+                        current,
+                        gateway,
+                        user,
+                        timeout,
+                    )
+
                 # Kill ControlMaster sockets BEFORE config update so
                 # ssh -O exit resolves to the old (current) HostName.
                 sockets_to_kill = [facility]
@@ -1221,16 +1240,6 @@ def host_survey(
                         + "Stopped stale tunnels (restart with "
                         + click.style("imas-codex tunnel start", bold=True)
                         + ")"
-                    )
-
-                # Migrate: clean up processes and zellij sessions
-                # on the old node
-                if current:
-                    _migrate_from_node(
-                        current,
-                        gateway,
-                        user,
-                        timeout,
                     )
 
         # LLM alias: --set-llm pins to explicit node, otherwise follows default
