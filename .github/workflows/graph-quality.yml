@@ -129,51 +129,30 @@ jobs:
           mkdir -p /tmp/graph-extracted
           tar -xzf "${ARCHIVE}" -C /tmp/graph-extracted
 
-          # Detect archive format: CSV (import.sh + csv/) or dump (.dump)
-          CONTENT_DIR=$(find /tmp/graph-extracted -maxdepth 1 -mindepth 1 -type d | head -1)
-
           NEO4J_CONTAINER=$(docker ps -aq --filter "ancestor=neo4j:2026.01.4-community" | head -1)
           NEO4J_DATA_VOLUME=$(docker inspect "${NEO4J_CONTAINER}" --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Name}}{{end}}{{end}}')
 
-          if [ -f "${CONTENT_DIR}/import.sh" ] && [ -d "${CONTENT_DIR}/csv" ]; then
-            echo "CSV-based archive detected — using generated import.sh"
-
-            # Use the archive's import.sh which has correct relationship types
-            docker run --rm \
-              -v "${NEO4J_DATA_VOLUME}:/data" \
-              -v "${CONTENT_DIR}/csv:/import" \
-              -v "${CONTENT_DIR}/import.sh:/import.sh:ro" \
-              -e CSV_DIR=/import \
-              neo4j:2026.01.4-community \
-              bash /import.sh
-
-            # Save DDL for post-start execution
-            if [ -f "${CONTENT_DIR}/ddl.cypher" ]; then
-              cp "${CONTENT_DIR}/ddl.cypher" /tmp/ddl.cypher
-            fi
-          else
-            # Legacy dump-based archive
-            DUMP_FILE=$(find /tmp/graph-extracted -name "*.dump" | head -1)
-            if [ -z "${DUMP_FILE}" ]; then
-              echo "ERROR: No import.sh+csv/ or .dump file found in archive"
-              ls -laR /tmp/graph-extracted/
-              exit 1
-            fi
-            echo "Found dump: ${DUMP_FILE}"
-
-            DUMP_DIR=$(dirname "${DUMP_FILE}")
-            if [ "$(basename ${DUMP_FILE})" != "neo4j.dump" ]; then
-              cp "${DUMP_FILE}" "${DUMP_DIR}/neo4j.dump"
-            fi
-
-            docker run --rm \
-              -v "${NEO4J_DATA_VOLUME}:/data" \
-              -v "${DUMP_DIR}:/dump" \
-              neo4j:2026.01.4-community \
-              neo4j-admin database load neo4j \
-                --from-path=/dump \
-                --overwrite-destination=true
+          # Dump-based archive
+          DUMP_FILE=$(find /tmp/graph-extracted -name "*.dump" | head -1)
+          if [ -z "${DUMP_FILE}" ]; then
+            echo "ERROR: No .dump file found in archive"
+            ls -laR /tmp/graph-extracted/
+            exit 1
           fi
+          echo "Found dump: ${DUMP_FILE}"
+
+          DUMP_DIR=$(dirname "${DUMP_FILE}")
+          if [ "$(basename ${DUMP_FILE})" != "neo4j.dump" ]; then
+            cp "${DUMP_FILE}" "${DUMP_DIR}/neo4j.dump"
+          fi
+
+          docker run --rm \
+            -v "${NEO4J_DATA_VOLUME}:/data" \
+            -v "${DUMP_DIR}:/dump" \
+            neo4j:2026.01.4-community \
+            neo4j-admin database load neo4j \
+              --from-path=/dump \
+              --overwrite-destination=true
 
       - name: Start Neo4j with loaded data
         run: |
@@ -193,48 +172,6 @@ jobs:
             fi
             sleep 2
           done
-
-      - name: Execute DDL for CSV-based archives
-        run: |
-          if [ ! -f /tmp/ddl.cypher ]; then
-            echo "No DDL to execute (dump-based archive)"
-            exit 0
-          fi
-
-          NEO4J_CONTAINER=$(docker ps -q --filter "ancestor=neo4j:2026.01.4-community" | head -1)
-          echo "Executing DDL index statements..."
-          DDL_COUNT=0
-          DDL_FAIL=0
-          while IFS= read -r stmt; do
-            [ -z "$stmt" ] && continue
-            if docker exec "${NEO4J_CONTAINER}" cypher-shell \
-                -u neo4j -p imas-codex "$stmt" 2>&1; then
-              DDL_COUNT=$((DDL_COUNT + 1))
-            else
-              echo "WARNING: DDL failed: $stmt"
-              DDL_FAIL=$((DDL_FAIL + 1))
-            fi
-          done < /tmp/ddl.cypher
-          echo "Executed $DDL_COUNT DDL statements ($DDL_FAIL failed)"
-
-          if [ "$DDL_FAIL" -gt 0 ] && [ "$DDL_COUNT" -eq 0 ]; then
-            echo "ERROR: All DDL statements failed"
-            exit 1
-          fi
-
-          # Wait for indexes to come online
-          echo "Waiting for indexes to come online..."
-          for i in $(seq 1 300); do
-            PENDING=$(docker exec "${NEO4J_CONTAINER}" cypher-shell \
-              -u neo4j -p imas-codex \
-              "SHOW INDEXES YIELD state WHERE state <> 'ONLINE' RETURN count(*) AS c" 2>/dev/null | tail -1 | tr -d ' ')
-            if [ "$PENDING" = "0" ]; then
-              echo "All indexes ONLINE (${i}s)"
-              break
-            fi
-            sleep 1
-          done
-          rm -f /tmp/ddl.cypher
 
       - name: Reset Neo4j password
         run: |

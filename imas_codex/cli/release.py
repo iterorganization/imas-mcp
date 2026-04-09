@@ -1056,9 +1056,9 @@ def _push_all_graph_variants(
         dispatch_graph_quality(git_info, git_tag, registry)
         return
 
-    # ── Local push path — dump for full, export+rebuild for filtered ───
-    # Full graph is always pushed (RC and final) — CI tests against it.
-    # DD-only and per-facility variants use export+rebuild from the live graph.
+    # ── Local push path — dump-based for all variants ──────────────────
+    # Create a shared dump once, reuse for full + dd-only + per-facility.
+    # DD-only and per-facility variants filter the dump via temp Neo4j.
     cached_dump = None
     click.echo("\n  Creating shared graph dump (stops Neo4j once)...")
     if dry_run:
@@ -1074,7 +1074,7 @@ def _push_all_graph_variants(
     failed: list[str] = []
     variant = 0
 
-    # Push full graph (all facilities) — needs traditional dump
+    # Push full graph — CI tests against this
     if cached_dump or dry_run:
         variant += 1
         click.echo(
@@ -1089,14 +1089,15 @@ def _push_all_graph_variants(
         ):
             failed.append("full")
 
-    # Push dd-only — export+rebuild from live graph (no source dump needed)
+    # Push dd-only — filtered dump for container image
     variant += 1
-    click.echo(f"\n  Variant {variant}: IMAS Data Dictionary only (export+rebuild)")
+    click.echo(f"\n  Variant {variant}: IMAS Data Dictionary only (filtered dump)")
     if not _push_graph_variant(
         dd_only=True,
         message=message,
         registry=registry,
         version_tag=git_tag,
+        source_dump=cached_dump,
         dry_run=dry_run,
     ):
         failed.append("dd-only")
@@ -1109,12 +1110,13 @@ def _push_all_graph_variants(
     else:
         for fac in facilities:
             variant += 1
-            click.echo(f"\n  Variant {variant}: {fac} + IMAS DD (export+rebuild)")
+            click.echo(f"\n  Variant {variant}: {fac} + IMAS DD (filtered dump)")
             if not _push_graph_variant(
                 facility=fac,
                 message=message,
                 registry=registry,
                 version_tag=git_tag,
+                source_dump=cached_dump,
                 dry_run=dry_run,
             ):
                 failed.append(fac)
