@@ -78,8 +78,9 @@ jobs:
             local REGISTRY="$1"
             local TAGS
             TAGS=$(oras repo tags "${REGISTRY}/${IMAS_PACKAGE}" 2>&1) || true
+            # Match only 'latest' or semver tags (v1.2.3, 5.2.0rc8, etc.)
             local CLEAN
-            CLEAN=$(echo "$TAGS" | grep -E '^[0-9v]' || true)
+            CLEAN=$(echo "$TAGS" | grep -E '^(latest|v?[0-9]+\.[0-9]+\.)' || true)
             if echo "$CLEAN" | grep -qx "latest"; then
               echo "latest"
             elif [ -n "$CLEAN" ]; then
