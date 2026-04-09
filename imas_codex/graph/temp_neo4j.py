@@ -499,12 +499,11 @@ def _build_filter_script(
         mkdir -p "$TEMP_DIR"/{{data,logs,dumps,conf,run,tmp}}
 
         echo "  Loading dump into temp instance..."
-        # Symlink avoids copying multi-GB dump (source is on shared GPFS)
-        ln -s "$SOURCE_DUMP" "$TEMP_DIR/dumps/neo4j.dump"
-
+        # Bind-mount source dump directly into container (symlinks don't
+        # resolve inside Apptainer when the target is outside bind paths).
         apptainer exec \\
             --bind "$TEMP_DIR/data:/data" \\
-            --bind "$TEMP_DIR/dumps:/dumps" \\
+            --bind "$SOURCE_DUMP:/dumps/neo4j.dump:ro" \\
             --writable-tmpfs \\
             "$NEO4J_IMAGE" \\
             neo4j-admin database load neo4j --from-path=/dumps --overwrite-destination=true
@@ -570,7 +569,6 @@ CONF
 
         # Dump filtered graph
         echo "  Dumping filtered graph..."
-        rm -f "$TEMP_DIR/dumps/neo4j.dump"
         apptainer exec \\
             --bind "$TEMP_DIR/data:/data" \\
             --bind "$TEMP_DIR/dumps:/dumps" \\
