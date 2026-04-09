@@ -114,6 +114,8 @@ dev = [
     # --- Interactive dev ---
     "ipython>=9.2.0",
     "ipykernel>=6.29.5",
+    # --- Standard Names catalog ---
+    "imas-standard-names",
     # --- LLM & Discovery ---
     "litellm>=1.81.0",
     # --- Graph build & schema ---
@@ -154,7 +156,6 @@ dev = [
     # --- Serve (embedding + LLM proxy) ---
     "fastapi>=0.115.0",
     "uvicorn>=0.31.1",
-    "imas-standard-names",
 ]
 
 [project.urls]

@@ -60,7 +60,7 @@ jobs:
         run: uv python install ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: uv sync --extra test
+        run: uv sync --extra test --no-dev
         env:
           HATCH_BUILD_NO_HOOKS: true
           IMAS_DD_VERSION: ${{ matrix.imas-dd-version }}
@@ -128,7 +128,7 @@ jobs:
         run: uv python install 3.12
 
       - name: Install dependencies
-        run: uv sync --extra test
+        run: uv sync --extra test --no-dev
         env:
           HATCH_BUILD_NO_HOOKS: true
 
