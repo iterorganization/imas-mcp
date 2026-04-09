@@ -451,7 +451,10 @@ def graph_export(
         # No Neo4j stop/start needed — work from cached dump
         click.echo(f"Creating archive [{profile.name}]: {output_path}")
 
-        with tempfile.TemporaryDirectory() as tmpdir:
+        # Use GPFS-visible temp dir when SLURM dispatch is possible,
+        # otherwise /run/user tmpfs is not visible from compute nodes.
+        tmp_base = str(profile.data_dir) if shutil.which("srun") else None
+        with tempfile.TemporaryDirectory(dir=tmp_base) as tmpdir:
             tmp = Path(tmpdir)
             archive_dir = tmp / f"{pkg_name}-{version_label}"
             archive_dir.mkdir()
