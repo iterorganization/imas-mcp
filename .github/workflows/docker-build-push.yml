@@ -134,7 +134,7 @@ jobs:
           docker stop $(docker ps -q --filter "ancestor=neo4j:2026.01.4-community") || true
           sleep 3
 
-      - name: Load graph dump into Neo4j
+      - name: Load graph data into Neo4j
         if: steps.graph-tag.outputs.imas-tag != 'none'
         run: |
           set -euo pipefail
@@ -145,33 +145,62 @@ jobs:
           mkdir -p /tmp/graph-extracted
           tar -xzf "${ARCHIVE}" -C /tmp/graph-extracted
 
-          # Find the dump file (may be named graph.dump or neo4j.dump)
-          DUMP_FILE=$(find /tmp/graph-extracted -name "*.dump" | head -1)
-          if [ -z "${DUMP_FILE}" ]; then
-            echo "ERROR: No .dump file found in archive"
-            ls -laR /tmp/graph-extracted/
-            exit 1
-          fi
-          echo "Found dump: ${DUMP_FILE}"
+          # Detect archive format: CSV (import.sh + csv/) or dump (.dump)
+          CONTENT_DIR=$(find /tmp/graph-extracted -maxdepth 1 -mindepth 1 -type d | head -1)
 
-          # neo4j-admin expects the dump file named neo4j.dump
-          DUMP_DIR=$(dirname "${DUMP_FILE}")
-          if [ "$(basename ${DUMP_FILE})" != "neo4j.dump" ]; then
-            cp "${DUMP_FILE}" "${DUMP_DIR}/neo4j.dump"
-          fi
-
-          # Get the Neo4j container ID for data volume
           NEO4J_CONTAINER=$(docker ps -aq --filter "ancestor=neo4j:2026.01.4-community" | head -1)
           NEO4J_DATA_VOLUME=$(docker inspect "${NEO4J_CONTAINER}" --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Name}}{{end}}{{end}}')
 
-          # Load into Neo4j using a fresh container
-          docker run --rm \
-            -v "${NEO4J_DATA_VOLUME}:/data" \
-            -v "${DUMP_DIR}:/dump" \
-            neo4j:2026.01.4-community \
-            neo4j-admin database load neo4j \
-              --from-path=/dump \
-              --overwrite-destination=true
+          if [ -f "${CONTENT_DIR}/import.sh" ] && [ -d "${CONTENT_DIR}/csv" ]; then
+            echo "CSV-based archive detected"
+
+            # Run neo4j-admin import via Docker
+            CSV_DIR="${CONTENT_DIR}/csv"
+
+            # Build import command from import.sh
+            IMPORT_ARGS="--overwrite-destination=true --id-type=string --array-delimiter=; --multiline-fields=true --skip-bad-relationships=true"
+            for f in "${CSV_DIR}"/nodes_*.csv; do
+              LABEL=$(basename "$f" | sed 's/^nodes_//;s/\.csv$//')
+              IMPORT_ARGS="${IMPORT_ARGS} --nodes=${LABEL}=/import/$(basename $f)"
+            done
+            for f in "${CSV_DIR}"/rels_*.csv; do
+              TYPE=$(basename "$f" | sed 's/^rels_//;s/\.csv$//')
+              IMPORT_ARGS="${IMPORT_ARGS} --relationships=${TYPE}=/import/$(basename $f)"
+            done
+
+            docker run --rm \
+              -v "${NEO4J_DATA_VOLUME}:/data" \
+              -v "${CSV_DIR}:/import" \
+              neo4j:2026.01.4-community \
+              neo4j-admin database import full neo4j ${IMPORT_ARGS}
+
+            # Save DDL for post-start execution
+            if [ -f "${CONTENT_DIR}/ddl.cypher" ]; then
+              cp "${CONTENT_DIR}/ddl.cypher" /tmp/ddl.cypher
+            fi
+          else
+            # Legacy dump-based archive
+            DUMP_FILE=$(find /tmp/graph-extracted -name "*.dump" | head -1)
+            if [ -z "${DUMP_FILE}" ]; then
+              echo "ERROR: No import.sh+csv/ or .dump file found in archive"
+              ls -laR /tmp/graph-extracted/
+              exit 1
+            fi
+            echo "Found dump: ${DUMP_FILE}"
+
+            DUMP_DIR=$(dirname "${DUMP_FILE}")
+            if [ "$(basename ${DUMP_FILE})" != "neo4j.dump" ]; then
+              cp "${DUMP_FILE}" "${DUMP_DIR}/neo4j.dump"
+            fi
+
+            docker run --rm \
+              -v "${NEO4J_DATA_VOLUME}:/data" \
+              -v "${DUMP_DIR}:/dump" \
+              neo4j:2026.01.4-community \
+              neo4j-admin database load neo4j \
+                --from-path=/dump \
+                --overwrite-destination=true
+          fi
 
       - name: Start Neo4j with loaded data
         if: steps.graph-tag.outputs.imas-tag != 'none'
@@ -193,6 +222,37 @@ jobs:
             fi
             sleep 2
           done
+
+      - name: Execute DDL for CSV-based archives
+        if: steps.graph-tag.outputs.imas-tag != 'none'
+        run: |
+          if [ ! -f /tmp/ddl.cypher ]; then
+            echo "No DDL to execute (dump-based archive)"
+            exit 0
+          fi
+
+          NEO4J_CONTAINER=$(docker ps -q --filter "ancestor=neo4j:2026.01.4-community" | head -1)
+          echo "Executing DDL index statements..."
+          DDL_COUNT=0
+          while IFS= read -r stmt; do
+            [ -z "$stmt" ] && continue
+            docker exec "${NEO4J_CONTAINER}" cypher-shell -u neo4j -p neo4j "$stmt" 2>&1 || true
+            DDL_COUNT=$((DDL_COUNT + 1))
+          done < /tmp/ddl.cypher
+          echo "Executed $DDL_COUNT DDL statements"
+
+          # Wait for indexes to come online
+          echo "Waiting for indexes to come online..."
+          for i in $(seq 1 300); do
+            PENDING=$(docker exec "${NEO4J_CONTAINER}" cypher-shell -u neo4j -p neo4j \
+              "SHOW INDEXES YIELD state WHERE state <> 'ONLINE' RETURN count(*) AS c" 2>/dev/null | tail -1 | tr -d ' ')
+            if [ "$PENDING" = "0" ]; then
+              echo "All indexes ONLINE (${i}s)"
+              break
+            fi
+            sleep 1
+          done
+          rm -f /tmp/ddl.cypher
 
       - name: Reset Neo4j password
         if: steps.graph-tag.outputs.imas-tag != 'none'
