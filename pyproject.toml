@@ -431,7 +431,6 @@ torch = [
   { index = "pytorch-cpu", extra = "test" },
   { index = "pytorch-gpu", extra = "gpu" },
 ]
-imas-standard-names = { path = "../imas-standard-names", editable = true }
 
 [tool.uv]
 # cpu, gpu, and test extras for torch are mutually exclusive with gpu
