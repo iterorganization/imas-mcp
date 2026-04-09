@@ -640,8 +640,16 @@ def format_imas_report(
                     if isinstance(ch, dict):
                         ver = ch.get("version", "?")
                         ctype = ch.get("type", "")
-                        summary = ch.get("summary", "")
-                        parts.append(f"    DD {ver} [{ctype}]: {summary}")
+                        old_v = ch.get("old_value", "")
+                        new_v = ch.get("new_value", "")
+                        if old_v and new_v:
+                            parts.append(
+                                f"    DD {ver} [{ctype}]: `{old_v}` → `{new_v}`"
+                            )
+                        elif new_v:
+                            parts.append(f"    DD {ver} [{ctype}]: {new_v}")
+                        else:
+                            parts.append(f"    DD {ver} [{ctype}]")
 
             parts.append("")
 
@@ -865,6 +873,22 @@ def format_fetch_paths_report(result: Any) -> str:
         labels = _stringify_cluster_labels(getattr(node, "cluster_labels", None))
         if labels:
             parts.append(f"  Clusters: {', '.join(f'"{c}"' for c in labels)}")
+
+        # Render version changes if present
+        if hasattr(node, "version_changes") and node.version_changes:
+            parts.append("  Version changes:")
+            for vc in node.version_changes:
+                ver = vc.get("version", "?")
+                ctype = vc.get("type", "unknown")
+                old_v = vc.get("old_value", "")
+                new_v = vc.get("new_value", "")
+                if old_v and new_v:
+                    parts.append(f"    - {ver} [{ctype}]: `{old_v}` → `{new_v}`")
+                elif new_v:
+                    parts.append(f"    - {ver} [{ctype}]: {new_v}")
+                else:
+                    parts.append(f"    - {ver} [{ctype}]")
+
         parts.append("")
 
     for nf in _get_value(result, "not_found_paths", []) or []:
@@ -1164,8 +1188,16 @@ def format_search_dd_report(result: Any, cluster_result: Any | None = None) -> s
                     if isinstance(ch, dict):
                         ver = ch.get("version", "?")
                         ctype = ch.get("type", "")
-                        summary = ch.get("summary", "")
-                        parts.append(f"    DD {ver} [{ctype}]: {summary}")
+                        old_v = ch.get("old_value", "")
+                        new_v = ch.get("new_value", "")
+                        if old_v and new_v:
+                            parts.append(
+                                f"    DD {ver} [{ctype}]: `{old_v}` → `{new_v}`"
+                            )
+                        elif new_v:
+                            parts.append(f"    DD {ver} [{ctype}]: {new_v}")
+                        else:
+                            parts.append(f"    DD {ver} [{ctype}]")
 
             parts.append("")
 

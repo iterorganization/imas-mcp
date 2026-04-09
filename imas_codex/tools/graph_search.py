@@ -710,12 +710,12 @@ class GraphPathTool:
             if include_version_history:
                 version_clause = """
                 OPTIONAL MATCH (change:IMASNodeChange)-[:FOR_IMAS_PATH]->(p)
-                WHERE change.semantic_change_type IN
-                      ['sign_convention', 'coordinate_convention', 'units', 'definition_clarification']
+                OPTIONAL MATCH (change)-[:IN_VERSION]->(cv:DDVersion)
                 WITH p, u, cluster_labels, coordinates, ident, iv,
-                     collect(DISTINCT {version: change.version,
-                                       type: change.semantic_change_type,
-                                       summary: change.summary}) AS version_changes
+                     collect(DISTINCT {version: cv.id,
+                                       type: change.change_type,
+                                       old_value: change.old_value,
+                                       new_value: change.new_value}) AS version_changes
                 """
             else:
                 version_clause = """
@@ -2755,16 +2755,25 @@ def _get_version_context(
         UNWIND $path_ids AS pid
         MATCH (p:IMASNode {id: pid})
         OPTIONAL MATCH (change:IMASNodeChange)-[:FOR_IMAS_PATH]->(p)
-        WHERE change.semantic_change_type IN
-              ['sign_convention', 'coordinate_convention', 'units', 'definition_clarification']
+        OPTIONAL MATCH (change)-[:IN_VERSION]->(v:DDVersion)
         RETURN p.id AS id,
                count(change) AS change_count,
-               collect({version: change.version,
-                        type: change.semantic_change_type,
-                        summary: change.summary})[..5] AS notable_changes
+               collect({version: v.id,
+                        type: change.change_type,
+                        old_value: change.old_value,
+                        new_value: change.new_value})[..5] AS notable_changes
     """
     results = gc.query(cypher, path_ids=path_ids)
-    return {r["id"]: r for r in results}
+    out = {}
+    for r in results:
+        # Filter null entries from OPTIONAL MATCH no-match
+        raw = r.get("notable_changes") or []
+        filtered = [c for c in raw if c.get("version") is not None]
+        out[r["id"]] = {
+            "change_count": len(filtered),
+            "notable_changes": filtered,
+        }
+    return out
 
 
 def _common_path_prefix(paths: list[str]) -> str:
