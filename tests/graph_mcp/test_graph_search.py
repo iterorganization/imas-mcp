@@ -710,7 +710,7 @@ class TestExportDomain:
         """Exact domain name should return paths."""
         tool = self._make_tool(graph_client)
         # 'equilibrium' is stored on equilibrium paths in fixtures
-        result = await tool.export_imas_domain(domain="equilibrium")
+        result = await tool.export_dd_domain(domain="equilibrium")
         assert result["total_paths"] > 0
         assert "equilibrium" in result["resolved_domains"]
 
@@ -718,7 +718,7 @@ class TestExportDomain:
     async def test_export_ids_name(self, graph_client):
         """IDS name should resolve and export domain paths."""
         tool = self._make_tool(graph_client)
-        result = await tool.export_imas_domain(domain="core_profiles")
+        result = await tool.export_dd_domain(domain="core_profiles")
         assert result["total_paths"] > 0
         assert result["resolution"] == "ids_name:core_profiles"
         assert "transport" in result["resolved_domains"]
@@ -727,7 +727,7 @@ class TestExportDomain:
     async def test_export_no_match(self, graph_client):
         """No-match domain should return error."""
         tool = self._make_tool(graph_client)
-        result = await tool.export_imas_domain(domain="nonexistent_xyz")
+        result = await tool.export_dd_domain(domain="nonexistent_xyz")
         assert result["total_paths"] == 0
         assert "error" in result
 

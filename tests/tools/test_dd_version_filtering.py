@@ -87,16 +87,17 @@ class TestRenamedPathHandling:
     async def test_renamed_path_returns_valid_model(self):
         """Renamed paths must produce a valid CheckPathsResultItem, not a Pydantic error."""
         gc = MagicMock()
-        # First query: path not found (no match)
-        # Second query: RENAMED_TO found
-        gc.query.side_effect = [
-            [],  # path lookup returns empty
-            [
-                {
-                    "old_path": "magnetics/bpol_probe/polarisation_angle",
-                    "new_path": "magnetics/bpol_probe/polarization_angle",
-                }
-            ],
+        # Batch UNWIND query: path not found directly, but rename exists
+        gc.query.return_value = [
+            {
+                "check_path": "magnetics/bpol_probe/polarisation_angle",
+                "id": None,
+                "ids": None,
+                "data_type": None,
+                "units": None,
+                "renamed_from": "magnetics/bpol_probe/polarisation_angle",
+                "renamed_to": "magnetics/bpol_probe/polarization_angle",
+            }
         ]
         tool = GraphPathTool(gc)
         result = await tool.check_dd_paths("magnetics/bpol_probe/polarisation_angle")
@@ -128,10 +129,13 @@ class TestVersionFilteringSemantics:
         gc = MagicMock()
         gc.query.return_value = [
             {
+                "check_path": "equilibrium/time_slice/profiles_1d/psi",
                 "id": "equilibrium/time_slice/profiles_1d/psi",
                 "ids": "equilibrium",
                 "data_type": "FLT_1D",
                 "units": "Wb",
+                "renamed_from": None,
+                "renamed_to": None,
             }
         ]
         tool = GraphPathTool(gc)
@@ -149,7 +153,15 @@ class TestVersionFilteringSemantics:
         """The dd_major_version parameter passed to Cypher must be an integer."""
         gc = MagicMock()
         gc.query.return_value = [
-            {"id": "test/path", "ids": "test", "data_type": "FLT_0D", "units": ""}
+            {
+                "check_path": "test/path",
+                "id": "test/path",
+                "ids": "test",
+                "data_type": "FLT_0D",
+                "units": "",
+                "renamed_from": None,
+                "renamed_to": None,
+            }
         ]
         tool = GraphPathTool(gc)
         await tool.check_dd_paths("test/path", dd_version=4)
@@ -164,7 +176,15 @@ class TestVersionFilteringSemantics:
         """When dd_version is None, no version filter clause should be in the query."""
         gc = MagicMock()
         gc.query.return_value = [
-            {"id": "test/path", "ids": "test", "data_type": "FLT_0D", "units": ""}
+            {
+                "check_path": "test/path",
+                "id": "test/path",
+                "ids": "test",
+                "data_type": "FLT_0D",
+                "units": "",
+                "renamed_from": None,
+                "renamed_to": None,
+            }
         ]
         tool = GraphPathTool(gc)
         await tool.check_dd_paths("test/path", dd_version=None)
@@ -226,7 +246,7 @@ class TestClusterScopeQuery:
         assert kwargs["dd_major_version"] == 4
 
     @pytest.mark.asyncio
-    async def test_search_dd_clusters_path_with_scope(self):
+    async def test_search_imas_clusters_path_with_scope(self):
         """Full tool call with scope must not raise."""
         gc = MagicMock()
         gc.query.return_value = []
@@ -247,7 +267,7 @@ class TestClusterScopeQuery:
 
 
 class TestOverviewQueryStructure:
-    """Test that get_dd_overview uses correct query patterns."""
+    """Test that get_imas_overview uses correct query patterns."""
 
     @pytest.mark.asyncio
     async def test_overview_queries_ids_nodes(self):
@@ -309,38 +329,38 @@ class TestExportQueryStructure:
 
     @pytest.mark.asyncio
     async def test_export_ids_uses_ids_filter(self):
-        """export_imas_ids must filter by IDS name."""
+        """export_dd_ids must filter by IDS name."""
         gc = MagicMock()
         gc.query.return_value = []
         tool = GraphStructureTool(gc)
 
-        await tool.export_imas_ids("equilibrium")
+        await tool.export_dd_ids("equilibrium")
 
         cypher = gc.query.call_args[0][0]
         assert "p.ids = $ids_name" in cypher
 
     @pytest.mark.asyncio
     async def test_export_domain_uses_domain_filter(self):
-        """export_imas_domain must filter by physics domain."""
+        """export_dd_domain must filter by physics domain."""
         gc = MagicMock()
         gc.query.side_effect = [
             [],  # export results
         ]
         tool = GraphStructureTool(gc)
 
-        await tool.export_imas_domain("equilibrium")
+        await tool.export_dd_domain("equilibrium")
 
         export_cypher = gc.query.call_args_list[-1][0][0]
         assert "physics_domain" in export_cypher
 
     @pytest.mark.asyncio
     async def test_export_ids_with_dd_version(self):
-        """export_imas_ids with dd_version must include version filter."""
+        """export_dd_ids with dd_version must include version filter."""
         gc = MagicMock()
         gc.query.return_value = []
         tool = GraphStructureTool(gc)
 
-        await tool.export_imas_ids("equilibrium", dd_version=4)
+        await tool.export_dd_ids("equilibrium", dd_version=4)
 
         cypher = gc.query.call_args[0][0]
         assert "INTRODUCED_IN" in cypher
@@ -349,12 +369,12 @@ class TestExportQueryStructure:
 
 
 # ============================================================================
-# Phase 3: list_dd_paths query tests
+# Phase 3: list_imas_paths query tests
 # ============================================================================
 
 
 class TestListPathsQuery:
-    """Verify list_dd_paths query patterns."""
+    """Verify list_imas_paths query patterns."""
 
     @pytest.mark.asyncio
     async def test_ids_level_queries_graph(self):
@@ -392,8 +412,7 @@ class TestListPathsQuery:
         gc = MagicMock()
         gc.query.side_effect = [
             [{"i.name": "equilibrium"}],  # IDS exists
-            [],  # STARTS WITH query
-            [  # ids = query (overwrites)
+            [  # ids = query (unified)
                 {"id": "equilibrium/time_slice"},
                 {"id": "equilibrium/vacuum_toroidal_field"},
             ],

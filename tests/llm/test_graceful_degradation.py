@@ -253,8 +253,8 @@ CYPHER_ONLY_TOOLS = {
     "get_dd_identifiers",
     "get_dd_versions",
     "get_dd_version_context",
-    "export_imas_ids",
-    "export_imas_domain",
+    "export_dd_ids",
+    "export_dd_domain",
 }
 
 
