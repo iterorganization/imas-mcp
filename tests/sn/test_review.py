@@ -148,6 +148,10 @@ class TestSNReviewModels:
 class TestReviewWorker:
     """Test the review_worker function."""
 
+    @pytest.fixture(autouse=True)
+    def _requires_imas_sn(self):
+        pytest.importorskip("imas_standard_names")
+
     def _make_state(self, **overrides):
         """Create a minimal SNBuildState for testing."""
         from imas_codex.sn.state import SNBuildState
@@ -371,6 +375,10 @@ class TestSNBuildStateReview:
 
 class TestPipelineReviewWiring:
     """Test that the pipeline correctly wires the review phase."""
+
+    @pytest.fixture(autouse=True)
+    def _requires_imas_sn(self):
+        pytest.importorskip("imas_standard_names")
 
     def test_validate_depends_on_review_phase(self):
         """Validate worker should depend on review_phase, not compose_phase."""
