@@ -164,8 +164,9 @@ RUN echo "Graph tag: ${GRAPH_TAG}" > /dev/null
 # Copy graph archive from builder
 COPY --from=builder /tmp/graph-pull/ /tmp/graph-pull/
 
-# Extract and load the graph data (or create empty database)
+# Extract, load graph data, and pre-start Neo4j for recovery — all in one layer.
 # CRITICAL: clean up intermediate files progressively to minimize peak disk usage.
+# Merging into a single RUN avoids a multi-GB intermediate layer from the load step.
 RUN set -ex && \
     if [ -f /tmp/graph-pull/.no-graph ]; then \
         echo "No graph data — creating empty Neo4j database"; \
@@ -207,39 +208,34 @@ RUN set -ex && \
             ls -la /tmp/graph-pull/ >&2; \
             exit 1; \
         fi; \
-    fi
-
-# Pre-start Neo4j to complete WAL recovery and create system DB.
-# This shifts expensive work from runtime (slow Azure I/O) to build time (fast CI SSD).
-RUN if [ ! -f /tmp/graph-pull/.no-graph ]; then \
-    echo "Pre-starting Neo4j for database recovery..." && \
-    echo "dbms.security.auth_enabled=false" >> /var/lib/neo4j/conf/neo4j.conf && \
-    /var/lib/neo4j/bin/neo4j console > /tmp/neo4j-recovery.log 2>&1 & \
-    NEO4J_PID=$! && \
-    READY=0 && \
-    for i in $(seq 1 120); do \
-        if /var/lib/neo4j/bin/cypher-shell -a bolt://127.0.0.1:7687 "RETURN 1" > /dev/null 2>&1; then \
-            echo "Database ready (${i}s)"; \
-            READY=1; \
-            break; \
-        fi; \
-        if ! kill -0 $NEO4J_PID 2>/dev/null; then \
-            echo "ERROR: Neo4j exited during recovery. Log:"; \
-            cat /tmp/neo4j-recovery.log; \
+        echo "Pre-starting Neo4j for database recovery..." && \
+        echo "dbms.security.auth_enabled=false" >> /var/lib/neo4j/conf/neo4j.conf && \
+        /var/lib/neo4j/bin/neo4j console > /tmp/neo4j-recovery.log 2>&1 & \
+        NEO4J_PID=$! && \
+        READY=0 && \
+        for i in $(seq 1 120); do \
+            if /var/lib/neo4j/bin/cypher-shell -a bolt://127.0.0.1:7687 "RETURN 1" > /dev/null 2>&1; then \
+                echo "Database ready (${i}s)"; \
+                READY=1; \
+                break; \
+            fi; \
+            if ! kill -0 $NEO4J_PID 2>/dev/null; then \
+                echo "ERROR: Neo4j exited during recovery. Log:"; \
+                cat /tmp/neo4j-recovery.log; \
+                exit 1; \
+            fi; \
+            sleep 1; \
+        done && \
+        if [ "$READY" -eq 0 ]; then \
+            echo "ERROR: Recovery did not complete in 120s. Log:"; \
+            tail -50 /tmp/neo4j-recovery.log; \
             exit 1; \
-        fi; \
-        sleep 1; \
-    done && \
-    if [ "$READY" -eq 0 ]; then \
-        echo "ERROR: Recovery did not complete in 120s. Log:"; \
-        tail -50 /tmp/neo4j-recovery.log; \
-        exit 1; \
-    fi && \
-    /var/lib/neo4j/bin/neo4j stop && \
-    sleep 2 && \
-    rm -f /tmp/neo4j-recovery.log && \
-    echo "Neo4j shut down cleanly — database is recovery-free"; \
-fi
+        fi && \
+        /var/lib/neo4j/bin/neo4j stop && \
+        sleep 2 && \
+        rm -f /tmp/neo4j-recovery.log && \
+        echo "Neo4j shut down cleanly — database is recovery-free"; \
+    fi
 
 # NOTE: Do NOT remove transaction logs (/data/transactions/neo4j/*).
 # Neo4j 2026 requires valid WAL state to open the database after

@@ -281,8 +281,10 @@ jobs:
         run: |
           echo "Before cleanup:"
           df -h /
-          # Remove packages we don't need for docker builds
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          # Aggressively free space — Docker build with Neo4j graph needs ~25 GB
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /opt/hostedtoolcache /usr/share/swift /usr/local/share/boost \
+            /usr/local/graalvm /usr/local/share/chromium /usr/local/lib/node_modules
           sudo docker image prune --all --force
           echo "After cleanup:"
           df -h /
