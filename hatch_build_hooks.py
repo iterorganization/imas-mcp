@@ -38,12 +38,18 @@ class CustomBuildHook(BuildHookInterface):
             schemas_dir / "common.yaml",
             schemas_dir / "imas_dd.yaml",
             schemas_dir / "facility_config.yaml",
+            schemas_dir / "standard_name.yaml",
+            schemas_dir / "task_groups.yaml",
         ]
 
         # All generated output files that must exist
         output_files = [
             package_root / "imas_codex" / "graph" / "models.py",
+            package_root / "imas_codex" / "graph" / "dd_models.py",
             package_root / "imas_codex" / "config" / "models.py",
+            # schema_context_data.py is a runtime dependency
+            # (imported by schema_context.py, query_builder.py, client.py)
+            package_root / "imas_codex" / "graph" / "schema_context_data.py",
         ]
 
         # If no schema files exist yet, nothing to generate
@@ -69,8 +75,9 @@ class CustomBuildHook(BuildHookInterface):
         try:
             from scripts.build_models import build_models
 
-            # Invoke with empty args to avoid picking up hatch's CLI arguments
-            result = build_models.main(args=["--force"], standalone_mode=False)
+            # Let build_models freshness checks decide what to regenerate
+            # instead of using --force which rebuilds everything.
+            result = build_models.main(args=[], standalone_mode=False)
             if result == 0:
                 self._trace("Graph models generated successfully")
             else:
@@ -228,6 +235,11 @@ class CustomBuildHook(BuildHookInterface):
         start_time = time.time()
         self._trace(f"initialize() called with version={version}")
 
+        # Signal to imas_codex internals that we are in a build context.
+        # This prevents the schema.py daemon thread from starting
+        # (avoids import-lock contention with linkml_runtime on NFS).
+        os.environ["_IMAS_CODEX_BUILD"] = "1"
+
         # Add package root to sys.path temporarily to resolve internal imports
         package_root = Path(__file__).parent
         original_path = sys.path[:]
@@ -285,11 +297,10 @@ class CustomBuildHook(BuildHookInterface):
             self._trace("Generating graph models from LinkML schema...")
             self._generate_graph_models(package_root)
 
-        # Generate schema reference for agents (after models exist)
-        self._generate_schema_reference(package_root)
-
-        # Generate schema context data for schema_for()
-        self._generate_schema_context(package_root)
+        # Schema reference (agents/schema-reference.md) and schema context
+        # (imas_codex/graph/schema_context_data.py) are generated inside
+        # build_models.main() above, with their own freshness checks.
+        # No need to call them again here.
 
         # Get resource paths for this version
         path_accessor = ResourcePathAccessor(dd_version=resolved_dd_version)

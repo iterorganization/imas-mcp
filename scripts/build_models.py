@@ -262,14 +262,23 @@ def build_models(
 
                 logger.debug(f"Running command: {' '.join(cmd)}")
 
-                result = subprocess.run(
-                    cmd,
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                    encoding="utf-8",
-                    errors="replace",
-                )
+                try:
+                    result = subprocess.run(
+                        cmd,
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                        encoding="utf-8",
+                        errors="replace",
+                        stdin=subprocess.DEVNULL,
+                        timeout=120,
+                    )
+                except subprocess.TimeoutExpired:
+                    logger.error(
+                        "gen-pydantic timed out after 120s for facility schema"
+                    )
+                    click.echo("Error: gen-pydantic timed out after 120s", err=True)
+                    return 1
 
                 if result.returncode != 0:
                     logger.error(f"gen-pydantic failed: {result.stderr}")
@@ -333,14 +342,23 @@ To regenerate:
 
                     logger.debug(f"Running command: {' '.join(cmd)}")
 
-                    result = subprocess.run(
-                        cmd,
-                        capture_output=True,
-                        text=True,
-                        check=False,
-                        encoding="utf-8",
-                        errors="replace",
-                    )
+                    try:
+                        result = subprocess.run(
+                            cmd,
+                            capture_output=True,
+                            text=True,
+                            check=False,
+                            encoding="utf-8",
+                            errors="replace",
+                            stdin=subprocess.DEVNULL,
+                            timeout=120,
+                        )
+                    except subprocess.TimeoutExpired:
+                        logger.error(
+                            "gen-pydantic timed out after 120s for imas_dd schema"
+                        )
+                        click.echo("Error: gen-pydantic timed out after 120s", err=True)
+                        return 1
 
                     if result.returncode != 0:
                         logger.error(
@@ -408,14 +426,23 @@ To regenerate:
 
                     logger.debug(f"Running command: {' '.join(cmd)}")
 
-                    result = subprocess.run(
-                        cmd,
-                        capture_output=True,
-                        text=True,
-                        check=False,
-                        encoding="utf-8",
-                        errors="replace",
-                    )
+                    try:
+                        result = subprocess.run(
+                            cmd,
+                            capture_output=True,
+                            text=True,
+                            check=False,
+                            encoding="utf-8",
+                            errors="replace",
+                            stdin=subprocess.DEVNULL,
+                            timeout=120,
+                        )
+                    except subprocess.TimeoutExpired:
+                        logger.error(
+                            "gen-pydantic timed out after 120s for facility_config"
+                        )
+                        click.echo("Error: gen-pydantic timed out after 120s", err=True)
+                        return 1
 
                     if result.returncode != 0:
                         logger.error(

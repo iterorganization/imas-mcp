@@ -15,6 +15,7 @@ Example:
     [('MDSplusServer', 'facility_id', 'Facility'), ...]
 """
 
+import os
 import threading
 from dataclasses import dataclass
 from enum import Enum
@@ -793,6 +794,10 @@ def merge_relationship_query(
 # timeout), we kick off a daemon thread that loads the schema in the
 # background.  ``get_schema()`` blocks only if the caller actually
 # needs the schema before the background thread finishes.
+#
+# The preload is skipped during hatch build hooks (_IMAS_CODEX_BUILD=1)
+# to avoid needless work and potential import-lock contention with the
+# main thread's own GraphSchema instantiations.
 
 _schema: GraphSchema | None = None
 _schema_ready = threading.Event()
@@ -810,15 +815,24 @@ def _preload_schema() -> None:
         _schema_ready.set()
 
 
-threading.Thread(target=_preload_schema, daemon=True, name="schema-preload").start()
+if not os.environ.get("_IMAS_CODEX_BUILD"):
+    threading.Thread(target=_preload_schema, daemon=True, name="schema-preload").start()
+else:
+    # During build: no background preload; get_schema() will init on demand.
+    pass
 
 
 def get_schema() -> GraphSchema:
     """Get the global GraphSchema instance.
 
     Returns immediately if background preload has finished, otherwise
-    blocks until the schema is ready.
+    blocks until the schema is ready.  When the preload thread was
+    skipped (build mode), creates the schema on demand.
     """
+    global _schema, _schema_error
+    if not _schema_ready.is_set() and os.environ.get("_IMAS_CODEX_BUILD"):
+        # Build mode: no background thread was started; init synchronously.
+        _preload_schema()
     _schema_ready.wait()
     if _schema_error is not None:
         raise RuntimeError("Schema preload failed") from _schema_error
