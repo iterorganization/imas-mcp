@@ -25,6 +25,16 @@ Gap documents consolidate remaining work from completed implementation phases. T
 | **P3** | ~~embedding-upgrade-and-search-migration~~ | Fix embed bug, dim eval, SEARCH clause, quantization | **Done** — dim stays 256, SEARCH migrated, quantization enabled |
 | **P4** | [gaps-compute-orchestration.md](features/gaps-compute-orchestration.md) | Compute session orchestration remaining gaps | Low priority — Python CLI covers basics |
 
+### Standard Names
+
+| Plan | Scope | Status | Depends On |
+|------|-------|--------|------------|
+| [standard-names/09-sn-generate.md](features/standard-names/09-sn-generate.md) | Core pipeline: EXTRACT→COMPOSE→VALIDATE→PERSIST | ✅ Done | — |
+| [standard-names/11-rich-compose.md](features/standard-names/11-rich-compose.md) | Rich compose: full catalog fields, schema extension | Ready | 09 |
+| [standard-names/12-catalog-import.md](features/standard-names/12-catalog-import.md) | Catalog import & bootstrap (309 entries, feedback loop) | Ready | 11 P1 |
+| [standard-names/13-publish-pipeline.md](features/standard-names/13-publish-pipeline.md) | Lossless publish, round-trip, batched PRs | Ready | 11, 12 P1 |
+| [standard-names/14-mcp-tools-benchmark.md](features/standard-names/14-mcp-tools-benchmark.md) | SN MCP tools + benchmark quality tiers | Ready | 11, 12 |
+
 ### Pending plans (partially implemented)
 
 These plans are reference material for the gap documents above — not direct work items. Gaps were extracted into the active gap docs.
