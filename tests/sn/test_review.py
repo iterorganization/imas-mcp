@@ -175,7 +175,7 @@ class TestReviewWorker:
 
         from imas_codex.sn.workers import review_worker
 
-        asyncio.get_event_loop().run_until_complete(review_worker(state))
+        asyncio.run(review_worker(state))
 
         assert state.review_phase.done
         assert state.stats.get("review_skipped") is True
@@ -190,7 +190,7 @@ class TestReviewWorker:
 
         from imas_codex.sn.workers import review_worker
 
-        asyncio.get_event_loop().run_until_complete(review_worker(state))
+        asyncio.run(review_worker(state))
 
         assert state.review_phase.done
         assert state.reviewed == []
@@ -221,7 +221,7 @@ class TestReviewWorker:
 
         from imas_codex.sn.workers import review_worker
 
-        asyncio.get_event_loop().run_until_complete(review_worker(state))
+        asyncio.run(review_worker(state))
 
         assert state.review_phase.done
         assert len(state.reviewed) == 1
@@ -251,7 +251,7 @@ class TestReviewWorker:
 
         from imas_codex.sn.workers import review_worker
 
-        asyncio.get_event_loop().run_until_complete(review_worker(state))
+        asyncio.run(review_worker(state))
 
         assert state.review_phase.done
         assert len(state.reviewed) == 0
@@ -286,7 +286,7 @@ class TestReviewWorker:
 
         from imas_codex.sn.workers import review_worker
 
-        asyncio.get_event_loop().run_until_complete(review_worker(state))
+        asyncio.run(review_worker(state))
 
         assert state.review_phase.done
         assert len(state.reviewed) == 1
@@ -319,7 +319,7 @@ class TestReviewWorker:
 
         from imas_codex.sn.workers import review_worker
 
-        asyncio.get_event_loop().run_until_complete(review_worker(state))
+        asyncio.run(review_worker(state))
 
         assert state.review_phase.done
         # On failure, candidates pass through
@@ -434,5 +434,5 @@ class TestPipelineReviewWiring:
         from imas_codex.sn.workers import validate_worker
 
         # In dry-run, validation is skipped — but we verify the buffer logic
-        asyncio.get_event_loop().run_until_complete(validate_worker(state))
+        asyncio.run(validate_worker(state))
         assert state.validate_phase.done
