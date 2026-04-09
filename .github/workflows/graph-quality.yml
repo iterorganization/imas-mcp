@@ -83,18 +83,24 @@ jobs:
           fi
           echo "tag=${TAG:-latest}" >> $GITHUB_OUTPUT
           echo "registry=${REGISTRY:-ghcr.io/iterorganization}" >> $GITHUB_OUTPUT
-          echo "Graph: ${REGISTRY}/imas-codex-graph:${TAG}"
+          echo "Graph: ${REGISTRY}/imas-codex-graph-dd:${TAG}"
 
       - name: Login to GHCR
         run: |
           echo "${{ secrets.GHCR_TOKEN }}" | oras login ghcr.io -u token --password-stdin
 
-      - name: Pull graph dump from GHCR
+      - name: Pull graph from GHCR
         run: |
-          ARTIFACT="${{ steps.resolve-tag.outputs.registry }}/imas-codex-graph:${{ steps.resolve-tag.outputs.tag }}"
+          ARTIFACT="${{ steps.resolve-tag.outputs.registry }}/imas-codex-graph-dd:${{ steps.resolve-tag.outputs.tag }}"
           echo "Pulling: ${ARTIFACT}"
           mkdir -p /tmp/graph-dump
-          oras pull "${ARTIFACT}" -o /tmp/graph-dump
+          oras pull "${ARTIFACT}" -o /tmp/graph-dump --allow-path-traversal
+          # Handle oras path traversal: artifact may land outside -o dir
+          FOUND=$(find /tmp -maxdepth 3 -name "*.tar.gz" ! -path "/tmp/graph-dump/*" 2>/dev/null | head -1)
+          if [ -n "$FOUND" ] && [ ! -f /tmp/graph-dump/*.tar.gz ]; then
+            echo "Moving artifact from traversal path: ${FOUND}"
+            mv "$FOUND" /tmp/graph-dump/
+          fi
           ls -la /tmp/graph-dump/
 
       - name: Wait for Neo4j to be ready
