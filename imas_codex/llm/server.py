@@ -1216,7 +1216,7 @@ def _init_repl() -> dict[str, Any]:
         try:
             tools = _get_imas_tools()
             result = _run_async(
-                tools.structure_tool.export_imas_ids(
+                tools.structure_tool.export_dd_ids(
                     ids_name=ids_name,
                     leaf_only=leaf_only,
                     dd_version=dd_version,
@@ -1244,7 +1244,7 @@ def _init_repl() -> dict[str, Any]:
         try:
             tools = _get_imas_tools()
             result = _run_async(
-                tools.structure_tool.export_imas_domain(
+                tools.structure_tool.export_dd_domain(
                     domain=domain,
                     ids_filter=ids_filter,
                     dd_version=dd_version,
@@ -2658,7 +2658,7 @@ class AgentsServer:
             """
             tools = _get_imas_tools()
             result = _run_async(
-                tools.path_tool.fetch_dd_error_fields(path=path, dd_version=dd_version)
+                tools.path_tool.fetch_error_fields(path=path, dd_version=dd_version)
             )
             return _format_error_fields_report(result)
 
@@ -2696,7 +2696,10 @@ class AgentsServer:
                 or lifecycle_filter is not None
             ):
                 logger.debug(
-                    "physics_domain/node_type/lifecycle_filter not yet implemented in backend, ignoring"
+                    "Applying filters: physics_domain=%s node_type=%s lifecycle=%s",
+                    physics_domain,
+                    node_type,
+                    lifecycle_filter,
                 )
             tools = _get_imas_tools()
             result = _run_async(
@@ -2705,7 +2708,9 @@ class AgentsServer:
                     leaf_only=leaf_only,
                     max_paths=max_paths,
                     dd_version=dd_version,
-                    # physics_domain, node_type, lifecycle_filter not yet implemented in backend
+                    physics_domain=physics_domain,
+                    node_type=node_type,
+                    lifecycle_filter=lifecycle_filter,
                 )
             )
             return format_list_report(result)
@@ -2731,15 +2736,13 @@ class AgentsServer:
             from imas_codex.llm.search_formatters import format_overview_report
 
             if include_unit_stats:
-                logger.debug(
-                    "include_unit_stats not yet implemented in backend, ignoring"
-                )
+                logger.debug("Including unit distribution statistics")
             tools = _get_imas_tools()
             result = _run_async(
                 tools.overview_tool.get_dd_overview(
                     query=query,
                     dd_version=dd_version,
-                    # include_unit_stats not yet implemented in backend
+                    include_unit_stats=include_unit_stats,
                 )
             )
             return format_overview_report(result)
@@ -2823,12 +2826,13 @@ class AgentsServer:
             Returns:
                 Formatted text report with related paths grouped by relationship type, each showing the target path, IDS, and relevance score.
             """
+            from imas_codex.core.paths import normalize_imas_path
             from imas_codex.llm.search_formatters import format_path_context_report
 
             tools = _get_imas_tools()
             result = _run_async(
                 tools.path_context_tool.get_dd_path_context(
-                    path=path,
+                    path=normalize_imas_path(path),
                     relationship_types=relationship_types,
                     max_results=max_results,
                     dd_version=dd_version,
@@ -2858,7 +2862,7 @@ class AgentsServer:
 
             tools = _get_imas_tools()
             result = _run_async(
-                tools.structure_tool.export_imas_ids(
+                tools.structure_tool.export_dd_ids(
                     ids_name=ids_name,
                     leaf_only=leaf_only,
                     dd_version=dd_version,
@@ -2886,13 +2890,41 @@ class AgentsServer:
 
             tools = _get_imas_tools()
             result = _run_async(
-                tools.structure_tool.export_imas_domain(
+                tools.structure_tool.export_dd_domain(
                     domain=domain,
                     ids_filter=ids_filter,
                     dd_version=dd_version,
                 )
             )
             return format_export_domain_report(result)
+
+        @self.mcp.tool()
+        def get_ids_structure(
+            ids_name: str,
+            dd_version: int | None = None,
+        ) -> str:
+            """Analyze the internal structure and organization of a specific IMAS IDS.
+
+            Returns a compact overview including: metrics (path counts, depth), top-level sections,
+            semantic clusters, identifier schemas, COCOS fields, coordinate arrays, and data type distribution.
+
+            Args:
+                ids_name: IDS name to analyze (e.g. "equilibrium", "core_profiles").
+                dd_version: Filter by DD major version (3 or 4). Default: latest version.
+
+            Returns:
+                Formatted text report with structural overview of the IDS.
+            """
+            from imas_codex.llm.search_formatters import format_ids_structure_report
+
+            tools = _get_imas_tools()
+            result = _run_async(
+                tools.structure_tool.get_ids_structure(
+                    ids_name=ids_name,
+                    dd_version=dd_version,
+                )
+            )
+            return format_ids_structure_report(result)
 
         @self.mcp.tool()
         def get_dd_cocos_fields(
@@ -2916,7 +2948,7 @@ class AgentsServer:
 
             tools = _get_imas_tools()
             result = _run_async(
-                tools.structure_tool.get_cocos_fields(
+                tools.structure_tool.get_dd_cocos_fields(
                     transformation_type=transformation_type,
                     ids_filter=ids_filter,
                     dd_version=dd_version,
@@ -3372,6 +3404,13 @@ class AgentsServer:
                     "node_count": graph.get("node_count"),
                     "relationship_count": graph.get("relationship_count"),
                 }
+                # Add GHCR package name for deployment identification
+                try:
+                    from imas_codex.graph.ghcr import get_package_name
+
+                    graph_section["package"] = get_package_name(dd_only=server.dd_only)
+                except Exception:
+                    pass
                 if server.dd_only:
                     graph_section["variant"] = "dd-only"
                 elif graph.get("facilities"):
@@ -3387,9 +3426,9 @@ class AgentsServer:
                 if not server.dd_only:
                     response["facilities"] = graph.get("facilities", [])
 
-            # Tool inventory
+            # Tool inventory — strip FastMCP internal "@" suffix from keys
             tool_names = sorted(
-                k.removeprefix("tool:")
+                k.removeprefix("tool:").rstrip("@")
                 for k in server.mcp._local_provider._components
                 if k.startswith("tool:")
             )

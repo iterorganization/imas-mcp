@@ -46,6 +46,7 @@ def generate_schema_context(
         schemas_dir / "facility.yaml",
         schemas_dir / "common.yaml",
         schemas_dir / "imas_dd.yaml",
+        schemas_dir / "standard_name.yaml",
     ]
     task_groups_file = schemas_dir / "task_groups.yaml"
 

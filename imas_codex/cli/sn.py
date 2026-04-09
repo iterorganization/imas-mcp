@@ -1,0 +1,598 @@
+"""Standard name generation commands."""
+
+from __future__ import annotations
+
+import logging
+
+import click
+from rich.console import Console
+
+logger = logging.getLogger(__name__)
+console = Console()
+
+
+@click.group()
+def sn() -> None:
+    """Standard name generation and management.
+
+    \b
+    Build:
+      imas-codex sn build --source dd [--ids NAME] [--domain NAME]
+      imas-codex sn build --source signals --facility NAME
+
+    \b
+    Status:
+      imas-codex sn status
+    """
+    pass
+
+
+@sn.command("build")
+@click.option(
+    "--source",
+    type=click.Choice(["dd", "signals"]),
+    required=True,
+    help="Source to extract candidates from",
+)
+@click.option(
+    "--ids",
+    "ids_filter",
+    type=str,
+    default=None,
+    help="Filter to specific IDS (for DD source)",
+)
+@click.option(
+    "--domain",
+    "domain_filter",
+    type=str,
+    default=None,
+    help="Filter to physics domain",
+)
+@click.option(
+    "--facility",
+    type=str,
+    default=None,
+    help="Facility ID (required for signals source)",
+)
+@click.option(
+    "--cost-limit",
+    type=float,
+    default=5.0,
+    help="Maximum LLM cost in USD",
+)
+@click.option("--dry-run", is_flag=True, help="Preview extraction without LLM calls")
+@click.option(
+    "--force", is_flag=True, help="Re-generate names for already-named sources"
+)
+@click.option(
+    "--limit",
+    type=int,
+    default=None,
+    help="Maximum number of DD paths to process",
+)
+@click.option(
+    "--review-model",
+    type=str,
+    default=None,
+    help="LLM model for cross-model review (default: reasoning model)",
+)
+@click.option("--skip-review", is_flag=True, help="Skip the cross-model review phase")
+@click.option("-v", "--verbose", is_flag=True, help="Enable verbose logging")
+@click.option("-q", "--quiet", is_flag=True, help="Suppress non-error output")
+def sn_build(
+    source: str,
+    ids_filter: str | None,
+    domain_filter: str | None,
+    facility: str | None,
+    cost_limit: float,
+    dry_run: bool,
+    force: bool,
+    limit: int | None,
+    review_model: str | None,
+    skip_review: bool,
+    verbose: bool,
+    quiet: bool,
+) -> None:
+    """Build standard names from a source.
+
+    \b
+    Examples:
+      imas-codex sn build --source dd --ids equilibrium --dry-run
+      imas-codex sn build --source dd --domain magnetics --cost-limit 2
+      imas-codex sn build --source signals --facility tcv
+    """
+    # Validate: signals source requires facility
+    if source == "signals" and not facility:
+        raise click.UsageError("--facility is required when --source is signals")
+
+    from imas_codex.discovery.base.llm import set_litellm_offline_env
+
+    set_litellm_offline_env()
+
+    from imas_codex.cli.discover.common import (
+        DiscoveryConfig,
+        make_log_print,
+        run_discovery,
+        setup_logging,
+        use_rich_output,
+    )
+
+    use_rich = use_rich_output()
+    console_obj = setup_logging("sn", "sn", use_rich, verbose=verbose)
+    log_print = make_log_print("sn", console_obj)
+
+    # Suppress noisy loggers
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+
+    # Determine effective facility for state
+    effective_facility = facility if source == "signals" else "dd"
+
+    log_print("\n[bold]Standard Name Build[/bold]")
+    log_print(f"  Source: {source}")
+    if ids_filter:
+        log_print(f"  IDS filter: {ids_filter}")
+    if domain_filter:
+        log_print(f"  Domain filter: {domain_filter}")
+    if facility:
+        log_print(f"  Facility: {facility}")
+    if dry_run:
+        log_print("  Mode: dry run")
+    if force:
+        log_print("  Force: re-generating all names")
+    if limit:
+        log_print(f"  Limit: {limit} paths")
+    if skip_review:
+        log_print("  Review: skipped")
+    elif review_model:
+        log_print(f"  Review model: {review_model}")
+    log_print(f"  Cost limit: ${cost_limit:.2f}")
+    log_print("")
+
+    from imas_codex.sn.pipeline import run_sn_build_engine
+    from imas_codex.sn.state import SNBuildState
+
+    # Build progress display
+    display = None
+    if use_rich and not quiet:
+        try:
+            from imas_codex.sn.progress import SNProgressDisplay
+
+            display = SNProgressDisplay(
+                source=source,
+                console=console_obj,
+                cost_limit=cost_limit,
+                mode_label="DRY RUN" if dry_run else None,
+            )
+        except Exception:
+            logger.debug("Could not create progress display", exc_info=True)
+
+    state = SNBuildState(
+        facility=effective_facility,
+        source=source,
+        ids_filter=ids_filter,
+        domain_filter=domain_filter,
+        facility_filter=facility,
+        cost_limit=cost_limit,
+        dry_run=dry_run,
+        force=force,
+        limit=limit,
+        skip_review=skip_review,
+        review_model=review_model,
+    )
+
+    if display:
+        display.set_engine_state(state)
+
+    async def _run(stop_event, service_monitor):
+        if service_monitor:
+            state.service_monitor = service_monitor
+        await run_sn_build_engine(
+            state,
+            stop_event=stop_event,
+            on_worker_status=display.on_worker_status if display else None,
+        )
+        return state.stats
+
+    config = DiscoveryConfig(
+        facility=effective_facility,
+        domain="sn",
+        facility_config={},
+        display=display,
+        check_graph=True,
+        check_embed=False,
+        check_ssh=False,
+        check_auth=source != "dd",  # signals source might need auth
+        check_model=not dry_run,
+        model_section="language",
+        suppress_loggers=[
+            "imas_codex.sn",
+        ],
+        verbose=verbose,
+    )
+
+    result = run_discovery(config, _run)
+
+    # Print summary
+    if result:
+        extracted = result.get("extract_count", 0)
+        composed = result.get("compose_count", 0)
+        reviewed = result.get("review_accepted", composed)
+        validated = result.get("validate_valid", 0)
+        parts = [f"Extracted: {extracted}", f"Composed: {composed}"]
+        if not skip_review:
+            rejected = result.get("review_rejected", 0)
+            revised = result.get("review_revised", 0)
+            parts.append(
+                f"Reviewed: {reviewed} (rejected: {rejected}, revised: {revised})"
+            )
+        parts.append(f"Validated: {validated}")
+        log_print(", ".join(parts))
+        if dry_run:
+            log_print("(dry run — no LLM calls or graph writes)")
+
+
+@sn.command("benchmark")
+@click.option(
+    "--source",
+    type=click.Choice(["dd", "signals"]),
+    default="dd",
+    help="Source to extract candidates from",
+)
+@click.option(
+    "--ids",
+    "ids_filter",
+    type=str,
+    default=None,
+    help="Filter to specific IDS (for DD source)",
+)
+@click.option(
+    "--domain",
+    "domain_filter",
+    type=str,
+    default=None,
+    help="Filter to physics domain",
+)
+@click.option(
+    "--facility",
+    type=str,
+    default=None,
+    help="Facility ID (required for signals source)",
+)
+@click.option(
+    "--models",
+    type=str,
+    required=True,
+    help="Comma-separated model list (e.g. 'claude-sonnet-4,gpt-4o')",
+)
+@click.option(
+    "--max-candidates",
+    type=int,
+    default=50,
+    help="Maximum extraction candidates",
+)
+@click.option(
+    "--runs",
+    type=int,
+    default=1,
+    help="Runs per model for consistency check",
+)
+@click.option(
+    "--temperature",
+    type=float,
+    default=0.0,
+    help="LLM temperature (0.0 for reproducibility)",
+)
+@click.option(
+    "--output",
+    type=click.Path(),
+    default=None,
+    help="JSON report output path",
+)
+@click.option("-v", "--verbose", is_flag=True, help="Enable verbose logging")
+def sn_benchmark(
+    source: str,
+    ids_filter: str | None,
+    domain_filter: str | None,
+    facility: str | None,
+    models: str,
+    max_candidates: int,
+    runs: int,
+    temperature: float,
+    output: str | None,
+    verbose: bool,
+) -> None:
+    """Benchmark LLM models on standard name generation.
+
+    Runs a fixed dataset through multiple models and compares results
+    on grammar validity, reference overlap, cost, and speed.
+
+    \b
+    Examples:
+      imas-codex sn benchmark --models claude-sonnet-4,gpt-4o --ids equilibrium
+      imas-codex sn benchmark --models claude-sonnet-4 --max-candidates 20 -v
+      imas-codex sn benchmark --models gpt-4o --output report.json
+    """
+    if verbose:
+        logging.basicConfig(level=logging.DEBUG)
+    else:
+        logging.basicConfig(level=logging.WARNING)
+
+    # Parse model list
+    model_list = [m.strip() for m in models.split(",") if m.strip()]
+    if not model_list:
+        raise click.UsageError("--models must contain at least one model name")
+
+    from imas_codex.sn.benchmark import (
+        BenchmarkConfig,
+        render_comparison_table,
+        run_benchmark,
+    )
+
+    config = BenchmarkConfig(
+        models=model_list,
+        source=source,
+        ids_filter=ids_filter,
+        domain_filter=domain_filter,
+        facility=facility,
+        max_candidates=max_candidates,
+        runs_per_model=runs,
+        temperature=temperature,
+    )
+
+    console.print("[bold]SN Benchmark[/bold]")
+    console.print(f"  Models: {', '.join(model_list)}")
+    console.print(f"  Source: {source}")
+    if ids_filter:
+        console.print(f"  IDS filter: {ids_filter}")
+    if domain_filter:
+        console.print(f"  Domain filter: {domain_filter}")
+    console.print(f"  Max candidates: {max_candidates}")
+    console.print(f"  Runs per model: {runs}")
+    console.print(f"  Temperature: {temperature}")
+    console.print()
+
+    from imas_codex.cli.utils import run_async
+
+    report = run_async(run_benchmark(config))
+
+    # Display comparison table
+    render_comparison_table(report)
+
+    # Save JSON report
+    if output is None:
+        ts = report.timestamp.replace(":", "").replace("-", "")[:15]
+        output = f"sn_benchmark_{ts}.json"
+
+    from pathlib import Path
+
+    out_path = Path(output)
+    out_path.write_text(report.to_json())
+    console.print(f"\n[green]Report saved:[/green] {out_path}")
+
+
+@sn.command("status")
+def sn_status() -> None:
+    """Show standard name statistics."""
+    from imas_codex.graph.client import GraphClient
+
+    try:
+        with GraphClient() as gc:
+            result = gc.query(
+                """
+                MATCH (sn:StandardName)
+                RETURN count(sn) AS total,
+                       count(CASE WHEN sn.source = 'dd' THEN 1 END) AS from_dd,
+                       count(CASE WHEN sn.source = 'signals' THEN 1 END) AS from_signals,
+                       count(CASE WHEN sn.source = 'manual' THEN 1 END) AS from_manual
+            """
+            )
+            row = next(iter(result), None)
+            if row:
+                console.print(f"[bold]Standard Names:[/bold] {row['total']}")
+                console.print(f"  From DD: {row['from_dd']}")
+                console.print(f"  From signals: {row['from_signals']}")
+                console.print(f"  From manual: {row['from_manual']}")
+            else:
+                console.print("No standard names in graph")
+    except Exception as e:
+        console.print(f"[red]Error:[/red] {e}")
+
+
+@sn.command("publish")
+@click.option(
+    "--ids",
+    "ids_filter",
+    type=str,
+    default=None,
+    help="Filter to specific IDS name",
+)
+@click.option(
+    "--domain",
+    "domain_filter",
+    type=str,
+    default=None,
+    help="Filter to physics domain (applied to tags)",
+)
+@click.option(
+    "--output-dir",
+    type=click.Path(),
+    default="sn_catalog_output",
+    help="Directory for YAML files",
+)
+@click.option(
+    "--group-by",
+    type=click.Choice(["ids", "domain", "confidence"]),
+    default="ids",
+    help="Batching strategy for PR grouping",
+)
+@click.option(
+    "--confidence-min",
+    type=float,
+    default=0.0,
+    help="Minimum confidence threshold (0.0-1.0)",
+)
+@click.option(
+    "--catalog-dir",
+    type=click.Path(exists=False),
+    default=None,
+    help="Existing catalog directory for duplicate checking",
+)
+@click.option(
+    "--create-pr",
+    is_flag=True,
+    help="Create GitHub PR (requires gh CLI)",
+)
+@click.option(
+    "--catalog-repo",
+    type=str,
+    default="iterorganization/imas-standard-names-catalog",
+    help="Target GitHub repo for PR creation",
+)
+@click.option("--dry-run", is_flag=True, help="Preview without writing files")
+@click.option("-v", "--verbose", is_flag=True, help="Enable verbose logging")
+def sn_publish(
+    ids_filter: str | None,
+    domain_filter: str | None,
+    output_dir: str,
+    group_by: str,
+    confidence_min: float,
+    catalog_dir: str | None,
+    create_pr: bool,
+    catalog_repo: str,
+    dry_run: bool,
+    verbose: bool,
+) -> None:
+    """Publish validated standard names to YAML catalog files.
+
+    \b
+    Reads StandardName nodes from the graph, converts them to YAML
+    files matching the imas-standard-names-catalog format, and
+    optionally creates batched GitHub pull requests.
+
+    \b
+    Examples:
+      imas-codex sn publish --dry-run
+      imas-codex sn publish --ids equilibrium --output-dir catalog/
+      imas-codex sn publish --group-by confidence --confidence-min 0.8
+      imas-codex sn publish --create-pr --catalog-repo org/repo
+    """
+    from pathlib import Path
+
+    if verbose:
+        logging.basicConfig(level=logging.DEBUG)
+
+    console.print("\n[bold]Standard Name Publish[/bold]")
+    if ids_filter:
+        console.print(f"  IDS filter: {ids_filter}")
+    if domain_filter:
+        console.print(f"  Domain filter: {domain_filter}")
+    console.print(f"  Output: {output_dir}")
+    console.print(f"  Group by: {group_by}")
+    console.print(f"  Confidence min: {confidence_min}")
+    if dry_run:
+        console.print("  Mode: [yellow]dry run[/yellow]")
+    console.print("")
+
+    # Step 1: Load validated names from graph
+    try:
+        from imas_codex.sn.graph_ops import get_validated_standard_names
+
+        records = get_validated_standard_names(
+            ids_filter=ids_filter,
+            confidence_min=confidence_min,
+        )
+    except Exception as e:
+        console.print(f"[red]Error reading from graph:[/red] {e}")
+        raise SystemExit(1) from e
+
+    if not records:
+        console.print("[yellow]No validated standard names found in graph.[/yellow]")
+        return
+
+    console.print(f"  Loaded [bold]{len(records)}[/bold] validated names from graph")
+
+    # Step 2: Convert to publish entries
+    from imas_codex.sn.publish import (
+        check_catalog_duplicates,
+        create_catalog_pr,
+        generate_catalog_files,
+        graph_records_to_entries,
+        make_publish_batches,
+    )
+
+    entries = graph_records_to_entries(records)
+
+    # Apply domain filter on tags if specified
+    if domain_filter:
+        entries = [e for e in entries if domain_filter in e.tags]
+        console.print(f"  After domain filter: [bold]{len(entries)}[/bold] entries")
+
+    if not entries:
+        console.print("[yellow]No entries after filtering.[/yellow]")
+        return
+
+    # Step 3: Check for duplicates
+    catalog_path = Path(catalog_dir) if catalog_dir else None
+    new_entries, duplicates = check_catalog_duplicates(entries, catalog_path)
+
+    if duplicates:
+        console.print(f"  Skipping [yellow]{len(duplicates)}[/yellow] duplicate(s)")
+    entries = new_entries
+
+    if not entries:
+        console.print(
+            "[yellow]All entries are duplicates — nothing to publish.[/yellow]"
+        )
+        return
+
+    # Step 4: Create batches
+    batches = make_publish_batches(entries, group_by)
+
+    # Step 5: Print summary table
+    console.print(f"\n[bold]Publish Summary[/bold] ({len(entries)} entries)")
+    console.print("")
+    for batch in batches:
+        console.print(
+            f"  [bold]{batch.group_key}[/bold]: "
+            f"{len(batch.entries)} entries "
+            f"(confidence: {batch.confidence_tier})"
+        )
+        if verbose:
+            for entry in batch.entries:
+                conf = f"{entry.provenance.confidence:.2f}"
+                console.print(f"    - {entry.name} [{conf}]")
+
+    # Step 6: Generate YAML files
+    if dry_run:
+        console.print(
+            f"\n[yellow]Dry run — would write {len(entries)} files to {output_dir}[/yellow]"
+        )
+    else:
+        out = Path(output_dir)
+        written = generate_catalog_files(entries, out)
+        console.print(f"\n[green]Wrote {len(written)} YAML files to {out}[/green]")
+
+    # Step 7: Optionally create PRs
+    if create_pr:
+        for batch in batches:
+            branch = f"sn/{batch.group_key}/{batch.confidence_tier}"
+            branch = branch.replace(" ", "-").lower()
+            yaml_files = (
+                [Path(output_dir) / f"{e.name}.yaml" for e in batch.entries]
+                if not dry_run
+                else []
+            )
+            pr_url = create_catalog_pr(
+                batch=batch,
+                catalog_repo=catalog_repo,
+                branch_name=branch,
+                yaml_files=yaml_files,
+                dry_run=dry_run,
+            )
+            if pr_url:
+                console.print(f"  PR: {pr_url}")
+            elif dry_run:
+                console.print(
+                    f"  [yellow]Would create PR for {batch.group_key}[/yellow]"
+                )

@@ -349,6 +349,14 @@ class GetOverviewResult(WithPhysics, ToolResult, SearchHits):
         default=None,
         description="Unit distribution statistics (top units by path count)",
     )
+    domain_summary: dict[str, Any] | None = Field(
+        default=None,
+        description="High-level domain breakdown with IDS counts and path totals",
+    )
+    lifecycle_summary: dict[str, int] | None = Field(
+        default=None,
+        description="IDS counts by lifecycle status (active, alpha, etc.)",
+    )
 
 
 # ============================================================================
@@ -465,6 +473,10 @@ class CheckPathsResultItem(BaseModel):
     suggestion: str | None = Field(
         default=None,
         description="Suggested correction for not-found paths (typo hints)",
+    )
+    suggestions: list[str] | None = Field(
+        default=None,
+        description="Multiple fuzzy-match suggestions for not-found paths",
     )
     error: str | None = Field(default=None, description="Error message if invalid")
 

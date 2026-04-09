@@ -4,15 +4,20 @@ Replaces DocumentStore, SemanticSearch, and ClusterSearcher with
 GraphClient queries against Neo4j vector indexes and Cypher traversals.
 """
 
+from __future__ import annotations
+
 import json
 import logging
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from fastmcp import Context
 
 from imas_codex.core.data_model import IdsNode
 from imas_codex.graph.client import GraphClient
 from imas_codex.models.constants import SearchMode
+
+if TYPE_CHECKING:
+    from imas_codex.search.fuzzy_matcher import PathFuzzyMatcher
 from imas_codex.models.result_models import (
     CheckPathsResult,
     CheckPathsResultItem,
@@ -224,6 +229,11 @@ class GraphSearchTool:
                 physics_domains=[],
                 error="Query cannot be empty.",
             )
+
+        from imas_codex.core.paths import normalize_imas_path
+
+        # Normalize dot-notation and bracket notation before any analysis
+        query = normalize_imas_path(query)
 
         normalized_filter = normalize_ids_filter(ids_filter)
 
@@ -521,8 +531,30 @@ class GraphSearchTool:
 class GraphPathTool:
     """Graph-backed path validation and fetching."""
 
+    _fuzzy_cache: dict[int | None, PathFuzzyMatcher] = {}
+
     def __init__(self, graph_client: GraphClient):
         self._gc = graph_client
+
+    def _get_fuzzy_matcher(self, dd_version: int | None = None) -> PathFuzzyMatcher:
+        """Lazy-init a version-scoped PathFuzzyMatcher."""
+        if dd_version not in self._fuzzy_cache:
+            from imas_codex.search.fuzzy_matcher import PathFuzzyMatcher
+
+            dd_params: dict[str, Any] = {}
+            dd_clause = _dd_version_clause("p", dd_version, dd_params)
+            rows = self._gc.query(
+                f"""
+                MATCH (p:IMASNode)
+                WHERE p.node_category = 'data' {dd_clause}
+                RETURN p.id AS id, p.ids AS ids
+                """,
+                **dd_params,
+            )
+            paths = [r["id"] for r in rows] if rows else []
+            ids_names = sorted({r["ids"] for r in rows if r["ids"]}) if rows else []
+            self._fuzzy_cache[dd_version] = PathFuzzyMatcher(ids_names, paths)
+        return self._fuzzy_cache[dd_version]
 
     @property
     def tool_name(self) -> str:
@@ -543,7 +575,7 @@ class GraphPathTool:
         dd_version: int | None = None,
         ctx: Context | None = None,
     ) -> CheckPathsResult:
-        """Validate IMAS paths against graph."""
+        """Validate IMAS paths against graph using batch UNWIND."""
         path_list = _normalize_paths(paths)
         if ids:
             path_list = [
@@ -554,22 +586,33 @@ class GraphPathTool:
         dd_params: dict[str, Any] = {}
         dd_clause = _dd_version_clause("p", dd_version, dd_params)
 
+        # Batch existence + rename check in a single UNWIND query
+        rows = self._gc.query(
+            f"""
+            UNWIND $paths AS check_path
+            OPTIONAL MATCH (p:IMASNode {{id: check_path}})
+            WHERE true {dd_clause}
+            OPTIONAL MATCH (p)-[:HAS_UNIT]->(u:Unit)
+            OPTIONAL MATCH (old:IMASNode {{id: check_path}})-[:RENAMED_TO]->(new:IMASNode)
+            RETURN check_path,
+                   p.id AS id, p.ids AS ids, p.data_type AS data_type,
+                   u.id AS units,
+                   old.id AS renamed_from, new.id AS renamed_to
+            """,
+            paths=path_list,
+            **dd_params,
+        )
+
+        row_map: dict[str, dict] = {}
+        for r in rows or []:
+            row_map[r["check_path"]] = r
+
         results = []
         found = 0
+        not_found_paths = []
         for path in path_list:
-            row = self._gc.query(
-                f"""
-                MATCH (p:IMASNode {{id: $path}})
-                WHERE true {dd_clause}
-                OPTIONAL MATCH (p)-[:HAS_UNIT]->(u:Unit)
-                RETURN p.id AS id, p.ids AS ids, p.data_type AS data_type,
-                       u.id AS units
-                """,
-                path=path,
-                **dd_params,
-            )
-            if row:
-                r = row[0]
+            r = row_map.get(path)
+            if r and r["id"]:
                 results.append(
                     CheckPathsResultItem(
                         path=r["id"],
@@ -580,38 +623,46 @@ class GraphPathTool:
                     )
                 )
                 found += 1
-            else:
-                # Check for deprecated/renamed path
-                renamed = self._gc.query(
-                    """
-                    MATCH (old:IMASNode {id: $path})-[:RENAMED_TO]->(new:IMASNode)
-                    RETURN old.id AS old_path, new.id AS new_path
-                    """,
-                    path=path,
+            elif r and r["renamed_to"]:
+                new_path = r["renamed_to"]
+                results.append(
+                    CheckPathsResultItem(
+                        path=path,
+                        exists=False,
+                        renamed_from=[
+                            {"old_path": r["renamed_from"], "new_path": new_path}
+                        ],
+                        migration={"type": "renamed", "target": new_path},
+                        suggestion=new_path,
+                    )
                 )
-                if renamed:
-                    new_path = renamed[0]["new_path"]
-                    results.append(
-                        CheckPathsResultItem(
-                            path=path,
-                            exists=False,
-                            renamed_from=[
-                                {
-                                    "old_path": renamed[0]["old_path"],
-                                    "new_path": new_path,
-                                }
-                            ],
-                            migration={"type": "renamed", "target": new_path},
-                            suggestion=new_path,
-                        )
+            else:
+                not_found_paths.append(path)
+                results.append(
+                    CheckPathsResultItem(
+                        path=path,
+                        exists=False,
                     )
-                else:
-                    results.append(
-                        CheckPathsResultItem(
-                            path=path,
-                            exists=False,
+                )
+
+        # Fuzzy suggestions for paths not found and not renamed
+        if not_found_paths:
+            try:
+                matcher = self._get_fuzzy_matcher(dd_version)
+                for item in results:
+                    if (
+                        not item.exists
+                        and item.path in not_found_paths
+                        and not item.suggestion
+                    ):
+                        suggestions = matcher.suggest_paths(
+                            item.path, max_suggestions=3
                         )
-                    )
+                        if suggestions:
+                            item.suggestions = suggestions
+                            item.suggestion = suggestions[0]
+            except Exception:
+                logger.debug("Fuzzy matching unavailable", exc_info=True)
 
         return CheckPathsResult(
             results=results,
@@ -800,7 +851,7 @@ class GraphPathTool:
         "path (required): Exact IMAS data path. "
         "dd_version: Filter by DD major version (e.g., 3 or 4). None returns all versions."
     )
-    async def fetch_dd_error_fields(
+    async def fetch_error_fields(
         self,
         path: str,
         dd_version: int | None = None,
@@ -877,9 +928,14 @@ class GraphListTool:
         max_paths: int | None = None,
         dd_version: int | None = None,
         response_profile: str = "minimal",
+        physics_domain: str | None = None,
+        node_type: str | None = None,
+        lifecycle_filter: str | None = None,
         ctx: Context | None = None,
     ) -> ListPathsResult:
         """List paths from graph."""
+        from imas_codex.core.paths import normalize_imas_path
+
         queries = paths.strip().split()
         results = []
 
@@ -887,13 +943,14 @@ class GraphListTool:
         dd_clause = _dd_version_clause("p", dd_version, dd_params)
 
         for query in queries:
+            query = normalize_imas_path(query)
             # Determine if this is an IDS name or a path prefix
             if "/" in query:
                 ids_name = query.split("/")[0]
                 prefix = query
             else:
                 ids_name = query
-                prefix = query
+                prefix = None
 
             # Verify IDS exists
             ids_exists = self._gc.query(
@@ -911,13 +968,24 @@ class GraphListTool:
                 )
                 continue
 
-            # Query paths
+            # Build filter clauses
             leaf_filter = (
-                "AND NOT p.data_type IN ['STRUCTURE', 'STRUCT_ARRAY']"
+                "AND NOT (p.data_type IN ['STRUCTURE', 'STRUCT_ARRAY'])"
                 if leaf_only
                 else ""
             )
             limit_clause = f"LIMIT {max_paths}" if max_paths else ""
+
+            extra_filters = ""
+            if physics_domain:
+                extra_filters += " AND p.physics_domain = $physics_domain"
+                dd_params["physics_domain"] = physics_domain
+            if node_type:
+                extra_filters += " AND p.node_type = $node_type"
+                dd_params["node_type"] = node_type
+            if lifecycle_filter:
+                extra_filters += " AND p.lifecycle_status = $lifecycle_filter"
+                dd_params["lifecycle_filter"] = lifecycle_filter
 
             include_metadata = response_profile != "minimal"
 
@@ -933,37 +1001,29 @@ class GraphListTool:
             else:
                 return_clause = "RETURN p.id AS id"
 
+            # Unified query — use ids= for plain IDS names, STARTS WITH for prefixes
+            if prefix:
+                match_clause = (
+                    "WHERE p.id STARTS WITH $prefix AND p.node_category = 'data'"
+                )
+                dd_params["prefix"] = prefix + ("/" if not prefix.endswith("/") else "")
+            else:
+                match_clause = "WHERE p.ids = $ids_name AND p.node_category = 'data'"
+                dd_params["ids_name"] = ids_name
+
             path_results = self._gc.query(
                 f"""
                 MATCH (p:IMASNode)
-                WHERE p.id STARTS WITH $prefix
-                AND p.node_category = 'data'
+                {match_clause}
                 {leaf_filter}
+                {extra_filters}
                 {dd_clause}
                 {return_clause}
                 ORDER BY p.id
                 {limit_clause}
                 """,
-                prefix=prefix + ("/" if "/" not in prefix else ""),
                 **dd_params,
             )
-
-            # Also include the prefix itself if it's an exact IDS
-            if "/" not in prefix:
-                path_results = self._gc.query(
-                    f"""
-                    MATCH (p:IMASNode)
-                    WHERE p.ids = $ids_name
-                    AND p.node_category = 'data'
-                    {leaf_filter}
-                    {dd_clause}
-                    {return_clause}
-                    ORDER BY p.id
-                    {limit_clause}
-                    """,
-                    ids_name=ids_name,
-                    **dd_params,
-                )
 
             path_ids = [r["id"] for r in (path_results or [])]
             if not include_ids_prefix:
@@ -1030,12 +1090,14 @@ class GraphOverviewTool:
         "Get an overview of available IMAS Interface Data Structures (IDS). "
         "Returns IDS names, descriptions, path counts, and physics domains. "
         "query: Optional filter to narrow results (e.g., 'magnetics' or 'plasma equilibrium'). "
-        "dd_version: Filter by DD major version (e.g., 3 or 4). None returns all versions."
+        "dd_version: Filter by DD major version (e.g., 3 or 4). None returns all versions. "
+        "include_unit_stats: If true, include unit distribution statistics."
     )
     async def get_dd_overview(
         self,
         query: str | None = None,
         dd_version: int | None = None,
+        include_unit_stats: bool = False,
         ctx: Context | None = None,
     ) -> GetOverviewResult:
         """Get overview from graph."""
@@ -1129,7 +1191,36 @@ class GraphOverviewTool:
             if r["physics_domain"]:
                 physics_domains.add(r["physics_domain"])
 
-        # Build tools list (query_imas_graph and get_dd_graph_schema were removed)
+        # Domain summary: group IDS counts and path counts by physics domain
+        domain_summary: dict[str, dict[str, int]] = {}
+        for _ids_name, stats in ids_statistics.items():
+            dom = stats.get("physics_domain") or "uncategorized"
+            entry = domain_summary.setdefault(dom, {"ids_count": 0, "path_count": 0})
+            entry["ids_count"] += 1
+            entry["path_count"] += stats["path_count"]
+
+        # Lifecycle summary
+        lifecycle_counts: dict[str, int] = {}
+        for r in ids_results or []:
+            lc = r.get("lifecycle_status") or "unknown"
+            lifecycle_counts[lc] = lifecycle_counts.get(lc, 0) + 1
+
+        # Unit stats (optional)
+        unit_stats: dict[str, int] | None = None
+        if include_unit_stats:
+            unit_rows = self._gc.query(
+                f"""
+                MATCH (p:IMASNode)-[:HAS_UNIT]->(u:Unit)
+                WHERE p.node_category = 'data' {dd_clause}
+                RETURN u.id AS unit, count(p) AS cnt
+                ORDER BY cnt DESC
+                LIMIT 30
+                """,
+                **dd_params,
+            )
+            unit_stats = {r["unit"]: r["cnt"] for r in (unit_rows or [])}
+
+        # Build tools list
         mcp_tools = [
             "search_dd_paths",
             "check_dd_paths",
@@ -1148,16 +1239,27 @@ class GraphOverviewTool:
 
         total_paths = sum(s["path_count"] for s in ids_statistics.values())
 
+        # When no query, truncate to top 10 IDS to reduce token usage
+        if not query and len(all_ids) > 10:
+            top_ids = all_ids[:10]
+            top_statistics = {k: ids_statistics[k] for k in top_ids}
+        else:
+            top_ids = all_ids
+            top_statistics = ids_statistics
+
         return GetOverviewResult(
             content=f"IMAS Data Dictionary v{current_version}: {len(all_ids)} IDS, {total_paths} total paths",
-            available_ids=all_ids,
+            available_ids=top_ids,
             query=query,
             physics_domains=sorted(physics_domains),
-            ids_statistics=ids_statistics,
+            ids_statistics=top_statistics,
             mcp_tools=mcp_tools,
             dd_version=current_version,
             mcp_version=version,
             total_leaf_nodes=total_paths,
+            domain_summary=domain_summary,
+            lifecycle_summary=lifecycle_counts,
+            unit_statistics=unit_stats,
         )
 
 
@@ -2026,8 +2128,154 @@ class GraphStructureTool:
 
         return result
 
+    @mcp_tool(
+        "Get a rich structural overview of an IDS using efficient graph queries. "
+        "Returns metrics (path counts, depth), top-level sections, semantic clusters, "
+        "identifier schemas, COCOS fields, coordinate arrays, and data type distribution. "
+        "ids_name (required): IDS name to analyze (e.g. 'equilibrium', 'core_profiles'). "
+        "dd_version: Filter by DD major version (3 or 4). Default: latest version."
+    )
+    @handle_errors("get_ids_structure")
+    async def get_ids_structure(
+        self,
+        ids_name: str,
+        dd_version: int | None = None,
+        ctx: Context | None = None,
+    ) -> dict[str, Any]:
+        """Get a rich structural overview of an IDS using efficient graph queries."""
+        dd_params: dict[str, Any] = {"ids_name": ids_name}
+        dd_clause = _dd_version_clause("p", dd_version, dd_params)
+
+        # Query 1: IDS metadata + metrics + top-level sections
+        combined = self._gc.query(
+            f"""
+            MATCH (i:IDS {{id: $ids_name}})
+            OPTIONAL MATCH (p:IMASNode)
+            WHERE p.ids = $ids_name AND p.node_category = 'data' {dd_clause}
+            WITH i,
+                 count(p) AS total,
+                 count(CASE WHEN NOT (p.data_type IN ['STRUCTURE', 'STRUCT_ARRAY'])
+                            THEN 1 END) AS leaves,
+                 max(size(split(p.id, '/')) - 1) AS max_depth,
+                 collect(CASE WHEN size(split(p.id, '/')) = 2
+                              THEN p END) AS top_nodes
+            RETURN i.name AS name,
+                   COALESCE(i.description, i.documentation) AS description,
+                   i.physics_domain AS physics_domain,
+                   i.lifecycle_status AS lifecycle_status,
+                   total, leaves, max_depth,
+                   [n IN top_nodes WHERE n IS NOT NULL |
+                    {{id: n.id, name: n.name, data_type: n.data_type,
+                      doc: left(n.documentation, 80)}}] AS top_sections
+            """,
+            **dd_params,
+        )
+
+        if not combined:
+            return {
+                "ids_name": ids_name,
+                "error": f"IDS '{ids_name}' not found",
+            }
+
+        meta = combined[0]
+
+        # Query 2: Clusters containing paths from this IDS
+        clusters = self._gc.query(
+            f"""
+            MATCH (p:IMASNode)-[:IN_CLUSTER]->(c:IMASSemanticCluster)
+            WHERE p.ids = $ids_name {dd_clause}
+            WITH c, count(p) AS member_count
+            RETURN c.label AS label, c.scope AS scope, member_count
+            ORDER BY member_count DESC
+            LIMIT 15
+            """,
+            **dd_params,
+        )
+
+        # Query 3: Identifier schemas used in this IDS
+        identifiers = self._gc.query(
+            f"""
+            MATCH (p:IMASNode)-[:HAS_IDENTIFIER_SCHEMA]->(s:IdentifierSchema)
+            WHERE p.ids = $ids_name {dd_clause}
+            WITH s, collect(p.id) AS paths, count(p) AS usage_count
+            RETURN s.name AS schema, usage_count,
+                   paths[0..3] AS example_paths
+            ORDER BY usage_count DESC
+            """,
+            **dd_params,
+        )
+
+        # Query 4: COCOS fields + coordinate specs
+        cocos_coords = self._gc.query(
+            f"""
+            MATCH (p:IMASNode)
+            WHERE p.ids = $ids_name
+              AND (p.cocos_label_transformation IS NOT NULL
+                   OR exists((p)-[:HAS_COORDINATE]->())) {dd_clause}
+            OPTIONAL MATCH (p)-[:HAS_COORDINATE]->(coord:IMASCoordinateSpec)
+            RETURN p.id AS path,
+                   p.cocos_label_transformation AS cocos,
+                   collect(coord.id) AS coordinates
+            ORDER BY p.id
+            """,
+            **dd_params,
+        )
+
+        cocos_fields = [
+            {"path": r["path"], "label": r["cocos"]}
+            for r in (cocos_coords or [])
+            if r["cocos"]
+        ]
+        coord_arrays = [
+            {"path": r["path"], "coordinates": r["coordinates"]}
+            for r in (cocos_coords or [])
+            if r["coordinates"]
+        ]
+
+        # Query 5: Data type distribution
+        types = self._gc.query(
+            f"""
+            MATCH (p:IMASNode)
+            WHERE p.ids = $ids_name AND p.data_type IS NOT NULL {dd_clause}
+            RETURN p.data_type AS data_type, count(p) AS count
+            ORDER BY count DESC
+            """,
+            **dd_params,
+        )
+
+        total = meta.get("total", 0)
+        leaves = meta.get("leaves", 0)
+        return {
+            "ids_name": ids_name,
+            "description": meta.get("description", ""),
+            "physics_domain": meta.get("physics_domain", ""),
+            "lifecycle_status": meta.get("lifecycle_status", ""),
+            "metrics": {
+                "total_paths": total,
+                "leaf_count": leaves,
+                "structure_count": total - leaves,
+                "max_depth": meta.get("max_depth", 0),
+            },
+            "top_sections": meta.get("top_sections", []),
+            "clusters": [
+                {"label": c["label"], "scope": c["scope"], "members": c["member_count"]}
+                for c in (clusters or [])
+            ],
+            "identifier_schemas": [
+                {
+                    "schema": s["schema"],
+                    "usage_count": s["usage_count"],
+                    "examples": s["example_paths"],
+                }
+                for s in (identifiers or [])
+            ],
+            "cocos_fields": cocos_fields,
+            "coordinate_arrays": coord_arrays[:20],
+            "data_types": {t["data_type"]: t["count"] for t in (types or [])},
+        }
+
     @handle_errors("get_cocos_fields")
-    async def get_cocos_fields(
+    async def get_dd_cocos_fields(
         self,
         transformation_type: str | None = None,
         ids_filter: str | None = None,
@@ -2095,7 +2343,7 @@ class GraphStructureTool:
         "leaf_only: If true, return only leaf nodes (default false)."
     )
     @handle_errors("export_imas_ids")
-    async def export_imas_ids(
+    async def export_dd_ids(
         self,
         ids_name: str,
         leaf_only: bool = False,
@@ -2143,7 +2391,7 @@ class GraphStructureTool:
         "ids_filter: Optional IDS name filter."
     )
     @handle_errors("export_imas_domain")
-    async def export_imas_domain(
+    async def export_dd_domain(
         self,
         domain: str,
         ids_filter: str | None = None,
@@ -2206,13 +2454,13 @@ class GraphStructureTool:
 
 
 def _normalize_paths(paths: str | list[str]) -> list[str]:
-    """Normalize paths input to a flat list, stripping index annotations."""
+    """Normalize paths input to a flat list, handling dots, annotations, and JSON."""
     import json
 
-    from imas_codex.core.paths import strip_path_annotations
+    from imas_codex.core.paths import normalize_imas_path
 
     if isinstance(paths, list):
-        return [strip_path_annotations(p) for p in paths]
+        return [normalize_imas_path(p) for p in paths]
 
     s = paths.strip()
     # Handle JSON array strings from MCP transport
@@ -2221,14 +2469,14 @@ def _normalize_paths(paths: str | list[str]) -> list[str]:
             parsed = json.loads(s)
             if isinstance(parsed, list):
                 return [
-                    strip_path_annotations(str(p).strip())
+                    normalize_imas_path(str(p).strip())
                     for p in parsed
                     if str(p).strip()
                 ]
         except (json.JSONDecodeError, TypeError):
             pass
     raw = [p.strip() for p in s.replace(",", " ").split() if p.strip()]
-    return [strip_path_annotations(p) for p in raw]
+    return [normalize_imas_path(p) for p in raw]
 
 
 STRUCTURE_DATA_TYPES = ("STRUCTURE", "STRUCT_ARRAY")

@@ -25,7 +25,7 @@ TOOL_METHOD_MAP = {
     "search_tool": (GraphSearchTool, ["search_dd_paths"]),
     "path_tool": (
         GraphPathTool,
-        ["check_dd_paths", "fetch_dd_paths", "fetch_dd_error_fields"],
+        ["check_dd_paths", "fetch_dd_paths", "fetch_error_fields"],
     ),
     "list_tool": (GraphListTool, ["list_dd_paths"]),
     "overview_tool": (GraphOverviewTool, ["get_dd_overview"]),
@@ -36,9 +36,8 @@ TOOL_METHOD_MAP = {
         GraphStructureTool,
         [
             "analyze_dd_structure",
-            "get_cocos_fields",
-            "export_imas_ids",
-            "export_imas_domain",
+            "export_dd_ids",
+            "export_dd_domain",
         ],
     ),
     "version_tool": (
@@ -83,8 +82,8 @@ class TestToolMethodExistence:
             "get_dd_identifiers",
             "get_dd_path_context",
             "get_dd_cocos_fields",
-            "export_imas_ids",
-            "export_imas_domain",
+            "export_dd_ids",
+            "export_dd_domain",
             "get_dd_versions",
             "search_dd_clusters",
             "get_dd_version_context",

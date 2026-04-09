@@ -15,7 +15,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 # ---------------------------------------------------------------------------
-# Bug 1 & 2: export_imas_ids / export_imas_domain must NOT expose
+# Bug 1 & 2: export_dd_ids / export_dd_domain must NOT expose
 # ``include_errors`` — the underlying GraphStructureTool methods don't
 # accept that parameter, so passing it would raise TypeError.
 # ---------------------------------------------------------------------------
@@ -24,29 +24,29 @@ import pytest
 class TestExportHandlersNoIncludeErrors:
     """Bug 1 & 2: Server handlers must not pass include_errors to graph tools."""
 
-    def test_export_imas_ids_tool_has_no_include_errors_param(self):
-        """GraphStructureTool.export_imas_ids must not accept include_errors."""
+    def test_export_dd_ids_tool_has_no_include_errors_param(self):
+        """GraphStructureTool.export_dd_ids must not accept include_errors."""
         from imas_codex.tools.graph_search import GraphStructureTool
 
-        sig = inspect.signature(GraphStructureTool.export_imas_ids)
+        sig = inspect.signature(GraphStructureTool.export_dd_ids)
         assert "include_errors" not in sig.parameters, (
-            "GraphStructureTool.export_imas_ids gained an unexpected "
+            "GraphStructureTool.export_dd_ids gained an unexpected "
             "'include_errors' parameter — the server handler must not "
             "pass this kwarg"
         )
 
-    def test_export_imas_domain_tool_has_no_include_errors_param(self):
-        """GraphStructureTool.export_imas_domain must not accept include_errors."""
+    def test_export_dd_domain_tool_has_no_include_errors_param(self):
+        """GraphStructureTool.export_dd_domain must not accept include_errors."""
         from imas_codex.tools.graph_search import GraphStructureTool
 
-        sig = inspect.signature(GraphStructureTool.export_imas_domain)
+        sig = inspect.signature(GraphStructureTool.export_dd_domain)
         assert "include_errors" not in sig.parameters, (
-            "GraphStructureTool.export_imas_domain gained an unexpected "
+            "GraphStructureTool.export_dd_domain gained an unexpected "
             "'include_errors' parameter — the server handler must not "
             "pass this kwarg"
         )
 
-    def test_export_imas_ids_server_handler_no_include_errors(self):
+    def test_export_dd_ids_server_handler_no_include_errors(self):
         """The DD-only server handler for export_imas_ids must omit include_errors."""
         from imas_codex.llm.server import AgentsServer
 
@@ -61,7 +61,7 @@ class TestExportHandlersNoIncludeErrors:
                 )
                 break
 
-    def test_export_imas_domain_server_handler_no_include_errors(self):
+    def test_export_dd_domain_server_handler_no_include_errors(self):
         """The DD-only server handler for export_imas_domain must omit include_errors."""
         from imas_codex.llm.server import AgentsServer
 

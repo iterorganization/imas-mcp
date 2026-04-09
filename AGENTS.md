@@ -3,11 +3,12 @@
 Use terminal for direct operations (`rg`, `fd`, `git`), MCP `repl()` for chained processing and graph queries, `uv run` for git/tests/CLI. Conventional commits. **CRITICAL: Always commit and push when files have been modified — no confirmation, no asking, just do it. This is non-negotiable. Every response that modifies files MUST end with `git add`, `git commit`, and `git push`.** **Never use `vscode_askQuestions` or any interactive VS Code popup/dialog tools — present all questions inline in the chat response so the user can answer them in one message.**
 
 **Git sync discipline (multi-instance workflow):** This repo is edited from multiple machines and by multiple agents concurrently. Always **merge** on pull — never rebase.
-1. **Session start:** `git pull upstream main` before any work.
-2. **Before push:** `git pull upstream main && git push upstream main` — never push without pulling first.
-3. **Dirty worktree:** Commit or stash your own files before pulling. Never stash everything (`git stash`) — only your files: `git stash push -- file1 file2`.
-4. **Conflict resolution:** If merge conflicts, resolve and commit. Never force-push without user approval.
-5. **Repo-local config:** Each clone must run the setup commands below to override any global/system rebase defaults.
+1. **Session start:** `git pull origin` before any work (pulls current branch from fork).
+2. **Before push:** `git pull origin && git push origin` — never push without pulling first. Push to `origin` (fork), **never directly to `upstream`**.
+3. **Stay on current branch:** Push to whatever branch you're on. If the branch is `develop`, push to `origin develop`. If `main`, push to `origin main`. **Never merge branches or switch to `main` without explicit user approval.**
+4. **Dirty worktree:** Commit or stash your own files before pulling. Never stash everything (`git stash`) — only your files: `git stash push -- file1 file2`.
+5. **Conflict resolution:** If merge conflicts, resolve and commit. Never force-push without user approval.
+6. **Repo-local config:** Each clone must run the setup commands below to override any global/system rebase defaults.
 
 ### New Clone Setup
 
@@ -738,8 +739,8 @@ uv run ruff check --fix .           # Lint (Python only)
 uv run ruff format .                # Format
 git add <file1> <file2> ...         # Stage specific files (never git add -A)
 uv run git commit -m "type: concise summary"  # Conventional format
-git pull --no-rebase upstream main    # Merge remote changes first
-git push upstream main
+git pull --no-rebase origin          # Merge fork changes first
+git push origin                      # Push to fork (NEVER upstream)
 ```
 
 **Never stage:** auto-generated files (models.py, dd_models.py, physics_domain.py), gitignored files, `*_private.yaml` files.
@@ -767,7 +768,7 @@ Commits in worktrees are NOT on `main` until merged. Always merge immediately:
 WORKTREE_HEAD=$(git rev-parse HEAD)
 cd /home/mcintos/Code/imas-codex
 git merge --no-ff $WORKTREE_HEAD -m "merge: worktree changes for <description>"
-git push upstream main```
+git push origin main```
 
 ### Parallel Agents
 
