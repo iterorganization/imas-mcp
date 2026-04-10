@@ -84,6 +84,16 @@ When modifying LinkML schemas:
 - Documentation and prompt template updates
 - Refactors where the before/after is well-defined
 
+### Commonly-Modified Areas
+
+| Path | Purpose |
+|------|---------|
+| `imas_codex/sn/` | Standard name pipeline (mint, benchmark, graph ops) |
+| `tests/sn/` | SN test suite (mostly mock-based, no Neo4j required) |
+| `imas_codex/llm/prompts/sn/` | LLM prompt templates for SN |
+| `imas_codex/sn/benchmark_reference.py` | Gold reference set for benchmark scoring |
+| `imas_codex/sn/benchmark_calibration.yaml` | Calibration dataset for reviewer consistency |
+
 ## When to Escalate
 
 If a task requires:

@@ -48,10 +48,10 @@ All status values use past tense: drafted, published, accepted, rejected, skippe
 | 13 | publish-pipeline | Lossless YAML export, batched PRs | 📋 Ready | 11 (all) | 12 (feedback loop) |
 | 14 | mcp-tools-benchmark | SN search/fetch/list MCP tools + benchmark quality | ✅ Done | 11 (embedding) | 19 |
 | 15 | import-physics-domain | Import physics_domain from catalog | ✅ Done | 12 | — |
-| ~~16~~ | ~~benchmark-parity~~ | ~~Superseded by Plan 19~~ | 🔀 Merged | — | — |
-| ~~17~~ | ~~sn-lifecycle-management~~ | ~~Superseded by Plan 19~~ | 🔀 Merged | — | — |
-| ~~18~~ | ~~benchmark-calibration~~ | ~~Superseded by Plan 19~~ | 🔀 Merged | — | — |
-| 19 | benchmark-and-lifecycle | Benchmark parity, lifecycle mgmt, calibration, model selection | 📋 Ready | 14 | — |
+| ~~16~~ | ~~benchmark-parity~~ | ~~Superseded by Plan 19~~ | 🗑️ Deleted | — | — |
+| ~~17~~ | ~~sn-lifecycle-management~~ | ~~Superseded by Plan 19~~ | 🗑️ Deleted | — | — |
+| ~~18~~ | ~~benchmark-calibration~~ | ~~Superseded by Plan 19~~ | 🗑️ Deleted | — | — |
+| 19 | benchmark-and-lifecycle | Benchmark parity, lifecycle mgmt, calibration, model selection | ✅ Complete | 14 | — |
 
 ## Deployment Waves
 

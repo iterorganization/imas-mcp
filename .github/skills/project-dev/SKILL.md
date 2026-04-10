@@ -84,6 +84,10 @@ git push origin main
 | `@pytest.mark.integration` | Full integration tests |
 | `@pytest.mark.unit` | Fast unit tests |
 
+SN tests live in `tests/sn/` and run with `uv run pytest tests/sn/ -v`. They do not require
+Neo4j unless marked `@pytest.mark.graph` — the rest use mocks. Benchmark tests validate prompt
+parity with the mint pipeline, calibration dataset integrity, and reference set coverage.
+
 ## Project Structure
 
 | Directory | Purpose |
@@ -95,7 +99,9 @@ git push origin main
 | `imas_codex/tools/` | MCP tool implementations |
 | `imas_codex/remote/` | Remote execution (SSH, scripts) |
 | `imas_codex/llm/` | LLM integration and prompt templates |
+| `imas_codex/sn/` | Standard name pipeline (mint, benchmark, graph ops) |
 | `tests/` | Test suite (mirrors source structure) |
+| `tests/sn/` | Standard name test suite (mostly mock-based) |
 | `plans/features/` | Active feature plans |
 | `agents/` | Agent documentation and schema reference |
 
@@ -107,3 +113,11 @@ git push origin main
 - **Model selection**: Use `get_model(section)` from `imas_codex.settings`
 - **Facility config**: Use `get_facility(facility)` — never hardcode facility values
 - **Remote execution**: Use `run_python_script()` from `imas_codex.remote.executor`
+
+### SN Key Files
+
+| File | Purpose |
+|------|---------|
+| `imas_codex/sn/benchmark_reference.py` | Gold reference set (52 entries across 8 IDSs) |
+| `imas_codex/sn/benchmark_calibration.yaml` | Known-quality examples for reviewer consistency |
+| `imas_codex/llm/prompts/sn/` | LLM prompt templates for mint, review, and benchmark |
