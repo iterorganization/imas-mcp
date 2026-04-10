@@ -2,10 +2,10 @@
 
 Use terminal for direct operations (`rg`, `fd`, `git`), MCP `repl()` for chained processing and graph queries, `uv run` for git/tests/CLI. Conventional commits. **CRITICAL: Always commit and push when files have been modified — no confirmation, no asking, just do it. This is non-negotiable. Every response that modifies files MUST end with `git add`, `git commit`, and `git push`.** **Never use `vscode_askQuestions` or any interactive VS Code popup/dialog tools — present all questions inline in the chat response so the user can answer them in one message.**
 
-**Git sync discipline (multi-instance workflow):** This repo is edited from multiple machines and by multiple agents concurrently. Always **merge** on pull — never rebase.
-1. **Session start:** `git pull origin` before any work (pulls current branch from fork).
-2. **Before push:** `git pull origin && git push origin` — never push without pulling first. Push to `origin` (fork), **never directly to `upstream`**.
-3. **Stay on current branch:** Push to whatever branch you're on. If the branch is `develop`, push to `origin develop`. If `main`, push to `origin main`. **Never merge branches or switch to `main` without explicit user approval.**
+**Git sync discipline (fork-based workflow):** All development happens on the fork's `main` branch. Always **merge** on pull — never rebase. Never use feature branches (`develop`, `feature/*`) — they add merge overhead and break the release CLI which requires `main`.
+1. **Session start:** `git pull origin main` before any work.
+2. **Before push:** `git pull origin main && git push origin main` — never push without pulling first. Push to `origin` (fork), **never directly to `upstream`**.
+3. **Always work on `main`** — the release CLI requires `main` branch. Never create or switch to feature branches without explicit user approval.
 4. **Dirty worktree:** Commit or stash your own files before pulling. Never stash everything (`git stash`) — only your files: `git stash push -- file1 file2`.
 5. **Conflict resolution:** If merge conflicts, resolve and commit. Never force-push without user approval.
 6. **Repo-local config:** Each clone must run the setup commands below to override any global/system rebase defaults.
@@ -691,14 +691,15 @@ Azure Web App has continuous deployment enabled on ACR. When a new image appears
 
 **Fork-based development workflow:**
 
-1. **Develop on fork's `main`** — all work happens on `origin` (your fork)
-2. **RC releases → fork** — `imas-codex release -m "..."` pushes graph + tag to origin, fork CI validates and deploys to Azure test URL
-3. **Verify RC** — exercise tools on test deployment, run A/B tests
-4. **PR to upstream** — when RC is confirmed working, PR fork/main → upstream/main
-5. **Final release → upstream** — after PR merges: `imas-codex release --final -m "..."` tags upstream, production CI deploys
+1. **All work on fork's `main`** — no feature branches. Multiple agents use the same `main` branch with merge discipline.
+2. **RC releases → fork CI → Azure test** — `imas-codex release -m "..."` pushes graph + tag to origin. Fork CI builds and pushes to ACR (hardcoded `iterorganization/` path). Azure auto-deploys the `latest-rc` tag.
+3. **Verify RC** — exercise tools on test deployment at `https://app-imas-mcp-server-test-frc.azurewebsites.net/health`. Run A/B tests against all MCP tools.
+4. **PR to upstream** — when RC is confirmed working, PR fork/main → upstream/main.
+5. **Final release → upstream** — after PR merges: `imas-codex release --final -m "..."` tags upstream, production CI deploys with `latest-stable` tag.
 
 **Rules:**
 - **Never push directly to `upstream/main`** — always PR. Use `git push origin main` for day-to-day work.
+- **Never push the same tag to both origin and upstream** — RC tags go to origin only, final tags to upstream only. Duplicate tags cause ACR race conditions.
 - RC tags on fork are disposable — iterate freely
 - Graph push runs from the ITER machine where Neo4j runs — CI cannot build graph data
 - The release CLI handles everything — do not manually push graphs or tags separately
@@ -741,8 +742,8 @@ uv run ruff check --fix .           # Lint (Python only)
 uv run ruff format .                # Format
 git add <file1> <file2> ...         # Stage specific files (never git add -A)
 uv run git commit -m "type: concise summary"  # Conventional format
-git pull --no-rebase origin          # Merge fork changes first
-git push origin                      # Push to fork (NEVER upstream)
+git pull --no-rebase origin main     # Merge fork changes first
+git push origin main                 # Push to fork (NEVER upstream)
 ```
 
 **Never stage:** auto-generated files (models.py, dd_models.py, schema_context_data.py), gitignored files, `*_private.yaml` files.
