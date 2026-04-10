@@ -46,11 +46,12 @@ All status values use past tense: drafted, published, accepted, rejected, skippe
 | 11 | rich-compose | Full catalog fields, schema extension, coalesce fix, tests | 📋 Ready | 09 | 12, 13, 14 |
 | 12 | catalog-import | Feedback import from reviewed catalog PRs | 📋 Ready | 11 P1 | 13 P4 |
 | 13 | publish-pipeline | Lossless YAML export, batched PRs | 📋 Ready | 11 (all) | 12 (feedback loop) |
-| 14 | mcp-tools-benchmark | SN search/fetch/list MCP tools + benchmark quality | ✅ Done | 11 (embedding) | 16 |
+| 14 | mcp-tools-benchmark | SN search/fetch/list MCP tools + benchmark quality | ✅ Done | 11 (embedding) | 19 |
 | 15 | import-physics-domain | Import physics_domain from catalog | ✅ Done | 12 | — |
-| 16 | benchmark-parity | Fix benchmark/build prompt parity + caching | 📋 Ready | 14 | 18 |
-| 17 | sn-lifecycle-management | SN reset/clear commands | 📋 Ready | — | — |
-| 18 | benchmark-calibration | Calibration dataset, reviewer enhancement, model selection | 📋 Ready | 16 | — |
+| ~~16~~ | ~~benchmark-parity~~ | ~~Superseded by Plan 19~~ | 🔀 Merged | — | — |
+| ~~17~~ | ~~sn-lifecycle-management~~ | ~~Superseded by Plan 19~~ | 🔀 Merged | — | — |
+| ~~18~~ | ~~benchmark-calibration~~ | ~~Superseded by Plan 19~~ | 🔀 Merged | — | — |
+| 19 | benchmark-and-lifecycle | Benchmark parity, lifecycle mgmt, calibration, model selection | 📋 Ready | 14 | — |
 
 ## Deployment Waves
 
@@ -81,12 +82,15 @@ Run in parallel — export and tools are independent:
 - **Agent A (engineer):** Fix lossy publish export, update graph query, PR workflow, dedup
 - **Agent B (engineer):** 3 MCP tools (search/fetch/list) + benchmark quality tiers + reviewer
 
-### Wave 4: Benchmark & Lifecycle (Plans 16, 17, 18)
+### Wave 4: Benchmark & Lifecycle (Plan 19)
 
-Prerequisite for production minting:
-- **Agent A (engineer):** Plan 16 — fix benchmark prompt parity + caching verification
-- **Agent B (engineer):** Plan 17 — SN reset/clear commands for iterative development
-- **Agent C (architect):** Plan 18 — calibration dataset, reviewer enhancement, model selection
+Fleet-ready plan for production minting readiness:
+- **Phase 1A (engineer, Sonnet 4.6):** Benchmark prompt parity + cache verification
+- **Phase 1B (engineer, Sonnet 4.6):** SN reset/clear commands (parallel with 1A)
+- **Phase 2A (engineer, Sonnet 4.6):** Expand gold reference to 50+ entries
+- **Phase 2B (architect, Opus 4.6):** Calibration dataset + reviewer enhancement
+- **Phase 3 (architect, Opus 4.6):** Cache reporting + model selection runbook
+- **Phase 4 (engineer, Sonnet 4.6):** Documentation + superseded plan cleanup
 
 ### Wave 5: Integration Testing
 
