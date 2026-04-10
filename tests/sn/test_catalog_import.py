@@ -588,3 +588,516 @@ class TestWriteCatalogEntries:
 
         result = _write_catalog_entries([])
         assert result == 0
+
+
+# =============================================================================
+# Phase 2: Version tracking tests
+# =============================================================================
+
+
+class TestResolveCatalogSha:
+    """Tests for _resolve_catalog_sha()."""
+
+    def test_returns_sha_in_git_repo(self, tmp_path: Path) -> None:
+        """Should return a 40-char SHA when run in a git repo."""
+        from imas_codex.sn.catalog_import import _resolve_catalog_sha
+
+        # Use the project repo itself as the catalog dir
+        project_root = Path(__file__).resolve().parents[2]
+        sha = _resolve_catalog_sha(project_root)
+        assert sha is not None
+        assert len(sha) == 40
+        assert all(c in "0123456789abcdef" for c in sha)
+
+    def test_returns_none_for_non_git_dir(self, tmp_path: Path) -> None:
+        """Should return None for a directory that isn't a git repo."""
+        from imas_codex.sn.catalog_import import _resolve_catalog_sha
+
+        sha = _resolve_catalog_sha(tmp_path)
+        assert sha is None
+
+    def test_returns_none_when_git_not_found(self, tmp_path: Path) -> None:
+        """Should return None when git binary is missing."""
+        from imas_codex.sn.catalog_import import _resolve_catalog_sha
+
+        with patch("imas_codex.sn.catalog_import.subprocess.run") as mock_run:
+            mock_run.side_effect = FileNotFoundError("git not found")
+            sha = _resolve_catalog_sha(tmp_path)
+            assert sha is None
+
+
+class TestVersionTracking:
+    """Tests for catalog_commit_sha propagation through the import pipeline."""
+
+    def test_sha_in_cypher_batch(self) -> None:
+        """_write_catalog_entries should inject catalog_commit_sha into each entry."""
+        from imas_codex.sn.catalog_import import _write_catalog_entries
+
+        mock_gc = MagicMock()
+        mock_gc.query = MagicMock(return_value=[])
+
+        entries = [
+            {
+                "id": "electron_temperature",
+                "description": "Te",
+                "documentation": None,
+                "kind": "scalar",
+                "units": "eV",
+                "tags": None,
+                "links": None,
+                "imas_paths": None,
+                "validity_domain": None,
+                "constraints": None,
+                "physics_domain": None,
+                "review_status": "accepted",
+                "source_type": "dd",
+                "physical_base": "temperature",
+                "subject": "electron",
+                "component": None,
+                "coordinate": None,
+                "position": None,
+                "process": None,
+            }
+        ]
+
+        test_sha = "abc123def456" * 3 + "abcd"  # 40 chars
+
+        with patch("imas_codex.graph.client.GraphClient") as MockGC:
+            MockGC.return_value.__enter__ = MagicMock(return_value=mock_gc)
+            MockGC.return_value.__exit__ = MagicMock(return_value=False)
+
+            _write_catalog_entries(entries, catalog_commit_sha=test_sha)
+
+        # Verify the SHA was injected into the entry dicts
+        assert entries[0]["catalog_commit_sha"] == test_sha
+
+        # Verify the Cypher includes catalog_commit_sha
+        merge_call = mock_gc.query.call_args_list[0]
+        cypher = merge_call[0][0]
+        assert "catalog_commit_sha" in cypher
+
+    def test_sha_none_when_not_provided(self) -> None:
+        """When no SHA is provided, entries should get catalog_commit_sha=None."""
+        from imas_codex.sn.catalog_import import _write_catalog_entries
+
+        mock_gc = MagicMock()
+        mock_gc.query = MagicMock(return_value=[])
+
+        entries = [
+            {
+                "id": "test_name",
+                "description": "Test",
+                "documentation": None,
+                "kind": "scalar",
+                "units": None,
+                "tags": None,
+                "links": None,
+                "imas_paths": None,
+                "validity_domain": None,
+                "constraints": None,
+                "physics_domain": None,
+                "review_status": "accepted",
+                "source_type": "manual",
+                "physical_base": None,
+                "subject": None,
+                "component": None,
+                "coordinate": None,
+                "position": None,
+                "process": None,
+            }
+        ]
+
+        with patch("imas_codex.graph.client.GraphClient") as MockGC:
+            MockGC.return_value.__enter__ = MagicMock(return_value=mock_gc)
+            MockGC.return_value.__exit__ = MagicMock(return_value=False)
+
+            _write_catalog_entries(entries)
+
+        assert entries[0]["catalog_commit_sha"] is None
+
+    def test_import_result_contains_sha(self, catalog_dir: Path) -> None:
+        """import_catalog() should populate catalog_commit_sha on the result."""
+        from imas_codex.sn.catalog_import import import_catalog
+
+        test_sha = "a" * 40
+
+        with (
+            patch(
+                "imas_codex.sn.catalog_import._resolve_catalog_sha",
+                return_value=test_sha,
+            ),
+            patch(
+                "imas_codex.sn.catalog_import._write_catalog_entries", return_value=2
+            ),
+        ):
+            result = import_catalog(catalog_dir=catalog_dir)
+
+        assert result.catalog_commit_sha == test_sha
+
+    def test_import_result_sha_none_for_non_git(self, catalog_dir: Path) -> None:
+        """import_catalog() should have sha=None when dir is not a git repo."""
+        from imas_codex.sn.catalog_import import import_catalog
+
+        with (
+            patch(
+                "imas_codex.sn.catalog_import._resolve_catalog_sha",
+                return_value=None,
+            ),
+            patch(
+                "imas_codex.sn.catalog_import._write_catalog_entries", return_value=2
+            ),
+        ):
+            result = import_catalog(catalog_dir=catalog_dir)
+
+        assert result.catalog_commit_sha is None
+
+
+class TestImportIdempotency:
+    """Tests that re-importing the same catalog produces identical results."""
+
+    def test_double_import_same_entries(self, catalog_dir: Path) -> None:
+        """Importing the same catalog twice should produce same entry count."""
+        from imas_codex.sn.catalog_import import import_catalog
+
+        with patch(
+            "imas_codex.sn.catalog_import._write_catalog_entries", return_value=2
+        ) as mock_write:
+            r1 = import_catalog(catalog_dir=catalog_dir)
+            r2 = import_catalog(catalog_dir=catalog_dir)
+
+        assert r1.imported == r2.imported
+        assert len(r1.entries) == len(r2.entries)
+        # Both calls should produce identical entry dicts
+        for e1, e2 in zip(r1.entries, r2.entries, strict=False):
+            assert e1["id"] == e2["id"]
+            assert e1["description"] == e2["description"]
+        assert mock_write.call_count == 2
+
+    def test_idempotent_entry_dicts(self, catalog_dir: Path) -> None:
+        """Entry dicts from two imports of the same catalog should be identical."""
+        from imas_codex.sn.catalog_import import import_catalog
+
+        with patch(
+            "imas_codex.sn.catalog_import._write_catalog_entries", return_value=2
+        ):
+            r1 = import_catalog(catalog_dir=catalog_dir)
+            r2 = import_catalog(catalog_dir=catalog_dir)
+
+        # Compare each field (excluding mutable fields like catalog_commit_sha)
+        for e1, e2 in zip(r1.entries, r2.entries, strict=False):
+            for key in (
+                "id",
+                "description",
+                "documentation",
+                "kind",
+                "units",
+                "tags",
+                "imas_paths",
+                "validity_domain",
+                "constraints",
+                "physics_domain",
+                "review_status",
+                "source_type",
+                "physical_base",
+                "subject",
+                "component",
+                "coordinate",
+                "position",
+                "process",
+            ):
+                assert e1[key] == e2[key], f"Mismatch on field '{key}'"
+
+
+class TestCheckMode:
+    """Tests for check_catalog() — the --check sync comparison."""
+
+    def test_all_in_sync(self, catalog_dir: Path) -> None:
+        """When graph matches catalog exactly, in_sync should equal entry count."""
+        from imas_codex.sn.catalog_import import check_catalog
+
+        # Build graph rows that match catalog exactly
+        graph_rows = [
+            {
+                "id": "electron_temperature",
+                "description": "Electron temperature",
+                "documentation": "The electron temperature Te is measured by Thomson scattering.",
+                "kind": "scalar",
+                "units": "eV",
+                "tags": None,
+                "imas_paths": ["core_profiles/profiles_1d/electrons/temperature"],
+                "validity_domain": "core plasma",
+                "constraints": ["T_e > 0"],
+                "physics_domain": "core_plasma_physics",
+                "catalog_commit_sha": "a" * 40,
+            },
+            {
+                "id": "plasma_current",
+                "description": "Plasma current",
+                "documentation": "Total toroidal plasma current.",
+                "kind": "scalar",
+                "units": "A",
+                "tags": None,
+                "imas_paths": None,
+                "validity_domain": None,
+                "constraints": None,
+                "physics_domain": "equilibrium",
+                "catalog_commit_sha": "a" * 40,
+            },
+        ]
+
+        mock_gc = MagicMock()
+        mock_gc.query = MagicMock(return_value=graph_rows)
+
+        with (
+            patch("imas_codex.graph.client.GraphClient") as MockGC,
+            patch(
+                "imas_codex.sn.catalog_import._resolve_catalog_sha",
+                return_value="a" * 40,
+            ),
+        ):
+            MockGC.return_value.__enter__ = MagicMock(return_value=mock_gc)
+            MockGC.return_value.__exit__ = MagicMock(return_value=False)
+
+            cr = check_catalog(catalog_dir=catalog_dir)
+
+        assert cr.in_sync == 2
+        assert cr.only_in_catalog == []
+        assert cr.only_in_graph == []
+        assert cr.diverged == []
+        assert cr.catalog_commit_sha == "a" * 40
+        assert cr.graph_commit_sha == "a" * 40
+
+    def test_only_in_catalog(self, catalog_dir: Path) -> None:
+        """Entries in catalog but not graph should appear in only_in_catalog."""
+        from imas_codex.sn.catalog_import import check_catalog
+
+        # Graph has no entries
+        mock_gc = MagicMock()
+        mock_gc.query = MagicMock(return_value=[])
+
+        with (
+            patch("imas_codex.graph.client.GraphClient") as MockGC,
+            patch(
+                "imas_codex.sn.catalog_import._resolve_catalog_sha",
+                return_value=None,
+            ),
+        ):
+            MockGC.return_value.__enter__ = MagicMock(return_value=mock_gc)
+            MockGC.return_value.__exit__ = MagicMock(return_value=False)
+
+            cr = check_catalog(catalog_dir=catalog_dir)
+
+        assert set(cr.only_in_catalog) == {"electron_temperature", "plasma_current"}
+        assert cr.in_sync == 0
+        assert cr.only_in_graph == []
+
+    def test_only_in_graph(self, catalog_dir: Path) -> None:
+        """Entries in graph but not catalog should appear in only_in_graph."""
+        from imas_codex.sn.catalog_import import check_catalog
+
+        graph_rows = [
+            {
+                "id": "electron_temperature",
+                "description": "Electron temperature",
+                "documentation": "The electron temperature Te is measured by Thomson scattering.",
+                "kind": "scalar",
+                "units": "eV",
+                "tags": None,
+                "imas_paths": ["core_profiles/profiles_1d/electrons/temperature"],
+                "validity_domain": "core plasma",
+                "constraints": ["T_e > 0"],
+                "physics_domain": "core_plasma_physics",
+                "catalog_commit_sha": None,
+            },
+            {
+                "id": "plasma_current",
+                "description": "Plasma current",
+                "documentation": "Total toroidal plasma current.",
+                "kind": "scalar",
+                "units": "A",
+                "tags": None,
+                "imas_paths": None,
+                "validity_domain": None,
+                "constraints": None,
+                "physics_domain": "equilibrium",
+                "catalog_commit_sha": None,
+            },
+            {
+                "id": "ion_density",
+                "description": "Ion density",
+                "documentation": "Total ion density.",
+                "kind": "scalar",
+                "units": "m^-3",
+                "tags": None,
+                "imas_paths": None,
+                "validity_domain": None,
+                "constraints": None,
+                "physics_domain": "core_plasma_physics",
+                "catalog_commit_sha": None,
+            },
+        ]
+
+        mock_gc = MagicMock()
+        mock_gc.query = MagicMock(return_value=graph_rows)
+
+        with (
+            patch("imas_codex.graph.client.GraphClient") as MockGC,
+            patch(
+                "imas_codex.sn.catalog_import._resolve_catalog_sha",
+                return_value=None,
+            ),
+        ):
+            MockGC.return_value.__enter__ = MagicMock(return_value=mock_gc)
+            MockGC.return_value.__exit__ = MagicMock(return_value=False)
+
+            cr = check_catalog(catalog_dir=catalog_dir)
+
+        assert cr.only_in_graph == ["ion_density"]
+        assert cr.in_sync == 2  # electron_temperature and plasma_current match
+
+    def test_diverged_entries(self, catalog_dir: Path) -> None:
+        """Entries with different field values should appear in diverged."""
+        from imas_codex.sn.catalog_import import check_catalog
+
+        graph_rows = [
+            {
+                "id": "electron_temperature",
+                "description": "WRONG description",  # differs from catalog
+                "documentation": "The electron temperature Te is measured by Thomson scattering.",
+                "kind": "scalar",
+                "units": "keV",  # differs from catalog (eV)
+                "tags": None,
+                "imas_paths": ["core_profiles/profiles_1d/electrons/temperature"],
+                "validity_domain": "core plasma",
+                "constraints": ["T_e > 0"],
+                "physics_domain": "core_plasma_physics",
+                "catalog_commit_sha": None,
+            },
+            {
+                "id": "plasma_current",
+                "description": "Plasma current",
+                "documentation": "Total toroidal plasma current.",
+                "kind": "scalar",
+                "units": "A",
+                "tags": None,
+                "imas_paths": None,
+                "validity_domain": None,
+                "constraints": None,
+                "physics_domain": "equilibrium",
+                "catalog_commit_sha": None,
+            },
+        ]
+
+        mock_gc = MagicMock()
+        mock_gc.query = MagicMock(return_value=graph_rows)
+
+        with (
+            patch("imas_codex.graph.client.GraphClient") as MockGC,
+            patch(
+                "imas_codex.sn.catalog_import._resolve_catalog_sha",
+                return_value=None,
+            ),
+        ):
+            MockGC.return_value.__enter__ = MagicMock(return_value=mock_gc)
+            MockGC.return_value.__exit__ = MagicMock(return_value=False)
+
+            cr = check_catalog(catalog_dir=catalog_dir)
+
+        assert cr.in_sync == 1  # plasma_current matches
+        assert len(cr.diverged) == 1
+        assert cr.diverged[0]["name"] == "electron_temperature"
+        assert "description" in cr.diverged[0]["fields"]
+        assert "units" in cr.diverged[0]["fields"]
+
+    def test_check_with_tag_filter(self, tmp_path: Path) -> None:
+        """Tag filter should limit which catalog entries are checked."""
+        from imas_codex.sn.catalog_import import check_catalog
+
+        # Create catalog with tagged entry
+        d = tmp_path / "catalog"
+        d.mkdir()
+        entry_with_tag = dict(SAMPLE_CATALOG_ENTRY)
+        entry_with_tag["tags"] = ["spatial-profile"]
+        (d / "electron_temperature.yaml").write_text(yaml.safe_dump(entry_with_tag))
+        (d / "plasma_current.yaml").write_text(
+            yaml.safe_dump(SAMPLE_CATALOG_ENTRY_MINIMAL)
+        )
+
+        # Graph has no entries
+        mock_gc = MagicMock()
+        mock_gc.query = MagicMock(return_value=[])
+
+        with (
+            patch("imas_codex.graph.client.GraphClient") as MockGC,
+            patch(
+                "imas_codex.sn.catalog_import._resolve_catalog_sha",
+                return_value=None,
+            ),
+        ):
+            MockGC.return_value.__enter__ = MagicMock(return_value=mock_gc)
+            MockGC.return_value.__exit__ = MagicMock(return_value=False)
+
+            cr = check_catalog(
+                catalog_dir=d,
+                tag_filter=["spatial-profile"],
+            )
+
+        # Only electron_temperature has the tag — plasma_current should be filtered out
+        assert cr.only_in_catalog == ["electron_temperature"]
+        assert cr.in_sync == 0
+
+    def test_check_empty_catalog(self, tmp_path: Path) -> None:
+        """Empty catalog directory should return empty CheckResult."""
+        from imas_codex.sn.catalog_import import check_catalog
+
+        d = tmp_path / "empty_catalog"
+        d.mkdir()
+
+        with patch(
+            "imas_codex.sn.catalog_import._resolve_catalog_sha",
+            return_value=None,
+        ):
+            cr = check_catalog(catalog_dir=d)
+
+        assert cr.in_sync == 0
+        assert cr.only_in_catalog == []
+        assert cr.only_in_graph == []
+        assert cr.diverged == []
+
+
+class TestNormalizeField:
+    """Tests for _normalize_field() comparison normalization."""
+
+    def test_none(self) -> None:
+        from imas_codex.sn.catalog_import import _normalize_field
+
+        assert _normalize_field(None) is None
+
+    def test_empty_string(self) -> None:
+        from imas_codex.sn.catalog_import import _normalize_field
+
+        assert _normalize_field("") is None
+        assert _normalize_field("  ") is None
+
+    def test_normal_string(self) -> None:
+        from imas_codex.sn.catalog_import import _normalize_field
+
+        assert _normalize_field("hello") == "hello"
+        assert _normalize_field("  hello  ") == "hello"
+
+    def test_empty_list(self) -> None:
+        from imas_codex.sn.catalog_import import _normalize_field
+
+        assert _normalize_field([]) is None
+
+    def test_list_sorted(self) -> None:
+        from imas_codex.sn.catalog_import import _normalize_field
+
+        assert _normalize_field(["b", "a"]) == ("a", "b")
+        assert _normalize_field(["a", "b"]) == ("a", "b")
+
+    def test_numeric_passthrough(self) -> None:
+        from imas_codex.sn.catalog_import import _normalize_field
+
+        assert _normalize_field(42) == 42
+        assert _normalize_field(3.14) == 3.14

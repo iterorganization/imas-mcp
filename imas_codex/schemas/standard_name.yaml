@@ -189,3 +189,12 @@ classes:
         description: Physics domain classification (equilibrium, transport, etc.)
       process:
         description: Physical process qualifier (ohmic, bootstrap, etc.)
+      imported_at:
+        description: >-
+          ISO 8601 timestamp when this entry was imported from the catalog.
+          Set by ``sn import-catalog`` on each import.
+        range: datetime
+      catalog_commit_sha:
+        description: >-
+          Git commit SHA of the catalog repo at import time.
+          Enables sync-status checking between graph and catalog.

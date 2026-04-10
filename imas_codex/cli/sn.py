@@ -607,11 +607,18 @@ def sn_publish(
 )
 @click.option("--tags", type=str, default=None, help="Comma-separated tag filter")
 @click.option("--dry-run", is_flag=True, help="Preview without writing to graph")
+@click.option(
+    "--check",
+    "check_mode",
+    is_flag=True,
+    help="Compare catalog vs graph without importing; report sync status",
+)
 @click.option("-v", "--verbose", is_flag=True, help="Enable verbose logging")
 def sn_import_catalog(
     catalog_dir: str,
     tags: str | None,
     dry_run: bool,
+    check_mode: bool,
     verbose: bool,
 ) -> None:
     """Import reviewed catalog entries into the graph.
@@ -622,10 +629,14 @@ def sn_import_catalog(
     MERGEs into the graph with review_status='accepted'.
 
     \b
+    Use --check to compare catalog vs graph without importing.
+
+    \b
     Examples:
       imas-codex sn import-catalog --catalog-dir ../imas-standard-names-catalog/standard_names
       imas-codex sn import-catalog --catalog-dir <path> --dry-run
       imas-codex sn import-catalog --catalog-dir <path> --tags equilibrium,core-physics
+      imas-codex sn import-catalog --catalog-dir <path> --check
     """
     from pathlib import Path
 
@@ -633,6 +644,69 @@ def sn_import_catalog(
         logging.basicConfig(level=logging.DEBUG)
 
     tag_filter = [t.strip() for t in tags.split(",") if t.strip()] if tags else None
+
+    # -- Check mode --
+    if check_mode:
+        console.print("\n[bold]Standard Name Catalog Check[/bold]")
+        console.print(f"  Catalog: {catalog_dir}")
+        if tag_filter:
+            console.print(f"  Tag filter: {', '.join(tag_filter)}")
+        console.print("")
+
+        try:
+            from imas_codex.sn.catalog_import import check_catalog
+
+            cr = check_catalog(
+                catalog_dir=Path(catalog_dir),
+                tag_filter=tag_filter,
+            )
+        except ImportError as e:
+            console.print(
+                f"[red]Missing dependency:[/red] {e}\n"
+                "Install with: uv pip install imas-standard-names"
+            )
+            raise SystemExit(1) from e
+        except Exception as e:
+            console.print(f"[red]Check error:[/red] {e}")
+            raise SystemExit(1) from e
+
+        # Print check results
+        if cr.catalog_commit_sha:
+            console.print(f"  Catalog SHA: {cr.catalog_commit_sha[:12]}")
+        if cr.graph_commit_sha:
+            console.print(f"  Graph SHA:   {cr.graph_commit_sha[:12]}")
+        if cr.catalog_commit_sha and cr.graph_commit_sha:
+            if cr.catalog_commit_sha == cr.graph_commit_sha:
+                console.print("  [green]SHAs match[/green]")
+            else:
+                console.print("  [yellow]SHAs differ[/yellow]")
+        console.print("")
+
+        console.print(f"  In sync: [green]{cr.in_sync}[/green]")
+        if cr.only_in_catalog:
+            console.print(
+                f"  Only in catalog: [yellow]{len(cr.only_in_catalog)}[/yellow]"
+            )
+            for name in cr.only_in_catalog[:10]:
+                console.print(f"    + {name}")
+            if len(cr.only_in_catalog) > 10:
+                console.print(f"    ... and {len(cr.only_in_catalog) - 10} more")
+        if cr.only_in_graph:
+            console.print(f"  Only in graph: [yellow]{len(cr.only_in_graph)}[/yellow]")
+            for name in cr.only_in_graph[:10]:
+                console.print(f"    - {name}")
+            if len(cr.only_in_graph) > 10:
+                console.print(f"    ... and {len(cr.only_in_graph) - 10} more")
+        if cr.diverged:
+            console.print(f"  Diverged: [red]{len(cr.diverged)}[/red]")
+            for item in cr.diverged[:10]:
+                fields = ", ".join(item["fields"].keys())
+                console.print(f"    ~ {item['name']} ({fields})")
+            if len(cr.diverged) > 10:
+                console.print(f"    ... and {len(cr.diverged) - 10} more")
+        if not cr.only_in_catalog and not cr.only_in_graph and not cr.diverged:
+            console.print("\n  [green]✓ Catalog and graph are in sync[/green]")
+        return
 
     console.print("\n[bold]Standard Name Catalog Import[/bold]")
     console.print(f"  Catalog: {catalog_dir}")
@@ -661,6 +735,9 @@ def sn_import_catalog(
         raise SystemExit(1) from e
 
     # Print results
+    if result.catalog_commit_sha:
+        console.print(f"  Catalog SHA: {result.catalog_commit_sha[:12]}")
+
     if result.errors:
         console.print(f"  [red]Errors: {len(result.errors)}[/red]")
         for err in result.errors[:10]:

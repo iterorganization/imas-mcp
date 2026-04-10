@@ -8,6 +8,7 @@ Graph-only fields (embedding, model, generated_at) are preserved.
 from __future__ import annotations
 
 import logging
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,44 @@ class ImportResult:
     skipped: int = 0
     errors: list[str] = field(default_factory=list)
     entries: list[dict[str, Any]] = field(default_factory=list)
+    catalog_commit_sha: str | None = None
+
+
+@dataclass
+class CheckResult:
+    """Summary of a catalog-vs-graph sync check."""
+
+    only_in_catalog: list[str] = field(default_factory=list)
+    only_in_graph: list[str] = field(default_factory=list)
+    diverged: list[dict[str, Any]] = field(default_factory=list)
+    in_sync: int = 0
+    catalog_commit_sha: str | None = None
+    graph_commit_sha: str | None = None
+
+
+def _resolve_catalog_sha(catalog_dir: Path) -> str | None:
+    """Resolve the git HEAD SHA of the catalog directory.
+
+    Returns the 40-character commit SHA, or None if the directory
+    is not inside a git repository.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=str(catalog_dir),
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode == 0:
+            sha = result.stdout.strip()
+            logger.debug("Catalog commit SHA: %s", sha)
+            return sha
+        logger.debug("git rev-parse failed: %s", result.stderr.strip())
+        return None
+    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+        logger.debug("Could not resolve catalog SHA: %s", exc)
+        return None
 
 
 def _parse_grammar_fields(name: str) -> dict[str, str | None]:
@@ -100,7 +139,10 @@ def _catalog_entry_to_dict(entry: Any) -> dict[str, Any]:
     }
 
 
-def _write_catalog_entries(entries: list[dict[str, Any]]) -> int:
+def _write_catalog_entries(
+    entries: list[dict[str, Any]],
+    catalog_commit_sha: str | None = None,
+) -> int:
     """Write catalog entries to graph with catalog-authoritative semantics.
 
     Catalog-owned fields are SET directly (overwrite).
@@ -111,6 +153,10 @@ def _write_catalog_entries(entries: list[dict[str, Any]]) -> int:
         return 0
 
     from imas_codex.graph.client import GraphClient
+
+    # Inject catalog_commit_sha into each entry for Cypher parameter access
+    for e in entries:
+        e["catalog_commit_sha"] = catalog_commit_sha
 
     with GraphClient() as gc:
         # MERGE StandardName nodes — catalog fields overwrite, graph-only preserved
@@ -130,6 +176,7 @@ def _write_catalog_entries(entries: list[dict[str, Any]]) -> int:
                 sn.physics_domain = b.physics_domain,
                 sn.review_status = 'accepted',
                 sn.imported_at = datetime(),
+                sn.catalog_commit_sha = b.catalog_commit_sha,
                 sn.physical_base = b.physical_base,
                 sn.subject = b.subject,
                 sn.component = b.component,
@@ -218,7 +265,12 @@ def import_catalog(
     from pydantic import TypeAdapter
 
     ta = TypeAdapter(StandardNameEntry)
-    result = ImportResult()
+    # Resolve catalog commit SHA for version tracking
+    catalog_sha = _resolve_catalog_sha(catalog_dir)
+    if catalog_sha:
+        logger.info("Catalog commit SHA: %s", catalog_sha)
+
+    result = ImportResult(catalog_commit_sha=catalog_sha)
 
     # Collect YAML files
     yaml_files = sorted(
@@ -272,8 +324,153 @@ def import_catalog(
         result.imported = len(prepared)
         logger.info("Dry run: would import %d entries", len(prepared))
     else:
-        written = _write_catalog_entries(prepared)
+        written = _write_catalog_entries(prepared, catalog_commit_sha=catalog_sha)
         result.imported = written
         logger.info("Imported %d entries to graph", written)
 
     return result
+
+
+# -- Fields compared during check mode (catalog-owned, excluding grammar fields) --
+_CHECK_FIELDS = (
+    "description",
+    "documentation",
+    "kind",
+    "units",
+    "tags",
+    "imas_paths",
+    "validity_domain",
+    "constraints",
+    "physics_domain",
+)
+
+
+def check_catalog(
+    catalog_dir: Path,
+    tag_filter: list[str] | None = None,
+) -> CheckResult:
+    """Compare catalog entries against graph without importing.
+
+    Returns a :class:`CheckResult` describing which entries are only in
+    the catalog, only in the graph, or present in both but with differing
+    field values.
+
+    Parameters
+    ----------
+    catalog_dir:
+        Path to directory containing YAML catalog entries.
+    tag_filter:
+        If provided, only check entries whose tags overlap with this list.
+
+    Returns
+    -------
+    CheckResult with sync status details.
+    """
+    import yaml
+    from imas_standard_names.catalog.edit import StandardNameEntry
+    from pydantic import TypeAdapter
+
+    from imas_codex.graph.client import GraphClient
+
+    ta = TypeAdapter(StandardNameEntry)
+    catalog_sha = _resolve_catalog_sha(catalog_dir)
+    result = CheckResult(catalog_commit_sha=catalog_sha)
+
+    # Parse catalog entries
+    yaml_files = sorted(
+        p
+        for p in catalog_dir.rglob("*")
+        if p.suffix in (".yml", ".yaml") and p.is_file()
+    )
+
+    catalog_entries: dict[str, dict[str, Any]] = {}
+    for yaml_path in yaml_files:
+        try:
+            with open(yaml_path) as f:
+                data = yaml.safe_load(f)
+            if not isinstance(data, dict):
+                continue
+            entry = ta.validate_python(data)
+        except Exception:
+            continue
+
+        # Apply tag filter
+        if tag_filter:
+            entry_tags = {str(t) for t in entry.tags} if entry.tags else set()
+            if not entry_tags.intersection(tag_filter):
+                continue
+
+        graph_dict = _catalog_entry_to_dict(entry)
+        catalog_entries[graph_dict["id"]] = graph_dict
+
+    if not catalog_entries:
+        return result
+
+    # Fetch graph entries
+    with GraphClient() as gc:
+        rows = gc.query(
+            """
+            MATCH (sn:StandardName)
+            WHERE sn.review_status = 'accepted'
+            RETURN sn.id AS id,
+                   sn.description AS description,
+                   sn.documentation AS documentation,
+                   sn.kind AS kind,
+                   sn.canonical_units AS units,
+                   sn.tags AS tags,
+                   sn.imas_paths AS imas_paths,
+                   sn.validity_domain AS validity_domain,
+                   sn.constraints AS constraints,
+                   sn.physics_domain AS physics_domain,
+                   sn.catalog_commit_sha AS catalog_commit_sha
+            """
+        )
+
+    graph_entries: dict[str, dict[str, Any]] = {}
+    graph_sha: str | None = None
+    for row in rows:
+        graph_entries[row["id"]] = dict(row)
+        if row.get("catalog_commit_sha") and not graph_sha:
+            graph_sha = row["catalog_commit_sha"]
+
+    result.graph_commit_sha = graph_sha
+
+    # Compare
+    catalog_names = set(catalog_entries.keys())
+    graph_names = set(graph_entries.keys())
+
+    result.only_in_catalog = sorted(catalog_names - graph_names)
+    result.only_in_graph = sorted(graph_names - catalog_names)
+
+    for name in sorted(catalog_names & graph_names):
+        cat = catalog_entries[name]
+        graph = graph_entries[name]
+
+        diffs: dict[str, Any] = {}
+        for fld in _CHECK_FIELDS:
+            cat_val = _normalize_field(cat.get(fld))
+            graph_val = _normalize_field(graph.get(fld))
+            if cat_val != graph_val:
+                diffs[fld] = {"catalog": cat_val, "graph": graph_val}
+
+        if diffs:
+            result.diverged.append({"name": name, "fields": diffs})
+        else:
+            result.in_sync += 1
+
+    return result
+
+
+def _normalize_field(val: Any) -> Any:
+    """Normalize a field value for comparison.
+
+    Converts lists to sorted tuples, None-like values to None,
+    and strings to stripped strings.
+    """
+    if val is None:
+        return None
+    if isinstance(val, list):
+        return tuple(sorted(str(v) for v in val)) if val else None
+    if isinstance(val, str):
+        return val.strip() if val.strip() else None
+    return val
