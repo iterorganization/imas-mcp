@@ -657,7 +657,7 @@ async def persist_worker(state: SNBuildState, **_kwargs) -> None:
     # Enrich with provenance
     for entry in state.validated:
         entry.setdefault("model", model)
-        entry.setdefault("review_status", "skipped")
+        entry.setdefault("review_status", "drafted")
         entry.setdefault("generated_at", now)
         # confidence comes from LLM output — never default to 1.0
 
@@ -680,6 +680,47 @@ async def persist_worker(state: SNBuildState, **_kwargs) -> None:
     state.persist_stats.total = len(state.validated)
 
     written = await asyncio.to_thread(write_standard_names, state.validated)
+
+    # Embed descriptions for vector search
+    if written > 0:
+        try:
+            from imas_codex.embeddings.description import embed_descriptions_batch
+
+            embed_items = [
+                {"id": e["id"], "description": e.get("description", "")}
+                for e in state.validated
+                if e.get("description")
+            ]
+            if embed_items:
+                enriched = await asyncio.to_thread(
+                    embed_descriptions_batch, embed_items
+                )
+                # Write embeddings back to graph
+                from imas_codex.graph.client import GraphClient
+
+                def _write_embeddings():
+                    with GraphClient() as gc:
+                        gc.query(
+                            """
+                            UNWIND $batch AS b
+                            MATCH (sn:StandardName {id: b.id})
+                            SET sn.embedding = b.embedding,
+                                sn.embedded_at = datetime()
+                            """,
+                            batch=[
+                                {"id": e["id"], "embedding": e["embedding"]}
+                                for e in enriched
+                                if e.get("embedding")
+                            ],
+                        )
+
+                await asyncio.to_thread(_write_embeddings)
+                wlog.info("Embedded %d StandardName descriptions", len(embed_items))
+        except Exception:
+            wlog.warning(
+                "Embedding generation failed — names persisted without embeddings",
+                exc_info=True,
+            )
 
     state.persist_stats.processed = written
     state.persist_stats.record_batch(written)

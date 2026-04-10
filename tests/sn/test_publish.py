@@ -46,7 +46,7 @@ def sample_entry(sample_provenance: SNProvenance) -> SNPublishEntry:
         kind="physical",
         unit="eV",
         tags=["equilibrium", "core_profiles"],
-        status="candidate",
+        status="drafted",
         description="Electron temperature profile",
         provenance=sample_provenance,
     )
@@ -144,7 +144,7 @@ class TestSNPublishEntry:
             provenance=sample_provenance,
         )
         assert entry.kind == "physical"
-        assert entry.status == "candidate"
+        assert entry.status == "drafted"
         assert entry.tags == []
         assert entry.unit is None
 
@@ -201,7 +201,7 @@ class TestGenerateYamlEntry:
         assert doc["name"] == "electron_temperature"
         assert doc["kind"] == "physical"
         assert doc["unit"] == "eV"
-        assert doc["status"] == "candidate"
+        assert doc["status"] == "drafted"
         assert doc["description"] == "Electron temperature profile"
         assert doc["provenance"]["source"] == "dd"
         assert doc["provenance"]["confidence"] == 0.95

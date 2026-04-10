@@ -275,7 +275,7 @@ def graph_records_to_entries(
                 kind="physical",
                 unit=unit,
                 tags=tags,
-                status="candidate",
+                status="drafted",
                 description=description[:500] if description else "",
                 provenance=provenance,
             )

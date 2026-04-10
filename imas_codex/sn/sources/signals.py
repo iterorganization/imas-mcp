@@ -53,7 +53,7 @@ def extract_signal_candidates(
                 f"""
             MATCH (s:FacilitySignal)
             WHERE {where_clause}
-            OPTIONAL MATCH (s)-[:MEASURES]->(sn:StandardName)
+            OPTIONAL MATCH (s)-[:HAS_STANDARD_NAME]->(sn:StandardName)
             RETURN s.id AS signal_id, s.description AS description,
                    s.physics_domain AS physics_domain,
                    s.canonical_units AS units,
