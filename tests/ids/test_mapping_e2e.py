@@ -28,7 +28,7 @@ from imas_codex.ids.models import (
 )
 from imas_codex.ids.tools import (
     analyze_units,
-    check_imas_paths,
+    check_dd_paths,
     fetch_imas_fields,
     fetch_imas_subtree,
     get_sign_flip_paths,
@@ -350,12 +350,12 @@ class TestCheckImasPaths:
         mock_gc.query.return_value = [
             {"id": "pf_active/coil", "data_type": "STRUCT_ARRAY", "units": None}
         ]
-        result = check_imas_paths(["pf_active/coil"], gc=mock_gc)
+        result = check_dd_paths(["pf_active/coil"], gc=mock_gc)
         assert result[0]["exists"] is True
 
     def test_invalid_path_no_rename(self, mock_gc):
         mock_gc.query.side_effect = [[], []]  # main query, rename query
-        result = check_imas_paths(["nonexistent/path"], gc=mock_gc)
+        result = check_dd_paths(["nonexistent/path"], gc=mock_gc)
         assert result[0]["exists"] is False
         assert "suggestion" not in result[0]
 
@@ -364,7 +364,7 @@ class TestCheckImasPaths:
             [],  # main query — not found
             [{"new_path": "pf_active/coil"}],  # rename query
         ]
-        result = check_imas_paths(["old/path"], gc=mock_gc)
+        result = check_dd_paths(["old/path"], gc=mock_gc)
         assert result[0]["exists"] is False
         assert result[0]["suggestion"] == "pf_active/coil"
 
@@ -626,7 +626,7 @@ class TestPipelineOrchestrator:
         assert len(result) == 2
         assert len(result[0].mappings) == 2
 
-    @patch("imas_codex.ids.validation.check_imas_paths")
+    @patch("imas_codex.ids.validation.check_dd_paths")
     def test_validate_mappings(
         self,
         mock_check,
@@ -1303,7 +1303,7 @@ class TestDiscoverAssemblyPatterns:
 class TestValidateMappingsCatchesUnitMismatch:
     """Test that validation catches identity transform with unit mismatch."""
 
-    @patch("imas_codex.ids.validation.check_imas_paths")
+    @patch("imas_codex.ids.validation.check_dd_paths")
     def test_identity_transform_unit_mismatch(self, mock_check, mock_gc):
         from imas_codex.ids.mapping import validate_mappings
 
@@ -1355,7 +1355,7 @@ class TestValidateMappingsCatchesUnitMismatch:
 class TestValidateMappingsCatchesCOCOSMissing:
     """Test that validation catches sign-flip path without COCOS handling."""
 
-    @patch("imas_codex.ids.validation.check_imas_paths")
+    @patch("imas_codex.ids.validation.check_dd_paths")
     def test_sign_flip_path_no_cocos(self, mock_check, mock_gc):
         from imas_codex.ids.mapping import validate_mappings
 
@@ -1410,7 +1410,7 @@ class TestValidateMappingsCatchesCOCOSMissing:
 class TestValidateSameSourceDiffTargetsOk:
     """Test one source → multiple targets produces no warning."""
 
-    @patch("imas_codex.ids.validation.check_imas_paths")
+    @patch("imas_codex.ids.validation.check_dd_paths")
     def test_no_warning_for_multi_target(self, mock_check, mock_gc):
         from imas_codex.ids.validation import validate_mapping
 
