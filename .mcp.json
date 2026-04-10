@@ -1,11 +1,16 @@
 {
-  "mcpServers": {
+  "servers": {
+    "imas-dd": {
+      "type": "stdio",
+      "command": "uv",
+      "args": ["run", "imas-codex", "serve", "--dd-only"]
+    },
     "codex": {
       "type": "stdio",
       "command": "uv",
       "args": ["run", "imas-codex", "serve"]
     },
-    "imas": {
+    "imas-prod": {
       "type": "http",
       "url": "https://imas-dd.iter.org/mcp"
     },
