@@ -82,6 +82,9 @@ class ModelResult:
     avg_quality_score: float = 0.0
     avg_doc_length: float = 0.0
     avg_fields_populated: float = 0.0
+    # Prompt-cache statistics
+    cache_read_tokens: int = 0
+    cache_creation_tokens: int = 0
 
 
 @dataclass
@@ -557,14 +560,21 @@ async def _run_model(
             ]
 
             try:
-                llm_result, cost, tokens = await acall_llm_structured(
+                llm_response = await acall_llm_structured(
                     model=model,
                     messages=messages,
                     response_model=SNComposeBatch,
                     temperature=config.temperature,
                 )
+                llm_result, cost, tokens = llm_response
                 result.total_cost += cost
                 result.total_tokens += tokens
+                result.cache_read_tokens += getattr(
+                    llm_response, "cache_read_tokens", 0
+                )
+                result.cache_creation_tokens += getattr(
+                    llm_response, "cache_creation_tokens", 0
+                )
                 logger.debug(
                     "Batch %s: cost=%.4f tokens=%d",
                     group_key,
@@ -665,6 +675,7 @@ def render_comparison_table(report: BenchmarkReport) -> None:
     table.add_column("Cost", justify="right")
     table.add_column("Names/min", justify="right")
     table.add_column("$/name", justify="right")
+    table.add_column("Cache %", justify="right")
     table.add_column("Errors", justify="right")
     if has_quality:
         table.add_column("Avg Quality", justify="right")
@@ -681,6 +692,12 @@ def render_comparison_table(report: BenchmarkReport) -> None:
         cost_str = f"${r.total_cost:.4f}" if r.total_cost > 0 else "—"
         speed_str = f"{r.names_per_minute:.0f}" if r.names_per_minute > 0 else "—"
         cpn_str = f"${r.cost_per_name:.4f}" if r.cost_per_name > 0 else "—"
+        cache_total = r.cache_read_tokens + r.cache_creation_tokens
+        cache_pct = (
+            f"{r.cache_read_tokens / cache_total * 100:.0f}%"
+            if cache_total > 0
+            else "—"
+        )
         err_str = str(r.batch_errors) if r.batch_errors > 0 else "0"
 
         row_data = [
@@ -692,6 +709,7 @@ def render_comparison_table(report: BenchmarkReport) -> None:
             cost_str,
             speed_str,
             cpn_str,
+            cache_pct,
             err_str,
         ]
 

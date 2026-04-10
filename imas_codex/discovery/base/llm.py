@@ -30,12 +30,14 @@ Usage:
         response_model=ScoreBatch,
     )
 
-    # Async structured output
-    batch, cost, tokens = await acall_llm_structured(
+    # Async structured output (also returns LLMResult with cache info)
+    llm_out = await acall_llm_structured(
         model="google/gemini-3-flash-preview",
         messages=[...],
         response_model=WikiScoreBatch,
     )
+    batch, cost, tokens = llm_out          # backward-compatible
+    cache_read = llm_out.cache_read_tokens  # new: cache metrics
 
     # Raw response (when caller needs custom parsing)
     response, cost = call_llm(
@@ -77,6 +79,66 @@ class ProviderBudgetExhausted(Exception):
     work immediately rather than retrying — the key/account needs manual
     intervention (top-up credits or raise the spending limit).
     """
+
+
+class LLMResult:
+    """Return type for call_llm_structured / acall_llm_structured.
+
+    Backward-compatible with 3-tuple unpacking::
+
+        result, cost, tokens = call_llm_structured(...)  # still works
+
+    Also carries prompt-cache token counts for callers that need them::
+
+        llm_out = await acall_llm_structured(...)
+        result, cost, tokens = llm_out
+        cache_read = llm_out.cache_read_tokens
+        cache_creation = llm_out.cache_creation_tokens
+
+    Attributes:
+        parsed: The Pydantic model instance returned by the LLM.
+        cost: Total cost in USD (accumulated across retries).
+        tokens: Total tokens (prompt + completion).
+        cache_read_tokens: Tokens served from provider prompt cache (0 if
+            the provider doesn't report caching or the prompt wasn't cached).
+        cache_creation_tokens: Tokens written to the provider prompt cache.
+    """
+
+    __slots__ = (
+        "parsed",
+        "cost",
+        "tokens",
+        "cache_read_tokens",
+        "cache_creation_tokens",
+    )
+
+    def __init__(
+        self,
+        parsed: Any,
+        cost: float,
+        tokens: int,
+        cache_read_tokens: int = 0,
+        cache_creation_tokens: int = 0,
+    ) -> None:
+        self.parsed = parsed
+        self.cost = cost
+        self.tokens = tokens
+        self.cache_read_tokens = cache_read_tokens
+        self.cache_creation_tokens = cache_creation_tokens
+
+    # Allow ``result, cost, tokens = call_llm_structured(...)``
+    def __iter__(self):
+        return iter((self.parsed, self.cost, self.tokens))
+
+    def __len__(self) -> int:
+        return 3
+
+    def __repr__(self) -> str:
+        return (
+            f"LLMResult(cost={self.cost:.4f}, tokens={self.tokens}, "
+            f"cache_read={self.cache_read_tokens}, "
+            f"cache_creation={self.cache_creation_tokens})"
+        )
 
 
 # Patterns indicating the API key or account has hit a hard spending cap.
@@ -366,6 +428,30 @@ def _log_cache_metrics(response: Any, model: str) -> None:
         )
 
 
+def extract_cache_tokens(response: Any) -> tuple[int, int]:
+    """Extract prompt-cache token counts from an LLM response.
+
+    Providers (OpenRouter, Anthropic, OpenAI) report cached token counts
+    in ``usage.prompt_tokens_details``.  This helper mirrors the extraction
+    logic of :func:`_log_cache_metrics` but returns the values instead of
+    logging them, so callers can accumulate cache statistics.
+
+    Args:
+        response: Raw litellm response object.
+
+    Returns:
+        ``(cache_read_tokens, cache_creation_tokens)`` — both default to 0
+        when the provider does not report caching information.
+    """
+    usage = getattr(response, "usage", None)
+    if not usage:
+        return 0, 0
+    ptd = getattr(usage, "prompt_tokens_details", None)
+    cached = getattr(ptd, "cached_tokens", 0) or 0 if ptd else 0
+    cache_write = getattr(ptd, "cache_creation_tokens", 0) or 0 if ptd else 0
+    return cached, cache_write
+
+
 def _sanitize_content(content: str) -> str:
     """Sanitize LLM response content for JSON parsing.
 
@@ -563,7 +649,7 @@ def call_llm_structured(
     timeout: int | None = None,
     max_retries: int = DEFAULT_MAX_RETRIES,
     retry_base_delay: float = DEFAULT_RETRY_BASE_DELAY,
-) -> tuple[BaseModel, float, int]:
+) -> LLMResult:
     """Call LLM and parse structured output, retrying on both API and parse errors.
 
     Wraps the LLM call and Pydantic parsing in a single retry loop so that
@@ -584,7 +670,9 @@ def call_llm_structured(
         retry_base_delay: Base delay for exponential backoff (seconds).
 
     Returns:
-        Tuple of (parsed_model, total_cost_usd, total_tokens).
+        :class:`LLMResult` — backward-compatible with 3-tuple unpacking
+        ``(parsed_model, total_cost_usd, total_tokens)`` and also carries
+        ``cache_read_tokens`` / ``cache_creation_tokens``.
 
     Raises:
         ValueError: If response parsing fails after all retries.
@@ -625,7 +713,10 @@ def call_llm_structured(
             total_tokens = (
                 response.usage.prompt_tokens + response.usage.completion_tokens
             )
-            return parsed, total_cost, total_tokens
+            cache_read, cache_creation = extract_cache_tokens(response)
+            return LLMResult(
+                parsed, total_cost, total_tokens, cache_read, cache_creation
+            )
 
         except Exception as e:
             last_error = e
@@ -669,7 +760,7 @@ async def acall_llm_structured(
     timeout: int | None = None,
     max_retries: int = DEFAULT_MAX_RETRIES,
     retry_base_delay: float = DEFAULT_RETRY_BASE_DELAY,
-) -> tuple[BaseModel, float, int]:
+) -> LLMResult:
     """Async version of call_llm_structured.
 
     Identical retry+parse semantics using litellm.acompletion() and
@@ -686,7 +777,9 @@ async def acall_llm_structured(
         retry_base_delay: Base delay for exponential backoff (seconds).
 
     Returns:
-        Tuple of (parsed_model, total_cost_usd, total_tokens).
+        :class:`LLMResult` — backward-compatible with 3-tuple unpacking
+        ``(parsed_model, total_cost_usd, total_tokens)`` and also carries
+        ``cache_read_tokens`` / ``cache_creation_tokens``.
 
     Raises:
         ValueError: If response parsing fails after all retries.
@@ -727,7 +820,10 @@ async def acall_llm_structured(
             total_tokens = (
                 response.usage.prompt_tokens + response.usage.completion_tokens
             )
-            return parsed, total_cost, total_tokens
+            cache_read, cache_creation = extract_cache_tokens(response)
+            return LLMResult(
+                parsed, total_cost, total_tokens, cache_read, cache_creation
+            )
 
         except Exception as e:
             last_error = e

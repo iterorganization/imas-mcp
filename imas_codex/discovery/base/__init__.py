@@ -37,10 +37,12 @@ from imas_codex.discovery.base.imas_patterns import (
     normalize_imas_path,
 )
 from imas_codex.discovery.base.llm import (
+    LLMResult,
     acall_llm,
     acall_llm_structured,
     call_llm,
     call_llm_structured,
+    extract_cache_tokens,
     extract_cost,
     get_model_limits,
     inject_cache_control,
@@ -136,11 +138,13 @@ __all__ = [
     "ParallelExecutor",
     "CommandResult",
     # LLM
+    "LLMResult",
     "call_llm",
     "call_llm_structured",
     "acall_llm",
     "acall_llm_structured",
     "extract_cost",
+    "extract_cache_tokens",
     "get_model_limits",
     "inject_cache_control",
     "suppress_litellm_noise",

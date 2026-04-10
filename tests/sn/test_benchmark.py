@@ -894,6 +894,163 @@ class TestCalibrationDataset:
         assert r.quality_distribution["outstanding"] == 1
 
 
+class TestCacheTokenReporting:
+    """Test prompt-cache token reporting in ModelResult and Rich table."""
+
+    def test_llm_result_unpacking(self):
+        """LLMResult supports 3-element tuple unpacking (backward compat)."""
+        from imas_codex.discovery.base.llm import LLMResult
+
+        r = LLMResult(
+            "parsed", 0.05, 500, cache_read_tokens=300, cache_creation_tokens=100
+        )
+        parsed, cost, tokens = r
+        assert parsed == "parsed"
+        assert cost == 0.05
+        assert tokens == 500
+        assert r.cache_read_tokens == 300
+        assert r.cache_creation_tokens == 100
+
+    def test_llm_result_getattr_fallback(self):
+        """getattr on a plain tuple returns 0 (mock compatibility)."""
+        mock_return = ("parsed", 0.01, 200)
+        assert getattr(mock_return, "cache_read_tokens", 0) == 0
+        assert getattr(mock_return, "cache_creation_tokens", 0) == 0
+
+    def test_model_result_cache_defaults(self):
+        from imas_codex.sn.benchmark import ModelResult
+
+        r = ModelResult(model="test")
+        assert r.cache_read_tokens == 0
+        assert r.cache_creation_tokens == 0
+
+    def test_model_result_with_cache(self):
+        from imas_codex.sn.benchmark import ModelResult
+
+        r = ModelResult(
+            model="test",
+            cache_read_tokens=5000,
+            cache_creation_tokens=2000,
+        )
+        assert r.cache_read_tokens == 5000
+        assert r.cache_creation_tokens == 2000
+
+    def test_cache_pct_all_read(self):
+        """100% cache hit rate."""
+        read, creation = 1000, 0
+        total = read + creation
+        pct = read / total * 100 if total > 0 else 0
+        assert pct == 100.0
+
+    def test_cache_pct_no_cache(self):
+        """0/0 — no cache tokens at all."""
+        read, creation = 0, 0
+        total = read + creation
+        pct = read / total * 100 if total > 0 else 0
+        assert pct == 0.0
+
+    def test_cache_pct_mixed(self):
+        """Partial cache hit rate."""
+        read, creation = 300, 700
+        total = read + creation
+        pct = read / total * 100 if total > 0 else 0
+        assert pct == 30.0
+
+    def test_cache_pct_all_creation(self):
+        """First request — all tokens are cache creation."""
+        read, creation = 0, 500
+        total = read + creation
+        pct = read / total * 100 if total > 0 else 0
+        assert pct == 0.0
+
+    def test_render_table_with_cache(self):
+        """Cache % column should appear and show correct values."""
+        from imas_codex.sn.benchmark import (
+            BenchmarkConfig,
+            BenchmarkReport,
+            ModelResult,
+            render_comparison_table,
+        )
+
+        r = ModelResult(
+            model="test-model",
+            candidates=[{"source_id": "p", "standard_name": "electron_temperature"}],
+            grammar_valid_count=1,
+            grammar_invalid_count=0,
+            fields_consistent_count=1,
+            total_cost=0.01,
+            total_tokens=100,
+            elapsed_seconds=5.0,
+            names_per_minute=12.0,
+            cost_per_name=0.01,
+            cache_read_tokens=800,
+            cache_creation_tokens=200,
+        )
+        report = BenchmarkReport(
+            config=BenchmarkConfig(models=["test-model"]),
+            results=[r],
+            reference_names=[],
+            extraction_count=1,
+            timestamp="2025-01-01",
+        )
+        # Should not raise
+        render_comparison_table(report)
+
+    def test_render_table_no_cache(self):
+        """Cache % column shows '—' when no cache tokens."""
+        from imas_codex.sn.benchmark import (
+            BenchmarkConfig,
+            BenchmarkReport,
+            ModelResult,
+            render_comparison_table,
+        )
+
+        r = ModelResult(
+            model="no-cache-model",
+            candidates=[{"source_id": "p", "standard_name": "electron_temperature"}],
+            grammar_valid_count=1,
+            total_cost=0.01,
+            total_tokens=100,
+        )
+        report = BenchmarkReport(
+            config=BenchmarkConfig(models=["no-cache-model"]),
+            results=[r],
+            reference_names=[],
+            timestamp="2025-01-01",
+        )
+        # Should not raise
+        render_comparison_table(report)
+
+    def test_cache_in_json_round_trip(self):
+        """Cache fields survive JSON serialization."""
+        import json
+
+        from imas_codex.sn.benchmark import (
+            BenchmarkConfig,
+            BenchmarkReport,
+            ModelResult,
+        )
+
+        r = ModelResult(
+            model="m",
+            cache_read_tokens=1500,
+            cache_creation_tokens=500,
+        )
+        report = BenchmarkReport(
+            config=BenchmarkConfig(models=["m"]),
+            results=[r],
+            reference_names=[],
+            timestamp="2025-01-01",
+        )
+        parsed = json.loads(report.to_json())
+        assert parsed["results"][0]["cache_read_tokens"] == 1500
+        assert parsed["results"][0]["cache_creation_tokens"] == 500
+
+        restored = BenchmarkReport.from_json(report.to_json())
+        assert restored.results[0].cache_read_tokens == 1500
+        assert restored.results[0].cache_creation_tokens == 500
+
+
 class TestReviewerModelCLI:
     """Test --reviewer-model CLI option."""
 
