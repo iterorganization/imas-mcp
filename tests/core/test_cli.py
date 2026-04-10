@@ -196,7 +196,7 @@ class TestReadOnlyServer:
         assert "fetch_dd_paths" in tool_names
         assert "find_related_dd_paths" in tool_names
         assert "get_graph_schema" in tool_names
-        assert "get_dd_overview" in tool_names
+        assert "get_dd_catalog" in tool_names
 
     def test_dd_only_implies_read_only(self):
         """DD-only mode automatically sets read_only=True."""

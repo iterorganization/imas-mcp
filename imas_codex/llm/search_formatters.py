@@ -1287,75 +1287,7 @@ def format_path_context_report(result: dict[str, Any]) -> str:
 
 
 def format_structure_report(result: dict[str, Any]) -> str:
-    """Format analyze_imas_structure result into readable text."""
-    tool_error = _format_tool_error(result)
-    if tool_error:
-        return tool_error
-
-    parts: list[str] = []
-    ids_name = result.get("ids_name", "")
-    dd_version = result.get("dd_version")
-
-    header = f"## IDS Structure Analysis: {ids_name}"
-    if dd_version is not None:
-        header += f" (DD v{dd_version})"
-    parts.append(header + "\n")
-
-    # Version context note when filtered
-    version_ctx = result.get("version_context")
-    if version_ctx:
-        parts.append(f"> {version_ctx['note']}")
-        dep = version_ctx.get("deprecated_in_or_before", 0)
-        ren = version_ctx.get("renamed_paths", 0)
-        if dep or ren:
-            ctx_parts = []
-            if dep:
-                ctx_parts.append(f"{dep} deprecated")
-            if ren:
-                ctx_parts.append(f"{ren} renamed")
-            parts.append(
-                f"> Version changes: {', '.join(ctx_parts)} paths in this IDS."
-            )
-        parts.append("")
-
-    parts.append(f"- Total paths: {result.get('total_paths', 0)}")
-    parts.append(f"- Leaf fields: {result.get('leaf_count', 0)}")
-    parts.append(f"- Structures: {result.get('structure_count', 0)}")
-    parts.append(f"- Max depth: {result.get('max_depth', 0)}")
-    parts.append(f"- Avg depth: {result.get('avg_depth', 0)}")
-
-    domains = result.get("physics_domains", [])
-    if domains:
-        parts.append("\n### Physics Domains")
-        for d in domains:
-            parts.append(f"  - {d['domain']}: {d['count']} paths")
-
-    types = result.get("data_types", [])
-    if types:
-        parts.append("\n### Data Types")
-        for t in types:
-            parts.append(f"  - {t['type']}: {t['count']}")
-
-    arrays = result.get("array_structures", [])
-    if arrays:
-        parts.append(f"\n### Array Structures ({len(arrays)})")
-        for a in arrays[:20]:
-            coords = ", ".join(a.get("coordinates", []))
-            parts.append(f"  - `{a['path']}` → [{coords}]")
-        if len(arrays) > 20:
-            parts.append(f"  ... and {len(arrays) - 20} more")
-
-    cocos = result.get("cocos_fields", [])
-    if cocos:
-        parts.append(f"\n### COCOS-Labeled Fields ({len(cocos)})")
-        for c in cocos:
-            parts.append(f"  - `{c['path']}` ({c['label']})")
-
-    return "\n".join(parts)
-
-
-def format_ids_structure_report(result: dict[str, Any]) -> str:
-    """Format get_ids_structure result into a compact, rich overview."""
+    """Format get_ids_summary result into a compact overview."""
     if isinstance(result, dict) and result.get("error"):
         return f"Error: {result['error']}"
 
@@ -1403,12 +1335,24 @@ def format_ids_structure_report(result: dict[str, Any]) -> str:
         parts.append("\n### Data Types\n")
         parts.append("  " + " | ".join(f"{k}: {v}" for k, v in dtypes.items()))
 
-    # Clusters
-    clusters = result.get("clusters", [])
-    if clusters:
-        parts.append(f"\n### Semantic Clusters ({len(clusters)})\n")
-        for c in clusters:
-            parts.append(f"  {c['label']} [{c['scope']}] ({c['members']} paths)")
+    # Counts with pointers to dedicated tools
+    cluster_count = result.get("semantic_clusters", 0)
+    cocos_count = result.get("cocos_fields", 0)
+    coord_count = result.get("coordinate_arrays", 0)
+    if cluster_count or cocos_count or coord_count:
+        parts.append("\n### Cross-References\n")
+        if cluster_count:
+            parts.append(
+                f"  Semantic clusters: {cluster_count} "
+                f"(use `search_dd_clusters(ids_filter='{ids_name}')` for details)"
+            )
+        if cocos_count:
+            parts.append(
+                f"  COCOS fields: {cocos_count} "
+                f"(use `get_dd_cocos_fields(ids_filter='{ids_name}')` for details)"
+            )
+        if coord_count:
+            parts.append(f"  Coordinate arrays: {coord_count}")
 
     # Identifier schemas
     idents = result.get("identifier_schemas", [])
@@ -1418,28 +1362,11 @@ def format_ids_structure_report(result: dict[str, Any]) -> str:
             examples = ", ".join(i.get("examples", [])[:2])
             parts.append(f"  {i['schema']} (×{i['usage_count']}) e.g. {examples}")
 
-    # COCOS
-    cocos = result.get("cocos_fields", [])
-    if cocos:
-        parts.append(f"\n### COCOS Fields ({len(cocos)})\n")
-        for c in cocos:
-            parts.append(f"  `{c['path']}` ({c['label']})")
-
-    # Coordinate arrays (compact)
-    coords = result.get("coordinate_arrays", [])
-    if coords:
-        parts.append(f"\n### Coordinate Arrays ({len(coords)})\n")
-        for ca in coords[:10]:
-            clist = ", ".join(ca.get("coordinates", []))
-            parts.append(f"  `{ca['path']}` → [{clist}]")
-        if len(coords) > 10:
-            parts.append(f"  ... and {len(coords) - 10} more")
-
     return "\n".join(parts)
 
 
 def format_export_ids_report(result: dict[str, Any]) -> str:
-    """Format export_imas_ids result into readable text."""
+    """Format export_dd_ids result into readable text."""
     tool_error = _format_tool_error(result)
     if tool_error:
         return tool_error
@@ -1480,7 +1407,7 @@ def format_export_ids_report(result: dict[str, Any]) -> str:
 
 
 def format_export_domain_report(result: Any) -> str:
-    """Format export_imas_domain result into readable text."""
+    """Format export_dd_domain result into readable text."""
     parts: list[str] = []
     if isinstance(result, dict):
         domain = result.get("domain", "")

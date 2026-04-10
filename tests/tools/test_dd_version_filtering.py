@@ -287,7 +287,7 @@ class TestOverviewQueryStructure:
         ]
 
         tool = GraphOverviewTool(gc)
-        await tool.get_dd_overview()
+        await tool.get_dd_catalog()
 
         ids_cypher = gc.query.call_args_list[0][0][0]
         assert "MATCH (i:IDS)" in ids_cypher
@@ -310,7 +310,7 @@ class TestOverviewQueryStructure:
         ]
 
         tool = GraphOverviewTool(gc)
-        await tool.get_dd_overview(dd_version=4)
+        await tool.get_dd_catalog(dd_version=4)
 
         ids_cypher = gc.query.call_args_list[0][0][0]
         assert "MATCH (i:IDS)" in ids_cypher

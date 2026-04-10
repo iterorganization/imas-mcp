@@ -313,7 +313,7 @@ class GetOverviewResult(WithPhysics, ToolResult, SearchHits):
     @property
     def tool_name(self) -> str:
         """Name of the tool that generated this result."""
-        return "get_dd_overview"
+        return "get_dd_catalog"
 
     content: str
     available_ids: list[str] = Field(default_factory=list)

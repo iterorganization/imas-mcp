@@ -127,7 +127,7 @@ class TestGenerateSearchSuggestions:
 
         assert len(suggestions) > 0
         tool_names = [s["tool"] for s in suggestions]
-        assert "get_dd_overview" in tool_names
+        assert "get_dd_catalog" in tool_names
         assert "get_dd_identifiers" in tool_names
 
 
@@ -176,7 +176,7 @@ class TestGenerateToolRecommendations:
 
         assert len(recommendations) > 0
         tool_names = [r["tool"] for r in recommendations]
-        assert "get_dd_overview" in tool_names
+        assert "get_dd_catalog" in tool_names
 
     def test_search_result_suggestions(self):
         """Test suggestions for search results."""
@@ -219,7 +219,7 @@ class TestGenerateToolRecommendations:
         assert len(recommendations) > 0
         tool_names = [r["tool"] for r in recommendations]
         assert "search_dd_paths" in tool_names
-        assert "get_dd_overview" in tool_names
+        assert "get_dd_catalog" in tool_names
 
 
 class TestRecommendToolsDecorator:

@@ -96,7 +96,7 @@ def generate_search_suggestions(
             for domain in context["domains"][:2]:  # Limit suggestions
                 suggestions.append(
                     {
-                        "tool": "get_dd_overview",
+                        "tool": "get_dd_catalog",
                         "reason": f"Learn more about {domain} physics domain",
                         "description": f"Get detailed explanation of {domain} concepts",
                     }
@@ -116,7 +116,7 @@ def generate_search_suggestions(
         # No results - suggest broader search strategies
         suggestions.append(
             {
-                "tool": "get_dd_overview",
+                "tool": "get_dd_catalog",
                 "reason": "No results found - get overview of available data",
                 "description": "Explore IMAS data structure and available concepts",
             }
@@ -133,7 +133,7 @@ def generate_search_suggestions(
         # Suggest concept explanation for the query
         suggestions.append(
             {
-                "tool": "get_dd_overview",
+                "tool": "get_dd_catalog",
                 "reason": f'Learn about "{query}" concept in fusion physics',
                 "description": "Get conceptual understanding and context",
             }
@@ -215,7 +215,7 @@ def generate_tool_recommendations(
         # Error case - suggest diagnostic tools
         return [
             {
-                "tool": "get_dd_overview",
+                "tool": "get_dd_catalog",
                 "reason": "Get overview of available data and functionality",
                 "description": "Explore IMAS capabilities and data structure",
             }
@@ -244,7 +244,7 @@ def generate_tool_recommendations(
                 "description": "Find relevant IMAS data for your research",
             },
             {
-                "tool": "get_dd_overview",
+                "tool": "get_dd_catalog",
                 "reason": "Get overview of IMAS structure",
                 "description": "Understand available data and capabilities",
             },

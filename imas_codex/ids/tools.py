@@ -209,7 +209,7 @@ def analyze_units(
 # ---------------------------------------------------------------------------
 
 
-def check_imas_paths(
+def check_dd_paths(
     paths: list[str],
     *,
     gc: GraphClient | None = None,

@@ -1082,25 +1082,23 @@ class GraphOverviewTool:
 
     @property
     def tool_name(self) -> str:
-        return "get_dd_overview"
+        return "get_dd_catalog"
 
     @cache_results(ttl=3600)
     @handle_errors(fallback="overview_error")
     @mcp_tool(
-        "Get an overview of available IMAS Interface Data Structures (IDS). "
-        "Returns IDS names, descriptions, path counts, and physics domains. "
-        "query: Optional filter to narrow results (e.g., 'magnetics' or 'plasma equilibrium'). "
-        "dd_version: Filter by DD major version (e.g., 3 or 4). None returns all versions. "
-        "include_unit_stats: If true, include unit distribution statistics."
+        "List all available IDSs (Interface Data Structures) with descriptions "
+        "and statistics. Returns every IDS with name, description, path count, "
+        "physics domain, and lifecycle status. Use as a starting point to discover "
+        "which IDS contains the data you need. "
+        "dd_version: Filter by DD major version (e.g., 3 or 4). None returns latest."
     )
-    async def get_dd_overview(
+    async def get_dd_catalog(
         self,
-        query: str | None = None,
         dd_version: int | None = None,
-        include_unit_stats: bool = False,
         ctx: Context | None = None,
     ) -> GetOverviewResult:
-        """Get overview from graph."""
+        """Get full catalog of all IDSs from graph."""
         import importlib.metadata
 
         dd_params: dict[str, Any] = {}
@@ -1138,50 +1136,8 @@ class GraphOverviewTool:
         ids_statistics = {}
         physics_domains = set()
 
-        # If query provided, try semantic search via ids_embedding vector index
-        semantic_scores: dict[str, float] = {}
-        if query:
-            try:
-                from imas_codex.embeddings.config import EncoderConfig
-                from imas_codex.embeddings.encoder import Encoder
-                from imas_codex.settings import get_embedding_model
-
-                encoder = Encoder(
-                    config=EncoderConfig(
-                        model_name=get_embedding_model(),
-                        normalize_embeddings=True,
-                    )
-                )
-                query_vec = encoder.embed_texts([query])[0].tolist()
-                sem_results = self._gc.query(
-                    """
-                    CALL db.index.vector.queryNodes(
-                        'ids_embedding', $k, $query_vec
-                    ) YIELD node, score
-                    RETURN node.id AS name, score
-                    """,
-                    k=20,
-                    query_vec=query_vec,
-                )
-                for r in sem_results or []:
-                    semantic_scores[r["name"]] = r["score"]
-            except Exception:
-                pass  # Vector index may not exist yet
-
         for r in ids_results or []:
             ids_name = r["name"]
-            # Apply query filter: text match OR semantic match
-            if query:
-                query_lower = query.lower()
-                name_match = query_lower in ids_name.lower()
-                desc_match = (r["description"] or "").lower().find(query_lower) >= 0
-                domain_match = (r["physics_domain"] or "").lower().find(
-                    query_lower
-                ) >= 0
-                semantic_match = ids_name in semantic_scores
-                if not (name_match or desc_match or domain_match or semantic_match):
-                    continue
-
             all_ids.append(ids_name)
             ids_statistics[ids_name] = {
                 "path_count": r["path_count"],
@@ -1205,28 +1161,13 @@ class GraphOverviewTool:
             lc = r.get("lifecycle_status") or "unknown"
             lifecycle_counts[lc] = lifecycle_counts.get(lc, 0) + 1
 
-        # Unit stats (optional)
-        unit_stats: dict[str, int] | None = None
-        if include_unit_stats:
-            unit_rows = self._gc.query(
-                f"""
-                MATCH (p:IMASNode)-[:HAS_UNIT]->(u:Unit)
-                WHERE p.node_category = 'data' {dd_clause}
-                RETURN u.id AS unit, count(p) AS cnt
-                ORDER BY cnt DESC
-                LIMIT 30
-                """,
-                **dd_params,
-            )
-            unit_stats = {r["unit"]: r["cnt"] for r in (unit_rows or [])}
-
         # Build tools list
         mcp_tools = [
             "search_dd_paths",
             "check_dd_paths",
             "fetch_dd_paths",
             "list_dd_paths",
-            "get_dd_overview",
+            "get_dd_catalog",
             "search_dd_clusters",
             "get_dd_identifiers",
             "get_dd_versions",
@@ -1239,27 +1180,19 @@ class GraphOverviewTool:
 
         total_paths = sum(s["path_count"] for s in ids_statistics.values())
 
-        # When no query, truncate to top 10 IDS to reduce token usage
-        if not query and len(all_ids) > 10:
-            top_ids = all_ids[:10]
-            top_statistics = {k: ids_statistics[k] for k in top_ids}
-        else:
-            top_ids = all_ids
-            top_statistics = ids_statistics
-
         return GetOverviewResult(
             content=f"IMAS Data Dictionary v{current_version}: {len(all_ids)} IDS, {total_paths} total paths",
-            available_ids=top_ids,
-            query=query,
+            available_ids=all_ids,
+            query=None,
             physics_domains=sorted(physics_domains),
-            ids_statistics=top_statistics,
+            ids_statistics=ids_statistics,
             mcp_tools=mcp_tools,
             dd_version=current_version,
             mcp_version=version,
             total_leaf_nodes=total_paths,
             domain_summary=domain_summary,
             lifecycle_summary=lifecycle_counts,
-            unit_statistics=unit_stats,
+            unit_statistics=None,
         )
 
 
@@ -1882,15 +1815,15 @@ class GraphPathContextTool:
         self._gc = graph_client
 
     @mcp_tool(
-        "Get structural context for an IMAS path via graph traversal. "
-        "Discovers sibling paths via shared clusters, coordinates, units, "
+        "Find paths in other IDSs that are related to a given path. "
+        "Discovers related paths via shared clusters, coordinates, units, "
         "and identifier schemas across IDS boundaries. "
         "path (required): Exact IMAS path (e.g. 'equilibrium/time_slice/profiles_1d/psi'). "
-        "relationship_types: Filter to specific types — 'cluster', 'coordinate', "
+        "relationship_types: Filter to specific types — 'semantic', 'cluster', 'coordinate', "
         "'unit', 'identifier', or 'all' (default)."
     )
-    @handle_errors("get_dd_path_context")
-    async def get_dd_path_context(
+    @handle_errors("find_related_dd_paths")
+    async def find_related_dd_paths(
         self,
         path: str,
         relationship_types: str = "all",
@@ -1991,158 +1924,20 @@ class GraphStructureTool:
         self._gc = graph_client
 
     @mcp_tool(
-        "Analyze the hierarchical structure of an IMAS IDS. "
-        "Returns depth metrics, leaf/structure ratio, array patterns, "
-        "physics domain distribution, coordinate usage, and COCOS-labeled fields. "
+        "Analyze the internal structure and organization of a specific IMAS IDS. "
+        "Returns metrics (path counts, depth), data type distribution, "
+        "physics domains, coordinate arrays, and COCOS/cluster counts. "
+        "Use get_dd_cocos_fields or search_dd_clusters for full listings. "
         "ids_name (required): IDS name (e.g. 'equilibrium')."
     )
-    @handle_errors("analyze_dd_structure")
-    async def analyze_dd_structure(
+    @handle_errors("get_ids_summary")
+    async def get_ids_summary(
         self,
         ids_name: str,
         dd_version: int | None = None,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
-        """Analyze the hierarchical structure of an IMAS IDS."""
-        dd_params: dict[str, Any] = {"ids_name": ids_name}
-        dd_clause = _dd_version_clause("p", dd_version, dd_params)
-
-        # Basic metrics — single scan using nullIf for leaf counting (Neo4j 2026 compat)
-        metrics = self._gc.query(
-            f"""
-            MATCH (p:IMASNode)
-            WHERE p.ids = $ids_name {dd_clause}
-            RETURN count(p) AS total_paths,
-                   max(size(split(p.id, '/')) - 1) AS max_depth,
-                   avg(size(split(p.id, '/')) - 1) AS avg_depth,
-                   count(nullIf(
-                       p.data_type IS NULL OR p.data_type IN {_structure_type_list()},
-                       true
-                   )) AS leaf_count
-            """,
-            **dd_params,
-        )
-
-        # Physics domain distribution
-        domains = self._gc.query(
-            f"""
-            MATCH (p:IMASNode)
-            WHERE p.ids = $ids_name AND p.physics_domain IS NOT NULL {dd_clause}
-            RETURN p.physics_domain AS domain, count(p) AS count
-            ORDER BY count DESC
-            """,
-            **dd_params,
-        )
-
-        # Data type distribution
-        types = self._gc.query(
-            f"""
-            MATCH (p:IMASNode)
-            WHERE p.ids = $ids_name AND p.data_type IS NOT NULL {dd_clause}
-            RETURN p.data_type AS data_type, count(p) AS count
-            ORDER BY count DESC
-            """,
-            **dd_params,
-        )
-
-        # Array structures with coordinates
-        arrays = self._gc.query(
-            f"""
-            MATCH (p:IMASNode)-[:HAS_COORDINATE]->(coord:IMASCoordinateSpec)
-            WHERE p.ids = $ids_name {dd_clause}
-            RETURN p.id AS path, collect(coord.id) AS coordinates
-            ORDER BY p.id
-            """,
-            **dd_params,
-        )
-
-        # COCOS-labeled fields
-        cocos_fields = self._gc.query(
-            f"""
-            MATCH (p:IMASNode)
-            WHERE p.ids = $ids_name
-              AND p.cocos_label_transformation IS NOT NULL {dd_clause}
-            RETURN p.id AS path,
-                   p.cocos_label_transformation AS cocos_label
-            ORDER BY p.id
-            """,
-            **dd_params,
-        )
-
-        basic = metrics[0] if metrics else {}
-        total_paths = basic.get("total_paths", 0)
-        leaf_count = basic.get("leaf_count", 0)
-        result: dict[str, Any] = {
-            "ids_name": ids_name,
-            "dd_version": dd_version,
-            "total_paths": total_paths,
-            "leaf_count": leaf_count,
-            "structure_count": total_paths - leaf_count,
-            "max_depth": basic.get("max_depth", 0),
-            "avg_depth": round(basic.get("avg_depth", 0), 1),
-            "physics_domains": [
-                {"domain": d["domain"], "count": d["count"]} for d in domains
-            ],
-            "data_types": [
-                {"type": t["data_type"], "count": t["count"]} for t in types
-            ],
-            "array_structures": [
-                {"path": a["path"], "coordinates": a["coordinates"]} for a in arrays
-            ],
-            "cocos_fields": [
-                {"path": c["path"], "label": c["cocos_label"]} for c in cocos_fields
-            ],
-        }
-
-        # When version-filtered, add deprecated/renamed context for this IDS
-        if dd_version is not None:
-            dep_params: dict[str, Any] = {
-                "ids_name": ids_name,
-                "dd_major_version": dd_version,
-            }
-            deprecated = self._gc.query(
-                """
-                MATCH (p:IMASNode)-[:DEPRECATED_IN]->(dv:DDVersion)
-                WHERE p.ids = $ids_name
-                  AND toInteger(split(dv.id, '.')[0]) <= $dd_major_version
-                RETURN count(p) AS count
-                """,
-                **dep_params,
-            )
-            renamed = self._gc.query(
-                """
-                MATCH (old:IMASNode)-[:RENAMED_TO]->(new:IMASNode)
-                WHERE old.ids = $ids_name
-                RETURN count(old) AS count
-                """,
-                ids_name=ids_name,
-            )
-            result["version_context"] = {
-                "note": (
-                    f"Filtered to paths active in DD v{dd_version}. "
-                    f"Counts include paths carried forward from earlier major versions."
-                ),
-                "deprecated_in_or_before": deprecated[0]["count"] if deprecated else 0,
-                "renamed_paths": renamed[0]["count"] if renamed else 0,
-            }
-
-        return result
-
-    @mcp_tool(
-        "Get a rich structural overview of an IDS using efficient graph queries. "
-        "Returns metrics (path counts, depth), top-level sections, semantic clusters, "
-        "identifier schemas, COCOS fields, coordinate arrays, and data type distribution. "
-        "ids_name (required): IDS name to analyze (e.g. 'equilibrium', 'core_profiles'). "
-        "dd_version: Filter by DD major version (3 or 4). Default: latest version."
-    )
-    @handle_errors("get_ids_structure")
-    async def get_ids_structure(
-        self,
-        ids_name: str,
-        dd_version: int | None = None,
-        ctx: Context | None = None,
-    ) -> dict[str, Any]:
-        """Get a rich structural overview of an IDS using efficient graph queries."""
+        """Get a compact structural summary of an IDS."""
         dd_params: dict[str, Any] = {"ids_name": ids_name}
         dd_clause = _dd_version_clause("p", dd_version, dd_params)
 
@@ -2179,15 +1974,12 @@ class GraphStructureTool:
 
         meta = combined[0]
 
-        # Query 2: Clusters containing paths from this IDS
-        clusters = self._gc.query(
+        # Query 2: Cluster count (compact — use search_dd_clusters for full listings)
+        cluster_count_result = self._gc.query(
             f"""
             MATCH (p:IMASNode)-[:IN_CLUSTER]->(c:IMASSemanticCluster)
             WHERE p.ids = $ids_name {dd_clause}
-            WITH c, count(p) AS member_count
-            RETURN c.label AS label, c.scope AS scope, member_count
-            ORDER BY member_count DESC
-            LIMIT 15
+            RETURN count(DISTINCT c) AS count
             """,
             **dd_params,
         )
@@ -2205,34 +1997,28 @@ class GraphStructureTool:
             **dd_params,
         )
 
-        # Query 4: COCOS fields + coordinate specs
-        cocos_coords = self._gc.query(
+        # Query 4: COCOS count only (use get_dd_cocos_fields for full listing)
+        cocos_count_result = self._gc.query(
             f"""
             MATCH (p:IMASNode)
             WHERE p.ids = $ids_name
-              AND (p.cocos_label_transformation IS NOT NULL
-                   OR exists((p)-[:HAS_COORDINATE]->())) {dd_clause}
-            OPTIONAL MATCH (p)-[:HAS_COORDINATE]->(coord:IMASCoordinateSpec)
-            RETURN p.id AS path,
-                   p.cocos_label_transformation AS cocos,
-                   collect(coord.id) AS coordinates
-            ORDER BY p.id
+              AND p.cocos_label_transformation IS NOT NULL {dd_clause}
+            RETURN count(p) AS count
             """,
             **dd_params,
         )
 
-        cocos_fields = [
-            {"path": r["path"], "label": r["cocos"]}
-            for r in (cocos_coords or [])
-            if r["cocos"]
-        ]
-        coord_arrays = [
-            {"path": r["path"], "coordinates": r["coordinates"]}
-            for r in (cocos_coords or [])
-            if r["coordinates"]
-        ]
+        # Query 5: Coordinate array count
+        coord_count_result = self._gc.query(
+            f"""
+            MATCH (p:IMASNode)-[:HAS_COORDINATE]->(coord:IMASCoordinateSpec)
+            WHERE p.ids = $ids_name {dd_clause}
+            RETURN count(DISTINCT p) AS count
+            """,
+            **dd_params,
+        )
 
-        # Query 5: Data type distribution
+        # Query 6: Data type distribution
         types = self._gc.query(
             f"""
             MATCH (p:IMASNode)
@@ -2245,7 +2031,11 @@ class GraphStructureTool:
 
         total = meta.get("total", 0)
         leaves = meta.get("leaves", 0)
-        return {
+        cluster_count = cluster_count_result[0]["count"] if cluster_count_result else 0
+        cocos_count = cocos_count_result[0]["count"] if cocos_count_result else 0
+        coord_count = coord_count_result[0]["count"] if coord_count_result else 0
+
+        result: dict[str, Any] = {
             "ids_name": ids_name,
             "description": meta.get("description", ""),
             "physics_domain": meta.get("physics_domain", ""),
@@ -2257,10 +2047,7 @@ class GraphStructureTool:
                 "max_depth": meta.get("max_depth", 0),
             },
             "top_sections": meta.get("top_sections", []),
-            "clusters": [
-                {"label": c["label"], "scope": c["scope"], "members": c["member_count"]}
-                for c in (clusters or [])
-            ],
+            "semantic_clusters": cluster_count,
             "identifier_schemas": [
                 {
                     "schema": s["schema"],
@@ -2269,12 +2056,14 @@ class GraphStructureTool:
                 }
                 for s in (identifiers or [])
             ],
-            "cocos_fields": cocos_fields,
-            "coordinate_arrays": coord_arrays[:20],
+            "coordinate_arrays": coord_count,
+            "cocos_fields": cocos_count,
             "data_types": {t["data_type"]: t["count"] for t in (types or [])},
         }
 
-    @handle_errors("get_cocos_fields")
+        return result
+
+    @handle_errors("get_dd_cocos_fields")
     async def get_dd_cocos_fields(
         self,
         transformation_type: str | None = None,
@@ -2342,7 +2131,7 @@ class GraphStructureTool:
         "ids_name (required): IDS name (e.g. 'equilibrium'). "
         "leaf_only: If true, return only leaf nodes (default false)."
     )
-    @handle_errors("export_imas_ids")
+    @handle_errors("export_dd_ids")
     async def export_dd_ids(
         self,
         ids_name: str,
@@ -2390,7 +2179,7 @@ class GraphStructureTool:
         "domain (required): Physics domain name (e.g. 'magnetics', 'equilibrium'). "
         "ids_filter: Optional IDS name filter."
     )
-    @handle_errors("export_imas_domain")
+    @handle_errors("export_dd_domain")
     async def export_dd_domain(
         self,
         domain: str,

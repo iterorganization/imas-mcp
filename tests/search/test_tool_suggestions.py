@@ -19,13 +19,13 @@ class TestSuggestFollowUpTools:
         suggestions = suggest_follow_up_tools(results, "search_dd_paths")
 
         assert len(suggestions) > 0
-        assert any(s["tool"] == "get_dd_overview" for s in suggestions)
+        assert any(s["tool"] == "get_dd_catalog" for s in suggestions)
         assert any(s["tool"] == "list_dd_paths" for s in suggestions)
 
     def test_overview_results_suggest_search(self):
         """Overview results suggest search tool."""
         results = {"concept": "plasma temperature"}
-        suggestions = suggest_follow_up_tools(results, "get_dd_overview")
+        suggestions = suggest_follow_up_tools(results, "get_dd_catalog")
 
         assert len(suggestions) > 0
         assert any(s["tool"] == "search_dd_paths" for s in suggestions)

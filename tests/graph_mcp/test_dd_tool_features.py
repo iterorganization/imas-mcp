@@ -172,24 +172,8 @@ class TestOverviewUnitStats:
     async def test_overview_without_unit_stats(self, graph_client):
         """Default overview has no unit_statistics."""
         tool = self._make_tool(graph_client)
-        result = await tool.get_dd_overview()
+        result = await tool.get_dd_catalog()
         assert result.unit_statistics is None
-
-    @pytest.mark.asyncio
-    @pytest.mark.skip(
-        reason="include_unit_stats parameter not implemented in get_dd_overview"
-    )
-    async def test_overview_with_unit_stats(self, graph_client):
-        """Overview with include_unit_stats=True returns unit distribution."""
-        tool = self._make_tool(graph_client)
-        result = await tool.get_dd_overview(include_unit_stats=True)
-        assert result.unit_statistics is not None
-        assert "top_units" in result.unit_statistics
-        assert len(result.unit_statistics["top_units"]) > 0
-        # Check structure of each unit entry
-        for u in result.unit_statistics["top_units"]:
-            assert "unit" in u
-            assert "count" in u
 
 
 # ── Phase 4: Lifecycle filtering ──────────────────────────────────────────

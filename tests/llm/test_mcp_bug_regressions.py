@@ -46,35 +46,6 @@ class TestExportHandlersNoIncludeErrors:
             "pass this kwarg"
         )
 
-    def test_export_dd_ids_server_handler_no_include_errors(self):
-        """The DD-only server handler for export_imas_ids must omit include_errors."""
-        from imas_codex.llm.server import AgentsServer
-
-        server = AgentsServer(dd_only=True)
-        # Walk registered tool components to find the handler
-        for key, component in server.mcp._local_provider._components.items():
-            if key == "tool:export_imas_ids":
-                fn = component.fn
-                sig = inspect.signature(fn)
-                assert "include_errors" not in sig.parameters, (
-                    "DD-only export_imas_ids handler still has include_errors"
-                )
-                break
-
-    def test_export_dd_domain_server_handler_no_include_errors(self):
-        """The DD-only server handler for export_imas_domain must omit include_errors."""
-        from imas_codex.llm.server import AgentsServer
-
-        server = AgentsServer(dd_only=True)
-        for key, component in server.mcp._local_provider._components.items():
-            if key == "tool:export_imas_domain":
-                fn = component.fn
-                sig = inspect.signature(fn)
-                assert "include_errors" not in sig.parameters, (
-                    "DD-only export_imas_domain handler still has include_errors"
-                )
-                break
-
 
 # ---------------------------------------------------------------------------
 # Bug 4: Short physics terms like "ip", "q", "b0" must not be filtered out
@@ -157,7 +128,7 @@ class TestShortPhysicsTermsPreserved:
 
 
 # ---------------------------------------------------------------------------
-# Bug 5: Coordinate channel in find_related_dd_paths (get_dd_path_context)
+# Bug 5: Coordinate channel in find_related_dd_paths (find_related_dd_paths)
 # must traverse through IMASCoordinateSpec for coordinate partner discovery.
 # The HAS_COORDINATE relationship now correctly points to IMASCoordinateSpec
 # nodes, which hold coordinate specifications used across IDSs.
@@ -171,7 +142,7 @@ class TestCoordinateChannelTargetsIMASCoordinateSpec:
         """The HAS_COORDINATE Cypher must traverse (coord:IMASCoordinateSpec)."""
         from imas_codex.tools.graph_search import GraphPathContextTool
 
-        source = inspect.getsource(GraphPathContextTool.get_dd_path_context)
+        source = inspect.getsource(GraphPathContextTool.find_related_dd_paths)
 
         # Find the coordinate partners query
         coord_section = source[source.index("Coordinate partners") :]
@@ -192,7 +163,7 @@ class TestCoordinateChannelTargetsIMASCoordinateSpec:
         gc.query.return_value = []
         tool = GraphPathContextTool(gc)
 
-        await tool.get_dd_path_context(
+        await tool.find_related_dd_paths(
             path="equilibrium/time_slice/profiles_1d/psi",
             relationship_types="coordinate",
         )

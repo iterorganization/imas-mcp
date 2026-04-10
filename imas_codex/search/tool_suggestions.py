@@ -35,9 +35,9 @@ def suggest_follow_up_tools(
             if results.get("results"):
                 suggestions.append(
                     {
-                        "tool": "get_dd_overview",
+                        "tool": "get_dd_catalog",
                         "reason": "Get detailed explanation of physics concepts found in search results",
-                        "sample_call": "get_dd_overview(query='plasma temperature')",
+                        "sample_call": "get_dd_catalog()",
                     }
                 )
 
@@ -54,7 +54,7 @@ def suggest_follow_up_tools(
                         )
                         break
 
-        elif func_name == "get_dd_overview":
+        elif func_name == "get_dd_catalog":
             # After concept explanation, suggest searching for related data
             concept = results.get("concept", "")
             if concept:
@@ -78,7 +78,7 @@ def suggest_follow_up_tools(
                     }
                 )
 
-        elif func_name == "get_dd_overview":
+        elif func_name == "get_dd_catalog":
             # After overview, suggest searching for specific topics
             suggestions.extend(
                 [

@@ -379,7 +379,7 @@ def mcp_test_context():
         "expected_tools": [
             ("path_tool", "check_dd_paths"),
             ("path_tool", "fetch_dd_paths"),
-            ("overview_tool", "get_dd_overview"),
+            ("overview_tool", "get_dd_catalog"),
             ("identifiers_tool", "get_dd_identifiers"),
             ("list_tool", "list_dd_paths"),
             ("clusters_tool", "search_dd_clusters"),

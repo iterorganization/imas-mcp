@@ -112,6 +112,6 @@ def validate_query(query: str | None, tool_name: str) -> tuple[bool, str | None]
         return False, (
             f"Query cannot be empty for {tool_name}. "
             "Provide a search term like 'electron temperature' or 'equilibrium/time_slice'. "
-            "Use get_dd_overview() to explore available IDS structures."
+            "Use get_dd_catalog() to explore available IDS structures."
         )
     return True, None

@@ -26,7 +26,7 @@ class TestUserWorkflows:
     async def test_discovery_workflow(self, tools, workflow_test_data):
         """Test: overview → search workflow."""
         # Step 1: Get overview to understand what's available
-        overview = await tools.overview_tool.get_dd_overview()
+        overview = await tools.overview_tool.get_dd_catalog()
         assert isinstance(overview, GetOverviewResult)
 
         if overview.available_ids:
@@ -101,7 +101,7 @@ class TestWorkflowPerformance:
         start_time = time.time()
 
         # Execute a typical workflow
-        overview = await tools.overview_tool.get_dd_overview()
+        overview = await tools.overview_tool.get_dd_catalog()
         search = await tools.search_tool.search_dd_paths(
             query="temperature", max_results=3
         )
@@ -120,7 +120,7 @@ class TestWorkflowPerformance:
         """Test tools can be used concurrently without interference."""
         # Run multiple tools concurrently
         tasks = [
-            tools.overview_tool.get_dd_overview(),
+            tools.overview_tool.get_dd_catalog(),
             tools.search_tool.search_dd_paths(query="temperature", max_results=3),
         ]
 
@@ -139,7 +139,7 @@ class TestWorkflowErrorRecovery:
     async def test_workflow_continues_after_error(self, tools):
         """Test workflow can continue after one step fails."""
         # Step 1: Valid operation
-        overview = await tools.overview_tool.get_dd_overview()
+        overview = await tools.overview_tool.get_dd_catalog()
         assert isinstance(overview, GetOverviewResult)
 
         # Step 2: Continue with valid operation

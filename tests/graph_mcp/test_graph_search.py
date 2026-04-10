@@ -175,7 +175,7 @@ class TestGraphOverviewTool:
     @pytest.mark.asyncio
     async def test_overview_returns_all_ids(self, graph_client):
         tool = self._make_tool(graph_client)
-        result = await tool.get_dd_overview()
+        result = await tool.get_dd_catalog()
         assert len(result.available_ids) == len(IDS_NODES)
         for ids in IDS_NODES:
             assert ids["name"] in result.available_ids
@@ -183,35 +183,27 @@ class TestGraphOverviewTool:
     @pytest.mark.asyncio
     async def test_overview_has_statistics(self, graph_client):
         tool = self._make_tool(graph_client)
-        result = await tool.get_dd_overview()
+        result = await tool.get_dd_catalog()
         assert len(result.ids_statistics) > 0
         assert "equilibrium" in result.ids_statistics
 
     @pytest.mark.asyncio
-    async def test_overview_with_query_filter(self, graph_client):
-        tool = self._make_tool(graph_client)
-        result = await tool.get_dd_overview(query="equilibrium")
-        assert "equilibrium" in result.available_ids
-        # core_profiles should be filtered out
-        assert "core_profiles" not in result.available_ids
-
-    @pytest.mark.asyncio
     async def test_overview_has_dd_version(self, graph_client):
         tool = self._make_tool(graph_client)
-        result = await tool.get_dd_overview()
+        result = await tool.get_dd_catalog()
         assert result.dd_version == "4.1.0"
 
     @pytest.mark.asyncio
     async def test_overview_has_mcp_tools(self, graph_client):
         tool = self._make_tool(graph_client)
-        result = await tool.get_dd_overview()
+        result = await tool.get_dd_catalog()
         assert "search_dd_paths" in result.mcp_tools
         # query_imas_graph was removed in the unified server cleanup
 
     @pytest.mark.asyncio
     async def test_overview_has_physics_domains(self, graph_client):
         tool = self._make_tool(graph_client)
-        result = await tool.get_dd_overview()
+        result = await tool.get_dd_catalog()
         assert len(result.physics_domains) > 0
 
 
@@ -320,7 +312,7 @@ class TestToolsGraphMode:
             "check_dd_paths",
             "fetch_dd_paths",
             "list_dd_paths",
-            "get_dd_overview",
+            "get_dd_catalog",
             "search_dd_clusters",
             "get_dd_identifiers",
             "get_dd_versions",
@@ -357,7 +349,7 @@ class TestToolsGraphMode:
     @pytest.mark.asyncio
     async def test_delegation_overview(self, graph_client):
         tools = self._make_tools(graph_client)
-        result = await tools.overview_tool.get_dd_overview()
+        result = await tools.overview_tool.get_dd_catalog()
         assert len(result.available_ids) > 0
 
     @pytest.mark.asyncio
@@ -698,7 +690,7 @@ class TestResolveDomain:
 
 
 class TestExportDomain:
-    """Tests for export_imas_domain with domain resolution."""
+    """Tests for export_dd_domain with domain resolution."""
 
     def _make_tool(self, graph_client):
         from imas_codex.tools.graph_search import GraphStructureTool

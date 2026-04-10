@@ -34,7 +34,7 @@ class TestToolRegistration:
         assert "search_dd_paths" in names
         assert "fetch_dd_paths" in names
         assert "list_dd_paths" in names
-        assert "get_dd_overview" in names
+        assert "get_dd_catalog" in names
 
     def test_total_tool_count(self, graph_client):
         """Total tool count matches expected number of graph-backed tools."""

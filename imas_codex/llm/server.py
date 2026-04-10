@@ -1139,30 +1139,21 @@ def _init_repl() -> dict[str, Any]:
         except Exception as e:
             return f"Check error: {e}"
 
-    def get_dd_overview(
-        query_text: str | None = None,
+    def get_dd_catalog(
         dd_version: int | None = None,
-        include_unit_stats: bool = False,
     ) -> str:
-        """Get high-level overview of IMAS Data Dictionary.
+        """Get full catalog of all IMAS IDSs.
 
         Args:
-            query_text: Optional keyword filter
             dd_version: Filter by DD major version (e.g., 3 or 4)
-            include_unit_stats: If true, include unit distribution statistics
 
         Returns:
-            Overview with IDS list, physics domains, statistics
+            Catalog with all IDS names, descriptions, path counts, physics domains
         """
         try:
-            if include_unit_stats:
-                logger.debug(
-                    "include_unit_stats not yet implemented in backend, ignoring"
-                )
             tools = _get_imas_tools()
             result = _run_async(
-                tools.overview_tool.get_dd_overview(
-                    query=query_text,
+                tools.overview_tool.get_dd_catalog(
                     dd_version=dd_version,
                 )
             )
@@ -1170,7 +1161,7 @@ def _init_repl() -> dict[str, Any]:
         except Exception as e:
             return f"Overview error: {e}"
 
-    def get_dd_path_context(
+    def find_related_dd_paths(
         path: str,
         relationship_types: str = "all",
         dd_version: int | None = None,
@@ -1188,7 +1179,7 @@ def _init_repl() -> dict[str, Any]:
         try:
             tools = _get_imas_tools()
             result = _run_async(
-                tools.path_context_tool.get_dd_path_context(
+                tools.path_context_tool.find_related_dd_paths(
                     path=path,
                     relationship_types=relationship_types,
                     dd_version=dd_version,
@@ -1198,7 +1189,7 @@ def _init_repl() -> dict[str, Any]:
         except Exception as e:
             return f"Path context error: {e}"
 
-    def export_imas_ids(
+    def export_dd_ids(
         ids_name: str,
         leaf_only: bool = False,
         dd_version: int | None = None,
@@ -1226,7 +1217,7 @@ def _init_repl() -> dict[str, Any]:
         except Exception as e:
             return f"Export error: {e}"
 
-    def export_imas_domain(
+    def export_dd_domain(
         domain: str,
         ids_filter: str | None = None,
         dd_version: int | None = None,
@@ -1564,10 +1555,10 @@ def _init_repl() -> dict[str, Any]:
                 ("fetch_dd_paths", fetch_dd_paths),
                 ("list_dd_paths", list_dd_paths),
                 ("check_dd_paths", check_dd_paths),
-                ("get_dd_overview", get_dd_overview),
-                ("get_dd_path_context", get_dd_path_context),
-                ("export_imas_ids", export_imas_ids),
-                ("export_imas_domain", export_imas_domain),
+                ("get_dd_catalog", get_dd_catalog),
+                ("find_related_dd_paths", find_related_dd_paths),
+                ("export_dd_ids", export_dd_ids),
+                ("export_dd_domain", export_dd_domain),
             ],
         ),
         (
@@ -1638,7 +1629,7 @@ def _init_repl() -> dict[str, Any]:
             "update_metadata": update_metadata,
             "install_tools": install_tools,
             "search_code": search_code,
-            "get_dd_overview": get_dd_overview,
+            "get_dd_catalog": get_dd_catalog,
             "cocos_sign_flip_paths": cocos_sign_flip_paths,
             # REPL management
             "reload": _reload_repl,
@@ -2716,33 +2707,25 @@ class AgentsServer:
             return format_list_report(result)
 
         @self.mcp.tool()
-        def get_dd_overview(
-            query: str | None = None,
+        def get_dd_catalog(
             dd_version: int | None = None,
-            include_unit_stats: bool = False,
         ) -> str:
             """List all available IDSs (Interface Data Structures) with descriptions and statistics. Use as a starting point to discover which IDS contains the data you need.
 
             Each IDS entry includes its description, total path count, and physics domain classification.
 
             Args:
-                query: Optional keyword to filter IDS names and descriptions (e.g. "magnetics", "transport"). Default: list all IDSs.
                 dd_version: Filter by DD major version (3 or 4). Default: latest version.
-                include_unit_stats: If true, include unit distribution statistics in the response. Default: false.
 
             Returns:
                 Formatted text report listing each IDS with its description, path count, and physics domain.
             """
             from imas_codex.llm.search_formatters import format_overview_report
 
-            if include_unit_stats:
-                logger.debug("Including unit distribution statistics")
             tools = _get_imas_tools()
             result = _run_async(
-                tools.overview_tool.get_dd_overview(
-                    query=query,
+                tools.overview_tool.get_dd_catalog(
                     dd_version=dd_version,
-                    include_unit_stats=include_unit_stats,
                 )
             )
             return format_overview_report(result)
@@ -2831,7 +2814,7 @@ class AgentsServer:
 
             tools = _get_imas_tools()
             result = _run_async(
-                tools.path_context_tool.get_dd_path_context(
+                tools.path_context_tool.find_related_dd_paths(
                     path=normalize_imas_path(path),
                     relationship_types=relationship_types,
                     max_results=max_results,
@@ -2841,65 +2824,7 @@ class AgentsServer:
             return format_path_context_report(result)
 
         @self.mcp.tool()
-        def export_imas_ids(
-            ids_name: str,
-            leaf_only: bool = False,
-            dd_version: int | None = None,
-        ) -> str:
-            """Export every path in an IDS with full metadata. Use when you need the complete schema of an IDS — all paths with their types, units, coordinates, cluster labels, and COCOS annotations.
-
-            Warning: large IDSs can produce very long output. Use leaf_only=true to reduce volume by excluding intermediate structure nodes.
-
-            Args:
-                ids_name: IDS name to export (e.g. "equilibrium", "core_profiles").
-                leaf_only: If true, return only leaf data fields (skip structures). Default: false.
-                dd_version: Filter by DD major version (3 or 4). Default: latest version.
-
-            Returns:
-                Formatted text listing every path in the IDS with documentation, type, units, and coordinates.
-            """
-            from imas_codex.llm.search_formatters import format_export_ids_report
-
-            tools = _get_imas_tools()
-            result = _run_async(
-                tools.structure_tool.export_dd_ids(
-                    ids_name=ids_name,
-                    leaf_only=leaf_only,
-                    dd_version=dd_version,
-                )
-            )
-            return format_export_ids_report(result)
-
-        @self.mcp.tool()
-        def export_imas_domain(
-            domain: str,
-            ids_filter: str | None = None,
-            dd_version: int | None = None,
-        ) -> str:
-            """Export all IMAS paths classified under a physics domain, grouped by IDS. Use to see every path in the DD that belongs to a domain like "magnetics" or "transport".
-
-            Args:
-                domain: Physics domain name (e.g. "magnetics", "equilibrium", "transport", "core_profiles").
-                ids_filter: Optional IDS name to restrict output to a single IDS. Default: all IDSs in the domain.
-                dd_version: Filter by DD major version (3 or 4). Default: latest version.
-
-            Returns:
-                Formatted text report listing paths with documentation and units, organized by IDS.
-            """
-            from imas_codex.llm.search_formatters import format_export_domain_report
-
-            tools = _get_imas_tools()
-            result = _run_async(
-                tools.structure_tool.export_dd_domain(
-                    domain=domain,
-                    ids_filter=ids_filter,
-                    dd_version=dd_version,
-                )
-            )
-            return format_export_domain_report(result)
-
-        @self.mcp.tool()
-        def get_ids_structure(
+        def get_ids_summary(
             ids_name: str,
             dd_version: int | None = None,
         ) -> str:
@@ -2915,16 +2840,16 @@ class AgentsServer:
             Returns:
                 Formatted text report with structural overview of the IDS.
             """
-            from imas_codex.llm.search_formatters import format_ids_structure_report
+            from imas_codex.llm.search_formatters import format_structure_report
 
             tools = _get_imas_tools()
             result = _run_async(
-                tools.structure_tool.get_ids_structure(
+                tools.structure_tool.get_ids_summary(
                     ids_name=ids_name,
                     dd_version=dd_version,
                 )
             )
-            return format_ids_structure_report(result)
+            return format_structure_report(result)
 
         @self.mcp.tool()
         def get_dd_cocos_fields(

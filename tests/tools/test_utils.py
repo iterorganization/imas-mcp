@@ -183,4 +183,4 @@ class TestValidateQuery:
         """Test that error message includes helpful guidance."""
         is_valid, error = validate_query("", "search_dd_paths")
         assert is_valid is False
-        assert "get_dd_overview" in error
+        assert "get_dd_catalog" in error

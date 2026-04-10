@@ -20,7 +20,7 @@ from enum import StrEnum
 
 from imas_codex.graph.client import GraphClient
 from imas_codex.ids.models import EscalationFlag, EscalationSeverity
-from imas_codex.ids.tools import analyze_units, check_imas_paths
+from imas_codex.ids.tools import analyze_units, check_dd_paths
 from imas_codex.ids.transforms import execute_transform
 
 logger = logging.getLogger(__name__)
@@ -107,7 +107,7 @@ def validate_mapping(
 
     # Batch checks
     source_exists = _check_sources_exist(source_ids, gc)
-    target_results = {r["path"]: r for r in check_imas_paths(target_paths, gc=gc)}
+    target_results = {r["path"]: r for r in check_dd_paths(target_paths, gc=gc)}
 
     for b in bindings:
         check = BindingCheck(source_id=b.source_id, target_id=b.target_id)

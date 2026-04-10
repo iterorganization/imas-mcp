@@ -791,109 +791,39 @@ def _migrate_from_node(
     """Kill imas-codex processes and zellij sessions on the old node.
 
     Called automatically when ``--set-default`` switches to a different
-    node.  Zellij session layouts are dumped to
-    ``~/.local/share/imas-codex/zellij-layouts/`` before sessions are
-    killed, so they can be restored on the new node with::
-
-        zellij --layout ~/.local/share/imas-codex/zellij-layouts/<name>.kdl
-
-    Uses two SSH calls:
-    1. Dump zellij layouts (must happen while sessions are alive)
-    2. Kill imas-codex/litellm processes, then zellij sessions
+    node.  Uses a single SSH call to:
+    1. Send SIGINT to imas-codex/litellm processes (graceful shutdown)
+    2. SIGTERM stragglers after a grace period
+    3. Delete zellij sessions AND kill orphaned server daemons
+    4. Detect lingering VS Code server sessions that could re-spawn
     """
     old_short = old_hostname.split(".")[0]
     fqdn = old_hostname if "." in old_hostname else f"{old_hostname}.iter.org"
 
     click.echo(f"\n  Migrating from {click.style(old_short, fg='yellow')}…")
 
-    layout_dir = "~/.local/share/imas-codex/zellij-layouts"
-
-    # --- Phase 0: Dump zellij layouts (sessions must still be alive) ---
-    dump_script = (
-        f"mkdir -p {layout_dir}; "
-        "if command -v zellij >/dev/null 2>&1; then "
-        "  sessions=$(zellij list-sessions -s 2>/dev/null || true); "
-        '  if [ -n "$sessions" ]; then '
-        "    saved=0; "
-        "    for s in $sessions; do "
-        f'      layout=$(zellij -s "$s" action dump-layout 2>/dev/null || true); '
-        '      if [ -n "$layout" ]; then '
-        f'        echo "$layout" > {layout_dir}/"$s".kdl; '
-        "        saved=$((saved + 1)); "
-        "      fi; "
-        "    done; "
-        '    echo "layouts:$saved"; '
-        "  else "
-        "    echo 'layouts:0'; "
-        "  fi; "
-        "else "
-        "  echo 'layouts:none'; "
-        "fi"
-    )
-
-    layouts_saved = 0
-    try:
-        result = _ssh_to_node(fqdn, gateway, user, dump_script, timeout=30)
-        if result.returncode == 0:
-            for line in result.stdout.strip().splitlines():
-                if line.startswith("layouts:"):
-                    val = line.split(":")[1]
-                    if val not in ("none", "0"):
-                        layouts_saved = int(val)
-                        click.echo(
-                            f"    {click.style('✓', fg='green')} "
-                            f"Saved {layouts_saved} zellij layout(s) to "
-                            f"{click.style(layout_dir + '/', fg='cyan')}"
-                        )
-    except (subprocess.TimeoutExpired, Exception):
-        pass  # Layout dump is best-effort; cleanup proceeds regardless
-
-    # --- Phase 1+2: Kill processes, then zellij sessions ---
+    # Build pattern regex from _CODEX_PATTERNS, skip neo4j (shared service).
     kill_patterns = [p for p in _CODEX_PATTERNS if p != "neo4j"]
     pattern_re = "|".join(kill_patterns)
 
-    # CRITICAL: pgrep -f matches the command line of ALL processes,
-    # including the SSH shell running this script (its argv contains
-    # the pattern string).  We must exclude $$ (shell) and $PPID
-    # (sshd) from the kill list, otherwise kill -INT destroys our own
-    # SSH connection (exit 255, empty output).
+    # Single SSH call for all cleanup — reduces failure surface vs
+    # multiple independent SSH connections that can each timeout.
     migrate_script = (
-        # Collect PIDs, then filter out our own process tree
-        f"all_pids=$(pgrep -u $USER -f '{pattern_re}' 2>/dev/null || true); "
-        "pids=''; "
-        "for p in $all_pids; do "
-        '  if [ "$p" != "$$" ] && [ "$p" != "$PPID" ]; then '
-        '    pids="$pids $p"; '
-        "  fi; "
-        "done; "
-        "pids=$(echo $pids | xargs); "
-        'if [ -n "$pids" ]; then '
-        '  count=$(echo "$pids" | wc -w); '
-        "  kill -INT $pids 2>/dev/null; "
-        "  sleep 2; "
-        f"  all_rem=$(pgrep -u $USER -f '{pattern_re}' 2>/dev/null || true); "
-        "  remaining=''; "
-        "  for p in $all_rem; do "
-        '    if [ "$p" != "$$" ] && [ "$p" != "$PPID" ]; then '
-        '      remaining="$remaining $p"; '
-        "    fi; "
-        "  done; "
-        "  remaining=$(echo $remaining | xargs); "
-        '  if [ -n "$remaining" ]; then '
-        "    kill -TERM $remaining 2>/dev/null; "
-        "  fi; "
-        '  echo "killed:$count"; '
-        "else "
-        "  echo 'killed:0'; "
-        "fi; "
-        # Detect VS Code server (warns user)
-        "vscode_pids=$(pgrep -u $USER -f 'code-server|vscode-server' 2>/dev/null || true); "
-        'if [ -n "$vscode_pids" ]; then '
-        '  echo "vscode:$(echo "$vscode_pids" | wc -w)"; '
-        "else "
-        "  echo 'vscode:0'; "
-        "fi; "
-        # Kill zellij sessions (layouts already saved above)
+        # --- Phase 1: Kill imas-codex processes ---
+        f"pids=$(pgrep -u $USER -f '{pattern_re}' 2>/dev/null || true); "
+        f'if [ -n "$pids" ]; then '
+        f'  count=$(echo "$pids" | wc -w); '
+        f"  kill -INT $pids 2>/dev/null; "
+        f"  sleep 2; "
+        f"  remaining=$(pgrep -u $USER -f '{pattern_re}' 2>/dev/null || true); "
+        f'  if [ -n "$remaining" ]; then '
+        f"    kill -TERM $remaining 2>/dev/null; "
+        f"  fi; "
+        f'  echo "killed:$count"; '
+        f"else "
+        f"  echo 'killed:0'; "
+        f"fi; "
+        # --- Phase 2: Zellij sessions + orphaned server daemons ---
         "if command -v zellij >/dev/null 2>&1; then "
         "  sessions=$(zellij list-sessions -s 2>/dev/null || true); "
         '  if [ -n "$sessions" ]; then '
@@ -906,20 +836,22 @@ def _migrate_from_node(
         "else "
         "  echo 'zj:none'; "
         "fi; "
-        # Kill orphaned zellij server daemons (PPID=1)
-        "all_zj=$(pgrep -u $USER -f 'zellij --server' 2>/dev/null || true); "
-        "zj_servers=''; "
-        "for p in $all_zj; do "
-        '  if [ "$p" != "$$" ] && [ "$p" != "$PPID" ]; then '
-        '    zj_servers="$zj_servers $p"; '
-        "  fi; "
-        "done; "
-        "zj_servers=$(echo $zj_servers | xargs); "
+        # Fallback: kill orphaned zellij --server daemons (PPID=1) that
+        # survive delete-all-sessions.  These spin at high CPU doing
+        # nothing and are the main cause of cleanup failure.
+        "zj_servers=$(pgrep -u $USER -f 'zellij --server' 2>/dev/null || true); "
         'if [ -n "$zj_servers" ]; then '
         "  kill -TERM $zj_servers 2>/dev/null; "
         '  echo "zj_servers:$(echo "$zj_servers" | wc -w)"; '
         "else "
         "  echo 'zj_servers:0'; "
+        "fi; "
+        # --- Phase 3: Detect VS Code server (warns user) ---
+        "vscode_pids=$(pgrep -u $USER -f 'code-server|vscode-server' 2>/dev/null || true); "
+        'if [ -n "$vscode_pids" ]; then '
+        '  echo "vscode:$(echo "$vscode_pids" | wc -w)"; '
+        "else "
+        "  echo 'vscode:0'; "
         "fi"
     )
 
@@ -937,8 +869,32 @@ def _migrate_from_node(
                         )
                     else:
                         click.echo(
-                            f"    {click.style('·', dim=True)} "
+                            f"    {click.style('·', fg='dim')} "
                             f"No imas-codex processes running"
+                        )
+                elif line.startswith("zj:"):
+                    val = line.split(":")[1]
+                    if val == "none":
+                        click.echo(
+                            f"    {click.style('·', fg='dim')} "
+                            f"zellij not found on {old_short}"
+                        )
+                    elif val == "0":
+                        click.echo(
+                            f"    {click.style('·', fg='dim')} "
+                            f"No zellij sessions to clean up"
+                        )
+                    else:
+                        click.echo(
+                            f"    {click.style('✓', fg='green')} "
+                            f"Deleted {val} zellij session(s)"
+                        )
+                elif line.startswith("zj_servers:"):
+                    count = line.split(":")[1]
+                    if count != "0":
+                        click.echo(
+                            f"    {click.style('✓', fg='green')} "
+                            f"Killed {count} orphaned zellij server(s)"
                         )
                 elif line.startswith("vscode:"):
                     count = line.split(":")[1]
@@ -947,25 +903,6 @@ def _migrate_from_node(
                             f"    {click.style('⚠', fg='yellow')} "
                             f"VS Code server still running on {old_short} "
                             f"({count} procs) — may re-spawn MCP servers"
-                        )
-                elif line.startswith("zj:"):
-                    val = line.split(":")[1]
-                    if val == "none":
-                        click.echo(
-                            f"    {click.style('·', dim=True)} "
-                            f"zellij not found on {old_short}"
-                        )
-                    elif val != "0":
-                        click.echo(
-                            f"    {click.style('✓', fg='green')} "
-                            f"Killed {val} zellij session(s)"
-                        )
-                elif line.startswith("zj_servers:"):
-                    count = line.split(":")[1]
-                    if count != "0":
-                        click.echo(
-                            f"    {click.style('✓', fg='green')} "
-                            f"Killed {count} orphaned zellij server(s)"
                         )
         else:
             stderr_hint = ""
@@ -988,10 +925,6 @@ def _migrate_from_node(
             f"    {click.style('⚠', fg='yellow')} Error during cleanup on {old_short}"
         )
 
-    if layouts_saved:
-        click.echo(
-            f"    Restore: {click.style(f'zellij --layout {layout_dir}/<name>.kdl', fg='cyan')}"
-        )
     click.echo(
         f"    Reconnect: {click.style('cx', fg='cyan', bold=True)} to start fresh"
     )
@@ -1043,7 +976,7 @@ def _handle_llm_alias(
     existing = _get_ssh_hostname(llm_alias)
     if existing == llm_fqdn:
         click.echo(
-            click.style("  · ", dim=True)
+            click.style("  · ", fg="dim")
             + f"LLM already set: {llm_alias} → "
             + click.style(existing, fg="cyan")
         )
@@ -1264,8 +1197,11 @@ def host_survey(
             if current == target_fqdn:
                 click.echo(f"  Already set: {facility} → {target_fqdn}")
             else:
-                # Migrate FIRST — SSH to old node while control sockets
-                # and gateway connections are still alive.
+                # Migrate FIRST — clean up processes on the old node
+                # while SSH connections are still warm.  Must happen
+                # before we kill ControlMaster sockets, update config,
+                # or stop tunnels, all of which can break connectivity
+                # to the old node.
                 if current:
                     _migrate_from_node(
                         current,
@@ -1274,7 +1210,7 @@ def host_survey(
                         timeout,
                     )
 
-                # Kill ControlMaster sockets AFTER migration so
+                # Kill ControlMaster sockets BEFORE config update so
                 # ssh -O exit resolves to the old (current) HostName.
                 sockets_to_kill = [facility]
                 llm_alias = f"{facility}-llm"
@@ -1313,17 +1249,6 @@ def host_survey(
         elif target_fqdn:
             # No --set-llm: LLM travels with the new default
             _handle_llm_alias(facility, target_fqdn, results)
-
-        # Show processes on the new target node after migration
-        if target_fqdn and current != target_fqdn:
-            target_short = target_fqdn.split(".")[0]
-            click.echo()
-            _, new_info = _query_node(target_short, gateway, user, timeout)
-            if new_info is not None:
-                procs = {target_short: new_info.get("codex_procs", [])}
-                _show_processes(procs, title=f"Processes on {target_short}")
-            else:
-                click.echo(f"  Could not query {target_short} for process list")
 
         return
 

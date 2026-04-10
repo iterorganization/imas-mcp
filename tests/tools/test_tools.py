@@ -52,7 +52,7 @@ class TestToolsComposition:
     @pytest.mark.asyncio
     async def test_overview_tool_interface(self, tools):
         """Test overview tool interface and basic functionality."""
-        result = await tools.overview_tool.get_dd_overview()
+        result = await tools.overview_tool.get_dd_catalog()
 
         # Test interface contract
         assert isinstance(result, GetOverviewResult)

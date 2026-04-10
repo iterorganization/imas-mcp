@@ -187,7 +187,7 @@ def get_fallback_response(
             "query": query,
             "suggestions": [
                 {
-                    "tool": "get_dd_overview",
+                    "tool": "get_dd_catalog",
                     "reason": "Get overview of available IMAS data",
                     "description": "Explore data structure and capabilities",
                 },
@@ -197,7 +197,7 @@ def get_fallback_response(
                     "description": "Discover alternative search terms",
                 },
                 {
-                    "tool": "get_dd_overview",
+                    "tool": "get_dd_catalog",
                     "reason": f'Learn about "{query}" in fusion physics',
                     "description": "Get conceptual understanding",
                 },
@@ -215,7 +215,7 @@ def get_fallback_response(
                     "description": "Find specific measurements and data paths",
                 },
                 {
-                    "tool": "get_dd_overview",
+                    "tool": "get_dd_catalog",
                     "reason": "Get general overview of IMAS concepts",
                     "description": "Explore available physics domains",
                 },

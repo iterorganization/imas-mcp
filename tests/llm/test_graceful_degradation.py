@@ -249,12 +249,11 @@ CYPHER_ONLY_TOOLS = {
     "find_related_dd_paths",
     "list_dd_paths",
     "fetch_dd_error_fields",
-    "get_dd_overview",
+    "get_dd_catalog",
     "get_dd_identifiers",
     "get_dd_versions",
     "get_dd_version_context",
-    "export_imas_ids",
-    "export_imas_domain",
+    "get_ids_summary",
 }
 
 

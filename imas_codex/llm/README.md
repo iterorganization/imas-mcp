@@ -52,7 +52,7 @@ The `python()` REPL includes rich pre-loaded utilities:
 - `fetch_dd_paths(paths)` - Full documentation for paths
 - `list_dd_paths(paths, leaf_only, max_paths)` - List IDS structure
 - `check_dd_paths(paths)` - Validate path existence
-- `get_dd_overview(query)` - High-level DD summary
+- `get_dd_catalog(query)` - High-level DD summary
 
 ### CLI Agent Usage
 
