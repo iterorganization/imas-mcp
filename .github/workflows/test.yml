@@ -1,7 +1,5 @@
 name: Test
 
-env:
-
 on:
   push:
     branches: [main]

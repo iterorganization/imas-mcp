@@ -1,7 +1,5 @@
 name: Release
 
-env:
-
 on:
   push:
     tags:

@@ -1,7 +1,5 @@
 name: Benchmark
 
-env:
-
 on:
   push:
     tags: ["v*"]
