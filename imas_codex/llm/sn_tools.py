@@ -111,7 +111,7 @@ RETURN sn.id AS name, sn.description AS description,
        score
 ORDER BY score DESC
 """
-    return gc.query(cypher, {"embedding": embedding, "k": k})
+    return gc.query(cypher, embedding=embedding, k=k)
 
 
 def _keyword_search_sn(gc: GraphClient, query: str, k: int) -> list[dict]:
@@ -131,7 +131,7 @@ RETURN sn.id AS name, sn.description AS description,
        1.0 AS score
 LIMIT $k
 """
-    return gc.query(cypher, {"keyword": query, "k": k})
+    return gc.query(cypher, keyword=query, k=k)
 
 
 def _format_search_report(query: str, rows: list[dict]) -> str:
@@ -237,7 +237,7 @@ RETURN sn.id AS name, sn.description AS description,
 """
 
     try:
-        rows = gc.query(cypher, {"names": name_list})
+        rows = gc.query(cypher, names=name_list)
     except ServiceUnavailable:
         return NEO4J_NOT_RUNNING_MSG
     except Exception as e:
@@ -403,7 +403,7 @@ ORDER BY sn.id
 """
 
     try:
-        rows = gc.query(cypher, params)
+        rows = gc.query(cypher, **params)
     except ServiceUnavailable:
         return NEO4J_NOT_RUNNING_MSG
     except Exception as e:
