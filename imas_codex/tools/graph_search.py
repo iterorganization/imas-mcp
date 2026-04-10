@@ -2614,8 +2614,7 @@ def _resolve_physics_domain(
     Resolution order:
     1. Exact match on PhysicsDomain enum value
     2. IDS name → its physics_domain from the graph
-    3. DomainCategory expansion (all domains in that category)
-    4. Substring match on domain names
+    3. Substring match on domain names
 
     Returns:
         (resolved_domains, resolution_method) — list of canonical domain
@@ -2640,31 +2639,7 @@ def _resolve_physics_domain(
         if domains:
             return sorted(set(domains)), f"ids_name:{query}"
 
-    # 3. DomainCategory expansion
-    try:
-        from pathlib import Path
-
-        from linkml_runtime.utils.schemaview import SchemaView
-
-        schema_path = Path(__file__).parent.parent / "definitions/physics/domains.yaml"
-        if schema_path.exists():
-            sv = SchemaView(str(schema_path))
-            cat_enum = sv.get_enum("DomainCategory")
-            if cat_enum and query in cat_enum.permissible_values:
-                pd_enum = sv.get_enum("PhysicsDomain")
-                if pd_enum:
-                    domains = []
-                    for pv_name, pv in pd_enum.permissible_values.items():
-                        ann = pv.annotations.get("category") if pv.annotations else None
-                        cat = ann.value if ann else ""
-                        if cat == query:
-                            domains.append(pv_name)
-                    if domains:
-                        return sorted(domains), f"category:{query}"
-    except Exception:
-        pass
-
-    # 4. Substring match on domain names
+    # 3. Substring match on domain names
     matches = [d for d in sorted(valid_domains) if query in d]
     if matches:
         return matches, f"substring:{query}"

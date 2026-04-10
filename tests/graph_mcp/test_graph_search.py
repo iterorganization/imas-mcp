@@ -677,11 +677,11 @@ class TestResolveDomain:
         assert domains == []
         assert method == "no_match"
 
-    def test_category_expansion(self, graph_client):
+    def test_substring_expansion(self, graph_client):
         from imas_codex.tools.graph_search import _resolve_physics_domain
 
         domains, method = _resolve_physics_domain(graph_client, "diagnostics")
-        assert method == "category:diagnostics"
+        assert method == "substring:diagnostics"
         assert "magnetic_field_diagnostics" in domains
         assert "radiation_measurement_diagnostics" in domains
 
