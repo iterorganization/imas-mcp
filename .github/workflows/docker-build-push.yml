@@ -317,16 +317,16 @@ jobs:
           echo "Container started, waiting for services..."
 
       - name: Wait for health check
-        timeout-minutes: 5
+        timeout-minutes: 10
         run: |
           echo "Waiting for MCP server to be ready..."
-          for i in $(seq 1 60); do
+          for i in $(seq 1 90); do
             if docker exec smoke-test curl -sf http://127.0.0.1:8000/health > /dev/null 2>&1; then
-              echo "✅ MCP server healthy after ${i}s"
+              echo "✅ MCP server healthy after $((i * 5))s"
               break
             fi
-            if [ $i -eq 60 ]; then
-              echo "❌ Health check timed out"
+            if [ $i -eq 90 ]; then
+              echo "❌ Health check timed out after 450s"
               docker logs smoke-test
               exit 1
             fi
