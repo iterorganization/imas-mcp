@@ -30,10 +30,10 @@ Gap documents consolidate remaining work from completed implementation phases. T
 | Plan | Scope | Status | Depends On |
 |------|-------|--------|------------|
 | [standard-names/09-sn-generate.md](features/standard-names/09-sn-generate.md) | Core pipeline: EXTRACT→COMPOSE→VALIDATE→PERSIST | ✅ Done | — |
-| [standard-names/11-rich-compose.md](features/standard-names/11-rich-compose.md) | Rich compose: full catalog fields, schema extension | Ready | 09 |
-| [standard-names/12-catalog-import.md](features/standard-names/12-catalog-import.md) | Catalog import & bootstrap (309 entries, feedback loop) | Ready | 11 P1 |
-| [standard-names/13-publish-pipeline.md](features/standard-names/13-publish-pipeline.md) | Lossless publish, round-trip, batched PRs | Ready | 11, 12 P1 |
-| [standard-names/14-mcp-tools-benchmark.md](features/standard-names/14-mcp-tools-benchmark.md) | SN MCP tools + benchmark quality tiers | Ready | 11, 12 |
+| [standard-names/11-rich-compose.md](features/standard-names/11-rich-compose.md) | Rich compose: full catalog fields, schema extension | ✅ Done | 09 |
+| [standard-names/12-catalog-import.md](features/standard-names/12-catalog-import.md) | Catalog import & bootstrap (309 entries, feedback loop) | ✅ Done | 11 P1 |
+| [standard-names/13-publish-pipeline.md](features/standard-names/13-publish-pipeline.md) | Lossless publish, round-trip, batched PRs | ✅ Done | 11, 12 P1 |
+| [standard-names/14-mcp-tools-benchmark.md](features/standard-names/14-mcp-tools-benchmark.md) | SN MCP tools + benchmark quality tiers | ✅ Done | 11, 12 |
 
 ### Pending plans (partially implemented)
 
