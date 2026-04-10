@@ -114,31 +114,6 @@ class BenchmarkReport:
 
 
 # ---------------------------------------------------------------------------
-# Grammar context builder
-# ---------------------------------------------------------------------------
-
-
-def build_grammar_context() -> dict[str, list[str]]:
-    """Build the grammar enum values needed by the compose prompt.
-
-    Returns a dict with keys matching the template variables in
-    ``sn/compose_dd.md``: subjects, positions, components, coordinates,
-    processes, transformations, geometric_bases, objects, binary_operators.
-    """
-    return {
-        "subjects": [e.value for e in Subject],
-        "positions": [e.value for e in Position],
-        "components": [e.value for e in Component],
-        "coordinates": [e.value for e in Component],  # same enum
-        "processes": [e.value for e in Process],
-        "transformations": [e.value for e in Transformation],
-        "geometric_bases": [e.value for e in GeometricBase],
-        "objects": [e.value for e in Object],
-        "binary_operators": [e.value for e in BinaryOperator],
-    }
-
-
-# ---------------------------------------------------------------------------
 # Grammar validation
 # ---------------------------------------------------------------------------
 
@@ -283,7 +258,6 @@ async def score_with_reviewer(
     candidates: list[dict],
     reviewer_model: str,
     quality_labels: dict[str, list[str]],
-    grammar_context: dict[str, list[str]],
 ) -> list[dict]:
     """Score candidates using a reviewer model.
 
@@ -406,7 +380,12 @@ async def run_benchmark(
 
     # --- 2. Run each model ---
     results: list[ModelResult] = []
-    grammar_ctx = build_grammar_context()
+    from imas_codex.llm.prompt_loader import render_prompt
+    from imas_codex.sn.context import build_compose_context
+
+    context = build_compose_context()
+    system_prompt = render_prompt("sn/compose_system", context)
+
     for model in config.models:
         logger.info("Benchmarking model: %s", model)
         model_result = await _run_model(
@@ -414,6 +393,8 @@ async def run_benchmark(
             extraction_batches=extraction_batches,
             config=config,
             reference=REFERENCE_NAMES,
+            system_prompt=system_prompt,
+            context=context,
         )
         results.append(model_result)
 
@@ -426,7 +407,6 @@ async def run_benchmark(
                     result.candidates,
                     config.reviewer_model,
                     quality_labels,
-                    grammar_ctx,
                 )
                 result.quality_scores = reviews
                 # Compute distribution
@@ -478,7 +458,7 @@ async def run_benchmark(
 def _extract_candidates(config: BenchmarkConfig) -> list[dict]:
     """Extract candidates from the graph DB.
 
-    Returns list of batch dicts with keys: group_key, items, existing_names.
+    Returns list of batch dicts with keys: group_key, items, existing_names, context.
     """
     from imas_codex.sn.sources.dd import extract_dd_candidates
 
@@ -496,6 +476,7 @@ def _extract_candidates(config: BenchmarkConfig) -> list[dict]:
                 "group_key": batch.group_key,
                 "items": batch.items,
                 "existing_names": list(batch.existing_names),
+                "context": batch.context,
             }
         )
     return result
@@ -522,12 +503,13 @@ async def _run_model(
     extraction_batches: list[dict],
     config: BenchmarkConfig,
     reference: dict[str, dict],
+    system_prompt: str,
+    context: dict[str, Any],
 ) -> ModelResult:
     """Run a single model across all extraction batches."""
     from imas_codex.discovery.base.llm import acall_llm_structured
     from imas_codex.llm.prompt_loader import render_prompt
 
-    grammar_ctx = build_grammar_context()
     result = ModelResult(model=model)
     all_candidates: list[dict] = []
 
@@ -542,22 +524,27 @@ async def _run_model(
             group_key = batch.get("group_key", "unknown")
             existing = set(batch.get("existing_names", []))
 
-            # Build prompt context
-            prompt_context = {
+            # Build user prompt context — mirrors workers.py pattern
+            user_context = {
                 "items": items,
                 "ids_name": group_key,
-                "existing_names": list(existing),
-                **grammar_ctx,
+                "existing_names": sorted(existing)[:200],
+                "cluster_context": batch.get("context", ""),
             }
 
             try:
-                prompt_text = render_prompt("sn/compose_dd", prompt_context)
+                user_prompt = render_prompt(
+                    "sn/compose_dd", {**context, **user_context}
+                )
             except Exception:
                 logger.warning("Failed to render prompt for batch %s", group_key)
                 result.batch_errors += 1
                 continue
 
-            messages = [{"role": "user", "content": prompt_text}]
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ]
 
             try:
                 llm_result, cost, tokens = await acall_llm_structured(
@@ -568,6 +555,12 @@ async def _run_model(
                 )
                 result.total_cost += cost
                 result.total_tokens += tokens
+                logger.debug(
+                    "Batch %s: cost=%.4f tokens=%d",
+                    group_key,
+                    cost,
+                    tokens,
+                )
 
                 # Collect candidates
                 for c in llm_result.candidates:

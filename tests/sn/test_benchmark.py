@@ -136,39 +136,139 @@ class TestDataclasses:
 
 
 # -----------------------------------------------------------------------
-# Grammar context builder tests
+# Context builder tests
 # -----------------------------------------------------------------------
 
 
 class TestGrammarContext:
-    """Verify grammar context builder provides all template variables."""
+    """Verify build_compose_context provides all template variables."""
 
-    def test_build_grammar_context_keys(self):
-        from imas_codex.sn.benchmark import build_grammar_context
+    def test_build_compose_context_keys(self):
+        """build_compose_context() should return rich grammar context."""
+        from imas_codex.sn.context import build_compose_context
 
-        ctx = build_grammar_context()
-        expected_keys = {
+        ctx = build_compose_context()
+        # Rich grammar context keys
+        assert "canonical_pattern" in ctx
+        assert "vocabulary_sections" in ctx
+        assert "segment_descriptions" in ctx
+        # Backward-compat enum lists still present
+        assert "subjects" in ctx
+        assert "positions" in ctx
+        assert "components" in ctx
+
+    def test_all_values_non_empty(self):
+        """Enum lists from build_compose_context should be non-empty strings."""
+        from imas_codex.sn.context import build_compose_context
+
+        ctx = build_compose_context()
+        for key in (
             "subjects",
             "positions",
             "components",
-            "coordinates",
             "processes",
             "transformations",
-            "geometric_bases",
-            "objects",
-            "binary_operators",
-        }
-        assert set(ctx.keys()) == expected_keys
-
-    def test_all_values_non_empty(self):
-        from imas_codex.sn.benchmark import build_grammar_context
-
-        ctx = build_grammar_context()
-        for key, values in ctx.items():
-            assert len(values) > 0, f"{key} should have at least one value"
-            assert all(isinstance(v, str) for v in values), (
+        ):
+            assert len(ctx[key]) > 0, f"{key} should have at least one value"
+            assert all(isinstance(v, str) for v in ctx[key]), (
                 f"{key} values must be strings"
             )
+
+
+# -----------------------------------------------------------------------
+# Prompt parity tests
+# -----------------------------------------------------------------------
+
+
+class TestPromptParity:
+    """Verify benchmark uses the same prompt architecture as mint pipeline."""
+
+    def test_extract_candidates_preserves_context(self):
+        """_extract_candidates should include batch.context in output dicts."""
+        from unittest.mock import patch
+
+        from imas_codex.sn.benchmark import BenchmarkConfig, _extract_candidates
+        from imas_codex.sn.sources.base import ExtractionBatch
+
+        fake_batch = ExtractionBatch(
+            source="dd",
+            group_key="equilibrium",
+            items=[{"path": "test/path", "description": "Test"}],
+            context="IDS: equilibrium\nSemantic clusters: psi, safety_factor",
+            existing_names=set(),
+        )
+
+        config = BenchmarkConfig(models=["test"])
+
+        with patch(
+            "imas_codex.sn.sources.dd.extract_dd_candidates",
+            return_value=[fake_batch],
+        ):
+            batches = _extract_candidates(config)
+
+        assert len(batches) == 1
+        assert "context" in batches[0]
+        assert (
+            batches[0]["context"]
+            == "IDS: equilibrium\nSemantic clusters: psi, safety_factor"
+        )
+
+    @pytest.mark.asyncio
+    async def test_run_model_system_user_messages(self):
+        """_run_model should construct [system, user] message structure."""
+        from unittest.mock import AsyncMock, patch
+
+        from imas_codex.sn.benchmark import BenchmarkConfig, _run_model
+        from imas_codex.sn.models import SNComposeBatch
+
+        config = BenchmarkConfig(models=["test"], temperature=0.0)
+        batches = [
+            {
+                "group_key": "test",
+                "items": [
+                    {
+                        "path": "test/path",
+                        "description": "Test",
+                        "units": None,
+                        "data_type": "FLT_0D",
+                        "cluster_label": None,
+                    }
+                ],
+                "existing_names": [],
+                "context": "IDS: test",
+            }
+        ]
+        minimal_context: dict = {"subjects": ["electron"], "vocabulary_sections": []}
+        captured_messages: list[dict] = []
+        mock_response = SNComposeBatch(candidates=[], skipped=[])
+
+        async def mock_llm(model, messages, response_model, **kwargs):
+            captured_messages.extend(messages)
+            return mock_response, 0.0, 0
+
+        with (
+            patch(
+                "imas_codex.discovery.base.llm.acall_llm_structured",
+                side_effect=mock_llm,
+            ),
+            patch(
+                "imas_codex.llm.prompt_loader.render_prompt",
+                return_value="rendered prompt",
+            ),
+        ):
+            await _run_model(
+                model="test",
+                extraction_batches=batches,
+                config=config,
+                reference={},
+                system_prompt="System instructions",
+                context=minimal_context,
+            )
+
+        assert len(captured_messages) == 2
+        assert captured_messages[0]["role"] == "system"
+        assert captured_messages[0]["content"] == "System instructions"
+        assert captured_messages[1]["role"] == "user"
 
 
 # -----------------------------------------------------------------------
