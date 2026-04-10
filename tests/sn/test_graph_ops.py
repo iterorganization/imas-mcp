@@ -313,3 +313,248 @@ class TestGetExistingStandardNames:
         assert "electron_temperature" in result
         assert "plasma_current" in result
         assert len(result) == 2
+
+
+# =============================================================================
+# TestResetStandardNames
+# =============================================================================
+
+
+class TestResetStandardNames:
+    """Test reset_standard_names query logic."""
+
+    def _call_reset(self, mock_gc: MagicMock, **kwargs) -> int:
+        with patch("imas_codex.sn.graph_ops.GraphClient") as MockGC:
+            MockGC.return_value.__enter__ = MagicMock(return_value=mock_gc)
+            MockGC.return_value.__exit__ = MagicMock(return_value=False)
+            from imas_codex.sn.graph_ops import reset_standard_names
+
+            return reset_standard_names(**kwargs)
+
+    def test_dry_run_returns_count_without_modifying(self) -> None:
+        """dry_run=True should return count from the count query only."""
+        mock_gc = MagicMock()
+        mock_gc.query = MagicMock(return_value=[{"n": 3}])
+
+        count = self._call_reset(mock_gc, from_status="drafted", dry_run=True)
+
+        assert count == 3
+        # Only one query should be called (the count query)
+        assert mock_gc.query.call_count == 1
+
+    def test_returns_zero_for_empty_graph(self) -> None:
+        """When no nodes match, reset returns 0 and makes no modification queries."""
+        mock_gc = MagicMock()
+        mock_gc.query = MagicMock(return_value=[{"n": 0}])
+
+        count = self._call_reset(mock_gc, from_status="drafted")
+
+        assert count == 0
+        # Only the count query; no DELETE or SET queries
+        assert mock_gc.query.call_count == 1
+
+    def test_clears_transient_fields(self) -> None:
+        """Reset should null out embedding, embedded_at, model, generated_at, confidence."""
+        mock_gc = MagicMock()
+        # First call = count query; subsequent calls = relationship + set queries
+        mock_gc.query = MagicMock(return_value=[{"n": 2}])
+
+        self._call_reset(mock_gc, from_status="drafted")
+
+        # Collect all Cypher strings passed
+        all_cypher = " ".join(call[0][0] for call in mock_gc.query.call_args_list)
+
+        assert "sn.embedding = null" in all_cypher
+        assert "sn.embedded_at = null" in all_cypher
+        assert "sn.model = null" in all_cypher
+        assert "sn.generated_at = null" in all_cypher
+        assert "sn.confidence = null" in all_cypher
+
+    def test_removes_has_standard_name_relationships(self) -> None:
+        """Reset should delete HAS_STANDARD_NAME relationships."""
+        mock_gc = MagicMock()
+        mock_gc.query = MagicMock(return_value=[{"n": 1}])
+
+        self._call_reset(mock_gc, from_status="drafted")
+
+        all_cypher = " ".join(call[0][0] for call in mock_gc.query.call_args_list)
+        assert "HAS_STANDARD_NAME" in all_cypher
+
+    def test_removes_canonical_units_relationships(self) -> None:
+        """Reset should delete CANONICAL_UNITS relationships."""
+        mock_gc = MagicMock()
+        mock_gc.query = MagicMock(return_value=[{"n": 1}])
+
+        self._call_reset(mock_gc, from_status="drafted")
+
+        all_cypher = " ".join(call[0][0] for call in mock_gc.query.call_args_list)
+        assert "CANONICAL_UNITS" in all_cypher
+
+    def test_to_status_sets_review_status(self) -> None:
+        """When to_status is given, SET clause should include review_status."""
+        mock_gc = MagicMock()
+        mock_gc.query = MagicMock(return_value=[{"n": 1}])
+
+        self._call_reset(mock_gc, from_status="drafted", to_status="extracted")
+
+        all_cypher = " ".join(call[0][0] for call in mock_gc.query.call_args_list)
+        assert "review_status" in all_cypher
+
+        # Verify to_status kwarg was passed
+        all_kwargs = [call[1] for call in mock_gc.query.call_args_list]
+        to_statuses = [kw.get("to_status") for kw in all_kwargs if "to_status" in kw]
+        assert "extracted" in to_statuses
+
+    def test_source_filter_included_in_cypher(self) -> None:
+        """source_filter should appear in the WHERE clause."""
+        mock_gc = MagicMock()
+        mock_gc.query = MagicMock(return_value=[{"n": 0}])
+
+        self._call_reset(mock_gc, from_status="drafted", source_filter="dd")
+
+        # Check source_filter param was passed
+        all_kwargs = [call[1] for call in mock_gc.query.call_args_list]
+        sources = [
+            kw.get("source_filter") for kw in all_kwargs if "source_filter" in kw
+        ]
+        assert "dd" in sources
+
+    def test_ids_filter_uses_starts_with(self) -> None:
+        """ids_filter should restrict via STARTS WITH prefix on src.id."""
+        mock_gc = MagicMock()
+        mock_gc.query = MagicMock(return_value=[{"n": 0}])
+
+        self._call_reset(mock_gc, from_status="drafted", ids_filter="equilibrium")
+
+        all_cypher = " ".join(call[0][0] for call in mock_gc.query.call_args_list)
+        assert "STARTS WITH" in all_cypher
+
+        all_kwargs = [call[1] for call in mock_gc.query.call_args_list]
+        prefixes = [kw.get("ids_prefix") for kw in all_kwargs if "ids_prefix" in kw]
+        assert "equilibrium/" in prefixes
+
+
+# =============================================================================
+# TestClearStandardNames
+# =============================================================================
+
+
+class TestClearStandardNames:
+    """Test clear_standard_names deletion logic."""
+
+    def _call_clear(self, mock_gc: MagicMock, **kwargs) -> int:
+        with patch("imas_codex.sn.graph_ops.GraphClient") as MockGC:
+            MockGC.return_value.__enter__ = MagicMock(return_value=mock_gc)
+            MockGC.return_value.__exit__ = MagicMock(return_value=False)
+            from imas_codex.sn.graph_ops import clear_standard_names
+
+            return clear_standard_names(**kwargs)
+
+    def test_dry_run_returns_count_without_deleting(self) -> None:
+        """dry_run=True should return count without issuing DELETE."""
+        mock_gc = MagicMock()
+        mock_gc.query = MagicMock(return_value=[{"n": 5}])
+
+        count = self._call_clear(mock_gc, dry_run=True)
+
+        assert count == 5
+        # Only the count query
+        assert mock_gc.query.call_count == 1
+        all_cypher = " ".join(call[0][0] for call in mock_gc.query.call_args_list)
+        assert "DELETE" not in all_cypher
+
+    def test_default_status_filter_is_drafted(self) -> None:
+        """Without status_filter, should only target 'drafted' nodes."""
+        mock_gc = MagicMock()
+        mock_gc.query = MagicMock(return_value=[{"n": 0}])
+
+        self._call_clear(mock_gc)
+
+        all_kwargs = [call[1] for call in mock_gc.query.call_args_list]
+        statuses_lists = [kw.get("statuses") for kw in all_kwargs if "statuses" in kw]
+        assert any("drafted" in sl for sl in statuses_lists)
+
+    def test_accepted_not_deleted_without_flag(self) -> None:
+        """Without include_accepted, 'accepted' should not be in statuses list."""
+        mock_gc = MagicMock()
+        mock_gc.query = MagicMock(return_value=[{"n": 0}])
+
+        self._call_clear(mock_gc, status_filter=["drafted"])
+
+        all_kwargs = [call[1] for call in mock_gc.query.call_args_list]
+        statuses_lists = [kw.get("statuses") for kw in all_kwargs if "statuses" in kw]
+        for sl in statuses_lists:
+            assert "accepted" not in sl, (
+                "accepted should not appear without include_accepted"
+            )
+
+    def test_include_accepted_adds_to_statuses(self) -> None:
+        """include_accepted=True should add 'accepted' to effective_statuses."""
+        mock_gc = MagicMock()
+        mock_gc.query = MagicMock(return_value=[{"n": 0}])
+
+        self._call_clear(mock_gc, status_filter=["drafted"], include_accepted=True)
+
+        all_kwargs = [call[1] for call in mock_gc.query.call_args_list]
+        statuses_lists = [kw.get("statuses") for kw in all_kwargs if "statuses" in kw]
+        assert any("accepted" in sl for sl in statuses_lists)
+
+    def test_returns_zero_for_empty_graph(self) -> None:
+        """When no nodes match, returns 0 and makes no DELETE queries."""
+        mock_gc = MagicMock()
+        mock_gc.query = MagicMock(return_value=[{"n": 0}])
+
+        count = self._call_clear(mock_gc)
+
+        assert count == 0
+        assert mock_gc.query.call_count == 1
+
+    def test_detach_delete_without_ids_filter(self) -> None:
+        """Without ids_filter, should DETACH DELETE matching nodes."""
+        mock_gc = MagicMock()
+        mock_gc.query = MagicMock(return_value=[{"n": 2}])
+
+        self._call_clear(mock_gc)
+
+        all_cypher = " ".join(call[0][0] for call in mock_gc.query.call_args_list)
+        assert "DETACH DELETE" in all_cypher
+
+    def test_relationship_first_with_ids_filter(self) -> None:
+        """With ids_filter, should remove relationships before deleting orphan nodes."""
+        mock_gc = MagicMock()
+        mock_gc.query = MagicMock(return_value=[{"n": 3}])
+
+        self._call_clear(mock_gc, ids_filter="core_profiles")
+
+        all_cypher = " ".join(call[0][0] for call in mock_gc.query.call_args_list)
+        # Relationship delete should appear (DELETE r pattern)
+        assert "DELETE r" in all_cypher
+        # Node delete should also appear
+        assert "DETACH DELETE sn" in all_cypher
+
+    def test_ids_filter_uses_starts_with(self) -> None:
+        """ids_filter should use STARTS WITH prefix matching."""
+        mock_gc = MagicMock()
+        mock_gc.query = MagicMock(return_value=[{"n": 0}])
+
+        self._call_clear(mock_gc, ids_filter="magnetics")
+
+        all_cypher = " ".join(call[0][0] for call in mock_gc.query.call_args_list)
+        assert "STARTS WITH" in all_cypher
+
+        all_kwargs = [call[1] for call in mock_gc.query.call_args_list]
+        prefixes = [kw.get("ids_prefix") for kw in all_kwargs if "ids_prefix" in kw]
+        assert "magnetics/" in prefixes
+
+    def test_source_filter_passed_as_param(self) -> None:
+        """source_filter should be passed as a query parameter."""
+        mock_gc = MagicMock()
+        mock_gc.query = MagicMock(return_value=[{"n": 0}])
+
+        self._call_clear(mock_gc, source_filter="signals")
+
+        all_kwargs = [call[1] for call in mock_gc.query.call_args_list]
+        sources = [
+            kw.get("source_filter") for kw in all_kwargs if "source_filter" in kw
+        ]
+        assert "signals" in sources

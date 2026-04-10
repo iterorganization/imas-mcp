@@ -368,6 +368,267 @@ def get_validated_standard_names(
         return list(results)
 
 
+def reset_standard_names(
+    *,
+    from_status: str = "drafted",
+    to_status: str | None = None,
+    source_filter: str | None = None,
+    ids_filter: str | None = None,
+    dry_run: bool = False,
+) -> int:
+    """Reset StandardName nodes to allow re-processing.
+
+    Clears transient fields (embedding, embedded_at, model, generated_at,
+    confidence) and removes HAS_STANDARD_NAME and CANONICAL_UNITS
+    relationships for matching nodes.
+
+    Parameters
+    ----------
+    from_status:
+        Only reset nodes with this ``review_status`` (default ``"drafted"``).
+    to_status:
+        Target ``review_status`` after reset.  ``None`` (default) clears fields
+        only without changing the status.
+    source_filter:
+        Restrict to nodes with ``source`` equal to ``"dd"`` or ``"signals"``.
+    ids_filter:
+        Restrict to nodes whose HAS_STANDARD_NAME source path starts with this
+        IDS name (matched via ``IMASNode -[:HAS_STANDARD_NAME]-> sn``).
+    dry_run:
+        Return the count of matching nodes without modifying anything.
+
+    Returns
+    -------
+    Number of nodes reset (or that would be reset in dry-run mode).
+    """
+    with GraphClient() as gc:
+        params: dict[str, Any] = {"from_status": from_status}
+        where_clauses = ["sn.review_status = $from_status"]
+
+        if source_filter:
+            where_clauses.append("coalesce(sn.source, sn.source_type) = $source_filter")
+            params["source_filter"] = source_filter
+
+        where = " AND ".join(where_clauses)
+
+        if ids_filter:
+            # Match through HAS_STANDARD_NAME to an IMASNode whose id starts with
+            # the given IDS name (ids_filter + "/")
+            params["ids_prefix"] = ids_filter + "/"
+            count_cypher = f"""
+                MATCH (src:IMASNode)-[:HAS_STANDARD_NAME]->(sn:StandardName)
+                WHERE {where}
+                AND src.id STARTS WITH $ids_prefix
+                RETURN count(DISTINCT sn) AS n
+            """
+        else:
+            count_cypher = f"""
+                MATCH (sn:StandardName)
+                WHERE {where}
+                RETURN count(sn) AS n
+            """
+
+        result = gc.query(count_cypher, **params)
+        count = result[0]["n"] if result else 0
+        logger.info(
+            "reset_standard_names: %d nodes match (from_status=%s, source=%s, ids=%s)",
+            count,
+            from_status,
+            source_filter,
+            ids_filter,
+        )
+
+        if dry_run or count == 0:
+            return count
+
+        if ids_filter:
+            # Collect matching SN ids first, then operate on them
+            collect_cypher = f"""
+                MATCH (src:IMASNode)-[:HAS_STANDARD_NAME]->(sn:StandardName)
+                WHERE {where}
+                AND src.id STARTS WITH $ids_prefix
+                RETURN DISTINCT sn.id AS sn_id
+            """
+            rows = gc.query(collect_cypher, **params)
+            sn_ids = [r["sn_id"] for r in rows]
+            reset_params: dict[str, Any] = {"sn_ids": sn_ids}
+            node_match = "MATCH (sn:StandardName) WHERE sn.id IN $sn_ids"
+        else:
+            reset_params = dict(params)
+            if ids_filter:
+                reset_params["ids_prefix"] = ids_filter + "/"
+            node_match = f"MATCH (sn:StandardName) WHERE {where}"
+
+        # Remove HAS_STANDARD_NAME and CANONICAL_UNITS relationships
+        gc.query(
+            f"""
+            {node_match}
+            OPTIONAL MATCH (src)-[r:HAS_STANDARD_NAME]->(sn)
+            DELETE r
+            """,
+            **reset_params,
+        )
+        gc.query(
+            f"""
+            {node_match}
+            OPTIONAL MATCH (sn)-[r:CANONICAL_UNITS]->(u)
+            DELETE r
+            """,
+            **reset_params,
+        )
+
+        # Clear transient fields, optionally set new status
+        if to_status is not None:
+            set_clause = (
+                "sn.embedding = null, sn.embedded_at = null, sn.model = null, "
+                "sn.generated_at = null, sn.confidence = null, "
+                "sn.review_status = $to_status"
+            )
+            reset_params["to_status"] = to_status
+        else:
+            set_clause = (
+                "sn.embedding = null, sn.embedded_at = null, sn.model = null, "
+                "sn.generated_at = null, sn.confidence = null"
+            )
+
+        gc.query(
+            f"""
+            {node_match}
+            SET {set_clause}
+            """,
+            **reset_params,
+        )
+
+    logger.info("Reset %d StandardName nodes", count)
+    return count
+
+
+def clear_standard_names(
+    *,
+    status_filter: list[str] | None = None,
+    source_filter: str | None = None,
+    ids_filter: str | None = None,
+    include_accepted: bool = False,
+    dry_run: bool = False,
+) -> int:
+    """Delete StandardName nodes and their relationships.
+
+    Safety model (relationship-first):
+
+    1. If ``ids_filter`` or ``source_filter`` is set, delete matching
+       ``HAS_STANDARD_NAME`` relationships first.
+    2. Then delete ``StandardName`` nodes that have zero remaining
+       ``HAS_STANDARD_NAME`` edges.
+
+    By default only nodes with ``review_status = 'drafted'`` are deleted.
+    Accepted names require ``include_accepted=True``.
+
+    Parameters
+    ----------
+    status_filter:
+        List of ``review_status`` values to delete (default ``["drafted"]``).
+    source_filter:
+        Restrict to nodes with ``source`` equal to ``"dd"`` or ``"signals"``.
+    ids_filter:
+        Delete only names linked to an IMASNode whose id starts with this IDS
+        name.  Relationships are removed first; nodes become orphans and are
+        then deleted.
+    include_accepted:
+        When ``True``, ``"accepted"`` names are eligible for deletion even if
+        not listed in ``status_filter``.
+    dry_run:
+        Return the count of nodes that would be deleted without modifying
+        anything.
+
+    Returns
+    -------
+    Number of nodes deleted (or that would be deleted in dry-run mode).
+    """
+    if status_filter is None:
+        status_filter = ["drafted"]
+
+    effective_statuses = list(status_filter)
+    if include_accepted and "accepted" not in effective_statuses:
+        effective_statuses.append("accepted")
+    elif not include_accepted and "accepted" in effective_statuses:
+        effective_statuses.remove("accepted")
+
+    with GraphClient() as gc:
+        params: dict[str, Any] = {"statuses": effective_statuses}
+        sn_where_clauses = ["sn.review_status IN $statuses"]
+
+        if source_filter:
+            sn_where_clauses.append(
+                "coalesce(sn.source, sn.source_type) = $source_filter"
+            )
+            params["source_filter"] = source_filter
+
+        sn_where = " AND ".join(sn_where_clauses)
+
+        if ids_filter:
+            params["ids_prefix"] = ids_filter + "/"
+            count_cypher = f"""
+                MATCH (src:IMASNode)-[:HAS_STANDARD_NAME]->(sn:StandardName)
+                WHERE {sn_where}
+                AND src.id STARTS WITH $ids_prefix
+                RETURN count(DISTINCT sn) AS n
+            """
+        else:
+            count_cypher = f"""
+                MATCH (sn:StandardName)
+                WHERE {sn_where}
+                RETURN count(sn) AS n
+            """
+
+        result = gc.query(count_cypher, **params)
+        count = result[0]["n"] if result else 0
+        logger.info(
+            "clear_standard_names: %d nodes match (statuses=%s, source=%s, ids=%s)",
+            count,
+            effective_statuses,
+            source_filter,
+            ids_filter,
+        )
+
+        if dry_run or count == 0:
+            return count
+
+        if ids_filter:
+            # Step 1: remove HAS_STANDARD_NAME relationships for matching scope
+            gc.query(
+                f"""
+                MATCH (src:IMASNode)-[r:HAS_STANDARD_NAME]->(sn:StandardName)
+                WHERE {sn_where}
+                AND src.id STARTS WITH $ids_prefix
+                DELETE r
+                """,
+                **params,
+            )
+            # Step 2: delete nodes that are now orphans (no remaining edges)
+            gc.query(
+                f"""
+                MATCH (sn:StandardName)
+                WHERE {sn_where}
+                AND NOT EXISTS {{ MATCH ()-[:HAS_STANDARD_NAME]->(sn) }}
+                DETACH DELETE sn
+                """,
+                **params,
+            )
+        else:
+            # No scoping — detach-delete all matching nodes (removes all rels)
+            gc.query(
+                f"""
+                MATCH (sn:StandardName)
+                WHERE {sn_where}
+                DETACH DELETE sn
+                """,
+                **params,
+            )
+
+    logger.info("Deleted %d StandardName nodes", count)
+    return count
+
+
 def update_review_status(names: list[str], status: str = "published") -> int:
     """Update review_status for a batch of StandardName nodes.
 

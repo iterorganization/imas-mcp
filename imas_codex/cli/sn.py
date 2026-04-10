@@ -79,6 +79,16 @@ def sn() -> None:
 @click.option("--skip-review", is_flag=True, help="Skip the cross-model review phase")
 @click.option("-v", "--verbose", is_flag=True, help="Enable verbose logging")
 @click.option("-q", "--quiet", is_flag=True, help="Suppress non-error output")
+@click.option(
+    "--reset-to",
+    type=click.Choice(["extracted", "drafted"]),
+    default=None,
+    help=(
+        "Reset standard names before minting. "
+        "'extracted' clears matching SN nodes (full re-run); "
+        "'drafted' resets existing drafted names (re-compose only)."
+    ),
+)
 def sn_mint(
     source: str,
     ids_filter: str | None,
@@ -92,6 +102,7 @@ def sn_mint(
     skip_review: bool,
     verbose: bool,
     quiet: bool,
+    reset_to: str | None,
 ) -> None:
     """Mint standard names from a source.
 
@@ -104,6 +115,27 @@ def sn_mint(
     # Validate: signals source requires facility
     if source == "signals" and not facility:
         raise click.UsageError("--facility is required when --source is signals")
+
+    # Handle --reset-to before the main pipeline
+    if reset_to is not None and not dry_run:
+        source_arg = "dd" if source == "dd" else "signals"
+        from imas_codex.sn.graph_ops import clear_standard_names, reset_standard_names
+
+        if reset_to == "extracted":
+            n = clear_standard_names(
+                source_filter=source_arg,
+                ids_filter=ids_filter,
+            )
+            console.print(
+                f"[yellow]--reset-to extracted:[/yellow] cleared {n} SN nodes"
+            )
+        elif reset_to == "drafted":
+            n = reset_standard_names(
+                from_status="drafted",
+                source_filter=source_arg,
+                ids_filter=ids_filter,
+            )
+            console.print(f"[yellow]--reset-to drafted:[/yellow] reset {n} SN nodes")
 
     from imas_codex.discovery.base.llm import set_litellm_offline_env
 
@@ -777,3 +809,124 @@ def sn_import(
             console.print(f"    - {entry['id']}{units}")
         if len(result.entries) > 20:
             console.print(f"    ... and {len(result.entries) - 20} more")
+
+
+@sn.command("reset")
+@click.option("--status", required=True, help="Reset names with this review_status")
+@click.option(
+    "--to",
+    "to_status",
+    default=None,
+    help="Target review_status after reset (default: clear fields only)",
+)
+@click.option(
+    "--source",
+    type=click.Choice(["dd", "signals"]),
+    default=None,
+    help="Filter by source ('dd' or 'signals')",
+)
+@click.option("--ids", "ids_filter", default=None, help="Filter to specific IDS")
+@click.option("--dry-run", is_flag=True, help="Preview without modifying the graph")
+def sn_reset(
+    status: str,
+    to_status: str | None,
+    source: str | None,
+    ids_filter: str | None,
+    dry_run: bool,
+) -> None:
+    """Reset standard names for re-processing.
+
+    Clears transient fields (embedding, model, confidence, generated_at) and
+    removes HAS_STANDARD_NAME / CANONICAL_UNITS relationships for matching
+    nodes, optionally changing their review_status.
+
+    \b
+    Examples:
+      imas-codex sn reset --status drafted --dry-run
+      imas-codex sn reset --status drafted --to extracted --ids equilibrium
+      imas-codex sn reset --status drafted --source dd
+    """
+    from imas_codex.sn.graph_ops import reset_standard_names
+
+    try:
+        count = reset_standard_names(
+            from_status=status,
+            to_status=to_status,
+            source_filter=source,
+            ids_filter=ids_filter,
+            dry_run=dry_run,
+        )
+    except Exception as e:
+        console.print(f"[red]Reset error:[/red] {e}")
+        raise SystemExit(1) from e
+
+    qualifier = "Would reset" if dry_run else "Reset"
+    to_note = f" → {to_status}" if to_status else " (fields cleared)"
+    console.print(f"{qualifier} {count} StandardName node(s){to_note}")
+
+
+@sn.command("clear")
+@click.option(
+    "--status",
+    default=None,
+    help="Delete names with this review_status (e.g. drafted)",
+)
+@click.option(
+    "--all",
+    "clear_all",
+    is_flag=True,
+    help="Delete all standard names (still respects --include-accepted)",
+)
+@click.option(
+    "--source",
+    type=click.Choice(["dd", "signals"]),
+    default=None,
+    help="Filter by source ('dd' or 'signals')",
+)
+@click.option("--ids", "ids_filter", default=None, help="Filter to specific IDS")
+@click.option(
+    "--include-accepted",
+    is_flag=True,
+    help="Also delete accepted names (dangerous — use with care)",
+)
+@click.option("--dry-run", is_flag=True, help="Preview without modifying the graph")
+def sn_clear(
+    status: str | None,
+    clear_all: bool,
+    source: str | None,
+    ids_filter: str | None,
+    include_accepted: bool,
+    dry_run: bool,
+) -> None:
+    """Delete standard names from the graph.
+
+    Relationship-first safety model: HAS_STANDARD_NAME edges are removed
+    before deleting nodes; scoped deletes only remove orphaned nodes.
+
+    \b
+    Examples:
+      imas-codex sn clear --status drafted --dry-run
+      imas-codex sn clear --all --source dd --ids equilibrium --dry-run
+      imas-codex sn clear --all --include-accepted --dry-run
+    """
+    if not status and not clear_all:
+        raise click.UsageError("Provide --status <value> or --all to select names.")
+
+    status_filter = None if clear_all else ([status] if status else None)
+
+    from imas_codex.sn.graph_ops import clear_standard_names
+
+    try:
+        count = clear_standard_names(
+            status_filter=status_filter,
+            source_filter=source,
+            ids_filter=ids_filter,
+            include_accepted=include_accepted,
+            dry_run=dry_run,
+        )
+    except Exception as e:
+        console.print(f"[red]Clear error:[/red] {e}")
+        raise SystemExit(1) from e
+
+    qualifier = "Would delete" if dry_run else "Deleted"
+    console.print(f"{qualifier} {count} StandardName node(s)")
