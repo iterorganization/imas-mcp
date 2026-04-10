@@ -216,6 +216,8 @@ class GraphSearchTool:
         facility: str | None = None,
         include_version_context: bool = False,
         include_summary_ids: bool = False,
+        physics_domain: str | None = None,
+        lifecycle_filter: str | None = None,
         ctx: Context | None = None,
     ) -> SearchPathsResult:
         """Search IMAS paths using hybrid vector + text search."""
@@ -468,6 +470,20 @@ class GraphSearchTool:
             )
             if r["physics_domain"]:
                 physics_domains.add(r["physics_domain"])
+
+        # --- Post-filter by physics_domain and lifecycle_status ---
+        if physics_domain:
+            hits = [h for h in hits if h.physics_domain == physics_domain]
+        if lifecycle_filter:
+            if lifecycle_filter == "active":
+                # NULL means "inherits IDS-level lifecycle" which defaults to active
+                hits = [
+                    h
+                    for h in hits
+                    if h.lifecycle_status is None or h.lifecycle_status == "active"
+                ]
+            else:
+                hits = [h for h in hits if h.lifecycle_status == lifecycle_filter]
 
         # --- Expand STRUCTURE hits with leaf children ---
         _STRUCTURE_TYPES = {"structure", "struct_array", "STRUCTURE"}
@@ -984,8 +1000,12 @@ class GraphListTool:
                 extra_filters += " AND p.node_type = $node_type"
                 dd_params["node_type"] = node_type
             if lifecycle_filter:
-                extra_filters += " AND p.lifecycle_status = $lifecycle_filter"
-                dd_params["lifecycle_filter"] = lifecycle_filter
+                if lifecycle_filter == "active":
+                    # NULL means "inherits IDS-level lifecycle" which defaults to active
+                    extra_filters += " AND (p.lifecycle_status IS NULL OR p.lifecycle_status = 'active')"
+                else:
+                    extra_filters += " AND p.lifecycle_status = $lifecycle_filter"
+                    dd_params["lifecycle_filter"] = lifecycle_filter
 
             include_metadata = response_profile != "minimal"
 

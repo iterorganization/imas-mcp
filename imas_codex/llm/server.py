@@ -2507,11 +2507,6 @@ class AgentsServer:
 
             tools = _get_imas_tools(semantic_search=True)
 
-            if physics_domain is not None or lifecycle_filter is not None:
-                logger.debug(
-                    "physics_domain/lifecycle_filter not yet implemented in backend, ignoring"
-                )
-
             # Run path search and cluster search in parallel — they are
             # independent operations sharing the same encoder singleton.
             def _path_search():
@@ -2523,7 +2518,8 @@ class AgentsServer:
                         facility=facility,
                         include_version_context=include_version_context,
                         dd_version=dd_version,
-                        # physics_domain and lifecycle_filter not yet implemented in backend
+                        physics_domain=physics_domain,
+                        lifecycle_filter=lifecycle_filter,
                     )
                 )
 
