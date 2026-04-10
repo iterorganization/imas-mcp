@@ -1,4 +1,4 @@
-"""SN build pipeline orchestrator.
+"""SN mint pipeline orchestrator.
 
 Wires the EXTRACT → COMPOSE → [REVIEW] → VALIDATE → PERSIST workers into
 the generic discovery engine and runs them with supervision and progress
@@ -24,13 +24,13 @@ from imas_codex.sn.workers import (
 logger = logging.getLogger(__name__)
 
 
-async def run_sn_build_engine(
+async def run_sn_mint_engine(
     state: SNBuildState,
     *,
     stop_event: asyncio.Event | None = None,
     on_worker_status: Any | None = None,
 ) -> None:
-    """Run the SN build pipeline.
+    """Run the SN mint pipeline.
 
     Pipeline::
 

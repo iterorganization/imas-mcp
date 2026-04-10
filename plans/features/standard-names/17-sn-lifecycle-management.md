@@ -123,17 +123,17 @@ Safety rules:
 
 **Files:** `imas_codex/cli/sn.py`
 
-Add `--reset-to` option to `sn build`:
+Add `--reset-to` option to `sn mint`:
 
 ```bash
 # Re-compose all drafted names from scratch (reset + build)
-imas-codex sn build --source dd --reset-to drafted
+imas-codex sn mint --source dd --reset-to drafted
 
 # Full pipeline from extraction (clears and rebuilds)
-imas-codex sn build --source dd --reset-to extracted --ids equilibrium
+imas-codex sn mint --source dd --reset-to extracted --ids equilibrium
 ```
 
-Reset targets for `sn build`:
+Reset targets for `sn mint`:
 - `extracted` — clear all SN nodes for matching source, re-run full pipeline
 - `drafted` — reset existing drafted names, re-compose them
 
@@ -151,7 +151,7 @@ Reset targets for `sn build`:
 1. `sn reset --status drafted` resets nodes and clears embeddings
 2. `sn clear --status drafted` deletes only drafted names
 3. `sn clear --all` requires `--confirm` flag
-4. `sn build --reset-to drafted` resets then rebuilds
+4. `sn mint --reset-to drafted` resets then rebuilds
 5. Accepted/imported names are never touched without explicit confirmation
 6. `sn status` shows correct counts after reset/clear
 

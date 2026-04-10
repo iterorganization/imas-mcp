@@ -16,9 +16,9 @@ def sn() -> None:
     """Standard name generation and management.
 
     \b
-    Build:
-      imas-codex sn build --source dd [--ids NAME] [--domain NAME]
-      imas-codex sn build --source signals --facility NAME
+    Mint:
+      imas-codex sn mint --source dd [--ids NAME] [--domain NAME]
+      imas-codex sn mint --source signals --facility NAME
 
     \b
     Status:
@@ -27,7 +27,7 @@ def sn() -> None:
     pass
 
 
-@sn.command("build")
+@sn.command("mint")
 @click.option(
     "--source",
     type=click.Choice(["dd", "signals"]),
@@ -79,7 +79,7 @@ def sn() -> None:
 @click.option("--skip-review", is_flag=True, help="Skip the cross-model review phase")
 @click.option("-v", "--verbose", is_flag=True, help="Enable verbose logging")
 @click.option("-q", "--quiet", is_flag=True, help="Suppress non-error output")
-def sn_build(
+def sn_mint(
     source: str,
     ids_filter: str | None,
     domain_filter: str | None,
@@ -93,13 +93,13 @@ def sn_build(
     verbose: bool,
     quiet: bool,
 ) -> None:
-    """Build standard names from a source.
+    """Mint standard names from a source.
 
     \b
     Examples:
-      imas-codex sn build --source dd --ids equilibrium --dry-run
-      imas-codex sn build --source dd --domain magnetics --cost-limit 2
-      imas-codex sn build --source signals --facility tcv
+      imas-codex sn mint --source dd --ids equilibrium --dry-run
+      imas-codex sn mint --source dd --domain magnetics --cost-limit 2
+      imas-codex sn mint --source signals --facility tcv
     """
     # Validate: signals source requires facility
     if source == "signals" and not facility:
@@ -149,7 +149,7 @@ def sn_build(
     log_print(f"  Cost limit: ${cost_limit:.2f}")
     log_print("")
 
-    from imas_codex.sn.pipeline import run_sn_build_engine
+    from imas_codex.sn.pipeline import run_sn_mint_engine
     from imas_codex.sn.state import SNBuildState
 
     # Build progress display
@@ -187,7 +187,7 @@ def sn_build(
     async def _run(stop_event, service_monitor):
         if service_monitor:
             state.service_monitor = service_monitor
-        await run_sn_build_engine(
+        await run_sn_mint_engine(
             state,
             stop_event=stop_event,
             on_worker_status=display.on_worker_status if display else None,

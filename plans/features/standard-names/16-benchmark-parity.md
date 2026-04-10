@@ -1,4 +1,4 @@
-# 16: Benchmark / Build Prompt Parity & Caching
+# 16: Benchmark / Mint Prompt Parity & Cache Verification
 
 **Status:** Ready to implement
 **Depends on:** None (standalone fix)
@@ -7,13 +7,13 @@
 
 ## Problem
 
-The `sn benchmark` command constructs LLM prompts differently from `sn build`,
+The `sn benchmark` command constructs LLM prompts differently from `sn mint`,
 making benchmark metrics (cost, speed, quality) unreliable for production model
 selection.
 
 ### Specific gaps
 
-| Aspect | Build (`workers.py`) | Benchmark (`benchmark.py`) |
+| Aspect | Mint (`workers.py`) | Benchmark (`benchmark.py`) |
 |--------|---------------------|---------------------------|
 | System prompt | `sn/compose_system` via `build_compose_context()` | None |
 | User prompt | `sn/compose_dd` with `cluster_context` | `sn/compose_dd` without `cluster_context` |
@@ -27,6 +27,22 @@ selection.
 - Speed metrics pessimistic (larger uncached prompts)
 - Quality metrics unreliable (model sees different context)
 - Benchmark cannot validate whether caching actually works
+
+### Caching architecture
+
+Prompt caching is **provider-side** — OpenRouter caches repeated prompt prefixes
+automatically when `cache_control` blocks are present. Our infrastructure already
+supports this:
+
+- `inject_cache_control()` in `discovery/base/llm.py` adds `cache_control:
+  {"type": "ephemeral"}` breakpoints to system messages
+- `openrouter/` model prefix preserves these blocks through LiteLLM
+- OpenRouter returns `usage.cache_creation_input_tokens` and
+  `usage.cache_read_input_tokens` in responses
+
+The fix here is to **use the same prompt architecture as mint** so that caching
+works naturally, then **confirm** it works by reading cache token counts from
+the response.
 
 ## Phase 1: Shared prompt construction
 
@@ -122,7 +138,7 @@ for model in config.models:
 
 ## Acceptance criteria
 
-1. `sn benchmark` uses identical prompt construction as `sn build`
+1. `sn benchmark` uses identical prompt construction as `sn mint`
 2. System/user message split enables prompt caching
 3. `cluster_context` is preserved through extraction
 4. Cache hit rate is reported in benchmark output

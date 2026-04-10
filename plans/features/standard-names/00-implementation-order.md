@@ -90,7 +90,7 @@ Prerequisite for production minting:
 
 ### Wave 5: Integration Testing
 
-- End-to-end: build → publish → review → import
+- End-to-end: mint → publish → review → import
 - Round-trip idempotence verification
 - Embedding coverage for all StandardName nodes
 - Documentation updates (AGENTS.md, README)
