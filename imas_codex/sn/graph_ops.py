@@ -13,6 +13,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from imas_codex.graph.client import GraphClient
+
 logger = logging.getLogger(__name__)
 
 
@@ -31,8 +33,6 @@ def get_extraction_candidates_dd(
     Returns dynamic leaf nodes that have been enriched (status=embedded),
     optionally filtered by IDS or physics domain.
     """
-    from imas_codex.graph.client import GraphClient
-
     with GraphClient() as gc:
         params: dict[str, Any] = {"limit": limit}
         where_clauses = [
@@ -76,8 +76,6 @@ def get_extraction_candidates_signals(
     Returns signals that have been enriched, optionally filtered by
     physics domain.
     """
-    from imas_codex.graph.client import GraphClient
-
     with GraphClient() as gc:
         params: dict[str, Any] = {"facility": facility, "limit": limit}
         where_clauses = ["s.status = 'enriched'"]
@@ -112,8 +110,6 @@ def get_extraction_candidates_signals(
 
 def get_existing_standard_names() -> set[str]:
     """Return the set of existing StandardName node IDs for deduplication."""
-    from imas_codex.graph.client import GraphClient
-
     with GraphClient() as gc:
         results = gc.query("MATCH (sn:StandardName) RETURN sn.id AS id")
         return {r["id"] for r in results}
@@ -125,8 +121,6 @@ def get_named_source_ids() -> set[str]:
     Used for resumability: extract skips sources that already have
     a standard name unless --force is specified.
     """
-    from imas_codex.graph.client import GraphClient
-
     with GraphClient() as gc:
         results = gc.query("""
             MATCH (src)-[:HAS_STANDARD_NAME]->(sn:StandardName)
@@ -153,47 +147,63 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
       - ``source_id``: the originating path / signal ID
 
     Optional fields: ``physical_base``, ``subject``, ``component``,
-    ``coordinate``, ``position``, ``units``, ``description``,
-    ``model``, ``review_status``, ``generated_at``, ``confidence``.
+    ``coordinate``, ``position``, ``process``, ``units``, ``description``,
+    ``documentation``, ``kind``, ``tags``, ``links``, ``imas_paths``,
+    ``validity_domain``, ``constraints``, ``model``, ``review_status``,
+    ``generated_at``, ``confidence``.
 
     Returns the number of nodes written.
     """
-    from imas_codex.graph.client import GraphClient
-
     if not names:
         return 0
 
     with GraphClient() as gc:
-        # MERGE StandardName nodes with provenance
+        # MERGE StandardName nodes with provenance — coalesce to preserve existing data
         gc.query(
             """
             UNWIND $batch AS b
             MERGE (sn:StandardName {id: b.id})
-            SET sn.source_type = b.source_type,
-                sn.physical_base = b.physical_base,
-                sn.subject = b.subject,
-                sn.component = b.component,
-                sn.coordinate = b.coordinate,
-                sn.position = b.position,
-                sn.units = b.units,
-                sn.description = b.description,
-                sn.model = b.model,
-                sn.review_status = b.review_status,
-                sn.generated_at = b.generated_at,
-                sn.confidence = b.confidence,
+            SET sn.source_type = coalesce(b.source_type, sn.source_type),
+                sn.physical_base = coalesce(b.physical_base, sn.physical_base),
+                sn.subject = coalesce(b.subject, sn.subject),
+                sn.component = coalesce(b.component, sn.component),
+                sn.coordinate = coalesce(b.coordinate, sn.coordinate),
+                sn.position = coalesce(b.position, sn.position),
+                sn.process = coalesce(b.process, sn.process),
+                sn.description = coalesce(b.description, sn.description),
+                sn.documentation = coalesce(b.documentation, sn.documentation),
+                sn.kind = coalesce(b.kind, sn.kind),
+                sn.tags = coalesce(b.tags, sn.tags),
+                sn.links = coalesce(b.links, sn.links),
+                sn.imas_paths = coalesce(b.imas_paths, sn.imas_paths),
+                sn.validity_domain = coalesce(b.validity_domain, sn.validity_domain),
+                sn.constraints = coalesce(b.constraints, sn.constraints),
+                sn.canonical_units = coalesce(b.units, sn.canonical_units),
+                sn.model = coalesce(b.model, sn.model),
+                sn.review_status = coalesce(b.review_status, sn.review_status),
+                sn.generated_at = coalesce(b.generated_at, sn.generated_at),
+                sn.confidence = coalesce(b.confidence, sn.confidence),
                 sn.created_at = coalesce(sn.created_at, datetime())
             """,
             batch=[
                 {
                     "id": n["id"],
-                    "source_type": n.get("source_type", ""),
+                    "source_type": n.get("source_type") or None,
                     "physical_base": n.get("physical_base"),
                     "subject": n.get("subject"),
                     "component": n.get("component"),
                     "coordinate": n.get("coordinate"),
                     "position": n.get("position"),
-                    "units": n.get("units"),
+                    "process": n.get("process"),
                     "description": n.get("description"),
+                    "documentation": n.get("documentation"),
+                    "kind": n.get("kind"),
+                    "tags": n.get("tags") or None,
+                    "links": n.get("links") or None,
+                    "imas_paths": n.get("imas_paths") or None,
+                    "validity_domain": n.get("validity_domain"),
+                    "constraints": n.get("constraints") or None,
+                    "units": n.get("units"),
                     "model": n.get("model"),
                     "review_status": n.get("review_status"),
                     "generated_at": n.get("generated_at"),
@@ -236,6 +246,21 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
                 ],
             )
 
+        # Create CANONICAL_UNITS relationships: StandardName → Unit
+        units_batch = [
+            {"id": n["id"], "unit": n["units"]} for n in names if n.get("units")
+        ]
+        if units_batch:
+            gc.query(
+                """
+                UNWIND $batch AS b
+                MATCH (sn:StandardName {id: b.id})
+                MERGE (u:Unit {id: b.unit})
+                MERGE (sn)-[:CANONICAL_UNITS]->(u)
+                """,
+                batch=units_batch,
+            )
+
     written = len(names)
     logger.info("Wrote %d StandardName nodes", written)
     return written
@@ -272,8 +297,6 @@ def get_validated_standard_names(
     list of dicts with keys: name, description, source, source_path,
     canonical_units, confidence, ids_name.
     """
-    from imas_codex.graph.client import GraphClient
-
     with GraphClient() as gc:
         params: dict[str, Any] = {"confidence_min": confidence_min}
 

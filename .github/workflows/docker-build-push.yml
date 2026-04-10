@@ -15,7 +15,9 @@ env:
   GHCR_REGISTRY: ghcr.io
   ACR_REGISTRY: crcommonallfrc.azurecr.io
   IMAGE_NAME: ${{ github.repository }}
-  IMAS_DD_VERSION: "4.1.0"
+  # ACR image name is always the upstream path so Azure picks up fork RC
+  # builds. GHCR uses IMAGE_NAME (per-fork) — each fork has its own GHCR.
+  ACR_IMAGE_NAME: iterorganization/imas-codex
   # Graph OCI artifacts: try the repo owner's registry first (where
   # `imas-codex release` pushes them), fall back to the upstream org
   # registry for forks that haven't pushed their own graph yet.
@@ -528,7 +530,7 @@ jobs:
         id: meta-acr
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.ACR_REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: ${{ env.ACR_REGISTRY }}/${{ env.ACR_IMAGE_NAME }}
           tags: |
             type=semver,pattern=v{{version}}${{ matrix.graph_variant.suffix }}
             type=semver,pattern=v{{major}}.{{minor}}${{ matrix.graph_variant.suffix }}
@@ -555,7 +557,6 @@ jobs:
             ${{ steps.meta-ghcr-rc.outputs.labels }}
           build-args: |
             IDS_FILTER=
-            IMAS_DD_VERSION=${{ env.IMAS_DD_VERSION }}
             GHCR_REGISTRY=${{ needs.graph-quality.outputs.graph-registry }}
             GRAPH_TAG=${{ steps.variant.outputs.graph-tag }}
             GRAPH_PACKAGE=${{ matrix.graph_variant.package }}
@@ -583,7 +584,6 @@ jobs:
             ${{ steps.meta-acr.outputs.labels }}
           build-args: |
             IDS_FILTER=
-            IMAS_DD_VERSION=${{ env.IMAS_DD_VERSION }}
             GHCR_REGISTRY=${{ needs.graph-quality.outputs.graph-registry }}
             GRAPH_TAG=${{ steps.variant.outputs.graph-tag }}
             GRAPH_PACKAGE=${{ matrix.graph_variant.package }}

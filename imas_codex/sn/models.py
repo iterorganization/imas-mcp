@@ -52,7 +52,7 @@ class SNPublishEntry(BaseModel):
     )
     unit: str | None = Field(default=None, description="SI unit string")
     tags: list[str] = Field(default_factory=list, description="Classification tags")
-    status: str = Field(default="candidate", description="Entry status")
+    status: str = Field(default="drafted", description="Entry status")
     description: str = Field(default="", description="Human-readable description")
     provenance: SNProvenance = Field(description="Generation provenance")
 

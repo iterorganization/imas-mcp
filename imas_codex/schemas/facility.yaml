@@ -1851,7 +1851,7 @@ classes:
         multivalued: true
       physics_domain:
         description: Physics domain classification
-        range: PhysicsDomain
+        range: string
       status:
         description: Lifecycle status
         range: SignalSourceStatus
@@ -2174,7 +2174,7 @@ classes:
           relationship_type: AT_FACILITY
       physics_domain:
         description: Physics domain for categorizing this signal
-        range: PhysicsDomain
+        range: string
         annotations:
           required_after: enriched
       name:

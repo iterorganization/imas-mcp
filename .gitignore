@@ -8,7 +8,6 @@ __pycache__/
 imas_codex/graph/models.py
 imas_codex/graph/schema_context_data.py
 imas_codex/config/models.py
-imas_codex/core/physics_domain.py
 agents/schema-reference.md
 
 # Generated index files

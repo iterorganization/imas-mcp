@@ -92,50 +92,6 @@ class CustomBuildHook(BuildHookInterface):
         finally:
             sys.path[:] = original_path
 
-    def _check_physics_domain_exists(self) -> bool:
-        """Check if physics domain enum file exists and is up to date."""
-        package_root = Path(__file__).parent
-        generated_file = package_root / "imas_codex" / "core" / "physics_domain.py"
-        schema_file = (
-            package_root / "imas_codex" / "definitions" / "physics" / "domains.yaml"
-        )
-
-        if not generated_file.exists():
-            return False
-
-        if not schema_file.exists():
-            return True  # No schema, nothing to generate
-
-        # Check if schema is newer than generated file
-        return generated_file.stat().st_mtime >= schema_file.stat().st_mtime
-
-    def _generate_physics_domain(self, package_root: Path) -> None:
-        """Generate physics domain enum from LinkML schema."""
-        schema_file = (
-            package_root / "imas_codex" / "definitions" / "physics" / "domains.yaml"
-        )
-        output_file = package_root / "imas_codex" / "core" / "physics_domain.py"
-
-        if not schema_file.exists():
-            self._trace(f"Schema file not found: {schema_file}")
-            return
-
-        # Import generator function
-        original_path = sys.path[:]
-        if str(package_root) not in sys.path:
-            sys.path.insert(0, str(package_root))
-
-        try:
-            from scripts.gen_physics_domains import generate_enum_code
-
-            code = generate_enum_code(schema_file)
-            output_file.write_text(code)
-            self._trace(f"Generated {output_file}")
-        except Exception as e:
-            self._trace(f"Failed to generate physics domain: {e}")
-        finally:
-            sys.path[:] = original_path
-
     def _generate_schema_reference(self, package_root: Path) -> None:
         """Generate agents/schema-reference.md from LinkML schemas."""
         output_file = package_root / "agents" / "schema-reference.md"
@@ -280,14 +236,6 @@ class CustomBuildHook(BuildHookInterface):
                 sys.path[:] = original_path
 
         self._trace(f"Using DD version: {resolved_dd_version}")
-
-        # Check if physics domain enum needs generation
-        physics_domain_exists = self._check_physics_domain_exists()
-        self._trace(f"physics_domain_exists={physics_domain_exists}")
-
-        if not physics_domain_exists:
-            self._trace("Generating physics domain enum from LinkML schema...")
-            self._generate_physics_domain(package_root)
 
         # Check if graph models need generation
         graph_models_exist = self._check_graph_models_exist()
