@@ -596,3 +596,88 @@ def sn_publish(
                 console.print(
                     f"  [yellow]Would create PR for {batch.group_key}[/yellow]"
                 )
+
+
+@sn.command("import-catalog")
+@click.option(
+    "--catalog-dir",
+    type=click.Path(exists=True),
+    required=True,
+    help="Path to catalog directory containing YAML entries",
+)
+@click.option("--tags", type=str, default=None, help="Comma-separated tag filter")
+@click.option("--dry-run", is_flag=True, help="Preview without writing to graph")
+@click.option("-v", "--verbose", is_flag=True, help="Enable verbose logging")
+def sn_import_catalog(
+    catalog_dir: str,
+    tags: str | None,
+    dry_run: bool,
+    verbose: bool,
+) -> None:
+    """Import reviewed catalog entries into the graph.
+
+    \b
+    Reads YAML files from the catalog directory, validates them against
+    the imas-standard-names catalog model, derives grammar fields, and
+    MERGEs into the graph with review_status='accepted'.
+
+    \b
+    Examples:
+      imas-codex sn import-catalog --catalog-dir ../imas-standard-names-catalog/standard_names
+      imas-codex sn import-catalog --catalog-dir <path> --dry-run
+      imas-codex sn import-catalog --catalog-dir <path> --tags equilibrium,core-physics
+    """
+    from pathlib import Path
+
+    if verbose:
+        logging.basicConfig(level=logging.DEBUG)
+
+    tag_filter = [t.strip() for t in tags.split(",") if t.strip()] if tags else None
+
+    console.print("\n[bold]Standard Name Catalog Import[/bold]")
+    console.print(f"  Catalog: {catalog_dir}")
+    if tag_filter:
+        console.print(f"  Tag filter: {', '.join(tag_filter)}")
+    if dry_run:
+        console.print("  Mode: [yellow]dry run[/yellow]")
+    console.print("")
+
+    try:
+        from imas_codex.sn.catalog_import import import_catalog
+
+        result = import_catalog(
+            catalog_dir=Path(catalog_dir),
+            dry_run=dry_run,
+            tag_filter=tag_filter,
+        )
+    except ImportError as e:
+        console.print(
+            f"[red]Missing dependency:[/red] {e}\n"
+            "Install with: uv pip install imas-standard-names"
+        )
+        raise SystemExit(1) from e
+    except Exception as e:
+        console.print(f"[red]Import error:[/red] {e}")
+        raise SystemExit(1) from e
+
+    # Print results
+    if result.errors:
+        console.print(f"  [red]Errors: {len(result.errors)}[/red]")
+        for err in result.errors[:10]:
+            console.print(f"    - {err}")
+        if len(result.errors) > 10:
+            console.print(f"    ... and {len(result.errors) - 10} more")
+
+    if result.skipped:
+        console.print(f"  [yellow]Skipped: {result.skipped}[/yellow] (tag filter)")
+
+    action = "Would import" if dry_run else "Imported"
+    console.print(f"\n  [green]{action}: {result.imported}[/green] entries")
+
+    if dry_run and result.entries:
+        console.print("\n  [bold]Preview:[/bold]")
+        for entry in result.entries[:20]:
+            units = f" [{entry.get('units', '')}]" if entry.get("units") else ""
+            console.print(f"    - {entry['id']}{units}")
+        if len(result.entries) > 20:
+            console.print(f"    ... and {len(result.entries) - 20} more")
