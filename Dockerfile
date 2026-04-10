@@ -61,8 +61,11 @@ RUN git config core.sparseCheckout true \
     && echo "Sparse checkout (phase 1) paths:" \
     && git sparse-checkout list
 
-# Configure PyTorch CPU-only to minimize image size
-ENV UV_EXTRA_INDEX_URL="https://download.pytorch.org/whl/cpu"
+# Configure PyTorch CPU-only to minimize image size.
+# unsafe-best-match allows uv to find the best version across all indexes,
+# preventing PyTorch's bundled requests==2.28.1 from shadowing PyPI's newer version.
+ENV UV_EXTRA_INDEX_URL="https://download.pytorch.org/whl/cpu" \
+    UV_INDEX_STRATEGY="unsafe-best-match"
 
 ## Install only dependencies without installing the local project (frozen = must match committed lock)
 # Lock file already specifies CPU-only PyTorch (no nvidia-* CUDA deps)
