@@ -46,7 +46,11 @@ All status values use past tense: drafted, published, accepted, rejected, skippe
 | 11 | rich-compose | Full catalog fields, schema extension, coalesce fix, tests | 📋 Ready | 09 | 12, 13, 14 |
 | 12 | catalog-import | Feedback import from reviewed catalog PRs | 📋 Ready | 11 P1 | 13 P4 |
 | 13 | publish-pipeline | Lossless YAML export, batched PRs | 📋 Ready | 11 (all) | 12 (feedback loop) |
-| 14 | mcp-tools-benchmark | SN search/fetch/list MCP tools + benchmark quality | 📋 Ready | 11 (embedding) | — |
+| 14 | mcp-tools-benchmark | SN search/fetch/list MCP tools + benchmark quality | ✅ Done | 11 (embedding) | 16 |
+| 15 | import-physics-domain | Import physics_domain from catalog | ✅ Done | 12 | — |
+| 16 | benchmark-parity | Fix benchmark/build prompt parity + caching | 📋 Ready | 14 | 18 |
+| 17 | sn-lifecycle-management | SN reset/clear commands | 📋 Ready | — | — |
+| 18 | benchmark-calibration | Calibration dataset, reviewer enhancement, model selection | 📋 Ready | 16 | — |
 
 ## Deployment Waves
 
@@ -77,7 +81,14 @@ Run in parallel — export and tools are independent:
 - **Agent A (engineer):** Fix lossy publish export, update graph query, PR workflow, dedup
 - **Agent B (engineer):** 3 MCP tools (search/fetch/list) + benchmark quality tiers + reviewer
 
-### Wave 4: Integration Testing
+### Wave 4: Benchmark & Lifecycle (Plans 16, 17, 18)
+
+Prerequisite for production minting:
+- **Agent A (engineer):** Plan 16 — fix benchmark prompt parity + caching verification
+- **Agent B (engineer):** Plan 17 — SN reset/clear commands for iterative development
+- **Agent C (architect):** Plan 18 — calibration dataset, reviewer enhancement, model selection
+
+### Wave 5: Integration Testing
 
 - End-to-end: build → publish → review → import
 - Round-trip idempotence verification
