@@ -3106,6 +3106,80 @@ class AgentsServer:
 
                 return _f(resource)
 
+        # =====================================================================
+        # Standard Name tools
+        # =====================================================================
+
+        @self.mcp.tool()
+        def search_standard_names(
+            query: str,
+            kind: str | None = None,
+            tags: list[str] | None = None,
+            review_status: str | None = None,
+            k: int = 20,
+        ) -> str:
+            """Search standard names by physics concept.
+
+            Hybrid search (vector + keyword) over StandardName descriptions
+            and documentation. Enriched with DD path links, unit info, and
+            grammar decomposition.
+
+            Args:
+                query: Natural-language description of the quantity to find
+                    (e.g. "electron temperature", "plasma boundary shape").
+                kind: Filter by kind (e.g. "scalar", "vector", "metadata").
+                tags: Filter by tags (e.g. ["equilibrium", "core_profiles"]).
+                review_status: Filter by review status (e.g. "drafted", "published").
+                k: Maximum results to return (default 20).
+
+            Returns:
+                Formatted text report with matched standard names, descriptions,
+                units, tags, grammar fields, and relevance scores.
+            """
+            from imas_codex.llm.sn_tools import _search_standard_names as _ssn
+
+            return _ssn(query, kind=kind, tags=tags, review_status=review_status, k=k)
+
+        @self.mcp.tool()
+        def fetch_standard_names(names: str) -> str:
+            """Fetch full entries for known standard names.
+
+            Returns complete metadata: description, documentation, unit, kind,
+            tags, links, ids_paths, grammar fields, provenance, review status.
+
+            Args:
+                names: Space- or comma-separated standard name IDs
+                    (e.g. "electron_temperature plasma_current").
+
+            Returns:
+                Formatted text report with complete documentation per name.
+            """
+            from imas_codex.llm.sn_tools import _fetch_standard_names as _fsn
+
+            return _fsn(names)
+
+        @self.mcp.tool()
+        def list_standard_names(
+            tag: str | None = None,
+            kind: str | None = None,
+            review_status: str | None = None,
+        ) -> str:
+            """List standard names with optional filters.
+
+            Returns name, description, kind, unit, status for each entry.
+
+            Args:
+                tag: Filter by tag (e.g. "equilibrium", "magnetics").
+                kind: Filter by kind (e.g. "scalar", "vector").
+                review_status: Filter by review status (e.g. "drafted").
+
+            Returns:
+                Formatted markdown table of standard names.
+            """
+            from imas_codex.llm.sn_tools import _list_standard_names as _lsn
+
+            return _lsn(tag=tag, kind=kind, review_status=review_status)
+
         if not self.read_only:
             # =====================================================================
             # Log Tools (Phase 3: MCP Logs)

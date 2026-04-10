@@ -13,6 +13,7 @@ import logging
 import time
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from imas_standard_names.grammar import (
@@ -51,6 +52,7 @@ class BenchmarkConfig:
     max_candidates: int = 50
     runs_per_model: int = 1
     temperature: float = 0.0  # pinned for reproducibility
+    reviewer_model: str | None = None  # frontier model for quality scoring
 
 
 @dataclass
@@ -74,6 +76,12 @@ class ModelResult:
     reference_total: int = 0
     reference_precision: float = 0.0
     reference_recall: float = 0.0
+    # Quality scoring (reviewer model)
+    quality_scores: list[dict] = field(default_factory=list)
+    quality_distribution: dict[str, int] = field(default_factory=dict)
+    avg_quality_score: float = 0.0
+    avg_doc_length: float = 0.0
+    avg_fields_populated: float = 0.0
 
 
 @dataclass
@@ -252,6 +260,109 @@ def compare_to_reference(
 
 
 # ---------------------------------------------------------------------------
+# Quality tier labels
+# ---------------------------------------------------------------------------
+
+
+def load_quality_labels() -> dict[str, list[str]]:
+    """Load quality tier labels from benchmark_labels.yaml.
+
+    Returns a dict mapping tier name → list of standard name IDs.
+    Returns empty dict if file not found.
+    """
+    import yaml
+
+    labels_path = Path(__file__).parent / "benchmark_labels.yaml"
+    if labels_path.exists():
+        with open(labels_path) as f:
+            return yaml.safe_load(f) or {}
+    return {}
+
+
+async def score_with_reviewer(
+    candidates: list[dict],
+    reviewer_model: str,
+    quality_labels: dict[str, list[str]],
+    grammar_context: dict[str, list[str]],
+) -> list[dict]:
+    """Score candidates using a reviewer model.
+
+    Returns list of dicts with: name, quality_tier, score, reasoning.
+    """
+    from pydantic import BaseModel, Field
+
+    from imas_codex.discovery.base.llm import acall_llm_structured
+
+    class QualityReview(BaseModel):
+        name: str
+        quality_tier: str = Field(description="outstanding, good, adequate, or poor")
+        score: int = Field(ge=0, le=100, description="Quality score 0-100")
+        reasoning: str
+
+    class QualityReviewBatch(BaseModel):
+        reviews: list[QualityReview]
+
+    # Build prompt with labeled examples and rubric
+    labeled_examples = []
+    for tier, names in quality_labels.items():
+        for name in names:
+            labeled_examples.append(f"  - {name}: {tier}")
+
+    rubric = """
+Quality rubric:
+- Grammar correctness: Does the name follow standard name grammar rules?
+- Semantic accuracy: Does the name correctly describe the physics quantity?
+- Documentation quality: Is the documentation clear, with LaTeX where appropriate?
+- Naming conventions: Does the name follow established patterns?
+- Unit consistency: Is the unit correct for this quantity?
+
+Quality tiers:
+- outstanding (80-100): Rich docs, correct grammar, cross-linked, LaTeX
+- good (60-79): Correct grammar, adequate documentation
+- adequate (40-59): Correct grammar, thin documentation
+- poor (0-39): Grammar valid but naming debatable or docs minimal
+"""
+
+    prompt = f"""You are reviewing standard name entries for quality.
+
+{rubric}
+
+Labeled examples (scoring anchors):
+{chr(10).join(labeled_examples)}
+
+Review these candidates and assign a quality tier and score:
+"""
+
+    # Process in batches of 10
+    all_reviews: list[dict] = []
+    for i in range(0, len(candidates), 10):
+        batch = candidates[i : i + 10]
+        batch_text = []
+        for c in batch:
+            batch_text.append(f"Name: {c.get('standard_name', '')}")
+            batch_text.append(f"  Description: {c.get('description', '')}")
+            doc = c.get("documentation", "") or ""
+            batch_text.append(f"  Documentation: {doc[:200]}")
+            batch_text.append(f"  Unit: {c.get('unit', 'N/A')}")
+            batch_text.append(f"  Fields: {c.get('fields', {})}")
+            batch_text.append("")
+
+        messages = [{"role": "user", "content": prompt + "\n".join(batch_text)}]
+
+        try:
+            result, _, _ = await acall_llm_structured(
+                model=reviewer_model,
+                messages=messages,
+                response_model=QualityReviewBatch,
+            )
+            all_reviews.extend([r.model_dump() for r in result.reviews])
+        except Exception as e:
+            logger.warning("Reviewer scoring failed for batch: %s", e)
+
+    return all_reviews
+
+
+# ---------------------------------------------------------------------------
 # Core benchmark runner
 # ---------------------------------------------------------------------------
 
@@ -295,6 +406,7 @@ async def run_benchmark(
 
     # --- 2. Run each model ---
     results: list[ModelResult] = []
+    grammar_ctx = build_grammar_context()
     for model in config.models:
         logger.info("Benchmarking model: %s", model)
         model_result = await _run_model(
@@ -304,6 +416,53 @@ async def run_benchmark(
             reference=REFERENCE_NAMES,
         )
         results.append(model_result)
+
+    # --- 2b. Reviewer scoring (optional) ---
+    if config.reviewer_model:
+        quality_labels = load_quality_labels()
+        for result in results:
+            if result.candidates:
+                reviews = await score_with_reviewer(
+                    result.candidates,
+                    config.reviewer_model,
+                    quality_labels,
+                    grammar_ctx,
+                )
+                result.quality_scores = reviews
+                # Compute distribution
+                for r in reviews:
+                    tier = r.get("quality_tier", "unknown")
+                    result.quality_distribution[tier] = (
+                        result.quality_distribution.get(tier, 0) + 1
+                    )
+                if reviews:
+                    result.avg_quality_score = sum(
+                        r.get("score", 0) for r in reviews
+                    ) / len(reviews)
+
+                # Compute doc length and field coverage metrics
+                docs = [c.get("documentation", "") or "" for c in result.candidates]
+                result.avg_doc_length = (
+                    sum(len(d) for d in docs) / len(docs) if docs else 0.0
+                )
+
+                all_fields = {
+                    "physical_base",
+                    "subject",
+                    "component",
+                    "coordinate",
+                    "position",
+                    "process",
+                }
+                field_counts = []
+                for c in result.candidates:
+                    fields = c.get("fields", {})
+                    field_counts.append(
+                        len(set(fields.keys()) & all_fields) / len(all_fields)
+                    )
+                result.avg_fields_populated = (
+                    sum(field_counts) / len(field_counts) if field_counts else 0.0
+                )
 
     # --- 3. Build report ---
     report = BenchmarkReport(
@@ -486,6 +645,9 @@ def render_comparison_table(report: BenchmarkReport) -> None:
 
     console = Console()
 
+    # Check if any result has quality scores
+    has_quality = any(r.quality_scores for r in report.results)
+
     table = Table(
         title="SN Benchmark Results",
         show_header=True,
@@ -501,6 +663,10 @@ def render_comparison_table(report: BenchmarkReport) -> None:
     table.add_column("Names/min", justify="right")
     table.add_column("$/name", justify="right")
     table.add_column("Errors", justify="right")
+    if has_quality:
+        table.add_column("Avg Quality", justify="right")
+        table.add_column("Avg Doc Len", justify="right")
+        table.add_column("Fields Pop%", justify="right")
 
     for r in report.results:
         n = len(r.candidates)
@@ -514,7 +680,7 @@ def render_comparison_table(report: BenchmarkReport) -> None:
         cpn_str = f"${r.cost_per_name:.4f}" if r.cost_per_name > 0 else "—"
         err_str = str(r.batch_errors) if r.batch_errors > 0 else "0"
 
-        table.add_row(
+        row_data = [
             r.model,
             str(n),
             valid_pct,
@@ -524,14 +690,64 @@ def render_comparison_table(report: BenchmarkReport) -> None:
             speed_str,
             cpn_str,
             err_str,
-        )
+        ]
+
+        if has_quality:
+            qual_str = f"{r.avg_quality_score:.1f}" if r.quality_scores else "—"
+            doc_str = f"{r.avg_doc_length:.0f}" if r.quality_scores else "—"
+            fp_str = f"{r.avg_fields_populated * 100:.0f}%" if r.quality_scores else "—"
+            row_data.extend([qual_str, doc_str, fp_str])
+
+        table.add_row(*row_data)
 
     console.print()
     console.print(table)
 
+    # Quality distribution table (when reviewer was used)
+    if has_quality:
+        qual_table = Table(
+            title="Quality Distribution",
+            show_header=True,
+            header_style="bold magenta",
+        )
+        qual_table.add_column("Model", style="bold")
+        qual_table.add_column("Outstanding", justify="right")
+        qual_table.add_column("Good", justify="right")
+        qual_table.add_column("Adequate", justify="right")
+        qual_table.add_column("Poor", justify="right")
+
+        for r in report.results:
+            if r.quality_scores:
+                dist = r.quality_distribution
+                n_reviews = len(r.quality_scores)
+
+                qual_table.add_row(
+                    r.model,
+                    f"{dist.get('outstanding', 0)} ({dist.get('outstanding', 0) / n_reviews * 100:.0f}%)"
+                    if n_reviews
+                    else "—",
+                    f"{dist.get('good', 0)} ({dist.get('good', 0) / n_reviews * 100:.0f}%)"
+                    if n_reviews
+                    else "—",
+                    f"{dist.get('adequate', 0)} ({dist.get('adequate', 0) / n_reviews * 100:.0f}%)"
+                    if n_reviews
+                    else "—",
+                    f"{dist.get('poor', 0)} ({dist.get('poor', 0) / n_reviews * 100:.0f}%)"
+                    if n_reviews
+                    else "—",
+                )
+
+        console.print()
+        console.print(qual_table)
+
     # Summary line
+    reviewer_str = (
+        f" | Reviewer: {report.config.reviewer_model}"
+        if report.config.reviewer_model
+        else ""
+    )
     console.print(
         f"\n[dim]Extraction: {report.extraction_count} items | "
-        f"Temperature: {report.config.temperature} | "
+        f"Temperature: {report.config.temperature}{reviewer_str} | "
         f"Timestamp: {report.timestamp}[/dim]"
     )

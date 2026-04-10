@@ -661,3 +661,90 @@ class TestCLICommand:
         result = runner.invoke(sn, ["benchmark"])
         assert result.exit_code != 0
         assert "Missing" in result.output or "required" in result.output.lower()
+
+
+class TestQualityLabels:
+    """Test benchmark quality tier labels."""
+
+    def test_labels_load(self):
+        from imas_codex.sn.benchmark import load_quality_labels
+
+        labels = load_quality_labels()
+        assert isinstance(labels, dict)
+        assert "outstanding" in labels
+        assert "good" in labels
+        assert "adequate" in labels
+        assert "poor" in labels
+
+    def test_labels_non_empty(self):
+        from imas_codex.sn.benchmark import load_quality_labels
+
+        labels = load_quality_labels()
+        for tier, names in labels.items():
+            assert len(names) > 0, f"Tier {tier} should have entries"
+
+    def test_labels_no_overlap(self):
+        from imas_codex.sn.benchmark import load_quality_labels
+
+        labels = load_quality_labels()
+        all_names = []
+        for names in labels.values():
+            all_names.extend(names)
+        assert len(all_names) == len(set(all_names)), "No duplicate names across tiers"
+
+    def test_reviewer_config_field(self):
+        from imas_codex.sn.benchmark import BenchmarkConfig
+
+        config = BenchmarkConfig(models=["test"], reviewer_model="test/model")
+        assert config.reviewer_model == "test/model"
+
+    def test_reviewer_config_default_none(self):
+        from imas_codex.sn.benchmark import BenchmarkConfig
+
+        config = BenchmarkConfig(models=["test"])
+        assert config.reviewer_model is None
+
+    def test_model_result_quality_fields(self):
+        from imas_codex.sn.benchmark import ModelResult
+
+        r = ModelResult(model="test")
+        assert r.quality_scores == []
+        assert r.quality_distribution == {}
+        assert r.avg_quality_score == 0.0
+        assert r.avg_doc_length == 0.0
+        assert r.avg_fields_populated == 0.0
+
+    def test_model_result_with_quality(self):
+        from imas_codex.sn.benchmark import ModelResult
+
+        r = ModelResult(
+            model="test",
+            quality_scores=[
+                {
+                    "name": "a",
+                    "score": 80,
+                    "quality_tier": "outstanding",
+                    "reasoning": "good",
+                }
+            ],
+            quality_distribution={"outstanding": 1},
+            avg_quality_score=80.0,
+            avg_doc_length=150.0,
+            avg_fields_populated=0.5,
+        )
+        assert r.avg_quality_score == 80.0
+        assert r.quality_distribution["outstanding"] == 1
+
+
+class TestReviewerModelCLI:
+    """Test --reviewer-model CLI option."""
+
+    def test_reviewer_model_in_help(self):
+        from click.testing import CliRunner
+
+        from imas_codex.cli.sn import sn
+
+        runner = CliRunner()
+        result = runner.invoke(sn, ["benchmark", "--help"])
+        assert result.exit_code == 0
+        assert "--reviewer-model" in result.output
