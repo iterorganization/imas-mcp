@@ -43,7 +43,7 @@ def sample_provenance() -> SNProvenance:
 def sample_entry(sample_provenance: SNProvenance) -> SNPublishEntry:
     return SNPublishEntry(
         name="electron_temperature",
-        kind="physical",
+        kind="scalar",
         unit="eV",
         tags=["equilibrium", "core_profiles"],
         status="drafted",
@@ -58,7 +58,7 @@ def sample_entries() -> list[SNPublishEntry]:
     return [
         SNPublishEntry(
             name="electron_temperature",
-            kind="physical",
+            kind="scalar",
             unit="eV",
             tags=["equilibrium"],
             description="Electron temperature",
@@ -71,7 +71,7 @@ def sample_entries() -> list[SNPublishEntry]:
         ),
         SNPublishEntry(
             name="electron_density",
-            kind="physical",
+            kind="scalar",
             unit="m^-3",
             tags=["core_profiles"],
             description="Electron density",
@@ -84,7 +84,7 @@ def sample_entries() -> list[SNPublishEntry]:
         ),
         SNPublishEntry(
             name="plasma_current",
-            kind="physical",
+            kind="scalar",
             unit="A",
             tags=["equilibrium"],
             description="Plasma current",
@@ -97,7 +97,7 @@ def sample_entries() -> list[SNPublishEntry]:
         ),
         SNPublishEntry(
             name="major_radius",
-            kind="geometric",
+            kind="vector",
             unit="m",
             tags=["equilibrium"],
             description="Major radius",
@@ -143,14 +143,19 @@ class TestSNPublishEntry:
             name="test_name",
             provenance=sample_provenance,
         )
-        assert entry.kind == "physical"
+        assert entry.kind == "scalar"
         assert entry.status == "drafted"
         assert entry.tags == []
         assert entry.unit is None
+        assert entry.documentation is None
+        assert entry.links == []
+        assert entry.ids_paths == []
+        assert entry.constraints == []
+        assert entry.validity_domain is None
 
     def test_all_fields(self, sample_entry: SNPublishEntry) -> None:
         assert sample_entry.name == "electron_temperature"
-        assert sample_entry.kind == "physical"
+        assert sample_entry.kind == "scalar"
         assert sample_entry.unit == "eV"
         assert "equilibrium" in sample_entry.tags
         assert sample_entry.provenance.confidence == 0.95
@@ -199,7 +204,7 @@ class TestGenerateYamlEntry:
         doc = yaml.safe_load(content)
 
         assert doc["name"] == "electron_temperature"
-        assert doc["kind"] == "physical"
+        assert doc["kind"] == "scalar"
         assert doc["unit"] == "eV"
         assert doc["status"] == "drafted"
         assert doc["description"] == "Electron temperature profile"
@@ -280,6 +285,31 @@ class TestGenerateCatalogFiles:
         names = {p.stem for p in written}
         expected = {e.name for e in sample_entries}
         assert names == expected
+
+    def test_directory_structure_by_tag(
+        self, tmp_path: Path, sample_entries: list[SNPublishEntry]
+    ) -> None:
+        """Files should be grouped into tag-based subdirectories."""
+        written = generate_catalog_files(sample_entries, tmp_path)
+        # All entries have tags — check subdirs were created
+        subdirs = {p.parent.name for p in written}
+        assert "equilibrium" in subdirs
+        assert "core_profiles" in subdirs
+        # equilibrium tag entries go into equilibrium/
+        eq_files = [p for p in written if p.parent.name == "equilibrium"]
+        eq_names = {p.stem for p in eq_files}
+        assert "electron_temperature" in eq_names
+        assert "plasma_current" in eq_names
+        assert "major_radius" in eq_names
+
+    def test_untagged_goes_to_unscoped(
+        self, tmp_path: Path, sample_provenance: SNProvenance
+    ) -> None:
+        """Entries without tags go into 'unscoped/' subdirectory."""
+        entry = SNPublishEntry(name="untagged_quantity", provenance=sample_provenance)
+        written = generate_catalog_files([entry], tmp_path)
+        assert len(written) == 1
+        assert written[0].parent.name == "unscoped"
 
     def test_file_content_valid_yaml(
         self, tmp_path: Path, sample_entry: SNPublishEntry
@@ -367,14 +397,27 @@ class TestCheckCatalogDuplicates:
     def test_finds_catalog_duplicates(
         self, tmp_path: Path, sample_entries: list[SNPublishEntry]
     ) -> None:
-        # Write one existing catalog entry
-        (tmp_path / "electron_temperature.yaml").write_text(
-            yaml.safe_dump({"name": "electron_temperature", "kind": "physical"})
+        # Write one existing catalog entry in a subdirectory (tag-based layout)
+        subdir = tmp_path / "equilibrium"
+        subdir.mkdir()
+        (subdir / "electron_temperature.yaml").write_text(
+            yaml.safe_dump({"name": "electron_temperature", "kind": "scalar"})
         )
         new, dupes = check_catalog_duplicates(sample_entries, catalog_dir=tmp_path)
         assert len(dupes) == 1
         assert dupes[0].name == "electron_temperature"
         assert len(new) == len(sample_entries) - 1
+
+    def test_finds_catalog_duplicates_top_level(
+        self, tmp_path: Path, sample_entries: list[SNPublishEntry]
+    ) -> None:
+        # Also detect duplicates in flat (top-level) YAML files
+        (tmp_path / "electron_temperature.yaml").write_text(
+            yaml.safe_dump({"name": "electron_temperature", "kind": "scalar"})
+        )
+        new, dupes = check_catalog_duplicates(sample_entries, catalog_dir=tmp_path)
+        assert len(dupes) == 1
+        assert dupes[0].name == "electron_temperature"
 
     def test_finds_within_batch_duplicates(
         self, sample_provenance: SNProvenance
@@ -482,3 +525,115 @@ class TestGraphRecordsToEntries:
         ]
         entries = graph_records_to_entries(records)
         assert entries[0].tags == []
+
+    def test_rich_fields_carried_through(self) -> None:
+        """Rich fields (documentation, links, ids_paths, constraints, validity_domain, kind) are preserved."""
+        records = [
+            {
+                "name": "ion_temperature",
+                "description": "Ion temperature",
+                "documentation": "Ion temperature $T_i$ in eV. See also electron_temperature.",
+                "kind": "scalar",
+                "source": "dd",
+                "source_path": "core_profiles/profiles_1d/ion/temperature",
+                "canonical_units": "eV",
+                "confidence": 0.9,
+                "ids_name": "core_profiles",
+                "tags": ["core_profiles", "kinetics"],
+                "links": ["electron_temperature", "ion_density"],
+                "ids_paths": ["core_profiles/profiles_1d/ion/temperature"],
+                "constraints": ["T_i > 0"],
+                "validity_domain": "core plasma",
+            }
+        ]
+        entries = graph_records_to_entries(records)
+        assert len(entries) == 1
+        e = entries[0]
+        assert (
+            e.documentation
+            == "Ion temperature $T_i$ in eV. See also electron_temperature."
+        )
+        assert e.kind == "scalar"
+        assert e.links == ["electron_temperature", "ion_density"]
+        assert e.ids_paths == ["core_profiles/profiles_1d/ion/temperature"]
+        assert e.constraints == ["T_i > 0"]
+        assert e.validity_domain == "core plasma"
+        assert e.tags == ["core_profiles", "kinetics"]
+
+    def test_kind_defaults_to_scalar(self) -> None:
+        """kind field defaults to 'scalar' when not present in record."""
+        records = [
+            {"name": "test_q", "source": "dd", "source_path": "x", "confidence": 0.8}
+        ]
+        entries = graph_records_to_entries(records)
+        assert entries[0].kind == "scalar"
+
+
+# =============================================================================
+# Rich-field YAML round-trip tests
+# =============================================================================
+
+
+class TestRichFieldRoundTrip:
+    def test_all_rich_fields_in_yaml(self, sample_provenance: SNProvenance) -> None:
+        """Full round-trip: create entry with all rich fields → YAML → parse back."""
+        entry = SNPublishEntry(
+            name="ion_temperature",
+            kind="scalar",
+            unit="eV",
+            tags=["core_profiles", "kinetics"],
+            status="drafted",
+            description="Ion temperature",
+            documentation="Ion temperature $T_i$ in eV. Typical range 0.1–20 keV.",
+            links=["electron_temperature", "ion_density"],
+            ids_paths=["core_profiles/profiles_1d/ion/temperature"],
+            constraints=["T_i > 0"],
+            validity_domain="core plasma",
+            provenance=sample_provenance,
+        )
+        content = generate_yaml_entry(entry)
+        doc = yaml.safe_load(content)
+
+        assert doc["name"] == "ion_temperature"
+        assert doc["kind"] == "scalar"
+        assert doc["unit"] == "eV"
+        assert (
+            doc["documentation"]
+            == "Ion temperature $T_i$ in eV. Typical range 0.1–20 keV."
+        )
+        assert doc["links"] == [
+            {"name": "electron_temperature"},
+            {"name": "ion_density"},
+        ]
+        assert doc["ids_paths"] == ["core_profiles/profiles_1d/ion/temperature"]
+        assert doc["constraints"] == ["T_i > 0"]
+        assert doc["validity_domain"] == "core plasma"
+        assert doc["tags"] == ["core_profiles", "kinetics"]
+
+    def test_empty_rich_fields_omitted(self, sample_provenance: SNProvenance) -> None:
+        """Empty optional rich fields should not appear in YAML output."""
+        entry = SNPublishEntry(
+            name="bare_quantity",
+            provenance=sample_provenance,
+        )
+        content = generate_yaml_entry(entry)
+        doc = yaml.safe_load(content)
+
+        assert "documentation" not in doc
+        assert "links" not in doc
+        assert "ids_paths" not in doc
+        assert "constraints" not in doc
+        assert "validity_domain" not in doc
+
+    def test_links_formatted_as_name_dicts(
+        self, sample_provenance: SNProvenance
+    ) -> None:
+        """links list should be serialized as [{name: ...}] objects."""
+        entry = SNPublishEntry(
+            name="test_quantity",
+            links=["alpha", "beta"],
+            provenance=sample_provenance,
+        )
+        content = generate_yaml_entry(entry)
+        doc = yaml.safe_load(content)
+        assert doc["links"] == [{"name": "alpha"}, {"name": "beta"}]

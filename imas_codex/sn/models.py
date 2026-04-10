@@ -72,12 +72,26 @@ class SNPublishEntry(BaseModel):
 
     name: str = Field(description="The standard name")
     kind: str = Field(
-        default="physical", description="Name kind: physical or geometric"
+        default="scalar", description="Name kind: scalar, vector, or metadata"
     )
     unit: str | None = Field(default=None, description="SI unit string")
     tags: list[str] = Field(default_factory=list, description="Classification tags")
     status: str = Field(default="drafted", description="Entry status")
     description: str = Field(default="", description="Human-readable description")
+    # Rich fields
+    documentation: str | None = Field(
+        default=None, description="Rich documentation with LaTeX"
+    )
+    links: list[str] = Field(default_factory=list, description="Related standard names")
+    ids_paths: list[str] = Field(
+        default_factory=list, description="Mapped IMAS DD paths"
+    )
+    constraints: list[str] = Field(
+        default_factory=list, description="Physical constraints"
+    )
+    validity_domain: str | None = Field(
+        default=None, description="Physical region where valid"
+    )
     provenance: SNProvenance = Field(description="Generation provenance")
 
 

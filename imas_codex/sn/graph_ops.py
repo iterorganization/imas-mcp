@@ -274,13 +274,14 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
 def get_validated_standard_names(
     ids_filter: str | None = None,
     confidence_min: float = 0.0,
+    review_status: str = "drafted",
 ) -> list[dict[str, Any]]:
     """Read validated StandardName nodes and their provenance.
 
-    Queries all StandardName nodes, joining through ``HAS_STANDARD_NAME``
-    to find source entities and their parent IDS.  Uses ``collect()``
-    to avoid row duplication when a name has multiple sources (takes
-    the first source).
+    Queries StandardName nodes with the given ``review_status``, joining
+    through ``HAS_STANDARD_NAME`` to find source entities and their parent IDS,
+    and through ``CANONICAL_UNITS`` to find the unit node.  Uses ``collect()``
+    to avoid row duplication when a name has multiple sources (takes the first).
 
     Parameters
     ----------
@@ -291,30 +292,41 @@ def get_validated_standard_names(
     confidence_min:
         Minimum confidence threshold.  Nodes without a ``confidence``
         property are treated as 1.0 (grammar-validated).
+    review_status:
+        Filter by ``review_status`` property (default ``"drafted"``).
 
     Returns
     -------
-    list of dicts with keys: name, description, source, source_path,
-    canonical_units, confidence, ids_name.
+    list of dicts with keys: name, description, documentation, kind,
+    canonical_units, tags, links, ids_paths, constraints, validity_domain,
+    confidence, model, source, source_path, ids_name, physical_base,
+    subject, component, coordinate, position, process, source_ids_names.
     """
     with GraphClient() as gc:
-        params: dict[str, Any] = {"confidence_min": confidence_min}
+        params: dict[str, Any] = {
+            "confidence_min": confidence_min,
+            "review_status": review_status,
+        }
 
         # Collect source info — use HAS_STANDARD_NAME (entity → concept)
         cypher = """
             MATCH (sn:StandardName)
-            WHERE coalesce(sn.confidence, 1.0) >= $confidence_min
+            WHERE sn.review_status = $review_status
+            AND coalesce(sn.confidence, 1.0) >= $confidence_min
             OPTIONAL MATCH (src)-[:HAS_STANDARD_NAME]->(sn)
             OPTIONAL MATCH (src)-[:IN_IDS]->(ids:IDS)
+            OPTIONAL MATCH (sn)-[:CANONICAL_UNITS]->(u:Unit)
             WITH sn,
                  collect(DISTINCT src.id)[0] AS first_source,
-                 collect(DISTINCT ids.id)[0] AS first_ids
+                 collect(DISTINCT ids.id)[0] AS first_ids,
+                 collect(DISTINCT ids.id) AS all_ids,
+                 u
         """
 
         if ids_filter:
             # Re-check: at least one HAS_STANDARD_NAME source must be in the target IDS
             cypher += """
-            WITH sn, first_source, first_ids
+            WITH sn, first_source, first_ids, all_ids, u
             WHERE first_ids = $ids_filter
             """
             params["ids_filter"] = ids_filter
@@ -322,19 +334,67 @@ def get_validated_standard_names(
         cypher += """
             RETURN sn.id AS name,
                    sn.description AS description,
+                   sn.documentation AS documentation,
+                   sn.kind AS kind,
+                   coalesce(u.id, sn.canonical_units, sn.units) AS canonical_units,
+                   sn.tags AS tags,
+                   sn.links AS links,
+                   sn.ids_paths AS ids_paths,
+                   sn.constraints AS constraints,
+                   sn.validity_domain AS validity_domain,
+                   coalesce(sn.confidence, 1.0) AS confidence,
+                   sn.model AS model,
                    coalesce(sn.source, sn.source_type) AS source,
                    coalesce(sn.source_path, first_source) AS source_path,
-                   coalesce(sn.canonical_units, sn.units) AS canonical_units,
-                   coalesce(sn.confidence, 1.0) AS confidence,
-                   first_ids AS ids_name
+                   first_ids AS ids_name,
+                   sn.physical_base AS physical_base,
+                   sn.subject AS subject,
+                   sn.component AS component,
+                   sn.coordinate AS coordinate,
+                   sn.position AS position,
+                   sn.process AS process,
+                   all_ids AS source_ids_names
             ORDER BY sn.id
         """
 
         results = gc.query(cypher, **params)
         logger.info(
-            "Read %d validated standard names (ids_filter=%s, confidence_min=%.2f)",
+            "Read %d validated standard names (ids_filter=%s, confidence_min=%.2f, review_status=%s)",
             len(results),
             ids_filter,
             confidence_min,
+            review_status,
         )
         return list(results)
+
+
+def update_review_status(names: list[str], status: str = "published") -> int:
+    """Update review_status for a batch of StandardName nodes.
+
+    Parameters
+    ----------
+    names:
+        List of StandardName node IDs (``sn.id``) to update.
+    status:
+        New ``review_status`` value (default ``"published"``).
+
+    Returns
+    -------
+    Number of nodes updated.
+    """
+    if not names:
+        return 0
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            UNWIND $names AS name
+            MATCH (sn:StandardName {id: name})
+            SET sn.review_status = $status
+            RETURN count(sn) AS updated
+            """,
+            names=names,
+            status=status,
+        )
+        count = result[0]["updated"] if result else 0
+        logger.info("Updated review_status to '%s' for %d names", status, count)
+        return count

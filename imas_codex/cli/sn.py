@@ -290,6 +290,12 @@ def sn_build(
     help="JSON report output path",
 )
 @click.option("-v", "--verbose", is_flag=True, help="Enable verbose logging")
+@click.option(
+    "--reviewer-model",
+    type=str,
+    default=None,
+    help="Frontier model for quality scoring (e.g. anthropic/claude-opus-4-6)",
+)
 def sn_benchmark(
     source: str,
     ids_filter: str | None,
@@ -301,6 +307,7 @@ def sn_benchmark(
     temperature: float,
     output: str | None,
     verbose: bool,
+    reviewer_model: str | None,
 ) -> None:
     """Benchmark LLM models on standard name generation.
 
@@ -338,6 +345,7 @@ def sn_benchmark(
         max_candidates=max_candidates,
         runs_per_model=runs,
         temperature=temperature,
+        reviewer_model=reviewer_model,
     )
 
     console.print("[bold]SN Benchmark[/bold]")
@@ -350,6 +358,8 @@ def sn_benchmark(
     console.print(f"  Max candidates: {max_candidates}")
     console.print(f"  Runs per model: {runs}")
     console.print(f"  Temperature: {temperature}")
+    if reviewer_model:
+        console.print(f"  Reviewer model: {reviewer_model}")
     console.print()
 
     from imas_codex.cli.utils import run_async
@@ -572,6 +582,15 @@ def sn_publish(
         out = Path(output_dir)
         written = generate_catalog_files(entries, out)
         console.print(f"\n[green]Wrote {len(written)} YAML files to {out}[/green]")
+
+        # Step 6b: Update review_status in graph
+        from imas_codex.sn.graph_ops import update_review_status
+
+        published_names = [e.name for e in entries]
+        updated = update_review_status(published_names, status="published")
+        console.print(
+            f"  Updated [bold]{updated}[/bold] names to review_status='published'"
+        )
 
     # Step 7: Optionally create PRs
     if create_pr:

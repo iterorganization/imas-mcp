@@ -51,7 +51,8 @@ def generate_yaml_entry(entry: SNPublishEntry) -> str:
     """Generate YAML content for a single standard name entry.
 
     Returns a YAML string formatted to match the
-    ``imas-standard-names-catalog`` convention.
+    ``imas-standard-names-catalog`` convention.  All rich fields are
+    included; empty/None optional fields are omitted.
     """
     doc: dict[str, Any] = {
         "name": entry.name,
@@ -64,6 +65,16 @@ def generate_yaml_entry(entry: SNPublishEntry) -> str:
     doc["status"] = entry.status
     if entry.description:
         doc["description"] = entry.description
+    if entry.documentation:
+        doc["documentation"] = entry.documentation
+    if entry.links:
+        doc["links"] = [{"name": link} for link in entry.links]
+    if entry.ids_paths:
+        doc["ids_paths"] = entry.ids_paths
+    if entry.constraints:
+        doc["constraints"] = entry.constraints
+    if entry.validity_domain:
+        doc["validity_domain"] = entry.validity_domain
     doc["provenance"] = {
         "source": entry.provenance.source,
         "source_id": entry.provenance.source_id,
@@ -80,9 +91,10 @@ def generate_catalog_files(
     entries: list[SNPublishEntry],
     output_dir: Path,
 ) -> list[Path]:
-    """Write YAML files to *output_dir*.  One file per entry.
+    """Write YAML files to *output_dir*, grouped by primary tag into subdirectories.
 
-    File names are ``{name}.yaml`` (e.g. ``electron_temperature.yaml``).
+    File names are ``{tag}/{name}.yaml`` (e.g. ``equilibrium/electron_temperature.yaml``).
+    Entries without tags go into ``unscoped/``.
     Returns list of written file paths.
     """
     output_dir = Path(output_dir)
@@ -90,8 +102,12 @@ def generate_catalog_files(
 
     written: list[Path] = []
     for entry in entries:
+        # Group by primary tag into subdirectories
+        subdir = entry.tags[0] if entry.tags else "unscoped"
+        entry_dir = output_dir / subdir
+        entry_dir.mkdir(parents=True, exist_ok=True)
         filename = f"{entry.name}.yaml"
-        filepath = output_dir / filename
+        filepath = entry_dir / filename
         content = generate_yaml_entry(entry)
         filepath.write_text(content + "\n", encoding="utf-8")
         written.append(filepath)
@@ -177,7 +193,8 @@ def check_catalog_duplicates(
 ) -> tuple[list[SNPublishEntry], list[SNPublishEntry]]:
     """Check for duplicates against an existing catalog directory.
 
-    Scans ``catalog_dir`` for ``.yaml`` files and reads the ``name``
+    Scans ``catalog_dir`` recursively for ``.yaml`` files (including
+    subdirectories created by tag-based grouping) and reads the ``name``
     field from each.  Also detects duplicates within *entries* itself.
 
     Returns ``(new_entries, duplicate_entries)``.
@@ -187,7 +204,8 @@ def check_catalog_duplicates(
     if catalog_dir is not None:
         catalog_path = Path(catalog_dir)
         if catalog_path.is_dir():
-            for yaml_file in catalog_path.glob("*.yaml"):
+            # Scan both top-level and subdirectory YAML files
+            for yaml_file in catalog_path.rglob("*.yaml"):
                 try:
                     with open(yaml_file, encoding="utf-8") as f:
                         doc = yaml.safe_load(f)
@@ -230,7 +248,8 @@ def graph_records_to_entries(
 
     Handles both schema-canonical properties (``source``, ``source_path``,
     ``canonical_units``) and legacy write properties (``source_type``,
-    ``source_id``, ``units``).
+    ``source_id``, ``units``).  Carries through all rich fields:
+    documentation, links, ids_paths, constraints, validity_domain, kind.
     """
     entries: list[SNPublishEntry] = []
     for rec in records:
@@ -257,9 +276,17 @@ def graph_records_to_entries(
 
         description = rec.get("description") or ""
 
+        # Rich fields
+        documentation = rec.get("documentation")
+        kind = rec.get("kind") or "scalar"
+        links_raw = rec.get("links") or []
+        ids_paths_raw = rec.get("ids_paths") or []
+        constraints_raw = rec.get("constraints") or []
+        validity_domain = rec.get("validity_domain")
+
         # Build tags from available context
-        tags: list[str] = []
-        if ids_name:
+        tags: list[str] = list(rec.get("tags") or [])
+        if not tags and ids_name:
             tags.append(ids_name)
 
         provenance = SNProvenance(
@@ -272,11 +299,18 @@ def graph_records_to_entries(
         entries.append(
             SNPublishEntry(
                 name=name,
-                kind="physical",
+                kind=kind,
                 unit=unit,
                 tags=tags,
                 status="drafted",
                 description=description[:500] if description else "",
+                documentation=documentation,
+                links=links_raw if isinstance(links_raw, list) else [],
+                ids_paths=ids_paths_raw if isinstance(ids_paths_raw, list) else [],
+                constraints=constraints_raw
+                if isinstance(constraints_raw, list)
+                else [],
+                validity_domain=validity_domain,
                 provenance=provenance,
             )
         )
