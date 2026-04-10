@@ -154,7 +154,7 @@ dev = [
     # --- Serve (embedding + LLM proxy) ---
     "fastapi>=0.115.0",
     "uvicorn>=0.31.1",
-    "imas-standard-names",
+    "imas-standard-names>=0.7.0rc2",
 ]
 
 [project.urls]
@@ -431,9 +431,10 @@ torch = [
   { index = "pytorch-cpu", extra = "test" },
   { index = "pytorch-gpu", extra = "gpu" },
 ]
-imas-standard-names = { path = "../imas-standard-names", editable = true }
+
 
 [tool.uv]
+prerelease = "if-necessary-or-explicit"
 # cpu, gpu, and test extras for torch are mutually exclusive with gpu
 conflicts = [
   [

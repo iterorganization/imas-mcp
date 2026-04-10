@@ -74,19 +74,21 @@ All graph node types, relationships, and properties are defined in LinkML schema
 **Schema files:**
 - `imas_codex/schemas/facility.yaml` - Facility graph: SourceFile, SignalNode, CodeChunk, etc.
 - `imas_codex/schemas/imas_dd.yaml` - DD graph: IMASNode, DDVersion, Unit, IMASCoordinateSpec
-- `imas_codex/schemas/common.yaml` - Shared: status enums, PhysicsDomain
+- `imas_codex/schemas/common.yaml` - Shared: status enums
 
 **Build pipeline:**
 - Models auto-generated during `uv sync` via hatch build hook
 - Regenerate manually: `uv run build-models --force`
-- Output: `imas_codex/graph/models.py`, `imas_codex/graph/dd_models.py`, `imas_codex/config/models.py`
+- Output: `imas_codex/graph/models.py`, `imas_codex/graph/dd_models.py`, `imas_codex/config/models.py`, `agents/schema-reference.md`, `imas_codex/graph/schema_context_data.py`
 
 **CRITICAL: Never commit auto-generated files.** These are gitignored and rebuilt on `uv sync`. If `git status` shows a generated model file as untracked or modified, do NOT stage it. Generated files:
 - `imas_codex/graph/models.py`
 - `imas_codex/graph/dd_models.py`
 - `imas_codex/config/models.py`
-- `imas_codex/core/physics_domain.py`
 - `agents/schema-reference.md`
+- `imas_codex/graph/schema_context_data.py`
+
+**PhysicsDomain enum**: Imported from the `imas-standard-names` PyPI package and re-exported from `imas_codex.core.physics_domain`. The canonical vocabulary is maintained in the imas-standard-names project. Contains 32 physics domain values. `imas_codex/core/physics_domain.py` is a hand-written one-line re-export — it IS committed and should NOT be treated as auto-generated.
 
 Always import enums and classes from generated models. Never hardcode status values:
 
@@ -743,7 +745,7 @@ git pull --no-rebase origin          # Merge fork changes first
 git push origin                      # Push to fork (NEVER upstream)
 ```
 
-**Never stage:** auto-generated files (models.py, dd_models.py, physics_domain.py), gitignored files, `*_private.yaml` files.
+**Never stage:** auto-generated files (models.py, dd_models.py, schema_context_data.py), gitignored files, `*_private.yaml` files.
 
 | Type | Purpose |
 |------|---------|

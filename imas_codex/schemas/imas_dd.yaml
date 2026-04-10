@@ -446,7 +446,7 @@ classes:
         description: IDS description from DD documentation (raw XML text)
       physics_domain:
         description: Primary physics domain
-        range: PhysicsDomain
+        range: string
       path_count:
         description: Number of paths in this IDS (current version)
         range: integer
@@ -588,7 +588,7 @@ classes:
         range: DDNodeType
       physics_domain:
         description: Physics domain (derived from path/IDS)
-        range: PhysicsDomain
+        range: string
       maxoccur:
         description: Maximum occurrences (for struct arrays)
         range: integer
@@ -874,7 +874,7 @@ classes:
         description: Extended description of the cluster concept
       physics_domain:
         description: Primary physics domain of cluster members
-        range: PhysicsDomain
+        range: string
       path_count:
         description: Number of paths in this cluster
         range: integer

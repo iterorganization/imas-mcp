@@ -25,7 +25,6 @@ default_range: string
 
 imports:
   - linkml:types
-  - physics_domains
 
 # =============================================================================
 # Status Enums - Unified Lifecycle Terminology
@@ -615,7 +614,7 @@ classes:
         multivalued: true
       physics_domain:
         description: Primary physics domain inferred from content
-        range: PhysicsDomain
+        range: string
       score_cost:
         description: LLM/VLM cost in USD for scoring (batch cost / batch size)
         range: float
@@ -708,10 +707,6 @@ classes:
           Confidence in COCOS assignment (0.0-1.0).
           Higher when validated against physics quantities.
         range: float
-
-  # NOTE: PhysicsDomain is now an ENUM imported from physics_domains.yaml
-  # The class was removed to avoid conflict with the enum. Use the enum
-  # for categorizing FacilitySignal, IMASPath, DataNode, etc.
 
   Unit:
     description: >-
