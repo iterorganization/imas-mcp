@@ -763,34 +763,92 @@ class TestCLICommand:
         assert "Missing" in result.output or "required" in result.output.lower()
 
 
-class TestQualityLabels:
-    """Test benchmark quality tier labels."""
+class TestCalibrationDataset:
+    """Test benchmark calibration dataset."""
 
-    def test_labels_load(self):
-        from imas_codex.sn.benchmark import load_quality_labels
+    def test_calibration_loads(self):
+        from imas_codex.sn.benchmark import load_calibration_entries
 
-        labels = load_quality_labels()
-        assert isinstance(labels, dict)
-        assert "outstanding" in labels
-        assert "good" in labels
-        assert "adequate" in labels
-        assert "poor" in labels
+        entries = load_calibration_entries()
+        assert isinstance(entries, list)
+        assert len(entries) == 15, f"Expected 15 entries, got {len(entries)}"
 
-    def test_labels_non_empty(self):
-        from imas_codex.sn.benchmark import load_quality_labels
+    def test_calibration_tiers(self):
+        from imas_codex.sn.benchmark import load_calibration_entries
 
-        labels = load_quality_labels()
-        for tier, names in labels.items():
-            assert len(names) > 0, f"Tier {tier} should have entries"
+        entries = load_calibration_entries()
+        tiers = {}
+        for entry in entries:
+            tier = entry["tier"]
+            tiers[tier] = tiers.get(tier, 0) + 1
+        assert tiers == {"outstanding": 4, "good": 4, "adequate": 4, "poor": 3}
 
-    def test_labels_no_overlap(self):
-        from imas_codex.sn.benchmark import load_quality_labels
+    def test_calibration_required_keys(self):
+        from imas_codex.sn.benchmark import load_calibration_entries
 
-        labels = load_quality_labels()
-        all_names = []
-        for names in labels.values():
-            all_names.extend(names)
-        assert len(all_names) == len(set(all_names)), "No duplicate names across tiers"
+        required = {"name", "tier", "expected_score", "description", "fields", "reason"}
+        entries = load_calibration_entries()
+        for entry in entries:
+            missing = required - set(entry.keys())
+            assert not missing, f"Entry {entry['name']} missing keys: {missing}"
+
+    def test_calibration_names_round_trip(self):
+        """Every calibration entry name must survive parse→compose round-trip."""
+        from imas_codex.sn.benchmark import load_calibration_entries
+
+        entries = load_calibration_entries()
+        failures = []
+        for entry in entries:
+            name = entry["name"]
+            try:
+                parsed = parse_standard_name(name)
+                rt = compose_standard_name(parsed)
+                if rt != name:
+                    failures.append(f"{name}: round-trip produced {rt!r}")
+            except Exception as e:
+                failures.append(f"{name}: {e!s:.80s}")
+        assert not failures, "Round-trip failures:\n" + "\n".join(failures)
+
+    def test_calibration_fields_compose_to_name(self):
+        """compose_standard_name(StandardName(**fields)) == name for each entry."""
+        from imas_codex.sn.benchmark import load_calibration_entries
+
+        entries = load_calibration_entries()
+        failures = []
+        for entry in entries:
+            try:
+                sn = imas_standard_names.grammar.StandardName(**entry["fields"])
+                composed = compose_standard_name(sn)
+                if composed != entry["name"]:
+                    failures.append(f"{entry['name']}: fields compose to {composed!r}")
+            except Exception as e:
+                failures.append(f"{entry['name']}: {e!s:.80s}")
+        assert not failures, "Field composition failures:\n" + "\n".join(failures)
+
+    def test_calibration_score_ranges(self):
+        """Verify expected_score falls within the tier's defined range."""
+        from imas_codex.sn.benchmark import load_calibration_entries
+
+        tier_ranges = {
+            "outstanding": (85, 100),
+            "good": (60, 79),
+            "adequate": (40, 59),
+            "poor": (0, 39),
+        }
+        entries = load_calibration_entries()
+        for entry in entries:
+            lo, hi = tier_ranges[entry["tier"]]
+            assert lo <= entry["expected_score"] <= hi, (
+                f"{entry['name']} ({entry['tier']}): score {entry['expected_score']} "
+                f"outside range [{lo}, {hi}]"
+            )
+
+    def test_calibration_no_duplicate_names(self):
+        from imas_codex.sn.benchmark import load_calibration_entries
+
+        entries = load_calibration_entries()
+        names = [e["name"] for e in entries]
+        assert len(names) == len(set(names)), "Duplicate names in calibration dataset"
 
     def test_reviewer_config_field(self):
         from imas_codex.sn.benchmark import BenchmarkConfig
@@ -848,3 +906,184 @@ class TestReviewerModelCLI:
         result = runner.invoke(sn, ["benchmark", "--help"])
         assert result.exit_code == 0
         assert "--reviewer-model" in result.output
+
+
+# -----------------------------------------------------------------------
+# 5-dimensional scoring model tests
+# -----------------------------------------------------------------------
+
+
+class TestQualityReviewModel:
+    """Test the 5-dimensional QualityReview Pydantic model."""
+
+    def _make_review_model(self):
+        """Import the QualityReview model from inside score_with_reviewer."""
+        from pydantic import BaseModel, Field
+
+        class QualityReview(BaseModel):
+            name: str
+            quality_tier: str = Field(
+                description="outstanding, good, adequate, or poor"
+            )
+            score: int = Field(
+                ge=0, le=100, description="Total quality score (sum of dimensions)"
+            )
+            grammar_score: int = Field(ge=0, le=20, description="Grammar correctness")
+            semantic_score: int = Field(ge=0, le=20, description="Semantic accuracy")
+            documentation_score: int = Field(
+                ge=0, le=20, description="Documentation quality"
+            )
+            convention_score: int = Field(ge=0, le=20, description="Naming conventions")
+            completeness_score: int = Field(
+                ge=0, le=20, description="Entry completeness"
+            )
+            reasoning: str
+
+        return QualityReview
+
+    def test_valid_review(self):
+        QualityReview = self._make_review_model()
+        review = QualityReview(
+            name="electron_temperature",
+            quality_tier="outstanding",
+            score=95,
+            grammar_score=20,
+            semantic_score=20,
+            documentation_score=19,
+            convention_score=18,
+            completeness_score=18,
+            reasoning="Excellent entry",
+        )
+        assert review.score == 95
+        assert review.grammar_score == 20
+
+    def test_dimension_max_20(self):
+        QualityReview = self._make_review_model()
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            QualityReview(
+                name="test",
+                quality_tier="good",
+                score=50,
+                grammar_score=25,  # exceeds max 20
+                semantic_score=10,
+                documentation_score=10,
+                convention_score=5,
+                completeness_score=0,
+                reasoning="test",
+            )
+
+    def test_dimension_min_0(self):
+        QualityReview = self._make_review_model()
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            QualityReview(
+                name="test",
+                quality_tier="poor",
+                score=10,
+                grammar_score=-1,  # below min 0
+                semantic_score=5,
+                documentation_score=3,
+                convention_score=2,
+                completeness_score=1,
+                reasoning="test",
+            )
+
+    def test_total_score_max_100(self):
+        QualityReview = self._make_review_model()
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            QualityReview(
+                name="test",
+                quality_tier="outstanding",
+                score=101,  # exceeds max 100
+                grammar_score=20,
+                semantic_score=20,
+                documentation_score=20,
+                convention_score=20,
+                completeness_score=20,
+                reasoning="test",
+            )
+
+    def test_poor_tier_scores(self):
+        QualityReview = self._make_review_model()
+        review = QualityReview(
+            name="data",
+            quality_tier="poor",
+            score=5,
+            grammar_score=5,
+            semantic_score=0,
+            documentation_score=0,
+            convention_score=0,
+            completeness_score=0,
+            reasoning="Uninformative name",
+        )
+        assert review.score == 5
+        assert review.quality_tier == "poor"
+
+
+# -----------------------------------------------------------------------
+# Reviewer template rendering tests
+# -----------------------------------------------------------------------
+
+
+class TestReviewerTemplate:
+    """Test that the reviewer template renders correctly."""
+
+    def test_template_renders(self):
+        from imas_codex.llm.prompt_loader import render_prompt
+        from imas_codex.sn.benchmark import load_calibration_entries
+
+        entries = load_calibration_entries()
+        rendered = render_prompt(
+            "sn/review_benchmark",
+            {
+                "calibration_entries": entries,
+                "candidates": [
+                    {
+                        "standard_name": "electron_temperature",
+                        "description": "Electron temperature",
+                        "documentation": "A test doc",
+                        "unit": "eV",
+                        "kind": "scalar",
+                        "tags": ["core_profiles"],
+                        "fields": {
+                            "physical_base": "temperature",
+                            "subject": "electron",
+                        },
+                    }
+                ],
+            },
+        )
+        assert "electron_temperature" in rendered
+        assert "Grammar Correctness" in rendered
+        assert "Semantic Accuracy" in rendered
+        assert "Documentation Quality" in rendered
+        assert "outstanding" in rendered
+
+    def test_template_includes_calibration_examples(self):
+        from imas_codex.llm.prompt_loader import render_prompt
+        from imas_codex.sn.benchmark import load_calibration_entries
+
+        entries = load_calibration_entries()
+        rendered = render_prompt(
+            "sn/review_benchmark",
+            {"calibration_entries": entries, "candidates": []},
+        )
+        # All calibration entry names should appear
+        for entry in entries:
+            assert entry["name"] in rendered, (
+                f"Calibration entry {entry['name']} not in rendered template"
+            )
+
+    def test_template_renders_empty_candidates(self):
+        from imas_codex.llm.prompt_loader import render_prompt
+
+        rendered = render_prompt(
+            "sn/review_benchmark",
+            {"calibration_entries": [], "candidates": []},
+        )
+        assert "Scoring Dimensions" in rendered

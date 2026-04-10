@@ -239,89 +239,99 @@ def compare_to_reference(
 # ---------------------------------------------------------------------------
 
 
-def load_quality_labels() -> dict[str, list[str]]:
-    """Load quality tier labels from benchmark_labels.yaml.
+def load_calibration_entries() -> list[dict]:
+    """Load calibration entries from benchmark_calibration.yaml.
 
-    Returns a dict mapping tier name → list of standard name IDs.
-    Returns empty dict if file not found.
+    Returns a list of dicts, each with: name, tier, expected_score,
+    description, documentation, unit, kind, tags, fields, reason.
+    Returns empty list if file not found.
     """
     import yaml
 
-    labels_path = Path(__file__).parent / "benchmark_labels.yaml"
-    if labels_path.exists():
-        with open(labels_path) as f:
-            return yaml.safe_load(f) or {}
-    return {}
+    cal_path = Path(__file__).parent / "benchmark_calibration.yaml"
+    if cal_path.exists():
+        with open(cal_path) as f:
+            data = yaml.safe_load(f) or {}
+        return data.get("entries", [])
+    return []
 
 
 async def score_with_reviewer(
     candidates: list[dict],
     reviewer_model: str,
-    quality_labels: dict[str, list[str]],
+    calibration_entries: list[dict],
 ) -> list[dict]:
-    """Score candidates using a reviewer model.
+    """Score candidates using a reviewer model with 5-dimensional scoring.
 
-    Returns list of dicts with: name, quality_tier, score, reasoning.
+    Each candidate is scored across five dimensions (0-20 each):
+    grammar, semantic, documentation, convention, completeness.
+    Total score is the sum (0-100).
+
+    Returns list of dicts with: name, quality_tier, score,
+    grammar_score, semantic_score, documentation_score,
+    convention_score, completeness_score, reasoning.
     """
     from pydantic import BaseModel, Field
 
     from imas_codex.discovery.base.llm import acall_llm_structured
+    from imas_codex.llm.prompt_loader import render_prompt
 
     class QualityReview(BaseModel):
         name: str
         quality_tier: str = Field(description="outstanding, good, adequate, or poor")
-        score: int = Field(ge=0, le=100, description="Quality score 0-100")
+        score: int = Field(
+            ge=0, le=100, description="Total quality score (sum of dimensions)"
+        )
+        grammar_score: int = Field(ge=0, le=20, description="Grammar correctness")
+        semantic_score: int = Field(ge=0, le=20, description="Semantic accuracy")
+        documentation_score: int = Field(
+            ge=0, le=20, description="Documentation quality"
+        )
+        convention_score: int = Field(ge=0, le=20, description="Naming conventions")
+        completeness_score: int = Field(ge=0, le=20, description="Entry completeness")
         reasoning: str
 
     class QualityReviewBatch(BaseModel):
         reviews: list[QualityReview]
 
-    # Build prompt with labeled examples and rubric
-    labeled_examples = []
-    for tier, names in quality_labels.items():
-        for name in names:
-            labeled_examples.append(f"  - {name}: {tier}")
-
-    rubric = """
-Quality rubric:
-- Grammar correctness: Does the name follow standard name grammar rules?
-- Semantic accuracy: Does the name correctly describe the physics quantity?
-- Documentation quality: Is the documentation clear, with LaTeX where appropriate?
-- Naming conventions: Does the name follow established patterns?
-- Unit consistency: Is the unit correct for this quantity?
-
-Quality tiers:
-- outstanding (80-100): Rich docs, correct grammar, cross-linked, LaTeX
-- good (60-79): Correct grammar, adequate documentation
-- adequate (40-59): Correct grammar, thin documentation
-- poor (0-39): Grammar valid but naming debatable or docs minimal
-"""
-
-    prompt = f"""You are reviewing standard name entries for quality.
-
-{rubric}
-
-Labeled examples (scoring anchors):
-{chr(10).join(labeled_examples)}
-
-Review these candidates and assign a quality tier and score:
-"""
+    # Render system prompt with calibration entries (cached across batches)
+    system_prompt = render_prompt(
+        "sn/review_benchmark",
+        {"calibration_entries": calibration_entries, "candidates": []},
+    )
 
     # Process in batches of 10
     all_reviews: list[dict] = []
     for i in range(0, len(candidates), 10):
         batch = candidates[i : i + 10]
-        batch_text = []
-        for c in batch:
-            batch_text.append(f"Name: {c.get('standard_name', '')}")
-            batch_text.append(f"  Description: {c.get('description', '')}")
-            doc = c.get("documentation", "") or ""
-            batch_text.append(f"  Documentation: {doc[:200]}")
-            batch_text.append(f"  Unit: {c.get('unit', 'N/A')}")
-            batch_text.append(f"  Fields: {c.get('fields', {})}")
-            batch_text.append("")
 
-        messages = [{"role": "user", "content": prompt + "\n".join(batch_text)}]
+        # Build per-batch user prompt with candidate details
+        batch_items = []
+        for c in batch:
+            batch_items.append(
+                {
+                    "standard_name": c.get("standard_name", ""),
+                    "description": c.get("description", ""),
+                    "documentation": (c.get("documentation", "") or "")[:500],
+                    "unit": c.get("unit", "N/A"),
+                    "kind": c.get("kind", "N/A"),
+                    "tags": c.get("tags", []),
+                    "fields": c.get("fields", {}),
+                }
+            )
+
+        user_prompt = render_prompt(
+            "sn/review_benchmark",
+            {
+                "calibration_entries": calibration_entries,
+                "candidates": batch_items,
+            },
+        )
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
 
         try:
             result, _, _ = await acall_llm_structured(
@@ -400,13 +410,13 @@ async def run_benchmark(
 
     # --- 2b. Reviewer scoring (optional) ---
     if config.reviewer_model:
-        quality_labels = load_quality_labels()
+        calibration_entries = load_calibration_entries()
         for result in results:
             if result.candidates:
                 reviews = await score_with_reviewer(
                     result.candidates,
                     config.reviewer_model,
-                    quality_labels,
+                    calibration_entries,
                 )
                 result.quality_scores = reviews
                 # Compute distribution

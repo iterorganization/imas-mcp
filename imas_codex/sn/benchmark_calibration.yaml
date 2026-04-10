@@ -1,0 +1,302 @@
+# Calibration dataset for benchmark reviewer scoring.
+# Each entry is a hand-crafted full standard name entry spanning quality tiers.
+# Used as scoring anchors by the reviewer model — they define what
+# "outstanding" vs "poor" looks like.
+#
+# Every entry's grammar fields have been validated:
+#   compose_standard_name(StandardName(**fields)) == name
+
+entries:
+  # ===================================================================
+  # OUTSTANDING tier (85-100): Rich docs, LaTeX, cross-refs, perfect grammar
+  # ===================================================================
+
+  - name: electron_temperature
+    tier: outstanding
+    expected_score: 95
+    description: "Temperature of the electron population."
+    documentation: >
+      Electron temperature $T_e$ is a fundamental kinetic quantity representing
+      the thermal energy of the plasma electron population. Measured primarily
+      by Thomson scattering and electron cyclotron emission (ECE) diagnostics.
+      Typical values range from ~100 eV at the edge to 1-20 keV in the core
+      depending on heating power and confinement regime. Related to
+      electron_density via the electron pressure $p_e = n_e T_e$.
+    unit: eV
+    kind: scalar
+    tags: [core_profiles, equilibrium, transport]
+    fields:
+      physical_base: temperature
+      subject: electron
+    reason: >
+      Canonical physics quantity. Rich documentation with LaTeX notation,
+      typical values, diagnostic context, and cross-references. Perfect
+      grammar decomposition with subject + physical_base.
+
+  - name: safety_factor
+    tier: outstanding
+    expected_score: 92
+    description: "Magnetohydrodynamic safety factor profile."
+    documentation: >
+      The safety factor $q = \frac{d\Phi}{d\psi}$ measures the ratio of
+      toroidal to poloidal magnetic flux, quantifying field line winding.
+      Values $q > 1$ everywhere ensure MHD stability against internal kink
+      modes. The edge safety factor $q_{95}$ is a key operational parameter;
+      typical range is 2.5-5 for standard H-mode operation. Related to
+      plasma_current via $q \propto B_T / I_p$.
+    unit: null
+    kind: scalar
+    tags: [equilibrium, mhd]
+    fields:
+      physical_base: safety_factor
+    reason: >
+      Fundamental equilibrium quantity with mathematical definition,
+      stability context, typical operating ranges, and cross-references
+      to related quantities. Standalone physical_base — no qualification
+      needed.
+
+  - name: toroidal_component_of_magnetic_field_at_magnetic_axis
+    tier: outstanding
+    expected_score: 90
+    description: "Toroidal magnetic field at the magnetic axis."
+    documentation: >
+      The toroidal component of the magnetic field $B_\phi$ evaluated at the
+      magnetic axis $(R_0, Z_0)$. This is a primary machine parameter that
+      determines cyclotron resonance locations and plasma beta. Produced by
+      the toroidal field coil system. Typical values: 1.4 T (TCV), 2.6 T
+      (ASDEX Upgrade), 5.3 T (ITER). Sign convention follows COCOS;
+      positive $B_\phi$ corresponds to counter-clockwise toroidal field
+      when viewed from above.
+    unit: T
+    kind: scalar
+    tags: [equilibrium, magnetics]
+    fields:
+      physical_base: magnetic_field
+      component: toroidal
+      position: magnetic_axis
+    reason: >
+      Multi-segment grammar (component + physical_base + position) correctly
+      composed. Documentation includes LaTeX, machine-specific typical values,
+      COCOS sign convention, and physical significance.
+
+  - name: elongation_at_plasma_boundary
+    tier: outstanding
+    expected_score: 88
+    description: "Plasma elongation at the last closed flux surface."
+    documentation: >
+      Elongation $\kappa = b/a$ is the ratio of plasma half-height to
+      half-width at the last closed flux surface. Higher elongation increases
+      plasma volume and achievable beta limit ($\beta_N \propto \kappa$) but
+      requires active vertical stabilization. Typical range: 1.0 (circular)
+      to 1.8 (strongly shaped). Measured from equilibrium reconstruction
+      (EFIT, LIUQE). Related to triangularity and plasma_current via the
+      Troyon limit.
+    unit: null
+    kind: scalar
+    tags: [equilibrium]
+    fields:
+      physical_base: elongation
+      position: plasma_boundary
+    reason: >
+      Correct grammar with position qualifier on plasma_boundary. Rich docs
+      covering definition, stability implications, typical ranges, and
+      measurement method.
+
+  # ===================================================================
+  # GOOD tier (60-79): Correct grammar, adequate documentation
+  # ===================================================================
+
+  - name: electron_density
+    tier: good
+    expected_score: 75
+    description: "Electron number density profile."
+    documentation: >
+      Electron density $n_e$ profile representing the number of electrons
+      per unit volume. Measured by interferometry, Thomson scattering, and
+      reflectometry. Typical core values 1-10 × 10^19 m^-3.
+    unit: m^-3
+    kind: scalar
+    tags: [core_profiles]
+    fields:
+      physical_base: density
+      subject: electron
+    reason: >
+      Correct grammar and adequate documentation with LaTeX and typical
+      values, but lacks cross-references to related quantities and detailed
+      physics context.
+
+  - name: ion_pressure
+    tier: good
+    expected_score: 70
+    description: "Thermal pressure of the ion population."
+    documentation: >
+      Ion thermal pressure $p_i = n_i T_i$ computed from ion density and
+      temperature profiles. Contributes to total plasma pressure and
+      determines the plasma beta.
+    unit: Pa
+    kind: scalar
+    tags: [core_profiles, transport]
+    fields:
+      physical_base: pressure
+      subject: ion
+    reason: >
+      Correct grammar with subject + physical_base. Documentation includes
+      the governing equation but is relatively short, missing typical values
+      and measurement context.
+
+  - name: ion_temperature
+    tier: good
+    expected_score: 68
+    description: "Temperature of the ion population."
+    documentation: >
+      Ion temperature $T_i$ represents the thermal energy of the main ion
+      species. Measured by charge exchange recombination spectroscopy (CXRS).
+      Key parameter for fusion reactivity.
+    unit: eV
+    kind: scalar
+    tags: [core_profiles, transport]
+    fields:
+      physical_base: temperature
+      subject: ion
+    reason: >
+      Valid grammar, correct unit. Documentation mentions measurement
+      technique but is thin — no typical values, no cross-references.
+
+  - name: centroid_at_plasma_boundary
+    tier: good
+    expected_score: 65
+    description: "Centroid position of the plasma boundary shape."
+    documentation: >
+      Geometric centroid of the last closed flux surface boundary,
+      representing the average R,Z position of the plasma cross-section.
+      Useful for shape control and equilibrium reconstruction.
+    unit: m
+    kind: vector
+    tags: [equilibrium]
+    fields:
+      geometric_base: centroid
+      position: plasma_boundary
+    reason: >
+      Correct geometric_base grammar with position qualifier. Documentation
+      is adequate but lacks LaTeX, typical values, and references.
+
+  # ===================================================================
+  # ADEQUATE tier (40-59): Correct grammar, thin documentation
+  # ===================================================================
+
+  - name: resistivity_due_to_neoclassical
+    tier: adequate
+    expected_score: 55
+    description: "Neoclassical plasma resistivity."
+    documentation: >
+      Plasma resistivity arising from neoclassical transport effects
+      including trapped particle corrections.
+    unit: ohm.m
+    kind: scalar
+    tags: [transport]
+    fields:
+      physical_base: resistivity
+      process: neoclassical
+    reason: >
+      Valid grammar with process qualifier. Documentation is minimal — just
+      a single sentence with no equations, no typical values, no diagnostic
+      context.
+
+  - name: extent_of_poloidal_magnetic_field_probe
+    tier: adequate
+    expected_score: 50
+    description: "Physical extent of a poloidal field probe."
+    documentation: >
+      Geometric extent (size) of a poloidal magnetic field probe sensor
+      element.
+    unit: m
+    kind: scalar
+    tags: [magnetics]
+    fields:
+      geometric_base: extent
+      object: poloidal_magnetic_field_probe
+    reason: >
+      Valid geometric_base + object grammar. Documentation is just one
+      sentence paraphrasing the name. No measurement context.
+
+  - name: electron_collisionality
+    tier: adequate
+    expected_score: 48
+    description: "Electron collisionality parameter."
+    documentation: >
+      Dimensionless electron collisionality. Important for transport regime
+      classification.
+    unit: null
+    kind: scalar
+    tags: [core_profiles, transport]
+    fields:
+      physical_base: collisionality
+      subject: electron
+    reason: >
+      Correct grammar (subject + physical_base). Documentation is a terse
+      two-sentence summary with no equations or typical values.
+
+  - name: poloidal_component_of_beta
+    tier: adequate
+    expected_score: 45
+    description: "Poloidal beta."
+    documentation: >
+      Ratio of plasma pressure to poloidal magnetic field pressure.
+    unit: null
+    kind: scalar
+    tags: [equilibrium]
+    fields:
+      physical_base: beta
+      component: poloidal
+    reason: >
+      Valid component + physical_base grammar. Documentation is a single
+      sentence — essentially a dictionary definition with no depth.
+
+  # ===================================================================
+  # POOR tier (0-39): Grammar valid but naming questionable or docs empty
+  # ===================================================================
+
+  - name: banana_regime
+    tier: poor
+    expected_score: 20
+    description: "Banana orbit regime."
+    documentation: ""
+    unit: null
+    kind: metadata
+    tags: []
+    fields:
+      physical_base: banana_regime
+    reason: >
+      Empty documentation. The name describes a transport regime, not a
+      measurable quantity — better suited as metadata or an identifier
+      value rather than a standard name. No tags assigned.
+
+  - name: signal_value
+    tier: poor
+    expected_score: 15
+    description: "A signal value."
+    documentation: "Generic signal value."
+    unit: null
+    kind: scalar
+    tags: []
+    fields:
+      physical_base: signal_value
+    reason: >
+      Overly generic name that conveys no physics meaning. Description
+      is circular ("a signal value"). No unit, no tags. Would apply to
+      almost any measurement — violates the specificity principle.
+
+  - name: data
+    tier: poor
+    expected_score: 5
+    description: "Data."
+    documentation: ""
+    unit: null
+    kind: scalar
+    tags: []
+    fields:
+      physical_base: data
+    reason: >
+      Maximally vague name with no physics content whatsoever. Empty
+      documentation, no unit, no tags. Represents everything a standard
+      name should NOT be — completely uninformative.
