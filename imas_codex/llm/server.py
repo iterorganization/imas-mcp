@@ -451,7 +451,10 @@ def _format_version_context_report(result: dict) -> str:
         changes = ctx.get("changes", [])
         introduced = ctx.get("introduced_in")
         deprecated = ctx.get("deprecated_in")
+        lifecycle = ctx.get("lifecycle_status")
         lifecycle_parts = []
+        if lifecycle and lifecycle != "active":
+            lifecycle_parts.append(lifecycle)
         if introduced:
             lifecycle_parts.append(f"introduced v{introduced}")
         if deprecated:
@@ -1941,41 +1944,45 @@ class AgentsServer:
                     return f"Error: {e}\n\n{tb}"
 
         # =====================================================================
-        # Tool 2: get_graph_schema - Schema introspection
+        # Tool 2: get_graph_schema - Schema introspection (REPL companion)
         # =====================================================================
+        # Only available in full mode — provides schema context for Cypher
+        # queries via the REPL, which dd-only mode does not expose.
 
-        @self.mcp.tool()
-        def get_graph_schema(
-            scope: str = "overview",
-        ) -> str:
-            """Get graph schema context for Cypher query generation.
+        if not self.dd_only:
 
-            Returns compact, task-relevant schema in text format. Use scope to
-            get only the schema slice you need, reducing token usage. Call this
-            before writing any raw Cypher to verify node labels, property names,
-            relationship types, and enum values.
+            @self.mcp.tool()
+            def get_graph_schema(
+                scope: str = "overview",
+            ) -> str:
+                """Get graph schema context for Cypher query generation.
 
-            Args:
-                scope: Schema slice to return. One of:
-                    - "overview": compact summary of all node labels, relationship
-                      types, vector indexes, and task groupings (default).
-                    - "signals": FacilitySignal, DataAccess, Diagnostic, AccessCheck.
-                    - "wiki": WikiPage, WikiChunk, Document, Image.
-                    - "imas": IMASNode, IDS, IMASSemanticCluster, DDVersion, Unit,
-                      IMASNodeChange, IMASCoordinateSpec.
-                    - "code": CodeFile, CodeChunk, CodeExample.
-                    - "facility": Facility, FacilityPath, FacilitySignal, SignalNode,
-                      Diagnostic.
-                    - "data_sources": data source nodes and tree-related relationships.
+                Returns compact, task-relevant schema in text format. Use scope to
+                get only the schema slice you need, reducing token usage. Call this
+                before writing any raw Cypher to verify node labels, property names,
+                relationship types, and enum values.
 
-            Returns:
-                Formatted text containing property tables (name, type, description),
-                relationship definitions as (From)-[:REL]->(To), available vector
-                indexes, and enum values for the requested scope.
-            """
-            from imas_codex.graph.schema_context import schema_for
+                Args:
+                    scope: Schema slice to return. One of:
+                        - "overview": compact summary of all node labels, relationship
+                          types, vector indexes, and task groupings (default).
+                        - "signals": FacilitySignal, DataAccess, Diagnostic, AccessCheck.
+                        - "wiki": WikiPage, WikiChunk, Document, Image.
+                        - "imas": IMASNode, IDS, IMASSemanticCluster, DDVersion, Unit,
+                          IMASNodeChange, IMASCoordinateSpec.
+                        - "code": CodeFile, CodeChunk, CodeExample.
+                        - "facility": Facility, FacilityPath, FacilitySignal, SignalNode,
+                          Diagnostic.
+                        - "data_sources": data source nodes and tree-related relationships.
 
-            return schema_for(task=scope)
+                Returns:
+                    Formatted text containing property tables (name, type, description),
+                    relationship definitions as (From)-[:REL]->(To), available vector
+                    indexes, and enum values for the requested scope.
+                """
+                from imas_codex.graph.schema_context import schema_for
+
+                return schema_for(task=scope)
 
         if not self.read_only:
             # =====================================================================

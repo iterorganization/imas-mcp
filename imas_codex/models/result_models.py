@@ -461,6 +461,9 @@ class CheckPathsResultItem(BaseModel):
     ids_name: str | None = Field(default=None, description="IDS name if path exists")
     data_type: str | None = Field(default=None, description="Data type if available")
     units: str | None = Field(default=None, description="Physical units if available")
+    lifecycle_status: str | None = Field(
+        default=None, description="Lifecycle maturity: active, alpha, or obsolescent"
+    )
     migration: dict[str, Any] | None = Field(
         default=None, description="Migration info if path is deprecated"
     )

@@ -822,6 +822,9 @@ def format_check_report(result: Any) -> str:
                 meta.append(f"Units: {item.units}")
             if item.ids_name:
                 meta.append(f"IDS: {item.ids_name}")
+            lifecycle = getattr(item, "lifecycle_status", None)
+            if lifecycle and lifecycle != "active":
+                meta.append(f"Lifecycle: {lifecycle}")
             if meta:
                 parts.append(f"    {' | '.join(meta)}")
         else:
@@ -1538,19 +1541,25 @@ def format_dd_changelog_report(result: dict[str, Any]) -> str:
             parts.append(f"Version range: {fr or 'earliest'} → {to or 'latest'}")
     parts.append("")
 
-    parts.append("| Rank | Path | IDS | Changes | Types | Renamed | Score |")
-    parts.append("|------|------|-----|---------|-------|---------|-------|")
+    parts.append(
+        "| Rank | Path | IDS | Lifecycle | Changes | Types | Renamed | Score |"
+    )
+    parts.append(
+        "|------|------|-----|-----------|---------|-------|---------|-------|"
+    )
 
     for i, row in enumerate(result.get("results", []), 1):
         path = row.get("path", "")
         ids_name = row.get("ids", "")
+        lifecycle = row.get("lifecycle_status", "active") or "active"
         changes = row.get("change_count", 0)
         types = row.get("change_types", [])
         renamed = "✓" if row.get("was_renamed") else ""
         score = row.get("volatility_score", 0)
         type_str = ", ".join(str(t) for t in types if t) if types else ""
+        lifecycle_tag = lifecycle if lifecycle != "active" else ""
         parts.append(
-            f"| {i} | `{path}` | {ids_name} | {changes} | {type_str} | {renamed} | {score} |"
+            f"| {i} | `{path}` | {ids_name} | {lifecycle_tag} | {changes} | {type_str} | {renamed} | {score} |"
         )
 
     if total >= limit:

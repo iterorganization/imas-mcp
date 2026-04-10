@@ -138,6 +138,7 @@ class VersionTool:
                 OPTIONAL MATCH (change:IMASNodeChange)-[:FOR_IMAS_PATH]->(p)
                 OPTIONAL MATCH (change)-[:IN_VERSION]->(v:DDVersion)
                 RETURN p.id AS id,
+                       p.lifecycle_status AS lifecycle_status,
                        iv.id AS introduced_in,
                        dv.id AS deprecated_in,
                        count(change) AS change_count,
@@ -161,6 +162,7 @@ class VersionTool:
                 c for c in (r.get("changes") or []) if c.get("version") is not None
             ]
             path_ctx[r["id"]] = {
+                "lifecycle_status": r.get("lifecycle_status"),
                 "introduced_in": r.get("introduced_in"),
                 "deprecated_in": r.get("deprecated_in"),
                 "change_count": len(changes),
@@ -274,7 +276,7 @@ class VersionTool:
         OPTIONAL MATCH (p)-[:RENAMED_TO]->()
         WITH p, change_count, type_variety, change_types,
              CASE WHEN EXISTS { (p)-[:RENAMED_TO]->() } THEN 1 ELSE 0 END AS was_renamed
-        RETURN p.id AS path, p.ids AS ids,
+        RETURN p.id AS path, p.ids AS ids, p.lifecycle_status AS lifecycle_status,
                change_count, type_variety, change_types, was_renamed,
                change_count + (type_variety * 2) + (was_renamed * 3) AS volatility_score
         ORDER BY volatility_score DESC

@@ -604,7 +604,7 @@ class GraphPathTool:
             OPTIONAL MATCH (old:IMASNode {{id: check_path}})-[:RENAMED_TO]->(new:IMASNode)
             RETURN check_path,
                    p.id AS id, p.ids AS ids, p.data_type AS data_type,
-                   u.id AS units,
+                   u.id AS units, p.lifecycle_status AS lifecycle_status,
                    old.id AS renamed_from, new.id AS renamed_to
             """,
             paths=path_list,
@@ -628,6 +628,7 @@ class GraphPathTool:
                         ids_name=r["ids"],
                         data_type=r["data_type"],
                         units=r["units"] or "",
+                        lifecycle_status=r.get("lifecycle_status"),
                     )
                 )
                 found += 1
