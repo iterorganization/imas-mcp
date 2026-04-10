@@ -148,7 +148,7 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
 
     Optional fields: ``physical_base``, ``subject``, ``component``,
     ``coordinate``, ``position``, ``process``, ``units``, ``description``,
-    ``documentation``, ``kind``, ``tags``, ``links``, ``ids_paths``,
+    ``documentation``, ``kind``, ``tags``, ``links``, ``imas_paths``,
     ``validity_domain``, ``constraints``, ``model``, ``review_status``,
     ``generated_at``, ``confidence``.
 
@@ -175,7 +175,7 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
                 sn.kind = coalesce(b.kind, sn.kind),
                 sn.tags = coalesce(b.tags, sn.tags),
                 sn.links = coalesce(b.links, sn.links),
-                sn.ids_paths = coalesce(b.ids_paths, sn.ids_paths),
+                sn.imas_paths = coalesce(b.imas_paths, sn.imas_paths),
                 sn.validity_domain = coalesce(b.validity_domain, sn.validity_domain),
                 sn.constraints = coalesce(b.constraints, sn.constraints),
                 sn.canonical_units = coalesce(b.units, sn.canonical_units),
@@ -200,7 +200,7 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
                     "kind": n.get("kind"),
                     "tags": n.get("tags") or None,
                     "links": n.get("links") or None,
-                    "ids_paths": n.get("ids_paths") or None,
+                    "imas_paths": n.get("imas_paths") or None,
                     "validity_domain": n.get("validity_domain"),
                     "constraints": n.get("constraints") or None,
                     "units": n.get("units"),

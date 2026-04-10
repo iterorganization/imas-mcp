@@ -20,7 +20,7 @@ def sample_standard_names() -> list[dict]:
             "kind": "scalar",
             "tags": ["core_profiles", "kinetics"],
             "links": ["ion_temperature", "electron_density"],
-            "ids_paths": ["core_profiles/profiles_1d/electrons/temperature"],
+            "imas_paths": ["core_profiles/profiles_1d/electrons/temperature"],
             "validity_domain": "core plasma",
             "constraints": ["T_e > 0"],
             "units": "eV",

@@ -48,7 +48,7 @@ class TestWriteStandardNames:
         assert "coalesce(b.kind, sn.kind)" in cypher
         assert "coalesce(b.tags, sn.tags)" in cypher
         assert "coalesce(b.links, sn.links)" in cypher
-        assert "coalesce(b.ids_paths, sn.ids_paths)" in cypher
+        assert "coalesce(b.imas_paths, sn.imas_paths)" in cypher
         assert "coalesce(b.validity_domain, sn.validity_domain)" in cypher
         assert "coalesce(b.constraints, sn.constraints)" in cypher
         assert "coalesce(b.confidence, sn.confidence)" in cypher
@@ -180,7 +180,7 @@ class TestWriteStandardNames:
                 "source_id": "some/path",
                 "tags": [],
                 "links": [],
-                "ids_paths": [],
+                "imas_paths": [],
                 "constraints": [],
             }
         ]
@@ -193,7 +193,7 @@ class TestWriteStandardNames:
         # Empty lists should become None so coalesce preserves existing
         assert first["tags"] is None
         assert first["links"] is None
-        assert first["ids_paths"] is None
+        assert first["imas_paths"] is None
         assert first["constraints"] is None
 
 

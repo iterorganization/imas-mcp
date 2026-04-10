@@ -167,7 +167,7 @@ classes:
         description: Internal cross-references to related standard names (name only)
         multivalued: true
         range: string
-      ids_paths:
+      imas_paths:
         description: IMAS DD paths mapped to this standard name
         multivalued: true
         range: string
@@ -185,5 +185,7 @@ classes:
         description: Coordinate qualifier
       position:
         description: Spatial location qualifier (magnetic_axis, midplane, etc.)
+      physics_domain:
+        description: Physics domain classification (equilibrium, transport, etc.)
       process:
         description: Physical process qualifier (ohmic, bootstrap, etc.)
