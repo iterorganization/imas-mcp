@@ -11,7 +11,6 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   GHCR_REGISTRY: ghcr.io
   ACR_REGISTRY: crcommonallfrc.azurecr.io
   IMAGE_NAME: ${{ github.repository }}
@@ -54,7 +53,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install oras CLI
         run: |
@@ -209,7 +208,7 @@ jobs:
 
       - name: Install uv
         if: steps.graph-tag.outputs.imas-tag != 'none'
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v8
         with:
           enable-cache: true
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -259,7 +258,7 @@ jobs:
 
       - name: Upload test results
         if: always() && steps.graph-tag.outputs.imas-tag != 'none'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: graph-quality-results
           path: graph-quality-results.xml
@@ -272,7 +271,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -438,7 +437,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0 # Full git history for dynamic versioning
           # Ensure all refs are available
@@ -641,7 +640,7 @@ jobs:
 
       - name: Generate artifact attestation for GHCR (releases only)
         if: github.event_name != 'pull_request' && startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-rc')
-        uses: actions/attest-build-provenance@v1
+        uses: actions/attest-build-provenance@v4
         with:
           subject-name: ${{ env.GHCR_REGISTRY }}/${{ env.IMAGE_NAME }}
           subject-digest: ${{ steps.build-release.outputs.digest }}

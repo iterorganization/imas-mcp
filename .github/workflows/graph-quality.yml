@@ -29,7 +29,6 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   NEO4J_PASSWORD: imas-codex
   NEO4J_URI: bolt://localhost:7687
 
@@ -58,7 +57,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install oras CLI
         run: |
@@ -186,7 +185,7 @@ jobs:
             "MATCH (n) RETURN count(n) AS nodes, labels(n)[0] AS label ORDER BY nodes DESC LIMIT 10"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v8
         with:
           enable-cache: true
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -230,7 +229,7 @@ jobs:
 
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: graph-quality-results
           path: graph-quality-results.xml

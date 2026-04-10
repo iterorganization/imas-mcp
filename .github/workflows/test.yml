@@ -1,7 +1,6 @@
 name: Test
 
 env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 on:
   push:
@@ -23,7 +22,7 @@ jobs:
         imas-dd-version: ["3.42.2", "4.1.0"]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -37,7 +36,7 @@ jobs:
           npx --version
 
       - name: Cache npm packages
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.npm
           key: npm-${{ runner.os }}-${{ hashFiles('.github/workflows/test.yml') }}
@@ -51,7 +50,7 @@ jobs:
         run: playwright install --with-deps chromium
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v8
         with:
           enable-cache: true
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -85,7 +84,7 @@ jobs:
           IMAS_DD_VERSION: ${{ matrix.imas-dd-version }}
 
       - name: Upload coverage reports to Codecov
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v6
         if: ${{ !cancelled() }}
         with:
           file: ./coverage.xml
@@ -116,10 +115,10 @@ jobs:
           --health-start-period 30s
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v8
         with:
           enable-cache: true
           github-token: ${{ secrets.GITHUB_TOKEN }}
