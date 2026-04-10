@@ -931,11 +931,14 @@ def format_list_report(result: Any) -> str:
                 dtype = d.get("data_type", "")
                 units = d.get("units", "")
                 doc = d.get("documentation", "")
+                lifecycle = d.get("lifecycle_status", "")
                 line = f"  {d['id']}"
                 if dtype:
                     line += f" ({dtype})"
                 if units:
                     line += f" [{units}]"
+                if lifecycle and lifecycle != "active":
+                    line += f" [{lifecycle}]"
                 if doc:
                     line += f" — {doc[:100]}"
                 parts.append(line)
@@ -990,9 +993,12 @@ def format_overview_report(result: Any) -> str:
             count = stats.get("path_count", 0)
             desc = stats.get("description", "")
             domain = stats.get("physics_domain", "")
+            lifecycle = stats.get("lifecycle_status", "")
             line = f"  {ids_name} ({count} paths)"
             if domain:
                 line += f" [{domain}]"
+            if lifecycle and lifecycle != "active":
+                line += f" [{lifecycle}]"
             parts.append(line)
             if desc:
                 parts.append(f"    {desc[:120]}")
@@ -1307,6 +1313,14 @@ def format_structure_report(result: dict[str, Any]) -> str:
         meta.append(f"Lifecycle: {lifecycle}")
     if meta:
         parts.append(" | ".join(meta))
+
+    # Lifecycle distribution of child paths
+    lifecycle_dist = result.get("lifecycle_distribution", {})
+    if lifecycle_dist and not (
+        len(lifecycle_dist) == 1 and lifecycle in lifecycle_dist
+    ):
+        dist_parts = [f"{v} {k}" for k, v in lifecycle_dist.items()]
+        parts.append(f"Path lifecycle: {', '.join(dist_parts)}")
 
     # Metrics
     m = result.get("metrics", {})

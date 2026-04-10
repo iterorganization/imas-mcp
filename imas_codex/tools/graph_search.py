@@ -475,15 +475,7 @@ class GraphSearchTool:
         if physics_domain:
             hits = [h for h in hits if h.physics_domain == physics_domain]
         if lifecycle_filter:
-            if lifecycle_filter == "active":
-                # NULL means "inherits IDS-level lifecycle" which defaults to active
-                hits = [
-                    h
-                    for h in hits
-                    if h.lifecycle_status is None or h.lifecycle_status == "active"
-                ]
-            else:
-                hits = [h for h in hits if h.lifecycle_status == lifecycle_filter]
+            hits = [h for h in hits if h.lifecycle_status == lifecycle_filter]
 
         # --- Expand STRUCTURE hits with leaf children ---
         _STRUCTURE_TYPES = {"structure", "struct_array", "STRUCTURE"}
@@ -1000,12 +992,8 @@ class GraphListTool:
                 extra_filters += " AND p.node_type = $node_type"
                 dd_params["node_type"] = node_type
             if lifecycle_filter:
-                if lifecycle_filter == "active":
-                    # NULL means "inherits IDS-level lifecycle" which defaults to active
-                    extra_filters += " AND (p.lifecycle_status IS NULL OR p.lifecycle_status = 'active')"
-                else:
-                    extra_filters += " AND p.lifecycle_status = $lifecycle_filter"
-                    dd_params["lifecycle_filter"] = lifecycle_filter
+                extra_filters += " AND p.lifecycle_status = $lifecycle_filter"
+                dd_params["lifecycle_filter"] = lifecycle_filter
 
             include_metadata = response_profile != "minimal"
 
@@ -1016,6 +1004,7 @@ class GraphListTool:
                     "p.data_type AS data_type,\n"
                     "                       p.node_type AS node_type, "
                     "p.documentation AS documentation,\n"
+                    "                       p.lifecycle_status AS lifecycle_status,\n"
                     "                       u.symbol AS units"
                 )
             else:
@@ -1070,6 +1059,7 @@ class GraphListTool:
                         "node_type": r.get("node_type"),
                         "documentation": r.get("documentation"),
                         "units": r.get("units"),
+                        "lifecycle_status": r.get("lifecycle_status"),
                     }
                     for r in path_results
                 ]
@@ -1163,6 +1153,7 @@ class GraphOverviewTool:
                 "path_count": r["path_count"],
                 "description": r["description"] or "",
                 "physics_domain": r["physics_domain"] or "",
+                "lifecycle_status": r["lifecycle_status"] or "",
             }
             if r["physics_domain"]:
                 physics_domains.add(r["physics_domain"])
@@ -2049,6 +2040,18 @@ class GraphStructureTool:
             **dd_params,
         )
 
+        # Query 7: Lifecycle distribution within this IDS
+        lifecycle_dist = self._gc.query(
+            f"""
+            MATCH (p:IMASNode)
+            WHERE p.ids = $ids_name AND p.node_category = 'data'
+              AND p.lifecycle_status IS NOT NULL {dd_clause}
+            RETURN p.lifecycle_status AS status, count(p) AS count
+            ORDER BY count DESC
+            """,
+            **dd_params,
+        )
+
         total = meta.get("total", 0)
         leaves = meta.get("leaves", 0)
         cluster_count = cluster_count_result[0]["count"] if cluster_count_result else 0
@@ -2079,6 +2082,9 @@ class GraphStructureTool:
             "coordinate_arrays": coord_count,
             "cocos_fields": cocos_count,
             "data_types": {t["data_type"]: t["count"] for t in (types or [])},
+            "lifecycle_distribution": {
+                r["status"]: r["count"] for r in (lifecycle_dist or [])
+            },
         }
 
         return result

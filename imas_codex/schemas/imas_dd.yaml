@@ -625,9 +625,9 @@ classes:
         range: integer
       lifecycle_status:
         description: >-
-          Lifecycle maturity status from the DD XML (alpha or obsolescent).
-          Only set on fields with non-default lifecycle status. Null means
-          the field inherits the IDS-level lifecycle status.
+          Lifecycle maturity status. Resolved at build time: fields without
+          an explicit lifecycle_status in the DD XML inherit from their
+          parent IDS. All data nodes have an explicit value after build.
         range: LifecycleStatus
       lifecycle_version:
         description: >-

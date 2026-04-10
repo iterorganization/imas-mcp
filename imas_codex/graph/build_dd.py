@@ -1800,7 +1800,9 @@ def phase_build(
             stats["ids_created"] = max(stats["ids_created"], len(data["ids_info"]))
 
             new_paths_data = {p: data["paths"][p] for p in changes["added"]}
-            _batch_create_path_nodes(client, new_paths_data, version)
+            _batch_create_path_nodes(
+                client, new_paths_data, version, ids_info=data["ids_info"]
+            )
             stats["paths_created"] += len(changes["added"])
 
             _batch_mark_paths_deprecated(client, changes["removed"], version)
@@ -2962,10 +2964,14 @@ def _batch_create_path_nodes(
     paths_data: dict[str, dict],
     version: str,
     batch_size: int = 1000,
+    ids_info: dict[str, dict] | None = None,
 ) -> None:
     """Batch create IMASNode nodes with relationships.
 
     Uses multiple batched queries to avoid memory issues with large datasets.
+    When ids_info is provided, fields without explicit lifecycle_status inherit
+    from their parent IDS (resolved here, not in _extract_paths_recursive, to
+    avoid polluting version-diff computation with inherited values).
     """
     # Prepare path data for batch insertion
     path_list = []
@@ -2998,7 +3004,12 @@ def _batch_create_path_nodes(
                 "cocos_label_transformation": path_info.get(
                     "cocos_label_transformation"
                 ),
-                "lifecycle_status": path_info.get("lifecycle_status"),
+                "lifecycle_status": path_info.get("lifecycle_status")
+                or (
+                    ids_info.get(ids_name, {}).get("lifecycle_status")
+                    if ids_info
+                    else None
+                ),
                 "lifecycle_version": path_info.get("lifecycle_version"),
                 "timebasepath": path_info.get("timebasepath"),
                 "path_doc": path_info.get("path_doc"),

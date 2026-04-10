@@ -1087,21 +1087,32 @@ class TestLifecycleMetadata:
         assert count >= 80, f"Expected >=80 IDS with lifecycle_last_change, got {count}"
 
     def test_field_lifecycle_status(self, graph_client, label_counts):
-        """Fields with alpha/obsolescent lifecycle_status should be populated."""
+        """All data fields should have lifecycle_status resolved from IDS."""
         if not label_counts.get("IMASNode"):
             pytest.skip("No IMASNode nodes in graph")
 
         result = graph_client.query(
-            "MATCH (p:IMASNode) WHERE p.lifecycle_status IS NOT NULL "
+            "MATCH (p:IMASNode {node_category: 'data'}) "
             "RETURN p.lifecycle_status AS status, count(p) AS cnt"
         )
         total = sum(r["cnt"] for r in result)
-        # DD 4.1.1 has 238 fields with lifecycle_status
+        # After backfill: all data nodes have lifecycle_status
         assert total >= 200, f"Expected >=200 fields with lifecycle_status, got {total}"
         statuses = {r["status"] for r in result}
-        valid = {"alpha", "obsolescent"}
+        valid = {"active", "alpha", "obsolescent"}
         invalid = statuses - valid
         assert not invalid, f"Invalid field lifecycle_status values: {invalid}"
+
+        # No data nodes should have NULL lifecycle_status
+        null_result = graph_client.query(
+            "MATCH (p:IMASNode {node_category: 'data'}) "
+            "WHERE p.lifecycle_status IS NULL "
+            "RETURN count(p) AS cnt"
+        )
+        null_count = null_result[0]["cnt"] if null_result else 0
+        assert null_count == 0, (
+            f"Expected 0 data nodes with NULL lifecycle_status, got {null_count}"
+        )
 
 
 class TestTimebasepath:
