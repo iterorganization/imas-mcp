@@ -1,0 +1,6 @@
+{
+    "machine": "ghactions-x86_64-4c-15gb",
+    "os": "Ubuntu 22.04.5 LTS",
+    "ram": "15GB",
+    "version": 1
+}
