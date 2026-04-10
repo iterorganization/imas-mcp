@@ -652,6 +652,8 @@ The release CLI is state-machine driven. State is derived from the latest git ta
 
 **Remote defaults:** RC releases target `origin` (fork), final releases target `upstream` (iterorganization). Override with `--remote`.
 
+**Dirty worktree policy:** RC releases allow dirty worktrees (warning only) since parallel agents often modify files concurrently. Final releases (`--final`) require a clean worktree — commit or stash first.
+
 ```bash
 # Check current state and permitted commands
 uv run imas-codex release status

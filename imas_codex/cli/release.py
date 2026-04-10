@@ -343,16 +343,30 @@ def _check_remote_exists(remote: str) -> None:
     click.echo(f"  ✓ Remote '{remote}' exists")
 
 
-def _check_clean_tree(dry_run: bool) -> None:
+def _check_clean_tree(dry_run: bool, *, strict: bool = True) -> None:
     result = subprocess.run(
         ["git", "status", "--porcelain"], capture_output=True, text=True
     )
     if result.stdout.strip():
-        msg = "Working tree has uncommitted changes. Commit or stash first."
-        if dry_run:
-            click.echo(f"  ⚠ {msg}", err=True)
+        dirty_files = result.stdout.strip().splitlines()
+        if dry_run or not strict:
+            # RC releases: warn but continue (parallel agents often dirty the tree)
+            label = "dry-run" if dry_run else "RC"
+            click.echo(
+                f"  ⚠ Working tree has {len(dirty_files)} uncommitted change(s) "
+                f"(allowed for {label})",
+                err=True,
+            )
+            for f in dirty_files[:5]:
+                click.echo(f"    {f}", err=True)
+            if len(dirty_files) > 5:
+                click.echo(f"    ... and {len(dirty_files) - 5} more", err=True)
         else:
-            raise click.ClickException(msg)
+            raise click.ClickException(
+                f"Working tree has {len(dirty_files)} uncommitted change(s). "
+                "Commit or stash first.\n"
+                "  Hint: RC releases (without --final) allow dirty worktrees."
+            )
     else:
         click.echo("  ✓ Working tree is clean")
 
@@ -1360,7 +1374,7 @@ def release(
     click.echo("Pre-flight checks...")
     _check_on_main()
     _check_remote_exists(remote)
-    _check_clean_tree(dry_run)
+    _check_clean_tree(dry_run, strict=not is_rc)
     _check_synced(remote, dry_run)
     if final:
         _check_final_targets_upstream(remote)
