@@ -15,6 +15,9 @@ env:
   GHCR_REGISTRY: ghcr.io
   ACR_REGISTRY: crcommonallfrc.azurecr.io
   IMAGE_NAME: ${{ github.repository }}
+  # ACR image name is always the upstream path so Azure picks up fork RC
+  # builds. GHCR uses IMAGE_NAME (per-fork) — each fork has its own GHCR.
+  ACR_IMAGE_NAME: iterorganization/imas-codex
   IMAS_DD_VERSION: "4.1.0"
   # Graph OCI artifacts: try the repo owner's registry first (where
   # `imas-codex release` pushes them), fall back to the upstream org
@@ -529,7 +532,7 @@ jobs:
         id: meta-acr
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.ACR_REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: ${{ env.ACR_REGISTRY }}/${{ env.ACR_IMAGE_NAME }}
           tags: |
             type=semver,pattern=v{{version}}${{ matrix.graph_variant.suffix }}
             type=semver,pattern=v{{major}}.{{minor}}${{ matrix.graph_variant.suffix }}
