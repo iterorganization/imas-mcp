@@ -192,7 +192,7 @@ classes:
       imported_at:
         description: >-
           ISO 8601 timestamp when this entry was imported from the catalog.
-          Set by ``sn import-catalog`` on each import.
+          Set by ``sn import`` on each import.
         range: datetime
       catalog_commit_sha:
         description: >-

@@ -1101,3 +1101,153 @@ class TestNormalizeField:
 
         assert _normalize_field(42) == 42
         assert _normalize_field(3.14) == 3.14
+
+
+class TestPublishImportRoundTrip:
+    """Test that published entries can be reviewed, imported, and re-imported."""
+
+    def test_published_entry_importable_after_review(self, tmp_path: Path) -> None:
+        """A published entry enriched with catalog fields should import cleanly."""
+        from imas_codex.sn.catalog_import import import_catalog
+        from imas_codex.sn.models import SNProvenance, SNPublishEntry
+        from imas_codex.sn.publish import generate_yaml_entry
+
+        # 1. Generate a published YAML entry (what `sn publish` produces)
+        published = SNPublishEntry(
+            name="electron_temperature",
+            kind="physical",
+            unit="eV",
+            tags=["core_profiles"],
+            status="drafted",
+            description="Electron temperature",
+            provenance=SNProvenance(
+                source="dd",
+                source_id="core_profiles/profiles_1d/electrons/temperature",
+                ids_name="core_profiles",
+                confidence=0.95,
+            ),
+        )
+        published_yaml = generate_yaml_entry(published)
+        assert "electron_temperature" in published_yaml
+
+        # 2. Simulate reviewer enriching entry into catalog format
+        reviewed = {
+            "name": "electron_temperature",
+            "description": "Electron temperature",
+            "documentation": "The electron temperature Te is measured by Thomson.",
+            "kind": "scalar",
+            "unit": "eV",
+            "tags": [],
+            "links": [],
+            "ids_paths": ["core_profiles/profiles_1d/electrons/temperature"],
+            "validity_domain": "core plasma",
+            "constraints": ["T_e > 0"],
+            "physics_domain": "core_plasma_physics",
+            "status": "active",
+        }
+
+        catalog_dir = tmp_path / "reviewed_catalog"
+        catalog_dir.mkdir()
+        (catalog_dir / "electron_temperature.yaml").write_text(yaml.safe_dump(reviewed))
+
+        # 3. Import the reviewed entry
+        result = import_catalog(catalog_dir=catalog_dir, dry_run=True)
+
+        assert result.imported == 1
+        entry = result.entries[0]
+
+        # 4. Verify all catalog fields map correctly into graph dict shape
+        assert entry["id"] == "electron_temperature"
+        assert entry["units"] == "eV"
+        assert entry["imas_paths"] == [
+            "core_profiles/profiles_1d/electrons/temperature"
+        ]
+        assert entry["review_status"] == "accepted"
+        assert entry["source_type"] == "dd"
+        assert entry["physics_domain"] == "core_plasma_physics"
+        assert entry["validity_domain"] == "core plasma"
+        assert entry["constraints"] == ["T_e > 0"]
+        # Grammar-parsed fields should be populated
+        assert entry["physical_base"] == "temperature"
+        assert entry["subject"] == "electron"
+
+    def test_round_trip_preserves_all_fields(self, tmp_path: Path) -> None:
+        """Importing the same catalog entry twice should yield identical dicts."""
+        from imas_codex.sn.catalog_import import import_catalog
+
+        catalog_dir = tmp_path / "rt_catalog"
+        catalog_dir.mkdir()
+        (catalog_dir / "electron_temperature.yaml").write_text(
+            yaml.safe_dump(SAMPLE_CATALOG_ENTRY)
+        )
+        (catalog_dir / "plasma_current.yaml").write_text(
+            yaml.safe_dump(SAMPLE_CATALOG_ENTRY_MINIMAL)
+        )
+
+        r1 = import_catalog(catalog_dir=catalog_dir, dry_run=True)
+        r2 = import_catalog(catalog_dir=catalog_dir, dry_run=True)
+
+        assert len(r1.entries) == len(r2.entries) == 2
+        for e1, e2 in zip(r1.entries, r2.entries, strict=False):
+            assert e1 == e2, f"Mismatch for {e1.get('id')}: {e1} != {e2}"
+
+    def test_graph_records_reimport_consistency(self, tmp_path: Path) -> None:
+        """graph_records_to_entries output can be re-published and re-imported."""
+        from imas_codex.sn.catalog_import import import_catalog
+        from imas_codex.sn.publish import (
+            generate_catalog_files,
+            graph_records_to_entries,
+        )
+
+        # Simulate graph records from a first import
+        graph_records = [
+            {
+                "name": "electron_temperature",
+                "source_type": "dd",
+                "source_id": "core_profiles/profiles_1d/electrons/temperature",
+                "units": "eV",
+                "description": "Electron temperature",
+                "ids_name": "core_profiles",
+                "confidence": 0.95,
+            }
+        ]
+
+        # Convert to publish entries and write YAML
+        publish_entries = graph_records_to_entries(graph_records)
+        assert len(publish_entries) == 1
+        assert publish_entries[0].name == "electron_temperature"
+
+        publish_dir = tmp_path / "published"
+        written = generate_catalog_files(publish_entries, publish_dir)
+        assert len(written) == 1
+
+        # Now create a "reviewed" catalog version from the published YAML
+        catalog_dir = tmp_path / "catalog_reviewed"
+        catalog_dir.mkdir()
+        reviewed = {
+            "name": "electron_temperature",
+            "description": "Electron temperature",
+            "documentation": "Te from core profiles.",
+            "kind": "scalar",
+            "unit": "eV",
+            "tags": [],
+            "links": [],
+            "ids_paths": ["core_profiles/profiles_1d/electrons/temperature"],
+            "validity_domain": "",
+            "constraints": [],
+            "physics_domain": "core_plasma_physics",
+            "status": "active",
+        }
+        (catalog_dir / "electron_temperature.yaml").write_text(yaml.safe_dump(reviewed))
+
+        # Import the reviewed entry
+        result = import_catalog(catalog_dir=catalog_dir, dry_run=True)
+        assert result.imported == 1
+        entry = result.entries[0]
+
+        # Verify key fields survive the full publish→review→import cycle
+        assert entry["id"] == "electron_temperature"
+        assert entry["units"] == "eV"
+        assert entry["source_type"] == "dd"
+        assert entry["review_status"] == "accepted"
+        assert entry["documentation"] == "Te from core profiles."

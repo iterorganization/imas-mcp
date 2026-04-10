@@ -598,7 +598,7 @@ def sn_publish(
                 )
 
 
-@sn.command("import-catalog")
+@sn.command("import")
 @click.option(
     "--catalog-dir",
     type=click.Path(exists=True),
@@ -614,7 +614,7 @@ def sn_publish(
     help="Compare catalog vs graph without importing; report sync status",
 )
 @click.option("-v", "--verbose", is_flag=True, help="Enable verbose logging")
-def sn_import_catalog(
+def sn_import(
     catalog_dir: str,
     tags: str | None,
     dry_run: bool,
@@ -633,10 +633,10 @@ def sn_import_catalog(
 
     \b
     Examples:
-      imas-codex sn import-catalog --catalog-dir ../imas-standard-names-catalog/standard_names
-      imas-codex sn import-catalog --catalog-dir <path> --dry-run
-      imas-codex sn import-catalog --catalog-dir <path> --tags equilibrium,core-physics
-      imas-codex sn import-catalog --catalog-dir <path> --check
+      imas-codex sn import --catalog-dir ../imas-standard-names-catalog/standard_names
+      imas-codex sn import --catalog-dir <path> --dry-run
+      imas-codex sn import --catalog-dir <path> --tags equilibrium,core-physics
+      imas-codex sn import --catalog-dir <path> --check
     """
     from pathlib import Path
 
