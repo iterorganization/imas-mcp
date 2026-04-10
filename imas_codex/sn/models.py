@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -11,10 +12,33 @@ class SNCandidate(BaseModel):
     """A single standard name candidate from LLM composition."""
 
     source_id: str = Field(description="Source entity ID (DD path or signal ID)")
-    standard_name: str = Field(description="Composed standard name")
-    fields: dict[str, str] = Field(description="Grammar fields used")
+    standard_name: str = Field(description="Composed standard name in snake_case")
+    description: str = Field(default="", description="One sentence, <120 chars")
+    documentation: str = Field(
+        default="", description="Rich docs with LaTeX, links, typical values"
+    )
+    unit: str | None = Field(
+        default=None, description="SI unit string (eV, m, A, etc.)"
+    )
+    kind: Literal["scalar", "vector", "metadata"] = Field(
+        default="scalar", description="Entry kind"
+    )
+    tags: list[str] = Field(default_factory=list, description="Classification tags")
+    links: list[str] = Field(default_factory=list, description="Related standard names")
+    ids_paths: list[str] = Field(
+        default_factory=list, description="Mapped IMAS DD paths"
+    )
+    fields: dict[str, str] = Field(
+        default_factory=dict, description="Grammar fields used"
+    )
     confidence: float = Field(ge=0, le=1, description="Naming confidence")
     reason: str = Field(description="Brief justification")
+    validity_domain: str | None = Field(
+        default=None, description="Physical region where quantity is valid"
+    )
+    constraints: list[str] = Field(
+        default_factory=list, description="Physical constraints"
+    )
 
 
 class SNComposeBatch(BaseModel):

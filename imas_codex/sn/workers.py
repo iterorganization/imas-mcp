@@ -196,9 +196,18 @@ async def compose_worker(state: SNBuildState, **_kwargs) -> None:
                         "id": c.standard_name,
                         "source_type": "dd" if state.source == "dd" else "signal",
                         "source_id": c.source_id,
+                        "description": c.description,
+                        "documentation": c.documentation,
+                        "units": c.unit,  # graph_ops uses "units" → canonical_units
+                        "kind": c.kind,
+                        "tags": c.tags,
+                        "links": c.links,
+                        "imas_paths": c.ids_paths,  # graph schema key
                         "fields": c.fields,
                         "confidence": c.confidence,
                         "reason": c.reason,
+                        "validity_domain": c.validity_domain,
+                        "constraints": c.constraints,
                     }
                 )
 
@@ -513,6 +522,23 @@ async def validate_worker(state: SNBuildState, **_kwargs) -> None:
         parse_standard_name,
     )
 
+    # Load tag vocabulary for soft validation
+    try:
+        from typing import get_args
+
+        from imas_standard_names.grammar.tag_types import PrimaryTag, SecondaryTag
+
+        valid_primary_tags = set(get_args(PrimaryTag))
+        valid_secondary_tags = set(get_args(SecondaryTag))
+        valid_tags = valid_primary_tags | valid_secondary_tags
+    except Exception:
+        valid_tags = set()
+
+    # Collect existing names for link validation
+    existing_names: set[str] = set()
+    for entry in input_candidates:
+        existing_names.add(entry.get("id", ""))
+
     wlog.info("Validating %d composed names", len(input_candidates))
     state.validate_stats.total = len(input_candidates)
 
@@ -520,6 +546,18 @@ async def validate_worker(state: SNBuildState, **_kwargs) -> None:
     invalid_count = 0
     fields_consistent = 0
     fields_inconsistent = 0
+
+    # Soft validation counters
+    desc_present = 0
+    desc_too_long = 0
+    doc_present = 0
+    doc_too_short = 0
+    unit_valid = 0
+    kind_valid = 0
+    tags_valid = 0
+    links_valid = 0
+
+    _VALID_KINDS = {"scalar", "vector", "metadata"}
 
     for i, entry in enumerate(input_candidates):
         name = entry.get("id", "")
@@ -553,6 +591,66 @@ async def validate_worker(state: SNBuildState, **_kwargs) -> None:
                     fields_inconsistent += 1
                     entry["fields_consistent"] = False
 
+            # --- Soft validation checks (metrics only, never reject) ---
+
+            # 1. Description present + length check
+            desc = entry.get("description", "")
+            if desc:
+                desc_present += 1
+                if len(desc) > 120:
+                    desc_too_long += 1
+                    wlog.debug("Description >120 chars for %r: %d", name, len(desc))
+            else:
+                wlog.debug("Missing description for %r", name)
+
+            # 2. Documentation present + minimum length
+            doc = entry.get("documentation", "")
+            if doc:
+                doc_present += 1
+                if len(doc) < 200:
+                    doc_too_short += 1
+                    wlog.debug("Documentation <200 chars for %r: %d", name, len(doc))
+            else:
+                wlog.debug("Missing documentation for %r", name)
+
+            # 3. Unit validity — simple pattern check
+            unit = entry.get("units")
+            if unit and isinstance(unit, str) and len(unit) < 50:
+                unit_valid += 1
+
+            # 4. Kind validity
+            kind = entry.get("kind", "")
+            if kind in _VALID_KINDS:
+                kind_valid += 1
+            elif kind:
+                wlog.debug("Invalid kind %r for %r", kind, name)
+
+            # 5. Tags from vocabulary
+            entry_tags = entry.get("tags") or []
+            if entry_tags and valid_tags:
+                if all(t in valid_tags for t in entry_tags):
+                    tags_valid += 1
+                else:
+                    bad_tags = [t for t in entry_tags if t not in valid_tags]
+                    wlog.debug("Unknown tags for %r: %s", name, bad_tags)
+            elif entry_tags:
+                tags_valid += 1  # no vocabulary loaded, accept any
+
+            # 6. Links reference existing names
+            entry_links = entry.get("links") or []
+            if entry_links:
+                if all(lnk in existing_names for lnk in entry_links):
+                    links_valid += 1
+                else:
+                    unknown = [lnk for lnk in entry_links if lnk not in existing_names]
+                    wlog.debug("Unknown links for %r: %s", name, unknown)
+
+            # 7. ids_paths look like IMAS paths (contain '/')
+            imas_paths = entry.get("imas_paths") or []
+            for p in imas_paths:
+                if "/" not in p:
+                    wlog.debug("Suspicious ids_path for %r: %r", name, p)
+
             valid.append(entry)
         except Exception:
             wlog.debug("Validation failed for name: %r", name)
@@ -573,10 +671,33 @@ async def validate_worker(state: SNBuildState, **_kwargs) -> None:
         fields_consistent,
         fields_inconsistent,
     )
+    wlog.info(
+        "Soft checks: desc=%d/%d (>120: %d), doc=%d/%d (<200: %d), "
+        "unit=%d, kind=%d, tags=%d, links=%d",
+        desc_present,
+        len(valid),
+        desc_too_long,
+        doc_present,
+        len(valid),
+        doc_too_short,
+        unit_valid,
+        kind_valid,
+        tags_valid,
+        links_valid,
+    )
     state.stats["validate_valid"] = len(valid)
     state.stats["validate_invalid"] = invalid_count
     state.stats["validate_fields_consistent"] = fields_consistent
     state.stats["validate_fields_inconsistent"] = fields_inconsistent
+    # Soft validation metrics
+    state.stats["validate_desc_present"] = desc_present
+    state.stats["validate_desc_too_long"] = desc_too_long
+    state.stats["validate_doc_present"] = doc_present
+    state.stats["validate_doc_too_short"] = doc_too_short
+    state.stats["validate_unit_valid"] = unit_valid
+    state.stats["validate_kind_valid"] = kind_valid
+    state.stats["validate_tags_valid"] = tags_valid
+    state.stats["validate_links_valid"] = links_valid
 
     state.validate_stats.freeze_rate()
     state.validate_phase.mark_done()
