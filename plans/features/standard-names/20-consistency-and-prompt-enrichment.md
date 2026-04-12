@@ -52,9 +52,11 @@ when they should be derived from authoritative DD context.
 
 ### Naming scope model (CF conventions pattern)
 
-Following CF conventions, only **independent physics concepts** get standard
-names. Metadata about how the quantity is stored, measured, or validated
-is captured via modifiers and relationships, not new names:
+Following our own naming scope model (inspired by but independent of CF
+conventions — see "Relationship to CF" below), only **independent physics
+concepts** get standard names. Metadata about how the quantity is stored,
+measured, or validated is captured via modifiers and relationships, not
+new names:
 
 ```
 barometry/gauge/pressure              (STRUCTURE, unit=Pa)
@@ -323,6 +325,298 @@ eliminates this cartesian product: each path appears in exactly one batch.
     "ids_name": "core_profiles",
 }
 ```
+
+## Relationship to CF Conventions
+
+**This is a completely independent project.** We do not follow, extend, or
+conform to the CF (Climate and Forecast) metadata conventions. CF conventions
+are for climate/ocean data with fundamentally different subject matter.
+
+We draw **selective inspiration** from CF's structural choices:
+- Only independent physics concepts get names (not storage artifacts)
+- Metadata modifiers instead of proliferating independent names
+- Method independence as a core principle
+
+But our grammar, vocabulary, validation rules, and naming conventions are
+entirely our own, defined and maintained in the `imas-standard-names` package.
+CF's choices about atmosphere/ocean-specific naming, cell methods, and their
+particular modifier system do not apply to fusion plasma physics.
+
+## Grammar and Vocabulary Sourcing
+
+**All grammar and vocabulary is sourced from the `imas-standard-names` PyPI
+package.** This is the single source of truth. The pipeline never invents
+grammar rules or vocabulary — it imports them programmatically.
+
+### What `imas-standard-names` provides
+
+| Component | Import path | Description |
+|-----------|-------------|-------------|
+| Canonical pattern | `tools.grammar._build_canonical_pattern()` | Regex-like name structure |
+| Segment order | `tools.grammar._build_segment_order_constraint()` | Required ordering |
+| Template rules | `tools.grammar._build_template_application_rule()` | How templates compose |
+| Exclusive pairs | `grammar.constants.EXCLUSIVE_SEGMENT_PAIRS` | Mutually exclusive segments |
+| Segment rules + tokens | `grammar.constants.SEGMENT_RULES` | Per-segment vocabulary |
+| Segment descriptions | `tools.grammar._get_segment_descriptions()` | Usage guidance |
+| Field guidance | `grammar.field_schemas.FIELD_GUIDANCE` | Per-field content rules |
+| Grammar enums | `grammar.{Subject,Position,...}` | Closed vocabulary enums |
+| Tag vocabulary | `grammar.tag_types.{PrimaryTag,SecondaryTag}` | 29 primary + 56 secondary |
+| Curated examples | `resources/standard_name_examples/*.yml` | Gold-standard examples |
+| Tokamak parameters | `resources/tokamak_parameters/*.yml` | Machine data for grounding |
+| Validation models | `catalog.edit.StandardNameEntry` | Pydantic validators |
+| Grammar parsing | `grammar.{parse_standard_name,compose_standard_name}` | Roundtrip validation |
+
+### How context flows to the LLM
+
+`build_compose_context()` in `imas_codex/sn/context.py` assembles all of
+the above into a dict of Jinja2 template variables. The system prompt
+(`compose_system.md`) renders this context as:
+1. Grammar rules (pattern, order, template rules, exclusive pairs)
+2. Per-segment vocabulary sections (tokens, descriptions, open/closed flag)
+3. Curated examples (with category, kind, unit, grammar decomposition)
+4. Tokamak parameter ranges (for documentation grounding)
+
+**The `physical_base` segment is the only open vocabulary** — the LLM may
+invent new physics base terms (e.g., `resistivity`, `bootstrap_fraction`).
+All other segments (subject, position, component, process, device,
+geometric_base, object, coordinate, geometry) have closed vocabularies
+that the LLM must choose from.
+
+## Missing Vocabulary / Grammar Gap Mechanism
+
+When the LLM needs to compose a name but the required vocabulary token
+doesn't exist in a **closed** segment (e.g., a new `subject` species not
+in the enum, or a `position` not yet defined), the name cannot be
+validly composed. We need a mechanism for this.
+
+### New status: `vocab_gap`
+
+Add `vocab_gap` to `StandardNameReviewStatus` enum:
+
+```yaml
+vocab_gap:
+  description: >-
+    Name generation blocked by missing grammar vocabulary.
+    The LLM flagged that a required token is not available in a
+    closed segment. Requires vocabulary update in imas-standard-names
+    before this name can be generated.
+```
+
+### LLM flagging mechanism
+
+Add a `vocab_gaps` field to `SNComposeBatch` response model:
+
+```python
+class SNVocabGap(BaseModel):
+    source_id: str = Field(description="DD path that needs naming")
+    segment: str = Field(description="Grammar segment missing a token")
+    needed_token: str = Field(description="Proposed token value")
+    reason: str = Field(description="Why this token is needed")
+
+class SNComposeBatch(BaseModel):
+    candidates: list[SNCandidate]
+    skipped: list[str]
+    vocab_gaps: list[SNVocabGap] = Field(
+        default_factory=list,
+        description="Paths where naming requires vocabulary expansion"
+    )
+```
+
+### Workflow for vocab gaps
+
+1. LLM identifies a path needing a token not in a closed vocabulary
+2. Returns it in `vocab_gaps` instead of `candidates`
+3. Pipeline persists a `StandardName` stub with `review_status='vocab_gap'`,
+   storing the needed segment and token in a `vocab_gap_detail` property
+4. Periodically: review accumulated `vocab_gap` entries → decide which
+   tokens to add to `imas-standard-names` → release new version → re-run
+   affected paths
+
+This creates a **feedback loop** between the mint pipeline and the
+grammar package: the pipeline discovers vocabulary needs, the grammar
+package evolves to meet them, and the pipeline re-runs.
+
+## Provenance Tracking
+
+### Requirements
+
+Every StandardName must carry full provenance:
+- **When** it was generated (timestamp)
+- **What model** generated it (LLM model identifier)
+- **When** it was reviewed (timestamp)
+- **What model** reviewed it (reviewer LLM identifier)
+- **Numeric scores** (5-dimensional quality assessment)
+- **Review comments** (LLM reasoning about quality)
+
+### Schema additions
+
+The StandardName schema already has `model`, `generated_at`, `confidence`.
+Add the following properties:
+
+```yaml
+# Review provenance (NEW fields)
+reviewer_model:
+  description: LLM model that reviewed this name
+reviewer_score:
+  description: Total quality score from review (0-100)
+  range: integer
+reviewer_scores:
+  description: >-
+    JSON-encoded dimensional scores: grammar, semantic,
+    documentation, convention, completeness (each 0-20)
+reviewer_comments:
+  description: >-
+    LLM reviewer reasoning about this name's quality.
+    Persisted for audit trail and regeneration context.
+reviewed_at:
+  description: When LLM review occurred
+  range: datetime
+review_tier:
+  description: >-
+    Quality tier from review: outstanding, good, adequate, poor.
+    Derived from reviewer_score thresholds.
+```
+
+### Is persisting review comments practical?
+
+**Yes.** Each review comment is ~100-300 chars of reasoning. For ~2,500
+unique concepts this is ~500KB total — negligible for Neo4j. The value:
+- **Audit trail**: why was this name scored low?
+- **Regeneration context**: feed reviewer comments back to the compose
+  model as "previous attempt feedback" for targeted improvement
+- **Human review**: surface LLM quality assessment in catalog PRs
+- **Model comparison**: compare how different reviewer models assess
+  the same name
+
+### Provenance query examples
+
+```cypher
+-- Names with low review scores for regeneration
+MATCH (sn:StandardName)
+WHERE sn.reviewer_score < 60 AND sn.review_status = 'reviewed'
+RETURN sn.id, sn.model, sn.reviewer_model,
+       sn.reviewer_score, sn.reviewer_comments
+ORDER BY sn.reviewer_score ASC
+
+-- Compare models: average score by compose model
+MATCH (sn:StandardName)
+WHERE sn.reviewer_score IS NOT NULL
+RETURN sn.model, avg(sn.reviewer_score) AS avg_score,
+       count(sn) AS name_count
+ORDER BY avg_score DESC
+
+-- Vocab gaps awaiting grammar update
+MATCH (sn:StandardName {review_status: 'vocab_gap'})
+RETURN sn.id, sn.vocab_gap_detail
+ORDER BY sn.created_at
+```
+
+## Regeneration Mechanism
+
+### The iterative loop
+
+Standard name generation is inherently iterative. Not every name will be
+right on the first attempt. We need a systematic way to:
+
+1. **Identify** low-scoring or problematic names
+2. **Regenerate** them with additional context (reviewer feedback)
+3. **Re-review** and compare to previous attempts
+4. **Accept or iterate** until quality threshold is met
+
+### `sn regenerate` CLI command
+
+```bash
+# Regenerate names scoring below threshold
+uv run imas-codex sn regenerate --below 60
+
+# Regenerate specific names
+uv run imas-codex sn regenerate --names "plasma_current,safety_factor"
+
+# Regenerate with a different model
+uv run imas-codex sn regenerate --below 60 \
+    --model openrouter/anthropic/claude-sonnet-4.6
+
+# Regenerate vocab_gap names (after grammar update)
+uv run imas-codex sn regenerate --status vocab_gap
+
+# Dry run — show what would be regenerated
+uv run imas-codex sn regenerate --below 60 --dry-run
+```
+
+### Regeneration context enrichment
+
+When regenerating, the LLM receives **additional context** beyond the
+standard enriched prompt:
+
+```python
+{
+    # Standard enriched context (DD paths, unit, siblings, etc.)
+    ...
+    # Regeneration-specific context
+    "previous_name": "electron_temp",
+    "previous_score": 45,
+    "reviewer_comments": "Name uses abbreviation 'temp' — should use "
+                         "full physical_base 'temperature'. Documentation "
+                         "lacks governing equation.",
+    "attempt_number": 2,
+}
+```
+
+This creates a targeted feedback loop: the LLM knows exactly what was
+wrong and can focus on fixing those specific issues.
+
+### Regeneration lifecycle
+
+```
+drafted (score < threshold)
+    → regenerate (re-compose with feedback context)
+    → re-review (assess new attempt)
+    → if score >= threshold: keep new version
+    → if score < threshold: iterate or flag for manual review
+
+vocab_gap
+    → grammar package updated with new token
+    → regenerate (re-compose with updated vocabulary)
+    → standard validation + review flow
+```
+
+### Graph update semantics
+
+Regeneration **replaces** the existing StandardName node (same `id`),
+updating all fields including `model`, `generated_at`, `reviewer_score`,
+etc. The previous version is not preserved (the review comments from the
+prior attempt are passed as context but not stored as history).
+
+If history tracking becomes needed, a `StandardNameVersion` node could
+be added later — but for now, the current state plus regeneration count
+is sufficient.
+
+## Extended Review Status Lifecycle
+
+Updated `StandardNameReviewStatus` with all states:
+
+```
+drafted → reviewed → published → accepted
+    ↓         ↓                     ↓
+    ↓    validation_failed     rejected
+    ↓
+  vocab_gap → (grammar updated) → drafted (re-enter)
+```
+
+| Status | Description |
+|--------|-------------|
+| `drafted` | LLM-generated, not yet reviewed |
+| `reviewed` | LLM-reviewed with quality scores (NEW) |
+| `validation_failed` | Failed imas_standard_names validation |
+| `vocab_gap` | Blocked by missing grammar vocabulary (NEW) |
+| `published` | Exported to catalog PR for human review |
+| `accepted` | Imported from merged catalog entry |
+| `rejected` | Reviewed and rejected |
+| `skipped` | Skipped during review (e.g., low confidence) |
+
+The `reviewed` status distinguishes "generated and LLM-assessed" from
+"generated but not yet assessed". This enables querying for names that
+need review vs names that have been reviewed but scored low.
 
 ## Unclustered Path Handling
 
