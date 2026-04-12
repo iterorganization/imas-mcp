@@ -70,6 +70,12 @@ model_list:
       litellm_credential_name: codex
       extra_headers: *cx_hdr
 
+  - model_name: openrouter/google/gemini-3-flash-preview
+    litellm_params:
+      model: openai/google/gemini-3-flash-preview
+      litellm_credential_name: codex
+      extra_headers: *cx_hdr
+
   # ── OpenAI GPT (OpenAI-compatible /api/v1) ─────────────
   # GPT-5.x requires max_completion_tokens ≥ 16; override health check default
   - model_name: openrouter/openai/gpt-5.4

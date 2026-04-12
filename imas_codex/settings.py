@@ -596,6 +596,7 @@ _SN_BENCHMARK_DEFAULTS: dict[str, Any] = {
         "openai/gpt-5.4",
         "openai/gpt-5.4-mini",
         "google/gemini-3.1-pro-preview",
+        "google/gemini-3-flash-preview",
         "google/gemini-3.1-flash-lite-preview",
     ],
     "reviewer-model": "anthropic/claude-opus-4.6",
