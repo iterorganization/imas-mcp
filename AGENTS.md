@@ -707,6 +707,39 @@ Azure Web App has continuous deployment enabled on ACR. When a new image appears
 
 ## Standard Names
 
+> Architecture docs: `docs/architecture/standard-names.md` (pipeline detail),
+> `docs/architecture/standard-names-decisions.md` (design rationale).
+
+### Pipeline
+
+Six-phase DAG: **EXTRACT → COMPOSE → [REVIEW] → VALIDATE → CONSOLIDATE → PERSIST**
+
+| Phase | Worker | Key Operation |
+|-------|--------|---------------|
+| EXTRACT | `extract_worker` | Query DD paths, classify (quantity/metadata/skip), enrich with clusters, group into batches |
+| COMPOSE | `compose_worker` | LLM generates names per batch; unit injected from DD (never from LLM output) |
+| REVIEW | `review_worker` | Optional LLM judge: accept/reject/revise each candidate |
+| VALIDATE | `validate_worker` | Grammar round-trip via `parse_standard_name()`, fields consistency check |
+| CONSOLIDATE | `consolidate_worker` | Cross-batch dedup, conflict detection (unit/kind/source), coverage accounting |
+| PERSIST | `persist_worker` | Conflict-detecting Neo4j writes with coalesce semantics |
+
+**Key modules:**
+
+| Module | Purpose |
+|--------|---------|
+| `imas_codex/sn/classifier.py` | 11-rule path classifier: quantity (→ name), metadata (→ skip), skip (→ discard) |
+| `imas_codex/sn/enrichment.py` | Primary cluster selection (IDS > domain > global scope) + global grouping by (cluster × unit) |
+| `imas_codex/sn/consolidation.py` | Cross-batch dedup, 5 conflict checks, coverage gap accounting |
+| `imas_codex/sn/graph_ops.py` | Neo4j read/write with unit conflict detection |
+| `imas_codex/sn/pipeline.py` | DAG orchestrator wiring workers into `run_discovery_engine()` |
+| `imas_codex/sn/workers.py` | Six async worker functions |
+| `imas_codex/sn/models.py` | Pydantic response models (`SNComposeBatch`, `SNReviewBatch`) |
+| `imas_codex/sn/context.py` | Grammar context builder (vocabulary, examples, tokamak ranges) |
+
+**Unit safety:** Units flow exclusively from the DD `HAS_UNIT` relationship → EXTRACT → prompt
+(marked read-only) → injected into candidate dict by worker → `CANONICAL_UNITS` relationship in graph.
+The LLM never provides the unit field.
+
 ### CLI Commands
 
 | Command | Purpose | Key Options |
@@ -789,11 +822,16 @@ Two distinct write paths with different semantics:
 
 ### Schema
 
-StandardName node defined in `imas_codex/schemas/standard_name.yaml`. Key relationships:
+StandardName node defined in `imas_codex/schemas/standard_name.yaml` (v0.5.0). Key relationships:
 
 - `(IMASNode)-[:HAS_STANDARD_NAME]->(StandardName)`
 - `(FacilitySignal)-[:HAS_STANDARD_NAME]->(StandardName)`
 - `(StandardName)-[:CANONICAL_UNITS]->(Unit)`
+
+**Provenance fields** (v0.5.0): `reviewer_model`, `reviewer_score`, `reviewer_scores` (JSON:
+grammar/semantic/documentation/convention/completeness), `reviewer_comments`, `reviewed_at`,
+`review_tier` (outstanding/good/adequate/poor), `vocab_gap_detail` (JSON: segment/needed_token/reason),
+`catalog_commit_sha`.
 
 ## Remote Tools
 
