@@ -1,6 +1,6 @@
 # 20: DD-Enriched Standard Name Generation
 
-**Status:** Ready to implement
+**Status:** Revised after dual-frontier review (Opus 4.6 + GPT 5.4)
 **Depends on:** Plan 19 (benchmark parity — DONE)
 **Agent type:** Architect (research-driven design + implementation)
 
@@ -124,7 +124,7 @@ graph query (path, desc, cluster_label)
     -> LLM generates name + unit + docs + links
 ```
 
-### Proposed flow (DD-enriched, LLM composes)
+### Proposed flow (DD-enriched, two-pass with consolidation)
 
 ```
 graph navigation (path -> unit, siblings, coordinates, parent structure)
@@ -133,17 +133,25 @@ graph navigation (path -> unit, siblings, coordinates, parent structure)
 classify: physics_quantity | metadata_modifier | skip
     |
     v
-group by (IDS x cluster x unit) — split mixed-unit clusters
+select PRIMARY cluster per path (narrowest scope, highest similarity)
     |
     v
-enriched system prompt (grammar + vocab + examples — CACHED)
-enriched user prompt (DD context per path — DYNAMIC, authoritative unit GIVEN)
+group by (primary_cluster x unit) — GLOBAL, not IDS-scoped
     |
     v
-LLM composes name + documentation (unit is a FACT, not a guess)
+split oversized groups (token-budget estimator, ~20-30 concepts/batch)
     |
     v
-unit-safe persistence (validate unit consistency, reject conflicts)
+PASS 1: GENERATE — parallel LLM compose (enriched context, unit GIVEN)
+    |
+    v
+PASS 2: CONSOLIDATE — cross-batch dedup, name harmonization, conflict detect
+    |
+    v
+validate: imas_standard_names Pydantic + grammar roundtrip + unit match
+    |
+    v
+persist: conflict-detecting writes (NOT coalesce — fail on mismatch)
 ```
 
 ### DD tool integration
@@ -219,11 +227,18 @@ def classify_path(node: dict) -> Literal["quantity", "metadata", "skip"]:
 - `/validity`, `/validity_timed` -> `metadata` (quality flag)
 - `_error_upper`, `_error_lower`, `_error_index` -> already excluded via HAS_ERROR
 - `STR_0D` (string fields: names, identifiers, descriptions) -> `skip`
-- `INT_0D` used as flag/index (no unit, no physics description) -> `skip`
+- `INT_0D` without `HAS_UNIT` AND description matches index/flag pattern
+  (`"index"`, `"flag"`, `"identifier"`, `"number of"`, `"count"`) -> `skip`
+- `INT_0D` without `HAS_UNIT` but with physics description (e.g., `"toroidal
+  mode number"`) -> `quantity` (unit=null, genuinely dimensionless)
 - Physics leaf with `HAS_UNIT` and description -> `quantity`
 - Physics leaf without `HAS_UNIT`, genuinely dimensionless -> `quantity` (unit=null)
 - STRUCTURE with `HAS_UNIT` and physics description -> `quantity`
   (children /data, /time etc are metadata of this concept)
+
+**Hardening (from review):** Use `node_category` field to disambiguate
+edge cases. Maintain a reviewed gold set of ~50 edge-case paths with
+expected classifications. Classifier tests parametrized from this gold set.
 
 ### Phase 2: DD enrichment layer (`imas_codex/sn/enrichment.py`)
 
@@ -232,26 +247,59 @@ New module that navigates the DD graph to build rich context for each path.
 **Functions:**
 
 ```python
+def select_primary_cluster(path: str, clusters: list[dict]) -> dict | None:
+    """Choose ONE primary cluster per path from its many-to-many memberships.
+
+    Resolution order:
+    1. IDS-scope cluster (most specific)
+    2. Domain-scope cluster
+    3. Global-scope cluster
+    Within same scope: highest embedding similarity score.
+
+    This eliminates the cartesian product: a path in 2 clusters
+    generates 1 batch assignment, not 2.
+    """
+
 async def enrich_dd_batch(batch: ExtractionBatch, gc: GraphClient) -> EnrichedBatch:
     """Enrich a batch with authoritative DD context via graph navigation.
 
     For each path:
     1. Custom Cypher: unit, cluster, parent, coordinates (single query)
-    2. search_dd_clusters: concept siblings across all IDSs
-    3. find_related_dd_paths: collision context (optional, for high-value paths)
+    2. Primary cluster selection (deduplicate multi-cluster paths)
+    3. Cluster siblings for concept context (informational, not authority)
 
     Returns EnrichedBatch with unit-validated, context-rich items.
     """
 
 def group_by_concept_and_unit(
     items: list[dict],
+    max_batch_size: int = 25,
 ) -> list[ExtractionBatch]:
-    """Re-group by (IDS, cluster, unit) instead of IDS alone.
+    """Group by (primary_cluster x unit) GLOBALLY, not per-IDS.
 
-    Mixed-unit clusters split into separate batches.
-    Each batch produces one StandardName per concept.
+    Critical design decisions (from dual-frontier review):
+    - GLOBAL grouping: same concept across IDSs → same batch → same name
+    - Primary cluster: each path appears in exactly ONE batch (no cartesian product)
+    - Mixed-unit clusters split into separate batches
+    - Oversized groups split by token budget estimator
+    - Unclustered paths: sub-group by parent_path, not catch-all bucket
     """
 ```
+
+**Why global grouping, not IDS-scoped (review finding #1):**
+
+IDS-scoped batching violates method independence. `electron_temperature`
+in `core_profiles` and `edge_profiles` would land in different batches,
+generating different names. Global (cluster × unit) grouping ensures all
+paths for the same concept enter the same LLM call, so the LLM sees the
+full cross-IDS context and produces one canonical name.
+
+**Why primary cluster selection (review finding #2):**
+
+Paths average 2.0 cluster memberships (many-to-many). Without primary
+cluster selection, a path in 2 clusters generates 2 rows → 2 batch
+assignments → 2 independent name generations. The primary cluster
+eliminates this cartesian product: each path appears in exactly one batch.
 
 **Enriched item structure** (what the user prompt receives):
 
@@ -276,6 +324,85 @@ def group_by_concept_and_unit(
 }
 ```
 
+## Unclustered Path Handling
+
+~500 paths (5.2%) have no cluster membership. Without special handling,
+these form giant catch-all batches per IDS with no concept context.
+
+**Strategy:**
+1. Sub-group unclustered paths by `parent_path` — structural siblings
+   are likely related quantities (e.g., all children of `electrons/`)
+2. If parent sub-group has >1 path with same unit, batch together
+3. Singleton unclustered paths: process individually or flag for manual review
+4. Never lump unrelated unclustered paths into a single catch-all batch
+
+**Rationale:** Parent-based sub-grouping provides structural context even
+without semantic clusters. A path like `wall/temperature` unclustered is
+still meaningfully grouped with `wall/heat_flux` if they share a parent.
+
+## Concept Registry (Cross-Run Consistency)
+
+**Problem:** Even with consolidation within a single run, subsequent runs
+can generate different names for the same concept (LLM non-determinism).
+
+**Solution:** Maintain a concept registry — a mapping from concept
+signature to approved standard name. Before generation:
+
+1. **Lookup:** Check if concept already has an approved name in graph
+   (`StandardName` with `review_status = 'accepted'`)
+2. **Reuse:** If found, skip generation — reuse existing name
+3. **Generate:** Only generate names for concepts not yet in registry
+4. **Register:** After consolidation + validation, new names become
+   candidates (status `'drafted'`) available for reuse in future runs
+
+**Concept signature:** `(primary_cluster_id, unit)` — the same key used
+for batching. This ensures deterministic concept identity across runs.
+
+## Dual-Frontier Review Findings
+
+Plan 20 was reviewed by **Claude Opus 4.6** and **GPT 5.4** independently.
+Both reviews converged on the same critical issues, increasing confidence
+in the findings. All blocking issues have been addressed in this revision.
+
+### Convergent findings (both reviewers agreed)
+
+| # | Finding | Severity | Resolution |
+|---|---------|----------|------------|
+| 1 | 250-path batch exceeds all model output limits | **Blocking** | Revised to 20-30 concepts. Token-budget estimator added. |
+| 2 | No cross-batch dedup/consistency mechanism | **Blocking** | Added Pass 2 consolidation before persistence. |
+| 3 | Multi-cluster cartesian product (2.0 clusters/path → 2× rows) | **Blocking** | Primary cluster selection per path. |
+| 4 | `coalesce()` silently masks unit/metadata conflicts | **Blocking** | Conflict-detecting writes replace coalesce. |
+| 5 | INT_0D classification ambiguity (index vs dimensionless) | High | Keyword heuristics + gold set of edge cases. |
+| 6 | Unclustered paths form giant catch-all batches | Medium | Parent-based sub-grouping. |
+
+### Opus 4.6 unique findings
+
+| Finding | Resolution |
+|---------|------------|
+| Plan conflates done vs proposed work | Added "Current state" annotations to each phase. |
+| Unit validation still `len(unit)<50`, not wired to Pint | Phase 4 now includes unit match validation against DD source. |
+| CF "cell methods" equivalent missing | Deferred — noted as future work for distinguishing time-averaged vs instantaneous. |
+
+### GPT 5.4 unique findings
+
+| Finding | Resolution |
+|---------|------------|
+| `ids_paths` auto-population from clusters unsafe | Changed to validated equivalence, not raw cluster membership. |
+| CF contradiction: device segment puts method back in name | Fixed — device is for physical objects, not measurement methods. |
+| If unit is authoritative, why ask LLM to output it? | Removed unit from LLM output model. Injected from DD at persistence. |
+| Need concept registry/cache for reuse-first policy | Added Concept Registry section. |
+| Need coverage accounting | Added to consolidation: every path → mapped \| skipped \| review. |
+
+### Deferred items (out of scope, noted for future plans)
+
+- **CF "cell methods" equivalent** — distinguishing time-averaged, flux-surface-averaged,
+  line-integrated variants of the same quantity. Requires DD enrichment with coordinate
+  semantics that goes beyond current cluster/unit grouping.
+- **DD version/rename tracking** — stability of `ids_paths` across DD versions.
+  Graph has all versions but names should reference a specific DD version range.
+- **COCOS/sign-convention enrichment** — COCOS-dependent quantities may need
+  convention metadata on StandardName nodes.
+
 ### Phase 3: Enriched prompt templates
 
 Update `compose_dd.md` to render DD-enriched context. Unit is presented as
@@ -288,19 +415,73 @@ coordinate context grounds the LLM in the path's dimensionality.
 - Cluster siblings provide concept identity across IDSs
 - Coordinate context grounds dimensionality
 - Anti-pattern examples for common naming mistakes
+- **Unit removed from LLM output model** (review finding): unit is authoritative,
+  not a generation target. LLM composes name + documentation + tags. Unit is
+  injected from DD at persistence time, bypassing LLM entirely.
 
-### Phase 4: Unit-safe persistence
+**Current state:** `compose_dd.md` already renders enriched fields (description,
+documentation, unit, data_type, physics_domain, keywords, ndim, cluster info,
+siblings, parent structure, coordinates). Remaining work: remove unit from
+SNCandidate output model, add anti-pattern examples.
 
-Update `graph_ops.write_standard_names()`:
+### Phase 4: Two-pass persistence with consolidation
 
-1. **Pre-write validation**: Collect all source path units via `HAS_UNIT`.
-   If different units -> reject with `UnitConflictError`.
-2. **Authoritative unit**: Set `canonical_units` from DD unit, not LLM.
-3. **Dimensionless handling**: Paths without `HAS_UNIT` that are genuinely
-   dimensionless get `canonical_units=null`, `kind=scalar`.
-4. **`ids_paths` from cluster**: Auto-populate from cluster siblings, not
-   just the source path. If cluster "electron temperature" has 10 paths
-   across 6 IDSs, all 10 go into `ids_paths`.
+**Pass 1 → Pass 2 architecture (review finding #5):**
+
+LLM compose runs in parallel across batches. Before persistence, a
+consolidation pass detects and resolves cross-batch conflicts.
+
+#### Pass 1: Generate (parallel)
+Compose workers generate candidates in parallel. Each batch produces
+`list[SNCandidate]`. Results accumulate in `state.validated`.
+
+#### Pass 2: Consolidate (serial, before any graph writes)
+
+```python
+def consolidate_candidates(candidates: list[dict]) -> ConsolidationResult:
+    """Cross-batch dedup and conflict detection.
+
+    Checks:
+    1. No duplicate standard_name with different units
+    2. No duplicate standard_name with different kind
+    3. No source path claimed by multiple candidates
+    4. Coverage: every non-skipped source path mapped exactly once
+    5. Concept registry lookup: if name already exists in graph, reuse it
+
+    Returns ConsolidationResult with:
+    - approved: list[dict] — ready for persistence
+    - conflicts: list[ConflictRecord] — need resolution
+    - coverage_gaps: list[str] — unmapped paths
+    """
+```
+
+#### Conflict-detecting persistence (review finding #3)
+
+Replace `coalesce(b.field, sn.field)` with conflict-detecting writes:
+
+```python
+# Instead of: SET sn.canonical_units = coalesce(b.unit, sn.canonical_units)
+# Use: fail-on-mismatch pattern
+"""
+MATCH (sn:StandardName {id: $name})
+WHERE sn.canonical_units IS NOT NULL AND sn.canonical_units <> $unit
+RETURN sn.id AS conflict, sn.canonical_units AS existing, $unit AS incoming
+"""
+```
+
+If any conflicts are returned, raise `UnitConflictError` with details.
+Only after conflict check passes do we MERGE with SET (not coalesce).
+
+#### `ids_paths` population (review finding: clusters ≠ authority)
+
+`ids_paths` is populated from **validated equivalence**, not raw cluster
+membership. A path qualifies for `ids_paths` only if:
+1. It shares the same primary cluster AND same unit
+2. The classifier marks it as `quantity` (not metadata/skip)
+3. It has been named in the same consolidation pass
+
+Cluster siblings are **context for the LLM** (informational), not
+**authority for path linking** (which requires validation).
 
 ### Phase 5: Benchmark approach profiles
 
@@ -335,11 +516,21 @@ Phase 5 -> document benchmark evidence for model/approach selection.
 ## Implementation Order
 
 1. **Phase 1** — Naming scope classification (defines WHAT gets named)
-2. **Phase 2** — DD enrichment layer (builds rich context from graph)
-3. **Phase 3** — Enriched prompt templates (feeds context to LLM)
-4. **Phase 4** — Unit-safe persistence (enforces invariants)
-5. **Phase 5** — Benchmark profiles (measures impact, validates model choice)
+2. **Phase 2** — DD enrichment layer (primary cluster selection + global grouping)
+3. **Phase 3** — Enriched prompt templates (unit removed from LLM output)
+4. **Phase 4** — Two-pass persistence (consolidation + conflict-detecting writes)
+5. **Phase 5** — Benchmark profiles (measures impact, validates model + batch size)
 6. **Phase 6** — Documentation (writes decisions as they're made — interleaved)
+
+**Current state (already implemented):**
+- `sources/dd.py`: enriched Cypher query with HAS_UNIT, IN_CLUSTER, HAS_PARENT,
+  HAS_COORDINATE, sibling lookup. Groups by (IDS × cluster × unit) — **needs
+  revision to global grouping with primary cluster selection**.
+- `compose_dd.md`: renders authoritative unit, cluster context, siblings, parent
+  structure, coordinates, keywords, physics domain. **Needs: remove unit from
+  output model, add anti-pattern examples.**
+- `units`→`unit` property fix across entire pipeline (commit `ded4870c`).
+- SN benchmark config with 7 compose-models (commit `6d78a0e5`).
 
 ## Success Criteria
 
@@ -348,7 +539,13 @@ Phase 5 -> document benchmark evidence for model/approach selection.
 - [ ] Paths with different units CANNOT share a StandardName (enforced)
 - [ ] Paths with missing units are classified (dimensionless vs flagged)
 - [ ] Mixed-unit clusters split into separate batches before generation
-- [ ] Cluster siblings auto-populate `ids_paths` on each StandardName
+- [ ] Each path appears in exactly ONE batch (primary cluster selection)
+- [ ] Cross-batch consolidation detects name/unit conflicts before persistence
+- [ ] Conflict-detecting writes replace coalesce pattern
+- [ ] `ids_paths` populated from validated equivalence, not raw cluster membership
+- [ ] Unclustered paths handled explicitly (parent-based sub-groups or manual review)
+- [ ] Batch size capped by token-budget estimator (~20-30 concepts)
+- [ ] Coverage accounting: every target path → mapped | skipped | review
 - [ ] Benchmark: enriched + cheap model >= thin + expensive model
 - [ ] `docs/architecture/standard-names.md` written and reviewed
 - [ ] Enrichment adds <2s per batch (graph queries, not remote calls)
@@ -365,17 +562,26 @@ Phase 5 -> document benchmark evidence for model/approach selection.
    before passing to validation: `re.sub(r'\^(-?\d+)\.0', r'^\1', unit)`.
 
 2. **Structure quantity naming** — Name comes from the **concept**, not the
-   method. Grammar modifiers distinguish measurement context. Example:
+   method. Method independence is a core principle — same quantity measured
+   differently gets the same name. Example:
    `langmuir_probes/embedded/t_e` → `electron_temperature` (not
-   `langmuir_probe_electron_temperature`). The `device` grammar segment
-   captures measurement context when needed:
-   `electron_temperature_langmuir_probe`. Method independence is a core
-   principle — same quantity measured differently gets the same name.
+   `langmuir_probe_electron_temperature`).
 
-3. **Batch size with enrichment** — Make batches **much** bigger. Output
-   tokens are the bottleneck, not input (prompts can be very long).
-   Atomize system/user prompts for caching. Target 250-path batches.
-   Benchmark will validate optimal size.
+   **Clarification (from review):** The `device` grammar segment is for
+   cases where the device defines a **distinct physical quantity**, not
+   a measurement method. `langmuir_probe` as a modifier violates method
+   independence. Valid uses: `tokamak_wall_temperature` (the wall IS the
+   object), `divertor_heat_flux` (the divertor IS the location).
+   Measurement method belongs in metadata/tags, not in the name.
+
+3. **Batch size with enrichment** — ~~Target 250-path batches.~~ **Revised
+   after review:** 250 paths × ~500 output tokens/name = ~125K tokens,
+   exceeding all model output limits (Claude 8K default, Gemini 8K). Both
+   reviewers flagged this as blocking. **Revised target: 20-30 concepts
+   per batch.** Implement a token-budget estimator that serializes one
+   `SNCandidate` to JSON, counts tokens, and caps batch size accordingly.
+   Benchmark will validate optimal size. Note: "concepts" not "paths" —
+   a concept may map to 7+ cross-IDS paths but produces one output entry.
 
 4. **Graph vs DD completeness** — The graph matches the DD exactly (built
    from all DD versions via `build_dd.py`). All unit information in the DD
@@ -427,8 +633,8 @@ wastes LLM output.
 
 **Why selective, not batch-level:**
 - Names are not interdependent within a batch (no collision avoidance)
-- Unit-safe grouping (IDS × cluster × unit) prevents cross-contamination
-- Rejecting an entire batch of 250 paths because 1 name fails is wasteful
+- Unit-safe grouping (primary_cluster × unit) prevents cross-contamination
+- Rejecting an entire batch of 20-30 concepts because 1 name fails is wasteful
 - Failed names get explicit error messages for targeted retry
 
 ### Enriched item structure (what the user prompt receives)
