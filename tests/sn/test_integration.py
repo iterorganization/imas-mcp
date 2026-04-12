@@ -115,7 +115,7 @@ class TestEmbeddingCoverage:
                 "description": "Electron temperature",
                 "documentation": "Te measured by Thomson scattering.",
                 "kind": "scalar",
-                "units": "eV",
+                "unit": "eV",
                 "tags": ["core_profiles"],
                 "links": None,
                 "imas_paths": ["core_profiles/profiles_1d/electrons/temperature"],
@@ -163,7 +163,7 @@ class TestEmbeddingCoverage:
                 "source_id": "core_profiles/profiles_1d/electrons/temperature",
                 "description": "Electron temperature",
                 "kind": "scalar",
-                "units": "eV",
+                "unit": "eV",
                 "review_status": "drafted",
                 "confidence": 0.95,
             }
@@ -284,7 +284,7 @@ class TestCoalesceSafety:
             "imas_paths",
             "validity_domain",
             "constraints",
-            "units",
+            "unit",
             "model",
             "review_status",
             "generated_at",
@@ -355,7 +355,7 @@ class TestCoalesceSafety:
             "description": "Electron temperature",
             "documentation": "Te measured by Thomson scattering.",
             "kind": "scalar",
-            "units": "eV",
+            "unit": "eV",
             "tags": ["core_profiles"],
             "links": None,
             "imas_paths": ["core_profiles/profiles_1d/electrons/temperature"],
@@ -697,7 +697,7 @@ class TestRoundTripIdempotence:
             "description",
             "documentation",
             "kind",
-            "units",
+            "unit",
             "tags",
             "links",
             "imas_paths",
@@ -731,7 +731,7 @@ _RICH_SN_RECORD = {
         "It is a key parameter for transport modelling."
     ),
     "kind": "scalar",
-    "units": "eV",
+    "unit": "eV",
     "tags": ["spatial-profile"],
     "links": ["name:ion_temperature"],
     "imas_paths": ["core_profiles/profiles_1d/electrons/temperature"],
@@ -862,7 +862,7 @@ class TestE2ERoundTrip:
         entry = result.entries[0]
         assert entry["id"] == "electron_temperature"
         assert entry["review_status"] == "accepted"
-        assert entry["units"] == "eV"
+        assert entry["unit"] == "eV"
         assert entry["physics_domain"] == "core_plasma_physics"
         assert entry["physical_base"] == "temperature"
         assert entry["subject"] == "electron"
@@ -889,9 +889,8 @@ class TestE2ERoundTrip:
         assert len(result.errors) == 0
 
         entry = result.entries[0]
-        # catalog 'unit' → graph 'units'
-        assert entry["units"] == "eV"
-        assert "unit" not in entry
+        # catalog 'unit' passes through as graph 'unit'
+        assert entry["unit"] == "eV"
         # catalog 'ids_paths' → graph 'imas_paths'
         assert entry["imas_paths"] == [
             "core_profiles/profiles_1d/electrons/temperature"
@@ -963,7 +962,7 @@ class TestE2ERoundTrip:
         assert imported["description"] == "Electron temperature in the core plasma"
         assert "documentation" in imported
         assert imported["kind"] == "scalar"
-        assert imported["units"] == "eV"
+        assert imported["unit"] == "eV"
         assert imported["imas_paths"] == [
             "core_profiles/profiles_1d/electrons/temperature"
         ]
@@ -1000,7 +999,7 @@ class TestE2ERoundTrip:
         assert node["id"] == "electron_temperature"
         assert node["description"] == "Electron temperature in the core plasma"
         assert node["kind"] == "scalar"
-        assert node["units"] == "eV"
+        assert node["unit"] == "eV"
         assert node["tags"] == ["spatial-profile"]
         assert node["constraints"] == ["T_e > 0"]
         assert node["validity_domain"] == "core plasma"

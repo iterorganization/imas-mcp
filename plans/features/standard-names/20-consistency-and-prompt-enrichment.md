@@ -353,24 +353,106 @@ Phase 5 -> document benchmark evidence for model/approach selection.
 - [ ] `docs/architecture/standard-names.md` written and reviewed
 - [ ] Enrichment adds <2s per batch (graph queries, not remote calls)
 
-## Open Questions
+## Resolved Questions
 
-1. **Dimensional equivalence** — "pressure" cluster has Pa and J/m3 (same
-   dimension). Split on exact unit string or physical dimension via pint?
+1. **Dimensional equivalence** — Units are already pint-normalized on ingest
+   via `normalize_unit_symbol()` from `imas_codex.units`. Group by exact
+   normalized unit string. Pa and J.m^-3 produce separate batches despite
+   same dimensionality. Could add optional re-normalization pass for
+   consistency but not required — the graph stores pint-canonical forms.
+   **Note:** Graph units use `.0` fractional exponents (e.g., `m^2.0.s^-1`)
+   that fail `imas_standard_names` regex validation. Strip `.0` suffixes
+   before passing to validation: `re.sub(r'\^(-?\d+)\.0', r'^\1', unit)`.
 
-2. **Structure quantity naming** — When STRUCTURE has `HAS_UNIT`, does the
-   name come from the structure itself or from the concept it represents?
-   E.g., `langmuir_probes/embedded/t_e` (STRUCTURE, eV) — name is
-   `electron_temperature`, not `langmuir_probe_electron_temperature` (method
-   independence).
+2. **Structure quantity naming** — Name comes from the **concept**, not the
+   method. Grammar modifiers distinguish measurement context. Example:
+   `langmuir_probes/embedded/t_e` → `electron_temperature` (not
+   `langmuir_probe_electron_temperature`). The `device` grammar segment
+   captures measurement context when needed:
+   `electron_temperature_langmuir_probe`. Method independence is a core
+   principle — same quantity measured differently gets the same name.
 
-3. **Batch size with enrichment** — Current batch=10-15. With DD context per
-   path, user prompts will be longer. Benchmark profiles will answer this.
+3. **Batch size with enrichment** — Make batches **much** bigger. Output
+   tokens are the bottleneck, not input (prompts can be very long).
+   Atomize system/user prompts for caching. Target 250-path batches.
+   Benchmark will validate optimal size.
 
-4. **5,035 paths without `HAS_UNIT`** — Options:
-   a. Some may have units in DD but not in graph -> check via `fetch_dd_paths`
-   b. Heuristic: `INT_0D` flag/index -> metadata, `FLT_0D` dimensionless -> quantity
-   c. LLM classification: batch query "Is this a physics quantity or metadata?"
+4. **Graph vs DD completeness** — The graph matches the DD exactly (built
+   from all DD versions via `build_dd.py`). All unit information in the DD
+   is already in the graph via `HAS_UNIT` relationships and `unit` property
+   on IMASNode. No gap to fill via `fetch_dd_paths`.
 
-5. **Signals source enrichment** — This plan covers DD source only. Signals
-   source uses `search_dd_paths` to find matching DD paths -> future work.
+5. **Signals source enrichment** — Future work. Not in scope for this plan.
+
+## Pre-Persistence Validation
+
+### imas_standard_names validation layer
+
+Every proposed StandardName MUST be validated against the `imas_standard_names`
+package before graph persistence. The package provides:
+
+1. **Pydantic model validation** — `StandardNameScalarEntry` enforces:
+   - `name`: snake_case pattern `^[a-z][a-z0-9_]*$`
+   - `unit`: dot-exponent pattern `^[A-Za-z0-9]+(\^[+-]?\d+)?(\.[A-Za-z0-9]+(\^[+-]?\d+)?)*$|^$`
+   - `description`: required, max 180 chars
+   - `documentation`: required
+   - `physics_domain`: required
+   - `tags`: must be from controlled vocabulary (29 primary + 56 secondary)
+   - `kind`: literal `"scalar"` | `"vector"` | `"metadata"`
+
+2. **Grammar parsing** — `parse_standard_name()` decomposes into segments,
+   `compose_standard_name()` reassembles. If roundtrip != original, the
+   name has invalid grammar structure.
+
+3. **Quality checks** — `run_quality_checks()` checks domain-specific
+   rules, prose quality (proselint), and semantic consistency.
+
+### Invalidation strategy: Selective per-name
+
+Names within a batch are semi-independent — each maps to specific IMAS
+paths. Rejecting one valid name because another in the batch failed
+wastes LLM output.
+
+**Strategy:**
+1. LLM generates batch of N candidates
+2. Each candidate validated individually:
+   a. Construct `StandardNameScalarEntry` (or Vector/Metadata by kind)
+   b. Run `parse_standard_name()` → `compose_standard_name()` roundtrip
+   c. Check unit consistency: all source paths must have same unit
+3. **Valid names** → proceed to graph persistence
+4. **Invalid names** → logged with validation errors, status set to
+   `"validation_failed"`, not persisted to graph
+5. **Retry opportunity** — failed names can be retried in a subsequent pass
+   with the validation error as additional LLM context
+
+**Why selective, not batch-level:**
+- Names are not interdependent within a batch (no collision avoidance)
+- Unit-safe grouping (IDS × cluster × unit) prevents cross-contamination
+- Rejecting an entire batch of 250 paths because 1 name fails is wasteful
+- Failed names get explicit error messages for targeted retry
+
+### Enriched item structure (what the user prompt receives)
+
+```python
+{
+    "path": "core_profiles/profiles_1d/electrons/temperature",
+    "description": "Electron temperature (Te) 1D radial profile...",  # LLM-enriched
+    "documentation": "Temperature",                                    # raw DD doc
+    "unit": "eV",                                  # AUTHORITATIVE from HAS_UNIT
+    "data_type": "FLT_1D",
+    "physics_domain": "transport",
+    "keywords": ["Te", "core profiles", "transport", "thermal energy"],
+    "ndim": 1,
+    "coordinates": ["core_profiles/profiles_1d/grid/rho_tor_norm"],
+    "coordinate_units": ["dimensionless"],
+    "cluster_label": "electron temperature",
+    "cluster_description": "Electron thermal energy in the core plasma",
+    "cluster_siblings": [                           # same concept, other IDSs
+        {"path": "edge_profiles/.../temperature", "unit": "eV"},
+        {"path": "turbulence/.../temperature", "unit": "eV"},
+    ],
+    "parent_path": "core_profiles/profiles_1d/electrons",
+    "parent_description": "Electron fluid properties...",
+    "parent_type": "STRUCTURE",
+    "ids_name": "core_profiles",
+}

@@ -56,7 +56,7 @@ def get_extraction_candidates_dd(
             WITH n, ids
             OPTIONAL MATCH (n)-[:IN_CLUSTER]->(c:IMASSemanticCluster)
             RETURN n.id AS path, n.description AS description,
-                   n.units AS units, n.data_type AS data_type,
+                   n.unit AS unit, n.data_type AS data_type,
                    ids.id AS ids_name, c.label AS cluster_label
             ORDER BY ids.id, n.id
             LIMIT $limit
@@ -147,7 +147,7 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
       - ``source_id``: the originating path / signal ID
 
     Optional fields: ``physical_base``, ``subject``, ``component``,
-    ``coordinate``, ``position``, ``process``, ``units``, ``description``,
+    ``coordinate``, ``position``, ``process``, ``unit``, ``description``,
     ``documentation``, ``kind``, ``tags``, ``links``, ``imas_paths``,
     ``validity_domain``, ``constraints``, ``model``, ``review_status``,
     ``generated_at``, ``confidence``.
@@ -178,7 +178,7 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
                 sn.imas_paths = coalesce(b.imas_paths, sn.imas_paths),
                 sn.validity_domain = coalesce(b.validity_domain, sn.validity_domain),
                 sn.constraints = coalesce(b.constraints, sn.constraints),
-                sn.canonical_units = coalesce(b.units, sn.canonical_units),
+                sn.canonical_units = coalesce(b.unit, sn.canonical_units),
                 sn.model = coalesce(b.model, sn.model),
                 sn.review_status = coalesce(b.review_status, sn.review_status),
                 sn.generated_at = coalesce(b.generated_at, sn.generated_at),
@@ -203,7 +203,7 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
                     "imas_paths": n.get("imas_paths") or None,
                     "validity_domain": n.get("validity_domain"),
                     "constraints": n.get("constraints") or None,
-                    "units": n.get("units"),
+                    "unit": n.get("unit"),
                     "model": n.get("model"),
                     "review_status": n.get("review_status"),
                     "generated_at": n.get("generated_at"),
@@ -248,7 +248,7 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
 
         # Create CANONICAL_UNITS relationships: StandardName → Unit
         units_batch = [
-            {"id": n["id"], "unit": n["units"]} for n in names if n.get("units")
+            {"id": n["id"], "unit": n["unit"]} for n in names if n.get("unit")
         ]
         if units_batch:
             gc.query(

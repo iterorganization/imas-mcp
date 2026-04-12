@@ -120,7 +120,7 @@ def _catalog_entry_to_dict(entry: Any) -> dict[str, Any]:
         "description": entry.description or None,
         "documentation": entry.documentation or None,
         "kind": str(entry.kind) if entry.kind else None,
-        "units": str(entry.unit) if entry.unit else None,
+        "unit": str(entry.unit) if entry.unit else None,
         "tags": tags or None,
         "links": links or None,
         "imas_paths": ids_paths or None,
@@ -167,7 +167,7 @@ def _write_catalog_entries(
             SET sn.description = b.description,
                 sn.documentation = b.documentation,
                 sn.kind = b.kind,
-                sn.canonical_units = b.units,
+                sn.canonical_units = b.unit,
                 sn.tags = b.tags,
                 sn.links = b.links,
                 sn.imas_paths = b.imas_paths,
@@ -196,7 +196,7 @@ def _write_catalog_entries(
 
         # Create CANONICAL_UNITS relationships: StandardName → Unit
         units_batch = [
-            {"id": e["id"], "unit": e["units"]} for e in entries if e.get("units")
+            {"id": e["id"], "unit": e["unit"]} for e in entries if e.get("unit")
         ]
         if units_batch:
             gc.query(
@@ -336,7 +336,7 @@ _CHECK_FIELDS = (
     "description",
     "documentation",
     "kind",
-    "units",
+    "unit",
     "tags",
     "imas_paths",
     "validity_domain",
@@ -416,7 +416,7 @@ def check_catalog(
                    sn.description AS description,
                    sn.documentation AS documentation,
                    sn.kind AS kind,
-                   sn.canonical_units AS units,
+                   sn.canonical_units AS unit,
                    sn.tags AS tags,
                    sn.imas_paths AS imas_paths,
                    sn.validity_domain AS validity_domain,

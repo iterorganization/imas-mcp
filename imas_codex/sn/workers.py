@@ -198,7 +198,7 @@ async def compose_worker(state: SNBuildState, **_kwargs) -> None:
                         "source_id": c.source_id,
                         "description": c.description,
                         "documentation": c.documentation,
-                        "units": c.unit,  # graph_ops uses "units" → canonical_units
+                        "unit": c.unit,
                         "kind": c.kind,
                         "tags": c.tags,
                         "links": c.links,
@@ -614,7 +614,7 @@ async def validate_worker(state: SNBuildState, **_kwargs) -> None:
                 wlog.debug("Missing documentation for %r", name)
 
             # 3. Unit validity — simple pattern check
-            unit = entry.get("units")
+            unit = entry.get("unit")
             if unit and isinstance(unit, str) and len(unit) < 50:
                 unit_valid += 1
 

@@ -7,8 +7,8 @@ Configuration is organized into subsections:
   [tool.imas-codex.embedding]      — embedding model, dimension, location
   [tool.imas-codex.language]       — language models, batch-size for structured output
   [tool.imas-codex.vision]         — vision models for image/document tasks
-  [tool.imas-codex.reasoning]      — reasoning models for complex structured output
-  [tool.imas-codex.sn.benchmark]   — SN benchmark compose-models and reviewer-model
+  [tool.imas-codex.agent]          — agent models for planning/exploration tasks
+  [tool.imas-codex.compaction]     — compaction models for summarization tasks
 
 All settings support environment variable overrides (IMAS_CODEX_* prefix / NEO4J_*).
 """
@@ -17,7 +17,6 @@ import importlib.resources
 import os
 from functools import cache
 from pathlib import Path
-from typing import Any
 
 try:
     import tomllib
@@ -73,13 +72,17 @@ def _get_section(section: str) -> dict:
 
 # ─── Valid model sections ───────────────────────────────────────────────────
 
-MODEL_SECTIONS = frozenset({"embedding", "language", "vision", "reasoning"})
+MODEL_SECTIONS = frozenset(
+    {"embedding", "language", "vision", "agent", "compaction", "reasoning"}
+)
 
 # Default model per section (fallback when not configured)
 _MODEL_DEFAULTS: dict[str, str] = {
     "embedding": "Qwen/Qwen3-Embedding-0.6B",
     "language": "google/gemini-3.1-flash-lite-preview",
     "vision": "google/gemini-3.1-flash-lite-preview",
+    "agent": "anthropic/claude-sonnet-4.6",
+    "compaction": "anthropic/claude-haiku-4.5",
     "reasoning": "anthropic/claude-sonnet-4.6",
 }
 
@@ -88,6 +91,8 @@ _MODEL_ENV_VARS: dict[str, str] = {
     "embedding": "IMAS_CODEX_EMBEDDING_MODEL",
     "language": "IMAS_CODEX_LANGUAGE_MODEL",
     "vision": "IMAS_CODEX_VISION_MODEL",
+    "agent": "IMAS_CODEX_AGENT_MODEL",
+    "compaction": "IMAS_CODEX_COMPACTION_MODEL",
     "reasoning": "IMAS_CODEX_REASONING_MODEL",
 }
 
@@ -587,50 +592,6 @@ def get_labeling_batch_size() -> int:
     return 50
 
 
-# ─── SN benchmark settings ─────────────────────────────────────────────────
-
-_SN_BENCHMARK_DEFAULTS: dict[str, Any] = {
-    "compose-models": [
-        "anthropic/claude-sonnet-4.6",
-        "anthropic/claude-haiku-4.5",
-        "openai/gpt-5.4",
-        "openai/gpt-5.4-mini",
-        "google/gemini-3.1-pro-preview",
-        "google/gemini-3-flash-preview",
-        "google/gemini-3.1-flash-lite-preview",
-    ],
-    "reviewer-model": "anthropic/claude-opus-4.6",
-}
-
-
-def get_sn_benchmark_compose_models() -> list[str]:
-    """Get the list of models to benchmark for SN composition.
-
-    Priority: IMAS_CODEX_SN_COMPOSE_MODELS env (comma-sep)
-        → [tool.imas-codex.sn.benchmark].compose-models → defaults.
-    """
-    if env := os.getenv("IMAS_CODEX_SN_COMPOSE_MODELS"):
-        return [m.strip() for m in env.split(",") if m.strip()]
-    section = _load_pyproject_settings().get("sn", {}).get("benchmark", {})
-    if models := section.get("compose-models"):
-        return list(models)
-    return list(_SN_BENCHMARK_DEFAULTS["compose-models"])
-
-
-def get_sn_benchmark_reviewer_model() -> str:
-    """Get the reviewer (judge) model for SN benchmark quality scoring.
-
-    Priority: IMAS_CODEX_SN_REVIEWER_MODEL env
-        → [tool.imas-codex.sn.benchmark].reviewer-model → default.
-    """
-    if env := os.getenv("IMAS_CODEX_SN_REVIEWER_MODEL"):
-        return env
-    section = _load_pyproject_settings().get("sn", {}).get("benchmark", {})
-    if model := section.get("reviewer-model"):
-        return str(model)
-    return str(_SN_BENCHMARK_DEFAULTS["reviewer-model"])
-
-
 def _parse_bool(value: str | bool) -> bool:
     """Parse a boolean value from string or bool."""
     if isinstance(value, bool):
@@ -658,3 +619,37 @@ LABELING_BATCH_SIZE = get_labeling_batch_size()
 INCLUDE_GGD = get_include_ggd()
 INCLUDE_ERROR_FIELDS = get_include_error_fields()
 EMBEDDING_DIMENSION = get_embedding_dimension()
+
+
+# ─── SN benchmark settings ─────────────────────────────────────────────────
+
+_SN_BENCHMARK_DEFAULTS = {
+    "compose-models": [
+        "anthropic/claude-sonnet-4.6",
+        "anthropic/claude-haiku-4.5",
+        "openai/gpt-5.4",
+        "openai/gpt-5.4-mini",
+        "google/gemini-3.1-pro-preview",
+        "google/gemini-3-flash-preview",
+        "google/gemini-3.1-flash-lite-preview",
+    ],
+    "reviewer-model": "anthropic/claude-opus-4.6",
+}
+
+
+def get_sn_benchmark_compose_models() -> list[str]:
+    """Get list of models for SN benchmark composition.
+
+    Priority: [sn.benchmark].compose-models in pyproject.toml → defaults.
+    """
+    section = _get_section("sn").get("benchmark", {})
+    return section.get("compose-models", _SN_BENCHMARK_DEFAULTS["compose-models"])
+
+
+def get_sn_benchmark_reviewer_model() -> str:
+    """Get the reviewer model for SN benchmark scoring.
+
+    Priority: [sn.benchmark].reviewer-model in pyproject.toml → default.
+    """
+    section = _get_section("sn").get("benchmark", {})
+    return section.get("reviewer-model", _SN_BENCHMARK_DEFAULTS["reviewer-model"])

@@ -189,15 +189,14 @@ class TestFieldMapping:
         for entry in result.entries:
             assert entry["review_status"] == "accepted"
 
-    def test_maps_unit_to_units(self, catalog_dir: Path) -> None:
-        """Catalog 'unit' field should map to graph 'units' key."""
+    def test_maps_unit_to_unit(self, catalog_dir: Path) -> None:
+        """Catalog 'unit' field should pass through as graph unit key."""
         from imas_codex.sn.catalog_import import import_catalog
 
         result = import_catalog(catalog_dir, dry_run=True)
 
         et_entry = next(e for e in result.entries if e["id"] == "electron_temperature")
-        assert et_entry["units"] == "eV"
-        assert "unit" not in et_entry  # should not have the catalog key
+        assert et_entry["unit"] == "eV"
 
     def test_maps_ids_paths_to_imas_paths(self, catalog_dir: Path) -> None:
         """Catalog 'ids_paths' should map to graph 'imas_paths' key."""
@@ -427,7 +426,7 @@ class TestWriteCatalogEntries:
                 "description": "Te profile",
                 "documentation": "Rich docs here",
                 "kind": "scalar",
-                "units": "eV",
+                "unit": "eV",
                 "tags": ["core"],
                 "links": None,
                 "imas_paths": None,
@@ -480,7 +479,7 @@ class TestWriteCatalogEntries:
                 "description": "Te",
                 "documentation": None,
                 "kind": "scalar",
-                "units": "eV",
+                "unit": "eV",
                 "tags": None,
                 "links": None,
                 "imas_paths": None,
@@ -520,7 +519,7 @@ class TestWriteCatalogEntries:
                 "description": "Te",
                 "documentation": None,
                 "kind": "scalar",
-                "units": "eV",
+                "unit": "eV",
                 "tags": None,
                 "links": None,
                 "imas_paths": ["core_profiles/profiles_1d/electrons/temperature"],
@@ -560,7 +559,7 @@ class TestWriteCatalogEntries:
                 "description": "Test",
                 "documentation": None,
                 "kind": "scalar",
-                "units": None,
+                "unit": None,
                 "tags": None,
                 "links": None,
                 "imas_paths": None,
@@ -642,7 +641,7 @@ class TestVersionTracking:
                 "description": "Te",
                 "documentation": None,
                 "kind": "scalar",
-                "units": "eV",
+                "unit": "eV",
                 "tags": None,
                 "links": None,
                 "imas_paths": None,
@@ -689,7 +688,7 @@ class TestVersionTracking:
                 "description": "Test",
                 "documentation": None,
                 "kind": "scalar",
-                "units": None,
+                "unit": None,
                 "tags": None,
                 "links": None,
                 "imas_paths": None,
@@ -790,7 +789,7 @@ class TestImportIdempotency:
                 "description",
                 "documentation",
                 "kind",
-                "units",
+                "unit",
                 "tags",
                 "imas_paths",
                 "validity_domain",
@@ -822,7 +821,7 @@ class TestCheckMode:
                 "description": "Electron temperature",
                 "documentation": "The electron temperature Te is measured by Thomson scattering.",
                 "kind": "scalar",
-                "units": "eV",
+                "unit": "eV",
                 "tags": None,
                 "imas_paths": ["core_profiles/profiles_1d/electrons/temperature"],
                 "validity_domain": "core plasma",
@@ -835,7 +834,7 @@ class TestCheckMode:
                 "description": "Plasma current",
                 "documentation": "Total toroidal plasma current.",
                 "kind": "scalar",
-                "units": "A",
+                "unit": "A",
                 "tags": None,
                 "imas_paths": None,
                 "validity_domain": None,
@@ -901,7 +900,7 @@ class TestCheckMode:
                 "description": "Electron temperature",
                 "documentation": "The electron temperature Te is measured by Thomson scattering.",
                 "kind": "scalar",
-                "units": "eV",
+                "unit": "eV",
                 "tags": None,
                 "imas_paths": ["core_profiles/profiles_1d/electrons/temperature"],
                 "validity_domain": "core plasma",
@@ -914,7 +913,7 @@ class TestCheckMode:
                 "description": "Plasma current",
                 "documentation": "Total toroidal plasma current.",
                 "kind": "scalar",
-                "units": "A",
+                "unit": "A",
                 "tags": None,
                 "imas_paths": None,
                 "validity_domain": None,
@@ -927,7 +926,7 @@ class TestCheckMode:
                 "description": "Ion density",
                 "documentation": "Total ion density.",
                 "kind": "scalar",
-                "units": "m^-3",
+                "unit": "m^-3",
                 "tags": None,
                 "imas_paths": None,
                 "validity_domain": None,
@@ -965,7 +964,7 @@ class TestCheckMode:
                 "description": "WRONG description",  # differs from catalog
                 "documentation": "The electron temperature Te is measured by Thomson scattering.",
                 "kind": "scalar",
-                "units": "keV",  # differs from catalog (eV)
+                "unit": "keV",  # differs from catalog (eV)
                 "tags": None,
                 "imas_paths": ["core_profiles/profiles_1d/electrons/temperature"],
                 "validity_domain": "core plasma",
@@ -978,7 +977,7 @@ class TestCheckMode:
                 "description": "Plasma current",
                 "documentation": "Total toroidal plasma current.",
                 "kind": "scalar",
-                "units": "A",
+                "unit": "A",
                 "tags": None,
                 "imas_paths": None,
                 "validity_domain": None,
@@ -1007,7 +1006,7 @@ class TestCheckMode:
         assert len(cr.diverged) == 1
         assert cr.diverged[0]["name"] == "electron_temperature"
         assert "description" in cr.diverged[0]["fields"]
-        assert "units" in cr.diverged[0]["fields"]
+        assert "unit" in cr.diverged[0]["fields"]
 
     def test_check_with_tag_filter(self, tmp_path: Path) -> None:
         """Tag filter should limit which catalog entries are checked."""
@@ -1158,7 +1157,7 @@ class TestPublishImportRoundTrip:
 
         # 4. Verify all catalog fields map correctly into graph dict shape
         assert entry["id"] == "electron_temperature"
-        assert entry["units"] == "eV"
+        assert entry["unit"] == "eV"
         assert entry["imas_paths"] == [
             "core_profiles/profiles_1d/electrons/temperature"
         ]
@@ -1205,7 +1204,7 @@ class TestPublishImportRoundTrip:
                 "name": "electron_temperature",
                 "source_type": "dd",
                 "source_id": "core_profiles/profiles_1d/electrons/temperature",
-                "units": "eV",
+                "unit": "eV",
                 "description": "Electron temperature",
                 "ids_name": "core_profiles",
                 "confidence": 0.95,
@@ -1247,7 +1246,7 @@ class TestPublishImportRoundTrip:
 
         # Verify key fields survive the full publish→review→import cycle
         assert entry["id"] == "electron_temperature"
-        assert entry["units"] == "eV"
+        assert entry["unit"] == "eV"
         assert entry["source_type"] == "dd"
         assert entry["review_status"] == "accepted"
         assert entry["documentation"] == "Te from core profiles."

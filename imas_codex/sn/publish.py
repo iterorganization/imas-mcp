@@ -263,8 +263,8 @@ def graph_records_to_entries(
         # Resolve source ID (schema: source_path, legacy: source_id)
         source_id = rec.get("source_path") or rec.get("source_id") or ""
 
-        # Resolve units (schema: canonical_units, legacy: units)
-        unit = rec.get("canonical_units") or rec.get("units")
+        # Resolve units (schema: canonical_units, legacy: unit/units)
+        unit = rec.get("canonical_units") or rec.get("unit") or rec.get("units")
 
         # IDS name from graph traversal
         ids_name = rec.get("ids_name")
