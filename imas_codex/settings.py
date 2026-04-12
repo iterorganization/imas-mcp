@@ -17,6 +17,7 @@ import importlib.resources
 import os
 from functools import cache
 from pathlib import Path
+from typing import Any
 
 try:
     import tomllib
@@ -590,6 +591,49 @@ def get_labeling_batch_size() -> int:
     if (val := _get_section("language").get("batch-size")) is not None:
         return int(val)
     return 50
+
+
+# ─── SN benchmark settings ─────────────────────────────────────────────────
+
+_SN_BENCHMARK_DEFAULTS: dict[str, Any] = {
+    "compose-models": [
+        "anthropic/claude-sonnet-4.6",
+        "anthropic/claude-haiku-4.5",
+        "openai/gpt-5.4",
+        "openai/gpt-5.4-mini",
+        "google/gemini-3.1-pro-preview",
+        "google/gemini-3.1-flash-lite-preview",
+    ],
+    "reviewer-model": "anthropic/claude-opus-4.6",
+}
+
+
+def get_sn_benchmark_compose_models() -> list[str]:
+    """Get the list of models to benchmark for SN composition.
+
+    Priority: IMAS_CODEX_SN_COMPOSE_MODELS env (comma-sep)
+        → [tool.imas-codex.sn.benchmark].compose-models → defaults.
+    """
+    if env := os.getenv("IMAS_CODEX_SN_COMPOSE_MODELS"):
+        return [m.strip() for m in env.split(",") if m.strip()]
+    section = _load_pyproject_settings().get("sn", {}).get("benchmark", {})
+    if models := section.get("compose-models"):
+        return list(models)
+    return list(_SN_BENCHMARK_DEFAULTS["compose-models"])
+
+
+def get_sn_benchmark_reviewer_model() -> str:
+    """Get the reviewer (judge) model for SN benchmark quality scoring.
+
+    Priority: IMAS_CODEX_SN_REVIEWER_MODEL env
+        → [tool.imas-codex.sn.benchmark].reviewer-model → default.
+    """
+    if env := os.getenv("IMAS_CODEX_SN_REVIEWER_MODEL"):
+        return env
+    section = _load_pyproject_settings().get("sn", {}).get("benchmark", {})
+    if model := section.get("reviewer-model"):
+        return str(model)
+    return str(_SN_BENCHMARK_DEFAULTS["reviewer-model"])
 
 
 def _parse_bool(value: str | bool) -> bool:

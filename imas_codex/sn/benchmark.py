@@ -559,12 +559,17 @@ async def _run_model(
                 {"role": "user", "content": user_prompt},
             ]
 
+            # GPT-5.x models don't support temperature=0.0
+            temp = config.temperature
+            if "gpt-5" in model and temp == 0.0:
+                temp = None  # let the provider use its default
+
             try:
                 llm_response = await acall_llm_structured(
                     model=model,
                     messages=messages,
                     response_model=SNComposeBatch,
-                    temperature=config.temperature,
+                    temperature=temp,
                 )
                 llm_result, cost, tokens = llm_response
                 result.total_cost += cost

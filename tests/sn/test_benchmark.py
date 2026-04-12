@@ -752,15 +752,15 @@ class TestCLICommand:
         assert "--output" in result.output
         assert "--temperature" in result.output
 
-    def test_command_requires_models(self):
-        from click.testing import CliRunner
+    def test_command_defaults_from_config(self):
+        """Benchmark loads models from pyproject.toml config when --models omitted."""
+        from imas_codex.settings import get_sn_benchmark_compose_models
 
-        from imas_codex.cli.sn import sn
-
-        runner = CliRunner()
-        result = runner.invoke(sn, ["benchmark"])
-        assert result.exit_code != 0
-        assert "Missing" in result.output or "required" in result.output.lower()
+        models = get_sn_benchmark_compose_models()
+        assert len(models) > 0, "Should have default compose models"
+        # Verify all model IDs have provider/slug format
+        for m in models:
+            assert "/" in m, f"Model ID should be provider/slug format: {m}"
 
 
 class TestCalibrationDataset:

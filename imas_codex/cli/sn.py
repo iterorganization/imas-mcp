@@ -267,7 +267,7 @@ def sn_mint(
 @sn.command("benchmark")
 @click.option(
     "--source",
-    type=click.Choice(["dd", "signals"]),
+    type=click.Choice(["dd"]),
     default="dd",
     help="Source to extract candidates from",
 )
@@ -289,13 +289,13 @@ def sn_mint(
     "--facility",
     type=str,
     default=None,
-    help="Facility ID (required for signals source)",
+    help="Facility ID (reserved for future signals source)",
 )
 @click.option(
     "--models",
     type=str,
-    required=True,
-    help="Comma-separated model list (e.g. 'claude-sonnet-4,gpt-4o')",
+    default=None,
+    help="Comma-separated model list. Defaults to [sn.benchmark].compose-models.",
 )
 @click.option(
     "--max-candidates",
@@ -326,14 +326,14 @@ def sn_mint(
     "--reviewer-model",
     type=str,
     default=None,
-    help="Frontier model for quality scoring (e.g. anthropic/claude-opus-4-6)",
+    help="Judge model for quality scoring. Defaults to [sn.benchmark].reviewer-model.",
 )
 def sn_benchmark(
     source: str,
     ids_filter: str | None,
     domain_filter: str | None,
     facility: str | None,
-    models: str,
+    models: str | None,
     max_candidates: int,
     runs: int,
     temperature: float,
@@ -346,21 +346,41 @@ def sn_benchmark(
     Runs a fixed dataset through multiple models and compares results
     on grammar validity, reference overlap, cost, and speed.
 
+    When --models is omitted, loads the model list from
+    [tool.imas-codex.sn.benchmark].compose-models in pyproject.toml.
+
     \b
     Examples:
-      imas-codex sn benchmark --models claude-sonnet-4,gpt-4o --ids equilibrium
-      imas-codex sn benchmark --models claude-sonnet-4 --max-candidates 20 -v
-      imas-codex sn benchmark --models gpt-4o --output report.json
+      imas-codex sn benchmark --ids equilibrium
+      imas-codex sn benchmark --models anthropic/claude-sonnet-4.6,openai/gpt-5.4
+      imas-codex sn benchmark --max-candidates 20 -v
+      imas-codex sn benchmark --reviewer-model anthropic/claude-opus-4.6
     """
     if verbose:
         logging.basicConfig(level=logging.DEBUG)
     else:
         logging.basicConfig(level=logging.WARNING)
 
-    # Parse model list
-    model_list = [m.strip() for m in models.split(",") if m.strip()]
+    from imas_codex.settings import (
+        get_sn_benchmark_compose_models,
+        get_sn_benchmark_reviewer_model,
+    )
+
+    # Resolve model list: CLI flag → pyproject.toml → built-in defaults
+    if models:
+        model_list = [m.strip() for m in models.split(",") if m.strip()]
+    else:
+        model_list = get_sn_benchmark_compose_models()
+
     if not model_list:
-        raise click.UsageError("--models must contain at least one model name")
+        raise click.UsageError(
+            "No models configured. Pass --models or set "
+            "[tool.imas-codex.sn.benchmark].compose-models in pyproject.toml."
+        )
+
+    # Resolve reviewer model: CLI flag → pyproject.toml → built-in default
+    if reviewer_model is None:
+        reviewer_model = get_sn_benchmark_reviewer_model()
 
     from imas_codex.sn.benchmark import (
         BenchmarkConfig,
@@ -390,8 +410,7 @@ def sn_benchmark(
     console.print(f"  Max candidates: {max_candidates}")
     console.print(f"  Runs per model: {runs}")
     console.print(f"  Temperature: {temperature}")
-    if reviewer_model:
-        console.print(f"  Reviewer model: {reviewer_model}")
+    console.print(f"  Reviewer (judge): {reviewer_model}")
     console.print()
 
     from imas_codex.cli.utils import run_async
