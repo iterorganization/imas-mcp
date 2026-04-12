@@ -47,13 +47,12 @@ All model and tool settings live in `pyproject.toml` under `[tool.imas-codex]`. 
 | `[embedding]` | Embedding model, dimension, location, scheduler | `get_model("embedding")`, `get_embedding_location()` |
 | `[language]` | Structured output (scoring, discovery, labeling), batch-size | `get_model("language")` |
 | `[vision]` | Image/document tasks | `get_model("vision")` |
-| `[agent]` | Planning, exploration, autonomous tasks | `get_model("agent")` |
-| `[compaction]` | Summarization/compaction | `get_model("compaction")` |
 | `[reasoning]` | Complex structured output (IMAS mapping, multi-step reasoning) | `get_model("reasoning")` |
 | `[discovery]` | Discovery threshold for high-value processing | `get_discovery_threshold()` |
 | `[data-dictionary]` | DD version, include-ggd, include-error-fields | `get_dd_version()` |
+| `[sn.benchmark]` | SN benchmark compose-models list and reviewer-model | `get_sn_benchmark_compose_models()`, `get_sn_benchmark_reviewer_model()` |
 
-**Model access:** `get_model(section)` is the single entry point for all model lookups. Pass the pyproject.toml section name directly: `"language"`, `"vision"`, `"agent"`, `"compaction"`, `"reasoning"`, or `"embedding"`. Priority: section env var → pyproject.toml config → default.
+**Model access:** `get_model(section)` is the single entry point for all model lookups. Pass the pyproject.toml section name directly: `"language"`, `"vision"`, `"reasoning"`, or `"embedding"`. Priority: section env var → pyproject.toml config → default.
 
 **Graph access:** Graph profiles separate **name** (what data) from **location** (where Neo4j runs). The default graph `"codex"` contains all facilities + IMAS DD and runs at location `"iter"`. `IMAS_CODEX_GRAPH` env var selects the graph name. `IMAS_CODEX_GRAPH_LOCATION` overrides where it runs. Each location maps to a unique bolt+HTTP port pair by convention:
 
@@ -718,17 +717,31 @@ Azure Web App has continuous deployment enabled on ACR. When a new image appears
 | `sn status` | Show standard name statistics from graph | — |
 | `sn reset` | Reset standard names for re-processing | `--status` (required), `--to`, `--source`, `--ids`, `--dry-run` |
 | `sn clear` | Delete standard names from the graph (relationship-first safety model) | `--status`, `--all`, `--source`, `--ids`, `--include-accepted`, `--dry-run` |
-| `sn benchmark` | Benchmark LLM models on standard name generation quality | `--models`, `--source`, `--reviewer-model` |
+| `sn benchmark` | Benchmark LLM models on standard name generation quality | `--models`, `--ids`, `--reviewer-model`, `--max-candidates` |
 
 ### Benchmark
 
 `sn benchmark` uses the same prompt pipeline as `sn mint` (system/user message split via
-`build_compose_context()`). Output table includes a **Cache %** column showing the prompt-cache
+`build_compose_context()`). Model lists default from `[tool.imas-codex.sn.benchmark]` in
+pyproject.toml. Output table includes a **Cache %** column showing the prompt-cache
 hit rate per model (provider-side via OpenRouter — not something we implement). Scoring is
-**5-dimensional**: accuracy, completeness, physics_correctness, naming_convention, and
-overall, evaluated by a reviewer LLM against a gold reference set (`benchmark_reference.py`,
-52 entries across 8 IDSs). The calibration dataset (`benchmark_calibration.yaml`) provides
-known-quality examples for reviewer consistency checks.
+**5-dimensional**: grammar, semantic, documentation, convention, and completeness (each 0-20,
+total 0-100), evaluated by a reviewer LLM. The calibration dataset (`benchmark_calibration.yaml`)
+provides known-quality examples for reviewer consistency checks.
+
+**Qualified models** (benchmark evidence from equilibrium + core_profiles + magnetics):
+
+| Role | Model | Avg Quality | Notes |
+|------|-------|-------------|-------|
+| **Compose (recommended)** | `anthropic/claude-sonnet-4.6` | 76.5 | 32% Outstanding, best grammar + documentation |
+| **Compose (budget)** | `google/gemini-3.1-pro-preview` | 74.6 | Near-top quality, good consistency |
+| **Compose (light)** | `anthropic/claude-haiku-4.5` | 61.2 | Adequate for bulk generation |
+| **Review/scoring** | `anthropic/claude-opus-4.6` | — | Reviewer (5-dimensional rubric judge) |
+| **Mint review** | `anthropic/claude-sonnet-4.6` | — | Uses `get_model("reasoning")` |
+
+**GPT-5.4 compatibility:** GPT-5.x models require `strict: false` JSON schema wrapping
+(handled automatically in `llm.py`) and cannot use `temperature=0.0` (handled in benchmark).
+Quality is adequate (68.9 avg) but not top-tier for standard name generation.
 
 ### StandardName Lifecycle
 

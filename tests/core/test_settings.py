@@ -36,15 +36,6 @@ class TestSettingsFunctions:
 
         assert result == "test-vlm"
 
-    def test_get_model_compaction_env_override(self, monkeypatch):
-        """Environment variable overrides compaction model setting."""
-        settings._load_pyproject_settings.cache_clear()
-
-        monkeypatch.setenv("IMAS_CODEX_COMPACTION_MODEL", "test-compact")
-        result = settings.get_model("compaction")
-
-        assert result == "test-compact"
-
     def test_get_labeling_batch_size_env_override(self, monkeypatch):
         """Environment variable overrides labeling batch size."""
         settings._load_pyproject_settings.cache_clear()
@@ -142,18 +133,6 @@ class TestGetModel:
     def test_vision_section_returns_model(self):
         """Vision section returns a model string."""
         model = settings.get_model("vision")
-        assert isinstance(model, str)
-        assert "/" in model
-
-    def test_agent_section_returns_model(self):
-        """Agent section returns a model string."""
-        model = settings.get_model("agent")
-        assert isinstance(model, str)
-        assert "/" in model
-
-    def test_compaction_section_returns_model(self):
-        """Compaction section returns a model string."""
-        model = settings.get_model("compaction")
         assert isinstance(model, str)
         assert "/" in model
 

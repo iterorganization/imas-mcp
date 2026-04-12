@@ -7,8 +7,8 @@ Configuration is organized into subsections:
   [tool.imas-codex.embedding]      — embedding model, dimension, location
   [tool.imas-codex.language]       — language models, batch-size for structured output
   [tool.imas-codex.vision]         — vision models for image/document tasks
-  [tool.imas-codex.agent]          — agent models for planning/exploration tasks
-  [tool.imas-codex.compaction]     — compaction models for summarization tasks
+  [tool.imas-codex.reasoning]      — reasoning models for complex structured output
+  [tool.imas-codex.sn.benchmark]   — SN benchmark compose-models and reviewer-model
 
 All settings support environment variable overrides (IMAS_CODEX_* prefix / NEO4J_*).
 """
@@ -73,17 +73,13 @@ def _get_section(section: str) -> dict:
 
 # ─── Valid model sections ───────────────────────────────────────────────────
 
-MODEL_SECTIONS = frozenset(
-    {"embedding", "language", "vision", "agent", "compaction", "reasoning"}
-)
+MODEL_SECTIONS = frozenset({"embedding", "language", "vision", "reasoning"})
 
 # Default model per section (fallback when not configured)
 _MODEL_DEFAULTS: dict[str, str] = {
     "embedding": "Qwen/Qwen3-Embedding-0.6B",
     "language": "google/gemini-3.1-flash-lite-preview",
     "vision": "google/gemini-3.1-flash-lite-preview",
-    "agent": "anthropic/claude-sonnet-4.6",
-    "compaction": "anthropic/claude-haiku-4.5",
     "reasoning": "anthropic/claude-sonnet-4.6",
 }
 
@@ -92,8 +88,6 @@ _MODEL_ENV_VARS: dict[str, str] = {
     "embedding": "IMAS_CODEX_EMBEDDING_MODEL",
     "language": "IMAS_CODEX_LANGUAGE_MODEL",
     "vision": "IMAS_CODEX_VISION_MODEL",
-    "agent": "IMAS_CODEX_AGENT_MODEL",
-    "compaction": "IMAS_CODEX_COMPACTION_MODEL",
     "reasoning": "IMAS_CODEX_REASONING_MODEL",
 }
 

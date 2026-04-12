@@ -265,13 +265,7 @@ batch-size = 50
 [tool.imas-codex.vision]
 model = "google/gemini-3.1-flash-lite-preview"
 
-[tool.imas-codex.agent]
-model = "anthropic/claude-opus-4.6"
-
 [tool.imas-codex.reasoning]
-model = "anthropic/claude-sonnet-4.6"
-
-[tool.imas-codex.compaction]
 model = "anthropic/claude-sonnet-4.6"
 
 [tool.imas-codex.sn.benchmark]
