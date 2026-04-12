@@ -150,7 +150,13 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
     ``coordinate``, ``position``, ``process``, ``unit``, ``description``,
     ``documentation``, ``kind``, ``tags``, ``links``, ``imas_paths``,
     ``validity_domain``, ``constraints``, ``model``, ``review_status``,
-    ``generated_at``, ``confidence``.
+    ``generated_at``, ``confidence``, ``reviewer_model``, ``reviewer_score``,
+    ``reviewer_scores``, ``reviewer_comments``, ``reviewed_at``,
+    ``review_tier``, ``vocab_gap_detail``.
+
+    Performs conflict detection on ``unit``: if a StandardName already exists
+    with a different canonical_units value, that entry is skipped (not written)
+    and a warning is logged.
 
     Returns the number of nodes written.
     """
@@ -158,6 +164,40 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
         return 0
 
     with GraphClient() as gc:
+        # Conflict-detect on unit — same name with different unit is a data
+        # integrity error.  Filter out conflicting entries rather than raising
+        # so that non-conflicting entries can still proceed.
+        unit_check_batch = [
+            {"id": n["id"], "unit": n.get("unit")} for n in names if n.get("unit")
+        ]
+        if unit_check_batch:
+            unit_conflicts = list(
+                gc.query(
+                    """
+                    UNWIND $batch AS b
+                    MATCH (sn:StandardName {id: b.id})
+                    WHERE sn.canonical_units IS NOT NULL AND b.unit IS NOT NULL
+                      AND sn.canonical_units <> b.unit
+                    RETURN sn.id AS name,
+                           sn.canonical_units AS existing_unit,
+                           b.unit AS incoming_unit
+                    """,
+                    batch=unit_check_batch,
+                )
+                or []
+            )
+            if unit_conflicts:
+                conflict_details = "; ".join(
+                    f"{c['name']}: {c['existing_unit']} vs {c['incoming_unit']}"
+                    for c in unit_conflicts
+                )
+                logger.warning("Unit conflicts detected: %s", conflict_details)
+                conflicting_ids = {c["name"] for c in unit_conflicts}
+                names = [n for n in names if n["id"] not in conflicting_ids]
+                if not names:
+                    logger.warning("All entries had unit conflicts — nothing to write")
+                    return 0
+
         # MERGE StandardName nodes with provenance — coalesce to preserve existing data
         gc.query(
             """
@@ -183,6 +223,13 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
                 sn.review_status = coalesce(b.review_status, sn.review_status),
                 sn.generated_at = coalesce(b.generated_at, sn.generated_at),
                 sn.confidence = coalesce(b.confidence, sn.confidence),
+                sn.reviewer_model = coalesce(b.reviewer_model, sn.reviewer_model),
+                sn.reviewer_score = coalesce(b.reviewer_score, sn.reviewer_score),
+                sn.reviewer_scores = coalesce(b.reviewer_scores, sn.reviewer_scores),
+                sn.reviewer_comments = coalesce(b.reviewer_comments, sn.reviewer_comments),
+                sn.reviewed_at = coalesce(b.reviewed_at, sn.reviewed_at),
+                sn.review_tier = coalesce(b.review_tier, sn.review_tier),
+                sn.vocab_gap_detail = coalesce(b.vocab_gap_detail, sn.vocab_gap_detail),
                 sn.created_at = coalesce(sn.created_at, datetime())
             """,
             batch=[
@@ -208,6 +255,13 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
                     "review_status": n.get("review_status"),
                     "generated_at": n.get("generated_at"),
                     "confidence": n.get("confidence"),
+                    "reviewer_model": n.get("reviewer_model"),
+                    "reviewer_score": n.get("reviewer_score"),
+                    "reviewer_scores": n.get("reviewer_scores"),
+                    "reviewer_comments": n.get("reviewer_comments"),
+                    "reviewed_at": n.get("reviewed_at"),
+                    "review_tier": n.get("review_tier"),
+                    "vocab_gap_detail": n.get("vocab_gap_detail"),
                 }
                 for n in names
             ],

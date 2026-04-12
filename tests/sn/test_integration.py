@@ -52,13 +52,21 @@ def _call_import_write(
 
 
 def _merge_cypher(mock_gc: MagicMock) -> str:
-    """Return the Cypher string from the first MERGE query call."""
-    return mock_gc.query.call_args_list[0][0][0]
+    """Return the Cypher string from the first MERGE StandardName query call."""
+    for c in mock_gc.query.call_args_list:
+        cypher = c[0][0]
+        if "MERGE (sn:StandardName" in cypher:
+            return cypher
+    raise AssertionError("No MERGE StandardName query found in calls")
 
 
 def _merge_batch(mock_gc: MagicMock) -> list[dict]:
-    """Return the batch parameter from the first MERGE query call."""
-    return mock_gc.query.call_args_list[0][1]["batch"]
+    """Return the batch parameter from the first MERGE StandardName query call."""
+    for c in mock_gc.query.call_args_list:
+        cypher = c[0][0]
+        if "MERGE (sn:StandardName" in cypher:
+            return c[1]["batch"]
+    raise AssertionError("No MERGE StandardName query found in calls")
 
 
 # =============================================================================
@@ -289,6 +297,13 @@ class TestCoalesceSafety:
             "review_status",
             "generated_at",
             "confidence",
+            "reviewer_model",
+            "reviewer_score",
+            "reviewer_scores",
+            "reviewer_comments",
+            "reviewed_at",
+            "review_tier",
+            "vocab_gap_detail",
         }
         missing = required_keys - set(item.keys())
         assert not missing, (
@@ -977,11 +992,11 @@ class TestE2ERoundTrip:
         """write_standard_names receives all populated fields without losing any."""
         from imas_codex.sn.graph_ops import write_standard_names
 
-        captured_batches: list = []
+        captured_calls: list = []
 
         def capture_query(cypher, **kwargs):
             if "batch" in kwargs:
-                captured_batches.extend(kwargs["batch"])
+                captured_calls.append({"cypher": cypher, "batch": kwargs["batch"]})
             return None
 
         mock_gc = MagicMock()
@@ -994,8 +1009,14 @@ class TestE2ERoundTrip:
             MockGC.return_value = mock_ctx
             write_standard_names([_RICH_SN_RECORD])
 
-        assert len(captured_batches) > 0
-        node = captured_batches[0]
+        # Find the MERGE StandardName batch (not the conflict check batch)
+        merge_batch = None
+        for call_info in captured_calls:
+            if "MERGE (sn:StandardName" in call_info["cypher"]:
+                merge_batch = call_info["batch"]
+                break
+        assert merge_batch is not None, "MERGE StandardName query not found"
+        node = merge_batch[0]
         assert node["id"] == "electron_temperature"
         assert node["description"] == "Electron temperature in the core plasma"
         assert node["kind"] == "scalar"

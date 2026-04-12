@@ -1,14 +1,15 @@
 """Async workers for the standard-name build pipeline.
 
-Four-phase pipeline (review optional, persist new):
+Six-phase pipeline (review optional):
 
-    EXTRACT → COMPOSE → [REVIEW] → VALIDATE → PERSIST
+    EXTRACT → COMPOSE → [REVIEW] → VALIDATE → CONSOLIDATE → PERSIST
 
 - **extract**: queries graph for DD paths or facility signals, builds batches
 - **compose**: LLM-generates standard names from extraction batches
 - **review**: cross-model review of composed candidates (optional)
 - **validate**: validates names against grammar via round-trip + fields check
-- **persist**: writes validated names to graph with provenance
+- **consolidate**: cross-batch dedup, conflict detection, coverage accounting
+- **persist**: writes consolidated names to graph with provenance
 
 Workers follow the ``dd_workers.py`` pattern: each is an async function
 with signature ``async def worker(state, **_kwargs)`` that updates stats,
@@ -191,6 +192,11 @@ async def compose_worker(state: SNBuildState, **_kwargs) -> None:
 
             candidates = []
             for c in result.candidates:
+                # Find the matching source item to get authoritative unit
+                source_item = next(
+                    (item for item in batch.items if item.get("path") == c.source_id),
+                    None,
+                )
                 candidates.append(
                     {
                         "id": c.standard_name,
@@ -207,8 +213,22 @@ async def compose_worker(state: SNBuildState, **_kwargs) -> None:
                         "reason": c.reason,
                         "validity_domain": c.validity_domain,
                         "constraints": c.constraints,
+                        # Inject unit from DD (authoritative source, not LLM output)
+                        "unit": source_item.get("unit") if source_item else None,
                     }
                 )
+
+            # Collect vocab gaps for later reporting
+            if result.vocab_gaps:
+                for vg in result.vocab_gaps:
+                    state.stats.setdefault("vocab_gaps", []).append(
+                        {
+                            "source_id": vg.source_id,
+                            "segment": vg.segment,
+                            "needed_token": vg.needed_token,
+                            "reason": vg.reason,
+                        }
+                    )
 
             wlog.info(
                 "Batch %s: %d composed, %d skipped (cost=$%.4f)",
@@ -737,12 +757,92 @@ def _convert_fields_to_grammar(fields: dict) -> dict:
 
 
 # =============================================================================
+# CONSOLIDATE phase
+# =============================================================================
+
+
+async def consolidate_worker(state: SNBuildState, **_kwargs) -> None:
+    """Cross-batch consolidation: dedup, conflict detection, coverage accounting.
+
+    Runs after VALIDATE, before PERSIST.  Reads from ``state.validated``,
+    writes to ``state.consolidated``.
+    """
+    from imas_codex.cli.logging import WorkerLogAdapter
+
+    wlog = WorkerLogAdapter(logger, worker_name="sn_consolidate_worker")
+
+    if state.dry_run:
+        wlog.info("Dry run — skipping consolidation")
+        state.consolidated = list(state.validated)
+        state.consolidate_stats.total = len(state.validated)
+        state.consolidate_stats.processed = len(state.validated)
+        state.stats["consolidation_skipped"] = True
+        state.consolidate_stats.freeze_rate()
+        state.consolidate_phase.mark_done()
+        return
+
+    if not state.validated:
+        wlog.info("No validated names to consolidate — skipping")
+        state.consolidate_stats.freeze_rate()
+        state.consolidate_phase.mark_done()
+        return
+
+    from imas_codex.sn.consolidation import consolidate_candidates
+
+    wlog.info("Consolidating %d validated candidates", len(state.validated))
+    state.consolidate_stats.total = len(state.validated)
+
+    # Collect all source paths for coverage accounting
+    source_paths = None
+    if state.extracted:
+        source_paths = set()
+        for batch in state.extracted:
+            for item in batch.items:
+                if item.get("path"):
+                    source_paths.add(item["path"])
+
+    result = await asyncio.to_thread(
+        consolidate_candidates,
+        state.validated,
+        source_paths=source_paths,
+    )
+
+    state.consolidated = result.approved
+
+    # Log results
+    wlog.info(
+        "Consolidation: %d approved, %d conflicts, %d coverage gaps, %d reused",
+        len(result.approved),
+        len(result.conflicts),
+        len(result.coverage_gaps),
+        len(result.reused),
+    )
+
+    # Record stats
+    state.stats["consolidation"] = result.stats
+    if result.conflicts:
+        for conflict in result.conflicts:
+            wlog.warning(
+                "Conflict: %s (%s) — %s",
+                conflict.standard_name,
+                conflict.conflict_type,
+                conflict.details,
+            )
+    if result.coverage_gaps:
+        wlog.info("Coverage gaps: %d unmapped source paths", len(result.coverage_gaps))
+
+    state.consolidate_stats.processed = len(state.validated)
+    state.consolidate_stats.freeze_rate()
+    state.consolidate_phase.mark_done()
+
+
+# =============================================================================
 # PERSIST phase
 # =============================================================================
 
 
 async def persist_worker(state: SNBuildState, **_kwargs) -> None:
-    """Write validated standard names to graph with provenance.
+    """Write consolidated standard names to graph with provenance.
 
     Creates StandardName nodes and HAS_STANDARD_NAME relationships.
     Enriches entries with model name, generation timestamp, review status.
@@ -753,17 +853,18 @@ async def persist_worker(state: SNBuildState, **_kwargs) -> None:
 
     if state.dry_run:
         wlog.info(
-            "Dry run — skipping persist for %d validated names", len(state.validated)
+            "Dry run — skipping persist for %d consolidated names",
+            len(state.consolidated),
         )
-        state.persist_stats.total = len(state.validated)
-        state.persist_stats.processed = len(state.validated)
+        state.persist_stats.total = len(state.consolidated)
+        state.persist_stats.processed = len(state.consolidated)
         state.stats["persist_skipped"] = True
         state.persist_stats.freeze_rate()
         state.persist_phase.mark_done()
         return
 
-    if not state.validated:
-        wlog.info("No validated names to persist — skipping")
+    if not state.consolidated:
+        wlog.info("No consolidated names to persist — skipping")
         state.persist_stats.freeze_rate()
         state.persist_phase.mark_done()
         return
@@ -775,7 +876,7 @@ async def persist_worker(state: SNBuildState, **_kwargs) -> None:
     now = datetime.now(UTC).isoformat()
 
     # Enrich with provenance
-    for entry in state.validated:
+    for entry in state.consolidated:
         entry.setdefault("model", model)
         entry.setdefault("review_status", "drafted")
         entry.setdefault("generated_at", now)
@@ -796,10 +897,10 @@ async def persist_worker(state: SNBuildState, **_kwargs) -> None:
             if field_name in fields and field_name not in entry:
                 entry[field_name] = fields[field_name]
 
-    wlog.info("Persisting %d validated standard names", len(state.validated))
-    state.persist_stats.total = len(state.validated)
+    wlog.info("Persisting %d consolidated standard names", len(state.consolidated))
+    state.persist_stats.total = len(state.consolidated)
 
-    written = await asyncio.to_thread(write_standard_names, state.validated)
+    written = await asyncio.to_thread(write_standard_names, state.consolidated)
 
     # Embed descriptions for vector search
     if written > 0:
@@ -808,7 +909,7 @@ async def persist_worker(state: SNBuildState, **_kwargs) -> None:
 
             embed_items = [
                 {"id": e["id"], "description": e.get("description", "")}
-                for e in state.validated
+                for e in state.consolidated
                 if e.get("description")
             ]
             if embed_items:

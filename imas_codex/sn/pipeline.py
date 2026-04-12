@@ -1,8 +1,8 @@
 """SN mint pipeline orchestrator.
 
-Wires the EXTRACT → COMPOSE → [REVIEW] → VALIDATE → PERSIST workers into
-the generic discovery engine and runs them with supervision and progress
-tracking.
+Wires the EXTRACT → COMPOSE → [REVIEW] → VALIDATE → CONSOLIDATE → PERSIST
+workers into the generic discovery engine and runs them with supervision
+and progress tracking.
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ from imas_codex.discovery.base.engine import WorkerSpec, run_discovery_engine
 from imas_codex.sn.state import SNBuildState
 from imas_codex.sn.workers import (
     compose_worker,
+    consolidate_worker,
     extract_worker,
     persist_worker,
     review_worker,
@@ -34,13 +35,14 @@ async def run_sn_mint_engine(
 
     Pipeline::
 
-        EXTRACT → COMPOSE → [REVIEW] → VALIDATE → PERSIST
+        EXTRACT → COMPOSE → [REVIEW] → VALIDATE → CONSOLIDATE → PERSIST
 
     Extract queries the graph for DD paths, builds cluster-based batches.
     Compose uses LLM to generate standard names from the batches.
     Review uses a different model family to cross-check composed names.
     Validate checks grammar compliance via round-trip + fields consistency.
-    Persist writes validated names to graph with provenance.
+    Consolidate performs cross-batch dedup, conflict detection, and coverage.
+    Persist writes consolidated names to graph with provenance.
 
     When ``state.skip_review`` is True the REVIEW phase is disabled and
     its ``PipelinePhase`` is marked done immediately, so VALIDATE does
@@ -80,10 +82,16 @@ async def run_sn_mint_engine(
             depends_on=validate_deps,
         ),
         WorkerSpec(
+            "consolidate",
+            "consolidate_phase",
+            consolidate_worker,
+            depends_on=["validate_phase"],
+        ),
+        WorkerSpec(
             "persist",
             "persist_phase",
             persist_worker,
-            depends_on=["validate_phase"],
+            depends_on=["consolidate_phase"],
         ),
     ]
 

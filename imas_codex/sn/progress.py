@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 class SNProgressDisplay(BaseProgressDisplay):
     """Rich progress display for the SN build pipeline.
 
-    Shows five phases: Extract → Compose → Review → Validate → Persist
+    Shows six phases: Extract → Compose → Review → Validate → Consolidate → Persist
     with per-phase progress bars, rates, and cost tracking.
     """
 
@@ -63,12 +63,13 @@ class SNProgressDisplay(BaseProgressDisplay):
         return getattr(self._engine_state, attr, None)
 
     def _build_pipeline_section(self) -> Text:
-        """Build pipeline section showing Extract → Compose → Review → Validate → Persist."""
+        """Build pipeline section showing Extract → Compose → Review → Validate → Consolidate → Persist."""
         stages = [
             ("EXTRACT", "bold blue", "extract", "extract_stats"),
             ("COMPOSE", "bold magenta", "compose", "compose_stats"),
             ("REVIEW", "bold yellow", "review", "review_stats"),
             ("VALIDATE", "bold green", "validate", "validate_stats"),
+            ("CONSOLIDATE", "bold white", "consolidate", "consolidate_stats"),
             ("PERSIST", "bold cyan", "persist", "persist_stats"),
         ]
 
@@ -113,6 +114,7 @@ class SNProgressDisplay(BaseProgressDisplay):
             "compose_stats",
             "review_stats",
             "validate_stats",
+            "consolidate_stats",
             "persist_stats",
         ]
 
@@ -143,6 +145,7 @@ class SNProgressDisplay(BaseProgressDisplay):
             ("COMPOSE", "compose_stats"),
             ("REVIEW", "review_stats"),
             ("VALIDATE", "validate_stats"),
+            ("CONSOLIDATE", "consolidate_stats"),
             ("PERSIST", "persist_stats"),
         ]:
             stats = self._get_stage_stats(attr)

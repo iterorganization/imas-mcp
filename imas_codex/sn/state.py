@@ -1,8 +1,8 @@
 """SN build pipeline state.
 
 Extends :class:`DiscoveryStateBase` with per-phase stats and pipeline
-phases for the EXTRACT → COMPOSE → VALIDATE → PERSIST standard-name
-pipeline.
+phases for the EXTRACT → COMPOSE → VALIDATE → CONSOLIDATE → PERSIST
+standard-name pipeline.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ class SNBuildState(DiscoveryStateBase):
     Workers update stats and shared data as they progress.
 
     State fields are all past tense, named after the phase that writes them:
-    ``extracted``, ``composed``, ``reviewed``, ``validated``.
+    ``extracted``, ``composed``, ``reviewed``, ``validated``, ``consolidated``.
 
     The ``facility`` field is inherited from ``DiscoveryStateBase``.
     For DD source pipelines use ``facility="dd"``; for signal source
@@ -43,11 +43,12 @@ class SNBuildState(DiscoveryStateBase):
     skip_review: bool = False
     review_model: str | None = None
 
-    # In-memory pipeline data (extract → compose → review → validate)
+    # In-memory pipeline data (extract → compose → review → validate → consolidate)
     extracted: list[Any] = field(default_factory=list)  # ExtractionBatch objects
     composed: list[dict[str, Any]] = field(default_factory=list)
     reviewed: list[dict[str, Any]] = field(default_factory=list)
     validated: list[dict[str, Any]] = field(default_factory=list)
+    consolidated: list[dict[str, Any]] = field(default_factory=list)
 
     # Accumulated results
     stats: dict[str, Any] = field(default_factory=dict)
@@ -57,6 +58,7 @@ class SNBuildState(DiscoveryStateBase):
     compose_stats: WorkerStats = field(default_factory=WorkerStats)
     review_stats: WorkerStats = field(default_factory=WorkerStats)
     validate_stats: WorkerStats = field(default_factory=WorkerStats)
+    consolidate_stats: WorkerStats = field(default_factory=WorkerStats)
     persist_stats: WorkerStats = field(default_factory=WorkerStats)
 
     # Pipeline phases
@@ -64,6 +66,7 @@ class SNBuildState(DiscoveryStateBase):
     compose_phase: PipelinePhase = field(init=False)
     review_phase: PipelinePhase = field(init=False)
     validate_phase: PipelinePhase = field(init=False)
+    consolidate_phase: PipelinePhase = field(init=False)
     persist_phase: PipelinePhase = field(init=False)
 
     def __post_init__(self) -> None:
@@ -71,6 +74,7 @@ class SNBuildState(DiscoveryStateBase):
         self.compose_phase = PipelinePhase("compose")
         self.review_phase = PipelinePhase("review")
         self.validate_phase = PipelinePhase("validate")
+        self.consolidate_phase = PipelinePhase("consolidate")
         self.persist_phase = PipelinePhase("persist")
 
     # ------------------------------------------------------------------

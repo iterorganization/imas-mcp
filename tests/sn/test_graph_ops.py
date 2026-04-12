@@ -23,6 +23,14 @@ class TestWriteStandardNames:
 
             return write_standard_names(names)
 
+    def _find_merge_call(self, mock_gc: MagicMock):
+        """Find the MERGE StandardName query call from the call list."""
+        for c in mock_gc.query.call_args_list:
+            cypher = c[0][0]
+            if "MERGE (sn:StandardName" in cypher:
+                return c
+        raise AssertionError("No MERGE StandardName query found in calls")
+
     def test_write_coalesce_preserves_existing(
         self, sample_standard_names: list[dict]
     ) -> None:
@@ -38,7 +46,7 @@ class TestWriteStandardNames:
         self._call_write(sample_standard_names, mock_gc)
 
         # Verify MERGE query uses coalesce
-        merge_call = mock_gc.query.call_args_list[0]
+        merge_call = self._find_merge_call(mock_gc)
         cypher = merge_call[0][0]
 
         # Every field SET should use coalesce pattern
@@ -154,7 +162,7 @@ class TestWriteStandardNames:
 
         self._call_write(sample_standard_names, mock_gc)
 
-        merge_call = mock_gc.query.call_args_list[0]
+        merge_call = self._find_merge_call(mock_gc)
         batch = merge_call[1]["batch"]
 
         # First entry should have all rich fields
@@ -186,7 +194,7 @@ class TestWriteStandardNames:
         ]
         self._call_write(names, mock_gc)
 
-        merge_call = mock_gc.query.call_args_list[0]
+        merge_call = self._find_merge_call(mock_gc)
         batch = merge_call[1]["batch"]
         first = batch[0]
 

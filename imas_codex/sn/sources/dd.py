@@ -2,7 +2,8 @@
 
 Surfaces rich graph context for each path: authoritative unit from HAS_UNIT,
 LLM-enriched descriptions, cluster siblings, coordinates, parent structure,
-and keywords. Groups by (IDS × cluster × unit) for unit-safe batching.
+and keywords. Passes paths through enrichment layer for classification,
+primary cluster selection, and global (cluster × unit) batching.
 """
 
 from __future__ import annotations
@@ -72,7 +73,8 @@ def extract_dd_candidates(
 
     Queries IMASNode paths from the graph with full context: authoritative unit,
     cluster siblings, coordinates, parent structure, and LLM-enriched descriptions.
-    Groups by (IDS × cluster × unit) for unit-safe batching.
+    Classifies paths (quantity vs metadata vs skip), selects primary cluster per
+    path, and groups **globally** by (cluster × unit) for unit-safe batching.
 
     Args:
         ids_filter: Restrict to specific IDS (e.g., "equilibrium")
@@ -81,7 +83,7 @@ def extract_dd_candidates(
         existing_names: Known standard names for dedup awareness
 
     Returns:
-        List of ExtractionBatch objects grouped by (IDS, cluster, unit)
+        List of ExtractionBatch objects grouped by (primary_cluster, unit)
     """
     from imas_codex.graph.client import GraphClient
 
@@ -146,44 +148,22 @@ def extract_dd_candidates(
         else:
             row["cluster_siblings"] = []
 
-    # Group by (IDS × cluster × unit) for unit-safe batching
-    groups: dict[str, list[dict]] = {}
-    for row in results:
-        ids_name = row["ids_name"]
-        cluster = row.get("cluster_label") or "unclustered"
-        unit = row.get("unit") or "dimensionless"
-        group_key = f"{ids_name}/{cluster}/{unit}"
-        groups.setdefault(group_key, []).append(dict(row))
+    # --- Enrichment layer: classify, deduplicate, select primary cluster ----
+    from imas_codex.sn.enrichment import enrich_paths, group_by_concept_and_unit
 
-    batches = []
-    for group_key, items in groups.items():
-        ids_name = items[0]["ids_name"]
-        cluster_label = items[0].get("cluster_label") or "unclustered"
-        unit = items[0].get("unit") or "dimensionless"
+    enriched = enrich_paths(results)
 
-        # Build rich context summary
-        context_parts = [f"IDS: {ids_name}"]
-        context_parts.append(f"Cluster: {cluster_label}")
-        context_parts.append(f"Authoritative unit: {unit}")
-        context_parts.append(f"{len(items)} paths sharing this concept")
+    if not enriched:
+        logger.info("No quantity paths after classification")
+        return []
 
-        # Include sibling summary
-        all_siblings = items[0].get("cluster_siblings", [])
-        if all_siblings:
-            sib_strs = [
-                f"  {s['path']} ({s.get('unit', '?')})" for s in all_siblings[:5]
-            ]
-            context_parts.append("Cross-IDS siblings:\n" + "\n".join(sib_strs))
-
-        batches.append(
-            ExtractionBatch(
-                source="dd",
-                group_key=group_key,
-                items=items,
-                context="\n".join(context_parts),
-                existing_names=existing_names,
-            )
-        )
+    # Group GLOBALLY by (primary_cluster × unit) — same concept across IDSs
+    # gets batched together for coherent naming.
+    batches = group_by_concept_and_unit(
+        enriched,
+        max_batch_size=25,
+        existing_names=existing_names,
+    )
 
     logger.info(
         "Extracted %d batches from %d DD paths (%d clusters)",
