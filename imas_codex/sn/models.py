@@ -17,9 +17,6 @@ class SNCandidate(BaseModel):
     documentation: str = Field(
         default="", description="Rich docs with LaTeX, links, typical values"
     )
-    unit: str | None = Field(
-        default=None, description="SI unit string (eV, m, A, etc.)"
-    )
     kind: Literal["scalar", "vector", "metadata"] = Field(
         default="scalar", description="Entry kind"
     )
@@ -41,12 +38,29 @@ class SNCandidate(BaseModel):
     )
 
 
+class SNVocabGap(BaseModel):
+    """A path where naming requires vocabulary expansion."""
+
+    source_id: str = Field(description="DD path that needs naming")
+    segment: str = Field(
+        description="Grammar segment missing a token (e.g., 'subject', 'position')"
+    )
+    needed_token: str = Field(
+        description="Proposed token value for the grammar segment"
+    )
+    reason: str = Field(description="Why this token is needed for naming this path")
+
+
 class SNComposeBatch(BaseModel):
     """LLM response for a batch of standard name compositions."""
 
     candidates: list[SNCandidate]
     skipped: list[str] = Field(
         default_factory=list, description="Source IDs skipped (not physics quantities)"
+    )
+    vocab_gaps: list[SNVocabGap] = Field(
+        default_factory=list,
+        description="Paths where naming requires vocabulary expansion in imas-standard-names",
     )
 
 

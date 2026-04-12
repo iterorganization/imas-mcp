@@ -23,7 +23,7 @@ description: >-
   shared vocabulary of physics concepts.
 
 license: MIT
-version: 0.4.0
+version: 0.5.0
 
 prefixes:
   linkml: https://w3id.org/linkml/
@@ -62,6 +62,15 @@ enums:
         description: Imported from merged catalog entry
       rejected:
         description: Reviewed and rejected
+      reviewed:
+        description: LLM-reviewed with quality scores, awaiting further processing
+      validation_failed:
+        description: Failed imas_standard_names validation checks
+      vocab_gap:
+        description: >-
+          Name generation blocked by missing grammar vocabulary.
+          Requires vocabulary update in imas-standard-names before
+          this name can be generated.
       skipped:
         description: Skipped during review (e.g., low confidence)
 
@@ -194,6 +203,30 @@ classes:
           ISO 8601 timestamp when this entry was imported from the catalog.
           Set by ``sn import`` on each import.
         range: datetime
+      reviewer_model:
+        description: LLM model that reviewed this name
+      reviewer_score:
+        description: Total quality score from review (0-100)
+        range: integer
+      reviewer_scores:
+        description: >-
+          JSON-encoded dimensional scores: grammar, semantic,
+          documentation, convention, completeness (each 0-20)
+      reviewer_comments:
+        description: >-
+          LLM reviewer reasoning about this name's quality.
+          Persisted for audit trail and regeneration context.
+      reviewed_at:
+        description: When LLM review occurred
+        range: datetime
+      review_tier:
+        description: >-
+          Quality tier from review: outstanding, good, adequate, poor.
+          Derived from reviewer_score thresholds.
+      vocab_gap_detail:
+        description: >-
+          JSON-encoded detail about missing vocabulary: segment name,
+          needed token, and reason. Set when review_status is vocab_gap.
       catalog_commit_sha:
         description: >-
           Git commit SHA of the catalog repo at import time.

@@ -198,7 +198,6 @@ async def compose_worker(state: SNBuildState, **_kwargs) -> None:
                         "source_id": c.source_id,
                         "description": c.description,
                         "documentation": c.documentation,
-                        "unit": c.unit,
                         "kind": c.kind,
                         "tags": c.tags,
                         "links": c.links,
