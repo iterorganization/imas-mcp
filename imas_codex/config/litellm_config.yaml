@@ -123,3 +123,4 @@ litellm_settings:
   request_timeout: 120
 general_settings:
   background_health_checks: false
+  master_key: sk-codex-local
