@@ -95,6 +95,7 @@ Physics: B_T={{ machine.physics.get('toroidal_magnetic_field', {}).get('value', 
 6. **Reuse existing standard names** when the DD path measures the same quantity
 7. Skip paths that are: array indices, metadata/timestamps, structural containers, coordinate grids (rho_tor_norm, psi, etc.)
 8. Set confidence < 0.5 when the mapping is ambiguous or multiple names could apply
+9. **Do NOT output a `unit` field** — unit is provided as authoritative context from the DD and will be injected at persistence time
 
 ## Output Format
 
@@ -109,7 +110,6 @@ Each candidate MUST include:
 - `standard_name`: the composed name in snake_case
 - `description`: one-sentence summary, **under 120 characters** (e.g., "Electron temperature profile on the poloidal flux grid")
 - `documentation`: rich documentation paragraph (200-500 chars) — see template below
-- `unit`: SI unit string (`eV`, `m`, `A`, `T`, `Pa`, `W`, `m^-3`, `s`, `V`, `kg`, `rad`, `K`, `Wb`, `ohm`, `Hz`, `J`) or `null` for dimensionless
 - `kind`: one of `"scalar"`, `"vector"`, `"metadata"` — see classification rules
 - `tags`: array of 1-2 primary + 0-3 secondary tags from the controlled vocabulary
 - `links`: array of 4-8 related standard names from the existing_names list
