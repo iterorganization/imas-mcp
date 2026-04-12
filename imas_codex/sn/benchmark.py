@@ -131,7 +131,7 @@ def validate_candidate(candidate: dict) -> tuple[bool, bool]:
             produces the same name (after normalization).
     """
     name = candidate.get("standard_name", "")
-    fields = candidate.get("fields", {})
+    fields = candidate.get("grammar_fields", {})
 
     grammar_valid = False
     fields_consistent = False
@@ -319,7 +319,7 @@ async def score_with_reviewer(
                     "unit": c.get("unit", "N/A"),
                     "kind": c.get("kind", "N/A"),
                     "tags": c.get("tags", []),
-                    "fields": c.get("fields", {}),
+                    "grammar_fields": c.get("grammar_fields", {}),
                 }
             )
 
@@ -449,7 +449,7 @@ async def run_benchmark(
                 }
                 field_counts = []
                 for c in result.candidates:
-                    fields = c.get("fields", {})
+                    fields = c.get("grammar_fields", {})
                     field_counts.append(
                         len(set(fields.keys()) & all_fields) / len(all_fields)
                     )

@@ -203,7 +203,7 @@ async def compose_worker(state: SNBuildState, **_kwargs) -> None:
                         "tags": c.tags,
                         "links": c.links,
                         "imas_paths": c.ids_paths,  # graph schema key
-                        "fields": c.fields,
+                        "fields": c.grammar_fields,
                         "confidence": c.confidence,
                         "reason": c.reason,
                         "validity_domain": c.validity_domain,

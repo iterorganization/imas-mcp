@@ -284,7 +284,7 @@ class TestValidation:
 
         candidate = {
             "standard_name": "electron_temperature",
-            "fields": {"physical_base": "temperature", "subject": "electron"},
+            "grammar_fields": {"physical_base": "temperature", "subject": "electron"},
         }
         g_valid, f_consistent = validate_candidate(candidate)
         assert g_valid is True
@@ -295,7 +295,7 @@ class TestValidation:
 
         candidate = {
             "standard_name": "this_is_not_valid_!!!",
-            "fields": {"physical_base": "nonsense"},
+            "grammar_fields": {"physical_base": "nonsense"},
         }
         g_valid, f_consistent = validate_candidate(candidate)
         assert g_valid is False
@@ -306,7 +306,7 @@ class TestValidation:
 
         candidate = {
             "standard_name": "electron_temperature",
-            "fields": {"physical_base": "density", "subject": "ion"},
+            "grammar_fields": {"physical_base": "density", "subject": "ion"},
         }
         g_valid, f_consistent = validate_candidate(candidate)
         assert g_valid is True
@@ -1207,7 +1207,7 @@ class TestReviewerTemplate:
                         "unit": "eV",
                         "kind": "scalar",
                         "tags": ["core_profiles"],
-                        "fields": {
+                        "grammar_fields": {
                             "physical_base": "temperature",
                             "subject": "electron",
                         },

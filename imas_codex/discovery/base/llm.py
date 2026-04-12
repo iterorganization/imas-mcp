@@ -348,6 +348,52 @@ def ensure_model_prefix(model: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# JSON schema format for models that need explicit schema wrapping
+# ---------------------------------------------------------------------------
+
+# GPT-5 series models require explicit json_schema response_format.
+# When the Pydantic model is passed as a class, litellm auto-applies
+# ``strict: true`` which rejects freeform dicts (``dict[str, str]``
+# generates ``additionalProperties: {type: string}``).  We pre-wrap
+# the schema with ``strict: false`` so the model uses it as guidance
+# while our Pydantic parsing provides the actual validation.
+_JSON_SCHEMA_MODEL_PATTERNS = ("gpt-5",)
+
+
+def _needs_json_schema_wrap(model: str) -> bool:
+    """Return True if the model needs explicit json_schema wrapping."""
+    model_lower = model.lower()
+    return any(p in model_lower for p in _JSON_SCHEMA_MODEL_PATTERNS)
+
+
+def _is_pydantic_model(obj: Any) -> bool:
+    """Check if obj is a Pydantic BaseModel class (not instance)."""
+    try:
+        from pydantic import BaseModel
+
+        return isinstance(obj, type) and issubclass(obj, BaseModel)
+    except ImportError:
+        return False
+
+
+def _to_json_schema_format(model_cls: type) -> dict:
+    """Convert a Pydantic model class to a non-strict json_schema format.
+
+    Uses ``strict: false`` so that freeform dicts (``dict[str, str]``)
+    are accepted by the API.  The model still receives the full schema
+    as guidance, and our Pydantic parsing validates the response.
+    """
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": model_cls.__name__,
+            "strict": False,
+            "schema": model_cls.model_json_schema(),
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
 # Retry / cost helpers
 # ---------------------------------------------------------------------------
 
@@ -620,7 +666,15 @@ def _build_kwargs(
         }
 
     if response_format is not None:
-        kwargs["response_format"] = response_format
+        # GPT-5+ models need explicit json_schema wrapping with strict=false
+        # to support freeform dicts (dict[str, str]).  When a Pydantic class
+        # is passed directly, litellm auto-applies strict=true which rejects
+        # freeform objects.  Pre-wrapping with strict=false avoids this while
+        # still providing schema guidance to the model.
+        if _needs_json_schema_wrap(model) and _is_pydantic_model(response_format):
+            kwargs["response_format"] = _to_json_schema_format(response_format)
+        else:
+            kwargs["response_format"] = response_format
     if temperature is not None:
         kwargs["temperature"] = temperature
 

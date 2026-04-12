@@ -109,10 +109,30 @@ Use these scored examples to anchor your judgments:
 - **Unit:** {{ candidate.unit | default('N/A', true) }}
 - **Kind:** {{ candidate.kind | default('N/A', true) }}
 - **Tags:** {{ candidate.tags | default([], true) | join(', ') }}
-- **Fields:** {{ candidate.fields | default({}, true) }}
+- **Grammar Fields:** {{ candidate.grammar_fields | default({}, true) }}
 
 {% endfor %}
 
 ## Output Format
 
-Return a JSON object with a `reviews` array. Each review MUST include all five dimension scores that sum to the total score. Provide brief but specific reasoning.
+Return a JSON object with a `reviews` array containing one entry per candidate above. Each review MUST use this exact schema:
+
+```json
+{
+  "reviews": [
+    {
+      "name": "<standard_name of the candidate>",
+      "quality_tier": "outstanding|good|adequate|poor",
+      "score": 75,
+      "grammar_score": 18,
+      "semantic_score": 16,
+      "documentation_score": 14,
+      "convention_score": 15,
+      "completeness_score": 12,
+      "reasoning": "Brief specific justification"
+    }
+  ]
+}
+```
+
+The `name` field MUST be the `standard_name` string from the candidate. All five dimension scores (0-20 each) MUST sum to the total `score` (0-100).

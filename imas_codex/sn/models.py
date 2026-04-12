@@ -28,7 +28,7 @@ class SNCandidate(BaseModel):
     ids_paths: list[str] = Field(
         default_factory=list, description="Mapped IMAS DD paths"
     )
-    fields: dict[str, str] = Field(
+    grammar_fields: dict[str, str] = Field(
         default_factory=dict, description="Grammar fields used"
     )
     confidence: float = Field(ge=0, le=1, description="Naming confidence")

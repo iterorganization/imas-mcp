@@ -114,7 +114,7 @@ Each candidate MUST include:
 - `tags`: array of 1-2 primary + 0-3 secondary tags from the controlled vocabulary
 - `links`: array of 4-8 related standard names from the existing_names list
 - `ids_paths`: array of IMAS DD paths this name maps to (include the source_id at minimum)
-- `fields`: dict of grammar fields used (only non-null fields)
+- `grammar_fields`: dict of grammar fields used (only non-null fields)
 - `confidence`: float 0.0-1.0
 - `reason`: brief justification
 - `validity_domain`: physical region where this quantity is meaningful (e.g., "core plasma", "scrape-off layer", "entire plasma", "pedestal region") or `null`
