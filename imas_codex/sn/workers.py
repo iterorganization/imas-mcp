@@ -341,6 +341,18 @@ async def review_worker(state: SNBuildState, **_kwargs) -> None:
     grammar_enums = _get_grammar_enums()
     existing_names = _get_existing_names_for_review()
 
+    # Load calibration entries for consistent scoring
+    calibration_entries = _load_calibration_entries()
+
+    # Build batch context map from extracted batches (if available)
+    batch_context_map: dict[str, str] = {}
+    if state.extracted:
+        for eb in state.extracted:
+            for item in eb.items:
+                path = item.get("path", "")
+                if path:
+                    batch_context_map[path] = eb.context
+
     accepted: list[dict] = []
     rejected = 0
     revised = 0
@@ -357,6 +369,14 @@ async def review_worker(state: SNBuildState, **_kwargs) -> None:
 
         batch = candidates[batch_start : batch_start + _REVIEW_BATCH_SIZE]
 
+        # Find batch context for this batch's candidates
+        batch_ctx = ""
+        for entry in batch:
+            sid = entry.get("source_id", "")
+            if sid in batch_context_map:
+                batch_ctx = batch_context_map[sid]
+                break
+
         try:
             batch_result = await _review_batch(
                 batch,
@@ -364,6 +384,8 @@ async def review_worker(state: SNBuildState, **_kwargs) -> None:
                 grammar_enums,
                 names_in_run,
                 wlog,
+                calibration_entries=calibration_entries,
+                batch_context=batch_ctx,
             )
             batch_accepted, batch_rejected, batch_revised, cost, tokens = batch_result
             total_cost += cost
@@ -390,6 +412,12 @@ async def review_worker(state: SNBuildState, **_kwargs) -> None:
 
         state.review_stats.processed = min(batch_start + len(batch), len(candidates))
         state.review_stats.record_batch(len(batch))
+
+    # Store reviewer model and timestamp on all accepted entries
+    reviewed_at = datetime.now(UTC).isoformat()
+    for entry in accepted:
+        entry["reviewer_model"] = review_model
+        entry["reviewed_at"] = reviewed_at
 
     state.review_stats.errors = errors
     state.review_stats.cost = total_cost
@@ -425,30 +453,69 @@ def _get_existing_names_for_review() -> set[str]:
         return set()
 
 
+def _load_calibration_entries() -> list[dict]:
+    """Load calibration entries from benchmark_calibration.yaml."""
+    from pathlib import Path
+
+    import yaml
+
+    cal_path = Path(__file__).parent / "benchmark_calibration.yaml"
+    if not cal_path.exists():
+        return []
+    try:
+        with open(cal_path) as f:
+            data = yaml.safe_load(f)
+        return data.get("entries", [])
+    except Exception:
+        return []
+
+
 async def _review_batch(
     batch: list[dict],
     model: str,
     grammar_enums: dict[str, list[str]],
     existing_names: set[str],
     wlog: logging.LoggerAdapter,
+    calibration_entries: list[dict] | None = None,
+    batch_context: str | None = None,
 ) -> tuple[list[dict], int, int, float, int]:
-    """Review a single batch of candidates via LLM."""
+    """Review a single batch of candidates via LLM with unified scoring."""
     from imas_codex.discovery.base.llm import acall_llm_structured
     from imas_codex.llm.prompt_loader import render_prompt
-    from imas_codex.sn.models import SNReviewBatch, SNReviewVerdict
+    from imas_codex.sn.models import SNQualityReviewBatch, SNReviewVerdict
 
+    cal = calibration_entries or []
+
+    # Build context for unified prompt
     context = {
         "items": batch,
         "existing_names": sorted(existing_names)[:200],
+        "calibration_entries": cal,
+        "batch_context": batch_context or "",
         **grammar_enums,
     }
-    prompt_text = render_prompt("sn/review", context)
 
-    messages = [{"role": "user", "content": prompt_text}]
+    # System prompt: rubric + calibration (cached across batches)
+    system_context = {
+        "items": [],  # empty in system message
+        "existing_names": [],
+        "calibration_entries": cal,
+        "batch_context": "",
+        **grammar_enums,
+    }
+    system_prompt = render_prompt("sn/review_unified", system_context)
+
+    # User prompt: actual candidates + DD context
+    user_prompt = render_prompt("sn/review_unified", context)
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
     result, cost, tokens = await acall_llm_structured(
         model=model,
         messages=messages,
-        response_model=SNReviewBatch,
+        response_model=SNQualityReviewBatch,
     )
 
     entry_map: dict[str, dict] = {}
@@ -466,11 +533,23 @@ async def _review_batch(
             wlog.debug("Review returned unknown source_id: %s", review.source_id)
             continue
 
+        # Store review scores on the entry for downstream persistence
+        original["reviewer_score"] = review.scores.total
+        original["reviewer_scores"] = review.scores.model_dump()
+        original["reviewer_comments"] = review.reasoning
+        original["review_tier"] = review.scores.tier
+
         if review.verdict == SNReviewVerdict.accept:
             accepted.append(original)
         elif review.verdict == SNReviewVerdict.reject:
             rejected_count += 1
-            wlog.debug("Rejected %r: %s", review.standard_name, review.reason)
+            wlog.debug(
+                "Rejected %r (score %d/%d): %s",
+                review.standard_name,
+                review.scores.total,
+                120,
+                review.reasoning,
+            )
         elif review.verdict == SNReviewVerdict.revise:
             if review.revised_name:
                 revised_entry = dict(original)
@@ -482,14 +561,17 @@ async def _review_batch(
                 accepted.append(revised_entry)
                 revised_count += 1
                 wlog.debug(
-                    "Revised %r → %r: %s",
+                    "Revised %r → %r (score %d/%d): %s",
                     review.standard_name,
                     review.revised_name,
-                    review.reason,
+                    review.scores.total,
+                    120,
+                    review.reasoning,
                 )
             else:
                 accepted.append(original)
 
+    # Entries not in the review result pass through (accepted by default)
     reviewed_ids = {r.source_id for r in result.reviews}
     for entry in batch:
         sid = entry.get("source_id") or entry.get("id") or ""

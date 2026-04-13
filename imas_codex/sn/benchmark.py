@@ -264,43 +264,49 @@ async def score_with_reviewer(
     reviewer_model: str,
     calibration_entries: list[dict],
 ) -> list[dict]:
-    """Score candidates using a reviewer model with 5-dimensional scoring.
+    """Score candidates using unified 6-dimensional quality review.
 
-    Each candidate is scored across five dimensions (0-20 each):
-    grammar, semantic, documentation, convention, completeness.
-    Total score is the sum (0-100).
+    Each candidate is scored across six dimensions (0-20 each):
+    grammar, semantic, documentation, convention, completeness, compliance.
+    Total score is the sum (0-120).
 
     Returns list of dicts with: name, quality_tier, score,
     grammar_score, semantic_score, documentation_score,
-    convention_score, completeness_score, reasoning.
+    convention_score, completeness_score, compliance_score, reasoning.
     """
-    from pydantic import BaseModel, Field
-
     from imas_codex.discovery.base.llm import acall_llm_structured
     from imas_codex.llm.prompt_loader import render_prompt
+    from imas_codex.sn.context import build_compose_context
+    from imas_codex.sn.models import SNQualityReviewBatch
 
-    class QualityReview(BaseModel):
-        name: str
-        quality_tier: str = Field(description="outstanding, good, adequate, or poor")
-        score: int = Field(
-            ge=0, le=100, description="Total quality score (sum of dimensions)"
+    # Get grammar enums for the prompt
+    context = build_compose_context()
+    grammar_enums = {
+        k: context[k]
+        for k in (
+            "subjects",
+            "components",
+            "coordinates",
+            "positions",
+            "processes",
+            "transformations",
+            "geometric_bases",
+            "objects",
+            "binary_operators",
         )
-        grammar_score: int = Field(ge=0, le=20, description="Grammar correctness")
-        semantic_score: int = Field(ge=0, le=20, description="Semantic accuracy")
-        documentation_score: int = Field(
-            ge=0, le=20, description="Documentation quality"
-        )
-        convention_score: int = Field(ge=0, le=20, description="Naming conventions")
-        completeness_score: int = Field(ge=0, le=20, description="Entry completeness")
-        reasoning: str
+        if k in context
+    }
 
-    class QualityReviewBatch(BaseModel):
-        reviews: list[QualityReview]
-
-    # Render system prompt with calibration entries (cached across batches)
+    # System prompt: rubric + calibration (cached across batches)
     system_prompt = render_prompt(
-        "sn/review_benchmark",
-        {"calibration_entries": calibration_entries, "candidates": []},
+        "sn/review_unified",
+        {
+            "calibration_entries": calibration_entries,
+            "items": [],
+            "existing_names": [],
+            "batch_context": "",
+            **grammar_enums,
+        },
     )
 
     # Process in batches of 10
@@ -314,20 +320,25 @@ async def score_with_reviewer(
             batch_items.append(
                 {
                     "standard_name": c.get("standard_name", ""),
+                    "source_id": c.get("source_id", ""),
                     "description": c.get("description", ""),
                     "documentation": (c.get("documentation", "") or "")[:500],
                     "unit": c.get("unit", "N/A"),
                     "kind": c.get("kind", "N/A"),
                     "tags": c.get("tags", []),
                     "grammar_fields": c.get("grammar_fields", {}),
+                    "imas_paths": c.get("imas_paths", []),
                 }
             )
 
         user_prompt = render_prompt(
-            "sn/review_benchmark",
+            "sn/review_unified",
             {
                 "calibration_entries": calibration_entries,
-                "candidates": batch_items,
+                "items": batch_items,
+                "existing_names": [],
+                "batch_context": "",
+                **grammar_enums,
             },
         )
 
@@ -340,9 +351,22 @@ async def score_with_reviewer(
             result, _, _ = await acall_llm_structured(
                 model=reviewer_model,
                 messages=messages,
-                response_model=QualityReviewBatch,
+                response_model=SNQualityReviewBatch,
             )
-            all_reviews.extend([r.model_dump() for r in result.reviews])
+            for r in result.reviews:
+                review_dict = {
+                    "name": r.standard_name,
+                    "quality_tier": r.scores.tier,
+                    "score": r.scores.total,
+                    "grammar_score": r.scores.grammar,
+                    "semantic_score": r.scores.semantic,
+                    "documentation_score": r.scores.documentation,
+                    "convention_score": r.scores.convention,
+                    "completeness_score": r.scores.completeness,
+                    "compliance_score": r.scores.compliance,
+                    "reasoning": r.reasoning,
+                }
+                all_reviews.append(review_dict)
         except Exception as e:
             logger.warning("Reviewer scoring failed for batch: %s", e)
 

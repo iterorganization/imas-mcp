@@ -141,6 +141,208 @@ class TestSNReviewModels:
 
 
 # =============================================================================
+# Unified quality review model tests
+# =============================================================================
+
+
+class TestSNQualityReviewModels:
+    """Test the unified 6-dimensional quality review models."""
+
+    def test_quality_score_total(self):
+        """Total is the sum of all six dimensions."""
+        from imas_codex.sn.models import SNQualityScore
+
+        score = SNQualityScore(
+            grammar=18,
+            semantic=16,
+            documentation=14,
+            convention=17,
+            completeness=15,
+            compliance=12,
+        )
+        assert score.total == 92
+
+    def test_quality_score_tier_outstanding(self):
+        """Score >= 102 is outstanding."""
+        from imas_codex.sn.models import SNQualityScore
+
+        score = SNQualityScore(
+            grammar=20,
+            semantic=19,
+            documentation=18,
+            convention=17,
+            completeness=16,
+            compliance=15,
+        )
+        assert score.total == 105
+        assert score.tier == "outstanding"
+
+    def test_quality_score_tier_good(self):
+        """Score 72-101 is good."""
+        from imas_codex.sn.models import SNQualityScore
+
+        score = SNQualityScore(
+            grammar=15,
+            semantic=14,
+            documentation=12,
+            convention=13,
+            completeness=11,
+            compliance=10,
+        )
+        assert score.total == 75
+        assert score.tier == "good"
+
+    def test_quality_score_tier_adequate(self):
+        """Score 48-71 is adequate."""
+        from imas_codex.sn.models import SNQualityScore
+
+        score = SNQualityScore(
+            grammar=10,
+            semantic=10,
+            documentation=8,
+            convention=10,
+            completeness=8,
+            compliance=6,
+        )
+        assert score.total == 52
+        assert score.tier == "adequate"
+
+    def test_quality_score_tier_poor(self):
+        """Score < 48 is poor."""
+        from imas_codex.sn.models import SNQualityScore
+
+        score = SNQualityScore(
+            grammar=5,
+            semantic=5,
+            documentation=3,
+            convention=3,
+            completeness=2,
+            compliance=2,
+        )
+        assert score.total == 20
+        assert score.tier == "poor"
+
+    def test_quality_score_max_120(self):
+        """Max possible total is 120."""
+        from imas_codex.sn.models import SNQualityScore
+
+        score = SNQualityScore(
+            grammar=20,
+            semantic=20,
+            documentation=20,
+            convention=20,
+            completeness=20,
+            compliance=20,
+        )
+        assert score.total == 120
+        assert score.tier == "outstanding"
+
+    def test_quality_score_model_dump(self):
+        """model_dump() includes all dimension fields."""
+        from imas_codex.sn.models import SNQualityScore
+
+        score = SNQualityScore(
+            grammar=18,
+            semantic=16,
+            documentation=14,
+            convention=17,
+            completeness=15,
+            compliance=12,
+        )
+        d = score.model_dump()
+        assert set(d.keys()) == {
+            "grammar",
+            "semantic",
+            "documentation",
+            "convention",
+            "completeness",
+            "compliance",
+        }
+
+    def test_quality_review_full(self):
+        """SNQualityReview with all fields populated."""
+        from imas_codex.sn.models import (
+            SNQualityReview,
+            SNQualityScore,
+            SNReviewVerdict,
+        )
+
+        review = SNQualityReview(
+            source_id="core_profiles/profiles_1d/electrons/temperature",
+            standard_name="electron_temperature",
+            scores=SNQualityScore(
+                grammar=20,
+                semantic=19,
+                documentation=18,
+                convention=17,
+                completeness=16,
+                compliance=15,
+            ),
+            verdict=SNReviewVerdict.accept,
+            reasoning="Excellent entry with rich documentation",
+        )
+        assert review.scores.total == 105
+        assert review.scores.tier == "outstanding"
+        assert review.verdict == SNReviewVerdict.accept
+
+    def test_quality_review_batch(self):
+        """SNQualityReviewBatch wraps quality reviews."""
+        from imas_codex.sn.models import (
+            SNQualityReview,
+            SNQualityReviewBatch,
+            SNQualityScore,
+            SNReviewVerdict,
+        )
+
+        batch = SNQualityReviewBatch(
+            reviews=[
+                SNQualityReview(
+                    source_id="src1",
+                    standard_name="electron_temperature",
+                    scores=SNQualityScore(
+                        grammar=20,
+                        semantic=20,
+                        documentation=18,
+                        convention=18,
+                        completeness=16,
+                        compliance=15,
+                    ),
+                    verdict=SNReviewVerdict.accept,
+                    reasoning="Good",
+                ),
+            ]
+        )
+        assert len(batch.reviews) == 1
+        assert batch.reviews[0].scores.total == 107
+
+    def test_quality_score_validation(self):
+        """Scores must be in 0-20 range."""
+        from pydantic import ValidationError
+
+        from imas_codex.sn.models import SNQualityScore
+
+        with pytest.raises(ValidationError):
+            SNQualityScore(
+                grammar=25,  # exceeds 20
+                semantic=10,
+                documentation=10,
+                convention=10,
+                completeness=10,
+                compliance=10,
+            )
+
+        with pytest.raises(ValidationError):
+            SNQualityScore(
+                grammar=-1,  # below 0
+                semantic=10,
+                documentation=10,
+                convention=10,
+                completeness=10,
+                compliance=10,
+            )
+
+
+# =============================================================================
 # Review worker tests
 # =============================================================================
 
@@ -201,9 +403,11 @@ class TestReviewWorker:
 
     @patch("imas_codex.sn.workers._review_batch")
     @patch("imas_codex.sn.workers._get_existing_names_for_review")
-    def test_accept_verdict_passes_through(self, mock_existing, mock_batch):
+    @patch("imas_codex.sn.workers._load_calibration_entries")
+    def test_accept_verdict_passes_through(self, mock_cal, mock_existing, mock_batch):
         """Accept verdict keeps the candidate in reviewed output."""
         mock_existing.return_value = set()
+        mock_cal.return_value = []
 
         candidates = [
             {
@@ -232,12 +436,19 @@ class TestReviewWorker:
         assert state.reviewed[0]["id"] == "electron_temperature"
         assert state.stats["review_accepted"] == 1
         assert state.stats["review_rejected"] == 0
+        # Reviewer metadata is added to accepted entries
+        assert state.reviewed[0].get("reviewer_model") == "test/model"
+        assert "reviewed_at" in state.reviewed[0]
 
     @patch("imas_codex.sn.workers._review_batch")
     @patch("imas_codex.sn.workers._get_existing_names_for_review")
-    def test_reject_verdict_removes_candidate(self, mock_existing, mock_batch):
+    @patch("imas_codex.sn.workers._load_calibration_entries")
+    def test_reject_verdict_removes_candidate(
+        self, mock_cal, mock_existing, mock_batch
+    ):
         """Reject verdict removes the candidate from reviewed output."""
         mock_existing.return_value = set()
+        mock_cal.return_value = []
 
         candidates = [
             {"id": "bad_name", "source_id": "path/a", "physical_base": "x"},
@@ -263,9 +474,13 @@ class TestReviewWorker:
 
     @patch("imas_codex.sn.workers._review_batch")
     @patch("imas_codex.sn.workers._get_existing_names_for_review")
-    def test_revise_verdict_updates_candidate(self, mock_existing, mock_batch):
+    @patch("imas_codex.sn.workers._load_calibration_entries")
+    def test_revise_verdict_updates_candidate(
+        self, mock_cal, mock_existing, mock_batch
+    ):
         """Revise verdict updates candidate name in reviewed output."""
         mock_existing.return_value = set()
+        mock_cal.return_value = []
 
         original = {
             "id": "electron_temp",
@@ -299,9 +514,11 @@ class TestReviewWorker:
 
     @patch("imas_codex.sn.workers._review_batch")
     @patch("imas_codex.sn.workers._get_existing_names_for_review")
-    def test_batch_failure_passes_through(self, mock_existing, mock_batch):
+    @patch("imas_codex.sn.workers._load_calibration_entries")
+    def test_batch_failure_passes_through(self, mock_cal, mock_existing, mock_batch):
         """On batch failure, candidates pass through unreviewed."""
         mock_existing.return_value = set()
+        mock_cal.return_value = []
 
         candidates = [
             {
@@ -329,6 +546,63 @@ class TestReviewWorker:
         # On failure, candidates pass through
         assert len(state.reviewed) == 1
         assert state.review_stats.errors == 1
+
+    @patch("imas_codex.sn.workers._review_batch")
+    @patch("imas_codex.sn.workers._get_existing_names_for_review")
+    @patch("imas_codex.sn.workers._load_calibration_entries")
+    def test_review_passes_calibration_and_context(
+        self, mock_cal, mock_existing, mock_batch
+    ):
+        """review_worker passes calibration entries and batch context."""
+        mock_existing.return_value = set()
+        mock_cal.return_value = [
+            {"name": "electron_temperature", "tier": "outstanding"}
+        ]
+
+        candidates = [
+            {
+                "id": "electron_temperature",
+                "source_id": "equilibrium/time_slice/profiles_1d/psi",
+                "physical_base": "temperature",
+            },
+        ]
+
+        call_kwargs = {}
+
+        async def _mock_review(*args, **kwargs):
+            call_kwargs.update(kwargs)
+            return candidates, 0, 0, 0.001, 100
+
+        mock_batch.side_effect = _mock_review
+
+        state = self._make_state()
+        state.composed = list(candidates)
+        state.review_model = "test/model"
+
+        # Set up extracted batches to provide context
+        from imas_codex.sn.sources.base import ExtractionBatch
+
+        state.extracted = [
+            ExtractionBatch(
+                source="dd",
+                group_key="equilibrium",
+                items=[{"path": "equilibrium/time_slice/profiles_1d/psi"}],
+                context="Equilibrium profiles from reconstruction",
+            )
+        ]
+
+        from imas_codex.sn.workers import review_worker
+
+        asyncio.run(review_worker(state))
+
+        assert state.review_phase.done
+        assert call_kwargs.get("calibration_entries") == [
+            {"name": "electron_temperature", "tier": "outstanding"}
+        ]
+        assert (
+            call_kwargs.get("batch_context")
+            == "Equilibrium profiles from reconstruction"
+        )
 
 
 # =============================================================================

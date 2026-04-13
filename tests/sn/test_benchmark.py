@@ -1071,115 +1071,136 @@ class TestReviewerModelCLI:
 
 
 class TestQualityReviewModel:
-    """Test the 5-dimensional QualityReview Pydantic model."""
-
-    def _make_review_model(self):
-        """Import the QualityReview model from inside score_with_reviewer."""
-        from pydantic import BaseModel, Field
-
-        class QualityReview(BaseModel):
-            name: str
-            quality_tier: str = Field(
-                description="outstanding, good, adequate, or poor"
-            )
-            score: int = Field(
-                ge=0, le=100, description="Total quality score (sum of dimensions)"
-            )
-            grammar_score: int = Field(ge=0, le=20, description="Grammar correctness")
-            semantic_score: int = Field(ge=0, le=20, description="Semantic accuracy")
-            documentation_score: int = Field(
-                ge=0, le=20, description="Documentation quality"
-            )
-            convention_score: int = Field(ge=0, le=20, description="Naming conventions")
-            completeness_score: int = Field(
-                ge=0, le=20, description="Entry completeness"
-            )
-            reasoning: str
-
-        return QualityReview
+    """Test the 6-dimensional quality review models from models.py."""
 
     def test_valid_review(self):
-        QualityReview = self._make_review_model()
-        review = QualityReview(
-            name="electron_temperature",
-            quality_tier="outstanding",
-            score=95,
-            grammar_score=20,
-            semantic_score=20,
-            documentation_score=19,
-            convention_score=18,
-            completeness_score=18,
+        from imas_codex.sn.models import (
+            SNQualityReview,
+            SNQualityScore,
+            SNReviewVerdict,
+        )
+
+        score = SNQualityScore(
+            grammar=20,
+            semantic=20,
+            documentation=19,
+            convention=18,
+            completeness=18,
+            compliance=17,
+        )
+        review = SNQualityReview(
+            source_id="test/path",
+            standard_name="electron_temperature",
+            scores=score,
+            verdict=SNReviewVerdict.accept,
             reasoning="Excellent entry",
         )
-        assert review.score == 95
-        assert review.grammar_score == 20
+        assert review.scores.total == 112
+        assert review.scores.tier == "outstanding"
 
     def test_dimension_max_20(self):
-        QualityReview = self._make_review_model()
         from pydantic import ValidationError
 
+        from imas_codex.sn.models import SNQualityScore
+
         with pytest.raises(ValidationError):
-            QualityReview(
-                name="test",
-                quality_tier="good",
-                score=50,
-                grammar_score=25,  # exceeds max 20
-                semantic_score=10,
-                documentation_score=10,
-                convention_score=5,
-                completeness_score=0,
-                reasoning="test",
+            SNQualityScore(
+                grammar=25,  # exceeds max 20
+                semantic=10,
+                documentation=10,
+                convention=5,
+                completeness=0,
+                compliance=10,
             )
 
     def test_dimension_min_0(self):
-        QualityReview = self._make_review_model()
         from pydantic import ValidationError
 
-        with pytest.raises(ValidationError):
-            QualityReview(
-                name="test",
-                quality_tier="poor",
-                score=10,
-                grammar_score=-1,  # below min 0
-                semantic_score=5,
-                documentation_score=3,
-                convention_score=2,
-                completeness_score=1,
-                reasoning="test",
-            )
-
-    def test_total_score_max_100(self):
-        QualityReview = self._make_review_model()
-        from pydantic import ValidationError
+        from imas_codex.sn.models import SNQualityScore
 
         with pytest.raises(ValidationError):
-            QualityReview(
-                name="test",
-                quality_tier="outstanding",
-                score=101,  # exceeds max 100
-                grammar_score=20,
-                semantic_score=20,
-                documentation_score=20,
-                convention_score=20,
-                completeness_score=20,
-                reasoning="test",
+            SNQualityScore(
+                grammar=-1,  # below min 0
+                semantic=5,
+                documentation=3,
+                convention=2,
+                completeness=1,
+                compliance=5,
             )
+
+    def test_total_score_max_120(self):
+        from imas_codex.sn.models import SNQualityScore
+
+        # All dimensions at max = 120
+        score = SNQualityScore(
+            grammar=20,
+            semantic=20,
+            documentation=20,
+            convention=20,
+            completeness=20,
+            compliance=20,
+        )
+        assert score.total == 120
+        assert score.tier == "outstanding"
 
     def test_poor_tier_scores(self):
-        QualityReview = self._make_review_model()
-        review = QualityReview(
-            name="data",
-            quality_tier="poor",
-            score=5,
-            grammar_score=5,
-            semantic_score=0,
-            documentation_score=0,
-            convention_score=0,
-            completeness_score=0,
-            reasoning="Uninformative name",
+        from imas_codex.sn.models import SNQualityScore
+
+        score = SNQualityScore(
+            grammar=5,
+            semantic=0,
+            documentation=0,
+            convention=0,
+            completeness=0,
+            compliance=0,
         )
-        assert review.score == 5
-        assert review.quality_tier == "poor"
+        assert score.total == 5
+        assert score.tier == "poor"
+
+    def test_score_model_dump_has_six_dimensions(self):
+        from imas_codex.sn.models import SNQualityScore
+
+        score = SNQualityScore(
+            grammar=15,
+            semantic=14,
+            documentation=12,
+            convention=13,
+            completeness=11,
+            compliance=10,
+        )
+        d = score.model_dump()
+        assert "compliance" in d
+        assert len(d) == 6
+
+    def test_review_batch_from_models(self):
+        """SNQualityReviewBatch from models.py works correctly."""
+        from imas_codex.sn.models import (
+            SNQualityReview,
+            SNQualityReviewBatch,
+            SNQualityScore,
+            SNReviewVerdict,
+        )
+
+        batch = SNQualityReviewBatch(
+            reviews=[
+                SNQualityReview(
+                    source_id="a",
+                    standard_name="electron_temperature",
+                    scores=SNQualityScore(
+                        grammar=20,
+                        semantic=18,
+                        documentation=16,
+                        convention=17,
+                        completeness=15,
+                        compliance=14,
+                    ),
+                    verdict=SNReviewVerdict.accept,
+                    reasoning="Good entry",
+                ),
+            ]
+        )
+        assert len(batch.reviews) == 1
+        assert batch.reviews[0].scores.total == 100
 
 
 # -----------------------------------------------------------------------
@@ -1188,20 +1209,43 @@ class TestQualityReviewModel:
 
 
 class TestReviewerTemplate:
-    """Test that the reviewer template renders correctly."""
+    """Test that the unified reviewer template renders correctly."""
+
+    def _get_grammar_enums(self):
+        """Get grammar enums for template context."""
+        from imas_codex.sn.context import build_compose_context
+
+        ctx = build_compose_context()
+        return {
+            k: ctx[k]
+            for k in (
+                "subjects",
+                "components",
+                "coordinates",
+                "positions",
+                "processes",
+                "transformations",
+                "geometric_bases",
+                "objects",
+                "binary_operators",
+            )
+            if k in ctx
+        }
 
     def test_template_renders(self):
         from imas_codex.llm.prompt_loader import render_prompt
         from imas_codex.sn.benchmark import load_calibration_entries
 
         entries = load_calibration_entries()
+        grammar_enums = self._get_grammar_enums()
         rendered = render_prompt(
-            "sn/review_benchmark",
+            "sn/review_unified",
             {
                 "calibration_entries": entries,
-                "candidates": [
+                "items": [
                     {
                         "standard_name": "electron_temperature",
+                        "source_id": "core_profiles/profiles_1d/electrons/temperature",
                         "description": "Electron temperature",
                         "documentation": "A test doc",
                         "unit": "eV",
@@ -1213,12 +1257,16 @@ class TestReviewerTemplate:
                         },
                     }
                 ],
+                "existing_names": [],
+                "batch_context": "",
+                **grammar_enums,
             },
         )
         assert "electron_temperature" in rendered
         assert "Grammar Correctness" in rendered
         assert "Semantic Accuracy" in rendered
         assert "Documentation Quality" in rendered
+        assert "Prompt Compliance" in rendered
         assert "outstanding" in rendered
 
     def test_template_includes_calibration_examples(self):
@@ -1226,9 +1274,16 @@ class TestReviewerTemplate:
         from imas_codex.sn.benchmark import load_calibration_entries
 
         entries = load_calibration_entries()
+        grammar_enums = self._get_grammar_enums()
         rendered = render_prompt(
-            "sn/review_benchmark",
-            {"calibration_entries": entries, "candidates": []},
+            "sn/review_unified",
+            {
+                "calibration_entries": entries,
+                "items": [],
+                "existing_names": [],
+                "batch_context": "",
+                **grammar_enums,
+            },
         )
         # All calibration entry names should appear
         for entry in entries:
@@ -1239,8 +1294,15 @@ class TestReviewerTemplate:
     def test_template_renders_empty_candidates(self):
         from imas_codex.llm.prompt_loader import render_prompt
 
+        grammar_enums = self._get_grammar_enums()
         rendered = render_prompt(
-            "sn/review_benchmark",
-            {"calibration_entries": [], "candidates": []},
+            "sn/review_unified",
+            {
+                "calibration_entries": [],
+                "items": [],
+                "existing_names": [],
+                "batch_context": "",
+                **grammar_enums,
+            },
         )
         assert "Scoring Dimensions" in rendered
