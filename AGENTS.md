@@ -719,7 +719,7 @@ Six-phase DAG: **EXTRACT → COMPOSE → [REVIEW] → VALIDATE → CONSOLIDATE �
 | EXTRACT | `extract_worker` | Query DD paths, classify (quantity/metadata/skip), enrich with clusters, group into batches |
 | COMPOSE | `compose_worker` | LLM generates names per batch; unit injected from DD (never from LLM output) |
 | REVIEW | `review_worker` | Optional LLM judge: accept/reject/revise each candidate |
-| VALIDATE | `validate_worker` | Grammar round-trip via `parse_standard_name()`, fields consistency check |
+| VALIDATE | `validate_worker` | ISN 3-layer validation (Pydantic → semantic → description) + grammar round-trip |
 | CONSOLIDATE | `consolidate_worker` | Cross-batch dedup, conflict detection (unit/kind/source), coverage accounting |
 | PERSIST | `persist_worker` | Conflict-detecting Neo4j writes with coalesce semantics |
 
@@ -735,6 +735,8 @@ Six-phase DAG: **EXTRACT → COMPOSE → [REVIEW] → VALIDATE → CONSOLIDATE �
 | `imas_codex/sn/workers.py` | Six async worker functions |
 | `imas_codex/sn/models.py` | Pydantic response models (`SNComposeBatch`, `SNReviewBatch`) |
 | `imas_codex/sn/context.py` | Grammar context builder (vocabulary, examples, tokamak ranges) |
+| `imas_codex/sn/calibration.py` | Centralized loader (cached) for `benchmark_calibration.yaml` |
+| `imas_codex/sn/search.py` | Vector search for similar existing StandardName nodes (collision avoidance) |
 
 **Unit safety:** Units flow exclusively from the DD `HAS_UNIT` relationship → EXTRACT → prompt
 (marked read-only) → injected into candidate dict by worker → `CANONICAL_UNITS` relationship in graph.
@@ -758,9 +760,11 @@ The LLM never provides the unit field.
 `build_compose_context()`). Model lists default from `[tool.imas-codex.sn.benchmark]` in
 pyproject.toml. Output table includes a **Cache %** column showing the prompt-cache
 hit rate per model (provider-side via OpenRouter — not something we implement). Scoring is
-**5-dimensional**: grammar, semantic, documentation, convention, and completeness (each 0-20,
-total 0-100), evaluated by a reviewer LLM. The calibration dataset (`benchmark_calibration.yaml`)
-provides known-quality examples for reviewer consistency checks.
+**6-dimensional**: grammar, semantic, documentation, convention, completeness, and compliance
+(each 0-20 integer, aggregate normalized to 0-1 via `sum / 120.0`), evaluated by a reviewer LLM.
+Scoring criteria are defined in `imas_codex/llm/config/sn_review_criteria.yaml`. The calibration
+dataset (`benchmark_calibration.yaml`) is loaded via `imas_codex/sn/calibration.py` (cached
+singleton) and provides known-quality examples for reviewer consistency checks.
 
 **Qualified models** (benchmark evidence from equilibrium + core_profiles + magnetics):
 
@@ -809,7 +813,7 @@ specific IDS without touching the rest of the graph.
 
 Two distinct write paths with different semantics:
 
-- **`write_standard_names()` (build path)**: Uses `coalesce(b.field, sn.field)` for ALL fields — passing None preserves existing graph data. Safe to re-run without erasing imported data.
+- **`write_standard_names()` (build path)**: Uses `coalesce(b.field, sn.field)` for ALL fields — passing None preserves existing graph data. Safe to re-run without erasing imported data. Also persists `validation_issues` (list of tagged strings from ISN 3-layer validation) and `validation_layer_summary` (JSON with per-layer pass/fail counts).
 - **`_write_catalog_entries()` (import path)**: Catalog fields SET directly (overwrite) — catalog is authoritative. Graph-only fields (embedding, model, generated_at, confidence) preserved via coalesce.
 
 ### MCP Tools
@@ -828,10 +832,34 @@ StandardName node defined in `imas_codex/schemas/standard_name.yaml` (v0.5.0). K
 - `(FacilitySignal)-[:HAS_STANDARD_NAME]->(StandardName)`
 - `(StandardName)-[:CANONICAL_UNITS]->(Unit)`
 
-**Provenance fields** (v0.5.0): `reviewer_model`, `reviewer_score`, `reviewer_scores` (JSON:
-grammar/semantic/documentation/convention/completeness), `reviewer_comments`, `reviewed_at`,
-`review_tier` (outstanding/good/adequate/poor), `vocab_gap_detail` (JSON: segment/needed_token/reason),
-`catalog_commit_sha`.
+**Provenance fields** (v0.5.0): `reviewer_model`, `reviewer_score` (float 0-1, normalized from
+6×0-20), `reviewer_scores` (JSON: grammar/semantic/documentation/convention/completeness/compliance,
+each 0-20), `reviewer_comments`, `reviewed_at`, `review_tier` (outstanding/good/adequate/poor),
+`vocab_gap_detail` (JSON: segment/needed_token/reason), `catalog_commit_sha`,
+`validation_issues` (list of tagged strings), `validation_layer_summary` (JSON).
+
+### Architecture Boundary
+
+> Full details: `docs/architecture/boundary.md`
+
+ISN owns grammar, vocabulary, and validation. Codex owns the pipeline, evaluation, and graph persistence.
+
+**Import boundary** (ISN ≥0.7.0rc3):
+- `get_grammar_context()` — single entry point for all grammar data (19 keys)
+- `create_standard_name_entry()` — Pydantic model construction (18 validators)
+- `run_semantic_checks()` — 9 semantic grammar checks
+- `validate_description()` — description quality checks
+- `parse_standard_name()` / `compose_standard_name()` — grammar round-trip
+
+**Rules:** Never import from ISN private modules. Never hardcode grammar rules — get them from `get_grammar_context()`. Review criteria and scoring live in codex (`sn_review_criteria.yaml`).
+
+### Prompt Infrastructure
+
+Compose and review prompts use shared fragments via `{% include %}`:
+- `{% include "sn/_grammar_reference.md" %}` — grammar vocabulary and segment order (used in `compose_system.md`)
+- `llm/prompts/shared/sn/_scoring_rubric.md` — 6-dimension scoring rubric (shared reference)
+- `llm/config/sn_review_criteria.yaml` — scoring dimensions, tiers, verdict rules (loaded via `load_prompt_config()`)
+- ISN context keys (`quick_start`, `common_patterns`, `critical_distinctions`) rendered in compose prompt
 
 ## Remote Tools
 

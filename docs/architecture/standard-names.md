@@ -38,10 +38,10 @@ Examples: `electron_temperature`, `toroidal_magnetic_field_at_magnetic_axis`,
  ┌───────────┐     ┌───────────┐     ┌───────────┐
  │  PERSIST  │◀────│CONSOLIDATE│◀────│ VALIDATE  │
  │           │     │           │     │           │
- │ Neo4j     │     │ dedup     │     │ grammar   │
- │ conflict  │     │ conflicts │     │ round-trip│
- │ detection │     │ coverage  │     │ fields    │
- └───────────┘     └───────────┘     │ check     │
+ │ Neo4j     │     │ dedup     │     │ ISN 3-    │
+ │ conflict  │     │ conflicts │     │ layer +   │
+ │ detection │     │ coverage  │     │ grammar   │
+ └───────────┘     └───────────┘     │ round-trip│
                                      └───────────┘
 ```
 
@@ -52,12 +52,75 @@ Examples: `electron_temperature`, `toroidal_magnetic_field_at_magnetic_axis`,
 | EXTRACT | `workers.extract_worker` | Query graph for DD paths, classify, enrich with clusters, group into batches |
 | COMPOSE | `workers.compose_worker` | LLM generates standard names per batch; unit injected from DD |
 | REVIEW | `workers.review_worker` | Optional LLM review: accept/reject/revise each candidate |
-| VALIDATE | `workers.validate_worker` | Grammar round-trip via `parse_standard_name()`, fields consistency |
+| VALIDATE | `workers.validate_worker` | ISN 3-layer validation + grammar round-trip via `parse_standard_name()`, fields consistency |
 | CONSOLIDATE | `workers.consolidate_worker` | Cross-batch dedup, conflict detection, coverage accounting |
 | PERSIST | `workers.persist_worker` | Conflict-detecting Neo4j writes with coalesce semantics |
 
 Orchestrator: `imas_codex/sn/pipeline.py` — wires workers into the generic
 `run_discovery_engine()` with a DAG dependency graph.
+
+## ISN Integration
+
+The architecture boundary between imas-codex and imas-standard-names (ISN) is
+documented in detail at [`docs/architecture/boundary.md`](boundary.md).
+
+**Single import boundary:** `imas_codex/sn/context.py` calls
+`get_grammar_context()` from ISN v0.7.0rc3 as its single entry point for all
+grammar data (19 context keys: vocabulary, patterns, naming guidance, etc.).
+No private ISN modules are imported.
+
+**Three-layer validation** (`_validate_via_isn()` in `workers.py`):
+
+1. **Pydantic** — `create_standard_name_entry()` fires 18 field validators
+2. **Semantic** — `run_semantic_checks()` runs 9 grammar-semantic checks
+3. **Description** — `validate_description()` checks for metadata leakage
+
+Validation is **annotation-only**: entries are never rejected by ISN validation.
+Issues are persisted to the graph as `validation_issues` (list of tagged
+strings) and `validation_layer_summary` (JSON with per-layer counts). The only
+hard rejection is an unparseable name (grammar round-trip failure).
+
+## Scoring
+
+Review scoring uses 6 dimensions × 0–20 integer scores, normalized to a 0–1
+aggregate via `sum / 120.0`. The LLM scores in integers to avoid float
+clustering (LLMs distribute poorly across continuous ranges). The graph stores
+the normalized 0–1 float as `reviewer_score`.
+
+**6 dimensions:** grammar, semantic, documentation, convention, completeness,
+compliance. Defined in `imas_codex/llm/config/sn_review_criteria.yaml`.
+
+**Tier thresholds:**
+
+| Tier | Minimum Score |
+|------|---------------|
+| outstanding | ≥0.85 |
+| good | ≥0.60 |
+| adequate | ≥0.40 |
+| poor | <0.40 |
+
+**Verdict rules:** accept (≥0.60, no zero dimensions), reject (<0.40 or any
+zero dimension), revise (otherwise).
+
+## A/B Comparison (Plan 21 Outcomes)
+
+Plan 21 closed two categories of gaps relative to ISN's built-in capabilities:
+
+**ISN validation leads — closed.** The `_validate_via_isn()` three-layer
+validation now runs 27+ checks via Pydantic model construction, semantic
+analysis, and description quality checking. All issues are persisted to the
+graph for reviewer context.
+
+**Context gaps — closed.** Collision avoidance via vector search
+(`imas_codex/sn/search.py`) finds similar existing StandardName nodes before
+compose and review. ISN grammar context keys (`quick_start`, `common_patterns`,
+`critical_distinctions`) are rendered in the compose prompt for richer LLM
+guidance.
+
+**Remaining ISN lead:** Iterative retry loop (ISN supports validate → fix →
+revalidate cycles). Assessed as lower priority — the validate-once +
+persistent-issues architecture catches issues upfront and surfaces them to
+the reviewer rather than attempting automated repair.
 
 ## Naming Scope Classifier
 
@@ -299,8 +362,8 @@ Each StandardName node carries a full audit trail:
 | `confidence` | LLM output | 0–1 confidence score |
 | `generated_at` | Compose worker | Timestamp of LLM generation |
 | `reviewer_model` | Review worker | Model used for review |
-| `reviewer_score` | Review worker | 0–100 quality score |
-| `reviewer_scores` | Review worker | JSON: grammar, semantic, docs, convention, completeness |
+| `reviewer_score` | Review worker | 0–1 quality score (normalized from 6×0-20) |
+| `reviewer_scores` | Review worker | JSON: grammar, semantic, docs, convention, completeness, compliance (each 0-20) |
 | `reviewer_comments` | Review worker | Reasoning text |
 | `reviewed_at` | Review worker | Review timestamp |
 | `review_tier` | Review worker | outstanding/good/adequate/poor |
@@ -355,4 +418,10 @@ graph modification.
 | `imas_codex/sn/benchmark.py` | LLM model quality benchmarking |
 | `imas_codex/llm/prompts/sn/compose_system.md` | Static system prompt |
 | `imas_codex/llm/prompts/sn/compose_dd.md` | Dynamic user prompt template |
+| `imas_codex/llm/prompts/sn/review.md` | Review prompt with 6-dimension scoring rubric |
+| `imas_codex/llm/prompts/shared/sn/_grammar_reference.md` | Shared grammar fragment (included by compose_system.md) |
+| `imas_codex/llm/prompts/shared/sn/_scoring_rubric.md` | Shared scoring rubric reference |
+| `imas_codex/llm/config/sn_review_criteria.yaml` | Review scoring config (dimensions, tiers, verdict rules) |
+| `imas_codex/sn/calibration.py` | Centralized loader (cached) for benchmark_calibration.yaml |
+| `imas_codex/sn/search.py` | Vector search for similar existing StandardName nodes |
 | `imas_codex/schemas/standard_name.yaml` | LinkML schema (v0.5.0) |

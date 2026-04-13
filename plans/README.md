@@ -34,6 +34,7 @@ Gap documents consolidate remaining work from completed implementation phases. T
 | [standard-names/12-catalog-import.md](features/standard-names/12-catalog-import.md) | Catalog import & bootstrap (309 entries, feedback loop) | ✅ Done | 11 P1 |
 | [standard-names/13-publish-pipeline.md](features/standard-names/13-publish-pipeline.md) | Lossless publish, round-trip, batched PRs | ✅ Done | 11, 12 P1 |
 | [standard-names/14-mcp-tools-benchmark.md](features/standard-names/14-mcp-tools-benchmark.md) | SN MCP tools + benchmark quality tiers | ✅ Done | 11, 12 |
+| [standard-names/21-architecture-boundary.md](features/standard-names/21-architecture-boundary.md) | Architecture boundary, ISN validation, 0-1 scoring, prompt infrastructure | ✅ Done | 14 |
 
 ### Pending plans (partially implemented)
 
