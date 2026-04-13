@@ -949,3 +949,137 @@ def sn_clear(
 
     qualifier = "Would delete" if dry_run else "Deleted"
     console.print(f"{qualifier} {count} StandardName node(s)")
+
+
+@sn.command("seed")
+@click.option(
+    "--source",
+    type=click.Choice(["isn", "west", "all"]),
+    default="all",
+    help="Which source to import: ISN reference examples, WEST catalog, or both",
+)
+@click.option(
+    "--west-dir",
+    type=click.Path(exists=True),
+    default=None,
+    help="Path to west-standard-names/standard_names (default: ~/Code/west-standard-names/standard_names)",
+)
+@click.option(
+    "--dry-run", is_flag=True, help="Validate and count but don't write to graph"
+)
+@click.option("-v", "--verbose", is_flag=True, help="Enable verbose logging")
+def sn_seed(
+    source: str,
+    west_dir: str | None,
+    dry_run: bool,
+    verbose: bool,
+) -> None:
+    """Seed the graph with reference standard names from external sources.
+
+    \b
+    Imports curated standard names from ISN reference examples (42 entries,
+    accepted) and/or the WEST catalog (~305 entries, drafted).
+
+    \b
+    ISN examples are shipped with imas-standard-names and serve as
+    calibration anchors. WEST entries receive physics_domain and tag
+    cleanup before ISN validation.
+
+    \b
+    Examples:
+      imas-codex sn seed                          # import both ISN + WEST
+      imas-codex sn seed --source isn --dry-run    # preview ISN only
+      imas-codex sn seed --source west --west-dir /path/to/standard_names
+    """
+    from pathlib import Path
+
+    if verbose:
+        logging.basicConfig(level=logging.DEBUG)
+
+    console.print("\n[bold]Standard Name Seed[/bold]")
+    if dry_run:
+        console.print("  Mode: [yellow]dry run[/yellow]")
+    console.print("")
+
+    try:
+        from imas_codex.sn.seed import seed_isn_examples, seed_west_catalog
+    except ImportError as e:
+        console.print(
+            f"[red]Missing dependency:[/red] {e}\n"
+            "Install with: uv pip install imas-standard-names"
+        )
+        raise SystemExit(1) from e
+
+    # -- ISN reference examples --
+    if source in ("isn", "all"):
+        console.print("[bold]ISN reference examples[/bold]")
+        try:
+            isn_result = seed_isn_examples(dry_run=dry_run)
+        except Exception as e:
+            console.print(f"  [red]Error:[/red] {e}")
+            raise SystemExit(1) from e
+
+        console.print(f"  Loaded:    {isn_result.loaded}")
+        console.print(f"  Validated: [green]{isn_result.validated}[/green]")
+
+        if isn_result.validation_errors:
+            console.print(
+                f"  Errors:    [red]{len(isn_result.validation_errors)}[/red]"
+            )
+            for err in isn_result.validation_errors[:5]:
+                console.print(f"    - {err}")
+            if len(isn_result.validation_errors) > 5:
+                console.print(
+                    f"    ... and {len(isn_result.validation_errors) - 5} more"
+                )
+
+        if isn_result.grammar_mismatches:
+            console.print(
+                f"  Grammar mismatches: [yellow]{len(isn_result.grammar_mismatches)}[/yellow]"
+            )
+            for m in isn_result.grammar_mismatches[:5]:
+                console.print(f"    ⚠ {m}")
+
+        action = "Would write" if dry_run else "Wrote"
+        written = isn_result.validated if dry_run else isn_result.written
+        console.print(f"  {action}:   [green]{written}[/green] entries")
+        console.print("")
+
+    # -- WEST catalog --
+    if source in ("west", "all"):
+        west_path = Path(west_dir) if west_dir else None
+        console.print("[bold]WEST catalog[/bold]")
+        if west_path:
+            console.print(f"  Directory: {west_path}")
+
+        try:
+            west_result = seed_west_catalog(west_dir=west_path, dry_run=dry_run)
+        except Exception as e:
+            console.print(f"  [red]Error:[/red] {e}")
+            raise SystemExit(1) from e
+
+        console.print(f"  Loaded:    {west_result.loaded}")
+        console.print(f"  Validated: [green]{west_result.validated}[/green]")
+
+        if west_result.validation_errors:
+            console.print(
+                f"  Errors:    [red]{len(west_result.validation_errors)}[/red]"
+            )
+            for err in west_result.validation_errors[:5]:
+                console.print(f"    - {err}")
+            if len(west_result.validation_errors) > 5:
+                console.print(
+                    f"    ... and {len(west_result.validation_errors) - 5} more"
+                )
+
+        if west_result.grammar_mismatches:
+            console.print(
+                f"  Grammar mismatches: [yellow]{len(west_result.grammar_mismatches)}[/yellow]"
+            )
+            for m in west_result.grammar_mismatches[:5]:
+                console.print(f"    ⚠ {m}")
+
+        action = "Would write" if dry_run else "Wrote"
+        written = west_result.validated if dry_run else west_result.written
+        console.print(f"  {action}:   [green]{written}[/green] entries")
+        console.print("")
