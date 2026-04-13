@@ -10,17 +10,37 @@ debt from its rapid development:
 
 1. **Private API coupling:** 5 imports from ISN's `tools/grammar.py` use `_` prefixed
    functions that can break on any ISN internal refactor.
-2. **Hardcoded prompt guidelines:** 96 lines of composition rules are inline in
-   `compose_system.md` instead of managed as structured YAML configuration.
+2. **Hardcoded prompt content that belongs to ISN:** Composition rules, kind
+   classification, anti-patterns in `compose_system.md` duplicate ISN's grammar
+   authority. If ISN updates a naming convention, codex's inline rules won't know.
 3. **No shared prompt fragments:** Grammar reference duplicated between compose and review
    prompts — a change to one must be manually mirrored to the other.
 4. **ISN validation not imported:** codex's `validate_worker` uses grammar round-trip
-   (parse→compose) but skips ISN's 8 semantic validation checks (unit consistency,
-   tag physics domain alignment, description quality, etc).
+   (parse→compose) but skips ISN's 8 semantic validation checks (geometric qualifier
+   requirements, component/coordinate base type checks, orientation completeness, etc).
 5. **Import path fragility:** `catalog_import.py` imports `StandardNameEntry` from
    `imas_standard_names.catalog.edit` which is a re-export — should import from
-   `imas_standard_names.models` directly.
+   `imas_standard_names.models` directly. ISN Plan 05 deletes `catalog/edit.py`.
 6. **No formal boundary documentation:** Neither project documents what it owns vs delegates.
+
+## Boundary Principle
+
+**ISN owns ALL naming knowledge.** If ISN updates the grammar spec and a rule should
+change, it belongs in ISN. Codex owns how to instruct an LLM to produce output and
+how to evaluate that output.
+
+**ISN-owned (via `get_grammar_context()`):**
+- Grammar rules (canonical pattern, segment order, vocabulary)
+- Naming conventions (composition rules, anti-patterns, reuse guidance)
+- Kind definitions (scalar/vector/metadata classification)
+- Documentation guidance, tag descriptions, applicability rules
+- Field guidance, type-specific requirements
+
+**Codex-owned (inline in prompts or codex config):**
+- LLM output format (JSON schema instructions, candidate field list)
+- DD-specific pipeline rules ("skip array indices", "no unit field", confidence thresholds)
+- Review scoring criteria (6-dim rubric, tiers, verdicts)
+- Calibration dataset
 
 ## Approach
 
@@ -43,26 +63,43 @@ from imas_standard_names.tools.grammar import (
 
 These will be replaced by ISN's new `get_grammar_context()` public API (ISN Plan 05, Phase 0).
 
-### Hardcoded guidelines in compose_system.md (lines 146-228)
+### Broken import in catalog_import.py
 
-```markdown
-## Composition Rules
-1. Each standard name must describe exactly one physical quantity...
-2. Use only tokens from the vocabulary above...
-...
-## Output Schema
-Return a JSON array matching this schema...
-## Kind Classification
-| Kind | Use when... |
-...
-## Links Guidance
-- `ids_paths`: ...
+```python
+# Lines 264, 370 — imports from module ISN Plan 05 deletes
+from imas_standard_names.catalog.edit import StandardNameEntry
+# Should be:
+from imas_standard_names.models import StandardNameEntry
 ```
 
-These 83 lines of rules should live in a YAML config file so they can be:
-- Versioned independently of template structure
-- Shared across prompts (compose and review both need rules)
-- Edited without touching Jinja2 syntax
+### Hardcoded guidelines in compose_system.md (lines 145-228)
+
+Content analysis — what belongs where:
+
+| Lines | Content | Owner | Action |
+|-------|---------|-------|--------|
+| 147-151 | Grammar rules (physical_base/geometric_base, pattern, tokens) | ISN | Move to ISN `get_grammar_context()` |
+| 152 | "Reuse existing standard names" | ISN | Naming convention → ISN API |
+| 153 | "Skip array indices, metadata" | Codex | DD classifier rule, keep in prompt |
+| 154 | "Set confidence < 0.5" | Codex | Pipeline rule, keep in prompt |
+| 155 | "Do NOT output unit field" | Codex | DD enrichment rule, keep in prompt |
+| 157-179 | Output format / candidate schema | Codex | LLM output instructions |
+| 180-194 | Documentation template | Mixed | ISN provides DOCUMENTATION_GUIDANCE, codex formats for LLM |
+| 195-213 | Tags controlled vocabulary | ISN | Already imported from ISN tag_types |
+| 215-219 | Kind classification | ISN | ISN defines Kind enum |
+| 221-228 | Links guidance | Codex | Pipeline instructions |
+
+### ISN semantic validation (not yet imported)
+
+ISN's `validation/semantic.py` — `run_semantic_checks()`:
+- **Signature:** `run_semantic_checks(entries: dict[str, StandardNameEntry]) -> list[str]`
+- **Requires:** Pydantic `StandardNameEntry` models (not raw dicts)
+- **Checks:** geometric qualifier requirements, component/coordinate base type,
+  orientation vector completeness, trajectory/path qualification, extent dimensionality,
+  physical_base+object, dimensionless quantities, provenance/operator gradient units
+
+Codex's `validate_worker` operates on `list[dict]` from LLM output — impedance mismatch.
+Phase 4 must include adapter code to construct `StandardNameEntry` from raw dicts.
 
 ### Duplicate grammar context
 
@@ -70,25 +107,16 @@ Both `compose_system.md` and `review.md` render grammar vocabulary and rules.
 They do this independently — if grammar formatting changes, both must be updated.
 A shared `{% include "sn/_grammar_reference.md" %}` fragment eliminates this.
 
-### ISN semantic validation (not yet imported)
-
-ISN's `validation/semantic.py` has 8 checks codex doesn't use:
-1. Unit consistency (SI prefixes, compound units)
-2. Tag physics domain alignment
-3. Coordinate system validity
-4. Duplicate name detection
-5. Link format validation
-6. Vocabulary token usage check
-7. Description metadata leakage
-8. Kind-specific field requirements
-
-Codex's `validate_worker` only does parse→compose round-trip.
+The Jinja2 `PromptsLoader` searches `prompts/shared/` then `prompts/` root, so
+`{% include "sn/_grammar_reference.md" %}` resolves to `prompts/sn/_grammar_reference.md`.
+Verified in `prompt_loader.py` lines 1095-1113.
 
 ## Phases
 
-### Phase 1: Replace Private ISN Imports
+### Phase 1: Replace Private ISN Imports and Fix Broken Paths
 
 **Goal:** Use ISN's public `get_grammar_context()` API instead of 5 private functions.
+Fix the `StandardNameEntry` import that will break when ISN removes `catalog/edit.py`.
 
 **Prerequisite:** ISN Plan 05 Phase 0 is merged and released.
 
@@ -106,62 +134,39 @@ Codex's `validate_worker` only does parse→compose round-trip.
     - `ctx["template_rules"]` → `template_rules`
     - `ctx["vocabulary_sections"]` → `vocabulary_sections`
     - `ctx["segment_descriptions"]` → `segment_descriptions`
+  - ISN-owned naming guidelines now also come from `get_grammar_context()`:
+    - `ctx["naming_guidance"]` → composition rules for prompt
+    - `ctx["kind_definitions"]` → kind classification for prompt
+    - `ctx["anti_patterns"]` → anti-pattern examples for prompt
 
-- `imas_codex/sn/catalog_import.py`:
-  - Change import from `imas_standard_names.catalog.edit` to `imas_standard_names.models`
-    (ISN plan removes catalog.edit — prepare now)
+- `imas_codex/sn/catalog_import.py` (lines 264, 370):
+  - Change `from imas_standard_names.catalog.edit import StandardNameEntry`
+    to `from imas_standard_names.models import StandardNameEntry`
 
 **Tests:**
-- Update `tests/sn/test_context.py` (if exists) or add tests verifying `build_compose_context()`
-  output is unchanged after the import switch
-- Run `uv run pytest tests/sn/` — all 437 tests must pass
+- `tests/sn/test_context.py` — verify `build_compose_context()` output unchanged
+- `tests/sn/test_grammar_contract.py` (NEW) — API contract test:
+  ```python
+  def test_grammar_context_contract():
+      from imas_standard_names.grammar.context import get_grammar_context
+      ctx = get_grammar_context()
+      required = {"canonical_pattern", "segment_order", "template_rules",
+                  "vocabulary_sections", "segment_descriptions", "naming_guidance"}
+      assert required <= set(ctx.keys())
+  ```
+- Run `uv run pytest tests/sn/` — all tests must pass
 
-**Verification:**
-- Diff the output of `build_compose_context()` before and after — keys and values identical
+### Phase 2: Prompt Restructure — ISN Content via API, Codex Content via Includes
 
-### Phase 2: Extract Guidelines to YAML Config
+**Goal:** Remove hardcoded naming rules from prompts. ISN-owned content comes from
+`get_grammar_context()` at render time. Codex-owned pipeline instructions use
+`{% include %}` fragments for shared rendering.
 
-**Goal:** Move hardcoded prose guidelines from prompts into structured YAML config files.
+**Key insight:** No YAML config files needed for naming guidelines. ISN's
+`get_grammar_context()` is the single source of truth. Codex only needs a YAML
+config for its review scoring criteria (used by both mint and benchmark).
 
 **Files to create:**
-
-- `imas_codex/llm/config/sn_guidelines.yaml` (NEW ~150 lines):
-  ```yaml
-  composition_rules:
-    - rule: "Each standard name describes exactly one physical quantity"
-      category: identity
-    - rule: "Use only tokens from the provided vocabulary"
-      category: vocabulary
-    ...
-
-  output_schema:
-    description: "Return JSON matching the SNComposeBatch schema"
-    notes:
-      - "Each candidate has: name, kind, description, documentation, tags, links"
-
-  kind_classification:
-    scalar: "Single value per time point (Te, Ip, q95)"
-    vector: "Array of values (profiles, spectra)"
-    metadata: "Non-physical (diagnostic names, code versions)"
-
-  links_guidance:
-    ids_paths: "Full IMAS path from root IDS"
-    dd_paths: "Relative path within IDS"
-
-  anti_patterns:
-    - pattern: "Embedding units in the name"
-      example: "electron_temperature_ev"
-      correction: "electron_temperature (unit comes from DD)"
-    - pattern: "Overly specific names"
-      example: "core_profiles_1d_electron_temperature_fit"
-      correction: "electron_temperature_fit"
-    ...
-
-  unit_policy:
-    source: "DD HAS_UNIT relationship"
-    rule: "Never invent units. Use DD unit exactly as provided."
-    when_missing: "Leave unit field empty, flag as vocab_gap"
-  ```
 
 - `imas_codex/llm/config/sn_review_criteria.yaml` (NEW ~60 lines):
   ```yaml
@@ -197,18 +202,26 @@ Codex's `validate_worker` only does parse→compose round-trip.
     poor: { min: 0, label: "Poor" }
   ```
 
+- `imas_codex/llm/prompts/sn/_grammar_reference.md` (NEW ~40 lines):
+  Shared grammar rendering (vocabulary, pattern, segment order) used by both
+  compose and review prompts.
+
+- `imas_codex/llm/prompts/sn/_scoring_rubric.md` (NEW ~30 lines):
+  Review scoring dimensions rendered from `sn_review_criteria.yaml`.
+
 **Files to modify:**
 
 - `imas_codex/llm/prompts/sn/compose_system.md`:
-  - Replace hardcoded rules (lines ~146-228) with:
-    ```jinja
-    {% include "sn/_guidelines.md" %}
-    ```
-  - The include fragment reads from YAML config at render time
+  - Replace hardcoded grammar rules (lines 147-151) with ISN-provided
+    `naming_guidance` from context (rendered via `{% include "sn/_grammar_reference.md" %}`)
+  - Keep codex-specific pipeline instructions (lines 153-155) inline
+  - Replace hardcoded kind classification (lines 215-219) with ISN-provided
+    `kind_definitions` from context
+  - Keep output format section (lines 157-179) — codex LLM instructions
 
 - `imas_codex/llm/prompts/sn/review.md`:
-  - Replace hardcoded rubric with YAML-driven rendering
-  - Scoring dimensions loaded from `sn_review_criteria.yaml`
+  - Replace inline grammar section with `{% include "sn/_grammar_reference.md" %}`
+  - Replace inline rubric with `{% include "sn/_scoring_rubric.md" %}`
 
 - `imas_codex/llm/prompt_loader.py`:
   - Add helper to load YAML config files from `llm/config/`:
@@ -216,112 +229,63 @@ Codex's `validate_worker` only does parse→compose round-trip.
     def load_prompt_config(name: str) -> dict:
         """Load YAML config from imas_codex/llm/config/{name}.yaml"""
     ```
-  - Or integrate with existing `render_prompt()` to auto-load config YAML as template context
 
 **Tests:**
-- `tests/llm/test_prompt_config.py` — verify YAML configs load and validate
-- Render compose_system.md and review.md, verify output matches pre-refactor output
+- Render compose_system.md and review.md, verify grammar section is character-identical
+  between the two
+- Verify ISN-owned content no longer hardcoded — comes from `get_grammar_context()`
 - Full SN test suite passes
 
-### Phase 3: Create Shared Prompt Fragments
+### Phase 3: Import ISN Semantic Validation
 
-**Goal:** Eliminate duplication between compose and review prompts via `{% include %}`.
+**Goal:** Use ISN's semantic checks in codex's `validate_worker`.
 
-**Files to create:**
-
-- `imas_codex/llm/prompts/sn/_grammar_reference.md` (NEW ~40 lines):
-  ```jinja
-  ## Grammar Reference
-
-  **Canonical Pattern:** {{ canonical_pattern }}
-
-  **Segment Order:** {{ segment_order }}
-
-  **Vocabulary:**
-  {% for section in vocabulary_sections %}
-  ### {{ section.segment }}
-  {% for token in section.tokens %}
-  - `{{ token.name }}`: {{ token.description }}
-  {% endfor %}
-  {% endfor %}
-  ```
-
-- `imas_codex/llm/prompts/sn/_guidelines.md` (NEW ~50 lines):
-  ```jinja
-  {# Renders composition rules, anti-patterns, unit policy from YAML config #}
-  ## Composition Rules
-  {% for rule in guidelines.composition_rules %}
-  {{ loop.index }}. {{ rule.rule }}
-  {% endfor %}
-
-  ## Anti-Patterns
-  {% for ap in guidelines.anti_patterns %}
-  - ❌ `{{ ap.example }}` → ✅ `{{ ap.correction }}` ({{ ap.pattern }})
-  {% endfor %}
-
-  ## Unit Policy
-  {{ guidelines.unit_policy.rule }}
-  ```
-
-- `imas_codex/llm/prompts/sn/_scoring_rubric.md` (NEW ~30 lines):
-  ```jinja
-  {# Renders review scoring dimensions from YAML config #}
-  ## Scoring Rubric ({{ criteria.dimensions | length }} dimensions, 0-{{ total_max }} total)
-  {% for name, dim in criteria.dimensions.items() %}
-  ### {{ name | title }} (0-{{ dim.weight }})
-  {{ dim.description }}
-  {% endfor %}
-  ```
-
-**Files to modify:**
-
-- `imas_codex/llm/prompts/sn/compose_system.md`:
-  - Add `{% include "sn/_grammar_reference.md" %}`
-  - Add `{% include "sn/_guidelines.md" %}`
-  - Remove inline grammar and guidelines sections
-
-- `imas_codex/llm/prompts/sn/review.md`:
-  - Add `{% include "sn/_grammar_reference.md" %}`
-  - Add `{% include "sn/_scoring_rubric.md" %}`
-  - Remove inline grammar and rubric sections
-
-**Tests:**
-- Render both prompts, verify grammar section is character-identical
-- Full SN test suite passes
-
-### Phase 4: Import ISN Semantic Validation
-
-**Goal:** Use ISN's 8 semantic checks in codex's `validate_worker`.
+**Prerequisite:** ISN Plan 05 Phase 0 merged (stable imports).
 
 **Files to modify:**
 
 - `imas_codex/sn/workers.py` (`validate_worker`):
-  - Add import: `from imas_standard_names.validation.semantic import validate_semantic`
-  - After parse→compose round-trip, run ISN semantic checks:
+  - Add ISN semantic validation after parse→compose round-trip
+  - **Adapter required:** ISN's `run_semantic_checks()` expects
+    `dict[str, StandardNameEntry]` (Pydantic models). Codex has raw dicts.
+    Build adapter:
     ```python
-    from imas_standard_names.validation.semantic import validate_semantic
-    from imas_standard_names.validation.description import validate_description
+    from imas_standard_names.models import create_standard_name_entry
+    from imas_standard_names.validation.semantic import run_semantic_checks
 
-    semantic_issues = validate_semantic(entry_dict)
-    description_issues = validate_description(entry_dict)
+    def _run_isn_validation(candidates: list[dict]) -> dict[str, list[str]]:
+        """Adapt ISN validation to work with raw LLM output dicts."""
+        entries = {}
+        for c in candidates:
+            try:
+                entry = create_standard_name_entry(**c)
+                entries[c["standard_name"]] = entry
+            except (ValidationError, KeyError):
+                continue  # Skip malformed candidates
+        issues = run_semantic_checks(entries)
+        return _group_issues_by_name(issues)
     ```
   - Merge ISN validation issues into the existing soft-validation framework
-  - Map ISN issue severity to codex's warning/error classification
+  - ISN issues become warnings (not hard failures) — LLM output may not perfectly
+    match ISN's entry schema
 
 **New validation checks gained:**
-1. Unit consistency (SI prefix + compound unit validation)
-2. Tag-physics domain alignment
-3. Coordinate system validity
-4. Description metadata leakage detection
-5. Kind-specific field requirements
+1. Geometric qualifier requirements (orientation/path bases need object)
+2. Component/coordinate with base type checks
+3. Orientation vector completeness
+4. Trajectory/path qualification
+5. Extent dimensionality
+6. Physical base + object checks
+7. Dimensionless quantity detection
+8. Provenance/operator gradient unit heuristics
 
 **Tests:**
 - `tests/sn/test_validate_integration.py` — verify ISN checks run within validate_worker
-- Test that a name with a bad unit gets flagged by ISN checks
-- Test that a name with metadata leakage in description gets flagged
+- Test that adapter handles malformed dicts gracefully (no crash)
+- Test that a name with missing geometric qualifier gets flagged
 - Full SN test suite passes
 
-### Phase 5: Centralize Calibration Loading
+### Phase 4: Centralize Calibration Loading
 
 **Goal:** Single calibration loading path for both mint review and benchmark.
 
@@ -369,7 +333,7 @@ Codex's `validate_worker` only does parse→compose round-trip.
 - `tests/sn/test_calibration.py` — verify loading, caching, prompt formatting
 - Verify both mint and benchmark use identical calibration data
 
-### Phase 6: Documentation and Boundary Definition
+### Phase 5: Documentation and Boundary Definition
 
 **Goal:** Document the project boundary and updated architecture.
 
@@ -380,7 +344,8 @@ Codex's `validate_worker` only does parse→compose round-trip.
   # Project Boundary: imas-codex ↔ imas-standard-names
 
   ## imas-codex owns
-  - Standard name **generation** (LLM pipeline: extract → compose → review → validate → consolidate → persist)
+  - Standard name **generation** (LLM pipeline: extract → compose → review →
+    validate → consolidate → persist)
   - DD enrichment (clusters, siblings, coordinates, parent structures)
   - Quality review with calibrated 6-dimensional scoring
   - Graph storage and lifecycle management (drafted → published → accepted)
@@ -391,73 +356,70 @@ Codex's `validate_worker` only does parse→compose round-trip.
   - Grammar specification (specification.yml → code-gen)
   - Vocabulary definition (YAML → StrEnums)
   - Parse/compose functions (string ↔ structured)
+  - Naming conventions (composition rules, anti-patterns, kind definitions)
   - 4-layer validation (structural, semantic, description, quality)
   - Read-only catalog server (MCP tools for lookup/search)
   - Curated resources (examples, tokamak parameters, tag descriptions)
 
-  ## Data flow
-  1. codex `sn mint` → generates candidates from DD paths using LLM
-  2. codex `sn publish` → exports validated names to YAML catalog files
-  3. Human review → accepts/rejects/revises in YAML
-  4. codex `sn import` → imports reviewed catalog back to graph
-  5. ISN `standard-names build` → builds .db from YAML catalog
-  6. ISN MCP tools → serve .db to LLM agents for lookup
+  ## Principle
+  ISN defines what a valid standard name IS. Codex decides what names to CREATE.
+  If a rule would change when ISN updates the grammar spec, it belongs in ISN.
+  If a rule is about how to instruct an LLM, it belongs in codex.
 
   ## API contract
   - codex imports from ISN: `get_grammar_context()`, `parse_standard_name()`,
-    `compose_standard_name()`, `validate_semantic()`, `validate_description()`,
+    `compose_standard_name()`, `run_semantic_checks()`,
     vocabulary constants, tag constants, curated resources
   - ISN exposes NO write operations via MCP or Python API
   - Changes to ISN grammar specification are coordinated releases
   ```
 
 - Update `docs/architecture/standard-names.md`:
-  - Add prompt infrastructure section (YAML configs, shared fragments)
   - Add ISN integration section (what we import, why)
   - Update pipeline diagram to show validation integration
 
 - Update `AGENTS.md`:
   - Add project boundary reference: `docs/architecture/boundary.md`
-  - Document YAML config files and their purpose
+  - Document review criteria YAML config and its purpose
   - Document `{% include %}` fragments and when to create new ones
 
 ## Dependency Order
 
 ```
-ISN Phase 0 (public API)
+ISN Phase 0 (public API — expanded with naming guidelines)
     ↓
-Codex Phase 1 (replace private imports)
+Codex Phase 1 (replace private imports + fix StandardNameEntry path)
     ↓
-Codex Phase 2 (YAML configs) ←── independent of Phase 1
+Codex Phase 2 (prompt restructure + shared fragments + review criteria YAML)
     ↓
-Codex Phase 3 (shared fragments) ←── depends on Phase 2
+Codex Phase 3 (ISN validation with adapter) ←── depends on Phase 1
     ↓
-Codex Phase 4 (ISN validation) ←── depends on Phase 1
+Codex Phase 4 (centralize calibration) ←── independent of Phase 3
     ↓
-Codex Phase 5 (centralize calibration) ←── independent
-    ↓
-Codex Phase 6 (docs) ←── depends on all above
+Codex Phase 5 (docs) ←── depends on all above
 ```
 
-Phases 2 and 5 can run in parallel with Phase 1 (no cross-dependency).
-Phase 4 needs Phase 1 (ISN public API available).
-Phase 3 needs Phase 2 (YAML configs exist to include).
+Phases 2 and 4 can run in parallel (no cross-dependency).
+Phase 3 needs Phase 1 (ISN public API available + StandardNameEntry import fixed).
 
 ## Implementation Notes
 
 - **Each phase is one commit.** Run `uv run pytest tests/sn/` after each.
-- **Phase 1 is blocked on ISN Plan 05 Phase 0.** Start with Phase 2 while waiting.
-- **Prompt output must be identical** after Phases 2-3. Diff rendered prompts to verify.
-- **No behavioral change** in Phases 1-3, 5. Phase 4 adds new validations (may cause
+- **Phase 1 is blocked on ISN Plan 05 Phase 0.** Start with Phase 4 while waiting.
+- **Prompt output must be semantically identical** after Phase 2 — ISN API returns
+  the same rules that were previously hardcoded. Diff rendered prompts to verify.
+- **No behavioral change** in Phases 1-2, 4. Phase 3 adds new validations (may cause
   previously-passing names to get warnings — this is correct behavior).
-- **YAML config files are NOT prompts.** They live in `imas_codex/llm/config/`, not
-  in `imas_codex/llm/prompts/`. Prompts `{% include %}` fragments that read from configs.
+- **No `sn_guidelines.yaml` in codex.** Naming knowledge comes from ISN. Only
+  `sn_review_criteria.yaml` lives in codex (scoring is codex's evaluation framework).
+- **Include path verified:** `PromptsLoader` searches `prompts/shared/` then `prompts/`
+  root, so `{% include "sn/_grammar_reference.md" %}` resolves correctly.
 
 ## Documentation Updates
 
 | Target | Phase |
 |--------|-------|
-| `docs/architecture/boundary.md` | Phase 6 — NEW |
-| `docs/architecture/standard-names.md` | Phase 6 — update pipeline section |
-| `AGENTS.md` | Phase 6 — boundary reference, YAML config docs |
-| `plans/README.md` | Phase 6 — mark plan 21 done |
+| `docs/architecture/boundary.md` | Phase 5 — NEW |
+| `docs/architecture/standard-names.md` | Phase 5 — update pipeline section |
+| `AGENTS.md` | Phase 5 — boundary reference, YAML config docs |
+| `plans/README.md` | Phase 5 — mark plan 21 done |
