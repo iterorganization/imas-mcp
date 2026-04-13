@@ -35,3 +35,139 @@ tiers:
     min: 0.40
   poor:
     min: 0.0
+
+# Concrete issues identified during peer review of LLM-generated standard names
+# (PR #2, ~305 WEST tokamak standard names). Referenced by [I-code] in prompts.
+common_issues:
+  naming_consistency:
+    I1.1_ambiguous_prepositions:
+      description: "Names using _from_ imply causation"
+      example_bad: "current_from_passive_loop"
+      example_good: "passive_loop_current"
+      rule: "Use device prefix for signals, _of_ for static properties, never _from_"
+      affects: [convention, grammar]
+
+    I1.2_duplicate_names:
+      description: "Synonymous names for the same physical quantity"
+      example_bad: "poloidal_flux vs poloidal_magnetic_flux"
+      rule: "Use controlled vocabulary term; never create synonymous alternatives"
+      affects: [convention]
+      score_override: "convention = 0 if duplicate detected"
+
+    I1.3_inconsistent_boundary:
+      description: "Mixed naming patterns for plasma boundary quantities"
+      rule: "Use consistent _of_plasma_boundary suffix"
+      affects: [convention]
+
+    I1.4_scalar_vs_vector_position:
+      description: "Both component and vector position names should coexist"
+      rule: "radial_position_of_ / vertical_position_of_ for components; position_of_ for vector"
+      affects: [semantic, completeness]
+
+    I1.5_processing_verbs:
+      description: "Names encoding processing/reconstruction method"
+      example_bad: "reconstructed_faraday_rotation_angle"
+      example_good: "faraday_rotation_angle"
+      forbidden_prefixes: ["reconstructed_", "averaged_", "measured_", "calculated_", "fitted_"]
+      exception: "flux_surface_averaged_ is a valid transformation segment"
+      affects: [convention, compliance]
+
+    I1.6_dd_path_leakage:
+      description: "Names containing DD organizational prefixes"
+      example_bad: "geometric_minor_radius"
+      example_good: "minor_radius"
+      rule: "Standard names are IDS-agnostic; no DD section prefixes"
+      affects: [convention]
+      score_override: "convention = 0 if DD prefix detected"
+
+  documentation_quality:
+    I2.1_undefined_variables:
+      description: "LaTeX equations with undefined variables"
+      rule: "Every variable must be defined with units immediately after the equation"
+      affects: [documentation]
+      score_override: "documentation <= 5 if any variable undefined"
+
+    I2.2_tangential_context:
+      description: "Documentation introduces loosely-related physics concepts"
+      rule: "Documentation covers THIS quantity only: definition, equation, significance, typical values"
+      positive_model: "effective_charge — clear definition, one equation, all variables defined"
+      affects: [documentation]
+
+    I2.3_unit_conversion_errors:
+      description: "Incorrect unit conversion factors"
+      conversions:
+        eV_to_K: 11605
+        Pa_to_eV_per_m3: 6.242e+18
+      rule: "State units of variables before applying conversions"
+      affects: [semantic, documentation]
+
+    I2.4_missing_cross_references:
+      description: "Documentation references quantities without links"
+      rule: "Use [standard_name](#standard_name) inline markdown links"
+      affects: [documentation]
+
+    I2.5_missing_sign_conventions:
+      description: "COCOS-dependent quantities without sign convention"
+      format: "Sign convention: Positive when [condition]."
+      rule: "Separate paragraph, plain text, not bold"
+      affects: [documentation]
+      score_override: "documentation <= 10 for COCOS quantities without sign convention"
+
+    I2.6_missing_aliases:
+      description: "DD abbreviated names (gm1-gm9) not mentioned"
+      rule: "Mention DD alias in documentation when abbreviated names exist"
+      affects: [documentation, completeness]
+
+    I2.7_wrong_physics_qualifier:
+      description: "Incorrect mathematical qualifier (e.g., flux_surface_averaged_elongation)"
+      rule: "Elongation/triangularity are geometric properties OF a contour, not averages"
+      affects: [semantic]
+      score_override: "semantic = 0 if physics qualifier is wrong"
+
+    I2.8_superfluous_equations:
+      description: "Trivial algebraic rearrangements waste documentation space"
+      rule: "Include defining equations only, not trivial rearrangements"
+      affects: [documentation]
+
+  formatting:
+    I3.1_sign_convention_format:
+      description: "Inconsistent sign convention formatting"
+      rule: "Separate paragraph starting with 'Sign convention:' — plain text, not bold"
+      affects: [documentation]
+
+    I3.2_yaml_multiline:
+      description: "Mixed folded (>) and literal (|) block scalars"
+      rule: "Always use | (literal block scalar) for multiline documentation"
+      affects: [compliance]
+
+    I3.3_latex_escaping:
+      description: "LaTeX commands corrupted by string escaping (\\nabla → newline+abla)"
+      rule: "Use | or |- block scalar for LaTeX content; never quoted strings"
+      affects: [documentation, compliance]
+
+  structural_scope:
+    I4.1_geometry_explosion:
+      description: "Too many per-component position/geometry names"
+      rule: "Prefer generic parameterized names over per-component entries"
+      affects: [compliance]
+
+    I4.2_fitting_metadata:
+      description: "chi_squared, weights repeated per measured quantity"
+      rule: "Define fitting/uncertainty as standalone names"
+      affects: [compliance, convention]
+
+    I4.3_vector_units:
+      description: "Position vectors with mixed units (m for R,Z; rad for phi)"
+      status: "deferred to ISN vector_axes proposal"
+      rule: "Document the limitation in description"
+      affects: [completeness]
+
+    I4.4_boundary_ambiguity:
+      description: "DD leaves plasma boundary definition to user"
+      rule: "Document assumed boundary definition (LCFS, 99% psi_norm, or code-dependent)"
+      affects: [completeness, documentation]
+
+    I4.5_batch_consistency:
+      description: "Inconsistent naming across entries in same batch"
+      rule: "Same vocabulary and suffix patterns for related entries within a batch"
+      affects: [convention, compliance]

@@ -29,6 +29,18 @@ The `unit` field for each path is pre-populated from the IMAS Data Dictionary
 | `electron_temperature_in_eV` | `electron_temperature` | Unit is never part of the name |
 | `safety_factor_q` | `safety_factor` | No symbol suffixes |
 | `plasma_current_IP` | `plasma_current` | No symbol suffixes |
+| `current_from_passive_loop` | `passive_loop_current` | `_from_` implies causation — use device prefix for signals |
+| `poloidal_flux` | `poloidal_magnetic_flux` | Use controlled vocabulary term; no synonymous short forms |
+| `reconstructed_faraday_rotation_angle` | `faraday_rotation_angle` | Processing method is metadata, not part of the name |
+| `geometric_minor_radius` | `minor_radius` | DD section prefix leaking into standard name |
+| `flux_surface_averaged_elongation` | `elongation` | Elongation is a geometric property of a contour, not a flux-surface average |
+
+## Batch Consistency Check
+
+Before finalizing your output, verify:
+1. **No synonymous names** — if you used `magnetic_flux` in one entry, don't use just `flux` in another
+2. **Consistent suffixes** — all boundary quantities use `_of_plasma_boundary`, not a mix of patterns
+3. **No DD leakage** — none of your names start with an IDS or DD section name
 
 ## Batch Context
 

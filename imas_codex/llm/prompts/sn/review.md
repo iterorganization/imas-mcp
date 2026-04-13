@@ -43,6 +43,7 @@ grammar and convention scores.
 - Are all segments valid enum values from the vocabulary?
 - Is the field decomposition consistent with the composed name?
 - Does the name round-trip: `parse(name) → compose() == name`?
+- **[I1.1]** Does the name use `_from_` preposition? → Flag as grammar issue (use device prefix or `_of_`).
 
 **20**: Perfect parse, valid segments, consistent decomposition.
 **10**: Parses correctly but uses unusual segment combinations.
@@ -55,39 +56,53 @@ grammar and convention scores.
 {% if batch_context %}
 - Does the name match the DD path description and cluster context provided?
 {% endif %}
+- **[I2.7]** Are mathematical qualifiers physically correct? Elongation and triangularity are geometric properties OF a flux surface, NOT flux-surface averages. `flux_surface_averaged_elongation` → **score 0**.
+- **[I2.3]** Are unit conversions dimensionally consistent? Check eV↔K ($1\;\text{eV} = 11605\;\text{K}$) and Pa↔eV/m³ ($1\;\text{Pa} = 6.242 \times 10^{18}\;\text{eV/m}^3$).
 
 **20**: Name unambiguously identifies the quantity; domain expert would agree.
 **10**: Name is defensible but there may be a more precise choice.
-**0**: Name is misleading or describes a different quantity.
+**0**: Name is misleading, describes a different quantity, or uses a wrong physics qualifier.
 
 ### 3. Documentation Quality (0-20)
 - Does the documentation include LaTeX mathematical notation?
 - Are typical value ranges provided?
 - Is measurement/diagnostic context mentioned?
-- Are cross-references to related quantities included (using inline links)?
+- Are cross-references to related quantities included (using `[name](#name)` links)?
 - Is the documentation substantive (not just rephrasing the name)?
+- **[I2.1]** Are ALL variables in equations defined with units? Any undefined variable → **score ≤ 5**.
+- **[I2.2]** Is the documentation focused on THIS quantity, or does it introduce tangential physics (e.g., Biot-Savart for a simple current measurement)?
+- **[I2.5]** For COCOS-dependent quantities, is a sign convention present as a separate paragraph (`Sign convention: Positive when ...`)? Missing → **score ≤ 10**.
+- **[I2.6]** If the DD path uses abbreviated names (gm1–gm9), does the documentation mention the alias?
+- **[I2.8]** Does the documentation contain superfluous algebraic rearrangements of the same equation?
+- **[I3.1]** Is the sign convention formatted correctly (plain text, separate paragraph, not bold/inline)?
 
-**20**: Rich docs with LaTeX, value ranges, measurement context, cross-refs.
+**20**: Rich docs with LaTeX, all variables defined, value ranges, measurement context, cross-refs, sign convention where needed.
 **10**: Adequate docs — correct but thin, missing some elements.
-**0**: Empty or circular documentation (just restates the name).
+**0**: Empty, circular documentation, or undefined equation variables.
 
 ### 4. Naming Conventions (0-20)
 - Does the name follow established patterns for similar quantities?
 - Is the name concise but unambiguous?
 - Does it avoid overly generic terms (data, signal, value)?
 - Is it specific enough to be useful as a standard identifier?
+- **[I1.2]** Is the name a synonym/duplicate of an existing standard name? (e.g., `poloidal_flux` when `poloidal_magnetic_flux` exists) → **score 0**.
+- **[I1.5]** Does the name contain processing verbs (`reconstructed_`, `measured_`, `calculated_`, `fitted_`, `averaged_` unless it's a valid `transformation` segment like `flux_surface_averaged_`)?
+- **[I1.6]** Does the name leak DD organizational structure (`geometric_`, `radial_profile_of_`, IDS name as prefix)? → **score 0**.
+- **[I1.3]** Are boundary quantities consistently suffixed with `_of_plasma_boundary`?
 
-**20**: Follows best practices, concise, unambiguous, specific.
+**20**: Follows best practices, concise, unambiguous, no synonyms, no DD leakage.
 **10**: Acceptable but could be improved — slightly verbose or generic.
-**0**: Vague, generic, or violates naming conventions.
+**0**: Duplicate/synonymous name, DD leakage, or systematic convention violation.
 
 ### 5. Entry Completeness (0-20)
 - Is the unit correct for this quantity (or null if dimensionless)?
 - Is the kind (scalar/vector/metadata) appropriate?
 - Are relevant tags assigned from the controlled vocabulary?
 - Are grammar fields properly populated?
+- **[I4.3]** For position vectors with mixed units (m for R,Z; rad for φ), is the limitation documented?
+- **[I4.4]** For boundary quantities, is the boundary definition noted (LCFS, 99% ψ_norm, or code-dependent)?
 
-**20**: All metadata fields correct and complete.
+**20**: All metadata fields correct and complete, edge cases documented.
 **10**: Most fields present but some missing or questionable.
 **0**: Missing critical fields (wrong unit, no tags, wrong kind).
 
@@ -97,10 +112,13 @@ grammar and convention scores.
 - Is concept identity preserved? (Same concept across IDSs → same standard name)
 - If the source is a coordinate or index, was it correctly skipped or handled?
 - Are vocab_gaps flagged when a needed grammar token doesn't exist?
+- **[I4.1]** For machine geometry, does the batch create an explosion of per-component position names when a generic parameterized name would suffice?
+- **[I4.2]** Are fitting/uncertainty quantities (chi_squared, weights) defined as standalone names rather than repeated per measured quantity?
+- **[I4.5]** Is naming consistent across the batch? (Same vocabulary for related entries, consistent suffix patterns)
 
-**20**: Perfect compliance with all composition instructions.
+**20**: Perfect compliance with all composition instructions and batch consistency.
 **10**: Minor deviations — one anti-pattern or missing vocab_gap flag.
-**0**: Systematic disregard for instructions.
+**0**: Systematic disregard for instructions or gross batch inconsistency.
 
 ## Quality Tiers
 

@@ -137,6 +137,106 @@ Standard names should NOT be created for:
 {% endfor %}
 {% endif %}
 
+## Peer-Review Quality Rules
+
+The following rules encode concrete issues found during expert peer review of
+LLM-generated standard names. Treat these as hard constraints.
+
+### Naming Consistency
+
+**NC-1 No synonymous names.** When a controlled vocabulary term exists (e.g.,
+`magnetic_flux`), always use it. Never create alternative wordings for the same
+physical quantity. ❌ `poloidal_flux` vs ✅ `poloidal_magnetic_flux`;
+❌ `cross_sectional_area_of_flux_surface` vs ✅ `flux_surface_area`.
+
+**NC-2 Consistent boundary naming.** Use a consistent `_of_plasma_boundary`
+suffix for boundary-specific quantities. When a flux surface quantity has a
+boundary variant, derive it as `{flux_surface_quantity}_of_plasma_boundary`
+(e.g., `elongation_of_plasma_boundary`).
+
+**NC-3 Scalar vs vector position names.** Both atomic component names
+(`radial_position_of_x_point`, `vertical_position_of_x_point`) and vector
+names (`position_of_x_point`) are valid. Components use `radial_position_of_`
+or `vertical_position_of_` prefixes; the vector form uses `position_of_`.
+Define both when the DD provides both.
+
+**NC-4 Batch consistency.** Within a batch, use identical vocabulary for related
+entries. If one entry uses `poloidal_magnetic_flux`, all related entries must
+use `magnetic_flux` (not just `flux`).
+
+### Documentation Structure
+
+**DS-1 Define every variable.** EVERY variable in a LaTeX equation MUST be
+defined immediately after the equation, including its units. Example:
+
+> The safety factor is defined as $q = \frac{d\Phi}{d\Psi}$, where
+> $\Phi$ is the toroidal magnetic flux (Wb) and $\Psi$ is the poloidal
+> magnetic flux (Wb).
+
+**DS-2 Stay focused.** Documentation covers THIS quantity only. Include:
+(1) clear definition with equation, (2) physical significance in 1–2 sentences,
+(3) typical values, (4) sign convention if applicable. Do NOT introduce
+tangential physics concepts or derive related quantities.
+Positive model: `effective_charge` — clear definition, one equation, all
+variables defined, brief context.
+
+**DS-3 Unit conversion accuracy.** When converting between unit systems:
+- eV ↔ Kelvin: $1\;\text{eV} = 11605\;\text{K}$
+- Pa ↔ eV/m³: $1\;\text{Pa} = 6.242 \times 10^{18}\;\text{eV/m}^3$
+
+Always state which units variables are expressed in before applying conversions.
+
+**DS-4 Cross-references.** Use `[standard_name_here](#standard_name_here)`
+inline link syntax when referencing other standard names in documentation.
+
+**DS-5 Sign conventions.** For COCOS-dependent or sign-ambiguous quantities,
+include a dedicated paragraph:
+`Sign convention: Positive when [specific physical condition].`
+Use plain text (not bold), separate paragraph, not inline.
+
+**DS-6 DD aliases.** When the DD path uses abbreviated names (e.g., gm1–gm9),
+mention the alias: "Known as gm1 in the IMAS data dictionary." The standard
+name itself must remain self-describing.
+
+**DS-7 Physics qualifier accuracy.** Verify that mathematical qualifiers are
+physically correct. Elongation and triangularity are geometric properties OF a
+flux surface contour — they are NOT flux-surface averages.
+❌ `flux_surface_averaged_elongation` ✅ `elongation`.
+
+**DS-8 No superfluous equations.** Include equations that DEFINE the quantity
+or express fundamental relationships. Do NOT include trivial algebraic
+rearrangements (e.g., showing $V = IR$ then $I = V/R$ then $R = V/I$).
+
+### Formatting
+
+**FMT-1 YAML block scalars.** Always use `|` (literal block scalar) for
+multiline documentation fields. Never use `>` (folded) — it breaks bullet
+lists and markdown formatting.
+
+**FMT-2 LaTeX safety.** In `|` block scalars, `\n` is literal backslash-n,
+not a newline. This keeps LaTeX commands like `\nabla`, `\nu`, `\theta` intact.
+Never use quoted strings for documentation containing LaTeX.
+
+### Structural Scope
+
+**SS-1 Prefer generic over explosive.** For machine geometry (positions,
+cross-sections, areas of device components), prefer generic names parameterized
+by component metadata over creating separate names for every component's R and
+Z coordinates. E.g., one `position_of_flux_loop` rather than dozens of
+per-loop entries.
+
+**SS-2 Standalone fitting quantities.** Generic fitting/uncertainty quantities
+(`chi_squared`, `fitting_weight`, `residual`) should be standalone standard
+names, not repeated per measured quantity.
+
+**SS-3 Boundary definition.** When creating boundary-related quantities,
+document which definition of plasma boundary is assumed (LCFS, 99% ψ_norm,
+etc.) or note that it is code-dependent.
+
+**SS-4 Vector units limitation.** Position vectors may have mixed units
+(m for R, Z; rad for φ). Document this limitation in the description when it
+applies. (Deferred to ISN vector_axes proposal for structural resolution.)
+
 ## Composition Rules
 
 1. Every name MUST have either a `physical_base` or a `geometric_base` (never both)
