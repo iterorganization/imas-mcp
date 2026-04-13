@@ -771,7 +771,7 @@ class TestCalibrationDataset:
 
         entries = load_calibration_entries()
         assert isinstance(entries, list)
-        assert len(entries) == 15, f"Expected 15 entries, got {len(entries)}"
+        assert len(entries) == 18, f"Expected 18 entries, got {len(entries)}"
 
     def test_calibration_tiers(self):
         from imas_codex.sn.benchmark import load_calibration_entries
@@ -781,7 +781,7 @@ class TestCalibrationDataset:
         for entry in entries:
             tier = entry["tier"]
             tiers[tier] = tiers.get(tier, 0) + 1
-        assert tiers == {"outstanding": 4, "good": 4, "adequate": 4, "poor": 3}
+        assert tiers == {"outstanding": 4, "good": 4, "adequate": 6, "poor": 4}
 
     def test_calibration_required_keys(self):
         from imas_codex.sn.benchmark import load_calibration_entries
@@ -830,10 +830,10 @@ class TestCalibrationDataset:
         from imas_codex.sn.benchmark import load_calibration_entries
 
         tier_ranges = {
-            "outstanding": (85, 100),
-            "good": (60, 79),
-            "adequate": (40, 59),
-            "poor": (0, 39),
+            "outstanding": (102, 120),
+            "good": (72, 101),
+            "adequate": (48, 71),
+            "poor": (0, 47),
         }
         entries = load_calibration_entries()
         for entry in entries:

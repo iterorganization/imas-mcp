@@ -5,15 +5,18 @@
 #
 # Every entry's grammar fields have been validated:
 #   compose_standard_name(StandardName(**fields)) == name
+#
+# Scoring: 6 dimensions × 0-20 each = 0-120 total.
+# Dimensions: grammar, semantic, documentation, convention, completeness, compliance.
 
 entries:
   # ===================================================================
-  # OUTSTANDING tier (85-100): Rich docs, LaTeX, cross-refs, perfect grammar
+  # OUTSTANDING tier (102-120): Rich docs, LaTeX, cross-refs, perfect grammar
   # ===================================================================
 
   - name: electron_temperature
     tier: outstanding
-    expected_score: 95
+    expected_score: 114
     description: "Temperature of the electron population."
     documentation: >
       Electron temperature $T_e$ is a fundamental kinetic quantity representing
@@ -31,11 +34,12 @@ entries:
     reason: >
       Canonical physics quantity. Rich documentation with LaTeX notation,
       typical values, diagnostic context, and cross-references. Perfect
-      grammar decomposition with subject + physical_base.
+      grammar decomposition with subject + physical_base. Full compliance
+      with composition instructions — no anti-patterns, correct unit source.
 
   - name: safety_factor
     tier: outstanding
-    expected_score: 92
+    expected_score: 110
     description: "Magnetohydrodynamic safety factor profile."
     documentation: >
       The safety factor $q = \frac{d\Phi}{d\psi}$ measures the ratio of
@@ -53,11 +57,12 @@ entries:
       Fundamental equilibrium quantity with mathematical definition,
       stability context, typical operating ranges, and cross-references
       to related quantities. Standalone physical_base — no qualification
-      needed.
+      needed. Strong compliance — IDS-agnostic naming, concept identity
+      preserved.
 
   - name: toroidal_component_of_magnetic_field_at_magnetic_axis
     tier: outstanding
-    expected_score: 90
+    expected_score: 108
     description: "Toroidal magnetic field at the magnetic axis."
     documentation: >
       The toroidal component of the magnetic field $B_\phi$ evaluated at the
@@ -77,11 +82,12 @@ entries:
     reason: >
       Multi-segment grammar (component + physical_base + position) correctly
       composed. Documentation includes LaTeX, machine-specific typical values,
-      COCOS sign convention, and physical significance.
+      COCOS sign convention, and physical significance. Excellent compliance
+      with all composition instructions.
 
   - name: elongation_at_plasma_boundary
     tier: outstanding
-    expected_score: 88
+    expected_score: 106
     description: "Plasma elongation at the last closed flux surface."
     documentation: >
       Elongation $\kappa = b/a$ is the ratio of plasma half-height to
@@ -100,15 +106,16 @@ entries:
     reason: >
       Correct grammar with position qualifier on plasma_boundary. Rich docs
       covering definition, stability implications, typical ranges, and
-      measurement method.
+      measurement method. Strong compliance — no anti-patterns, proper
+      unit handling.
 
   # ===================================================================
-  # GOOD tier (60-79): Correct grammar, adequate documentation
+  # GOOD tier (72-101): Correct grammar, adequate documentation
   # ===================================================================
 
   - name: electron_density
     tier: good
-    expected_score: 75
+    expected_score: 88
     description: "Electron number density profile."
     documentation: >
       Electron density $n_e$ profile representing the number of electrons
@@ -123,11 +130,11 @@ entries:
     reason: >
       Correct grammar and adequate documentation with LaTeX and typical
       values, but lacks cross-references to related quantities and detailed
-      physics context.
+      physics context. Good compliance — follows all composition rules.
 
   - name: ion_pressure
     tier: good
-    expected_score: 70
+    expected_score: 83
     description: "Thermal pressure of the ion population."
     documentation: >
       Ion thermal pressure $p_i = n_i T_i$ computed from ion density and
@@ -142,11 +149,11 @@ entries:
     reason: >
       Correct grammar with subject + physical_base. Documentation includes
       the governing equation but is relatively short, missing typical values
-      and measurement context.
+      and measurement context. Good compliance with composition rules.
 
   - name: ion_temperature
     tier: good
-    expected_score: 68
+    expected_score: 80
     description: "Temperature of the ion population."
     documentation: >
       Ion temperature $T_i$ represents the thermal energy of the main ion
@@ -161,10 +168,11 @@ entries:
     reason: >
       Valid grammar, correct unit. Documentation mentions measurement
       technique but is thin — no typical values, no cross-references.
+      Good compliance — unit from DD, no anti-patterns.
 
   - name: centroid_at_plasma_boundary
     tier: good
-    expected_score: 65
+    expected_score: 78
     description: "Centroid position of the plasma boundary shape."
     documentation: >
       Geometric centroid of the last closed flux surface boundary,
@@ -178,15 +186,16 @@ entries:
       position: plasma_boundary
     reason: >
       Correct geometric_base grammar with position qualifier. Documentation
-      is adequate but lacks LaTeX, typical values, and references.
+      is adequate but lacks LaTeX, typical values, and references. Good
+      compliance with naming conventions.
 
   # ===================================================================
-  # ADEQUATE tier (40-59): Correct grammar, thin documentation
+  # ADEQUATE tier (48-71): Correct grammar, thin documentation
   # ===================================================================
 
   - name: resistivity_due_to_neoclassical
     tier: adequate
-    expected_score: 55
+    expected_score: 65
     description: "Neoclassical plasma resistivity."
     documentation: >
       Plasma resistivity arising from neoclassical transport effects
@@ -200,11 +209,11 @@ entries:
     reason: >
       Valid grammar with process qualifier. Documentation is minimal — just
       a single sentence with no equations, no typical values, no diagnostic
-      context.
+      context. Adequate compliance — no anti-patterns but thin overall.
 
   - name: extent_of_poloidal_magnetic_field_probe
     tier: adequate
-    expected_score: 50
+    expected_score: 60
     description: "Physical extent of a poloidal field probe."
     documentation: >
       Geometric extent (size) of a poloidal magnetic field probe sensor
@@ -217,11 +226,12 @@ entries:
       object: poloidal_magnetic_field_probe
     reason: >
       Valid geometric_base + object grammar. Documentation is just one
-      sentence paraphrasing the name. No measurement context.
+      sentence paraphrasing the name. No measurement context. Adequate
+      compliance — follows rules but lacks depth.
 
   - name: electron_collisionality
     tier: adequate
-    expected_score: 48
+    expected_score: 56
     description: "Electron collisionality parameter."
     documentation: >
       Dimensionless electron collisionality. Important for transport regime
@@ -234,11 +244,12 @@ entries:
       subject: electron
     reason: >
       Correct grammar (subject + physical_base). Documentation is a terse
-      two-sentence summary with no equations or typical values.
+      two-sentence summary with no equations or typical values. Adequate
+      compliance — no violations but minimal effort.
 
   - name: poloidal_component_of_beta
     tier: adequate
-    expected_score: 45
+    expected_score: 53
     description: "Poloidal beta."
     documentation: >
       Ratio of plasma pressure to poloidal magnetic field pressure.
@@ -250,15 +261,53 @@ entries:
       component: poloidal
     reason: >
       Valid component + physical_base grammar. Documentation is a single
-      sentence — essentially a dictionary definition with no depth.
+      sentence — essentially a dictionary definition with no depth. Adequate
+      compliance — follows basic rules.
+
+  # === Prompt compliance calibration entries ===
+
+  - name: electron_temperature_profile
+    tier: adequate
+    expected_score: 58
+    description: "Electron temperature profile."
+    documentation: >
+      Electron temperature profile data. Unit: eV.
+    unit: eV
+    kind: scalar
+    tags: [core_profiles]
+    fields:
+      physical_base: temperature_profile
+      subject: electron
+    reason: >
+      Anti-pattern violation: "_profile" suffix in physical_base — the grammar
+      does not encode dimensionality in the name. Documentation mentions unit
+      (unit should come from DD, not docs). Grammar otherwise valid. Compliance
+      score penalized heavily for anti-pattern.
+
+  - name: equilibrium_safety_factor
+    tier: adequate
+    expected_score: 55
+    description: "Safety factor from equilibrium IDS."
+    documentation: >
+      Safety factor q from the equilibrium reconstruction.
+    unit: null
+    kind: scalar
+    tags: [equilibrium]
+    fields:
+      physical_base: equilibrium_safety_factor
+    reason: >
+      Anti-pattern violation: IDS name "equilibrium" appears in the standard
+      name. Standard names are IDS-agnostic — the same concept should get
+      the same name regardless of which IDS it appears in. Description also
+      mentions IDS. Compliance score penalized.
 
   # ===================================================================
-  # POOR tier (0-39): Grammar valid but naming questionable or docs empty
+  # POOR tier (0-47): Grammar valid but naming questionable or docs empty
   # ===================================================================
 
   - name: banana_regime
     tier: poor
-    expected_score: 20
+    expected_score: 23
     description: "Banana orbit regime."
     documentation: ""
     unit: null
@@ -269,11 +318,12 @@ entries:
     reason: >
       Empty documentation. The name describes a transport regime, not a
       measurable quantity — better suited as metadata or an identifier
-      value rather than a standard name. No tags assigned.
+      value rather than a standard name. No tags assigned. Poor compliance
+      — not a meaningful physics quantity for standardization.
 
   - name: signal_value
     tier: poor
-    expected_score: 15
+    expected_score: 17
     description: "A signal value."
     documentation: "Generic signal value."
     unit: null
@@ -284,7 +334,9 @@ entries:
     reason: >
       Overly generic name that conveys no physics meaning. Description
       is circular ("a signal value"). No unit, no tags. Would apply to
-      almost any measurement — violates the specificity principle.
+      almost any measurement — violates the specificity principle. Very
+      poor compliance — "signal_value" is explicitly listed as an
+      anti-pattern.
 
   - name: data
     tier: poor
@@ -299,4 +351,21 @@ entries:
     reason: >
       Maximally vague name with no physics content whatsoever. Empty
       documentation, no unit, no tags. Represents everything a standard
-      name should NOT be — completely uninformative.
+      name should NOT be — completely uninformative. Zero compliance with
+      any composition instruction.
+
+  - name: ip
+    tier: poor
+    expected_score: 25
+    description: "Plasma current."
+    documentation: ""
+    unit: A
+    kind: scalar
+    tags: []
+    fields:
+      physical_base: ip
+    reason: >
+      Uses facility-specific abbreviation "ip" as physical_base instead of
+      the descriptive "plasma_current". Empty documentation. No tags.
+      Violates concept identity principle — this would create a different
+      name from the proper "plasma_current" for the same quantity.

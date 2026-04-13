@@ -151,3 +151,66 @@ class SNReviewBatch(BaseModel):
     """LLM response for reviewing a batch of standard name candidates."""
 
     reviews: list[SNReviewItem]
+
+
+# =============================================================================
+# Unified quality review models (used by both mint and benchmark)
+# =============================================================================
+
+
+class SNQualityScore(BaseModel):
+    """6-dimensional quality score for a standard name entry."""
+
+    grammar: int = Field(ge=0, le=20, description="Grammar correctness (0-20)")
+    semantic: int = Field(ge=0, le=20, description="Semantic accuracy (0-20)")
+    documentation: int = Field(ge=0, le=20, description="Documentation quality (0-20)")
+    convention: int = Field(ge=0, le=20, description="Naming conventions (0-20)")
+    completeness: int = Field(ge=0, le=20, description="Entry completeness (0-20)")
+    compliance: int = Field(
+        ge=0, le=20, description="Prompt instruction compliance (0-20)"
+    )
+
+    @property
+    def total(self) -> int:
+        return (
+            self.grammar
+            + self.semantic
+            + self.documentation
+            + self.convention
+            + self.completeness
+            + self.compliance
+        )
+
+    @property
+    def tier(self) -> str:
+        t = self.total
+        if t >= 102:  # 85% of 120
+            return "outstanding"
+        elif t >= 72:  # 60% of 120
+            return "good"
+        elif t >= 48:  # 40% of 120
+            return "adequate"
+        return "poor"
+
+
+class SNQualityReview(BaseModel):
+    """Review of a single standard name with quality scoring."""
+
+    source_id: str = Field(description="Source entity ID being reviewed")
+    standard_name: str = Field(description="The standard name under review")
+    scores: SNQualityScore = Field(description="6-dimensional quality scores")
+    verdict: SNReviewVerdict = Field(description="Accept, reject, or revise")
+    reasoning: str = Field(description="Specific justification per dimension")
+    revised_name: str | None = Field(
+        default=None, description="Suggested revision if verdict is revise"
+    )
+    revised_fields: dict[str, str] | None = Field(
+        default=None, description="Revised grammar fields"
+    )
+    issues: list[str] = Field(default_factory=list, description="Specific issues found")
+
+
+class SNQualityReviewBatch(BaseModel):
+    """LLM response for quality-scored review of a batch."""
+
+    reviews: list[SNQualityReview]
