@@ -55,7 +55,10 @@ def test_standard_name_entry_import():
 
 def test_build_compose_context_has_isn_keys():
     """Verify compose context includes ISN-provided keys."""
-    from imas_codex.sn.context import build_compose_context, clear_context_cache
+    from imas_codex.standard_names.context import (
+        build_compose_context,
+        clear_context_cache,
+    )
 
     clear_context_cache()
     ctx = build_compose_context()

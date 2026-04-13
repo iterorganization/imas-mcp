@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from imas_codex.sn.classifier import (
+from imas_codex.standard_names.classifier import (
     ERROR_SUFFIXES,
     PHYSICS_LEAF_TYPES,
     STRUCTURE_TYPES,

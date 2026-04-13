@@ -75,7 +75,7 @@ uv run imas-codex llm spend           # Cost tracking
 uv run imas-codex llm logs            # View logs
 ```
 
-`sn mint` and `sn benchmark` require the LLM proxy to be running. Model names must use the
+`sn generate` and `sn benchmark` require the LLM proxy to be running. Model names must use the
 `openrouter/` prefix (e.g. `openrouter/anthropic/claude-sonnet-4-5`) to preserve
 `cache_control` blocks — prompt caching is handled provider-side by OpenRouter, not by this
 codebase.

@@ -79,7 +79,7 @@ class TestLoadIsnExamples:
     """Test loading ISN shipped reference examples."""
 
     def test_load_returns_entries(self) -> None:
-        from imas_codex.sn.seed import load_isn_examples
+        from imas_codex.standard_names.seed import load_isn_examples
 
         entries, errors = load_isn_examples()
 
@@ -88,7 +88,7 @@ class TestLoadIsnExamples:
         assert len(errors) == 0, f"Unexpected validation errors: {errors}"
 
     def test_entries_have_required_fields(self) -> None:
-        from imas_codex.sn.seed import load_isn_examples
+        from imas_codex.standard_names.seed import load_isn_examples
 
         entries, _ = load_isn_examples()
 
@@ -103,7 +103,7 @@ class TestLoadIsnExamples:
             )
 
     def test_grammar_fields_populated(self) -> None:
-        from imas_codex.sn.seed import load_isn_examples
+        from imas_codex.standard_names.seed import load_isn_examples
 
         entries, _ = load_isn_examples()
 
@@ -114,7 +114,7 @@ class TestLoadIsnExamples:
         assert len(with_grammar) > 0, "No entries have grammar fields"
 
     def test_unique_ids(self) -> None:
-        from imas_codex.sn.seed import load_isn_examples
+        from imas_codex.standard_names.seed import load_isn_examples
 
         entries, _ = load_isn_examples()
         ids = [e["id"] for e in entries]
@@ -130,7 +130,7 @@ class TestWestMigration:
     """Test WEST-specific fixes: physics_domain and tag cleanup."""
 
     def test_fix_west_entry_adds_physics_domain(self) -> None:
-        from imas_codex.sn.seed import _fix_west_entry
+        from imas_codex.standard_names.seed import _fix_west_entry
 
         data = {
             "name": "test_name",
@@ -140,7 +140,7 @@ class TestWestMigration:
         assert fixed["physics_domain"] == "magnetic_field_diagnostics"
 
     def test_fix_west_entry_strips_primary_tags(self) -> None:
-        from imas_codex.sn.seed import _fix_west_entry
+        from imas_codex.standard_names.seed import _fix_west_entry
 
         data = {
             "name": "test_name",
@@ -152,7 +152,7 @@ class TestWestMigration:
         assert "measured" in fixed["tags"]
 
     def test_fix_west_entry_preserves_existing_physics_domain(self) -> None:
-        from imas_codex.sn.seed import _fix_west_entry
+        from imas_codex.standard_names.seed import _fix_west_entry
 
         data = {
             "name": "test_name",
@@ -163,7 +163,7 @@ class TestWestMigration:
         assert fixed["physics_domain"] == "existing_domain"
 
     def test_fix_west_entry_does_not_mutate_input(self) -> None:
-        from imas_codex.sn.seed import _fix_west_entry
+        from imas_codex.standard_names.seed import _fix_west_entry
 
         original_tags = ["magnetics", "measured"]
         data = {"name": "test_name", "tags": original_tags}
@@ -171,7 +171,7 @@ class TestWestMigration:
         assert data["tags"] == ["magnetics", "measured"], "Input was mutated"
 
     def test_fix_west_entry_unknown_dir(self) -> None:
-        from imas_codex.sn.seed import _fix_west_entry
+        from imas_codex.standard_names.seed import _fix_west_entry
 
         data = {"name": "test_name", "tags": []}
         fixed = _fix_west_entry(data, "unknown-dir")
@@ -182,7 +182,7 @@ class TestLoadWestCatalog:
     """Test loading and validating WEST entries from filesystem."""
 
     def test_load_from_temp_dir(self, west_dir: Path) -> None:
-        from imas_codex.sn.seed import load_west_catalog
+        from imas_codex.standard_names.seed import load_west_catalog
 
         entries, errors = load_west_catalog(west_dir)
 
@@ -203,7 +203,7 @@ class TestLoadWestCatalog:
         assert "spatial-profile" in core_entry["tags"]
 
     def test_load_handles_invalid_entries(self, west_dir_with_invalid: Path) -> None:
-        from imas_codex.sn.seed import load_west_catalog
+        from imas_codex.standard_names.seed import load_west_catalog
 
         entries, errors = load_west_catalog(west_dir_with_invalid)
 
@@ -213,7 +213,7 @@ class TestLoadWestCatalog:
         assert "bad_entry.yml" in errors[0]
 
     def test_load_nonexistent_dir(self, tmp_path: Path) -> None:
-        from imas_codex.sn.seed import load_west_catalog
+        from imas_codex.standard_names.seed import load_west_catalog
 
         entries, errors = load_west_catalog(tmp_path / "nonexistent")
         assert len(entries) == 0
@@ -235,7 +235,7 @@ class TestGrammarRoundtrip:
             parse_standard_name,
         )
 
-        from imas_codex.sn.seed import load_isn_examples
+        from imas_codex.standard_names.seed import load_isn_examples
 
         entries, _ = load_isn_examples()
         mismatches = []
@@ -266,9 +266,9 @@ class TestGrammarRoundtrip:
 class TestSeedIsnExamples:
     """Test seed_isn_examples with mocked graph writes."""
 
-    @patch("imas_codex.sn.graph_ops.write_standard_names", return_value=42)
+    @patch("imas_codex.standard_names.graph_ops.write_standard_names", return_value=42)
     def test_seed_writes_to_graph(self, mock_write: MagicMock) -> None:
-        from imas_codex.sn.seed import seed_isn_examples
+        from imas_codex.standard_names.seed import seed_isn_examples
 
         result = seed_isn_examples(dry_run=False)
 
@@ -278,16 +278,16 @@ class TestSeedIsnExamples:
         assert result.written == 42
 
     def test_seed_dry_run_skips_graph(self) -> None:
-        from imas_codex.sn.seed import seed_isn_examples
+        from imas_codex.standard_names.seed import seed_isn_examples
 
         result = seed_isn_examples(dry_run=True)
 
         assert result.written == 0
         assert result.validated > 30
 
-    @patch("imas_codex.sn.graph_ops.write_standard_names", return_value=42)
+    @patch("imas_codex.standard_names.graph_ops.write_standard_names", return_value=42)
     def test_seed_result_fields(self, mock_write: MagicMock) -> None:
-        from imas_codex.sn.seed import seed_isn_examples
+        from imas_codex.standard_names.seed import seed_isn_examples
 
         result = seed_isn_examples(dry_run=False)
 
@@ -299,9 +299,9 @@ class TestSeedIsnExamples:
 class TestSeedWestCatalog:
     """Test seed_west_catalog with mocked graph writes."""
 
-    @patch("imas_codex.sn.graph_ops.write_standard_names", return_value=2)
+    @patch("imas_codex.standard_names.graph_ops.write_standard_names", return_value=2)
     def test_seed_writes_to_graph(self, mock_write: MagicMock, west_dir: Path) -> None:
-        from imas_codex.sn.seed import seed_west_catalog
+        from imas_codex.standard_names.seed import seed_west_catalog
 
         result = seed_west_catalog(west_dir=west_dir, dry_run=False)
 
@@ -311,7 +311,7 @@ class TestSeedWestCatalog:
         assert result.written == 2
 
     def test_seed_dry_run_skips_graph(self, west_dir: Path) -> None:
-        from imas_codex.sn.seed import seed_west_catalog
+        from imas_codex.standard_names.seed import seed_west_catalog
 
         result = seed_west_catalog(west_dir=west_dir, dry_run=True)
 
@@ -328,7 +328,7 @@ class TestDirToDomainMapping:
     """Ensure all expected WEST directories are mapped."""
 
     def test_all_west_dirs_mapped(self) -> None:
-        from imas_codex.sn.seed import DIR_TO_DOMAIN
+        from imas_codex.standard_names.seed import DIR_TO_DOMAIN
 
         expected_dirs = {
             "coils-and-control",

@@ -20,7 +20,11 @@ from typing import Any
 
 import yaml
 
-from imas_codex.sn.models import SNProvenance, SNPublishBatch, SNPublishEntry
+from imas_codex.standard_names.models import (
+    SNProvenance,
+    SNPublishBatch,
+    SNPublishEntry,
+)
 
 logger = logging.getLogger(__name__)
 

@@ -86,7 +86,7 @@ git push origin main
 
 SN tests live in `tests/sn/` and run with `uv run pytest tests/sn/ -v`. They do not require
 Neo4j unless marked `@pytest.mark.graph` — the rest use mocks. Benchmark tests validate prompt
-parity with the mint pipeline, calibration dataset integrity, and reference set coverage.
+parity with the generate pipeline, calibration dataset integrity, and reference set coverage.
 
 ## Project Structure
 
@@ -99,7 +99,7 @@ parity with the mint pipeline, calibration dataset integrity, and reference set 
 | `imas_codex/tools/` | MCP tool implementations |
 | `imas_codex/remote/` | Remote execution (SSH, scripts) |
 | `imas_codex/llm/` | LLM integration and prompt templates |
-| `imas_codex/sn/` | Standard name pipeline (mint, benchmark, graph ops) |
+| `imas_codex/standard_names/` | Standard name pipeline (generate, benchmark, graph ops) |
 | `tests/` | Test suite (mirrors source structure) |
 | `tests/sn/` | Standard name test suite (mostly mock-based) |
 | `plans/features/` | Active feature plans |
@@ -118,6 +118,6 @@ parity with the mint pipeline, calibration dataset integrity, and reference set 
 
 | File | Purpose |
 |------|---------|
-| `imas_codex/sn/benchmark_reference.py` | Gold reference set (52 entries across 8 IDSs) |
-| `imas_codex/sn/benchmark_calibration.yaml` | Known-quality examples for reviewer consistency |
-| `imas_codex/llm/prompts/sn/` | LLM prompt templates for mint, review, and benchmark |
+| `imas_codex/standard_names/benchmark_reference.py` | Gold reference set (52 entries across 8 IDSs) |
+| `imas_codex/standard_names/benchmark_calibration.yaml` | Known-quality examples for reviewer consistency |
+| `imas_codex/llm/prompts/sn/` | LLM prompt templates for generate, review, and benchmark |

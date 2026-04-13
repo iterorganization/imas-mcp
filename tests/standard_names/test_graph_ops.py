@@ -16,10 +16,10 @@ class TestWriteStandardNames:
 
     def _call_write(self, names: list[dict], mock_gc: MagicMock) -> int:
         """Call write_standard_names with a mocked GraphClient."""
-        with patch("imas_codex.sn.graph_ops.GraphClient") as MockGC:
+        with patch("imas_codex.standard_names.graph_ops.GraphClient") as MockGC:
             MockGC.return_value.__enter__ = MagicMock(return_value=mock_gc)
             MockGC.return_value.__exit__ = MagicMock(return_value=False)
-            from imas_codex.sn.graph_ops import write_standard_names
+            from imas_codex.standard_names.graph_ops import write_standard_names
 
             return write_standard_names(names)
 
@@ -67,7 +67,7 @@ class TestWriteStandardNames:
 
     def test_write_empty_returns_zero(self) -> None:
         """Empty list should return 0 without touching the graph."""
-        from imas_codex.sn.graph_ops import write_standard_names
+        from imas_codex.standard_names.graph_ops import write_standard_names
 
         result = write_standard_names([])
         assert result == 0
@@ -225,11 +225,11 @@ class TestGetValidatedStandardNames:
             ]
         )
 
-        with patch("imas_codex.sn.graph_ops.GraphClient") as MockGC:
+        with patch("imas_codex.standard_names.graph_ops.GraphClient") as MockGC:
             MockGC.return_value.__enter__ = MagicMock(return_value=mock_gc)
             MockGC.return_value.__exit__ = MagicMock(return_value=False)
 
-            from imas_codex.sn.graph_ops import get_validated_standard_names
+            from imas_codex.standard_names.graph_ops import get_validated_standard_names
 
             results = get_validated_standard_names(confidence_min=0.9)
 
@@ -243,11 +243,11 @@ class TestGetValidatedStandardNames:
         mock_gc = MagicMock()
         mock_gc.query = MagicMock(return_value=[])
 
-        with patch("imas_codex.sn.graph_ops.GraphClient") as MockGC:
+        with patch("imas_codex.standard_names.graph_ops.GraphClient") as MockGC:
             MockGC.return_value.__enter__ = MagicMock(return_value=mock_gc)
             MockGC.return_value.__exit__ = MagicMock(return_value=False)
 
-            from imas_codex.sn.graph_ops import get_validated_standard_names
+            from imas_codex.standard_names.graph_ops import get_validated_standard_names
 
             get_validated_standard_names(ids_filter="equilibrium")
 
@@ -285,11 +285,11 @@ class TestGetValidatedStandardNames:
             ]
         )
 
-        with patch("imas_codex.sn.graph_ops.GraphClient") as MockGC:
+        with patch("imas_codex.standard_names.graph_ops.GraphClient") as MockGC:
             MockGC.return_value.__enter__ = MagicMock(return_value=mock_gc)
             MockGC.return_value.__exit__ = MagicMock(return_value=False)
 
-            from imas_codex.sn.graph_ops import get_validated_standard_names
+            from imas_codex.standard_names.graph_ops import get_validated_standard_names
 
             results = get_validated_standard_names()
 
@@ -309,11 +309,11 @@ class TestGetExistingStandardNames:
             ]
         )
 
-        with patch("imas_codex.sn.graph_ops.GraphClient") as MockGC:
+        with patch("imas_codex.standard_names.graph_ops.GraphClient") as MockGC:
             MockGC.return_value.__enter__ = MagicMock(return_value=mock_gc)
             MockGC.return_value.__exit__ = MagicMock(return_value=False)
 
-            from imas_codex.sn.graph_ops import get_existing_standard_names
+            from imas_codex.standard_names.graph_ops import get_existing_standard_names
 
             result = get_existing_standard_names()
 
@@ -332,10 +332,10 @@ class TestResetStandardNames:
     """Test reset_standard_names query logic."""
 
     def _call_reset(self, mock_gc: MagicMock, **kwargs) -> int:
-        with patch("imas_codex.sn.graph_ops.GraphClient") as MockGC:
+        with patch("imas_codex.standard_names.graph_ops.GraphClient") as MockGC:
             MockGC.return_value.__enter__ = MagicMock(return_value=mock_gc)
             MockGC.return_value.__exit__ = MagicMock(return_value=False)
-            from imas_codex.sn.graph_ops import reset_standard_names
+            from imas_codex.standard_names.graph_ops import reset_standard_names
 
             return reset_standard_names(**kwargs)
 
@@ -451,10 +451,10 @@ class TestClearStandardNames:
     """Test clear_standard_names deletion logic."""
 
     def _call_clear(self, mock_gc: MagicMock, **kwargs) -> int:
-        with patch("imas_codex.sn.graph_ops.GraphClient") as MockGC:
+        with patch("imas_codex.standard_names.graph_ops.GraphClient") as MockGC:
             MockGC.return_value.__enter__ = MagicMock(return_value=mock_gc)
             MockGC.return_value.__exit__ = MagicMock(return_value=False)
-            from imas_codex.sn.graph_ops import clear_standard_names
+            from imas_codex.standard_names.graph_ops import clear_standard_names
 
             return clear_standard_names(**kwargs)
 

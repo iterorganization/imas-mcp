@@ -129,6 +129,40 @@ def get_named_source_ids() -> set[str]:
         return {r["source_id"] for r in results}
 
 
+def get_source_name_mapping() -> dict[str, dict]:
+    """Return mapping of source_id → previous standard name details.
+
+    Used by extract_worker in --force mode to inject per-path
+    previous_name context so the LLM can improve on prior names.
+
+    Returns:
+        Dict mapping source entity ID to dict with keys:
+        name, description, kind, review_status.
+        If a source has multiple names, prefers the accepted one.
+    """
+    with GraphClient() as gc:
+        results = gc.query("""
+            MATCH (src)-[:HAS_STANDARD_NAME]->(sn:StandardName)
+            RETURN src.id AS source_id,
+                   sn.id AS name,
+                   sn.description AS description,
+                   sn.kind AS kind,
+                   sn.review_status AS review_status
+        """)
+        mapping: dict[str, dict] = {}
+        for r in results:
+            sid = r["source_id"]
+            # If multiple names exist for same source, prefer accepted
+            if sid not in mapping or r.get("review_status") == "accepted":
+                mapping[sid] = {
+                    "name": r["name"],
+                    "description": r.get("description"),
+                    "kind": r.get("kind"),
+                    "review_status": r.get("review_status"),
+                }
+        return mapping
+
+
 # =============================================================================
 # Write helpers
 # =============================================================================

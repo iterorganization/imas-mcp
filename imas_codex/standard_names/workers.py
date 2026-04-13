@@ -25,8 +25,8 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from imas_codex.sn.sources.base import ExtractionBatch
-    from imas_codex.sn.state import SNBuildState
+    from imas_codex.standard_names.sources.base import ExtractionBatch
+    from imas_codex.standard_names.state import SNBuildState
 
 logger = logging.getLogger(__name__)
 
@@ -49,11 +49,11 @@ async def extract_worker(state: SNBuildState, **_kwargs) -> None:
     wlog.info("Starting extraction (source=%s)", state.source)
 
     def _run() -> list:
-        from imas_codex.sn.graph_ops import (
+        from imas_codex.standard_names.graph_ops import (
             get_existing_standard_names,
             get_named_source_ids,
         )
-        from imas_codex.sn.sources.dd import extract_dd_candidates
+        from imas_codex.standard_names.sources.dd import extract_dd_candidates
 
         existing = get_existing_standard_names()
 
@@ -90,6 +90,25 @@ async def extract_worker(state: SNBuildState, **_kwargs) -> None:
 
     batches = await asyncio.to_thread(_run)
 
+    # Inject previous name context for --force regeneration
+    if state.force:
+
+        def _get_mapping():
+            from imas_codex.standard_names.graph_ops import get_source_name_mapping
+
+            return get_source_name_mapping()
+
+        source_names = await asyncio.to_thread(_get_mapping)
+        injected = 0
+        for batch in batches:
+            for item in batch.items:
+                path = item.get("path", item.get("signal_id"))
+                if path and path in source_names:
+                    item["previous_name"] = source_names[path]
+                    injected += 1
+        if injected:
+            wlog.info("Injected previous_name context for %d items", injected)
+
     total_items = sum(len(b.items) for b in batches)
     state.extracted = batches
     state.extract_stats.total = total_items
@@ -116,12 +135,12 @@ async def extract_worker(state: SNBuildState, **_kwargs) -> None:
 def _search_nearby_names(query: str, k: int = 5) -> list[dict]:
     """Search for existing standard names near *query* for collision avoidance.
 
-    Wraps :func:`imas_codex.sn.search.search_similar_names` with graceful
+    Wraps :func:`imas_codex.standard_names.search.search_similar_names` with graceful
     fallback — never raises, returns ``[]`` if graph or embeddings are
     unavailable.
     """
     try:
-        from imas_codex.sn.search import search_similar_names
+        from imas_codex.standard_names.search import search_similar_names
 
         return search_similar_names(query, k=k)
     except Exception:
@@ -159,8 +178,8 @@ async def compose_worker(state: SNBuildState, **_kwargs) -> None:
     from imas_codex.discovery.base.llm import acall_llm_structured
     from imas_codex.llm.prompt_loader import render_prompt
     from imas_codex.settings import get_model
-    from imas_codex.sn.context import build_compose_context
-    from imas_codex.sn.models import SNComposeBatch
+    from imas_codex.standard_names.context import build_compose_context
+    from imas_codex.standard_names.models import SNComposeBatch
 
     model = get_model("language")
     context = build_compose_context()
@@ -328,7 +347,7 @@ def _get_compose_context_for_review() -> dict[str, Any]:
     _scoring_rubric.md) that require compose context variables like
     canonical_pattern, segment_order, vocabulary_sections, etc.
     """
-    from imas_codex.sn.context import build_compose_context
+    from imas_codex.standard_names.context import build_compose_context
 
     return build_compose_context()
 
@@ -480,7 +499,7 @@ async def review_worker(state: SNBuildState, **_kwargs) -> None:
 def _get_existing_names_for_review() -> set[str]:
     """Fetch existing standard names from graph for duplicate checking."""
     try:
-        from imas_codex.sn.graph_ops import get_existing_standard_names
+        from imas_codex.standard_names.graph_ops import get_existing_standard_names
 
         return get_existing_standard_names()
     except Exception:
@@ -517,7 +536,7 @@ async def _review_batch(
     """Review a single batch of candidates via LLM with unified scoring."""
     from imas_codex.discovery.base.llm import acall_llm_structured
     from imas_codex.llm.prompt_loader import render_prompt
-    from imas_codex.sn.models import SNQualityReviewBatch, SNReviewVerdict
+    from imas_codex.standard_names.models import SNQualityReviewBatch, SNReviewVerdict
 
     cal = calibration_entries or []
 
@@ -1007,7 +1026,7 @@ async def consolidate_worker(state: SNBuildState, **_kwargs) -> None:
         state.consolidate_phase.mark_done()
         return
 
-    from imas_codex.sn.consolidation import consolidate_candidates
+    from imas_codex.standard_names.consolidation import consolidate_candidates
 
     wlog.info("Consolidating %d validated candidates", len(state.validated))
     state.consolidate_stats.total = len(state.validated)
@@ -1090,7 +1109,7 @@ async def persist_worker(state: SNBuildState, **_kwargs) -> None:
         return
 
     from imas_codex.settings import get_model
-    from imas_codex.sn.graph_ops import write_standard_names
+    from imas_codex.standard_names.graph_ops import write_standard_names
 
     model = get_model("language")
     now = datetime.now(UTC).isoformat()

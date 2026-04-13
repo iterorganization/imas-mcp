@@ -22,13 +22,13 @@ class TestReferenceDataset:
     """Verify the reference dataset is valid and self-consistent."""
 
     def test_reference_not_empty(self):
-        from imas_codex.sn.benchmark_reference import REFERENCE_NAMES
+        from imas_codex.standard_names.benchmark_reference import REFERENCE_NAMES
 
         assert len(REFERENCE_NAMES) >= 20, "Reference set should have >= 20 entries"
 
     def test_all_names_round_trip(self):
         """Every reference name must survive parse→compose round-trip."""
-        from imas_codex.sn.benchmark_reference import REFERENCE_NAMES
+        from imas_codex.standard_names.benchmark_reference import REFERENCE_NAMES
 
         failures = []
         for path, entry in REFERENCE_NAMES.items():
@@ -44,7 +44,7 @@ class TestReferenceDataset:
         assert not failures, "Round-trip failures:\n" + "\n".join(failures)
 
     def test_all_entries_have_required_keys(self):
-        from imas_codex.sn.benchmark_reference import REFERENCE_NAMES
+        from imas_codex.standard_names.benchmark_reference import REFERENCE_NAMES
 
         for path, entry in REFERENCE_NAMES.items():
             assert "name" in entry, f"Missing 'name' in {path}"
@@ -53,7 +53,7 @@ class TestReferenceDataset:
             assert isinstance(entry["fields"], dict), f"fields must be dict in {path}"
 
     def test_all_fields_have_physical_or_geometric_base(self):
-        from imas_codex.sn.benchmark_reference import REFERENCE_NAMES
+        from imas_codex.standard_names.benchmark_reference import REFERENCE_NAMES
 
         for path, entry in REFERENCE_NAMES.items():
             fields = entry["fields"]
@@ -64,7 +64,7 @@ class TestReferenceDataset:
             )
 
     def test_paths_look_like_dd_paths(self):
-        from imas_codex.sn.benchmark_reference import REFERENCE_NAMES
+        from imas_codex.standard_names.benchmark_reference import REFERENCE_NAMES
 
         for path in REFERENCE_NAMES:
             assert "/" in path, f"Path should contain '/': {path}"
@@ -80,7 +80,7 @@ class TestDataclasses:
     """Verify dataclass instantiation and basic behavior."""
 
     def test_benchmark_config_defaults(self):
-        from imas_codex.sn.benchmark import BenchmarkConfig
+        from imas_codex.standard_names.benchmark import BenchmarkConfig
 
         cfg = BenchmarkConfig(models=["model-a", "model-b"])
         assert cfg.source == "dd"
@@ -90,7 +90,7 @@ class TestDataclasses:
         assert cfg.ids_filter is None
 
     def test_benchmark_config_custom(self):
-        from imas_codex.sn.benchmark import BenchmarkConfig
+        from imas_codex.standard_names.benchmark import BenchmarkConfig
 
         cfg = BenchmarkConfig(
             models=["m1"],
@@ -106,7 +106,7 @@ class TestDataclasses:
         assert cfg.runs_per_model == 3
 
     def test_model_result_defaults(self):
-        from imas_codex.sn.benchmark import ModelResult
+        from imas_codex.standard_names.benchmark import ModelResult
 
         r = ModelResult(model="test-model")
         assert r.model == "test-model"
@@ -116,7 +116,7 @@ class TestDataclasses:
         assert r.names_per_minute == 0.0
 
     def test_benchmark_report_instantiation(self):
-        from imas_codex.sn.benchmark import (
+        from imas_codex.standard_names.benchmark import (
             BenchmarkConfig,
             BenchmarkReport,
             ModelResult,
@@ -145,7 +145,7 @@ class TestGrammarContext:
 
     def test_build_compose_context_keys(self):
         """build_compose_context() should return rich grammar context."""
-        from imas_codex.sn.context import build_compose_context
+        from imas_codex.standard_names.context import build_compose_context
 
         ctx = build_compose_context()
         # Rich grammar context keys
@@ -159,7 +159,7 @@ class TestGrammarContext:
 
     def test_all_values_non_empty(self):
         """Enum lists from build_compose_context should be non-empty strings."""
-        from imas_codex.sn.context import build_compose_context
+        from imas_codex.standard_names.context import build_compose_context
 
         ctx = build_compose_context()
         for key in (
@@ -187,8 +187,11 @@ class TestPromptParity:
         """_extract_candidates should include batch.context in output dicts."""
         from unittest.mock import patch
 
-        from imas_codex.sn.benchmark import BenchmarkConfig, _extract_candidates
-        from imas_codex.sn.sources.base import ExtractionBatch
+        from imas_codex.standard_names.benchmark import (
+            BenchmarkConfig,
+            _extract_candidates,
+        )
+        from imas_codex.standard_names.sources.base import ExtractionBatch
 
         fake_batch = ExtractionBatch(
             source="dd",
@@ -201,7 +204,7 @@ class TestPromptParity:
         config = BenchmarkConfig(models=["test"])
 
         with patch(
-            "imas_codex.sn.sources.dd.extract_dd_candidates",
+            "imas_codex.standard_names.sources.dd.extract_dd_candidates",
             return_value=[fake_batch],
         ):
             batches = _extract_candidates(config)
@@ -218,8 +221,8 @@ class TestPromptParity:
         """_run_model should construct [system, user] message structure."""
         from unittest.mock import AsyncMock, patch
 
-        from imas_codex.sn.benchmark import BenchmarkConfig, _run_model
-        from imas_codex.sn.models import SNComposeBatch
+        from imas_codex.standard_names.benchmark import BenchmarkConfig, _run_model
+        from imas_codex.standard_names.models import SNComposeBatch
 
         config = BenchmarkConfig(models=["test"], temperature=0.0)
         batches = [
@@ -280,7 +283,7 @@ class TestValidation:
     """Test the candidate validation logic."""
 
     def test_valid_candidate(self):
-        from imas_codex.sn.benchmark import validate_candidate
+        from imas_codex.standard_names.benchmark import validate_candidate
 
         candidate = {
             "standard_name": "electron_temperature",
@@ -291,7 +294,7 @@ class TestValidation:
         assert f_consistent is True
 
     def test_invalid_grammar(self):
-        from imas_codex.sn.benchmark import validate_candidate
+        from imas_codex.standard_names.benchmark import validate_candidate
 
         candidate = {
             "standard_name": "this_is_not_valid_!!!",
@@ -302,7 +305,7 @@ class TestValidation:
         assert f_consistent is False
 
     def test_valid_grammar_inconsistent_fields(self):
-        from imas_codex.sn.benchmark import validate_candidate
+        from imas_codex.standard_names.benchmark import validate_candidate
 
         candidate = {
             "standard_name": "electron_temperature",
@@ -313,7 +316,7 @@ class TestValidation:
         assert f_consistent is False
 
     def test_empty_candidate(self):
-        from imas_codex.sn.benchmark import validate_candidate
+        from imas_codex.standard_names.benchmark import validate_candidate
 
         g_valid, f_consistent = validate_candidate({})
         assert g_valid is False
@@ -329,7 +332,7 @@ class TestReferenceComparison:
     """Test reference set comparison logic."""
 
     def test_full_overlap(self):
-        from imas_codex.sn.benchmark import compare_to_reference
+        from imas_codex.standard_names.benchmark import compare_to_reference
 
         reference = {
             "path/a": {"name": "electron_temperature", "fields": {}},
@@ -345,7 +348,7 @@ class TestReferenceComparison:
         assert recall == 1.0
 
     def test_no_overlap(self):
-        from imas_codex.sn.benchmark import compare_to_reference
+        from imas_codex.standard_names.benchmark import compare_to_reference
 
         reference = {
             "path/a": {"name": "electron_temperature", "fields": {}},
@@ -359,7 +362,7 @@ class TestReferenceComparison:
         assert recall == 0.0
 
     def test_partial_overlap(self):
-        from imas_codex.sn.benchmark import compare_to_reference
+        from imas_codex.standard_names.benchmark import compare_to_reference
 
         reference = {
             "path/a": {"name": "electron_temperature", "fields": {}},
@@ -376,7 +379,7 @@ class TestReferenceComparison:
         assert recall == 0.5
 
     def test_empty_candidates(self):
-        from imas_codex.sn.benchmark import compare_to_reference
+        from imas_codex.standard_names.benchmark import compare_to_reference
 
         overlap, total, precision, recall = compare_to_reference(
             [], {"path/a": {"name": "x", "fields": {}}}
@@ -394,7 +397,7 @@ class TestJsonSerialization:
     """Test JSON round-trip for BenchmarkReport."""
 
     def test_json_round_trip(self):
-        from imas_codex.sn.benchmark import (
+        from imas_codex.standard_names.benchmark import (
             BenchmarkConfig,
             BenchmarkReport,
             ModelResult,
@@ -437,7 +440,7 @@ class TestJsonSerialization:
         assert parsed["extraction_count"] == 10
 
     def test_from_json(self):
-        from imas_codex.sn.benchmark import (
+        from imas_codex.standard_names.benchmark import (
             BenchmarkConfig,
             BenchmarkReport,
             ModelResult,
@@ -472,7 +475,7 @@ class TestRichTable:
     """Verify the Rich comparison table renders without error."""
 
     def test_render_empty_report(self):
-        from imas_codex.sn.benchmark import (
+        from imas_codex.standard_names.benchmark import (
             BenchmarkConfig,
             BenchmarkReport,
             render_comparison_table,
@@ -488,7 +491,7 @@ class TestRichTable:
         render_comparison_table(report)
 
     def test_render_with_results(self):
-        from imas_codex.sn.benchmark import (
+        from imas_codex.standard_names.benchmark import (
             BenchmarkConfig,
             BenchmarkReport,
             ModelResult,
@@ -521,7 +524,7 @@ class TestRichTable:
 
     def test_render_with_zero_candidates(self):
         """Model that produced zero candidates should show '—' not crash."""
-        from imas_codex.sn.benchmark import (
+        from imas_codex.standard_names.benchmark import (
             BenchmarkConfig,
             BenchmarkReport,
             ModelResult,
@@ -549,8 +552,8 @@ class TestBenchmarkRunner:
     @pytest.mark.asyncio
     async def test_run_benchmark_mocked(self):
         """Run benchmark with mocked extraction and LLM calls."""
-        from imas_codex.sn.benchmark import BenchmarkConfig, run_benchmark
-        from imas_codex.sn.models import SNCandidate, SNComposeBatch
+        from imas_codex.standard_names.benchmark import BenchmarkConfig, run_benchmark
+        from imas_codex.standard_names.models import SNCandidate, SNComposeBatch
 
         config = BenchmarkConfig(
             models=["mock-model-a"],
@@ -628,8 +631,8 @@ class TestBenchmarkRunner:
     @pytest.mark.asyncio
     async def test_run_benchmark_multiple_models(self):
         """Run with multiple models and verify separate results."""
-        from imas_codex.sn.benchmark import BenchmarkConfig, run_benchmark
-        from imas_codex.sn.models import SNCandidate, SNComposeBatch
+        from imas_codex.standard_names.benchmark import BenchmarkConfig, run_benchmark
+        from imas_codex.standard_names.models import SNCandidate, SNComposeBatch
 
         config = BenchmarkConfig(models=["model-a", "model-b"], max_candidates=2)
 
@@ -686,7 +689,7 @@ class TestBenchmarkRunner:
     @pytest.mark.asyncio
     async def test_run_benchmark_llm_failure(self):
         """LLM call failure should be recorded, not crash."""
-        from imas_codex.sn.benchmark import BenchmarkConfig, run_benchmark
+        from imas_codex.standard_names.benchmark import BenchmarkConfig, run_benchmark
 
         config = BenchmarkConfig(models=["fail-model"], max_candidates=2)
 
@@ -767,14 +770,14 @@ class TestCalibrationDataset:
     """Test benchmark calibration dataset."""
 
     def test_calibration_loads(self):
-        from imas_codex.sn.benchmark import load_calibration_entries
+        from imas_codex.standard_names.benchmark import load_calibration_entries
 
         entries = load_calibration_entries()
         assert isinstance(entries, list)
         assert len(entries) == 27, f"Expected 27 entries, got {len(entries)}"
 
     def test_calibration_tiers(self):
-        from imas_codex.sn.benchmark import load_calibration_entries
+        from imas_codex.standard_names.benchmark import load_calibration_entries
 
         entries = load_calibration_entries()
         tiers = {}
@@ -784,7 +787,7 @@ class TestCalibrationDataset:
         assert tiers == {"outstanding": 10, "good": 7, "adequate": 5, "poor": 5}
 
     def test_calibration_required_keys(self):
-        from imas_codex.sn.benchmark import load_calibration_entries
+        from imas_codex.standard_names.benchmark import load_calibration_entries
 
         required = {"name", "tier", "expected_score", "description", "fields", "reason"}
         entries = load_calibration_entries()
@@ -794,7 +797,7 @@ class TestCalibrationDataset:
 
     def test_calibration_names_round_trip(self):
         """Every calibration entry name must survive parse→compose round-trip."""
-        from imas_codex.sn.benchmark import load_calibration_entries
+        from imas_codex.standard_names.benchmark import load_calibration_entries
 
         entries = load_calibration_entries()
         failures = []
@@ -811,7 +814,7 @@ class TestCalibrationDataset:
 
     def test_calibration_fields_compose_to_name(self):
         """compose_standard_name(StandardName(**fields)) == name for each entry."""
-        from imas_codex.sn.benchmark import load_calibration_entries
+        from imas_codex.standard_names.benchmark import load_calibration_entries
 
         entries = load_calibration_entries()
         failures = []
@@ -827,7 +830,7 @@ class TestCalibrationDataset:
 
     def test_calibration_score_ranges(self):
         """Verify expected_score falls within the tier's defined range."""
-        from imas_codex.sn.benchmark import load_calibration_entries
+        from imas_codex.standard_names.benchmark import load_calibration_entries
 
         tier_ranges = {
             "outstanding": (102, 120),
@@ -844,26 +847,26 @@ class TestCalibrationDataset:
             )
 
     def test_calibration_no_duplicate_names(self):
-        from imas_codex.sn.benchmark import load_calibration_entries
+        from imas_codex.standard_names.benchmark import load_calibration_entries
 
         entries = load_calibration_entries()
         names = [e["name"] for e in entries]
         assert len(names) == len(set(names)), "Duplicate names in calibration dataset"
 
     def test_reviewer_config_field(self):
-        from imas_codex.sn.benchmark import BenchmarkConfig
+        from imas_codex.standard_names.benchmark import BenchmarkConfig
 
         config = BenchmarkConfig(models=["test"], reviewer_model="test/model")
         assert config.reviewer_model == "test/model"
 
     def test_reviewer_config_default_none(self):
-        from imas_codex.sn.benchmark import BenchmarkConfig
+        from imas_codex.standard_names.benchmark import BenchmarkConfig
 
         config = BenchmarkConfig(models=["test"])
         assert config.reviewer_model is None
 
     def test_model_result_quality_fields(self):
-        from imas_codex.sn.benchmark import ModelResult
+        from imas_codex.standard_names.benchmark import ModelResult
 
         r = ModelResult(model="test")
         assert r.quality_scores == []
@@ -873,7 +876,7 @@ class TestCalibrationDataset:
         assert r.avg_fields_populated == 0.0
 
     def test_model_result_with_quality(self):
-        from imas_codex.sn.benchmark import ModelResult
+        from imas_codex.standard_names.benchmark import ModelResult
 
         r = ModelResult(
             model="test",
@@ -918,14 +921,14 @@ class TestCacheTokenReporting:
         assert getattr(mock_return, "cache_creation_tokens", 0) == 0
 
     def test_model_result_cache_defaults(self):
-        from imas_codex.sn.benchmark import ModelResult
+        from imas_codex.standard_names.benchmark import ModelResult
 
         r = ModelResult(model="test")
         assert r.cache_read_tokens == 0
         assert r.cache_creation_tokens == 0
 
     def test_model_result_with_cache(self):
-        from imas_codex.sn.benchmark import ModelResult
+        from imas_codex.standard_names.benchmark import ModelResult
 
         r = ModelResult(
             model="test",
@@ -965,7 +968,7 @@ class TestCacheTokenReporting:
 
     def test_render_table_with_cache(self):
         """Cache % column should appear and show correct values."""
-        from imas_codex.sn.benchmark import (
+        from imas_codex.standard_names.benchmark import (
             BenchmarkConfig,
             BenchmarkReport,
             ModelResult,
@@ -998,7 +1001,7 @@ class TestCacheTokenReporting:
 
     def test_render_table_no_cache(self):
         """Cache % column shows '—' when no cache tokens."""
-        from imas_codex.sn.benchmark import (
+        from imas_codex.standard_names.benchmark import (
             BenchmarkConfig,
             BenchmarkReport,
             ModelResult,
@@ -1025,7 +1028,7 @@ class TestCacheTokenReporting:
         """Cache fields survive JSON serialization."""
         import json
 
-        from imas_codex.sn.benchmark import (
+        from imas_codex.standard_names.benchmark import (
             BenchmarkConfig,
             BenchmarkReport,
             ModelResult,
@@ -1074,7 +1077,7 @@ class TestQualityReviewModel:
     """Test the 6-dimensional quality review models from models.py."""
 
     def test_valid_review(self):
-        from imas_codex.sn.models import (
+        from imas_codex.standard_names.models import (
             SNQualityReview,
             SNQualityScore,
             SNReviewVerdict,
@@ -1101,7 +1104,7 @@ class TestQualityReviewModel:
     def test_dimension_max_20(self):
         from pydantic import ValidationError
 
-        from imas_codex.sn.models import SNQualityScore
+        from imas_codex.standard_names.models import SNQualityScore
 
         with pytest.raises(ValidationError):
             SNQualityScore(
@@ -1116,7 +1119,7 @@ class TestQualityReviewModel:
     def test_dimension_min_0(self):
         from pydantic import ValidationError
 
-        from imas_codex.sn.models import SNQualityScore
+        from imas_codex.standard_names.models import SNQualityScore
 
         with pytest.raises(ValidationError):
             SNQualityScore(
@@ -1129,7 +1132,7 @@ class TestQualityReviewModel:
             )
 
     def test_total_score_max_120(self):
-        from imas_codex.sn.models import SNQualityScore
+        from imas_codex.standard_names.models import SNQualityScore
 
         # All dimensions at max = 120
         score = SNQualityScore(
@@ -1144,7 +1147,7 @@ class TestQualityReviewModel:
         assert score.tier == "outstanding"
 
     def test_poor_tier_scores(self):
-        from imas_codex.sn.models import SNQualityScore
+        from imas_codex.standard_names.models import SNQualityScore
 
         score = SNQualityScore(
             grammar=5,
@@ -1158,7 +1161,7 @@ class TestQualityReviewModel:
         assert score.tier == "poor"
 
     def test_score_model_dump_has_six_dimensions(self):
-        from imas_codex.sn.models import SNQualityScore
+        from imas_codex.standard_names.models import SNQualityScore
 
         score = SNQualityScore(
             grammar=15,
@@ -1174,7 +1177,7 @@ class TestQualityReviewModel:
 
     def test_review_batch_from_models(self):
         """SNQualityReviewBatch from models.py works correctly."""
-        from imas_codex.sn.models import (
+        from imas_codex.standard_names.models import (
             SNQualityReview,
             SNQualityReviewBatch,
             SNQualityScore,
@@ -1218,7 +1221,7 @@ class TestReviewerTemplate:
         (canonical_pattern, vocabulary_sections, etc.) in addition to bare
         grammar enum lists.
         """
-        from imas_codex.sn.context import build_compose_context
+        from imas_codex.standard_names.context import build_compose_context
 
         ctx = build_compose_context()
         grammar_enums = {
@@ -1240,7 +1243,7 @@ class TestReviewerTemplate:
 
     def test_template_renders(self):
         from imas_codex.llm.prompt_loader import render_prompt
-        from imas_codex.sn.benchmark import load_calibration_entries
+        from imas_codex.standard_names.benchmark import load_calibration_entries
 
         entries = load_calibration_entries()
         review_ctx = self._get_review_context()
@@ -1277,7 +1280,7 @@ class TestReviewerTemplate:
 
     def test_template_includes_calibration_examples(self):
         from imas_codex.llm.prompt_loader import render_prompt
-        from imas_codex.sn.benchmark import load_calibration_entries
+        from imas_codex.standard_names.benchmark import load_calibration_entries
 
         entries = load_calibration_entries()
         review_ctx = self._get_review_context()

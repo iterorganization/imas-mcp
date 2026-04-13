@@ -12,8 +12,12 @@ from pathlib import Path
 import pytest
 import yaml
 
-from imas_codex.sn.models import SNProvenance, SNPublishBatch, SNPublishEntry
-from imas_codex.sn.publish import (
+from imas_codex.standard_names.models import (
+    SNProvenance,
+    SNPublishBatch,
+    SNPublishEntry,
+)
+from imas_codex.standard_names.publish import (
     batch_by_group,
     check_catalog_duplicates,
     confidence_tier,

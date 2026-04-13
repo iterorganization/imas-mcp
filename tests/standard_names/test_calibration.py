@@ -1,6 +1,6 @@
 """Tests for centralized calibration loading."""
 
-from imas_codex.sn.calibration import (
+from imas_codex.standard_names.calibration import (
     clear_calibration_cache,
     get_calibration_for_prompt,
     load_calibration,

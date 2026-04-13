@@ -1,7 +1,7 @@
 ---
 name: sn/compose_dd
 description: Dynamic user prompt for SN composition — per-batch DD paths with enriched context
-used_by: imas_codex.sn.workers.compose_worker
+used_by: imas_codex.standard_names.workers.compose_worker
 task: composition
 dynamic: true
 schema_needs: []
@@ -85,6 +85,11 @@ These names already exist in the catalog. Reuse them if they match your source, 
 {% if item.parent_path %}- **Parent structure:** {{ item.parent_path }} ({{ item.parent_type or 'STRUCTURE' }}){% endif %}
 {% if item.parent_description %}- **Parent description:** {{ item.parent_description }}{% endif %}
 {% if item.coord_path %}- **Coordinate:** {{ item.coord_path }}{% if item.coord_unit %} ({{ item.coord_unit }}){% endif %}{% endif %}
+{% if item.previous_name %}
+- **Previous name:** `{{ item.previous_name.name }}` *(from prior generation — reuse if still appropriate, or improve. This is a suggestion, not a constraint.)*
+{% if item.previous_name.description %}- **Prior documentation:** {{ item.previous_name.description[:200] }}{% endif %}
+{% if item.previous_name.review_status == 'accepted' %}- ⚠️ **This name was human-accepted** — only replace with a clearly better alternative.{% endif %}
+{% endif %}
 {% if item.cluster_siblings %}- **Cross-IDS siblings:**
 {% for sib in item.cluster_siblings[:5] %}  - {{ sib.path }} ({{ sib.unit or '?' }})
 {% endfor %}

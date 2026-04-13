@@ -32,7 +32,7 @@ from the returned dict — no private ISN imports.
 - **Review criteria**: `imas_codex/llm/config/sn_review_criteria.yaml`
 - **Graph persistence**: StandardName nodes, relationships, validation issues
 - **Calibration**: `benchmark_calibration.yaml` for reviewer consistency
-- **Collision avoidance**: Vector search for similar existing names (`imas_codex/sn/search.py`)
+- **Collision avoidance**: Vector search for similar existing names (`imas_codex/standard_names/search.py`)
 - **Prompt infrastructure**: Shared fragments via `{% include %}`, prompt configs via `load_prompt_config()`
 
 ## Three-Layer Validation
@@ -57,7 +57,7 @@ The only hard rejection is an unparseable name (grammar round-trip fails in
 `validation_issues` (list) and `validation_layer_summary` (JSON), and are
 shown to the LLM reviewer as context.
 
-**Implementation**: `_validate_via_isn()` in `imas_codex/sn/workers.py` runs
+**Implementation**: `_validate_via_isn()` in `imas_codex/standard_names/workers.py` runs
 all three layers in sequence and returns `(issues, layer_summary)`.
 
 ## Scoring Architecture

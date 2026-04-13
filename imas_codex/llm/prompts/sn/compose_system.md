@@ -1,7 +1,7 @@
 ---
 name: sn/compose_system
 description: Static system prompt for SN composition — prompt-cached via OpenRouter
-used_by: imas_codex.sn.workers.compose_worker
+used_by: imas_codex.standard_names.workers.compose_worker
 task: composition
 dynamic: false
 schema_needs: []
@@ -248,6 +248,11 @@ applies. (Deferred to ISN vector_axes proposal for structural resolution.)
 7. Skip paths that are: array indices, metadata/timestamps, structural containers, coordinate grids (rho_tor_norm, psi, etc.)
 8. Set confidence < 0.5 when the mapping is ambiguous or multiple names could apply
 9. **Do NOT output a `unit` field** — unit is provided as authoritative context from the DD and will be injected at persistence time
+10. When a **Previous name** is shown for a path, treat it as context:
+    - If the previous name is good, reuse it (stability matters for downstream consumers)
+    - If you can clearly improve it, replace it and explain the improvement in documentation
+    - If the previous name was marked as human-accepted (⚠️), strongly prefer keeping it
+    - Never feel anchored to a bad previous name — replace without hesitation when you can do better
 
 ## Output Format
 

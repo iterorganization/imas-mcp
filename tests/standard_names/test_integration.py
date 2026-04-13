@@ -31,10 +31,10 @@ imas_sn = pytest.importorskip("imas_standard_names")
 
 def _call_write(names: list[dict], mock_gc: MagicMock) -> int:
     """Call write_standard_names with a mocked GraphClient."""
-    with patch("imas_codex.sn.graph_ops.GraphClient") as MockGC:
+    with patch("imas_codex.standard_names.graph_ops.GraphClient") as MockGC:
         MockGC.return_value.__enter__ = MagicMock(return_value=mock_gc)
         MockGC.return_value.__exit__ = MagicMock(return_value=False)
-        from imas_codex.sn.graph_ops import write_standard_names
+        from imas_codex.standard_names.graph_ops import write_standard_names
 
         return write_standard_names(names)
 
@@ -46,7 +46,7 @@ def _call_import_write(
     with patch("imas_codex.graph.client.GraphClient") as MockGC:
         MockGC.return_value.__enter__ = MagicMock(return_value=mock_gc)
         MockGC.return_value.__exit__ = MagicMock(return_value=False)
-        from imas_codex.sn.catalog_import import _write_catalog_entries
+        from imas_codex.standard_names.catalog_import import _write_catalog_entries
 
         return _write_catalog_entries(entries, catalog_commit_sha=catalog_sha)
 
@@ -560,7 +560,7 @@ class TestRoundTripIdempotence:
         must be identical after a full publish → import → publish cycle.
         Provenance and confidence fields are allowed to differ.
         """
-        from imas_codex.sn.publish import (
+        from imas_codex.standard_names.publish import (
             generate_catalog_files,
             graph_records_to_entries,
         )
@@ -590,7 +590,7 @@ class TestRoundTripIdempotence:
         )
 
         # --- Import catalog (dry run) → graph dicts ---
-        from imas_codex.sn.catalog_import import import_catalog
+        from imas_codex.standard_names.catalog_import import import_catalog
 
         result = import_catalog(catalog_dir, dry_run=True)
         assert result.imported == 1, (
@@ -637,8 +637,11 @@ class TestRoundTripIdempotence:
         ``generate_yaml_entry`` path, asserting that the re-published YAML
         preserves every semantically significant field from the original catalog.
         """
-        from imas_codex.sn.catalog_import import import_catalog
-        from imas_codex.sn.publish import generate_yaml_entry, graph_records_to_entries
+        from imas_codex.standard_names.catalog_import import import_catalog
+        from imas_codex.standard_names.publish import (
+            generate_yaml_entry,
+            graph_records_to_entries,
+        )
 
         catalog_dir = tmp_path / "catalog"
         catalog_dir.mkdir()
@@ -689,7 +692,7 @@ class TestRoundTripIdempotence:
         Verifies that ``import_catalog`` is deterministic: repeated calls on the
         same input produce identical graph dicts (same keys and values).
         """
-        from imas_codex.sn.catalog_import import import_catalog
+        from imas_codex.standard_names.catalog_import import import_catalog
 
         catalog_dir = tmp_path / "catalog"
         catalog_dir.mkdir()
@@ -834,15 +837,15 @@ class TestE2ERoundTrip:
 
     def test_full_lifecycle_round_trip(self, tmp_path: Path) -> None:
         """Complete build → publish → manual-edit → import cycle."""
-        from imas_codex.sn.catalog_import import import_catalog
-        from imas_codex.sn.graph_ops import write_standard_names
-        from imas_codex.sn.publish import (
+        from imas_codex.standard_names.catalog_import import import_catalog
+        from imas_codex.standard_names.graph_ops import write_standard_names
+        from imas_codex.standard_names.publish import (
             generate_catalog_files,
             graph_records_to_entries,
         )
 
         # Phase 1: write to graph (mocked)
-        with patch("imas_codex.sn.graph_ops.GraphClient") as MockGC:
+        with patch("imas_codex.standard_names.graph_ops.GraphClient") as MockGC:
             MockGC.return_value = self._mock_write_graph_client()
             count = write_standard_names([_RICH_SN_RECORD])
         assert count == 1
@@ -884,8 +887,8 @@ class TestE2ERoundTrip:
 
     def test_publish_generates_valid_yaml_for_import(self, tmp_path: Path) -> None:
         """Published YAML (after curator enrichment) is valid input for import_catalog."""
-        from imas_codex.sn.catalog_import import import_catalog
-        from imas_codex.sn.publish import graph_records_to_entries
+        from imas_codex.standard_names.catalog_import import import_catalog
+        from imas_codex.standard_names.publish import graph_records_to_entries
 
         entries = graph_records_to_entries([_GRAPH_QUERY_ROW])
         assert len(entries) == 1
@@ -916,8 +919,8 @@ class TestE2ERoundTrip:
 
     def test_field_preservation_across_lifecycle(self, tmp_path: Path) -> None:
         """Specific rich fields are verified at each stage of the lifecycle."""
-        from imas_codex.sn.catalog_import import import_catalog
-        from imas_codex.sn.publish import (
+        from imas_codex.standard_names.catalog_import import import_catalog
+        from imas_codex.standard_names.publish import (
             generate_catalog_files,
             generate_yaml_entry,
             graph_records_to_entries,
@@ -990,7 +993,7 @@ class TestE2ERoundTrip:
 
     def test_write_standard_names_called_with_all_fields(self) -> None:
         """write_standard_names receives all populated fields without losing any."""
-        from imas_codex.sn.graph_ops import write_standard_names
+        from imas_codex.standard_names.graph_ops import write_standard_names
 
         captured_calls: list = []
 
@@ -1005,7 +1008,7 @@ class TestE2ERoundTrip:
         mock_ctx.__enter__ = MagicMock(return_value=mock_gc)
         mock_ctx.__exit__ = MagicMock(return_value=False)
 
-        with patch("imas_codex.sn.graph_ops.GraphClient") as MockGC:
+        with patch("imas_codex.standard_names.graph_ops.GraphClient") as MockGC:
             MockGC.return_value = mock_ctx
             write_standard_names([_RICH_SN_RECORD])
 
@@ -1030,7 +1033,7 @@ class TestE2ERoundTrip:
 
     def test_import_dry_run_does_not_call_graph(self, tmp_path: Path) -> None:
         """dry_run=True must never invoke the graph write path."""
-        from imas_codex.sn.catalog_import import import_catalog
+        from imas_codex.standard_names.catalog_import import import_catalog
 
         catalog_entry = {
             "name": "electron_temperature",
@@ -1052,7 +1055,9 @@ class TestE2ERoundTrip:
             yaml.safe_dump(catalog_entry)
         )
 
-        with patch("imas_codex.sn.catalog_import._write_catalog_entries") as mock_write:
+        with patch(
+            "imas_codex.standard_names.catalog_import._write_catalog_entries"
+        ) as mock_write:
             result = import_catalog(catalog_dir=catalog_dir, dry_run=True)
 
         mock_write.assert_not_called()

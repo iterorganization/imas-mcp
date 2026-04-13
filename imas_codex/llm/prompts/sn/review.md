@@ -1,7 +1,7 @@
 ---
 name: sn/review
 description: Quality review for standard name candidates
-used_by: imas_codex.sn.workers.review_worker, imas_codex.sn.benchmark.score_with_reviewer
+used_by: imas_codex.standard_names.workers.review_worker, imas_codex.sn.benchmark.score_with_reviewer
 task: review
 dynamic: true
 schema_needs: []

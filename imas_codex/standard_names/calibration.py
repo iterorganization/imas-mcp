@@ -27,7 +27,10 @@ def load_calibration() -> list[dict[str, Any]]:
         return _CACHE
 
     try:
-        ref = importlib.resources.files("imas_codex.sn") / "benchmark_calibration.yaml"
+        ref = (
+            importlib.resources.files("imas_codex.standard_names")
+            / "benchmark_calibration.yaml"
+        )
         _CACHE = yaml.safe_load(ref.read_text()).get("entries", [])
     except Exception:
         logger.debug("Failed to load calibration entries", exc_info=True)

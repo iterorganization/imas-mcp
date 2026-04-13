@@ -1,4 +1,4 @@
-"""SN mint pipeline orchestrator.
+"""SN generate pipeline orchestrator.
 
 Wires the EXTRACT → COMPOSE → [REVIEW] → VALIDATE → CONSOLIDATE → PERSIST
 workers into the generic discovery engine and runs them with supervision
@@ -12,8 +12,8 @@ import logging
 from typing import Any
 
 from imas_codex.discovery.base.engine import WorkerSpec, run_discovery_engine
-from imas_codex.sn.state import SNBuildState
-from imas_codex.sn.workers import (
+from imas_codex.standard_names.state import SNBuildState
+from imas_codex.standard_names.workers import (
     compose_worker,
     consolidate_worker,
     extract_worker,
@@ -25,13 +25,13 @@ from imas_codex.sn.workers import (
 logger = logging.getLogger(__name__)
 
 
-async def run_sn_mint_engine(
+async def run_sn_generate_engine(
     state: SNBuildState,
     *,
     stop_event: asyncio.Event | None = None,
     on_worker_status: Any | None = None,
 ) -> None:
-    """Run the SN mint pipeline.
+    """Run the SN generate pipeline.
 
     Pipeline::
 

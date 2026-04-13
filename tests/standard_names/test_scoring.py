@@ -5,7 +5,7 @@ from __future__ import annotations
 
 def test_quality_score_normalized():
     """SNQualityScore.score returns float in 0-1 range."""
-    from imas_codex.sn.models import SNQualityScore
+    from imas_codex.standard_names.models import SNQualityScore
 
     score = SNQualityScore(
         grammar=15,
@@ -23,7 +23,7 @@ def test_quality_score_normalized():
 
 def test_quality_score_perfect():
     """Perfect scores give 1.0."""
-    from imas_codex.sn.models import SNQualityScore
+    from imas_codex.standard_names.models import SNQualityScore
 
     score = SNQualityScore(
         grammar=20,
@@ -39,7 +39,7 @@ def test_quality_score_perfect():
 
 def test_quality_score_zero():
     """Zero scores give 0.0."""
-    from imas_codex.sn.models import SNQualityScore
+    from imas_codex.standard_names.models import SNQualityScore
 
     score = SNQualityScore(
         grammar=0,
@@ -55,7 +55,7 @@ def test_quality_score_zero():
 
 def test_tier_boundaries():
     """Tier thresholds at 0.85/0.60/0.40."""
-    from imas_codex.sn.models import SNQualityScore
+    from imas_codex.standard_names.models import SNQualityScore
 
     # Outstanding boundary: 0.85 * 120 = 102
     outstanding = SNQualityScore(
@@ -118,7 +118,7 @@ def test_tier_boundaries():
 
 def test_total_preserved():
     """The .total property still returns integer sum for internal use."""
-    from imas_codex.sn.models import SNQualityScore
+    from imas_codex.standard_names.models import SNQualityScore
 
     score = SNQualityScore(
         grammar=15,

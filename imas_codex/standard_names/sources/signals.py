@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from imas_codex.sn.sources.base import ExtractionBatch
+from imas_codex.standard_names.sources.base import ExtractionBatch
 
 logger = logging.getLogger(__name__)
 

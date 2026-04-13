@@ -10,7 +10,7 @@ name generation:
 
 The classifier is purely rule-based, deterministic, and operates on a single
 dict of enriched DD node attributes (as returned by the enriched extraction
-query in ``imas_codex.sn.sources.dd``).
+query in ``imas_codex.standard_names.sources.dd``).
 """
 
 from __future__ import annotations

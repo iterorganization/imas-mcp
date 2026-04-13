@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from imas_codex.sn.consolidation import (
+from imas_codex.standard_names.consolidation import (
     ConflictRecord,
     ConsolidationResult,
     _merge_duplicates,

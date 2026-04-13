@@ -7,7 +7,11 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from imas_codex.sn.models import SNReviewBatch, SNReviewItem, SNReviewVerdict
+from imas_codex.standard_names.models import (
+    SNReviewBatch,
+    SNReviewItem,
+    SNReviewVerdict,
+)
 
 # =============================================================================
 # Model instantiation tests
@@ -150,7 +154,7 @@ class TestSNQualityReviewModels:
 
     def test_quality_score_total(self):
         """Total is the sum of all six dimensions."""
-        from imas_codex.sn.models import SNQualityScore
+        from imas_codex.standard_names.models import SNQualityScore
 
         score = SNQualityScore(
             grammar=18,
@@ -164,7 +168,7 @@ class TestSNQualityReviewModels:
 
     def test_quality_score_tier_outstanding(self):
         """Score >= 102 is outstanding."""
-        from imas_codex.sn.models import SNQualityScore
+        from imas_codex.standard_names.models import SNQualityScore
 
         score = SNQualityScore(
             grammar=20,
@@ -179,7 +183,7 @@ class TestSNQualityReviewModels:
 
     def test_quality_score_tier_good(self):
         """Score 72-101 is good."""
-        from imas_codex.sn.models import SNQualityScore
+        from imas_codex.standard_names.models import SNQualityScore
 
         score = SNQualityScore(
             grammar=15,
@@ -194,7 +198,7 @@ class TestSNQualityReviewModels:
 
     def test_quality_score_tier_adequate(self):
         """Score 48-71 is adequate."""
-        from imas_codex.sn.models import SNQualityScore
+        from imas_codex.standard_names.models import SNQualityScore
 
         score = SNQualityScore(
             grammar=10,
@@ -209,7 +213,7 @@ class TestSNQualityReviewModels:
 
     def test_quality_score_tier_poor(self):
         """Score < 48 is poor."""
-        from imas_codex.sn.models import SNQualityScore
+        from imas_codex.standard_names.models import SNQualityScore
 
         score = SNQualityScore(
             grammar=5,
@@ -224,7 +228,7 @@ class TestSNQualityReviewModels:
 
     def test_quality_score_max_120(self):
         """Max possible total is 120."""
-        from imas_codex.sn.models import SNQualityScore
+        from imas_codex.standard_names.models import SNQualityScore
 
         score = SNQualityScore(
             grammar=20,
@@ -239,7 +243,7 @@ class TestSNQualityReviewModels:
 
     def test_quality_score_model_dump(self):
         """model_dump() includes all dimension fields."""
-        from imas_codex.sn.models import SNQualityScore
+        from imas_codex.standard_names.models import SNQualityScore
 
         score = SNQualityScore(
             grammar=18,
@@ -261,7 +265,7 @@ class TestSNQualityReviewModels:
 
     def test_quality_review_full(self):
         """SNQualityReview with all fields populated."""
-        from imas_codex.sn.models import (
+        from imas_codex.standard_names.models import (
             SNQualityReview,
             SNQualityScore,
             SNReviewVerdict,
@@ -287,7 +291,7 @@ class TestSNQualityReviewModels:
 
     def test_quality_review_batch(self):
         """SNQualityReviewBatch wraps quality reviews."""
-        from imas_codex.sn.models import (
+        from imas_codex.standard_names.models import (
             SNQualityReview,
             SNQualityReviewBatch,
             SNQualityScore,
@@ -319,7 +323,7 @@ class TestSNQualityReviewModels:
         """Scores must be in 0-20 range."""
         from pydantic import ValidationError
 
-        from imas_codex.sn.models import SNQualityScore
+        from imas_codex.standard_names.models import SNQualityScore
 
         with pytest.raises(ValidationError):
             SNQualityScore(
@@ -356,7 +360,7 @@ class TestReviewWorker:
 
     def _make_state(self, **overrides):
         """Create a minimal SNBuildState for testing."""
-        from imas_codex.sn.state import SNBuildState
+        from imas_codex.standard_names.state import SNBuildState
 
         defaults = {
             "facility": "dd",
@@ -379,7 +383,7 @@ class TestReviewWorker:
             {"id": "ion_density", "source_id": "path/b", "physical_base": "density"},
         ]
 
-        from imas_codex.sn.workers import review_worker
+        from imas_codex.standard_names.workers import review_worker
 
         asyncio.run(review_worker(state))
 
@@ -394,16 +398,16 @@ class TestReviewWorker:
         state = self._make_state()
         state.composed = []
 
-        from imas_codex.sn.workers import review_worker
+        from imas_codex.standard_names.workers import review_worker
 
         asyncio.run(review_worker(state))
 
         assert state.review_phase.done
         assert state.reviewed == []
 
-    @patch("imas_codex.sn.workers._review_batch")
-    @patch("imas_codex.sn.workers._get_existing_names_for_review")
-    @patch("imas_codex.sn.workers._load_calibration_entries")
+    @patch("imas_codex.standard_names.workers._review_batch")
+    @patch("imas_codex.standard_names.workers._get_existing_names_for_review")
+    @patch("imas_codex.standard_names.workers._load_calibration_entries")
     def test_accept_verdict_passes_through(self, mock_cal, mock_existing, mock_batch):
         """Accept verdict keeps the candidate in reviewed output."""
         mock_existing.return_value = set()
@@ -427,7 +431,7 @@ class TestReviewWorker:
         state.composed = list(candidates)
         state.review_model = "test/model"
 
-        from imas_codex.sn.workers import review_worker
+        from imas_codex.standard_names.workers import review_worker
 
         asyncio.run(review_worker(state))
 
@@ -440,9 +444,9 @@ class TestReviewWorker:
         assert state.reviewed[0].get("reviewer_model") == "test/model"
         assert "reviewed_at" in state.reviewed[0]
 
-    @patch("imas_codex.sn.workers._review_batch")
-    @patch("imas_codex.sn.workers._get_existing_names_for_review")
-    @patch("imas_codex.sn.workers._load_calibration_entries")
+    @patch("imas_codex.standard_names.workers._review_batch")
+    @patch("imas_codex.standard_names.workers._get_existing_names_for_review")
+    @patch("imas_codex.standard_names.workers._load_calibration_entries")
     def test_reject_verdict_removes_candidate(
         self, mock_cal, mock_existing, mock_batch
     ):
@@ -464,7 +468,7 @@ class TestReviewWorker:
         state.composed = list(candidates)
         state.review_model = "test/model"
 
-        from imas_codex.sn.workers import review_worker
+        from imas_codex.standard_names.workers import review_worker
 
         asyncio.run(review_worker(state))
 
@@ -472,9 +476,9 @@ class TestReviewWorker:
         assert len(state.reviewed) == 0
         assert state.stats["review_rejected"] == 1
 
-    @patch("imas_codex.sn.workers._review_batch")
-    @patch("imas_codex.sn.workers._get_existing_names_for_review")
-    @patch("imas_codex.sn.workers._load_calibration_entries")
+    @patch("imas_codex.standard_names.workers._review_batch")
+    @patch("imas_codex.standard_names.workers._get_existing_names_for_review")
+    @patch("imas_codex.standard_names.workers._load_calibration_entries")
     def test_revise_verdict_updates_candidate(
         self, mock_cal, mock_existing, mock_batch
     ):
@@ -503,7 +507,7 @@ class TestReviewWorker:
         state.composed = [dict(original)]
         state.review_model = "test/model"
 
-        from imas_codex.sn.workers import review_worker
+        from imas_codex.standard_names.workers import review_worker
 
         asyncio.run(review_worker(state))
 
@@ -512,9 +516,9 @@ class TestReviewWorker:
         assert state.reviewed[0]["id"] == "electron_temperature"
         assert state.stats["review_revised"] == 1
 
-    @patch("imas_codex.sn.workers._review_batch")
-    @patch("imas_codex.sn.workers._get_existing_names_for_review")
-    @patch("imas_codex.sn.workers._load_calibration_entries")
+    @patch("imas_codex.standard_names.workers._review_batch")
+    @patch("imas_codex.standard_names.workers._get_existing_names_for_review")
+    @patch("imas_codex.standard_names.workers._load_calibration_entries")
     def test_batch_failure_passes_through(self, mock_cal, mock_existing, mock_batch):
         """On batch failure, candidates pass through unreviewed."""
         mock_existing.return_value = set()
@@ -538,7 +542,7 @@ class TestReviewWorker:
         state.composed = list(candidates)
         state.review_model = "test/model"
 
-        from imas_codex.sn.workers import review_worker
+        from imas_codex.standard_names.workers import review_worker
 
         asyncio.run(review_worker(state))
 
@@ -547,9 +551,9 @@ class TestReviewWorker:
         assert len(state.reviewed) == 1
         assert state.review_stats.errors == 1
 
-    @patch("imas_codex.sn.workers._review_batch")
-    @patch("imas_codex.sn.workers._get_existing_names_for_review")
-    @patch("imas_codex.sn.workers._load_calibration_entries")
+    @patch("imas_codex.standard_names.workers._review_batch")
+    @patch("imas_codex.standard_names.workers._get_existing_names_for_review")
+    @patch("imas_codex.standard_names.workers._load_calibration_entries")
     def test_review_passes_calibration_and_context(
         self, mock_cal, mock_existing, mock_batch
     ):
@@ -580,7 +584,7 @@ class TestReviewWorker:
         state.review_model = "test/model"
 
         # Set up extracted batches to provide context
-        from imas_codex.sn.sources.base import ExtractionBatch
+        from imas_codex.standard_names.sources.base import ExtractionBatch
 
         state.extracted = [
             ExtractionBatch(
@@ -591,7 +595,7 @@ class TestReviewWorker:
             )
         ]
 
-        from imas_codex.sn.workers import review_worker
+        from imas_codex.standard_names.workers import review_worker
 
         asyncio.run(review_worker(state))
 
@@ -615,7 +619,7 @@ class TestSNBuildStateReview:
 
     def test_state_has_review_fields(self):
         """SNBuildState includes review configuration fields."""
-        from imas_codex.sn.state import SNBuildState
+        from imas_codex.standard_names.state import SNBuildState
 
         state = SNBuildState(facility="dd")
         assert state.skip_review is False
@@ -626,7 +630,7 @@ class TestSNBuildStateReview:
 
     def test_total_cost_includes_review(self):
         """total_cost sums compose and review costs."""
-        from imas_codex.sn.state import SNBuildState
+        from imas_codex.standard_names.state import SNBuildState
 
         state = SNBuildState(facility="dd")
         state.compose_stats.cost = 0.5
@@ -635,7 +639,7 @@ class TestSNBuildStateReview:
 
     def test_skip_review_configuration(self):
         """skip_review can be set at construction."""
-        from imas_codex.sn.state import SNBuildState
+        from imas_codex.standard_names.state import SNBuildState
 
         state = SNBuildState(facility="dd", skip_review=True, review_model="test/model")
         assert state.skip_review is True
@@ -658,7 +662,7 @@ class TestPipelineReviewWiring:
         """Validate worker should depend on review_phase, not compose_phase."""
         # We can't easily test the actual pipeline running without graph,
         # but we can verify the WorkerSpec construction.
-        from imas_codex.sn.state import SNBuildState
+        from imas_codex.standard_names.state import SNBuildState
 
         state = SNBuildState(facility="dd", skip_review=False)
 
@@ -673,8 +677,8 @@ class TestPipelineReviewWiring:
         dependency on review_phase is satisfied.
         """
         from imas_codex.discovery.base.engine import WorkerSpec
-        from imas_codex.sn.state import SNBuildState
-        from imas_codex.sn.workers import review_worker, validate_worker
+        from imas_codex.standard_names.state import SNBuildState
+        from imas_codex.standard_names.workers import review_worker, validate_worker
 
         state = SNBuildState(facility="dd", skip_review=True)
 
@@ -703,7 +707,7 @@ class TestPipelineReviewWiring:
 
     def test_validate_reads_reviewed_buffer(self):
         """Validate worker reads from state.reviewed when populated."""
-        from imas_codex.sn.state import SNBuildState
+        from imas_codex.standard_names.state import SNBuildState
 
         state = SNBuildState(facility="dd", dry_run=True)
         state.reviewed = [
@@ -713,7 +717,7 @@ class TestPipelineReviewWiring:
             {"id": "old_name", "source_id": "b"},
         ]
 
-        from imas_codex.sn.workers import validate_worker
+        from imas_codex.standard_names.workers import validate_worker
 
         # In dry-run, validation is skipped — but we verify the buffer logic
         asyncio.run(validate_worker(state))

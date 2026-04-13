@@ -18,8 +18,8 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 
-from imas_codex.sn.classifier import classify_path
-from imas_codex.sn.sources.base import ExtractionBatch
+from imas_codex.standard_names.classifier import classify_path
+from imas_codex.standard_names.sources.base import ExtractionBatch
 
 logger = logging.getLogger(__name__)
 

@@ -84,10 +84,11 @@ class TestImportParsesYaml:
 
     def test_parses_yaml_files(self, catalog_dir: Path) -> None:
         """Should parse all valid YAML files in the directory."""
-        from imas_codex.sn.catalog_import import import_catalog
+        from imas_codex.standard_names.catalog_import import import_catalog
 
         with patch(
-            "imas_codex.sn.catalog_import._write_catalog_entries", return_value=2
+            "imas_codex.standard_names.catalog_import._write_catalog_entries",
+            return_value=2,
         ):
             result = import_catalog(catalog_dir, dry_run=False)
 
@@ -102,10 +103,11 @@ class TestImportParsesYaml:
             yaml.safe_dump(SAMPLE_CATALOG_ENTRY)
         )
 
-        from imas_codex.sn.catalog_import import import_catalog
+        from imas_codex.standard_names.catalog_import import import_catalog
 
         with patch(
-            "imas_codex.sn.catalog_import._write_catalog_entries", return_value=1
+            "imas_codex.standard_names.catalog_import._write_catalog_entries",
+            return_value=1,
         ):
             result = import_catalog(d, dry_run=False)
 
@@ -120,10 +122,11 @@ class TestImportParsesYaml:
             yaml.safe_dump(SAMPLE_CATALOG_ENTRY)
         )
 
-        from imas_codex.sn.catalog_import import import_catalog
+        from imas_codex.standard_names.catalog_import import import_catalog
 
         with patch(
-            "imas_codex.sn.catalog_import._write_catalog_entries", return_value=1
+            "imas_codex.standard_names.catalog_import._write_catalog_entries",
+            return_value=1,
         ):
             result = import_catalog(d, dry_run=False)
 
@@ -140,7 +143,7 @@ class TestGrammarFields:
 
     def test_derives_grammar_fields(self) -> None:
         """Should extract subject and physical_base from name."""
-        from imas_codex.sn.catalog_import import _parse_grammar_fields
+        from imas_codex.standard_names.catalog_import import _parse_grammar_fields
 
         fields = _parse_grammar_fields("electron_temperature")
         assert fields["subject"] == "electron"
@@ -148,7 +151,7 @@ class TestGrammarFields:
 
     def test_unparseable_name_returns_none(self) -> None:
         """Should return None fields for names that can't be parsed."""
-        from imas_codex.sn.catalog_import import _parse_grammar_fields
+        from imas_codex.standard_names.catalog_import import _parse_grammar_fields
 
         # Mock the grammar parser to raise, simulating an unparseable name
         with patch(
@@ -162,7 +165,7 @@ class TestGrammarFields:
 
     def test_grammar_fields_in_import_output(self, catalog_dir: Path) -> None:
         """Imported entries should have grammar fields populated."""
-        from imas_codex.sn.catalog_import import import_catalog
+        from imas_codex.standard_names.catalog_import import import_catalog
 
         result = import_catalog(catalog_dir, dry_run=True)
 
@@ -182,7 +185,7 @@ class TestFieldMapping:
 
     def test_sets_accepted_status(self, catalog_dir: Path) -> None:
         """All imported entries should have review_status='accepted'."""
-        from imas_codex.sn.catalog_import import import_catalog
+        from imas_codex.standard_names.catalog_import import import_catalog
 
         result = import_catalog(catalog_dir, dry_run=True)
 
@@ -191,7 +194,7 @@ class TestFieldMapping:
 
     def test_maps_unit_to_unit(self, catalog_dir: Path) -> None:
         """Catalog 'unit' field should pass through as graph unit key."""
-        from imas_codex.sn.catalog_import import import_catalog
+        from imas_codex.standard_names.catalog_import import import_catalog
 
         result = import_catalog(catalog_dir, dry_run=True)
 
@@ -200,7 +203,7 @@ class TestFieldMapping:
 
     def test_maps_ids_paths_to_imas_paths(self, catalog_dir: Path) -> None:
         """Catalog 'ids_paths' should map to graph 'imas_paths' key."""
-        from imas_codex.sn.catalog_import import import_catalog
+        from imas_codex.standard_names.catalog_import import import_catalog
 
         result = import_catalog(catalog_dir, dry_run=True)
 
@@ -211,7 +214,7 @@ class TestFieldMapping:
 
     def test_source_type_dd_for_entries_with_paths(self, catalog_dir: Path) -> None:
         """Entries with ids_paths should have source_type='dd'."""
-        from imas_codex.sn.catalog_import import import_catalog
+        from imas_codex.standard_names.catalog_import import import_catalog
 
         result = import_catalog(catalog_dir, dry_run=True)
 
@@ -222,7 +225,7 @@ class TestFieldMapping:
         self, catalog_dir: Path
     ) -> None:
         """Entries without ids_paths should have source_type='manual'."""
-        from imas_codex.sn.catalog_import import import_catalog
+        from imas_codex.standard_names.catalog_import import import_catalog
 
         result = import_catalog(catalog_dir, dry_run=True)
 
@@ -231,7 +234,7 @@ class TestFieldMapping:
 
     def test_maps_kind(self, catalog_dir: Path) -> None:
         """Catalog 'kind' field should be mapped correctly."""
-        from imas_codex.sn.catalog_import import import_catalog
+        from imas_codex.standard_names.catalog_import import import_catalog
 
         result = import_catalog(catalog_dir, dry_run=True)
 
@@ -240,7 +243,7 @@ class TestFieldMapping:
 
     def test_empty_lists_become_none(self, catalog_dir: Path) -> None:
         """Empty catalog lists should become None for graph coalesce compatibility."""
-        from imas_codex.sn.catalog_import import import_catalog
+        from imas_codex.standard_names.catalog_import import import_catalog
 
         result = import_catalog(catalog_dir, dry_run=True)
 
@@ -252,7 +255,7 @@ class TestFieldMapping:
 
     def test_maps_physics_domain(self, catalog_dir: Path) -> None:
         """Catalog 'physics_domain' field should be mapped."""
-        from imas_codex.sn.catalog_import import import_catalog
+        from imas_codex.standard_names.catalog_import import import_catalog
 
         result = import_catalog(catalog_dir, dry_run=True)
 
@@ -270,9 +273,11 @@ class TestDryRun:
 
     def test_dry_run_no_write(self, catalog_dir: Path) -> None:
         """Dry run should not call the write function."""
-        from imas_codex.sn.catalog_import import import_catalog
+        from imas_codex.standard_names.catalog_import import import_catalog
 
-        with patch("imas_codex.sn.catalog_import._write_catalog_entries") as mock_write:
+        with patch(
+            "imas_codex.standard_names.catalog_import._write_catalog_entries"
+        ) as mock_write:
             result = import_catalog(catalog_dir, dry_run=True)
 
         mock_write.assert_not_called()
@@ -281,10 +286,11 @@ class TestDryRun:
 
     def test_non_dry_run_calls_write(self, catalog_dir: Path) -> None:
         """Non-dry-run should call the write function."""
-        from imas_codex.sn.catalog_import import import_catalog
+        from imas_codex.standard_names.catalog_import import import_catalog
 
         with patch(
-            "imas_codex.sn.catalog_import._write_catalog_entries", return_value=2
+            "imas_codex.standard_names.catalog_import._write_catalog_entries",
+            return_value=2,
         ) as mock_write:
             result = import_catalog(catalog_dir, dry_run=False)
 
@@ -302,7 +308,7 @@ class TestTagFilter:
 
     def test_tag_filter_includes_matching(self, catalog_dir_with_tags: Path) -> None:
         """Should import entries whose tags match the filter."""
-        from imas_codex.sn.catalog_import import import_catalog
+        from imas_codex.standard_names.catalog_import import import_catalog
 
         result = import_catalog(
             catalog_dir_with_tags, dry_run=True, tag_filter=["spatial-profile"]
@@ -313,7 +319,7 @@ class TestTagFilter:
 
     def test_tag_filter_skips_non_matching(self, catalog_dir_with_tags: Path) -> None:
         """Should skip entries that don't match the tag filter."""
-        from imas_codex.sn.catalog_import import import_catalog
+        from imas_codex.standard_names.catalog_import import import_catalog
 
         result = import_catalog(
             catalog_dir_with_tags, dry_run=True, tag_filter=["spatial-profile"]
@@ -323,7 +329,7 @@ class TestTagFilter:
 
     def test_no_tag_filter_imports_all(self, catalog_dir_with_tags: Path) -> None:
         """Without tag filter, all entries should be imported."""
-        from imas_codex.sn.catalog_import import import_catalog
+        from imas_codex.standard_names.catalog_import import import_catalog
 
         result = import_catalog(catalog_dir_with_tags, dry_run=True)
 
@@ -345,7 +351,7 @@ class TestErrorHandling:
         d.mkdir()
         (d / "bad.yaml").write_text(": : : invalid yaml [[[")
 
-        from imas_codex.sn.catalog_import import import_catalog
+        from imas_codex.standard_names.catalog_import import import_catalog
 
         result = import_catalog(d, dry_run=True)
 
@@ -359,7 +365,7 @@ class TestErrorHandling:
         d.mkdir()
         (d / "list.yaml").write_text(yaml.safe_dump(["a", "b", "c"]))
 
-        from imas_codex.sn.catalog_import import import_catalog
+        from imas_codex.standard_names.catalog_import import import_catalog
 
         result = import_catalog(d, dry_run=True)
 
@@ -374,7 +380,7 @@ class TestErrorHandling:
         incomplete = {"name": "test", "kind": "scalar"}  # missing required fields
         (d / "incomplete.yaml").write_text(yaml.safe_dump(incomplete))
 
-        from imas_codex.sn.catalog_import import import_catalog
+        from imas_codex.standard_names.catalog_import import import_catalog
 
         result = import_catalog(d, dry_run=True)
 
@@ -387,7 +393,7 @@ class TestErrorHandling:
         d = tmp_path / "empty"
         d.mkdir()
 
-        from imas_codex.sn.catalog_import import import_catalog
+        from imas_codex.standard_names.catalog_import import import_catalog
 
         result = import_catalog(d, dry_run=True)
 
@@ -411,7 +417,7 @@ class TestWriteCatalogEntries:
             MockGC.return_value.__enter__ = MagicMock(return_value=mock_gc)
             MockGC.return_value.__exit__ = MagicMock(return_value=False)
 
-            from imas_codex.sn.catalog_import import _write_catalog_entries
+            from imas_codex.standard_names.catalog_import import _write_catalog_entries
 
             return _write_catalog_entries(entries)
 
@@ -583,7 +589,7 @@ class TestWriteCatalogEntries:
 
     def test_empty_list_returns_zero(self) -> None:
         """Empty list should return 0 without touching the graph."""
-        from imas_codex.sn.catalog_import import _write_catalog_entries
+        from imas_codex.standard_names.catalog_import import _write_catalog_entries
 
         result = _write_catalog_entries([])
         assert result == 0
@@ -599,7 +605,7 @@ class TestResolveCatalogSha:
 
     def test_returns_sha_in_git_repo(self, tmp_path: Path) -> None:
         """Should return a 40-char SHA when run in a git repo."""
-        from imas_codex.sn.catalog_import import _resolve_catalog_sha
+        from imas_codex.standard_names.catalog_import import _resolve_catalog_sha
 
         # Use the project repo itself as the catalog dir
         project_root = Path(__file__).resolve().parents[2]
@@ -610,16 +616,18 @@ class TestResolveCatalogSha:
 
     def test_returns_none_for_non_git_dir(self, tmp_path: Path) -> None:
         """Should return None for a directory that isn't a git repo."""
-        from imas_codex.sn.catalog_import import _resolve_catalog_sha
+        from imas_codex.standard_names.catalog_import import _resolve_catalog_sha
 
         sha = _resolve_catalog_sha(tmp_path)
         assert sha is None
 
     def test_returns_none_when_git_not_found(self, tmp_path: Path) -> None:
         """Should return None when git binary is missing."""
-        from imas_codex.sn.catalog_import import _resolve_catalog_sha
+        from imas_codex.standard_names.catalog_import import _resolve_catalog_sha
 
-        with patch("imas_codex.sn.catalog_import.subprocess.run") as mock_run:
+        with patch(
+            "imas_codex.standard_names.catalog_import.subprocess.run"
+        ) as mock_run:
             mock_run.side_effect = FileNotFoundError("git not found")
             sha = _resolve_catalog_sha(tmp_path)
             assert sha is None
@@ -630,7 +638,7 @@ class TestVersionTracking:
 
     def test_sha_in_cypher_batch(self) -> None:
         """_write_catalog_entries should inject catalog_commit_sha into each entry."""
-        from imas_codex.sn.catalog_import import _write_catalog_entries
+        from imas_codex.standard_names.catalog_import import _write_catalog_entries
 
         mock_gc = MagicMock()
         mock_gc.query = MagicMock(return_value=[])
@@ -677,7 +685,7 @@ class TestVersionTracking:
 
     def test_sha_none_when_not_provided(self) -> None:
         """When no SHA is provided, entries should get catalog_commit_sha=None."""
-        from imas_codex.sn.catalog_import import _write_catalog_entries
+        from imas_codex.standard_names.catalog_import import _write_catalog_entries
 
         mock_gc = MagicMock()
         mock_gc.query = MagicMock(return_value=[])
@@ -716,17 +724,18 @@ class TestVersionTracking:
 
     def test_import_result_contains_sha(self, catalog_dir: Path) -> None:
         """import_catalog() should populate catalog_commit_sha on the result."""
-        from imas_codex.sn.catalog_import import import_catalog
+        from imas_codex.standard_names.catalog_import import import_catalog
 
         test_sha = "a" * 40
 
         with (
             patch(
-                "imas_codex.sn.catalog_import._resolve_catalog_sha",
+                "imas_codex.standard_names.catalog_import._resolve_catalog_sha",
                 return_value=test_sha,
             ),
             patch(
-                "imas_codex.sn.catalog_import._write_catalog_entries", return_value=2
+                "imas_codex.standard_names.catalog_import._write_catalog_entries",
+                return_value=2,
             ),
         ):
             result = import_catalog(catalog_dir=catalog_dir)
@@ -735,15 +744,16 @@ class TestVersionTracking:
 
     def test_import_result_sha_none_for_non_git(self, catalog_dir: Path) -> None:
         """import_catalog() should have sha=None when dir is not a git repo."""
-        from imas_codex.sn.catalog_import import import_catalog
+        from imas_codex.standard_names.catalog_import import import_catalog
 
         with (
             patch(
-                "imas_codex.sn.catalog_import._resolve_catalog_sha",
+                "imas_codex.standard_names.catalog_import._resolve_catalog_sha",
                 return_value=None,
             ),
             patch(
-                "imas_codex.sn.catalog_import._write_catalog_entries", return_value=2
+                "imas_codex.standard_names.catalog_import._write_catalog_entries",
+                return_value=2,
             ),
         ):
             result = import_catalog(catalog_dir=catalog_dir)
@@ -756,10 +766,11 @@ class TestImportIdempotency:
 
     def test_double_import_same_entries(self, catalog_dir: Path) -> None:
         """Importing the same catalog twice should produce same entry count."""
-        from imas_codex.sn.catalog_import import import_catalog
+        from imas_codex.standard_names.catalog_import import import_catalog
 
         with patch(
-            "imas_codex.sn.catalog_import._write_catalog_entries", return_value=2
+            "imas_codex.standard_names.catalog_import._write_catalog_entries",
+            return_value=2,
         ) as mock_write:
             r1 = import_catalog(catalog_dir=catalog_dir)
             r2 = import_catalog(catalog_dir=catalog_dir)
@@ -774,10 +785,11 @@ class TestImportIdempotency:
 
     def test_idempotent_entry_dicts(self, catalog_dir: Path) -> None:
         """Entry dicts from two imports of the same catalog should be identical."""
-        from imas_codex.sn.catalog_import import import_catalog
+        from imas_codex.standard_names.catalog_import import import_catalog
 
         with patch(
-            "imas_codex.sn.catalog_import._write_catalog_entries", return_value=2
+            "imas_codex.standard_names.catalog_import._write_catalog_entries",
+            return_value=2,
         ):
             r1 = import_catalog(catalog_dir=catalog_dir)
             r2 = import_catalog(catalog_dir=catalog_dir)
@@ -812,7 +824,7 @@ class TestCheckMode:
 
     def test_all_in_sync(self, catalog_dir: Path) -> None:
         """When graph matches catalog exactly, in_sync should equal entry count."""
-        from imas_codex.sn.catalog_import import check_catalog
+        from imas_codex.standard_names.catalog_import import check_catalog
 
         # Build graph rows that match catalog exactly
         graph_rows = [
@@ -850,7 +862,7 @@ class TestCheckMode:
         with (
             patch("imas_codex.graph.client.GraphClient") as MockGC,
             patch(
-                "imas_codex.sn.catalog_import._resolve_catalog_sha",
+                "imas_codex.standard_names.catalog_import._resolve_catalog_sha",
                 return_value="a" * 40,
             ),
         ):
@@ -868,7 +880,7 @@ class TestCheckMode:
 
     def test_only_in_catalog(self, catalog_dir: Path) -> None:
         """Entries in catalog but not graph should appear in only_in_catalog."""
-        from imas_codex.sn.catalog_import import check_catalog
+        from imas_codex.standard_names.catalog_import import check_catalog
 
         # Graph has no entries
         mock_gc = MagicMock()
@@ -877,7 +889,7 @@ class TestCheckMode:
         with (
             patch("imas_codex.graph.client.GraphClient") as MockGC,
             patch(
-                "imas_codex.sn.catalog_import._resolve_catalog_sha",
+                "imas_codex.standard_names.catalog_import._resolve_catalog_sha",
                 return_value=None,
             ),
         ):
@@ -892,7 +904,7 @@ class TestCheckMode:
 
     def test_only_in_graph(self, catalog_dir: Path) -> None:
         """Entries in graph but not catalog should appear in only_in_graph."""
-        from imas_codex.sn.catalog_import import check_catalog
+        from imas_codex.standard_names.catalog_import import check_catalog
 
         graph_rows = [
             {
@@ -942,7 +954,7 @@ class TestCheckMode:
         with (
             patch("imas_codex.graph.client.GraphClient") as MockGC,
             patch(
-                "imas_codex.sn.catalog_import._resolve_catalog_sha",
+                "imas_codex.standard_names.catalog_import._resolve_catalog_sha",
                 return_value=None,
             ),
         ):
@@ -956,7 +968,7 @@ class TestCheckMode:
 
     def test_diverged_entries(self, catalog_dir: Path) -> None:
         """Entries with different field values should appear in diverged."""
-        from imas_codex.sn.catalog_import import check_catalog
+        from imas_codex.standard_names.catalog_import import check_catalog
 
         graph_rows = [
             {
@@ -993,7 +1005,7 @@ class TestCheckMode:
         with (
             patch("imas_codex.graph.client.GraphClient") as MockGC,
             patch(
-                "imas_codex.sn.catalog_import._resolve_catalog_sha",
+                "imas_codex.standard_names.catalog_import._resolve_catalog_sha",
                 return_value=None,
             ),
         ):
@@ -1010,7 +1022,7 @@ class TestCheckMode:
 
     def test_check_with_tag_filter(self, tmp_path: Path) -> None:
         """Tag filter should limit which catalog entries are checked."""
-        from imas_codex.sn.catalog_import import check_catalog
+        from imas_codex.standard_names.catalog_import import check_catalog
 
         # Create catalog with tagged entry
         d = tmp_path / "catalog"
@@ -1029,7 +1041,7 @@ class TestCheckMode:
         with (
             patch("imas_codex.graph.client.GraphClient") as MockGC,
             patch(
-                "imas_codex.sn.catalog_import._resolve_catalog_sha",
+                "imas_codex.standard_names.catalog_import._resolve_catalog_sha",
                 return_value=None,
             ),
         ):
@@ -1047,13 +1059,13 @@ class TestCheckMode:
 
     def test_check_empty_catalog(self, tmp_path: Path) -> None:
         """Empty catalog directory should return empty CheckResult."""
-        from imas_codex.sn.catalog_import import check_catalog
+        from imas_codex.standard_names.catalog_import import check_catalog
 
         d = tmp_path / "empty_catalog"
         d.mkdir()
 
         with patch(
-            "imas_codex.sn.catalog_import._resolve_catalog_sha",
+            "imas_codex.standard_names.catalog_import._resolve_catalog_sha",
             return_value=None,
         ):
             cr = check_catalog(catalog_dir=d)
@@ -1068,35 +1080,35 @@ class TestNormalizeField:
     """Tests for _normalize_field() comparison normalization."""
 
     def test_none(self) -> None:
-        from imas_codex.sn.catalog_import import _normalize_field
+        from imas_codex.standard_names.catalog_import import _normalize_field
 
         assert _normalize_field(None) is None
 
     def test_empty_string(self) -> None:
-        from imas_codex.sn.catalog_import import _normalize_field
+        from imas_codex.standard_names.catalog_import import _normalize_field
 
         assert _normalize_field("") is None
         assert _normalize_field("  ") is None
 
     def test_normal_string(self) -> None:
-        from imas_codex.sn.catalog_import import _normalize_field
+        from imas_codex.standard_names.catalog_import import _normalize_field
 
         assert _normalize_field("hello") == "hello"
         assert _normalize_field("  hello  ") == "hello"
 
     def test_empty_list(self) -> None:
-        from imas_codex.sn.catalog_import import _normalize_field
+        from imas_codex.standard_names.catalog_import import _normalize_field
 
         assert _normalize_field([]) is None
 
     def test_list_sorted(self) -> None:
-        from imas_codex.sn.catalog_import import _normalize_field
+        from imas_codex.standard_names.catalog_import import _normalize_field
 
         assert _normalize_field(["b", "a"]) == ("a", "b")
         assert _normalize_field(["a", "b"]) == ("a", "b")
 
     def test_numeric_passthrough(self) -> None:
-        from imas_codex.sn.catalog_import import _normalize_field
+        from imas_codex.standard_names.catalog_import import _normalize_field
 
         assert _normalize_field(42) == 42
         assert _normalize_field(3.14) == 3.14
@@ -1107,9 +1119,9 @@ class TestPublishImportRoundTrip:
 
     def test_published_entry_importable_after_review(self, tmp_path: Path) -> None:
         """A published entry enriched with catalog fields should import cleanly."""
-        from imas_codex.sn.catalog_import import import_catalog
-        from imas_codex.sn.models import SNProvenance, SNPublishEntry
-        from imas_codex.sn.publish import generate_yaml_entry
+        from imas_codex.standard_names.catalog_import import import_catalog
+        from imas_codex.standard_names.models import SNProvenance, SNPublishEntry
+        from imas_codex.standard_names.publish import generate_yaml_entry
 
         # 1. Generate a published YAML entry (what `sn publish` produces)
         published = SNPublishEntry(
@@ -1172,7 +1184,7 @@ class TestPublishImportRoundTrip:
 
     def test_round_trip_preserves_all_fields(self, tmp_path: Path) -> None:
         """Importing the same catalog entry twice should yield identical dicts."""
-        from imas_codex.sn.catalog_import import import_catalog
+        from imas_codex.standard_names.catalog_import import import_catalog
 
         catalog_dir = tmp_path / "rt_catalog"
         catalog_dir.mkdir()
@@ -1192,8 +1204,8 @@ class TestPublishImportRoundTrip:
 
     def test_graph_records_reimport_consistency(self, tmp_path: Path) -> None:
         """graph_records_to_entries output can be re-published and re-imported."""
-        from imas_codex.sn.catalog_import import import_catalog
-        from imas_codex.sn.publish import (
+        from imas_codex.standard_names.catalog_import import import_catalog
+        from imas_codex.standard_names.publish import (
             generate_catalog_files,
             graph_records_to_entries,
         )

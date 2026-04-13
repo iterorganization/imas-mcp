@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 
-from imas_codex.sn.sources.base import ExtractionBatch
+from imas_codex.standard_names.sources.base import ExtractionBatch
 
 logger = logging.getLogger(__name__)
 
@@ -149,7 +149,10 @@ def extract_dd_candidates(
             row["cluster_siblings"] = []
 
     # --- Enrichment layer: classify, deduplicate, select primary cluster ----
-    from imas_codex.sn.enrichment import enrich_paths, group_by_concept_and_unit
+    from imas_codex.standard_names.enrichment import (
+        enrich_paths,
+        group_by_concept_and_unit,
+    )
 
     enriched = enrich_paths(results)
 

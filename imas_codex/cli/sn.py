@@ -16,9 +16,9 @@ def sn() -> None:
     """Standard name generation and management.
 
     \b
-    Mint:
-      imas-codex sn mint --source dd [--ids NAME] [--domain NAME]
-      imas-codex sn mint --source signals --facility NAME
+    Generate:
+      imas-codex sn generate --source dd [--ids NAME] [--domain NAME]
+      imas-codex sn generate --source signals --facility NAME
 
     \b
     Status:
@@ -27,7 +27,7 @@ def sn() -> None:
     pass
 
 
-@sn.command("mint")
+@sn.command("generate")
 @click.option(
     "--source",
     type=click.Choice(["dd", "signals"]),
@@ -84,12 +84,12 @@ def sn() -> None:
     type=click.Choice(["extracted", "drafted"]),
     default=None,
     help=(
-        "Reset standard names before minting. "
+        "Reset standard names before generating. "
         "'extracted' clears matching SN nodes (full re-run); "
         "'drafted' resets existing drafted names (re-compose only)."
     ),
 )
-def sn_mint(
+def sn_generate(
     source: str,
     ids_filter: str | None,
     domain_filter: str | None,
@@ -104,13 +104,13 @@ def sn_mint(
     quiet: bool,
     reset_to: str | None,
 ) -> None:
-    """Mint standard names from a source.
+    """Generate standard names from a source.
 
     \b
     Examples:
-      imas-codex sn mint --source dd --ids equilibrium --dry-run
-      imas-codex sn mint --source dd --domain magnetics --cost-limit 2
-      imas-codex sn mint --source signals --facility tcv
+      imas-codex sn generate --source dd --ids equilibrium --dry-run
+      imas-codex sn generate --source dd --domain magnetics --cost-limit 2
+      imas-codex sn generate --source signals --facility tcv
     """
     # Validate: signals source requires facility
     if source == "signals" and not facility:
@@ -119,7 +119,10 @@ def sn_mint(
     # Handle --reset-to before the main pipeline
     if reset_to is not None and not dry_run:
         source_arg = "dd" if source == "dd" else "signals"
-        from imas_codex.sn.graph_ops import clear_standard_names, reset_standard_names
+        from imas_codex.standard_names.graph_ops import (
+            clear_standard_names,
+            reset_standard_names,
+        )
 
         if reset_to == "extracted":
             n = clear_standard_names(
@@ -181,14 +184,14 @@ def sn_mint(
     log_print(f"  Cost limit: ${cost_limit:.2f}")
     log_print("")
 
-    from imas_codex.sn.pipeline import run_sn_mint_engine
-    from imas_codex.sn.state import SNBuildState
+    from imas_codex.standard_names.pipeline import run_sn_generate_engine
+    from imas_codex.standard_names.state import SNBuildState
 
     # Build progress display
     display = None
     if use_rich and not quiet:
         try:
-            from imas_codex.sn.progress import SNProgressDisplay
+            from imas_codex.standard_names.progress import SNProgressDisplay
 
             display = SNProgressDisplay(
                 source=source,
@@ -219,7 +222,7 @@ def sn_mint(
     async def _run(stop_event, service_monitor):
         if service_monitor:
             state.service_monitor = service_monitor
-        await run_sn_mint_engine(
+        await run_sn_generate_engine(
             state,
             stop_event=stop_event,
             on_worker_status=display.on_worker_status if display else None,
@@ -238,7 +241,7 @@ def sn_mint(
         check_model=not dry_run,
         model_section="language",
         suppress_loggers=[
-            "imas_codex.sn",
+            "imas_codex.standard_names",
         ],
         verbose=verbose,
     )
@@ -382,7 +385,7 @@ def sn_benchmark(
     if reviewer_model is None:
         reviewer_model = get_sn_benchmark_reviewer_model()
 
-    from imas_codex.sn.benchmark import (
+    from imas_codex.standard_names.benchmark import (
         BenchmarkConfig,
         render_comparison_table,
         run_benchmark,
@@ -557,7 +560,7 @@ def sn_publish(
 
     # Step 1: Load validated names from graph
     try:
-        from imas_codex.sn.graph_ops import get_validated_standard_names
+        from imas_codex.standard_names.graph_ops import get_validated_standard_names
 
         records = get_validated_standard_names(
             ids_filter=ids_filter,
@@ -574,7 +577,7 @@ def sn_publish(
     console.print(f"  Loaded [bold]{len(records)}[/bold] validated names from graph")
 
     # Step 2: Convert to publish entries
-    from imas_codex.sn.publish import (
+    from imas_codex.standard_names.publish import (
         check_catalog_duplicates,
         create_catalog_pr,
         generate_catalog_files,
@@ -635,7 +638,7 @@ def sn_publish(
         console.print(f"\n[green]Wrote {len(written)} YAML files to {out}[/green]")
 
         # Step 6b: Update review_status in graph
-        from imas_codex.sn.graph_ops import update_review_status
+        from imas_codex.standard_names.graph_ops import update_review_status
 
         published_names = [e.name for e in entries]
         updated = update_review_status(published_names, status="published")
@@ -724,7 +727,7 @@ def sn_import(
         console.print("")
 
         try:
-            from imas_codex.sn.catalog_import import check_catalog
+            from imas_codex.standard_names.catalog_import import check_catalog
 
             cr = check_catalog(
                 catalog_dir=Path(catalog_dir),
@@ -787,7 +790,7 @@ def sn_import(
     console.print("")
 
     try:
-        from imas_codex.sn.catalog_import import import_catalog
+        from imas_codex.standard_names.catalog_import import import_catalog
 
         result = import_catalog(
             catalog_dir=Path(catalog_dir),
@@ -865,7 +868,7 @@ def sn_reset(
       imas-codex sn reset --status drafted --to extracted --ids equilibrium
       imas-codex sn reset --status drafted --source dd
     """
-    from imas_codex.sn.graph_ops import reset_standard_names
+    from imas_codex.standard_names.graph_ops import reset_standard_names
 
     try:
         count = reset_standard_names(
@@ -933,7 +936,7 @@ def sn_clear(
 
     status_filter = None if clear_all else ([status] if status else None)
 
-    from imas_codex.sn.graph_ops import clear_standard_names
+    from imas_codex.standard_names.graph_ops import clear_standard_names
 
     try:
         count = clear_standard_names(
@@ -1002,7 +1005,7 @@ def sn_seed(
     console.print("")
 
     try:
-        from imas_codex.sn.seed import seed_isn_examples, seed_west_catalog
+        from imas_codex.standard_names.seed import seed_isn_examples, seed_west_catalog
     except ImportError as e:
         console.print(
             f"[red]Missing dependency:[/red] {e}\n"

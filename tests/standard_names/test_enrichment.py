@@ -8,13 +8,13 @@ from __future__ import annotations
 
 import pytest
 
-from imas_codex.sn.enrichment import (
+from imas_codex.standard_names.enrichment import (
     build_batch_context,
     enrich_paths,
     group_by_concept_and_unit,
     select_primary_cluster,
 )
-from imas_codex.sn.sources.base import ExtractionBatch
+from imas_codex.standard_names.sources.base import ExtractionBatch
 
 # ============================================================================
 # Helpers

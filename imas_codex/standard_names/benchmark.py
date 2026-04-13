@@ -30,7 +30,7 @@ from imas_standard_names.grammar import (
     parse_standard_name,
 )
 
-from imas_codex.sn.models import SNComposeBatch
+from imas_codex.standard_names.models import SNComposeBatch
 
 logger = logging.getLogger(__name__)
 
@@ -276,8 +276,8 @@ async def score_with_reviewer(
     """
     from imas_codex.discovery.base.llm import acall_llm_structured
     from imas_codex.llm.prompt_loader import render_prompt
-    from imas_codex.sn.context import build_compose_context
-    from imas_codex.sn.models import SNQualityReviewBatch
+    from imas_codex.standard_names.context import build_compose_context
+    from imas_codex.standard_names.models import SNQualityReviewBatch
 
     # Get compose context (includes grammar enums + shared include variables)
     compose_ctx = build_compose_context()
@@ -394,7 +394,7 @@ async def run_benchmark(
     Returns:
         BenchmarkReport with per-model results.
     """
-    from imas_codex.sn.benchmark_reference import REFERENCE_NAMES
+    from imas_codex.standard_names.benchmark_reference import REFERENCE_NAMES
 
     # --- 1. Extract candidates (same for all models) ---
     if extraction_batches is None:
@@ -420,7 +420,7 @@ async def run_benchmark(
     # --- 2. Run each model ---
     results: list[ModelResult] = []
     from imas_codex.llm.prompt_loader import render_prompt
-    from imas_codex.sn.context import build_compose_context
+    from imas_codex.standard_names.context import build_compose_context
 
     context = build_compose_context()
     system_prompt = render_prompt("sn/compose_system", context)
@@ -499,7 +499,7 @@ def _extract_candidates(config: BenchmarkConfig) -> list[dict]:
 
     Returns list of batch dicts with keys: group_key, items, existing_names, context.
     """
-    from imas_codex.sn.sources.dd import extract_dd_candidates
+    from imas_codex.standard_names.sources.dd import extract_dd_candidates
 
     batches = extract_dd_candidates(
         ids_filter=config.ids_filter,

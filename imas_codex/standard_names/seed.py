@@ -302,7 +302,7 @@ def seed_isn_examples(dry_run: bool = False) -> SeedResult:
     if not entries:
         return result
 
-    from imas_codex.sn.graph_ops import write_standard_names
+    from imas_codex.standard_names.graph_ops import write_standard_names
 
     result.written = write_standard_names(entries)
     logger.info("ISN seed: wrote %d entries", result.written)
@@ -437,7 +437,7 @@ def seed_west_catalog(
     if not entries:
         return result
 
-    from imas_codex.sn.graph_ops import write_standard_names
+    from imas_codex.standard_names.graph_ops import write_standard_names
 
     result.written = write_standard_names(entries)
     logger.info("WEST seed: wrote %d entries", result.written)
