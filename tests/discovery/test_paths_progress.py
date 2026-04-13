@@ -740,5 +740,8 @@ class TestWorkerStatusUpdate:
         section = display._build_pipeline_section()
         text = section.plain
 
-        # Worker counts should appear as "×N" in the output
-        assert "x1" in text  # scan, score, or enrich (all x1)
+        # Worker counts should appear as "×N" only for multi-worker groups
+        # Single-worker groups (scan, score, enrich, expand) should NOT show x1
+        assert "x1" not in text
+        # No multi-worker groups in this test, so no xN suffix at all
+        assert "x2" not in text

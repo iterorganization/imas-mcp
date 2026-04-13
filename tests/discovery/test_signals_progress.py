@@ -617,8 +617,8 @@ class TestDataProgressDisplay:
 
         section = display._build_pipeline_section()
         text = section.plain
-        assert "x1" in text  # seed workers
-        assert "x2" in text  # enrich workers
+        assert "x1" not in text  # single-worker groups don't show count
+        assert "x2" in text  # enrich workers (multi-worker group)
 
     def test_resources_section_has_time(self):
         """Resources section shows TIME."""

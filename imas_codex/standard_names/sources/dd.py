@@ -53,12 +53,11 @@ LIMIT $limit
 # Cluster siblings query — paths sharing the same cluster
 _SIBLINGS_QUERY = """
 MATCH (c:IMASSemanticCluster)<-[:IN_CLUSTER]-(sibling:IMASNode)
-WHERE c.id IN $cluster_ids AND sibling.id <> $exclude_path
-WITH c.id AS cluster_id, sibling.id AS sibling_path,
-     sibling.description AS sibling_desc
+WHERE c.id IN $cluster_ids AND NOT (sibling.id IN $exclude_paths)
+WITH c.id AS cluster_id, sibling
 OPTIONAL MATCH (sibling)-[:HAS_UNIT]->(su:Unit)
-RETURN cluster_id, sibling_path,
-       su.id AS sibling_unit, sibling_desc
+RETURN cluster_id, sibling.id AS sibling_path,
+       su.id AS sibling_unit, sibling.description AS sibling_desc
 ORDER BY cluster_id, sibling_path
 """
 
@@ -138,19 +137,18 @@ def extract_dd_candidates(
                 gc.query(
                     _SIBLINGS_QUERY,
                     cluster_ids=sorted(cluster_ids),
-                    exclude_path="",  # we filter client-side
+                    exclude_paths=sorted(path_set),
                 )
             )
             for sr in sib_results:
                 cid = sr["cluster_id"]
-                if sr["sibling_path"] not in path_set:
-                    siblings_by_cluster.setdefault(cid, []).append(
-                        {
-                            "path": sr["sibling_path"],
-                            "unit": sr.get("sibling_unit"),
-                            "description": sr.get("sibling_desc", ""),
-                        }
-                    )
+                siblings_by_cluster.setdefault(cid, []).append(
+                    {
+                        "path": sr["sibling_path"],
+                        "unit": sr.get("sibling_unit"),
+                        "description": sr.get("sibling_desc", ""),
+                    }
+                )
 
     # Attach siblings to each result
     for row in results:

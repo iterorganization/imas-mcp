@@ -1124,19 +1124,18 @@ def build_pipeline_row(config: PipelineRowConfig, bar_width: int = 40) -> Text:
     # ── Line 1: label + progress bar + count + pct ──
     label = Text()
     label.append(f"  {config.name}", style=config.style)
-    if config.worker_count > 0:
+    if config.worker_count > 1:
         label.append(f"x{config.worker_count}", style="dim")
     if config.worker_annotation:
         label.append(f" {config.worker_annotation}", style="dim")
-    # Pad to LABEL_WIDTH for aligned bar start
+    # Pad to LABEL_WIDTH for aligned bar start (ensure at least 1 space)
     label_len = len(label.plain)
-    label_pad = LABEL_WIDTH - label_len
-    if label_pad > 0:
-        label.append(" " * label_pad)
+    label_pad = max(1, LABEL_WIDTH - label_len)
+    label.append(" " * label_pad)
     row.append_text(label)
 
     # Shorten bar when label overflows LABEL_WIDTH to keep line 1 on one line
-    effective_bar = bar_width - max(0, label_len - LABEL_WIDTH)
+    effective_bar = bar_width - max(0, label_len + 1 - LABEL_WIDTH)
 
     total = max(config.total, 1)
     ratio = min(config.completed / total, 1.0)
