@@ -48,6 +48,9 @@ async def extract_worker(state: SNBuildState, **_kwargs) -> None:
     wlog = WorkerLogAdapter(logger, worker_name="sn_extract_worker")
     wlog.info("Starting extraction (source=%s)", state.source)
 
+    def _on_status(text: str) -> None:
+        state.extract_stats.status_text = text
+
     def _run() -> list:
         from imas_codex.standard_names.graph_ops import (
             get_existing_standard_names,
@@ -55,6 +58,7 @@ async def extract_worker(state: SNBuildState, **_kwargs) -> None:
         )
         from imas_codex.standard_names.sources.dd import extract_dd_candidates
 
+        _on_status("loading existing names…")
         existing = get_existing_standard_names()
 
         # Source-level skip for resumability
@@ -70,6 +74,7 @@ async def extract_worker(state: SNBuildState, **_kwargs) -> None:
                 domain_filter=state.domain_filter,
                 limit=state.limit or 500,
                 existing_names=existing,
+                on_status=_on_status,
             )
         else:
             wlog.error("Unknown source: %s", state.source)
@@ -276,6 +281,15 @@ async def compose_worker(state: SNBuildState, **_kwargs) -> None:
                 len(result.skipped),
                 cost,
             )
+            # Stream batch completion to progress display
+            state.compose_stats.stream_queue.add(
+                [
+                    {
+                        "primary_text": batch.group_key,
+                        "description": f"{len(result.candidates)} names  ${cost:.3f}",
+                    }
+                ]
+            )
             return candidates
 
     tasks = [_compose_batch(batch) for batch in state.extracted]
@@ -465,6 +479,16 @@ async def review_worker(state: SNBuildState, **_kwargs) -> None:
 
         state.review_stats.processed = min(batch_start + len(batch), len(candidates))
         state.review_stats.record_batch(len(batch))
+        # Stream review batch progress
+        batch_num = batch_start // _REVIEW_BATCH_SIZE + 1
+        state.review_stats.stream_queue.add(
+            [
+                {
+                    "primary_text": f"batch {batch_num}",
+                    "description": f"{len(accepted)} accepted  ${total_cost:.3f}",
+                }
+            ]
+        )
 
     # Store reviewer model and timestamp on all accepted entries
     reviewed_at = datetime.now(UTC).isoformat()
@@ -745,6 +769,10 @@ async def validate_worker(state: SNBuildState, **_kwargs) -> None:
 
     wlog = WorkerLogAdapter(logger, worker_name="sn_validate_worker")
 
+    # Initialize finalize progress (3 steps: validate, consolidate, persist)
+    state.finalize_stats.total = 3
+    state.finalize_stats.status_text = "validating…"
+
     if state.dry_run:
         wlog.info("Dry run — skipping validation")
         count = sum(len(b.items) for b in state.extracted) if state.extracted else 0
@@ -959,6 +987,7 @@ async def validate_worker(state: SNBuildState, **_kwargs) -> None:
 
     state.validate_stats.freeze_rate()
     state.validate_phase.mark_done()
+    state.finalize_stats.processed = 1
 
 
 def _convert_fields_to_grammar(fields: dict) -> dict:
@@ -1009,6 +1038,8 @@ async def consolidate_worker(state: SNBuildState, **_kwargs) -> None:
     from imas_codex.cli.logging import WorkerLogAdapter
 
     wlog = WorkerLogAdapter(logger, worker_name="sn_consolidate_worker")
+
+    state.finalize_stats.status_text = "consolidating…"
 
     if state.dry_run:
         wlog.info("Dry run — skipping consolidation")
@@ -1073,6 +1104,7 @@ async def consolidate_worker(state: SNBuildState, **_kwargs) -> None:
     state.consolidate_stats.processed = len(state.validated)
     state.consolidate_stats.freeze_rate()
     state.consolidate_phase.mark_done()
+    state.finalize_stats.processed = 2
 
 
 # =============================================================================
@@ -1089,6 +1121,8 @@ async def persist_worker(state: SNBuildState, **_kwargs) -> None:
     from imas_codex.cli.logging import WorkerLogAdapter
 
     wlog = WorkerLogAdapter(logger, worker_name="sn_persist_worker")
+
+    state.finalize_stats.status_text = "persisting…"
 
     if state.dry_run:
         wlog.info(
@@ -1189,3 +1223,6 @@ async def persist_worker(state: SNBuildState, **_kwargs) -> None:
     wlog.info("Persist complete: %d written", written)
     state.persist_stats.freeze_rate()
     state.persist_phase.mark_done()
+    state.finalize_stats.processed = 3
+    state.finalize_stats.status_text = "done"
+    state.finalize_stats.freeze_rate()

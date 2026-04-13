@@ -60,6 +60,7 @@ class SNBuildState(DiscoveryStateBase):
     validate_stats: WorkerStats = field(default_factory=WorkerStats)
     consolidate_stats: WorkerStats = field(default_factory=WorkerStats)
     persist_stats: WorkerStats = field(default_factory=WorkerStats)
+    finalize_stats: WorkerStats = field(default_factory=WorkerStats)
 
     # Pipeline phases
     extract_phase: PipelinePhase = field(init=False)

@@ -80,18 +80,21 @@ async def run_sn_generate_engine(
             "validate_phase",
             validate_worker,
             depends_on=validate_deps,
+            group="finalize",
         ),
         WorkerSpec(
             "consolidate",
             "consolidate_phase",
             consolidate_worker,
             depends_on=["validate_phase"],
+            group="finalize",
         ),
         WorkerSpec(
             "persist",
             "persist_phase",
             persist_worker,
             depends_on=["consolidate_phase"],
+            group="finalize",
         ),
     ]
 

@@ -9,6 +9,7 @@ primary cluster selection, and global (cluster × unit) batching.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 
 from imas_codex.standard_names.sources.base import ExtractionBatch
 
@@ -68,6 +69,7 @@ def extract_dd_candidates(
     domain_filter: str | None = None,
     limit: int = 500,
     existing_names: set[str] | None = None,
+    on_status: Callable[[str], None] | None = None,
 ) -> list[ExtractionBatch]:
     """Extract candidate quantities from IMAS DD paths with enriched context.
 
@@ -81,14 +83,21 @@ def extract_dd_candidates(
         domain_filter: Restrict to physics domain
         limit: Max paths to extract
         existing_names: Known standard names for dedup awareness
+        on_status: Optional callback ``(text: str) -> None`` for progress updates
 
     Returns:
         List of ExtractionBatch objects grouped by (primary_cluster, unit)
     """
     from imas_codex.graph.client import GraphClient
 
+    def _status(text: str) -> None:
+        if on_status:
+            on_status(text)
+
     if existing_names is None:
         existing_names = set()
+
+    _status("querying graph…")
 
     with GraphClient() as gc:
         params: dict = {"limit": limit}
@@ -113,6 +122,8 @@ def extract_dd_candidates(
             logger.info("No DD paths found matching filters")
             return []
 
+        _status(f"found {len(results)} paths, resolving units…")
+
         # Resolve authoritative unit: prefer HAS_UNIT relationship, fall back to node property
         for row in results:
             row["unit"] = row.get("unit_from_rel") or row.get("unit") or None
@@ -121,6 +132,7 @@ def extract_dd_candidates(
         cluster_ids = {r["cluster_id"] for r in results if r.get("cluster_id")}
         siblings_by_cluster: dict[str, list[dict]] = {}
         if cluster_ids:
+            _status(f"fetching siblings for {len(cluster_ids)} clusters…")
             path_set = {r["path"] for r in results}
             sib_results = list(
                 gc.query(
@@ -149,6 +161,7 @@ def extract_dd_candidates(
             row["cluster_siblings"] = []
 
     # --- Enrichment layer: classify, deduplicate, select primary cluster ----
+    _status(f"classifying {len(results)} paths…")
     from imas_codex.standard_names.enrichment import (
         enrich_paths,
         group_by_concept_and_unit,
@@ -162,6 +175,7 @@ def extract_dd_candidates(
 
     # Group GLOBALLY by (primary_cluster × unit) — same concept across IDSs
     # gets batched together for coherent naming.
+    _status(f"grouping {len(enriched)} quantities into batches…")
     batches = group_by_concept_and_unit(
         enriched,
         max_batch_size=25,

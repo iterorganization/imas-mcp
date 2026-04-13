@@ -31,7 +31,8 @@ def sn() -> None:
 @click.option(
     "--source",
     type=click.Choice(["dd", "signals"]),
-    required=True,
+    default="dd",
+    show_default=True,
     help="Source to extract candidates from",
 )
 @click.option(
@@ -55,6 +56,7 @@ def sn() -> None:
     help="Facility ID (required for signals source)",
 )
 @click.option(
+    "-c",
     "--cost-limit",
     type=float,
     default=5.0,
@@ -198,6 +200,7 @@ def sn_generate(
                 console=console_obj,
                 cost_limit=cost_limit,
                 mode_label="DRY RUN" if dry_run else None,
+                skip_review=skip_review,
             )
         except Exception:
             logger.debug("Could not create progress display", exc_info=True)
