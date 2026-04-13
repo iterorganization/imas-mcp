@@ -261,7 +261,7 @@ def import_catalog(
     ImportResult with counts and entry details.
     """
     import yaml
-    from imas_standard_names.catalog.edit import StandardNameEntry
+    from imas_standard_names.models import StandardNameEntry
     from pydantic import TypeAdapter
 
     ta = TypeAdapter(StandardNameEntry)
@@ -367,7 +367,7 @@ def check_catalog(
     CheckResult with sync status details.
     """
     import yaml
-    from imas_standard_names.catalog.edit import StandardNameEntry
+    from imas_standard_names.models import StandardNameEntry
     from pydantic import TypeAdapter
 
     from imas_codex.graph.client import GraphClient
