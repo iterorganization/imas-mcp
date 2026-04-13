@@ -130,6 +130,15 @@ Use these scored examples to anchor your judgments:
 {{ batch_context }}
 {% endif %}
 
+{% if nearby_existing_names %}
+## Nearby Existing Standard Names
+
+These names already exist in the catalog. Flag candidates that duplicate them:
+{% for name in nearby_existing_names %}
+- **{{ name.id }}**: {{ name.description | default('', true) }} ({{ name.kind | default('scalar', true) }}, {{ name.unit | default('dimensionless', true) }})
+{% endfor %}
+{% endif %}
+
 ## Candidates to Review
 
 {% for item in items %}

@@ -9,45 +9,11 @@ schema_needs: []
 
 You are a physics nomenclature expert generating IMAS standard names for fusion plasma quantities.
 
-## Canonical Composition Pattern
-
-{{ canonical_pattern }}
-
-### Segment Order
-
-{{ segment_order }}
+{% include "sn/_grammar_reference.md" %}
 
 ### Template Application
 
 {{ template_rules }}
-
-### Exclusive Pairs
-
-These segment pairs are mutually exclusive — never use both in the same name:
-{% for pair in exclusive_pairs %}
-- **{{ pair[0] }}** and **{{ pair[1] }}**
-{% endfor %}
-
-## Vocabulary Reference
-
-{% for section in vocabulary_sections %}
-### {{ section.segment }}{% if section.is_open %} (open vocabulary){% endif %}
-
-{{ section.description }}
-{% if section.template %}
-Template: `{{ section.template }}`
-{% endif %}
-{% if section.exclusive_with %}
-Exclusive with: {{ section.exclusive_with | join(', ') }}
-{% endif %}
-{% if section.tokens %}
-Valid tokens: {{ section.tokens | join(', ') }}
-{% endif %}
-{% if section.is_open %}
-Use any physics quantity in snake_case (e.g., temperature, density, magnetic_field, pressure).
-{% endif %}
-
-{% endfor %}
 
 ## Segment Descriptions
 
@@ -57,7 +23,6 @@ Use any physics quantity in snake_case (e.g., temperature, density, magnetic_fie
 {{ seg_desc }}
 
 {% endfor %}
-
 {% if field_guidance.naming_guidance %}
 ## Naming Guidance
 
@@ -142,6 +107,36 @@ Standard names should NOT be created for:
 {{ applicability.rationale }}
 {% endif %}
 
+{% if quick_start %}
+## Quick Start Guide
+
+{{ quick_start }}
+{% endif %}
+
+{% if common_patterns %}
+## Common Naming Patterns
+
+{% for pattern in common_patterns %}
+- {{ pattern }}
+{% endfor %}
+{% endif %}
+
+{% if critical_distinctions %}
+## Critical Distinctions
+
+{% for distinction in critical_distinctions %}
+- {{ distinction }}
+{% endfor %}
+{% endif %}
+
+{% if anti_patterns %}
+## Anti-Patterns to Avoid
+
+{% for ap in anti_patterns %}
+- {{ ap }}
+{% endfor %}
+{% endif %}
+
 ## Composition Rules
 
 1. Every name MUST have either a `physical_base` or a `geometric_base` (never both)
@@ -212,12 +207,19 @@ Example documentation:
 **Secondary tags** (include 0-3): time-dependent, steady-state, spatial-profile, flux-surface-average, volume-average, line-integrated, local-measurement, global-quantity, measured, reconstructed, simulated, derived, validated, equilibrium-reconstruction, transport-modeling, mhd-stability-analysis, heating-deposition, calibrated, real-time, post-shot-analysis, benchmark-quantity, performance-metric
 {% endif %}
 
+{% if kind_definitions %}
+### Kind Classification Rules
+
+{% for kind_name, kind_def in kind_definitions.items() %}
+- **{{ kind_name }}**: {{ kind_def }}
+{% endfor %}
+{% else %}
 ### Kind Classification Rules
 
 - **scalar**: single value per spatial point or time — temperature, density, current, pressure, energy, power, frequency, flux, beta, safety factor
 - **vector**: has R/Z or multi-component structure — magnetic field, velocity field, gradient, current density vector, force density
 - **metadata**: non-measurable concepts, technique names, classifications, indices, status flags — confinement mode label, scenario identifier
-
+{% endif %}
 ### Links Guidance
 
 Reference 4-8 related standard names from the `existing_names` list. Only include names that actually exist — do NOT invent new names for links. Prefer names that are:

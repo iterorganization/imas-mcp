@@ -48,6 +48,15 @@ quantity — do not create a duplicate with different wording.
 {% endfor %}
 {% endif %}
 
+{% if nearby_existing_names %}
+## Nearby Existing Standard Names
+
+These names already exist in the catalog. Reuse them if they match your source, or avoid creating duplicates:
+{% for name in nearby_existing_names %}
+- **{{ name.id }}**: {{ name.description | default('', true) }} ({{ name.kind | default('scalar', true) }}, {{ name.unit | default('dimensionless', true) }})
+{% endfor %}
+{% endif %}
+
 ## DD Paths to Name
 
 {% for item in items %}

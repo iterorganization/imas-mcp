@@ -1174,3 +1174,22 @@ def get_prompt_content_hash(name: str, prompts_dir: Path | None = None) -> str:
 
     content = prompts[name].content
     return hashlib.sha256(content.encode()).hexdigest()[:16]
+
+
+# =============================================================================
+# Prompt Config Loader
+# =============================================================================
+
+
+def load_prompt_config(name: str) -> dict:
+    """Load YAML config from imas_codex/llm/config/{name}.yaml.
+
+    Used for structured prompt configuration (e.g., review scoring criteria).
+    """
+    config_dir = Path(__file__).parent / "config"
+    config_path = config_dir / f"{name}.yaml"
+    if not config_path.exists():
+        raise FileNotFoundError(f"Prompt config not found: {config_path}")
+
+    with open(config_path) as f:
+        return yaml.safe_load(f)

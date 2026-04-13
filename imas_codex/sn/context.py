@@ -1,8 +1,8 @@
 """Rich grammar context for SN compose prompts.
 
-Imports segment rules, vocabulary, field guidance, and curated examples
-from imas_standard_names backing functions.  Assembles them into template
-variables for Jinja2 rendering.
+Imports grammar context from imas_standard_names public API
+(``get_grammar_context()``) and augments with codex-specific data
+(curated examples, tokamak parameter ranges, enum lists).
 
 Caches assembled context in-process (module-level dict).
 """
@@ -25,8 +25,19 @@ logger = logging.getLogger(__name__)
 _CONTEXT_CACHE: dict[str, Any] | None = None
 
 
+def _get_isn_context() -> dict[str, Any]:
+    """Return the ISN grammar context (cached by ISN internally)."""
+    from imas_standard_names.grammar.context import get_grammar_context
+
+    return get_grammar_context()
+
+
 def build_compose_context() -> dict[str, Any]:
     """Build rich context dict for sn/compose_system.md template.
+
+    Pulls all grammar, vocabulary, field-guidance, tag, and applicability
+    data from ISN's ``get_grammar_context()`` public API, then augments
+    with codex-specific data (curated examples, tokamak ranges, enum lists).
 
     Returns keys needed by both system and user prompts:
     - grammar_rules: canonical pattern, order constraint, template rules
@@ -36,40 +47,56 @@ def build_compose_context() -> dict[str, Any]:
     - examples: curated standard name examples (YAML)
     - tokamak_ranges: machine parameter data for grounding
     - exclusive_pairs: mutually exclusive segment pairs
+    - naming_guidance, kind_definitions, anti_patterns, quick_start,
+      common_patterns, critical_distinctions, vocabulary_usage_stats,
+      base_requirements, type_specific_requirements, documentation_guidance
     - enum lists: subjects, positions, etc. (for user prompt backward compat)
     """
     global _CONTEXT_CACHE
     if _CONTEXT_CACHE is not None:
         return _CONTEXT_CACHE
 
+    # Single call to ISN's public API provides all grammar context
+    isn = _get_isn_context()
+
     ctx: dict[str, Any] = {}
 
-    # Grammar rules
-    ctx["canonical_pattern"] = _get_canonical_pattern()
-    ctx["segment_order"] = _get_segment_order()
-    ctx["template_rules"] = _get_template_rules()
-    ctx["exclusive_pairs"] = _get_exclusive_pairs()
+    # Grammar rules (from ISN)
+    ctx["canonical_pattern"] = isn["canonical_pattern"]
+    ctx["segment_order"] = isn["segment_order"]
+    ctx["template_rules"] = isn["template_rules"]
+    ctx["exclusive_pairs"] = isn["exclusive_pairs"]
 
-    # Vocabulary with descriptions
-    ctx["vocabulary_sections"] = _build_vocabulary_sections()
+    # Vocabulary with descriptions (from ISN)
+    ctx["vocabulary_sections"] = isn["vocabulary_sections"]
 
-    # Segment descriptions and usage guidance
-    ctx["segment_descriptions"] = _get_all_segment_descriptions()
+    # Segment descriptions and usage guidance (from ISN)
+    ctx["segment_descriptions"] = isn["segment_descriptions"]
 
-    # Field guidance for documentation generation
-    ctx["field_guidance"] = _get_field_guidance()
+    # Field guidance for documentation generation (from ISN)
+    ctx["field_guidance"] = isn["field_guidance"]
 
-    # Curated examples
+    # Tag descriptions — primary + secondary (from ISN)
+    ctx["tag_descriptions"] = isn["tag_descriptions"]
+
+    # Applicability rules (from ISN)
+    ctx["applicability"] = isn["applicability"]
+
+    # New ISN-provided keys
+    ctx["naming_guidance"] = isn["naming_guidance"]
+    ctx["kind_definitions"] = isn["kind_definitions"]
+    ctx["anti_patterns"] = isn["anti_patterns"]
+    ctx["quick_start"] = isn["quick_start"]
+    ctx["common_patterns"] = isn["common_patterns"]
+    ctx["critical_distinctions"] = isn["critical_distinctions"]
+    ctx["vocabulary_usage_stats"] = isn["vocabulary_usage_stats"]
+    ctx["base_requirements"] = isn["base_requirements"]
+    ctx["type_specific_requirements"] = isn["type_specific_requirements"]
+    ctx["documentation_guidance"] = isn["documentation_guidance"]
+
+    # Codex-specific data (not from ISN)
     ctx["examples"] = _load_curated_examples()
-
-    # Tokamak parameter ranges for documentation grounding
     ctx["tokamak_ranges"] = _load_tokamak_ranges()
-
-    # Tag descriptions (primary + secondary)
-    ctx["tag_descriptions"] = _get_tag_descriptions()
-
-    # Applicability rules (what should/shouldn't get standard names)
-    ctx["applicability"] = _get_applicability_rules()
 
     # Bare enum lists (backward compat for user prompt)
     ctx.update(_build_enum_lists())
@@ -82,145 +109,6 @@ def clear_context_cache() -> None:
     """Clear cached context (for testing)."""
     global _CONTEXT_CACHE
     _CONTEXT_CACHE = None
-
-
-# ---------------------------------------------------------------------------
-# Grammar rules
-# ---------------------------------------------------------------------------
-
-
-@lru_cache(maxsize=1)
-def _get_canonical_pattern() -> str:
-    from imas_standard_names.tools.grammar import _build_canonical_pattern
-
-    return _build_canonical_pattern()
-
-
-@lru_cache(maxsize=1)
-def _get_segment_order() -> str:
-    from imas_standard_names.tools.grammar import _build_segment_order_constraint
-
-    return _build_segment_order_constraint()
-
-
-@lru_cache(maxsize=1)
-def _get_template_rules() -> str:
-    from imas_standard_names.tools.grammar import _build_template_application_rule
-
-    return _build_template_application_rule()
-
-
-@lru_cache(maxsize=1)
-def _get_exclusive_pairs() -> list[tuple[str, str]]:
-    from imas_standard_names.grammar.constants import EXCLUSIVE_SEGMENT_PAIRS
-
-    return list(EXCLUSIVE_SEGMENT_PAIRS)
-
-
-# ---------------------------------------------------------------------------
-# Vocabulary
-# ---------------------------------------------------------------------------
-
-
-def _build_vocabulary_sections() -> list[dict[str, Any]]:
-    """Build per-segment vocabulary sections with tokens and descriptions."""
-    from imas_standard_names.grammar.constants import SEGMENT_RULES
-    from imas_standard_names.tools.grammar import _get_vocabulary_description
-
-    sections = []
-    for rule in SEGMENT_RULES:
-        seg_id = rule.identifier
-        desc = _get_vocabulary_description(seg_id)
-        tokens = list(rule.tokens) if rule.tokens else []
-        template = rule.template
-
-        sections.append(
-            {
-                "segment": seg_id,
-                "description": desc,
-                "tokens": tokens,
-                "template": template,
-                "is_open": seg_id == "physical_base",
-                "exclusive_with": list(rule.exclusive_with)
-                if rule.exclusive_with
-                else [],
-            }
-        )
-    return sections
-
-
-# ---------------------------------------------------------------------------
-# Segment descriptions
-# ---------------------------------------------------------------------------
-
-
-@lru_cache(maxsize=1)
-def _get_all_segment_descriptions() -> dict[str, str]:
-    from imas_standard_names.tools.grammar import _get_segment_descriptions
-
-    return _get_segment_descriptions()
-
-
-# ---------------------------------------------------------------------------
-# Field guidance
-# ---------------------------------------------------------------------------
-
-
-@lru_cache(maxsize=1)
-def _get_field_guidance() -> dict[str, Any]:
-    from imas_standard_names.grammar.field_schemas import (
-        DOCUMENTATION_GUIDANCE,
-        FIELD_GUIDANCE,
-        NAMING_GUIDANCE,
-        TYPE_SPECIFIC_REQUIREMENTS,
-    )
-
-    return {
-        "fields": dict(FIELD_GUIDANCE),
-        "type_requirements": dict(TYPE_SPECIFIC_REQUIREMENTS),
-        "naming_guidance": dict(NAMING_GUIDANCE),
-        "documentation_guidance": dict(DOCUMENTATION_GUIDANCE),
-    }
-
-
-# ---------------------------------------------------------------------------
-# Tag descriptions
-# ---------------------------------------------------------------------------
-
-
-@lru_cache(maxsize=1)
-def _get_tag_descriptions() -> dict[str, dict[str, str]]:
-    """Load primary and secondary tag descriptions from ISN."""
-    from imas_standard_names.grammar.tag_types import (
-        PRIMARY_TAG_DESCRIPTIONS,
-        SECONDARY_TAG_DESCRIPTIONS,
-    )
-
-    return {
-        "primary": dict(PRIMARY_TAG_DESCRIPTIONS),
-        "secondary": dict(SECONDARY_TAG_DESCRIPTIONS),
-    }
-
-
-# ---------------------------------------------------------------------------
-# Applicability rules
-# ---------------------------------------------------------------------------
-
-
-@lru_cache(maxsize=1)
-def _get_applicability_rules() -> dict[str, Any]:
-    """Load applicability rules from ISN grammar constants."""
-    from imas_standard_names.grammar.constants import (
-        APPLICABILITY_EXCLUDE,
-        APPLICABILITY_INCLUDE,
-        APPLICABILITY_RATIONALE,
-    )
-
-    return {
-        "include": list(APPLICABILITY_INCLUDE),
-        "exclude": list(APPLICABILITY_EXCLUDE),
-        "rationale": str(APPLICABILITY_RATIONALE),
-    }
 
 
 # ---------------------------------------------------------------------------

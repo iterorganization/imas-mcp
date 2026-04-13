@@ -21,7 +21,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from imas_codex.sn.sources.base import ExtractionBatch
@@ -112,6 +112,21 @@ async def extract_worker(state: SNBuildState, **_kwargs) -> None:
 # =============================================================================
 
 
+def _search_nearby_names(query: str, k: int = 5) -> list[dict]:
+    """Search for existing standard names near *query* for collision avoidance.
+
+    Wraps :func:`imas_codex.sn.search.search_similar_names` with graceful
+    fallback — never raises, returns ``[]`` if graph or embeddings are
+    unavailable.
+    """
+    try:
+        from imas_codex.sn.search import search_similar_names
+
+        return search_similar_names(query, k=k)
+    except Exception:
+        return []
+
+
 async def compose_worker(state: SNBuildState, **_kwargs) -> None:
     """LLM-generate standard names from extracted batches.
 
@@ -167,11 +182,15 @@ async def compose_worker(state: SNBuildState, **_kwargs) -> None:
             if state.should_stop():
                 return []
 
+            # Search for nearby existing names to help avoid duplicates
+            nearby = _search_nearby_names(batch.context or batch.group_key)
+
             user_context = {
                 "items": batch.items,
                 "ids_name": batch.group_key,
                 "existing_names": sorted(batch.existing_names)[:200],
                 "cluster_context": batch.context,
+                "nearby_existing_names": nearby,
             }
             user_prompt = render_prompt("sn/compose_dd", {**context, **user_context})
 
@@ -301,6 +320,18 @@ def _get_grammar_enums() -> dict[str, list[str]]:
     }
 
 
+def _get_compose_context_for_review() -> dict[str, Any]:
+    """Return compose context keys needed by shared prompt includes.
+
+    The review prompt uses shared includes (_grammar_reference.md,
+    _scoring_rubric.md) that require compose context variables like
+    canonical_pattern, segment_order, vocabulary_sections, etc.
+    """
+    from imas_codex.sn.context import build_compose_context
+
+    return build_compose_context()
+
+
 async def review_worker(state: SNBuildState, **_kwargs) -> None:
     """Cross-model review of composed standard name candidates.
 
@@ -339,6 +370,7 @@ async def review_worker(state: SNBuildState, **_kwargs) -> None:
     wlog.info("Review model: %s", review_model)
 
     grammar_enums = _get_grammar_enums()
+    compose_ctx = _get_compose_context_for_review()
     existing_names = _get_existing_names_for_review()
 
     # Load calibration entries for consistent scoring
@@ -386,6 +418,7 @@ async def review_worker(state: SNBuildState, **_kwargs) -> None:
                 wlog,
                 calibration_entries=calibration_entries,
                 batch_context=batch_ctx,
+                compose_ctx=compose_ctx,
             )
             batch_accepted, batch_rejected, batch_revised, cost, tokens = batch_result
             total_cost += cost
@@ -478,6 +511,7 @@ async def _review_batch(
     wlog: logging.LoggerAdapter,
     calibration_entries: list[dict] | None = None,
     batch_context: str | None = None,
+    compose_ctx: dict[str, Any] | None = None,
 ) -> tuple[list[dict], int, int, float, int]:
     """Review a single batch of candidates via LLM with unified scoring."""
     from imas_codex.discovery.base.llm import acall_llm_structured
@@ -486,17 +520,26 @@ async def _review_batch(
 
     cal = calibration_entries or []
 
+    # Search for nearby existing names for collision detection
+    nearby = _search_nearby_names(batch_context or "", k=5)
+
+    # Merge compose context (for shared includes) with review-specific keys
+    base_ctx = dict(compose_ctx) if compose_ctx else {}
+
     # Build context for unified prompt
     context = {
+        **base_ctx,
         "items": batch,
         "existing_names": sorted(existing_names)[:200],
         "calibration_entries": cal,
         "batch_context": batch_context or "",
+        "nearby_existing_names": nearby,
         **grammar_enums,
     }
 
     # System prompt: rubric + calibration (cached across batches)
     system_context = {
+        **base_ctx,
         "items": [],  # empty in system message
         "existing_names": [],
         "calibration_entries": cal,

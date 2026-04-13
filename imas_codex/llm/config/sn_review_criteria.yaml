@@ -1,0 +1,37 @@
+# Review scoring criteria — codex-owned evaluation framework.
+# Per-dimension scoring uses integers 0-20 in the LLM prompt.
+# Aggregate score is normalized to 0-1 (sum / 120).
+dimensions:
+  grammar:
+    max_score: 20
+    description: "Parse/compose round-trip, segment ordering, vocabulary compliance"
+  semantic:
+    max_score: 20
+    description: "Name accurately describes the physical quantity"
+  documentation:
+    max_score: 20
+    description: "Description and documentation are clear, complete, non-redundant"
+  convention:
+    max_score: 20
+    description: "Follows naming conventions (no units in name, no path fragments)"
+  completeness:
+    max_score: 20
+    description: "All required fields filled, links populated, tags relevant"
+  compliance:
+    max_score: 20
+    description: "Follows compose prompt instructions exactly"
+
+verdict_rules:
+  accept: "score >= 0.60 AND no dimension is 0"
+  reject: "score < 0.40 OR any dimension is 0"
+  revise: "all other cases"
+
+tiers:
+  outstanding:
+    min: 0.85
+  good:
+    min: 0.60
+  adequate:
+    min: 0.40
+  poor:
+    min: 0.0

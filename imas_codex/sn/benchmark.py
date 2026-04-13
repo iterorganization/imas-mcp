@@ -279,10 +279,10 @@ async def score_with_reviewer(
     from imas_codex.sn.context import build_compose_context
     from imas_codex.sn.models import SNQualityReviewBatch
 
-    # Get grammar enums for the prompt
-    context = build_compose_context()
+    # Get compose context (includes grammar enums + shared include variables)
+    compose_ctx = build_compose_context()
     grammar_enums = {
-        k: context[k]
+        k: compose_ctx[k]
         for k in (
             "subjects",
             "components",
@@ -294,13 +294,14 @@ async def score_with_reviewer(
             "objects",
             "binary_operators",
         )
-        if k in context
+        if k in compose_ctx
     }
 
     # System prompt: rubric + calibration (cached across batches)
     system_prompt = render_prompt(
         "sn/review",
         {
+            **compose_ctx,
             "calibration_entries": calibration_entries,
             "items": [],
             "existing_names": [],
@@ -334,6 +335,7 @@ async def score_with_reviewer(
         user_prompt = render_prompt(
             "sn/review",
             {
+                **compose_ctx,
                 "calibration_entries": calibration_entries,
                 "items": batch_items,
                 "existing_names": [],

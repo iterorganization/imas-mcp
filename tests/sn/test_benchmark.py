@@ -1211,12 +1211,17 @@ class TestQualityReviewModel:
 class TestReviewerTemplate:
     """Test that the unified reviewer template renders correctly."""
 
-    def _get_grammar_enums(self):
-        """Get grammar enums for template context."""
+    def _get_review_context(self):
+        """Get full compose context + grammar enums for template rendering.
+
+        The review template now uses shared includes that need compose context
+        (canonical_pattern, vocabulary_sections, etc.) in addition to bare
+        grammar enum lists.
+        """
         from imas_codex.sn.context import build_compose_context
 
         ctx = build_compose_context()
-        return {
+        grammar_enums = {
             k: ctx[k]
             for k in (
                 "subjects",
@@ -1231,16 +1236,18 @@ class TestReviewerTemplate:
             )
             if k in ctx
         }
+        return {**ctx, **grammar_enums}
 
     def test_template_renders(self):
         from imas_codex.llm.prompt_loader import render_prompt
         from imas_codex.sn.benchmark import load_calibration_entries
 
         entries = load_calibration_entries()
-        grammar_enums = self._get_grammar_enums()
+        review_ctx = self._get_review_context()
         rendered = render_prompt(
             "sn/review",
             {
+                **review_ctx,
                 "calibration_entries": entries,
                 "items": [
                     {
@@ -1259,7 +1266,6 @@ class TestReviewerTemplate:
                 ],
                 "existing_names": [],
                 "batch_context": "",
-                **grammar_enums,
             },
         )
         assert "electron_temperature" in rendered
@@ -1274,15 +1280,15 @@ class TestReviewerTemplate:
         from imas_codex.sn.benchmark import load_calibration_entries
 
         entries = load_calibration_entries()
-        grammar_enums = self._get_grammar_enums()
+        review_ctx = self._get_review_context()
         rendered = render_prompt(
             "sn/review",
             {
+                **review_ctx,
                 "calibration_entries": entries,
                 "items": [],
                 "existing_names": [],
                 "batch_context": "",
-                **grammar_enums,
             },
         )
         # All calibration entry names should appear
@@ -1294,15 +1300,15 @@ class TestReviewerTemplate:
     def test_template_renders_empty_candidates(self):
         from imas_codex.llm.prompt_loader import render_prompt
 
-        grammar_enums = self._get_grammar_enums()
+        review_ctx = self._get_review_context()
         rendered = render_prompt(
             "sn/review",
             {
+                **review_ctx,
                 "calibration_entries": [],
                 "items": [],
                 "existing_names": [],
                 "batch_context": "",
-                **grammar_enums,
             },
         )
         assert "Scoring Dimensions" in rendered
