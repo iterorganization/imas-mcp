@@ -236,54 +236,167 @@ config for its review scoring criteria (used by both mint and benchmark).
 - Verify ISN-owned content no longer hardcoded — comes from `get_grammar_context()`
 - Full SN test suite passes
 
-### Phase 3: Import ISN Semantic Validation
+### Phase 3: Full ISN Validation via Pydantic Model Construction
 
-**Goal:** Use ISN's semantic checks in codex's `validate_worker`.
+**Goal:** Construct `StandardNameEntry` Pydantic models in validate_worker to fire ALL
+27 ISN validators. This is the single highest-value change — it closes 15 validation
+gaps in one step.
 
 **Prerequisite:** ISN Plan 05 Phase 0 merged (stable imports).
+
+**Critical insight:** Codex currently NEVER constructs `StandardNameEntry` Pydantic
+models from LLM output. This means ALL 18 field validators that fire during model
+construction are bypassed, plus 9 post-construction semantic checks. The current
+validate_worker only does grammar round-trip (parse → compose) and soft metadata checks.
+
+**Architecture: Three-layer validation**
+
+```
+Layer 1: Pydantic model construction (create_standard_name_entry)
+         → 18 field validators fire automatically
+         → Catches: name pattern, grammar vocabulary consistency, link format,
+            physics domain vocabulary, secondary tag vocabulary, sign convention
+            format, unit canonicalization + pint validation, description max_length,
+            provenance rules
+
+Layer 2: Post-construction semantic checks (run_semantic_checks)
+         → 9 grammar-semantic checks on constructed models
+         → Catches: geometric qualifier requirements, component/coordinate base
+            type, orientation completeness, trajectory qualification, extent
+            dimensionality, physical base + object, dimensionless detection
+
+Layer 3: Description quality checks (validate_description)
+         → Metadata leakage detection (tag-redundant phrases, structural phrases)
+```
 
 **Files to modify:**
 
 - `imas_codex/sn/workers.py` (`validate_worker`):
-  - Add ISN semantic validation after parse→compose round-trip
-  - **Adapter required:** ISN's `run_semantic_checks()` expects
-    `dict[str, StandardNameEntry]` (Pydantic models). Codex has raw dicts.
-    Build adapter:
-    ```python
-    from imas_standard_names.models import create_standard_name_entry
-    from imas_standard_names.validation.semantic import run_semantic_checks
 
-    def _run_isn_validation(candidates: list[dict]) -> dict[str, list[str]]:
-        """Adapt ISN validation to work with raw LLM output dicts."""
-        entries = {}
-        for c in candidates:
-            try:
-                entry = create_standard_name_entry(**c)
-                entries[c["standard_name"]] = entry
-            except (ValidationError, KeyError):
-                continue  # Skip malformed candidates
-        issues = run_semantic_checks(entries)
-        return _group_issues_by_name(issues)
-    ```
-  - Merge ISN validation issues into the existing soft-validation framework
-  - ISN issues become warnings (not hard failures) — LLM output may not perfectly
-    match ISN's entry schema
+  Replace the current soft-validation section (lines 695-753) with ISN model
+  construction + semantic validation:
 
-**New validation checks gained:**
-1. Geometric qualifier requirements (orientation/path bases need object)
-2. Component/coordinate with base type checks
-3. Orientation vector completeness
-4. Trajectory/path qualification
-5. Extent dimensionality
-6. Physical base + object checks
-7. Dimensionless quantity detection
-8. Provenance/operator gradient unit heuristics
+  ```python
+  from imas_standard_names.models import create_standard_name_entry
+  from imas_standard_names.validation.semantic import run_semantic_checks
+  from imas_standard_names.validation.description import validate_description
+  from pydantic import ValidationError
+
+  def _validate_via_isn(entry: dict) -> tuple[StandardNameEntry | None, list[str]]:
+      """Construct ISN Pydantic model and collect all validation issues.
+
+      Returns (model_or_None, list_of_issue_strings).
+      If model construction fails, returns (None, [error_messages]).
+      """
+      issues = []
+
+      # Map codex dict keys to ISN model fields
+      isn_dict = {
+          "name": entry.get("id", ""),
+          "kind": entry.get("kind", "scalar"),
+          "description": entry.get("description", ""),
+          "documentation": entry.get("documentation", ""),
+          "unit": entry.get("unit", ""),
+          "tags": entry.get("tags", []),
+          "links": entry.get("links", []),
+          "physics_domain": entry.get("physics_domain", ""),
+          "ids_paths": entry.get("imas_paths", []),
+          "validity_domain": entry.get("validity_domain"),
+          "constraints": entry.get("constraints", []),
+      }
+
+      # Layer 1: Pydantic model construction (fires 18 validators)
+      try:
+          model = create_standard_name_entry(isn_dict)
+      except ValidationError as e:
+          for err in e.errors():
+              field = ".".join(str(loc) for loc in err["loc"])
+              issues.append(f"[pydantic:{field}] {err['msg']}")
+          return None, issues
+
+      # Layer 2: Semantic checks (9 grammar-semantic checks)
+      semantic_issues = run_semantic_checks({isn_dict["name"]: model})
+      issues.extend(f"[semantic] {i}" for i in semantic_issues)
+
+      # Layer 3: Description quality (metadata leakage)
+      desc_issues = validate_description(isn_dict)
+      issues.extend(f"[description] {i}" for i in desc_issues)
+
+      return model, issues
+  ```
+
+  **Classification of ISN issues:**
+  - **Hard fail** (entry rejected): Pydantic `ValidationError` on name, kind, or grammar
+    fields (name won't round-trip or is structurally invalid)
+  - **Soft fail** (entry passes with warnings): Pydantic errors on description length,
+    sign convention format, link format. Semantic and description issues.
+  - **Auto-fix** (entry corrected silently): Unit canonicalization (ISN reorders tokens),
+    tag normalization (ISN strips whitespace, removes empties)
+
+  Separate hard vs soft based on which validator field the error comes from:
+  ```python
+  HARD_FAIL_FIELDS = {"name", "kind"}  # structural validity
+  # Everything else is a warning — the name is valid but entry quality is low
+  ```
+
+  **Benefit of model construction:**
+  - Unit canonicalization happens automatically (ISN sorts unit tokens
+    lexicographically, rejects `/` and `*` syntax)
+  - If pint is available, dimensional analysis validates the unit string
+  - The constructed `StandardNameEntry` can be cached for downstream use
+    (e.g., direct persistence to ISN catalog format)
+
+- `imas_codex/sn/workers.py` — Update stats tracking:
+  - Add counters: `isn_model_ok`, `isn_model_fail`, `isn_semantic_issues`,
+    `isn_description_issues`
+  - Log aggregate stats at end of validate phase
+
+**Validation checks gained (27 total from 3 layers):**
+
+Layer 1 — Pydantic (18 checks):
+1. Name pattern: no `__`, lowercase, `^[a-z][a-z0-9_]*$`
+2. Grammar vocabulary consistency (component_of → Component enum, etc.)
+3. Link format validation (http:// or name:xxx pattern)
+4. Physics domain controlled vocabulary (32 valid values)
+5. Secondary tag controlled vocabulary (50+ values)
+6. Documentation sign convention format
+7. Unit canonicalization (reject `/`, `*`, whitespace; sort tokens)
+8. Unit pint dimensional analysis
+9. Provenance operator/reduction naming rules
+10. Description max_length=180
+11. Deprecated governance (deprecated → must have superseded_by)
+12. Tags/constraints list normalization
+13. Extra fields rejection (ConfigDict extra="forbid")
+14-18. Provenance sub-model validators (operator token pattern, base pattern, etc.)
+
+Layer 2 — Semantic (9 checks):
+19. Geometric qualifier requirements
+20. Component with base type check
+21. Coordinate with base type check
+22. Orientation vector completeness
+23. Trajectory/path qualification
+24. Extent dimensionality
+25. Physical base + object check
+26. Dimensionless quantity detection
+27. Gradient operator unit heuristic
+
+Layer 3 — Description (2+ checks):
+28. Tag-redundant phrase detection
+29. Structural phrase detection
 
 **Tests:**
-- `tests/sn/test_validate_integration.py` — verify ISN checks run within validate_worker
-- Test that adapter handles malformed dicts gracefully (no crash)
-- Test that a name with missing geometric qualifier gets flagged
-- Full SN test suite passes
+- `tests/sn/test_validate_isn.py` (NEW):
+  - Test model construction succeeds for well-formed LLM output
+  - Test model construction catches double-underscore names
+  - Test unit canonicalization auto-fixes token order
+  - Test pint validation rejects nonsense units
+  - Test link format validation catches malformed links
+  - Test physics domain validation catches invalid values
+  - Test semantic checks flag missing geometric qualifiers
+  - Test description checks flag metadata leakage
+  - Test hard vs soft failure classification
+  - Test graceful handling of malformed dicts (no crash)
+- Run `uv run pytest tests/sn/` — all tests must pass
 
 ### Phase 4: Centralize Calibration Loading
 
@@ -333,7 +446,53 @@ config for its review scoring criteria (used by both mint and benchmark).
 - `tests/sn/test_calibration.py` — verify loading, caching, prompt formatting
 - Verify both mint and benchmark use identical calibration data
 
-### Phase 5: Documentation and Boundary Definition
+### Phase 5: Close Context Enrichment Gaps
+
+**Goal:** Import the ISN context areas where ISN provides richer data than codex,
+closing the 4 gaps identified in the A/B comparison.
+
+**Context gaps from A/B analysis (ISN wins):**
+
+| Gap | ISN provides | Codex status |
+|-----|-------------|-------------|
+| Quick-start / common patterns | 5-step guide, 11 patterns, critical distinctions | Not provided to LLM |
+| Vocabulary usage statistics | Token frequencies, most_common, unused tokens | Not provided |
+| Existing name search | FTS+fuzzy search, 20 results per concept | Flat list from graph |
+| Base JSON schema | Full Pydantic JSON schema via `get_schema()` | `get_pydantic_schema_json()` for compose only |
+
+**Files to modify:**
+
+- **ISN Plan 05 Phase 0 dependency**: `get_grammar_context()` must expose:
+  - `quick_start`: 5-step generation guide
+  - `common_patterns`: 11 frequent patterns with examples
+  - `critical_distinctions`: Base vs modifier, orientation vs direction, etc.
+  - `vocabulary_usage_stats`: Per-segment frequency data from catalog
+
+  If ISN doesn't add these in Phase 0, request a Phase 0.1 addition.
+
+- `imas_codex/sn/context.py` (`build_compose_context()`):
+  - Add `quick_start`, `common_patterns`, `critical_distinctions` from
+    `get_grammar_context()` to compose context dict
+  - Add `vocabulary_usage_stats` for LLM to understand token frequency
+
+- `imas_codex/llm/prompts/sn/compose_system.md`:
+  - Add quick-start section before grammar reference (helps LLM orientation)
+  - Add common patterns section with "do this, not that" examples
+  - Add token frequency note to vocabulary section ("commonly used:", "rarely used:")
+
+- `imas_codex/sn/workers.py` (`review_worker`):
+  - Add existing-name search to review context: query graph for names with
+    similar tokens to each candidate, provide as "nearby names" context
+  - This replaces ISN's `search_standard_names()` capability
+  - Use simple prefix/token matching on graph, not semantic search (fast)
+
+**Tests:**
+- Verify `build_compose_context()` includes all new keys
+- Verify compose_system.md renders quick-start and common-patterns sections
+- Verify review context includes nearby existing names
+- Full SN test suite passes
+
+### Phase 6: Documentation and Boundary Definition
 
 **Goal:** Document the project boundary and updated architecture.
 
@@ -368,7 +527,8 @@ config for its review scoring criteria (used by both mint and benchmark).
 
   ## API contract
   - codex imports from ISN: `get_grammar_context()`, `parse_standard_name()`,
-    `compose_standard_name()`, `run_semantic_checks()`,
+    `compose_standard_name()`, `create_standard_name_entry()`,
+    `run_semantic_checks()`, `validate_description()`,
     vocabulary constants, tag constants, curated resources
   - ISN exposes NO write operations via MCP or Python API
   - Changes to ISN grammar specification are coordinated releases
@@ -376,31 +536,36 @@ config for its review scoring criteria (used by both mint and benchmark).
 
 - Update `docs/architecture/standard-names.md`:
   - Add ISN integration section (what we import, why)
-  - Update pipeline diagram to show validation integration
+  - Update pipeline diagram to show 3-layer validation
+  - Add A/B comparison summary table
 
 - Update `AGENTS.md`:
   - Add project boundary reference: `docs/architecture/boundary.md`
   - Document review criteria YAML config and its purpose
   - Document `{% include %}` fragments and when to create new ones
+  - Document 3-layer validation architecture (Pydantic → semantic → description)
 
 ## Dependency Order
 
 ```
-ISN Phase 0 (public API — expanded with naming guidelines)
+ISN Phase 0 (public API — expanded with naming guidelines, common patterns, usage stats)
     ↓
 Codex Phase 1 (replace private imports + fix StandardNameEntry path)
     ↓
 Codex Phase 2 (prompt restructure + shared fragments + review criteria YAML)
     ↓
-Codex Phase 3 (ISN validation with adapter) ←── depends on Phase 1
+Codex Phase 3 (full ISN Pydantic validation) ←── depends on Phase 1
     ↓
 Codex Phase 4 (centralize calibration) ←── independent of Phase 3
     ↓
-Codex Phase 5 (docs) ←── depends on all above
+Codex Phase 5 (context enrichment gaps) ←── depends on Phase 1 + ISN Phase 0.1
+    ↓
+Codex Phase 6 (docs) ←── depends on all above
 ```
 
-Phases 2 and 4 can run in parallel (no cross-dependency).
+Phases 2, 4, and 5 can run in parallel (no cross-dependency).
 Phase 3 needs Phase 1 (ISN public API available + StandardNameEntry import fixed).
+Phase 5 needs ISN Phase 0 to expose common_patterns and vocabulary_usage_stats.
 
 ## Implementation Notes
 
@@ -408,18 +573,37 @@ Phase 3 needs Phase 1 (ISN public API available + StandardNameEntry import fixed
 - **Phase 1 is blocked on ISN Plan 05 Phase 0.** Start with Phase 4 while waiting.
 - **Prompt output must be semantically identical** after Phase 2 — ISN API returns
   the same rules that were previously hardcoded. Diff rendered prompts to verify.
-- **No behavioral change** in Phases 1-2, 4. Phase 3 adds new validations (may cause
-  previously-passing names to get warnings — this is correct behavior).
+- **No behavioral change** in Phases 1-2, 4. Phase 3 adds ISN Pydantic validation
+  (27 checks) — may cause previously-passing names to get warnings or fail. This
+  is correct behavior: codex now enforces the same standards as ISN.
+- **Phase 3 is the highest-value phase.** A single `create_standard_name_entry()` call
+  closes 15 validation gaps simultaneously. Prioritize this over context enrichment.
 - **No `sn_guidelines.yaml` in codex.** Naming knowledge comes from ISN. Only
   `sn_review_criteria.yaml` lives in codex (scoring is codex's evaluation framework).
 - **Include path verified:** `PromptsLoader` searches `prompts/shared/` then `prompts/`
   root, so `{% include "sn/_grammar_reference.md" %}` resolves correctly.
 
+## A/B Comparison Summary
+
+Codex pipeline vs ISN agent workflow — winners by area:
+
+| Area | ISN leads | Codex leads | Tie |
+|------|-----------|-------------|-----|
+| Context provided to generator | 4 | 2 | 8 |
+| Validation checks | 15 | 3 | 1 |
+| Review quality | 1 | 5 | 0 |
+| **Total** | **20** | **10** | **9** |
+
+**After Phase 3:** ISN validation checks: 15 → 0 (all closed by Pydantic model construction).
+**After Phase 5:** ISN context lead: 4 → 0 (all gaps closed by enriching compose context).
+**Remaining ISN lead:** Iterative retry loop (5 rounds). Assessed as lower priority — the
+unified review + Pydantic validation catches issues upfront rather than iterating.
+
 ## Documentation Updates
 
 | Target | Phase |
 |--------|-------|
-| `docs/architecture/boundary.md` | Phase 5 — NEW |
-| `docs/architecture/standard-names.md` | Phase 5 — update pipeline section |
-| `AGENTS.md` | Phase 5 — boundary reference, YAML config docs |
-| `plans/README.md` | Phase 5 — mark plan 21 done |
+| `docs/architecture/boundary.md` | Phase 6 — NEW |
+| `docs/architecture/standard-names.md` | Phase 6 — update pipeline + A/B comparison |
+| `AGENTS.md` | Phase 6 — boundary reference, YAML config, 3-layer validation |
+| `plans/README.md` | Phase 6 — mark plan 21 done |
