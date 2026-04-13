@@ -1239,7 +1239,7 @@ class TestReviewerTemplate:
         entries = load_calibration_entries()
         grammar_enums = self._get_grammar_enums()
         rendered = render_prompt(
-            "sn/review_unified",
+            "sn/review",
             {
                 "calibration_entries": entries,
                 "items": [
@@ -1276,7 +1276,7 @@ class TestReviewerTemplate:
         entries = load_calibration_entries()
         grammar_enums = self._get_grammar_enums()
         rendered = render_prompt(
-            "sn/review_unified",
+            "sn/review",
             {
                 "calibration_entries": entries,
                 "items": [],
@@ -1296,7 +1296,7 @@ class TestReviewerTemplate:
 
         grammar_enums = self._get_grammar_enums()
         rendered = render_prompt(
-            "sn/review_unified",
+            "sn/review",
             {
                 "calibration_entries": [],
                 "items": [],

@@ -503,10 +503,10 @@ async def _review_batch(
         "batch_context": "",
         **grammar_enums,
     }
-    system_prompt = render_prompt("sn/review_unified", system_context)
+    system_prompt = render_prompt("sn/review", system_context)
 
     # User prompt: actual candidates + DD context
-    user_prompt = render_prompt("sn/review_unified", context)
+    user_prompt = render_prompt("sn/review", context)
 
     messages = [
         {"role": "system", "content": system_prompt},

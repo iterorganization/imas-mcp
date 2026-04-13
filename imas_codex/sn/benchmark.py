@@ -299,7 +299,7 @@ async def score_with_reviewer(
 
     # System prompt: rubric + calibration (cached across batches)
     system_prompt = render_prompt(
-        "sn/review_unified",
+        "sn/review",
         {
             "calibration_entries": calibration_entries,
             "items": [],
@@ -332,7 +332,7 @@ async def score_with_reviewer(
             )
 
         user_prompt = render_prompt(
-            "sn/review_unified",
+            "sn/review",
             {
                 "calibration_entries": calibration_entries,
                 "items": batch_items,
