@@ -152,7 +152,8 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
     ``validity_domain``, ``constraints``, ``model``, ``review_status``,
     ``generated_at``, ``confidence``, ``reviewer_model``, ``reviewer_score``,
     ``reviewer_scores``, ``reviewer_comments``, ``reviewed_at``,
-    ``review_tier``, ``vocab_gap_detail``.
+    ``review_tier``, ``vocab_gap_detail``, ``validation_issues``,
+    ``validation_layer_summary``.
 
     Performs conflict detection on ``unit``: if a StandardName already exists
     with a different canonical_units value, that entry is skipped (not written)
@@ -230,6 +231,8 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
                 sn.reviewed_at = coalesce(b.reviewed_at, sn.reviewed_at),
                 sn.review_tier = coalesce(b.review_tier, sn.review_tier),
                 sn.vocab_gap_detail = coalesce(b.vocab_gap_detail, sn.vocab_gap_detail),
+                sn.validation_issues = coalesce(b.validation_issues, sn.validation_issues),
+                sn.validation_layer_summary = coalesce(b.validation_layer_summary, sn.validation_layer_summary),
                 sn.created_at = coalesce(sn.created_at, datetime())
             """,
             batch=[
@@ -262,6 +265,8 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
                     "reviewed_at": n.get("reviewed_at"),
                     "review_tier": n.get("review_tier"),
                     "vocab_gap_detail": n.get("vocab_gap_detail"),
+                    "validation_issues": n.get("validation_issues") or None,
+                    "validation_layer_summary": n.get("validation_layer_summary"),
                 }
                 for n in names
             ],

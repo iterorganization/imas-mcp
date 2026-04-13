@@ -19,6 +19,7 @@ marks phases done, and respects ``state.should_stop()``.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -523,13 +524,20 @@ async def _review_batch(
     # Search for nearby existing names for collision detection
     nearby = _search_nearby_names(batch_context or "", k=5)
 
+    # Enrich items with validation issues for reviewer context
+    items_with_issues = []
+    for item in batch:
+        item_data = dict(item)
+        item_data["validation_issues"] = item.get("validation_issues", [])
+        items_with_issues.append(item_data)
+
     # Merge compose context (for shared includes) with review-specific keys
     base_ctx = dict(compose_ctx) if compose_ctx else {}
 
     # Build context for unified prompt
     context = {
         **base_ctx,
-        "items": batch,
+        "items": items_with_issues,
         "existing_names": sorted(existing_names)[:200],
         "calibration_entries": cal,
         "batch_context": batch_context or "",
@@ -577,7 +585,7 @@ async def _review_batch(
             continue
 
         # Store review scores on the entry for downstream persistence
-        original["reviewer_score"] = review.scores.total
+        original["reviewer_score"] = review.scores.score
         original["reviewer_scores"] = review.scores.model_dump()
         original["reviewer_comments"] = review.reasoning
         original["review_tier"] = review.scores.tier
@@ -587,10 +595,10 @@ async def _review_batch(
         elif review.verdict == SNReviewVerdict.reject:
             rejected_count += 1
             wlog.debug(
-                "Rejected %r (score %d/%d): %s",
+                "Rejected %r (score %.2f/%.1f): %s",
                 review.standard_name,
-                review.scores.total,
-                120,
+                review.scores.score,
+                1.0,
                 review.reasoning,
             )
         elif review.verdict == SNReviewVerdict.revise:
@@ -604,11 +612,11 @@ async def _review_batch(
                 accepted.append(revised_entry)
                 revised_count += 1
                 wlog.debug(
-                    "Revised %r → %r (score %d/%d): %s",
+                    "Revised %r → %r (score %.2f/%.1f): %s",
                     review.standard_name,
                     review.revised_name,
-                    review.scores.total,
-                    120,
+                    review.scores.score,
+                    1.0,
                     review.reasoning,
                 )
             else:
@@ -627,6 +635,83 @@ async def _review_batch(
 # =============================================================================
 # VALIDATE phase
 # =============================================================================
+
+
+def _validate_via_isn(entry: dict) -> tuple[list[str], dict]:
+    """Construct ISN Pydantic model and collect ALL validation issues.
+
+    Returns:
+        (issues: list[str], layer_summary: dict)
+
+    This function is purely an annotator — it never rejects entries.
+    Parseability is checked upstream by the grammar round-trip in
+    validate_worker. This function attaches quality annotations.
+    """
+    from pydantic import ValidationError
+
+    issues: list[str] = []
+    summary = {
+        "pydantic": {"passed": True, "error_count": 0},
+        "semantic": {"issue_count": 0, "skipped": False},
+        "description": {"issue_count": 0},
+    }
+
+    # Map codex dict keys to ISN model fields
+    isn_dict = {
+        "name": entry.get("id", ""),
+        "kind": entry.get("kind", "scalar"),
+        "description": entry.get("description", ""),
+        "documentation": entry.get("documentation", ""),
+        "unit": entry.get("unit", ""),
+        "tags": entry.get("tags", []),
+        "links": entry.get("links", []),
+        "physics_domain": entry.get("physics_domain", ""),
+        "ids_paths": entry.get("imas_paths", []),
+    }
+
+    # Layer 1: Pydantic model construction (fires 18 validators)
+    model = None
+    try:
+        from imas_standard_names.models import create_standard_name_entry
+
+        model = create_standard_name_entry(isn_dict)
+    except ValidationError as e:
+        summary["pydantic"]["passed"] = False
+        summary["pydantic"]["error_count"] = len(e.errors())
+        for err in e.errors():
+            field = ".".join(str(loc) for loc in err["loc"])
+            issues.append(f"[pydantic:{field}] {err['msg']}")
+    except Exception as e:
+        # Non-validation errors (import issues, etc.) — don't crash
+        summary["pydantic"]["passed"] = False
+        summary["pydantic"]["error_count"] = 1
+        issues.append(f"[pydantic:unknown] {e}")
+
+    # Layer 2: Semantic checks (only if model constructed)
+    if model is not None:
+        try:
+            from imas_standard_names.validation.semantic import run_semantic_checks
+
+            sem_issues = run_semantic_checks({isn_dict["name"]: model})
+            summary["semantic"]["issue_count"] = len(sem_issues)
+            issues.extend(f"[semantic] {i}" for i in sem_issues)
+        except Exception as e:
+            summary["semantic"]["skipped"] = True
+            issues.append(f"[semantic] check failed: {e}")
+    else:
+        summary["semantic"]["skipped"] = True
+
+    # Layer 3: Description quality
+    try:
+        from imas_standard_names.validation.description import validate_description
+
+        desc_issues = validate_description(isn_dict)
+        summary["description"]["issue_count"] = len(desc_issues)
+        issues.extend(f"[description] {i['message']}" for i in desc_issues)
+    except Exception as e:
+        issues.append(f"[description] check failed: {e}")
+
+    return issues, summary
 
 
 async def validate_worker(state: SNBuildState, **_kwargs) -> None:
@@ -794,6 +879,16 @@ async def validate_worker(state: SNBuildState, **_kwargs) -> None:
             for p in imas_paths:
                 if "/" not in p:
                     wlog.debug("Suspicious ids_path for %r: %r", name, p)
+
+            # --- ISN three-layer validation (annotate, never reject) ---
+            try:
+                issues, layer_summary = _validate_via_isn(entry)
+                entry["validation_issues"] = issues
+                entry["validation_layer_summary"] = json.dumps(layer_summary)
+                if issues:
+                    wlog.debug("ISN validation: %d issues for %r", len(issues), name)
+            except Exception:
+                wlog.debug("ISN validation failed for %r — skipping annotation", name)
 
             valid.append(entry)
         except Exception:

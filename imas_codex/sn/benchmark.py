@@ -268,7 +268,7 @@ async def score_with_reviewer(
 
     Each candidate is scored across six dimensions (0-20 each):
     grammar, semantic, documentation, convention, completeness, compliance.
-    Total score is the sum (0-120).
+    Score is normalized (0-1).
 
     Returns list of dicts with: name, quality_tier, score,
     grammar_score, semantic_score, documentation_score,
@@ -359,7 +359,7 @@ async def score_with_reviewer(
                 review_dict = {
                     "name": r.standard_name,
                     "quality_tier": r.scores.tier,
-                    "score": r.scores.total,
+                    "score": r.scores.score,
                     "grammar_score": r.scores.grammar,
                     "semantic_score": r.scores.semantic,
                     "documentation_score": r.scores.documentation,
@@ -745,7 +745,7 @@ def render_comparison_table(report: BenchmarkReport) -> None:
         ]
 
         if has_quality:
-            qual_str = f"{r.avg_quality_score:.1f}" if r.quality_scores else "—"
+            qual_str = f"{r.avg_quality_score:.2f}" if r.quality_scores else "—"
             doc_str = f"{r.avg_doc_length:.0f}" if r.quality_scores else "—"
             fp_str = f"{r.avg_fields_populated * 100:.0f}%" if r.quality_scores else "—"
             row_data.extend([qual_str, doc_str, fp_str])

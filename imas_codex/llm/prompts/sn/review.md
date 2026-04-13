@@ -34,6 +34,10 @@ Every name MUST have either a `physical_base` (open vocabulary) or a `geometric_
 
 Rate each dimension from 0 to 20. The total score is the sum (0-120).
 
+If ISN validation issues are present for an entry, assess whether they are
+genuine quality problems or false positives. Factor genuine issues into your
+grammar and convention scores.
+
 ### 1. Grammar Correctness (0-20)
 - Does the name parse correctly under the standard name grammar?
 - Are all segments valid enum values from the vocabulary?
@@ -153,6 +157,12 @@ These names already exist in the catalog. Flag candidates that duplicate them:
 - **Grammar Fields**: {{ item.grammar_fields or item.fields | default({}, true) }}
 {% if item.imas_paths %}
 - **IMAS Paths**: {{ item.imas_paths | join(', ') }}
+{% endif %}
+{% if item.validation_issues %}
+**ISN Validation Issues:**
+{% for issue in item.validation_issues %}
+- {{ issue }}
+{% endfor %}
 {% endif %}
 
 {% endfor %}

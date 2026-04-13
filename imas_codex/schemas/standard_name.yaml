@@ -206,8 +206,8 @@ classes:
       reviewer_model:
         description: LLM model that reviewed this name
       reviewer_score:
-        description: Total quality score from review (0-100)
-        range: integer
+        description: Normalized quality score from review (0-1)
+        range: float
       reviewer_scores:
         description: >-
           JSON-encoded dimensional scores: grammar, semantic,
@@ -223,6 +223,19 @@ classes:
         description: >-
           Quality tier from review: outstanding, good, adequate, poor.
           Derived from reviewer_score thresholds.
+      validation_issues:
+        description: >-
+          ISN validation issues from three-layer validation
+          (pydantic, semantic, description). Each entry is a tagged
+          string like "[pydantic:field] message" or "[semantic] message".
+        multivalued: true
+        range: string
+      validation_layer_summary:
+        description: >-
+          JSON-encoded summary of validation by layer:
+          {pydantic: {passed: bool, error_count: int},
+           semantic: {issue_count: int},
+           description: {issue_count: int}}
       vocab_gap_detail:
         description: >-
           JSON-encoded detail about missing vocabulary: segment name,

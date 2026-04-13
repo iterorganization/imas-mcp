@@ -182,13 +182,18 @@ class SNQualityScore(BaseModel):
         )
 
     @property
+    def score(self) -> float:
+        """Normalized quality score (0-1). Sum of 6 dimensions / 120."""
+        return self.total / 120.0
+
+    @property
     def tier(self) -> str:
-        t = self.total
-        if t >= 102:  # 85% of 120
+        s = self.score
+        if s >= 0.85:
             return "outstanding"
-        elif t >= 72:  # 60% of 120
+        elif s >= 0.60:
             return "good"
-        elif t >= 48:  # 40% of 120
+        elif s >= 0.40:
             return "adequate"
         return "poor"
 
