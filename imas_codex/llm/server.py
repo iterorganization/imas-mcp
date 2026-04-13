@@ -3428,6 +3428,20 @@ class AgentsServer:
                 if not server.dd_only:
                     response["facilities"] = graph.get("facilities", [])
 
+            # Embedding model metadata for semantic search diagnostics
+            try:
+                from imas_codex.settings import (
+                    get_embedding_dimension,
+                    get_embedding_model,
+                )
+
+                response["embedding"] = {
+                    "model": get_embedding_model(),
+                    "dimension": get_embedding_dimension(),
+                }
+            except Exception:
+                pass
+
             # Tool inventory — strip FastMCP internal "@" suffix from keys
             tool_names = sorted(
                 k.removeprefix("tool:").rstrip("@")

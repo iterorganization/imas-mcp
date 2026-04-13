@@ -915,6 +915,7 @@ Multiple agents may be working on this repository simultaneously. Assume another
 - **Pull before push** if push is rejected: `git pull --no-rebase upstream main && git push upstream main`
 - **Avoid broad formatting runs** (`ruff format .`) unless you are the only agent active — prefer formatting only your changed files
 - **If `git stash` is needed**, only stash your own files: `git stash push -- file1 file2`, never `git stash` (which stashes everything)
+- **NEVER run `git stash pop` or `git stash apply`** without first checking the stash age and contents. Stale stashes from prior work sessions can silently overwrite the working tree with old code, reverting committed renames and improvements. Always verify: `git stash show stash@{N} --stat` and `git log -1 --format='%ci' stash@{N}` before applying. If the stash is more than a day old, drop it — the code has moved on.
 - **Auto-generated files cause dirty worktrees** — `uv sync` regenerates model files that are gitignored. These should never be staged, but their presence will block `git pull --rebase`. This is another reason merge is the correct policy.
 
 ### Session Completion
