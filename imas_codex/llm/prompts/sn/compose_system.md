@@ -58,6 +58,47 @@ Use any physics quantity in snake_case (e.g., temperature, density, magnetic_fie
 
 {% endfor %}
 
+{% if field_guidance.naming_guidance %}
+## Naming Guidance
+
+{% for category, guidance in field_guidance.naming_guidance.items() %}
+### {{ category | replace('_', ' ') | title }}
+{% if guidance is mapping %}
+{% for key, value in guidance.items() %}
+{% if value is mapping %}
+- **{{ key | replace('_', ' ') | title }}**: {{ value.get('rule', value.get('purpose', '')) }}
+{% if value.get('examples') %}  Examples: {{ value.examples }}{% endif %}
+{% else %}
+- **{{ key | replace('_', ' ') | title }}**: {{ value }}
+{% endif %}
+{% endfor %}
+{% else %}
+{{ guidance }}
+{% endif %}
+
+{% endfor %}
+{% endif %}
+
+{% if field_guidance.documentation_guidance %}
+## Documentation Quality Guidance
+
+{% for category, guidance in field_guidance.documentation_guidance.items() %}
+### {{ category | replace('_', ' ') | title }}
+{% if guidance is mapping %}
+{% for key, value in guidance.items() %}
+{% if value is string %}
+- **{{ key | replace('_', ' ') | title }}**: {{ value }}
+{% elif value is mapping and value.get('purpose') %}
+- **{{ key | replace('_', ' ') | title }}**: {{ value.purpose }}
+{% endif %}
+{% endfor %}
+{% else %}
+{{ guidance }}
+{% endif %}
+
+{% endfor %}
+{% endif %}
+
 ## Curated Examples
 
 Learn from these validated standard names:
@@ -84,6 +125,22 @@ Geometry: R₀={{ machine.geometry.get('major_radius', {}).get('value', '?') }}m
 Physics: B_T={{ machine.physics.get('toroidal_magnetic_field', {}).get('value', '?') }}T, I_p={{ machine.physics.get('plasma_current', {}).get('value', '?') }}MA
 {% endif %}
 {% endfor %}
+
+{% if applicability %}
+## Applicability
+
+Standard names SHOULD be created for:
+{% for item in applicability.include %}
+- {{ item }}
+{% endfor %}
+
+Standard names should NOT be created for:
+{% for item in applicability.exclude %}
+- {{ item }}
+{% endfor %}
+
+{{ applicability.rationale }}
+{% endif %}
 
 ## Composition Rules
 
@@ -137,9 +194,23 @@ Example documentation:
 
 ### Tags — Controlled Vocabulary
 
+{% if tag_descriptions and tag_descriptions.primary %}
+**Primary tags** (include 1-2):
+{% for tag, desc in tag_descriptions.primary.items() %}
+- `{{ tag }}`: {{ desc }}
+{% endfor %}
+{% else %}
 **Primary tags** (include 1-2): fundamental, equilibrium, core-physics, transport, edge-physics, mhd, nbi, ec-heating, ic-heating, lh-heating, waves, fast-particles, runaway-electrons, magnetics, thomson-scattering, interferometry, reflectometry, spectroscopy, radiation-diagnostics, imaging, neutronics, coils-and-control, fueling, wall-and-structures, pulse-management, data-products, utilities, turbulence, plasma-initiation
+{% endif %}
 
+{% if tag_descriptions and tag_descriptions.secondary %}
+**Secondary tags** (include 0-3):
+{% for tag, desc in tag_descriptions.secondary.items() %}
+- `{{ tag }}`: {{ desc }}
+{% endfor %}
+{% else %}
 **Secondary tags** (include 0-3): time-dependent, steady-state, spatial-profile, flux-surface-average, volume-average, line-integrated, local-measurement, global-quantity, measured, reconstructed, simulated, derived, validated, equilibrium-reconstruction, transport-modeling, mhd-stability-analysis, heating-deposition, calibrated, real-time, post-shot-analysis, benchmark-quantity, performance-metric
+{% endif %}
 
 ### Kind Classification Rules
 

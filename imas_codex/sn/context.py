@@ -65,6 +65,12 @@ def build_compose_context() -> dict[str, Any]:
     # Tokamak parameter ranges for documentation grounding
     ctx["tokamak_ranges"] = _load_tokamak_ranges()
 
+    # Tag descriptions (primary + secondary)
+    ctx["tag_descriptions"] = _get_tag_descriptions()
+
+    # Applicability rules (what should/shouldn't get standard names)
+    ctx["applicability"] = _get_applicability_rules()
+
     # Bare enum lists (backward compat for user prompt)
     ctx.update(_build_enum_lists())
 
@@ -163,13 +169,57 @@ def _get_all_segment_descriptions() -> dict[str, str]:
 @lru_cache(maxsize=1)
 def _get_field_guidance() -> dict[str, Any]:
     from imas_standard_names.grammar.field_schemas import (
+        DOCUMENTATION_GUIDANCE,
         FIELD_GUIDANCE,
+        NAMING_GUIDANCE,
         TYPE_SPECIFIC_REQUIREMENTS,
     )
 
     return {
         "fields": dict(FIELD_GUIDANCE),
         "type_requirements": dict(TYPE_SPECIFIC_REQUIREMENTS),
+        "naming_guidance": dict(NAMING_GUIDANCE),
+        "documentation_guidance": dict(DOCUMENTATION_GUIDANCE),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Tag descriptions
+# ---------------------------------------------------------------------------
+
+
+@lru_cache(maxsize=1)
+def _get_tag_descriptions() -> dict[str, dict[str, str]]:
+    """Load primary and secondary tag descriptions from ISN."""
+    from imas_standard_names.grammar.tag_types import (
+        PRIMARY_TAG_DESCRIPTIONS,
+        SECONDARY_TAG_DESCRIPTIONS,
+    )
+
+    return {
+        "primary": dict(PRIMARY_TAG_DESCRIPTIONS),
+        "secondary": dict(SECONDARY_TAG_DESCRIPTIONS),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Applicability rules
+# ---------------------------------------------------------------------------
+
+
+@lru_cache(maxsize=1)
+def _get_applicability_rules() -> dict[str, Any]:
+    """Load applicability rules from ISN grammar constants."""
+    from imas_standard_names.grammar.constants import (
+        APPLICABILITY_EXCLUDE,
+        APPLICABILITY_INCLUDE,
+        APPLICABILITY_RATIONALE,
+    )
+
+    return {
+        "include": list(APPLICABILITY_INCLUDE),
+        "exclude": list(APPLICABILITY_EXCLUDE),
+        "rationale": str(APPLICABILITY_RATIONALE),
     }
 
 
