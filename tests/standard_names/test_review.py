@@ -624,7 +624,7 @@ class TestSNBuildStateReview:
         state = SNBuildState(facility="dd")
         assert state.skip_review is False
         assert state.review_model is None
-        assert state.reviewed == []
+        assert state.reviewed is None
         assert state.review_phase.name == "review"
         assert not state.review_phase.done
 

@@ -46,7 +46,7 @@ class SNBuildState(DiscoveryStateBase):
     # In-memory pipeline data (extract → compose → review → validate → consolidate)
     extracted: list[Any] = field(default_factory=list)  # ExtractionBatch objects
     composed: list[dict[str, Any]] = field(default_factory=list)
-    reviewed: list[dict[str, Any]] = field(default_factory=list)
+    reviewed: list[dict[str, Any]] | None = field(default=None)  # None = review not run
     validated: list[dict[str, Any]] = field(default_factory=list)
     consolidated: list[dict[str, Any]] = field(default_factory=list)
 

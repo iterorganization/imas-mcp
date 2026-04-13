@@ -443,6 +443,7 @@ async def review_worker(state: SNBuildState, **_kwargs) -> None:
 
     if not state.composed:
         wlog.info("No composed candidates to review — skipping")
+        state.reviewed = []
         state.review_stats.freeze_rate()
         state.review_phase.mark_done()
         return
@@ -838,8 +839,8 @@ async def validate_worker(state: SNBuildState, **_kwargs) -> None:
         state.validate_phase.mark_done()
         return
 
-    # Read from reviewed if available, else composed
-    input_candidates = state.reviewed if state.reviewed else state.composed
+    # Read from reviewed if review ran, else composed
+    input_candidates = state.reviewed if state.reviewed is not None else state.composed
 
     if not input_candidates:
         wlog.info("No composed names to validate — skipping")

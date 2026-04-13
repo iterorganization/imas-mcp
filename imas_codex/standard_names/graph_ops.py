@@ -10,12 +10,22 @@ Relationship direction: entity → concept
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
 from imas_codex.graph.client import GraphClient
 
 logger = logging.getLogger(__name__)
+
+
+def _ensure_json(value: Any) -> str | None:
+    """Ensure a value is a JSON string, not a raw dict/list (Neo4j rejects Maps)."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    return json.dumps(value)
 
 
 # =============================================================================
@@ -296,13 +306,15 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
                     "confidence": n.get("confidence"),
                     "reviewer_model": n.get("reviewer_model"),
                     "reviewer_score": n.get("reviewer_score"),
-                    "reviewer_scores": n.get("reviewer_scores"),
+                    "reviewer_scores": _ensure_json(n.get("reviewer_scores")),
                     "reviewer_comments": n.get("reviewer_comments"),
                     "reviewed_at": n.get("reviewed_at"),
                     "review_tier": n.get("review_tier"),
-                    "vocab_gap_detail": n.get("vocab_gap_detail"),
+                    "vocab_gap_detail": _ensure_json(n.get("vocab_gap_detail")),
                     "validation_issues": n.get("validation_issues") or None,
-                    "validation_layer_summary": n.get("validation_layer_summary"),
+                    "validation_layer_summary": _ensure_json(
+                        n.get("validation_layer_summary")
+                    ),
                 }
                 for n in names
             ],
