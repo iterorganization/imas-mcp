@@ -401,7 +401,7 @@ Layer 3: Description quality checks (validate_description)
       # Layer 3: Description quality
       desc_issues = validate_description(isn_dict)
       summary["description"]["issue_count"] = len(desc_issues)
-      issues.extend(f"[description] {i}" for i in desc_issues)
+      issues.extend(f"[description] {i['message']}" for i in desc_issues)
 
       return issues, summary
   ```
@@ -708,12 +708,13 @@ closing the 4 gaps identified in the A/B comparison.
   If a rule is about how to instruct an LLM, it belongs in codex.
 
   ## API contract
-  - codex imports from ISN: `get_grammar_context()`, `parse_standard_name()`,
-    `compose_standard_name()`, `create_standard_name_entry()`,
-    `run_semantic_checks()`, `validate_description()`,
-    vocabulary constants, tag constants, curated resources
+  - codex imports from ISN (exhaustive — ISN must not rename/remove without coordination):
+    - Grammar: `get_grammar_context()`, `parse_standard_name()`, `compose_standard_name()`
+    - Models: `StandardNameEntry`, `create_standard_name_entry()`
+    - Validation: `run_semantic_checks()`, `validate_description()`, `run_structural_checks()`
+    - Constants: grammar enums (vocabulary StrEnums), tag constants, `PhysicsDomain`
   - ISN exposes NO write operations via MCP or Python API
-  - Changes to ISN grammar specification are coordinated releases
+  - Changes to any contract function require a coordinated release
   ```
 
 - Update `docs/architecture/standard-names.md`:
