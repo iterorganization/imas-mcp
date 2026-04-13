@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -141,7 +141,7 @@ class SNReviewItem(BaseModel):
     revised_name: str | None = Field(
         default=None, description="Suggested revision if verdict is revise"
     )
-    revised_fields: dict[str, str] | None = Field(
+    revised_fields: dict[str, Any] | None = Field(
         default=None, description="Revised grammar fields"
     )
     issues: list[str] = Field(default_factory=list, description="Specific issues found")
@@ -209,7 +209,7 @@ class SNQualityReview(BaseModel):
     revised_name: str | None = Field(
         default=None, description="Suggested revision if verdict is revise"
     )
-    revised_fields: dict[str, str] | None = Field(
+    revised_fields: dict[str, Any] | None = Field(
         default=None, description="Revised grammar fields"
     )
     issues: list[str] = Field(default_factory=list, description="Specific issues found")

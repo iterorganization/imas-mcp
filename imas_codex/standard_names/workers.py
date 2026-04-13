@@ -22,6 +22,7 @@ import asyncio
 import json
 import logging
 from datetime import UTC, datetime
+from functools import cache as _cache
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -152,6 +153,38 @@ def _search_nearby_names(query: str, k: int = 5) -> list[dict]:
         return []
 
 
+@_cache
+def _get_secondary_tags() -> frozenset[str]:
+    """Return the set of valid secondary tags from ISN grammar context."""
+    try:
+        from imas_standard_names.grammar.context import get_grammar_context
+
+        ctx = get_grammar_context()
+        td = ctx.get("tag_descriptions", {})
+        return frozenset(td.get("secondary", {}).keys())
+    except Exception:
+        return frozenset()
+
+
+def _normalize_links(links: list[str]) -> list[str]:
+    """Ensure all internal links have ``name:`` prefix."""
+    result = []
+    for link in links:
+        if link.startswith(("http://", "https://", "name:")):
+            result.append(link)
+        else:
+            result.append(f"name:{link}")
+    return result
+
+
+def _filter_secondary_tags(tags: list[str]) -> list[str]:
+    """Keep only valid secondary tags, stripping any primary tags."""
+    secondary = _get_secondary_tags()
+    if not secondary:
+        return tags  # no vocabulary loaded, pass through
+    return [t for t in tags if t in secondary]
+
+
 async def compose_worker(state: SNBuildState, **_kwargs) -> None:
     """LLM-generate standard names from extracted batches.
 
@@ -236,11 +269,30 @@ async def compose_worker(state: SNBuildState, **_kwargs) -> None:
 
             candidates = []
             for c in result.candidates:
-                # Find the matching source item to get authoritative unit
+                # Find the matching source item to get authoritative fields
                 source_item = next(
                     (item for item in batch.items if item.get("path") == c.source_id),
                     None,
                 )
+                # Inject unit from DD (authoritative, not LLM output)
+                raw_unit = source_item.get("unit") if source_item else None
+                # Normalize: '-', 'mixed', and None/empty are invalid in ISN
+                if raw_unit in ("-", "mixed", None, ""):
+                    unit = "1"
+                else:
+                    unit = raw_unit
+
+                # Inject physics_domain from DD (authoritative, like unit)
+                physics_domain = (
+                    source_item.get("physics_domain") if source_item else None
+                )
+
+                # Post-process links: ensure name: prefix for internal refs
+                links = _normalize_links(c.links)
+
+                # Post-process tags: strip primary tags, keep only secondary
+                tags = _filter_secondary_tags(c.tags)
+
                 candidates.append(
                     {
                         "id": c.standard_name,
@@ -249,16 +301,16 @@ async def compose_worker(state: SNBuildState, **_kwargs) -> None:
                         "description": c.description,
                         "documentation": c.documentation,
                         "kind": c.kind,
-                        "tags": c.tags,
-                        "links": c.links,
+                        "tags": tags,
+                        "links": links,
                         "imas_paths": c.ids_paths,  # graph schema key
                         "fields": c.grammar_fields,
                         "confidence": c.confidence,
                         "reason": c.reason,
                         "validity_domain": c.validity_domain,
                         "constraints": c.constraints,
-                        # Inject unit from DD (authoritative source, not LLM output)
-                        "unit": source_item.get("unit") if source_item else None,
+                        "unit": unit,
+                        "physics_domain": physics_domain,
                     }
                 )
 
@@ -629,7 +681,7 @@ async def _review_batch(
 
         # Store review scores on the entry for downstream persistence
         original["reviewer_score"] = review.scores.score
-        original["reviewer_scores"] = review.scores.model_dump()
+        original["reviewer_scores"] = json.dumps(review.scores.model_dump())
         original["reviewer_comments"] = review.reasoning
         original["review_tier"] = review.scores.tier
 
@@ -700,17 +752,20 @@ def _validate_via_isn(entry: dict) -> tuple[list[str], dict]:
     }
 
     # Map codex dict keys to ISN model fields
-    isn_dict = {
+    isn_dict: dict[str, Any] = {
         "name": entry.get("id", ""),
         "kind": entry.get("kind", "scalar"),
         "description": entry.get("description", ""),
         "documentation": entry.get("documentation", ""),
-        "unit": entry.get("unit", ""),
         "tags": entry.get("tags", []),
         "links": entry.get("links", []),
         "physics_domain": entry.get("physics_domain", ""),
         "ids_paths": entry.get("imas_paths", []),
     }
+    # ISN metadata kind forbids unit field entirely
+    if isn_dict["kind"] != "metadata":
+        unit = entry.get("unit") or "1"  # ISN requires '1' for dimensionless
+        isn_dict["unit"] = unit
 
     # Layer 1: Pydantic model construction (fires 18 validators)
     model = None

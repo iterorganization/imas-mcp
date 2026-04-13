@@ -268,8 +268,8 @@ Each candidate MUST include:
 - `description`: one-sentence summary, **under 120 characters** (e.g., "Electron temperature profile on the poloidal flux grid")
 - `documentation`: rich documentation paragraph (200-500 chars) — see template below
 - `kind`: one of `"scalar"`, `"vector"`, `"metadata"` — see classification rules
-- `tags`: array of 1-2 primary + 0-3 secondary tags from the controlled vocabulary
-- `links`: array of 4-8 related standard names from the existing_names list
+- `tags`: array of 0-3 **secondary** tags ONLY from the controlled vocabulary below (primary classification goes into `physics_domain` automatically — do NOT include primary tags here)
+- `links`: array of 4-8 related standard names from the existing_names list, each prefixed with `name:` (e.g., `"name:electron_temperature"`)
 - `ids_paths`: array of IMAS DD paths this name maps to (include the source_id at minimum)
 - `grammar_fields`: dict of grammar fields used (only non-null fields)
 - `confidence`: float 0.0-1.0
@@ -294,14 +294,10 @@ Example documentation:
 
 ### Tags — Controlled Vocabulary
 
-{% if tag_descriptions and tag_descriptions.primary %}
-**Primary tags** (include 1-2):
-{% for tag, desc in tag_descriptions.primary.items() %}
-- `{{ tag }}`: {{ desc }}
-{% endfor %}
-{% else %}
-**Primary tags** (include 1-2): fundamental, equilibrium, core-physics, transport, edge-physics, mhd, nbi, ec-heating, ic-heating, lh-heating, waves, fast-particles, runaway-electrons, magnetics, thomson-scattering, interferometry, reflectometry, spectroscopy, radiation-diagnostics, imaging, neutronics, coils-and-control, fueling, wall-and-structures, pulse-management, data-products, utilities, turbulence, plasma-initiation
-{% endif %}
+**IMPORTANT:** Tags are ONLY for **secondary** classification. Primary domain classification is
+handled by the `physics_domain` field (injected from DD — you do not need to set it).
+Include **0-3 secondary tags** from the list below. Do NOT include primary tags like
+`fundamental`, `equilibrium`, `core-physics`, `transport`, etc.
 
 {% if tag_descriptions and tag_descriptions.secondary %}
 **Secondary tags** (include 0-3):
@@ -327,8 +323,10 @@ Example documentation:
 {% endif %}
 ### Links Guidance
 
-Reference 4-8 related standard names from the `existing_names` list. Only include names that actually exist — do NOT invent new names for links. Prefer names that are:
-- Same physical quantity in a different context (electron_temperature ↔ ion_temperature)
-- Derived or input quantities (pressure ↔ temperature + density)
+Reference 4-8 related standard names from the `existing_names` list. Each link MUST be
+prefixed with `name:` — for example, `"name:electron_temperature"`, `"name:ion_temperature"`.
+Only include names that actually exist — do NOT invent new names for links. Prefer names that are:
+- Same physical quantity in a different context (name:electron_temperature ↔ name:ion_temperature)
+- Derived or input quantities (name:electron_pressure ↔ name:electron_temperature + name:electron_density)
 - Measured by the same diagnostic
 - Commonly plotted together
