@@ -15,30 +15,42 @@
 
 ## Active Feature Plans
 
-Gap documents consolidate remaining work from completed implementation phases.
+Refactored after rubber-duck review with independent code investigation (2026-04-14).
+Plans validated against live MCP tool output and current codebase.
 
-| Priority | Plan | Scope | Status |
-|----------|------|-------|--------|
-| **P2** | [features/imas-dd-server-improvements.md](features/imas-dd-server-improvements.md) | DD server gaps: explain_concept, total_paths, Phase 4 migration redesign | ~80% done |
-| **P2** | [features/gap-sn-quality-and-review.md](features/gap-sn-quality-and-review.md) | SN quality parity + standalone review CLI | New gap plan |
-| **P3** | [features/search-cluster-output-and-evaluation.md](features/search-cluster-output-and-evaluation.md) | Search cluster labels, See Also siblings, DoE optimization | ~40% done |
-| **P4** | [features/gaps-compute-orchestration.md](features/gaps-compute-orchestration.md) | Compute session orchestration remaining gaps | Low priority |
+| Priority | Plan | Scope | Est. Agents |
+|----------|------|-------|-------------|
+| **P1** | [features/sn-bootstrap-loop.md](features/sn-bootstrap-loop.md) | Wire `sn review` CLI, run generate→review→regenerate loop | 1 agent |
+| **P2** | [features/dd-server-cleanup.md](features/dd-server-cleanup.md) | 3 surgical fixes: truncation count, migration API, fuzzy matcher | 1-3 agents |
+| **P3** | [features/search-quality-improvements.md](features/search-quality-improvements.md) | Ranking fixes, evaluation alignment, fuzzy search | 2-3 agents |
 
-### Standard Names (remaining work)
+### Wave Implementation Order
 
-| Plan | Scope | Status |
-|------|-------|--------|
-| [standard-names/gap-sn-enrichment-gaps.md](features/standard-names/gap-sn-enrichment-gaps.md) | DD enrichment remaining: regenerate CLI, benchmark profiles, concept registry | New gap plan |
+```
+Wave 1: sn-bootstrap-loop (Phase 1 only — review CLI)
+Wave 2: dd-server-cleanup (all 3 fixes, parallel)  ← can run parallel with Wave 1
+Wave 3: search-quality-improvements (Phases 1-2)
+Wave 4: sn-bootstrap-loop Phases 2-3 (operational bootstrap + prompt improvements)
+```
+
+### Explicitly Removed / Deferred
+
+| Plan | Reason |
+|------|--------|
+| Compute orchestration | Removed — compute nodes cannot access internet |
+| `explain_concept` tool | Removed — frontier LLMs already do this, zero value |
+| SN benchmarking | Deferred — insufficient quality content in graph |
+| SN enrichment gaps | Deferred — low priority refinements, workarounds exist |
+| Search dimension upgrade | Deferred — fix ranking first, then investigate |
+| DoE weight optimization | Deferred — harness doesn't match production scoring |
 
 ### Completed plans
 
-Fully implemented plans archived in `features/completed/` and `features/standard-names/completed/` for reference.
+Fully implemented plans archived in `features/completed/` and `features/standard-names/completed/`.
 
-### Pending plans (partially implemented)
+### Reference plans (pending/)
 
-| Plan | Consolidated into |
-|------|-------------------|
-| [compute-session-orchestration.md](features/pending/compute-session-orchestration.md) | gaps-compute-orchestration |
+Partially implemented plans kept as reference for gap documents.
 
 ## Documentation Gaps
 
