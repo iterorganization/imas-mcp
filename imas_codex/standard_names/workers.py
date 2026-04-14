@@ -1,12 +1,11 @@
 """Async workers for the standard-name build pipeline.
 
-Six-phase pipeline (review optional):
+Five-phase generate pipeline:
 
-    EXTRACT → COMPOSE → [REVIEW] → VALIDATE → CONSOLIDATE → PERSIST
+    EXTRACT → COMPOSE → VALIDATE → CONSOLIDATE → PERSIST
 
 - **extract**: queries graph for DD paths or facility signals, builds batches
 - **compose**: LLM-generates standard names from extraction batches
-- **review**: cross-model review of composed candidates (optional)
 - **validate**: validates names against grammar via round-trip + fields check
 - **consolidate**: cross-batch dedup, conflict detection, coverage accounting
 - **persist**: writes consolidated names to graph with provenance
@@ -412,6 +411,46 @@ def _enrich_batch_items(items: list[dict]) -> None:
                     item["version_history"] = valid_changes
 
 
+def _process_attachments(
+    attachments: list, state: SNBuildState, wlog: logging.LoggerAdapter
+) -> None:
+    """Attach DD paths to existing standard names without regeneration.
+
+    Creates HAS_STANDARD_NAME relationships in the graph for paths that the
+    compose LLM identified as mapping to existing names.
+    """
+    from imas_codex.graph.client import GraphClient
+
+    batch = [
+        {"source_id": a.source_id, "standard_name": a.standard_name}
+        for a in attachments
+    ]
+
+    try:
+        with GraphClient() as gc:
+            # Also add path to the StandardName's imas_paths list
+            gc.query(
+                """
+                UNWIND $batch AS b
+                MATCH (sn:StandardName {id: b.standard_name})
+                MATCH (src:IMASNode {id: b.source_id})
+                MERGE (src)-[:HAS_STANDARD_NAME]->(sn)
+                WITH sn, b.source_id AS path
+                WHERE NOT path IN coalesce(sn.imas_paths, [])
+                SET sn.imas_paths = coalesce(sn.imas_paths, []) + path
+                """,
+                batch=batch,
+            )
+
+        for a in attachments:
+            wlog.info("Attached %s → %s (%s)", a.source_id, a.standard_name, a.reason)
+
+        prev = state.stats.get("attachments", 0)
+        state.stats["attachments"] = prev + len(attachments)
+    except Exception:
+        wlog.warning("Failed to process attachments", exc_info=True)
+
+
 async def compose_worker(state: SNBuildState, **_kwargs) -> None:
     """LLM-generate standard names from extracted batches.
 
@@ -636,19 +675,29 @@ async def compose_worker(state: SNBuildState, **_kwargs) -> None:
                         }
                     )
 
+            # Process attachments — paths that map to existing names
+            if result.attachments:
+                _process_attachments(result.attachments, state, wlog)
+
             wlog.info(
-                "Batch %s: %d composed, %d skipped (cost=$%.4f)",
+                "Batch %s: %d composed, %d attached, %d skipped (cost=$%.4f)",
                 batch.group_key,
                 len(result.candidates),
+                len(result.attachments),
                 len(result.skipped),
                 cost,
             )
             # Stream batch completion to progress display
+            attach_label = (
+                f"+{len(result.attachments)} attached  " if result.attachments else ""
+            )
             state.compose_stats.stream_queue.add(
                 [
                     {
                         "primary_text": batch.group_key,
-                        "description": f"{len(result.candidates)} names  ${cost:.3f}",
+                        "description": (
+                            f"{len(result.candidates)} names  {attach_label}${cost:.3f}"
+                        ),
                     }
                 ]
             )
@@ -669,9 +718,11 @@ async def compose_worker(state: SNBuildState, **_kwargs) -> None:
     state.composed = composed
     state.compose_stats.errors = errors
 
+    attached = state.stats.get("attachments", 0)
     wlog.info(
-        "Composition complete: %d composed, %d errors (cost=$%.4f)",
+        "Composition complete: %d composed, %d attached, %d errors (cost=$%.4f)",
         len(composed),
+        attached,
         errors,
         state.compose_stats.cost,
     )
@@ -1137,7 +1188,7 @@ def _validate_via_isn(entry: dict) -> tuple[list[str], dict]:
 async def validate_worker(state: SNBuildState, **_kwargs) -> None:
     """Validate composed names against grammar via round-trip + fields check.
 
-    Reads from ``state.reviewed`` if review ran, else ``state.composed``.
+    Reads from ``state.composed``.
     Reports distinct metrics: validate_valid, validate_invalid,
     validate_fields_consistent, validate_fields_inconsistent.
     Results stored in ``state.validated``.
@@ -1160,8 +1211,7 @@ async def validate_worker(state: SNBuildState, **_kwargs) -> None:
         state.validate_phase.mark_done()
         return
 
-    # Read from reviewed if review ran, else composed
-    input_candidates = state.reviewed if state.reviewed is not None else state.composed
+    input_candidates = state.composed
 
     if not input_candidates:
         wlog.info("No composed names to validate — skipping")

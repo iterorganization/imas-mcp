@@ -352,14 +352,20 @@ class TestSNQualityReviewModels:
 
 
 class TestReviewWorker:
-    """Test the review_worker function."""
+    """Test the review_worker function (standalone, not part of generate pipeline).
+
+    The review_worker function exists for future ``sn review`` CLI tool.
+    These tests use a mock state with the required attributes.
+    """
 
     @pytest.fixture(autouse=True)
     def _requires_imas_sn(self):
         pytest.importorskip("imas_standard_names")
 
     def _make_state(self, **overrides):
-        """Create a minimal SNBuildState for testing."""
+        """Create a minimal state with review-specific fields for testing."""
+        from imas_codex.discovery.base.progress import WorkerStats
+        from imas_codex.discovery.base.supervision import PipelinePhase
         from imas_codex.standard_names.state import SNBuildState
 
         defaults = {
@@ -368,7 +374,13 @@ class TestReviewWorker:
             "dry_run": False,
         }
         defaults.update(overrides)
-        return SNBuildState(**defaults)
+        state = SNBuildState(**defaults)
+        # Add review-specific fields that were removed from generate pipeline
+        state.reviewed = None
+        state.review_stats = WorkerStats()
+        state.review_phase = PipelinePhase("review")
+        state.review_model = None
+        return state
 
     def test_dry_run_skips_review(self):
         """In dry-run mode, review passes candidates through unchanged."""
@@ -616,39 +628,36 @@ class TestReviewWorker:
 
 
 class TestSNBuildStateReview:
-    """Test review-related state fields."""
+    """Test review-related state fields after pipeline refactor.
 
-    def test_state_has_review_fields(self):
-        """SNBuildState includes review configuration fields."""
+    Review has been removed from the generate pipeline. These tests
+    verify the state still works correctly without review fields.
+    """
+
+    def test_state_has_compose_model(self):
+        """SNBuildState includes compose model configuration."""
         from imas_codex.standard_names.state import SNBuildState
 
         state = SNBuildState(facility="dd")
-        assert state.review_model is None
         assert state.compose_model is None
-        assert state.reviewed is None
-        assert state.review_phase.name == "review"
-        assert not state.review_phase.done
 
-    def test_total_cost_includes_review(self):
-        """total_cost sums compose and review costs."""
+    def test_total_cost_is_compose_only(self):
+        """total_cost only includes compose cost (no review)."""
         from imas_codex.standard_names.state import SNBuildState
 
         state = SNBuildState(facility="dd")
         state.compose_stats.cost = 0.5
-        state.review_stats.cost = 0.3
-        assert state.total_cost == pytest.approx(0.8)
+        assert state.total_cost == pytest.approx(0.5)
 
     def test_model_override_configuration(self):
-        """compose_model and review_model can be set at construction."""
+        """compose_model can be set at construction."""
         from imas_codex.standard_names.state import SNBuildState
 
         state = SNBuildState(
             facility="dd",
             compose_model="test/compose",
-            review_model="test/review",
         )
         assert state.compose_model == "test/compose"
-        assert state.review_model == "test/review"
 
 
 # =============================================================================
@@ -656,65 +665,44 @@ class TestSNBuildStateReview:
 # =============================================================================
 
 
-class TestPipelineReviewWiring:
-    """Test that the pipeline correctly wires the review phase."""
+class TestPipelineWiring:
+    """Test that the pipeline correctly wires phases (no review in generate)."""
 
     @pytest.fixture(autouse=True)
     def _requires_imas_sn(self):
         pytest.importorskip("imas_standard_names")
 
-    def test_validate_depends_on_review_phase(self):
-        """Validate worker should depend on review_phase."""
+    def test_validate_depends_on_compose_phase(self):
+        """Validate worker should depend on compose_phase (review removed)."""
         from imas_codex.standard_names.state import SNBuildState
 
         state = SNBuildState(facility="dd")
 
-        # review_phase should not be done yet
-        assert not state.review_phase.done
+        assert not state.compose_phase.done
         assert not state.validate_phase.done
 
-    def test_review_always_runs(self):
-        """Review is always wired into the pipeline — no skip option.
-
-        All names are scored and persisted; the review step never rejects.
-        """
-        from imas_codex.discovery.base.engine import WorkerSpec
-        from imas_codex.standard_names.state import SNBuildState  # noqa: F841
-        from imas_codex.standard_names.workers import review_worker, validate_worker
-
-        _state = SNBuildState(facility="dd")
-
-        review_spec = WorkerSpec(
-            "review",
-            "review_phase",
-            review_worker,
-            depends_on=["compose_phase"],
-        )
-
-        validate_spec = WorkerSpec(
-            "validate",
-            "validate_phase",
-            validate_worker,
-            depends_on=["review_phase"],
-        )
-
-        assert review_spec.enabled is True
-        assert validate_spec.depends_on == ["review_phase"]
-
-    def test_validate_reads_reviewed_buffer(self):
-        """Validate worker reads from state.reviewed when populated."""
+    def test_validate_reads_composed_buffer(self):
+        """Validate worker reads from state.composed directly."""
         from imas_codex.standard_names.state import SNBuildState
 
         state = SNBuildState(facility="dd", dry_run=True)
-        state.reviewed = [
-            {"id": "electron_temperature", "source_id": "a"},
-        ]
         state.composed = [
-            {"id": "old_name", "source_id": "b"},
+            {"id": "electron_temperature", "source_id": "a"},
         ]
 
         from imas_codex.standard_names.workers import validate_worker
 
-        # In dry-run, validation is skipped — but we verify the buffer logic
         asyncio.run(validate_worker(state))
         assert state.validate_phase.done
+
+    def test_pipeline_has_no_review_step(self):
+        """Generate pipeline should not include a review worker."""
+        import importlib
+
+        mod = importlib.import_module("imas_codex.standard_names.pipeline")
+        source = importlib.util.find_spec(mod.__name__).origin
+        with open(source) as f:
+            content = f.read()
+
+        assert "review_worker" not in content
+        assert "review_phase" not in content

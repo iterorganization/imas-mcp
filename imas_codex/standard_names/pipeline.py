@@ -1,6 +1,6 @@
 """SN generate pipeline orchestrator.
 
-Wires the EXTRACT → COMPOSE → REVIEW → VALIDATE → CONSOLIDATE → PERSIST
+Wires the EXTRACT → COMPOSE → VALIDATE → CONSOLIDATE → PERSIST
 workers into the generic discovery engine and runs them with supervision
 and progress tracking.
 """
@@ -18,7 +18,6 @@ from imas_codex.standard_names.workers import (
     consolidate_worker,
     extract_worker,
     persist_worker,
-    review_worker,
     validate_worker,
 )
 
@@ -35,14 +34,16 @@ async def run_sn_generate_engine(
 
     Pipeline::
 
-        EXTRACT → COMPOSE → REVIEW → VALIDATE → CONSOLIDATE → PERSIST
+        EXTRACT → COMPOSE → VALIDATE → CONSOLIDATE → PERSIST
 
     Extract queries the graph for DD paths, builds cluster-based batches.
     Compose uses a reasoning model to generate standard names from the batches.
-    Review uses a budget model to score all composed names (no rejection).
     Validate checks grammar compliance via round-trip + fields consistency.
     Consolidate performs cross-batch dedup, conflict detection, and coverage.
     Persist writes consolidated names to graph with provenance.
+
+    Review/scoring is a separate process (``sn review``) that operates on the
+    full catalog with cross-name visibility.
 
     Args:
         state: Populated ``SNBuildState`` with source and filter config.
@@ -62,16 +63,10 @@ async def run_sn_generate_engine(
             depends_on=["extract_phase"],
         ),
         WorkerSpec(
-            "review",
-            "review_phase",
-            review_worker,
-            depends_on=["compose_phase"],
-        ),
-        WorkerSpec(
             "validate",
             "validate_phase",
             validate_worker,
-            depends_on=["review_phase"],
+            depends_on=["compose_phase"],
             group="finalize",
         ),
         WorkerSpec(

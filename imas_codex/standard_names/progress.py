@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 def build_sn_stages() -> list[StageDisplaySpec]:
     """Build the stage specs for the SN progress display.
 
-    4 rows: EXTRACT → COMPOSE → REVIEW → FINALIZE
+    3 rows: EXTRACT → COMPOSE → FINALIZE
     """
     return [
         StageDisplaySpec(
@@ -38,13 +38,6 @@ def build_sn_stages() -> list[StageDisplaySpec]:
             phase_attr="compose_phase",
         ),
         StageDisplaySpec(
-            name="REVIEW",
-            style="bold yellow",
-            group="review",
-            stats_attr="review_stats",
-            phase_attr="review_phase",
-        ),
-        StageDisplaySpec(
             name="FINALIZE",
             style="bold green",
             group="finalize",
@@ -56,7 +49,7 @@ def build_sn_stages() -> list[StageDisplaySpec]:
 class SNProgressDisplay(DataDrivenProgressDisplay):
     """Rich progress display for the SN build pipeline.
 
-    Shows 3–4 phases: Extract → Compose → [Review] → Finalize
+    Shows 3 phases: Extract → Compose → Finalize
     where Finalize groups validate + consolidate + persist.
     """
 
@@ -87,10 +80,11 @@ class SNProgressDisplay(DataDrivenProgressDisplay):
         """Build resource gauges: elapsed, cost."""
         total_cost = 0.0
         if self._engine_state:
-            for attr in ("compose_stats", "review_stats"):
-                stats: WorkerStats | None = getattr(self._engine_state, attr, None)
-                if stats and stats.cost > 0:
-                    total_cost += stats.cost
+            stats: WorkerStats | None = getattr(
+                self._engine_state, "compose_stats", None
+            )
+            if stats and stats.cost > 0:
+                total_cost += stats.cost
 
         config = ResourceConfig(
             elapsed=self.elapsed,
@@ -112,7 +106,6 @@ class SNProgressDisplay(DataDrivenProgressDisplay):
         for label, attr in [
             ("EXTRACT", "extract_stats"),
             ("COMPOSE", "compose_stats"),
-            ("REVIEW", "review_stats"),
             ("FINALIZE", "finalize_stats"),
         ]:
             stats = getattr(self._engine_state, attr, None)

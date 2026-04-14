@@ -77,12 +77,6 @@ def sn() -> None:
     help="Maximum number of DD paths to process",
 )
 @click.option(
-    "--review-model",
-    type=str,
-    default=None,
-    help="LLM model for scoring review (default: language model)",
-)
-@click.option(
     "--compose-model",
     type=str,
     default=None,
@@ -122,7 +116,6 @@ def sn_generate(
     dry_run: bool,
     force: bool,
     limit: int | None,
-    review_model: str | None,
     compose_model: str | None,
     verbose: bool,
     quiet: bool,
@@ -289,8 +282,6 @@ def sn_generate(
         log_print(f"  Limit: {limit} paths")
     if compose_model:
         log_print(f"  Compose model: {compose_model}")
-    if review_model:
-        log_print(f"  Review model: {review_model}")
     log_print(f"  Cost limit: ${cost_limit:.2f}")
     log_print("")
 
@@ -324,7 +315,6 @@ def sn_generate(
         force=force,
         limit=limit,
         compose_model=compose_model,
-        review_model=review_model,
     )
 
     if display:
@@ -363,15 +353,15 @@ def sn_generate(
     if result:
         extracted = result.get("extract_count", 0)
         composed = result.get("compose_count", 0)
-        scored = result.get("review_scored", composed)
+        attached = result.get("attachments", 0)
         validated = result.get("validate_valid", 0)
-        revised = result.get("review_revised", 0)
         parts = [
             f"Extracted: {extracted}",
             f"Composed: {composed}",
-            f"Scored: {scored}" + (f" ({revised} revised)" if revised else ""),
-            f"Validated: {validated}",
         ]
+        if attached:
+            parts.append(f"Attached: {attached}")
+        parts.append(f"Validated: {validated}")
         log_print(", ".join(parts))
         if dry_run:
             log_print("(dry run — no LLM calls or graph writes)")

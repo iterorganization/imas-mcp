@@ -269,7 +269,7 @@ applies. (Deferred to ISN vector_axes proposal for structural resolution.)
 3. Use only valid tokens from the vocabulary lists above
 4. `physical_base` is open vocabulary (any physics quantity in snake_case)
 5. `geometric_base` is restricted to the enumerated tokens
-6. **Reuse existing standard names** when the DD path measures the same quantity
+6. **Reuse existing standard names** when the DD path measures the same quantity — use `attachments` (see Output Format) to link the path to the existing name without regeneration. This avoids unnecessary token usage and preserves already-concrete names.
 7. Skip paths that are: array indices, metadata/timestamps, structural containers, coordinate grids (rho_tor_norm, psi, etc.)
 8. Set confidence < 0.5 when the mapping is ambiguous or multiple names could apply
 9. **Do NOT output a `unit` field** — unit is provided as authoritative context from the DD and will be injected at persistence time
@@ -283,6 +283,7 @@ applies. (Deferred to ISN vector_axes proposal for structural resolution.)
 
 Return a JSON object with:
 - `candidates`: array of standard name compositions (see schema below)
+- `attachments`: array of `{source_id, standard_name, reason}` for DD paths that map to an **existing** standard name without needing regeneration. Use this when an existing name from the "Existing Standard Names" or "Nearby Existing Standard Names" list is a perfect match for the DD path — this avoids regenerating documentation for already-concrete names.
 - `skipped`: array of source_ids that are not distinct physics quantities
 
 ### Candidate Schema
