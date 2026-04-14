@@ -266,7 +266,7 @@ Each candidate MUST include:
 - `source_id`: full DD path (e.g., "equilibrium/time_slice/profiles_1d/psi")
 - `standard_name`: the composed name in snake_case
 - `description`: one-sentence summary, **under 120 characters** (e.g., "Electron temperature profile on the poloidal flux grid")
-- `documentation`: rich documentation paragraph (200-500 chars) — see template below
+- `documentation`: rich documentation following the template below (**target: 150-400 words, 800-2500 chars**)
 - `kind`: one of `"scalar"`, `"vector"`, `"metadata"` — see classification rules
 - `tags`: array of 0-3 **secondary** tags ONLY from the controlled vocabulary below (primary classification goes into `physics_domain` automatically — do NOT include primary tags here)
 - `links`: array of 4-8 related standard names from the existing_names list, each prefixed with `name:` (e.g., `"name:electron_temperature"`)
@@ -279,18 +279,51 @@ Each candidate MUST include:
 
 ### Documentation Template
 
-Write documentation following this structure (200-500 characters):
+Write documentation following this mandatory structure (**target: 150-400 words, 800-2500 characters**).
+Every section listed below MUST appear. Omitting sections degrades review scores.
 
-1. **Opening statement** — what the quantity is and where it appears
-2. **Governing physics** — equations or relationships using LaTeX ($T_e$, $\psi$, $n_e$)
-3. **Physical significance** — why this quantity matters for plasma performance
-4. **Measurement context** — how it is typically measured or computed
-5. **Typical values** — use ranges from the tokamak parameter data above
-6. **Sign conventions** — note any COCOS dependencies if applicable
-7. **Cross-references** — use `[name](#name)` format to link related quantities
+1. **Opening definition** (1-2 sentences) — precise physics definition of the quantity. State clearly
+   what it represents and in what physical domain it appears.
 
-Example documentation:
-> The electron temperature $T_e$ is a fundamental kinetic quantity representing the thermal energy of the plasma electron population. Measured primarily by Thomson scattering and electron cyclotron emission (ECE) diagnostics. Typical values range from ~100 eV at the edge to 1-20 keV in the core depending on heating power and confinement regime. Related to [electron_density](#electron_density) via the electron pressure $p_e = n_e T_e$.
+2. **Defining equation** — at least one display equation using LaTeX `$$...$$` format. Define EVERY
+   variable after the equation (including SI units). Example:
+   ```
+   $$q(\psi) = \frac{1}{2\pi} \oint \frac{\mathbf{B} \cdot \nabla\phi}{\mathbf{B} \cdot \nabla\theta} d\theta$$
+   where $q$ is the safety factor (dimensionless), $\psi$ is the poloidal magnetic flux (Wb), ...
+   ```
+
+3. **Physical significance** (2-3 sentences) — explain WHY this quantity matters. Connect to
+   confinement performance, stability, or operational limits.
+
+4. **Measurement and computation** (1-2 sentences) — typical measurement technique or equilibrium
+   reconstruction method. Keep method-independent (do not name specific codes unless necessary).
+
+5. **Typical values** — give quantitative ranges from the tokamak parameter data above. Format:
+   "In conventional tokamaks: X-Y [unit]; in spherical tokamaks: A-B [unit]."
+
+6. **Sign convention** — include for ALL COCOS-dependent quantities using EXACTLY the format:
+   "Sign convention: Positive when [specific condition]."
+   If not COCOS-dependent, state: "This quantity has no sign ambiguity."
+
+7. **Cross-references** — reference 2-4 related quantities using `[name](#name)` inline link format.
+   These must match entries from the `links` field.
+
+**Quality gates:**
+- At least ONE `$$...$$` display equation (not inline `$...$`)
+- All equation variables defined with units
+- Quantitative typical values (not "typically large")
+- Every `[name](#name)` link must also appear in `links` list
+
+Example documentation (quality standard):
+> The safety factor $q$ quantifies the helicity of magnetic field lines on a given flux surface, representing the ratio of toroidal to poloidal transit of a field line.
+>
+> $$q(\psi) = \frac{1}{2\pi} \oint \frac{\mathbf{B} \cdot \nabla\phi}{\mathbf{B} \cdot \nabla\theta} d\theta$$
+>
+> where $q$ is the safety factor (dimensionless), $\psi$ is the poloidal magnetic flux (Wb), $\mathbf{B}$ is the magnetic field (T), $\phi$ is the toroidal angle (rad), and $\theta$ is the poloidal angle (rad).
+>
+> The safety factor is central to MHD stability analysis: rational values of $q$ ($m/n$ where $m, n$ are integers) correspond to resonant surfaces susceptible to tearing modes and other instabilities. The minimum value $q_\text{min}$ determines the onset of sawtooth oscillations (typically $q_0 < 1$ at the magnetic axis) and the edge value $q_{95}$ governs edge stability.
+>
+> Typical values range from 0.8-1.2 at the magnetic axis to 3-7 at the 95% flux surface in conventional tokamaks, and 1.5-15 in spherical tokamaks. Values below 1 at the axis indicate sawtooth activity. Related to [poloidal_magnetic_flux](#poloidal_magnetic_flux) via the flux derivative and connected to [plasma_current](#plasma_current) through the edge safety factor scaling $q_{95} \propto B_0 a^2 / (R_0 I_p)$.
 
 ### Tags — Controlled Vocabulary
 
@@ -323,10 +356,14 @@ Include **0-3 secondary tags** from the list below. Do NOT include primary tags 
 {% endif %}
 ### Links Guidance
 
-Reference 4-8 related standard names from the `existing_names` list. Each link MUST be
-prefixed with `name:` — for example, `"name:electron_temperature"`, `"name:ion_temperature"`.
-Only include names that actually exist — do NOT invent new names for links. Prefer names that are:
+Reference 4-8 related standard names or DD paths. Each link MUST have a prefix:
+- `name:` for existing standard names (e.g., `"name:electron_temperature"`)
+- `dd:` for IMAS DD paths when no standard name exists yet (e.g., `"dd:equilibrium/time_slice/profiles_1d/phi"`)
+
+Prefer `name:` links to existing names when available. Use `dd:` links for sibling fields and
+related paths from the batch context that don't have standard names yet — these will be resolved
+to `name:` links once those paths are named. Include links that are:
 - Same physical quantity in a different context (name:electron_temperature ↔ name:ion_temperature)
 - Derived or input quantities (name:electron_pressure ↔ name:electron_temperature + name:electron_density)
-- Measured by the same diagnostic
+- Sibling fields from the same parent structure (use `dd:` prefix for these)
 - Commonly plotted together

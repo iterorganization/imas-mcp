@@ -84,7 +84,16 @@ These names already exist in the catalog. Reuse them if they match your source, 
 {% if item.cluster_description %}- **Cluster description:** {{ item.cluster_description }}{% endif %}
 {% if item.parent_path %}- **Parent structure:** {{ item.parent_path }} ({{ item.parent_type or 'STRUCTURE' }}){% endif %}
 {% if item.parent_description %}- **Parent description:** {{ item.parent_description }}{% endif %}
+{% if item.coordinate_paths %}- **Coordinates:** {{ item.coordinate_paths | join(', ') }}{% endif %}
+{% if item.timebase %}- **Timebase:** {{ item.timebase }}{% endif %}
+{% if item.cocos_label %}- **COCOS transformation:** {{ item.cocos_label }}{% if item.cocos_expression %} ({{ item.cocos_expression }}){% endif %}
+  ⚠️ This quantity is COCOS-dependent — include sign convention in documentation.{% endif %}
+{% if item.identifier_schema %}- **Identifier schema:** {{ item.identifier_schema }}{% if item.identifier_schema_doc %} — {{ item.identifier_schema_doc }}{% endif %}{% endif %}
 {% if item.coord_path %}- **Coordinate:** {{ item.coord_path }}{% if item.coord_unit %} ({{ item.coord_unit }}){% endif %}{% endif %}
+{% if item.sibling_fields %}
+- **Sibling fields** (same parent structure — use for documentation cross-references):
+{% for sib in item.sibling_fields %}  - `{{ sib.path }}`: {{ sib.description or 'no description' }} ({{ sib.data_type or '?' }})
+{% endfor %}{% endif %}
 {% if item.previous_name %}
 - **Previous name:** `{{ item.previous_name.name }}` *(from prior generation — reuse if still appropriate, or improve. This is a suggestion, not a constraint.)*
 {% if item.previous_name.description %}- **Prior documentation:** {{ item.previous_name.description[:200] }}{% endif %}

@@ -179,11 +179,14 @@ def _get_secondary_tags() -> frozenset[str]:
 
 
 def _normalize_links(links: list[str]) -> list[str]:
-    """Ensure all internal links have ``name:`` prefix."""
+    """Ensure all internal links have ``name:`` or ``dd:`` prefix."""
     result = []
     for link in links:
-        if link.startswith(("http://", "https://", "name:")):
+        if link.startswith(("http://", "https://", "name:", "dd:")):
             result.append(link)
+        elif "/" in link:
+            # Looks like a DD path (contains slash) — add dd: prefix
+            result.append(f"dd:{link}")
         else:
             result.append(f"name:{link}")
     return result
@@ -195,6 +198,99 @@ def _filter_secondary_tags(tags: list[str]) -> list[str]:
     if not secondary:
         return tags  # no vocabulary loaded, pass through
     return [t for t in tags if t in secondary]
+
+
+# =============================================================================
+# DD context enrichment — fetch rich graph data before composing
+# =============================================================================
+
+_DD_CONTEXT_QUERY = """
+MATCH (n:IMASNode {id: $path})
+OPTIONAL MATCH (n)-[:HAS_COORDINATE]->(cs:IMASCoordinateSpec)
+OPTIONAL MATCH (n)-[:HAS_IDENTIFIER_SCHEMA]->(ident:IdentifierSchema)
+OPTIONAL MATCH (n)-[:HAS_PARENT]->(parent:IMASNode)
+OPTIONAL MATCH (parent)-[:HAS_CHILD]->(sibling:IMASNode)
+WHERE sibling.id <> $path
+  AND sibling.data_type <> 'STRUCTURE'
+  AND sibling.data_type <> 'STRUCT_ARRAY'
+WITH n, cs, ident, parent,
+     collect(DISTINCT {
+         path: sibling.id,
+         description: sibling.description,
+         data_type: sibling.data_type
+     })[0..8] AS sibling_fields
+RETURN n.coordinate1_same_as AS coordinate1,
+       n.coordinate2_same_as AS coordinate2,
+       n.coordinate3_same_as AS coordinate3,
+       n.timebasepath AS timebase,
+       n.cocos_label_transformation AS cocos_label,
+       n.cocos_transformation_expression AS cocos_expression,
+       cs.id AS coordinate_spec_id,
+       cs.coordinate_description AS coordinate_spec_description,
+       ident.name AS identifier_schema_name,
+       ident.documentation AS identifier_schema_doc,
+       parent.id AS parent_path,
+       parent.description AS parent_description,
+       sibling_fields
+"""
+
+
+def _enrich_batch_items(items: list[dict]) -> None:
+    """Enrich batch items with rich DD context from the graph.
+
+    Fetches coordinate specs, COCOS info, identifier schemas, and sibling
+    fields for each item. Modifies items in-place.
+    """
+    from imas_codex.graph.client import GraphClient
+
+    with GraphClient() as gc:
+        for item in items:
+            path = item.get("path")
+            if not path:
+                continue
+
+            rows = list(gc.query(_DD_CONTEXT_QUERY, path=path))
+            if not rows:
+                continue
+
+            row = rows[0]
+
+            # Coordinate context
+            coords = []
+            for key in ("coordinate1", "coordinate2", "coordinate3"):
+                val = row.get(key)
+                if val:
+                    coords.append(val)
+            if coords:
+                item["coordinate_paths"] = coords
+
+            timebase = row.get("timebase")
+            if timebase:
+                item["timebase"] = timebase
+
+            # COCOS
+            cocos_label = row.get("cocos_label")
+            cocos_expr = row.get("cocos_expression")
+            if cocos_label:
+                item["cocos_label"] = cocos_label
+            if cocos_expr:
+                item["cocos_expression"] = cocos_expr
+
+            # Identifier schema
+            ident_name = row.get("identifier_schema_name")
+            if ident_name:
+                item["identifier_schema"] = ident_name
+                ident_doc = row.get("identifier_schema_doc")
+                if ident_doc:
+                    item["identifier_schema_doc"] = ident_doc
+
+            # Sibling fields (same parent, different leaf paths)
+            siblings = row.get("sibling_fields") or []
+            if siblings and isinstance(siblings, list):
+                # Filter out empty entries
+                valid = [s for s in siblings if s.get("path")]
+                if valid:
+                    item["sibling_fields"] = valid
 
 
 async def compose_worker(state: SNBuildState, **_kwargs) -> None:
@@ -233,6 +329,14 @@ async def compose_worker(state: SNBuildState, **_kwargs) -> None:
 
     model = get_model("language")
     context = build_compose_context()
+
+    # Enrich batch items with rich DD context (coordinate specs, COCOS, siblings)
+    def _enrich_all_batches():
+        for batch in state.extracted:
+            _enrich_batch_items(batch.items)
+
+    await asyncio.to_thread(_enrich_all_batches)
+    wlog.info("Enriched batch items with DD context")
 
     # Render system prompt once (cached via prompt caching)
     system_prompt = render_prompt("sn/compose_system", context)
@@ -490,7 +594,15 @@ async def review_worker(state: SNBuildState, **_kwargs) -> None:
     errors = 0
     total_cost = 0.0
     total_tokens = 0
+
+    # Build dedup set: all existing names, minus names for sources being
+    # regenerated (--force mode) so they can be replaced.
     names_in_run: set[str] = set(existing_names)
+    if state.force:
+        # The composed candidates may re-generate the same names that already
+        # exist in the graph. Remove those from the dedup set so they pass.
+        composed_names = {c.get("id", "") for c in state.composed if c.get("id")}
+        names_in_run -= composed_names
 
     candidates = list(state.composed)
     for batch_start in range(0, len(candidates), _REVIEW_BATCH_SIZE):

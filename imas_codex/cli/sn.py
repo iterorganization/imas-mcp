@@ -138,6 +138,7 @@ def sn_generate(
         ids_filter = None
         domain_filter = None
         limit = None
+        force = True  # Targeted paths always regenerate
 
     # Handle --reset-to before the main pipeline
     if reset_to is not None and not dry_run:
