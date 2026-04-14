@@ -56,7 +56,7 @@ def extract_signal_candidates(
             OPTIONAL MATCH (s)-[:HAS_STANDARD_NAME]->(sn:StandardName)
             RETURN s.id AS signal_id, s.description AS description,
                    s.physics_domain AS physics_domain,
-                   s.canonical_units AS units,
+                   s.unit AS units,
                    sn.id AS existing_standard_name
             ORDER BY s.physics_domain, s.id
             LIMIT $limit

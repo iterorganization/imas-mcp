@@ -475,7 +475,7 @@ class TestWriteCatalogEntries:
         assert "coalesce(sn.created_at, datetime())" in cypher
 
     def test_unit_relationship_created(self) -> None:
-        """Entries with units should create CANONICAL_UNITS relationship."""
+        """Entries with units should create HAS_UNIT relationship."""
         mock_gc = MagicMock()
         mock_gc.query = MagicMock(return_value=[])
 
@@ -507,12 +507,12 @@ class TestWriteCatalogEntries:
         unit_calls = [
             call
             for call in mock_gc.query.call_args_list
-            if "CANONICAL_UNITS" in str(call)
+            if "HAS_UNIT" in str(call) and "Unit" in str(call)
         ]
         assert len(unit_calls) >= 1
         unit_cypher = unit_calls[0][0][0]
         assert "MERGE (u:Unit" in unit_cypher
-        assert "MERGE (sn)-[:CANONICAL_UNITS]->(u)" in unit_cypher
+        assert "MERGE (sn)-[:HAS_UNIT]->(u)" in unit_cypher
 
     def test_dd_relationship_from_imas_paths(self) -> None:
         """Entries with imas_paths should create HAS_STANDARD_NAME from IMASNode."""

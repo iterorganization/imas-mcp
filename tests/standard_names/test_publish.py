@@ -458,7 +458,7 @@ class TestGraphRecordsToEntries:
                 "description": "Te profile",
                 "source": "dd",
                 "source_path": "equilibrium/time_slice/profiles_1d/electrons/temperature",
-                "canonical_units": "eV",
+                "unit": "eV",
                 "confidence": 0.9,
                 "ids_name": "equilibrium",
             }
@@ -540,7 +540,7 @@ class TestGraphRecordsToEntries:
                 "kind": "scalar",
                 "source": "dd",
                 "source_path": "core_profiles/profiles_1d/ion/temperature",
-                "canonical_units": "eV",
+                "unit": "eV",
                 "confidence": 0.9,
                 "ids_name": "core_profiles",
                 "tags": ["core_profiles", "kinetics"],

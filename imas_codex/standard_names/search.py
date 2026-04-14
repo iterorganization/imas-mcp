@@ -44,11 +44,11 @@ def search_similar_names(query: str, k: int = 5) -> list[dict[str, Any]]:
                 )
                 YIELD node AS sn, score
                 WHERE sn.id IS NOT NULL
-                OPTIONAL MATCH (sn)-[:CANONICAL_UNITS]->(u:Unit)
+                OPTIONAL MATCH (sn)-[:HAS_UNIT]->(u:Unit)
                 RETURN sn.id AS id,
                        sn.description AS description,
                        sn.kind AS kind,
-                       coalesce(u.id, sn.canonical_units) AS unit,
+                       coalesce(u.id, sn.unit) AS unit,
                        score
                 ORDER BY score DESC
                 """,

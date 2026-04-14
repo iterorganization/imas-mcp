@@ -167,7 +167,7 @@ def _write_catalog_entries(
             SET sn.description = b.description,
                 sn.documentation = b.documentation,
                 sn.kind = b.kind,
-                sn.canonical_units = b.unit,
+                sn.unit = b.unit,
                 sn.tags = b.tags,
                 sn.links = b.links,
                 sn.imas_paths = b.imas_paths,
@@ -194,7 +194,7 @@ def _write_catalog_entries(
             batch=entries,
         )
 
-        # Create CANONICAL_UNITS relationships: StandardName → Unit
+        # Create HAS_UNIT relationships: StandardName → Unit
         units_batch = [
             {"id": e["id"], "unit": e["unit"]} for e in entries if e.get("unit")
         ]
@@ -204,7 +204,7 @@ def _write_catalog_entries(
                 UNWIND $batch AS b
                 MATCH (sn:StandardName {id: b.id})
                 MERGE (u:Unit {id: b.unit})
-                MERGE (sn)-[:CANONICAL_UNITS]->(u)
+                MERGE (sn)-[:HAS_UNIT]->(u)
                 """,
                 batch=units_batch,
             )
@@ -416,7 +416,7 @@ def check_catalog(
                    sn.description AS description,
                    sn.documentation AS documentation,
                    sn.kind AS kind,
-                   sn.canonical_units AS unit,
+                   sn.unit AS unit,
                    sn.tags AS tags,
                    sn.imas_paths AS imas_paths,
                    sn.validity_domain AS validity_domain,

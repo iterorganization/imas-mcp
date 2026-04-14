@@ -462,7 +462,7 @@ SAMPLE_GRAPH_RECORD: dict[str, Any] = {
     "documentation": "The $T_e$ profile measured by Thomson scattering.",
     "source": "dd",
     "source_path": "core_profiles/profiles_1d/electrons/temperature",
-    "canonical_units": "eV",
+    "unit": "eV",
     "kind": "scalar",
     "tags": [],
     "links": [],
@@ -526,7 +526,7 @@ def _imported_dict_to_graph_record(d: dict[str, Any]) -> dict[str, Any]:
 
     ``import_catalog`` returns dicts with ``id`` / ``units`` / ``imas_paths``
     keys.  ``graph_records_to_entries`` looks for ``name``/``id``,
-    ``canonical_units``/``units``, and ``ids_paths``.  This helper adds the
+    ``unit``/``units``, and ``ids_paths``.  This helper adds the
     ``ids_paths`` alias so that the path list survives the round-trip.
     """
     rec = dict(d)
@@ -771,7 +771,7 @@ _GRAPH_QUERY_ROW = {
         "It is a key parameter for transport modelling."
     ),
     "kind": "scalar",
-    "canonical_units": "eV",
+    "unit": "eV",
     "tags": ["spatial-profile"],
     "links": ["name:ion_temperature"],
     "ids_paths": ["core_profiles/profiles_1d/electrons/temperature"],

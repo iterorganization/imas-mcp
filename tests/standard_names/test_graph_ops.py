@@ -115,27 +115,27 @@ class TestWriteStandardNames:
         assert "FacilitySignal" in signal_cypher
 
     def test_unit_relationship_created(self, sample_standard_names: list[dict]) -> None:
-        """Names with units should create (StandardName)-[:CANONICAL_UNITS]->(Unit)."""
+        """Names with units should create (StandardName)-[:HAS_UNIT]->(Unit)."""
         mock_gc = MagicMock()
         mock_gc.query = MagicMock(return_value=[])
 
         self._call_write(sample_standard_names, mock_gc)
 
-        # Find the CANONICAL_UNITS relationship query
+        # Find the HAS_UNIT relationship query
         unit_calls = [
             call
             for call in mock_gc.query.call_args_list
-            if "CANONICAL_UNITS" in str(call)
+            if "HAS_UNIT" in str(call) and "Unit" in str(call)
         ]
-        assert len(unit_calls) >= 1, "Should create CANONICAL_UNITS relationship"
+        assert len(unit_calls) >= 1, "Should create HAS_UNIT relationship"
 
         unit_cypher = unit_calls[0][0][0]
         assert "Unit" in unit_cypher
         assert "MERGE (u:Unit" in unit_cypher
-        assert "MERGE (sn)-[:CANONICAL_UNITS]->(u)" in unit_cypher
+        assert "MERGE (sn)-[:HAS_UNIT]->(u)" in unit_cypher
 
     def test_no_unit_relationship_when_no_units(self) -> None:
-        """Names without units should NOT create CANONICAL_UNITS relationships."""
+        """Names without units should NOT create HAS_UNIT relationships."""
         mock_gc = MagicMock()
         mock_gc.query = MagicMock(return_value=[])
 
@@ -151,9 +151,9 @@ class TestWriteStandardNames:
         unit_calls = [
             call
             for call in mock_gc.query.call_args_list
-            if "CANONICAL_UNITS" in str(call)
+            if "MERGE (u:Unit" in str(call)
         ]
-        assert len(unit_calls) == 0, "Should NOT create CANONICAL_UNITS when no units"
+        assert len(unit_calls) == 0, "Should NOT create HAS_UNIT when no units"
 
     def test_rich_fields_in_batch(self, sample_standard_names: list[dict]) -> None:
         """All rich fields should be included in the batch parameter."""
@@ -218,7 +218,7 @@ class TestGetValidatedStandardNames:
                     "description": "Te",
                     "source": "dd",
                     "source_path": "core_profiles/profiles_1d/electrons/temperature",
-                    "canonical_units": "eV",
+                    "unit": "eV",
                     "confidence": 0.95,
                     "ids_name": "core_profiles",
                 }
@@ -269,7 +269,7 @@ class TestGetValidatedStandardNames:
                     "description": "",
                     "source": "dd",
                     "source_path": "x",
-                    "canonical_units": None,
+                    "unit": None,
                     "confidence": 1.0,
                     "ids_name": None,
                 },
@@ -278,7 +278,7 @@ class TestGetValidatedStandardNames:
                     "description": "",
                     "source": "dd",
                     "source_path": "y",
-                    "canonical_units": None,
+                    "unit": None,
                     "confidence": 1.0,
                     "ids_name": None,
                 },
@@ -388,15 +388,15 @@ class TestResetStandardNames:
         all_cypher = " ".join(call[0][0] for call in mock_gc.query.call_args_list)
         assert "HAS_STANDARD_NAME" in all_cypher
 
-    def test_removes_canonical_units_relationships(self) -> None:
-        """Reset should delete CANONICAL_UNITS relationships."""
+    def test_removes_unit_relationships(self) -> None:
+        """Reset should delete HAS_UNIT relationships."""
         mock_gc = MagicMock()
         mock_gc.query = MagicMock(return_value=[{"n": 1}])
 
         self._call_reset(mock_gc, from_status="drafted")
 
         all_cypher = " ".join(call[0][0] for call in mock_gc.query.call_args_list)
-        assert "CANONICAL_UNITS" in all_cypher
+        assert "HAS_UNIT" in all_cypher
 
     def test_to_status_sets_review_status(self) -> None:
         """When to_status is given, SET clause should include review_status."""

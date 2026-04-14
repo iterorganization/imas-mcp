@@ -101,9 +101,9 @@ def _vector_search_sn(gc: GraphClient, embedding: list[float], k: int) -> list[d
 CALL db.index.vector.queryNodes('standard_name_desc_embedding', $k, $embedding)
 YIELD node AS sn, score
 WHERE sn.id IS NOT NULL
-OPTIONAL MATCH (sn)-[:CANONICAL_UNITS]->(u:Unit)
+OPTIONAL MATCH (sn)-[:HAS_UNIT]->(u:Unit)
 RETURN sn.id AS name, sn.description AS description,
-       sn.kind AS kind, coalesce(u.id, sn.canonical_units) AS unit,
+       sn.kind AS kind, coalesce(u.id, sn.unit) AS unit,
        sn.tags AS tags, sn.review_status AS review_status,
        sn.documentation AS documentation,
        sn.physical_base AS physical_base,
@@ -121,9 +121,9 @@ MATCH (sn:StandardName)
 WHERE toLower(sn.id) CONTAINS toLower($keyword)
    OR toLower(sn.description) CONTAINS toLower($keyword)
    OR toLower(coalesce(sn.documentation, '')) CONTAINS toLower($keyword)
-OPTIONAL MATCH (sn)-[:CANONICAL_UNITS]->(u:Unit)
+OPTIONAL MATCH (sn)-[:HAS_UNIT]->(u:Unit)
 RETURN sn.id AS name, sn.description AS description,
-       sn.kind AS kind, coalesce(u.id, sn.canonical_units) AS unit,
+       sn.kind AS kind, coalesce(u.id, sn.unit) AS unit,
        sn.tags AS tags, sn.review_status AS review_status,
        sn.documentation AS documentation,
        sn.physical_base AS physical_base,
@@ -218,12 +218,12 @@ def _fetch_standard_names(
     cypher = """
 UNWIND $names AS name_id
 MATCH (sn:StandardName {id: name_id})
-OPTIONAL MATCH (sn)-[:CANONICAL_UNITS]->(u:Unit)
+OPTIONAL MATCH (sn)-[:HAS_UNIT]->(u:Unit)
 OPTIONAL MATCH (src)-[:HAS_STANDARD_NAME]->(sn)
 OPTIONAL MATCH (src)-[:IN_IDS]->(ids:IDS)
 RETURN sn.id AS name, sn.description AS description,
        sn.documentation AS documentation,
-       sn.kind AS kind, coalesce(u.id, sn.canonical_units) AS unit,
+       sn.kind AS kind, coalesce(u.id, sn.unit) AS unit,
        sn.tags AS tags, sn.links AS links,
        sn.ids_paths AS ids_paths, sn.constraints AS constraints,
        sn.validity_domain AS validity_domain,
@@ -394,9 +394,9 @@ def _list_standard_names(
     cypher = f"""
 MATCH (sn:StandardName)
 {where_clause}
-OPTIONAL MATCH (sn)-[:CANONICAL_UNITS]->(u:Unit)
+OPTIONAL MATCH (sn)-[:HAS_UNIT]->(u:Unit)
 RETURN sn.id AS name, sn.kind AS kind,
-       coalesce(u.id, sn.canonical_units) AS unit,
+       coalesce(u.id, sn.unit) AS unit,
        sn.review_status AS review_status,
        sn.description AS description
 ORDER BY sn.id

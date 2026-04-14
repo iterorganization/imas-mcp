@@ -198,7 +198,7 @@ def _get_rich_source_name_mapping() -> dict[str, dict]:
     with GraphClient() as gc:
         results = gc.query("""
             MATCH (src)-[:HAS_STANDARD_NAME]->(sn:StandardName)
-            OPTIONAL MATCH (sn)-[:CANONICAL_UNITS]->(u:Unit)
+            OPTIONAL MATCH (sn)-[:HAS_UNIT]->(u:Unit)
             OPTIONAL MATCH (other_src)-[:HAS_STANDARD_NAME]->(sn)
             WHERE other_src <> src
             RETURN src.id AS source_id,
@@ -265,7 +265,7 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
     ``validation_layer_summary``.
 
     Performs conflict detection on ``unit``: if a StandardName already exists
-    with a different canonical_units value, that entry is skipped (not written)
+    with a different unit value, that entry is skipped (not written)
     and a warning is logged.
 
     Returns the number of nodes written.
@@ -286,10 +286,10 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
                     """
                     UNWIND $batch AS b
                     MATCH (sn:StandardName {id: b.id})
-                    WHERE sn.canonical_units IS NOT NULL AND b.unit IS NOT NULL
-                      AND sn.canonical_units <> b.unit
+                    WHERE sn.unit IS NOT NULL AND b.unit IS NOT NULL
+                      AND sn.unit <> b.unit
                     RETURN sn.id AS name,
-                           sn.canonical_units AS existing_unit,
+                           sn.unit AS existing_unit,
                            b.unit AS incoming_unit
                     """,
                     batch=unit_check_batch,
@@ -328,7 +328,7 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
                 sn.imas_paths = coalesce(b.imas_paths, sn.imas_paths),
                 sn.validity_domain = coalesce(b.validity_domain, sn.validity_domain),
                 sn.constraints = coalesce(b.constraints, sn.constraints),
-                sn.canonical_units = coalesce(b.unit, sn.canonical_units),
+                sn.unit = coalesce(b.unit, sn.unit),
                 sn.physics_domain = coalesce(b.physics_domain, sn.physics_domain),
                 sn.model = coalesce(b.model, sn.model),
                 sn.review_status = coalesce(b.review_status, sn.review_status),
@@ -420,7 +420,7 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
                 ],
             )
 
-        # Create CANONICAL_UNITS relationships: StandardName → Unit
+        # Create HAS_UNIT relationships: StandardName → Unit
         units_batch = [
             {"id": n["id"], "unit": n["unit"]} for n in names if n.get("unit")
         ]
@@ -430,7 +430,7 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
                 UNWIND $batch AS b
                 MATCH (sn:StandardName {id: b.id})
                 MERGE (u:Unit {id: b.unit})
-                MERGE (sn)-[:CANONICAL_UNITS]->(u)
+                MERGE (sn)-[:HAS_UNIT]->(u)
                 """,
                 batch=units_batch,
             )
@@ -454,7 +454,7 @@ def get_validated_standard_names(
 
     Queries StandardName nodes with the given ``review_status``, joining
     through ``HAS_STANDARD_NAME`` to find source entities and their parent IDS,
-    and through ``CANONICAL_UNITS`` to find the unit node.  Uses ``collect()``
+    and through ``HAS_UNIT`` to find the unit node.  Uses ``collect()``
     to avoid row duplication when a name has multiple sources (takes the first).
 
     Parameters
@@ -472,7 +472,7 @@ def get_validated_standard_names(
     Returns
     -------
     list of dicts with keys: name, description, documentation, kind,
-    canonical_units, tags, links, ids_paths, constraints, validity_domain,
+    unit, tags, links, ids_paths, constraints, validity_domain,
     confidence, model, source, source_path, ids_name, physical_base,
     subject, component, coordinate, position, process, source_ids_names.
     """
@@ -489,7 +489,7 @@ def get_validated_standard_names(
             AND coalesce(sn.confidence, 1.0) >= $confidence_min
             OPTIONAL MATCH (src)-[:HAS_STANDARD_NAME]->(sn)
             OPTIONAL MATCH (src)-[:IN_IDS]->(ids:IDS)
-            OPTIONAL MATCH (sn)-[:CANONICAL_UNITS]->(u:Unit)
+            OPTIONAL MATCH (sn)-[:HAS_UNIT]->(u:Unit)
             WITH sn,
                  collect(DISTINCT src.id)[0] AS first_source,
                  collect(DISTINCT ids.id)[0] AS first_ids,
@@ -510,7 +510,7 @@ def get_validated_standard_names(
                    sn.description AS description,
                    sn.documentation AS documentation,
                    sn.kind AS kind,
-                   coalesce(u.id, sn.canonical_units, sn.units) AS canonical_units,
+                   coalesce(u.id, sn.unit) AS unit,
                    sn.tags AS tags,
                    sn.links AS links,
                    sn.ids_paths AS ids_paths,
@@ -553,7 +553,7 @@ def reset_standard_names(
     """Reset StandardName nodes to allow re-processing.
 
     Clears transient fields (embedding, embedded_at, model, generated_at,
-    confidence) and removes HAS_STANDARD_NAME and CANONICAL_UNITS
+    confidence) and removes HAS_STANDARD_NAME and HAS_UNIT
     relationships for matching nodes.
 
     Parameters
@@ -633,7 +633,7 @@ def reset_standard_names(
                 reset_params["ids_prefix"] = ids_filter + "/"
             node_match = f"MATCH (sn:StandardName) WHERE {where}"
 
-        # Remove HAS_STANDARD_NAME and CANONICAL_UNITS relationships
+        # Remove HAS_STANDARD_NAME and HAS_UNIT relationships
         gc.query(
             f"""
             {node_match}
@@ -645,7 +645,7 @@ def reset_standard_names(
         gc.query(
             f"""
             {node_match}
-            OPTIONAL MATCH (sn)-[r:CANONICAL_UNITS]->(u)
+            OPTIONAL MATCH (sn)-[r:HAS_UNIT]->(u)
             DELETE r
             """,
             **reset_params,

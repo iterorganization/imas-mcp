@@ -129,9 +129,11 @@ classes:
         description: >-
           The core physics quantity (e.g., "temperature", "density",
           "current"). Used for grouping related standard names.
-      canonical_units:
+      unit:
         description: Expected SI units for this quantity
         range: Unit
+        annotations:
+          relationship_type: HAS_UNIT
       source:
         description: >-
           How this standard name was generated.

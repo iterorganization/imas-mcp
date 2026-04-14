@@ -964,7 +964,7 @@ def sn_reset(
     """Reset standard names for re-processing.
 
     Clears transient fields (embedding, model, confidence, generated_at) and
-    removes HAS_STANDARD_NAME / CANONICAL_UNITS relationships for matching
+    removes HAS_STANDARD_NAME / HAS_UNIT relationships for matching
     nodes, optionally changing their review_status.
 
     \b

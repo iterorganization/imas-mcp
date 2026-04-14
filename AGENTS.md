@@ -739,7 +739,7 @@ Six-phase DAG: **EXTRACT → COMPOSE → [REVIEW] → VALIDATE → CONSOLIDATE �
 | `imas_codex/standard_names/search.py` | Vector search for similar existing StandardName nodes (collision avoidance) |
 
 **Unit safety:** Units flow exclusively from the DD `HAS_UNIT` relationship → EXTRACT → prompt
-(marked read-only) → injected into candidate dict by worker → `CANONICAL_UNITS` relationship in graph.
+(marked read-only) → injected into candidate dict by worker → `HAS_UNIT` relationship in graph.
 The LLM never provides the unit field.
 
 ### CLI Commands
@@ -794,7 +794,7 @@ drafted → published → accepted
 ### Reset and Clear Semantics
 
 **`sn reset`** — Re-processes existing nodes without deleting them. Clears transient fields
-(embedding, model, confidence, generated_at) and removes HAS_STANDARD_NAME and CANONICAL_UNITS
+(embedding, model, confidence, generated_at) and removes HAS_STANDARD_NAME and HAS_UNIT
 relationships. Optionally changes `review_status` via `--to <status>`. Default (no `--to`) leaves
 status unchanged, only clears fields.
 
@@ -830,7 +830,7 @@ StandardName node defined in `imas_codex/schemas/standard_name.yaml` (v0.5.0). K
 
 - `(IMASNode)-[:HAS_STANDARD_NAME]->(StandardName)`
 - `(FacilitySignal)-[:HAS_STANDARD_NAME]->(StandardName)`
-- `(StandardName)-[:CANONICAL_UNITS]->(Unit)`
+- `(StandardName)-[:HAS_UNIT]->(Unit)`
 
 **Provenance fields** (v0.5.0): `reviewer_model`, `reviewer_score` (float 0-1, normalized from
 6×0-20), `reviewer_scores` (JSON: grammar/semantic/documentation/convention/completeness/compliance,
