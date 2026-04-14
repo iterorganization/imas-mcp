@@ -122,9 +122,16 @@ These names already exist in the catalog. Reuse them if they match your source, 
 {% for sib in item.sibling_fields %}  - `{{ sib.path }}`: {{ sib.description or 'no description' }} ({{ sib.data_type or '?' }})
 {% endfor %}{% endif %}
 {% if item.previous_name %}
-- **Previous name:** `{{ item.previous_name.name }}` *(from prior generation — reuse if still appropriate, or improve. This is a suggestion, not a constraint.)*
-{% if item.previous_name.description %}- **Prior documentation:** {{ item.previous_name.description[:200] }}{% endif %}
-{% if item.previous_name.review_status == 'accepted' %}- ⚠️ **This name was human-accepted** — only replace with a clearly better alternative.{% endif %}
+- **⟳ Previous generation:** `{{ item.previous_name.name }}` ({{ item.previous_name.review_status or 'drafted' }}{% if item.previous_name.reviewer_score %}, score={{ item.previous_name.reviewer_score | round(2) }}{% endif %}{% if item.previous_name.review_tier %}, {{ item.previous_name.review_tier }}{% endif %})
+{% if item.previous_name.description %}- **Prior description:** {{ item.previous_name.description }}{% endif %}
+{% if item.previous_name.documentation %}- **Prior documentation:** {{ item.previous_name.documentation }}{% endif %}
+{% if item.previous_name.tags %}- **Prior tags:** {{ item.previous_name.tags | join(', ') if item.previous_name.tags is iterable and item.previous_name.tags is not string else item.previous_name.tags }}{% endif %}
+{% if item.previous_name.links %}- **Prior links:** {{ item.previous_name.links | join(', ') if item.previous_name.links is iterable and item.previous_name.links is not string else item.previous_name.links }}{% endif %}
+{% if item.previous_name.validation_issues %}- **⚠️ Validation issues from prior run:** {{ item.previous_name.validation_issues | join('; ') if item.previous_name.validation_issues is iterable and item.previous_name.validation_issues is not string else item.previous_name.validation_issues }}{% endif %}
+{% if item.previous_name.linked_dd_paths %}- **Other DD paths sharing this name:** These paths were also mapped to `{{ item.previous_name.name }}` — your generated name should be appropriate for all of them:
+{% for ldp in item.previous_name.linked_dd_paths %}  - `{{ ldp }}`
+{% endfor %}{% endif %}
+{% if item.previous_name.review_status == 'accepted' %}- **⚠️ This name was human-accepted** — only replace with a clearly better alternative.{% endif %}
 {% endif %}
 {% if item.cluster_siblings %}- **Cross-IDS siblings:**
 {% for sib in item.cluster_siblings[:5] %}  - {{ sib.path }} ({{ sib.unit or '?' }})

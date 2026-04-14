@@ -278,6 +278,8 @@ class TestGroupByConceptAndUnit:
             "primary_cluster_id": "c1",
             "primary_cluster_label": "Electron temperature",
             "primary_cluster_description": "Temperature of electrons",
+            "grouping_cluster_id": "c1",
+            "grouping_cluster_label": "Electron temperature",
             "parent_path": "core_profiles/profiles_1d/electrons",
             "cluster_siblings": [],
         }
@@ -329,18 +331,24 @@ class TestGroupByConceptAndUnit:
                 path="a/b/field1",
                 primary_cluster_id=None,
                 primary_cluster_label=None,
+                grouping_cluster_id=None,
+                grouping_cluster_label=None,
                 parent_path="a/b",
             ),
             self._enriched(
                 path="a/b/field2",
                 primary_cluster_id=None,
                 primary_cluster_label=None,
+                grouping_cluster_id=None,
+                grouping_cluster_label=None,
                 parent_path="a/b",
             ),
             self._enriched(
                 path="x/y/field3",
                 primary_cluster_id=None,
                 primary_cluster_label=None,
+                grouping_cluster_id=None,
+                grouping_cluster_label=None,
                 parent_path="x/y",
             ),
         ]
@@ -447,10 +455,11 @@ class TestBuildBatchContext:
                 "unit": "eV",
                 "ids_name": "core_profiles",
                 "primary_cluster_description": "Temperature of electrons",
+                "grouping_cluster_label": "Electron temperature",
                 "cluster_siblings": [],
             }
         ]
-        ctx = build_batch_context(items, "Electron temperature/eV")
+        ctx = build_batch_context(items, "c1/eV")
         assert "Cluster: Electron temperature" in ctx
         assert "Authoritative unit: eV" in ctx
         assert "1 paths" in ctx
@@ -476,12 +485,13 @@ class TestBuildBatchContext:
                 "unit": "eV",
                 "ids_name": "core_profiles",
                 "primary_cluster_description": None,
+                "primary_cluster_label": "Cluster A",
                 "cluster_siblings": [
                     {"path": "sibling/path", "unit": "eV"},
                 ],
             }
         ]
-        ctx = build_batch_context(items, "Cluster A/eV")
+        ctx = build_batch_context(items, "c_a/eV")
         assert "sibling/path" in ctx
         assert "Cross-IDS siblings" in ctx
 
@@ -491,10 +501,11 @@ class TestBuildBatchContext:
                 "unit": None,
                 "ids_name": "equilibrium",
                 "primary_cluster_description": None,
+                "primary_cluster_label": "SomeCluster",
                 "cluster_siblings": [],
             }
         ]
-        ctx = build_batch_context(items, "SomeCluster/dimensionless")
+        ctx = build_batch_context(items, "c_some/dimensionless")
         assert "dimensionless" in ctx
 
     def test_multi_ids_context(self):
@@ -503,16 +514,18 @@ class TestBuildBatchContext:
                 "unit": "eV",
                 "ids_name": "core_profiles",
                 "primary_cluster_description": None,
+                "primary_cluster_label": "Temperature",
                 "cluster_siblings": [],
             },
             {
                 "unit": "eV",
                 "ids_name": "edge_profiles",
                 "primary_cluster_description": None,
+                "primary_cluster_label": "Temperature",
                 "cluster_siblings": [],
             },
         ]
-        ctx = build_batch_context(items, "Temperature/eV")
+        ctx = build_batch_context(items, "c_temp/eV")
         assert "Cross-IDS" in ctx
         assert "core_profiles" in ctx
         assert "edge_profiles" in ctx
@@ -582,12 +595,12 @@ class TestIntegration:
         # Group globally
         batches = group_by_concept_and_unit(enriched)
 
-        # Both paths share cluster "Electron temperature" / unit "eV"
-        # → single batch with 2 items
+        # Both paths share cluster c1 / unit "eV" → single batch with 2 items
         assert len(batches) == 1
         assert len(batches[0].items) == 2
         assert batches[0].source == "dd"
-        assert "Electron temperature" in batches[0].group_key
+        # Group key uses cluster ID (not label) for collision avoidance
+        assert "c1" in batches[0].group_key
 
     def test_mixed_units_split(self):
         """Same cluster, different units → separate batches."""

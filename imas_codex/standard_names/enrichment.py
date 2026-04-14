@@ -43,7 +43,7 @@ _DEFAULT_SCOPE_RANK = 3  # missing or unrecognised scope
 def select_primary_cluster(clusters: list[dict]) -> dict | None:
     """Choose ONE primary cluster per path from its many-to-many memberships.
 
-    Resolution order:
+    Resolution order (most specific first — best for per-item context):
 
     1. IDS-scope cluster (most specific) — check ``scope`` field
     2. Domain-scope cluster
@@ -73,6 +73,23 @@ def select_primary_cluster(clusters: list[dict]) -> dict | None:
         return (scope_rank, sim, label)
 
     return min(clusters, key=_sort_key)
+
+
+def select_grouping_cluster(clusters: list[dict]) -> dict | None:
+    """Choose the best cluster for batch grouping.
+
+    Uses the same IDS-first priority as :func:`select_primary_cluster`
+    to ensure paths sharing an IDS-scope cluster stay in the same batch.
+    The key difference from primary selection: batch formation uses the
+    cluster **ID** (not label) to avoid collisions from identically-named
+    clusters in different scopes.
+
+    Returns:
+        The selected grouping cluster dict, or ``None`` if *clusters* is empty.
+    """
+    # Same priority as primary — IDS-first ensures cross-IDS paths sharing
+    # an IDS-scope cluster land in the same batch.
+    return select_primary_cluster(clusters)
 
 
 def enrich_paths(paths: list[dict]) -> list[dict]:
@@ -140,7 +157,7 @@ def enrich_paths(paths: list[dict]) -> list[dict]:
             meta_count += 1
             continue
 
-        # Select primary cluster.
+        # Select primary cluster (IDS-local, for per-item context)
         clusters = path_clusters.get(path, [])
         primary = select_primary_cluster(clusters)
 
@@ -152,6 +169,13 @@ def enrich_paths(paths: list[dict]) -> list[dict]:
             primary["cluster_description"] if primary else None
         )
         base_row["all_clusters"] = clusters
+
+        # Select grouping cluster (global/domain preferred, for batch formation)
+        grouping = select_grouping_cluster(clusters)
+        base_row["grouping_cluster_id"] = grouping["cluster_id"] if grouping else None
+        base_row["grouping_cluster_label"] = (
+            grouping["cluster_label"] if grouping else None
+        )
 
         enriched.append(base_row)
 
@@ -168,29 +192,27 @@ def enrich_paths(paths: list[dict]) -> list[dict]:
 def build_batch_context(items: list[dict], group_key: str) -> str:
     """Build rich context summary for a batch.
 
-    Includes cluster label (or "unclustered" tag), authoritative unit, path
-    count, cross-IDS summary, concept description, and cluster sibling
-    preview.
+    Includes cluster label, authoritative unit, path count, cross-IDS
+    summary, concept description, and cluster sibling preview.
     """
     parts: list[str] = []
 
-    # Decode group key.
+    # Derive cluster label from items (preferred) or group_key (fallback)
     if group_key.startswith("unclustered/"):
         parts.append("Unclustered paths")
-        # unclustered/{parent_path}/{unit} — parent may contain slashes.
         inner = group_key[len("unclustered/") :]
         last_slash = inner.rfind("/")
         if last_slash > 0:
             parent = inner[:last_slash]
             parts.append(f"Parent structure: {parent}")
     else:
-        # {cluster_label}/{unit}
-        last_slash = group_key.rfind("/")
-        if last_slash > 0:
-            cluster_label = group_key[:last_slash]
+        cluster_label = items[0].get("grouping_cluster_label") or items[0].get(
+            "primary_cluster_label"
+        )
+        if cluster_label:
+            parts.append(f"Cluster: {cluster_label}")
         else:
-            cluster_label = group_key
-        parts.append(f"Cluster: {cluster_label}")
+            parts.append(f"Group: {group_key}")
 
     # Authoritative unit.
     unit = items[0].get("unit") or "dimensionless"
@@ -252,15 +274,17 @@ def group_by_concept_and_unit(
     if not items:
         return []
 
-    # --- Build groups: (primary_cluster_label / unit) -----------------------
+    # --- Build groups: (grouping_cluster_id / unit) -------------------------
+    # Uses grouping cluster (global/domain preferred) and cluster ID (not label)
+    # to ensure cross-IDS paths sharing the same concept land in one batch.
     groups: dict[str, list[dict]] = defaultdict(list)
 
     for item in items:
-        cluster_label = item.get("primary_cluster_label")
+        cluster_id = item.get("grouping_cluster_id")
         unit = item.get("unit") or "dimensionless"
 
-        if cluster_label:
-            group_key = f"{cluster_label}/{unit}"
+        if cluster_id:
+            group_key = f"{cluster_id}/{unit}"
         else:
             # Unclustered: sub-group by parent_path for coherent batches.
             parent = item.get("parent_path") or "root"

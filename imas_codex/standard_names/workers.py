@@ -110,11 +110,13 @@ async def extract_worker(state: SNBuildState, **_kwargs) -> None:
 
     # Inject previous name context for --force regeneration
     if state.force:
+        # --paths mode gets rich metadata (full docs, links, linked DD paths)
+        use_rich = bool(state.paths_list)
 
         def _get_mapping():
             from imas_codex.standard_names.graph_ops import get_source_name_mapping
 
-            return get_source_name_mapping()
+            return get_source_name_mapping(rich=use_rich)
 
         source_names = await asyncio.to_thread(_get_mapping)
         injected = 0

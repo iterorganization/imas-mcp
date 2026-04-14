@@ -152,17 +152,24 @@ def get_named_source_ids() -> set[str]:
         return {r["source_id"] for r in results}
 
 
-def get_source_name_mapping() -> dict[str, dict]:
+def get_source_name_mapping(*, rich: bool = False) -> dict[str, dict]:
     """Return mapping of source_id → previous standard name details.
 
     Used by extract_worker in --force mode to inject per-path
     previous_name context so the LLM can improve on prior names.
 
+    Args:
+        rich: If True, return full SN metadata including documentation,
+            tags, links, and all linked DD paths. Used by --paths mode.
+
     Returns:
         Dict mapping source entity ID to dict with keys:
-        name, description, kind, review_status.
+        name, description, kind, review_status (and more if rich=True).
         If a source has multiple names, prefers the accepted one.
     """
+    if rich:
+        return _get_rich_source_name_mapping()
+
     with GraphClient() as gc:
         results = gc.query("""
             MATCH (src)-[:HAS_STANDARD_NAME]->(sn:StandardName)
@@ -182,6 +189,51 @@ def get_source_name_mapping() -> dict[str, dict]:
                     "description": r.get("description"),
                     "kind": r.get("kind"),
                     "review_status": r.get("review_status"),
+                }
+        return mapping
+
+
+def _get_rich_source_name_mapping() -> dict[str, dict]:
+    """Full SN metadata with documentation + all linked DD paths."""
+    with GraphClient() as gc:
+        results = gc.query("""
+            MATCH (src)-[:HAS_STANDARD_NAME]->(sn:StandardName)
+            OPTIONAL MATCH (sn)-[:CANONICAL_UNITS]->(u:Unit)
+            OPTIONAL MATCH (other_src)-[:HAS_STANDARD_NAME]->(sn)
+            WHERE other_src <> src
+            RETURN src.id AS source_id,
+                   sn.id AS name,
+                   sn.description AS description,
+                   sn.documentation AS documentation,
+                   sn.kind AS kind,
+                   sn.tags AS tags,
+                   sn.links AS links,
+                   sn.review_status AS review_status,
+                   sn.reviewer_score AS reviewer_score,
+                   sn.review_tier AS review_tier,
+                   sn.validation_issues AS validation_issues,
+                   u.id AS unit,
+                   collect(DISTINCT other_src.id) AS linked_dd_paths
+        """)
+        mapping: dict[str, dict] = {}
+        for r in results:
+            sid = r["source_id"]
+            if sid not in mapping or r.get("review_status") == "accepted":
+                mapping[sid] = {
+                    "name": r["name"],
+                    "description": r.get("description"),
+                    "documentation": r.get("documentation"),
+                    "kind": r.get("kind"),
+                    "tags": r.get("tags"),
+                    "links": r.get("links"),
+                    "review_status": r.get("review_status"),
+                    "reviewer_score": r.get("reviewer_score"),
+                    "review_tier": r.get("review_tier"),
+                    "validation_issues": r.get("validation_issues"),
+                    "unit": r.get("unit"),
+                    "linked_dd_paths": [
+                        p for p in (r.get("linked_dd_paths") or []) if p != sid
+                    ],
                 }
         return mapping
 

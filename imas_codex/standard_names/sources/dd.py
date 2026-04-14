@@ -231,9 +231,9 @@ def extract_specific_paths(
 ) -> list[ExtractionBatch]:
     """Extract specific DD paths with full context — bypasses classifier.
 
-    Used for targeted debugging via ``--paths`` CLI flag. Every path is
-    treated as a quantity (no classification), and already-named filtering
-    is skipped.
+    Used for targeted debugging via ``--paths`` CLI flag. Each path becomes
+    its own batch (serial processing) with rich context including the
+    previous StandardName metadata and all DD paths linked to that name.
 
     Args:
         paths: Explicit list of DD path IDs to process
@@ -241,7 +241,7 @@ def extract_specific_paths(
         on_status: Optional progress callback
 
     Returns:
-        List of ExtractionBatch objects grouped by IDS
+        List of ExtractionBatch objects — one per path for maximum context
     """
     from imas_codex.graph.client import GraphClient
     from imas_codex.standard_names.enrichment import (
@@ -311,31 +311,25 @@ def extract_specific_paths(
         base_row["all_clusters"] = clusters
         enriched.append(base_row)
 
-    _status(f"grouping {len(enriched)} paths into batches…")
+    _status(f"creating {len(enriched)} single-path batches…")
 
-    # Group by IDS for coherent batches
-    from collections import defaultdict
-
-    ids_groups: dict[str, list[dict]] = defaultdict(list)
+    # One batch per path for maximum context depth
+    batches: list[ExtractionBatch] = []
     for item in enriched:
         ids_name = item.get("ids_name", "unknown")
-        ids_groups[ids_name].append(item)
-
-    batches: list[ExtractionBatch] = []
-    for ids_name, items in sorted(ids_groups.items()):
-        context = build_batch_context(items, ids_name)
+        context = build_batch_context([item], ids_name)
         batches.append(
             ExtractionBatch(
                 source="dd",
                 group_key=ids_name,
-                items=items,
+                items=[item],
                 context=context,
                 existing_names=existing_names,
             )
         )
 
     logger.info(
-        "Extracted %d batches from %d targeted paths",
+        "Extracted %d single-path batches from %d targeted paths",
         len(batches),
         len(enriched),
     )
