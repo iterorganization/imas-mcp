@@ -29,6 +29,7 @@ Greenfield project under active development. No backwards compatibility.
 - Breaking changes are expected - remove deprecated code decisively
 - Avoid "enhanced", "new", "refactored" in names - just use the good name
 - When patterns change, update all usages - don't leave old patterns alongside new
+- **Stale context kills** — if your session is more than a few hours old, your memory of file contents may be wrong. Before modifying any file, re-read it from disk (`view` / `cat`) to verify your assumptions match reality. Never write code from memory alone.
 - Prefer explicit over clever - future agents will read this code
 - Exploration notes go in facility YAML, not markdown files
 - `docs/` is for mature infrastructure only
@@ -940,6 +941,12 @@ git push origin main```
 
 Multiple agents may be working on this repository simultaneously. Assume another agent could be editing files or committing right now.
 
+**CRITICAL — Verify before modifying:**
+
+- **Re-read files before editing** — your in-memory view of a file may be hours or days old. Another agent may have renamed functions, added features, or restructured code since you last read it. Always `view` or `cat` the current file from disk before making changes. If the file looks different from what you expect, **stop and re-read** — do not "fix" it back to what you remember.
+- **Check recent git history** before modifying shared files: `git log --oneline -5 -- <file>`. If there are commits you don't recognize, read the file fresh and understand the current state before editing.
+- **If you see unfamiliar method names, imports, or patterns** in a file, assume they are correct and intentional. Another agent renamed them. Do not revert unfamiliar changes.
+
 **CRITICAL — Do not touch files you didn't modify:**
 
 - **Only stage files you modified** — never `git add -A` or `git add .`
@@ -951,6 +958,12 @@ Multiple agents may be working on this repository simultaneously. Assume another
 - **If `git stash` is needed**, only stash your own files: `git stash push -- file1 file2`, never `git stash` (which stashes everything)
 - **NEVER run `git stash pop` or `git stash apply`** without first checking the stash age and contents. Stale stashes from prior work sessions can silently overwrite the working tree with old code, reverting committed renames and improvements. Always verify: `git stash show stash@{N} --stat` and `git log -1 --format='%ci' stash@{N}` before applying. If the stash is more than a day old, drop it — the code has moved on.
 - **Auto-generated files cause dirty worktrees** — `uv sync` regenerates model files that are gitignored. These should never be staged, but their presence will block `git pull --rebase`. This is another reason merge is the correct policy.
+
+**Session hygiene:**
+
+- **Close sessions when done** — `ctrl+d`, `/exit`, or `/quit`. Idle `copilot` processes with stale context are the #1 cause of regressions.
+- **Audit periodically:** `ps aux | grep copilot` — kill any process older than your current session.
+- **Avoid long-lived `--yolo` sessions** — auto-approve + stale context is the most dangerous combination. Start fresh sessions for new tasks.
 
 ### Session Completion
 
