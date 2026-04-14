@@ -476,14 +476,14 @@ class TestGraphRecordsToEntries:
         assert e.provenance.ids_name == "equilibrium"
 
     def test_legacy_field_names(self) -> None:
-        """Test conversion from legacy write property names."""
+        """Test conversion using current field names."""
         records = [
             {
                 "name": "plasma_current",
                 "description": "Ip",
                 "source_type": "dd",
-                "source_id": "equilibrium/global/ip",
-                "units": "A",
+                "source_path": "equilibrium/global/ip",
+                "unit": "A",
                 "confidence": None,
                 "ids_name": None,
             }

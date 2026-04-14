@@ -36,37 +36,17 @@ class TestNoLegacyCanonicalUnits:
         """Source code must not contain CANONICAL_UNITS relationship type."""
         mod = importlib.import_module(module_path)
         source = inspect.getsource(mod)
-        # Allow backward-compat fallback in publish.py (rec.get("canonical_units"))
-        if module_path == "imas_codex.standard_names.publish":
-            # Only the fallback dict lookup is allowed
-            lines_with_legacy = [
-                line.strip()
-                for line in source.splitlines()
-                if "canonical_units" in line.lower()
-                and 'rec.get("canonical_units")' not in line
-                and "legacy" not in line.lower()
-                and "comment" not in line.lower()
-            ]
-            assert not lines_with_legacy, (
-                f"{module_path} contains non-fallback canonical_units references:\n"
-                + "\n".join(lines_with_legacy)
-            )
-        else:
-            assert "CANONICAL_UNITS" not in source, (
-                f"{module_path} still references CANONICAL_UNITS relationship type"
-            )
-            # Allow in comments but not in Cypher strings or property access
-            for i, line in enumerate(source.splitlines(), 1):
-                stripped = line.strip()
-                if stripped.startswith("#"):
-                    continue
-                if "canonical_units" in stripped.lower():
-                    # Allow backward-compat dict lookups
-                    if 'rec.get("canonical_units")' in stripped:
-                        continue
-                    pytest.fail(
-                        f"{module_path}:{i} uses legacy canonical_units: {stripped}"
-                    )
+        assert "CANONICAL_UNITS" not in source, (
+            f"{module_path} still references CANONICAL_UNITS relationship type"
+        )
+        for i, line in enumerate(source.splitlines(), 1):
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                continue
+            if "canonical_units" in stripped.lower():
+                pytest.fail(
+                    f"{module_path}:{i} uses legacy canonical_units: {stripped}"
+                )
 
 
 class TestSchemaUnitSlot:

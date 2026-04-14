@@ -275,8 +275,7 @@ def graph_records_to_entries(
         # Resolve source ID (schema: source_path, legacy: source_id)
         source_id = rec.get("source_path") or rec.get("source_id") or ""
 
-        # Resolve units (schema: unit, legacy: canonical_units/units)
-        unit = rec.get("unit") or rec.get("canonical_units") or rec.get("units")
+        unit = rec.get("unit")
 
         # IDS name from graph traversal
         ids_name = rec.get("ids_name")
