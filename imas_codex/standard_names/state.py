@@ -35,6 +35,7 @@ class SNBuildState(DiscoveryStateBase):
     ids_filter: str | None = None  # For DD source: restrict to a single IDS
     domain_filter: str | None = None  # Physics domain filter
     facility_filter: str | None = None  # For signals source: facility to query
+    paths_list: list[str] | None = None  # Explicit DD paths (bypass query+classifier)
     dry_run: bool = False
     force: bool = False  # Bypass source-level skip
     limit: int | None = None  # Cap on paths to process

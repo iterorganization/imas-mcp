@@ -187,3 +187,156 @@ def extract_dd_candidates(
         len(cluster_ids),
     )
     return batches
+
+
+# Targeted extraction query — single path with full context
+_TARGETED_PATH_QUERY = """
+MATCH (n:IMASNode {id: $path})-[:IN_IDS]->(ids:IDS)
+OPTIONAL MATCH (n)-[:HAS_UNIT]->(u:Unit)
+OPTIONAL MATCH (n)-[:IN_CLUSTER]->(c:IMASSemanticCluster)
+OPTIONAL MATCH (n)-[:HAS_PARENT]->(parent:IMASNode)
+OPTIONAL MATCH (n)-[:HAS_COORDINATE]->(coord:IMASNode)
+OPTIONAL MATCH (coord)-[:HAS_UNIT]->(cu:Unit)
+RETURN n.id AS path,
+       n.description AS description,
+       n.documentation AS documentation,
+       n.unit AS unit,
+       u.id AS unit_from_rel,
+       n.data_type AS data_type,
+       n.physics_domain AS physics_domain,
+       n.keywords AS keywords,
+       n.node_category AS node_category,
+       n.ndim AS ndim,
+       n.lifecycle_status AS lifecycle_status,
+       n.cocos_label_transformation AS cocos_label,
+       n.cocos_transformation_expression AS cocos_expression,
+       ids.id AS ids_name,
+       c.label AS cluster_label,
+       c.id AS cluster_id,
+       c.description AS cluster_description,
+       parent.id AS parent_path,
+       parent.description AS parent_description,
+       parent.data_type AS parent_type,
+       coord.id AS coord_path,
+       coord.description AS coord_description,
+       cu.id AS coord_unit
+"""
+
+
+def extract_specific_paths(
+    paths: list[str],
+    *,
+    existing_names: set[str] | None = None,
+    on_status: Callable[[str], None] | None = None,
+) -> list[ExtractionBatch]:
+    """Extract specific DD paths with full context — bypasses classifier.
+
+    Used for targeted debugging via ``--paths`` CLI flag. Every path is
+    treated as a quantity (no classification), and already-named filtering
+    is skipped.
+
+    Args:
+        paths: Explicit list of DD path IDs to process
+        existing_names: Known standard names for dedup awareness in compose
+        on_status: Optional progress callback
+
+    Returns:
+        List of ExtractionBatch objects grouped by IDS
+    """
+    from imas_codex.graph.client import GraphClient
+    from imas_codex.standard_names.enrichment import (
+        build_batch_context,
+        select_primary_cluster,
+    )
+
+    if existing_names is None:
+        existing_names = set()
+
+    def _status(text: str) -> None:
+        if on_status:
+            on_status(text)
+
+    _status(f"fetching {len(paths)} targeted paths…")
+
+    results: list[dict] = []
+    with GraphClient() as gc:
+        for path in paths:
+            rows = list(gc.query(_TARGETED_PATH_QUERY, path=path))
+            if rows:
+                results.extend(rows)
+            else:
+                logger.warning("Path not found in graph: %s", path)
+
+    if not results:
+        logger.info("No targeted paths found in graph")
+        return []
+
+    # Resolve units + deduplicate rows (multi-cluster → multiple rows per path)
+    path_base: dict[str, dict] = {}
+    path_clusters: dict[str, list[dict]] = {}
+
+    for row in results:
+        p = row.get("path", "")
+        row["unit"] = row.get("unit_from_rel") or row.get("unit") or None
+        row["cluster_siblings"] = []
+
+        if p not in path_base:
+            path_base[p] = dict(row)
+            path_clusters[p] = []
+
+        cid = row.get("cluster_id")
+        if cid:
+            existing_cids = {c["cluster_id"] for c in path_clusters[p]}
+            if cid not in existing_cids:
+                path_clusters[p].append(
+                    {
+                        "cluster_id": cid,
+                        "cluster_label": row.get("cluster_label") or "",
+                        "cluster_description": row.get("cluster_description") or "",
+                    }
+                )
+
+    # Select primary cluster + attach enrichment
+    enriched: list[dict] = []
+    for path, base_row in path_base.items():
+        clusters = path_clusters.get(path, [])
+        primary = select_primary_cluster(clusters)
+        base_row["primary_cluster_id"] = primary["cluster_id"] if primary else None
+        base_row["primary_cluster_label"] = (
+            primary["cluster_label"] if primary else None
+        )
+        base_row["primary_cluster_description"] = (
+            primary["cluster_description"] if primary else None
+        )
+        base_row["all_clusters"] = clusters
+        enriched.append(base_row)
+
+    _status(f"grouping {len(enriched)} paths into batches…")
+
+    # Group by IDS for coherent batches
+    from collections import defaultdict
+
+    ids_groups: dict[str, list[dict]] = defaultdict(list)
+    for item in enriched:
+        ids_name = item.get("ids_name", "unknown")
+        ids_groups[ids_name].append(item)
+
+    batches: list[ExtractionBatch] = []
+    for ids_name, items in sorted(ids_groups.items()):
+        context = build_batch_context(items, ids_name)
+        batches.append(
+            ExtractionBatch(
+                source="dd",
+                group_key=ids_name,
+                items=items,
+                context=context,
+                existing_names=existing_names,
+            )
+        )
+
+    logger.info(
+        "Extracted %d batches from %d targeted paths",
+        len(batches),
+        len(enriched),
+    )
+    return batches

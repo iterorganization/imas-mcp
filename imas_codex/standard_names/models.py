@@ -91,6 +91,9 @@ class SNPublishEntry(BaseModel):
     unit: str | None = Field(default=None, description="SI unit string")
     tags: list[str] = Field(default_factory=list, description="Classification tags")
     status: str = Field(default="drafted", description="Entry status")
+    physics_domain: str | None = Field(
+        default=None, description="Physics domain classification"
+    )
     description: str = Field(default="", description="Human-readable description")
     # Rich fields
     documentation: str | None = Field(

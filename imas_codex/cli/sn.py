@@ -82,6 +82,18 @@ def sn() -> None:
 @click.option("-v", "--verbose", is_flag=True, help="Enable verbose logging")
 @click.option("-q", "--quiet", is_flag=True, help="Suppress non-error output")
 @click.option(
+    "--paths",
+    "paths_list",
+    type=str,
+    default=None,
+    help=(
+        "Space-separated DD paths to process directly (e.g., "
+        "'equilibrium/time_slice/profiles_1d/psi equilibrium/time_slice/profiles_1d/q'). "
+        "Bypasses graph query, classifier, and already-named check. "
+        "Overrides --ids, --domain, and --limit."
+    ),
+)
+@click.option(
     "--reset-to",
     type=click.Choice(["extracted", "drafted"]),
     default=None,
@@ -104,19 +116,28 @@ def sn_generate(
     skip_review: bool,
     verbose: bool,
     quiet: bool,
+    paths_list: str | None,
     reset_to: str | None,
 ) -> None:
     """Generate standard names from a source.
 
     \b
     Examples:
-      imas-codex sn generate --source dd --ids equilibrium --dry-run
-      imas-codex sn generate --source dd --domain magnetics --cost-limit 2
+      imas-codex sn generate --ids equilibrium --dry-run
+      imas-codex sn generate --domain magnetics -c 2
       imas-codex sn generate --source signals --facility tcv
+      imas-codex sn generate --paths "equilibrium/time_slice/profiles_1d/psi equilibrium/time_slice/profiles_1d/q"
     """
     # Validate: signals source requires facility
     if source == "signals" and not facility:
         raise click.UsageError("--facility is required when --source is signals")
+
+    # --paths implies DD source and overrides filters
+    if paths_list:
+        source = "dd"
+        ids_filter = None
+        domain_filter = None
+        limit = None
 
     # Handle --reset-to before the main pipeline
     if reset_to is not None and not dry_run:
@@ -167,6 +188,9 @@ def sn_generate(
 
     log_print("\n[bold]Standard Name Build[/bold]")
     log_print(f"  Source: {source}")
+    if paths_list:
+        path_count = len(paths_list.split())
+        log_print(f"  Targeted paths: {path_count} paths")
     if ids_filter:
         log_print(f"  IDS filter: {ids_filter}")
     if domain_filter:
@@ -211,6 +235,7 @@ def sn_generate(
         ids_filter=ids_filter,
         domain_filter=domain_filter,
         facility_filter=facility,
+        paths_list=paths_list.split() if paths_list else None,
         cost_limit=cost_limit,
         dry_run=dry_run,
         force=force,

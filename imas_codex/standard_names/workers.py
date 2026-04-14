@@ -62,21 +62,33 @@ async def extract_worker(state: SNBuildState, **_kwargs) -> None:
         _on_status("loading existing names…")
         existing = get_existing_standard_names()
 
-        # Source-level skip for resumability
+        # Source-level skip for resumability (not in targeted mode)
         named_ids: set[str] = set()
-        if not state.force:
+        if not state.force and not state.paths_list:
             named_ids = get_named_source_ids()
             if named_ids:
                 wlog.info("Skipping %d already-named sources", len(named_ids))
 
         if state.source == "dd":
-            batches = extract_dd_candidates(
-                ids_filter=state.ids_filter,
-                domain_filter=state.domain_filter,
-                limit=state.limit or 500,
-                existing_names=existing,
-                on_status=_on_status,
-            )
+            if state.paths_list:
+                # Targeted mode: bypass graph query + classifier
+                from imas_codex.standard_names.sources.dd import (
+                    extract_specific_paths,
+                )
+
+                batches = extract_specific_paths(
+                    paths=state.paths_list,
+                    existing_names=existing,
+                    on_status=_on_status,
+                )
+            else:
+                batches = extract_dd_candidates(
+                    ids_filter=state.ids_filter,
+                    domain_filter=state.domain_filter,
+                    limit=state.limit or 500,
+                    existing_names=existing,
+                    on_status=_on_status,
+                )
         else:
             wlog.error("Unknown source: %s", state.source)
             return []

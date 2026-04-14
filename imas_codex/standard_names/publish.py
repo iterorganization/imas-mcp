@@ -106,8 +106,12 @@ def generate_catalog_files(
 
     written: list[Path] = []
     for entry in entries:
-        # Group by primary tag into subdirectories
-        subdir = entry.tags[0] if entry.tags else "unscoped"
+        # Group by physics_domain when available, fall back to first tag
+        subdir = (
+            entry.physics_domain
+            or (entry.tags[0] if entry.tags else None)
+            or "unscoped"
+        )
         entry_dir = output_dir / subdir
         entry_dir.mkdir(parents=True, exist_ok=True)
         filename = f"{entry.name}.yaml"
@@ -151,7 +155,11 @@ def batch_by_group(
         if group_by == "ids":
             key = entry.provenance.ids_name or "unscoped"
         elif group_by == "domain":
-            key = entry.tags[0] if entry.tags else "unscoped"
+            key = (
+                entry.physics_domain
+                or (entry.tags[0] if entry.tags else None)
+                or "unscoped"
+            )
         elif group_by == "confidence":
             key = confidence_tier(entry.provenance.confidence)
         else:
@@ -293,6 +301,9 @@ def graph_records_to_entries(
         if not tags and ids_name:
             tags.append(ids_name)
 
+        # Physics domain
+        physics_domain = rec.get("physics_domain")
+
         provenance = SNProvenance(
             source=str(source),
             source_id=str(source_id),
@@ -307,6 +318,7 @@ def graph_records_to_entries(
                 unit=unit,
                 tags=tags,
                 status="drafted",
+                physics_domain=physics_domain,
                 description=description[:500] if description else "",
                 documentation=documentation,
                 links=links_raw if isinstance(links_raw, list) else [],
