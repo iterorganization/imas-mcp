@@ -355,6 +355,8 @@ def sn_generate(
         composed = result.get("compose_count", 0)
         attached = result.get("attachments", 0)
         validated = result.get("validate_valid", 0)
+        compose_cost = result.get("compose_cost", 0.0)
+        compose_model_name = result.get("compose_model", "")
         parts = [
             f"Extracted: {extracted}",
             f"Composed: {composed}",
@@ -362,7 +364,11 @@ def sn_generate(
         if attached:
             parts.append(f"Attached: {attached}")
         parts.append(f"Validated: {validated}")
+        if compose_cost > 0:
+            parts.append(f"Cost: ${compose_cost:.4f}")
         log_print(", ".join(parts))
+        if compose_model_name:
+            log_print(f"Model: {compose_model_name}")
         if dry_run:
             log_print("(dry run — no LLM calls or graph writes)")
 

@@ -728,6 +728,8 @@ async def compose_worker(state: SNBuildState, **_kwargs) -> None:
     )
     state.stats["compose_count"] = len(composed)
     state.stats["compose_errors"] = errors
+    state.stats["compose_cost"] = state.compose_stats.cost
+    state.stats["compose_model"] = model
 
     state.compose_stats.freeze_rate()
     state.compose_phase.mark_done()
