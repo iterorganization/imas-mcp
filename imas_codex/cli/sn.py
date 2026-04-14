@@ -94,12 +94,13 @@ def sn() -> None:
     "--paths",
     "paths_list",
     type=str,
-    default=None,
+    multiple=True,
     help=(
-        "Space-separated DD paths to process directly (e.g., "
-        "'equilibrium/time_slice/profiles_1d/psi equilibrium/time_slice/profiles_1d/q'). "
+        "DD paths to process directly. Accepts multiple --paths flags or "
+        "space-separated paths within each flag (e.g., "
+        "'--paths eq/.../psi eq/.../q' or '--paths eq/.../psi --paths eq/.../q'). "
         "Bypasses graph query, classifier, and already-named check. "
-        "Overrides --ids, --domain, and --limit."
+        "Overrides --ids, --domain, --limit, and implies --force."
     ),
 )
 @click.option(
@@ -125,7 +126,7 @@ def sn_generate(
     compose_model: str | None,
     verbose: bool,
     quiet: bool,
-    paths_list: str | None,
+    paths_list: tuple[str, ...],
     reset_to: str | None,
 ) -> None:
     """Generate standard names from a source.
@@ -135,14 +136,17 @@ def sn_generate(
       imas-codex sn generate --ids equilibrium --dry-run
       imas-codex sn generate --domain magnetics -c 2
       imas-codex sn generate --source signals --facility tcv
+      imas-codex sn generate --paths equilibrium/time_slice/profiles_1d/psi --paths equilibrium/time_slice/profiles_1d/q
       imas-codex sn generate --paths "equilibrium/time_slice/profiles_1d/psi equilibrium/time_slice/profiles_1d/q"
     """
     # Validate: signals source requires facility
     if source == "signals" and not facility:
         raise click.UsageError("--facility is required when --source is signals")
 
-    # --paths implies DD source and overrides filters
-    if paths_list:
+    # --paths implies DD source, force, and overrides filters
+    # Flatten multiple --paths args and space-separated paths within each arg
+    flat_paths = " ".join(paths_list).split() if paths_list else []
+    if flat_paths:
         source = "dd"
         ids_filter = None
         domain_filter = None
@@ -150,7 +154,7 @@ def sn_generate(
         force = True  # Targeted paths always regenerate
 
         # Resolve wildcard patterns (e.g., "*/profiles_1d/q" or "equilibrium/*/data")
-        raw_paths = paths_list.split()
+        raw_paths = flat_paths
         resolved_paths = []
         has_wildcards = any("*" in p for p in raw_paths)
 
@@ -207,10 +211,7 @@ def sn_generate(
                 f"  Resolved {len(resolved_paths)} unique paths from "
                 f"{len(raw_paths)} patterns"
             )
-            paths_list = " ".join(resolved_paths)
-
-            if not resolved_paths:
-                raise click.UsageError("No paths matched the given patterns")
+            resolved_paths_final = resolved_paths
         else:
             # No wildcards — just use raw paths, still deduplicate
             seen_paths: set[str] = set()
@@ -219,7 +220,9 @@ def sn_generate(
                 if p not in seen_paths:
                     seen_paths.add(p)
                     unique.append(p)
-            paths_list = " ".join(unique)
+            resolved_paths_final = unique
+    else:
+        resolved_paths_final = None
 
     # Handle --reset-to before the main pipeline
     if reset_to is not None and not dry_run:
@@ -270,9 +273,8 @@ def sn_generate(
 
     log_print("\n[bold]Standard Name Build[/bold]")
     log_print(f"  Source: {source}")
-    if paths_list:
-        path_count = len(paths_list.split())
-        log_print(f"  Targeted paths: {path_count} paths")
+    if resolved_paths_final:
+        log_print(f"  Targeted paths: {len(resolved_paths_final)} paths")
     if ids_filter:
         log_print(f"  IDS filter: {ids_filter}")
     if domain_filter:
@@ -316,7 +318,7 @@ def sn_generate(
         ids_filter=ids_filter,
         domain_filter=domain_filter,
         facility_filter=facility,
-        paths_list=paths_list.split() if paths_list else None,
+        paths_list=resolved_paths_final,
         cost_limit=cost_limit,
         dry_run=dry_run,
         force=force,
