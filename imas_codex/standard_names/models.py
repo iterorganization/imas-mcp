@@ -128,6 +128,10 @@ class SNPublishEntry(BaseModel):
         default=None,
         description="COCOS transformation type (e.g., psi_like, ip_like). Null for non-COCOS quantities.",
     )
+    cocos: int | None = Field(
+        default=None,
+        description="COCOS convention index (e.g. 11, 17). Null for non-COCOS quantities.",
+    )
     provenance: SNProvenance = Field(description="Generation provenance")
 
 

@@ -331,6 +331,7 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
                 sn.unit = coalesce(b.unit, sn.unit),
                 sn.physics_domain = coalesce(b.physics_domain, sn.physics_domain),
                 sn.cocos_transformation_type = coalesce(b.cocos_transformation_type, sn.cocos_transformation_type),
+                sn.cocos = coalesce(b.cocos, sn.cocos),
                 sn.dd_version = coalesce(b.dd_version, sn.dd_version),
                 sn.model = coalesce(b.model, sn.model),
                 sn.review_status = coalesce(b.review_status, sn.review_status),
@@ -369,6 +370,7 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
                     "unit": n.get("unit"),
                     "physics_domain": n.get("physics_domain"),
                     "cocos_transformation_type": n.get("cocos_transformation_type"),
+                    "cocos": n.get("cocos"),
                     "dd_version": n.get("dd_version"),
                     "model": n.get("model"),
                     "review_status": n.get("review_status"),
@@ -434,27 +436,28 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
                 UNWIND $batch AS b
                 MATCH (sn:StandardName {id: b.id})
                 MERGE (u:Unit {id: b.unit})
+                SET u.symbol = coalesce(u.symbol, b.unit)
                 MERGE (sn)-[:HAS_UNIT]->(u)
                 """,
                 batch=units_batch,
             )
 
-        # Create FROM_DD_VERSION relationships: StandardName → DDVersion
-        # Use MATCH (not MERGE) — DDVersion nodes already exist from DD build.
-        dd_version_batch = [
-            {"id": n["id"], "dd_version": n["dd_version"]}
+        # Create HAS_COCOS relationships: StandardName → COCOS
+        # Use MATCH (not MERGE) — COCOS singleton nodes already exist.
+        cocos_batch = [
+            {"id": n["id"], "cocos": n["cocos"]}
             for n in names
-            if n.get("dd_version")
+            if n.get("cocos") is not None
         ]
-        if dd_version_batch:
+        if cocos_batch:
             gc.query(
                 """
                 UNWIND $batch AS b
                 MATCH (sn:StandardName {id: b.id})
-                MATCH (dv:DDVersion {id: b.dd_version})
-                MERGE (sn)-[:FROM_DD_VERSION]->(dv)
+                MATCH (c:COCOS {id: b.cocos})
+                MERGE (sn)-[:HAS_COCOS]->(c)
                 """,
-                batch=dd_version_batch,
+                batch=cocos_batch,
             )
 
     written = len(names)
@@ -540,7 +543,7 @@ def get_validated_standard_names(
                    sn.validity_domain AS validity_domain,
                    coalesce(sn.confidence, 1.0) AS confidence,
                    sn.model AS model,
-                   coalesce(sn.source, sn.source_type) AS source,
+                   sn.source_type AS source,
                    coalesce(sn.source_path, first_source) AS source_path,
                    first_ids AS ids_name,
                    sn.physical_base AS physical_base,
@@ -551,6 +554,7 @@ def get_validated_standard_names(
                    sn.process AS process,
                    all_ids AS source_ids_names,
                    sn.cocos_transformation_type AS cocos_transformation_type,
+                   sn.cocos AS cocos,
                    sn.dd_version AS dd_version
             ORDER BY sn.id
         """
@@ -578,7 +582,7 @@ def reset_standard_names(
 
     Clears transient fields (embedding, embedded_at, model, generated_at,
     confidence) and removes HAS_STANDARD_NAME, HAS_UNIT, and
-    FROM_DD_VERSION relationships for matching nodes.
+    HAS_COCOS relationships for matching nodes.
 
     Parameters
     ----------
@@ -604,7 +608,7 @@ def reset_standard_names(
         where_clauses = ["sn.review_status = $from_status"]
 
         if source_filter:
-            where_clauses.append("coalesce(sn.source, sn.source_type) = $source_filter")
+            where_clauses.append("sn.source_type = $source_filter")
             params["source_filter"] = source_filter
 
         where = " AND ".join(where_clauses)
@@ -657,7 +661,7 @@ def reset_standard_names(
                 reset_params["ids_prefix"] = ids_filter + "/"
             node_match = f"MATCH (sn:StandardName) WHERE {where}"
 
-        # Remove HAS_STANDARD_NAME, HAS_UNIT, and FROM_DD_VERSION relationships
+        # Remove HAS_STANDARD_NAME, HAS_UNIT, and HAS_COCOS relationships
         gc.query(
             f"""
             {node_match}
@@ -677,7 +681,7 @@ def reset_standard_names(
         gc.query(
             f"""
             {node_match}
-            OPTIONAL MATCH (sn)-[r:FROM_DD_VERSION]->(dv)
+            OPTIONAL MATCH (sn)-[r:HAS_COCOS]->(c)
             DELETE r
             """,
             **reset_params,
@@ -688,7 +692,7 @@ def reset_standard_names(
             set_clause = (
                 "sn.embedding = null, sn.embedded_at = null, sn.model = null, "
                 "sn.generated_at = null, sn.confidence = null, "
-                "sn.cocos_transformation_type = null, sn.dd_version = null, "
+                "sn.cocos_transformation_type = null, sn.cocos = null, sn.dd_version = null, "
                 "sn.review_status = $to_status"
             )
             reset_params["to_status"] = to_status
@@ -696,7 +700,7 @@ def reset_standard_names(
             set_clause = (
                 "sn.embedding = null, sn.embedded_at = null, sn.model = null, "
                 "sn.generated_at = null, sn.confidence = null, "
-                "sn.cocos_transformation_type = null, sn.dd_version = null"
+                "sn.cocos_transformation_type = null, sn.cocos = null, sn.dd_version = null"
             )
 
         gc.query(
@@ -766,9 +770,7 @@ def clear_standard_names(
         sn_where_clauses = ["sn.review_status IN $statuses"]
 
         if source_filter:
-            sn_where_clauses.append(
-                "coalesce(sn.source, sn.source_type) = $source_filter"
-            )
+            sn_where_clauses.append("sn.source_type = $source_filter")
             params["source_filter"] = source_filter
 
         sn_where = " AND ".join(sn_where_clauses)

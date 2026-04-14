@@ -144,6 +144,14 @@ async def extract_worker(state: SNBuildState, **_kwargs) -> None:
 
     state.extract_stats.freeze_rate()
     state.extract_phase.mark_done()
+    state.extract_stats.stream_queue.add(
+        [
+            {
+                "primary_text": "extract",
+                "description": f"{total_items} paths in {len(batches)} batches",
+            }
+        ]
+    )
 
 
 # =============================================================================
@@ -659,6 +667,7 @@ async def compose_worker(state: SNBuildState, **_kwargs) -> None:
                         "unit": unit,
                         "physics_domain": physics_domain,
                         "cocos_transformation_type": cocos_type,
+                        "cocos": batch.cocos_version,
                         "dd_version": batch.dd_version,
                     }
                 )
@@ -1417,6 +1426,14 @@ async def validate_worker(state: SNBuildState, **_kwargs) -> None:
     state.validate_stats.freeze_rate()
     state.validate_phase.mark_done()
     state.finalize_stats.processed = 1
+    state.finalize_stats.stream_queue.add(
+        [
+            {
+                "primary_text": "validate",
+                "description": f"{len(valid)} valid  {invalid_count} invalid",
+            }
+        ]
+    )
 
 
 def _convert_fields_to_grammar(fields: dict) -> dict:
@@ -1534,6 +1551,17 @@ async def consolidate_worker(state: SNBuildState, **_kwargs) -> None:
     state.consolidate_stats.freeze_rate()
     state.consolidate_phase.mark_done()
     state.finalize_stats.processed = 2
+    conflicts_count = len(result.conflicts) if result.conflicts else 0
+    state.finalize_stats.stream_queue.add(
+        [
+            {
+                "primary_text": "consolidate",
+                "description": (
+                    f"{len(state.consolidated)} names  {conflicts_count} conflicts"
+                ),
+            }
+        ]
+    )
 
 
 # =============================================================================
@@ -1688,4 +1716,12 @@ async def persist_worker(state: SNBuildState, **_kwargs) -> None:
     state.persist_phase.mark_done()
     state.finalize_stats.processed = 3
     state.finalize_stats.status_text = "done"
+    state.finalize_stats.stream_queue.add(
+        [
+            {
+                "primary_text": "persist",
+                "description": f"{written} written to graph",
+            }
+        ]
+    )
     state.finalize_stats.freeze_rate()

@@ -114,6 +114,7 @@ RETURN sn.id AS name, sn.description AS description,
        sn.physical_base AS physical_base,
        sn.subject AS subject,
        sn.cocos_transformation_type AS cocos_transformation_type,
+       sn.cocos AS cocos,
        score
 ORDER BY score DESC
 """
@@ -135,6 +136,7 @@ RETURN sn.id AS name, sn.description AS description,
        sn.physical_base AS physical_base,
        sn.subject AS subject,
        sn.cocos_transformation_type AS cocos_transformation_type,
+       sn.cocos AS cocos,
        1.0 AS score
 LIMIT $k
 """
@@ -164,6 +166,7 @@ def _format_search_report(query: str, rows: list[dict]) -> str:
         physical_base = row.get("physical_base") or ""
         subject = row.get("subject") or ""
         cocos_transformation_type = row.get("cocos_transformation_type") or ""
+        cocos = row.get("cocos")
 
         lines.append(f"### {i}. {name} (score: {score:.2f})")
         if kind:
@@ -177,6 +180,8 @@ def _format_search_report(query: str, rows: list[dict]) -> str:
             lines.append(f"- **Status:** {review_status}")
         if cocos_transformation_type:
             lines.append(f"- **COCOS Transformation:** {cocos_transformation_type}")
+        if cocos is not None:
+            lines.append(f"- **COCOS:** {cocos}")
         if description:
             lines.append(f"- **Description:** {description}")
         if documentation:
@@ -243,6 +248,7 @@ RETURN sn.id AS name, sn.description AS description,
        sn.review_status AS review_status,
        sn.confidence AS confidence, sn.model AS model,
        sn.cocos_transformation_type AS cocos_transformation_type,
+       sn.cocos AS cocos,
        sn.dd_version AS dd_version,
        collect(DISTINCT src.id) AS source_ids,
        collect(DISTINCT ids.id) AS source_ids_names
@@ -293,6 +299,7 @@ def _format_fetch_report(rows: list[dict], requested: list[str]) -> str:
         confidence = row.get("confidence")
         model = row.get("model") or ""
         cocos_transformation_type = row.get("cocos_transformation_type") or ""
+        cocos = row.get("cocos")
         dd_version = row.get("dd_version") or ""
         source_ids = row.get("source_ids") or []
         source_ids_names = row.get("source_ids_names") or []
@@ -315,6 +322,8 @@ def _format_fetch_report(rows: list[dict], requested: list[str]) -> str:
             lines.append(f"- **Model:** {model}")
         if cocos_transformation_type:
             lines.append(f"- **COCOS Transformation:** {cocos_transformation_type}")
+        if cocos is not None:
+            lines.append(f"- **COCOS:** {cocos}")
         if dd_version:
             lines.append(f"- **DD Version:** {dd_version}")
 
@@ -421,6 +430,7 @@ RETURN sn.id AS name, sn.kind AS kind,
        coalesce(u.id, sn.unit) AS unit,
        sn.review_status AS review_status,
        sn.cocos_transformation_type AS cocos_transformation_type,
+       sn.cocos AS cocos,
        sn.description AS description
 ORDER BY sn.id
 """
@@ -462,8 +472,8 @@ def _format_list_report(
 
     lines = [
         f"## Standard Names ({len(rows)} total{filter_str})\n",
-        "| Name | Kind | Unit | Status | COCOS | Description |",
-        "|------|------|------|--------|-------|-------------|",
+        "| Name | Kind | Unit | Status | COCOS Type | COCOS | Description |",
+        "|------|------|------|--------|------------|-------|-------------|",
     ]
 
     for row in rows:
@@ -471,11 +481,14 @@ def _format_list_report(
         row_kind = row.get("kind") or ""
         unit = row.get("unit") or ""
         status = row.get("review_status") or ""
-        cocos = row.get("cocos_transformation_type") or ""
+        cocos_type_val = row.get("cocos_transformation_type") or ""
+        cocos_val = row.get("cocos") if row.get("cocos") is not None else ""
         desc = row.get("description") or ""
         # Truncate long descriptions
         if len(desc) > 80:
             desc = desc[:77] + "..."
-        lines.append(f"| {name} | {row_kind} | {unit} | {status} | {cocos} | {desc} |")
+        lines.append(
+            f"| {name} | {row_kind} | {unit} | {status} | {cocos_type_val} | {cocos_val} | {desc} |"
+        )
 
     return "\n".join(lines)

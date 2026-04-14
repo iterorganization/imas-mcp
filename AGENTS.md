@@ -829,13 +829,14 @@ StandardName node defined in `imas_codex/schemas/standard_name.yaml` (v0.5.0). K
 - `(IMASNode)-[:HAS_STANDARD_NAME]->(StandardName)`
 - `(FacilitySignal)-[:HAS_STANDARD_NAME]->(StandardName)`
 - `(StandardName)-[:HAS_UNIT]->(Unit)`
-- `(StandardName)-[:FROM_DD_VERSION]->(DDVersion)`
+- `(StandardName)-[:HAS_COCOS]->(COCOS)`
 
 **COCOS provenance:** `cocos_transformation_type` (string, e.g. `psi_like`, `ip_like`) records
-how a quantity transforms under COCOS convention changes. `dd_version` links to the DDVersion
-node whose COCOS convention applies. Both are injected post-LLM (like `unit`) — never generated
-by the model. The full audit trail is:
-`StandardName.dd_version` → `DDVersion.cocos` → `COCOS` node parameters.
+how a quantity transforms under COCOS convention changes. `cocos` (integer) links directly to
+the COCOS singleton node whose convention applies — works for any source (DD, signals, manual).
+`dd_version` (string) is optional provenance recording which DD snapshot was used for DD-sourced names.
+Both `cocos` and `cocos_transformation_type` are injected post-LLM (like `unit`) — never generated
+by the model.
 
 **Provenance fields** (v0.5.0): `reviewer_model`, `reviewer_score` (float 0-1, normalized from
 6×0-20), `reviewer_scores` (JSON: grammar/semantic/documentation/convention/completeness/compliance,

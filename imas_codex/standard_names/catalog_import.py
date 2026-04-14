@@ -151,6 +151,9 @@ def _catalog_entry_to_dict(entry: Any, *, extra: dict | None = None) -> dict[str
         cocos_type = extra.get("cocos_transformation_type")
         if cocos_type:
             result["cocos_transformation_type"] = cocos_type
+        cocos = extra.get("cocos")
+        if cocos is not None:
+            result["cocos"] = int(cocos)
 
     return result
 
@@ -207,6 +210,7 @@ def _write_catalog_entries(
                 sn.model = coalesce(sn.model, null),
                 sn.generated_at = coalesce(sn.generated_at, null),
                 sn.confidence = coalesce(sn.confidence, null),
+                sn.cocos = coalesce(b.cocos, sn.cocos),
                 sn.dd_version = coalesce(sn.dd_version, null)
             """,
             batch=entries,
@@ -222,9 +226,27 @@ def _write_catalog_entries(
                 UNWIND $batch AS b
                 MATCH (sn:StandardName {id: b.id})
                 MERGE (u:Unit {id: b.unit})
+                SET u.symbol = coalesce(u.symbol, b.unit)
                 MERGE (sn)-[:HAS_UNIT]->(u)
                 """,
                 batch=units_batch,
+            )
+
+        # Create HAS_COCOS relationships: StandardName → COCOS
+        cocos_batch = [
+            {"id": e["id"], "cocos": e["cocos"]}
+            for e in entries
+            if e.get("cocos") is not None
+        ]
+        if cocos_batch:
+            gc.query(
+                """
+                UNWIND $batch AS b
+                MATCH (sn:StandardName {id: b.id})
+                MATCH (c:COCOS {id: b.cocos})
+                MERGE (sn)-[:HAS_COCOS]->(c)
+                """,
+                batch=cocos_batch,
             )
 
         # Create HAS_STANDARD_NAME relationships from ids_paths

@@ -81,6 +81,8 @@ def generate_yaml_entry(entry: SNPublishEntry) -> str:
         doc["validity_domain"] = entry.validity_domain
     if entry.cocos_transformation_type:
         doc["cocos_transformation_type"] = entry.cocos_transformation_type
+    if entry.cocos is not None:
+        doc["cocos"] = entry.cocos
     doc["provenance"] = {
         "source": entry.provenance.source,
         "source_id": entry.provenance.source_id,
@@ -271,7 +273,7 @@ def graph_records_to_entries(
         if not name:
             continue
 
-        # Resolve source type (schema: source, legacy: source_type)
+        # Source type (read from graph as 'source')
         source = rec.get("source") or rec.get("source_type") or "dd"
 
         # Resolve source ID (schema: source_path, legacy: source_id)
@@ -297,6 +299,7 @@ def graph_records_to_entries(
         constraints_raw = rec.get("constraints") or []
         validity_domain = rec.get("validity_domain")
         cocos_transformation_type = rec.get("cocos_transformation_type")
+        cocos = rec.get("cocos")
 
         # Build tags from available context
         tags: list[str] = list(rec.get("tags") or [])
@@ -330,6 +333,7 @@ def graph_records_to_entries(
                 else [],
                 validity_domain=validity_domain,
                 cocos_transformation_type=cocos_transformation_type,
+                cocos=int(cocos) if cocos is not None else None,
                 provenance=provenance,
             )
         )
