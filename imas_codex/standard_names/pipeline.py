@@ -50,6 +50,12 @@ async def run_sn_generate_engine(
         stop_event: Optional asyncio.Event for CLI shutdown signalling.
         on_worker_status: Optional callback for progress display updates.
     """
+
+    # Downstream workers should run to completion even when cost limit is hit.
+    # They only stop on CLI shutdown (stop_requested), not on budget.
+    def _downstream_should_stop():
+        return state.stop_requested
+
     workers = [
         WorkerSpec(
             "extract",
@@ -68,6 +74,7 @@ async def run_sn_generate_engine(
             validate_worker,
             depends_on=["compose_phase"],
             group="finalize",
+            should_stop_fn=_downstream_should_stop,
         ),
         WorkerSpec(
             "consolidate",
@@ -75,6 +82,7 @@ async def run_sn_generate_engine(
             consolidate_worker,
             depends_on=["validate_phase"],
             group="finalize",
+            should_stop_fn=_downstream_should_stop,
         ),
         WorkerSpec(
             "persist",
@@ -82,6 +90,7 @@ async def run_sn_generate_engine(
             persist_worker,
             depends_on=["consolidate_phase"],
             group="finalize",
+            should_stop_fn=_downstream_should_stop,
         ),
     ]
 

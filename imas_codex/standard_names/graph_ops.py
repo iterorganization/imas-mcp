@@ -14,6 +14,7 @@ import json
 import logging
 from typing import Any
 
+from imas_codex.discovery.base.claims import retry_on_deadlock
 from imas_codex.graph.client import GraphClient
 
 logger = logging.getLogger(__name__)
@@ -466,6 +467,313 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
     written = len(names)
     logger.info("Wrote %d StandardName nodes", written)
     return written
+
+
+# =============================================================================
+# Immediate-persist helpers — graph-state-machine compose
+# =============================================================================
+
+_GRAMMAR_FIELDS = (
+    "physical_base",
+    "subject",
+    "component",
+    "coordinate",
+    "position",
+    "process",
+    "geometric_base",
+    "object",
+)
+
+
+def persist_composed_batch(
+    candidates: list[dict[str, Any]],
+    *,
+    compose_model: str,
+    dd_version: str | None = None,
+    cocos_version: int | None = None,
+) -> int:
+    """Persist a single compose batch immediately to graph.
+
+    Called from within ``_compose_batch`` after LLM success.
+    Enriches candidates with provenance metadata and extracts grammar
+    fields before writing, matching what ``persist_worker`` previously did.
+
+    Returns the number of nodes written.
+    """
+    from datetime import UTC, datetime
+
+    if not candidates:
+        return 0
+
+    now = datetime.now(UTC).isoformat()
+    for entry in candidates:
+        entry.setdefault("model", compose_model)
+        entry.setdefault("review_status", "drafted")
+        entry.setdefault("generated_at", now)
+        # Extract grammar fields into top-level properties for graph
+        fields = entry.get("fields", {})
+        for field_name in _GRAMMAR_FIELDS:
+            if field_name in fields and field_name not in entry:
+                entry[field_name] = fields[field_name]
+
+    return write_standard_names(candidates)
+
+
+# =============================================================================
+# Claim/mark/release — graph-state-machine workers
+#
+# Follows the battle-tested pattern from discovery/code/graph_ops.py:
+#   1. claim: ORDER BY rand(), SET claimed_at + claim_token
+#   2. verify: re-query by claim_token (prevents double-claim)
+#   3. process (caller)
+#   4. mark: SET result fields + clear claimed_at/claim_token (token-verified)
+#   5. release (on error): clear claimed_at/claim_token (token-verified)
+# =============================================================================
+
+_CLAIM_TIMEOUT = "PT300S"  # 5 minutes — matches DEFAULT_CLAIM_TIMEOUT_SECONDS
+
+
+@retry_on_deadlock()
+def claim_names_for_validation(limit: int = 50) -> tuple[str, list[dict[str, Any]]]:
+    """Atomically claim unvalidated StandardNames for ISN validation.
+
+    Returns ``(token, items)`` where *token* must be passed to
+    ``mark_names_validated`` or ``release_validation_claims``.
+    """
+    import uuid
+
+    token = str(uuid.uuid4())
+    with GraphClient() as gc:
+        # Step 1: claim with random ordering and unique token
+        gc.query(
+            """
+            MATCH (sn:StandardName)
+            WHERE sn.review_status = 'drafted'
+              AND sn.generated_at IS NOT NULL
+              AND sn.validated_at IS NULL
+              AND (sn.claimed_at IS NULL
+                   OR sn.claimed_at < datetime() - duration($timeout))
+            WITH sn ORDER BY rand() LIMIT $limit
+            SET sn.claimed_at = datetime(), sn.claim_token = $token
+            """,
+            limit=limit,
+            token=token,
+            timeout=_CLAIM_TIMEOUT,
+        )
+        # Step 2: verify — only our token
+        results = gc.query(
+            """
+            MATCH (sn:StandardName {claim_token: $token})
+            OPTIONAL MATCH (sn)<-[:HAS_STANDARD_NAME]-(src)
+            RETURN sn.id AS id, sn.description AS description,
+                   sn.documentation AS documentation, sn.kind AS kind,
+                   sn.unit AS unit, sn.tags AS tags, sn.links AS links,
+                   sn.imas_paths AS imas_paths,
+                   sn.physical_base AS physical_base,
+                   sn.subject AS subject,
+                   sn.component AS component,
+                   sn.coordinate AS coordinate,
+                   sn.position AS position,
+                   sn.process AS process,
+                   sn.geometric_base AS geometric_base,
+                   sn.object AS object,
+                   sn.confidence AS confidence,
+                   collect(DISTINCT src.id) AS source_ids
+            """,
+            token=token,
+        )
+        return token, [dict(r) for r in results]
+
+
+def mark_names_validated(
+    token: str,
+    results: list[dict[str, Any]],
+) -> int:
+    """Write validation results and release claims atomically.
+
+    Each result dict must have ``id``, ``validation_issues`` (list[str]),
+    and ``validation_layer_summary`` (JSON string).
+    Token-verified: only updates nodes still claimed by this token.
+    """
+    if not results:
+        return 0
+    batch = []
+    for r in results:
+        batch.append(
+            {
+                "id": r["id"],
+                "issues": r.get("validation_issues") or [],
+                "summary": _ensure_json(r.get("validation_layer_summary")),
+            }
+        )
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            UNWIND $batch AS b
+            MATCH (sn:StandardName {id: b.id, claim_token: $token})
+            SET sn.validated_at = datetime(),
+                sn.validation_issues = b.issues,
+                sn.validation_layer_summary = b.summary,
+                sn.claimed_at = null,
+                sn.claim_token = null
+            RETURN count(sn) AS marked
+            """,
+            batch=batch,
+            token=token,
+        )
+        return result[0]["marked"] if result else 0
+
+
+def release_validation_claims(token: str) -> int:
+    """Release validation claims on error. Token-verified."""
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (sn:StandardName {claim_token: $token})
+            SET sn.claimed_at = null, sn.claim_token = null
+            RETURN count(sn) AS released
+            """,
+            token=token,
+        )
+        return result[0]["released"] if result else 0
+
+
+@retry_on_deadlock()
+def claim_names_for_embedding(limit: int = 100) -> tuple[str, list[dict[str, Any]]]:
+    """Atomically claim validated StandardNames needing embedding.
+
+    Returns ``(token, items)`` with ``id`` and ``description``.
+    """
+    import uuid
+
+    token = str(uuid.uuid4())
+    with GraphClient() as gc:
+        gc.query(
+            """
+            MATCH (sn:StandardName)
+            WHERE sn.review_status IN ['drafted', 'published', 'accepted']
+              AND sn.validated_at IS NOT NULL
+              AND sn.embedding IS NULL
+              AND sn.description IS NOT NULL
+              AND (sn.claimed_at IS NULL
+                   OR sn.claimed_at < datetime() - duration($timeout))
+            WITH sn ORDER BY rand() LIMIT $limit
+            SET sn.claimed_at = datetime(), sn.claim_token = $token
+            """,
+            limit=limit,
+            token=token,
+            timeout=_CLAIM_TIMEOUT,
+        )
+        results = gc.query(
+            """
+            MATCH (sn:StandardName {claim_token: $token})
+            RETURN sn.id AS id, sn.description AS description
+            """,
+            token=token,
+        )
+        return token, [dict(r) for r in results]
+
+
+def mark_names_embedded(
+    token: str,
+    embed_batch: list[dict[str, Any]],
+) -> int:
+    """Write embeddings and release claims. Token-verified.
+
+    Each item in *embed_batch* must have ``id`` and ``embedding``.
+    """
+    if not embed_batch:
+        return 0
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            UNWIND $batch AS b
+            MATCH (sn:StandardName {id: b.id, claim_token: $token})
+            SET sn.embedding = b.embedding,
+                sn.embedded_at = datetime(),
+                sn.claimed_at = null,
+                sn.claim_token = null
+            RETURN count(sn) AS marked
+            """,
+            batch=[
+                {"id": e["id"], "embedding": e["embedding"]}
+                for e in embed_batch
+                if e.get("embedding")
+            ],
+            token=token,
+        )
+        return result[0]["marked"] if result else 0
+
+
+def release_embedding_claims(token: str) -> int:
+    """Release embedding claims on error. Token-verified."""
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (sn:StandardName {claim_token: $token})
+            SET sn.claimed_at = null, sn.claim_token = null
+            RETURN count(sn) AS released
+            """,
+            token=token,
+        )
+        return result[0]["released"] if result else 0
+
+
+def get_validated_names(
+    ids_filter: str | None = None,
+    limit: int = 2000,
+) -> list[dict[str, Any]]:
+    """Query all validated StandardNames for consolidation analysis.
+
+    Read-only — no claims needed since consolidation is a batch analysis.
+    Returns drafted names that have ``validated_at`` set.
+    """
+    where_parts = [
+        "sn.review_status = 'drafted'",
+        "sn.validated_at IS NOT NULL",
+    ]
+    params: dict[str, Any] = {"limit": limit}
+
+    if ids_filter:
+        where_parts.append("ANY(p IN sn.imas_paths WHERE p STARTS WITH $ids_prefix)")
+        params["ids_prefix"] = f"{ids_filter}/"
+
+    where_clause = " AND ".join(where_parts)
+
+    with GraphClient() as gc:
+        results = gc.query(
+            f"""
+            MATCH (sn:StandardName)
+            WHERE {where_clause}
+            OPTIONAL MATCH (sn)<-[:HAS_STANDARD_NAME]-(src)
+            WITH sn, collect(DISTINCT src.id) AS source_ids
+            RETURN sn.id AS id, sn.description AS description,
+                   sn.documentation AS documentation, sn.kind AS kind,
+                   sn.unit AS unit, sn.tags AS tags, sn.links AS links,
+                   sn.imas_paths AS imas_paths, sn.confidence AS confidence,
+                   source_ids
+            LIMIT $limit
+            """,
+            **params,
+        )
+        return [dict(r) for r in results]
+
+
+def mark_names_consolidated(name_ids: list[str]) -> int:
+    """Mark names as consolidated (approved by cross-batch analysis)."""
+    if not name_ids:
+        return 0
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            UNWIND $ids AS nid
+            MATCH (sn:StandardName {id: nid})
+            SET sn.consolidated_at = datetime()
+            RETURN count(sn) AS marked
+            """,
+            ids=name_ids,
+        )
+        return result[0]["marked"] if result else 0
 
 
 # =============================================================================

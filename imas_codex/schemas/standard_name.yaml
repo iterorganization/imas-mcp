@@ -304,3 +304,24 @@ classes:
           that should be re-run.  OVERWRITTEN (not coalesced) on every
           write so that stale hashes never persist.
         range: string
+      # --- Worker coordination (graph-state-machine) ---
+      claimed_at:
+        description: >-
+          Timestamp when a worker claimed this name for processing.
+          Used for distributed worker coordination across parallel agents.
+          Stale claims (>5min) are reclaimed by other workers.
+        range: datetime
+      claim_token:
+        description: UUID token for atomic work claiming between parallel workers
+      validated_at:
+        description: >-
+          Timestamp when ISN validation completed. Null means validation
+          has not run yet. Set by validate_worker after grammar round-trip
+          and three-layer ISN checks.
+        range: datetime
+      consolidated_at:
+        description: >-
+          Timestamp when cross-batch consolidation approved this name.
+          Null means consolidation has not processed this name yet.
+          Names with conflicts are not marked consolidated.
+        range: datetime

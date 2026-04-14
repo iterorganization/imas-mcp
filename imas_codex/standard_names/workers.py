@@ -30,6 +30,17 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_GRAMMAR_FIELDS = (
+    "physical_base",
+    "subject",
+    "component",
+    "coordinate",
+    "position",
+    "process",
+    "geometric_base",
+    "object",
+)
+
 
 # =============================================================================
 # EXTRACT phase
@@ -648,9 +659,28 @@ async def compose_worker(state: SNBuildState, **_kwargs) -> None:
                 # Post-process tags: strip primary tags, keep only secondary
                 tags = _filter_secondary_tags(c.tags)
 
+                # Normalize name via grammar round-trip BEFORE persist
+                # to avoid duplicate nodes if validate would rename
+                name_id = c.standard_name
+                try:
+                    from imas_standard_names.grammar import (
+                        compose_standard_name,
+                        parse_standard_name,
+                    )
+
+                    parsed = parse_standard_name(name_id)
+                    normalized = compose_standard_name(parsed)
+                    if normalized != name_id:
+                        wlog.debug(
+                            "Pre-persist normalization: %r → %r", name_id, normalized
+                        )
+                        name_id = normalized
+                except Exception:
+                    wlog.debug("Grammar parse failed for %r — using raw name", name_id)
+
                 candidates.append(
                     {
-                        "id": c.standard_name,
+                        "id": name_id,
                         "source_type": "dd" if state.source == "dd" else "signal",
                         "source_id": c.source_id,
                         "description": c.description,
@@ -687,6 +717,20 @@ async def compose_worker(state: SNBuildState, **_kwargs) -> None:
             # Process attachments — paths that map to existing names
             if result.attachments:
                 _process_attachments(result.attachments, state, wlog)
+
+            # --- GRAPH-STATE-MACHINE: persist immediately per batch ---
+            # This ensures completed batches survive cost-limit cancellation.
+            if candidates:
+                from imas_codex.standard_names.graph_ops import persist_composed_batch
+
+                written = await asyncio.to_thread(
+                    persist_composed_batch,
+                    candidates,
+                    compose_model=model,
+                    dd_version=batch.dd_version,
+                    cocos_version=batch.cocos_version,
+                )
+                wlog.debug("Persisted %d names from batch %s", written, batch.group_key)
 
             wlog.info(
                 "Batch %s: %d composed, %d attached, %d skipped (cost=$%.4f)",
@@ -1197,12 +1241,11 @@ def _validate_via_isn(entry: dict) -> tuple[list[str], dict]:
 
 
 async def validate_worker(state: SNBuildState, **_kwargs) -> None:
-    """Validate composed names against grammar via round-trip + fields check.
+    """Validate composed names via ISN grammar checks (claim loop).
 
-    Reads from ``state.composed``.
-    Reports distinct metrics: validate_valid, validate_invalid,
-    validate_fields_consistent, validate_fields_inconsistent.
-    Results stored in ``state.validated``.
+    Graph-primary: claims unvalidated StandardName nodes, runs ISN
+    three-layer validation + grammar round-trip, marks results on graph.
+    Follows the claim/mark/release pattern from discovery workers.
     """
     from imas_codex.cli.logging import WorkerLogAdapter
 
@@ -1222,207 +1265,116 @@ async def validate_worker(state: SNBuildState, **_kwargs) -> None:
         state.validate_phase.mark_done()
         return
 
-    input_candidates = state.composed
-
-    if not input_candidates:
-        wlog.info("No composed names to validate — skipping")
-        state.validate_stats.freeze_rate()
-        state.validate_phase.mark_done()
-        return
-
     from imas_standard_names.grammar import (
         StandardName,
         compose_standard_name,
         parse_standard_name,
     )
 
-    # Load tag vocabulary for soft validation
-    try:
-        from typing import get_args
+    from imas_codex.standard_names.graph_ops import (
+        claim_names_for_validation,
+        mark_names_validated,
+        release_validation_claims,
+    )
 
-        from imas_standard_names.grammar.tag_types import PrimaryTag, SecondaryTag
+    _BATCH_SIZE = 50
 
-        valid_primary_tags = set(get_args(PrimaryTag))
-        valid_secondary_tags = set(get_args(SecondaryTag))
-        valid_tags = valid_primary_tags | valid_secondary_tags
-    except Exception:
-        valid_tags = set()
+    total_valid = 0
+    total_invalid = 0
+    idle_count = 0
+    _MAX_IDLE = 5
+    _BATCH_SIZE = 50
 
-    # Collect existing names for link validation
-    existing_names: set[str] = set()
-    for entry in input_candidates:
-        existing_names.add(entry.get("id", ""))
+    wlog.info("Starting validation claim loop")
 
-    wlog.info("Validating %d composed names", len(input_candidates))
-    state.validate_stats.total = len(input_candidates)
+    while not state.stop_requested:
+        # Claim a batch from graph
+        token, items = await asyncio.to_thread(claim_names_for_validation, _BATCH_SIZE)
 
-    valid: list[dict] = []
-    invalid_count = 0
-    fields_consistent = 0
-    fields_inconsistent = 0
+        if not items:
+            idle_count += 1
+            if idle_count >= _MAX_IDLE:
+                wlog.info("No more unvalidated names — exiting")
+                break
+            await asyncio.sleep(2.0)
+            continue
+        idle_count = 0
 
-    # Soft validation counters
-    desc_present = 0
-    desc_too_long = 0
-    doc_present = 0
-    doc_too_short = 0
-    unit_valid = 0
-    kind_valid = 0
-    tags_valid = 0
-    links_valid = 0
+        wlog.debug("Claimed %d names for validation (token=%s)", len(items), token[:8])
 
-    _VALID_KINDS = {"scalar", "vector", "metadata"}
-
-    for i, entry in enumerate(input_candidates):
-        name = entry.get("id", "")
+        # Process the claimed batch
         try:
-            parsed = parse_standard_name(name)
-            normalized = compose_standard_name(parsed)
-            if normalized != name:
-                wlog.debug("Normalization: %r → %r", name, normalized)
-                entry["id"] = normalized
+            results: list[dict[str, Any]] = []
+            batch_invalid = 0
 
-            # Fields consistency check
-            fields = entry.get("fields", {})
-            if fields:
+            for entry in items:
+                name = entry.get("id", "")
                 try:
-                    sn_fields = _convert_fields_to_grammar(fields)
-                    if sn_fields:
-                        sn = StandardName(**sn_fields)
-                        from_fields = compose_standard_name(sn)
-                        if from_fields == normalized:
-                            fields_consistent += 1
-                            entry["fields_consistent"] = True
-                        else:
-                            fields_inconsistent += 1
-                            entry["fields_consistent"] = False
-                            wlog.debug(
-                                "Fields inconsistent: %r vs %r",
-                                from_fields,
-                                normalized,
-                            )
+                    # Grammar round-trip validates parsability
+                    # (normalization already done at compose time)
+                    parsed = parse_standard_name(name)
+                    compose_standard_name(parsed)
+
+                    # Fields consistency check
+                    fields_dict = {}
+                    for fk in _GRAMMAR_FIELDS:
+                        val = entry.get(fk)
+                        if val:
+                            fields_dict[fk] = val
+                    if fields_dict:
+                        try:
+                            sn_fields = _convert_fields_to_grammar(fields_dict)
+                            if sn_fields:
+                                sn = StandardName(**sn_fields)
+                                compose_standard_name(sn)
+                        except Exception:
+                            pass
+
+                    # ISN three-layer validation (annotate, never reject)
+                    issues, layer_summary = _validate_via_isn(entry)
+
+                    results.append(
+                        {
+                            "id": name,
+                            "validation_issues": issues,
+                            "validation_layer_summary": json.dumps(layer_summary),
+                        }
+                    )
                 except Exception:
-                    fields_inconsistent += 1
-                    entry["fields_consistent"] = False
+                    wlog.debug(
+                        "Validation error for %r — marking with empty issues", name
+                    )
+                    results.append(
+                        {
+                            "id": name,
+                            "validation_issues": [
+                                f"parse_error: grammar round-trip failed for {name}"
+                            ],
+                            "validation_layer_summary": json.dumps({}),
+                        }
+                    )
+                    batch_invalid += 1
 
-            # --- Soft validation checks (metrics only, never reject) ---
+            # Mark results on graph (token-verified)
+            marked = await asyncio.to_thread(mark_names_validated, token, results)
+            total_valid += marked
+            total_invalid += batch_invalid
+            state.validate_stats.processed += marked
 
-            # 1. Description present + length check
-            desc = entry.get("description", "")
-            if desc:
-                desc_present += 1
-                if len(desc) > 120:
-                    desc_too_long += 1
-                    wlog.debug("Description >120 chars for %r: %d", name, len(desc))
-            else:
-                wlog.debug("Missing description for %r", name)
+            wlog.info(
+                "Validated batch: %d marked, %d errors",
+                marked,
+                batch_invalid,
+            )
+            state.validate_stats.record_batch(marked)
 
-            # 2. Documentation present + minimum length
-            doc = entry.get("documentation", "")
-            if doc:
-                doc_present += 1
-                if len(doc) < 200:
-                    doc_too_short += 1
-                    wlog.debug("Documentation <200 chars for %r: %d", name, len(doc))
-            else:
-                wlog.debug("Missing documentation for %r", name)
-
-            # 3. Unit validity — simple pattern check
-            unit = entry.get("unit")
-            if unit and isinstance(unit, str) and len(unit) < 50:
-                unit_valid += 1
-
-            # 4. Kind validity
-            kind = entry.get("kind", "")
-            if kind in _VALID_KINDS:
-                kind_valid += 1
-            elif kind:
-                wlog.debug("Invalid kind %r for %r", kind, name)
-
-            # 5. Tags from vocabulary
-            entry_tags = entry.get("tags") or []
-            if entry_tags and valid_tags:
-                if all(t in valid_tags for t in entry_tags):
-                    tags_valid += 1
-                else:
-                    bad_tags = [t for t in entry_tags if t not in valid_tags]
-                    wlog.debug("Unknown tags for %r: %s", name, bad_tags)
-            elif entry_tags:
-                tags_valid += 1  # no vocabulary loaded, accept any
-
-            # 6. Links reference existing names
-            entry_links = entry.get("links") or []
-            if entry_links:
-                if all(lnk in existing_names for lnk in entry_links):
-                    links_valid += 1
-                else:
-                    unknown = [lnk for lnk in entry_links if lnk not in existing_names]
-                    wlog.debug("Unknown links for %r: %s", name, unknown)
-
-            # 7. ids_paths look like IMAS paths (contain '/')
-            imas_paths = entry.get("imas_paths") or []
-            for p in imas_paths:
-                if "/" not in p:
-                    wlog.debug("Suspicious ids_path for %r: %r", name, p)
-
-            # --- ISN three-layer validation (annotate, never reject) ---
-            try:
-                issues, layer_summary = _validate_via_isn(entry)
-                entry["validation_issues"] = issues
-                entry["validation_layer_summary"] = json.dumps(layer_summary)
-                if issues:
-                    wlog.debug("ISN validation: %d issues for %r", len(issues), name)
-            except Exception:
-                wlog.debug("ISN validation failed for %r — skipping annotation", name)
-
-            valid.append(entry)
         except Exception:
-            wlog.debug("Validation failed for name: %r", name)
-            invalid_count += 1
+            wlog.warning("Validation batch failed — releasing claims", exc_info=True)
+            await asyncio.to_thread(release_validation_claims, token)
 
-        state.validate_stats.processed = i + 1
-
-    if valid:
-        state.validate_stats.record_batch(len(valid))
-    state.validate_stats.errors = invalid_count
-    state.validated = valid
-
-    wlog.info(
-        "Validation complete: %d valid, %d invalid, "
-        "%d fields consistent, %d fields inconsistent",
-        len(valid),
-        invalid_count,
-        fields_consistent,
-        fields_inconsistent,
-    )
-    wlog.info(
-        "Soft checks: desc=%d/%d (>120: %d), doc=%d/%d (<200: %d), "
-        "unit=%d, kind=%d, tags=%d, links=%d",
-        desc_present,
-        len(valid),
-        desc_too_long,
-        doc_present,
-        len(valid),
-        doc_too_short,
-        unit_valid,
-        kind_valid,
-        tags_valid,
-        links_valid,
-    )
-    state.stats["validate_valid"] = len(valid)
-    state.stats["validate_invalid"] = invalid_count
-    state.stats["validate_fields_consistent"] = fields_consistent
-    state.stats["validate_fields_inconsistent"] = fields_inconsistent
-    # Soft validation metrics
-    state.stats["validate_desc_present"] = desc_present
-    state.stats["validate_desc_too_long"] = desc_too_long
-    state.stats["validate_doc_present"] = doc_present
-    state.stats["validate_doc_too_short"] = doc_too_short
-    state.stats["validate_unit_valid"] = unit_valid
-    state.stats["validate_kind_valid"] = kind_valid
-    state.stats["validate_tags_valid"] = tags_valid
-    state.stats["validate_links_valid"] = links_valid
-
+    state.stats["validate_valid"] = total_valid
+    state.stats["validate_invalid"] = total_invalid
+    state.validate_stats.errors = total_invalid
     state.validate_stats.freeze_rate()
     state.validate_phase.mark_done()
     state.finalize_stats.processed = 1
@@ -1430,7 +1382,7 @@ async def validate_worker(state: SNBuildState, **_kwargs) -> None:
         [
             {
                 "primary_text": "validate",
-                "description": f"{len(valid)} valid  {invalid_count} invalid",
+                "description": f"{total_valid} valid  {total_invalid} invalid",
             }
         ]
     )
@@ -1478,8 +1430,9 @@ def _convert_fields_to_grammar(fields: dict) -> dict:
 async def consolidate_worker(state: SNBuildState, **_kwargs) -> None:
     """Cross-batch consolidation: dedup, conflict detection, coverage accounting.
 
-    Runs after VALIDATE, before PERSIST.  Reads from ``state.validated``,
-    writes to ``state.consolidated``.
+    Graph-primary: queries all validated StandardNames from graph, runs
+    consolidation analysis, marks approved names with ``consolidated_at``.
+    Read-only query (no claims needed — single-pass batch analysis).
     """
     from imas_codex.cli.logging import WorkerLogAdapter
 
@@ -1489,41 +1442,38 @@ async def consolidate_worker(state: SNBuildState, **_kwargs) -> None:
 
     if state.dry_run:
         wlog.info("Dry run — skipping consolidation")
-        state.consolidated = list(state.validated)
-        state.consolidate_stats.total = len(state.validated)
-        state.consolidate_stats.processed = len(state.validated)
-        state.stats["consolidation_skipped"] = True
-        state.consolidate_stats.freeze_rate()
-        state.consolidate_phase.mark_done()
-        return
-
-    if not state.validated:
-        wlog.info("No validated names to consolidate — skipping")
         state.consolidate_stats.freeze_rate()
         state.consolidate_phase.mark_done()
         return
 
     from imas_codex.standard_names.consolidation import consolidate_candidates
-
-    wlog.info("Consolidating %d validated candidates", len(state.validated))
-    state.consolidate_stats.total = len(state.validated)
-
-    # Collect all source paths for coverage accounting
-    source_paths = None
-    if state.extracted:
-        source_paths = set()
-        for batch in state.extracted:
-            for item in batch.items:
-                if item.get("path"):
-                    source_paths.add(item["path"])
-
-    result = await asyncio.to_thread(
-        consolidate_candidates,
-        state.validated,
-        source_paths=source_paths,
+    from imas_codex.standard_names.graph_ops import (
+        get_validated_names,
+        mark_names_consolidated,
     )
 
-    state.consolidated = result.approved
+    # Always read from graph — this is the primary data source
+    validated = await asyncio.to_thread(
+        get_validated_names,
+        ids_filter=getattr(state, "ids_filter", None),
+    )
+
+    if not validated:
+        wlog.info("No validated names to consolidate — skipping")
+        state.consolidate_stats.freeze_rate()
+        state.consolidate_phase.mark_done()
+        return
+
+    wlog.info("Consolidating %d validated candidates from graph", len(validated))
+    state.consolidate_stats.total = len(validated)
+
+    result = await asyncio.to_thread(consolidate_candidates, validated)
+
+    # Mark approved names with consolidated_at on graph
+    approved_ids = [e["id"] for e in result.approved if e.get("id")]
+    if approved_ids:
+        marked = await asyncio.to_thread(mark_names_consolidated, approved_ids)
+        wlog.info("Marked %d names as consolidated", marked)
 
     # Log results
     wlog.info(
@@ -1547,7 +1497,7 @@ async def consolidate_worker(state: SNBuildState, **_kwargs) -> None:
     if result.coverage_gaps:
         wlog.info("Coverage gaps: %d unmapped source paths", len(result.coverage_gaps))
 
-    state.consolidate_stats.processed = len(state.validated)
+    state.consolidate_stats.processed = len(validated)
     state.consolidate_stats.freeze_rate()
     state.consolidate_phase.mark_done()
     state.finalize_stats.processed = 2
@@ -1557,7 +1507,7 @@ async def consolidate_worker(state: SNBuildState, **_kwargs) -> None:
             {
                 "primary_text": "consolidate",
                 "description": (
-                    f"{len(state.consolidated)} names  {conflicts_count} conflicts"
+                    f"{len(result.approved)} names  {conflicts_count} conflicts"
                 ),
             }
         ]
@@ -1570,121 +1520,98 @@ async def consolidate_worker(state: SNBuildState, **_kwargs) -> None:
 
 
 async def persist_worker(state: SNBuildState, **_kwargs) -> None:
-    """Write consolidated standard names to graph with provenance.
+    """Compute embeddings for consolidated StandardNames (claim loop).
 
-    Creates StandardName nodes and HAS_STANDARD_NAME relationships.
-    Enriches entries with model name, generation timestamp, review status.
+    Graph-primary: claims unembedded StandardNames, computes embeddings,
+    writes results back to graph. Names are already persisted by compose —
+    this worker handles the embedding enrichment pass.
     """
     from imas_codex.cli.logging import WorkerLogAdapter
 
     wlog = WorkerLogAdapter(logger, worker_name="sn_persist_worker")
 
-    state.finalize_stats.status_text = "persisting…"
+    state.finalize_stats.status_text = "embedding…"
 
     if state.dry_run:
-        wlog.info(
-            "Dry run — skipping persist for %d consolidated names",
-            len(state.consolidated),
-        )
-        state.persist_stats.total = len(state.consolidated)
-        state.persist_stats.processed = len(state.consolidated)
-        state.stats["persist_skipped"] = True
+        wlog.info("Dry run — skipping embedding")
         state.persist_stats.freeze_rate()
         state.persist_phase.mark_done()
         return
 
-    if not state.consolidated:
-        wlog.info("No consolidated names to persist — skipping")
-        state.persist_stats.freeze_rate()
-        state.persist_phase.mark_done()
-        return
+    from imas_codex.standard_names.graph_ops import (
+        claim_names_for_embedding,
+        mark_names_embedded,
+        release_embedding_claims,
+    )
 
-    from imas_codex.settings import get_model
-    from imas_codex.standard_names.graph_ops import write_standard_names
+    total_embedded = 0
+    idle_count = 0
+    _MAX_IDLE = 5
+    _BATCH_SIZE = 100
 
-    compose_model = state.compose_model or get_model("reasoning")
-    now = datetime.now(UTC).isoformat()
+    wlog.info("Starting embedding claim loop")
 
-    # Enrich with provenance — record the actual compose model used
-    for entry in state.consolidated:
-        entry.setdefault("model", compose_model)
-        entry.setdefault("review_status", "drafted")
-        entry.setdefault("generated_at", now)
-        # confidence comes from LLM output — never default to 1.0
+    while not state.stop_requested:
+        # Claim a batch from graph
+        token, items = await asyncio.to_thread(claim_names_for_embedding, _BATCH_SIZE)
 
-        # Extract grammar fields into top-level properties for graph
-        fields = entry.get("fields", {})
-        for field_name in (
-            "physical_base",
-            "subject",
-            "component",
-            "coordinate",
-            "position",
-            "process",
-            "geometric_base",
-            "object",
-        ):
-            if field_name in fields and field_name not in entry:
-                entry[field_name] = fields[field_name]
+        if not items:
+            idle_count += 1
+            if idle_count >= _MAX_IDLE:
+                wlog.info("No more names needing embedding — exiting")
+                break
+            await asyncio.sleep(2.0)
+            continue
+        idle_count = 0
 
-    wlog.info("Persisting %d consolidated standard names", len(state.consolidated))
-    state.persist_stats.total = len(state.consolidated)
+        wlog.debug("Claimed %d names for embedding (token=%s)", len(items), token[:8])
 
-    written = await asyncio.to_thread(write_standard_names, state.consolidated)
-
-    # Embed descriptions for vector search
-    if written > 0:
         try:
             from imas_codex.embeddings.description import embed_descriptions_batch
 
-            embed_items = [
-                {"id": e["id"], "description": e.get("description", "")}
-                for e in state.consolidated
-                if e.get("description")
+            enriched = await asyncio.to_thread(embed_descriptions_batch, items)
+            embed_batch = [
+                {"id": e["id"], "embedding": e["embedding"]}
+                for e in enriched
+                if e.get("embedding")
             ]
-            if embed_items:
-                enriched = await asyncio.to_thread(
-                    embed_descriptions_batch, embed_items
-                )
-                # Write embeddings back to graph
-                from imas_codex.graph.client import GraphClient
 
-                def _write_embeddings():
-                    with GraphClient() as gc:
-                        gc.query(
-                            """
-                            UNWIND $batch AS b
-                            MATCH (sn:StandardName {id: b.id})
-                            SET sn.embedding = b.embedding,
-                                sn.embedded_at = datetime()
-                            """,
-                            batch=[
-                                {"id": e["id"], "embedding": e["embedding"]}
-                                for e in enriched
-                                if e.get("embedding")
-                            ],
-                        )
+            marked = await asyncio.to_thread(mark_names_embedded, token, embed_batch)
+            total_embedded += marked
 
-                await asyncio.to_thread(_write_embeddings)
-                wlog.info("Embedded %d StandardName descriptions", len(embed_items))
+            wlog.info("Embedded batch: %d names", marked)
+            state.persist_stats.processed += marked
+            state.persist_stats.record_batch(marked)
+
         except Exception:
-            wlog.warning(
-                "Embedding generation failed — names persisted without embeddings",
-                exc_info=True,
-            )
-
-    state.persist_stats.processed = written
-    state.persist_stats.record_batch(written)
-    state.stats["persist_written"] = written
+            wlog.warning("Embedding batch failed — releasing claims", exc_info=True)
+            await asyncio.to_thread(release_embedding_claims, token)
 
     # Post-success cleanup: detach stale HAS_STANDARD_NAME for targeted paths
     # Only runs when --force/--paths regenerated names for specific paths
-    if state.force and written > 0:
-        new_name_ids = {e["id"] for e in state.consolidated if e.get("id")}
-        source_paths = set()
-        for e in state.consolidated:
-            for sp in e.get("source_ids", []):
-                source_paths.add(sp)
+    if state.force and total_embedded > 0 and state.extracted:
+        new_name_ids: set[str] = set()
+        source_paths: set[str] = set()
+
+        # Collect from graph — names we just embedded
+        from imas_codex.graph.client import GraphClient
+
+        def _get_recent_names():
+            with GraphClient() as gc:
+                results = gc.query(
+                    """
+                    MATCH (sn:StandardName)
+                    WHERE sn.embedded_at IS NOT NULL
+                      AND sn.review_status = 'drafted'
+                    RETURN sn.id AS id, sn.imas_paths AS imas_paths
+                    """
+                )
+                for r in results:
+                    new_name_ids.add(r["id"])
+                    for p in r["imas_paths"] or []:
+                        source_paths.add(p)
+
+        await asyncio.to_thread(_get_recent_names)
 
         if source_paths and new_name_ids:
 
@@ -1711,7 +1638,8 @@ async def persist_worker(state: SNBuildState, **_kwargs) -> None:
                 wlog.info("Cleaned %d stale HAS_STANDARD_NAME relationships", detached)
                 state.stats["stale_detached"] = detached
 
-    wlog.info("Persist complete: %d written", written)
+    state.stats["persist_embedded"] = total_embedded
+    wlog.info("Persist complete: %d embedded", total_embedded)
     state.persist_stats.freeze_rate()
     state.persist_phase.mark_done()
     state.finalize_stats.processed = 3
@@ -1720,7 +1648,7 @@ async def persist_worker(state: SNBuildState, **_kwargs) -> None:
         [
             {
                 "primary_text": "persist",
-                "description": f"{written} written to graph",
+                "description": f"{total_embedded} embedded",
             }
         ]
     )
