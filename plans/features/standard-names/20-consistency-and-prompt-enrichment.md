@@ -188,7 +188,7 @@ RETURN n, u.id AS unit, c.label AS cluster,
 
 ### Invariants (enforced by pipeline, not LLM)
 
-1. **Unit comes FROM the DD.** `canonical_units` is set from
+1. **Unit comes FROM the DD.** `unit` is set from
    `IMASNode.HAS_UNIT->Unit`, never from LLM output. The prompt includes
    the authoritative unit as a given fact.
 
@@ -211,7 +211,7 @@ RETURN n, u.id AS unit, c.label AS cluster,
 
 Define which IMASNode paths receive standard names and which are metadata.
 
-**Path classifier** (`imas_codex/sn/classifier.py`):
+**Path classifier** (`imas_codex/standard_names/classifier.py`):
 
 ```python
 def classify_path(node: dict) -> Literal["quantity", "metadata", "skip"]:
@@ -242,7 +242,7 @@ def classify_path(node: dict) -> Literal["quantity", "metadata", "skip"]:
 edge cases. Maintain a reviewed gold set of ~50 edge-case paths with
 expected classifications. Classifier tests parametrized from this gold set.
 
-### Phase 2: DD enrichment layer (`imas_codex/sn/enrichment.py`)
+### Phase 2: DD enrichment layer (`imas_codex/standard_names/enrichment.py`)
 
 New module that navigates the DD graph to build rich context for each path.
 
@@ -368,7 +368,7 @@ grammar rules or vocabulary — it imports them programmatically.
 
 ### How context flows to the LLM
 
-`build_compose_context()` in `imas_codex/sn/context.py` assembles all of
+`build_compose_context()` in `imas_codex/standard_names/context.py` assembles all of
 the above into a dict of Jinja2 template variables. The system prompt
 (`compose_system.md`) renders this context as:
 1. Grammar rules (pattern, order, template rules, exclusive pairs)
@@ -754,12 +754,12 @@ def consolidate_candidates(candidates: list[dict]) -> ConsolidationResult:
 Replace `coalesce(b.field, sn.field)` with conflict-detecting writes:
 
 ```python
-# Instead of: SET sn.canonical_units = coalesce(b.unit, sn.canonical_units)
+# Instead of: SET sn.unit = coalesce(b.unit, sn.unit)
 # Use: fail-on-mismatch pattern
 """
 MATCH (sn:StandardName {id: $name})
-WHERE sn.canonical_units IS NOT NULL AND sn.canonical_units <> $unit
-RETURN sn.id AS conflict, sn.canonical_units AS existing, $unit AS incoming
+WHERE sn.unit IS NOT NULL AND sn.unit <> $unit
+RETURN sn.id AS conflict, sn.unit AS existing, $unit AS incoming
 """
 ```
 
@@ -829,7 +829,7 @@ Phase 5 -> document benchmark evidence for model/approach selection.
 ## Success Criteria
 
 - [ ] Path classification separates 9,964 physics quantities from metadata
-- [ ] Every StandardName has `canonical_units` sourced from DD `HAS_UNIT`
+- [ ] Every StandardName has `unit` sourced from DD `HAS_UNIT`
 - [ ] Paths with different units CANNOT share a StandardName (enforced)
 - [ ] Paths with missing units are classified (dimensionless vs flagged)
 - [ ] Mixed-unit clusters split into separate batches before generation

@@ -71,7 +71,7 @@ documentation for each. This is a separate LLM call from compose because:
      - Units and data type
 
 2. **Create Pydantic response models**
-   - File: `imas_codex/sn/models.py`
+   - File: `imas_codex/standard_names/models.py`
    ```python
    class SNDocumentation(BaseModel):
        """Rich documentation for a single standard name."""
@@ -98,7 +98,7 @@ documentation for each. This is a separate LLM call from compose because:
    ```
 
 3. **Implement `document_worker()`**
-   - File: `imas_codex/sn/workers.py`
+   - File: `imas_codex/standard_names/workers.py`
    - Pattern: follows `review_worker()` structure
    - Reads from `state.validated` (or `state.reviewed`)
    - Batches: 3-5 names per LLM call (smaller batches than compose
@@ -110,7 +110,7 @@ documentation for each. This is a separate LLM call from compose because:
    - CLI: `--document-model` and `--skip-document` flags
 
 4. **Add DOCUMENT phase to pipeline**
-   - File: `imas_codex/sn/pipeline.py`
+   - File: `imas_codex/standard_names/pipeline.py`
    - New WorkerSpec between VALIDATE and PERSIST_NODES:
      ```python
      WorkerSpec(
@@ -123,7 +123,7 @@ documentation for each. This is a separate LLM call from compose because:
      ```
 
 5. **Add state fields**
-   - File: `imas_codex/sn/state.py`
+   - File: `imas_codex/standard_names/state.py`
    - `documented: list[dict]` — documented names
    - `document_stats: WorkerStats` — phase tracking
    - `document_phase: PipelinePhase` — supervision
@@ -145,7 +145,7 @@ documentation for each. This is a separate LLM call from compose because:
 ### Tasks
 
 1. **Add DOCUMENT stage to progress display**
-   - File: `imas_codex/sn/progress.py`
+   - File: `imas_codex/standard_names/progress.py`
    - New `StageDisplaySpec` entry for document phase
    - Shows cost (LLM), rate, current name being documented
 
@@ -188,11 +188,11 @@ documentation for each. This is a separate LLM call from compose because:
 
 | File | Change |
 |------|--------|
-| `imas_codex/sn/workers.py` | Add `document_worker()` |
-| `imas_codex/sn/state.py` | Add documented, document_stats, document_phase |
-| `imas_codex/sn/pipeline.py` | Add DOCUMENT WorkerSpec |
-| `imas_codex/sn/models.py` | Add SNDocumentation, SNDocumentBatch |
-| `imas_codex/sn/progress.py` | Add document stage display |
+| `imas_codex/standard_names/workers.py` | Add `document_worker()` |
+| `imas_codex/standard_names/state.py` | Add documented, document_stats, document_phase |
+| `imas_codex/standard_names/pipeline.py` | Add DOCUMENT WorkerSpec |
+| `imas_codex/standard_names/models.py` | Add SNDocumentation, SNDocumentBatch |
+| `imas_codex/standard_names/progress.py` | Add document stage display |
 | `imas_codex/cli/sn.py` | Add --skip-document, --document-model |
 | `imas_codex/llm/prompts/sn/document.md` | New prompt template |
 | `tests/sn/test_document_worker.py` | New test file |

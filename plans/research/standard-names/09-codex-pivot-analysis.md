@@ -70,7 +70,7 @@ The LinkML schema at `schemas/facility.yaml:2088-2110` already defines:
 StandardName:
   id: string (snake_case, required, identifier)
   description: string
-  canonical_units: range Unit
+  unit: range Unit
   
 # Relationships:
 #   FacilitySignal -[:MEASURES]-> StandardName (cross-facility semantic linking)
@@ -381,7 +381,7 @@ Standard name generation is not "discovering what exists at a facility" — it i
 
 **Original resolution:** Place at `graph/sn_workers.py`, CLI as `imas-codex imas sn build`.
 
-**Revised resolution:** The pipeline mints from **multiple sources** (DD paths, facility signals, potentially others), so it is not IMAS-specific. Create a new **top-level `sn` module** in codex (`imas_codex/sn/`) with source plugins. CLI becomes `imas-codex sn build --source dd` or `imas-codex sn build --source signals`. This sits alongside `discover` and `imas` as a peer command group.
+**Revised resolution:** The pipeline mints from **multiple sources** (DD paths, facility signals, potentially others), so it is not IMAS-specific. Create a new **top-level `sn` module** in codex (`imas_codex/standard_names/`) with source plugins. CLI becomes `imas-codex sn build --source dd` or `imas-codex sn build --source signals`. This sits alongside `discover` and `imas` as a peer command group.
 
 ### 8.2 Finding 2: Transient candidates, not permanent nodes (adopted)
 
@@ -451,9 +451,9 @@ The split is:
 4. JSON schema contract for cross-project validation (Feature 04)
 
 **What happens in imas-codex:**
-1. `imas_codex/sn/` — new top-level module with source plugins
-2. `imas_codex/sn/sources/dd.py` — extract from IMASNode paths
-3. `imas_codex/sn/sources/signals.py` — extract from FacilitySignal nodes
+1. `imas_codex/standard_names/` — new top-level module with source plugins
+2. `imas_codex/standard_names/sources/dd.py` — extract from IMASNode paths
+3. `imas_codex/standard_names/sources/signals.py` — extract from FacilitySignal nodes
 4. `imas_codex/cli/sn.py` — top-level `sn` CLI group
 5. `llm/prompts/sn/` — Jinja2 generation/review templates
 6. `schemas/facility.yaml` — extend StandardName with DERIVED_FROM, source metadata

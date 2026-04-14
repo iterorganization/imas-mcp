@@ -15,7 +15,7 @@ Multi-source standard name generation pipeline. Extracts candidate quantities fr
 ## Module Structure
 
 ```
-imas_codex/sn/
+imas_codex/standard_names/
 ├── __init__.py
 ├── pipeline.py      # Orchestrator: run_sn_build()
 ├── workers.py       # WorkerSpec definitions for each phase
@@ -102,7 +102,7 @@ Extend `StandardName` node in `schemas/facility.yaml`:
 
 ## Deliverables
 
-- [ ] `imas_codex/sn/` module with all pipeline components
+- [ ] `imas_codex/standard_names/` module with all pipeline components
 - [ ] `imas_codex/cli/sn.py` — top-level CLI group registered in `cli/__init__.py`
 - [ ] `llm/prompts/sn/` — Jinja2 templates for compose and review
 - [ ] `sn/progress.py` — rich progress display

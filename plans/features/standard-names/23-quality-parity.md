@@ -8,7 +8,7 @@
 >
 > Reviewed by rubber-duck agent. Key changes from critique:
 > - Phase 0 added: benchmark harness FIRST for measurable progress
-> - Unit persistence (GAP-3) confirmed resolved — property is `canonical_units`
+> - Unit persistence (GAP-3) confirmed resolved — property is `unit`
 > - DD context: use library layer (`GraphPathTool`), NOT MCP server
 > - Doc length: soft target with content gates, not hard char minimum
 > - Link priority formula: fixed inversion (was boosting recent, not stale)
@@ -63,9 +63,9 @@ These are the A/B comparison targets — NEVER use them as prompt examples.
 
 ### ~~1A: Unit persistence fix (GAP-3)~~ — RESOLVED
 
-Units ARE correctly persisted as `canonical_units` property and
-`CANONICAL_UNITS` relationship. Earlier investigation used wrong property
-name (`sn.unit` instead of `sn.canonical_units`). No code change needed.
+Units ARE correctly persisted as `unit` property and
+`HAS_UNIT` relationship. Earlier investigation used the old property
+name (`sn.canonical_units`). Renamed to `sn.unit`. No code change needed.
 
 ### 1B: --paths CLI flag (GAP-10)
 

@@ -85,7 +85,7 @@ No LLM calls — this is deterministic string matching against the graph.
 ### Tasks
 
 1. **Create link resolution module**
-   - File: `imas_codex/sn/linker.py`
+   - File: `imas_codex/standard_names/linker.py`
    - Core function: `resolve_references(mentions, known_names) -> LinkResolution`
 
    ```python
@@ -109,7 +109,7 @@ No LLM calls — this is deterministic string matching against the graph.
    ```
 
 2. **Implement reference classification**
-   - File: `imas_codex/sn/linker.py`
+   - File: `imas_codex/standard_names/linker.py`
    - Classify each mention from DOCUMENT phase output:
      - `cross_reference_mentions` → candidate `CROSS_REFERENCES` edges
      - `dependency_mentions` → candidate `DEPENDS_ON` edges
@@ -124,7 +124,7 @@ No LLM calls — this is deterministic string matching against the graph.
      - Log warnings for cycles (don't block — circular deps happen in physics)
 
 3. **Implement graph edge writing**
-   - File: `imas_codex/sn/graph_ops.py`
+   - File: `imas_codex/standard_names/graph_ops.py`
    - Uses explicit Cypher (not `create_nodes()`) because:
      - Multivalued self-referential edges
      - Need `MERGE` for idempotent re-runs
@@ -174,7 +174,7 @@ No LLM calls — this is deterministic string matching against the graph.
 ### Tasks
 
 1. **Implement `link_worker()`**
-   - File: `imas_codex/sn/workers.py`
+   - File: `imas_codex/standard_names/workers.py`
    - Runs after PERSIST_NODES in the pipeline
    - Pattern: claim→process→persist→release (follows discovery workers)
    - Steps:
@@ -190,7 +190,7 @@ No LLM calls — this is deterministic string matching against the graph.
    - Fast: should process hundreds of names per second
 
 2. **Add LINK phase to pipeline**
-   - File: `imas_codex/sn/pipeline.py`
+   - File: `imas_codex/standard_names/pipeline.py`
    ```python
    WorkerSpec(
        "link",
@@ -202,14 +202,14 @@ No LLM calls — this is deterministic string matching against the graph.
    ```
 
 3. **Add state fields**
-   - File: `imas_codex/sn/state.py`
+   - File: `imas_codex/standard_names/state.py`
    - `link_stats: WorkerStats` — phase tracking
    - `link_phase: PipelinePhase` — supervision
    - `skip_link: bool = False` — CLI control
    - `link_resolution: LinkBatchResult | None` — results
 
 4. **Add progress display**
-   - File: `imas_codex/sn/progress.py`
+   - File: `imas_codex/standard_names/progress.py`
    - LINK stage: shows processed count, resolved/unresolved ratio
    - No cost display (pure Python, no LLM)
 
@@ -318,12 +318,12 @@ because the target names didn't exist yet.
 
 | File | Change |
 |------|--------|
-| `imas_codex/sn/linker.py` | NEW: Link resolution engine |
-| `imas_codex/sn/graph_ops.py` | Add explicit relationship-writing functions |
-| `imas_codex/sn/workers.py` | Add link_worker() |
-| `imas_codex/sn/pipeline.py` | Add LINK WorkerSpec |
-| `imas_codex/sn/state.py` | Add link_stats, link_phase, skip_link |
-| `imas_codex/sn/progress.py` | Add link stage display |
+| `imas_codex/standard_names/linker.py` | NEW: Link resolution engine |
+| `imas_codex/standard_names/graph_ops.py` | Add explicit relationship-writing functions |
+| `imas_codex/standard_names/workers.py` | Add link_worker() |
+| `imas_codex/standard_names/pipeline.py` | Add LINK WorkerSpec |
+| `imas_codex/standard_names/state.py` | Add link_stats, link_phase, skip_link |
+| `imas_codex/standard_names/progress.py` | Add link stage display |
 | `imas_codex/cli/sn.py` | Add `sn link` command, --skip-link flag |
 | `tests/sn/test_linker.py` | NEW: resolution engine tests |
 | `tests/sn/test_link_graph_ops.py` | NEW: graph operation tests |

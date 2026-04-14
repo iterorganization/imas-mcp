@@ -169,7 +169,7 @@ DD (HAS_UNIT relationship)
  workers.py injects DD unit into candidate dict
         │
         ▼
- PERSIST writes unit → (StandardName)-[:CANONICAL_UNITS]->(Unit)
+ PERSIST writes unit → (StandardName)-[:HAS_UNIT]->(Unit)
 ```
 
 The compose prompt (`compose_dd.md`) includes a **Unit Policy** section:
@@ -329,8 +329,8 @@ extension.
 Before writing to Neo4j, `write_standard_names()` checks for unit conflicts:
 
 ```python
-# If existing node has different canonical_units → skip, don't overwrite
-if existing sn.canonical_units != incoming unit:
+# If existing node has different unit → skip, don't overwrite
+if existing sn.unit != incoming unit:
     logger.warning("Unit conflict for %s: existing=%s incoming=%s",
                    name, existing_unit, incoming_unit)
     # Filter out conflicting entry
@@ -345,7 +345,7 @@ overwrite existing data:
 MERGE (sn:StandardName {id: b.id})
 SET sn.source_type    = coalesce(b.source_type, sn.source_type),
     sn.physical_base  = coalesce(b.physical_base, sn.physical_base),
-    sn.canonical_units = coalesce(b.unit, sn.canonical_units),
+    sn.unit = coalesce(b.unit, sn.unit),
     sn.created_at     = coalesce(sn.created_at, datetime())
 ```
 
@@ -375,7 +375,7 @@ Each StandardName node carries a full audit trail:
 ```
 (IMASNode)-[:HAS_STANDARD_NAME]->(StandardName)
 (FacilitySignal)-[:HAS_STANDARD_NAME]->(StandardName)
-(StandardName)-[:CANONICAL_UNITS]->(Unit)
+(StandardName)-[:HAS_UNIT]->(Unit)
 ```
 
 ## Standard Name Lifecycle

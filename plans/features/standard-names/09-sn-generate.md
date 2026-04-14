@@ -173,7 +173,7 @@ Create the Jinja include files that assemble rich grammar context from
 
 ### Files to Create
 
-**`imas_codex/sn/context.py`** — Grammar context builder (replaces `build_grammar_context()`):
+**`imas_codex/standard_names/context.py`** — Grammar context builder (replaces `build_grammar_context()`):
 
 ```python
 """Rich grammar context for SN compose prompts.
@@ -365,7 +365,7 @@ async def compose_worker(state: SNBuildState, **_kwargs) -> None:
     from imas_codex.discovery.base.llm import acall_llm_structured
     from imas_codex.llm.prompt_loader import render_prompt
     from imas_codex.settings import get_model
-    from imas_codex.sn.context import build_compose_context
+    from imas_codex.standard_names.context import build_compose_context
 
     model = get_model("language")
     context = build_compose_context()
@@ -478,7 +478,7 @@ async def persist_worker(state: SNBuildState, **_kwargs) -> None:
         return
 
     from imas_codex.settings import get_model
-    from imas_codex.sn.graph_ops import write_standard_names
+    from imas_codex.standard_names.graph_ops import write_standard_names
 
     # Enrich with provenance before writing
     model = get_model("language")

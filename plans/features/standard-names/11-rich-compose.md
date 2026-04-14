@@ -15,7 +15,7 @@ constraints, and grammar decomposition.
 
 The current `SNCandidate` Pydantic model captures only `source_id`, `standard_name`,
 `fields`, `confidence`, and `reason`. The graph schema (`StandardName` in standard_name.yaml)
-has `description`, `canonical_units`, `source`, `source_path`, `confidence` — but no
+has `description`, `unit`, `source`, `source_path`, `confidence` — but no
 documentation, kind, tags, links, ids_paths, or grammar fields.
 
 Additional bugs found via audit:
@@ -35,7 +35,7 @@ Split into two deployment units for parallelism:
 
 ## Phase 1: Extend graph schema + fix consistency
 
-**Files:** `imas_codex/schemas/standard_name.yaml`, `imas_codex/sn/sources/signals.py`
+**Files:** `imas_codex/schemas/standard_name.yaml`, `imas_codex/standard_names/sources/signals.py`
 
 ### 1a. Add rich fields to StandardName
 
@@ -122,11 +122,11 @@ Run `uv run build-models --force` after schema changes.
 
 **Acceptance:**
 - `uv run pytest tests/graph/test_schema_compliance.py` passes
-- `grep -r MEASURES imas_codex/sn/` returns zero matches
+- `grep -r MEASURES imas_codex/standard_names/` returns zero matches
 
 ## Phase 2: Extend LLM response model
 
-**Files:** `imas_codex/sn/models.py`
+**Files:** `imas_codex/standard_names/models.py`
 
 Extend `SNCandidate` with rich fields matching the catalog schema:
 
@@ -184,8 +184,8 @@ rich entries in progress output.
 ## Phase 4: Fix persist, graph_ops, and wire embedding
 
 **Files:**
-- `imas_codex/sn/workers.py` (persist_worker)
-- `imas_codex/sn/graph_ops.py` (write_standard_names)
+- `imas_codex/standard_names/workers.py` (persist_worker)
+- `imas_codex/standard_names/graph_ops.py` (write_standard_names)
 
 ### 4a. Fix unconditional SET overwrite bug
 
@@ -210,16 +210,16 @@ Extend `write_standard_names()` to persist: description, documentation, kind,
 tags, links, ids_paths, validity_domain, constraints, all grammar fields,
 model, generated_at, review_status='drafted'.
 
-### 4c. Link CANONICAL_UNITS (HAS_UNIT)
+### 4c. Link Unit (HAS_UNIT)
 
-The schema defines `canonical_units` with `range: Unit`. By schema convention
-this creates a `CANONICAL_UNITS` relationship. After MERGE StandardName:
+The schema defines `unit` with `range: Unit`. By schema convention
+this creates a `HAS_UNIT` relationship. After MERGE StandardName:
 
 ```cypher
 WITH sn, b
 WHERE b.unit IS NOT NULL
 MERGE (u:Unit {id: b.unit})
-MERGE (sn)-[:CANONICAL_UNITS]->(u)
+MERGE (sn)-[:HAS_UNIT]->(u)
 ```
 
 ### 4d. Wire embedding generation
@@ -238,12 +238,12 @@ embed_descriptions_batch("StandardName", [n["id"] for n in validated])
 - `sn build --ids equilibrium --limit 10` generates rich entries
 - Graph query shows StandardName nodes with documentation, kind, tags, unit
 - Re-run doesn't null out existing fields
-- `CANONICAL_UNITS` relationships exist
+- `HAS_UNIT` relationships exist
 - StandardName nodes have non-null `embedding` property
 
 ## Phase 5: Update validate worker
 
-**Files:** `imas_codex/sn/workers.py` (validate_worker)
+**Files:** `imas_codex/standard_names/workers.py` (validate_worker)
 
 Add validation checks:
 - `description` is present and <120 chars
@@ -267,7 +267,7 @@ Report new metrics: `doc_present`, `doc_length_ok`, `unit_valid`, `kind_valid`.
   verify first values preserved (prevents data corruption on re-runs)
 - `test_write_standard_names_dd_relationship` — verify HAS_STANDARD_NAME created for DD
 - `test_write_standard_names_signal_relationship` — verify HAS_STANDARD_NAME for signals
-- `test_write_standard_names_unit_relationship` — verify CANONICAL_UNITS created
+- `test_write_standard_names_unit_relationship` — verify HAS_UNIT created
 - `test_get_validated_standard_names_filters` — confidence and ids_filter work
 - `test_get_existing_standard_names_dedup` — returns correct set
 

@@ -26,7 +26,7 @@ for **drafted candidates** and operational metadata (embeddings, generation batc
 |-------|--------|
 | Catalog (YAML) | name, description, documentation, kind, unit, tags, links, ids_paths, status, constraints, validity_domain, provenance |
 | Graph only | embedding, embedded_at, model, generated_at, review_status, confidence, source, source_path |
-| Derived on import | grammar fields (from name parse), CANONICAL_UNITS edge (from unit string) |
+| Derived on import | grammar fields (from name parse), HAS_UNIT edge (from unit string) |
 
 **Import rule:** Whole-entry import. Catalog fields always win. Graph-only fields
 are preserved via coalesce. Imported entries get `review_status: accepted`.
@@ -35,7 +35,7 @@ are preserved via coalesce. Imported entries get `review_status: accepted`.
 
 **Files:**
 - `imas_codex/cli/sn.py` — add `import-catalog` subcommand
-- `imas_codex/sn/catalog_import.py` — new module
+- `imas_codex/standard_names/catalog_import.py` — new module
 
 ### CLI interface
 
@@ -74,7 +74,7 @@ Steps:
 3. Derive grammar fields by parsing the standard name
 4. MERGE StandardName nodes — catalog fields overwrite, graph-only fields preserved
 5. Set `review_status = 'accepted'`, `imported_at = datetime()`
-6. Derive `CANONICAL_UNITS` relationships from `unit` field
+6. Derive `HAS_UNIT` relationships from `unit` field
 7. Derive `HAS_STANDARD_NAME` relationships from `ids_paths` field
    (link to existing IMASNode nodes in the DD graph)
 8. Report: imported, updated, skipped, errors
@@ -87,7 +87,7 @@ MERGE (sn:StandardName {id: item.name})
 SET sn.description = item.description,
     sn.documentation = item.documentation,
     sn.kind = item.kind,
-    sn.canonical_units = item.unit,
+    sn.unit = item.unit,
     sn.tags = item.tags,
     sn.links = item.links,
     sn.ids_paths = item.ids_paths,
@@ -108,22 +108,22 @@ SET sn.description = item.description,
 WITH sn, item
 WHERE item.unit IS NOT NULL
 MERGE (u:Unit {id: item.unit})
-MERGE (sn)-[:CANONICAL_UNITS]->(u)
+MERGE (sn)-[:HAS_UNIT]->(u)
 ```
 
-Note: Uses `CANONICAL_UNITS` not `HAS_UNIT` per schema convention (range: Unit
-on `canonical_units` slot auto-generates the relationship type).
+Note: Uses `HAS_UNIT` not `HAS_UNIT` per schema convention (range: Unit
+on `unit` slot auto-generates the relationship type).
 
 **Acceptance:**
 - `sn import-catalog --catalog-dir <path> --dry-run` reports entries found
 - After import, nodes have `review_status: accepted`
-- CANONICAL_UNITS relationships exist for entries with units
+- HAS_UNIT relationships exist for entries with units
 - Grammar fields derived from name parsing
 - Graph-only fields (embedding, model, generated_at) preserved
 
 ## Phase 2: Version tracking
 
-**Files:** `imas_codex/sn/catalog_import.py`
+**Files:** `imas_codex/standard_names/catalog_import.py`
 
 Add version tracking to imported entries:
 - `catalog_commit_sha` — git rev-parse HEAD of catalog repo at import time

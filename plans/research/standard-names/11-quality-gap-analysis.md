@@ -24,7 +24,7 @@ on 2025-04-13, with review enabled. Queried from Neo4j graph.
 | With sign convention | 65% (201/309) | ~10% | **100%** (latest batch) | ≥60% | ✅ **RESOLVED** |
 | With links | 47% (145/309), avg 8.2 | 100% but many invalid | 100%, avg 3.3 | ≥80%, avg ≥6 | 🟡 **Prefix fixed, count improving** |
 | Tags — secondary only | 100%, avg 2.6 | ~40% include primary tags | **100% secondary only** | 100% secondary only | ✅ **RESOLVED** — migrated 9 names |
-| Units persisted | 100% | 100% (stored as `canonical_units`) | 100% | 100% | ✅ **RESOLVED** |
+| Units persisted | 100% | 100% (stored as `unit`) | 100% | 100% | ✅ **RESOLVED** |
 | Reviewer score | N/A (human reviewed) | avg 0.54 (range 0.36–0.68) | **avg 0.84** (range 0.50–0.96) | avg ≥0.75 | ✅ **RESOLVED** — 3 outstanding, 4 good |
 | ISN validation pass | 100% (catalog is canonical) | ~70% (post-fix) | **100%** (latest 7) | ≥95% | ✅ **RESOLVED** |
 
@@ -106,12 +106,12 @@ function to get full documentation for each path in the batch.
 **Metric:** Fraction of StandardName nodes with non-null unit.
 
 **Evidence (UPDATED):**
-- Units ARE correctly persisted as `canonical_units` property (not `unit`)
-- `CANONICAL_UNITS` relationships ARE correctly created to `Unit` nodes
-- Initial investigation used wrong property name (`sn.unit` vs `sn.canonical_units`)
-- Verified: `bootstrap_current` → `canonical_units=A`, `metric_jacobian` → `canonical_units=1`
+- Units ARE correctly persisted as `unit` property (renamed from legacy `canonical_units`)
+- `HAS_UNIT` relationships ARE correctly created to `Unit` nodes
+- Initial investigation used old property name (`sn.canonical_units` — renamed to `sn.unit`)
+- Verified: `bootstrap_current` → `unit=A`, `metric_jacobian` → `unit=1`
 
-**Status:** ✅ Resolved — no code change needed. Graph property is `canonical_units`.
+**Status:** ✅ Resolved — no code change needed. Graph property is `unit`.
 
 ---
 

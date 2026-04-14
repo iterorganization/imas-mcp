@@ -94,7 +94,7 @@ def list_standard_names(
 
 ### Phase 4: Quality tier labels
 
-**Files:** `imas_codex/sn/benchmark_labels.yaml` — new file
+**Files:** `imas_codex/standard_names/benchmark_labels.yaml` — new file
 
 Curate quality labels for ~20 benchmark reference entries:
 
@@ -121,7 +121,7 @@ poor:  # Grammar valid but naming debatable
 
 ### Phase 5: Reviewer model
 
-**Files:** `imas_codex/sn/benchmark.py`, `imas_codex/llm/prompts/sn/review_benchmark.md`
+**Files:** `imas_codex/standard_names/benchmark.py`, `imas_codex/llm/prompts/sn/review_benchmark.md`
 
 Add `--reviewer-model` option that uses a frontier model to evaluate outputs:
 

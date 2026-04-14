@@ -53,7 +53,7 @@ LLM compose pattern using `acall_llm_structured()`.
 
 ### Phase 1a: Schema Provider System
 
-Create `imas_codex/sn/schema_providers.py` implementing the 3-tier caching
+Create `imas_codex/standard_names/schema_providers.py` implementing the 3-tier caching
 design from `plans/research/standard-names/06-schema-provider-design.md`.
 
 **Tier 1: Process-lifetime (static, ~15KB)**
@@ -121,8 +121,8 @@ benchmark's `_run_model()` pattern:
 async def compose_worker(state: SNBuildState, **_kwargs) -> None:
     from imas_codex.discovery.base.llm import acall_llm_structured
     from imas_codex.llm.prompt_loader import render_prompt
-    from imas_codex.sn.schema_providers import get_schema_for_prompt
-    from imas_codex.sn.models import SNComposeBatch
+    from imas_codex.standard_names.schema_providers import get_schema_for_prompt
+    from imas_codex.standard_names.models import SNComposeBatch
     from imas_codex.settings import get_model
 
     model = get_model("language")
@@ -160,7 +160,7 @@ async def compose_worker(state: SNBuildState, **_kwargs) -> None:
 
 ## Files to Create/Modify
 
-### New: `imas_codex/sn/schema_providers.py`
+### New: `imas_codex/standard_names/schema_providers.py`
 
 The schema provider system with 3-tier caching.
 
@@ -169,17 +169,17 @@ The schema provider system with 3-tier caching.
 Rewrite to consume rich schema provider variables instead of bare enums.
 Add `schema_needs` frontmatter declaring required providers.
 
-### Modify: `imas_codex/sn/workers.py`
+### Modify: `imas_codex/standard_names/workers.py`
 
 - Delete `_compose_single()` and `_extract_physical_base()` (lines 172-247)
 - Rewrite `compose_worker()` to use batch LLM calls with schema providers
 - Rename `state.validated` → `state.composed` (see plan 10)
 
-### Modify: `imas_codex/sn/state.py`
+### Modify: `imas_codex/standard_names/state.py`
 
 - Add `composed: list[dict]` field (rename from `validated`)
 
-### Modify: `imas_codex/sn/benchmark.py`
+### Modify: `imas_codex/standard_names/benchmark.py`
 
 - Replace `build_grammar_context()` with `get_schema_for_prompt()` call
 - This ensures benchmark and pipeline use identical prompt context

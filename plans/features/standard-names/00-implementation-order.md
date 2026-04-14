@@ -16,7 +16,7 @@ the full authority boundary design.
 |-------|-------|
 | Catalog YAML | name, description, documentation, kind, unit, tags, links, ids_paths, status, constraints, validity_domain, provenance |
 | Graph only | embedding, embedded_at, model, generated_at, review_status, confidence, source, source_path |
-| Derived on import | grammar fields (from name parse), CANONICAL_UNITS edge (from unit string) |
+| Derived on import | grammar fields (from name parse), HAS_UNIT edge (from unit string) |
 
 ## Lifecycle
 
@@ -31,8 +31,8 @@ All status values use past tense: drafted, published, accepted, rejected, skippe
 - **Relationship direction:** `(entity)-[:HAS_STANDARD_NAME]->(sn:StandardName)`
   for ALL entity types (IMASNode, FacilitySignal). Single relationship name.
   The schema doc `(FacilitySignal)-[:MEASURES]->(StandardName)` is WRONG — fix in Plan 11.
-- **Unit linking:** `(sn:StandardName)-[:CANONICAL_UNITS]->(u:Unit)` via canonical_units
-  range declaration (relationship type: CANONICAL_UNITS per schema convention).
+- **Unit linking:** `(sn:StandardName)-[:HAS_UNIT]->(u:Unit)` via unit
+  range declaration (relationship type: HAS_UNIT per schema convention).
 - **Embedding:** StandardName.embedding exists in schema with vector index
   `standard_name_desc_embedding`. Persist worker must call embed after write.
 - **Coalesce bug:** `write_standard_names()` uses unconditional SET — re-runs
@@ -63,7 +63,7 @@ Fix the foundation before building on it:
 - Fix schema doc: FacilitySignal uses HAS_STANDARD_NAME (not MEASURES)
 - Fix signals.py MEASURES query → HAS_STANDARD_NAME
 - Fix unconditional SET overwrite bug (use coalesce)
-- Wire CANONICAL_UNITS relationship creation
+- Wire HAS_UNIT relationship creation
 - Wire embedding generation into persist worker
 - Add graph_ops unit tests (currently 0 tests)
 - Add conftest.py with shared fixtures

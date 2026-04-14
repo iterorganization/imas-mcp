@@ -111,7 +111,7 @@ entries that pass all checks.
 
 ## Files to Create/Modify
 
-### New: `imas_codex/sn/staging.py`
+### New: `imas_codex/standard_names/staging.py`
 
 Graph-backed UnitOfWork with:
 - `add()`, `update()`, `remove()` with undo stack
@@ -119,7 +119,7 @@ Graph-backed UnitOfWork with:
 - `commit()` calling `write_standard_names()`
 - `rollback()` discarding staged entries
 
-### Modify: `imas_codex/sn/publish.py`
+### Modify: `imas_codex/standard_names/publish.py`
 
 Add validation step between entry generation and YAML writing:
 
@@ -138,11 +138,11 @@ for entry in entries:
         report_error(f"Schema-invalid: {entry.name}: {e}")
 ```
 
-### Modify: `imas_codex/sn/state.py`
+### Modify: `imas_codex/standard_names/state.py`
 
 Add `staging: GraphUnitOfWork` field, replacing plain list accumulation.
 
-### Modify: `imas_codex/sn/workers.py`
+### Modify: `imas_codex/standard_names/workers.py`
 
 - Compose worker stages results via `state.staging.add()`
 - Validate worker calls `state.staging.validate()`

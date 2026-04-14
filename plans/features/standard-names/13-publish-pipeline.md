@@ -23,7 +23,7 @@ reconstruct the same graph state (minus graph-only fields).
 
 ## Phase 1: Fix lossy export
 
-**Files:** `imas_codex/sn/publish.py`
+**Files:** `imas_codex/standard_names/publish.py`
 
 Rewrite `generate_yaml_entry()` to include all catalog fields:
 
@@ -35,7 +35,7 @@ def generate_yaml_entry(sn: dict) -> dict:
         "description": sn["description"],
         "status": "draft",
         "kind": sn.get("kind", "scalar"),
-        "unit": sn.get("canonical_units"),
+        "unit": sn.get("unit"),
         "tags": sn.get("tags", []),
     }
     if sn.get("documentation"):
@@ -80,7 +80,7 @@ output/
 
 ## Phase 2: Update graph query
 
-**Files:** `imas_codex/sn/graph_ops.py`
+**Files:** `imas_codex/standard_names/graph_ops.py`
 
 Update `get_validated_standard_names()` to return all rich fields:
 
@@ -90,12 +90,12 @@ WHERE sn.review_status = 'drafted'
 AND coalesce(sn.confidence, 1.0) >= $confidence_min
 OPTIONAL MATCH (src)-[:HAS_STANDARD_NAME]->(sn)
 OPTIONAL MATCH (src)-[:IN_IDS]->(ids:IDS)
-OPTIONAL MATCH (sn)-[:CANONICAL_UNITS]->(u:Unit)
+OPTIONAL MATCH (sn)-[:HAS_UNIT]->(u:Unit)
 RETURN sn.id AS name,
        sn.description AS description,
        sn.documentation AS documentation,
        sn.kind AS kind,
-       u.id AS canonical_units,
+       u.id AS unit,
        sn.tags AS tags,
        sn.links AS links,
        sn.ids_paths AS ids_paths,
@@ -118,7 +118,7 @@ ORDER BY sn.id
 
 ## Phase 3: Batched PR creation
 
-**Files:** `imas_codex/cli/sn.py` (sn_publish), `imas_codex/sn/publish.py`
+**Files:** `imas_codex/cli/sn.py` (sn_publish), `imas_codex/standard_names/publish.py`
 
 Enhance `--create-pr` workflow:
 1. Group entries by primary tag (directory)
@@ -134,7 +134,7 @@ Enhance `--create-pr` workflow:
 
 ## Phase 4: Duplicate detection
 
-**Files:** `imas_codex/sn/publish.py`
+**Files:** `imas_codex/standard_names/publish.py`
 
 Before export, check for existing entries in catalog:
 1. Load existing catalog entries from `--catalog-dir`

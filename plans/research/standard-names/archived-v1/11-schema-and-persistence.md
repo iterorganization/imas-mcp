@@ -61,7 +61,7 @@ auto-relationship mechanism. This is because:
 **What `create_nodes()` handles** (scalar slots):
 - `derived_from_dd → DERIVED_FROM → IMASNode` (scalar, auto works)
 - `derived_from_signal → DERIVED_FROM → FacilitySignal` (scalar, auto works)
-- `canonical_units → CANONICAL_UNITS → Unit` (scalar, auto works)
+- `unit → HAS_UNIT → Unit` (scalar, auto works)
 
 **What requires explicit code** (multivalued slots):
 - `cross_references → CROSS_REFERENCES → StandardName` (multivalued)
@@ -150,11 +150,11 @@ auto-relationship mechanism. This is because:
        kind:
          description: "Name kind: physical, geometric, or metadata"
          range: string
-       canonical_units:
+       unit:
          description: SI unit string (e.g., eV, m^-3, A)
          range: Unit
          annotations:
-           relationship_type: CANONICAL_UNITS
+           relationship_type: HAS_UNIT
        description:
          description: Rich documentation with LaTeX, equations, measurement methods
        keywords:
@@ -329,7 +329,7 @@ auto-relationship mechanism. This is because:
 4. **Update `graph_ops.py` to use generated model**
    - Import `StandardName` from generated models
    - Use model for validation before graph writes
-   - Align property names: `source_type` → `source`, `units` → `canonical_units`
+   - Align property names: `source_type` → `source`, `units` → `unit`
 
 ### Acceptance Criteria
 - LinkML schema declares all StandardName properties and relationships
@@ -351,7 +351,7 @@ had PERSIST_GRAPH at the end.
 
 **What PERSIST_NODES writes:**
 - StandardName node with all properties (grammar fields, metadata, docs)
-- Scalar relationships via `create_nodes()`: DERIVED_FROM, CANONICAL_UNITS
+- Scalar relationships via `create_nodes()`: DERIVED_FROM, HAS_UNIT
 - Sets status to `persisted`
 
 **What PERSIST_NODES does NOT write:**
@@ -362,7 +362,7 @@ had PERSIST_GRAPH at the end.
 ### Tasks
 
 1. **Implement `persist_nodes_worker()`**
-   - File: `imas_codex/sn/workers.py`
+   - File: `imas_codex/standard_names/workers.py`
    - Reads from `state.documented` (output of DOCUMENT phase)
    - Converts documented entries to `StandardName` model instances
    - Calls `write_standard_names()` (refactored in Task 2)
@@ -371,18 +371,18 @@ had PERSIST_GRAPH at the end.
    - Pattern: claim→write→release (follows discovery worker pattern)
 
 2. **Refactor `write_standard_names()` to use `create_nodes()`**
-   - File: `imas_codex/sn/graph_ops.py`
+   - File: `imas_codex/standard_names/graph_ops.py`
    - Replace raw Cypher MERGE with `gc.create_nodes("StandardName", items)`
    - Scalar relationships auto-created by `create_nodes()`:
      - `derived_from_dd` → DERIVED_FROM → IMASNode
      - `derived_from_signal` → DERIVED_FROM → FacilitySignal
-     - `canonical_units` → CANONICAL_UNITS → Unit
+     - `unit` → HAS_UNIT → Unit
    - **Exclude** `cross_references` and `depends_on` from `create_nodes()`
      data — these are handled by LINK phase via explicit Cypher
    - Handle batch sizes for large runs (50 nodes per batch)
 
 3. **Add explicit relationship-writing functions for LINK phase**
-   - File: `imas_codex/sn/graph_ops.py`
+   - File: `imas_codex/standard_names/graph_ops.py`
    - `write_cross_references(source_id, target_ids)` — creates
      `CROSS_REFERENCES` edges using `MERGE` for idempotency
    - `write_depends_on(source_id, target_ids)` — creates `DEPENDS_ON` edges
@@ -408,7 +408,7 @@ had PERSIST_GRAPH at the end.
    ```
 
 4. **Add PERSIST_NODES phase to pipeline**
-   - File: `imas_codex/sn/pipeline.py`
+   - File: `imas_codex/standard_names/pipeline.py`
    - Between DOCUMENT and LINK:
    ```python
    WorkerSpec(
@@ -450,7 +450,7 @@ dedup, and link checking. Mark provenance clearly.
    - Options: `--source {snapshot,api}`, `--dry-run`
 
 2. **Create catalog snapshot fixture**
-   - File: `imas_codex/sn/catalog_snapshot.py` (or JSON/YAML data file)
+   - File: `imas_codex/standard_names/catalog_snapshot.py` (or JSON/YAML data file)
    - Export: name, kind, unit, tags, description (summary only)
    - Used for: tests, offline/CI, initial import
    - Updated periodically from catalog repo
@@ -506,11 +506,11 @@ dedup, and link checking. Mark provenance clearly.
 |------|--------|
 | `imas_codex/schemas/facility.yaml` | Complete StandardName class with all relationships and score dimensions |
 | `imas_codex/schemas/common.yaml` | Add StandardNameStatus enum (expanded with persisted/linked/scored) |
-| `imas_codex/sn/graph_ops.py` | Refactor to use create_nodes(); add explicit relationship functions |
-| `imas_codex/sn/workers.py` | Add persist_nodes_worker |
-| `imas_codex/sn/pipeline.py` | Add PERSIST_NODES phase (before LINK/SCORE) |
+| `imas_codex/standard_names/graph_ops.py` | Refactor to use create_nodes(); add explicit relationship functions |
+| `imas_codex/standard_names/workers.py` | Add persist_nodes_worker |
+| `imas_codex/standard_names/pipeline.py` | Add PERSIST_NODES phase (before LINK/SCORE) |
 | `imas_codex/cli/sn.py` | Add --no-persist, sn import-catalog |
-| `imas_codex/sn/catalog_snapshot.py` | New: frozen catalog data |
+| `imas_codex/standard_names/catalog_snapshot.py` | New: frozen catalog data |
 | `tests/sn/test_schema_compliance.py` | New: schema tests |
 | `tests/sn/test_persistence.py` | New: round-trip + relationship tests |
 

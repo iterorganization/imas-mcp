@@ -63,7 +63,7 @@ refactors with no behavioral change. Phases 4-5 add new capability. Phase 6 docu
 
 ## Evidence: Current State
 
-### Private API imports (imas_codex/sn/context.py)
+### Private API imports (imas_codex/standard_names/context.py)
 
 ```python
 from imas_standard_names.tools.grammar import (
@@ -136,7 +136,7 @@ Fix the `StandardNameEntry` import that will break when ISN removes `catalog/edi
 
 **Files to modify:**
 
-- `imas_codex/sn/context.py`:
+- `imas_codex/standard_names/context.py`:
   - Replace the 5 private imports with single import:
     ```python
     from imas_standard_names.grammar.context import get_grammar_context
@@ -153,7 +153,7 @@ Fix the `StandardNameEntry` import that will break when ISN removes `catalog/edi
     - `ctx["kind_definitions"]` → kind classification for prompt
     - `ctx["anti_patterns"]` → anti-pattern examples for prompt
 
-- `imas_codex/sn/catalog_import.py` (lines 264, 370):
+- `imas_codex/standard_names/catalog_import.py` (lines 264, 370):
   - Change `from imas_standard_names.catalog.edit import StandardNameEntry`
     to `from imas_standard_names.models import StandardNameEntry`
 
@@ -318,7 +318,7 @@ the LLM generation cost. Instead: annotate, review with context, let humans deci
        description: {issue_count: int}}
   ```
 
-- `imas_codex/sn/graph_ops.py` (`write_standard_names`):
+- `imas_codex/standard_names/graph_ops.py` (`write_standard_names`):
   - Add `validation_issues` and `validation_layer_summary` to the MERGE query
   - Use `coalesce(b.validation_issues, sn.validation_issues)` to preserve existing
 
@@ -340,7 +340,7 @@ Layer 3: Description quality checks (validate_description)
 
 **Files to modify:**
 
-- `imas_codex/sn/workers.py` (`validate_worker`):
+- `imas_codex/standard_names/workers.py` (`validate_worker`):
 
   Replace the current soft-validation section with ISN model construction +
   issue annotation:
@@ -416,7 +416,7 @@ Layer 3: Description quality checks (validate_description)
 
 #### 3d. Review Context: Validation Issues
 
-- `imas_codex/sn/workers.py` (`review_worker` / `_review_batch`):
+- `imas_codex/standard_names/workers.py` (`review_worker` / `_review_batch`):
   - Pass each entry's `validation_issues` to the review prompt context
   - The LLM reviewer sees the issues and factors them into scoring
 
@@ -445,7 +445,7 @@ should be normalized to 0-1 for:
 
 **What changes:**
 
-- `imas_codex/sn/models.py` (`SNQualityScore`):
+- `imas_codex/standard_names/models.py` (`SNQualityScore`):
   ```python
   @property
   def score(self) -> float:
@@ -466,14 +466,14 @@ should be normalized to 0-1 for:
   - Change `reviewer_score` description: "Normalized quality score (0-1)"
   - Change `reviewer_score` range: `float` (was `integer`)
 
-- `imas_codex/sn/workers.py` (`review_worker`):
+- `imas_codex/standard_names/workers.py` (`review_worker`):
   - Change: `original["reviewer_score"] = review.scores.score`  (was `.total`)
 
-- `imas_codex/sn/benchmark.py`:
+- `imas_codex/standard_names/benchmark.py`:
   - Change score output to use `.score` (0-1) instead of `.total` (0-120)
   - Update table format: `f"{score:.2f}"` instead of `f"{total}/120"`
 
-- `imas_codex/sn/benchmark_calibration.yaml`:
+- `imas_codex/standard_names/benchmark_calibration.yaml`:
   - Add `expected_score` as normalized 0-1 alongside existing `expected_score` integers
   - Or: compute normalized at load time: `entry["score"] = entry["expected_score"] / 120.0`
 
@@ -560,7 +560,7 @@ Layer 3 — Description (2+ checks):
 
 **Files to create:**
 
-- `imas_codex/sn/calibration.py` (NEW ~40 lines):
+- `imas_codex/standard_names/calibration.py` (NEW ~40 lines):
   ```python
   """Calibration dataset loader for quality review."""
 
@@ -593,11 +593,11 @@ Layer 3 — Description (2+ checks):
 
 **Files to modify:**
 
-- `imas_codex/sn/workers.py` (`review_worker`):
-  - Replace inline calibration loading with `from imas_codex.sn.calibration import load_calibration`
+- `imas_codex/standard_names/workers.py` (`review_worker`):
+  - Replace inline calibration loading with `from imas_codex.standard_names.calibration import load_calibration`
 
-- `imas_codex/sn/benchmark.py` (`score_with_reviewer`):
-  - Replace inline calibration loading with `from imas_codex.sn.calibration import load_calibration`
+- `imas_codex/standard_names/benchmark.py` (`score_with_reviewer`):
+  - Replace inline calibration loading with `from imas_codex.standard_names.calibration import load_calibration`
 
 **Tests:**
 - `tests/sn/test_calibration.py` — verify loading, caching, prompt formatting
@@ -619,7 +619,7 @@ closing the 4 gaps identified in the A/B comparison.
 
 **Files to create:**
 
-- `imas_codex/sn/search.py` (NEW ~30 lines):
+- `imas_codex/standard_names/search.py` (NEW ~30 lines):
   ```python
   """Standard name search helpers for pipeline use.
 
@@ -649,7 +649,7 @@ closing the 4 gaps identified in the A/B comparison.
 
   If ISN doesn't add these in Phase 0, request a Phase 0.1 addition.
 
-- `imas_codex/sn/context.py` (`build_compose_context()`):
+- `imas_codex/standard_names/context.py` (`build_compose_context()`):
   - Add `quick_start`, `common_patterns`, `critical_distinctions` from
     `get_grammar_context()` to compose context dict
   - Add `vocabulary_usage_stats` for LLM to understand token frequency
@@ -662,7 +662,7 @@ closing the 4 gaps identified in the A/B comparison.
   - Add common patterns section with "do this, not that" examples
   - Add token frequency note to vocabulary section ("commonly used:", "rarely used:")
 
-- `imas_codex/sn/workers.py` (`review_worker`):
+- `imas_codex/standard_names/workers.py` (`review_worker`):
   - Add existing-name collision avoidance to review context using
     `search_similar_names()` — embed each candidate's description and search
     for nearby existing names. Provide as "nearby names" in review prompt.

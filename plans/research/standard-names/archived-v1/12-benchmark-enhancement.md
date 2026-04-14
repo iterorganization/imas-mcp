@@ -82,7 +82,7 @@ depends on link resolution results.
 ### Tasks
 
 1. **Create `SNScoreFields` base model**
-   - File: `imas_codex/sn/scorer.py`
+   - File: `imas_codex/standard_names/scorer.py`
    ```python
    from pydantic import BaseModel, Field
 
@@ -115,7 +115,7 @@ depends on link resolution results.
    ```
 
 2. **Implement gated composite function**
-   - File: `imas_codex/sn/scorer.py`
+   - File: `imas_codex/standard_names/scorer.py`
    ```python
    GATE_DIMENSIONS = {"score_semantic_accuracy", "score_units_consistency"}
    GATE_THRESHOLD = 0.3
@@ -183,7 +183,7 @@ This keeps scoring consistent across runs and models.
 ### Tasks
 
 1. **Implement calibration sampling**
-   - File: `imas_codex/sn/scorer.py`
+   - File: `imas_codex/standard_names/scorer.py`
    ```python
    _calibration_cache: dict[str, Any] = {}
    _calibration_ttl: float = 300.0  # 5-minute TTL
@@ -239,7 +239,7 @@ This keeps scoring consistent across runs and models.
 ### Tasks
 
 1. **Implement `score_worker()`**
-   - File: `imas_codex/sn/workers.py`
+   - File: `imas_codex/standard_names/workers.py`
    - Pattern: claim→score→persist→release (follows discovery workers)
    - Steps:
      1. Claim batch of `status='linked'` (or `status='persisted'`) nodes
@@ -255,7 +255,7 @@ This keeps scoring consistent across runs and models.
    - Cost tracking in `state.score_stats`
 
 2. **Add SCORE phase to pipeline**
-   - File: `imas_codex/sn/pipeline.py`
+   - File: `imas_codex/standard_names/pipeline.py`
    ```python
    WorkerSpec(
        "score",
@@ -267,14 +267,14 @@ This keeps scoring consistent across runs and models.
    ```
 
 3. **Add state fields**
-   - File: `imas_codex/sn/state.py`
+   - File: `imas_codex/standard_names/state.py`
    - `score_stats: WorkerStats` — phase tracking
    - `score_phase: PipelinePhase` — supervision
    - `skip_score: bool = False` — CLI control
    - `score_model: str | None = None` — model override
 
 4. **Add progress display**
-   - File: `imas_codex/sn/progress.py`
+   - File: `imas_codex/standard_names/progress.py`
    - SCORE stage: shows scored count, average composite, cost
    - Shows gate failure count (how many names gated to 0.0)
 
@@ -311,7 +311,7 @@ The benchmark does NOT implement its own scoring — it reuses the scorer.
 ### Tasks
 
 1. **Refactor benchmark to use shared scorer**
-   - File: `imas_codex/sn/benchmark.py`
+   - File: `imas_codex/standard_names/benchmark.py`
    - Remove internal scoring logic
    - Import `SNScoreFields`, `gated_composite`, `sample_sn_calibration`
      from `sn/scorer.py`
@@ -322,7 +322,7 @@ The benchmark does NOT implement its own scoring — it reuses the scorer.
      4. Returns model-level aggregate stats
 
 2. **Add model comparison report**
-   - File: `imas_codex/sn/benchmark.py`
+   - File: `imas_codex/standard_names/benchmark.py`
    - Compare models on:
      - Average composite score
      - Gate failure rate
@@ -429,12 +429,12 @@ The benchmark does NOT implement its own scoring — it reuses the scorer.
 
 | File | Change |
 |------|--------|
-| `imas_codex/sn/scorer.py` | NEW: SNScoreFields, gated_composite, calibration, score functions |
-| `imas_codex/sn/workers.py` | Add score_worker() |
-| `imas_codex/sn/pipeline.py` | Add SCORE WorkerSpec |
-| `imas_codex/sn/state.py` | Add score_stats, score_phase, skip_score |
-| `imas_codex/sn/progress.py` | Add score stage display |
-| `imas_codex/sn/benchmark.py` | Refactor to use shared scorer |
+| `imas_codex/standard_names/scorer.py` | NEW: SNScoreFields, gated_composite, calibration, score functions |
+| `imas_codex/standard_names/workers.py` | Add score_worker() |
+| `imas_codex/standard_names/pipeline.py` | Add SCORE WorkerSpec |
+| `imas_codex/standard_names/state.py` | Add score_stats, score_phase, skip_score |
+| `imas_codex/standard_names/progress.py` | Add score stage display |
+| `imas_codex/standard_names/benchmark.py` | Refactor to use shared scorer |
 | `imas_codex/cli/sn.py` | Add --skip-score, --score-model, sn score, sn benchmark --compare |
 | `imas_codex/llm/prompts/sn/score.md` | NEW: scoring prompt template |
 | `tests/sn/test_scorer.py` | NEW: scorer unit tests |

@@ -36,12 +36,12 @@ LLM prompts.
 ### Tasks
 
 1. **Add `extraction_batches` field to `SNBuildState`**
-   - File: `imas_codex/sn/state.py`
+   - File: `imas_codex/standard_names/state.py`
    - Type: `list[ExtractionBatch]` (from `sn/sources/base.py`)
    - Extract worker populates this instead of (or in addition to) `state.candidates`
 
 2. **Refactor `extract_worker` to use source modules**
-   - File: `imas_codex/sn/workers.py` (lines 34–88)
+   - File: `imas_codex/standard_names/workers.py` (lines 34–88)
    - DD source: call `extract_dd_candidates()` from `sn/sources/dd.py`
    - Signals source: call `extract_signal_candidates()` from `sn/sources/signals.py`
    - Store results as `state.extraction_batches`
@@ -67,7 +67,7 @@ Replace the heuristic with batched async LLM calls matching the benchmark's
 ### Tasks
 
 1. **Rewrite `compose_worker()` for batched LLM**
-   - File: `imas_codex/sn/workers.py`
+   - File: `imas_codex/standard_names/workers.py`
    - Remove `_compose_single()` and `_extract_physical_base()` entirely
    - Add `_compose_batch()` async function following `_review_batch()` pattern:
      ```python
@@ -204,8 +204,8 @@ However, the prompts need minor improvements for quality:
 
 | File | Change |
 |------|--------|
-| `imas_codex/sn/workers.py` | Rewrite compose_worker, delete heuristics |
-| `imas_codex/sn/state.py` | Add extraction_batches, compose_model |
+| `imas_codex/standard_names/workers.py` | Rewrite compose_worker, delete heuristics |
+| `imas_codex/standard_names/state.py` | Add extraction_batches, compose_model |
 | `imas_codex/cli/sn.py` | Add --compose-model flag |
 | `imas_codex/llm/prompts/sn/compose_dd.md` | Add few-shot examples |
 | `imas_codex/llm/prompts/sn/compose_signals.md` | Add few-shot examples |

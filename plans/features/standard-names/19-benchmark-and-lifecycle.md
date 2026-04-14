@@ -60,14 +60,14 @@ explicitly added.
 ### Phase 1A: Benchmark prompt parity — Sonnet 4.6 (engineer)
 
 **Files:**
-- `imas_codex/sn/benchmark.py` — main changes
+- `imas_codex/standard_names/benchmark.py` — main changes
 - `tests/sn/test_benchmark.py` — update tests
 
 **Changes:**
 
 1. **Replace `_run_model()` prompt construction** with the mint pipeline's pattern:
    ```python
-   from imas_codex.sn.context import build_compose_context
+   from imas_codex.standard_names.context import build_compose_context
    context = build_compose_context()
    system_prompt = render_prompt("sn/compose_system", context)
    # ... per batch:
@@ -128,7 +128,7 @@ explicitly added.
 ### Phase 1B: Lifecycle management — Sonnet 4.6 (engineer)
 
 **Files:**
-- `imas_codex/sn/graph_ops.py` — add reset/clear functions
+- `imas_codex/standard_names/graph_ops.py` — add reset/clear functions
 - `imas_codex/cli/sn.py` — add `sn reset` and `sn clear` commands
 - `tests/sn/test_graph_ops.py` — add tests
 
@@ -147,7 +147,7 @@ explicitly added.
    ```
    Fields to clear on reset: `embedding`, `embedded_at`, `model`, `generated_at`,
    `confidence`. Fields to preserve: `id`, `source`, `source_path`, `created_at`.
-   Relationships to remove: `HAS_STANDARD_NAME`, `CANONICAL_UNITS`.
+   Relationships to remove: `HAS_STANDARD_NAME`, `HAS_UNIT`.
 
 2. **Add `clear_standard_names()`** to graph_ops.py:
    ```python
@@ -216,7 +216,7 @@ explicitly added.
 ### Phase 2A: Expand gold reference — Sonnet 4.6 (engineer)
 
 **Files:**
-- `imas_codex/sn/benchmark_reference.py`
+- `imas_codex/standard_names/benchmark_reference.py`
 - `tests/sn/test_benchmark.py`
 
 **Changes:**
@@ -255,10 +255,10 @@ explicitly added.
 ### Phase 2B: Calibration dataset & reviewer enhancement — Opus 4.6 (architect)
 
 **Files:**
-- `imas_codex/sn/benchmark_calibration.yaml` (new)
+- `imas_codex/standard_names/benchmark_calibration.yaml` (new)
 - `imas_codex/llm/prompts/sn/review_benchmark.md` (new template)
-- `imas_codex/sn/benchmark.py` — update `score_with_reviewer()`
-- `imas_codex/sn/benchmark_labels.yaml` — retire (replaced by calibration)
+- `imas_codex/standard_names/benchmark.py` — update `score_with_reviewer()`
+- `imas_codex/standard_names/benchmark_labels.yaml` — retire (replaced by calibration)
 - `tests/sn/test_benchmark.py`
 
 **Changes:**
@@ -333,7 +333,7 @@ explicitly added.
 **Depends on:** Phase 2 (needs calibrated benchmark for meaningful results)
 
 **Files:**
-- `imas_codex/sn/benchmark.py` — add cache reporting to ModelResult and table
+- `imas_codex/standard_names/benchmark.py` — add cache reporting to ModelResult and table
 - `plans/features/standard-names/model-selection-runbook.md` (new)
 
 **Changes:**
@@ -413,7 +413,7 @@ explicitly added.
 
 3. **Agent updates** (informative, not prescriptive):
    - `engineer.agent.md`: Add SN module to list of commonly-modified
-     areas (imas_codex/sn/, tests/sn/, imas_codex/llm/prompts/sn/)
+     areas (imas_codex/standard_names/, tests/sn/, imas_codex/llm/prompts/sn/)
    - `agents/README.md`: Mention SN pipeline if not already covered
 
 4. **Plan cleanup:**
