@@ -771,6 +771,7 @@ def build_migration_guide(
         optional_count=len(optional_actions),
         ids_affected=sorted(ids_affected - {""}),
         global_search_patterns=search_patterns,
+        include_recipes=include_recipes,
         cocos_advice=cocos_advice,
         path_update_advice=path_update_advice,
         type_update_advice=type_advice,
@@ -825,7 +826,7 @@ def format_migration_guide(guide: CodeMigrationGuide) -> str:
             for action in by_ids[ids_name]:
                 lines.append(f"**{action.change_type}:** `{action.path}`")
                 lines.append(f"  - {action.description}")
-                if action.search_patterns:
+                if guide.include_recipes and action.search_patterns:
                     patterns_str = ", ".join(
                         f"`{p}`" for p in action.search_patterns[:3]
                     )
@@ -883,13 +884,13 @@ def format_migration_guide(guide: CodeMigrationGuide) -> str:
                 lines.append(f"  - **Before:** {action.before}")
             if action.after:
                 lines.append(f"  - **After:** {action.after}")
-            if action.search_patterns:
+            if guide.include_recipes and action.search_patterns:
                 patterns_str = ", ".join(f"`{p}`" for p in action.search_patterns[:3])
                 lines.append(f"  - **Search for:** {patterns_str}")
             lines.append("")
 
     # -- Search strategy --
-    if guide.global_search_patterns:
+    if guide.include_recipes and guide.global_search_patterns:
         lines.append("## Search Strategy")
         lines.append("")
         lines.append("Use these patterns to find affected code in your codebase:")

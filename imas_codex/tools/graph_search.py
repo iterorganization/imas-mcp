@@ -1103,6 +1103,22 @@ class GraphListTool:
                 match_clause = "WHERE p.ids = $ids_name AND p.node_category = 'data'"
                 dd_params["ids_name"] = ids_name
 
+            # Count total paths before applying LIMIT
+            total_count = None
+            if max_paths:
+                count_result = self._gc.query(
+                    f"""
+                    MATCH (p:IMASNode)
+                    {match_clause}
+                    {leaf_filter}
+                    {extra_filters}
+                    {dd_clause}
+                    RETURN count(p) AS cnt
+                    """,
+                    **dd_params,
+                )
+                total_count = count_result[0]["cnt"] if count_result else 0
+
             path_results = self._gc.query(
                 f"""
                 MATCH (p:IMASNode)
@@ -1150,7 +1166,10 @@ class GraphListTool:
             results.append(
                 ListPathsResultItem(
                     query=query,
-                    path_count=len(path_ids),
+                    path_count=total_count
+                    if total_count is not None
+                    else len(path_ids),
+                    total_paths=total_count,
                     truncated_to=truncated,
                     paths=formatted,
                     path_details=details,

@@ -119,6 +119,11 @@ class CodeMigrationGuide(BaseModel):
         description="Search patterns grouped by IDS",
     )
 
+    include_recipes: bool = Field(
+        default=True,
+        description="Whether to include code update recipes and search patterns",
+    )
+
     cocos_advice: CocosMigrationAdvice | None = None
     path_update_advice: PathUpdateAdvice | None = None
     type_update_advice: TypeUpdateAdvice | None = None
