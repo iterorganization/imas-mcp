@@ -32,9 +32,11 @@ DD's declared convention.
    `DD graph → extract → enrich → prompt (read-only context) → post-process inject → persist (property + relationship)`.
    COCOS transformation type follows the identical pipeline stages.
 
-4. **Version-driven, not hardcoded.** COCOS parameters and sign guidance are
-   keyed off the extraction DD version's COCOS value (queried from the graph at
-   extract time). The pipeline fails closed for DD versions with unknown COCOS.
+4. **Graph-sourced, not hardcoded.** COCOS parameters are queried from the graph
+   at extract time via `DDVersion → HAS_COCOS → COCOS`. Sign guidance prose is
+   rendered from a small template YAML (`llm/config/cocos_sign_guidance.yaml`)
+   filled with COCOS node properties — no per-version hardcoded dicts in Python.
+   The pipeline fails closed for DD versions with no COCOS node link.
 
 5. **Facility signal implications.** A uniform COCOS convention means facility
    signals stored in a different COCOS cannot receive a standard name without
@@ -56,6 +58,7 @@ DD's declared convention.
 | IMASNode | `cocos_transformation_expression` | `"- {psi_like}"`, `"{ip_like} * {b0_like}"` | DD XML |
 | IMASNode | `cocos_label_source` | `xml`, `inferred_forward`, `inferred_expression` | build_dd.py inference |
 | COCOS (16 singletons) | `sigma_bp`, `e_bp`, `sigma_r_phi_z`, `sigma_rho_theta_phi` | COCOS 17: σ_Bp=-1, e_Bp=1, σ_RφZ=+1, σ_ρθφ=+1 | Sauter & Medvedev Table I |
+| COCOS (derived booleans) | `psi_increasing_outward`, `phi_increasing_ccw`, `theta_increasing_cw`, `sign_q`, `sign_dp_dpsi` | COCOS 17: ψ decreasing outward, φ CCW, θ CW, q>0 | Computed from Sauter params |
 
 ### COCOS Transformation Types (COCOSLabelTransformation enum)
 
@@ -199,15 +202,16 @@ dv_row = next(gc.query("""
     MATCH (dv:DDVersion {is_current: true})
     OPTIONAL MATCH (dv)-[:HAS_COCOS]->(c:COCOS)
     RETURN dv.id AS dd_version, dv.cocos AS cocos_version,
-           c.sigma_bp AS sigma_bp, c.sigma_r_phi_z AS sigma_r_phi_z,
-           c.sigma_rho_theta_phi AS sigma_rho_theta_phi
+           properties(c) AS cocos_params
 """), None)
 if dv_row:
     extraction_dd_version = dv_row["dd_version"]
     cocos_version = dv_row["cocos_version"]
+    cocos_params = dv_row["cocos_params"]  # Full COCOS node: sigma_bp, psi_increasing_outward, etc.
 else:
     extraction_dd_version = None
     cocos_version = None
+    cocos_params = None
 ```
 
 Store these on batch metadata and pipeline state. Add fields explicitly:
@@ -217,6 +221,7 @@ Store these on batch metadata and pipeline state. Add fields explicitly:
 ```python
 extraction_dd_version: str | None = None  # DD version used for extraction
 cocos_version: int | None = None  # COCOS convention from that DD version
+cocos_params: dict | None = None  # Full COCOS node properties (sigma_bp, psi_increasing_outward, etc.)
 ```
 
 **Add to `SNBuildState` (`state.py`):**
@@ -224,6 +229,7 @@ cocos_version: int | None = None  # COCOS convention from that DD version
 ```python
 extraction_dd_version: str | None = None  # Resolved once at extract start
 cocos_version: int | None = None  # COCOS version from extraction DD
+cocos_params: dict | None = None  # Full COCOS node properties for template rendering
 ```
 
 Set `state.extraction_dd_version` and `state.cocos_version` once in
@@ -256,75 +262,168 @@ if cocos_labels:
         parts.append(f"COCOS convention: {extraction_cocos}")
 ```
 
-### Phase 3: Prompt Enhancement (Version-Driven)
+### Phase 3: Prompt Enhancement (Graph-Sourced Templates)
 
-**Key principle: No hardcoded COCOS version.** All references to COCOS 17 in
-prompts are driven by the extraction DD version's COCOS value, resolved in Phase 2.
+**Key principle: No hardcoded COCOS prose.** Sign guidance is rendered from a
+template YAML file filled with properties from the COCOS graph node. The COCOS
+node already stores both the raw Sauter parameters (`sigma_bp`, `e_bp`,
+`sigma_r_phi_z`, `sigma_rho_theta_phi`) and derived boolean properties
+(`psi_increasing_outward`, `phi_increasing_ccw`, `theta_increasing_cw`,
+`sign_q`, `sign_dp_dpsi`) that express the physics in direction-based terms.
 
-**New: Add `cocos_sign_guidance` dict to context (`context.py`).**
+**New file: `imas_codex/llm/config/cocos_sign_guidance.yaml`**
 
-This is a version-keyed mapping from (cocos_version, transformation_type) to
-physics guidance. It is static per pipeline run (same for all batches) and
-cached with the compose context:
+One template per transformation label. Variables are filled from COCOS node
+properties at runtime — the same template works for any COCOS version:
 
-```python
-# Keyed by COCOS version — extensible for future DD versions
-COCOS_SIGN_GUIDANCE: dict[int, dict[str, str]] = {
-    17: {
-        "psi_like": (
-            "In COCOS 17, the poloidal magnetic flux ψ is defined with σ_Bp = −1. "
-            "For standard positive-Ip operation, ψ decreases from the magnetic axis "
-            "to the plasma boundary. State the sign relative to the surface normal "
-            "direction (increasing Z)."
-        ),
-        "ip_like": (
-            "In COCOS 17, plasma current Ip is positive when flowing in the direction "
-            "of increasing toroidal angle φ (counter-clockwise viewed from above). "
-            "Current density j follows the same convention."
-        ),
-        "b0_like": (
-            "In COCOS 17, the vacuum toroidal field B₀ is positive when pointing in "
-            "the direction of increasing φ (counter-clockwise viewed from above). "
-            "The toroidal flux function F = RBφ follows the same sign."
-        ),
-        "q_like": (
-            "The safety factor q = dΦ/dψ where Φ is toroidal flux. In COCOS 17 with "
-            "σ_ρθφ = +1, q is positive for standard co-current operation."
-        ),
-        "dodpsi_like": (
-            "Derivatives with respect to ψ inherit the ψ sign from COCOS 17 "
-            "(σ_Bp = −1). Since ψ decreases outward, dX/dψ has opposite sign to the "
-            "radial gradient dX/dr for positive Ip."
-        ),
-        "tor_angle_like": (
-            "In COCOS 17, the toroidal angle φ increases counter-clockwise when "
-            "viewed from above (σ_RφZ = +1, right-handed cylindrical system)."
-        ),
-        "pol_angle_like": (
-            "In COCOS 17, the poloidal angle θ increases counter-clockwise in the "
-            "(R, Z) poloidal plane (σ_ρθφ = +1, right-handed)."
-        ),
-    },
-    11: {
-        "psi_like": (
-            "In COCOS 11, the poloidal magnetic flux ψ is defined with σ_Bp = +1. "
-            "For standard positive-Ip operation, ψ increases from the magnetic axis "
-            "to the plasma boundary."
-        ),
-        # ... remaining types for COCOS 11 (lower priority, DD 3.x)
-    },
-}
+```yaml
+# Sign guidance templates for COCOS-dependent standard name generation.
+# Variables are filled from COCOS graph node properties (queried at extract time).
+# No per-COCOS-version hardcoding — works for any COCOS with a graph node.
 
-_COCOS_GENERIC_GUIDANCE = (
-    "This quantity transforms under COCOS convention changes. Consult the "
-    "transformation expression to determine the sign convention."
-)
+labels:
+  psi_like:
+    concept: "poloidal magnetic flux ψ"
+    guidance: >-
+      The poloidal magnetic flux ψ {psi_direction} from the magnetic axis to
+      the plasma boundary for standard positive-Ip operation (σ_Bp = {sigma_bp}).
+      State the sign relative to the surface normal direction (increasing Z).
+    variables:
+      psi_direction:
+        from: psi_increasing_outward
+        true: "increases"
+        false: "decreases"
+
+  ip_like:
+    concept: "plasma current"
+    guidance: >-
+      Plasma current Ip is positive when flowing in the direction of
+      {phi_direction} (σ_Bp = {sigma_bp}, σ_RφZ = {sigma_r_phi_z}).
+      Current density j follows the same convention.
+    variables:
+      phi_direction:
+        from: phi_increasing_ccw
+        true: "increasing toroidal angle φ (counter-clockwise viewed from above)"
+        false: "decreasing toroidal angle φ (clockwise viewed from above)"
+
+  b0_like:
+    concept: "vacuum toroidal field"
+    guidance: >-
+      The vacuum toroidal field B₀ is positive when pointing in the direction
+      of {phi_direction} (σ_RφZ = {sigma_r_phi_z}). The toroidal flux
+      function F = RBφ follows the same sign.
+    variables:
+      phi_direction:
+        from: phi_increasing_ccw
+        true: "increasing φ (counter-clockwise viewed from above)"
+        false: "decreasing φ (clockwise viewed from above)"
+
+  q_like:
+    concept: "safety factor"
+    guidance: >-
+      The safety factor q = dΦ/dψ where Φ is toroidal flux. With
+      σ_ρθφ = {sigma_rho_theta_phi}, q is {q_sign} for standard
+      co-current operation.
+    variables:
+      q_sign:
+        from: sign_q
+        1: "positive"
+        -1: "negative"
+
+  dodpsi_like:
+    concept: "ψ derivatives"
+    guidance: >-
+      Derivatives with respect to ψ inherit the ψ sign (σ_Bp = {sigma_bp}).
+      Since ψ {psi_direction} outward, dX/dψ has {derivative_relation} sign
+      to the radial gradient dX/dr for positive Ip.
+    variables:
+      psi_direction:
+        from: psi_increasing_outward
+        true: "increases"
+        false: "decreases"
+      derivative_relation:
+        from: psi_increasing_outward
+        true: "the same"
+        false: "opposite"
+
+  tor_angle_like:
+    concept: "toroidal angle"
+    guidance: >-
+      The toroidal angle φ increases {phi_direction}
+      (σ_RφZ = {sigma_r_phi_z}, {handedness} cylindrical system).
+    variables:
+      phi_direction:
+        from: phi_increasing_ccw
+        true: "counter-clockwise when viewed from above"
+        false: "clockwise when viewed from above"
+      handedness:
+        from: sigma_r_phi_z
+        1: "right-handed"
+        -1: "left-handed"
+
+  pol_angle_like:
+    concept: "poloidal angle"
+    guidance: >-
+      The poloidal angle θ increases {theta_direction} in the (R, Z)
+      poloidal plane (σ_ρθφ = {sigma_rho_theta_phi}, {handedness}).
+    variables:
+      theta_direction:
+        from: theta_increasing_cw
+        true: "clockwise"
+        false: "counter-clockwise"
+      handedness:
+        from: sigma_rho_theta_phi
+        1: "right-handed"
+        -1: "left-handed"
+
+generic_fallback: >-
+  This quantity transforms under COCOS convention changes. Consult the
+  transformation expression to determine the sign convention.
 ```
 
-Grid/tensor types (`grid_type_*_like`, `one_like`) use the generic fallback.
+**New function in `context.py` — render guidance from template + COCOS node:**
 
-The pipeline fails closed: if `cocos_version` is not in `COCOS_SIGN_GUIDANCE`,
-raise a clear error rather than generating names with no COCOS context.
+```python
+from imas_codex.llm.prompt_loader import load_prompt_config
+
+def render_cocos_guidance(label: str, cocos_params: dict) -> str:
+    """Render sign guidance for a transformation label using COCOS node properties.
+
+    Args:
+        label: COCOS transformation label (e.g., 'psi_like')
+        cocos_params: Properties dict from the COCOS graph node
+            (sigma_bp, psi_increasing_outward, phi_increasing_ccw, etc.)
+
+    Returns:
+        Rendered guidance string for the LLM prompt.
+    """
+    config = load_prompt_config("cocos_sign_guidance")
+    label_config = config.get("labels", {}).get(label)
+    if not label_config:
+        return config.get("generic_fallback", "")
+
+    guidance = label_config["guidance"]
+    # Substitute raw Sauter parameters directly
+    for param in ("sigma_bp", "sigma_r_phi_z", "sigma_rho_theta_phi", "e_bp"):
+        guidance = guidance.replace(f"{{{param}}}", str(cocos_params.get(param, "?")))
+    # Resolve template variables from COCOS node boolean/sign properties
+    for var_name, var_spec in label_config.get("variables", {}).items():
+        source_prop = var_spec["from"]
+        source_val = cocos_params.get(source_prop)
+        replacement = var_spec.get(str(source_val).lower() if isinstance(source_val, bool) else str(source_val), f"[unknown {source_prop}]")
+        guidance = guidance.replace(f"{{{var_name}}}", replacement)
+    return guidance
+```
+
+This function is called during prompt rendering — no version-specific dict, no
+maintenance burden when a new COCOS version appears in the graph. Adding COCOS 3
+support (if needed) requires only creating the COCOS 3 node in the graph.
+
+Grid/tensor types (`grid_type_*_like`, `one_like`) fall through to the generic
+fallback automatically since they have no template entry.
+
+The pipeline fails closed: if `cocos_params` is None (no COCOS node linked to
+the DD version), raise a clear error rather than generating names with no context.
 
 **Enhance `compose_dd.md` — per-item COCOS block:**
 
@@ -341,12 +440,16 @@ With a richer, physics-grounded block:
 {% if item.cocos_label %}
 - **COCOS transformation type:** `{{ item.cocos_label }}`{% if item.cocos_expression %} — expression: `{{ item.cocos_expression }}`{% endif %}
 - **COCOS convention:** {{ cocos_version }} ({{ dd_version }})
-- **Sign convention guidance:** {{ cocos_sign_guidance.get(item.cocos_label, cocos_generic_guidance) }}
+- **Sign convention guidance:** {{ item.cocos_guidance }}
   ⚠️ This quantity is COCOS-dependent. You MUST include a sign convention paragraph
   in the documentation section using EXACTLY the format:
   `Sign convention: Positive when [specific condition based on COCOS {{ cocos_version }}].`
 {% endif %}
 ```
+
+Where `item.cocos_guidance` is pre-rendered by `render_cocos_guidance(item.cocos_label, cocos_params)`
+during batch item preparation in `compose_worker`, before the template is rendered.
+This keeps the Jinja template simple and the rendering logic testable in isolation.
 
 **Enhance `compose_system.md` — add COCOS reference section:**
 
@@ -607,13 +710,18 @@ RETURN sn.id, sn.cocos_transformation_type, n.cocos_label_transformation
    in `imas_dd.yaml`; StandardName uses `range: string`. A future schema cleanup
    could share the enum, but it's not required for this feature.
 
+7. **Does not hardcode per-COCOS prose in Python.** Sign guidance is rendered from
+   `llm/config/cocos_sign_guidance.yaml` templates filled with COCOS graph node
+   properties. Adding support for a new COCOS convention requires only that the
+   COCOS node exists in the graph — no code or config changes needed.
+
 ## Implementation Order
 
 | Phase | Files Modified | Dependencies |
 |-------|---------------|--------------|
 | 1. Schema | `schemas/standard_name.yaml` | None |
 | 2. Extract | `standard_names/sources/dd.py`, `standard_names/sources/base.py`, `standard_names/state.py`, `standard_names/enrichment.py` | Phase 1 |
-| 3. Prompts | `llm/prompts/sn/compose_system.md`, `llm/prompts/sn/compose_dd.md`, `standard_names/context.py` | Phase 2 |
+| 3. Prompts | `llm/config/cocos_sign_guidance.yaml` (new), `llm/prompts/sn/compose_system.md`, `llm/prompts/sn/compose_dd.md`, `standard_names/context.py` | Phase 2 |
 | 4. Post-process | `standard_names/workers.py` | Phase 3 |
 | 5. Persistence | `standard_names/graph_ops.py` | Phase 4 |
 | 6. Validation | `standard_names/consolidation.py`, `llm/config/sn_review_criteria.yaml` | Phase 5 |
@@ -649,15 +757,21 @@ catalog fidelity. Phase 8 improves discoverability.
 7. **Catalog round-trip test**: Run `sn publish` → verify YAML contains
    `cocos_transformation_type` → run `sn import` → verify graph value matches.
 
-8. **Version-aware prompt test**: Render `compose_dd.md` with COCOS 17 context
+8. **Template rendering test**: Verify `render_cocos_guidance("psi_like", cocos_17_params)`
+   produces guidance mentioning "decreases" (σ_Bp=-1), and the same call with
+   COCOS 11 params produces "increases" (σ_Bp=+1). Verify unknown labels return
+   the generic fallback. Verify missing COCOS node properties produce `[unknown ...]`
+   markers rather than KeyError.
+
+9. **Version-aware prompt test**: Render `compose_dd.md` with COCOS 17 context
    and verify sign guidance appears. Render with COCOS 11 and verify different
-   guidance appears.
+   guidance appears (driven by different `cocos_params` from the graph).
 
-9. **Prompt regression / quality test**: Run `sn generate --ids equilibrium --dry-run`
-   and verify COCOS-dependent names (psi, ip, q, b0) have `cocos_transformation_type`
-   set. Compare sign convention paragraph quality with and without enhanced context.
+10. **Prompt regression / quality test**: Run `sn generate --ids equilibrium --dry-run`
+    and verify COCOS-dependent names (psi, ip, q, b0) have `cocos_transformation_type`
+    set. Compare sign convention paragraph quality with and without enhanced context.
 
-10. **Graph query validation**: After generation, verify:
+11. **Graph query validation**: After generation, verify:
     ```cypher
     MATCH (sn:StandardName) WHERE sn.cocos_transformation_type IS NOT NULL
     ```
@@ -675,3 +789,4 @@ catalog fidelity. Phase 8 improves discoverability.
 | `AGENTS.md` | Add `cocos_transformation_type` to StandardName schema docs |
 | `docs/architecture/standard-names.md` | Add COCOS propagation section |
 | `agents/schema-reference.md` | Auto-generated by `uv run build-models` |
+| `llm/config/cocos_sign_guidance.yaml` | New file — template-based COCOS guidance (part of Phase 3) |
