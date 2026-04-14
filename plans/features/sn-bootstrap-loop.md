@@ -1,97 +1,132 @@
-# Standard Names: Bootstrap Generation Loop
+# Standard Names: Standalone Review CLI + Bootstrap Loop
 
-> Priority: P1 — The StandardName graph is empty. This must run first.
+> Priority: P1 — 62 names exist (21 accepted, 41 drafted). Wire standalone
+> review to score and iterate quality upward across the full catalog.
 
 ## Problem
 
-Zero StandardName nodes exist in the graph. The `sn generate` pipeline is
-fully functional (schema-enforced LLM compose, automatic DD unit injection,
-COCOS propagation, 3-layer ISN validation, conflict-detecting persistence).
-What's missing is the `sn review` CLI command to score generated names, and
-an operational loop to iterate quality upward.
+The `sn generate` pipeline is fully functional and has produced 62 standard
+names. The review_worker exists inside the generate pipeline but there is no
+**standalone** `sn review` CLI command. A standalone review tool is needed to:
 
-## Verified Code Facts (rubber-duck confirmed)
+1. Score all existing names (including 21 accepted seed names) for consistency
+2. Detect cross-name issues: naming convention drift, link integrity, duplicate concepts
+3. Iterate quality by feeding review scores back into regeneration decisions
 
+The review task differs fundamentally from generation:
+- **Generate** scopes by IDS/domain and groups by `(cluster × unit)` to ensure
+  same-concept paths get composed together
+- **Review** needs **full catalog oversight** — it must see all names to check
+  cross-name consistency, naming conventions, and duplicate detection
+
+## Verified Code Facts
+
+- **62 names in graph**: 21 accepted (seed/import), 41 drafted (LLM generate)
 - **LLM compose is schema-enforced**: `acall_llm_structured(..., response_model=SNComposeBatch)` in `workers.py:612-615`
-- **Units are LLM-excluded**: prompt says "Do NOT output a `unit` field" (`compose_system.md:275`), `SNCandidate` has no `unit` field
-- **Units are DD-injected**: `workers.py:629-667` injects from DD, persists via `HAS_UNIT` relationship
-- **review_worker exists**: `workers.py:793+` — processes batches with LLM scoring via `SNQualityReviewBatch`
-- **review_worker uses `get_model("language")`** (not "reasoning" as previously speculated)
-- **Review batch size is 10** (hardcoded `workers.py:752`)
-- **`review_dd.md` does NOT exist** — only `review.md` is present
-- **6-dimension scoring**: grammar, semantic, documentation, convention, completeness, compliance (each 0-20, normalized to 0-1)
+- **Units are LLM-excluded + DD-injected**: prompt says "Do NOT output a `unit` field"; `workers.py:629-667` injects from DD
+- **review_worker exists**: `workers.py:793+` — processes batches via `SNQualityReviewBatch`
+- **review_worker uses `get_model("language")`** (not "reasoning")
+- **Review batch size**: `_REVIEW_BATCH_SIZE = 10` (hardcoded `workers.py:752`)
+- **6-dimension scoring**: grammar, semantic, documentation, convention, completeness, compliance (each 0-20, normalized to 0-1 via sum/120)
 - **Scoring criteria**: `sn_review_criteria.yaml`
 - **Calibration data**: `benchmark_calibration.yaml` — 27 curated reference entries
+- **Persistence already stores**: `reviewer_score`, `reviewer_scores` (JSON), `reviewer_comments`, `reviewed_at`, `review_tier`, `reviewer_model` (`graph_ops.py:340-345`)
+- **State machine**: `drafted` → `published` → `accepted`
+- **Write semantics**: `write_standard_names()` uses `coalesce(b.field, sn.field)` — safe to re-run reviews
 
 ## Phase 1: Wire `sn review` CLI Command
 
-### Implementation
+### CLI Design
 
-Add `sn review` to `cli/sn.py`:
+The review command deliberately avoids the generate-style scoping (`--ids`, `--domain`)
+because review needs full catalog oversight. Instead, it uses **selection filters**
+that control _which names to review_ without restricting the LLM's view of the catalog:
 
 ```
 sn review [OPTIONS]
-  --ids IDS           Review names for specific IDS
-  --domain DOMAIN     Review by physics domain
-  --score-below FLOAT Review only names scoring below threshold
-  --status STATUS     Filter by review_status (default: drafted)
-  --model MODEL       Override model (default: get_model("language"))
-  --batch-size INT    Names per LLM call (default: 10)
-  --limit INT         Max names to review
-  --cost-limit FLOAT  Max spend in USD
-  --dry-run           Show what would be reviewed
+  --status STATUS      Filter by review_status (default: all statuses)
+  --unreviewed         Only review names with no reviewer_score (shortcut)
+  --re-review          Force re-review of already-scored names
+  --model MODEL        Override model (default: get_model("language"))
+  --batch-size INT     Names per LLM call (default: 10)
+  --cost-limit FLOAT   Max spend in USD
+  --dry-run            Show what would be reviewed, no LLM calls
 ```
+
+**Key design decisions:**
+
+1. **No `--ids` / `--domain` / `--score-below` scoping** — the review must see the
+   full catalog for cross-name consistency. The existing `get_validated_standard_names()`
+   already loads from the graph with status filters; we load ALL names for context but
+   only score the subset matching the selection filters.
+
+2. **No `--score-below`** — names don't have scores at generation time. After first
+   review pass, `--re-review` explicitly opts into re-scoring already-reviewed names.
+   The `--unreviewed` flag is the natural starting point.
+
+3. **Full catalog context in each batch** — each LLM review batch receives a "catalog
+   summary" (all name IDs + descriptions) so the reviewer can check for naming
+   convention consistency and duplicate concepts across the entire catalog.
+
+4. **All metadata persisted** — every review writes: `reviewer_model`, `reviewer_score`,
+   `reviewer_scores` (JSON), `reviewer_comments`, `reviewed_at`, `review_tier`,
+   review `cost` accumulated on the CLI summary.
 
 ### Wiring
 
-1. Load StandardName nodes from graph filtered by `--ids`, `--domain`, `--status`, `--score-below`
-2. Group by IDS for context coherence
-3. Call existing `review_worker()` / `_review_batch()` with loaded names
-4. Persist scores: `reviewer_score`, `reviewer_scores` (JSON), `reviewer_comments`, `reviewed_at`, `review_tier`, `reviewer_model`
-5. Console summary: score distribution, tier breakdown, lowest scorers
+1. Load ALL StandardName nodes from graph (full catalog context)
+2. Filter to review targets: `--status`, `--unreviewed`, `--re-review`
+3. Build catalog summary for LLM context (name IDs + descriptions + kinds)
+4. Batch review targets into groups of `--batch-size` (default 10)
+5. For each batch: call `_review_batch()` with catalog summary as context
+6. Persist scores via `write_standard_names()` (coalesce semantics = safe)
+7. Console summary: total reviewed, cost, tier distribution, lowest scorers
+
+### New graph_ops function
+
+Add `get_all_standard_names_for_review()` to `graph_ops.py`:
+- Returns ALL StandardName nodes with their properties + linked unit + source IDS
+- No status filter (loads entire catalog for context building)
+- Returns both the full catalog list and the filtered review targets
 
 ### Tests
 
-- `test_sn_review_cli_dry_run` — verifies filtering and grouping without LLM call
-- `test_sn_review_score_persistence` — mock review, verify graph writes
+- `test_sn_review_cli_dry_run` — verifies selection filters and catalog loading
+- `test_sn_review_score_persistence` — mock review, verify graph writes include all metadata fields
+- `test_sn_review_catalog_context` — verify each batch receives catalog summary
 
-## Phase 2: Bootstrap Loop (Operational)
+## Phase 2: Bootstrap Loop (Operational — Agent Prompt)
 
-This is an operational sequence, not new code. Run on the live graph:
+This is an operational sequence, not new code. Run on the live graph after
+Phase 1 is implemented. See the Wave 3 agent prompt below for deployment.
 
-### Step 1: Initial Generation
+### Step 1: Review existing catalog
 ```bash
-uv run imas-codex sn generate --source dd --ids equilibrium --cost-limit 2.0
-uv run imas-codex sn generate --source dd --ids core_profiles --cost-limit 2.0
-uv run imas-codex sn generate --source dd --ids magnetics --cost-limit 2.0
-```
-
-### Step 2: Review Generated Names
-```bash
-uv run imas-codex sn review --ids equilibrium
-uv run imas-codex sn review --ids core_profiles
-uv run imas-codex sn review --ids magnetics
-```
-
-### Step 3: Regenerate Low Scorers
-```bash
+uv run imas-codex sn review --unreviewed --cost-limit 5.0
 uv run imas-codex sn status  # Check tier distribution
-# Regenerate names scoring below 0.5
-uv run imas-codex sn generate --source dd --ids equilibrium --force --score-below 0.5
 ```
 
-### Step 4: Review Again
+### Step 2: Generate for uncovered IDS
 ```bash
-uv run imas-codex sn review --ids equilibrium --score-below 0.6
-```
-
-### Step 5: Expand to More IDS
-```bash
-# Once quality is good for core IDS, expand
 uv run imas-codex sn generate --source dd --ids edge_profiles --cost-limit 2.0
 uv run imas-codex sn generate --source dd --ids summary --cost-limit 2.0
-# ... continue for all physics-relevant IDS
+uv run imas-codex sn generate --source dd --ids mhd --cost-limit 2.0
 ```
+
+### Step 3: Review new names
+```bash
+uv run imas-codex sn review --unreviewed --cost-limit 3.0
+```
+
+### Step 4: Regenerate poor names
+```bash
+# Use sn status to identify low-tier names, then regenerate specific paths
+uv run imas-codex sn generate --source dd --paths "equilibrium/time_slice/..." --force
+uv run imas-codex sn review --re-review --cost-limit 2.0
+```
+
+### Step 5: Iterate until quality targets met
+Target: ≥100 names with `review_tier` of "good" or "outstanding"
 
 ## Phase 3: Prompt Quality Improvements (After Bootstrap)
 
@@ -110,16 +145,15 @@ Add soft content gates to `compose_system.md`:
 ## Explicitly Deferred
 
 - **Benchmarking**: On hold until graph has ≥200 reviewed names with good tier distribution
-- **Group consistency review**: Needs enough related names to form meaningful groups
+- **Group consistency review**: Folded into review tool (catalog context provides this)
 - **A/B holdout validation**: Needs benchmark infrastructure, deferred
-- **Concept registry / drift detection**: Low priority refinement
 
 ## Phase Dependencies
 
 ```
-Phase 1 (review CLI)        → independent, implement first
-Phase 2 (bootstrap loop)    → after Phase 1
-Phase 3A (showcase examples) → after Phase 2 produces ≥100 names
+Phase 1 (review CLI)         → implement first
+Phase 2 (bootstrap loop)     → after Phase 1, operational agent prompt
+Phase 3A (showcase examples) → after Phase 2 produces ≥100 reviewed names
 Phase 3B (content gates)     → after Phase 3A
 ```
 
@@ -127,7 +161,8 @@ Phase 3B (content gates)     → after Phase 3A
 
 | Target | Update |
 |--------|--------|
-| `AGENTS.md` | Add `sn review` to CLI commands table |
+| `AGENTS.md` | Add `sn review` to CLI commands table with flags |
+| `docs/architecture/standard-names.md` | Update phase table to clarify review is standalone |
 | `plans/README.md` | Update status |
 
 ## References

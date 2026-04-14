@@ -15,22 +15,24 @@
 
 ## Active Feature Plans
 
-Refactored after rubber-duck review with independent code investigation (2026-04-14).
-Plans validated against live MCP tool output and current codebase.
+Refactored after rubber-duck review, docs audit, and live MCP tool testing (2026-04-14).
+Plans validated against 62 existing standard names, current scoring architecture, and docs/ state.
 
 | Priority | Plan | Scope | Est. Agents |
 |----------|------|-------|-------------|
-| **P1** | [features/sn-bootstrap-loop.md](features/sn-bootstrap-loop.md) | Wire `sn review` CLI, run generate→review→regenerate loop | 1 agent |
+| **P1** | [features/sn-bootstrap-loop.md](features/sn-bootstrap-loop.md) | Wire standalone `sn review` CLI (full catalog oversight), bootstrap generate→review loop | 1 agent |
 | **P2** | [features/dd-server-cleanup.md](features/dd-server-cleanup.md) | 3 surgical fixes: truncation count, migration API, fuzzy matcher | 1-3 agents |
-| **P3** | [features/search-quality-improvements.md](features/search-quality-improvements.md) | Ranking fixes, evaluation alignment, fuzzy search | 2-3 agents |
+| **P3** | [features/search-quality-improvements.md](features/search-quality-improvements.md) | Careful ranking fixes (accessor de-ranking, IDS preference), evaluation alignment | 2 agents |
+| **P4** | [features/docs-refresh.md](features/docs-refresh.md) | Fix 7 stale docs, rewrite docs/README.md (17+ missing entries) | 1 agent |
 
 ### Wave Implementation Order
 
 ```
-Wave 1: sn-bootstrap-loop (Phase 1 only — review CLI)
-Wave 2: dd-server-cleanup (all 3 fixes, parallel)  ← can run parallel with Wave 1
-Wave 3: search-quality-improvements (Phases 1-2)
-Wave 4: sn-bootstrap-loop Phases 2-3 (operational bootstrap + prompt improvements)
+Wave 1: sn-bootstrap-loop Phase 1 (review CLI)  ←─┐
+Wave 2: dd-server-cleanup (all 3 fixes, parallel) ←┘ parallel with Wave 1
+Wave 3: sn-bootstrap-loop Phase 2 (operational bootstrap — agent prompt)
+Wave 4: search-quality-improvements (Phases 1-2)
+Wave 5: docs-refresh (fix stale docs after code changes land)
 ```
 
 ### Explicitly Removed / Deferred
@@ -43,6 +45,7 @@ Wave 4: sn-bootstrap-loop Phases 2-3 (operational bootstrap + prompt improvement
 | SN enrichment gaps | Deferred — low priority refinements, workarounds exist |
 | Search dimension upgrade | Deferred — fix ranking first, then investigate |
 | DoE weight optimization | Deferred — harness doesn't match production scoring |
+| Leaf concept boost | Deferred — accessor de-ranking may be sufficient, needs investigation |
 
 ### Completed plans
 
@@ -54,14 +57,13 @@ Partially implemented plans kept as reference for gap documents.
 
 ## Documentation Gaps
 
-These implemented systems need architecture docs in `docs/`:
+Docs review (2026-04-14) found these gaps — addressed in P4 docs-refresh plan:
 
-1. **Discovery pipeline** — 6-domain supervised worker system with shared engine skeleton
-2. **Signal enrichment** — multi-phase LLM enrichment with deterministic context injection
-3. **IMAS mapping pipeline** — signal mapping, assembly discovery, programmatic validation
-4. **MCP search tools** — multi-index semantic search + graph enrichment pattern
-5. **Schema context system** — LinkML-driven `schema_for()` with task groups
-6. **Graph profiles & merge** — multi-graph management, GHCR push/pull
+1. **docs/README.md** — only lists 6 of 17+ architecture docs
+2. **graph.md** — documents non-existent `backup`/`restore` CLI commands
+3. **services.md** — wrong LLM proxy port (18790 vs 18400)
+4. **standard-names.md** — references non-existent `boundary.md`
+5. **llamaindex-agents.md** — references removed `create_enrichment_agent()`
 
 ## Research
 
