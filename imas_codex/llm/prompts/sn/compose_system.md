@@ -281,7 +281,10 @@ applies. (Deferred to ISN vector_axes proposal for structural resolution.)
 
 ## Output Format
 
-Return a JSON object with:
+Return **only** a JSON object — no prose, no markdown code fences, no commentary.
+The response must be valid JSON matching the schema below.
+
+Top-level keys:
 - `candidates`: array of standard name compositions (see schema below)
 - `attachments`: array of `{source_id, standard_name, reason}` for DD paths that map to an **existing** standard name without needing regeneration. Use this when an existing name from the "Existing Standard Names" or "Nearby Existing Standard Names" list is a perfect match for the DD path — this avoids regenerating documentation for already-concrete names.
 - `skipped`: array of source_ids that are not distinct physics quantities

@@ -348,22 +348,8 @@ def ensure_model_prefix(model: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# JSON schema format for models that need explicit schema wrapping
+# JSON schema format — always convert Pydantic models to json_schema dicts
 # ---------------------------------------------------------------------------
-
-# GPT-5 series models require explicit json_schema response_format.
-# When the Pydantic model is passed as a class, litellm auto-applies
-# ``strict: true`` which rejects freeform dicts (``dict[str, str]``
-# generates ``additionalProperties: {type: string}``).  We pre-wrap
-# the schema with ``strict: false`` so the model uses it as guidance
-# while our Pydantic parsing provides the actual validation.
-_JSON_SCHEMA_MODEL_PATTERNS = ("gpt-5",)
-
-
-def _needs_json_schema_wrap(model: str) -> bool:
-    """Return True if the model needs explicit json_schema wrapping."""
-    model_lower = model.lower()
-    return any(p in model_lower for p in _JSON_SCHEMA_MODEL_PATTERNS)
 
 
 def _is_pydantic_model(obj: Any) -> bool:
@@ -666,12 +652,12 @@ def _build_kwargs(
         }
 
     if response_format is not None:
-        # GPT-5+ models need explicit json_schema wrapping with strict=false
-        # to support freeform dicts (dict[str, str]).  When a Pydantic class
-        # is passed directly, litellm auto-applies strict=true which rejects
-        # freeform objects.  Pre-wrapping with strict=false avoids this while
-        # still providing schema guidance to the model.
-        if _needs_json_schema_wrap(model) and _is_pydantic_model(response_format):
+        # Always convert Pydantic models to explicit json_schema dicts.
+        # Passing raw Pydantic classes through LiteLLM proxy → OpenRouter
+        # does not reliably enforce structured output for all providers.
+        # The explicit schema dict is provider-agnostic; strict=false lets
+        # the model use it as guidance while our Pydantic parsing validates.
+        if _is_pydantic_model(response_format):
             kwargs["response_format"] = _to_json_schema_format(response_format)
         else:
             kwargs["response_format"] = response_format
