@@ -2115,7 +2115,7 @@ classes:
       
       Optional relationships:
         - HAS_UNIT -> Unit (data units)
-        - MEASURES -> StandardName (cross-facility semantic linking)
+        - HAS_STANDARD_NAME -> StandardName (cross-facility semantic linking)
       
       IMAS mapping: SignalSources link signals via MEMBER_OF, then
       MAPS_TO_IMAS relationships connect sources to IMASNode targets.
@@ -2351,6 +2351,13 @@ classes:
       has_code_evidence:
         description: Whether any code references resolve to this signal
         range: boolean
+      standard_name:
+        description: >-
+          Canonical physics quantity name for cross-facility semantic
+          unification. Links facility signals to StandardName nodes.
+        range: StandardName
+        annotations:
+          relationship_type: HAS_STANDARD_NAME
 
   DataAccess:
     description: >-
