@@ -552,9 +552,9 @@ def sn_status() -> None:
                 """
                 MATCH (sn:StandardName)
                 RETURN count(sn) AS total,
-                       count(CASE WHEN sn.source = 'dd' THEN 1 END) AS from_dd,
-                       count(CASE WHEN sn.source = 'signals' THEN 1 END) AS from_signals,
-                       count(CASE WHEN sn.source = 'manual' THEN 1 END) AS from_manual
+                       count(CASE WHEN sn.source_type = 'dd' THEN 1 END) AS from_dd,
+                       count(CASE WHEN sn.source_type = 'signals' THEN 1 END) AS from_signals,
+                       count(CASE WHEN sn.source_type = 'manual' THEN 1 END) AS from_manual
             """
             )
             row = next(iter(result), None)

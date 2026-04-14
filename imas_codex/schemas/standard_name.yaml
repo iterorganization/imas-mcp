@@ -50,6 +50,8 @@ enums:
         description: Extracted from facility signals
       manual:
         description: Manually curated
+      reference:
+        description: Seeded from ISN reference library
 
   StandardNameReviewStatus:
     description: Review lifecycle for standard names
