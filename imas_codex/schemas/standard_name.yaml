@@ -296,3 +296,11 @@ classes:
           Number of link resolution attempts. Used to determine when
           to move to terminal 'failed' state (max 5 retries).
         range: integer
+      review_input_hash:
+        description: >-
+          SHA-256 hex digest of the inputs used in the most recent LLM
+          review (name, description, documentation, unit, kind, tags).
+          Compared to a freshly computed hash to detect stale reviews
+          that should be re-run.  OVERWRITTEN (not coalesced) on every
+          write so that stale hashes never persist.
+        range: string

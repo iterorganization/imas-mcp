@@ -1284,3 +1284,300 @@ def sn_resolve_links(
         f"[yellow]{total_unresolved}[/yellow] unresolved, "
         f"[red]{total_failed}[/red] failed"
     )
+
+
+@sn.command("review")
+@click.option("--ids", default=None, help="Scope to names linked to specific IDS")
+@click.option("--domain", default=None, help="Scope to physics domain")
+@click.option(
+    "--status",
+    "status_filter",
+    default="drafted",
+    help="Filter by review_status (default: drafted)",
+)
+@click.option(
+    "--unreviewed",
+    is_flag=True,
+    help="Only names with no reviewer_score or stale review",
+)
+@click.option(
+    "--re-review", is_flag=True, help="Force re-review of already-scored names"
+)
+@click.option("--model", default=None, help="Override review model")
+@click.option(
+    "--batch-size",
+    type=int,
+    default=15,
+    help="Max names per batch (hard cap: 25)",
+)
+@click.option(
+    "--neighborhood",
+    type=int,
+    default=10,
+    help="Similar names for context",
+)
+@click.option(
+    "-c",
+    "--cost-limit",
+    type=float,
+    default=5.0,
+    help="Max LLM spend in USD",
+)
+@click.option(
+    "--dry-run", is_flag=True, help="Run Layer 1 audits, show batch plan, no LLM calls"
+)
+@click.option("--skip-audit", is_flag=True, help="Skip Layer 1 audits (debug only)")
+@click.option("--concurrency", type=int, default=2, help="Parallel review batches")
+def sn_review(
+    ids: str | None,
+    domain: str | None,
+    status_filter: str,
+    unreviewed: bool,
+    re_review: bool,
+    model: str | None,
+    batch_size: int,
+    neighborhood: int,
+    cost_limit: float,
+    dry_run: bool,
+    skip_audit: bool,
+    concurrency: int,
+) -> None:
+    """Review standard names with 3-layer pipeline.
+
+    \b
+    Layer 1: Deterministic audits (embedding, lint, links, duplicates)
+    Layer 2: Batched LLM quality scoring with neighborhood context
+    Layer 3: Cross-batch consolidation and summary report
+
+    \b
+    Examples:
+      imas-codex sn review --unreviewed --cost-limit 5.0
+      imas-codex sn review --ids equilibrium --dry-run
+      imas-codex sn review --re-review --domain magnetics
+    """
+    import asyncio
+
+    from imas_codex.standard_names.review.budget import ReviewBudgetManager
+    from imas_codex.standard_names.review.state import SNReviewState
+
+    # Enforce batch-size cap
+    batch_size = min(batch_size, 25)
+
+    # Build state
+    state = SNReviewState(
+        facility="dd",
+        cost_limit=cost_limit,
+        ids_filter=ids,
+        domain_filter=domain,
+        status_filter=status_filter,
+        unreviewed_only=unreviewed,
+        re_review=re_review,
+        skip_audit=skip_audit,
+        review_model=model,
+        batch_size=batch_size,
+        neighborhood_k=neighborhood,
+        concurrency=concurrency,
+        dry_run=dry_run,
+        budget_manager=ReviewBudgetManager(cost_limit),
+    )
+
+    async def _run() -> None:
+        # Layer 1: Audits (on full catalog, unless --skip-audit)
+        if not skip_audit:
+            console.print(
+                "[bold]Layer 1:[/bold] Running deterministic audits on full catalog…"
+            )
+            from imas_codex.graph.client import GraphClient
+
+            def _load_catalog() -> list[dict]:
+                with GraphClient() as gc:
+                    rows = gc.query(
+                        """
+                        MATCH (sn:StandardName)
+                        OPTIONAL MATCH (sn)-[:HAS_UNIT]->(u:Unit)
+                        RETURN sn.id AS id, sn.description AS description,
+                               sn.documentation AS documentation,
+                               sn.kind AS kind,
+                               coalesce(u.id, sn.unit) AS unit,
+                               sn.tags AS tags, sn.links AS links,
+                               sn.imas_paths AS imas_paths,
+                               sn.physical_base AS physical_base,
+                               sn.subject AS subject,
+                               sn.component AS component,
+                               sn.coordinate AS coordinate,
+                               sn.position AS position,
+                               sn.process AS process,
+                               sn.cocos_transformation_type AS cocos_transformation_type,
+                               sn.physics_domain AS physics_domain,
+                               sn.review_status AS review_status,
+                               sn.reviewer_score AS reviewer_score,
+                               sn.review_input_hash AS review_input_hash,
+                               sn.embedding AS embedding,
+                               sn.review_tier AS review_tier,
+                               sn.link_status AS link_status,
+                               sn.source_type AS source_type,
+                               sn.geometric_base AS geometric_base
+                        """
+                    )
+                    return [dict(r) for r in rows] if rows else []
+
+            all_names = await asyncio.to_thread(_load_catalog)
+
+            if not all_names:
+                console.print("[yellow]No standard names found in graph[/yellow]")
+                return
+
+            console.print(f"  Loaded {len(all_names)} standard names")
+
+            from imas_codex.standard_names.review.audits import run_all_audits
+
+            state.audit_report = await asyncio.to_thread(run_all_audits, all_names)
+            state.all_names = all_names
+
+            # Print audit summary
+            ar = state.audit_report
+            console.print(
+                f"  Embeddings: {ar.embedding.missing_count} missing, "
+                f"{ar.embedding.stale_count} stale, "
+                f"{ar.embedding.refreshed_count} refreshed"
+            )
+            console.print(f"  Lint findings: {len(ar.lint_findings)}")
+            console.print(f"  Link issues: {len(ar.link_findings)}")
+            console.print(f"  Duplicate components: {len(ar.duplicate_components)}")
+
+        if dry_run:
+            # In dry-run mode, show batch plan but don't run LLM
+            console.print("\n[bold]Dry run:[/bold] Showing batch plan (no LLM calls)")
+
+            from imas_codex.graph.client import GraphClient
+            from imas_codex.standard_names.review.enrichment import (
+                group_into_review_batches,
+                reconstruct_clusters_batch,
+            )
+
+            # Apply filters to get target names
+            targets = list(state.all_names) if state.all_names else []
+            if status_filter:
+                targets = [
+                    n for n in targets if n.get("review_status") == status_filter
+                ]
+            if ids:
+                targets = [
+                    n
+                    for n in targets
+                    if any(p.startswith(ids + "/") for p in (n.get("imas_paths") or []))
+                ]
+            if domain:
+                targets = [n for n in targets if n.get("physics_domain") == domain]
+            if unreviewed:
+                from imas_codex.standard_names.review.audits import (
+                    compute_review_input_hash,
+                )
+
+                targets = [
+                    n
+                    for n in targets
+                    if n.get("reviewer_score") is None
+                    or n.get("review_input_hash") != compute_review_input_hash(n)
+                ]
+
+            console.print(f"  Targets for review: {len(targets)} names")
+
+            if targets:
+                try:
+
+                    def _get_clusters() -> dict:
+                        with GraphClient() as gc:
+                            return reconstruct_clusters_batch(
+                                [n["id"] for n in targets], gc
+                            )
+
+                    clusters = await asyncio.to_thread(_get_clusters)
+                    batches = group_into_review_batches(
+                        targets,
+                        clusters,
+                        max_batch_size=batch_size,
+                    )
+                    console.print(f"  Would create {len(batches)} review batches:")
+                    for i, b in enumerate(batches[:10]):
+                        n_names = len(b.get("names", []))
+                        tokens = b.get("estimated_tokens", 0)
+                        console.print(
+                            f"    Batch {i + 1}: {n_names} names, ~{tokens} tokens"
+                            f" — {b.get('group_key', 'unknown')}"
+                        )
+                    if len(batches) > 10:
+                        console.print(f"    … and {len(batches) - 10} more batches")
+                except Exception as exc:
+                    console.print(
+                        f"  [yellow]Could not compute batch plan: {exc}[/yellow]"
+                    )
+            return
+
+        # Layer 2: Batched LLM Review
+        console.print("\n[bold]Layer 2:[/bold] Running batched LLM review…")
+
+        from imas_codex.standard_names.review.pipeline import run_sn_review_engine
+
+        stop_event = asyncio.Event()
+        await run_sn_review_engine(state, stop_event=stop_event)
+
+        # Layer 3: Consolidation
+        console.print("\n[bold]Layer 3:[/bold] Running cross-batch consolidation…")
+        from imas_codex.standard_names.review.consolidation import run_consolidation
+
+        summary = run_consolidation(state)
+
+        # Print summary report
+        console.print("\n[bold]═══ Review Summary ═══[/bold]")
+        console.print(
+            f"  Reviewed: {summary.total_reviewed} / {summary.total_catalog_size}"
+            f" names ({summary.coverage_pct:.1f}%)"
+        )
+        console.print(f"  LLM cost: ${summary.total_cost:.4f}")
+
+        if summary.tier_distribution:
+            tier_str = ", ".join(
+                f"{t}: {c}" for t, c in sorted(summary.tier_distribution.items())
+            )
+            console.print(f"  Tier distribution: {tier_str}")
+
+        if summary.duplicate_candidates:
+            console.print(
+                f"  Duplicate candidates: {len(summary.duplicate_candidates)}"
+            )
+            for dc in summary.duplicate_candidates[:3]:
+                console.print(f"    {dc.names} (sim={dc.max_similarity:.3f})")
+
+        if summary.drift_warnings:
+            console.print(f"  Convention drift warnings: {len(summary.drift_warnings)}")
+            for dw in summary.drift_warnings[:3]:
+                console.print(
+                    f"    [{dw.physics_domain}] {dw.drift_type}: {dw.detail[:80]}"
+                )
+
+        if summary.outliers:
+            console.print(f"  Score outliers: {len(summary.outliers)}")
+            for ol in summary.outliers[:5]:
+                console.print(
+                    f"    {ol.name_id}: {ol.score:.2f}"
+                    f" (z={ol.z_score:.1f}, {ol.recommendation})"
+                )
+
+        if summary.lowest_scorers:
+            console.print("  Lowest scorers:")
+            for ls in summary.lowest_scorers[:5]:
+                console.print(
+                    f"    {ls.get('id', '?')}: {ls.get('reviewer_score', 0):.2f}"
+                    f" ({ls.get('review_tier', '?')})"
+                )
+
+        # Budget summary
+        if state.budget_manager:
+            bs = state.budget_manager.summary
+            console.print(
+                f"  Budget: ${bs['total_actual']:.4f} used of"
+                f" ${bs['total_budget']:.2f} ({bs['batch_count']} batches)"
+            )
+
+    asyncio.run(_run())

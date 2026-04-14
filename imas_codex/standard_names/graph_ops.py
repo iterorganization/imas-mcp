@@ -262,7 +262,8 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
     ``generated_at``, ``confidence``, ``reviewer_model``, ``reviewer_score``,
     ``reviewer_scores``, ``reviewer_comments``, ``reviewed_at``,
     ``review_tier``, ``vocab_gap_detail``, ``validation_issues``,
-    ``validation_layer_summary``, ``cocos_transformation_type``, ``dd_version``.
+    ``validation_layer_summary``, ``cocos_transformation_type``, ``dd_version``,
+    ``review_input_hash``.
 
     Performs conflict detection on ``unit``: if a StandardName already exists
     with a different unit value, that entry is skipped (not written)
@@ -347,6 +348,7 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
                 sn.validation_issues = coalesce(b.validation_issues, sn.validation_issues),
                 sn.validation_layer_summary = coalesce(b.validation_layer_summary, sn.validation_layer_summary),
                 sn.link_status = coalesce(b.link_status, sn.link_status),
+                sn.review_input_hash = b.review_input_hash,
                 sn.created_at = coalesce(sn.created_at, datetime())
             """,
             batch=[
@@ -388,6 +390,7 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
                         n.get("validation_layer_summary")
                     ),
                     "link_status": _compute_link_status(n.get("links")),
+                    "review_input_hash": n.get("review_input_hash"),
                 }
                 for n in names
             ],
