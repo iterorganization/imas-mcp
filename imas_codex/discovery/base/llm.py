@@ -487,8 +487,8 @@ def extract_cache_tokens(response: Any) -> tuple[int, int]:
 def _sanitize_content(content: str) -> str:
     """Sanitize LLM response content for JSON parsing.
 
-    Removes control characters, strips markdown code fences, and fixes
-    surrogate encoding issues that LLMs sometimes produce.
+    Removes control characters, strips markdown code fences, extracts JSON
+    from prose wrappers, and fixes surrogate encoding issues.
 
     Args:
         content: Raw LLM response content string.
@@ -497,9 +497,16 @@ def _sanitize_content(content: str) -> str:
         Cleaned string safe for JSON/Pydantic parsing.
     """
     # Strip markdown code fences (```json ... ``` or ``` ... ```)
-    # LLMs sometimes wrap JSON in code blocks despite instructions
     content = re.sub(r"^```(?:json)?\s*\n?", "", content.strip())
     content = re.sub(r"\n?```\s*$", "", content)
+
+    # Extract JSON from prose wrappers — LLMs sometimes "think aloud" before
+    # or after the JSON object (e.g. "Looking at these paths...\n{...}")
+    stripped = content.strip()
+    if stripped and stripped[0] not in ("{", "["):
+        json_start = _find_json_start(stripped)
+        if json_start >= 0:
+            content = _extract_balanced_json(stripped, json_start)
 
     # Remove control characters
     content = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", content)
@@ -509,6 +516,69 @@ def _sanitize_content(content: str) -> str:
         "utf-8", errors="replace"
     )
     return content
+
+
+def _find_json_start(text: str) -> int:
+    """Find the start of a JSON object or array in text.
+
+    Looks for ``{`` or ``[`` that is likely the start of a JSON value,
+    skipping occurrences inside obvious prose (e.g. ``{variable}``
+    template markers).
+    """
+    for i, ch in enumerate(text):
+        if ch == "{":
+            # Skip Jinja/template-like markers: single word in braces
+            # e.g. {variable} but not {"key": ...}
+            rest = text[i + 1 : i + 50]
+            if rest.lstrip().startswith('"') or rest.lstrip().startswith("'"):
+                return i
+            # Also accept if it looks like the start of JSON with newlines
+            if "\n" in text[i : i + 200]:
+                return i
+            # Fallback: accept any { that's followed by another { or "
+            for ch2 in rest:
+                if ch2 in ('"', "'", "{", "["):
+                    return i
+                if ch2 in (" ", "\t", "\n", "\r"):
+                    continue
+                break
+        elif ch == "[":
+            return i
+    return -1
+
+
+def _extract_balanced_json(text: str, start: int) -> str:
+    """Extract a balanced JSON object/array starting at *start*.
+
+    Uses a simple brace/bracket counter that respects JSON strings
+    (skipping escaped characters inside double quotes).
+    Falls back to ``text[start:]`` if no balanced close is found.
+    """
+    open_ch = text[start]
+    close_ch = "}" if open_ch == "{" else "]"
+    depth = 0
+    in_string = False
+    i = start
+    while i < len(text):
+        ch = text[i]
+        if in_string:
+            if ch == "\\" and i + 1 < len(text):
+                i += 2  # skip escaped char
+                continue
+            if ch == '"':
+                in_string = False
+        else:
+            if ch == '"':
+                in_string = True
+            elif ch == open_ch:
+                depth += 1
+            elif ch == close_ch:
+                depth -= 1
+                if depth == 0:
+                    return text[start : i + 1]
+        i += 1
+    # No balanced close found — return from start to end
+    return text[start:]
 
 
 # ---------------------------------------------------------------------------

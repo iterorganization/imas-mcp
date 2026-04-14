@@ -1,4 +1,4 @@
-"""Tests for _build_kwargs JSON schema conversion in llm.py."""
+"""Tests for _build_kwargs JSON schema conversion and _sanitize_content in llm.py."""
 
 from __future__ import annotations
 
@@ -6,7 +6,10 @@ import pytest
 from pydantic import BaseModel
 
 from imas_codex.discovery.base.llm import (
+    _extract_balanced_json,
+    _find_json_start,
     _is_pydantic_model,
+    _sanitize_content,
     _to_json_schema_format,
 )
 
@@ -111,3 +114,139 @@ def test_build_kwargs_passes_dict_response_format_unchanged(monkeypatch):
         timeout=None,
     )
     assert kwargs["response_format"] is raw_format
+
+
+# ---------------------------------------------------------------------------
+# _sanitize_content tests — prose extraction, code fences, edge cases
+# ---------------------------------------------------------------------------
+
+
+class TestSanitizeContentBasic:
+    """Basic sanitization: code fences, control chars, surrogates."""
+
+    def test_strips_json_code_fence(self):
+        raw = '```json\n{"a": 1}\n```'
+        assert _sanitize_content(raw) == '{"a": 1}'
+
+    def test_strips_bare_code_fence(self):
+        raw = '```\n{"a": 1}\n```'
+        assert _sanitize_content(raw) == '{"a": 1}'
+
+    def test_removes_control_chars(self):
+        raw = '{"a":\x00 1}'
+        assert _sanitize_content(raw) == '{"a": 1}'
+
+    def test_passthrough_clean_json(self):
+        raw = '{"candidates": [], "vocab_gaps": []}'
+        assert _sanitize_content(raw) == raw
+
+
+class TestSanitizeContentProseExtraction:
+    """Extract JSON from LLM prose wrappers."""
+
+    def test_extracts_json_after_thinking_text(self):
+        raw = 'Looking at these paths, I need to analyze them.\n\n{"candidates": [], "vocab_gaps": []}'
+        result = _sanitize_content(raw)
+        assert result == '{"candidates": [], "vocab_gaps": []}'
+
+    def test_extracts_json_with_multiline_preamble(self):
+        raw = (
+            "I'll analyze the DD paths for standard names.\n"
+            "First, let me consider the physics.\n"
+            "Here are the results:\n"
+            '{"candidates": [{"name": "electron_temperature"}], "vocab_gaps": []}'
+        )
+        result = _sanitize_content(raw)
+        assert '"candidates"' in result
+        assert result.startswith("{")
+
+    def test_extracts_json_with_trailing_text(self):
+        raw = 'Here is the output:\n{"a": 1, "b": 2}\nI hope this helps!'
+        result = _sanitize_content(raw)
+        assert result == '{"a": 1, "b": 2}'
+
+    def test_extracts_nested_json(self):
+        raw = 'Analysis:\n{"outer": {"inner": [1, 2, 3]}, "x": "y"}'
+        result = _sanitize_content(raw)
+        assert result == '{"outer": {"inner": [1, 2, 3]}, "x": "y"}'
+
+    def test_handles_json_with_strings_containing_braces(self):
+        raw = 'Result:\n{"desc": "function f(x) { return x; }", "n": 1}'
+        result = _sanitize_content(raw)
+        assert result == '{"desc": "function f(x) { return x; }", "n": 1}'
+
+    def test_extracts_array_from_prose(self):
+        raw = "Here are the items:\n[1, 2, 3]"
+        result = _sanitize_content(raw)
+        assert result == "[1, 2, 3]"
+
+    def test_real_world_compose_error_pattern(self):
+        """Reproduce the actual error pattern from SN compose failures."""
+        raw = (
+            "Looking at these two paths from the mhd IDS, I need to generate "
+            "standard names following the grammar rules.\n\n"
+            "{\n"
+            '  "candidates": [\n'
+            "    {\n"
+            '      "name": "mhd_frequency_linear_toroidal_mode_number",\n'
+            '      "description": "Toroidal mode number for MHD instability"\n'
+            "    }\n"
+            "  ],\n"
+            '  "attachments": [],\n'
+            '  "skipped": [],\n'
+            '  "vocab_gaps": []\n'
+            "}"
+        )
+        result = _sanitize_content(raw)
+        assert result.startswith("{")
+        assert result.endswith("}")
+        import json
+
+        parsed = json.loads(result)
+        assert "candidates" in parsed
+
+
+class TestFindJsonStart:
+    """Unit tests for _find_json_start."""
+
+    def test_finds_object_start(self):
+        assert _find_json_start('hello\n{"a": 1}') >= 0
+
+    def test_finds_array_start(self):
+        assert _find_json_start("text [1,2]") == 5
+
+    def test_returns_negative_for_no_json(self):
+        assert _find_json_start("just plain text") == -1
+
+    def test_skips_to_first_brace(self):
+        text = 'preamble {"key": "value"}'
+        idx = _find_json_start(text)
+        assert text[idx] == "{"
+
+
+class TestExtractBalancedJson:
+    """Unit tests for _extract_balanced_json."""
+
+    def test_simple_object(self):
+        text = '{"a": 1} trailing'
+        assert _extract_balanced_json(text, 0) == '{"a": 1}'
+
+    def test_nested_object(self):
+        text = '{"a": {"b": 2}} end'
+        assert _extract_balanced_json(text, 0) == '{"a": {"b": 2}}'
+
+    def test_with_string_containing_braces(self):
+        text = '{"code": "if (x) { y; }"} extra'
+        assert _extract_balanced_json(text, 0) == '{"code": "if (x) { y; }"}'
+
+    def test_escaped_quotes_in_string(self):
+        text = r'{"a": "say \"hello\""} more'
+        assert _extract_balanced_json(text, 0) == r'{"a": "say \"hello\""}'
+
+    def test_array(self):
+        text = "[1, [2, 3], 4] rest"
+        assert _extract_balanced_json(text, 0) == "[1, [2, 3], 4]"
+
+    def test_no_close_returns_to_end(self):
+        text = '{"unbalanced'
+        assert _extract_balanced_json(text, 0) == '{"unbalanced'
