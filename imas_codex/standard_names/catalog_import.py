@@ -97,11 +97,19 @@ def _parse_grammar_fields(name: str) -> dict[str, str | None]:
         }
 
 
-def _catalog_entry_to_dict(entry: Any) -> dict[str, Any]:
+def _catalog_entry_to_dict(entry: Any, *, extra: dict | None = None) -> dict[str, Any]:
     """Convert a validated catalog entry to a graph-write dict.
 
     Maps catalog field names to graph schema field names and derives
     grammar fields from the standard name.
+
+    Parameters
+    ----------
+    entry:
+        Validated ``StandardNameEntry`` from ISN catalog parsing.
+    extra:
+        Raw YAML dict for fields not carried by the catalog model
+        (e.g., ``cocos_transformation_type``).
     """
     # Derive grammar fields from the name
     grammar = _parse_grammar_fields(entry.name)
@@ -115,7 +123,7 @@ def _catalog_entry_to_dict(entry: Any) -> dict[str, Any]:
     # Determine source_type from presence of ids_paths
     source_type = "dd" if ids_paths else "manual"
 
-    return {
+    result = {
         "id": entry.name,
         "description": entry.description or None,
         "documentation": entry.documentation or None,
@@ -137,6 +145,14 @@ def _catalog_entry_to_dict(entry: Any) -> dict[str, Any]:
         "position": grammar["position"],
         "process": grammar["process"],
     }
+
+    # Add fields from raw YAML that bypass the catalog model
+    if extra:
+        cocos_type = extra.get("cocos_transformation_type")
+        if cocos_type:
+            result["cocos_transformation_type"] = cocos_type
+
+    return result
 
 
 def _write_catalog_entries(

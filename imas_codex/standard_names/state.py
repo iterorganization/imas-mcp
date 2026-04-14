@@ -23,7 +23,7 @@ class SNBuildState(DiscoveryStateBase):
     Workers update stats and shared data as they progress.
 
     State fields are all past tense, named after the phase that writes them:
-    ``extracted``, ``composed``, ``reviewed``, ``validated``, ``consolidated``.
+    ``extracted``, ``composed``, ``validated``, ``consolidated``.
 
     The ``facility`` field is inherited from ``DiscoveryStateBase``.
     For DD source pipelines use ``facility="dd"``; for signal source
@@ -42,17 +42,15 @@ class SNBuildState(DiscoveryStateBase):
 
     # Model overrides (None = use defaults from pyproject.toml)
     compose_model: str | None = None  # Override for compose step (default: reasoning)
-    review_model: str | None = None  # Override for review step (default: language)
 
     # COCOS provenance (resolved once at extract start)
-    extraction_dd_version: str | None = None
+    dd_version: str | None = None
     cocos_version: int | None = None
     cocos_params: dict | None = None
 
-    # In-memory pipeline data (extract → compose → review → validate → consolidate)
+    # In-memory pipeline data (extract → compose → validate → consolidate)
     extracted: list[Any] = field(default_factory=list)  # ExtractionBatch objects
     composed: list[dict[str, Any]] = field(default_factory=list)
-    reviewed: list[dict[str, Any]] | None = field(default=None)  # None = review not run
     validated: list[dict[str, Any]] = field(default_factory=list)
     consolidated: list[dict[str, Any]] = field(default_factory=list)
 
@@ -62,7 +60,6 @@ class SNBuildState(DiscoveryStateBase):
     # Per-phase progress (observed by display)
     extract_stats: WorkerStats = field(default_factory=WorkerStats)
     compose_stats: WorkerStats = field(default_factory=WorkerStats)
-    review_stats: WorkerStats = field(default_factory=WorkerStats)
     validate_stats: WorkerStats = field(default_factory=WorkerStats)
     consolidate_stats: WorkerStats = field(default_factory=WorkerStats)
     persist_stats: WorkerStats = field(default_factory=WorkerStats)
@@ -71,7 +68,6 @@ class SNBuildState(DiscoveryStateBase):
     # Pipeline phases
     extract_phase: PipelinePhase = field(init=False)
     compose_phase: PipelinePhase = field(init=False)
-    review_phase: PipelinePhase = field(init=False)
     validate_phase: PipelinePhase = field(init=False)
     consolidate_phase: PipelinePhase = field(init=False)
     persist_phase: PipelinePhase = field(init=False)
@@ -79,7 +75,6 @@ class SNBuildState(DiscoveryStateBase):
     def __post_init__(self) -> None:
         self.extract_phase = PipelinePhase("extract")
         self.compose_phase = PipelinePhase("compose")
-        self.review_phase = PipelinePhase("review")
         self.validate_phase = PipelinePhase("validate")
         self.consolidate_phase = PipelinePhase("consolidate")
         self.persist_phase = PipelinePhase("persist")
@@ -90,8 +85,8 @@ class SNBuildState(DiscoveryStateBase):
 
     @property
     def total_cost(self) -> float:
-        """Total LLM cost — compose and review phases call the LLM."""
-        return self.compose_stats.cost + self.review_stats.cost
+        """Total LLM cost — compose is the only LLM phase."""
+        return self.compose_stats.cost
 
     def should_stop(self) -> bool:
         """Stop when base conditions met or budget exhausted."""

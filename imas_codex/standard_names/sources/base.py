@@ -21,7 +21,7 @@ class ExtractionBatch:
     existing_names: set[str] = field(
         default_factory=set
     )  # Known standard names for dedup
-    extraction_dd_version: str | None = None  # DD version used for extraction
+    dd_version: str | None = None  # DD version whose conventions apply
     cocos_version: int | None = None  # COCOS convention from that DD version
     cocos_params: dict | None = None  # Full COCOS node properties
 

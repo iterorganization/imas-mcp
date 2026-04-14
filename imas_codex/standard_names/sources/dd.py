@@ -101,7 +101,7 @@ def extract_dd_candidates(
     _status("querying graph…")
 
     with GraphClient() as gc:
-        # Resolve extraction DD version and COCOS convention
+        # Resolve DD version and COCOS convention (single source of truth)
         dv_row = next(
             iter(
                 gc.query("""
@@ -113,7 +113,7 @@ def extract_dd_candidates(
             ),
             None,
         )
-        extraction_dd_version = dv_row["dd_version"] if dv_row else None
+        dd_version = dv_row["dd_version"] if dv_row else None
         cocos_version = dv_row["cocos_version"] if dv_row else None
         cocos_params = dv_row["cocos_params"] if dv_row else None
 
@@ -207,7 +207,7 @@ def extract_dd_candidates(
 
     # Propagate COCOS metadata to batches
     for batch in batches:
-        batch.extraction_dd_version = extraction_dd_version
+        batch.dd_version = dd_version
         batch.cocos_version = cocos_version
         batch.cocos_params = cocos_params
 
@@ -297,7 +297,7 @@ def extract_specific_paths(
             ),
             None,
         )
-        extraction_dd_version = dv_row["dd_version"] if dv_row else None
+        dd_version = dv_row["dd_version"] if dv_row else None
         cocos_version = dv_row["cocos_version"] if dv_row else None
         cocos_params = dv_row["cocos_params"] if dv_row else None
 
@@ -377,7 +377,7 @@ def extract_specific_paths(
 
     # Propagate COCOS metadata to batches
     for batch in batches:
-        batch.extraction_dd_version = extraction_dd_version
+        batch.dd_version = dd_version
         batch.cocos_version = cocos_version
         batch.cocos_params = cocos_params
 
