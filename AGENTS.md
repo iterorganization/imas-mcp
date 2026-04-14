@@ -820,9 +820,9 @@ Two distinct write paths with different semantics:
 
 | Tool | Purpose | Key Parameters |
 |------|---------|----------------|
-| `search_standard_names` | Semantic + keyword search over StandardName descriptions | `query`, `kind`, `tags`, `review_status`, `k` |
+| `search_standard_names` | Semantic + keyword search over StandardName descriptions | `query`, `kind`, `tags`, `review_status`, `cocos_type`, `k` |
 | `fetch_standard_names` | Fetch full entries by name ID | `names` (space/comma separated) |
-| `list_standard_names` | List with optional filters | `tag`, `kind`, `review_status` |
+| `list_standard_names` | List with optional filters | `tag`, `kind`, `review_status`, `cocos_type` |
 
 ### Schema
 
@@ -831,6 +831,13 @@ StandardName node defined in `imas_codex/schemas/standard_name.yaml` (v0.5.0). K
 - `(IMASNode)-[:HAS_STANDARD_NAME]->(StandardName)`
 - `(FacilitySignal)-[:HAS_STANDARD_NAME]->(StandardName)`
 - `(StandardName)-[:HAS_UNIT]->(Unit)`
+- `(StandardName)-[:FROM_DD_VERSION]->(DDVersion)`
+
+**COCOS provenance:** `cocos_transformation_type` (string, e.g. `psi_like`, `ip_like`) records
+how a quantity transforms under COCOS convention changes. `dd_version` links to the DDVersion
+node whose COCOS convention applies. Both are injected post-LLM (like `unit`) — never generated
+by the model. The full audit trail is:
+`StandardName.dd_version` → `DDVersion.cocos` → `COCOS` node parameters.
 
 **Provenance fields** (v0.5.0): `reviewer_model`, `reviewer_score` (float 0-1, normalized from
 6×0-20), `reviewer_scores` (JSON: grammar/semantic/documentation/convention/completeness/compliance,
