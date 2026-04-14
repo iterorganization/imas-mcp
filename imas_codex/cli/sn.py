@@ -144,6 +144,78 @@ def sn_generate(
         limit = None
         force = True  # Targeted paths always regenerate
 
+        # Resolve wildcard patterns (e.g., "*/profiles_1d/q" or "equilibrium/*/data")
+        raw_paths = paths_list.split()
+        resolved_paths = []
+        has_wildcards = any("*" in p for p in raw_paths)
+
+        if has_wildcards:
+            import re
+
+            from imas_codex.graph.client import GraphClient
+
+            _MAX_WILDCARD_MATCHES = 50
+
+            with GraphClient() as gc:
+                for pattern in raw_paths:
+                    if "*" in pattern:
+                        # Escape regex metacharacters except *, then convert * to [^/]+
+                        escaped = re.escape(pattern).replace(r"\*", "[^/]+")
+                        regex = f"^{escaped}$"
+                        matches = list(
+                            gc.query(
+                                """
+                                MATCH (n:IMASNode)
+                                WHERE n.id =~ $regex
+                                  AND NOT (n.data_type IN ['STRUCTURE', 'STRUCT_ARRAY'])
+                                RETURN n.id AS path
+                                ORDER BY n.id
+                                LIMIT $max_matches
+                                """,
+                                regex=regex,
+                                max_matches=_MAX_WILDCARD_MATCHES,
+                            )
+                        )
+                        found = [r["path"] for r in matches]
+                        if found:
+                            console.print(
+                                f"  [dim]{pattern}[/dim] → {len(found)} paths"
+                            )
+                            resolved_paths.extend(found)
+                        else:
+                            console.print(
+                                f"  [yellow]⚠ {pattern}[/yellow] — no matches"
+                            )
+                    else:
+                        resolved_paths.append(pattern)
+
+            # Deduplicate preserving order
+            seen: set[str] = set()
+            unique_paths = []
+            for p in resolved_paths:
+                if p not in seen:
+                    seen.add(p)
+                    unique_paths.append(p)
+            resolved_paths = unique_paths
+
+            console.print(
+                f"  Resolved {len(resolved_paths)} unique paths from "
+                f"{len(raw_paths)} patterns"
+            )
+            paths_list = " ".join(resolved_paths)
+
+            if not resolved_paths:
+                raise click.UsageError("No paths matched the given patterns")
+        else:
+            # No wildcards — just use raw paths, still deduplicate
+            seen_paths: set[str] = set()
+            unique = []
+            for p in raw_paths:
+                if p not in seen_paths:
+                    seen_paths.add(p)
+                    unique.append(p)
+            paths_list = " ".join(unique)
+
     # Handle --reset-to before the main pipeline
     if reset_to is not None and not dry_run:
         source_arg = "dd" if source == "dd" else "signals"

@@ -42,9 +42,23 @@ Before finalizing your output, verify:
 2. **Consistent suffixes** — all boundary quantities use `_of_plasma_boundary`, not a mix of patterns
 3. **No DD leakage** — none of your names start with an IDS or DD section name
 
-## Batch Context
+## IDS Context
 
-**IDS:** {{ ids_name }}
+{% if ids_contexts %}
+{% for ids_ctx in ids_contexts %}
+### {{ ids_ctx.ids_name }}
+{{ ids_ctx.ids_description }}
+{% if ids_ctx.ids_documentation %}*{{ ids_ctx.ids_documentation }}*{% endif %}
+{% if ids_ctx.top_sections %}
+**Top-level sections:**
+{% for sec in ids_ctx.top_sections %}
+- `{{ sec.name }}` ({{ sec.data_type }}): {{ sec.description or 'no description' }}
+{% endfor %}
+{% endif %}
+{% endfor %}
+{% else %}
+**Batch:** {{ ids_name }}
+{% endif %}
 {% if cluster_context %}
 {{ cluster_context }}
 {% endif %}
@@ -79,17 +93,30 @@ These names already exist in the catalog. Reuse them if they match your source, 
 - **Data type:** {{ item.data_type or 'unspecified' }}
 {% if item.physics_domain %}- **Physics domain:** {{ item.physics_domain }}{% endif %}
 {% if item.ndim is not none %}- **Dimensions:** {{ item.ndim }}D{% endif %}
+{% if item.lifecycle_status %}- **Lifecycle:** {{ item.lifecycle_status }} ⚠️{% endif %}
 {% if item.keywords %}- **Keywords:** {{ item.keywords | join(', ') if item.keywords is iterable and item.keywords is not string else item.keywords }}{% endif %}
-{% if item.cluster_label %}- **Cluster:** {{ item.cluster_label }}{% endif %}
-{% if item.cluster_description %}- **Cluster description:** {{ item.cluster_description }}{% endif %}
-{% if item.parent_path %}- **Parent structure:** {{ item.parent_path }} ({{ item.parent_type or 'STRUCTURE' }}){% endif %}
-{% if item.parent_description %}- **Parent description:** {{ item.parent_description }}{% endif %}
 {% if item.coordinate_paths %}- **Coordinates:** {{ item.coordinate_paths | join(', ') }}{% endif %}
 {% if item.timebase %}- **Timebase:** {{ item.timebase }}{% endif %}
 {% if item.cocos_label %}- **COCOS transformation:** {{ item.cocos_label }}{% if item.cocos_expression %} ({{ item.cocos_expression }}){% endif %}
   ⚠️ This quantity is COCOS-dependent — include sign convention in documentation.{% endif %}
 {% if item.identifier_schema %}- **Identifier schema:** {{ item.identifier_schema }}{% if item.identifier_schema_doc %} — {{ item.identifier_schema_doc }}{% endif %}{% endif %}
 {% if item.coord_path %}- **Coordinate:** {{ item.coord_path }}{% if item.coord_unit %} ({{ item.coord_unit }}){% endif %}{% endif %}
+{% if item.parent_path %}- **Parent structure:** {{ item.parent_path }} ({{ item.parent_type or 'STRUCTURE' }}){% endif %}
+{% if item.parent_description %}- **Parent description:** {{ item.parent_description }}{% endif %}
+{% if item.clusters %}
+- **Semantic clusters:**
+{% for cl in item.clusters %}  - **{{ cl.label }}** ({{ cl.scope }}): {{ cl.description }}
+    Members: {{ cl.members | join(', ') }}
+{% endfor %}{% endif %}
+{% if item.cross_ids_paths %}
+- **Cross-IDS equivalents:** These paths in other IDSs represent the same quantity:
+{% for xp in item.cross_ids_paths %}  - `{{ xp }}`
+{% endfor %}  → Generate ONE name that covers all cross-IDS instances.
+{% endif %}
+{% if item.version_history %}
+- **Version history:**
+{% for vh in item.version_history %}  - {{ vh.version }}: {{ vh.change_type }}{% if vh.description %} — {{ vh.description }}{% endif %}
+{% endfor %}{% endif %}
 {% if item.sibling_fields %}
 - **Sibling fields** (same parent structure — use for documentation cross-references):
 {% for sib in item.sibling_fields %}  - `{{ sib.path }}`: {{ sib.description or 'no description' }} ({{ sib.data_type or '?' }})

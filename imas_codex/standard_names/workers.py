@@ -211,8 +211,7 @@ OPTIONAL MATCH (n)-[:HAS_IDENTIFIER_SCHEMA]->(ident:IdentifierSchema)
 OPTIONAL MATCH (n)-[:HAS_PARENT]->(parent:IMASNode)
 OPTIONAL MATCH (parent)-[:HAS_CHILD]->(sibling:IMASNode)
 WHERE sibling.id <> $path
-  AND sibling.data_type <> 'STRUCTURE'
-  AND sibling.data_type <> 'STRUCT_ARRAY'
+  AND NOT (sibling.data_type IN ['STRUCTURE', 'STRUCT_ARRAY'])
 WITH n, cs, ident, parent,
      collect(DISTINCT {
          path: sibling.id,
@@ -225,6 +224,7 @@ RETURN n.coordinate1_same_as AS coordinate1,
        n.timebasepath AS timebase,
        n.cocos_label_transformation AS cocos_label,
        n.cocos_transformation_expression AS cocos_expression,
+       n.lifecycle_status AS lifecycle_status,
        cs.id AS coordinate_spec_id,
        cs.coordinate_description AS coordinate_spec_description,
        ident.name AS identifier_schema_name,
@@ -234,12 +234,78 @@ RETURN n.coordinate1_same_as AS coordinate1,
        sibling_fields
 """
 
+_CROSS_IDS_QUERY = """
+MATCH (n:IMASNode {id: $path})-[:IN_CLUSTER]->(c:IMASSemanticCluster)
+WHERE c.scope IN ['global', 'domain']
+WITH c ORDER BY c.scope ASC LIMIT 3
+MATCH (member:IMASNode)-[:IN_CLUSTER]->(c)
+WHERE member.id <> $path
+  AND NOT (member.data_type IN ['STRUCTURE', 'STRUCT_ARRAY'])
+RETURN c.label AS cluster_label,
+       c.description AS cluster_description,
+       c.scope AS cluster_scope,
+       collect(DISTINCT member.id)[0..5] AS member_paths
+"""
+
+_VERSION_HISTORY_QUERY = """
+MATCH (vc:IMASNodeChange)-[:FOR_IMAS_PATH]->(n:IMASNode {id: $path})
+WHERE vc.change_type IN [
+    'path_added', 'cocos_label_transformation', 'sign_convention',
+    'units', 'path_renamed', 'definition_clarification'
+]
+RETURN vc.id AS change_id, vc.change_type AS change_type
+"""
+
+_IDS_CONTEXT_QUERY = """
+MATCH (ids:IDS {id: $ids_name})
+OPTIONAL MATCH (child:IMASNode)-[:IN_IDS]->(ids)
+WHERE child.id STARTS WITH $ids_prefix
+  AND child.data_type IN ['STRUCTURE', 'STRUCT_ARRAY', 'FLT_1D']
+  AND size([x IN split(child.id, '/') WHERE true]) = 2
+WITH ids,
+     collect(DISTINCT {
+         name: child.id, description: child.description, data_type: child.data_type
+     })[0..10] AS top_sections
+RETURN ids.description AS ids_description,
+       ids.documentation AS ids_documentation,
+       top_sections
+"""
+
+
+def _enrich_ids_context(ids_name: str) -> dict | None:
+    """Fetch IDS-level context for batch header.
+
+    Returns dict with ids_description, ids_documentation, top_sections,
+    or None if IDS not found.
+    """
+    from imas_codex.graph.client import GraphClient
+
+    with GraphClient() as gc:
+        rows = list(
+            gc.query(
+                _IDS_CONTEXT_QUERY,
+                ids_name=ids_name,
+                ids_prefix=f"{ids_name}/",
+            )
+        )
+        if not rows:
+            return None
+        row = rows[0]
+        sections = row.get("top_sections") or []
+        valid = [s for s in sections if s.get("name")]
+        return {
+            "ids_description": row.get("ids_description") or "",
+            "ids_documentation": row.get("ids_documentation") or "",
+            "top_sections": valid,
+        }
+
 
 def _enrich_batch_items(items: list[dict]) -> None:
     """Enrich batch items with rich DD context from the graph.
 
-    Fetches coordinate specs, COCOS info, identifier schemas, and sibling
-    fields for each item. Modifies items in-place.
+    Fetches coordinate specs, COCOS info, identifier schemas, sibling
+    fields, cross-IDS cluster siblings, and version history for each
+    item. Modifies items in-place.
     """
     from imas_codex.graph.client import GraphClient
 
@@ -276,6 +342,11 @@ def _enrich_batch_items(items: list[dict]) -> None:
             if cocos_expr:
                 item["cocos_expression"] = cocos_expr
 
+            # Lifecycle
+            lifecycle = row.get("lifecycle_status")
+            if lifecycle and lifecycle != "active":
+                item["lifecycle_status"] = lifecycle
+
             # Identifier schema
             ident_name = row.get("identifier_schema_name")
             if ident_name:
@@ -287,10 +358,56 @@ def _enrich_batch_items(items: list[dict]) -> None:
             # Sibling fields (same parent, different leaf paths)
             siblings = row.get("sibling_fields") or []
             if siblings and isinstance(siblings, list):
-                # Filter out empty entries
                 valid = [s for s in siblings if s.get("path")]
                 if valid:
                     item["sibling_fields"] = valid
+
+            # Cross-IDS cluster siblings
+            cross_rows = list(gc.query(_CROSS_IDS_QUERY, path=path))
+            if cross_rows:
+                clusters = []
+                cross_ids_paths = []
+                for cr in cross_rows:
+                    label = cr.get("cluster_label")
+                    members = cr.get("member_paths") or []
+                    if label and members:
+                        clusters.append(
+                            {
+                                "label": label,
+                                "description": cr.get("cluster_description") or "",
+                                "scope": cr.get("cluster_scope") or "",
+                                "members": members,
+                            }
+                        )
+                        cross_ids_paths.extend(members)
+                if clusters:
+                    item["clusters"] = clusters
+                if cross_ids_paths:
+                    # Deduplicate
+                    seen = set()
+                    unique = []
+                    for p in cross_ids_paths:
+                        if p not in seen:
+                            seen.add(p)
+                            unique.append(p)
+                    item["cross_ids_paths"] = unique[:8]
+
+            # Version history (COCOS/sign changes are most important)
+            version_rows = list(gc.query(_VERSION_HISTORY_QUERY, path=path))
+            if version_rows:
+                valid_changes = []
+                for vr in version_rows:
+                    change_id = vr.get("change_id") or ""
+                    change_type = vr.get("change_type") or ""
+                    # Version is encoded in the ID: path:change_type:version
+                    parts = change_id.rsplit(":", 1)
+                    version = parts[-1] if len(parts) >= 2 else ""
+                    if version and change_type:
+                        valid_changes.append(
+                            {"version": version, "change_type": change_type}
+                        )
+                if valid_changes:
+                    item["version_history"] = valid_changes
 
 
 async def compose_worker(state: SNBuildState, **_kwargs) -> None:
@@ -330,13 +447,32 @@ async def compose_worker(state: SNBuildState, **_kwargs) -> None:
     model = get_model("language")
     context = build_compose_context()
 
-    # Enrich batch items with rich DD context (coordinate specs, COCOS, siblings)
+    # Enrich batch items with rich DD context (coordinate specs, COCOS, siblings,
+    # cross-IDS paths, version history)
     def _enrich_all_batches():
         for batch in state.extracted:
             _enrich_batch_items(batch.items)
 
     await asyncio.to_thread(_enrich_all_batches)
     wlog.info("Enriched batch items with DD context")
+
+    # Pre-fetch IDS-level context for each unique IDS across batches
+    ids_context_cache: dict[str, dict | None] = {}
+
+    def _prefetch_ids_context():
+        for batch in state.extracted:
+            # Derive IDS names from item paths (first segment)
+            ids_names = {
+                item["path"].split("/")[0]
+                for item in batch.items
+                if item.get("path") and "/" in item["path"]
+            }
+            for ids_name in ids_names:
+                if ids_name not in ids_context_cache:
+                    ids_context_cache[ids_name] = _enrich_ids_context(ids_name)
+
+    await asyncio.to_thread(_prefetch_ids_context)
+    wlog.info("Fetched IDS context for %d IDS(s)", len(ids_context_cache))
 
     # Render system prompt once (cached via prompt caching)
     system_prompt = render_prompt("sn/compose_system", context)
@@ -359,9 +495,24 @@ async def compose_worker(state: SNBuildState, **_kwargs) -> None:
             # Search for nearby existing names to help avoid duplicates
             nearby = _search_nearby_names(batch.context or batch.group_key)
 
+            # IDS-level context — collect for each IDS present in batch
+            ids_names = sorted(
+                {
+                    item["path"].split("/")[0]
+                    for item in batch.items
+                    if item.get("path") and "/" in item["path"]
+                }
+            )
+            ids_contexts = []
+            for iname in ids_names:
+                info = ids_context_cache.get(iname)
+                if info:
+                    ids_contexts.append({"ids_name": iname, **info})
+
             user_context = {
                 "items": batch.items,
                 "ids_name": batch.group_key,
+                "ids_contexts": ids_contexts,
                 "existing_names": sorted(batch.existing_names)[:200],
                 "cluster_context": batch.context,
                 "nearby_existing_names": nearby,
