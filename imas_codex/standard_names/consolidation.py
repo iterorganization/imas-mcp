@@ -85,6 +85,22 @@ def _merge_duplicates(group: list[dict]) -> dict:
 
 
 # =============================================================================
+# Helpers
+# =============================================================================
+
+
+def check_batch_cocos_consistency(items: list[dict]) -> list[str]:
+    """Verify all COCOS-dependent paths in a batch share the same type.
+
+    Returns a list of warning messages (empty if consistent).
+    """
+    cocos_types = {item.get("cocos_label") for item in items if item.get("cocos_label")}
+    if len(cocos_types) > 1:
+        return [f"Mixed COCOS types in batch: {sorted(cocos_types)}"]
+    return []
+
+
+# =============================================================================
 # Main function
 # =============================================================================
 
@@ -176,6 +192,25 @@ def consolidate_candidates(
                     standard_name=name,
                     conflict_type="kind_mismatch",
                     details=f"Kinds: {kinds}",
+                    candidates=group,
+                )
+            )
+            conflicted_names.add(name)
+
+    # ------------------------------------------------------------------
+    # Check 2.5: COCOS transformation type consistency
+    # ------------------------------------------------------------------
+    for name, group in by_name.items():
+        if name in conflicted_names:
+            continue
+        cocos_types = {c.get("cocos_transformation_type") for c in group}
+        cocos_types.discard(None)
+        if len(cocos_types) > 1:
+            result.conflicts.append(
+                ConflictRecord(
+                    standard_name=name,
+                    conflict_type="cocos_type_mismatch",
+                    details=f"COCOS types: {cocos_types}",
                     candidates=group,
                 )
             )

@@ -107,11 +107,10 @@ common_issues:
       affects: [documentation]
 
     I2.5_missing_sign_conventions:
-      description: "COCOS-dependent quantities without sign convention"
-      format: "Sign convention: Positive when [condition]."
-      rule: "Separate paragraph, plain text, not bold"
-      affects: [documentation]
-      score_override: "documentation <= 10 for COCOS quantities without sign convention"
+      description: "COCOS-dependent quantities must include sign convention paragraph referencing specific COCOS version"
+      check: "If cocos_transformation_type is set, documentation MUST contain 'Sign convention:' paragraph with specific COCOS version reference"
+      severity: critical
+      score_override: "documentation <= 10 for COCOS quantities without version-specific sign convention"
 
     I2.6_missing_aliases:
       description: "DD abbreviated names (gm1-gm9) not mentioned"
