@@ -28,6 +28,19 @@ def _ensure_json(value: Any) -> str | None:
     return json.dumps(value)
 
 
+def _compute_link_status(links: list[str] | None) -> str | None:
+    """Determine link resolution status from link prefixes.
+
+    Returns 'resolved' if all links are ``name:`` or URL prefixed,
+    'unresolved' if any link has ``dd:`` prefix (pending resolution),
+    or None if no links exist.
+    """
+    if not links:
+        return None
+    has_unresolved = any(link.startswith("dd:") for link in links)
+    return "unresolved" if has_unresolved else "resolved"
+
+
 # =============================================================================
 # Read helpers — extraction candidates
 # =============================================================================
@@ -278,6 +291,7 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
                 sn.vocab_gap_detail = coalesce(b.vocab_gap_detail, sn.vocab_gap_detail),
                 sn.validation_issues = coalesce(b.validation_issues, sn.validation_issues),
                 sn.validation_layer_summary = coalesce(b.validation_layer_summary, sn.validation_layer_summary),
+                sn.link_status = coalesce(b.link_status, sn.link_status),
                 sn.created_at = coalesce(sn.created_at, datetime())
             """,
             batch=[
@@ -315,6 +329,7 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
                     "validation_layer_summary": _ensure_json(
                         n.get("validation_layer_summary")
                     ),
+                    "link_status": _compute_link_status(n.get("links")),
                 }
                 for n in names
             ],
@@ -766,3 +781,136 @@ def update_review_status(names: list[str], status: str = "published") -> int:
         count = result[0]["updated"] if result else 0
         logger.info("Updated review_status to '%s' for %d names", status, count)
         return count
+
+
+# =============================================================================
+# Link resolution
+# =============================================================================
+
+_MAX_LINK_RETRIES = 5
+
+
+def claim_unresolved_links(limit: int = 20) -> list[dict[str, Any]]:
+    """Claim StandardName nodes with unresolved links for resolution.
+
+    Uses age-weighted random selection: nodes not checked recently have
+    higher priority, preventing spin on temporarily unresolvable links.
+
+    Returns list of dicts with ``id``, ``links``, ``link_retry_count``.
+    """
+    import uuid
+
+    token = str(uuid.uuid4())
+    with GraphClient() as gc:
+        gc.query(
+            """
+            MATCH (sn:StandardName)
+            WHERE sn.link_status = 'unresolved'
+              AND sn.claimed_at IS NULL
+              AND coalesce(sn.link_retry_count, 0) < $max_retries
+            WITH sn,
+                 duration.between(
+                     coalesce(sn.link_checked_at, datetime('2020-01-01')),
+                     datetime()
+                 ).minutes + 1.0 AS age_minutes
+            ORDER BY rand() * age_minutes DESC
+            LIMIT $limit
+            SET sn.claimed_at = datetime(), sn.claim_token = $token
+            """,
+            limit=limit,
+            max_retries=_MAX_LINK_RETRIES,
+            token=token,
+        )
+        rows = list(
+            gc.query(
+                """
+                MATCH (sn:StandardName {claim_token: $token})
+                RETURN sn.id AS id, sn.links AS links,
+                       coalesce(sn.link_retry_count, 0) AS retry_count
+                """,
+                token=token,
+            )
+        )
+    return [dict(r) for r in rows]
+
+
+def resolve_links_batch(items: list[dict[str, Any]]) -> dict[str, Any]:
+    """Resolve dd: links to name: links for a batch of names.
+
+    For each ``dd:path`` link, checks if a StandardName exists that was
+    generated from that path. If found, replaces with ``name:sn_id``.
+    """
+    resolved_count = 0
+    still_unresolved = 0
+    failed_count = 0
+
+    with GraphClient() as gc:
+        # Build lookup: dd_path -> standard_name_id
+        all_dd_paths = set()
+        for item in items:
+            for link in item.get("links") or []:
+                if link.startswith("dd:"):
+                    all_dd_paths.add(link[3:])
+
+        path_to_name: dict[str, str] = {}
+        if all_dd_paths:
+            rows = gc.query(
+                """
+                UNWIND $paths AS path
+                MATCH (n:IMASNode {id: path})-[:HAS_STANDARD_NAME]->(sn:StandardName)
+                RETURN path AS dd_path, sn.id AS sn_id
+                """,
+                paths=list(all_dd_paths),
+            )
+            for r in rows:
+                path_to_name[r["dd_path"]] = r["sn_id"]
+
+        for item in items:
+            links = list(item.get("links") or [])
+            new_links = []
+            any_unresolved = False
+
+            for link in links:
+                if link.startswith("dd:"):
+                    dd_path = link[3:]
+                    if dd_path in path_to_name:
+                        new_links.append(f"name:{path_to_name[dd_path]}")
+                    else:
+                        new_links.append(link)
+                        any_unresolved = True
+                else:
+                    new_links.append(link)
+
+            retry_count = item.get("retry_count", 0) + 1
+
+            if any_unresolved and retry_count >= _MAX_LINK_RETRIES:
+                status = "failed"
+                failed_count += 1
+            elif any_unresolved:
+                status = "unresolved"
+                still_unresolved += 1
+            else:
+                status = "resolved"
+                resolved_count += 1
+
+            gc.query(
+                """
+                MATCH (sn:StandardName {id: $id})
+                SET sn.links = $links,
+                    sn.link_status = $status,
+                    sn.link_checked_at = datetime(),
+                    sn.link_retry_count = $retry_count,
+                    sn.claimed_at = null,
+                    sn.claim_token = null
+                """,
+                id=item["id"],
+                links=new_links,
+                status=status,
+                retry_count=retry_count,
+            )
+
+    return {
+        "resolved": resolved_count,
+        "unresolved": still_unresolved,
+        "failed": failed_count,
+    }

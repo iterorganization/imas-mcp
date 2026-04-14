@@ -21,6 +21,10 @@ def sn() -> None:
       imas-codex sn generate --source signals --facility NAME
 
     \b
+    Links:
+      imas-codex sn resolve-links
+
+    \b
     Status:
       imas-codex sn status
     """
@@ -1115,3 +1119,95 @@ def sn_seed(
         written = west_result.validated if dry_run else west_result.written
         console.print(f"  {action}:   [green]{written}[/green] entries")
         console.print("")
+
+
+@sn.command("resolve-links")
+@click.option("--limit", type=int, default=50, help="Max names to process per round")
+@click.option(
+    "--rounds",
+    type=int,
+    default=3,
+    help="Number of resolution rounds (names may become resolvable between rounds)",
+)
+@click.option("--dry-run", is_flag=True, help="Check resolvability without writing")
+@click.option("-v", "--verbose", is_flag=True, help="Enable verbose logging")
+def sn_resolve_links(
+    limit: int,
+    rounds: int,
+    dry_run: bool,
+    verbose: bool,
+) -> None:
+    """Resolve dd: links to name: links in standard names.
+
+    \b
+    Links with dd: prefix point to DD paths that may now have standard names.
+    This command checks each unresolved link and replaces it with name: if
+    the target path has been named.
+
+    \b
+    Examples:
+      imas-codex sn resolve-links
+      imas-codex sn resolve-links --rounds 5 --limit 100
+    """
+    from imas_codex.cli.utils import setup_logging
+
+    setup_logging("DEBUG" if verbose else "WARNING")
+
+    from imas_codex.standard_names.graph_ops import (
+        claim_unresolved_links,
+        resolve_links_batch,
+    )
+
+    total_resolved = 0
+    total_unresolved = 0
+    total_failed = 0
+
+    for round_num in range(1, rounds + 1):
+        if dry_run:
+            # Just count unresolved
+            from imas_codex.graph.client import GraphClient
+
+            with GraphClient() as gc:
+                rows = list(
+                    gc.query(
+                        """
+                        MATCH (sn:StandardName)
+                        WHERE sn.link_status = 'unresolved'
+                        RETURN count(sn) AS count
+                        """
+                    )
+                )
+                count = rows[0]["count"] if rows else 0
+            console.print(
+                f"[dim]Round {round_num}:[/dim] {count} names with unresolved links"
+            )
+            break
+
+        items = claim_unresolved_links(limit=limit)
+        if not items:
+            console.print(
+                f"[dim]Round {round_num}:[/dim] No unresolved links remaining"
+            )
+            break
+
+        result = resolve_links_batch(items)
+        total_resolved += result["resolved"]
+        total_unresolved += result["unresolved"]
+        total_failed += result["failed"]
+
+        console.print(
+            f"[dim]Round {round_num}:[/dim] "
+            f"[green]{result['resolved']}[/green] resolved, "
+            f"[yellow]{result['unresolved']}[/yellow] still unresolved, "
+            f"[red]{result['failed']}[/red] failed"
+        )
+
+        if result["unresolved"] == 0:
+            break
+
+    console.print(
+        f"\n[bold]Total:[/bold] "
+        f"[green]{total_resolved}[/green] resolved, "
+        f"[yellow]{total_unresolved}[/yellow] unresolved, "
+        f"[red]{total_failed}[/red] failed"
+    )

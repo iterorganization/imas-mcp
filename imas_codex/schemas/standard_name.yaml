@@ -84,6 +84,18 @@ enums:
       metadata:
         description: Non-measurable concept or classification
 
+  LinkResolutionStatus:
+    description: Status of cross-reference link resolution for standard names
+    permissible_values:
+      resolved:
+        description: All links point to existing standard names with name prefix
+      unresolved:
+        description: One or more links point to DD paths with dd prefix or missing names
+      failed:
+        description: >-
+          Link resolution attempted multiple times and permanently failed.
+          Terminal state — requires manual intervention or vocabulary update.
+
 # =============================================================================
 # Classes
 # =============================================================================
@@ -244,3 +256,19 @@ classes:
         description: >-
           Git commit SHA of the catalog repo at import time.
           Enables sync-status checking between graph and catalog.
+      link_status:
+        description: >-
+          Resolution status of cross-reference links. Set to 'unresolved'
+          when dd: prefix links are present, 'resolved' when all links
+          point to existing standard names, 'failed' after max retries.
+        range: LinkResolutionStatus
+      link_checked_at:
+        description: >-
+          ISO 8601 timestamp when link resolution was last attempted.
+          Used with link_retry_count for age-weighted priority queuing.
+        range: datetime
+      link_retry_count:
+        description: >-
+          Number of link resolution attempts. Used to determine when
+          to move to terminal 'failed' state (max 5 retries).
+        range: integer
