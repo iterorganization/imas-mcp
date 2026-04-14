@@ -232,10 +232,8 @@ resolved asynchronously after generation completes. Requires:
 **Root cause:** Pipeline was designed for small batches where all names are known.
 At scale (full DD), names reference each other across batches and domains.
 
-**Resolution:** Design and implement link resolution worker with penalty-based
-queue ordering. See feature plan for detailed design.
-
-**Status:** ☐ Not started
+**Status:** ✅ **RESOLVED** — LinkResolutionStatus enum, `sn resolve-links` CLI,
+age-weighted claim_unresolved_links(), resolve_links_batch().
 
 ---
 
@@ -275,7 +273,7 @@ flux_surface_averaged_parallel_bootstrap_current_density) as gold standards.
 **Resolution:** Add `--paths` flag accepting space-separated DD paths. Paths
 bypass graph query and classifier, go directly into batches.
 
-**Status:** ☐ Not started
+**Status:** ✅ **RESOLVED** — `--paths` flag implemented, implies `--force`.
 
 ---
 
