@@ -71,6 +71,26 @@ _PHYSICS_SHORT_TERMS: dict[str, str] = {
     "lh": "lower hybrid",
 }
 
+# Accessor terminals (data containers, time bases, validity flags) are
+# rarely the user's intent for concept queries.  Apply a small penalty
+# so the parent concept path ranks higher.
+_ACCESSOR_TERMINALS: frozenset[str] = frozenset(
+    {"data", "value", "time", "validity", "fit", "coefficients"}
+)
+
+# Soft IDS preferences for unqualified concept queries.
+# When query terms overlap these keywords and the result lives in the
+# preferred IDS, a small boost (3%) helps canonical paths rank first.
+# Only active when no explicit ids_filter is provided.
+_CONCEPT_IDS_PREFERENCE: dict[str, str] = {
+    "temperature": "core_profiles",
+    "density": "core_profiles",
+    "psi": "equilibrium",
+    "current": "equilibrium",
+    "boundary": "equilibrium",
+    "b_field": "magnetics",
+}
+
 # Lucene special characters that must be escaped in user queries
 _LUCENE_SPECIAL = frozenset('+-&&||!(){}[]^"~*?:\\/')
 
@@ -361,6 +381,29 @@ class GraphSearchTool:
                 if match_count > 0:
                     scores[pid] = round(scores[pid] * (1 + 0.015 * match_count), 4)
 
+        # --- Accessor de-ranking ---
+        # Accessor terminals (data containers, time bases, validity flags) are
+        # rarely the user's intent for concept queries.  Apply a small penalty
+        # so the parent concept path ranks higher.
+        for pid in scores:
+            terminal = pid.rsplit("/", 1)[-1].lower()
+            if terminal in _ACCESSOR_TERMINALS:
+                scores[pid] = round(scores[pid] * 0.95, 4)
+
+        # --- IDS preference for unqualified queries ---
+        # When no explicit IDS filter is active, give a small boost to results
+        # from the canonical IDS for recognised concept keywords.
+        if not normalized_filter and query_words:
+            matched_ids_prefs: set[str] = set()
+            for w in query_words:
+                if w in _CONCEPT_IDS_PREFERENCE:
+                    matched_ids_prefs.add(_CONCEPT_IDS_PREFERENCE[w])
+            if matched_ids_prefs:
+                for pid in scores:
+                    result_ids = pid.split("/", 1)[0]
+                    if result_ids in matched_ids_prefs:
+                        scores[pid] = round(scores[pid] * 1.03, 4)
+
         # Rank and limit
         sorted_ids = sorted(scores, key=lambda pid: scores[pid], reverse=True)[
             :max_results
@@ -590,6 +633,45 @@ class GraphPathTool:
                 f"{ids}/{p}" if "/" not in p or not p.startswith(ids) else p
                 for p in path_list
             ]
+
+            # Validate that the IDS itself exists
+            ids_check = self._gc.query(
+                "MATCH (i:IDS {id: $ids_name}) RETURN i.id",
+                ids_name=ids,
+            )
+            if not ids_check:
+                # IDS not found — try fuzzy suggestion
+                ids_suggestions: list[str] = []
+                try:
+                    matcher = self._get_fuzzy_matcher(dd_version)
+                    ids_suggestions = matcher.suggest_ids(ids, max_suggestions=3)
+                except Exception:
+                    logger.debug("Fuzzy IDS suggestion unavailable", exc_info=True)
+
+                suggestion_text = (
+                    f"Unknown IDS '{ids}'. Did you mean: {ids_suggestions[0]}?"
+                    if ids_suggestions
+                    else f"IDS '{ids}' not found in data dictionary"
+                )
+                top_suggestion = ids_suggestions[0] if ids_suggestions else None
+                return CheckPathsResult(
+                    results=[
+                        CheckPathsResultItem(
+                            path=p,
+                            exists=False,
+                            suggestion=top_suggestion,
+                            suggestions=ids_suggestions or None,
+                            error=suggestion_text,
+                        )
+                        for p in path_list
+                    ],
+                    summary={
+                        "total": len(path_list),
+                        "found": 0,
+                        "not_found": len(path_list),
+                    },
+                    error=suggestion_text,
+                )
 
         dd_params: dict[str, Any] = {}
         dd_clause = _dd_version_clause("p", dd_version, dd_params)
