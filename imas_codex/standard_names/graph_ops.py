@@ -262,7 +262,7 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
     ``generated_at``, ``confidence``, ``reviewer_model``, ``reviewer_score``,
     ``reviewer_scores``, ``reviewer_comments``, ``reviewed_at``,
     ``review_tier``, ``vocab_gap_detail``, ``validation_issues``,
-    ``validation_layer_summary``.
+    ``validation_layer_summary``, ``cocos_transformation_type``, ``dd_version``.
 
     Performs conflict detection on ``unit``: if a StandardName already exists
     with a different unit value, that entry is skipped (not written)
@@ -330,6 +330,8 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
                 sn.constraints = coalesce(b.constraints, sn.constraints),
                 sn.unit = coalesce(b.unit, sn.unit),
                 sn.physics_domain = coalesce(b.physics_domain, sn.physics_domain),
+                sn.cocos_transformation_type = coalesce(b.cocos_transformation_type, sn.cocos_transformation_type),
+                sn.dd_version = coalesce(b.dd_version, sn.dd_version),
                 sn.model = coalesce(b.model, sn.model),
                 sn.review_status = coalesce(b.review_status, sn.review_status),
                 sn.generated_at = coalesce(b.generated_at, sn.generated_at),
@@ -366,6 +368,8 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
                     "constraints": n.get("constraints") or None,
                     "unit": n.get("unit"),
                     "physics_domain": n.get("physics_domain"),
+                    "cocos_transformation_type": n.get("cocos_transformation_type"),
+                    "dd_version": n.get("dd_version"),
                     "model": n.get("model"),
                     "review_status": n.get("review_status"),
                     "generated_at": n.get("generated_at"),
@@ -433,6 +437,24 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
                 MERGE (sn)-[:HAS_UNIT]->(u)
                 """,
                 batch=units_batch,
+            )
+
+        # Create FROM_DD_VERSION relationships: StandardName → DDVersion
+        # Use MATCH (not MERGE) — DDVersion nodes already exist from DD build.
+        dd_version_batch = [
+            {"id": n["id"], "dd_version": n["dd_version"]}
+            for n in names
+            if n.get("dd_version")
+        ]
+        if dd_version_batch:
+            gc.query(
+                """
+                UNWIND $batch AS b
+                MATCH (sn:StandardName {id: b.id})
+                MATCH (dv:DDVersion {id: b.dd_version})
+                MERGE (sn)-[:FROM_DD_VERSION]->(dv)
+                """,
+                batch=dd_version_batch,
             )
 
     written = len(names)
@@ -527,7 +549,9 @@ def get_validated_standard_names(
                    sn.coordinate AS coordinate,
                    sn.position AS position,
                    sn.process AS process,
-                   all_ids AS source_ids_names
+                   all_ids AS source_ids_names,
+                   sn.cocos_transformation_type AS cocos_transformation_type,
+                   sn.dd_version AS dd_version
             ORDER BY sn.id
         """
 
@@ -553,8 +577,8 @@ def reset_standard_names(
     """Reset StandardName nodes to allow re-processing.
 
     Clears transient fields (embedding, embedded_at, model, generated_at,
-    confidence) and removes HAS_STANDARD_NAME and HAS_UNIT
-    relationships for matching nodes.
+    confidence) and removes HAS_STANDARD_NAME, HAS_UNIT, and
+    FROM_DD_VERSION relationships for matching nodes.
 
     Parameters
     ----------
@@ -633,7 +657,7 @@ def reset_standard_names(
                 reset_params["ids_prefix"] = ids_filter + "/"
             node_match = f"MATCH (sn:StandardName) WHERE {where}"
 
-        # Remove HAS_STANDARD_NAME and HAS_UNIT relationships
+        # Remove HAS_STANDARD_NAME, HAS_UNIT, and FROM_DD_VERSION relationships
         gc.query(
             f"""
             {node_match}
@@ -650,19 +674,29 @@ def reset_standard_names(
             """,
             **reset_params,
         )
+        gc.query(
+            f"""
+            {node_match}
+            OPTIONAL MATCH (sn)-[r:FROM_DD_VERSION]->(dv)
+            DELETE r
+            """,
+            **reset_params,
+        )
 
         # Clear transient fields, optionally set new status
         if to_status is not None:
             set_clause = (
                 "sn.embedding = null, sn.embedded_at = null, sn.model = null, "
                 "sn.generated_at = null, sn.confidence = null, "
+                "sn.cocos_transformation_type = null, sn.dd_version = null, "
                 "sn.review_status = $to_status"
             )
             reset_params["to_status"] = to_status
         else:
             set_clause = (
                 "sn.embedding = null, sn.embedded_at = null, sn.model = null, "
-                "sn.generated_at = null, sn.confidence = null"
+                "sn.generated_at = null, sn.confidence = null, "
+                "sn.cocos_transformation_type = null, sn.dd_version = null"
             )
 
         gc.query(
