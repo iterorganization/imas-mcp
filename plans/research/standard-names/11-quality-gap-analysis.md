@@ -17,16 +17,16 @@ on 2025-04-13, with review enabled. Queried from Neo4j graph.
 
 ## Summary Scorecard
 
-| Metric | Catalog (309) | Pipeline (17) | Target | Gap |
-|--------|--------------|---------------|--------|-----|
-| Avg documentation length | 1569 chars (median 2008) | 473 chars (median ~450) | ≥1200 chars | **4.2× shorter** |
-| With governing equation | 72% (224/309) | ~40% | ≥80% | **Missing equations** |
-| With sign convention | 65% (201/309) | ~10% | ≥60% | **Almost no sign conventions** |
-| With links | 47% (145/309), avg 8.2 | 100% but many invalid | ≥80%, avg ≥6 | **Links lack `name:` prefix in older names** |
-| Tags — secondary only | 100%, avg 2.6 | ~40% include primary tags | 100% secondary only | **Primary tag leakage** |
-| Units persisted | 100% | 100% (stored as `canonical_units`) | 100% | ✅ **RESOLVED** — property name is `canonical_units`, not `unit` |
-| Reviewer score | N/A (human reviewed) | avg 0.54 (range 0.36–0.68) | avg ≥0.75 | **Quality below threshold** |
-| ISN validation pass | 100% (catalog is canonical) | ~70% (post-fix) | ≥95% | **Validation failures** |
+| Metric | Catalog (309) | Pipeline (before) | Pipeline (after) | Target | Status |
+|--------|--------------|-------------------|------------------|--------|--------|
+| Avg documentation length | 1569 chars (median 2008) | 473 chars | **941 chars** (avg of latest 7) | ≥1200 chars | 🟡 **2× improved, closing** |
+| With governing equation | 72% (224/309) | ~40% | **100%** (latest batch) | ≥80% | ✅ **RESOLVED** |
+| With sign convention | 65% (201/309) | ~10% | **100%** (latest batch) | ≥60% | ✅ **RESOLVED** |
+| With links | 47% (145/309), avg 8.2 | 100% but many invalid | 100%, avg 3.3 | ≥80%, avg ≥6 | 🟡 **Prefix fixed, count improving** |
+| Tags — secondary only | 100%, avg 2.6 | ~40% include primary tags | **100% secondary only** | 100% secondary only | ✅ **RESOLVED** — migrated 9 names |
+| Units persisted | 100% | 100% (stored as `canonical_units`) | 100% | 100% | ✅ **RESOLVED** |
+| Reviewer score | N/A (human reviewed) | avg 0.54 (range 0.36–0.68) | **avg 0.84** (range 0.50–0.96) | avg ≥0.75 | ✅ **RESOLVED** — 3 outstanding, 4 good |
+| ISN validation pass | 100% (catalog is canonical) | ~70% (post-fix) | **100%** (latest 7) | ≥95% | ✅ **RESOLVED** |
 
 ---
 
