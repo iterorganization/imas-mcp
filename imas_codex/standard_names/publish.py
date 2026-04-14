@@ -79,6 +79,8 @@ def generate_yaml_entry(entry: SNPublishEntry) -> str:
         doc["constraints"] = entry.constraints
     if entry.validity_domain:
         doc["validity_domain"] = entry.validity_domain
+    if entry.cocos_transformation_type:
+        doc["cocos_transformation_type"] = entry.cocos_transformation_type
     doc["provenance"] = {
         "source": entry.provenance.source,
         "source_id": entry.provenance.source_id,
@@ -294,6 +296,7 @@ def graph_records_to_entries(
         ids_paths_raw = rec.get("ids_paths") or []
         constraints_raw = rec.get("constraints") or []
         validity_domain = rec.get("validity_domain")
+        cocos_transformation_type = rec.get("cocos_transformation_type")
 
         # Build tags from available context
         tags: list[str] = list(rec.get("tags") or [])
@@ -326,6 +329,7 @@ def graph_records_to_entries(
                 if isinstance(constraints_raw, list)
                 else [],
                 validity_domain=validity_domain,
+                cocos_transformation_type=cocos_transformation_type,
                 provenance=provenance,
             )
         )

@@ -51,10 +51,25 @@ class SNVocabGap(BaseModel):
     reason: str = Field(description="Why this token is needed for naming this path")
 
 
+class SNAttachment(BaseModel):
+    """A DD path that should attach to an existing standard name without regeneration."""
+
+    source_id: str = Field(description="DD path to attach")
+    standard_name: str = Field(description="Existing standard name to attach to")
+    reason: str = Field(description="Why this path maps to this existing name")
+
+
 class SNComposeBatch(BaseModel):
     """LLM response for a batch of standard name compositions."""
 
     candidates: list[SNCandidate]
+    attachments: list[SNAttachment] = Field(
+        default_factory=list,
+        description=(
+            "DD paths that map to existing standard names — attach without regeneration. "
+            "Use when a path measures the exact same quantity as an existing name."
+        ),
+    )
     skipped: list[str] = Field(
         default_factory=list, description="Source IDs skipped (not physics quantities)"
     )
@@ -108,6 +123,10 @@ class SNPublishEntry(BaseModel):
     )
     validity_domain: str | None = Field(
         default=None, description="Physical region where valid"
+    )
+    cocos_transformation_type: str | None = Field(
+        default=None,
+        description="COCOS transformation type (e.g., psi_like, ip_like). Null for non-COCOS quantities.",
     )
     provenance: SNProvenance = Field(description="Generation provenance")
 

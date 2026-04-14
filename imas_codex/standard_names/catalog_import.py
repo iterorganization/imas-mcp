@@ -174,6 +174,7 @@ def _write_catalog_entries(
                 sn.validity_domain = b.validity_domain,
                 sn.constraints = b.constraints,
                 sn.physics_domain = b.physics_domain,
+                sn.cocos_transformation_type = coalesce(b.cocos_transformation_type, sn.cocos_transformation_type),
                 sn.review_status = 'accepted',
                 sn.imported_at = datetime(),
                 sn.catalog_commit_sha = b.catalog_commit_sha,
@@ -189,7 +190,8 @@ def _write_catalog_entries(
                 sn.embedded_at = coalesce(sn.embedded_at, null),
                 sn.model = coalesce(sn.model, null),
                 sn.generated_at = coalesce(sn.generated_at, null),
-                sn.confidence = coalesce(sn.confidence, null)
+                sn.confidence = coalesce(sn.confidence, null),
+                sn.dd_version = coalesce(sn.dd_version, null)
             """,
             batch=entries,
         )
@@ -311,7 +313,7 @@ def import_catalog(
                 continue
 
         # Convert to graph dict
-        graph_dict = _catalog_entry_to_dict(entry)
+        graph_dict = _catalog_entry_to_dict(entry, extra=data)
         prepared.append(graph_dict)
         result.entries.append(graph_dict)
 
@@ -400,7 +402,7 @@ def check_catalog(
             if not entry_tags.intersection(tag_filter):
                 continue
 
-        graph_dict = _catalog_entry_to_dict(entry)
+        graph_dict = _catalog_entry_to_dict(entry, extra=data)
         catalog_entries[graph_dict["id"]] = graph_dict
 
     if not catalog_entries:
