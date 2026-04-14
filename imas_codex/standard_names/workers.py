@@ -458,6 +458,13 @@ async def compose_worker(state: SNBuildState, **_kwargs) -> None:
     await asyncio.to_thread(_enrich_all_batches)
     wlog.info("Enriched batch items with DD context")
 
+    # Propagate COCOS metadata to state (for downstream phases)
+    if state.extracted:
+        first_batch = state.extracted[0]
+        state.dd_version = first_batch.dd_version
+        state.cocos_version = first_batch.cocos_version
+        state.cocos_params = first_batch.cocos_params
+
     # Pre-fetch IDS-level context for each unique IDS across batches
     ids_context_cache: dict[str, dict | None] = {}
 
@@ -477,6 +484,22 @@ async def compose_worker(state: SNBuildState, **_kwargs) -> None:
     wlog.info("Fetched IDS context for %d IDS(s)", len(ids_context_cache))
 
     # Render system prompt once (cached via prompt caching)
+    # Inject COCOS context for system prompt (all batches share one DD version)
+    if state.extracted:
+        first_batch = state.extracted[0]
+        if first_batch.cocos_version:
+            context["cocos_version"] = first_batch.cocos_version
+            context["dd_version"] = first_batch.dd_version
+            if first_batch.cocos_params:
+                context["cocos_sigma_bp"] = first_batch.cocos_params.get("sigma_bp")
+                context["cocos_e_bp"] = first_batch.cocos_params.get("e_bp")
+                context["cocos_sigma_r_phi_z"] = first_batch.cocos_params.get(
+                    "sigma_r_phi_z"
+                )
+                context["cocos_sigma_rho_theta_phi"] = first_batch.cocos_params.get(
+                    "sigma_rho_theta_phi"
+                )
+
     system_prompt = render_prompt("sn/compose_system", context)
 
     wlog.info(
@@ -511,6 +534,17 @@ async def compose_worker(state: SNBuildState, **_kwargs) -> None:
                 if info:
                     ids_contexts.append({"ids_name": iname, **info})
 
+            # Pre-render COCOS guidance for items
+            if batch.cocos_params:
+                from imas_codex.standard_names.context import render_cocos_guidance
+
+                for item in batch.items:
+                    cocos_label = item.get("cocos_label")
+                    if cocos_label:
+                        item["cocos_guidance"] = render_cocos_guidance(
+                            cocos_label, batch.cocos_params
+                        )
+
             user_context = {
                 "items": batch.items,
                 "ids_name": batch.group_key,
@@ -518,6 +552,8 @@ async def compose_worker(state: SNBuildState, **_kwargs) -> None:
                 "existing_names": sorted(batch.existing_names)[:200],
                 "cluster_context": batch.context,
                 "nearby_existing_names": nearby,
+                "cocos_version": batch.cocos_version,
+                "dd_version": batch.dd_version,
             }
             user_prompt = render_prompt("sn/compose_dd", {**context, **user_context})
 
@@ -556,6 +592,9 @@ async def compose_worker(state: SNBuildState, **_kwargs) -> None:
                     source_item.get("physics_domain") if source_item else None
                 )
 
+                # Inject COCOS metadata from DD (authoritative, like unit)
+                cocos_type = source_item.get("cocos_label") if source_item else None
+
                 # Post-process links: ensure name: prefix for internal refs
                 links = _normalize_links(c.links)
 
@@ -580,6 +619,8 @@ async def compose_worker(state: SNBuildState, **_kwargs) -> None:
                         "constraints": c.constraints,
                         "unit": unit,
                         "physics_domain": physics_domain,
+                        "cocos_transformation_type": cocos_type,
+                        "dd_version": batch.dd_version,
                     }
                 )
 
