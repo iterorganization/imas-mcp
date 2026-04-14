@@ -19,25 +19,44 @@ _CACHE_MAX_AGE_DAYS = 7
 
 
 def _cache_key(gc) -> str:
-    """Build cache key from DD version + cluster count."""
+    """Build cache key from DD version + node count hash."""
     try:
         info = gc.query(
             """
-            MATCH (v:DDVersion) WITH count(v) AS vc
-            MATCH (c:IMASSemanticCluster) WITH vc, count(c) AS cc
-            RETURN vc, cc
+            MATCH (v:DDVersion)
+            WITH count(v) AS vc
+            OPTIONAL MATCH (v2:DDVersion) WHERE v2.is_current = true
+            WITH vc, v2.version AS current_version
+            MATCH (n:IMASNode) WHERE n.node_category = 'data'
+            WITH vc, current_version, count(n) AS nc
+            MATCH (c:IMASSemanticCluster)
+            WITH vc, current_version, nc, count(c) AS cc
+            RETURN vc, current_version, nc, cc
             """
         )
         if info:
-            raw = f"dd_versions={info[0]['vc']}_clusters={info[0]['cc']}"
+            row = info[0]
+            raw = (
+                f"dd_versions={row['vc']}"
+                f"_current={row.get('current_version', 'unknown')}"
+                f"_nodes={row['nc']}"
+                f"_clusters={row['cc']}"
+            )
             return hashlib.sha256(raw.encode()).hexdigest()[:16]
     except Exception:
         pass
     return "unknown"
 
 
-def _load_cache() -> dict | None:
-    """Load cached expected paths if fresh."""
+def _load_cache(gc=None) -> dict | None:
+    """Load cached expected paths if fresh.
+
+    Parameters
+    ----------
+    gc : GraphClient | None
+        When provided, the stored cache key is compared against the current
+        graph state and the cache is invalidated on mismatch.
+    """
     if not _CACHE_FILE.exists():
         return None
     try:
@@ -48,6 +67,17 @@ def _load_cache() -> dict | None:
         if age_days > _CACHE_MAX_AGE_DAYS:
             logger.info("Expected paths cache is %.1f days old, regenerating", age_days)
             return None
+        # Check graph version key if gc is available
+        if gc is not None:
+            current_key = _cache_key(gc)
+            cached_key = data.get("cache_key", "")
+            if current_key != "unknown" and cached_key != current_key:
+                logger.info(
+                    "Cache key mismatch (cached=%s, current=%s), regenerating",
+                    cached_key,
+                    current_key,
+                )
+                return None
         return data
     except Exception:
         return None
@@ -81,7 +111,7 @@ def expanded_expected_paths(request):
     """
     force_regen = request.config.getoption("--regenerate-expected", default=False)
 
-    # Try loading cache
+    # Try loading cache (without gc first — fast path for age-only check)
     if not force_regen:
         cached = _load_cache()
         if cached and "paths" in cached:
@@ -98,6 +128,12 @@ def expanded_expected_paths(request):
         return {q.query_text: set(q.expected_paths) for q in ALL_QUERIES}
 
     try:
+        # Re-validate cache with graph connection for key-based freshness check
+        if not force_regen:
+            cached = _load_cache(gc)
+            if cached and "paths" in cached:
+                return {qt: set(paths) for qt, paths in cached["paths"].items()}
+
         from tests.search.generate_expected_paths import generate_all_expected_paths
 
         key = _cache_key(gc)

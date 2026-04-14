@@ -393,6 +393,7 @@ def evaluate_config(
     encoder: Any,
     queries: list[BenchmarkQuery] | None = None,
     max_results: int = 50,
+    expanded_expected: dict[str, set[str]] | None = None,
 ) -> dict[str, Any]:
     """Run all benchmark queries with given config, return metrics.
 
@@ -408,6 +409,11 @@ def evaluate_config(
         Queries to evaluate; defaults to ALL_QUERIES (30 queries).
     max_results : int
         Maximum results per query.
+    expanded_expected : dict[str, set[str]] | None
+        Optional mapping of query_text to expanded expected path sets
+        (from ``expanded_expected_paths`` fixture).  When provided, the
+        expanded set is used for MRR/P@10/IDS-Recall computation instead
+        of the hand-curated ``q.expected_paths``.
 
     Returns
     -------
@@ -427,9 +433,16 @@ def evaluate_config(
     for q in queries:
         ranked = _search_with_config(gc, encoder, config, q.query_text, max_results)
 
-        rr = compute_mrr(ranked, q.expected_paths, allow_prefix=True)
-        p10 = compute_precision_at_k(ranked, q.expected_paths, k=10)
-        ids_r10 = compute_ids_recall_at_k(ranked, q.expected_paths, k=10)
+        # Use expanded paths when available, fall back to hand-curated
+        effective_expected = (
+            list(expanded_expected.get(q.query_text, set()))
+            if expanded_expected
+            else q.expected_paths
+        )
+
+        rr = compute_mrr(ranked, effective_expected, allow_prefix=True)
+        p10 = compute_precision_at_k(ranked, effective_expected, k=10)
+        ids_r10 = compute_ids_recall_at_k(ranked, effective_expected, k=10)
 
         mrr_values.append(rr)
         p10_values.append(p10)
@@ -443,7 +456,7 @@ def evaluate_config(
                 "precision_at_10": p10,
                 "ids_recall_at_10": ids_r10,
                 "top_5": ranked[:5],
-                "expected": q.expected_paths,
+                "expected": effective_expected,
             }
         )
 
@@ -1076,9 +1089,14 @@ class TestDoEEvaluation:
             elif "IMAS_CODEX_EMBEDDING_MODEL" in os.environ:
                 del os.environ["IMAS_CODEX_EMBEDDING_MODEL"]
 
-    def test_default_config_mrr(self, graph_client, encoder):
+    def test_default_config_mrr(self, graph_client, encoder, expanded_expected_paths):
         """Default config meets MRR target."""
-        metrics = evaluate_config(MixConfig(), graph_client, encoder)
+        metrics = evaluate_config(
+            MixConfig(),
+            graph_client,
+            encoder,
+            expanded_expected=expanded_expected_paths,
+        )
         logger.info(
             "Default: MRR=%.3f P@10=%.3f IDS-R@10=%.3f composite=%.3f",
             metrics["mrr"],
@@ -1095,9 +1113,16 @@ class TestDoEEvaluation:
             f"Default MRR {metrics['mrr']:.3f} below 0.20 target"
         )
 
-    def test_default_config_precision(self, graph_client, encoder):
+    def test_default_config_precision(
+        self, graph_client, encoder, expanded_expected_paths
+    ):
         """Default config meets P@10 target."""
-        metrics = evaluate_config(MixConfig(), graph_client, encoder)
+        metrics = evaluate_config(
+            MixConfig(),
+            graph_client,
+            encoder,
+            expanded_expected=expanded_expected_paths,
+        )
         if metrics["precision_at_10"] < 0.05:
             pytest.xfail(
                 f"Default P@10 {metrics['precision_at_10']:.3f} below 0.05 target "
@@ -1107,9 +1132,16 @@ class TestDoEEvaluation:
             f"Default P@10 {metrics['precision_at_10']:.3f} below 0.05 target"
         )
 
-    def test_per_category_coverage(self, graph_client, encoder):
+    def test_per_category_coverage(
+        self, graph_client, encoder, expanded_expected_paths
+    ):
         """Log per-category MRR for diagnostic purposes."""
-        metrics = evaluate_config(MixConfig(), graph_client, encoder)
+        metrics = evaluate_config(
+            MixConfig(),
+            graph_client,
+            encoder,
+            expanded_expected=expanded_expected_paths,
+        )
         cat_mrr = metrics["per_category_mrr"]
         for cat in CATEGORY_NAMES:
             if cat in cat_mrr:
