@@ -44,6 +44,11 @@ class SNBuildState(DiscoveryStateBase):
     compose_model: str | None = None  # Override for compose step (default: reasoning)
     review_model: str | None = None  # Override for review step (default: language)
 
+    # COCOS provenance (resolved once at extract start)
+    extraction_dd_version: str | None = None
+    cocos_version: int | None = None
+    cocos_params: dict | None = None
+
     # In-memory pipeline data (extract → compose → review → validate → consolidate)
     extracted: list[Any] = field(default_factory=list)  # ExtractionBatch objects
     composed: list[dict[str, Any]] = field(default_factory=list)

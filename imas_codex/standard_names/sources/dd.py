@@ -45,7 +45,9 @@ RETURN n.id AS path,
        parent.data_type AS parent_type,
        coord.id AS coord_path,
        coord.description AS coord_description,
-       cu.id AS coord_unit
+       cu.id AS coord_unit,
+       n.cocos_label_transformation AS cocos_label,
+       n.cocos_transformation_expression AS cocos_expression
 ORDER BY ids.id, n.id
 LIMIT $limit
 """
@@ -99,6 +101,22 @@ def extract_dd_candidates(
     _status("querying graph…")
 
     with GraphClient() as gc:
+        # Resolve extraction DD version and COCOS convention
+        dv_row = next(
+            iter(
+                gc.query("""
+                MATCH (dv:DDVersion {is_current: true})
+                OPTIONAL MATCH (dv)-[:HAS_COCOS]->(c:COCOS)
+                RETURN dv.id AS dd_version, dv.cocos AS cocos_version,
+                       properties(c) AS cocos_params
+            """)
+            ),
+            None,
+        )
+        extraction_dd_version = dv_row["dd_version"] if dv_row else None
+        cocos_version = dv_row["cocos_version"] if dv_row else None
+        cocos_params = dv_row["cocos_params"] if dv_row else None
+
         params: dict = {"limit": limit}
         where_parts = [
             "n.node_type = 'dynamic'",
@@ -186,6 +204,13 @@ def extract_dd_candidates(
         len(results),
         len(cluster_ids),
     )
+
+    # Propagate COCOS metadata to batches
+    for batch in batches:
+        batch.extraction_dd_version = extraction_dd_version
+        batch.cocos_version = cocos_version
+        batch.cocos_params = cocos_params
+
     return batches
 
 
@@ -260,6 +285,22 @@ def extract_specific_paths(
 
     results: list[dict] = []
     with GraphClient() as gc:
+        # Resolve extraction DD version and COCOS convention
+        dv_row = next(
+            iter(
+                gc.query("""
+                MATCH (dv:DDVersion {is_current: true})
+                OPTIONAL MATCH (dv)-[:HAS_COCOS]->(c:COCOS)
+                RETURN dv.id AS dd_version, dv.cocos AS cocos_version,
+                       properties(c) AS cocos_params
+            """)
+            ),
+            None,
+        )
+        extraction_dd_version = dv_row["dd_version"] if dv_row else None
+        cocos_version = dv_row["cocos_version"] if dv_row else None
+        cocos_params = dv_row["cocos_params"] if dv_row else None
+
         for path in paths:
             rows = list(gc.query(_TARGETED_PATH_QUERY, path=path))
             if rows:
@@ -333,4 +374,11 @@ def extract_specific_paths(
         len(batches),
         len(enriched),
     )
+
+    # Propagate COCOS metadata to batches
+    for batch in batches:
+        batch.extraction_dd_version = extraction_dd_version
+        batch.cocos_version = cocos_version
+        batch.cocos_params = cocos_params
+
     return batches

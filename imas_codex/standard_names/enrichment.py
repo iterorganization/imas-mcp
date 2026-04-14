@@ -189,7 +189,9 @@ def enrich_paths(paths: list[dict]) -> list[dict]:
     return enriched
 
 
-def build_batch_context(items: list[dict], group_key: str) -> str:
+def build_batch_context(
+    items: list[dict], group_key: str, cocos_version: int | None = None
+) -> str:
     """Build rich context summary for a batch.
 
     Includes cluster label, authoritative unit, path count, cross-IDS
@@ -238,6 +240,16 @@ def build_batch_context(items: list[dict], group_key: str) -> str:
     if siblings:
         sib_strs = [f"  {s['path']} ({s.get('unit', '?')})" for s in siblings[:5]]
         parts.append("Cross-IDS siblings:\n" + "\n".join(sib_strs))
+
+    # COCOS context
+    cocos_labels = {
+        item.get("cocos_label") for item in items if item.get("cocos_label")
+    }
+    if cocos_labels:
+        labels_str = ", ".join(sorted(cocos_labels))
+        parts.append(f"COCOS transformation types: {labels_str}")
+        if cocos_version:
+            parts.append(f"COCOS convention: {cocos_version}")
 
     return "\n".join(parts)
 
