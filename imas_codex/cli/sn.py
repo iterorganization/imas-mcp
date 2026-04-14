@@ -80,9 +80,14 @@ def sn() -> None:
     "--review-model",
     type=str,
     default=None,
-    help="LLM model for cross-model review (default: reasoning model)",
+    help="LLM model for scoring review (default: language model)",
 )
-@click.option("--skip-review", is_flag=True, help="Skip the cross-model review phase")
+@click.option(
+    "--compose-model",
+    type=str,
+    default=None,
+    help="LLM model for name composition (default: reasoning model)",
+)
 @click.option("-v", "--verbose", is_flag=True, help="Enable verbose logging")
 @click.option("-q", "--quiet", is_flag=True, help="Suppress non-error output")
 @click.option(
@@ -117,7 +122,7 @@ def sn_generate(
     force: bool,
     limit: int | None,
     review_model: str | None,
-    skip_review: bool,
+    compose_model: str | None,
     verbose: bool,
     quiet: bool,
     paths_list: str | None,
@@ -280,9 +285,9 @@ def sn_generate(
         log_print("  Force: re-generating all names")
     if limit:
         log_print(f"  Limit: {limit} paths")
-    if skip_review:
-        log_print("  Review: skipped")
-    elif review_model:
+    if compose_model:
+        log_print(f"  Compose model: {compose_model}")
+    if review_model:
         log_print(f"  Review model: {review_model}")
     log_print(f"  Cost limit: ${cost_limit:.2f}")
     log_print("")
@@ -301,7 +306,6 @@ def sn_generate(
                 console=console_obj,
                 cost_limit=cost_limit,
                 mode_label="DRY RUN" if dry_run else None,
-                skip_review=skip_review,
             )
         except Exception:
             logger.debug("Could not create progress display", exc_info=True)
@@ -317,7 +321,7 @@ def sn_generate(
         dry_run=dry_run,
         force=force,
         limit=limit,
-        skip_review=skip_review,
+        compose_model=compose_model,
         review_model=review_model,
     )
 
@@ -357,16 +361,15 @@ def sn_generate(
     if result:
         extracted = result.get("extract_count", 0)
         composed = result.get("compose_count", 0)
-        reviewed = result.get("review_accepted", composed)
+        scored = result.get("review_scored", composed)
         validated = result.get("validate_valid", 0)
-        parts = [f"Extracted: {extracted}", f"Composed: {composed}"]
-        if not skip_review:
-            rejected = result.get("review_rejected", 0)
-            revised = result.get("review_revised", 0)
-            parts.append(
-                f"Reviewed: {reviewed} (rejected: {rejected}, revised: {revised})"
-            )
-        parts.append(f"Validated: {validated}")
+        revised = result.get("review_revised", 0)
+        parts = [
+            f"Extracted: {extracted}",
+            f"Composed: {composed}",
+            f"Scored: {scored}" + (f" ({revised} revised)" if revised else ""),
+            f"Validated: {validated}",
+        ]
         log_print(", ".join(parts))
         if dry_run:
             log_print("(dry run — no LLM calls or graph writes)")

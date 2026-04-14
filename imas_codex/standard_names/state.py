@@ -40,9 +40,9 @@ class SNBuildState(DiscoveryStateBase):
     force: bool = False  # Bypass source-level skip
     limit: int | None = None  # Cap on paths to process
 
-    # Review configuration
-    skip_review: bool = False
-    review_model: str | None = None
+    # Model overrides (None = use defaults from pyproject.toml)
+    compose_model: str | None = None  # Override for compose step (default: reasoning)
+    review_model: str | None = None  # Override for review step (default: language)
 
     # In-memory pipeline data (extract → compose → review → validate → consolidate)
     extracted: list[Any] = field(default_factory=list)  # ExtractionBatch objects

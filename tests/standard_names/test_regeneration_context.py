@@ -134,9 +134,8 @@ class TestComposePromptPreviousName:
             "nearby_existing_names": [],
         }
         rendered = render_prompt("sn/compose_dd", context)
-        assert "Previous name:" in rendered
+        assert "Previous generation:" in rendered
         assert "poloidal_magnetic_flux" in rendered
-        assert "suggestion, not a constraint" in rendered
 
     def test_accepted_warning(self):
         """Accepted names get a warning in the prompt."""
@@ -182,4 +181,4 @@ class TestComposePromptPreviousName:
             "nearby_existing_names": [],
         }
         rendered = render_prompt("sn/compose_dd", context)
-        assert "Previous name:" not in rendered
+        assert "Previous generation:" not in rendered

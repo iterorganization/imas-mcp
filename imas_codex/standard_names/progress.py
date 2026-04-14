@@ -17,13 +17,12 @@ from imas_codex.discovery.base.supervision import SupervisedWorkerGroup
 logger = logging.getLogger(__name__)
 
 
-def build_sn_stages(*, skip_review: bool = False) -> list[StageDisplaySpec]:
+def build_sn_stages() -> list[StageDisplaySpec]:
     """Build the stage specs for the SN progress display.
 
-    3 rows when review is skipped, 4 when enabled:
-        EXTRACT → COMPOSE → [REVIEW] → FINALIZE
+    4 rows: EXTRACT → COMPOSE → REVIEW → FINALIZE
     """
-    stages = [
+    return [
         StageDisplaySpec(
             name="EXTRACT",
             style="bold blue",
@@ -38,26 +37,20 @@ def build_sn_stages(*, skip_review: bool = False) -> list[StageDisplaySpec]:
             stats_attr="compose_stats",
             phase_attr="compose_phase",
         ),
-    ]
-    if not skip_review:
-        stages.append(
-            StageDisplaySpec(
-                name="REVIEW",
-                style="bold yellow",
-                group="review",
-                stats_attr="review_stats",
-                phase_attr="review_phase",
-            )
-        )
-    stages.append(
+        StageDisplaySpec(
+            name="REVIEW",
+            style="bold yellow",
+            group="review",
+            stats_attr="review_stats",
+            phase_attr="review_phase",
+        ),
         StageDisplaySpec(
             name="FINALIZE",
             style="bold green",
             group="finalize",
             stats_attr="finalize_stats",
         ),
-    )
-    return stages
+    ]
 
 
 class SNProgressDisplay(DataDrivenProgressDisplay):
@@ -74,9 +67,8 @@ class SNProgressDisplay(DataDrivenProgressDisplay):
         console: Any | None = None,
         cost_limit: float = 5.0,
         mode_label: str | None = None,
-        skip_review: bool = False,
     ):
-        stages = build_sn_stages(skip_review=skip_review)
+        stages = build_sn_stages()
         super().__init__(
             facility="sn",
             cost_limit=cost_limit,

@@ -366,7 +366,6 @@ class TestReviewWorker:
             "facility": "dd",
             "source": "dd",
             "dry_run": False,
-            "skip_review": False,
         }
         defaults.update(overrides)
         return SNBuildState(**defaults)
@@ -438,29 +437,29 @@ class TestReviewWorker:
         assert state.review_phase.done
         assert len(state.reviewed) == 1
         assert state.reviewed[0]["id"] == "electron_temperature"
-        assert state.stats["review_accepted"] == 1
-        assert state.stats["review_rejected"] == 0
-        # Reviewer metadata is added to accepted entries
+        assert state.stats["review_scored"] == 1
+        # Reviewer metadata is added to scored entries
         assert state.reviewed[0].get("reviewer_model") == "test/model"
         assert "reviewed_at" in state.reviewed[0]
 
     @patch("imas_codex.standard_names.workers._review_batch")
     @patch("imas_codex.standard_names.workers._get_existing_names_for_review")
     @patch("imas_codex.standard_names.workers._load_calibration_entries")
-    def test_reject_verdict_removes_candidate(
-        self, mock_cal, mock_existing, mock_batch
-    ):
-        """Reject verdict removes the candidate from reviewed output."""
+    def test_all_names_scored_no_rejection(self, mock_cal, mock_existing, mock_batch):
+        """All names are scored and persisted — no rejection step."""
         mock_existing.return_value = set()
         mock_cal.return_value = []
 
         candidates = [
-            {"id": "bad_name", "source_id": "path/a", "physical_base": "x"},
+            {"id": "low_score_name", "source_id": "path/a", "physical_base": "x"},
         ]
 
-        # Mock the batch to return empty accepted, 1 rejected
+        # Mock the batch to return the candidate scored (even if low quality)
         async def _mock_review(*args, **kwargs):
-            return [], 1, 0, 0.001, 100
+            scored = list(args[0])
+            for c in scored:
+                c["reviewer_score"] = 0.3  # Low score but still passes through
+            return scored, 0, 0, 0.001, 100
 
         mock_batch.side_effect = _mock_review
 
@@ -473,8 +472,10 @@ class TestReviewWorker:
         asyncio.run(review_worker(state))
 
         assert state.review_phase.done
-        assert len(state.reviewed) == 0
-        assert state.stats["review_rejected"] == 1
+        # Low-scoring name still passes through — no rejection
+        assert len(state.reviewed) == 1
+        assert state.reviewed[0]["id"] == "low_score_name"
+        assert state.stats["review_scored"] == 1
 
     @patch("imas_codex.standard_names.workers._review_batch")
     @patch("imas_codex.standard_names.workers._get_existing_names_for_review")
@@ -622,8 +623,8 @@ class TestSNBuildStateReview:
         from imas_codex.standard_names.state import SNBuildState
 
         state = SNBuildState(facility="dd")
-        assert state.skip_review is False
         assert state.review_model is None
+        assert state.compose_model is None
         assert state.reviewed is None
         assert state.review_phase.name == "review"
         assert not state.review_phase.done
@@ -637,13 +638,17 @@ class TestSNBuildStateReview:
         state.review_stats.cost = 0.3
         assert state.total_cost == pytest.approx(0.8)
 
-    def test_skip_review_configuration(self):
-        """skip_review can be set at construction."""
+    def test_model_override_configuration(self):
+        """compose_model and review_model can be set at construction."""
         from imas_codex.standard_names.state import SNBuildState
 
-        state = SNBuildState(facility="dd", skip_review=True, review_model="test/model")
-        assert state.skip_review is True
-        assert state.review_model == "test/model"
+        state = SNBuildState(
+            facility="dd",
+            compose_model="test/compose",
+            review_model="test/review",
+        )
+        assert state.compose_model == "test/compose"
+        assert state.review_model == "test/review"
 
 
 # =============================================================================
@@ -659,35 +664,31 @@ class TestPipelineReviewWiring:
         pytest.importorskip("imas_standard_names")
 
     def test_validate_depends_on_review_phase(self):
-        """Validate worker should depend on review_phase, not compose_phase."""
-        # We can't easily test the actual pipeline running without graph,
-        # but we can verify the WorkerSpec construction.
+        """Validate worker should depend on review_phase."""
         from imas_codex.standard_names.state import SNBuildState
 
-        state = SNBuildState(facility="dd", skip_review=False)
+        state = SNBuildState(facility="dd")
 
-        # When skip_review is False, review_phase should not be done yet
+        # review_phase should not be done yet
         assert not state.review_phase.done
         assert not state.validate_phase.done
 
-    def test_skip_review_allows_validate(self):
-        """When review is skipped, validate can still proceed.
+    def test_review_always_runs(self):
+        """Review is always wired into the pipeline — no skip option.
 
-        The engine marks disabled phases as done, so validate's
-        dependency on review_phase is satisfied.
+        All names are scored and persisted; the review step never rejects.
         """
         from imas_codex.discovery.base.engine import WorkerSpec
-        from imas_codex.standard_names.state import SNBuildState
+        from imas_codex.standard_names.state import SNBuildState  # noqa: F841
         from imas_codex.standard_names.workers import review_worker, validate_worker
 
-        state = SNBuildState(facility="dd", skip_review=True)
+        _state = SNBuildState(facility="dd")
 
         review_spec = WorkerSpec(
             "review",
             "review_phase",
             review_worker,
             depends_on=["compose_phase"],
-            enabled=not state.skip_review,
         )
 
         validate_spec = WorkerSpec(
@@ -697,13 +698,8 @@ class TestPipelineReviewWiring:
             depends_on=["review_phase"],
         )
 
-        # When review is disabled, the engine would mark review_phase done
-        assert review_spec.enabled is False
+        assert review_spec.enabled is True
         assert validate_spec.depends_on == ["review_phase"]
-
-        # Simulate engine marking disabled phase done
-        state.review_phase.mark_done()
-        assert state.review_phase.done
 
     def test_validate_reads_reviewed_buffer(self):
         """Validate worker reads from state.reviewed when populated."""

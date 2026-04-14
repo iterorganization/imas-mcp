@@ -1,6 +1,6 @@
 """SN generate pipeline orchestrator.
 
-Wires the EXTRACT → COMPOSE → [REVIEW] → VALIDATE → CONSOLIDATE → PERSIST
+Wires the EXTRACT → COMPOSE → REVIEW → VALIDATE → CONSOLIDATE → PERSIST
 workers into the generic discovery engine and runs them with supervision
 and progress tracking.
 """
@@ -35,27 +35,20 @@ async def run_sn_generate_engine(
 
     Pipeline::
 
-        EXTRACT → COMPOSE → [REVIEW] → VALIDATE → CONSOLIDATE → PERSIST
+        EXTRACT → COMPOSE → REVIEW → VALIDATE → CONSOLIDATE → PERSIST
 
     Extract queries the graph for DD paths, builds cluster-based batches.
-    Compose uses LLM to generate standard names from the batches.
-    Review uses a different model family to cross-check composed names.
+    Compose uses a reasoning model to generate standard names from the batches.
+    Review uses a budget model to score all composed names (no rejection).
     Validate checks grammar compliance via round-trip + fields consistency.
     Consolidate performs cross-batch dedup, conflict detection, and coverage.
     Persist writes consolidated names to graph with provenance.
-
-    When ``state.skip_review`` is True the REVIEW phase is disabled and
-    its ``PipelinePhase`` is marked done immediately, so VALIDATE does
-    not block.
 
     Args:
         state: Populated ``SNBuildState`` with source and filter config.
         stop_event: Optional asyncio.Event for CLI shutdown signalling.
         on_worker_status: Optional callback for progress display updates.
     """
-    # When review is skipped, validate depends directly on compose
-    validate_deps = ["review_phase"] if not state.skip_review else ["compose_phase"]
-
     workers = [
         WorkerSpec(
             "extract",
@@ -73,13 +66,12 @@ async def run_sn_generate_engine(
             "review_phase",
             review_worker,
             depends_on=["compose_phase"],
-            enabled=not state.skip_review,
         ),
         WorkerSpec(
             "validate",
             "validate_phase",
             validate_worker,
-            depends_on=validate_deps,
+            depends_on=["review_phase"],
             group="finalize",
         ),
         WorkerSpec(

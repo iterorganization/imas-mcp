@@ -446,7 +446,7 @@ async def compose_worker(state: SNBuildState, **_kwargs) -> None:
     from imas_codex.standard_names.context import build_compose_context
     from imas_codex.standard_names.models import SNComposeBatch
 
-    model = get_model("language")
+    model = state.compose_model or get_model("reasoning")
     context = build_compose_context()
 
     # Enrich batch items with rich DD context (coordinate specs, COCOS, siblings,
@@ -722,7 +722,7 @@ async def review_worker(state: SNBuildState, **_kwargs) -> None:
 
     from imas_codex.settings import get_model
 
-    review_model = state.review_model or get_model("reasoning")
+    review_model = state.review_model or get_model("language")
     wlog.info("Review model: %s", review_model)
 
     grammar_enums = _get_grammar_enums()
@@ -741,8 +741,8 @@ async def review_worker(state: SNBuildState, **_kwargs) -> None:
                 if path:
                     batch_context_map[path] = eb.context
 
-    accepted: list[dict] = []
-    rejected = 0
+    scored: list[dict] = []
+    duplicates = 0
     revised = 0
     errors = 0
     total_cost = 0.0
@@ -784,64 +784,70 @@ async def review_worker(state: SNBuildState, **_kwargs) -> None:
                 batch_context=batch_ctx,
                 compose_ctx=compose_ctx,
             )
-            batch_accepted, batch_rejected, batch_revised, cost, tokens = batch_result
+            batch_scored, _, batch_revised, cost, tokens = batch_result
             total_cost += cost
             total_tokens += tokens
 
-            for entry in batch_accepted:
+            for entry in batch_scored:
                 name = entry.get("id", "")
                 if name and name not in names_in_run:
-                    accepted.append(entry)
+                    scored.append(entry)
                     names_in_run.add(name)
                 elif name in names_in_run:
                     wlog.debug("Duplicate name after review: %r — skipping", name)
-                    rejected += 1
+                    duplicates += 1
                 else:
-                    accepted.append(entry)
+                    scored.append(entry)
 
-            rejected += batch_rejected
             revised += batch_revised
 
         except Exception:
             wlog.debug("Review batch failed at offset %d", batch_start, exc_info=True)
             errors += len(batch)
-            accepted.extend(batch)
+            scored.extend(batch)
 
         state.review_stats.processed = min(batch_start + len(batch), len(candidates))
         state.review_stats.record_batch(len(batch))
         # Stream review batch progress
         batch_num = batch_start // _REVIEW_BATCH_SIZE + 1
+        low_score_count = sum(
+            1 for s in scored if (s.get("reviewer_score") or 1.0) < 0.5
+        )
         state.review_stats.stream_queue.add(
             [
                 {
                     "primary_text": f"batch {batch_num}",
-                    "description": f"{len(accepted)} accepted  ${total_cost:.3f}",
+                    "description": (
+                        f"{len(scored)} scored"
+                        + (f"  ⚠{low_score_count} low" if low_score_count else "")
+                        + f"  ${total_cost:.3f}"
+                    ),
                 }
             ]
         )
 
-    # Store reviewer model and timestamp on all accepted entries
+    # Store reviewer model and timestamp on all scored entries
     reviewed_at = datetime.now(UTC).isoformat()
-    for entry in accepted:
+    for entry in scored:
         entry["reviewer_model"] = review_model
         entry["reviewed_at"] = reviewed_at
 
     state.review_stats.errors = errors
     state.review_stats.cost = total_cost
-    state.reviewed = accepted
+    state.reviewed = scored
 
     wlog.info(
-        "Review complete: %d accepted, %d rejected, %d revised, %d errors "
+        "Review complete: %d scored, %d duplicates, %d revised, %d errors "
         "(cost: $%.4f, tokens: %d)",
-        len(accepted),
-        rejected,
+        len(scored),
+        duplicates,
         revised,
         errors,
         total_cost,
         total_tokens,
     )
-    state.stats["review_accepted"] = len(accepted)
-    state.stats["review_rejected"] = rejected
+    state.stats["review_scored"] = len(scored)
+    state.stats["review_duplicates"] = duplicates
     state.stats["review_revised"] = revised
     state.stats["review_errors"] = errors
     state.stats["review_cost"] = total_cost
@@ -947,8 +953,7 @@ async def _review_batch(
         sid = entry.get("source_id") or entry.get("id") or ""
         entry_map[sid] = entry
 
-    accepted: list[dict] = []
-    rejected_count = 0
+    scored: list[dict] = []
     revised_count = 0
 
     for review in result.reviews:
@@ -963,46 +968,44 @@ async def _review_batch(
         original["reviewer_comments"] = review.reasoning
         original["review_tier"] = review.scores.tier
 
-        if review.verdict == SNReviewVerdict.accept:
-            accepted.append(original)
-        elif review.verdict == SNReviewVerdict.reject:
-            rejected_count += 1
+        if review.verdict == SNReviewVerdict.revise and review.revised_name:
+            revised_entry = dict(original)
+            revised_entry["id"] = review.revised_name
+            if review.revised_fields:
+                for key, value in review.revised_fields.items():
+                    if key in revised_entry:
+                        revised_entry[key] = value
+            scored.append(revised_entry)
+            revised_count += 1
             wlog.debug(
-                "Rejected %r (score %.2f/%.1f): %s",
+                "Revised %r → %r (score %.2f/%.1f): %s",
                 review.standard_name,
+                review.revised_name,
                 review.scores.score,
                 1.0,
                 review.reasoning,
             )
-        elif review.verdict == SNReviewVerdict.revise:
-            if review.revised_name:
-                revised_entry = dict(original)
-                revised_entry["id"] = review.revised_name
-                if review.revised_fields:
-                    for key, value in review.revised_fields.items():
-                        if key in revised_entry:
-                            revised_entry[key] = value
-                accepted.append(revised_entry)
-                revised_count += 1
+        else:
+            # All names are scored and persisted — no rejection
+            scored.append(original)
+            if review.verdict == SNReviewVerdict.reject:
                 wlog.debug(
-                    "Revised %r → %r (score %.2f/%.1f): %s",
+                    "Low score %r (%.2f/%.1f, %s): %s",
                     review.standard_name,
-                    review.revised_name,
                     review.scores.score,
                     1.0,
-                    review.reasoning,
+                    review.scores.tier,
+                    review.reasoning[:120],
                 )
-            else:
-                accepted.append(original)
 
-    # Entries not in the review result pass through (accepted by default)
+    # Entries not in the review result pass through (scored by default)
     reviewed_ids = {r.source_id for r in result.reviews}
     for entry in batch:
         sid = entry.get("source_id") or entry.get("id") or ""
         if sid not in reviewed_ids:
-            accepted.append(entry)
+            scored.append(entry)
 
-    return accepted, rejected_count, revised_count, cost, tokens
+    return scored, 0, revised_count, cost, tokens
 
 
 # =============================================================================
@@ -1478,12 +1481,12 @@ async def persist_worker(state: SNBuildState, **_kwargs) -> None:
     from imas_codex.settings import get_model
     from imas_codex.standard_names.graph_ops import write_standard_names
 
-    model = get_model("language")
+    compose_model = state.compose_model or get_model("reasoning")
     now = datetime.now(UTC).isoformat()
 
-    # Enrich with provenance
+    # Enrich with provenance — record the actual compose model used
     for entry in state.consolidated:
-        entry.setdefault("model", model)
+        entry.setdefault("model", compose_model)
         entry.setdefault("review_status", "drafted")
         entry.setdefault("generated_at", now)
         # confidence comes from LLM output — never default to 1.0
@@ -1552,6 +1555,40 @@ async def persist_worker(state: SNBuildState, **_kwargs) -> None:
     state.persist_stats.processed = written
     state.persist_stats.record_batch(written)
     state.stats["persist_written"] = written
+
+    # Post-success cleanup: detach stale HAS_STANDARD_NAME for targeted paths
+    # Only runs when --force/--paths regenerated names for specific paths
+    if state.force and written > 0:
+        new_name_ids = {e["id"] for e in state.consolidated if e.get("id")}
+        source_paths = set()
+        for e in state.consolidated:
+            for sp in e.get("source_ids", []):
+                source_paths.add(sp)
+
+        if source_paths and new_name_ids:
+
+            def _cleanup_stale():
+                with GraphClient() as gc:
+                    result = list(
+                        gc.query(
+                            """
+                            UNWIND $paths AS path
+                            MATCH (n:IMASNode {id: path})-[r:HAS_STANDARD_NAME]->(sn:StandardName)
+                            WHERE NOT (sn.id IN $keep_names)
+                              AND sn.review_status IN ['drafted', null]
+                            DELETE r
+                            RETURN count(r) AS detached
+                            """,
+                            paths=list(source_paths),
+                            keep_names=list(new_name_ids),
+                        )
+                    )
+                    return result[0]["detached"] if result else 0
+
+            detached = await asyncio.to_thread(_cleanup_stale)
+            if detached:
+                wlog.info("Cleaned %d stale HAS_STANDARD_NAME relationships", detached)
+                state.stats["stale_detached"] = detached
 
     wlog.info("Persist complete: %d written", written)
     state.persist_stats.freeze_rate()
