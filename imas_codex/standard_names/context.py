@@ -206,3 +206,42 @@ def _build_enum_lists() -> dict[str, list[str]]:
         "objects": [e.value for e in Object],
         "binary_operators": [e.value for e in BinaryOperator],
     }
+
+
+def render_cocos_guidance(label: str, cocos_params: dict) -> str:
+    """Render sign guidance for a transformation label using COCOS node properties.
+
+    Args:
+        label: COCOS transformation label (e.g., 'psi_like')
+        cocos_params: Properties dict from the COCOS graph node
+            (sigma_bp, psi_increasing_outward, phi_increasing_ccw, etc.)
+
+    Returns:
+        Rendered guidance string for the LLM prompt.
+    """
+    from imas_codex.llm.prompt_loader import load_prompt_config
+
+    config = load_prompt_config("cocos_sign_guidance")
+    label_config = config.get("labels", {}).get(label)
+    if not label_config:
+        return config.get("generic_fallback", "")
+
+    guidance = label_config["guidance"]
+
+    # Substitute raw Sauter parameters directly
+    for param in ("sigma_bp", "sigma_r_phi_z", "sigma_rho_theta_phi", "e_bp"):
+        guidance = guidance.replace(f"{{{param}}}", str(cocos_params.get(param, "?")))
+
+    # Resolve template variables from COCOS node boolean/sign properties
+    for var_name, var_spec in label_config.get("variables", {}).items():
+        source_prop = var_spec["from"]
+        source_val = cocos_params.get(source_prop)
+        # Normalize lookup key: booleans → "true"/"false", numbers → str
+        if isinstance(source_val, bool):
+            lookup_key = str(source_val).lower()
+        else:
+            lookup_key = str(source_val)
+        replacement = var_spec.get(lookup_key, f"[unknown {source_prop}]")
+        guidance = guidance.replace(f"{{{var_name}}}", replacement)
+
+    return guidance

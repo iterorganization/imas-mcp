@@ -194,6 +194,31 @@ include a dedicated paragraph:
 `Sign convention: Positive when [specific physical condition].`
 Use plain text (not bold), separate paragraph, not inline.
 
+{% if cocos_version is defined and cocos_version %}
+### COCOS {{ cocos_version }} Reference
+
+The IMAS Data Dictionary {{ dd_version | default('') }} uses **COCOS {{ cocos_version }}**
+(Sauter & Medvedev, 2013). All sign conventions in documentation MUST be
+consistent with COCOS {{ cocos_version }}:
+
+| Parameter | Symbol | Value | Physical Meaning |
+|-----------|--------|-------|------------------|
+| Poloidal flux sign | σ_Bp | {{ cocos_sigma_bp | default('?') }} | ψ {{ "decreases" if cocos_sigma_bp is defined and cocos_sigma_bp == -1 else "increases" }} from axis to edge (positive Ip) |
+| Flux normalization | e_Bp | {{ cocos_e_bp | default('?') }} | {{ "Full ψ" if cocos_e_bp is defined and cocos_e_bp == 1 else "ψ/2π" }} |
+| Cylindrical handedness | σ_RφZ | {{ cocos_sigma_r_phi_z | default('?') }} | (R, φ, Z) {{ "right" if cocos_sigma_r_phi_z is defined and cocos_sigma_r_phi_z == 1 else "left" }}-handed |
+| Poloidal handedness | σ_ρθφ | {{ cocos_sigma_rho_theta_phi | default('?') }} | (ρ, θ, φ) {{ "right" if cocos_sigma_rho_theta_phi is defined and cocos_sigma_rho_theta_phi == 1 else "left" }}-handed |
+
+**Transformation types** classify how quantities change under COCOS:
+- **psi_like**: Multiplied by σ_Bp (flips sign between COCOS 11 and 17)
+- **ip_like**: Multiplied by σ_Bp · σ_RφZ (plasma current direction)
+- **b0_like**: Multiplied by σ_RφZ (toroidal field direction)
+- **q_like**: Multiplied by σ_ρθφ (safety factor sign)
+- **dodpsi_like**: Multiplied by 1/σ_Bp (ψ-derivative inversion)
+
+When the batch context marks a path as COCOS-dependent, your sign convention
+paragraph MUST be specific to COCOS {{ cocos_version }} — not generic.
+{% endif %}
+
 **DS-6 DD aliases.** When the DD path uses abbreviated names (e.g., gm1–gm9),
 mention the alias: "Known as gm1 in the IMAS data dictionary." The standard
 name itself must remain self-describing.

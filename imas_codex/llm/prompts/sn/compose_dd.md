@@ -97,8 +97,12 @@ These names already exist in the catalog. Reuse them if they match your source, 
 {% if item.keywords %}- **Keywords:** {{ item.keywords | join(', ') if item.keywords is iterable and item.keywords is not string else item.keywords }}{% endif %}
 {% if item.coordinate_paths %}- **Coordinates:** {{ item.coordinate_paths | join(', ') }}{% endif %}
 {% if item.timebase %}- **Timebase:** {{ item.timebase }}{% endif %}
-{% if item.cocos_label %}- **COCOS transformation:** {{ item.cocos_label }}{% if item.cocos_expression %} ({{ item.cocos_expression }}){% endif %}
-  ⚠️ This quantity is COCOS-dependent — include sign convention in documentation.{% endif %}
+{% if item.cocos_label %}- **COCOS transformation type:** `{{ item.cocos_label }}`{% if item.cocos_expression %} — expression: `{{ item.cocos_expression }}`{% endif %}
+{% if cocos_version is defined and cocos_version %}- **COCOS convention:** {{ cocos_version }}{% if dd_version %} (DD {{ dd_version }}){% endif %}{% endif %}
+{% if item.cocos_guidance %}- **Sign convention guidance:** {{ item.cocos_guidance }}{% endif %}
+  ⚠️ This quantity is COCOS-dependent. You MUST include a sign convention paragraph
+  in the documentation section using EXACTLY the format:
+  `Sign convention: Positive when [specific condition based on COCOS {{ cocos_version | default('') }}].`{% endif %}
 {% if item.identifier_schema %}- **Identifier schema:** {{ item.identifier_schema }}{% if item.identifier_schema_doc %} — {{ item.identifier_schema_doc }}{% endif %}{% endif %}
 {% if item.coord_path %}- **Coordinate:** {{ item.coord_path }}{% if item.coord_unit %} ({{ item.coord_unit }}){% endif %}{% endif %}
 {% if item.parent_path %}- **Parent structure:** {{ item.parent_path }} ({{ item.parent_type or 'STRUCTURE' }}){% endif %}

@@ -1,0 +1,102 @@
+# Sign guidance templates for COCOS-dependent standard name generation.
+# Variables are filled from COCOS graph node properties (queried at extract time).
+# No per-COCOS-version hardcoding — works for any COCOS with a graph node.
+
+labels:
+  psi_like:
+    concept: "poloidal magnetic flux ψ"
+    guidance: >-
+      The poloidal magnetic flux ψ {psi_direction} from the magnetic axis to
+      the plasma boundary for standard positive-Ip operation (σ_Bp = {sigma_bp}).
+      State the sign relative to the surface normal direction (increasing Z).
+    variables:
+      psi_direction:
+        from: psi_increasing_outward
+        "true": "increases"
+        "false": "decreases"
+
+  ip_like:
+    concept: "plasma current"
+    guidance: >-
+      Plasma current Ip is positive when flowing in the direction of
+      {phi_direction} (σ_Bp = {sigma_bp}, σ_RφZ = {sigma_r_phi_z}).
+      Current density j follows the same convention.
+    variables:
+      phi_direction:
+        from: phi_increasing_ccw
+        "true": "increasing toroidal angle φ (counter-clockwise viewed from above)"
+        "false": "decreasing toroidal angle φ (clockwise viewed from above)"
+
+  b0_like:
+    concept: "vacuum toroidal field"
+    guidance: >-
+      The vacuum toroidal field B₀ is positive when pointing in the direction
+      of {phi_direction} (σ_RφZ = {sigma_r_phi_z}). The toroidal flux
+      function F = RBφ follows the same sign.
+    variables:
+      phi_direction:
+        from: phi_increasing_ccw
+        "true": "increasing φ (counter-clockwise viewed from above)"
+        "false": "decreasing φ (clockwise viewed from above)"
+
+  q_like:
+    concept: "safety factor"
+    guidance: >-
+      The safety factor q = dΦ/dψ where Φ is toroidal flux. With
+      σ_ρθφ = {sigma_rho_theta_phi}, q is {q_sign} for standard
+      co-current operation.
+    variables:
+      q_sign:
+        from: sign_q
+        "1": "positive"
+        "-1": "negative"
+
+  dodpsi_like:
+    concept: "ψ derivatives"
+    guidance: >-
+      Derivatives with respect to ψ inherit the ψ sign (σ_Bp = {sigma_bp}).
+      Since ψ {psi_direction} outward, dX/dψ has {derivative_relation} sign
+      to the radial gradient dX/dr for positive Ip.
+    variables:
+      psi_direction:
+        from: psi_increasing_outward
+        "true": "increases"
+        "false": "decreases"
+      derivative_relation:
+        from: psi_increasing_outward
+        "true": "the same"
+        "false": "opposite"
+
+  tor_angle_like:
+    concept: "toroidal angle"
+    guidance: >-
+      The toroidal angle φ increases {phi_direction}
+      (σ_RφZ = {sigma_r_phi_z}, {handedness} cylindrical system).
+    variables:
+      phi_direction:
+        from: phi_increasing_ccw
+        "true": "counter-clockwise when viewed from above"
+        "false": "clockwise when viewed from above"
+      handedness:
+        from: sigma_r_phi_z
+        "1": "right-handed"
+        "-1": "left-handed"
+
+  pol_angle_like:
+    concept: "poloidal angle"
+    guidance: >-
+      The poloidal angle θ increases {theta_direction} in the (R, Z)
+      poloidal plane (σ_ρθφ = {sigma_rho_theta_phi}, {handedness}).
+    variables:
+      theta_direction:
+        from: theta_increasing_cw
+        "true": "clockwise"
+        "false": "counter-clockwise"
+      handedness:
+        from: sigma_rho_theta_phi
+        "1": "right-handed"
+        "-1": "left-handed"
+
+generic_fallback: >-
+  This quantity transforms under COCOS convention changes. Consult the
+  transformation expression to determine the sign convention.
