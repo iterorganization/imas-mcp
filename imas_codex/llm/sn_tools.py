@@ -41,6 +41,7 @@ def _search_standard_names(
     kind: str | None = None,
     tags: list[str] | None = None,
     review_status: str | None = None,
+    cocos_type: str | None = None,
     k: int = 20,
     gc: GraphClient | None = None,
 ) -> str:
@@ -91,6 +92,10 @@ def _search_standard_names(
             for r in rows
             if (r.get("review_status") or "").lower() == review_status.lower()
         ]
+    if cocos_type:
+        rows = [
+            r for r in rows if (r.get("cocos_transformation_type") or "") == cocos_type
+        ]
 
     return _format_search_report(query, rows)
 
@@ -108,6 +113,7 @@ RETURN sn.id AS name, sn.description AS description,
        sn.documentation AS documentation,
        sn.physical_base AS physical_base,
        sn.subject AS subject,
+       sn.cocos_transformation_type AS cocos_transformation_type,
        score
 ORDER BY score DESC
 """
@@ -128,6 +134,7 @@ RETURN sn.id AS name, sn.description AS description,
        sn.documentation AS documentation,
        sn.physical_base AS physical_base,
        sn.subject AS subject,
+       sn.cocos_transformation_type AS cocos_transformation_type,
        1.0 AS score
 LIMIT $k
 """
@@ -156,6 +163,7 @@ def _format_search_report(query: str, rows: list[dict]) -> str:
         documentation = row.get("documentation") or ""
         physical_base = row.get("physical_base") or ""
         subject = row.get("subject") or ""
+        cocos_transformation_type = row.get("cocos_transformation_type") or ""
 
         lines.append(f"### {i}. {name} (score: {score:.2f})")
         if kind:
@@ -167,6 +175,8 @@ def _format_search_report(query: str, rows: list[dict]) -> str:
             lines.append(f"- **Tags:** {tag_str}")
         if review_status:
             lines.append(f"- **Status:** {review_status}")
+        if cocos_transformation_type:
+            lines.append(f"- **COCOS Transformation:** {cocos_transformation_type}")
         if description:
             lines.append(f"- **Description:** {description}")
         if documentation:
@@ -232,6 +242,8 @@ RETURN sn.id AS name, sn.description AS description,
        sn.position AS position, sn.process AS process,
        sn.review_status AS review_status,
        sn.confidence AS confidence, sn.model AS model,
+       sn.cocos_transformation_type AS cocos_transformation_type,
+       sn.dd_version AS dd_version,
        collect(DISTINCT src.id) AS source_ids,
        collect(DISTINCT ids.id) AS source_ids_names
 """
@@ -280,6 +292,8 @@ def _format_fetch_report(rows: list[dict], requested: list[str]) -> str:
         review_status = row.get("review_status") or ""
         confidence = row.get("confidence")
         model = row.get("model") or ""
+        cocos_transformation_type = row.get("cocos_transformation_type") or ""
+        dd_version = row.get("dd_version") or ""
         source_ids = row.get("source_ids") or []
         source_ids_names = row.get("source_ids_names") or []
 
@@ -299,6 +313,10 @@ def _format_fetch_report(rows: list[dict], requested: list[str]) -> str:
             lines.append(f"- **Confidence:** {confidence:.2f}")
         if model:
             lines.append(f"- **Model:** {model}")
+        if cocos_transformation_type:
+            lines.append(f"- **COCOS Transformation:** {cocos_transformation_type}")
+        if dd_version:
+            lines.append(f"- **DD Version:** {dd_version}")
 
         # Grammar
         grammar_parts = []
@@ -364,6 +382,7 @@ def _list_standard_names(
     tag: str | None = None,
     kind: str | None = None,
     review_status: str | None = None,
+    cocos_type: str | None = None,
     gc: GraphClient | None = None,
 ) -> str:
     """List standard names with optional filters."""
@@ -388,6 +407,9 @@ def _list_standard_names(
     if review_status:
         conditions.append("toLower(sn.review_status) = toLower($review_status)")
         params["review_status"] = review_status
+    if cocos_type:
+        conditions.append("sn.cocos_transformation_type = $cocos_type")
+        params["cocos_type"] = cocos_type
 
     where_clause = ("WHERE " + " AND ".join(conditions)) if conditions else ""
 
@@ -398,6 +420,7 @@ OPTIONAL MATCH (sn)-[:HAS_UNIT]->(u:Unit)
 RETURN sn.id AS name, sn.kind AS kind,
        coalesce(u.id, sn.unit) AS unit,
        sn.review_status AS review_status,
+       sn.cocos_transformation_type AS cocos_transformation_type,
        sn.description AS description
 ORDER BY sn.id
 """
@@ -409,7 +432,9 @@ ORDER BY sn.id
     except Exception as e:
         return f"List failed: {_neo4j_error_message(e)}"
 
-    return _format_list_report(rows, tag=tag, kind=kind, review_status=review_status)
+    return _format_list_report(
+        rows, tag=tag, kind=kind, review_status=review_status, cocos_type=cocos_type
+    )
 
 
 def _format_list_report(
@@ -418,6 +443,7 @@ def _format_list_report(
     tag: str | None = None,
     kind: str | None = None,
     review_status: str | None = None,
+    cocos_type: str | None = None,
 ) -> str:
     """Format list results as a markdown table."""
     filter_parts = []
@@ -427,6 +453,8 @@ def _format_list_report(
         filter_parts.append(f"kind={kind}")
     if review_status:
         filter_parts.append(f"status={review_status}")
+    if cocos_type:
+        filter_parts.append(f"cocos_type={cocos_type}")
     filter_str = f" (filtered by: {', '.join(filter_parts)})" if filter_parts else ""
 
     if not rows:
@@ -434,8 +462,8 @@ def _format_list_report(
 
     lines = [
         f"## Standard Names ({len(rows)} total{filter_str})\n",
-        "| Name | Kind | Unit | Status | Description |",
-        "|------|------|------|--------|-------------|",
+        "| Name | Kind | Unit | Status | COCOS | Description |",
+        "|------|------|------|--------|-------|-------------|",
     ]
 
     for row in rows:
@@ -443,10 +471,11 @@ def _format_list_report(
         row_kind = row.get("kind") or ""
         unit = row.get("unit") or ""
         status = row.get("review_status") or ""
+        cocos = row.get("cocos_transformation_type") or ""
         desc = row.get("description") or ""
         # Truncate long descriptions
         if len(desc) > 80:
             desc = desc[:77] + "..."
-        lines.append(f"| {name} | {row_kind} | {unit} | {status} | {desc} |")
+        lines.append(f"| {name} | {row_kind} | {unit} | {status} | {cocos} | {desc} |")
 
     return "\n".join(lines)

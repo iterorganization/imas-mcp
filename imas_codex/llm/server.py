@@ -3045,6 +3045,7 @@ class AgentsServer:
             tags: list[str] | None = None,
             review_status: str | None = None,
             k: int = 20,
+            cocos_type: str | None = None,
         ) -> str:
             """Search standard names by physics concept.
 
@@ -3059,6 +3060,8 @@ class AgentsServer:
                 tags: Filter by tags (e.g. ["equilibrium", "core_profiles"]).
                 review_status: Filter by review status (e.g. "drafted", "published").
                 k: Maximum results to return (default 20).
+                cocos_type: Filter by COCOS transformation type (e.g. "psi_like",
+                    "ip_like", "b0_like"). Only returns names with that transformation.
 
             Returns:
                 Formatted text report with matched standard names, descriptions,
@@ -3066,7 +3069,14 @@ class AgentsServer:
             """
             from imas_codex.llm.sn_tools import _search_standard_names as _ssn
 
-            return _ssn(query, kind=kind, tags=tags, review_status=review_status, k=k)
+            return _ssn(
+                query,
+                kind=kind,
+                tags=tags,
+                review_status=review_status,
+                k=k,
+                cocos_type=cocos_type,
+            )
 
         @self.mcp.tool()
         def fetch_standard_names(names: str) -> str:
@@ -3091,6 +3101,7 @@ class AgentsServer:
             tag: str | None = None,
             kind: str | None = None,
             review_status: str | None = None,
+            cocos_type: str | None = None,
         ) -> str:
             """List standard names with optional filters.
 
@@ -3100,13 +3111,17 @@ class AgentsServer:
                 tag: Filter by tag (e.g. "equilibrium", "magnetics").
                 kind: Filter by kind (e.g. "scalar", "vector").
                 review_status: Filter by review status (e.g. "drafted").
+                cocos_type: Filter by COCOS transformation type (e.g. "psi_like",
+                    "ip_like", "b0_like"). Only returns names with that transformation.
 
             Returns:
                 Formatted markdown table of standard names.
             """
             from imas_codex.llm.sn_tools import _list_standard_names as _lsn
 
-            return _lsn(tag=tag, kind=kind, review_status=review_status)
+            return _lsn(
+                tag=tag, kind=kind, review_status=review_status, cocos_type=cocos_type
+            )
 
         if not self.read_only:
             # =====================================================================
