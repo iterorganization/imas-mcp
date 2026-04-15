@@ -240,7 +240,7 @@ RETURN sn.id AS name, sn.description AS description,
        sn.documentation AS documentation,
        sn.kind AS kind, coalesce(u.id, sn.unit) AS unit,
        sn.tags AS tags, sn.links AS links,
-       sn.ids_paths AS ids_paths, sn.constraints AS constraints,
+       sn.imas_paths AS dd_paths, sn.constraints AS constraints,
        sn.validity_domain AS validity_domain,
        sn.physical_base AS physical_base, sn.subject AS subject,
        sn.component AS component, sn.coordinate AS coordinate,
@@ -286,7 +286,7 @@ def _format_fetch_report(rows: list[dict], requested: list[str]) -> str:
         unit = row.get("unit") or ""
         tags = row.get("tags") or []
         links = row.get("links") or []
-        ids_paths = row.get("ids_paths") or []
+        dd_paths = row.get("dd_paths") or []
         constraints = row.get("constraints") or []
         validity_domain = row.get("validity_domain") or ""
         physical_base = row.get("physical_base") or ""
@@ -348,13 +348,13 @@ def _format_fetch_report(rows: list[dict], requested: list[str]) -> str:
         if links:
             link_str = ", ".join(links) if isinstance(links, list) else str(links)
             lines.append(f"- **Links:** {link_str}")
-        if ids_paths:
+        if dd_paths:
             path_str = (
-                "\n  - " + "\n  - ".join(ids_paths)
-                if isinstance(ids_paths, list)
-                else str(ids_paths)
+                "\n  - " + "\n  - ".join(dd_paths)
+                if isinstance(dd_paths, list)
+                else str(dd_paths)
             )
-            lines.append(f"- **IDS Paths:**{path_str}")
+            lines.append(f"- **DD Paths:**{path_str}")
         if constraints:
             c_str = (
                 ", ".join(constraints)

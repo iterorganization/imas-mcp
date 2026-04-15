@@ -176,7 +176,7 @@ def _entry_to_graph_dict(
     data:
         Dict with ``name``, ``description``, ``documentation``, ``kind``,
         ``unit``, ``tags``, ``physics_domain``, plus optional ``links``,
-        ``ids_paths``, ``validity_domain``, ``constraints``.
+        ``dd_paths``, ``validity_domain``, ``constraints``.
     review_status:
         Graph review_status to assign.
     source_type:
@@ -186,7 +186,7 @@ def _entry_to_graph_dict(
 
     tags = data.get("tags") or []
     links = data.get("links") or []
-    ids_paths = data.get("ids_paths") or []
+    dd_paths = data.get("dd_paths") or []
 
     return {
         "id": data["name"],
@@ -198,7 +198,7 @@ def _entry_to_graph_dict(
         "unit": data.get("unit") or None,
         "tags": [str(t) for t in tags] if tags else None,
         "links": [str(lnk) for lnk in links] if links else None,
-        "imas_paths": list(ids_paths) if ids_paths else None,
+        "imas_paths": list(dd_paths) if dd_paths else None,
         "validity_domain": data.get("validity_domain") or None,
         "constraints": list(data["constraints"]) if data.get("constraints") else None,
         "physics_domain": data.get("physics_domain") or None,

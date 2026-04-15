@@ -73,8 +73,8 @@ def generate_yaml_entry(entry: StandardNamePublishEntry) -> str:
         doc["documentation"] = entry.documentation
     if entry.links:
         doc["links"] = [{"name": link} for link in entry.links]
-    if entry.ids_paths:
-        doc["ids_paths"] = entry.ids_paths
+    if entry.dd_paths:
+        doc["dd_paths"] = entry.dd_paths
     if entry.constraints:
         doc["constraints"] = entry.constraints
     if entry.validity_domain:
@@ -265,7 +265,7 @@ def graph_records_to_entries(
     Handles both schema-canonical properties (``source``, ``source_path``,
     ``unit``) and legacy write properties (``source_type``,
     ``source_id``, ``units``).  Carries through all rich fields:
-    documentation, links, ids_paths, constraints, validity_domain, kind.
+    documentation, links, dd_paths, constraints, validity_domain, kind.
     """
     entries: list[StandardNamePublishEntry] = []
     for rec in records:
@@ -295,7 +295,7 @@ def graph_records_to_entries(
         documentation = rec.get("documentation")
         kind = rec.get("kind") or "scalar"
         links_raw = rec.get("links") or []
-        ids_paths_raw = rec.get("ids_paths") or []
+        dd_paths_raw = rec.get("imas_paths") or []
         constraints_raw = rec.get("constraints") or []
         validity_domain = rec.get("validity_domain")
         cocos_transformation_type = rec.get("cocos_transformation_type")
@@ -327,7 +327,7 @@ def graph_records_to_entries(
                 description=description[:500] if description else "",
                 documentation=documentation,
                 links=links_raw if isinstance(links_raw, list) else [],
-                ids_paths=ids_paths_raw if isinstance(ids_paths_raw, list) else [],
+                dd_paths=dd_paths_raw if isinstance(dd_paths_raw, list) else [],
                 constraints=constraints_raw
                 if isinstance(constraints_raw, list)
                 else [],

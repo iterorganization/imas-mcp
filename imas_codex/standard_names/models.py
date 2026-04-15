@@ -22,7 +22,7 @@ class StandardNameCandidate(BaseModel):
     )
     tags: list[str] = Field(default_factory=list, description="Classification tags")
     links: list[str] = Field(default_factory=list, description="Related standard names")
-    ids_paths: list[str] = Field(
+    dd_paths: list[str] = Field(
         default_factory=list, description="Mapped IMAS DD paths"
     )
     grammar_fields: dict[str, str] = Field(
@@ -115,7 +115,7 @@ class StandardNamePublishEntry(BaseModel):
         default=None, description="Rich documentation with LaTeX"
     )
     links: list[str] = Field(default_factory=list, description="Related standard names")
-    ids_paths: list[str] = Field(
+    dd_paths: list[str] = Field(
         default_factory=list, description="Mapped IMAS DD paths"
     )
     constraints: list[str] = Field(

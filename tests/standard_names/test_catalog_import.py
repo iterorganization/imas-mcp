@@ -27,7 +27,7 @@ SAMPLE_CATALOG_ENTRY = {
     "unit": "eV",
     "tags": [],
     "links": [],
-    "ids_paths": ["core_profiles/profiles_1d/electrons/temperature"],
+    "dd_paths": ["core_profiles/profiles_1d/electrons/temperature"],
     "validity_domain": "core plasma",
     "constraints": ["T_e > 0"],
     "physics_domain": "core_plasma_physics",
@@ -42,7 +42,7 @@ SAMPLE_CATALOG_ENTRY_MINIMAL = {
     "unit": "A",
     "tags": [],
     "links": [],
-    "ids_paths": [],
+    "dd_paths": [],
     "validity_domain": "",
     "constraints": [],
     "physics_domain": "equilibrium",
@@ -202,7 +202,7 @@ class TestFieldMapping:
         assert et_entry["unit"] == "eV"
 
     def test_maps_ids_paths_to_imas_paths(self, catalog_dir: Path) -> None:
-        """Catalog 'ids_paths' should map to graph 'imas_paths' key."""
+        """Catalog 'dd_paths' should map to graph 'imas_paths' key."""
         from imas_codex.standard_names.catalog_import import import_catalog
 
         result = import_catalog(catalog_dir, dry_run=True)
@@ -213,7 +213,7 @@ class TestFieldMapping:
         ]
 
     def test_source_type_dd_for_entries_with_paths(self, catalog_dir: Path) -> None:
-        """Entries with ids_paths should have source_type='dd'."""
+        """Entries with dd_paths should have source_type='dd'."""
         from imas_codex.standard_names.catalog_import import import_catalog
 
         result = import_catalog(catalog_dir, dry_run=True)
@@ -224,7 +224,7 @@ class TestFieldMapping:
     def test_source_type_manual_for_entries_without_paths(
         self, catalog_dir: Path
     ) -> None:
-        """Entries without ids_paths should have source_type='manual'."""
+        """Entries without dd_paths should have source_type='manual'."""
         from imas_codex.standard_names.catalog_import import import_catalog
 
         result = import_catalog(catalog_dir, dry_run=True)
@@ -247,7 +247,7 @@ class TestFieldMapping:
 
         result = import_catalog(catalog_dir, dry_run=True)
 
-        # plasma_current has no ids_paths, empty tags, empty links
+        # plasma_current has no dd_paths, empty tags, empty links
         pc_entry = next(e for e in result.entries if e["id"] == "plasma_current")
         assert pc_entry["imas_paths"] is None
         assert pc_entry["tags"] is None
@@ -1153,7 +1153,7 @@ class TestPublishImportRoundTrip:
             "unit": "eV",
             "tags": [],
             "links": [],
-            "ids_paths": ["core_profiles/profiles_1d/electrons/temperature"],
+            "dd_paths": ["core_profiles/profiles_1d/electrons/temperature"],
             "validity_domain": "core plasma",
             "constraints": ["T_e > 0"],
             "physics_domain": "core_plasma_physics",
@@ -1246,7 +1246,7 @@ class TestPublishImportRoundTrip:
             "unit": "eV",
             "tags": [],
             "links": [],
-            "ids_paths": ["core_profiles/profiles_1d/electrons/temperature"],
+            "dd_paths": ["core_profiles/profiles_1d/electrons/temperature"],
             "validity_domain": "",
             "constraints": [],
             "physics_domain": "core_plasma_physics",

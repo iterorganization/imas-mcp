@@ -904,7 +904,7 @@ def get_validated_standard_names(
     Returns
     -------
     list of dicts with keys: name, description, documentation, kind,
-    unit, tags, links, ids_paths, constraints, validity_domain,
+    unit, tags, links, dd_paths, constraints, validity_domain,
     confidence, model, source, source_path, ids_name, physical_base,
     subject, component, coordinate, position, process, source_ids_names.
     """
@@ -945,7 +945,7 @@ def get_validated_standard_names(
                    coalesce(u.id, sn.unit) AS unit,
                    sn.tags AS tags,
                    sn.links AS links,
-                   sn.ids_paths AS ids_paths,
+                   sn.imas_paths AS imas_paths,
                    sn.constraints AS constraints,
                    sn.validity_domain AS validity_domain,
                    coalesce(sn.confidence, 1.0) AS confidence,

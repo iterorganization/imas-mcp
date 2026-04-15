@@ -466,7 +466,7 @@ SAMPLE_GRAPH_RECORD: dict[str, Any] = {
     "kind": "scalar",
     "tags": [],
     "links": [],
-    "ids_paths": ["core_profiles/profiles_1d/electrons/temperature"],
+    "imas_paths": ["core_profiles/profiles_1d/electrons/temperature"],
     "constraints": ["T_e > 0"],
     "validity_domain": "core plasma",
     "confidence": 0.95,
@@ -484,7 +484,7 @@ SAMPLE_CATALOG_ENTRY_RT: dict[str, Any] = {
     "unit": "eV",
     "tags": [],
     "links": [],
-    "ids_paths": ["core_profiles/profiles_1d/electrons/temperature"],
+    "dd_paths": ["core_profiles/profiles_1d/electrons/temperature"],
     "validity_domain": "core plasma",
     "constraints": ["T_e > 0"],
     "physics_domain": "core_plasma_physics",
@@ -513,7 +513,7 @@ def _published_yaml_to_catalog(
     if raw_links and isinstance(raw_links[0], dict):
         doc["links"] = [lnk.get("name", str(lnk)) for lnk in raw_links]
     # Ensure required list fields are present (even if empty)
-    for list_field in ("tags", "links", "ids_paths", "constraints"):
+    for list_field in ("tags", "links", "dd_paths", "constraints"):
         doc.setdefault(list_field, [])
     # Empty string validity_domain instead of None
     if doc.get("validity_domain") is None:
@@ -525,14 +525,10 @@ def _imported_dict_to_graph_record(d: dict[str, Any]) -> dict[str, Any]:
     """Normalise an imported graph dict for ``graph_records_to_entries``.
 
     ``import_catalog`` returns dicts with ``id`` / ``units`` / ``imas_paths``
-    keys.  ``graph_records_to_entries`` looks for ``name``/``id``,
-    ``unit``/``units``, and ``ids_paths``.  This helper adds the
-    ``ids_paths`` alias so that the path list survives the round-trip.
+    keys.  ``graph_records_to_entries`` reads ``imas_paths`` from graph
+    records and maps to ``dd_paths`` on the Pydantic model.
     """
     rec = dict(d)
-    # Alias imas_paths → ids_paths (graph_records_to_entries reads ids_paths)
-    if "imas_paths" in rec and "ids_paths" not in rec:
-        rec["ids_paths"] = rec["imas_paths"] or []
     return rec
 
 
@@ -544,7 +540,7 @@ def _key_fields(parsed_yaml: dict[str, Any]) -> dict[str, Any]:
         "unit": parsed_yaml.get("unit"),
         "description": parsed_yaml.get("description"),
         "documentation": parsed_yaml.get("documentation"),
-        "ids_paths": sorted(parsed_yaml.get("ids_paths") or []),
+        "dd_paths": sorted(parsed_yaml.get("dd_paths") or []),
         "validity_domain": parsed_yaml.get("validity_domain"),
         "constraints": sorted(parsed_yaml.get("constraints") or []),
     }
@@ -556,7 +552,7 @@ class TestRoundTripIdempotence:
     def test_publish_import_publish_idempotent(self, tmp_path: Path) -> None:
         """Round-trip: graph_records → YAML → catalog import → YAML should match.
 
-        Key fields (name, kind, unit, ids_paths, validity_domain, constraints)
+        Key fields (name, kind, unit, dd_paths, validity_domain, constraints)
         must be identical after a full publish → import → publish cycle.
         Provenance and confidence fields are allowed to differ.
         """
@@ -620,9 +616,7 @@ class TestRoundTripIdempotence:
         assert fields2["name"] == fields1["name"], "name must be preserved"
         assert fields2["kind"] == fields1["kind"], "kind must be preserved"
         assert fields2["unit"] == fields1["unit"], "unit must be preserved"
-        assert fields2["ids_paths"] == fields1["ids_paths"], (
-            "ids_paths must be preserved"
-        )
+        assert fields2["dd_paths"] == fields1["dd_paths"], "dd_paths must be preserved"
         assert fields2["validity_domain"] == fields1["validity_domain"], (
             "validity_domain must be preserved"
         )
@@ -675,9 +669,9 @@ class TestRoundTripIdempotence:
         assert published.get("documentation") == original["documentation"], (
             "documentation must round-trip"
         )
-        assert sorted(published.get("ids_paths") or []) == sorted(
-            original.get("ids_paths") or []
-        ), "ids_paths must round-trip"
+        assert sorted(published.get("dd_paths") or []) == sorted(
+            original.get("dd_paths") or []
+        ), "dd_paths must round-trip"
         if original.get("validity_domain"):
             assert published.get("validity_domain") == original["validity_domain"], (
                 "validity_domain must round-trip"
@@ -774,7 +768,7 @@ _GRAPH_QUERY_ROW = {
     "unit": "eV",
     "tags": ["spatial-profile"],
     "links": ["name:ion_temperature"],
-    "ids_paths": ["core_profiles/profiles_1d/electrons/temperature"],
+    "imas_paths": ["core_profiles/profiles_1d/electrons/temperature"],
     "constraints": ["T_e > 0"],
     "validity_domain": "core plasma",
     "confidence": 0.95,
@@ -824,7 +818,7 @@ class TestE2ERoundTrip:
             "unit": publish_entry.unit,
             "tags": publish_entry.tags,
             "links": publish_entry.links,
-            "ids_paths": publish_entry.ids_paths,
+            "dd_paths": publish_entry.dd_paths,
             "validity_domain": publish_entry.validity_domain or "",
             "constraints": publish_entry.constraints,
             "physics_domain": "core_plasma_physics",
@@ -909,11 +903,11 @@ class TestE2ERoundTrip:
         entry = result.entries[0]
         # catalog 'unit' passes through as graph 'unit'
         assert entry["unit"] == "eV"
-        # catalog 'ids_paths' → graph 'imas_paths'
+        # catalog 'dd_paths' → graph 'imas_paths'
         assert entry["imas_paths"] == [
             "core_profiles/profiles_1d/electrons/temperature"
         ]
-        assert "ids_paths" not in entry
+        assert "dd_paths" not in entry
         # review_status always 'accepted' after import
         assert entry["review_status"] == "accepted"
 
@@ -935,7 +929,7 @@ class TestE2ERoundTrip:
         assert entry.unit == "eV"
         assert "spatial-profile" in entry.tags
         assert entry.links == ["name:ion_temperature"]
-        assert entry.ids_paths == ["core_profiles/profiles_1d/electrons/temperature"]
+        assert entry.dd_paths == ["core_profiles/profiles_1d/electrons/temperature"]
         assert entry.validity_domain == "core plasma"
         assert entry.constraints == ["T_e > 0"]
         assert entry.documentation is not None
@@ -954,9 +948,7 @@ class TestE2ERoundTrip:
         assert parsed["validity_domain"] == "core plasma"
         assert parsed["constraints"] == ["T_e > 0"]
         assert "documentation" in parsed
-        assert parsed["ids_paths"] == [
-            "core_profiles/profiles_1d/electrons/temperature"
-        ]
+        assert parsed["dd_paths"] == ["core_profiles/profiles_1d/electrons/temperature"]
         assert parsed["provenance"]["confidence"] == 0.95
 
         # Stage C: generate_catalog_files creates correct subdirectory structure
@@ -1043,7 +1035,7 @@ class TestE2ERoundTrip:
             "unit": "eV",
             "tags": [],
             "links": [],
-            "ids_paths": [],
+            "dd_paths": [],
             "validity_domain": "",
             "constraints": [],
             "physics_domain": "core_plasma_physics",

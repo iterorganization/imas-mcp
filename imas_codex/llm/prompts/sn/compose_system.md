@@ -299,7 +299,7 @@ Each candidate MUST include:
 - `kind`: one of `"scalar"`, `"vector"`, `"metadata"` — see classification rules
 - `tags`: array of 0-3 **secondary** tags ONLY from the controlled vocabulary below (primary classification goes into `physics_domain` automatically — do NOT include primary tags here)
 - `links`: array of 4-8 related standard names from the existing_names list, each prefixed with `name:` (e.g., `"name:electron_temperature"`)
-- `ids_paths`: array of IMAS DD paths this name maps to (include the source_id at minimum)
+- `dd_paths`: array of IMAS DD paths this name maps to (include the source_id at minimum)
 - `grammar_fields`: dict of grammar fields used (only non-null fields)
 - `confidence`: float 0.0-1.0
 - `reason`: brief justification

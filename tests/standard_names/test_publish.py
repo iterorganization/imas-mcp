@@ -153,7 +153,7 @@ class TestSNPublishEntry:
         assert entry.unit is None
         assert entry.documentation is None
         assert entry.links == []
-        assert entry.ids_paths == []
+        assert entry.dd_paths == []
         assert entry.constraints == []
         assert entry.validity_domain is None
 
@@ -551,7 +551,7 @@ class TestGraphRecordsToEntries:
         assert entries[0].tags == []
 
     def test_rich_fields_carried_through(self) -> None:
-        """Rich fields (documentation, links, ids_paths, constraints, validity_domain, kind) are preserved."""
+        """Rich fields (documentation, links, dd_paths, constraints, validity_domain, kind) are preserved."""
         records = [
             {
                 "name": "ion_temperature",
@@ -565,7 +565,7 @@ class TestGraphRecordsToEntries:
                 "ids_name": "core_profiles",
                 "tags": ["core_profiles", "kinetics"],
                 "links": ["electron_temperature", "ion_density"],
-                "ids_paths": ["core_profiles/profiles_1d/ion/temperature"],
+                "imas_paths": ["core_profiles/profiles_1d/ion/temperature"],
                 "constraints": ["T_i > 0"],
                 "validity_domain": "core plasma",
             }
@@ -579,7 +579,7 @@ class TestGraphRecordsToEntries:
         )
         assert e.kind == "scalar"
         assert e.links == ["electron_temperature", "ion_density"]
-        assert e.ids_paths == ["core_profiles/profiles_1d/ion/temperature"]
+        assert e.dd_paths == ["core_profiles/profiles_1d/ion/temperature"]
         assert e.constraints == ["T_i > 0"]
         assert e.validity_domain == "core plasma"
         assert e.tags == ["core_profiles", "kinetics"]
@@ -612,7 +612,7 @@ class TestRichFieldRoundTrip:
             description="Ion temperature",
             documentation="Ion temperature $T_i$ in eV. Typical range 0.1–20 keV.",
             links=["electron_temperature", "ion_density"],
-            ids_paths=["core_profiles/profiles_1d/ion/temperature"],
+            dd_paths=["core_profiles/profiles_1d/ion/temperature"],
             constraints=["T_i > 0"],
             validity_domain="core plasma",
             provenance=sample_provenance,
@@ -631,7 +631,7 @@ class TestRichFieldRoundTrip:
             {"name": "electron_temperature"},
             {"name": "ion_density"},
         ]
-        assert doc["ids_paths"] == ["core_profiles/profiles_1d/ion/temperature"]
+        assert doc["dd_paths"] == ["core_profiles/profiles_1d/ion/temperature"]
         assert doc["constraints"] == ["T_i > 0"]
         assert doc["validity_domain"] == "core plasma"
         assert doc["tags"] == ["core_profiles", "kinetics"]
@@ -649,7 +649,7 @@ class TestRichFieldRoundTrip:
 
         assert "documentation" not in doc
         assert "links" not in doc
-        assert "ids_paths" not in doc
+        assert "dd_paths" not in doc
         assert "constraints" not in doc
         assert "validity_domain" not in doc
 

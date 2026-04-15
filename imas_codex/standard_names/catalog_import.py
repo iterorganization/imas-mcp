@@ -117,11 +117,11 @@ def _catalog_entry_to_dict(entry: Any, *, extra: dict | None = None) -> dict[str
     # Convert tags/links to plain strings (catalog may use typed objects)
     tags = [str(t) for t in entry.tags] if entry.tags else None
     links = [str(lnk) for lnk in entry.links] if entry.links else None
-    ids_paths = list(entry.ids_paths) if entry.ids_paths else None
+    dd_paths = list(entry.dd_paths) if entry.dd_paths else None
     constraints = list(entry.constraints) if entry.constraints else None
 
-    # Determine source_type from presence of ids_paths
-    source_type = "dd" if ids_paths else "manual"
+    # Determine source_type from presence of dd_paths
+    source_type = "dd" if dd_paths else "manual"
 
     result = {
         "id": entry.name,
@@ -131,7 +131,7 @@ def _catalog_entry_to_dict(entry: Any, *, extra: dict | None = None) -> dict[str
         "unit": str(entry.unit) if entry.unit else None,
         "tags": tags or None,
         "links": links or None,
-        "imas_paths": ids_paths or None,
+        "imas_paths": dd_paths or None,
         "validity_domain": entry.validity_domain or None,
         "constraints": constraints or None,
         "physics_domain": entry.physics_domain or None,
@@ -249,7 +249,7 @@ def _write_catalog_entries(
                 batch=cocos_batch,
             )
 
-        # Create HAS_STANDARD_NAME relationships from ids_paths
+        # Create HAS_STANDARD_NAME relationships from dd_paths
         dd_batch = []
         for e in entries:
             if e.get("imas_paths"):

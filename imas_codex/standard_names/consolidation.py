@@ -52,7 +52,7 @@ def _merge_duplicates(group: list[dict]) -> dict:
     When multiple candidates produce the SAME standard_name with the SAME
     unit and kind, they are merged:
     - Keep the entry with the longest documentation
-    - Union the ids_paths from all duplicates
+    - Union the dd_paths from all duplicates
     - Union the tags
     - Keep highest confidence
     """
@@ -63,7 +63,7 @@ def _merge_duplicates(group: list[dict]) -> dict:
     )
     merged = dict(group[0])
 
-    # Union ids_paths
+    # Union dd_paths
     all_paths: set[str] = set()
     for c in group:
         all_paths.update(c.get("imas_paths") or [])

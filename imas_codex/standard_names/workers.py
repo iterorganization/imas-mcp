@@ -689,7 +689,7 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
                         "kind": c.kind,
                         "tags": tags,
                         "links": links,
-                        "imas_paths": c.ids_paths,  # graph schema key
+                        "imas_paths": c.dd_paths,  # graph schema key
                         "fields": c.grammar_fields,
                         "confidence": c.confidence,
                         "reason": c.reason,
@@ -1217,7 +1217,7 @@ def _validate_via_isn(entry: dict) -> tuple[list[str], dict]:
         "tags": entry.get("tags", []),
         "links": entry.get("links", []),
         "physics_domain": entry.get("physics_domain", ""),
-        "ids_paths": entry.get("imas_paths", []),
+        "dd_paths": entry.get("imas_paths", []),
     }
     # ISN metadata kind forbids unit field entirely
     if isn_dict["kind"] != "metadata":
