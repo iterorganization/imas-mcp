@@ -519,6 +519,102 @@ def persist_composed_batch(
     return write_standard_names(candidates)
 
 
+def write_vocab_gaps(
+    gaps: list[dict[str, str]],
+    source_type: str = "dd",
+) -> int:
+    """Persist VocabGap nodes and HAS_SN_VOCAB_GAP relationships.
+
+    Each gap dict has: source_id, segment, needed_token, reason.
+
+    Deduplicates VocabGap nodes by id (vocab_gap:{segment}:{needed_token}).
+    Creates HAS_SN_VOCAB_GAP relationships from source entities with
+    per-source reason as a relationship property.
+
+    Returns the number of VocabGap nodes written.
+    """
+    if not gaps:
+        return 0
+
+    from datetime import UTC, datetime
+
+    now = datetime.now(UTC).isoformat()
+
+    # Build deduplicated gap nodes and relationship batch
+    gap_nodes: dict[str, dict] = {}
+    rel_batch: list[dict] = []
+
+    for g in gaps:
+        segment = g["segment"]
+        needed_token = g["needed_token"]
+        gap_id = f"vocab_gap:{segment}:{needed_token}"
+
+        if gap_id not in gap_nodes:
+            gap_nodes[gap_id] = {
+                "id": gap_id,
+                "segment": segment,
+                "needed_token": needed_token,
+                "example_count": 0,
+            }
+        gap_nodes[gap_id]["example_count"] += 1
+
+        rel_batch.append(
+            {
+                "gap_id": gap_id,
+                "source_id": g["source_id"],
+                "reason": g.get("reason", ""),
+                "observed_at": now,
+            }
+        )
+
+    with GraphClient() as gc:
+        # MERGE VocabGap nodes — increment count, update timestamps
+        gc.query(
+            """
+            UNWIND $batch AS b
+            MERGE (vg:VocabGap {id: b.id})
+            SET vg.segment = b.segment,
+                vg.needed_token = b.needed_token,
+                vg.example_count = coalesce(vg.example_count, 0) + b.example_count,
+                vg.first_seen_at = coalesce(vg.first_seen_at, datetime()),
+                vg.last_seen_at = datetime()
+            """,
+            batch=list(gap_nodes.values()),
+        )
+
+        # Create HAS_SN_VOCAB_GAP relationships from source entities
+        if source_type == "dd":
+            # DD sources (IMASNode)
+            gc.query(
+                """
+                UNWIND $batch AS b
+                MATCH (vg:VocabGap {id: b.gap_id})
+                MATCH (src:IMASNode {id: b.source_id})
+                MERGE (src)-[r:HAS_SN_VOCAB_GAP]->(vg)
+                SET r.reason = b.reason,
+                    r.observed_at = datetime(b.observed_at)
+                """,
+                batch=rel_batch,
+            )
+        else:
+            # Signal sources (FacilitySignal)
+            gc.query(
+                """
+                UNWIND $batch AS b
+                MATCH (vg:VocabGap {id: b.gap_id})
+                MATCH (src:FacilitySignal {id: b.source_id})
+                MERGE (src)-[r:HAS_SN_VOCAB_GAP]->(vg)
+                SET r.reason = b.reason,
+                    r.observed_at = datetime(b.observed_at)
+                """,
+                batch=rel_batch,
+            )
+
+    written = len(gap_nodes)
+    logger.info("Wrote %d VocabGap nodes from %d gap reports", written, len(gaps))
+    return written
+
+
 # =============================================================================
 # Claim/mark/release — graph-state-machine workers
 #
