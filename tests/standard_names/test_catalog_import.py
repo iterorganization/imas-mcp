@@ -209,7 +209,7 @@ class TestFieldMapping:
 
         et_entry = next(e for e in result.entries if e["id"] == "electron_temperature")
         assert et_entry["source_paths"] == [
-            "core_profiles/profiles_1d/electrons/temperature"
+            "dd:core_profiles/profiles_1d/electrons/temperature"
         ]
 
     def test_source_type_dd_for_entries_with_paths(self, catalog_dir: Path) -> None:
@@ -835,7 +835,7 @@ class TestCheckMode:
                 "kind": "scalar",
                 "unit": "eV",
                 "tags": None,
-                "source_paths": ["core_profiles/profiles_1d/electrons/temperature"],
+                "source_paths": ["dd:core_profiles/profiles_1d/electrons/temperature"],
                 "validity_domain": "core plasma",
                 "constraints": ["T_e > 0"],
                 "physics_domain": "core_plasma_physics",
@@ -914,7 +914,7 @@ class TestCheckMode:
                 "kind": "scalar",
                 "unit": "eV",
                 "tags": None,
-                "source_paths": ["core_profiles/profiles_1d/electrons/temperature"],
+                "source_paths": ["dd:core_profiles/profiles_1d/electrons/temperature"],
                 "validity_domain": "core plasma",
                 "constraints": ["T_e > 0"],
                 "physics_domain": "core_plasma_physics",
@@ -1174,7 +1174,7 @@ class TestPublishImportRoundTrip:
         assert entry["id"] == "electron_temperature"
         assert entry["unit"] == "eV"
         assert entry["source_paths"] == [
-            "core_profiles/profiles_1d/electrons/temperature"
+            "dd:core_profiles/profiles_1d/electrons/temperature"
         ]
         assert entry["review_status"] == "accepted"
         assert entry["source_types"] == ["dd"]
