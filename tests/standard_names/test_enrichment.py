@@ -560,7 +560,16 @@ class TestIntegration:
                 unit="eV",
                 ids_name="core_profiles",
             ),
-            # Different path, same cluster c1
+            # Different path, same global cluster c2
+            _make_row(
+                path="core_transport/profiles_1d/electrons/temperature",
+                cluster_id="c2",
+                cluster_label="Kinetic profiles",
+                cluster_scope="global",
+                unit="eV",
+                ids_name="core_transport",
+            ),
+            # Same path, also in IDS-scope cluster c1
             _make_row(
                 path="core_transport/profiles_1d/electrons/temperature",
                 cluster_id="c1",
@@ -583,7 +592,7 @@ class TestIntegration:
         enriched = enrich_paths(raw_rows)
         assert len(enriched) == 2  # 2 unique quantity paths
 
-        # First path picks IDS-scope cluster c1 over global c2
+        # Primary cluster picks IDS-scope c1 (most specific)
         first = next(
             e
             for e in enriched
@@ -591,16 +600,18 @@ class TestIntegration:
         )
         assert first["primary_cluster_id"] == "c1"
         assert first["primary_cluster_label"] == "Electron temperature"
+        # Grouping cluster picks global-scope c2 (widest)
+        assert first["grouping_cluster_id"] == "c2"
 
         # Group globally
         batches = group_by_concept_and_unit(enriched)
 
-        # Both paths share cluster c1 / unit "eV" → single batch with 2 items
+        # Both paths share global cluster c2 / unit "eV" → single batch
         assert len(batches) == 1
         assert len(batches[0].items) == 2
         assert batches[0].source == "dd"
-        # Group key uses cluster ID (not label) for collision avoidance
-        assert "c1" in batches[0].group_key
+        # Group key uses global cluster c2 (not IDS-scope c1)
+        assert "c2" in batches[0].group_key
 
     def test_mixed_units_split(self):
         """Same cluster, different units → separate batches."""

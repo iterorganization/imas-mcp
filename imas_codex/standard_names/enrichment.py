@@ -75,21 +75,40 @@ def select_primary_cluster(clusters: list[dict]) -> dict | None:
     return min(clusters, key=_sort_key)
 
 
+# ---------------------------------------------------------------------------
+# Reversed scope priority for grouping (widest first).
+# ---------------------------------------------------------------------------
+
+_GROUPING_SCOPE_PRIORITY: dict[str, int] = {
+    "global": 0,
+    "domain": 1,
+    "ids": 2,
+}
+
+
 def select_grouping_cluster(clusters: list[dict]) -> dict | None:
     """Choose the best cluster for batch grouping.
 
-    Uses the same IDS-first priority as :func:`select_primary_cluster`
-    to ensure paths sharing an IDS-scope cluster stay in the same batch.
-    The key difference from primary selection: batch formation uses the
-    cluster **ID** (not label) to avoid collisions from identically-named
-    clusters in different scopes.
+    Uses REVERSED priority: global → domain → IDS (widest first) to ensure
+    equivalent paths across different IDSs land in the same batch.
 
     Returns:
         The selected grouping cluster dict, or ``None`` if *clusters* is empty.
     """
-    # Same priority as primary — IDS-first ensures cross-IDS paths sharing
-    # an IDS-scope cluster land in the same batch.
-    return select_primary_cluster(clusters)
+    if not clusters:
+        return None
+    if len(clusters) == 1:
+        return clusters[0]
+
+    def _sort_key(c: dict) -> tuple[int, float, str]:
+        scope_rank = _GROUPING_SCOPE_PRIORITY.get(
+            (c.get("scope") or ""), _DEFAULT_SCOPE_RANK
+        )
+        sim = -(c.get("similarity_score") or 0.0)
+        label = c.get("cluster_label") or ""
+        return (scope_rank, sim, label)
+
+    return min(clusters, key=_sort_key)
 
 
 def enrich_paths(paths: list[dict]) -> list[dict]:
@@ -298,9 +317,10 @@ def group_by_concept_and_unit(
         if cluster_id:
             group_key = f"{cluster_id}/{unit}"
         else:
-            # Unclustered: sub-group by parent_path for coherent batches.
+            # Unclustered: sub-group by IDS + parent for coherent batches.
+            ids_name = item.get("ids_name") or "unknown"
             parent = item.get("parent_path") or "root"
-            group_key = f"unclustered/{parent}/{unit}"
+            group_key = f"unclustered/{ids_name}/{parent}/{unit}"
 
         groups[group_key].append(item)
 

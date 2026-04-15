@@ -15,10 +15,16 @@ from imas_codex.standard_names.sources.base import ExtractionBatch
 
 logger = logging.getLogger(__name__)
 
-# Enriched extraction query — single Cypher surfacing all context
+# Enriched extraction query — single Cypher surfacing all context.
+# LIMIT is applied on DISTINCT (n, ids) pairs first, then clusters/coords
+# are joined.  This guarantees $limit unique paths regardless of how many
+# cluster memberships each path has.
 _ENRICHED_QUERY = """
 MATCH (n:IMASNode)-[:IN_IDS]->(ids:IDS)
 WHERE {where_clause}
+WITH DISTINCT n, ids
+ORDER BY ids.id, n.id
+LIMIT $limit
 WITH n, ids
 OPTIONAL MATCH (n)-[:HAS_UNIT]->(u:Unit)
 OPTIONAL MATCH (n)-[:IN_CLUSTER]->(c:IMASSemanticCluster)
@@ -40,6 +46,7 @@ RETURN n.id AS path,
        c.label AS cluster_label,
        c.id AS cluster_id,
        c.description AS cluster_description,
+       c.scope AS cluster_scope,
        parent.id AS parent_path,
        parent.description AS parent_description,
        parent.data_type AS parent_type,
@@ -49,7 +56,6 @@ RETURN n.id AS path,
        n.cocos_label_transformation AS cocos_label,
        n.cocos_transformation_expression AS cocos_expression
 ORDER BY ids.id, n.id
-LIMIT $limit
 """
 
 # Cluster siblings query — paths sharing the same cluster
@@ -72,6 +78,7 @@ def extract_dd_candidates(
     existing_names: set[str] | None = None,
     on_status: Callable[[str], None] | None = None,
     from_model: str | None = None,
+    force: bool = False,
 ) -> list[ExtractionBatch]:
     """Extract candidate quantities from IMAS DD paths with enriched context.
 
@@ -88,6 +95,8 @@ def extract_dd_candidates(
         on_status: Optional callback ``(text: str) -> None`` for progress updates
         from_model: Only return paths whose existing StandardName was generated
             by a model containing this substring
+        force: When False, exclude paths that already have a non-stale/non-failed
+            StandardNameSource node (skip already-processed).
 
     Returns:
         List of ExtractionBatch objects grouped by (primary_cluster, unit)
@@ -138,6 +147,11 @@ def extract_dd_candidates(
                 "WHERE sn.model CONTAINS $from_model }"
             )
             params["from_model"] = from_model
+        if not force:
+            where_parts.append(
+                "NOT EXISTS { MATCH (sns:StandardNameSource {source_id: n.id, source_type: 'dd'}) "
+                "WHERE NOT (sns.status IN ['stale', 'failed']) }"
+            )
 
         where_clause = " AND ".join(where_parts)
         query = _ENRICHED_QUERY.format(where_clause=where_clause)
@@ -208,10 +222,11 @@ def extract_dd_candidates(
     )
 
     logger.info(
-        "Extracted %d batches from %d DD paths (%d clusters)",
+        "Extracted %d batches from %d DD paths (%d clusters, force=%s)",
         len(batches),
         len(results),
         len(cluster_ids),
+        force,
     )
 
     # Propagate COCOS metadata to batches

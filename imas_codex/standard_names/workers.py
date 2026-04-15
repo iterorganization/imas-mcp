@@ -99,6 +99,7 @@ async def extract_worker(state: StandardNameBuildState, **_kwargs) -> None:
                     existing_names=existing,
                     on_status=_on_status,
                     from_model=state.from_model,
+                    force=state.force,
                 )
         else:
             wlog.error("Unknown source: %s", state.source)
@@ -139,6 +140,36 @@ async def extract_worker(state: StandardNameBuildState, **_kwargs) -> None:
                     injected += 1
         if injected:
             wlog.info("Injected previous_name context for %d items", injected)
+
+    # Write StandardNameSource nodes for crash-resilient tracking
+    if not state.dry_run and batches:
+        from imas_codex.standard_names.graph_ops import merge_standard_name_sources
+
+        sources = []
+        source_type = "dd" if state.source == "dd" else "signals"
+        for batch in batches:
+            for item in batch.items:
+                path = item.get("path", item.get("signal_id"))
+                if not path:
+                    continue
+                sources.append(
+                    {
+                        "id": f"{source_type}:{path}",
+                        "source_type": source_type,
+                        "source_id": path,
+                        "batch_key": batch.group_key,
+                        "status": "extracted",
+                        "description": item.get("description")
+                        or item.get("documentation")
+                        or "",
+                    }
+                )
+
+        if sources:
+            written = await asyncio.to_thread(
+                merge_standard_name_sources, sources, force=state.force
+            )
+            wlog.info("Wrote %d StandardNameSource nodes to graph", written)
 
     total_items = sum(len(b.items) for b in batches)
     state.extracted = batches
@@ -471,6 +502,126 @@ def _process_attachments(
         wlog.warning("Failed to process attachments", exc_info=True)
 
 
+# ---------------------------------------------------------------------------
+# StandardNameSource status updaters (Phase 5: incremental tracking)
+# ---------------------------------------------------------------------------
+
+
+def _update_sources_after_compose(
+    candidates: list[dict], source: str, wlog: logging.LoggerAdapter
+) -> None:
+    """Update StandardNameSource nodes to 'composed' after successful batch composition."""
+    from imas_codex.graph.client import GraphClient
+
+    source_type = "dd" if source == "dd" else "signals"
+    batch = []
+    for c in candidates:
+        source_id = c.get("source_id")
+        sn_id = c.get("id")
+        if source_id and sn_id:
+            batch.append(
+                {
+                    "sns_id": f"{source_type}:{source_id}",
+                    "sn_id": sn_id,
+                }
+            )
+
+    if not batch:
+        return
+
+    try:
+        with GraphClient() as gc:
+            gc.query(
+                """
+                UNWIND $batch AS b
+                MATCH (sns:StandardNameSource {id: b.sns_id})
+                SET sns.status = 'composed',
+                    sns.composed_at = datetime()
+                WITH sns, b
+                MATCH (sn:StandardName {id: b.sn_id})
+                MERGE (sns)-[:PRODUCED_NAME]->(sn)
+                """,
+                batch=batch,
+            )
+        wlog.debug("Updated %d StandardNameSource nodes to composed", len(batch))
+    except Exception:
+        wlog.warning("Failed to update StandardNameSource status", exc_info=True)
+
+
+def _update_sources_after_attach(
+    attachments: list, source: str, wlog: logging.LoggerAdapter
+) -> None:
+    """Update StandardNameSource nodes to 'attached' status."""
+    from imas_codex.graph.client import GraphClient
+
+    source_type = "dd" if source == "dd" else "signals"
+    batch = []
+    for a in attachments:
+        if a.source_id:
+            batch.append(
+                {
+                    "sns_id": f"{source_type}:{a.source_id}",
+                    "sn_id": a.standard_name,
+                }
+            )
+
+    if not batch:
+        return
+
+    try:
+        with GraphClient() as gc:
+            gc.query(
+                """
+                UNWIND $batch AS b
+                MATCH (sns:StandardNameSource {id: b.sns_id})
+                SET sns.status = 'attached',
+                    sns.composed_at = datetime()
+                WITH sns, b
+                MATCH (sn:StandardName {id: b.sn_id})
+                MERGE (sns)-[:PRODUCED_NAME]->(sn)
+                """,
+                batch=batch,
+            )
+        wlog.debug("Updated %d StandardNameSource nodes to attached", len(batch))
+    except Exception:
+        wlog.warning(
+            "Failed to update StandardNameSource attachment status", exc_info=True
+        )
+
+
+def _update_sources_after_vocab_gap(
+    vocab_gaps: list[dict], source: str, wlog: logging.LoggerAdapter
+) -> None:
+    """Update StandardNameSource nodes to 'vocab_gap' status."""
+    from imas_codex.graph.client import GraphClient
+
+    source_type = "dd" if source == "dd" else "signals"
+    source_ids = []
+    for vg in vocab_gaps:
+        sid = vg.get("source_id")
+        if sid:
+            source_ids.append(f"{source_type}:{sid}")
+
+    if not source_ids:
+        return
+
+    try:
+        with GraphClient() as gc:
+            gc.query(
+                """
+                UNWIND $ids AS sns_id
+                MATCH (sns:StandardNameSource {id: sns_id})
+                SET sns.status = 'vocab_gap'
+                """,
+                ids=source_ids,
+            )
+        wlog.debug("Updated %d StandardNameSource nodes to vocab_gap", len(source_ids))
+    except Exception:
+        wlog.warning(
+            "Failed to update StandardNameSource vocab_gap status", exc_info=True
+        )
+
+
 async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
     """LLM-generate standard names from extracted batches.
 
@@ -740,9 +891,14 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
                 await asyncio.to_thread(write_vocab_gaps, gap_dicts, source_type)
                 wlog.debug("Persisted %d vocab gaps to graph", len(gap_dicts))
 
+                if not state.dry_run:
+                    _update_sources_after_vocab_gap(gap_dicts, state.source, wlog)
+
             # Process attachments — paths that map to existing names
             if result.attachments:
                 _process_attachments(result.attachments, state, wlog)
+                if not state.dry_run:
+                    _update_sources_after_attach(result.attachments, state.source, wlog)
 
             # --- GRAPH-STATE-MACHINE: persist immediately per batch ---
             # This ensures completed batches survive cost-limit cancellation.
@@ -757,6 +913,10 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
                     cocos_version=batch.cocos_version,
                 )
                 wlog.debug("Persisted %d names from batch %s", written, batch.group_key)
+
+            # Update StandardNameSource nodes to composed status
+            if candidates and not state.dry_run:
+                _update_sources_after_compose(candidates, state.source, wlog)
 
             wlog.info(
                 "Batch %s: %d composed, %d attached, %d skipped (cost=$%.4f)",
