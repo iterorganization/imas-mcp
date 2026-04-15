@@ -8,6 +8,7 @@ from imas_codex.standard_names.consolidation import (
     ConflictRecord,
     ConsolidationResult,
     _merge_duplicates,
+    _resolve_physics_domain,
     consolidate_candidates,
 )
 
@@ -28,9 +29,10 @@ def _candidate(
     source_paths: list[str] | None = None,
     documentation: str = "",
     description: str = "",
+    physics_domain: str | None = None,
 ) -> dict:
     """Build a minimal candidate dict."""
-    return {
+    d: dict = {
         "id": name,
         "source_id": source_id,
         "source_types": source_types or ["dd"],
@@ -42,6 +44,9 @@ def _candidate(
         "documentation": documentation,
         "description": description,
     }
+    if physics_domain is not None:
+        d["physics_domain"] = physics_domain
+    return d
 
 
 # =============================================================================
@@ -600,3 +605,78 @@ class TestCombinedScenarios:
 
         # Stats add up
         assert result.stats["total_input"] == 5
+
+
+# =============================================================================
+# 13. Physics domain resolution
+# =============================================================================
+
+
+class TestResolvPhysicsDomain:
+    """Tests for _resolve_physics_domain deterministic resolution."""
+
+    def test_all_none(self):
+        assert _resolve_physics_domain([None, None]) is None
+
+    def test_all_empty(self):
+        assert _resolve_physics_domain(["", "", None]) is None
+
+    def test_unanimous_domain(self):
+        assert _resolve_physics_domain(["transport", "transport"]) == "transport"
+
+    def test_general_loses_to_specific(self):
+        assert _resolve_physics_domain(["general", "transport"]) == "transport"
+
+    def test_general_loses_to_multiple_specific(self):
+        # Alphabetically first specific domain wins
+        result = _resolve_physics_domain(["general", "transport", "equilibrium"])
+        assert result == "equilibrium"
+
+    def test_tie_alphabetically_first(self):
+        result = _resolve_physics_domain(["transport", "equilibrium"])
+        assert result == "equilibrium"
+
+    def test_single_value(self):
+        assert _resolve_physics_domain(["equilibrium"]) == "equilibrium"
+
+    def test_none_mixed_with_value(self):
+        assert _resolve_physics_domain([None, "transport", ""]) == "transport"
+
+    def test_all_general(self):
+        assert _resolve_physics_domain(["general", "general"]) == "general"
+
+
+class TestMergeDuplicatesPhysicsDomain:
+    """Test that _merge_duplicates resolves physics_domain deterministically."""
+
+    def test_merge_same_domain(self):
+        group = [
+            _candidate("te", "core/te", physics_domain="transport"),
+            _candidate("te", "eq/te", physics_domain="transport"),
+        ]
+        merged = _merge_duplicates(group)
+        assert merged["physics_domain"] == "transport"
+
+    def test_merge_general_vs_specific(self):
+        group = [
+            _candidate("te", "core/te", physics_domain="general"),
+            _candidate("te", "eq/te", physics_domain="transport"),
+        ]
+        merged = _merge_duplicates(group)
+        assert merged["physics_domain"] == "transport"
+
+    def test_merge_no_domain(self):
+        group = [
+            _candidate("te", "core/te"),
+            _candidate("te", "eq/te"),
+        ]
+        merged = _merge_duplicates(group)
+        assert merged["physics_domain"] is None
+
+    def test_merge_mixed_none_and_value(self):
+        group = [
+            _candidate("te", "core/te"),
+            _candidate("te", "eq/te", physics_domain="equilibrium"),
+        ]
+        merged = _merge_duplicates(group)
+        assert merged["physics_domain"] == "equilibrium"

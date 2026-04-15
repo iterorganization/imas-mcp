@@ -332,7 +332,7 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
                 sn.validity_domain = coalesce(b.validity_domain, sn.validity_domain),
                 sn.constraints = coalesce(b.constraints, sn.constraints),
                 sn.unit = coalesce(b.unit, sn.unit),
-                sn.physics_domain = coalesce(b.physics_domain, sn.physics_domain),
+                sn.physics_domain = coalesce(nullIf(b.physics_domain, ''), sn.physics_domain),
                 sn.cocos_transformation_type = coalesce(b.cocos_transformation_type, sn.cocos_transformation_type),
                 sn.cocos = coalesce(b.cocos, sn.cocos),
                 sn.dd_version = coalesce(b.dd_version, sn.dd_version),
@@ -349,6 +349,7 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
                 sn.vocab_gap_detail = coalesce(b.vocab_gap_detail, sn.vocab_gap_detail),
                 sn.validation_issues = coalesce(b.validation_issues, sn.validation_issues),
                 sn.validation_layer_summary = coalesce(b.validation_layer_summary, sn.validation_layer_summary),
+                sn.validation_status = coalesce(b.validation_status, sn.validation_status),
                 sn.link_status = coalesce(b.link_status, sn.link_status),
                 sn.review_input_hash = b.review_input_hash,
                 sn.created_at = coalesce(sn.created_at, datetime())
@@ -372,7 +373,7 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
                     "validity_domain": n.get("validity_domain"),
                     "constraints": n.get("constraints") or None,
                     "unit": n.get("unit"),
-                    "physics_domain": n.get("physics_domain"),
+                    "physics_domain": n.get("physics_domain") or None,
                     "cocos_transformation_type": n.get("cocos_transformation_type"),
                     "cocos": n.get("cocos"),
                     "dd_version": n.get("dd_version"),
@@ -391,6 +392,7 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
                     "validation_layer_summary": _ensure_json(
                         n.get("validation_layer_summary")
                     ),
+                    "validation_status": n.get("validation_status"),
                     "link_status": _compute_link_status(n.get("links")),
                     "review_input_hash": n.get("review_input_hash"),
                 }
@@ -510,6 +512,7 @@ def persist_composed_batch(
     for entry in candidates:
         entry.setdefault("model", compose_model)
         entry.setdefault("review_status", "drafted")
+        entry.setdefault("validation_status", "pending")
         entry.setdefault("generated_at", now)
         # Extract grammar fields into top-level properties for graph
         fields = entry.get("fields", {})
@@ -689,7 +692,8 @@ def mark_names_validated(
     """Write validation results and release claims atomically.
 
     Each result dict must have ``id``, ``validation_issues`` (list[str]),
-    and ``validation_layer_summary`` (JSON string).
+    ``validation_layer_summary`` (JSON string), and ``validation_status``
+    (``"valid"`` or ``"quarantined"``).
     Token-verified: only updates nodes still claimed by this token.
     """
     if not results:
@@ -701,6 +705,7 @@ def mark_names_validated(
                 "id": r["id"],
                 "issues": r.get("validation_issues") or [],
                 "summary": _ensure_json(r.get("validation_layer_summary")),
+                "validation_status": r.get("validation_status", "valid"),
             }
         )
     with GraphClient() as gc:
@@ -711,6 +716,7 @@ def mark_names_validated(
             SET sn.validated_at = datetime(),
                 sn.validation_issues = b.issues,
                 sn.validation_layer_summary = b.summary,
+                sn.validation_status = b.validation_status,
                 sn.claimed_at = null,
                 sn.claim_token = null
             RETURN count(sn) AS marked
@@ -823,17 +829,21 @@ def get_validated_names(
     """Query all validated StandardNames for consolidation analysis.
 
     Read-only — no claims needed since consolidation is a batch analysis.
-    Returns drafted names that have ``validated_at`` set.
+    Returns drafted names that have ``validated_at`` set and
+    ``validation_status`` = ``'valid'``.
     """
     where_parts = [
         "sn.review_status = 'drafted'",
         "sn.validated_at IS NOT NULL",
+        "sn.validation_status = 'valid'",
     ]
     params: dict[str, Any] = {"limit": limit}
 
     if ids_filter:
         where_parts.append("ANY(p IN sn.source_paths WHERE p STARTS WITH $ids_prefix)")
-        params["ids_prefix"] = f"{ids_filter}/"
+        from imas_codex.standard_names.source_paths import ids_prefix_for_source_paths
+
+        params["ids_prefix"] = ids_prefix_for_source_paths(ids_filter)
 
     where_clause = " AND ".join(where_parts)
 
@@ -920,6 +930,7 @@ def get_validated_standard_names(
             MATCH (sn:StandardName)
             WHERE sn.review_status = $review_status
             AND coalesce(sn.confidence, 1.0) >= $confidence_min
+            AND sn.validation_status = 'valid'
             OPTIONAL MATCH (src)-[:HAS_STANDARD_NAME]->(sn)
             OPTIONAL MATCH (src)-[:IN_IDS]->(ids:IDS)
             OPTIONAL MATCH (sn)-[:HAS_UNIT]->(u:Unit)

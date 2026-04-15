@@ -46,6 +46,33 @@ class ConsolidationResult:
 # =============================================================================
 
 
+def _resolve_physics_domain(domains: list[str | None]) -> str | None:
+    """Deterministically resolve physics_domain when sources disagree.
+
+    Resolution rules:
+    - All sources agree → use that domain
+    - Sources disagree → most specific wins (``general`` < any specific domain)
+    - Tie between equally specific → alphabetically first
+
+    Args:
+        domains: physics_domain values from all candidates in a merge group.
+
+    Returns:
+        Resolved domain string or None if all are empty.
+    """
+    # Filter out None / empty
+    valid = sorted({d for d in domains if d})
+    if not valid:
+        return None
+    if len(valid) == 1:
+        return valid[0]
+    # "general" is least specific — prefer any specific domain over it
+    specific = [d for d in valid if d != "general"]
+    if specific:
+        return sorted(specific)[0]
+    return "general"
+
+
 def _merge_duplicates(group: list[dict]) -> dict:
     """Merge duplicate candidates for the same standard name.
 
@@ -55,6 +82,7 @@ def _merge_duplicates(group: list[dict]) -> dict:
     - Union the dd_paths from all duplicates
     - Union the tags
     - Keep highest confidence
+    - Resolve physics_domain deterministically across sources
     """
     # Sort by documentation length (longest first), then confidence
     group.sort(
@@ -80,6 +108,11 @@ def _merge_duplicates(group: list[dict]) -> dict:
 
     # Keep highest confidence
     merged["confidence"] = max(c.get("confidence", 0) for c in group)
+
+    # Resolve physics_domain across sources
+    merged["physics_domain"] = _resolve_physics_domain(
+        [c.get("physics_domain") for c in group]
+    )
 
     return merged
 

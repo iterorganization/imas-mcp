@@ -98,6 +98,12 @@ def build_compose_context() -> dict[str, Any]:
     ctx["examples"] = _load_curated_examples()
     ctx["tokamak_ranges"] = _load_tokamak_ranges()
 
+    # Physics domain enum (for prompt context — LLM doesn't set it but
+    # needs domain awareness for better naming decisions)
+    from imas_codex.core.physics_domain import PhysicsDomain
+
+    ctx["physics_domains"] = [e.value for e in PhysicsDomain]
+
     # Bare enum lists (backward compat for user prompt)
     ctx.update(_build_enum_lists())
 

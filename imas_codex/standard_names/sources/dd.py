@@ -132,6 +132,7 @@ def extract_dd_candidates(
         params: dict = {"limit": limit}
         where_parts = [
             "n.node_type = 'dynamic'",
+            "n.node_category = 'data'",
             "n.description IS NOT NULL",
             "n.description <> ''",
         ]
