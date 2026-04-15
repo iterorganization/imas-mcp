@@ -717,8 +717,8 @@ Five-phase DAG: **EXTRACT → COMPOSE → VALIDATE → CONSOLIDATE → PERSIST**
 
 | Phase | Worker | Key Operation |
 |-------|--------|---------------|
-| EXTRACT | `extract_worker` | Query DD paths, classify (quantity/metadata/skip), enrich with clusters, group into batches |
-| COMPOSE | `compose_worker` | LLM generates names per batch; unit injected from DD (never from LLM output). Auto-attaches DD paths to existing matching standard names without regeneration |
+| EXTRACT | `extract_worker` | Query DD paths, classify (quantity/metadata/skip), enrich with clusters, group into batches. Writes `StandardNameSource` nodes to graph for crash resilience |
+| COMPOSE | `compose_worker` | LLM generates names per batch; unit injected from DD (never from LLM output). Auto-attaches DD paths to existing matching standard names without regeneration. Updates `StandardNameSource` status (composed/attached/vocab_gap) |
 | VALIDATE | `validate_worker` | ISN 3-layer validation (Pydantic → semantic → description) + grammar round-trip |
 | CONSOLIDATE | `consolidate_worker` | Cross-batch dedup, conflict detection (unit/kind/source), coverage accounting |
 | PERSIST | `persist_worker` | Conflict-detecting Neo4j writes with coalesce semantics |
@@ -728,12 +728,13 @@ Five-phase DAG: **EXTRACT → COMPOSE → VALIDATE → CONSOLIDATE → PERSIST**
 | Module | Purpose |
 |--------|---------|
 | `imas_codex/standard_names/classifier.py` | 11-rule path classifier: quantity (→ name), metadata (→ skip), skip (→ discard) |
-| `imas_codex/standard_names/enrichment.py` | Primary cluster selection (IDS > domain > global scope) + global grouping by (cluster × unit) |
+| `imas_codex/standard_names/enrichment.py` | Primary cluster selection (IDS > domain > global scope), grouping cluster selection (global > domain > IDS), global grouping by (cluster × unit) |
 | `imas_codex/standard_names/consolidation.py` | Cross-batch dedup, 5 conflict checks, coverage gap accounting |
-| `imas_codex/standard_names/graph_ops.py` | Neo4j read/write with unit conflict detection |
+| `imas_codex/standard_names/graph_ops.py` | Neo4j read/write with unit conflict detection + StandardNameSource CRUD (merge, claim, mark, reconcile) |
 | `imas_codex/standard_names/pipeline.py` | DAG orchestrator wiring workers into `run_discovery_engine()` |
 | `imas_codex/standard_names/workers.py` | Five async worker functions (review is standalone, not in generate pipeline) |
 | `imas_codex/standard_names/models.py` | Pydantic response models (`StandardNameComposeBatch`, `StandardNameAttachment`) |
+| `imas_codex/standard_names/source_paths.py` | Central encode/parse/split/merge utilities for StandardName source paths |
 | `imas_codex/standard_names/context.py` | Grammar context builder (vocabulary, examples, tokamak ranges) |
 | `imas_codex/standard_names/calibration.py` | Centralized loader (cached) for `benchmark_calibration.yaml` |
 | `imas_codex/standard_names/search.py` | Vector search for similar existing StandardName nodes (collision avoidance) |
@@ -751,10 +752,11 @@ The LLM never provides the unit field.
 | `sn enrich` | Enrich existing standard names with documentation | `--ids`, `--domain`, `--status`, `-c/--cost-limit`, `--dry-run`, `--limit`, `--batch-size` |
 | `sn publish` | Export validated StandardName nodes to YAML catalog files | `--output-dir`, `--ids`, `--domain`, `--group-by {ids,domain,confidence}`, `--confidence-min`, `--catalog-dir`, `--create-pr` |
 | `sn import` | Import reviewed YAML catalog entries back into graph | `--catalog-dir` (required), `--tags`, `--dry-run`, `--check` |
-| `sn status` | Show standard name statistics from graph | — |
+| `sn status` | Show standard name and StandardNameSource pipeline statistics | — |
 | `sn gaps` | List grammar vocabulary gaps from composition | `--segment`, `--export {table,yaml}` |
 | `sn reset` | Reset standard names for re-processing | `--status` (required), `--to`, `--source`, `--ids`, `--dry-run` |
-| `sn clear` | Delete standard names from the graph (relationship-first safety model) | `--status`, `--all`, `--source`, `--ids`, `--include-accepted`, `--dry-run` |
+| `sn clear` | Delete standard names from the graph (relationship-first safety model) | `--status`, `--all`, `--source`, `--ids`, `--include-accepted`, `--include-sources`, `--dry-run` |
+| `sn reconcile` | Reconcile StandardNameSource nodes after DD/signal rebuild | `--source-type {dd,signals}` |
 | `sn benchmark` | Benchmark LLM models on standard name generation quality | `--models`, `--ids`, `--reviewer-model`, `--max-candidates` |
 
 ### Benchmark
@@ -793,6 +795,25 @@ drafted → published → accepted
 - **published**: Exported by `sn publish` to YAML catalog for human review
 - **accepted**: Imported by `sn import` from reviewed catalog (catalog-authoritative)
 
+### StandardNameSource Lifecycle
+
+`StandardNameSource` nodes track individual DD path / facility signal extraction through the pipeline. Written by the extract worker, updated by the compose worker.
+
+```
+extracted → composed | attached | vocab_gap | failed | stale
+```
+
+- **extracted**: Path queued for composition (written by extract worker)
+- **composed**: LLM generated a new standard name for this source
+- **attached**: Source auto-attached to an existing standard name (no LLM call needed)
+- **vocab_gap**: Grammar vocabulary gap prevented naming this source
+- **failed**: Composition failed (LLM error, validation rejection)
+- **stale**: Source no longer exists in DD/signals graph (set by `sn reconcile`)
+
+**ID format**: `dd:{full_dd_path}` or `signals:{facility}:{signal_id}`
+
+**Reconciliation**: `sn reconcile --source-type dd` detects StandardNameSource nodes whose backing DD path or facility signal no longer exists in the graph and marks them `stale`.
+
 ### Reset and Clear Semantics
 
 **`sn reset`** — Re-processes existing nodes without deleting them. Clears transient fields
@@ -802,7 +823,8 @@ status unchanged, only clears fields.
 
 **`sn clear`** — Deletes StandardName nodes. Uses a relationship-first safety model: HAS_STANDARD_NAME
 edges are removed before deleting nodes, and scoped deletes only remove orphaned nodes. Requires
-either `--status <value>` or `--all`.
+either `--status <value>` or `--all`. Pass `--include-sources` to also delete associated
+`StandardNameSource` nodes.
 
 **Safety guard:** Both commands require `--include-accepted` to touch names with `review_status=accepted`.
 Accepted names are catalog-authoritative and should rarely be deleted from the graph.
@@ -836,12 +858,15 @@ Two distinct write paths with different semantics:
 
 ### Schema
 
-StandardName node defined in `imas_codex/schemas/standard_name.yaml` (v0.5.0). Key relationships:
+StandardName and StandardNameSource nodes defined in `imas_codex/schemas/standard_name.yaml`. Key relationships:
 
 - `(IMASNode)-[:HAS_STANDARD_NAME]->(StandardName)`
 - `(FacilitySignal)-[:HAS_STANDARD_NAME]->(StandardName)`
 - `(StandardName)-[:HAS_UNIT]->(Unit)`
 - `(StandardName)-[:HAS_COCOS]->(COCOS)`
+- `(StandardNameSource)-[:SOURCE_DD_PATH]->(IMASNode)` — DD-sourced extraction tracking
+- `(StandardNameSource)-[:SOURCE_SIGNAL]->(FacilitySignal)` — signal-sourced extraction tracking
+- `(StandardNameSource)-[:PRODUCED_STANDARD_NAME]->(StandardName)` — links source to result
 
 **COCOS provenance:** `cocos_transformation_type` (string, e.g. `psi_like`, `ip_like`) records
 how a quantity transforms under COCOS convention changes. `cocos` (integer) links directly to
