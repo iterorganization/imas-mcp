@@ -300,7 +300,9 @@ def graph_records_to_entries(
         documentation = rec.get("documentation")
         kind = rec.get("kind") or "scalar"
         links_raw = rec.get("links") or []
-        dd_paths_raw = rec.get("source_paths") or []
+        from imas_codex.standard_names.source_paths import strip_dd_prefix
+
+        dd_paths_raw = [strip_dd_prefix(p) for p in rec.get("source_paths") or []]
         constraints_raw = rec.get("constraints") or []
         validity_domain = rec.get("validity_domain")
         cocos_transformation_type = rec.get("cocos_transformation_type")

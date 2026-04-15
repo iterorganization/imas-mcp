@@ -466,7 +466,7 @@ SAMPLE_GRAPH_RECORD: dict[str, Any] = {
     "kind": "scalar",
     "tags": [],
     "links": [],
-    "source_paths": ["core_profiles/profiles_1d/electrons/temperature"],
+    "source_paths": ["dd:core_profiles/profiles_1d/electrons/temperature"],
     "constraints": ["T_e > 0"],
     "validity_domain": "core plasma",
     "confidence": 0.95,
@@ -768,7 +768,7 @@ _GRAPH_QUERY_ROW = {
     "unit": "eV",
     "tags": ["spatial-profile"],
     "links": ["name:ion_temperature"],
-    "source_paths": ["core_profiles/profiles_1d/electrons/temperature"],
+    "source_paths": ["dd:core_profiles/profiles_1d/electrons/temperature"],
     "constraints": ["T_e > 0"],
     "validity_domain": "core plasma",
     "confidence": 0.95,
@@ -905,10 +905,9 @@ class TestE2ERoundTrip:
         assert entry["unit"] == "eV"
         # catalog 'dd_paths' → graph 'source_paths'
         assert entry["source_paths"] == [
-            "core_profiles/profiles_1d/electrons/temperature"
+            "dd:core_profiles/profiles_1d/electrons/temperature"
         ]
         assert "dd_paths" not in entry
-        # review_status always 'accepted' after import
         assert entry["review_status"] == "accepted"
 
     def test_field_preservation_across_lifecycle(self, tmp_path: Path) -> None:
@@ -974,7 +973,7 @@ class TestE2ERoundTrip:
         assert imported["kind"] == "scalar"
         assert imported["unit"] == "eV"
         assert imported["source_paths"] == [
-            "core_profiles/profiles_1d/electrons/temperature"
+            "dd:core_profiles/profiles_1d/electrons/temperature"
         ]
         assert imported["validity_domain"] == "core plasma"
         assert imported["constraints"] == ["T_e > 0"]
