@@ -164,6 +164,29 @@ Define both when the DD provides both.
 entries. If one entry uses `poloidal_magnetic_flux`, all related entries must
 use `magnetic_flux` (not just `flux`).
 
+### Naming captures the physical quantity, not how it was obtained
+
+Standard names describe **what** is measured, not **how** it was measured or processed.
+Avoid processing verbs and method artifacts in names:
+- ❌ `electron_temperature_fit_measured` → ✅ `electron_temperature`
+- ❌ `plasma_current_reconstructed_value` → ✅ `plasma_current`
+- ❌ `pressure_chi_squared` → ✅ (skip — this is a fit diagnostic, not a physics quantity)
+
+Provenance qualifiers like `measured`, `reconstructed`, `simulated` may be included
+only when they distinguish genuinely different physical quantities (e.g., a measured
+signal vs a synthetic diagnostic), not as method annotations.
+
+### One subject per name
+
+Each standard name should describe a single physics quantity for a single particle
+species or component. Do not combine multiple subjects:
+- ❌ `electron_fast_ion_pressure` → ✅ separate names: `electron_pressure`, `fast_ion_pressure`
+- ❌ `deuterium_tritium_density` → ✅ separate names or use a species-generic `fuel_ion_density`
+
+If the DD path describes a multi-species quantity, use the most general applicable
+subject. If no single subject fits, flag it for vocabulary review by including a note
+in the `reason` field.
+
 ### Documentation Structure
 
 **DS-1 Define every variable.** EVERY variable in a LaTeX equation MUST be
@@ -261,6 +284,18 @@ etc.) or note that it is code-dependent.
 **SS-4 Vector units limitation.** Position vectors may have mixed units
 (m for R, Z; rad for φ). Document this limitation in the description when it
 applies. (Deferred to ISN vector_axes proposal for structural resolution.)
+
+{% if physics_domains %}
+### Physics Domain Reference
+
+The following physics domains classify IMAS data. The `physics_domain` field is
+set automatically from the Data Dictionary — **you do not set it**. This list
+is provided as context for your naming decisions.
+
+{% for domain in physics_domains %}
+- `{{ domain }}`
+{% endfor %}
+{% endif %}
 
 ## Composition Rules
 
@@ -385,14 +420,11 @@ Include **0-3 secondary tags** from the list below. Do NOT include primary tags 
 {% endif %}
 ### Links Guidance
 
-Reference 4-8 related standard names or DD paths. Each link MUST have a prefix:
+Reference 4-8 related standard names from the provided `existing_names` list. Each link MUST use the `name:` prefix:
 - `name:` for existing standard names (e.g., `"name:electron_temperature"`)
-- `dd:` for IMAS DD paths when no standard name exists yet (e.g., `"dd:equilibrium/time_slice/profiles_1d/phi"`)
 
-Prefer `name:` links to existing names when available. Use `dd:` links for sibling fields and
-related paths from the batch context that don't have standard names yet — these will be resolved
-to `name:` links once those paths are named. Include links that are:
+Only reference names that exist in the provided `existing_names` list. If fewer than 4 matching names exist, include as many as you can. Include links that are:
 - Same physical quantity in a different context (name:electron_temperature ↔ name:ion_temperature)
 - Derived or input quantities (name:electron_pressure ↔ name:electron_temperature + name:electron_density)
-- Sibling fields from the same parent structure (use `dd:` prefix for these)
+- Sibling or related quantities from the same physics domain
 - Commonly plotted together
