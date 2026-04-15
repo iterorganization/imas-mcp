@@ -1,4 +1,4 @@
-# SN Pipeline: Graph-Primary Architecture with SNSource Nodes
+# Standard Name Pipeline: Graph-Primary Architecture with StandardNameSource Nodes
 
 ## Problem Statement
 
@@ -26,18 +26,18 @@ The pipeline uses a hybrid in-memory/graph architecture:
 - **Not generic across sources** — DD and signal extraction have separate code paths with no shared tracking
 - **Status lost on DD clear** — if SN tracking were on IMASNode, `clear_dd_graph()` (DETACH DELETE) destroys it
 
-## Design: SNSource Intermediary Node
+## Design: StandardNameSource Intermediary Node
 
 **Reviewed and approved through 4 rounds of rubber-duck critique.**
 
 ### Core Concept
 
-Introduce `SNSource` — a graph-primary work-tracking node that registers source
+Introduce `StandardNameSource` — a graph-primary work-tracking node that registers source
 quantities needing standard names. It sits between source nodes (IMASNode,
 FacilitySignal) and StandardName nodes, providing:
 
-1. **Graph-primary orchestration** — workers claim SNSource nodes from graph, not memory
-2. **Explicit progress tracking** — `count(SNSource WHERE status='extracted')` = remaining work
+1. **Graph-primary orchestration** — workers claim StandardNameSource nodes from graph, not memory
+2. **Explicit progress tracking** — `count(StandardNameSource WHERE status='extracted')` = remaining work
 3. **Crash resilience** — graph state survives pipeline restarts
 4. **Source independence** — survives DD clear+rebuild (not a DD node type)
 5. **Generic across sources** — same node for DD paths and facility signals
@@ -47,7 +47,7 @@ FacilitySignal) and StandardName nodes, providing:
 ### Schema
 
 ```yaml
-SNSource:
+StandardNameSource:
   description: >-
     Work-tracking node for standard name composition pipeline.
     Created by EXTRACT, claimed by COMPOSE. Minimal design — source
@@ -57,20 +57,24 @@ SNSource:
     
     Generic across source types. Survives DD clear+rebuild because
     it is NOT a DD node type.
-  class_uri: sn:SNSource
+  class_uri: sn:StandardNameSource
   attributes:
     id:
       identifier: true
       description: "Composite key: {source_type}:{source_id}"
       required: true
     source_type:
-      range: StandardNameSource
+      range: StandardNameSourceType
+      description: >-
+        Source kind — only `dd` and `signals` are valid for pipeline nodes.
+        `manual` and `reference` are StandardName provenance values that
+        never enter the composition pipeline. Enforce via test.
       required: true
     source_id:
       description: ID of the source node (IMASNode.id or FacilitySignal.id)
       required: true
     status:
-      range: SNSourceStatus
+      range: StandardNameSourceStatus
       required: true
     classification:
       description: "Path classification: quantity"
@@ -96,7 +100,7 @@ SNSource:
     composed_at:
       range: datetime
 
-SNSourceStatus:
+StandardNameSourceStatus:
   permissible_values:
     extracted:
       description: Registered for composition, awaiting LLM processing
@@ -115,9 +119,9 @@ SNSourceStatus:
 ### Relationships
 
 ```
-(SNSource)-[:FROM_DD_PATH]->(IMASNode)        — DD source link
-(SNSource)-[:FROM_SIGNAL]->(FacilitySignal)   — signal source link
-(SNSource)-[:PRODUCED_NAME]->(StandardName)   — composition result (lineage)
+(StandardNameSource)-[:FROM_DD_PATH]->(IMASNode)        — DD source link
+(StandardNameSource)-[:FROM_SIGNAL]->(FacilitySignal)   — signal source link
+(StandardNameSource)-[:PRODUCED_NAME]->(StandardName)   — composition result (lineage)
 (IMASNode)-[:HAS_STANDARD_NAME]->(StandardName) — authoritative semantic mapping (unchanged)
 ```
 
@@ -126,10 +130,10 @@ queue item produced which name (composition lineage / auditability).
 
 ### Indexes
 
-- `SNSource(status)` — claim queries
-- `SNSource(batch_key)` — batch grouping
-- `SNSource(source_id)` — reconciliation joins
-- `SNSource(claim_token)` — claim verification
+- `StandardNameSource(status)` — claim queries
+- `StandardNameSource(batch_key)` — batch grouping
+- `StandardNameSource(source_id)` — reconciliation joins
+- `StandardNameSource(claim_token)` — claim verification
 
 ### Lifecycle Diagram
 
@@ -171,9 +175,9 @@ queue item produced which name (composition lineage / auditability).
 
 1. Query IMASNode candidates (with all coverage gap fixes applied)
 2. Classify each path via `classifier.py`
-3. Only quantity-classified paths get SNSource nodes (metadata/skip counted in stats only)
+3. Only quantity-classified paths get StandardNameSource nodes (metadata/skip counted in stats only)
 4. Enrich with cluster selection → compute `batch_key`
-5. MERGE SNSource nodes to graph (batch UNWIND) with FROM_DD_PATH relationships
+5. MERGE StandardNameSource nodes to graph (batch UNWIND) with FROM_DD_PATH relationships
 6. ON CREATE: status=extracted; ON MATCH: only requeue if stale or --force
 7. `extract_phase.mark_done()` when all batches written
 8. Progress: "Extracted X quantity sources (Y metadata, Z skip)"
@@ -182,7 +186,7 @@ queue item produced which name (composition lineage / auditability).
 
 ```cypher
 UNWIND $batch AS item
-MERGE (src:SNSource {id: item.id})
+MERGE (src:StandardNameSource {id: item.id})
 ON CREATE SET
   src.source_type = item.source_type,
   src.source_id = item.source_id,
@@ -214,19 +218,19 @@ MERGE (src)-[:FROM_DD_PATH]->(p)
 
 ### COMPOSE (graph-primary claim loop)
 
-1. `has_work_fn`: `MATCH (src:SNSource {status: 'extracted'}) WHERE src.claimed_at IS NULL RETURN count(src) > 0`
+1. `has_work_fn`: `MATCH (src:StandardNameSource {status: 'extracted'}) WHERE src.claimed_at IS NULL RETURN count(src) > 0`
 2. Atomic full-batch claim (all members of a batch_key in single transaction)
 3. Verify claim + fetch source metadata via OPTIONAL MATCH join to IMASNode
 4. Handle missing sources → mark stale (token-verified)
 5. LLM compose → persist StandardName → create PRODUCED_NAME + HAS_STANDARD_NAME
-6. Mark SNSource composed/attached/vocab_gap (token-verified)
+6. Mark StandardNameSource composed/attached/vocab_gap (token-verified)
 7. On failure: increment attempt_count, return to extracted or terminal failed
 8. Progress: "Composed X/Y sources (Z attached, W vocab_gap, V failed)"
 
 **Atomic full-batch claim (single transaction):**
 
 ```cypher
-MATCH (src:SNSource {status: 'extracted'})
+MATCH (src:StandardNameSource {status: 'extracted'})
 WHERE src.claimed_at IS NULL 
    OR src.claimed_at < datetime() - duration({seconds: $timeout})
 WITH src.batch_key AS bk, collect(src) AS all_members
@@ -243,13 +247,13 @@ RETURN all_members[0].batch_key AS batch_key, size(all_members) AS batch_size
 **Verify + fetch source metadata:**
 
 ```cypher
-MATCH (src:SNSource {claim_token: $token})
+MATCH (src:StandardNameSource {claim_token: $token})
 OPTIONAL MATCH (p:IMASNode {id: src.source_id})
 OPTIONAL MATCH (p)-[:HAS_UNIT]->(u:Unit)
 OPTIONAL MATCH (p)-[:IN_IDS]->(ids:IDS)
 OPTIONAL MATCH (p)-[:IN_CLUSTER]->(c:IMASSemanticCluster)
 OPTIONAL MATCH (p)-[:HAS_PARENT]->(parent:IMASNode)
-RETURN src.id AS sn_source_id, src.source_id AS path,
+RETURN src.id AS standard_name_source_id, src.source_id AS path,
        p IS NOT NULL AS source_exists,
        p.description, p.documentation, u.id AS unit,
        ids.id AS ids_name, c.id AS cluster_id, c.label AS cluster_label,
@@ -261,7 +265,7 @@ RETURN src.id AS sn_source_id, src.source_id AS path,
 **Token-verified failure with durable retry:**
 
 ```cypher
-MATCH (src:SNSource {claim_token: $token})
+MATCH (src:StandardNameSource {claim_token: $token})
 SET src.attempt_count = coalesce(src.attempt_count, 0) + 1,
     src.last_error = $error_msg,
     src.failed_at = datetime(),
@@ -295,7 +299,7 @@ Operate on StandardName nodes directly. No changes needed.
 ### Reconciliation after DD clear+rebuild
 
 ```cypher
-MATCH (src:SNSource {source_type: 'dd'})
+MATCH (src:StandardNameSource {source_type: 'dd'})
 WHERE NOT (src)-[:FROM_DD_PATH]->(:IMASNode)
 WITH src
 OPTIONAL MATCH (p:IMASNode {id: src.source_id})
@@ -338,9 +342,9 @@ OPTIONAL MATCH (n)-[:HAS_UNIT]->(u:Unit)
 
 ### Gap 2: Stall prevention (CRITICAL)
 
-With SNSource, the stall problem is eliminated by design:
-- EXTRACT creates SNSource with status=extracted (only for unnamed paths)
-- COMPOSE claims from SNSource, not from the raw query
+With StandardNameSource, the stall problem is eliminated by design:
+- EXTRACT creates StandardNameSource with status=extracted (only for unnamed paths)
+- COMPOSE claims from StandardNameSource, not from the raw query
 - Re-runs: ON MATCH preserves composed/attached status, only processes new/stale
 
 Additionally, add pre-LIMIT unnamed exclusion for the EXTRACT query:
@@ -349,10 +353,10 @@ Additionally, add pre-LIMIT unnamed exclusion for the EXTRACT query:
 AND NOT EXISTS { MATCH (n)-[:HAS_STANDARD_NAME]->(:StandardName) }
 ```
 
-And pre-LIMIT SNSource exclusion (skip paths already registered):
+And pre-LIMIT StandardNameSource exclusion (skip paths already registered):
 
 ```cypher
-AND NOT EXISTS { MATCH (:SNSource {source_id: n.id, source_type: 'dd'})
+AND NOT EXISTS { MATCH (:StandardNameSource {source_id: n.id, source_type: 'dd'})
                  WHERE NOT (_.status IN ['stale', 'failed']) }
 ```
 
@@ -377,34 +381,165 @@ Report unique path count, not row count.
 
 ### Gap 7: Source type inconsistency (NEW — from RD review)
 
-Normalize `signal` vs `signals` to match the `StandardNameSource` enum (`signals`).
+Normalize `signal` vs `signals` to match the `StandardNameSourceType` enum (`signals`).
 
 ## Implementation Plan
 
-### Phase 1: Schema — SNSource node type
+### Phase 0: Naming Standardization (prerequisite)
+
+Standardize all `SN` abbreviations to `StandardName` / `standard_name` across
+schema, code, tests, and graph. This must land first — all subsequent phases use
+the new naming.
+
+**Scope exclusion — public `sn` namespace retained:**
+- CLI command group: `sn generate`, `sn review`, `sn status`, etc. (`imas_codex/cli/sn.py` file name)
+- Config namespace: `[tool.imas-codex.sn.benchmark]` in `pyproject.toml`
+- Config accessors: `get_sn_benchmark_compose_models()`, `get_sn_benchmark_reviewer_model()`
+- File names: `imas_codex/llm/sn_tools.py`, `tests/standard_names/test_sn_tools.py`
+
+These are public-facing surfaces where `sn` is a deliberate CLI abbreviation for "standard name".
+The rename applies to **internal class/model/state/file identifiers** only.
+
+#### Phase 0a: Rename Pydantic models, state classes, and progress display
+
+Mechanical rename of 18 Python classes and all their import sites (~309 references).
+
+**Renames (models.py):**
+
+| Old | New |
+|-----|-----|
+| `SNCandidate` | `StandardNameCandidate` |
+| `SNVocabGap` | `StandardNameVocabGap` |
+| `SNAttachment` | `StandardNameAttachment` |
+| `SNComposeBatch` | `StandardNameComposeBatch` |
+| `SNProvenance` | `StandardNameProvenance` |
+| `SNPublishEntry` | `StandardNamePublishEntry` |
+| `SNPublishBatch` | `StandardNamePublishBatch` |
+| `SNReviewVerdict` | `StandardNameReviewVerdict` |
+| `SNReviewItem` | `StandardNameReviewItem` |
+| `SNReviewBatch` | `StandardNameReviewBatch` |
+| `SNQualityScore` | `StandardNameQualityScore` |
+| `SNQualityReview` | `StandardNameQualityReview` |
+| `SNQualityReviewBatch` | `StandardNameQualityReviewBatch` |
+| `SNEnrichItem` | `StandardNameEnrichItem` |
+| `SNEnrichBatch` | `StandardNameEnrichBatch` |
+
+**Renames (state + progress):**
+
+| Old | New |
+|-----|-----|
+| `SNBuildState` (state.py) | `StandardNameBuildState` |
+| `SNReviewState` (review/state.py) | `StandardNameReviewState` |
+| `SNProgressDisplay` (progress.py) | `StandardNameProgressDisplay` |
+
+**Files impacted** (~20 source + test files):
+- `imas_codex/standard_names/models.py` — class definitions
+- `imas_codex/standard_names/state.py` — `SNBuildState`
+- `imas_codex/standard_names/review/state.py` — `SNReviewState`
+- `imas_codex/standard_names/progress.py` — `SNProgressDisplay`
+- `imas_codex/standard_names/workers.py` — imports + type annotations
+- `imas_codex/standard_names/pipeline.py` — imports
+- `imas_codex/standard_names/publish.py` — imports + type annotations
+- `imas_codex/standard_names/benchmark.py` — imports + type annotations
+- `imas_codex/standard_names/review/pipeline.py` — imports + type annotations
+- `imas_codex/standard_names/review/consolidation.py` — imports
+- `imas_codex/cli/sn.py` — imports
+- `tests/standard_names/test_scoring.py` — imports
+- `tests/standard_names/test_benchmark.py` — imports
+- `tests/standard_names/test_graph_state_machine.py` — imports
+- `tests/standard_names/test_catalog_import.py` — imports
+- `tests/standard_names/test_integration.py` — imports
+
+**Documentation files also requiring SN→StandardName updates:**
+- `AGENTS.md` — `SNComposeBatch`, `SNAttachment` in module descriptions
+- `docs/architecture/standard-names.md` — `SNComposeBatch`, `SNCandidate`, `SNBuildState` in examples
+- `plans/features/sn-bootstrap-loop.md` — `SNQualityReviewBatch` references (active plan)
+- `docs/architecture/boundary.md` — `SNQualityScore` references
+- `plans/features/standard-names/pending/20-consistency-and-prompt-enrichment.md` — `SNCandidate`, `SNComposeBatch` references
+
+**Method:** `sed -i 's/\bSNCandidate\b/StandardNameCandidate/g'` etc. across all files,
+then `uv run ruff check --fix . && uv run ruff format .` to clean up.
+
+**Acceptance:** `uv run pytest tests/standard_names/` passes with zero `SN[A-Z]` references
+remaining in source files (excluding completed plans and SNAPSHOT log strings).
+
+#### Phase 0b: Schema renames
+
+Two schema changes that affect generated models and graph relationship types.
+
+**1. Rename `StandardNameSource` enum → `StandardNameSourceType`**
+
+The existing `StandardNameSource` enum (values: dd, signals, manual, reference) describes
+source *types*. Renaming to `StandardNameSourceType` frees the `StandardNameSource` name
+for the new node class (Phase 1).
+
+- `imas_codex/schemas/standard_name.yaml`: rename enum + update `source_type` range on `StandardName`
+- `uv run build-models --force`
+- Update all code referencing the generated enum class name
+
+**Graph impact:** None — the enum stores string values (dd, signals, etc.), not the Python class name.
+
+**2. Rename `HAS_SN_VOCAB_GAP` relationship → `HAS_STANDARD_NAME_VOCAB_GAP`**
+
+- `imas_codex/schemas/standard_name.yaml`: update VocabGap description + examples
+- `imas_codex/schemas/imas_dd.yaml`: update relationship_type annotation
+- `imas_codex/schemas/facility.yaml`: update relationship_type annotation
+- `uv run build-models --force`
+- Update code in `imas_codex/standard_names/graph_ops.py` (VocabGap persistence)
+- Update code in `imas_codex/cli/sn.py` (status query)
+- Update tests in `tests/standard_names/test_vocab_gaps.py`
+
+**Acceptance:** `uv run build-models --force` succeeds. `grep -r 'HAS_SN_VOCAB_GAP' imas_codex/ tests/`
+returns zero matches. `uv run pytest tests/standard_names/` passes.
+
+#### Phase 0c: Graph relationship migration
+
+Migrate existing `HAS_SN_VOCAB_GAP` relationships in the live graph to
+`HAS_STANDARD_NAME_VOCAB_GAP`. Run as inline Cypher per project guidelines
+(no migration scripts).
+
+```cypher
+MATCH (src)-[old:HAS_SN_VOCAB_GAP]->(vg:VocabGap)
+WITH src, old, vg, properties(old) AS props
+MERGE (src)-[new:HAS_STANDARD_NAME_VOCAB_GAP]->(vg)
+SET new = props
+DELETE old
+RETURN count(new) AS migrated
+```
+
+**Acceptance:** `MATCH ()-[r:HAS_SN_VOCAB_GAP]->() RETURN count(r)` returns 0.
+Schema compliance tests pass.
+
+### Phase 1: Schema — StandardNameSource node type
+
+**Prerequisite:** Phase 0b has renamed the `StandardNameSource` enum to `StandardNameSourceType`,
+freeing the `StandardNameSource` name for the new node class.
 
 **Files:**
-- `imas_codex/schemas/standard_name.yaml` — add SNSource class, SNSourceStatus enum,
+- `imas_codex/schemas/standard_name.yaml` — add StandardNameSource class, StandardNameSourceStatus enum,
   FROM_DD_PATH/FROM_SIGNAL/PRODUCED_NAME relationship annotations
 - Run `uv run build-models --force` to regenerate models
 
-**Acceptance:** `SNSource` and `SNSourceStatus` importable from generated models.
+**Acceptance:** `StandardNameSource` and `StandardNameSourceStatus` importable from generated models.
+No name collision with `StandardNameSourceType` enum.
 
-### Phase 2: Graph operations — SNSource CRUD
+### Phase 2: Graph operations — StandardNameSource CRUD
 
 **Files:**
 - `imas_codex/standard_names/graph_ops.py` — new functions:
-  - `merge_sn_sources(sources, force)` — batch MERGE with ON CREATE/ON MATCH
-  - `claim_sn_source_batch(timeout, token)` — atomic full-batch claim
+  - `merge_standard_name_sources(sources, force)` — batch MERGE with ON CREATE/ON MATCH.
+    Rejects `source_type` values `manual`/`reference` with `ValueError` before writing
+    (only `dd` and `signals` are valid pipeline sources).
+  - `claim_standard_name_source_batch(timeout, token)` — atomic full-batch claim
   - `fetch_claimed_source_metadata(token)` — verify + join source data
   - `mark_sources_composed(token, results)` — token-verified status update
   - `mark_sources_attached(token, results)` — auto-attach status
   - `mark_sources_vocab_gap(token, results)` — vocab gap status
   - `mark_sources_failed(token, error, max_attempts)` — durable retry + terminal
   - `mark_sources_stale(token, source_ids)` — missing source detection
-  - `release_sn_source_claims(token)` — batch release
-  - `reconcile_sn_sources(source_type)` — post-rebuild reconciliation
-  - `get_sn_source_stats()` — status counts for progress/CLI
+  - `release_standard_name_source_claims(token)` — batch release
+  - `reconcile_standard_name_sources(source_type)` — post-rebuild reconciliation
+  - `get_standard_name_source_stats()` — status counts for progress/CLI
 
 **All functions return affected row count. All state transitions are token-verified.**
 
@@ -413,7 +548,7 @@ Normalize `signal` vs `signals` to match the `StandardNameSource` enum (`signals
 **Files:**
 - `imas_codex/standard_names/sources/dd.py` — restructure `_ENRICHED_QUERY`:
   1. LIMIT on distinct paths (Gap 1)
-  2. Pre-LIMIT unnamed + SNSource exclusion (Gap 2)
+  2. Pre-LIMIT unnamed + StandardNameSource exclusion (Gap 2)
   3. Add `c.scope AS cluster_scope` (Gap 3)
   4. Fix observability (Gap 6)
   5. Add `force` parameter
@@ -428,7 +563,7 @@ Normalize `signal` vs `signals` to match the `StandardNameSource` enum (`signals
 - `imas_codex/standard_names/workers.py` — `extract_worker()`:
   1. Query + classify + enrich (existing logic, with fixes)
   2. Compute batch_key per item
-  3. Call `merge_sn_sources()` to write SNSource nodes to graph
+  3. Call `merge_standard_name_sources()` to write StandardNameSource nodes to graph
   4. Report stats: quantity/metadata/skip counts
   5. `mark_done()` — extract is a single-pass writer, not a loop
 
@@ -440,8 +575,8 @@ Normalize `signal` vs `signals` to match the `StandardNameSource` enum (`signals
 **Files:**
 - `imas_codex/standard_names/workers.py` — `compose_worker()`:
   1. Convert from in-memory batch reader to graph-primary claim loop
-  2. `has_work_fn` queries SNSource status
-  3. Claim loop: `claim_sn_source_batch()` → `fetch_claimed_source_metadata()` →
+  2. `has_work_fn` queries StandardNameSource status
+  3. Claim loop: `claim_standard_name_source_batch()` → `fetch_claimed_source_metadata()` →
      handle missing sources → LLM compose → persist StandardName → mark outcomes
   4. Attachment handling: detect existing matches → mark `attached`
   5. Vocab gap handling: detect grammar gaps → mark `vocab_gap`
@@ -463,22 +598,22 @@ Normalize `signal` vs `signals` to match the `StandardNameSource` enum (`signals
 
 **Files:**
 - `imas_codex/cli/sn.py`:
-  - `sn status` — show SNSource statistics alongside StandardName stats
-  - `sn generate` — display SNSource progress in Rich panels
+  - `sn status` — show StandardNameSource statistics alongside StandardName stats
+  - `sn generate` — display StandardNameSource progress in Rich panels
   - `sn reconcile` — new subcommand for post-rebuild reconciliation
-  - `sn clear` — handle SNSource cleanup alongside StandardName
+  - `sn clear` — handle StandardNameSource cleanup alongside StandardName
 
 ### Phase 8: Tests
 
 **Files:**
-- `tests/standard_names/test_sn_source_schema.py` — schema compliance
-- `tests/standard_names/test_sn_source_graph_ops.py` — CRUD, claims, reconciliation
+- `tests/standard_names/test_standard_name_source_schema.py` — schema compliance
+- `tests/standard_names/test_standard_name_source_graph_ops.py` — CRUD, claims, reconciliation
 - `tests/standard_names/test_extraction_coverage.py` — gap fixes (LIMIT, scope, grouping)
 - Update existing tests for new worker signatures
 
 **Test cases:**
-1. SNSource MERGE creates on first run, preserves composed on re-run
-2. SNSource MERGE requeues stale, resets all on --force
+1. StandardNameSource MERGE creates on first run, preserves composed on re-run
+2. StandardNameSource MERGE requeues stale, resets all on --force
 3. Atomic batch claim — full batch or nothing
 4. Stale-claim timeout reclaim
 5. Missing source detection → stale marking
@@ -489,13 +624,14 @@ Normalize `signal` vs `signals` to match the `StandardNameSource` enum (`signals
 10. cluster_scope flows through enrichment
 11. Grouping cluster uses global > domain > IDS
 12. Unclustered paths use IDS + parent grouping
-13. No SNSource created for metadata/skip paths
+13. No StandardNameSource created for metadata/skip paths
+14. StandardNameSource rejects source_type `manual`/`reference` (only `dd`/`signals` valid for pipeline nodes)
 
 ### Phase 9: Documentation
 
 | Target | Update |
 |--------|--------|
-| `AGENTS.md` | Update SN pipeline section: SNSource node, graph-primary compose, lifecycle, reconciliation |
+| `AGENTS.md` | Update SN pipeline section: StandardNameSource node, graph-primary compose, lifecycle, reconciliation. Replace all `SN*` references with `StandardName*` |
 | `README.md` | Mention `sn reconcile` command |
 | `plans/README.md` | Update plan status |
 | Schema reference | Auto-generated via `build-models` |
@@ -503,10 +639,10 @@ Normalize `signal` vs `signals` to match the `StandardNameSource` enum (`signals
 ## Dependencies
 
 ```
-Phase 1 (schema) → Phase 2 (graph ops) → Phase 3 (extraction fixes)
-                                        → Phase 4 (extract worker)
-                                        → Phase 5 (compose worker)
-Phase 6 (normalization) — independent
+Phase 0 (naming) → Phase 1 (schema) → Phase 2 (graph ops) → Phase 3 (extraction fixes)
+                                                            → Phase 4 (extract worker)
+                                                            → Phase 5 (compose worker)
+Phase 6 (normalization) — independent (can run in parallel with Phase 0)
 Phase 7 (CLI) depends on Phases 4, 5
 Phase 8 (tests) depends on Phases 1-7
 Phase 9 (docs) depends on all phases
@@ -517,7 +653,7 @@ Phase 9 (docs) depends on all phases
 **v1 (this plan): DD source only.**
 
 Signal support follows the same pattern with no schema changes:
-- `(SNSource {source_type: 'signals'})-[:FROM_SIGNAL]->(FacilitySignal)`
+- `(StandardNameSource {source_type: 'signals'})-[:FROM_SIGNAL]->(FacilitySignal)`
 - Signal batch_key: `{physics_domain}:{diagnostic}:{unit}`
 - Signal reconciliation: same stale detection via `source_id` join
 
@@ -525,6 +661,7 @@ Signal support follows the same pattern with no schema changes:
 
 | Phase | Risk | Mitigation |
 |-------|------|------------|
+| 0 (naming) | Low-Medium | Mechanical rename, high file count — use sed + ruff format, verify with grep + pytest |
 | 1 (schema) | Low | Additive change, no existing data affected |
 | 2 (graph ops) | Low | New functions, existing ops unchanged |
 | 3 (extraction) | Medium | Query restructure — test against live graph |
@@ -537,12 +674,14 @@ Signal support follows the same pattern with no schema changes:
 
 ## Design Decisions (from RD review)
 
-1. **Minimal SNSource** — no duplicated source metadata. Join at compose time. Eliminates staleness management.
-2. **5-state lifecycle** — extracted, composed, attached, vocab_gap, failed, stale. No `skipped` — only quantity paths get SNSource.
+1. **Minimal StandardNameSource** — no duplicated source metadata. Join at compose time. Eliminates staleness management.
+2. **5-state lifecycle** — extracted, composed, attached, vocab_gap, failed, stale. No `skipped` — only quantity paths get StandardNameSource.
 3. **Full-batch atomic claim** — single Cypher transaction ensures batch integrity.
 4. **Token-verified transitions** — all state changes match `claim_token`, preventing clobber from slow/crashed workers.
-5. **Durable retry** — `attempt_count` + `last_error` on SNSource. Returns to `extracted` until `max_attempts` (3), then terminal `failed`.
+5. **Durable retry** — `attempt_count` + `last_error` on StandardNameSource. Returns to `extracted` until `max_attempts` (3), then terminal `failed`.
 6. **PRODUCED_NAME relationship** — separate from HAS_STANDARD_NAME. Tracks composition lineage.
 7. **Reconciliation** — `sn reconcile` command re-links after DD rebuild, revives stale→extracted, marks missing sources.
 8. **Batch semantics** — "all currently extracted members with matching batch_key". Partial batches after failure are valid.
 9. **--force resets** — clears attempt_count, last_error, failed_at alongside status→extracted.
+10. **Naming convention** — all SN abbreviations expanded to `StandardName` (PascalCase classes) / `standard_name` (snake_case functions/files). `StandardNameSource` enum renamed to `StandardNameSourceType` to avoid collision with the new `StandardNameSource` node class. `HAS_SN_VOCAB_GAP` relationship renamed to `HAS_STANDARD_NAME_VOCAB_GAP`. Public `sn` CLI namespace and config accessors retained.
+11. **Source type constraint** — `StandardNameSource` nodes only allow `source_type` values `dd` and `signals` (pipeline sources). `manual` and `reference` are `StandardName` provenance values that never enter the composition pipeline. Enforced by test, not by a separate enum — avoids enum proliferation while preserving the invariant.

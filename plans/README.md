@@ -24,7 +24,7 @@ Plans validated against 62 existing standard names, current scoring architecture
 | **P2** | [features/dd-server-cleanup.md](features/dd-server-cleanup.md) | 3 surgical fixes: truncation count, migration API, fuzzy matcher | 1-3 agents |
 | **P3** | [features/search-quality-improvements.md](features/search-quality-improvements.md) | Careful ranking fixes (accessor de-ranking, IDS preference), evaluation alignment | 2 agents |
 | **P4** | [features/docs-refresh.md](features/docs-refresh.md) | Fix 7 stale docs, rewrite docs/README.md (17+ missing entries) | 1 agent |
-| **P5** | [features/sn-extraction-coverage-gaps.md](features/sn-extraction-coverage-gaps.md) | SNSource graph-primary architecture + 7 extraction coverage gap fixes | 2-3 agents |
+| **P5** | [features/sn-extraction-coverage-gaps.md](features/sn-extraction-coverage-gaps.md) | StandardNameSource graph-primary architecture, naming standardization, + 7 extraction coverage gap fixes | 2-3 agents |
 
 ### Wave Implementation Order
 
