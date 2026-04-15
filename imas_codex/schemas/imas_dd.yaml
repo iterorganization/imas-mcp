@@ -824,6 +824,13 @@ classes:
         range: StandardName
         annotations:
           relationship_type: HAS_STANDARD_NAME
+      has_sn_vocab_gap:
+        description: >-
+          Grammar vocab gap identified when trying to name this DD path.
+          Links to VocabGap nodes recording missing grammar tokens.
+        range: VocabGap
+        annotations:
+          relationship_type: HAS_SN_VOCAB_GAP
       coordinates:
         description: >-
           Coordinate specifications for this path (axis definitions).

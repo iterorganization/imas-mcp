@@ -325,3 +325,37 @@ classes:
           Null means consolidation has not processed this name yet.
           Names with conflicts are not marked consolidated.
         range: datetime
+
+  VocabGap:
+    description: >-
+      Records a missing grammar token identified during standard name composition.
+      Linked to source DD paths and facility signals via HAS_SN_VOCAB_GAP
+      relationships. The node stores the normalized gap concept; per-source
+      evidence (reason, observed_at) lives on the relationships.
+
+      Example Cypher:
+        MATCH (vg:VocabGap) RETURN vg.segment, vg.needed_token, vg.example_count
+        MATCH (n:IMASNode)-[:HAS_SN_VOCAB_GAP]->(vg:VocabGap) RETURN n.id, vg.id
+    class_uri: sn:VocabGap
+    attributes:
+      id:
+        identifier: true
+        description: >-
+          Format: vocab_gap:{segment}:{needed_token}
+          Example: vocab_gap:transformation:time_derivative_of
+        required: true
+      segment:
+        description: Grammar segment missing the token (transformation, process, subject, etc.)
+        required: true
+      needed_token:
+        description: The token that should exist in the grammar vocabulary
+        required: true
+      example_count:
+        description: Number of source paths that reported needing this token
+        range: integer
+      first_seen_at:
+        description: When this gap was first identified
+        range: datetime
+      last_seen_at:
+        description: When this gap was most recently reported
+        range: datetime

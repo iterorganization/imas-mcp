@@ -107,6 +107,25 @@ def sn() -> None:
         "'drafted' resets existing drafted names (re-compose only)."
     ),
 )
+@click.option(
+    "--name-only",
+    is_flag=True,
+    help=(
+        "Focus composition on naming and grammar only. "
+        "Documentation fields are preserved from existing graph data. "
+        "Invalidates stale reviews (clears review_input_hash)."
+    ),
+)
+@click.option(
+    "--from-model",
+    type=str,
+    default=None,
+    help=(
+        "Regenerate names produced by a specific model (substring match). "
+        "Example: --from-model gemini matches 'google/gemini-3.1-flash-lite-preview'. "
+        "Implies --force."
+    ),
+)
 def sn_generate(
     source: str,
     ids_filter: str | None,
@@ -121,6 +140,8 @@ def sn_generate(
     quiet: bool,
     paths_list: tuple[str, ...],
     reset_to: str | None,
+    name_only: bool,
+    from_model: str | None,
 ) -> None:
     """Generate standard names from a source.
 
@@ -217,6 +238,9 @@ def sn_generate(
     else:
         resolved_paths_final = None
 
+    # --from-model implies --force (selecting by model only makes sense for regeneration)
+    if from_model:
+        force = True
     # Handle --reset-to before the main pipeline
     if reset_to is not None and not dry_run:
         source_arg = "dd" if source == "dd" else "signals"
@@ -278,10 +302,14 @@ def sn_generate(
         log_print("  Mode: dry run")
     if force:
         log_print("  Force: re-generating all names")
+    if from_model:
+        log_print(f"  From model: {from_model} (substring match)")
     if limit:
         log_print(f"  Limit: {limit} paths")
     if compose_model:
         log_print(f"  Compose model: {compose_model}")
+    if name_only:
+        log_print("  Mode: name-only (preserving existing documentation)")
     log_print(f"  Cost limit: ${cost_limit:.2f}")
     log_print("")
 
@@ -315,6 +343,7 @@ def sn_generate(
         force=force,
         limit=limit,
         compose_model=compose_model,
+        name_only=name_only,
     )
 
     if display:
@@ -1301,7 +1330,17 @@ def sn_resolve_links(
     help="Only names with no reviewer_score or stale review",
 )
 @click.option(
-    "--re-review", is_flag=True, help="Force re-review of already-scored names"
+    "--force",
+    "force_flag",
+    is_flag=True,
+    help="Force re-review of already-scored names",
+)
+@click.option(
+    "--re-review",
+    "re_review_flag",
+    is_flag=True,
+    hidden=True,
+    help="Deprecated: use --force",
 )
 @click.option("--model", default=None, help="Override review model")
 @click.option(
@@ -1333,7 +1372,8 @@ def sn_review(
     domain: str | None,
     status_filter: str,
     unreviewed: bool,
-    re_review: bool,
+    force_flag: bool,
+    re_review_flag: bool,
     model: str | None,
     batch_size: int,
     neighborhood: int,
@@ -1353,12 +1393,15 @@ def sn_review(
     Examples:
       imas-codex sn review --unreviewed --cost-limit 5.0
       imas-codex sn review --ids equilibrium --dry-run
-      imas-codex sn review --re-review --domain magnetics
+      imas-codex sn review --force --domain magnetics
     """
     import asyncio
 
     from imas_codex.standard_names.review.budget import ReviewBudgetManager
     from imas_codex.standard_names.review.state import SNReviewState
+
+    # Combine --force / --re-review (deprecated alias)
+    force = force_flag or re_review_flag
 
     # Enforce batch-size cap
     batch_size = min(batch_size, 25)
@@ -1371,7 +1414,7 @@ def sn_review(
         domain_filter=domain,
         status_filter=status_filter,
         unreviewed_only=unreviewed,
-        re_review=re_review,
+        re_review=force,
         skip_audit=skip_audit,
         review_model=model,
         batch_size=batch_size,
