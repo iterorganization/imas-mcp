@@ -20,6 +20,7 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
+from imas_codex.core.node_categories import SEARCHABLE_CATEGORIES
 from imas_codex.graph.client import GraphClient
 
 logger = logging.getLogger(__name__)
@@ -823,8 +824,10 @@ def compute_semantic_matches(
         embeddings = encoder.embed_texts(texts)
 
     # Pre-compute shared Cypher fragments
-    imas_search_where = ["n.node_category = 'data'"]
-    imas_extra_params: dict[str, Any] = {}
+    imas_search_where = ["n.node_category IN $searchable_categories"]
+    imas_extra_params: dict[str, Any] = {
+        "searchable_categories": list(SEARCHABLE_CATEGORIES),
+    }
     if target_ids_name:
         imas_search_where.append("n.id STARTS WITH $ids_prefix")
         imas_extra_params["ids_prefix"] = f"{target_ids_name}/"

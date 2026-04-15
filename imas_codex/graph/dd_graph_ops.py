@@ -19,7 +19,9 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections.abc import Collection
 
+from imas_codex.core.node_categories import EMBEDDABLE_CATEGORIES, ENRICHABLE_CATEGORIES
 from imas_codex.discovery.base.claims import (
     DEFAULT_CLAIM_TIMEOUT_SECONDS,
     retry_on_deadlock,
@@ -66,7 +68,7 @@ def claim_paths_for_enrichment(
             f"""
             MATCH (p:IMASNode)
             WHERE p.status = $status
-              AND p.node_category = 'data'
+              AND p.node_category IN $categories
               AND (p.claimed_at IS NULL
                    OR p.claimed_at < datetime() - duration($cutoff))
               {ids_clause}
@@ -75,6 +77,7 @@ def claim_paths_for_enrichment(
             LIMIT $limit
             SET p.claimed_at = datetime(), p.claim_token = $token
             """,
+            categories=list(ENRICHABLE_CATEGORIES),
             **params,
         )
 
@@ -163,10 +166,11 @@ def has_pending_enrichment(*, ids_filter: set[str] | None = None) -> bool:
             f"""
             MATCH (p:IMASNode)
             WHERE p.status = $status
-              AND p.node_category = 'data'
+              AND p.node_category IN $categories
               {ids_clause}
             RETURN count(p) AS pending
             """,
+            categories=list(ENRICHABLE_CATEGORIES),
             **params,
         )
         return result[0]["pending"] > 0 if result else False
@@ -197,7 +201,7 @@ def claim_paths_for_embedding(limit: int = 500) -> list[dict]:
             """
             MATCH (p:IMASNode)
             WHERE p.status = $status
-              AND p.node_category = 'data'
+              AND p.node_category IN $categories
               AND (p.enrichment_source <> 'template' OR p.embedding IS NULL)
               AND (p.claimed_at IS NULL
                    OR p.claimed_at < datetime() - duration($cutoff))
@@ -207,6 +211,7 @@ def claim_paths_for_embedding(limit: int = 500) -> list[dict]:
             SET p.claimed_at = datetime(), p.claim_token = $token
             """,
             status="enriched",
+            categories=list(EMBEDDABLE_CATEGORIES),
             cutoff=cutoff,
             limit=limit,
             token=token,
@@ -271,23 +276,26 @@ def release_embedding_claims(path_ids: list[str]) -> None:
         )
 
 
-def count_imas_nodes_by_status(*, node_category: str | None = None) -> dict[str, int]:
+def count_imas_nodes_by_status(
+    *, node_categories: Collection[str] | None = None
+) -> dict[str, int]:
     """Count IMASNode nodes grouped by status.
 
     Args:
-        node_category: Optional IMASNode.node_category filter.
+        node_categories: Optional collection of node_category values to include.
 
     Returns dict mapping status → count, plus a 'total' key.
     """
+    filter_cats = list(node_categories) if node_categories is not None else None
     with GraphClient() as gc:
         result = gc.query(
             """
             MATCH (p:IMASNode)
             WHERE p.status IS NOT NULL
-              AND ($node_category IS NULL OR p.node_category = $node_category)
+              AND ($filter_categories IS NULL OR p.node_category IN $filter_categories)
             RETURN p.status AS status, count(p) AS cnt
             """,
-            node_category=node_category,
+            filter_categories=filter_cats,
         )
         counts: dict[str, int] = {}
         total = 0
@@ -311,10 +319,11 @@ def has_pending_embedding() -> bool:
             """
             MATCH (p:IMASNode)
             WHERE p.status = $status
-              AND p.node_category = 'data'
+              AND p.node_category IN $categories
             RETURN count(p) AS pending
             """,
             status="enriched",
+            categories=list(EMBEDDABLE_CATEGORIES),
         )
         return result[0]["pending"] > 0 if result else False
 

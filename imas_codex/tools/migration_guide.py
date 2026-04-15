@@ -11,6 +11,7 @@ import logging
 import re
 from typing import TYPE_CHECKING
 
+from imas_codex.core.node_categories import SEARCHABLE_CATEGORIES
 from imas_codex.models.migration_models import (
     CocosMigrationAdvice,
     CodeMigrationGuide,
@@ -90,7 +91,7 @@ def _get_cocos_table(
         MATCH (p:IMASNode)
         WHERE (p.cocos_label_transformation IS NOT NULL
                OR p.cocos_transformation_expression IS NOT NULL)
-          AND p.node_category = 'data'
+          AND p.node_category IN $categories
           {ids_clause}
         RETURN p.ids AS ids, p.id AS path,
                p.cocos_label_transformation AS label,
@@ -100,6 +101,7 @@ def _get_cocos_table(
         """,
         to_versions=to_versions,
         ids_filter=ids_filter,
+        categories=list(SEARCHABLE_CATEGORIES),
     )
 
     # For paths with expression but no label, infer from expression

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from imas_codex.core.node_categories import ENRICHABLE_CATEGORIES
 from imas_codex.discovery.base.progress import (
     DataDrivenProgressDisplay,
     StageDisplaySpec,
@@ -142,7 +143,7 @@ def _graph_refresh(state: DDBuildState, _facility: str) -> None:
     from imas_codex.graph.dd_graph_ops import count_imas_nodes_by_status
 
     try:
-        counts = count_imas_nodes_by_status(node_category="data")
+        counts = count_imas_nodes_by_status(node_categories=ENRICHABLE_CATEGORIES)
     except Exception:
         return
 

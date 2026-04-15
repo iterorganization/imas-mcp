@@ -11,6 +11,8 @@ import click
 from rich.console import Console
 from rich.table import Table
 
+from imas_codex.core.node_categories import SEARCHABLE_CATEGORIES
+
 logger = logging.getLogger(__name__)
 console = Console()
 
@@ -520,7 +522,7 @@ def imas_search(
     embedding = encoder.embed_texts([query])[0].tolist()
 
     # Build all WHERE conditions as post-filters after SCORE AS score
-    all_where: list[str] = ["node.node_category = 'data'"]
+    all_where: list[str] = ["node.node_category IN $searchable_categories"]
     if ids:
         all_where.append(f"node.id STARTS WITH '{ids}/'")
     if not include_deprecated:
@@ -560,6 +562,7 @@ def imas_search(
             embedding=embedding,
             limit=limit,
             search_k=limit * 2,
+            searchable_categories=list(SEARCHABLE_CATEGORIES),
             **extra_params,
         )
 

@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 
+from imas_codex.core.node_categories import SN_SOURCE_CATEGORIES
 from imas_codex.standard_names.sources.base import ExtractionBatch
 
 logger = logging.getLogger(__name__)
@@ -129,10 +130,10 @@ def extract_dd_candidates(
         cocos_version = dv_row["cocos_version"] if dv_row else None
         cocos_params = dv_row["cocos_params"] if dv_row else None
 
-        params: dict = {"limit": limit}
+        params: dict = {"limit": limit, "sn_categories": list(SN_SOURCE_CATEGORIES)}
         where_parts = [
             "n.node_type = 'dynamic'",
-            "n.node_category = 'data'",
+            "n.node_category IN $sn_categories",
             "n.description IS NOT NULL",
             "n.description <> ''",
         ]

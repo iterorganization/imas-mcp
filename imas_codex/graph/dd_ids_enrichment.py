@@ -23,6 +23,8 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
 
+from imas_codex.core.node_categories import ENRICHABLE_CATEGORIES
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -101,7 +103,7 @@ def _gather_ids_context(
     UNWIND $ids_names AS ids_name
     MATCH (p:IMASNode {ids: ids_name})
     WHERE size(split(p.id, '/')) <= 3
-      AND p.node_category = 'data'
+      AND p.node_category IN $categories
     RETURN p.ids AS ids_name,
            p.id AS path,
            p.name AS name,
@@ -110,7 +112,9 @@ def _gather_ids_context(
     ORDER BY p.id
     """
     sections_by_ids: dict[str, list[dict]] = {n: [] for n in ids_names}
-    for r in client.query(sections_query, ids_names=ids_names):
+    for r in client.query(
+        sections_query, ids_names=ids_names, categories=list(ENRICHABLE_CATEGORIES)
+    ):
         sections_by_ids[r["ids_name"]].append(
             {
                 "path": r["path"],

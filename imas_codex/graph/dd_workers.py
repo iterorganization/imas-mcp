@@ -33,6 +33,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from imas_codex.core.node_categories import EMBEDDABLE_CATEGORIES, ENRICHABLE_CATEGORIES
 from imas_codex.discovery.base.engine import WorkerSpec, run_discovery_engine
 from imas_codex.discovery.base.progress import WorkerStats, format_count
 from imas_codex.discovery.base.state import DiscoveryStateBase
@@ -348,7 +349,7 @@ async def enrich_worker(state: DDBuildState, **_kwargs) -> None:
     # restarting the CLI doesn't reset progress to 0%.
     try:
         status_counts = await asyncio.to_thread(
-            count_imas_nodes_by_status, node_category="data"
+            count_imas_nodes_by_status, node_categories=ENRICHABLE_CATEGORIES
         )
         state.imas_node_status_counts = status_counts
         total_nodes = status_counts.get("total", 0)
@@ -389,7 +390,7 @@ async def enrich_worker(state: DDBuildState, **_kwargs) -> None:
             # Refresh totals while idle (build may still be adding nodes)
             try:
                 status_counts = await asyncio.to_thread(
-                    count_imas_nodes_by_status, node_category="data"
+                    count_imas_nodes_by_status, node_categories=ENRICHABLE_CATEGORIES
                 )
                 state.imas_node_status_counts = status_counts
                 total_nodes = status_counts.get("total", 0)
@@ -487,7 +488,7 @@ async def embed_worker(state: DDBuildState, **_kwargs) -> None:
     # show 0% for already-embedded work.
     try:
         status_counts = await asyncio.to_thread(
-            count_imas_nodes_by_status, node_category="data"
+            count_imas_nodes_by_status, node_categories=EMBEDDABLE_CATEGORIES
         )
         total_nodes = status_counts.get("total", 0)
         if total_nodes > 0:

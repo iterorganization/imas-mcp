@@ -23,6 +23,7 @@ from imas_codex.clusters import (
     RelationshipExtractionConfig,
     RelationshipExtractor,
 )
+from imas_codex.core.node_categories import EMBEDDABLE_CATEGORIES
 from imas_codex.embeddings.cache import EmbeddingCache
 from imas_codex.embeddings.config import EncoderConfig
 from imas_codex.embeddings.encoder import Encoder
@@ -198,13 +199,14 @@ class Clusters:
                 MATCH (p:IMASNode)
                 WITH count(p) AS total,
                      count(CASE WHEN p.embedding IS NOT NULL THEN 1 END) AS with_emb,
-                     count(CASE WHEN p.node_category <> 'data' THEN 1 END) AS non_data
+                     count(CASE WHEN NOT (p.node_category IN $embeddable_categories) THEN 1 END) AS non_data
                 WITH total, with_emb, total - non_data AS embeddable
                 RETURN total, with_emb, embeddable,
                        CASE WHEN embeddable > 0
                             THEN toFloat(with_emb) / embeddable
                             ELSE 0.0 END AS coverage
-                """
+                """,
+                embeddable_categories=list(EMBEDDABLE_CATEGORIES),
             )
             if result:
                 row = result[0]

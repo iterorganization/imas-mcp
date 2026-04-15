@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from fastmcp import Context
 
 from imas_codex.core.data_model import IdsNode
+from imas_codex.core.node_categories import SEARCHABLE_CATEGORIES
 from imas_codex.graph.client import GraphClient
 from imas_codex.models.constants import SearchMode
 
@@ -295,6 +296,7 @@ class GraphSearchTool:
                 "embedding": embedding,
                 "k": min(max_results * 5, 500),
                 "vector_limit": min(max_results * 3, 150),
+                "categories": list(SEARCHABLE_CATEGORIES),
             }
             if normalized_filter:
                 filter_clause = "AND path.ids IN $ids_filter"
@@ -311,7 +313,7 @@ class GraphSearchTool:
                 CALL db.index.vector.queryNodes('imas_node_embedding', $k, $embedding)
                 YIELD node AS path, score
                 WHERE NOT (path)-[:DEPRECATED_IN]->(:DDVersion)
-                  AND path.node_category = 'data'
+                  AND path.node_category IN $categories
                 {filter_clause}
                 {summary_clause}
                 {dd_clause}
@@ -532,7 +534,7 @@ class GraphSearchTool:
                 MATCH (child:IMASNode)
                 WHERE child.id STARTS WITH parent_id + '/'
                   AND NOT (child)-[:DEPRECATED_IN]->(:DDVersion)
-                  AND child.node_category = 'data'
+                  AND child.node_category IN $categories
                   AND child.data_type IS NOT NULL
                   AND NOT (toLower(child.data_type) IN ['structure', 'struct_array'])
                   AND NOT (child.id CONTAINS '_error_')
@@ -547,6 +549,7 @@ class GraphSearchTool:
                 RETURN parent_id, children, total
                 """,
                 parent_ids=parent_ids,
+                categories=list(SEARCHABLE_CATEGORIES),
             )
 
             children_by_parent: dict[str, tuple[list, int]] = {
@@ -597,9 +600,10 @@ class GraphPathTool:
             rows = self._gc.query(
                 f"""
                 MATCH (p:IMASNode)
-                WHERE p.node_category = 'data' {dd_clause}
+                WHERE p.node_category IN $categories {dd_clause}
                 RETURN p.id AS id, p.ids AS ids
                 """,
+                categories=list(SEARCHABLE_CATEGORIES),
                 **dd_params,
             )
             paths = [r["id"] for r in rows] if rows else []
@@ -1094,13 +1098,16 @@ class GraphListTool:
                 return_clause = "RETURN p.id AS id"
 
             # Unified query — use ids= for plain IDS names, STARTS WITH for prefixes
+            dd_params["categories"] = list(SEARCHABLE_CATEGORIES)
             if prefix:
                 match_clause = (
-                    "WHERE p.id STARTS WITH $prefix AND p.node_category = 'data'"
+                    "WHERE p.id STARTS WITH $prefix AND p.node_category IN $categories"
                 )
                 dd_params["prefix"] = prefix + ("/" if not prefix.endswith("/") else "")
             else:
-                match_clause = "WHERE p.ids = $ids_name AND p.node_category = 'data'"
+                match_clause = (
+                    "WHERE p.ids = $ids_name AND p.node_category IN $categories"
+                )
                 dd_params["ids_name"] = ids_name
 
             # Count total paths before applying LIMIT
@@ -2051,7 +2058,10 @@ class GraphStructureTool:
         ctx: Context | None = None,
     ) -> dict[str, Any]:
         """Get a compact structural summary of an IDS."""
-        dd_params: dict[str, Any] = {"ids_name": ids_name}
+        dd_params: dict[str, Any] = {
+            "ids_name": ids_name,
+            "categories": list(SEARCHABLE_CATEGORIES),
+        }
         dd_clause = _dd_version_clause("p", dd_version, dd_params)
 
         # Query 1: IDS metadata + metrics + top-level sections
@@ -2059,7 +2069,7 @@ class GraphStructureTool:
             f"""
             MATCH (i:IDS {{id: $ids_name}})
             OPTIONAL MATCH (p:IMASNode)
-            WHERE p.ids = $ids_name AND p.node_category = 'data' {dd_clause}
+            WHERE p.ids = $ids_name AND p.node_category IN $categories {dd_clause}
             WITH i,
                  count(p) AS total,
                  count(CASE WHEN NOT (p.data_type IN ['STRUCTURE', 'STRUCT_ARRAY'])
@@ -2146,7 +2156,7 @@ class GraphStructureTool:
         lifecycle_dist = self._gc.query(
             f"""
             MATCH (p:IMASNode)
-            WHERE p.ids = $ids_name AND p.node_category = 'data'
+            WHERE p.ids = $ids_name AND p.node_category IN $categories
               AND p.lifecycle_status IS NOT NULL {dd_clause}
             RETURN p.lifecycle_status AS status, count(p) AS count
             ORDER BY count DESC
@@ -2431,10 +2441,17 @@ def _text_search_dd_paths(
         if len(w) > 2 or w.lower() in _PHYSICS_SHORT_TERMS
     ]
 
-    where_parts = ["NOT (p)-[:DEPRECATED_IN]->(:DDVersion)", "p.node_category = 'data'"]
+    where_parts = [
+        "NOT (p)-[:DEPRECATED_IN]->(:DDVersion)",
+        "p.node_category IN $categories",
+    ]
     # Cap CONTAINS fallback to avoid full scans on large graphs
     contains_limit = min(limit, 100)
-    params: dict[str, Any] = {"query_lower": query_lower, "limit": contains_limit}
+    params: dict[str, Any] = {
+        "query_lower": query_lower,
+        "limit": contains_limit,
+        "categories": list(SEARCHABLE_CATEGORIES),
+    }
 
     dd_clause = _dd_version_clause("p", dd_version, params)
     if dd_clause:
@@ -2452,12 +2469,11 @@ def _text_search_dd_paths(
 
     # Try fulltext index first (BM25 scoring)
     try:
-        ft_where = (
-            "WHERE NOT (p)-[:DEPRECATED_IN]->(:DDVersion) AND p.node_category = 'data'"
-        )
+        ft_where = "WHERE NOT (p)-[:DEPRECATED_IN]->(:DDVersion) AND p.node_category IN $categories"
         ft_params: dict[str, Any] = {
             "query": _build_phrase_aware_query(query),
             "limit": limit,
+            "categories": list(SEARCHABLE_CATEGORIES),
         }
         if ids_filter is not None:
             filter_list = ids_filter if isinstance(ids_filter, list) else [ids_filter]

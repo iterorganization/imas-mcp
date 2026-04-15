@@ -33,6 +33,7 @@ import imas
 import numpy as np
 
 from imas_codex import dd_version as current_dd_version
+from imas_codex.core.node_categories import EMBEDDABLE_CATEGORIES, SEARCHABLE_CATEGORIES
 from imas_codex.core.paths import strip_path_annotations
 from imas_codex.core.physics_categorization import physics_categorizer
 from imas_codex.core.progress_monitor import (
@@ -2116,7 +2117,7 @@ def phase_embed(
     existing_paths_query = """
     MATCH (p:IMASNode)
     WHERE p.embedding IS NULL
-      AND p.node_category = 'data'
+      AND p.node_category IN $categories
     RETURN p.id AS id, p.name AS name, p.documentation AS documentation,
            p.data_type AS data_type, p.ids AS ids, p.units AS units,
            p.description AS description, p.keywords AS keywords,
@@ -2124,7 +2125,7 @@ def phase_embed(
            p.physics_domain AS physics_domain,
            p.node_type AS node_type, p.ndim AS ndim
     """
-    for r in client.query(existing_paths_query):
+    for r in client.query(existing_paths_query, categories=list(EMBEDDABLE_CATEGORIES)):
         pid = r["id"]
         if pid not in merged_paths:
             merged_paths[pid] = {k: v for k, v in r.items() if v is not None}
@@ -2350,16 +2351,19 @@ def _create_cocos_clusters(client: GraphClient) -> int:
 
     Returns count of clusters created.
     """
-    labels = client.query("""
+    labels = client.query(
+        """
         MATCH (p:IMASNode)
         WHERE p.cocos_label_transformation IS NOT NULL
-          AND p.node_category = 'data'
+          AND p.node_category IN $categories
         RETURN p.cocos_label_transformation AS label,
                collect(p.id) AS paths,
                collect(DISTINCT p.ids) AS ids_names,
                count(p) AS cnt
         ORDER BY label
-    """)
+    """,
+        categories=list(SEARCHABLE_CATEGORIES),
+    )
 
     if not labels:
         return 0
@@ -2411,12 +2415,13 @@ def _create_cocos_clusters(client: GraphClient) -> int:
             """
             MATCH (p:IMASNode)
             WHERE p.cocos_label_transformation = $label
-              AND p.node_category = 'data'
+              AND p.node_category IN $categories
             MATCH (cl:IMASSemanticCluster {id: $cluster_id})
             MERGE (p)-[:IN_CLUSTER]->(cl)
             """,
             label=label,
             cluster_id=cluster_id,
+            categories=list(SEARCHABLE_CATEGORIES),
         )
 
     logger.info("Created %d COCOS clusters", len(clusters))
@@ -2431,11 +2436,14 @@ def _create_physics_clusters(client: GraphClient) -> int:
 
     Returns count of clusters created.
     """
-    all_paths = client.query("""
+    all_paths = client.query(
+        """
         MATCH (p:IMASNode)
-        WHERE p.node_category = 'data'
+        WHERE p.node_category IN $categories
         RETURN p.id AS id, p.ids AS ids
-    """)
+    """,
+        categories=list(SEARCHABLE_CATEGORIES),
+    )
 
     if not all_paths:
         return 0

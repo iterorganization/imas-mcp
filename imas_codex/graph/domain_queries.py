@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from imas_codex.core.node_categories import SEARCHABLE_CATEGORIES
 from imas_codex.graph.client import GraphClient
 from imas_codex.graph.vector_search import build_vector_search
 
@@ -392,10 +393,11 @@ def find_dd_paths(
     params: dict[str, Any] = {"k": limit, "embedding": embedding}
 
     # Pre-filters: property-based, pushed into SEARCH block
-    pre_filter_parts: list[str] = ["p.node_category = 'data'"]
+    pre_filter_parts: list[str] = ["p.node_category IN $searchable_categories"]
     if ids_filter is not None:
         pre_filter_parts.append("p.ids = $ids_filter")
         params["ids_filter"] = ids_filter
+    params["searchable_categories"] = list(SEARCHABLE_CATEGORIES)
 
     # Deprecated check consolidated into where_clauses
     if not include_deprecated:

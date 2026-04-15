@@ -30,13 +30,13 @@ def test_count_imas_nodes_by_status_filters_node_category(monkeypatch):
         lambda: _FakeGraphClient(result, calls),
     )
 
-    counts = dd_graph_ops.count_imas_nodes_by_status(node_category="data")
+    counts = dd_graph_ops.count_imas_nodes_by_status(node_categories=["data"])
 
     assert counts == {"embedded": 5, "enriched": 2, "total": 7}
     assert len(calls) == 1
     cypher, params = calls[0]
-    assert "p.node_category = $node_category" in cypher
-    assert params["node_category"] == "data"
+    assert "p.node_category IN $filter_categories" in cypher
+    assert params["filter_categories"] == ["data"]
 
 
 def test_count_imas_nodes_by_status_without_filter(monkeypatch):
@@ -54,4 +54,4 @@ def test_count_imas_nodes_by_status_without_filter(monkeypatch):
     assert counts == {"built": 3, "total": 3}
     assert len(calls) == 1
     _cypher, params = calls[0]
-    assert params["node_category"] is None
+    assert params["filter_categories"] is None
