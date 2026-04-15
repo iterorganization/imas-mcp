@@ -12,7 +12,7 @@ import logging
 from typing import Any
 
 from imas_codex.discovery.base.engine import WorkerSpec, run_discovery_engine
-from imas_codex.standard_names.state import SNBuildState
+from imas_codex.standard_names.state import StandardNameBuildState
 from imas_codex.standard_names.workers import (
     compose_worker,
     consolidate_worker,
@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 
 async def run_sn_generate_engine(
-    state: SNBuildState,
+    state: StandardNameBuildState,
     *,
     stop_event: asyncio.Event | None = None,
     on_worker_status: Any | None = None,
@@ -46,7 +46,7 @@ async def run_sn_generate_engine(
     full catalog with cross-name visibility.
 
     Args:
-        state: Populated ``SNBuildState`` with source and filter config.
+        state: Populated ``StandardNameBuildState`` with source and filter config.
         stop_event: Optional asyncio.Event for CLI shutdown signalling.
         on_worker_status: Optional callback for progress display updates.
     """

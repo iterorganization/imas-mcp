@@ -31,7 +31,7 @@ into the `standard_name_desc_embedding` vector index. This means:
 ## Verified Code Facts
 
 - **62 names in graph**: 21 accepted (seed/import), 41 drafted (LLM generate)
-- **review_worker exists**: `workers.py` — processes batches via `SNQualityReviewBatch`
+- **review_worker exists**: `workers.py` — processes batches via `StandardNameQualityReviewBatch`
 - **6-dimension scoring**: grammar, semantic, documentation, convention,
   completeness, compliance (each 0-20, normalized to 0-1 via sum/120)
 - **Scoring criteria**: `sn_review_criteria.yaml`
@@ -217,7 +217,7 @@ LLM scores each batch using existing 6-dimension rubric.
   unit, review_tier
 - **Scoring criteria** from `sn_review_criteria.yaml`
 
-**Response model**: `SNQualityReviewBatch` (unchanged)
+**Response model**: `StandardNameQualityReviewBatch` (unchanged)
 
 **LLM checks:**
 - Individual quality (grammar, docs, conventions) — 6 dimensions
@@ -371,7 +371,7 @@ New module: `imas_codex/standard_names/review/consolidation.py`
 | `embed_descriptions_batch()` from `workers.py` | Embedding preflight |
 | `write_standard_names()` from `graph_ops.py` | Score persistence |
 | `run_discovery_engine()` from `engine.py` | DAG orchestration |
-| `SNQualityReviewBatch` from `models.py` | LLM response model |
+| `StandardNameQualityReviewBatch` from `models.py` | LLM response model |
 | `sn_review_criteria.yaml` | Scoring dimensions and tiers |
 | `get_grammar_context()` from ISN | Lexical lint rules |
 

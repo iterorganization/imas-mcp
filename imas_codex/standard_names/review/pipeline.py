@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any
 from imas_codex.discovery.base.engine import WorkerSpec, run_discovery_engine
 
 if TYPE_CHECKING:
-    from imas_codex.standard_names.review.state import SNReviewState
+    from imas_codex.standard_names.review.state import StandardNameReviewState
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 
-async def extract_review_worker(state: SNReviewState, **_kwargs: Any) -> None:
+async def extract_review_worker(state: StandardNameReviewState, **_kwargs: Any) -> None:
     """Load StandardNames from graph, apply filters, and form review batches.
 
     1. Query full StandardName catalog into ``state.all_names``.
@@ -231,7 +231,7 @@ async def extract_review_worker(state: SNReviewState, **_kwargs: Any) -> None:
 # =============================================================================
 
 
-async def enrich_review_worker(state: SNReviewState, **_kwargs: Any) -> None:
+async def enrich_review_worker(state: StandardNameReviewState, **_kwargs: Any) -> None:
     """Enrich each batch with neighborhood context and audit findings.
 
     For each batch:
@@ -301,7 +301,7 @@ async def enrich_review_worker(state: SNReviewState, **_kwargs: Any) -> None:
 # =============================================================================
 
 
-async def review_review_worker(state: SNReviewState, **_kwargs: Any) -> None:
+async def review_review_worker(state: StandardNameReviewState, **_kwargs: Any) -> None:
     """Run LLM quality review on each enriched batch.
 
     Reuses the existing ``_review_batch()`` pattern from ``workers.py``
@@ -451,7 +451,7 @@ async def review_review_worker(state: SNReviewState, **_kwargs: Any) -> None:
 # =============================================================================
 
 
-async def persist_review_worker(state: SNReviewState, **_kwargs: Any) -> None:
+async def persist_review_worker(state: StandardNameReviewState, **_kwargs: Any) -> None:
     """Persist review results to graph.
 
     For each reviewed name:
@@ -517,7 +517,7 @@ async def persist_review_worker(state: SNReviewState, **_kwargs: Any) -> None:
 
 
 async def run_sn_review_engine(
-    state: SNReviewState,
+    state: StandardNameReviewState,
     *,
     stop_event: asyncio.Event | None = None,
     on_worker_status: Any | None = None,
@@ -534,7 +534,7 @@ async def run_sn_review_engine(
     Persist writes review scores back to the graph.
 
     Args:
-        state: Populated ``SNReviewState`` with filters and config.
+        state: Populated ``StandardNameReviewState`` with filters and config.
         stop_event: Optional asyncio.Event for CLI shutdown signalling.
         on_worker_status: Optional callback for progress display updates.
     """
@@ -666,7 +666,10 @@ async def _review_single_batch(
     """
     from imas_codex.discovery.base.llm import acall_llm_structured
     from imas_codex.llm.prompt_loader import render_prompt
-    from imas_codex.standard_names.models import SNQualityReviewBatch, SNReviewVerdict
+    from imas_codex.standard_names.models import (
+        StandardNameQualityReviewBatch,
+        StandardNameReviewVerdict,
+    )
 
     cal = calibration_entries or []
 
@@ -716,7 +719,7 @@ async def _review_single_batch(
     result, cost, tokens = await acall_llm_structured(
         model=model,
         messages=messages,
-        response_model=SNQualityReviewBatch,
+        response_model=StandardNameQualityReviewBatch,
     )
 
     # Map reviews back to original entries by source_id AND by id (standard
@@ -752,7 +755,7 @@ async def _review_single_batch(
         original["reviewer_comments"] = review.reasoning
         original["review_tier"] = review.scores.tier
 
-        if review.verdict == SNReviewVerdict.revise and review.revised_name:
+        if review.verdict == StandardNameReviewVerdict.revise and review.revised_name:
             revised_entry = dict(original)
             revised_entry["id"] = review.revised_name
             if review.revised_fields:
@@ -770,7 +773,7 @@ async def _review_single_batch(
             )
         else:
             scored.append(original)
-            if review.verdict == SNReviewVerdict.reject:
+            if review.verdict == StandardNameReviewVerdict.reject:
                 wlog.debug(
                     "Low score %r (%.2f, %s): %s",
                     review.standard_name,

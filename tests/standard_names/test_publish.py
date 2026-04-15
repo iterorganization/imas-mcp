@@ -13,9 +13,9 @@ import pytest
 import yaml
 
 from imas_codex.standard_names.models import (
-    SNProvenance,
-    SNPublishBatch,
-    SNPublishEntry,
+    StandardNameProvenance,
+    StandardNamePublishBatch,
+    StandardNamePublishEntry,
 )
 from imas_codex.standard_names.publish import (
     batch_by_group,
@@ -33,8 +33,8 @@ from imas_codex.standard_names.publish import (
 
 
 @pytest.fixture()
-def sample_provenance() -> SNProvenance:
-    return SNProvenance(
+def sample_provenance() -> StandardNameProvenance:
+    return StandardNameProvenance(
         source="dd",
         source_id="equilibrium/time_slice/profiles_1d/electrons/temperature",
         ids_name="equilibrium",
@@ -44,8 +44,8 @@ def sample_provenance() -> SNProvenance:
 
 
 @pytest.fixture()
-def sample_entry(sample_provenance: SNProvenance) -> SNPublishEntry:
-    return SNPublishEntry(
+def sample_entry(sample_provenance: StandardNameProvenance) -> StandardNamePublishEntry:
+    return StandardNamePublishEntry(
         name="electron_temperature",
         kind="scalar",
         unit="eV",
@@ -57,55 +57,55 @@ def sample_entry(sample_provenance: SNProvenance) -> SNPublishEntry:
 
 
 @pytest.fixture()
-def sample_entries() -> list[SNPublishEntry]:
+def sample_entries() -> list[StandardNamePublishEntry]:
     """A diverse set of entries for batching / grouping tests."""
     return [
-        SNPublishEntry(
+        StandardNamePublishEntry(
             name="electron_temperature",
             kind="scalar",
             unit="eV",
             tags=["equilibrium"],
             description="Electron temperature",
-            provenance=SNProvenance(
+            provenance=StandardNameProvenance(
                 source="dd",
                 source_id="equilibrium/time_slice/profiles_1d/electrons/temperature",
                 ids_name="equilibrium",
                 confidence=0.95,
             ),
         ),
-        SNPublishEntry(
+        StandardNamePublishEntry(
             name="electron_density",
             kind="scalar",
             unit="m^-3",
             tags=["core_profiles"],
             description="Electron density",
-            provenance=SNProvenance(
+            provenance=StandardNameProvenance(
                 source="dd",
                 source_id="core_profiles/profiles_1d/electrons/density",
                 ids_name="core_profiles",
                 confidence=0.88,
             ),
         ),
-        SNPublishEntry(
+        StandardNamePublishEntry(
             name="plasma_current",
             kind="scalar",
             unit="A",
             tags=["equilibrium"],
             description="Plasma current",
-            provenance=SNProvenance(
+            provenance=StandardNameProvenance(
                 source="dd",
                 source_id="equilibrium/time_slice/global_quantities/ip",
                 ids_name="equilibrium",
                 confidence=0.45,
             ),
         ),
-        SNPublishEntry(
+        StandardNamePublishEntry(
             name="major_radius",
             kind="vector",
             unit="m",
             tags=["equilibrium"],
             description="Major radius",
-            provenance=SNProvenance(
+            provenance=StandardNameProvenance(
                 source="signals",
                 source_id="tcv:rmajor",
                 ids_name=None,
@@ -122,7 +122,7 @@ def sample_entries() -> list[SNPublishEntry]:
 
 class TestSNProvenance:
     def test_valid_provenance(self) -> None:
-        p = SNProvenance(
+        p = StandardNameProvenance(
             source="dd",
             source_id="equilibrium/time_slice/profiles_1d/psi",
             confidence=0.9,
@@ -132,18 +132,18 @@ class TestSNProvenance:
 
     def test_confidence_bounds(self) -> None:
         with pytest.raises(ValueError):
-            SNProvenance(source="dd", source_id="x", confidence=1.5)
+            StandardNameProvenance(source="dd", source_id="x", confidence=1.5)
         with pytest.raises(ValueError):
-            SNProvenance(source="dd", source_id="x", confidence=-0.1)
+            StandardNameProvenance(source="dd", source_id="x", confidence=-0.1)
 
     def test_optional_ids_name(self) -> None:
-        p = SNProvenance(source="signals", source_id="sig:x", confidence=0.5)
+        p = StandardNameProvenance(source="signals", source_id="sig:x", confidence=0.5)
         assert p.ids_name is None
 
 
 class TestSNPublishEntry:
-    def test_defaults(self, sample_provenance: SNProvenance) -> None:
-        entry = SNPublishEntry(
+    def test_defaults(self, sample_provenance: StandardNameProvenance) -> None:
+        entry = StandardNamePublishEntry(
             name="test_name",
             provenance=sample_provenance,
         )
@@ -157,7 +157,7 @@ class TestSNPublishEntry:
         assert entry.constraints == []
         assert entry.validity_domain is None
 
-    def test_all_fields(self, sample_entry: SNPublishEntry) -> None:
+    def test_all_fields(self, sample_entry: StandardNamePublishEntry) -> None:
         assert sample_entry.name == "electron_temperature"
         assert sample_entry.kind == "scalar"
         assert sample_entry.unit == "eV"
@@ -166,8 +166,8 @@ class TestSNPublishEntry:
 
 
 class TestSNPublishBatch:
-    def test_batch_creation(self, sample_entry: SNPublishEntry) -> None:
-        batch = SNPublishBatch(
+    def test_batch_creation(self, sample_entry: StandardNamePublishEntry) -> None:
+        batch = StandardNamePublishBatch(
             group_key="equilibrium",
             entries=[sample_entry],
             confidence_tier="high",
@@ -203,7 +203,7 @@ class TestConfidenceTier:
 
 
 class TestGenerateYamlEntry:
-    def test_format(self, sample_entry: SNPublishEntry) -> None:
+    def test_format(self, sample_entry: StandardNamePublishEntry) -> None:
         content = generate_yaml_entry(sample_entry)
         doc = yaml.safe_load(content)
 
@@ -216,7 +216,7 @@ class TestGenerateYamlEntry:
         assert doc["provenance"]["confidence"] == 0.95
         assert doc["provenance"]["generated_by"] == "imas-codex"
 
-    def test_all_fields_present(self, sample_entry: SNPublishEntry) -> None:
+    def test_all_fields_present(self, sample_entry: StandardNamePublishEntry) -> None:
         content = generate_yaml_entry(sample_entry)
         doc = yaml.safe_load(content)
 
@@ -233,8 +233,10 @@ class TestGenerateYamlEntry:
         assert "confidence" in prov
         assert "generated_by" in prov
 
-    def test_optional_unit_omitted(self, sample_provenance: SNProvenance) -> None:
-        entry = SNPublishEntry(
+    def test_optional_unit_omitted(
+        self, sample_provenance: StandardNameProvenance
+    ) -> None:
+        entry = StandardNamePublishEntry(
             name="test_name",
             provenance=sample_provenance,
         )
@@ -243,19 +245,23 @@ class TestGenerateYamlEntry:
         assert "unit" not in doc
 
     def test_optional_ids_name_omitted(self) -> None:
-        prov = SNProvenance(source="signals", source_id="sig:x", confidence=0.5)
-        entry = SNPublishEntry(name="test_name", provenance=prov)
+        prov = StandardNameProvenance(
+            source="signals", source_id="sig:x", confidence=0.5
+        )
+        entry = StandardNamePublishEntry(name="test_name", provenance=prov)
         content = generate_yaml_entry(entry)
         doc = yaml.safe_load(content)
         assert "ids_name" not in doc["provenance"]
 
-    def test_tags_in_output(self, sample_entry: SNPublishEntry) -> None:
+    def test_tags_in_output(self, sample_entry: StandardNamePublishEntry) -> None:
         content = generate_yaml_entry(sample_entry)
         doc = yaml.safe_load(content)
         assert doc["tags"] == ["equilibrium", "core_profiles"]
 
-    def test_empty_tags_omitted(self, sample_provenance: SNProvenance) -> None:
-        entry = SNPublishEntry(
+    def test_empty_tags_omitted(
+        self, sample_provenance: StandardNameProvenance
+    ) -> None:
+        entry = StandardNamePublishEntry(
             name="test_name",
             provenance=sample_provenance,
         )
@@ -263,7 +269,7 @@ class TestGenerateYamlEntry:
         doc = yaml.safe_load(content)
         assert "tags" not in doc
 
-    def test_roundtrip_yaml(self, sample_entry: SNPublishEntry) -> None:
+    def test_roundtrip_yaml(self, sample_entry: StandardNamePublishEntry) -> None:
         """YAML output should parse back to the same values."""
         content = generate_yaml_entry(sample_entry)
         doc = yaml.safe_load(content)
@@ -274,7 +280,7 @@ class TestGenerateYamlEntry:
 
 class TestGenerateCatalogFiles:
     def test_writes_files(
-        self, tmp_path: Path, sample_entries: list[SNPublishEntry]
+        self, tmp_path: Path, sample_entries: list[StandardNamePublishEntry]
     ) -> None:
         written = generate_catalog_files(sample_entries, tmp_path)
         assert len(written) == len(sample_entries)
@@ -283,7 +289,7 @@ class TestGenerateCatalogFiles:
             assert path.suffix == ".yaml"
 
     def test_filenames(
-        self, tmp_path: Path, sample_entries: list[SNPublishEntry]
+        self, tmp_path: Path, sample_entries: list[StandardNamePublishEntry]
     ) -> None:
         written = generate_catalog_files(sample_entries, tmp_path)
         names = {p.stem for p in written}
@@ -291,7 +297,7 @@ class TestGenerateCatalogFiles:
         assert names == expected
 
     def test_directory_structure_by_tag(
-        self, tmp_path: Path, sample_entries: list[SNPublishEntry]
+        self, tmp_path: Path, sample_entries: list[StandardNamePublishEntry]
     ) -> None:
         """Files should be grouped into tag-based subdirectories."""
         written = generate_catalog_files(sample_entries, tmp_path)
@@ -307,16 +313,18 @@ class TestGenerateCatalogFiles:
         assert "major_radius" in eq_names
 
     def test_untagged_goes_to_unscoped(
-        self, tmp_path: Path, sample_provenance: SNProvenance
+        self, tmp_path: Path, sample_provenance: StandardNameProvenance
     ) -> None:
         """Entries without tags go into 'unscoped/' subdirectory."""
-        entry = SNPublishEntry(name="untagged_quantity", provenance=sample_provenance)
+        entry = StandardNamePublishEntry(
+            name="untagged_quantity", provenance=sample_provenance
+        )
         written = generate_catalog_files([entry], tmp_path)
         assert len(written) == 1
         assert written[0].parent.name == "unscoped"
 
     def test_file_content_valid_yaml(
-        self, tmp_path: Path, sample_entry: SNPublishEntry
+        self, tmp_path: Path, sample_entry: StandardNamePublishEntry
     ) -> None:
         written = generate_catalog_files([sample_entry], tmp_path)
         assert len(written) == 1
@@ -325,7 +333,7 @@ class TestGenerateCatalogFiles:
         assert doc["name"] == "electron_temperature"
 
     def test_creates_output_dir(
-        self, tmp_path: Path, sample_entry: SNPublishEntry
+        self, tmp_path: Path, sample_entry: StandardNamePublishEntry
     ) -> None:
         out = tmp_path / "nested" / "dir"
         assert not out.exists()
@@ -339,7 +347,7 @@ class TestGenerateCatalogFiles:
 
 
 class TestBatchByGroup:
-    def test_batch_by_ids(self, sample_entries: list[SNPublishEntry]) -> None:
+    def test_batch_by_ids(self, sample_entries: list[StandardNamePublishEntry]) -> None:
         groups = batch_by_group(sample_entries, group_by="ids")
         assert "equilibrium" in groups
         assert "core_profiles" in groups
@@ -347,12 +355,16 @@ class TestBatchByGroup:
         assert "unscoped" in groups
         assert len(groups["equilibrium"]) == 2  # electron_temperature + plasma_current
 
-    def test_batch_by_domain(self, sample_entries: list[SNPublishEntry]) -> None:
+    def test_batch_by_domain(
+        self, sample_entries: list[StandardNamePublishEntry]
+    ) -> None:
         groups = batch_by_group(sample_entries, group_by="domain")
         assert "equilibrium" in groups
         assert "core_profiles" in groups
 
-    def test_batch_by_confidence(self, sample_entries: list[SNPublishEntry]) -> None:
+    def test_batch_by_confidence(
+        self, sample_entries: list[StandardNamePublishEntry]
+    ) -> None:
         groups = batch_by_group(sample_entries, group_by="confidence")
         assert "high" in groups  # 0.95, 0.88
         assert "medium" in groups  # 0.72
@@ -364,17 +376,23 @@ class TestBatchByGroup:
 
 
 class TestMakePublishBatches:
-    def test_creates_batches(self, sample_entries: list[SNPublishEntry]) -> None:
+    def test_creates_batches(
+        self, sample_entries: list[StandardNamePublishEntry]
+    ) -> None:
         batches = make_publish_batches(sample_entries, group_by="ids")
         assert len(batches) > 0
-        assert all(isinstance(b, SNPublishBatch) for b in batches)
+        assert all(isinstance(b, StandardNamePublishBatch) for b in batches)
 
-    def test_batch_confidence_tier(self, sample_entries: list[SNPublishEntry]) -> None:
+    def test_batch_confidence_tier(
+        self, sample_entries: list[StandardNamePublishEntry]
+    ) -> None:
         batches = make_publish_batches(sample_entries, group_by="ids")
         for batch in batches:
             assert batch.confidence_tier in ("high", "medium", "low")
 
-    def test_all_entries_accounted(self, sample_entries: list[SNPublishEntry]) -> None:
+    def test_all_entries_accounted(
+        self, sample_entries: list[StandardNamePublishEntry]
+    ) -> None:
         batches = make_publish_batches(sample_entries, group_by="ids")
         total = sum(len(b.entries) for b in batches)
         assert total == len(sample_entries)
@@ -386,20 +404,22 @@ class TestMakePublishBatches:
 
 
 class TestCheckCatalogDuplicates:
-    def test_no_catalog_dir(self, sample_entries: list[SNPublishEntry]) -> None:
+    def test_no_catalog_dir(
+        self, sample_entries: list[StandardNamePublishEntry]
+    ) -> None:
         new, dupes = check_catalog_duplicates(sample_entries, catalog_dir=None)
         assert len(new) == len(sample_entries)
         assert len(dupes) == 0
 
     def test_no_duplicates(
-        self, tmp_path: Path, sample_entries: list[SNPublishEntry]
+        self, tmp_path: Path, sample_entries: list[StandardNamePublishEntry]
     ) -> None:
         new, dupes = check_catalog_duplicates(sample_entries, catalog_dir=tmp_path)
         assert len(new) == len(sample_entries)
         assert len(dupes) == 0
 
     def test_finds_catalog_duplicates(
-        self, tmp_path: Path, sample_entries: list[SNPublishEntry]
+        self, tmp_path: Path, sample_entries: list[StandardNamePublishEntry]
     ) -> None:
         # Write one existing catalog entry in a subdirectory (tag-based layout)
         subdir = tmp_path / "equilibrium"
@@ -413,7 +433,7 @@ class TestCheckCatalogDuplicates:
         assert len(new) == len(sample_entries) - 1
 
     def test_finds_catalog_duplicates_top_level(
-        self, tmp_path: Path, sample_entries: list[SNPublishEntry]
+        self, tmp_path: Path, sample_entries: list[StandardNamePublishEntry]
     ) -> None:
         # Also detect duplicates in flat (top-level) YAML files
         (tmp_path / "electron_temperature.yaml").write_text(
@@ -424,19 +444,19 @@ class TestCheckCatalogDuplicates:
         assert dupes[0].name == "electron_temperature"
 
     def test_finds_within_batch_duplicates(
-        self, sample_provenance: SNProvenance
+        self, sample_provenance: StandardNameProvenance
     ) -> None:
         entries = [
-            SNPublishEntry(name="dup_name", provenance=sample_provenance),
-            SNPublishEntry(name="dup_name", provenance=sample_provenance),
-            SNPublishEntry(name="unique_name", provenance=sample_provenance),
+            StandardNamePublishEntry(name="dup_name", provenance=sample_provenance),
+            StandardNamePublishEntry(name="dup_name", provenance=sample_provenance),
+            StandardNamePublishEntry(name="unique_name", provenance=sample_provenance),
         ]
         new, dupes = check_catalog_duplicates(entries, catalog_dir=None)
         assert len(new) == 2  # first dup_name + unique_name
         assert len(dupes) == 1  # second dup_name
 
     def test_nonexistent_catalog_dir(
-        self, tmp_path: Path, sample_entries: list[SNPublishEntry]
+        self, tmp_path: Path, sample_entries: list[StandardNamePublishEntry]
     ) -> None:
         """Non-existent catalog dir should be treated as empty."""
         fake_dir = tmp_path / "nonexistent"
@@ -579,9 +599,11 @@ class TestGraphRecordsToEntries:
 
 
 class TestRichFieldRoundTrip:
-    def test_all_rich_fields_in_yaml(self, sample_provenance: SNProvenance) -> None:
+    def test_all_rich_fields_in_yaml(
+        self, sample_provenance: StandardNameProvenance
+    ) -> None:
         """Full round-trip: create entry with all rich fields → YAML → parse back."""
-        entry = SNPublishEntry(
+        entry = StandardNamePublishEntry(
             name="ion_temperature",
             kind="scalar",
             unit="eV",
@@ -614,9 +636,11 @@ class TestRichFieldRoundTrip:
         assert doc["validity_domain"] == "core plasma"
         assert doc["tags"] == ["core_profiles", "kinetics"]
 
-    def test_empty_rich_fields_omitted(self, sample_provenance: SNProvenance) -> None:
+    def test_empty_rich_fields_omitted(
+        self, sample_provenance: StandardNameProvenance
+    ) -> None:
         """Empty optional rich fields should not appear in YAML output."""
-        entry = SNPublishEntry(
+        entry = StandardNamePublishEntry(
             name="bare_quantity",
             provenance=sample_provenance,
         )
@@ -630,10 +654,10 @@ class TestRichFieldRoundTrip:
         assert "validity_domain" not in doc
 
     def test_links_formatted_as_name_dicts(
-        self, sample_provenance: SNProvenance
+        self, sample_provenance: StandardNameProvenance
     ) -> None:
         """links list should be serialized as [{name: ...}] objects."""
-        entry = SNPublishEntry(
+        entry = StandardNamePublishEntry(
             name="test_quantity",
             links=["alpha", "beta"],
             provenance=sample_provenance,

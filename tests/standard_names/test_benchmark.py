@@ -222,7 +222,7 @@ class TestPromptParity:
         from unittest.mock import AsyncMock, patch
 
         from imas_codex.standard_names.benchmark import BenchmarkConfig, _run_model
-        from imas_codex.standard_names.models import SNComposeBatch
+        from imas_codex.standard_names.models import StandardNameComposeBatch
 
         config = BenchmarkConfig(models=["test"], temperature=0.0)
         batches = [
@@ -243,7 +243,7 @@ class TestPromptParity:
         ]
         minimal_context: dict = {"subjects": ["electron"], "vocabulary_sections": []}
         captured_messages: list[dict] = []
-        mock_response = SNComposeBatch(candidates=[], skipped=[])
+        mock_response = StandardNameComposeBatch(candidates=[], skipped=[])
 
         async def mock_llm(model, messages, response_model, **kwargs):
             captured_messages.extend(messages)
@@ -553,7 +553,10 @@ class TestBenchmarkRunner:
     async def test_run_benchmark_mocked(self):
         """Run benchmark with mocked extraction and LLM calls."""
         from imas_codex.standard_names.benchmark import BenchmarkConfig, run_benchmark
-        from imas_codex.standard_names.models import SNCandidate, SNComposeBatch
+        from imas_codex.standard_names.models import (
+            StandardNameCandidate,
+            StandardNameComposeBatch,
+        )
 
         config = BenchmarkConfig(
             models=["mock-model-a"],
@@ -585,16 +588,16 @@ class TestBenchmarkRunner:
         ]
 
         # Mock LLM response
-        mock_response = SNComposeBatch(
+        mock_response = StandardNameComposeBatch(
             candidates=[
-                SNCandidate(
+                StandardNameCandidate(
                     source_id="equilibrium/time_slice/profiles_1d/safety_factor",
                     standard_name="safety_factor",
                     fields={"physical_base": "safety_factor"},
                     confidence=0.95,
                     reason="Safety factor profile",
                 ),
-                SNCandidate(
+                StandardNameCandidate(
                     source_id="core_profiles/profiles_1d/electrons/temperature",
                     standard_name="electron_temperature",
                     fields={"physical_base": "temperature", "subject": "electron"},
@@ -632,7 +635,10 @@ class TestBenchmarkRunner:
     async def test_run_benchmark_multiple_models(self):
         """Run with multiple models and verify separate results."""
         from imas_codex.standard_names.benchmark import BenchmarkConfig, run_benchmark
-        from imas_codex.standard_names.models import SNCandidate, SNComposeBatch
+        from imas_codex.standard_names.models import (
+            StandardNameCandidate,
+            StandardNameComposeBatch,
+        )
 
         config = BenchmarkConfig(models=["model-a", "model-b"], max_candidates=2)
 
@@ -652,9 +658,9 @@ class TestBenchmarkRunner:
             }
         ]
 
-        mock_response = SNComposeBatch(
+        mock_response = StandardNameComposeBatch(
             candidates=[
-                SNCandidate(
+                StandardNameCandidate(
                     source_id="equilibrium/time_slice/profiles_1d/elongation",
                     standard_name="elongation",
                     fields={"physical_base": "elongation"},
@@ -1078,12 +1084,12 @@ class TestQualityReviewModel:
 
     def test_valid_review(self):
         from imas_codex.standard_names.models import (
-            SNQualityReview,
-            SNQualityScore,
-            SNReviewVerdict,
+            StandardNameQualityReview,
+            StandardNameQualityScore,
+            StandardNameReviewVerdict,
         )
 
-        score = SNQualityScore(
+        score = StandardNameQualityScore(
             grammar=20,
             semantic=20,
             documentation=19,
@@ -1091,11 +1097,11 @@ class TestQualityReviewModel:
             completeness=18,
             compliance=17,
         )
-        review = SNQualityReview(
+        review = StandardNameQualityReview(
             source_id="test/path",
             standard_name="electron_temperature",
             scores=score,
-            verdict=SNReviewVerdict.accept,
+            verdict=StandardNameReviewVerdict.accept,
             reasoning="Excellent entry",
         )
         assert review.scores.total == 112
@@ -1104,10 +1110,10 @@ class TestQualityReviewModel:
     def test_dimension_max_20(self):
         from pydantic import ValidationError
 
-        from imas_codex.standard_names.models import SNQualityScore
+        from imas_codex.standard_names.models import StandardNameQualityScore
 
         with pytest.raises(ValidationError):
-            SNQualityScore(
+            StandardNameQualityScore(
                 grammar=25,  # exceeds max 20
                 semantic=10,
                 documentation=10,
@@ -1119,10 +1125,10 @@ class TestQualityReviewModel:
     def test_dimension_min_0(self):
         from pydantic import ValidationError
 
-        from imas_codex.standard_names.models import SNQualityScore
+        from imas_codex.standard_names.models import StandardNameQualityScore
 
         with pytest.raises(ValidationError):
-            SNQualityScore(
+            StandardNameQualityScore(
                 grammar=-1,  # below min 0
                 semantic=5,
                 documentation=3,
@@ -1132,10 +1138,10 @@ class TestQualityReviewModel:
             )
 
     def test_total_score_max_120(self):
-        from imas_codex.standard_names.models import SNQualityScore
+        from imas_codex.standard_names.models import StandardNameQualityScore
 
         # All dimensions at max = 120
-        score = SNQualityScore(
+        score = StandardNameQualityScore(
             grammar=20,
             semantic=20,
             documentation=20,
@@ -1147,9 +1153,9 @@ class TestQualityReviewModel:
         assert score.tier == "outstanding"
 
     def test_poor_tier_scores(self):
-        from imas_codex.standard_names.models import SNQualityScore
+        from imas_codex.standard_names.models import StandardNameQualityScore
 
-        score = SNQualityScore(
+        score = StandardNameQualityScore(
             grammar=5,
             semantic=0,
             documentation=0,
@@ -1161,9 +1167,9 @@ class TestQualityReviewModel:
         assert score.tier == "poor"
 
     def test_score_model_dump_has_six_dimensions(self):
-        from imas_codex.standard_names.models import SNQualityScore
+        from imas_codex.standard_names.models import StandardNameQualityScore
 
-        score = SNQualityScore(
+        score = StandardNameQualityScore(
             grammar=15,
             semantic=14,
             documentation=12,
@@ -1176,20 +1182,20 @@ class TestQualityReviewModel:
         assert len(d) == 6
 
     def test_review_batch_from_models(self):
-        """SNQualityReviewBatch from models.py works correctly."""
+        """StandardNameQualityReviewBatch from models.py works correctly."""
         from imas_codex.standard_names.models import (
-            SNQualityReview,
-            SNQualityReviewBatch,
-            SNQualityScore,
-            SNReviewVerdict,
+            StandardNameQualityReview,
+            StandardNameQualityReviewBatch,
+            StandardNameQualityScore,
+            StandardNameReviewVerdict,
         )
 
-        batch = SNQualityReviewBatch(
+        batch = StandardNameQualityReviewBatch(
             reviews=[
-                SNQualityReview(
+                StandardNameQualityReview(
                     source_id="a",
                     standard_name="electron_temperature",
-                    scores=SNQualityScore(
+                    scores=StandardNameQualityScore(
                         grammar=20,
                         semantic=18,
                         documentation=16,
@@ -1197,7 +1203,7 @@ class TestQualityReviewModel:
                         completeness=15,
                         compliance=14,
                     ),
-                    verdict=SNReviewVerdict.accept,
+                    verdict=StandardNameReviewVerdict.accept,
                     reasoning="Good entry",
                 ),
             ]

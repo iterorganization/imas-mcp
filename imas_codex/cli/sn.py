@@ -314,15 +314,15 @@ def sn_generate(
     log_print("")
 
     from imas_codex.standard_names.pipeline import run_sn_generate_engine
-    from imas_codex.standard_names.state import SNBuildState
+    from imas_codex.standard_names.state import StandardNameBuildState
 
     # Build progress display
     display = None
     if use_rich and not quiet:
         try:
-            from imas_codex.standard_names.progress import SNProgressDisplay
+            from imas_codex.standard_names.progress import StandardNameProgressDisplay
 
-            display = SNProgressDisplay(
+            display = StandardNameProgressDisplay(
                 source=source,
                 console=console_obj,
                 cost_limit=cost_limit,
@@ -331,7 +331,7 @@ def sn_generate(
         except Exception:
             logger.debug("Could not create progress display", exc_info=True)
 
-    state = SNBuildState(
+    state = StandardNameBuildState(
         facility=effective_facility,
         source=source,
         ids_filter=ids_filter,
@@ -1549,7 +1549,7 @@ def sn_review(
     import asyncio
 
     from imas_codex.standard_names.review.budget import ReviewBudgetManager
-    from imas_codex.standard_names.review.state import SNReviewState
+    from imas_codex.standard_names.review.state import StandardNameReviewState
 
     # Combine --force / --re-review (deprecated alias)
     force = force_flag or re_review_flag
@@ -1558,7 +1558,7 @@ def sn_review(
     batch_size = min(batch_size, 25)
 
     # Build state
-    state = SNReviewState(
+    state = StandardNameReviewState(
         facility="dd",
         cost_limit=cost_limit,
         ids_filter=ids,
@@ -1882,7 +1882,7 @@ def sn_enrich(
         from imas_codex.discovery.base.llm import acall_llm_structured
         from imas_codex.llm.prompt_loader import render_prompt
         from imas_codex.settings import get_model
-        from imas_codex.standard_names.models import SNEnrichBatch
+        from imas_codex.standard_names.models import StandardNameEnrichBatch
 
         model = get_model("language")
         total_cost = 0.0
@@ -1949,7 +1949,7 @@ def sn_enrich(
                 result = await acall_llm_structured(
                     model=model,
                     messages=messages,
-                    response_model=SNEnrichBatch,
+                    response_model=StandardNameEnrichBatch,
                     max_tokens=4096,
                     temperature=0.3,
                 )

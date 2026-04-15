@@ -46,7 +46,7 @@ def build_sn_stages() -> list[StageDisplaySpec]:
     ]
 
 
-class SNProgressDisplay(DataDrivenProgressDisplay):
+class StandardNameProgressDisplay(DataDrivenProgressDisplay):
     """Rich progress display for the SN build pipeline.
 
     Shows 3 phases: Extract → Compose → Finalize

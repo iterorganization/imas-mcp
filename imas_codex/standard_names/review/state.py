@@ -15,7 +15,7 @@ from imas_codex.discovery.base.supervision import PipelinePhase
 
 
 @dataclass
-class SNReviewState(DiscoveryStateBase):
+class StandardNameReviewState(DiscoveryStateBase):
     """Shared state for the sn review pipeline.
 
     Each phase has its own ``WorkerStats`` and ``PipelinePhase``.

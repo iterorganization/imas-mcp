@@ -759,7 +759,7 @@ class TestPipelineShouldStopFn:
 
 
 def _make_mock_state(dry_run: bool = False):
-    """Create a minimal mock SNBuildState for worker testing."""
+    """Create a minimal mock StandardNameBuildState for worker testing."""
     state = MagicMock()
     state.dry_run = dry_run
     state.stop_requested = False

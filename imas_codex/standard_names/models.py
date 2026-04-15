@@ -8,7 +8,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 
-class SNCandidate(BaseModel):
+class StandardNameCandidate(BaseModel):
     """A single standard name candidate from LLM composition."""
 
     source_id: str = Field(description="Source entity ID (DD path or signal ID)")
@@ -38,7 +38,7 @@ class SNCandidate(BaseModel):
     )
 
 
-class SNVocabGap(BaseModel):
+class StandardNameVocabGap(BaseModel):
     """A path where naming requires vocabulary expansion."""
 
     source_id: str = Field(description="DD path that needs naming")
@@ -51,7 +51,7 @@ class SNVocabGap(BaseModel):
     reason: str = Field(description="Why this token is needed for naming this path")
 
 
-class SNAttachment(BaseModel):
+class StandardNameAttachment(BaseModel):
     """A DD path that should attach to an existing standard name without regeneration."""
 
     source_id: str = Field(description="DD path to attach")
@@ -59,11 +59,11 @@ class SNAttachment(BaseModel):
     reason: str = Field(description="Why this path maps to this existing name")
 
 
-class SNComposeBatch(BaseModel):
+class StandardNameComposeBatch(BaseModel):
     """LLM response for a batch of standard name compositions."""
 
-    candidates: list[SNCandidate]
-    attachments: list[SNAttachment] = Field(
+    candidates: list[StandardNameCandidate]
+    attachments: list[StandardNameAttachment] = Field(
         default_factory=list,
         description=(
             "DD paths that map to existing standard names — attach without regeneration. "
@@ -73,7 +73,7 @@ class SNComposeBatch(BaseModel):
     skipped: list[str] = Field(
         default_factory=list, description="Source IDs skipped (not physics quantities)"
     )
-    vocab_gaps: list[SNVocabGap] = Field(
+    vocab_gaps: list[StandardNameVocabGap] = Field(
         default_factory=list,
         description="Paths where naming requires vocabulary expansion in imas-standard-names",
     )
@@ -84,7 +84,7 @@ class SNComposeBatch(BaseModel):
 # =============================================================================
 
 
-class SNProvenance(BaseModel):
+class StandardNameProvenance(BaseModel):
     """Provenance metadata for a standard name entry."""
 
     source: str = Field(description="Source type: dd or signal")
@@ -96,7 +96,7 @@ class SNProvenance(BaseModel):
     )
 
 
-class SNPublishEntry(BaseModel):
+class StandardNamePublishEntry(BaseModel):
     """A single standard name entry ready for YAML catalog export."""
 
     name: str = Field(description="The standard name")
@@ -132,14 +132,14 @@ class SNPublishEntry(BaseModel):
         default=None,
         description="COCOS convention index (e.g. 11, 17). Null for non-COCOS quantities.",
     )
-    provenance: SNProvenance = Field(description="Generation provenance")
+    provenance: StandardNameProvenance = Field(description="Generation provenance")
 
 
-class SNPublishBatch(BaseModel):
+class StandardNamePublishBatch(BaseModel):
     """A batch of entries to publish as a PR."""
 
     group_key: str = Field(description="Batch group key (IDS name or domain)")
-    entries: list[SNPublishEntry]
+    entries: list[StandardNamePublishEntry]
     confidence_tier: str = Field(description="high, medium, or low")
 
 
@@ -148,7 +148,7 @@ class SNPublishBatch(BaseModel):
 # =============================================================================
 
 
-class SNReviewVerdict(StrEnum):
+class StandardNameReviewVerdict(StrEnum):
     """Review decision for a standard name candidate."""
 
     accept = "accept"
@@ -156,12 +156,12 @@ class SNReviewVerdict(StrEnum):
     revise = "revise"
 
 
-class SNReviewItem(BaseModel):
+class StandardNameReviewItem(BaseModel):
     """Review of a single standard name candidate."""
 
     source_id: str = Field(description="Source entity ID being reviewed")
     standard_name: str = Field(description="The standard name under review")
-    verdict: SNReviewVerdict = Field(description="Accept, reject, or revise")
+    verdict: StandardNameReviewVerdict = Field(description="Accept, reject, or revise")
     confidence: float = Field(ge=0, le=1, description="Review confidence")
     reason: str = Field(description="Justification for the verdict")
     revised_name: str | None = Field(
@@ -173,10 +173,10 @@ class SNReviewItem(BaseModel):
     issues: list[str] = Field(default_factory=list, description="Specific issues found")
 
 
-class SNReviewBatch(BaseModel):
+class StandardNameReviewBatch(BaseModel):
     """LLM response for reviewing a batch of standard name candidates."""
 
-    reviews: list[SNReviewItem]
+    reviews: list[StandardNameReviewItem]
 
 
 # =============================================================================
@@ -184,7 +184,7 @@ class SNReviewBatch(BaseModel):
 # =============================================================================
 
 
-class SNQualityScore(BaseModel):
+class StandardNameQualityScore(BaseModel):
     """6-dimensional quality score for a standard name entry."""
 
     grammar: int = Field(ge=0, le=20, description="Grammar correctness (0-20)")
@@ -224,13 +224,13 @@ class SNQualityScore(BaseModel):
         return "poor"
 
 
-class SNQualityReview(BaseModel):
+class StandardNameQualityReview(BaseModel):
     """Review of a single standard name with quality scoring."""
 
     source_id: str = Field(description="Source entity ID being reviewed")
     standard_name: str = Field(description="The standard name under review")
-    scores: SNQualityScore = Field(description="6-dimensional quality scores")
-    verdict: SNReviewVerdict = Field(description="Accept, reject, or revise")
+    scores: StandardNameQualityScore = Field(description="6-dimensional quality scores")
+    verdict: StandardNameReviewVerdict = Field(description="Accept, reject, or revise")
     reasoning: str = Field(description="Specific justification per dimension")
     revised_name: str | None = Field(
         default=None, description="Suggested revision if verdict is revise"
@@ -241,10 +241,10 @@ class SNQualityReview(BaseModel):
     issues: list[str] = Field(default_factory=list, description="Specific issues found")
 
 
-class SNQualityReviewBatch(BaseModel):
+class StandardNameQualityReviewBatch(BaseModel):
     """LLM response for quality-scored review of a batch."""
 
-    reviews: list[SNQualityReview]
+    reviews: list[StandardNameQualityReview]
 
 
 # =============================================================================
@@ -252,7 +252,7 @@ class SNQualityReviewBatch(BaseModel):
 # =============================================================================
 
 
-class SNEnrichItem(BaseModel):
+class StandardNameEnrichItem(BaseModel):
     """Enrichment result for a single standard name."""
 
     standard_name: str = Field(
@@ -274,7 +274,7 @@ class SNEnrichItem(BaseModel):
     )
 
 
-class SNEnrichBatch(BaseModel):
+class StandardNameEnrichBatch(BaseModel):
     """LLM response for enriching a batch of standard names."""
 
-    items: list[SNEnrichItem]
+    items: list[StandardNameEnrichItem]

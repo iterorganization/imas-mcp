@@ -310,10 +310,10 @@ computation across batches.
 ### Response Model
 
 ```python
-class SNComposeBatch(BaseModel):
-    candidates: list[SNCandidate]
+class StandardNameComposeBatch(BaseModel):
+    candidates: list[StandardNameCandidate]
     skipped: list[str]
-    vocab_gaps: list[SNVocabGap]
+    vocab_gaps: list[StandardNameVocabGap]
 ```
 
 `vocab_gaps` captures cases where the grammar vocabulary lacks a needed token
@@ -409,9 +409,9 @@ graph modification.
 | `imas_codex/standard_names/enrichment.py` | Primary cluster selection + global grouping |
 | `imas_codex/standard_names/consolidation.py` | Cross-batch dedup, conflict detection, coverage |
 | `imas_codex/standard_names/graph_ops.py` | Neo4j read/write helpers with conflict detection |
-| `imas_codex/standard_names/models.py` | Pydantic response models (`SNComposeBatch`, `SNReviewBatch`) |
+| `imas_codex/standard_names/models.py` | Pydantic response models (`StandardNameComposeBatch`, `StandardNameReviewBatch`) |
 | `imas_codex/standard_names/context.py` | Grammar context builder (vocabulary, examples, ranges) |
-| `imas_codex/standard_names/state.py` | `SNBuildState` dataclass (shared pipeline state) |
+| `imas_codex/standard_names/state.py` | `StandardNameBuildState` dataclass (shared pipeline state) |
 | `imas_codex/standard_names/sources/` | Extraction source plugins (DD and signals) |
 | `imas_codex/standard_names/publish.py` | Export to YAML catalog |
 | `imas_codex/standard_names/catalog_import.py` | Import reviewed catalog entries |

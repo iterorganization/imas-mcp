@@ -21,9 +21,9 @@ from typing import Any
 import yaml
 
 from imas_codex.standard_names.models import (
-    SNProvenance,
-    SNPublishBatch,
-    SNPublishEntry,
+    StandardNameProvenance,
+    StandardNamePublishBatch,
+    StandardNamePublishEntry,
 )
 
 logger = logging.getLogger(__name__)
@@ -51,7 +51,7 @@ def confidence_tier(confidence: float) -> str:
 # =============================================================================
 
 
-def generate_yaml_entry(entry: SNPublishEntry) -> str:
+def generate_yaml_entry(entry: StandardNamePublishEntry) -> str:
     """Generate YAML content for a single standard name entry.
 
     Returns a YAML string formatted to match the
@@ -96,7 +96,7 @@ def generate_yaml_entry(entry: SNPublishEntry) -> str:
 
 
 def generate_catalog_files(
-    entries: list[SNPublishEntry],
+    entries: list[StandardNamePublishEntry],
     output_dir: Path,
 ) -> list[Path]:
     """Write YAML files to *output_dir*, grouped by primary tag into subdirectories.
@@ -135,9 +135,9 @@ def generate_catalog_files(
 
 
 def batch_by_group(
-    entries: list[SNPublishEntry],
+    entries: list[StandardNamePublishEntry],
     group_by: str = "ids",
-) -> dict[str, list[SNPublishEntry]]:
+) -> dict[str, list[StandardNamePublishEntry]]:
     """Group entries into PR batches.
 
     Parameters
@@ -153,7 +153,7 @@ def batch_by_group(
     -------
     dict mapping group key → entries in that group.
     """
-    groups: dict[str, list[SNPublishEntry]] = {}
+    groups: dict[str, list[StandardNamePublishEntry]] = {}
 
     for entry in entries:
         if group_by == "ids":
@@ -175,12 +175,12 @@ def batch_by_group(
 
 
 def make_publish_batches(
-    entries: list[SNPublishEntry],
+    entries: list[StandardNamePublishEntry],
     group_by: str = "ids",
-) -> list[SNPublishBatch]:
-    """Create :class:`SNPublishBatch` objects from grouped entries."""
+) -> list[StandardNamePublishBatch]:
+    """Create :class:`StandardNamePublishBatch` objects from grouped entries."""
     groups = batch_by_group(entries, group_by)
-    batches: list[SNPublishBatch] = []
+    batches: list[StandardNamePublishBatch] = []
     for key, group_entries in sorted(groups.items()):
         # Determine overall confidence tier for the batch
         avg_conf = (
@@ -189,7 +189,7 @@ def make_publish_batches(
             else 0.0
         )
         batches.append(
-            SNPublishBatch(
+            StandardNamePublishBatch(
                 group_key=key,
                 entries=group_entries,
                 confidence_tier=confidence_tier(avg_conf),
@@ -204,9 +204,9 @@ def make_publish_batches(
 
 
 def check_catalog_duplicates(
-    entries: list[SNPublishEntry],
+    entries: list[StandardNamePublishEntry],
     catalog_dir: Path | None = None,
-) -> tuple[list[SNPublishEntry], list[SNPublishEntry]]:
+) -> tuple[list[StandardNamePublishEntry], list[StandardNamePublishEntry]]:
     """Check for duplicates against an existing catalog directory.
 
     Scans ``catalog_dir`` recursively for ``.yaml`` files (including
@@ -230,8 +230,8 @@ def check_catalog_duplicates(
                 except Exception:
                     logger.debug("Could not parse %s", yaml_file)
 
-    new: list[SNPublishEntry] = []
-    duplicates: list[SNPublishEntry] = []
+    new: list[StandardNamePublishEntry] = []
+    duplicates: list[StandardNamePublishEntry] = []
     seen: set[str] = set()
 
     for entry in entries:
@@ -253,21 +253,21 @@ def check_catalog_duplicates(
 
 
 # =============================================================================
-# Graph → SNPublishEntry conversion
+# Graph → StandardNamePublishEntry conversion
 # =============================================================================
 
 
 def graph_records_to_entries(
     records: list[dict[str, Any]],
-) -> list[SNPublishEntry]:
-    """Convert raw graph query dicts to :class:`SNPublishEntry` objects.
+) -> list[StandardNamePublishEntry]:
+    """Convert raw graph query dicts to :class:`StandardNamePublishEntry` objects.
 
     Handles both schema-canonical properties (``source``, ``source_path``,
     ``unit``) and legacy write properties (``source_type``,
     ``source_id``, ``units``).  Carries through all rich fields:
     documentation, links, ids_paths, constraints, validity_domain, kind.
     """
-    entries: list[SNPublishEntry] = []
+    entries: list[StandardNamePublishEntry] = []
     for rec in records:
         name = rec.get("name") or rec.get("id", "")
         if not name:
@@ -309,7 +309,7 @@ def graph_records_to_entries(
         # Physics domain
         physics_domain = rec.get("physics_domain")
 
-        provenance = SNProvenance(
+        provenance = StandardNameProvenance(
             source=str(source),
             source_id=str(source_id),
             ids_name=ids_name,
@@ -317,7 +317,7 @@ def graph_records_to_entries(
         )
 
         entries.append(
-            SNPublishEntry(
+            StandardNamePublishEntry(
                 name=name,
                 kind=kind,
                 unit=unit,
@@ -347,7 +347,7 @@ def graph_records_to_entries(
 
 
 def create_catalog_pr(
-    batch: SNPublishBatch,
+    batch: StandardNamePublishBatch,
     catalog_repo: str,
     branch_name: str,
     yaml_files: list[Path],

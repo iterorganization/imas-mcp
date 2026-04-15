@@ -404,19 +404,19 @@ vocab_gap:
 
 ### LLM flagging mechanism
 
-Add a `vocab_gaps` field to `SNComposeBatch` response model:
+Add a `vocab_gaps` field to `StandardNameComposeBatch` response model:
 
 ```python
-class SNVocabGap(BaseModel):
+class StandardNameVocabGap(BaseModel):
     source_id: str = Field(description="DD path that needs naming")
     segment: str = Field(description="Grammar segment missing a token")
     needed_token: str = Field(description="Proposed token value")
     reason: str = Field(description="Why this token is needed")
 
-class SNComposeBatch(BaseModel):
-    candidates: list[SNCandidate]
+class StandardNameComposeBatch(BaseModel):
+    candidates: list[StandardNameCandidate]
     skipped: list[str]
-    vocab_gaps: list[SNVocabGap] = Field(
+    vocab_gaps: list[StandardNameVocabGap] = Field(
         default_factory=list,
         description="Paths where naming requires vocabulary expansion"
     )
@@ -716,7 +716,7 @@ coordinate context grounds the LLM in the path's dimensionality.
 **Current state:** `compose_dd.md` already renders enriched fields (description,
 documentation, unit, data_type, physics_domain, keywords, ndim, cluster info,
 siblings, parent structure, coordinates). Remaining work: remove unit from
-SNCandidate output model, add anti-pattern examples.
+StandardNameCandidate output model, add anti-pattern examples.
 
 ### Phase 4: Two-pass persistence with consolidation
 
@@ -727,7 +727,7 @@ consolidation pass detects and resolves cross-batch conflicts.
 
 #### Pass 1: Generate (parallel)
 Compose workers generate candidates in parallel. Each batch produces
-`list[SNCandidate]`. Results accumulate in `state.validated`.
+`list[StandardNameCandidate]`. Results accumulate in `state.validated`.
 
 #### Pass 2: Consolidate (serial, before any graph writes)
 
@@ -873,7 +873,7 @@ Phase 5 -> document benchmark evidence for model/approach selection.
    exceeding all model output limits (Claude 8K default, Gemini 8K). Both
    reviewers flagged this as blocking. **Revised target: 20-30 concepts
    per batch.** Implement a token-budget estimator that serializes one
-   `SNCandidate` to JSON, counts tokens, and caps batch size accordingly.
+   `StandardNameCandidate` to JSON, counts tokens, and caps batch size accordingly.
    Benchmark will validate optimal size. Note: "concepts" not "paths" —
    a concept may map to 7+ cross-IDS paths but produces one output entry.
 

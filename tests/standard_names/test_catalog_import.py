@@ -1120,18 +1120,21 @@ class TestPublishImportRoundTrip:
     def test_published_entry_importable_after_review(self, tmp_path: Path) -> None:
         """A published entry enriched with catalog fields should import cleanly."""
         from imas_codex.standard_names.catalog_import import import_catalog
-        from imas_codex.standard_names.models import SNProvenance, SNPublishEntry
+        from imas_codex.standard_names.models import (
+            StandardNameProvenance,
+            StandardNamePublishEntry,
+        )
         from imas_codex.standard_names.publish import generate_yaml_entry
 
         # 1. Generate a published YAML entry (what `sn publish` produces)
-        published = SNPublishEntry(
+        published = StandardNamePublishEntry(
             name="electron_temperature",
             kind="physical",
             unit="eV",
             tags=["core_profiles"],
             status="drafted",
             description="Electron temperature",
-            provenance=SNProvenance(
+            provenance=StandardNameProvenance(
                 source="dd",
                 source_id="core_profiles/profiles_1d/electrons/temperature",
                 ids_name="core_profiles",

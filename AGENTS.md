@@ -733,7 +733,7 @@ Five-phase DAG: **EXTRACT → COMPOSE → VALIDATE → CONSOLIDATE → PERSIST**
 | `imas_codex/standard_names/graph_ops.py` | Neo4j read/write with unit conflict detection |
 | `imas_codex/standard_names/pipeline.py` | DAG orchestrator wiring workers into `run_discovery_engine()` |
 | `imas_codex/standard_names/workers.py` | Five async worker functions (review is standalone, not in generate pipeline) |
-| `imas_codex/standard_names/models.py` | Pydantic response models (`SNComposeBatch`, `SNAttachment`) |
+| `imas_codex/standard_names/models.py` | Pydantic response models (`StandardNameComposeBatch`, `StandardNameAttachment`) |
 | `imas_codex/standard_names/context.py` | Grammar context builder (vocabulary, examples, tokamak ranges) |
 | `imas_codex/standard_names/calibration.py` | Centralized loader (cached) for `benchmark_calibration.yaml` |
 | `imas_codex/standard_names/search.py` | Vector search for similar existing StandardName nodes (collision avoidance) |

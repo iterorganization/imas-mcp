@@ -63,7 +63,7 @@ all three layers in sequence and returns `(issues, layer_summary)`.
 ## Scoring Architecture
 
 - LLM scores 6 dimensions × 0–20 integers (avoids float clustering in LLM output)
-- Aggregate normalized to 0–1: `sum / 120.0` (via `SNQualityScore.score` property)
+- Aggregate normalized to 0–1: `sum / 120.0` (via `StandardNameQualityScore.score` property)
 - Tiers: outstanding ≥0.85, good ≥0.60, adequate ≥0.40, poor <0.40
 - The `reviewer_score` stored in the graph is a float 0–1
 - Scoring criteria defined in `imas_codex/llm/config/sn_review_criteria.yaml`

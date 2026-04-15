@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 
 if TYPE_CHECKING:
     from imas_codex.standard_names.review.audits import DuplicateComponent
-    from imas_codex.standard_names.review.state import SNReviewState
+    from imas_codex.standard_names.review.state import StandardNameReviewState
 
 logger = logging.getLogger(__name__)
 
@@ -433,7 +433,7 @@ def build_summary_report(
     return summary
 
 
-def run_consolidation(state: SNReviewState) -> ReviewSummary:
+def run_consolidation(state: StandardNameReviewState) -> ReviewSummary:
     """Orchestrate the full Layer 3 consolidation.
 
     Calls :func:`resolve_duplicates`, :func:`detect_convention_drift`,
@@ -441,7 +441,7 @@ def run_consolidation(state: SNReviewState) -> ReviewSummary:
     sequence and returns the assembled :class:`ReviewSummary`.
 
     Args:
-        state: The shared :class:`~imas_codex.standard_names.review.state.SNReviewState`
+        state: The shared :class:`~imas_codex.standard_names.review.state.StandardNameReviewState`
             after all Layer 2 batches have completed.
 
     Returns:

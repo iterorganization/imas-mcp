@@ -30,7 +30,7 @@ from imas_standard_names.grammar import (
     parse_standard_name,
 )
 
-from imas_codex.standard_names.models import SNComposeBatch
+from imas_codex.standard_names.models import StandardNameComposeBatch
 
 logger = logging.getLogger(__name__)
 
@@ -277,7 +277,7 @@ async def score_with_reviewer(
     from imas_codex.discovery.base.llm import acall_llm_structured
     from imas_codex.llm.prompt_loader import render_prompt
     from imas_codex.standard_names.context import build_compose_context
-    from imas_codex.standard_names.models import SNQualityReviewBatch
+    from imas_codex.standard_names.models import StandardNameQualityReviewBatch
 
     # Get compose context (includes grammar enums + shared include variables)
     compose_ctx = build_compose_context()
@@ -353,7 +353,7 @@ async def score_with_reviewer(
             result, _, _ = await acall_llm_structured(
                 model=reviewer_model,
                 messages=messages,
-                response_model=SNQualityReviewBatch,
+                response_model=StandardNameQualityReviewBatch,
             )
             for r in result.reviews:
                 review_dict = {
@@ -594,7 +594,7 @@ async def _run_model(
                 llm_response = await acall_llm_structured(
                     model=model,
                     messages=messages,
-                    response_model=SNComposeBatch,
+                    response_model=StandardNameComposeBatch,
                     temperature=temp,
                 )
                 llm_result, cost, tokens = llm_response

@@ -8,9 +8,9 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from imas_codex.standard_names.models import (
-    SNReviewBatch,
-    SNReviewItem,
-    SNReviewVerdict,
+    StandardNameReviewBatch,
+    StandardNameReviewItem,
+    StandardNameReviewVerdict,
 )
 
 # =============================================================================
@@ -23,20 +23,20 @@ class TestSNReviewModels:
 
     def test_review_verdict_enum_values(self):
         """All three verdict values are valid."""
-        assert SNReviewVerdict.accept == "accept"
-        assert SNReviewVerdict.reject == "reject"
-        assert SNReviewVerdict.revise == "revise"
+        assert StandardNameReviewVerdict.accept == "accept"
+        assert StandardNameReviewVerdict.reject == "reject"
+        assert StandardNameReviewVerdict.revise == "revise"
 
     def test_review_item_accept(self):
         """Accept verdict with minimal fields."""
-        item = SNReviewItem(
+        item = StandardNameReviewItem(
             source_id="equilibrium/time_slice/profiles_1d/psi",
             standard_name="poloidal_flux",
-            verdict=SNReviewVerdict.accept,
+            verdict=StandardNameReviewVerdict.accept,
             confidence=0.95,
             reason="Name correctly captures the physics quantity",
         )
-        assert item.verdict == SNReviewVerdict.accept
+        assert item.verdict == StandardNameReviewVerdict.accept
         assert item.confidence == 0.95
         assert item.revised_name is None
         assert item.revised_fields is None
@@ -44,30 +44,30 @@ class TestSNReviewModels:
 
     def test_review_item_reject(self):
         """Reject verdict with issues."""
-        item = SNReviewItem(
+        item = StandardNameReviewItem(
             source_id="magnetics/flux_loop/flux/data",
             standard_name="invalid_name",
-            verdict=SNReviewVerdict.reject,
+            verdict=StandardNameReviewVerdict.reject,
             confidence=0.8,
             reason="Name does not represent a valid physics quantity",
             issues=["Invalid physical_base", "No matching grammar rule"],
         )
-        assert item.verdict == SNReviewVerdict.reject
+        assert item.verdict == StandardNameReviewVerdict.reject
         assert len(item.issues) == 2
 
     def test_review_item_revise(self):
         """Revise verdict with revised name and fields."""
-        item = SNReviewItem(
+        item = StandardNameReviewItem(
             source_id="core_profiles/profiles_1d/electrons/temperature",
             standard_name="electron_temp",
-            verdict=SNReviewVerdict.revise,
+            verdict=StandardNameReviewVerdict.revise,
             confidence=0.85,
             reason="Physical base should be 'temperature' not 'temp'",
             revised_name="electron_temperature",
             revised_fields={"physical_base": "temperature", "subject": "electron"},
             issues=["Abbreviated physical_base"],
         )
-        assert item.verdict == SNReviewVerdict.revise
+        assert item.verdict == StandardNameReviewVerdict.revise
         assert item.revised_name == "electron_temperature"
         assert item.revised_fields == {
             "physical_base": "temperature",
@@ -75,72 +75,72 @@ class TestSNReviewModels:
         }
 
     def test_review_batch(self):
-        """SNReviewBatch wraps a list of review items."""
-        batch = SNReviewBatch(
+        """StandardNameReviewBatch wraps a list of review items."""
+        batch = StandardNameReviewBatch(
             reviews=[
-                SNReviewItem(
+                StandardNameReviewItem(
                     source_id="src1",
                     standard_name="electron_temperature",
-                    verdict=SNReviewVerdict.accept,
+                    verdict=StandardNameReviewVerdict.accept,
                     confidence=0.95,
                     reason="Good",
                 ),
-                SNReviewItem(
+                StandardNameReviewItem(
                     source_id="src2",
                     standard_name="bad_name",
-                    verdict=SNReviewVerdict.reject,
+                    verdict=StandardNameReviewVerdict.reject,
                     confidence=0.7,
                     reason="Invalid",
                 ),
             ]
         )
         assert len(batch.reviews) == 2
-        assert batch.reviews[0].verdict == SNReviewVerdict.accept
-        assert batch.reviews[1].verdict == SNReviewVerdict.reject
+        assert batch.reviews[0].verdict == StandardNameReviewVerdict.accept
+        assert batch.reviews[1].verdict == StandardNameReviewVerdict.reject
 
     def test_review_item_confidence_bounds(self):
         """Confidence must be between 0.0 and 1.0."""
         from pydantic import ValidationError
 
         # Valid at boundaries
-        SNReviewItem(
+        StandardNameReviewItem(
             source_id="a",
             standard_name="b",
-            verdict=SNReviewVerdict.accept,
+            verdict=StandardNameReviewVerdict.accept,
             confidence=0.0,
             reason="c",
         )
-        SNReviewItem(
+        StandardNameReviewItem(
             source_id="a",
             standard_name="b",
-            verdict=SNReviewVerdict.accept,
+            verdict=StandardNameReviewVerdict.accept,
             confidence=1.0,
             reason="c",
         )
 
         # Invalid: above 1.0
         with pytest.raises(ValidationError):
-            SNReviewItem(
+            StandardNameReviewItem(
                 source_id="a",
                 standard_name="b",
-                verdict=SNReviewVerdict.accept,
+                verdict=StandardNameReviewVerdict.accept,
                 confidence=1.5,
                 reason="c",
             )
 
         # Invalid: below 0.0
         with pytest.raises(ValidationError):
-            SNReviewItem(
+            StandardNameReviewItem(
                 source_id="a",
                 standard_name="b",
-                verdict=SNReviewVerdict.accept,
+                verdict=StandardNameReviewVerdict.accept,
                 confidence=-0.1,
                 reason="c",
             )
 
     def test_empty_review_batch(self):
         """Empty review batch is valid."""
-        batch = SNReviewBatch(reviews=[])
+        batch = StandardNameReviewBatch(reviews=[])
         assert batch.reviews == []
 
 
@@ -154,9 +154,9 @@ class TestSNQualityReviewModels:
 
     def test_quality_score_total(self):
         """Total is the sum of all six dimensions."""
-        from imas_codex.standard_names.models import SNQualityScore
+        from imas_codex.standard_names.models import StandardNameQualityScore
 
-        score = SNQualityScore(
+        score = StandardNameQualityScore(
             grammar=18,
             semantic=16,
             documentation=14,
@@ -168,9 +168,9 @@ class TestSNQualityReviewModels:
 
     def test_quality_score_tier_outstanding(self):
         """Score >= 102 is outstanding."""
-        from imas_codex.standard_names.models import SNQualityScore
+        from imas_codex.standard_names.models import StandardNameQualityScore
 
-        score = SNQualityScore(
+        score = StandardNameQualityScore(
             grammar=20,
             semantic=19,
             documentation=18,
@@ -183,9 +183,9 @@ class TestSNQualityReviewModels:
 
     def test_quality_score_tier_good(self):
         """Score 72-101 is good."""
-        from imas_codex.standard_names.models import SNQualityScore
+        from imas_codex.standard_names.models import StandardNameQualityScore
 
-        score = SNQualityScore(
+        score = StandardNameQualityScore(
             grammar=15,
             semantic=14,
             documentation=12,
@@ -198,9 +198,9 @@ class TestSNQualityReviewModels:
 
     def test_quality_score_tier_adequate(self):
         """Score 48-71 is adequate."""
-        from imas_codex.standard_names.models import SNQualityScore
+        from imas_codex.standard_names.models import StandardNameQualityScore
 
-        score = SNQualityScore(
+        score = StandardNameQualityScore(
             grammar=10,
             semantic=10,
             documentation=8,
@@ -213,9 +213,9 @@ class TestSNQualityReviewModels:
 
     def test_quality_score_tier_poor(self):
         """Score < 48 is poor."""
-        from imas_codex.standard_names.models import SNQualityScore
+        from imas_codex.standard_names.models import StandardNameQualityScore
 
-        score = SNQualityScore(
+        score = StandardNameQualityScore(
             grammar=5,
             semantic=5,
             documentation=3,
@@ -228,9 +228,9 @@ class TestSNQualityReviewModels:
 
     def test_quality_score_max_120(self):
         """Max possible total is 120."""
-        from imas_codex.standard_names.models import SNQualityScore
+        from imas_codex.standard_names.models import StandardNameQualityScore
 
-        score = SNQualityScore(
+        score = StandardNameQualityScore(
             grammar=20,
             semantic=20,
             documentation=20,
@@ -243,9 +243,9 @@ class TestSNQualityReviewModels:
 
     def test_quality_score_model_dump(self):
         """model_dump() includes all dimension fields."""
-        from imas_codex.standard_names.models import SNQualityScore
+        from imas_codex.standard_names.models import StandardNameQualityScore
 
-        score = SNQualityScore(
+        score = StandardNameQualityScore(
             grammar=18,
             semantic=16,
             documentation=14,
@@ -264,17 +264,17 @@ class TestSNQualityReviewModels:
         }
 
     def test_quality_review_full(self):
-        """SNQualityReview with all fields populated."""
+        """StandardNameQualityReview with all fields populated."""
         from imas_codex.standard_names.models import (
-            SNQualityReview,
-            SNQualityScore,
-            SNReviewVerdict,
+            StandardNameQualityReview,
+            StandardNameQualityScore,
+            StandardNameReviewVerdict,
         )
 
-        review = SNQualityReview(
+        review = StandardNameQualityReview(
             source_id="core_profiles/profiles_1d/electrons/temperature",
             standard_name="electron_temperature",
-            scores=SNQualityScore(
+            scores=StandardNameQualityScore(
                 grammar=20,
                 semantic=19,
                 documentation=18,
@@ -282,28 +282,28 @@ class TestSNQualityReviewModels:
                 completeness=16,
                 compliance=15,
             ),
-            verdict=SNReviewVerdict.accept,
+            verdict=StandardNameReviewVerdict.accept,
             reasoning="Excellent entry with rich documentation",
         )
         assert review.scores.total == 105
         assert review.scores.tier == "outstanding"
-        assert review.verdict == SNReviewVerdict.accept
+        assert review.verdict == StandardNameReviewVerdict.accept
 
     def test_quality_review_batch(self):
-        """SNQualityReviewBatch wraps quality reviews."""
+        """StandardNameQualityReviewBatch wraps quality reviews."""
         from imas_codex.standard_names.models import (
-            SNQualityReview,
-            SNQualityReviewBatch,
-            SNQualityScore,
-            SNReviewVerdict,
+            StandardNameQualityReview,
+            StandardNameQualityReviewBatch,
+            StandardNameQualityScore,
+            StandardNameReviewVerdict,
         )
 
-        batch = SNQualityReviewBatch(
+        batch = StandardNameQualityReviewBatch(
             reviews=[
-                SNQualityReview(
+                StandardNameQualityReview(
                     source_id="src1",
                     standard_name="electron_temperature",
-                    scores=SNQualityScore(
+                    scores=StandardNameQualityScore(
                         grammar=20,
                         semantic=20,
                         documentation=18,
@@ -311,7 +311,7 @@ class TestSNQualityReviewModels:
                         completeness=16,
                         compliance=15,
                     ),
-                    verdict=SNReviewVerdict.accept,
+                    verdict=StandardNameReviewVerdict.accept,
                     reasoning="Good",
                 ),
             ]
@@ -323,10 +323,10 @@ class TestSNQualityReviewModels:
         """Scores must be in 0-20 range."""
         from pydantic import ValidationError
 
-        from imas_codex.standard_names.models import SNQualityScore
+        from imas_codex.standard_names.models import StandardNameQualityScore
 
         with pytest.raises(ValidationError):
-            SNQualityScore(
+            StandardNameQualityScore(
                 grammar=25,  # exceeds 20
                 semantic=10,
                 documentation=10,
@@ -336,7 +336,7 @@ class TestSNQualityReviewModels:
             )
 
         with pytest.raises(ValidationError):
-            SNQualityScore(
+            StandardNameQualityScore(
                 grammar=-1,  # below 0
                 semantic=10,
                 documentation=10,
@@ -366,7 +366,7 @@ class TestReviewWorker:
         """Create a minimal state with review-specific fields for testing."""
         from imas_codex.discovery.base.progress import WorkerStats
         from imas_codex.discovery.base.supervision import PipelinePhase
-        from imas_codex.standard_names.state import SNBuildState
+        from imas_codex.standard_names.state import StandardNameBuildState
 
         defaults = {
             "facility": "dd",
@@ -374,7 +374,7 @@ class TestReviewWorker:
             "dry_run": False,
         }
         defaults.update(overrides)
-        state = SNBuildState(**defaults)
+        state = StandardNameBuildState(**defaults)
         # Add review-specific fields that were removed from generate pipeline
         state.reviewed = None
         state.review_stats = WorkerStats()
@@ -635,25 +635,25 @@ class TestSNBuildStateReview:
     """
 
     def test_state_has_compose_model(self):
-        """SNBuildState includes compose model configuration."""
-        from imas_codex.standard_names.state import SNBuildState
+        """StandardNameBuildState includes compose model configuration."""
+        from imas_codex.standard_names.state import StandardNameBuildState
 
-        state = SNBuildState(facility="dd")
+        state = StandardNameBuildState(facility="dd")
         assert state.compose_model is None
 
     def test_total_cost_is_compose_only(self):
         """total_cost only includes compose cost (no review)."""
-        from imas_codex.standard_names.state import SNBuildState
+        from imas_codex.standard_names.state import StandardNameBuildState
 
-        state = SNBuildState(facility="dd")
+        state = StandardNameBuildState(facility="dd")
         state.compose_stats.cost = 0.5
         assert state.total_cost == pytest.approx(0.5)
 
     def test_model_override_configuration(self):
         """compose_model can be set at construction."""
-        from imas_codex.standard_names.state import SNBuildState
+        from imas_codex.standard_names.state import StandardNameBuildState
 
-        state = SNBuildState(
+        state = StandardNameBuildState(
             facility="dd",
             compose_model="test/compose",
         )
@@ -674,18 +674,18 @@ class TestPipelineWiring:
 
     def test_validate_depends_on_compose_phase(self):
         """Validate worker should depend on compose_phase (review removed)."""
-        from imas_codex.standard_names.state import SNBuildState
+        from imas_codex.standard_names.state import StandardNameBuildState
 
-        state = SNBuildState(facility="dd")
+        state = StandardNameBuildState(facility="dd")
 
         assert not state.compose_phase.done
         assert not state.validate_phase.done
 
     def test_validate_reads_composed_buffer(self):
         """Validate worker reads from state.composed directly."""
-        from imas_codex.standard_names.state import SNBuildState
+        from imas_codex.standard_names.state import StandardNameBuildState
 
-        state = SNBuildState(facility="dd", dry_run=True)
+        state = StandardNameBuildState(facility="dd", dry_run=True)
         state.composed = [
             {"id": "electron_temperature", "source_id": "a"},
         ]

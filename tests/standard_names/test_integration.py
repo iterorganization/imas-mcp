@@ -656,7 +656,7 @@ class TestRoundTripIdempotence:
         )
         assert not result.errors, f"Import errors: {result.errors}"
 
-        # Normalise dict keys and convert to SNPublishEntry
+        # Normalise dict keys and convert to StandardNamePublishEntry
         graph_records = [_imported_dict_to_graph_record(e) for e in result.entries]
         entries = graph_records_to_entries(graph_records)
         assert len(entries) == 1, "Expected one publish entry from imported graph dict"
