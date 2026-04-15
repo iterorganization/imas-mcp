@@ -595,6 +595,27 @@ def sn_status() -> None:
                 console.print(f"  From manual: {row['from_manual']}")
             else:
                 console.print("No standard names in graph")
+
+            # Validation status breakdown
+            vstatus_result = gc.query(
+                """
+                MATCH (sn:StandardName)
+                RETURN coalesce(sn.validation_status, 'unset') AS status,
+                       count(sn) AS cnt
+                ORDER BY cnt DESC
+            """
+            )
+            if vstatus_result:
+                from rich.table import Table as RichTable
+
+                console.print()
+                console.print("[bold]Validation Status[/bold]")
+                vtable = RichTable(show_header=True)
+                vtable.add_column("Status")
+                vtable.add_column("Count", justify="right")
+                for vrow in vstatus_result:
+                    vtable.add_row(vrow["status"], str(vrow["cnt"]))
+                console.print(vtable)
     except Exception as e:
         console.print(f"[red]Error:[/red] {e}")
 

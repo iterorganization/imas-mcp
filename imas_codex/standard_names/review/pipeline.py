@@ -58,6 +58,7 @@ async def extract_review_worker(state: StandardNameReviewState, **_kwargs: Any) 
             rows = gc.query(
                 """
                 MATCH (sn:StandardName)
+                WHERE sn.validation_status = 'valid'
                 OPTIONAL MATCH (sn)-[:HAS_UNIT]->(u:Unit)
                 RETURN sn.id AS id,
                        sn.description AS description,

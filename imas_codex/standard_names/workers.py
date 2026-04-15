@@ -1077,6 +1077,34 @@ def _validate_via_isn(entry: dict) -> tuple[list[str], dict]:
     return issues, summary
 
 
+def _is_quarantined(issues: list[str], layer_summary: dict) -> bool:
+    """Determine whether validation issues are critical (quarantine the name).
+
+    Critical failures that make a name unusable for publication:
+    - Grammar round-trip failure (``parse_error:`` prefix)
+    - Pydantic validation failure (layer 1 did not pass)
+    - Empty or missing description (no ``id`` or empty string)
+    - Invalid kind value
+
+    Non-critical issues (semantic warnings, description quality hints)
+    do NOT trigger quarantine — they are advisory annotations.
+    """
+    # Grammar round-trip failures are always critical
+    if any(i.startswith("parse_error:") for i in issues):
+        return True
+
+    # Grammar ambiguity is also critical — the name can't be reliably parsed
+    if any("grammar:ambiguity" in i for i in issues):
+        return True
+
+    # Pydantic validation failure (model construction failed)
+    pydantic = layer_summary.get("pydantic", {})
+    if not pydantic.get("passed", True):
+        return True
+
+    return False
+
+
 async def validate_worker(state: StandardNameBuildState, **_kwargs) -> None:
     """Validate composed names via ISN grammar checks (claim loop).
 
@@ -1175,6 +1203,11 @@ async def validate_worker(state: StandardNameBuildState, **_kwargs) -> None:
                             "id": name,
                             "validation_issues": issues,
                             "validation_layer_summary": json.dumps(layer_summary),
+                            "validation_status": (
+                                "quarantined"
+                                if _is_quarantined(issues, layer_summary)
+                                else "valid"
+                            ),
                         }
                     )
                 except Exception as exc:
@@ -1204,6 +1237,7 @@ async def validate_worker(state: StandardNameBuildState, **_kwargs) -> None:
                             "id": name,
                             "validation_issues": issues,
                             "validation_layer_summary": json.dumps({}),
+                            "validation_status": "quarantined",
                         }
                     )
                     batch_invalid += 1

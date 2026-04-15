@@ -104,6 +104,23 @@ enums:
       stale:
         description: Source entity no longer exists in upstream data
 
+  StandardNameValidationStatus:
+    description: >-
+      Validation lifecycle for standard names.
+      pending → valid | quarantined.
+      Names default to pending at persist time.
+      validate_worker promotes to valid (passes) or quarantined (critical failures).
+      Only valid names participate in consolidation, review, publish.
+    permissible_values:
+      pending:
+        description: Awaiting validation (set at compose/persist time)
+      valid:
+        description: Passed ISN validation — eligible for consolidation, review, publish
+      quarantined:
+        description: >-
+          Failed critical validation checks (grammar round-trip failure,
+          empty description, invalid kind). Can be re-validated after fixes.
+
   LinkResolutionStatus:
     description: Status of cross-reference link resolution for standard names
     permissible_values:
@@ -334,6 +351,12 @@ classes:
           has not run yet. Set by validate_worker after grammar round-trip
           and three-layer ISN checks.
         range: datetime
+      validation_status:
+        description: >-
+          Validation lifecycle gate. Set to 'pending' at compose time,
+          promoted to 'valid' or 'quarantined' by validate_worker.
+          Only 'valid' names participate in consolidation, review, and publish.
+        range: StandardNameValidationStatus
       consolidated_at:
         description: >-
           Timestamp when cross-batch consolidation approved this name.
