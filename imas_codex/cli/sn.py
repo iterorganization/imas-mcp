@@ -643,7 +643,7 @@ def sn_gaps(segment: str | None, export_format: str) -> None:
                 f"""
                 MATCH (vg:VocabGap)
                 {where_clause}
-                OPTIONAL MATCH (src)-[:HAS_SN_VOCAB_GAP]->(vg)
+                OPTIONAL MATCH (src)-[:HAS_STANDARD_NAME_VOCAB_GAP]->(vg)
                 WITH vg, count(src) AS source_count,
                      collect(DISTINCT labels(src)[0]) AS source_types
                 RETURN vg.id AS id,

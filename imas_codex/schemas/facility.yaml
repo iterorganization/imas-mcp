@@ -2364,7 +2364,7 @@ classes:
           Links to VocabGap nodes recording missing grammar tokens.
         range: VocabGap
         annotations:
-          relationship_type: HAS_SN_VOCAB_GAP
+          relationship_type: HAS_STANDARD_NAME_VOCAB_GAP
 
   DataAccess:
     description: >-

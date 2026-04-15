@@ -218,7 +218,7 @@ class TestWriteVocabGaps:
         assert batch[0]["example_count"] == 3  # 3 sources contributed
 
     def test_dd_source_creates_imasnode_relationship(self):
-        """DD source type creates HAS_SN_VOCAB_GAP from IMASNode."""
+        """DD source type creates HAS_STANDARD_NAME_VOCAB_GAP from IMASNode."""
         mock_gc = MagicMock()
         mock_gc.query = MagicMock(return_value=[])
 
@@ -236,9 +236,11 @@ class TestWriteVocabGaps:
         rel_calls = [
             c
             for c in mock_gc.query.call_args_list
-            if "HAS_SN_VOCAB_GAP" in c[0][0] and "IMASNode" in c[0][0]
+            if "HAS_STANDARD_NAME_VOCAB_GAP" in c[0][0] and "IMASNode" in c[0][0]
         ]
-        assert len(rel_calls) == 1, "Should create DD HAS_SN_VOCAB_GAP relationship"
+        assert len(rel_calls) == 1, (
+            "Should create DD HAS_STANDARD_NAME_VOCAB_GAP relationship"
+        )
 
         # Verify reason is in the relationship batch
         rel_batch = rel_calls[0][1]["batch"]
@@ -247,7 +249,7 @@ class TestWriteVocabGaps:
         assert rel_batch[0]["source_id"] == ("equilibrium/time_slice/profiles_1d/psi")
 
     def test_signal_source_creates_facilitysignal_relationship(self):
-        """Signal source type creates HAS_SN_VOCAB_GAP from FacilitySignal."""
+        """Signal source type creates HAS_STANDARD_NAME_VOCAB_GAP from FacilitySignal."""
         mock_gc = MagicMock()
         mock_gc.query = MagicMock(return_value=[])
 
@@ -265,12 +267,14 @@ class TestWriteVocabGaps:
         rel_calls = [
             c
             for c in mock_gc.query.call_args_list
-            if "HAS_SN_VOCAB_GAP" in c[0][0] and "FacilitySignal" in c[0][0]
+            if "HAS_STANDARD_NAME_VOCAB_GAP" in c[0][0] and "FacilitySignal" in c[0][0]
         ]
-        assert len(rel_calls) == 1, "Should create signal HAS_SN_VOCAB_GAP relationship"
+        assert len(rel_calls) == 1, (
+            "Should create signal HAS_STANDARD_NAME_VOCAB_GAP relationship"
+        )
 
     def test_relationship_has_per_source_reason(self):
-        """Each HAS_SN_VOCAB_GAP relationship carries source-specific reason."""
+        """Each HAS_STANDARD_NAME_VOCAB_GAP relationship carries source-specific reason."""
         mock_gc = MagicMock()
         mock_gc.query = MagicMock(return_value=[])
 
@@ -292,7 +296,9 @@ class TestWriteVocabGaps:
 
         # Find relationship query
         rel_calls = [
-            c for c in mock_gc.query.call_args_list if "HAS_SN_VOCAB_GAP" in c[0][0]
+            c
+            for c in mock_gc.query.call_args_list
+            if "HAS_STANDARD_NAME_VOCAB_GAP" in c[0][0]
         ]
         assert len(rel_calls) >= 1
 

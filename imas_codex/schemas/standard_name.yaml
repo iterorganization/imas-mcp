@@ -41,7 +41,7 @@ imports:
 # =============================================================================
 
 enums:
-  StandardNameSource:
+  StandardNameSourceType:
     description: Source type for standard name generation
     permissible_values:
       dd:
@@ -142,7 +142,7 @@ classes:
           dd: extracted from IMAS Data Dictionary paths.
           signals: extracted from facility signal descriptions.
           manual: manually curated entry.
-        range: StandardNameSource
+        range: StandardNameSourceType
       source_path:
         description: >-
           The source entity ID this name was derived from.
@@ -329,13 +329,13 @@ classes:
   VocabGap:
     description: >-
       Records a missing grammar token identified during standard name composition.
-      Linked to source DD paths and facility signals via HAS_SN_VOCAB_GAP
+      Linked to source DD paths and facility signals via HAS_STANDARD_NAME_VOCAB_GAP
       relationships. The node stores the normalized gap concept; per-source
       evidence (reason, observed_at) lives on the relationships.
 
       Example Cypher:
         MATCH (vg:VocabGap) RETURN vg.segment, vg.needed_token, vg.example_count
-        MATCH (n:IMASNode)-[:HAS_SN_VOCAB_GAP]->(vg:VocabGap) RETURN n.id, vg.id
+        MATCH (n:IMASNode)-[:HAS_STANDARD_NAME_VOCAB_GAP]->(vg:VocabGap) RETURN n.id, vg.id
     class_uri: sn:VocabGap
     attributes:
       id:

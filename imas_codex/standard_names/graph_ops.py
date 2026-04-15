@@ -523,12 +523,12 @@ def write_vocab_gaps(
     gaps: list[dict[str, str]],
     source_type: str = "dd",
 ) -> int:
-    """Persist VocabGap nodes and HAS_SN_VOCAB_GAP relationships.
+    """Persist VocabGap nodes and HAS_STANDARD_NAME_VOCAB_GAP relationships.
 
     Each gap dict has: source_id, segment, needed_token, reason.
 
     Deduplicates VocabGap nodes by id (vocab_gap:{segment}:{needed_token}).
-    Creates HAS_SN_VOCAB_GAP relationships from source entities with
+    Creates HAS_STANDARD_NAME_VOCAB_GAP relationships from source entities with
     per-source reason as a relationship property.
 
     Returns the number of VocabGap nodes written.
@@ -582,7 +582,7 @@ def write_vocab_gaps(
             batch=list(gap_nodes.values()),
         )
 
-        # Create HAS_SN_VOCAB_GAP relationships from source entities
+        # Create HAS_STANDARD_NAME_VOCAB_GAP relationships from source entities
         if source_type == "dd":
             # DD sources (IMASNode)
             gc.query(
@@ -590,7 +590,7 @@ def write_vocab_gaps(
                 UNWIND $batch AS b
                 MATCH (vg:VocabGap {id: b.gap_id})
                 MATCH (src:IMASNode {id: b.source_id})
-                MERGE (src)-[r:HAS_SN_VOCAB_GAP]->(vg)
+                MERGE (src)-[r:HAS_STANDARD_NAME_VOCAB_GAP]->(vg)
                 SET r.reason = b.reason,
                     r.observed_at = datetime(b.observed_at)
                 """,
@@ -603,7 +603,7 @@ def write_vocab_gaps(
                 UNWIND $batch AS b
                 MATCH (vg:VocabGap {id: b.gap_id})
                 MATCH (src:FacilitySignal {id: b.source_id})
-                MERGE (src)-[r:HAS_SN_VOCAB_GAP]->(vg)
+                MERGE (src)-[r:HAS_STANDARD_NAME_VOCAB_GAP]->(vg)
                 SET r.reason = b.reason,
                     r.observed_at = datetime(b.observed_at)
                 """,
