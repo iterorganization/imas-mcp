@@ -87,25 +87,33 @@ names for ISN grammar review rather than producing broken names.
 
 ## Phase 2: Gap Infrastructure (P0)
 
-### 2A: VocabGap node type in schema
+### 2A: VocabGap node type and cross-schema relationships
 
 Gaps are NOT standard names — they must be a separate node type to avoid contaminating
 StandardName lifecycle, extract skip logic, and review pipelines.
 
-**File:** `imas_codex/schemas/standard_name.yaml`
+The relationship is **`HAS_SN_VOCAB_GAP`** (not `HAS_VOCAB_GAP`) — scoped to standard
+names because the graph contains facility, DD, and SN domains. Follows the same
+cross-domain pattern as `HAS_STANDARD_NAME` which is declared in all three schemas.
+
+**Schema changes across 3 files:**
+
+**1. `imas_codex/schemas/standard_name.yaml`** — new VocabGap class:
 
 ```yaml
 VocabGap:
   description: >-
     Records a missing grammar token identified during SN composition.
-    Linked to source DD paths via HAS_VOCAB_GAP relationships.
+    Linked to source DD paths and facility signals via HAS_SN_VOCAB_GAP
+    relationships. The node stores the normalized gap concept; per-source
+    evidence (reason, observed_at) lives on the relationships.
   class_uri: sn:VocabGap
   attributes:
     id:
       identifier: true
       description: "Format: vocab_gap:{segment}:{needed_token}"
     segment:
-      description: Grammar segment missing the token
+      description: Grammar segment missing the token (transformation, process, subject, etc.)
       required: true
     needed_token:
       description: The token that should exist
@@ -119,9 +127,33 @@ VocabGap:
       range: datetime
 ```
 
+**2. `imas_codex/schemas/imas_dd.yaml`** — add slot to IMASNode:
+
+```yaml
+# In IMASNode.attributes (alongside existing has_standard_name slot):
+has_sn_vocab_gap:
+  description: Grammar vocab gap identified for this DD path
+  range: VocabGap
+  annotations:
+    relationship_type: HAS_SN_VOCAB_GAP
+```
+
+**3. `imas_codex/schemas/facility.yaml`** — add slot to FacilitySignal:
+
+```yaml
+# In FacilitySignal.attributes (alongside existing has_standard_name slot):
+has_sn_vocab_gap:
+  description: Grammar vocab gap identified for this signal
+  range: VocabGap
+  annotations:
+    relationship_type: HAS_SN_VOCAB_GAP
+```
+
+After schema changes: `uv run build-models --force` to regenerate models.
+
 Relationships:
-- `(IMASNode)-[:HAS_VOCAB_GAP {reason, observed_at}]->(VocabGap)`
-- `(FacilitySignal)-[:HAS_VOCAB_GAP {reason, observed_at}]->(VocabGap)`
+- `(IMASNode)-[:HAS_SN_VOCAB_GAP {reason, observed_at}]->(VocabGap)`
+- `(FacilitySignal)-[:HAS_SN_VOCAB_GAP {reason, observed_at}]->(VocabGap)`
 
 Per-source `reason` lives on the relationship (source-specific), not the node
 (gap-global). Node stores the normalized gap concept; relationships store evidence.
