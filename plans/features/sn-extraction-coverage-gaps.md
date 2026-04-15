@@ -1,261 +1,548 @@
-# SN Extraction Coverage Gaps
+# SN Pipeline: Graph-Primary Architecture with SNSource Nodes
 
 ## Problem Statement
 
-The `sn generate` pipeline has several extraction-layer bugs that prevent it from
-achieving full coverage of the IMAS Data Dictionary. Empirical analysis of the
-live graph reveals:
+The `sn generate` pipeline has two categories of problems:
+
+### A. Extraction Coverage Gaps (6 bugs)
+
+Empirical analysis of the live graph reveals:
 
 - **11,441** dynamic IMASNode paths with descriptions are eligible for standard names
 - **342** StandardName nodes exist (3% coverage)
 - **1,042** unclustered quantity-type paths lack standard names
-- Each run with default settings processes only **~251 unique paths** (2.2% of pool)
-- Repeated runs **stall on the same front slice** — they re-query the same rows, filter
-  them out as already named, and never advance
+- Each run processes only **~251 unique paths** (2.2% of pool) due to LIMIT-on-rows
+- Repeated runs **stall on the same front slice** (deterministic ORDER BY + post-LIMIT filter)
 
-Root causes are a LIMIT-on-rows bug, a missing Cypher field (`cluster_scope`), and
-absent pre-LIMIT filtering of already-named nodes.
+Root causes: LIMIT applied to expanded rows not paths, missing `cluster_scope` field,
+post-LIMIT unnamed filter, inverted grouping policy.
 
-## Gap Inventory
+### B. Architectural Weaknesses
 
-### Gap 1: LIMIT applies to expanded rows, not distinct paths — CRITICAL
+The pipeline uses a hybrid in-memory/graph architecture:
+- **EXTRACT and COMPOSE are in-memory** — if the pipeline crashes, all extraction work is lost
+- **No pre-composition graph tracking** — no way to query "which paths are queued for SN generation?"
+- **Workers can't independently discover work** — compose reads `state.extracted` (Python list)
+- **Not generic across sources** — DD and signal extraction have separate code paths with no shared tracking
+- **Status lost on DD clear** — if SN tracking were on IMASNode, `clear_dd_graph()` (DETACH DELETE) destroys it
 
-**Location:** `imas_codex/standard_names/sources/dd.py`, `_ENRICHED_QUERY`
+## Design: SNSource Intermediary Node
 
-The extraction query uses multiple `OPTIONAL MATCH` clauses (clusters, coordinates,
-parents) that fan out rows. A path in 3 clusters produces 3 rows. `LIMIT $limit`
-(default 500) is applied to expanded rows, not distinct paths.
+**Reviewed and approved through 4 rounds of rubber-duck critique.**
 
-**Measured impact:**
-- Row fan-out factor: **1.88×** (21,497 rows for 11,441 paths)
-- `LIMIT 500` → **251 unique paths** (2.2% of pool)
-- To process all paths would require `--limit 21500`+
+### Core Concept
 
-**Fix:** Move LIMIT to a CTE that selects distinct paths first, then join enrichment:
+Introduce `SNSource` — a graph-primary work-tracking node that registers source
+quantities needing standard names. It sits between source nodes (IMASNode,
+FacilitySignal) and StandardName nodes, providing:
+
+1. **Graph-primary orchestration** — workers claim SNSource nodes from graph, not memory
+2. **Explicit progress tracking** — `count(SNSource WHERE status='extracted')` = remaining work
+3. **Crash resilience** — graph state survives pipeline restarts
+4. **Source independence** — survives DD clear+rebuild (not a DD node type)
+5. **Generic across sources** — same node for DD paths and facility signals
+6. **Minimal design** — stores only orchestration metadata; source descriptions and units
+   fetched at compose time via relationship joins (no data duplication, no staleness)
+
+### Schema
+
+```yaml
+SNSource:
+  description: >-
+    Work-tracking node for standard name composition pipeline.
+    Created by EXTRACT, claimed by COMPOSE. Minimal design — source
+    metadata fetched at compose time via FROM_DD_PATH/FROM_SIGNAL joins.
+    
+    Lifecycle: extracted → composed | attached | vocab_gap | failed | stale
+    
+    Generic across source types. Survives DD clear+rebuild because
+    it is NOT a DD node type.
+  class_uri: sn:SNSource
+  attributes:
+    id:
+      identifier: true
+      description: "Composite key: {source_type}:{source_id}"
+      required: true
+    source_type:
+      range: StandardNameSource
+      required: true
+    source_id:
+      description: ID of the source node (IMASNode.id or FacilitySignal.id)
+      required: true
+    status:
+      range: SNSourceStatus
+      required: true
+    classification:
+      description: "Path classification: quantity"
+    batch_key:
+      description: "Grouping key for composition (e.g., cluster_123:eV)"
+    extracted_from_dd_version:
+      description: DD version at extraction time
+    # Retry tracking
+    attempt_count:
+      description: Number of composition attempts (incremented on failure)
+      range: integer
+    last_error:
+      description: Error message from most recent failed attempt
+    failed_at:
+      range: datetime
+    # Worker coordination
+    claimed_at:
+      range: datetime
+    claim_token:
+      description: UUID for atomic claiming
+    extracted_at:
+      range: datetime
+    composed_at:
+      range: datetime
+
+SNSourceStatus:
+  permissible_values:
+    extracted:
+      description: Registered for composition, awaiting LLM processing
+    composed:
+      description: StandardName successfully generated via LLM
+    attached:
+      description: Matched to existing StandardName without LLM (auto-attach)
+    vocab_gap:
+      description: Composition blocked by missing grammar vocabulary token
+    failed:
+      description: Composition failed after max attempts (terminal)
+    stale:
+      description: Source node no longer exists after DD rebuild/clear
+```
+
+### Relationships
+
+```
+(SNSource)-[:FROM_DD_PATH]->(IMASNode)        — DD source link
+(SNSource)-[:FROM_SIGNAL]->(FacilitySignal)   — signal source link
+(SNSource)-[:PRODUCED_NAME]->(StandardName)   — composition result (lineage)
+(IMASNode)-[:HAS_STANDARD_NAME]->(StandardName) — authoritative semantic mapping (unchanged)
+```
+
+`HAS_STANDARD_NAME` remains the authoritative link. `PRODUCED_NAME` tracks which
+queue item produced which name (composition lineage / auditability).
+
+### Indexes
+
+- `SNSource(status)` — claim queries
+- `SNSource(batch_key)` — batch grouping
+- `SNSource(source_id)` — reconciliation joins
+- `SNSource(claim_token)` — claim verification
+
+### Lifecycle Diagram
+
+```
+                    ┌─────────────────┐
+                    │    extracted     │ ← EXTRACT creates (MERGE)
+                    └────────┬────────┘
+                             │ COMPOSE claims batch
+                    ┌────────┴────────┐
+              ┌─────┤   compose try   ├─────┐─────────┐
+              │     └─────────────────┘     │         │
+              ▼                             ▼         ▼
+     ┌────────────┐              ┌──────────────┐  ┌────────┐
+     │  composed   │              │  vocab_gap   │  │attached│
+     └────────────┘              └──────────────┘  └────────┘
+                                        │
+                            (attempt < max)
+                                        │
+                                        ▼
+                               ┌────────────────┐
+                               │   extracted     │ (retry)
+                               └────────────────┘
+                                        │
+                           (attempt >= max)
+                                        │
+                                        ▼
+                               ┌────────────────┐
+                               │    failed       │ (terminal)
+                               └────────────────┘
+
+     Source deleted → ┌────────┐ → Source rebuilt → ┌───────────┐
+                      │  stale │                    │ extracted  │
+                      └────────┘                    └───────────┘
+```
+
+## New Pipeline Flow
+
+### EXTRACT (graph writer, runs once)
+
+1. Query IMASNode candidates (with all coverage gap fixes applied)
+2. Classify each path via `classifier.py`
+3. Only quantity-classified paths get SNSource nodes (metadata/skip counted in stats only)
+4. Enrich with cluster selection → compute `batch_key`
+5. MERGE SNSource nodes to graph (batch UNWIND) with FROM_DD_PATH relationships
+6. ON CREATE: status=extracted; ON MATCH: only requeue if stale or --force
+7. `extract_phase.mark_done()` when all batches written
+8. Progress: "Extracted X quantity sources (Y metadata, Z skip)"
+
+**Re-extract semantics (ON CREATE vs ON MATCH):**
+
+```cypher
+UNWIND $batch AS item
+MERGE (src:SNSource {id: item.id})
+ON CREATE SET
+  src.source_type = item.source_type,
+  src.source_id = item.source_id,
+  src.status = 'extracted',
+  src.classification = item.classification,
+  src.batch_key = item.batch_key,
+  src.extracted_from_dd_version = item.dd_version,
+  src.extracted_at = datetime()
+ON MATCH SET
+  src.status = CASE
+    WHEN $force THEN 'extracted'
+    WHEN src.status = 'stale' THEN 'extracted'
+    ELSE src.status
+  END,
+  src.batch_key = CASE
+    WHEN $force OR src.status IN ['extracted', 'stale'] THEN item.batch_key
+    ELSE src.batch_key
+  END,
+  src.extracted_from_dd_version = item.dd_version,
+  src.claimed_at = CASE WHEN $force OR src.status = 'stale' THEN null ELSE src.claimed_at END,
+  src.claim_token = CASE WHEN $force OR src.status = 'stale' THEN null ELSE src.claim_token END,
+  src.attempt_count = CASE WHEN $force THEN 0 ELSE src.attempt_count END,
+  src.last_error = CASE WHEN $force THEN null ELSE src.last_error END,
+  src.failed_at = CASE WHEN $force THEN null ELSE src.failed_at END
+WITH src, item
+MATCH (p:IMASNode {id: item.source_id})
+MERGE (src)-[:FROM_DD_PATH]->(p)
+```
+
+### COMPOSE (graph-primary claim loop)
+
+1. `has_work_fn`: `MATCH (src:SNSource {status: 'extracted'}) WHERE src.claimed_at IS NULL RETURN count(src) > 0`
+2. Atomic full-batch claim (all members of a batch_key in single transaction)
+3. Verify claim + fetch source metadata via OPTIONAL MATCH join to IMASNode
+4. Handle missing sources → mark stale (token-verified)
+5. LLM compose → persist StandardName → create PRODUCED_NAME + HAS_STANDARD_NAME
+6. Mark SNSource composed/attached/vocab_gap (token-verified)
+7. On failure: increment attempt_count, return to extracted or terminal failed
+8. Progress: "Composed X/Y sources (Z attached, W vocab_gap, V failed)"
+
+**Atomic full-batch claim (single transaction):**
+
+```cypher
+MATCH (src:SNSource {status: 'extracted'})
+WHERE src.claimed_at IS NULL 
+   OR src.claimed_at < datetime() - duration({seconds: $timeout})
+WITH src.batch_key AS bk, collect(src) AS all_members
+WHERE ALL(m IN all_members WHERE
+  m.claimed_at IS NULL OR m.claimed_at < datetime() - duration({seconds: $timeout})
+)
+ORDER BY rand()
+LIMIT 1
+UNWIND all_members AS src
+SET src.claimed_at = datetime(), src.claim_token = $token
+RETURN all_members[0].batch_key AS batch_key, size(all_members) AS batch_size
+```
+
+**Verify + fetch source metadata:**
+
+```cypher
+MATCH (src:SNSource {claim_token: $token})
+OPTIONAL MATCH (p:IMASNode {id: src.source_id})
+OPTIONAL MATCH (p)-[:HAS_UNIT]->(u:Unit)
+OPTIONAL MATCH (p)-[:IN_IDS]->(ids:IDS)
+OPTIONAL MATCH (p)-[:IN_CLUSTER]->(c:IMASSemanticCluster)
+OPTIONAL MATCH (p)-[:HAS_PARENT]->(parent:IMASNode)
+RETURN src.id AS sn_source_id, src.source_id AS path,
+       p IS NOT NULL AS source_exists,
+       p.description, p.documentation, u.id AS unit,
+       ids.id AS ids_name, c.id AS cluster_id, c.label AS cluster_label,
+       c.scope AS cluster_scope, parent.id AS parent_path,
+       p.cocos_label_transformation AS cocos_label,
+       p.physics_domain, p.data_type
+```
+
+**Token-verified failure with durable retry:**
+
+```cypher
+MATCH (src:SNSource {claim_token: $token})
+SET src.attempt_count = coalesce(src.attempt_count, 0) + 1,
+    src.last_error = $error_msg,
+    src.failed_at = datetime(),
+    src.status = CASE
+      WHEN coalesce(src.attempt_count, 0) + 1 >= $max_attempts THEN 'failed'
+      ELSE 'extracted'
+    END,
+    src.claimed_at = null,
+    src.claim_token = null
+```
+
+**All state transitions are token-verified:**
+
+```python
+def mark_sources_composed(token, results) -> int:
+    # MATCH by claim_token, not just id
+
+def mark_sources_stale(token, source_ids) -> int:
+    # MATCH by claim_token
+
+def release_batch_claim(token) -> int:
+    # MATCH by claim_token
+```
+
+Every helper returns `count(src)` for logging/assertion.
+
+### VALIDATE, CONSOLIDATE, PERSIST (unchanged)
+
+Operate on StandardName nodes directly. No changes needed.
+
+### Reconciliation after DD clear+rebuild
+
+```cypher
+MATCH (src:SNSource {source_type: 'dd'})
+WHERE NOT (src)-[:FROM_DD_PATH]->(:IMASNode)
+WITH src
+OPTIONAL MATCH (p:IMASNode {id: src.source_id})
+WITH src, p
+FOREACH (_ IN CASE WHEN p IS NOT NULL THEN [1] ELSE [] END |
+  MERGE (src)-[:FROM_DD_PATH]->(p)
+)
+SET src.status = CASE
+  WHEN p IS NOT NULL AND src.status = 'stale' THEN 'extracted'
+  WHEN p IS NULL THEN 'stale'
+  ELSE src.status
+END,
+src.claimed_at = CASE
+  WHEN p IS NOT NULL AND src.status = 'stale' THEN null
+  ELSE src.claimed_at
+END,
+src.claim_token = CASE
+  WHEN p IS NOT NULL AND src.status = 'stale' THEN null
+  ELSE src.claim_token
+END
+```
+
+## Coverage Gap Fixes (integrated into new architecture)
+
+### Gap 1: LIMIT on rows → LIMIT on paths (CRITICAL)
+
+Move LIMIT before OPTIONAL MATCH fan-out in extraction query:
 
 ```cypher
 MATCH (n:IMASNode)-[:IN_IDS]->(ids:IDS)
-WHERE <filters>
+WHERE {filters}
 WITH DISTINCT n, ids
 ORDER BY ids.id, n.id
 LIMIT $limit
-// THEN join clusters, units, etc.
+// THEN join enrichment
 OPTIONAL MATCH (n)-[:IN_CLUSTER]->(c:IMASSemanticCluster)
 OPTIONAL MATCH (n)-[:HAS_UNIT]->(u:Unit)
 ...
 ```
 
-### Gap 2: Repeated runs stall — unnamed filter is post-LIMIT — CRITICAL
+### Gap 2: Stall prevention (CRITICAL)
 
-**Location:** `imas_codex/standard_names/workers.py:76-80`, `sources/dd.py:124-142`
+With SNSource, the stall problem is eliminated by design:
+- EXTRACT creates SNSource with status=extracted (only for unnamed paths)
+- COMPOSE claims from SNSource, not from the raw query
+- Re-runs: ON MATCH preserves composed/attached status, only processes new/stale
 
-The extraction query's WHERE clause does not exclude already-named nodes. The
-unnamed filter (`get_named_source_ids()`) runs in the extract worker and filters
-batch items AFTER the query returns. With deterministic `ORDER BY ids.id, n.id`:
-
-1. Run 1 gets rows for paths A₁..A₂₅₁, composes names
-2. Run 2 queries the **same** rows A₁..A₂₅₁ again (deterministic ORDER BY)
-3. Worker filters them out as already named → 0 items to compose
-4. Paths A₂₅₂+ never enter the extraction window
-
-**Fix:** Add a pre-LIMIT unnamed exclusion to the Cypher when `--force` is not set:
+Additionally, add pre-LIMIT unnamed exclusion for the EXTRACT query:
 
 ```cypher
 AND NOT EXISTS { MATCH (n)-[:HAS_STANDARD_NAME]->(:StandardName) }
 ```
 
-### Gap 3: `cluster_scope` not returned in extraction query — MODERATE-HIGH
+And pre-LIMIT SNSource exclusion (skip paths already registered):
 
-**Location:** `imas_codex/standard_names/sources/dd.py:19-53`
+```cypher
+AND NOT EXISTS { MATCH (:SNSource {source_id: n.id, source_type: 'dd'})
+                 WHERE NOT (_.status IN ['stale', 'failed']) }
+```
 
-The enriched query returns `c.label`, `c.id`, `c.description` but NOT `c.scope`.
-`enrich_paths()` builds cluster dicts with `"scope": row.get("cluster_scope") or ""`
-which always resolves to `""`.
+### Gap 3: Missing `cluster_scope` (MODERATE-HIGH)
 
-`select_primary_cluster()` uses a scope priority map (IDS=0, domain=1, global=2)
-but since scope is always empty, all clusters get `_DEFAULT_SCOPE_RANK=3` and
-tie-break degrades to similarity_score/label order.
+Add `c.scope AS cluster_scope` to extraction query RETURN clause.
 
-**Impact:**
-- Primary cluster selection is non-deterministic for multi-cluster paths
-- Batching coherence suffers — paths may land in wrong conceptual group
-- Runtime behavior diverges from test expectations
+### Gap 4: Inverted grouping policy (MODERATE)
 
-**Fix:** Add `c.scope AS cluster_scope` to both `_ENRICHED_QUERY` and
-`_TARGETED_PATH_QUERY` RETURN clauses.
+Implement `select_grouping_cluster()` with reversed scope priority:
+- **Primary cluster** (per-item context): IDS > domain > global
+- **Grouping cluster** (batch_key): global > domain > IDS
 
-### Gap 4: Grouping cluster policy contradicts global batching goal — MODERATE
+### Gap 5: Unclustered path handling (LOW-MODERATE)
 
-**Location:** `imas_codex/standard_names/enrichment.py:78-93`
+Use `unclustered/{ids_name}/{parent_path}/{unit}` for batch_key.
+Rootless paths use IDS name as fallback.
 
-`select_grouping_cluster()` just delegates to `select_primary_cluster()` which
-uses IDS-first priority. Once Gap 3 is fixed and scope works correctly, grouping
-will prefer IDS-scope clusters — fragmenting cross-IDS paths that share a
-global/domain cluster into separate per-IDS batches.
+### Gap 6: Observability (LOW)
 
-The docstring says "global/domain preferred for batch formation" but the code
-does the opposite. Two distinct policies are needed:
+Report unique path count, not row count.
 
-- **Primary cluster** (per-item context): IDS > domain > global (most specific)
-- **Grouping cluster** (batch formation): global > domain > IDS (widest scope)
+### Gap 7: Source type inconsistency (NEW — from RD review)
 
-**Fix:** Implement reversed scope priority in `select_grouping_cluster()`.
-
-### Gap 5: Unclustered paths — functional but low quality — LOW-MODERATE
-
-**Status:** 1,154 unclustered paths (10.1% of pool), 1,042 quantity-type without names.
-
-The fallback `unclustered/{parent_path}/{unit}` grouping works but:
-- 21 paths have no `HAS_PARENT` → `parent_path="root"`, creating an incoherent bag
-- Grouping by parent is structural, not semantic — siblings may be unrelated concepts
-- Batch context lacks cluster description, cross-IDS siblings, concept summary
-
-**Fix:** For unclustered paths, use IDS + parent_path grouping. For rootless paths,
-use IDS as the grouping key. Consider enriching batch context with parent description.
-
-### Gap 6: Observability reports rows as paths — LOW
-
-**Location:** `imas_codex/standard_names/sources/dd.py:151`
-
-`_status(f"found {len(results)} paths, resolving units…")` reports row count, not
-unique path count, since `results` may contain multiple rows per path from cluster
-fan-out.
-
-**Fix:** Report `len(set(r['path'] for r in results))` as the path count.
+Normalize `signal` vs `signals` to match the `StandardNameSource` enum (`signals`).
 
 ## Implementation Plan
 
-### Phase 1: Fix extraction query (Gaps 1, 2, 3, 6)
+### Phase 1: Schema — SNSource node type
 
-**Files to modify:**
-- `imas_codex/standard_names/sources/dd.py`
+**Files:**
+- `imas_codex/schemas/standard_name.yaml` — add SNSource class, SNSourceStatus enum,
+  FROM_DD_PATH/FROM_SIGNAL/PRODUCED_NAME relationship annotations
+- Run `uv run build-models --force` to regenerate models
 
-**Changes:**
+**Acceptance:** `SNSource` and `SNSourceStatus` importable from generated models.
 
-1. **Restructure `_ENRICHED_QUERY`** — apply LIMIT to distinct paths FIRST, then
-   expand with OPTIONAL MATCH for clusters, units, parents, coordinates:
+### Phase 2: Graph operations — SNSource CRUD
 
-   ```python
-   _ENRICHED_QUERY = """
-   MATCH (n:IMASNode)-[:IN_IDS]->(ids:IDS)
-   WHERE {where_clause}
-   WITH DISTINCT n, ids
-   ORDER BY ids.id, n.id
-   LIMIT $limit
-   OPTIONAL MATCH (n)-[:HAS_UNIT]->(u:Unit)
-   OPTIONAL MATCH (n)-[:IN_CLUSTER]->(c:IMASSemanticCluster)
-   OPTIONAL MATCH (n)-[:HAS_PARENT]->(parent:IMASNode)
-   OPTIONAL MATCH (n)-[:HAS_COORDINATE]->(coord:IMASNode)
-   OPTIONAL MATCH (coord)-[:HAS_UNIT]->(cu:Unit)
-   RETURN n.id AS path, ...
-          c.scope AS cluster_scope,
-          ...
-   """
-   ```
+**Files:**
+- `imas_codex/standard_names/graph_ops.py` — new functions:
+  - `merge_sn_sources(sources, force)` — batch MERGE with ON CREATE/ON MATCH
+  - `claim_sn_source_batch(timeout, token)` — atomic full-batch claim
+  - `fetch_claimed_source_metadata(token)` — verify + join source data
+  - `mark_sources_composed(token, results)` — token-verified status update
+  - `mark_sources_attached(token, results)` — auto-attach status
+  - `mark_sources_vocab_gap(token, results)` — vocab gap status
+  - `mark_sources_failed(token, error, max_attempts)` — durable retry + terminal
+  - `mark_sources_stale(token, source_ids)` — missing source detection
+  - `release_sn_source_claims(token)` — batch release
+  - `reconcile_sn_sources(source_type)` — post-rebuild reconciliation
+  - `get_sn_source_stats()` — status counts for progress/CLI
 
-2. **Add unnamed exclusion to where_parts** in `extract_dd_candidates()` when
-   force is not set. Pass a `force` parameter to the function:
+**All functions return affected row count. All state transitions are token-verified.**
 
-   ```python
-   if not force:
-       where_parts.append(
-           "NOT EXISTS { MATCH (n)-[:HAS_STANDARD_NAME]->(:StandardName) }"
-       )
-   ```
+### Phase 3: Fix extraction query + enrichment
 
-3. **Add `c.scope AS cluster_scope`** to `_ENRICHED_QUERY` RETURN clause.
+**Files:**
+- `imas_codex/standard_names/sources/dd.py` — restructure `_ENRICHED_QUERY`:
+  1. LIMIT on distinct paths (Gap 1)
+  2. Pre-LIMIT unnamed + SNSource exclusion (Gap 2)
+  3. Add `c.scope AS cluster_scope` (Gap 3)
+  4. Fix observability (Gap 6)
+  5. Add `force` parameter
 
-4. **Add `c.scope AS cluster_scope`** to `_TARGETED_PATH_QUERY` RETURN clause.
+- `imas_codex/standard_names/enrichment.py`:
+  1. Implement reversed `select_grouping_cluster()` (Gap 4)
+  2. Enhance unclustered grouping (Gap 5)
 
-5. **Fix observability** — compute unique path count for status messages.
+### Phase 4: Rewrite extract worker
 
-### Phase 2: Fix grouping cluster policy (Gap 4)
+**Files:**
+- `imas_codex/standard_names/workers.py` — `extract_worker()`:
+  1. Query + classify + enrich (existing logic, with fixes)
+  2. Compute batch_key per item
+  3. Call `merge_sn_sources()` to write SNSource nodes to graph
+  4. Report stats: quantity/metadata/skip counts
+  5. `mark_done()` — extract is a single-pass writer, not a loop
 
-**Files to modify:**
-- `imas_codex/standard_names/enrichment.py`
+- `imas_codex/standard_names/state.py` — remove `extracted` in-memory list
+  (compose reads from graph, not state)
 
-**Changes:**
+### Phase 5: Rewrite compose worker
 
-1. **Implement `select_grouping_cluster()`** with reversed scope priority
-   (global=0, domain=1, IDS=2) so cross-IDS paths sharing a global cluster
-   land in the same batch.
+**Files:**
+- `imas_codex/standard_names/workers.py` — `compose_worker()`:
+  1. Convert from in-memory batch reader to graph-primary claim loop
+  2. `has_work_fn` queries SNSource status
+  3. Claim loop: `claim_sn_source_batch()` → `fetch_claimed_source_metadata()` →
+     handle missing sources → LLM compose → persist StandardName → mark outcomes
+  4. Attachment handling: detect existing matches → mark `attached`
+  5. Vocab gap handling: detect grammar gaps → mark `vocab_gap`
+  6. Error handling: `mark_sources_failed()` with durable retry
+  7. Rich progress via WorkerStats
 
-2. **Update docstrings** to document the two-policy design.
+- `imas_codex/standard_names/pipeline.py` — update compose WorkerSpec:
+  - Add `has_work_fn` for PipelinePhase
+  - Compose now uses claim loop pattern (similar to validate/persist)
 
-### Phase 3: Improve unclustered path handling (Gap 5)
+### Phase 6: Source type normalization
 
-**Files to modify:**
-- `imas_codex/standard_names/enrichment.py`
+**Files:**
+- `imas_codex/schemas/standard_name.yaml` — verify enum value is `signals`
+- `imas_codex/standard_names/graph_ops.py` — normalize all `signal` → `signals`
+- `imas_codex/standard_names/workers.py` — normalize source_type references
 
-**Changes:**
+### Phase 7: CLI integration
 
-1. **Enhance unclustered grouping key** — use `unclustered/{ids_name}/{parent_path}/{unit}`
-   to keep IDS context for LLM prompt coherence.
+**Files:**
+- `imas_codex/cli/sn.py`:
+  - `sn status` — show SNSource statistics alongside StandardName stats
+  - `sn generate` — display SNSource progress in Rich panels
+  - `sn reconcile` — new subcommand for post-rebuild reconciliation
+  - `sn clear` — handle SNSource cleanup alongside StandardName
 
-2. **Enrich unclustered batch context** — include parent description, IDS description,
-   and a note about the path being unclustered for the LLM.
+### Phase 8: Tests
 
-3. **Handle rootless paths** — use IDS name as fallback group key when `parent_path`
-   is None.
-
-### Phase 4: Propagate `force` flag to extraction (Gap 2 support)
-
-**Files to modify:**
-- `imas_codex/standard_names/sources/dd.py` (`extract_dd_candidates` signature)
-- `imas_codex/standard_names/workers.py` (pass `force` from state)
-
-**Changes:**
-
-1. Add `force: bool = False` parameter to `extract_dd_candidates()`.
-2. Pass `state.force` when calling `extract_dd_candidates()` from extract worker.
-3. Only add the unnamed exclusion when `force=False`.
-
-### Phase 5: Tests
-
-**Files to modify/create:**
-- `tests/standard_names/test_dd_extraction.py` (or existing test file)
-- `tests/standard_names/test_enrichment.py` (update existing)
+**Files:**
+- `tests/standard_names/test_sn_source_schema.py` — schema compliance
+- `tests/standard_names/test_sn_source_graph_ops.py` — CRUD, claims, reconciliation
+- `tests/standard_names/test_extraction_coverage.py` — gap fixes (LIMIT, scope, grouping)
+- Update existing tests for new worker signatures
 
 **Test cases:**
+1. SNSource MERGE creates on first run, preserves composed on re-run
+2. SNSource MERGE requeues stale, resets all on --force
+3. Atomic batch claim — full batch or nothing
+4. Stale-claim timeout reclaim
+5. Missing source detection → stale marking
+6. Token-verified state transitions (no clobber from slow workers)
+7. Durable retry: attempt_count increments, transitions to failed at max
+8. Reconciliation: re-links after rebuild, marks stale when missing
+9. LIMIT applies to paths not rows
+10. cluster_scope flows through enrichment
+11. Grouping cluster uses global > domain > IDS
+12. Unclustered paths use IDS + parent grouping
+13. No SNSource created for metadata/skip paths
 
-1. **LIMIT-on-paths test**: Mock graph query returning fan-out rows, verify
-   the number of unique paths matches the limit, not the row count.
-
-2. **Stall prevention test**: Verify that already-named paths are excluded
-   from the query when force=False, allowing subsequent runs to advance.
-
-3. **cluster_scope propagation test**: Verify that cluster scope flows through
-   enrichment and affects primary/grouping cluster selection correctly.
-
-4. **Grouping cluster policy test**: Verify global-scope clusters are preferred
-   for batch grouping while IDS-scope clusters are preferred for per-item context.
-
-5. **Unclustered IDS grouping test**: Verify unclustered paths are grouped by
-   IDS + parent + unit, not just parent + unit.
-
-6. **Observability test**: Verify status messages report unique path counts.
-
-### Phase 6: Documentation Updates
+### Phase 9: Documentation
 
 | Target | Update |
 |--------|--------|
-| `AGENTS.md` | Update SN pipeline section to document the fix and the two cluster-selection policies |
-| `plans/README.md` | Add this plan |
+| `AGENTS.md` | Update SN pipeline section: SNSource node, graph-primary compose, lifecycle, reconciliation |
+| `README.md` | Mention `sn reconcile` command |
+| `plans/README.md` | Update plan status |
+| Schema reference | Auto-generated via `build-models` |
 
 ## Dependencies
 
-- Phase 2 depends on Phase 1 (scope must be returned before grouping policy can use it)
-- Phase 3 is independent
-- Phase 4 depends on Phase 1 (query structure must be restructured first)
-- Phase 5 depends on Phases 1-4
-- Phase 6 depends on all phases
+```
+Phase 1 (schema) → Phase 2 (graph ops) → Phase 3 (extraction fixes)
+                                        → Phase 4 (extract worker)
+                                        → Phase 5 (compose worker)
+Phase 6 (normalization) — independent
+Phase 7 (CLI) depends on Phases 4, 5
+Phase 8 (tests) depends on Phases 1-7
+Phase 9 (docs) depends on all phases
+```
+
+## Scope
+
+**v1 (this plan): DD source only.**
+
+Signal support follows the same pattern with no schema changes:
+- `(SNSource {source_type: 'signals'})-[:FROM_SIGNAL]->(FacilitySignal)`
+- Signal batch_key: `{physics_domain}:{diagnostic}:{unit}`
+- Signal reconciliation: same stale detection via `source_id` join
 
 ## Risk Assessment
 
-- **Phase 1** is the highest-value fix — resolves both critical gaps with a single
-  query restructure. Low risk since it's a Cypher-level change with no Python logic change.
-- **Phase 2** has moderate risk — changing grouping policy may shift batch boundaries,
-  producing different standard names for the same paths. This is acceptable since
-  current behavior is already non-deterministic due to the scope bug.
-- **Phase 4** changes the extraction query behavior (excluding named paths) which
-  could interact with `--force` and `--from-model` modes. Careful testing needed.
+| Phase | Risk | Mitigation |
+|-------|------|------------|
+| 1 (schema) | Low | Additive change, no existing data affected |
+| 2 (graph ops) | Low | New functions, existing ops unchanged |
+| 3 (extraction) | Medium | Query restructure — test against live graph |
+| 4 (extract worker) | Medium | Behavioral change — writes to graph instead of memory |
+| 5 (compose worker) | High | Major rewrite — claim loop replaces in-memory reader |
+| 6 (normalization) | Low | String substitution with grep verification |
+| 7 (CLI) | Low | Additive commands |
+| 8 (tests) | Low | New tests |
+| 9 (docs) | Low | Text updates |
+
+## Design Decisions (from RD review)
+
+1. **Minimal SNSource** — no duplicated source metadata. Join at compose time. Eliminates staleness management.
+2. **5-state lifecycle** — extracted, composed, attached, vocab_gap, failed, stale. No `skipped` — only quantity paths get SNSource.
+3. **Full-batch atomic claim** — single Cypher transaction ensures batch integrity.
+4. **Token-verified transitions** — all state changes match `claim_token`, preventing clobber from slow/crashed workers.
+5. **Durable retry** — `attempt_count` + `last_error` on SNSource. Returns to `extracted` until `max_attempts` (3), then terminal `failed`.
+6. **PRODUCED_NAME relationship** — separate from HAS_STANDARD_NAME. Tracks composition lineage.
+7. **Reconciliation** — `sn reconcile` command re-links after DD rebuild, revives stale→extracted, marks missing sources.
+8. **Batch semantics** — "all currently extracted members with matching batch_key". Partial batches after failure are valid.
+9. **--force resets** — clears attempt_count, last_error, failed_at alongside status→extracted.
