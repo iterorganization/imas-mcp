@@ -242,8 +242,28 @@ enums:
       Classification of IMASNode fields for filtering. Determines whether
       a node participates in enrichment, embedding, and search pipelines.
     permissible_values:
+      quantity:
+        description: >-
+          Independent physics quantity (temperature, current, flux).
+          Enriched, embedded, searchable, and SN-extractable.
+      coordinate:
+        description: >-
+          Independent variable (time, spatial coords, flux coordinates).
+          Enriched and searchable via properties, but NOT embedded or SN-extracted.
+      structural:
+        description: >-
+          Storage artifact (/data arrays, /validity flags, containers without unit).
+          Neither enriched, embedded, nor SN-extracted.
+      identifier:
+        description: >-
+          Typed descriptor with HAS_IDENTIFIER_SCHEMA relationship
+          (coordinate_identifier, grid_type, etc.). Neither enriched, embedded,
+          nor SN-extracted.
       data:
-        description: Physics data fields (enriched, embedded, searchable)
+        description: >-
+          DEPRECATED — transitional value retained during migration from 3-value
+          to 6-value NodeCategory. Will be removed after migration completes.
+          Treated as equivalent to quantity in transitional consumer code.
       error:
         description: Uncertainty bound fields (_error_upper, _error_lower, _error_index)
       metadata:
