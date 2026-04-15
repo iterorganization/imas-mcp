@@ -536,3 +536,445 @@ def test_compute_review_input_hash_deterministic():
     hash_minimal = compute_review_input_hash(name_minimal)
     assert isinstance(hash_minimal, str)
     assert len(hash_minimal) == 64  # SHA-256 hex digest
+
+
+# =============================================================================
+# 11. 1:1 scoring invariant — _match_reviews_to_entries
+# =============================================================================
+
+
+def test_match_reviews_all_matched():
+    """When LLM returns reviews for all entries, unmatched list is empty."""
+    import logging
+
+    from imas_codex.standard_names.models import (
+        StandardNameQualityReview,
+        StandardNameQualityScore,
+        StandardNameReviewVerdict,
+    )
+    from imas_codex.standard_names.review.pipeline import _match_reviews_to_entries
+
+    wlog = logging.getLogger("test")
+
+    names = [
+        {"id": "electron_temperature", "source_id": "core/te"},
+        {"id": "ion_temperature", "source_id": "core/ti"},
+    ]
+    reviews = [
+        StandardNameQualityReview(
+            source_id="core/te",
+            standard_name="electron_temperature",
+            scores=StandardNameQualityScore(
+                grammar=18,
+                semantic=18,
+                documentation=18,
+                convention=18,
+                completeness=18,
+                compliance=18,
+            ),
+            verdict=StandardNameReviewVerdict.accept,
+            reasoning="Good name.",
+        ),
+        StandardNameQualityReview(
+            source_id="core/ti",
+            standard_name="ion_temperature",
+            scores=StandardNameQualityScore(
+                grammar=16,
+                semantic=16,
+                documentation=16,
+                convention=16,
+                completeness=16,
+                compliance=16,
+            ),
+            verdict=StandardNameReviewVerdict.accept,
+            reasoning="Good name.",
+        ),
+    ]
+
+    scored, unmatched, revised = _match_reviews_to_entries(reviews, names, wlog)
+
+    assert len(scored) == 2
+    assert len(unmatched) == 0
+    assert revised == 0
+    # All entries have scores
+    for entry in scored:
+        assert entry["reviewer_score"] is not None
+        assert entry["review_tier"] is not None
+
+
+def test_match_reviews_partial_response():
+    """When LLM omits entries, they appear in the unmatched list."""
+    import logging
+
+    from imas_codex.standard_names.models import (
+        StandardNameQualityReview,
+        StandardNameQualityScore,
+        StandardNameReviewVerdict,
+    )
+    from imas_codex.standard_names.review.pipeline import _match_reviews_to_entries
+
+    wlog = logging.getLogger("test")
+
+    names = [
+        {"id": "electron_temperature", "source_id": "core/te"},
+        {"id": "ion_temperature", "source_id": "core/ti"},
+        {"id": "plasma_current", "source_id": "mag/ip"},
+    ]
+    # LLM only returns 1 of 3 reviews (simulates truncation)
+    reviews = [
+        StandardNameQualityReview(
+            source_id="core/te",
+            standard_name="electron_temperature",
+            scores=StandardNameQualityScore(
+                grammar=18,
+                semantic=18,
+                documentation=18,
+                convention=18,
+                completeness=18,
+                compliance=18,
+            ),
+            verdict=StandardNameReviewVerdict.accept,
+            reasoning="Good name.",
+        ),
+    ]
+
+    scored, unmatched, revised = _match_reviews_to_entries(reviews, names, wlog)
+
+    assert len(scored) == 1
+    assert len(unmatched) == 2
+    assert revised == 0
+
+    unmatched_ids = {e["id"] for e in unmatched}
+    assert "ion_temperature" in unmatched_ids
+    assert "plasma_current" in unmatched_ids
+
+    # Scored entry has a score, unmatched do NOT
+    assert scored[0]["reviewer_score"] is not None
+    for entry in unmatched:
+        assert entry.get("reviewer_score") is None
+
+
+def test_match_reviews_fallback_to_standard_name():
+    """Matching falls back to standard_name when source_id is None."""
+    import logging
+
+    from imas_codex.standard_names.models import (
+        StandardNameQualityReview,
+        StandardNameQualityScore,
+        StandardNameReviewVerdict,
+    )
+    from imas_codex.standard_names.review.pipeline import _match_reviews_to_entries
+
+    wlog = logging.getLogger("test")
+
+    # source_id is None — common for many StandardName nodes
+    names = [
+        {"id": "electron_temperature", "source_id": None},
+    ]
+    reviews = [
+        StandardNameQualityReview(
+            source_id="None",  # LLM renders None as string
+            standard_name="electron_temperature",
+            scores=StandardNameQualityScore(
+                grammar=18,
+                semantic=18,
+                documentation=18,
+                convention=18,
+                completeness=18,
+                compliance=18,
+            ),
+            verdict=StandardNameReviewVerdict.accept,
+            reasoning="Good name.",
+        ),
+    ]
+
+    scored, unmatched, revised = _match_reviews_to_entries(reviews, names, wlog)
+
+    # Should match via standard_name fallback
+    assert len(scored) == 1
+    assert len(unmatched) == 0
+
+
+# =============================================================================
+# 12. Retry logic — _review_single_batch with incomplete response
+# =============================================================================
+
+
+def test_review_single_batch_retries_unmatched():
+    """_review_single_batch retries unmatched entries and reports unscored count."""
+    import asyncio
+    import logging
+    from unittest.mock import AsyncMock, patch
+
+    from imas_codex.standard_names.models import (
+        StandardNameQualityReview,
+        StandardNameQualityReviewBatch,
+        StandardNameQualityScore,
+        StandardNameReviewVerdict,
+    )
+    from imas_codex.standard_names.review.pipeline import _review_single_batch
+
+    wlog = logging.getLogger("test")
+
+    names = [
+        {"id": "electron_temperature", "source_id": "core/te"},
+        {"id": "ion_temperature", "source_id": "core/ti"},
+        {"id": "plasma_current", "source_id": "mag/ip"},
+    ]
+
+    score_18 = StandardNameQualityScore(
+        grammar=18,
+        semantic=18,
+        documentation=18,
+        convention=18,
+        completeness=18,
+        compliance=18,
+    )
+
+    # First call: LLM returns only 1 of 3 reviews
+    first_response = StandardNameQualityReviewBatch(
+        reviews=[
+            StandardNameQualityReview(
+                source_id="core/te",
+                standard_name="electron_temperature",
+                scores=score_18,
+                verdict=StandardNameReviewVerdict.accept,
+                reasoning="Good.",
+            ),
+        ]
+    )
+    # Retry call: LLM returns 1 of 2 remaining (1 still missing)
+    retry_response = StandardNameQualityReviewBatch(
+        reviews=[
+            StandardNameQualityReview(
+                source_id="core/ti",
+                standard_name="ion_temperature",
+                scores=score_18,
+                verdict=StandardNameReviewVerdict.accept,
+                reasoning="Good.",
+            ),
+        ]
+    )
+
+    call_count = 0
+
+    async def mock_acall_llm_structured(**kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return first_response, 0.01, 100
+        return retry_response, 0.005, 50
+
+    with (
+        patch(
+            "imas_codex.llm.prompt_loader.render_prompt",
+            return_value="mocked prompt",
+        ),
+        patch(
+            "imas_codex.discovery.base.llm.acall_llm_structured",
+            side_effect=mock_acall_llm_structured,
+        ),
+    ):
+        result = asyncio.run(
+            _review_single_batch(
+                names=names,
+                model="test-model",
+                grammar_enums={},
+                compose_ctx={},
+                calibration_entries=[],
+                batch_context="test",
+                neighborhood=[],
+                audit_findings=[],
+                wlog=wlog,
+            )
+        )
+
+    # 2 scored (first + retry), 1 unscored (plasma_current)
+    assert len(result["_items"]) == 2
+    assert result["_unscored"] == 1
+    # Costs accumulated from both calls
+    assert result["_cost"] == 0.015
+    assert result["_tokens"] == 150
+    # LLM was called twice (initial + retry)
+    assert call_count == 2
+
+    # All scored items have reviewer_score set
+    for item in result["_items"]:
+        assert item["reviewer_score"] is not None
+
+
+def test_review_single_batch_no_retry_when_all_matched():
+    """No retry when all entries are matched on first try."""
+    import asyncio
+    import logging
+    from unittest.mock import patch
+
+    from imas_codex.standard_names.models import (
+        StandardNameQualityReview,
+        StandardNameQualityReviewBatch,
+        StandardNameQualityScore,
+        StandardNameReviewVerdict,
+    )
+    from imas_codex.standard_names.review.pipeline import _review_single_batch
+
+    wlog = logging.getLogger("test")
+
+    names = [
+        {"id": "electron_temperature", "source_id": "core/te"},
+    ]
+
+    response = StandardNameQualityReviewBatch(
+        reviews=[
+            StandardNameQualityReview(
+                source_id="core/te",
+                standard_name="electron_temperature",
+                scores=StandardNameQualityScore(
+                    grammar=18,
+                    semantic=18,
+                    documentation=18,
+                    convention=18,
+                    completeness=18,
+                    compliance=18,
+                ),
+                verdict=StandardNameReviewVerdict.accept,
+                reasoning="Good.",
+            ),
+        ]
+    )
+
+    call_count = 0
+
+    async def mock_acall_llm_structured(**kwargs):
+        nonlocal call_count
+        call_count += 1
+        return response, 0.01, 100
+
+    with (
+        patch(
+            "imas_codex.llm.prompt_loader.render_prompt",
+            return_value="mocked prompt",
+        ),
+        patch(
+            "imas_codex.discovery.base.llm.acall_llm_structured",
+            side_effect=mock_acall_llm_structured,
+        ),
+    ):
+        result = asyncio.run(
+            _review_single_batch(
+                names=names,
+                model="test-model",
+                grammar_enums={},
+                compose_ctx={},
+                calibration_entries=[],
+                batch_context="test",
+                neighborhood=[],
+                audit_findings=[],
+                wlog=wlog,
+            )
+        )
+
+    assert len(result["_items"]) == 1
+    assert result["_unscored"] == 0
+    # Only one LLM call — no retry needed
+    assert call_count == 1
+
+
+# =============================================================================
+# 13. Consolidation — accurate scored/unscored reporting
+# =============================================================================
+
+
+def test_build_summary_report_scored_unscored_split():
+    """build_summary_report separates scored and unscored entries correctly."""
+    from imas_codex.standard_names.review.consolidation import build_summary_report
+
+    all_names = [{"id": f"name_{i}"} for i in range(100)]
+
+    reviewed = [
+        # 3 scored entries with tiers
+        {
+            "id": "electron_temperature",
+            "reviewer_score": 0.9,
+            "review_tier": "outstanding",
+        },
+        {
+            "id": "ion_temperature",
+            "reviewer_score": 0.7,
+            "review_tier": "good",
+        },
+        {
+            "id": "plasma_current",
+            "reviewer_score": 0.45,
+            "review_tier": "adequate",
+        },
+        # 2 unscored entries (the bug case)
+        {
+            "id": "electron_density",
+            "reviewer_score": None,
+            "review_tier": None,
+        },
+        {
+            "id": "plasma_pressure",
+            "reviewer_score": None,
+            "review_tier": None,
+        },
+    ]
+
+    summary = build_summary_report(
+        all_names=all_names,
+        reviewed_names=reviewed,
+        duplicate_reports=[],
+        drift_warnings=[],
+        outliers=[],
+        total_cost=0.5,
+    )
+
+    # Total includes all entries
+    assert summary.total_reviewed == 5
+    # Scored/unscored split is accurate
+    assert summary.total_scored == 3
+    assert summary.total_unscored == 2
+    # Tier distribution only counts scored entries (no "unknown" tier from unscored)
+    assert "unknown" not in summary.tier_distribution
+    assert summary.tier_distribution.get("outstanding") == 1
+    assert summary.tier_distribution.get("good") == 1
+    assert summary.tier_distribution.get("adequate") == 1
+    assert sum(summary.tier_distribution.values()) == 3
+    # Coverage based on scored entries only
+    assert summary.coverage_pct == 3.0  # 3/100 * 100
+    # Lowest scorers only from scored entries
+    assert len(summary.lowest_scorers) == 3
+    assert all(s["score"] is not None for s in summary.lowest_scorers)
+
+
+def test_build_summary_report_all_scored():
+    """When all entries are scored, total_unscored is 0."""
+    from imas_codex.standard_names.review.consolidation import build_summary_report
+
+    all_names = [{"id": f"name_{i}"} for i in range(10)]
+
+    reviewed = [
+        {
+            "id": "electron_temperature",
+            "reviewer_score": 0.9,
+            "review_tier": "outstanding",
+        },
+        {
+            "id": "ion_temperature",
+            "reviewer_score": 0.7,
+            "review_tier": "good",
+        },
+    ]
+
+    summary = build_summary_report(
+        all_names=all_names,
+        reviewed_names=reviewed,
+        duplicate_reports=[],
+        drift_warnings=[],
+        outliers=[],
+    )
+
+    assert summary.total_reviewed == 2
+    assert summary.total_scored == 2
+    assert summary.total_unscored == 0
+    assert sum(summary.tier_distribution.values()) == summary.total_scored

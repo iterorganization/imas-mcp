@@ -1802,10 +1802,11 @@ def sn_review(
 
         # Print summary report
         console.print("\n[bold]═══ Review Summary ═══[/bold]")
-        console.print(
-            f"  Reviewed: {summary.total_reviewed} / {summary.total_catalog_size}"
-            f" names ({summary.coverage_pct:.1f}%)"
-        )
+        scored_info = f"  Scored: {summary.total_scored} / {summary.total_catalog_size}"
+        scored_info += f" names ({summary.coverage_pct:.1f}%)"
+        if summary.total_unscored > 0:
+            scored_info += f"  [yellow]({summary.total_unscored} unscored)[/yellow]"
+        console.print(scored_info)
         console.print(f"  LLM cost: ${summary.total_cost:.4f}")
 
         if summary.tier_distribution:

@@ -83,6 +83,8 @@ class ReviewSummary(BaseModel):
     """Final summary report from ``sn review``."""
 
     total_reviewed: int = 0
+    total_scored: int = 0
+    total_unscored: int = 0
     total_cost: float = 0.0
     tier_distribution: dict[str, int] = Field(default_factory=dict)  # tier -> count
     duplicate_candidates: list[DuplicateReport] = Field(default_factory=list)
@@ -389,14 +391,18 @@ def build_summary_report(
     Returns:
         A fully populated :class:`ReviewSummary`.
     """
-    # Tier distribution
+    # Separate scored from unscored entries
+    scored_names = [n for n in reviewed_names if n.get("reviewer_score") is not None]
+    unscored_names = [n for n in reviewed_names if n.get("reviewer_score") is None]
+
+    # Tier distribution — only from scored entries
     tier_distribution: dict[str, int] = {}
-    for name in reviewed_names:
+    for name in scored_names:
         tier: str = name.get("review_tier") or "unknown"
         tier_distribution[tier] = tier_distribution.get(tier, 0) + 1
 
-    # Lowest scorers — bottom 10 by reviewer_score
-    scoreable = [n for n in reviewed_names if n.get("reviewer_score") is not None]
+    # Lowest scorers — bottom 10 by reviewer_score (from scored only)
+    scoreable = list(scored_names)
     scoreable.sort(key=lambda n: float(n.get("reviewer_score", 0)))
     lowest_scorers: list[dict[str, Any]] = [
         {
@@ -407,14 +413,16 @@ def build_summary_report(
         for n in scoreable[:10]
     ]
 
-    # Coverage
+    # Coverage — based on scored entries only
     catalog_size = len(all_names)
     coverage_pct = (
-        (len(reviewed_names) / catalog_size * 100.0) if catalog_size > 0 else 0.0
+        (len(scored_names) / catalog_size * 100.0) if catalog_size > 0 else 0.0
     )
 
     summary = ReviewSummary(
         total_reviewed=len(reviewed_names),
+        total_scored=len(scored_names),
+        total_unscored=len(unscored_names),
         total_cost=total_cost,
         tier_distribution=tier_distribution,
         duplicate_candidates=duplicate_reports,
@@ -424,9 +432,23 @@ def build_summary_report(
         coverage_pct=round(coverage_pct, 2),
         total_catalog_size=catalog_size,
     )
+
+    if unscored_names:
+        unscored_ids = [n.get("id", "?") for n in unscored_names[:10]]
+        logger.warning(
+            "build_summary_report: %d/%d entries have no reviewer_score "
+            "(ids: %s). These are excluded from tier distribution.",
+            len(unscored_names),
+            len(reviewed_names),
+            ", ".join(unscored_ids) + ("…" if len(unscored_names) > 10 else ""),
+        )
+
     logger.debug(
-        "build_summary_report: %d reviewed, %.1f%% coverage, cost=$%.4f",
+        "build_summary_report: %d reviewed (%d scored, %d unscored), "
+        "%.1f%% coverage, cost=$%.4f",
         summary.total_reviewed,
+        summary.total_scored,
+        summary.total_unscored,
         summary.coverage_pct,
         summary.total_cost,
     )
@@ -477,9 +499,11 @@ def run_consolidation(state: StandardNameReviewState) -> ReviewSummary:
     )
 
     logger.info(
-        "Layer 3 consolidation complete: %d reviewed, %d duplicates, "
-        "%d drift warnings, %d outliers",
+        "Layer 3 consolidation complete: %d reviewed (%d scored, %d unscored), "
+        "%d duplicates, %d drift warnings, %d outliers",
         summary.total_reviewed,
+        summary.total_scored,
+        summary.total_unscored,
         len(summary.duplicate_candidates),
         len(summary.drift_warnings),
         len(summary.outliers),

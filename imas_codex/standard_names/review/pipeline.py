@@ -339,9 +339,10 @@ async def review_review_worker(state: StandardNameReviewState, **_kwargs: Any) -
     total_tokens = 0
     errors = 0
     revised = 0
+    unscored = 0
 
     async def _process_batch(batch_idx: int, batch: dict) -> list[dict]:
-        nonlocal total_cost, total_tokens, errors, revised
+        nonlocal total_cost, total_tokens, errors, revised, unscored
 
         async with sem:
             if state.should_stop():
@@ -380,24 +381,29 @@ async def review_review_worker(state: StandardNameReviewState, **_kwargs: Any) -
                 batch_tokens = batch_scored.pop("_tokens", 0)
                 batch_revised = batch_scored.pop("_revised", 0)
                 batch_items = batch_scored.pop("_items", [])
+                batch_unscored = batch_scored.pop("_unscored", 0)
 
                 actual_cost = batch_cost
                 total_cost += batch_cost
                 total_tokens += batch_tokens
                 revised += batch_revised
+                unscored += batch_unscored
 
+                # Only count actually scored items as processed
+                actually_scored = len(batch_items)
                 state.review_stats.cost += batch_cost
-                state.review_stats.processed += len(names)
-                state.review_stats.record_batch(len(names))
+                state.review_stats.processed += actually_scored
+                state.review_stats.record_batch(actually_scored)
 
-                # Stream progress
+                # Stream progress — distinguish scored from unscored
+                desc = f"{actually_scored} scored  ${batch_cost:.3f}"
+                if batch_unscored > 0:
+                    desc += f"  ({batch_unscored} unscored)"
                 state.review_stats.stream_queue.add(
                     [
                         {
                             "primary_text": f"batch {batch_idx + 1}",
-                            "description": (
-                                f"{len(batch_items)} scored  ${batch_cost:.3f}"
-                            ),
+                            "description": desc,
                         }
                     ]
                 )
@@ -410,9 +416,10 @@ async def review_review_worker(state: StandardNameReviewState, **_kwargs: Any) -
                     exc_info=True,
                 )
                 errors += len(names)
+                unscored += len(names)
                 state.review_stats.errors += len(names)
-                # Pass through unscored on failure
-                return list(names)
+                # Do NOT pass through unscored entries — they lack scores
+                return []
 
             finally:
                 if state.budget_manager:
@@ -430,14 +437,17 @@ async def review_review_worker(state: StandardNameReviewState, **_kwargs: Any) -
     state.review_results = scored
 
     wlog.info(
-        "Review complete: %d scored, %d revised, %d errors (cost=$%.4f, tokens=%d)",
+        "Review complete: %d scored, %d unscored, %d revised, %d errors "
+        "(cost=$%.4f, tokens=%d)",
         len(scored),
+        unscored,
         revised,
         errors,
         total_cost,
         total_tokens,
     )
     state.stats["review_scored"] = len(scored)
+    state.stats["review_unscored"] = unscored
     state.stats["review_revised"] = revised
     state.stats["review_errors"] = errors
     state.stats["review_cost"] = total_cost
@@ -647,6 +657,90 @@ def _extract_audit_findings(audit_report: Any, batch_ids: set[str]) -> list[str]
     return findings[:20]
 
 
+def _match_reviews_to_entries(
+    reviews: list,
+    names: list[dict],
+    wlog: logging.LoggerAdapter,
+) -> tuple[list[dict], list[dict], int]:
+    """Match LLM review results to original entries.
+
+    Returns ``(scored, unmatched, revised_count)`` where *scored* contains
+    entries with review scores applied and *unmatched* contains entries that
+    the LLM did not return a review for.
+    """
+    from imas_codex.standard_names.models import StandardNameReviewVerdict
+
+    # Build lookup: source_id → entry, id → entry
+    entry_map: dict[str, dict] = {}
+    for entry in names:
+        sid = entry.get("source_id") or entry.get("id") or ""
+        entry_map[sid] = entry
+        name_id = entry.get("id") or ""
+        if name_id and name_id != sid:
+            entry_map[name_id] = entry
+
+    scored: list[dict] = []
+    matched_entries: set[str] = set()  # track by entry id
+    revised_count = 0
+
+    for review in reviews:
+        original = entry_map.get(review.source_id) or entry_map.get(
+            review.standard_name
+        )
+        if original is None:
+            wlog.debug(
+                "Review returned unknown source_id=%s / standard_name=%s",
+                review.source_id,
+                review.standard_name,
+            )
+            continue
+
+        entry_id = original.get("id") or ""
+        matched_entries.add(entry_id)
+
+        # Store review scores on the entry
+        original["reviewer_score"] = review.scores.score
+        original["reviewer_scores"] = json.dumps(review.scores.model_dump())
+        original["reviewer_comments"] = review.reasoning
+        original["review_tier"] = review.scores.tier
+
+        if review.verdict == StandardNameReviewVerdict.revise and review.revised_name:
+            revised_entry = dict(original)
+            revised_entry["id"] = review.revised_name
+            if review.revised_fields:
+                for key, value in review.revised_fields.items():
+                    if key in revised_entry:
+                        revised_entry[key] = value
+            scored.append(revised_entry)
+            revised_count += 1
+            wlog.debug(
+                "Revised %r → %r (score %.2f): %s",
+                review.standard_name,
+                review.revised_name,
+                review.scores.score,
+                review.reasoning[:120],
+            )
+        else:
+            scored.append(original)
+            if review.verdict == StandardNameReviewVerdict.reject:
+                wlog.debug(
+                    "Low score %r (%.2f, %s): %s",
+                    review.standard_name,
+                    review.scores.score,
+                    review.scores.tier,
+                    review.reasoning[:120],
+                )
+
+    # Identify entries that were NOT matched to any review
+    unmatched: list[dict] = []
+    for entry in names:
+        entry_id = entry.get("id") or ""
+        if entry_id not in matched_entries:
+            unmatched.append(entry)
+
+    return scored, unmatched, revised_count
+
+
 async def _review_single_batch(
     *,
     names: list[dict],
@@ -658,17 +752,24 @@ async def _review_single_batch(
     neighborhood: list[dict],
     audit_findings: list[str],
     wlog: logging.LoggerAdapter,
+    _is_retry: bool = False,
 ) -> dict[str, Any]:
     """Review a single batch via LLM — mirrors ``_review_batch()`` from workers.py.
 
     Returns a dict with keys ``_items`` (scored entries), ``_cost``,
-    ``_tokens``, ``_revised``.
+    ``_tokens``, ``_revised``, and ``_unscored`` (count of entries that
+    could not be matched to an LLM review result).
+
+    When ``_is_retry`` is False and some entries are unmatched, a single
+    retry is attempted with only the unmatched entries.  Entries that
+    remain unmatched after retry are **not** included in ``_items`` —
+    they are counted in ``_unscored`` so callers never report unscored
+    entries as reviewed.
     """
     from imas_codex.discovery.base.llm import acall_llm_structured
     from imas_codex.llm.prompt_loader import render_prompt
     from imas_codex.standard_names.models import (
         StandardNameQualityReviewBatch,
-        StandardNameReviewVerdict,
     )
 
     cal = calibration_entries or []
@@ -722,82 +823,61 @@ async def _review_single_batch(
         response_model=StandardNameQualityReviewBatch,
     )
 
-    # Map reviews back to original entries by source_id AND by id (standard
-    # name).  Many StandardName nodes have source_id=None — the prompt renders
-    # this as "None" and the LLM may return the standard name string instead.
-    entry_map: dict[str, dict] = {}
-    for entry in names:
-        sid = entry.get("source_id") or entry.get("id") or ""
-        entry_map[sid] = entry
-        # Also index by standard name id for fallback matching
-        name_id = entry.get("id") or ""
-        if name_id and name_id != sid:
-            entry_map[name_id] = entry
+    # --- Match reviews to original entries -----------------------------------
+    scored, unmatched, revised_count = _match_reviews_to_entries(
+        result.reviews, names, wlog
+    )
 
-    scored: list[dict] = []
-    revised_count = 0
+    total_cost = cost
+    total_tokens = tokens
+    unscored_count = 0
 
-    for review in result.reviews:
-        original = entry_map.get(review.source_id) or entry_map.get(
-            review.standard_name
+    # --- Retry unmatched entries (once) --------------------------------------
+    if unmatched and not _is_retry:
+        unmatched_ids = [e.get("id", "?") for e in unmatched]
+        logger.warning(
+            "Batch incomplete: %d/%d entries unmatched after LLM review "
+            "(unmatched: %s). Retrying unmatched only.",
+            len(unmatched),
+            len(names),
+            ", ".join(unmatched_ids[:10]) + ("…" if len(unmatched_ids) > 10 else ""),
         )
-        if original is None:
-            wlog.debug(
-                "Review returned unknown source_id=%s / standard_name=%s",
-                review.source_id,
-                review.standard_name,
-            )
-            continue
 
-        # Store review scores on the entry
-        original["reviewer_score"] = review.scores.score
-        original["reviewer_scores"] = json.dumps(review.scores.model_dump())
-        original["reviewer_comments"] = review.reasoning
-        original["review_tier"] = review.scores.tier
+        retry_result = await _review_single_batch(
+            names=unmatched,
+            model=model,
+            grammar_enums=grammar_enums,
+            compose_ctx=compose_ctx,
+            calibration_entries=calibration_entries,
+            batch_context=batch_context,
+            neighborhood=neighborhood,
+            audit_findings=audit_findings,
+            wlog=wlog,
+            _is_retry=True,
+        )
 
-        if review.verdict == StandardNameReviewVerdict.revise and review.revised_name:
-            revised_entry = dict(original)
-            revised_entry["id"] = review.revised_name
-            if review.revised_fields:
-                for key, value in review.revised_fields.items():
-                    if key in revised_entry:
-                        revised_entry[key] = value
-            scored.append(revised_entry)
-            revised_count += 1
-            wlog.debug(
-                "Revised %r → %r (score %.2f): %s",
-                review.standard_name,
-                review.revised_name,
-                review.scores.score,
-                review.reasoning[:120],
-            )
-        else:
-            scored.append(original)
-            if review.verdict == StandardNameReviewVerdict.reject:
-                wlog.debug(
-                    "Low score %r (%.2f, %s): %s",
-                    review.standard_name,
-                    review.scores.score,
-                    review.scores.tier,
-                    review.reasoning[:120],
-                )
-
-    # Pass through entries not in the review result
-    reviewed_ids = set()
-    for r in result.reviews:
-        reviewed_ids.add(r.source_id)
-        reviewed_ids.add(r.standard_name)
-    for entry in names:
-        sid = entry.get("source_id") or entry.get("id") or ""
-        name_id = entry.get("id") or ""
-        if sid not in reviewed_ids and name_id not in reviewed_ids:
-            scored.append(entry)
+        scored.extend(retry_result.get("_items", []))
+        total_cost += retry_result.get("_cost", 0.0)
+        total_tokens += retry_result.get("_tokens", 0)
+        revised_count += retry_result.get("_revised", 0)
+        unscored_count = retry_result.get("_unscored", 0)
+    elif unmatched:
+        # Retry already attempted — log remaining unmatched as unscored
+        unmatched_ids = [e.get("id", "?") for e in unmatched]
+        logger.warning(
+            "Retry failed: %d entries still unscored after retry "
+            "(ids: %s). NOT generating synthetic scores.",
+            len(unmatched),
+            ", ".join(unmatched_ids[:10]) + ("…" if len(unmatched_ids) > 10 else ""),
+        )
+        unscored_count = len(unmatched)
 
     return {
         "_items": scored,
-        "_cost": cost,
-        "_tokens": tokens,
+        "_cost": total_cost,
+        "_tokens": total_tokens,
         "_revised": revised_count,
+        "_unscored": unscored_count,
     }
 
 
