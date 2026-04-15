@@ -1288,13 +1288,13 @@ def sn_clear(
                 )
                 count_result = gc.query(
                     f"MATCH (sns:StandardNameSource) {where_clause} RETURN count(sns) AS count",
-                    sns_params,
+                    **sns_params,
                 )
                 sns_count = count_result[0]["count"] if count_result else 0
                 if sns_count > 0:
                     gc.query(
                         f"MATCH (sns:StandardNameSource) {where_clause} DETACH DELETE sns",
-                        sns_params,
+                        **sns_params,
                     )
                     console.print(f"  Deleted {sns_count} StandardNameSource nodes")
 
