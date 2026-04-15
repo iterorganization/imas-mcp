@@ -2003,7 +2003,120 @@ def phase_build(
             )
         stats["orphaned_units_deleted"] = orphaned
 
+    # Pass 2: Relational reclassification using graph relationships
+    if not dry_run:
+        stats["pass2_reclassified"] = _reclassify_relational(client)
+
     return stats
+
+
+def _reclassify_relational(client: GraphClient) -> int:
+    """Pass 2 classification using graph relationships.
+
+    Refines node_category for nodes where relationship evidence
+    (HAS_IDENTIFIER_SCHEMA, HAS_COORDINATE, children) provides
+    a stronger signal than the build-time Pass 1 classification.
+    """
+    from imas_codex.core.node_classifier import classify_node_pass2
+
+    # Fetch nodes with relevant relationships in a single query
+    rows = client.query(
+        """
+        MATCH (n:IMASNode)
+        WHERE n.node_category IN ['quantity', 'coordinate', 'structural', 'data']
+        OPTIONAL MATCH (n)-[:HAS_IDENTIFIER_SCHEMA]->()
+        WITH n, count(*) > 0 AS has_id_schema
+        WHERE has_id_schema
+        RETURN n.id AS id, n.node_category AS current,
+               n.data_type AS data_type, n.unit AS unit,
+               true AS has_identifier_schema
+        UNION ALL
+        MATCH (n:IMASNode)
+        WHERE n.node_category IN ['quantity', 'coordinate', 'structural', 'data']
+        MATCH ()-[:HAS_COORDINATE]->(n)
+        RETURN DISTINCT n.id AS id, n.node_category AS current,
+               n.data_type AS data_type, n.unit AS unit,
+               false AS has_identifier_schema
+        """
+    )
+
+    # Also check STRUCTURE+unit nodes for children evidence
+    struct_rows = client.query(
+        """
+        MATCH (n:IMASNode)
+        WHERE n.node_category IN ['quantity', 'data']
+          AND n.data_type IN ['STRUCTURE', 'STRUCT_ARRAY']
+          AND n.unit IS NOT NULL AND n.unit <> '' AND n.unit <> '-'
+        OPTIONAL MATCH (n)<-[:PARENT_OF]-(child:IMASNode)
+        WITH n, collect(child.node_category) AS children_cats
+        RETURN n.id AS id, n.node_category AS current,
+               n.data_type AS data_type, n.unit AS unit,
+               children_cats
+        """
+    )
+
+    updates: dict[str, str] = {}
+
+    # Process identifier and coordinate overrides
+    coord_targets: set[str] = set()
+    for row in rows:
+        node_id = row["id"]
+        if row.get("has_identifier_schema"):
+            new_cat = classify_node_pass2(
+                row["current"],
+                has_identifier_schema=True,
+                data_type=row.get("data_type"),
+                unit=row.get("unit"),
+            )
+        else:
+            coord_targets.add(node_id)
+            new_cat = classify_node_pass2(
+                row["current"],
+                is_coordinate_target=True,
+                data_type=row.get("data_type"),
+                unit=row.get("unit"),
+            )
+
+        if new_cat and new_cat != row["current"]:
+            updates[node_id] = new_cat
+
+    # Process STRUCTURE+unit validation
+    for row in struct_rows:
+        node_id = row["id"]
+        if node_id in updates:
+            continue  # Already overridden by identifier/coordinate
+        new_cat = classify_node_pass2(
+            row["current"],
+            children_categories=row.get("children_cats", []),
+            data_type=row.get("data_type"),
+            unit=row.get("unit"),
+        )
+        if new_cat and new_cat != row["current"]:
+            updates[node_id] = new_cat
+
+    # Apply updates in batch
+    if updates:
+        update_list = [{"id": k, "category": v} for k, v in updates.items()]
+        for i in range(0, len(update_list), 1000):
+            batch = update_list[i : i + 1000]
+            client.query(
+                """
+                UNWIND $updates AS u
+                MATCH (n:IMASNode {id: u.id})
+                SET n.node_category = u.category
+                """,
+                updates=batch,
+            )
+        logger.info(
+            "Pass 2 reclassified %d nodes: %s",
+            len(updates),
+            {
+                v: sum(1 for x in updates.values() if x == v)
+                for v in set(updates.values())
+            },
+        )
+
+    return len(updates)
 
 
 def phase_enrich(
@@ -2945,26 +3058,28 @@ def _batch_upsert_ids_nodes(
         )
 
 
-def _classify_node(path_id: str, name: str) -> str:
+def _classify_node(
+    path_id: str,
+    name: str,
+    *,
+    data_type: str | None = None,
+    unit: str | None = None,
+    parent_data_type: str | None = None,
+) -> str:
     """Classify an IMASNode path into a node_category.
 
-    Returns 'data', 'error', or 'metadata' based on path structure.
-    Delegates to ExclusionChecker for consistent classification logic.
-    Used at node creation time to set the indexed node_category property.
+    Delegates to the shared classifier module which is the single source
+    of truth for both build-time and migration classification.
     """
-    from imas_codex.core.exclusions import ExclusionChecker
+    from imas_codex.core.node_classifier import classify_node_pass1
 
-    # Use a checker with both error fields and ggd included so that
-    # _is_error_field and _is_metadata_path are the only classification
-    # criteria — we want to classify, not exclude based on settings.
-    checker = ExclusionChecker(include_error_fields=False, include_ggd=True)
-
-    if checker._is_error_field(name):
-        return "error"
-    if checker._is_metadata_path(path_id):
-        return "metadata"
-
-    return "data"
+    return classify_node_pass1(
+        path_id,
+        name,
+        data_type=data_type,
+        unit=unit,
+        parent_data_type=parent_data_type,
+    )
 
 
 def _batch_create_path_nodes(
@@ -2990,11 +3105,26 @@ def _batch_create_path_nodes(
 
         doc = path_info.get("documentation", "")
         node_type = path_info.get("node_type")
+
+        # Resolve parent data_type for Pass 1 classification
+        parent_path = path_info.get("parent_path")
+        parent_dt = (
+            paths_data[parent_path].get("data_type")
+            if parent_path and parent_path in paths_data
+            else None
+        )
+
         path_list.append(
             {
                 "id": path,
                 "name": name,
-                "node_category": _classify_node(path, name),
+                "node_category": _classify_node(
+                    path,
+                    name,
+                    data_type=path_info.get("data_type"),
+                    unit=path_info.get("units", ""),
+                    parent_data_type=parent_dt,
+                ),
                 "documentation": doc,
                 "data_type": path_info.get("data_type"),
                 "ndim": path_info.get("ndim", 0),
