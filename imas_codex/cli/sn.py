@@ -1572,16 +1572,8 @@ def sn_resolve_links(
 )
 @click.option(
     "--force",
-    "force_flag",
     is_flag=True,
     help="Force re-review of already-scored names",
-)
-@click.option(
-    "--re-review",
-    "re_review_flag",
-    is_flag=True,
-    hidden=True,
-    help="Deprecated: use --force",
 )
 @click.option("--model", default=None, help="Override review model")
 @click.option(
@@ -1613,8 +1605,7 @@ def sn_review(
     domain: str | None,
     status_filter: str,
     unreviewed: bool,
-    force_flag: bool,
-    re_review_flag: bool,
+    force: bool,
     model: str | None,
     batch_size: int,
     neighborhood: int,
@@ -1641,9 +1632,6 @@ def sn_review(
     from imas_codex.standard_names.review.budget import ReviewBudgetManager
     from imas_codex.standard_names.review.state import StandardNameReviewState
 
-    # Combine --force / --re-review (deprecated alias)
-    force = force_flag or re_review_flag
-
     # Enforce batch-size cap
     batch_size = min(batch_size, 25)
 
@@ -1655,7 +1643,7 @@ def sn_review(
         domain_filter=domain,
         status_filter=status_filter,
         unreviewed_only=unreviewed,
-        re_review=force,
+        force_review=force,
         skip_audit=skip_audit,
         review_model=model,
         batch_size=batch_size,

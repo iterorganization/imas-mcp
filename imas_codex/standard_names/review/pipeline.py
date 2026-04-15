@@ -146,9 +146,9 @@ async def extract_review_worker(state: StandardNameReviewState, **_kwargs: Any) 
             if has_score and not is_stale:
                 continue
 
-        # --re-review: no filtering (include already-reviewed)
-        # (default: skip already-reviewed unless --re-review)
-        if not state.re_review and not state.unreviewed_only:
+        # --force: no filtering (include already-reviewed)
+        # (default: skip already-reviewed unless --force)
+        if not state.force_review and not state.unreviewed_only:
             if name.get("reviewer_score") is not None:
                 continue
 
@@ -157,14 +157,14 @@ async def extract_review_worker(state: StandardNameReviewState, **_kwargs: Any) 
     state.target_names = targets
     wlog.info(
         "Filter result: %d targets from %d total (ids=%s, domain=%s, "
-        "status=%s, unreviewed=%s, re_review=%s)",
+        "status=%s, unreviewed=%s, force_review=%s)",
         len(targets),
         len(all_names),
         state.ids_filter,
         state.domain_filter,
         state.status_filter,
         state.unreviewed_only,
-        state.re_review,
+        state.force_review,
     )
 
     if not targets:

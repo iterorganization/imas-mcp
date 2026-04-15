@@ -29,7 +29,7 @@ class StandardNameReviewState(DiscoveryStateBase):
     domain_filter: str | None = None
     status_filter: str = "drafted"
     unreviewed_only: bool = False
-    re_review: bool = False
+    force_review: bool = False
     skip_audit: bool = False
 
     # ------------------------------------------------------------------
