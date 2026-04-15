@@ -54,6 +54,27 @@ _INDEX_FLAG_RE: re.Pattern[str] = re.compile(
     re.IGNORECASE,
 )
 
+#: Regex for structural keywords in the last path segment — gates INT_0D/INT_1D
+#: fields that are storage artifacts (indices, flags, type selectors, etc.).
+_STRUCTURAL_SEGMENT_RE: re.Pattern[str] = re.compile(
+    r"(?:^|_)(?:index|flag|status|count|identifier|type"
+    r"|grid_subset|object_space|descriptor)(?:_|$)",
+)
+
+#: Regex for structural keywords in descriptions — extends the segment check
+#: to catch INT fields whose segment name is opaque (e.g. ``z_n``).
+_STRUCTURAL_DESC_RE: re.Pattern[str] = re.compile(
+    r"\b(?:index|flag|status|count|identifier|type"
+    r"|grid[\s_]subset|object[\s_]space|descriptor)\b",
+    re.IGNORECASE,
+)
+
+#: Regex for fit-diagnostic path segments — fitting-process artifacts that
+#: should not receive standard names (chi-squared, residuals, etc.).
+_FIT_DIAGNOSTIC_RE: re.Pattern[str] = re.compile(
+    r"(?:^|_)(?:chi_squared|residual|covariance|fitting_weight|fit_type)(?:_|$)",
+)
+
 # Type alias for the three-way classification.
 Scope = Literal["quantity", "metadata", "skip"]
 
@@ -120,6 +141,27 @@ def classify_path(node: dict) -> Scope:
     # Rule 5: STR_0D (string fields) → skip
     # ------------------------------------------------------------------
     if data_type == "STR_0D":
+        return "skip"
+
+    # ------------------------------------------------------------------
+    # Rule 11a: Structural keywords + INT_0D/INT_1D → skip
+    # Catches structural metadata (indices, type selectors, flags, etc.)
+    # that earlier rules miss — e.g. INT_0D with unit, or INT_1D.
+    # Checks the last path segment AND the description.
+    # ------------------------------------------------------------------
+    if data_type in ("INT_0D", "INT_1D"):
+        if _STRUCTURAL_SEGMENT_RE.search(last_segment) or _STRUCTURAL_DESC_RE.search(
+            description
+        ):
+            return "skip"
+
+    # ------------------------------------------------------------------
+    # Rule 11b: Fit-diagnostic segments → skip
+    # Fitting-process artifacts (chi², residuals, covariance, …) are not
+    # independent physics concepts.  _measured / _reconstructed are NOT
+    # matched — those are valid provenance qualifiers.
+    # ------------------------------------------------------------------
+    if _FIT_DIAGNOSTIC_RE.search(last_segment):
         return "skip"
 
     # ------------------------------------------------------------------

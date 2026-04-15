@@ -9,6 +9,9 @@ from __future__ import annotations
 import pytest
 
 from imas_codex.standard_names.classifier import (
+    _FIT_DIAGNOSTIC_RE,
+    _STRUCTURAL_DESC_RE,
+    _STRUCTURAL_SEGMENT_RE,
     ERROR_SUFFIXES,
     PHYSICS_LEAF_TYPES,
     STRUCTURE_TYPES,
@@ -504,6 +507,105 @@ GOLD_SET: list[tuple[str, str, str | None, str | None, str, str | None, Scope]] 
         None,
         "skip",
     ),
+    # -----------------------------------------------------------------------
+    # skip — structural metadata (Rule 11a)
+    # -----------------------------------------------------------------------
+    (
+        "edge_profiles/grid_ggd/space/objects_per_dimension/grid_subset_index",
+        "INT_0D",
+        None,
+        None,
+        "Index of the grid subset",
+        None,
+        "skip",
+    ),
+    (
+        "edge_profiles/grid_ggd/space/objects_per_dimension/object_space_descriptor",
+        "INT_1D",
+        None,
+        None,
+        "Descriptor for object in space",
+        None,
+        "skip",
+    ),
+    (
+        "edge_profiles/ggd/electrons/coordinate_system_type",
+        "INT_0D",
+        None,
+        None,
+        "Type of coordinate system",
+        None,
+        "skip",
+    ),
+    (
+        "equilibrium/time_slice/convergence/iteration_status",
+        "INT_0D",
+        None,
+        None,
+        "Status of convergence iterations",
+        None,
+        "skip",
+    ),
+    (
+        "edge_profiles/grid_ggd/space/element_count",
+        "INT_0D",
+        "dimensionless",
+        None,
+        "Element count for the grid",
+        None,
+        "skip",
+    ),
+    # -----------------------------------------------------------------------
+    # skip — fit diagnostics (Rule 11b)
+    # -----------------------------------------------------------------------
+    (
+        "core_profiles/profiles_1d/electrons/density_fit/chi_squared",
+        "FLT_0D",
+        None,
+        None,
+        "Chi-squared of the fit",
+        None,
+        "skip",
+    ),
+    (
+        "core_profiles/profiles_1d/electrons/density_fit/residual",
+        "FLT_1D",
+        None,
+        None,
+        "Residual of the density fit",
+        None,
+        "skip",
+    ),
+    (
+        "core_profiles/profiles_1d/electrons/density_fit/fitting_weight",
+        "FLT_1D",
+        None,
+        None,
+        "Weights used in the fitting procedure",
+        None,
+        "skip",
+    ),
+    # -----------------------------------------------------------------------
+    # quantity — _measured/_reconstructed NOT skipped
+    # -----------------------------------------------------------------------
+    (
+        "core_profiles/profiles_1d/electrons/density_fit/measured",
+        "FLT_1D",
+        "m^-3",
+        None,
+        "Measured electron density",
+        None,
+        "quantity",
+    ),
+    (
+        "core_profiles/profiles_1d/electrons/density_fit/reconstructed",
+        "FLT_1D",
+        "m^-3",
+        None,
+        "Reconstructed electron density",
+        None,
+        "quantity",
+    ),
 ]
 
 
@@ -902,6 +1004,189 @@ class TestRule11EverythingElse:
             "cluster_label": None,
         }
         assert classify_path(node) == "skip"
+
+
+class TestRule11aStructuralKeywords:
+    """Rule 11a: Structural keywords + INT_0D/INT_1D → skip."""
+
+    def _make(
+        self,
+        *,
+        path: str,
+        data_type: str = "INT_0D",
+        description: str = "",
+        unit: str | None = None,
+    ) -> dict:
+        return {
+            "path": path,
+            "data_type": data_type,
+            "unit": unit,
+            "parent_type": None,
+            "description": description,
+            "node_category": None,
+            "parent_path": "/".join(path.split("/")[:-1]) if "/" in path else None,
+            "cluster_label": None,
+        }
+
+    @pytest.mark.parametrize(
+        "keyword",
+        [
+            "index",
+            "flag",
+            "status",
+            "count",
+            "identifier",
+            "type",
+            "grid_subset",
+            "object_space",
+            "descriptor",
+        ],
+    )
+    def test_segment_keyword_skips_int0d(self, keyword: str) -> None:
+        node = self._make(path=f"some_ids/{keyword}", description="Some field")
+        assert classify_path(node) == "skip"
+
+    @pytest.mark.parametrize(
+        "keyword",
+        [
+            "index",
+            "flag",
+            "status",
+            "count",
+            "identifier",
+            "type",
+            "grid_subset",
+            "object_space",
+            "descriptor",
+        ],
+    )
+    def test_segment_keyword_skips_int1d(self, keyword: str) -> None:
+        node = self._make(
+            path=f"some_ids/{keyword}", data_type="INT_1D", description="Some field"
+        )
+        assert classify_path(node) == "skip"
+
+    def test_segment_keyword_embedded_in_name(self) -> None:
+        """Keywords as part of compound segment name should also match."""
+        node = self._make(
+            path="edge/grid_subset_index", description="Index of grid subset"
+        )
+        assert classify_path(node) == "skip"
+
+    def test_does_not_match_flt_types(self) -> None:
+        """Structural keyword check is INT-only — FLT types should pass through."""
+        node = self._make(
+            path="some_ids/status_value",
+            data_type="FLT_0D",
+            unit="eV",
+            description="Some status value",
+        )
+        assert classify_path(node) == "quantity"
+
+    def test_description_keyword_catches_int_without_segment_match(self) -> None:
+        """Description containing structural keyword → skip for INT."""
+        node = self._make(
+            path="some_ids/z_n", description="Count of nucleons in the element"
+        )
+        assert classify_path(node) == "skip"
+
+    def test_physics_int_not_caught(self) -> None:
+        """Genuine physics INT_0D without structural keywords → quantity."""
+        node = self._make(
+            path="mhd/toroidal_mode_number", description="Toroidal mode number"
+        )
+        assert classify_path(node) == "quantity"
+
+    def test_int0d_with_unit_and_structural_keyword(self) -> None:
+        """Even if INT_0D has a unit, structural keyword → skip."""
+        node = self._make(
+            path="some_ids/element_index",
+            unit="dimensionless",
+            description="Element index",
+        )
+        assert classify_path(node) == "skip"
+
+    def test_int1d_physics_not_caught(self) -> None:
+        """INT_1D without structural keywords → quantity (via Rule 8)."""
+        node = self._make(
+            path="some_ids/charge_state",
+            data_type="INT_1D",
+            unit="C",
+            description="Charge state array",
+        )
+        assert classify_path(node) == "quantity"
+
+
+class TestRule11bFitDiagnostics:
+    """Rule 11b: Fit-diagnostic segments → skip."""
+
+    def _make(
+        self,
+        *,
+        path: str,
+        data_type: str = "FLT_0D",
+        unit: str | None = None,
+        description: str = "Fit diagnostic",
+    ) -> dict:
+        return {
+            "path": path,
+            "data_type": data_type,
+            "unit": unit,
+            "parent_type": None,
+            "description": description,
+            "node_category": None,
+            "parent_path": "/".join(path.split("/")[:-1]) if "/" in path else None,
+            "cluster_label": None,
+        }
+
+    @pytest.mark.parametrize(
+        "segment",
+        ["chi_squared", "residual", "covariance", "fitting_weight", "fit_type"],
+    )
+    def test_fit_diagnostic_segments_skipped(self, segment: str) -> None:
+        node = self._make(path=f"some_ids/fit/{segment}")
+        assert classify_path(node) == "skip"
+
+    def test_reduced_chi_squared_skipped(self) -> None:
+        """Compound names containing fit diagnostic keywords → skip."""
+        node = self._make(path="some_ids/fit/reduced_chi_squared")
+        assert classify_path(node) == "skip"
+
+    def test_measured_not_skipped(self) -> None:
+        """_measured suffix should NOT be skipped — it's a provenance qualifier."""
+        node = self._make(
+            path="profiles/density_measured",
+            data_type="FLT_1D",
+            unit="m^-3",
+            description="Measured electron density",
+        )
+        assert classify_path(node) == "quantity"
+
+    def test_reconstructed_not_skipped(self) -> None:
+        """_reconstructed suffix should NOT be skipped."""
+        node = self._make(
+            path="profiles/temperature_reconstructed",
+            data_type="FLT_1D",
+            unit="eV",
+            description="Reconstructed electron temperature",
+        )
+        assert classify_path(node) == "quantity"
+
+    def test_fit_diagnostic_with_unit_still_skipped(self) -> None:
+        """Even with a unit, fit diagnostics are skip."""
+        node = self._make(path="some_ids/fit/chi_squared", unit="dimensionless")
+        assert classify_path(node) == "skip"
+
+    def test_fit_diagnostic_flt1d_skipped(self) -> None:
+        """FLT_1D fit diagnostics also skipped."""
+        node = self._make(path="some_ids/fit/residual", data_type="FLT_1D")
+        assert classify_path(node) == "skip"
+
+    def test_regex_constants_exposed(self) -> None:
+        """New regex constants are importable."""
+        assert _STRUCTURAL_SEGMENT_RE is not None
+        assert _STRUCTURAL_DESC_RE is not None
+        assert _FIT_DIAGNOSTIC_RE is not None
 
 
 # ============================================================================
