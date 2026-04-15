@@ -510,6 +510,173 @@ RETURN count(new) AS migrated
 **Acceptance:** `MATCH ()-[r:HAS_SN_VOCAB_GAP]->() RETURN count(r)` returns 0.
 Schema compliance tests pass.
 
+#### Phase 0d: Source-agnostic path references
+
+Make StandardName data source references generic — supporting DD paths, facility signals,
+and future source types in a unified model. **Reviewed through 4 rounds of RD critique.**
+
+**Coordinated ISN change:** `ids_paths` → `dd_paths` rename in imas-standard-names repo.
+See `~/Code/imas-standard-names/plans/features/07-dd-paths-rename.md`.
+
+##### Design rationale
+
+Standard names are many-to-one: `electron_temperature` may originate from DD and later
+gain signal sources. No source is "primary" — the name evolves to represent the physics
+concept across all data sources. The schema must reflect this.
+
+**Naming convention:**
+- `dd_paths` — used everywhere that refers specifically to DD paths (replaces `ids_paths`)
+- `source_paths` — generic graph property holding ALL source IDs (union of DD + signals + future)
+- `source_types` — unordered set of contributing source types
+
+**`source_paths` entry format (colon discriminator):**
+
+| Source Type | Format | Example | Discriminator |
+|-------------|--------|---------|---------------|
+| DD | bare path | `equilibrium/time_slice/profiles_1d/psi` | No colon |
+| Signal | `facility:path` | `tcv:ip/measured` | Contains colon |
+| Future | `namespace:id` | TBD | Contains colon |
+
+DD paths never contain colons. All non-DD sources use `namespace:` prefix.
+Enforced centrally via `encode_source_path()` / `parse_source_path()`.
+
+##### Schema changes on StandardName
+
+**Remove:**
+- `source_path` (singular) — replaced by `source_paths` (multivalued union)
+- `source_type` (singular enum) — replaced by `source_types` (multivalued set)
+
+**Add / rename:**
+```yaml
+source_types:
+  description: >-
+    Unordered set of source types that contribute to this standard name.
+    E.g., ["dd"] for DD-only, ["dd", "signals"] for multi-source.
+    Denormalized cache — authoritative source is StandardNameSource
+    relationships. Rebuild: COLLECT(DISTINCT sns.source_type).
+  multivalued: true
+  range: StandardNameSourceType
+
+source_paths:
+  description: >-
+    All source entity IDs mapped to this standard name (union list).
+    DD paths are bare (no colon): "equilibrium/time_slice/profiles_1d/psi".
+    Signal IDs are facility-prefixed: "tcv:ip/measured".
+    Denormalized cache — authoritative source is StandardNameSource
+    relationships via PRODUCED_NAME.
+  multivalued: true
+  range: string
+```
+
+**Rename:** `imas_paths` → `source_paths` (same slot, new name + expanded semantics)
+
+##### New utility module: `imas_codex/standard_names/source_paths.py`
+
+Central encode/parse/split/merge utilities. All callers go through this —
+no hand-rolled string construction.
+
+```python
+def encode_source_path(source_type: str, source_id: str) -> str:
+    """Encode a source ID for storage in source_paths.
+    DD paths stored bare; all others namespaced with colon."""
+
+def parse_source_path(path: str) -> tuple[str, str]:
+    """Parse source_paths entry → (source_type, source_id)."""
+
+def split_source_paths(paths: list[str]) -> dict[str, list[str]]:
+    """Split source_paths into typed subsets: {'dd': [...], 'signals': [...]}."""
+
+def merge_source_paths(existing: list[str], new: list[str]) -> list[str]:
+    """Deduplicated union of source paths. Deterministic sort for tests/export."""
+
+def merge_source_types(existing: list[str], new: list[str]) -> list[str]:
+    """Deduplicated union of source types. Sorted for deterministic output."""
+```
+
+##### Code renames (standard_names/ scope only)
+
+**`imas_paths` → `source_paths`** (~88 references in 19 files):
+- Schema: `standard_name.yaml` property rename + description update
+- Graph property: all Cypher `sn.imas_paths` → `sn.source_paths`
+- Dict keys: `"imas_paths"` → `"source_paths"` in graph_ops, workers, consolidation, etc.
+- Tests: all `imas_paths` references in `tests/standard_names/`
+
+**`ids_paths` → `dd_paths`** (~62 references in 11 files):
+- Pydantic model: `StandardNameCandidate.ids_paths` → `.dd_paths`
+- Workers: `c.ids_paths` → `c.dd_paths`, mapping to `"source_paths"` in graph dict
+- Publish: output `dd_paths` in catalog YAML (was `ids_paths`)
+- Catalog import: read `dd_paths` from YAML → merge into `source_paths`
+- Consolidation: `ids_paths` variable names → `dd_paths`
+- Seed: `ids_paths` → `dd_paths`
+- Tests: all `ids_paths` references in `tests/standard_names/`
+
+**`source_path` → remove** (~8 references in 5 files):
+- Schema: remove slot from StandardName
+- graph_ops.py: remove from write/read queries
+- publish.py: derive catalog provenance from `dd_paths[0]` (sorted, deterministic)
+- benchmark.py, benchmark_reference.py: remove references
+
+**`source_type` → `source_types`** (~15 references in 8 files):
+- Schema: remove singular slot, add multivalued `source_types`
+- graph_ops.py: update write queries (append-if-missing semantics)
+- workers.py: write `source_types: ["dd"]` or `["signals"]`
+- catalog_import.py: write `source_types` from catalog context
+- CLI `--source` filter: `'dd' IN sn.source_types` (set membership)
+
+**NOT changed** (different schema, different meaning):
+- `imas_paths` on WikiChunk/WikiPage (facility.yaml) — wiki extraction
+- `imas_paths_found`, `imas_paths_mentioned`, `ocr_imas_paths` — wiki fields
+- `extract_imas_paths()` — wiki entity extraction function
+
+**Prompt changes:**
+- `sn/review.md`: `item.imas_paths` → `item.dd_paths` (review context is DD-specific)
+
+##### Graph migration
+
+Atomic migration — rename property + remove legacy fields on all StandardName nodes:
+
+```cypher
+-- Step 1: Migrate imas_paths → source_paths (idempotent union)
+MATCH (sn:StandardName)
+WHERE sn.imas_paths IS NOT NULL
+WITH sn, sn.imas_paths AS old_paths,
+     coalesce(sn.source_paths, []) AS existing
+WITH sn, [p IN old_paths WHERE NOT p IN existing] + existing AS merged
+SET sn.source_paths = merged
+REMOVE sn.imas_paths
+RETURN count(sn) AS paths_migrated
+
+-- Step 2: Migrate source_type → source_types (singular to set)
+MATCH (sn:StandardName)
+WHERE sn.source_type IS NOT NULL
+WITH sn, sn.source_type AS old_type,
+     coalesce(sn.source_types, []) AS existing
+WITH sn, CASE WHEN old_type IN existing THEN existing
+              ELSE existing + old_type END AS merged
+SET sn.source_types = merged
+REMOVE sn.source_type
+RETURN count(sn) AS types_migrated
+
+-- Step 3: Remove source_path (singular)
+MATCH (sn:StandardName)
+WHERE sn.source_path IS NOT NULL
+REMOVE sn.source_path
+RETURN count(sn) AS removed
+```
+
+##### Acceptance criteria
+
+- `rg '\bimas_paths\b' imas_codex/standard_names/ imas_codex/schemas/standard_name.yaml tests/standard_names/` → 0 matches
+- `rg '\bids_paths\b' imas_codex/standard_names/ tests/standard_names/` → 0 matches
+- `rg '\bsource_path\b' imas_codex/schemas/standard_name.yaml` → 0 matches (singular removed)
+- `rg '\bsource_type\b' imas_codex/schemas/standard_name.yaml` → 0 matches (singular removed)
+- `MATCH (sn:StandardName) WHERE sn.imas_paths IS NOT NULL RETURN count(sn)` → 0
+- `MATCH (sn:StandardName) WHERE sn.source_path IS NOT NULL RETURN count(sn)` → 0
+- `MATCH (sn:StandardName) WHERE sn.source_type IS NOT NULL RETURN count(sn)` → 0
+- `uv run build-models --force` succeeds
+- `uv run pytest tests/standard_names/` passes
+- `source_paths.py` has 100% test coverage
+
 ### Phase 1: Schema — StandardNameSource node type
 
 **Prerequisite:** Phase 0b has renamed the `StandardNameSource` enum to `StandardNameSourceType`,
@@ -639,21 +806,32 @@ No name collision with `StandardNameSourceType` enum.
 ## Dependencies
 
 ```
-Phase 0 (naming) → Phase 1 (schema) → Phase 2 (graph ops) → Phase 3 (extraction fixes)
-                                                            → Phase 4 (extract worker)
-                                                            → Phase 5 (compose worker)
+Phase 0a-0c (naming) ──┐
+Phase 0d (source-agnostic) ──┤→ Phase 1 (schema) → Phase 2 (graph ops) → Phase 3 (extraction fixes)
+                              │                                          → Phase 4 (extract worker)
+                              │                                          → Phase 5 (compose worker)
+ISN dd_paths rename ──────────┘  (coordinated, not blocking)
 Phase 6 (normalization) — independent (can run in parallel with Phase 0)
 Phase 7 (CLI) depends on Phases 4, 5
 Phase 8 (tests) depends on Phases 1-7
 Phase 9 (docs) depends on all phases
 ```
 
+**Fleet dispatch:** Phases 0a-0d are mechanical renames suitable for parallel agent execution
+(different file sets). Phase 0d has a coordinated ISN plan but is not blocked by it — codex
+can land first, ISN follows. Phases 3-5 are the core architectural work requiring sequential
+implementation by a single agent.
+
 ## Scope
 
-**v1 (this plan): DD source only.**
+**v1 (this plan): DD source only, with source-agnostic schema.**
 
-Signal support follows the same pattern with no schema changes:
+The schema (`source_paths`, `source_types`, `StandardNameSource`) is designed for multi-source
+from day one. v1 implementation populates DD sources only. Signal support follows the same
+pattern with no schema changes:
 - `(StandardNameSource {source_type: 'signals'})-[:FROM_SIGNAL]->(FacilitySignal)`
+- Signal `source_paths` entries: `"tcv:ip/measured"` (facility-prefixed)
+- Signal `source_types` append: `["dd", "signals"]` on existing names
 - Signal batch_key: `{physics_domain}:{diagnostic}:{unit}`
 - Signal reconciliation: same stale detection via `source_id` join
 
@@ -661,7 +839,8 @@ Signal support follows the same pattern with no schema changes:
 
 | Phase | Risk | Mitigation |
 |-------|------|------------|
-| 0 (naming) | Low-Medium | Mechanical rename, high file count — use sed + ruff format, verify with grep + pytest |
+| 0a-0c (naming) | Low-Medium | Mechanical rename, high file count — use sed + ruff format, verify with grep + pytest |
+| 0d (source-agnostic) | Medium | Schema + code + graph migration atomic. Central utility prevents drift. ISN coordination adds scheduling risk |
 | 1 (schema) | Low | Additive change, no existing data affected |
 | 2 (graph ops) | Low | New functions, existing ops unchanged |
 | 3 (extraction) | Medium | Query restructure — test against live graph |
@@ -685,3 +864,10 @@ Signal support follows the same pattern with no schema changes:
 9. **--force resets** — clears attempt_count, last_error, failed_at alongside status→extracted.
 10. **Naming convention** — all SN abbreviations expanded to `StandardName` (PascalCase classes) / `standard_name` (snake_case functions/files). `StandardNameSource` enum renamed to `StandardNameSourceType` to avoid collision with the new `StandardNameSource` node class. `HAS_SN_VOCAB_GAP` relationship renamed to `HAS_STANDARD_NAME_VOCAB_GAP`. Public `sn` CLI namespace and config accessors retained.
 11. **Source type constraint** — `StandardNameSource` nodes only allow `source_type` values `dd` and `signals` (pipeline sources). `manual` and `reference` are `StandardName` provenance values that never enter the composition pipeline. Enforced by test, not by a separate enum — avoids enum proliferation while preserving the invariant.
+12. **Source-agnostic references (from RD rounds 1-4):**
+    - `source_paths` is a denormalized union cache on StandardName. Authoritative provenance lives in StandardNameSource typed relationships (`FROM_DD_PATH`, `FROM_SIGNAL`). Rebuildable from graph.
+    - `source_types` is an unordered set (no primary source concept). Standard names are many-to-one — any source can contribute without displacing others.
+    - Colon discriminator enforced centrally via `encode_source_path()` / `parse_source_path()`. DD paths are bare (no colon), all other sources are namespace-prefixed.
+    - `source_path` (singular) and `source_type` (singular) removed entirely — no backward compat, no deprecation period (greenfield project).
+    - ISN catalog exports DD subset only (`dd_paths`). Signal provenance stays in graph.
+    - Neo4j stores `source_types` as list; code treats as set. Export/tests normalize via deterministic sort.
