@@ -86,6 +86,24 @@ enums:
       metadata:
         description: Non-measurable concept or classification
 
+  StandardNameSourceStatus:
+    description: >-
+      Lifecycle status of a StandardNameSource node.
+      extracted → composed | attached | vocab_gap | failed | stale
+    permissible_values:
+      extracted:
+        description: Source entity identified and queued for composition
+      composed:
+        description: LLM successfully generated a standard name from this source
+      attached:
+        description: Source auto-attached to an existing standard name (no LLM needed)
+      vocab_gap:
+        description: Composition blocked by missing grammar vocabulary
+      failed:
+        description: Composition failed after max retry attempts
+      stale:
+        description: Source entity no longer exists in upstream data
+
   LinkResolutionStatus:
     description: Status of cross-reference link resolution for standard names
     permissible_values:
@@ -356,3 +374,86 @@ classes:
       last_seen_at:
         description: When this gap was most recently reported
         range: datetime
+
+  StandardNameSource:
+    description: >-
+      Tracks an individual source entity (DD path or facility signal) through
+      the standard name composition pipeline. Graph-primary state machine —
+      all pipeline progress is persisted here, not in memory.
+
+      Example Cypher:
+        MATCH (sns:StandardNameSource {source_type: 'dd', status: 'extracted'})
+        RETURN sns.source_id, sns.batch_key
+
+        MATCH (sns:StandardNameSource)-[:PRODUCED_NAME]->(sn:StandardName)
+        RETURN sns.source_id, sn.id
+    class_uri: sn:StandardNameSource
+    attributes:
+      id:
+        identifier: true
+        description: >-
+          Composite key: source_type + ":" + source_id.
+          DD: "dd:equilibrium/time_slice/profiles_1d/psi"
+          Signal: "signals:tcv:ip/measured"
+        required: true
+      source_type:
+        description: Type of source entity (dd or signals)
+        range: StandardNameSourceType
+        required: true
+      source_id:
+        description: >-
+          Original entity identifier. DD path (bare) or signal ID (facility:path).
+        required: true
+      batch_key:
+        description: >-
+          Grouping key for LLM composition batches.
+          DD: "{cluster_label}:{unit}" or "unclustered:{ids_name}:{unit}"
+          Signals: "{physics_domain}:{diagnostic}:{unit}"
+      status:
+        description: Current lifecycle status
+        range: StandardNameSourceStatus
+        required: true
+      claimed_at:
+        description: Timestamp when a worker claimed this source for processing
+        range: datetime
+      claim_token:
+        description: UUID token for claim verification
+      attempt_count:
+        description: Number of composition attempts (for durable retry)
+        range: integer
+      last_error:
+        description: Error message from most recent failed attempt
+      failed_at:
+        description: Timestamp of terminal failure
+        range: datetime
+      composed_at:
+        description: Timestamp when composition succeeded
+        range: datetime
+      dd_path:
+        description: >-
+          For DD sources, links to the IMASNode via FROM_DD_PATH relationship.
+          Value is the IMASNode id (bare DD path).
+        annotations:
+          relationship_type: FROM_DD_PATH
+          target_label: IMASNode
+      signal:
+        description: >-
+          For signal sources, links to the FacilitySignal via FROM_SIGNAL relationship.
+          Value is the FacilitySignal id (facility:path).
+        annotations:
+          relationship_type: FROM_SIGNAL
+          target_label: FacilitySignal
+      standard_name:
+        description: The StandardName produced by composing this source
+        range: StandardName
+        annotations:
+          relationship_type: PRODUCED_NAME
+      embedding:
+        description: Vector embedding for semantic search
+        multivalued: true
+        range: float
+      embedded_at:
+        description: When embedding was last computed
+        range: datetime
+      description:
+        description: Human-readable description of this source entity

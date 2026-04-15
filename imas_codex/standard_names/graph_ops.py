@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 from typing import Any
 
 from imas_codex.discovery.base.claims import retry_on_deadlock
@@ -1549,3 +1550,482 @@ def write_enrichment_results(results: list[dict[str, Any]]) -> int:
 
     logger.info("Enriched %d StandardName nodes", len(results))
     return len(results)
+
+
+# =============================================================================
+# StandardNameSource CRUD
+# =============================================================================
+
+_VALID_PIPELINE_SOURCE_TYPES = {"dd", "signals"}
+
+
+def merge_standard_name_sources(
+    sources: list[dict],
+    *,
+    force: bool = False,
+) -> int:
+    """Batch MERGE StandardNameSource nodes.
+
+    Each source dict must have: id, source_type, source_id, batch_key, status.
+    Optional: description, dd_path (for DD sources), signal (for signal sources).
+
+    On CREATE: sets all fields.
+    On MATCH (existing node):
+      - If force=True: resets to extracted, clears attempt_count/last_error/failed_at.
+      - If status is 'stale': requeues to extracted.
+      - Otherwise: preserves existing status (skip already-processed sources).
+
+    Rejects source_type values not in {'dd', 'signals'} with ValueError.
+    Returns count of nodes created or updated.
+    """
+    if not sources:
+        return 0
+
+    invalid = {s.get("source_type") for s in sources} - _VALID_PIPELINE_SOURCE_TYPES
+    if invalid:
+        raise ValueError(
+            f"Invalid source_type(s) for pipeline: {invalid}. "
+            f"Only {_VALID_PIPELINE_SOURCE_TYPES} are valid."
+        )
+
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            UNWIND $sources AS src
+            MERGE (sns:StandardNameSource {id: src.id})
+            ON CREATE SET
+                sns.source_type = src.source_type,
+                sns.source_id = src.source_id,
+                sns.batch_key = src.batch_key,
+                sns.status = src.status,
+                sns.description = src.description,
+                sns.attempt_count = 0
+            ON MATCH SET
+                sns.batch_key = src.batch_key,
+                sns.description = coalesce(src.description, sns.description),
+                sns.status = CASE
+                    WHEN $force THEN 'extracted'
+                    WHEN sns.status = 'stale' THEN 'extracted'
+                    ELSE sns.status
+                END,
+                sns.attempt_count = CASE
+                    WHEN $force THEN 0
+                    ELSE sns.attempt_count
+                END,
+                sns.last_error = CASE
+                    WHEN $force THEN null
+                    ELSE sns.last_error
+                END,
+                sns.failed_at = CASE
+                    WHEN $force THEN null
+                    ELSE sns.failed_at
+                END,
+                sns.claimed_at = CASE
+                    WHEN $force THEN null
+                    ELSE sns.claimed_at
+                END,
+                sns.claim_token = CASE
+                    WHEN $force THEN null
+                    ELSE sns.claim_token
+                END
+            WITH sns, src
+            // Create typed relationships to source entities
+            FOREACH (_ IN CASE WHEN src.source_type = 'dd' AND src.dd_path IS NOT NULL
+                          THEN [1] ELSE [] END |
+                MERGE (imas:IMASNode {id: src.dd_path})
+                MERGE (sns)-[:FROM_DD_PATH]->(imas)
+            )
+            FOREACH (_ IN CASE WHEN src.source_type = 'signals' AND src.signal IS NOT NULL
+                          THEN [1] ELSE [] END |
+                MERGE (sig:FacilitySignal {id: src.signal})
+                MERGE (sns)-[:FROM_SIGNAL]->(sig)
+            )
+            RETURN count(sns) AS affected
+            """,
+            sources=sources,
+            force=force,
+        )
+        return result[0]["affected"] if result else 0
+
+
+@retry_on_deadlock()
+def claim_standard_name_source_batch(
+    batch_key: str,
+    *,
+    limit: int = 50,
+    timeout_minutes: int = 30,
+) -> tuple[str, list[dict]]:
+    """Atomic full-batch claim of StandardNameSource nodes by batch_key.
+
+    Claims up to ``limit`` extracted sources with matching batch_key.
+    Uses two-step token verification to prevent double-claiming.
+    Reclaims sources with stale claims (older than timeout_minutes).
+
+    Returns (claim_token, claimed_sources) where each source dict has
+    id, source_id, source_type, batch_key, description.
+    """
+    token = str(uuid.uuid4())
+    with GraphClient() as gc:
+        # Step 1: Claim
+        gc.query(
+            """
+            MATCH (sns:StandardNameSource)
+            WHERE sns.batch_key = $batch_key
+              AND (
+                (sns.status = 'extracted' AND sns.claimed_at IS NULL)
+                OR (sns.claimed_at IS NOT NULL
+                    AND sns.claimed_at < datetime() - duration({minutes: $timeout}))
+              )
+            WITH sns ORDER BY rand() LIMIT $limit
+            SET sns.claimed_at = datetime(),
+                sns.claim_token = $token
+            """,
+            batch_key=batch_key,
+            limit=limit,
+            timeout=timeout_minutes,
+            token=token,
+        )
+        # Step 2: Verify
+        claimed = list(
+            gc.query(
+                """
+                MATCH (sns:StandardNameSource {claim_token: $token})
+                RETURN sns.id AS id,
+                       sns.source_id AS source_id,
+                       sns.source_type AS source_type,
+                       sns.batch_key AS batch_key,
+                       sns.description AS description
+                """,
+                token=token,
+            )
+        )
+    return token, claimed
+
+
+def fetch_claimed_source_metadata(token: str) -> list[dict]:
+    """Fetch full metadata for claimed sources, joining source entities.
+
+    For DD sources: joins IMASNode for documentation, unit, cluster info.
+    For signal sources: joins FacilitySignal for description, unit, diagnostic.
+
+    Returns list of dicts with source + joined metadata.
+    """
+    with GraphClient() as gc:
+        return list(
+            gc.query(
+                """
+                MATCH (sns:StandardNameSource {claim_token: $token})
+                OPTIONAL MATCH (sns)-[:FROM_DD_PATH]->(imas:IMASNode)
+                OPTIONAL MATCH (imas)-[:HAS_UNIT]->(u:Unit)
+                OPTIONAL MATCH (imas)<-[:CONTAINS_PATH]-(c:SemanticCluster)
+                OPTIONAL MATCH (sns)-[:FROM_SIGNAL]->(sig:FacilitySignal)
+                RETURN sns.id AS id,
+                       sns.source_id AS source_id,
+                       sns.source_type AS source_type,
+                       sns.batch_key AS batch_key,
+                       sns.description AS description,
+                       imas.id AS dd_path,
+                       imas.documentation AS dd_documentation,
+                       u.id AS unit,
+                       c.label AS cluster_label,
+                       c.scope AS cluster_scope,
+                       sig.id AS signal_id,
+                       sig.description AS signal_description
+                """,
+                token=token,
+            )
+        )
+
+
+def mark_sources_composed(
+    token: str,
+    source_ids: list[str],
+    standard_name_id: str,
+) -> int:
+    """Mark sources as composed and link to the produced StandardName.
+
+    Token-verified: only updates sources matching the claim_token.
+    Creates PRODUCED_NAME relationship to the StandardName.
+    Returns count of updated sources.
+    """
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            UNWIND $source_ids AS sid
+            MATCH (sns:StandardNameSource {id: sid, claim_token: $token})
+            SET sns.status = 'composed',
+                sns.composed_at = datetime(),
+                sns.claimed_at = null,
+                sns.claim_token = null
+            WITH sns
+            MATCH (sn:StandardName {id: $sn_id})
+            MERGE (sns)-[:PRODUCED_NAME]->(sn)
+            RETURN count(sns) AS affected
+            """,
+            source_ids=source_ids,
+            token=token,
+            sn_id=standard_name_id,
+        )
+        return result[0]["affected"] if result else 0
+
+
+def mark_sources_attached(
+    token: str,
+    source_ids: list[str],
+    standard_name_id: str,
+) -> int:
+    """Mark sources as auto-attached to an existing StandardName.
+
+    Used when a source matches an existing name without needing LLM composition.
+    Token-verified. Creates PRODUCED_NAME relationship.
+    Returns count of updated sources.
+    """
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            UNWIND $source_ids AS sid
+            MATCH (sns:StandardNameSource {id: sid, claim_token: $token})
+            SET sns.status = 'attached',
+                sns.composed_at = datetime(),
+                sns.claimed_at = null,
+                sns.claim_token = null
+            WITH sns
+            MATCH (sn:StandardName {id: $sn_id})
+            MERGE (sns)-[:PRODUCED_NAME]->(sn)
+            RETURN count(sns) AS affected
+            """,
+            source_ids=source_ids,
+            token=token,
+            sn_id=standard_name_id,
+        )
+        return result[0]["affected"] if result else 0
+
+
+def mark_sources_vocab_gap(
+    token: str,
+    source_ids: list[str],
+) -> int:
+    """Mark sources as blocked by missing grammar vocabulary.
+
+    Token-verified. Clears claim but preserves attempt_count.
+    Returns count of updated sources.
+    """
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            UNWIND $source_ids AS sid
+            MATCH (sns:StandardNameSource {id: sid, claim_token: $token})
+            SET sns.status = 'vocab_gap',
+                sns.claimed_at = null,
+                sns.claim_token = null
+            RETURN count(sns) AS affected
+            """,
+            source_ids=source_ids,
+            token=token,
+        )
+        return result[0]["affected"] if result else 0
+
+
+def mark_sources_failed(
+    token: str,
+    source_ids: list[str],
+    error: str,
+    *,
+    max_attempts: int = 3,
+) -> int:
+    """Mark sources as failed with durable retry.
+
+    Increments attempt_count. If below max_attempts, returns to 'extracted'
+    for retry. At max_attempts, transitions to terminal 'failed' status.
+    Token-verified. Returns count of updated sources.
+    """
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            UNWIND $source_ids AS sid
+            MATCH (sns:StandardNameSource {id: sid, claim_token: $token})
+            SET sns.attempt_count = coalesce(sns.attempt_count, 0) + 1,
+                sns.last_error = $error,
+                sns.claimed_at = null,
+                sns.claim_token = null,
+                sns.status = CASE
+                    WHEN coalesce(sns.attempt_count, 0) + 1 >= $max_attempts
+                    THEN 'failed'
+                    ELSE 'extracted'
+                END,
+                sns.failed_at = CASE
+                    WHEN coalesce(sns.attempt_count, 0) + 1 >= $max_attempts
+                    THEN datetime()
+                    ELSE sns.failed_at
+                END
+            RETURN count(sns) AS affected
+            """,
+            source_ids=source_ids,
+            token=token,
+            error=error,
+            max_attempts=max_attempts,
+        )
+        return result[0]["affected"] if result else 0
+
+
+def mark_sources_stale(source_ids: list[str]) -> int:
+    """Mark sources as stale (source entity no longer exists).
+
+    Not token-verified — can be called from reconciliation outside claim context.
+    Returns count of updated sources.
+    """
+    if not source_ids:
+        return 0
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            UNWIND $source_ids AS sid
+            MATCH (sns:StandardNameSource {id: sid})
+            SET sns.status = 'stale',
+                sns.claimed_at = null,
+                sns.claim_token = null
+            RETURN count(sns) AS affected
+            """,
+            source_ids=source_ids,
+        )
+        return result[0]["affected"] if result else 0
+
+
+def release_standard_name_source_claims(token: str) -> int:
+    """Release all claims held by this token without changing status.
+
+    Used for error recovery — release claims so other workers can pick them up.
+    Returns count of released sources.
+    """
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (sns:StandardNameSource {claim_token: $token})
+            SET sns.claimed_at = null,
+                sns.claim_token = null
+            RETURN count(sns) AS affected
+            """,
+            token=token,
+        )
+        return result[0]["affected"] if result else 0
+
+
+def reconcile_standard_name_sources(source_type: str = "dd") -> dict:
+    """Post-rebuild reconciliation of StandardNameSource nodes.
+
+    1. Re-links sources to DD paths/signals that still exist
+    2. Marks sources as stale if their upstream entity is gone
+    3. Revives stale sources if their entity reappears
+
+    Returns dict with counts: {relinked, stale_marked, revived}.
+    """
+    with GraphClient() as gc:
+        if source_type == "dd":
+            # Find stale: sources whose DD path no longer exists
+            stale = list(
+                gc.query(
+                    """
+                    MATCH (sns:StandardNameSource {source_type: 'dd'})
+                    WHERE NOT (sns)-[:FROM_DD_PATH]->(:IMASNode)
+                    AND NOT (sns.status = 'stale')
+                    RETURN sns.id AS id
+                    """
+                )
+            )
+            stale_ids = [r["id"] for r in stale]
+            stale_count = mark_sources_stale(stale_ids)
+
+            # Revive: stale sources whose DD path now exists again
+            revived = gc.query(
+                """
+                MATCH (sns:StandardNameSource {source_type: 'dd', status: 'stale'})
+                MATCH (imas:IMASNode {id: sns.source_id})
+                SET sns.status = 'extracted',
+                    sns.claimed_at = null,
+                    sns.claim_token = null
+                MERGE (sns)-[:FROM_DD_PATH]->(imas)
+                RETURN count(sns) AS count
+                """
+            )
+            revived_count = revived[0]["count"] if revived else 0
+
+            # Re-link: ensure FROM_DD_PATH exists for non-stale sources
+            relinked = gc.query(
+                """
+                MATCH (sns:StandardNameSource {source_type: 'dd'})
+                WHERE NOT (sns.status = 'stale')
+                  AND NOT (sns)-[:FROM_DD_PATH]->()
+                MATCH (imas:IMASNode {id: sns.source_id})
+                MERGE (sns)-[:FROM_DD_PATH]->(imas)
+                RETURN count(sns) AS count
+                """
+            )
+            relinked_count = relinked[0]["count"] if relinked else 0
+        else:
+            # Signal reconciliation (same pattern, different relationships)
+            stale = list(
+                gc.query(
+                    """
+                    MATCH (sns:StandardNameSource {source_type: 'signals'})
+                    WHERE NOT (sns)-[:FROM_SIGNAL]->(:FacilitySignal)
+                    AND NOT (sns.status = 'stale')
+                    RETURN sns.id AS id
+                    """
+                )
+            )
+            stale_ids = [r["id"] for r in stale]
+            stale_count = mark_sources_stale(stale_ids)
+
+            revived = gc.query(
+                """
+                MATCH (sns:StandardNameSource {source_type: 'signals', status: 'stale'})
+                MATCH (sig:FacilitySignal {id: sns.source_id})
+                SET sns.status = 'extracted',
+                    sns.claimed_at = null,
+                    sns.claim_token = null
+                MERGE (sns)-[:FROM_SIGNAL]->(sig)
+                RETURN count(sns) AS count
+                """
+            )
+            revived_count = revived[0]["count"] if revived else 0
+
+            relinked = gc.query(
+                """
+                MATCH (sns:StandardNameSource {source_type: 'signals'})
+                WHERE NOT (sns.status = 'stale')
+                  AND NOT (sns)-[:FROM_SIGNAL]->()
+                MATCH (sig:FacilitySignal {id: sns.source_id})
+                MERGE (sns)-[:FROM_SIGNAL]->(sig)
+                RETURN count(sns) AS count
+                """
+            )
+            relinked_count = relinked[0]["count"] if relinked else 0
+
+    return {
+        "stale_marked": stale_count,
+        "revived": revived_count,
+        "relinked": relinked_count,
+    }
+
+
+def get_standard_name_source_stats(
+    source_type: str | None = None,
+) -> dict[str, int]:
+    """Get StandardNameSource status counts.
+
+    Returns dict mapping status → count. Optionally filtered by source_type.
+    """
+    with GraphClient() as gc:
+        where = ""
+        params: dict = {}
+        if source_type:
+            where = "WHERE sns.source_type = $source_type"
+            params["source_type"] = source_type
+        result = gc.query(
+            f"""
+            MATCH (sns:StandardNameSource) {where}
+            RETURN sns.status AS status, count(sns) AS count
+            """,
+            **params,
+        )
+        return {r["status"]: r["count"] for r in result}
