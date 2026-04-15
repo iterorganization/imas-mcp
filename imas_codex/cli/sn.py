@@ -598,6 +598,34 @@ def sn_status() -> None:
     except Exception as e:
         console.print(f"[red]Error:[/red] {e}")
 
+    # StandardNameSource status
+    from rich.table import Table
+
+    from imas_codex.standard_names.graph_ops import get_standard_name_source_stats
+
+    source_stats = get_standard_name_source_stats()
+    if source_stats:
+        console.print()
+        console.print("[bold]StandardNameSource Pipeline Status[/bold]")
+        source_table = Table(show_header=True)
+        source_table.add_column("Status")
+        source_table.add_column("Count", justify="right")
+        total = 0
+        for status_name in [
+            "extracted",
+            "composed",
+            "attached",
+            "vocab_gap",
+            "failed",
+            "stale",
+        ]:
+            count = source_stats.get(status_name, 0)
+            total += count
+            if count > 0:
+                source_table.add_row(status_name, str(count))
+        source_table.add_row("[bold]Total[/bold]", f"[bold]{total}[/bold]")
+        console.print(source_table)
+
 
 @sn.command("gaps")
 @click.option(
@@ -1157,6 +1185,12 @@ def sn_reset(
 )
 @click.option("--dry-run", is_flag=True, help="Preview without modifying the graph")
 @click.option("--force", "-f", is_flag=True, help="Skip confirmation prompt")
+@click.option(
+    "--include-sources",
+    is_flag=True,
+    default=False,
+    help="Also delete StandardNameSource nodes",
+)
 def sn_clear(
     status: str | None,
     clear_all: bool,
@@ -1165,6 +1199,7 @@ def sn_clear(
     include_accepted: bool,
     dry_run: bool,
     force: bool,
+    include_sources: bool,
 ) -> None:
     """Delete standard names from the graph.
 
@@ -1233,11 +1268,66 @@ def sn_clear(
         )
         console.print(f"Deleted {deleted} StandardName node(s)")
 
+        if include_sources:
+            from imas_codex.graph.client import GraphClient
+
+            with GraphClient() as gc:
+                # Build filter for StandardNameSource nodes matching the same scope
+                sns_where_clauses = []
+                sns_params: dict = {}
+                if source:
+                    sns_where_clauses.append("sns.source_type = $source_type")
+                    sns_params["source_type"] = source
+                if ids_filter:
+                    sns_where_clauses.append("sns.ids_name = $ids_filter")
+                    sns_params["ids_filter"] = ids_filter
+                where_clause = (
+                    "WHERE " + " AND ".join(sns_where_clauses)
+                    if sns_where_clauses
+                    else ""
+                )
+                count_result = gc.query(
+                    f"MATCH (sns:StandardNameSource) {where_clause} RETURN count(sns) AS count",
+                    sns_params,
+                )
+                sns_count = count_result[0]["count"] if count_result else 0
+                if sns_count > 0:
+                    gc.query(
+                        f"MATCH (sns:StandardNameSource) {where_clause} DETACH DELETE sns",
+                        sns_params,
+                    )
+                    console.print(f"  Deleted {sns_count} StandardNameSource nodes")
+
     except click.Abort:
         raise
     except Exception as e:
         console.print(f"[red]Clear error:[/red] {e}")
         raise SystemExit(1) from e
+
+
+@sn.command("reconcile")
+@click.option(
+    "--source-type",
+    type=click.Choice(["dd", "signals"]),
+    default="dd",
+    help="Source type to reconcile",
+)
+def reconcile(source_type: str) -> None:
+    """Reconcile StandardNameSource nodes after DD/signal rebuild.
+
+    Re-links sources to upstream entities, marks missing as stale,
+    and revives previously-stale sources that reappear.
+    """
+    from imas_codex.standard_names.graph_ops import reconcile_standard_name_sources
+
+    console.print(f"Reconciling {source_type} sources...")
+
+    result = reconcile_standard_name_sources(source_type)
+
+    console.print(f"  Stale marked: {result['stale_marked']}")
+    console.print(f"  Revived: {result['revived']}")
+    console.print(f"  Re-linked: {result['relinked']}")
+    console.print("[green]Reconciliation complete[/green]")
 
 
 @sn.command("seed")
