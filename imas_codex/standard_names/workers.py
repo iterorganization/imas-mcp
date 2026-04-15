@@ -23,6 +23,12 @@ import logging
 from functools import cache as _cache
 from typing import TYPE_CHECKING, Any
 
+from imas_codex.standard_names.source_paths import (
+    encode_source_path,
+    parse_source_path,
+    strip_dd_prefix,
+)
+
 if TYPE_CHECKING:
     from imas_codex.standard_names.sources.base import ExtractionBatch
     from imas_codex.standard_names.state import StandardNameBuildState
@@ -230,14 +236,17 @@ def _get_secondary_tags() -> frozenset[str]:
 
 
 def _normalize_links(links: list[str]) -> list[str]:
-    """Ensure all internal links have ``name:`` or ``dd:`` prefix."""
+    """Normalize links to ``name:`` prefix, filtering out ``dd:`` links."""
     result = []
     for link in links:
-        if link.startswith(("http://", "https://", "name:", "dd:")):
+        # Filter out any dd: links that slipped through
+        if link.startswith("dd:"):
+            continue
+        # Drop raw DD paths (contain slash but no known prefix)
+        if "/" in link and not link.startswith(("http://", "https://", "name:")):
+            continue
+        if link.startswith(("http://", "https://", "name:")):
             result.append(link)
-        elif "/" in link:
-            # Looks like a DD path (contains slash) — add dd: prefix
-            result.append(f"dd:{link}")
         else:
             result.append(f"name:{link}")
     return result
@@ -478,16 +487,16 @@ def _process_attachments(
 
     try:
         with GraphClient() as gc:
-            # Also add path to the StandardName's source_paths list
+            # Also add path to the StandardName's source_paths list (dd: prefixed)
             gc.query(
                 """
                 UNWIND $batch AS b
                 MATCH (sn:StandardName {id: b.standard_name})
                 MATCH (src:IMASNode {id: b.source_id})
                 MERGE (src)-[:HAS_STANDARD_NAME]->(sn)
-                WITH sn, b.source_id AS path
-                WHERE NOT path IN coalesce(sn.source_paths, [])
-                SET sn.source_paths = coalesce(sn.source_paths, []) + path
+                WITH sn, 'dd:' + b.source_id AS uri
+                WHERE NOT uri IN coalesce(sn.source_paths, [])
+                SET sn.source_paths = coalesce(sn.source_paths, []) + uri
                 """,
                 batch=batch,
             )
@@ -797,9 +806,9 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
                     unit = raw_unit
 
                 # Inject physics_domain from DD (authoritative, like unit)
-                physics_domain = (
-                    source_item.get("physics_domain") if source_item else None
-                )
+                # Normalize empty string to None so coalesce works correctly
+                raw_domain = source_item.get("physics_domain") if source_item else None
+                physics_domain = raw_domain if raw_domain else None
 
                 # Inject COCOS metadata from DD (authoritative, like unit)
                 cocos_type = source_item.get("cocos_label") if source_item else None
@@ -839,7 +848,12 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
                         "kind": c.kind,
                         "tags": tags,
                         "links": links,
-                        "source_paths": c.dd_paths,  # graph schema key
+                        "source_paths": [
+                            encode_source_path(
+                                "dd" if state.source == "dd" else "signals", p
+                            )
+                            for p in (c.dd_paths or [])
+                        ],
                         "fields": c.grammar_fields,
                         "confidence": c.confidence,
                         "reason": c.reason,
@@ -998,6 +1012,11 @@ def _validate_via_isn(entry: dict) -> tuple[list[str], dict]:
     }
 
     # Map codex dict keys to ISN model fields
+    # Strip dd: prefix for ISN export (catalog uses bare DD paths)
+    raw_paths = entry.get("source_paths", [])
+    isn_dd_paths = [
+        strip_dd_prefix(p) for p in raw_paths if parse_source_path(p)[0] == "dd"
+    ]
     isn_dict: dict[str, Any] = {
         "name": entry.get("id", ""),
         "kind": entry.get("kind", "scalar"),
@@ -1005,8 +1024,8 @@ def _validate_via_isn(entry: dict) -> tuple[list[str], dict]:
         "documentation": entry.get("documentation", ""),
         "tags": entry.get("tags", []),
         "links": entry.get("links", []),
-        "physics_domain": entry.get("physics_domain", ""),
-        "dd_paths": entry.get("source_paths", []),
+        "physics_domain": entry.get("physics_domain") or "",
+        "dd_paths": isn_dd_paths,
     }
     # ISN metadata kind forbids unit field entirely
     if isn_dict["kind"] != "metadata":
@@ -1450,6 +1469,8 @@ async def persist_worker(state: StandardNameBuildState, **_kwargs) -> None:
         if source_paths and new_name_ids:
 
             def _cleanup_stale():
+                # Strip dd: prefix for IMASNode.id lookup
+                bare_paths = [strip_dd_prefix(p) for p in source_paths]
                 with GraphClient() as gc:
                     result = list(
                         gc.query(
@@ -1461,7 +1482,7 @@ async def persist_worker(state: StandardNameBuildState, **_kwargs) -> None:
                             DELETE r
                             RETURN count(r) AS detached
                             """,
-                            paths=list(source_paths),
+                            paths=bare_paths,
                             keep_names=list(new_name_ids),
                         )
                     )
