@@ -678,6 +678,7 @@ def claim_names_for_validation(limit: int = 50) -> tuple[str, list[dict[str, Any
                    sn.geometric_base AS geometric_base,
                    sn.object AS object,
                    sn.confidence AS confidence,
+                   sn.physics_domain AS physics_domain,
                    collect(DISTINCT src.id) AS source_ids
             """,
             token=token,

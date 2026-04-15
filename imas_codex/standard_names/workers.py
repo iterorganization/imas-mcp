@@ -1024,9 +1024,10 @@ def _validate_via_isn(entry: dict) -> tuple[list[str], dict]:
         "documentation": entry.get("documentation", ""),
         "tags": entry.get("tags", []),
         "links": entry.get("links", []),
-        "physics_domain": entry.get("physics_domain") or "",
         "dd_paths": isn_dd_paths,
     }
+    # ISN requires physics_domain — fall back to "general" when DD has no domain
+    isn_dict["physics_domain"] = entry.get("physics_domain") or "general"
     # ISN metadata kind forbids unit field entirely
     if isn_dict["kind"] != "metadata":
         unit = entry.get("unit") or "1"  # ISN requires '1' for dimensionless
