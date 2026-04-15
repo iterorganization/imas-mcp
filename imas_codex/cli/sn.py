@@ -1640,9 +1640,7 @@ def sn_review(
 
                     def _get_clusters() -> dict:
                         with GraphClient() as gc:
-                            return reconstruct_clusters_batch(
-                                [n["id"] for n in targets], gc
-                            )
+                            return reconstruct_clusters_batch(targets, gc)
 
                     clusters = await asyncio.to_thread(_get_clusters)
                     batches = group_into_review_batches(
