@@ -21,6 +21,7 @@ Plans validated against 62 existing standard names, current scoring architecture
 | Priority | Plan | Scope | Est. Agents |
 |----------|------|-------|-------------|
 | ~~**P1**~~ | [features/sn-bootstrap-loop.md](features/sn-bootstrap-loop.md) | ✅ Phase 1 (review CLI) complete, ✅ Phase 2 (bootstrap loop) complete, ⏳ Phase 3 blocked (needs ≥500 reviewed names) | 1 agent |
+| **P1.5** | [features/dd-node-kind-classification.md](features/dd-node-kind-classification.md) | Expand NodeCategory 3→6 values, clean vector space, unblock SN extraction for magnetics + broader IDSs | 1 agent |
 | **P2** | [features/dd-server-cleanup.md](features/dd-server-cleanup.md) | 3 surgical fixes: truncation count, migration API, fuzzy matcher | 1-3 agents |
 | **P3** | [features/search-quality-improvements.md](features/search-quality-improvements.md) | Careful ranking fixes (accessor de-ranking, IDS preference), evaluation alignment | 2 agents |
 | **P4** | [features/docs-refresh.md](features/docs-refresh.md) | Fix 7 stale docs, rewrite docs/README.md (17+ missing entries) | 1 agent |
