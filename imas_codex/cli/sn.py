@@ -1156,6 +1156,7 @@ def sn_reset(
     help="Also delete accepted names (dangerous — use with care)",
 )
 @click.option("--dry-run", is_flag=True, help="Preview without modifying the graph")
+@click.option("--force", "-f", is_flag=True, help="Skip confirmation prompt")
 def sn_clear(
     status: str | None,
     clear_all: bool,
@@ -1163,17 +1164,22 @@ def sn_clear(
     ids_filter: str | None,
     include_accepted: bool,
     dry_run: bool,
+    force: bool,
 ) -> None:
     """Delete standard names from the graph.
 
     Relationship-first safety model: HAS_STANDARD_NAME edges are removed
     before deleting nodes; scoped deletes only remove orphaned nodes.
 
+    Shows a preview count and requires confirmation before deleting.
+    Use --force to skip the confirmation prompt.
+
     \b
     Examples:
-      imas-codex sn clear --status drafted --dry-run
-      imas-codex sn clear --all --source dd --ids equilibrium --dry-run
+      imas-codex sn clear --status drafted              # Clear drafted names
+      imas-codex sn clear --all --source dd --ids equilibrium
       imas-codex sn clear --all --include-accepted --dry-run
+      imas-codex sn clear --all --force                 # Skip confirmation
     """
     if not status and not clear_all:
         raise click.UsageError("Provide --status <value> or --all to select names.")
@@ -1183,19 +1189,55 @@ def sn_clear(
     from imas_codex.standard_names.graph_ops import clear_standard_names
 
     try:
+        # Always preview first
         count = clear_standard_names(
             status_filter=status_filter,
             source_filter=source,
             ids_filter=ids_filter,
             include_accepted=include_accepted,
-            dry_run=dry_run,
+            dry_run=True,
         )
+
+        if count == 0:
+            console.print("No matching StandardName nodes to delete.")
+            return
+
+        # Build scope description for the confirmation message
+        scope_parts: list[str] = []
+        if status:
+            scope_parts.append(f"status={status}")
+        if source:
+            scope_parts.append(f"source={source}")
+        if ids_filter:
+            scope_parts.append(f"ids={ids_filter}")
+        if include_accepted:
+            scope_parts.append("including accepted")
+        scope = f" ({', '.join(scope_parts)})" if scope_parts else ""
+
+        if dry_run:
+            console.print(f"Would delete {count} StandardName node(s){scope}")
+            return
+
+        if not force:
+            click.confirm(
+                f"This will delete {count} StandardName node(s){scope}. Continue?",
+                abort=True,
+            )
+
+        deleted = clear_standard_names(
+            status_filter=status_filter,
+            source_filter=source,
+            ids_filter=ids_filter,
+            include_accepted=include_accepted,
+            dry_run=False,
+        )
+        console.print(f"Deleted {deleted} StandardName node(s)")
+
+    except click.Abort:
+        raise
     except Exception as e:
         console.print(f"[red]Clear error:[/red] {e}")
         raise SystemExit(1) from e
-
-    qualifier = "Would delete" if dry_run else "Deleted"
-    console.print(f"{qualifier} {count} StandardName node(s)")
 
 
 @sn.command("seed")
