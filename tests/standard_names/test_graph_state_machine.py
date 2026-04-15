@@ -736,6 +736,22 @@ class TestPipelineShouldStopFn:
         assert "should_stop_fn" in source
         assert "_downstream_should_stop" in source
 
+    def test_engine_stop_fn_ignores_budget(self):
+        """Supervised loop must use stop_requested, not budget_exhausted.
+
+        Without this, the supervised loop exits on cost-limit and cancel_all()
+        kills downstream workers before they process composed names.
+        """
+        import inspect
+
+        from imas_codex.standard_names.pipeline import run_sn_generate_engine
+
+        source = inspect.getsource(run_sn_generate_engine)
+        # Must pass stop_fn to run_discovery_engine
+        assert "stop_fn=" in source
+        # stop_fn must check stop_requested only, not should_stop (budget)
+        assert "stop_fn=lambda: state.stop_requested" in source
+
 
 # ---------------------------------------------------------------------------
 # Helpers

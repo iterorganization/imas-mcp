@@ -94,9 +94,13 @@ async def run_sn_generate_engine(
         ),
     ]
 
+    # The supervised loop's stop function must NOT check budget_exhausted.
+    # Budget only stops compose; downstream workers must run to completion.
+    # Individual workers use their own should_stop_fn for fine-grained control.
     await run_discovery_engine(
         state,
         workers,
         stop_event=stop_event,
         on_worker_status=on_worker_status,
+        stop_fn=lambda: state.stop_requested,
     )
