@@ -30,8 +30,9 @@ into the `standard_name_desc_embedding` vector index. This means:
 
 ## Verified Code Facts
 
-- **62 names in graph**: 21 accepted (seed/import), 41 drafted (LLM generate)
-- **review_worker exists**: `workers.py` — processes batches via `StandardNameQualityReviewBatch`
+- **Graph starts clean**: `sn clear --all --include-accepted --include-sources` wipes StandardName + StandardNameSource nodes
+- **Generate pipeline**: EXTRACT → COMPOSE → VALIDATE → CONSOLIDATE → PERSIST (no review step)
+- **Review is standalone**: `sn review` CLI runs a separate 3-layer pipeline (audits → LLM review → consolidation)
 - **6-dimension scoring**: grammar, semantic, documentation, convention,
   completeness, compliance (each 0-20, normalized to 0-1 via sum/120)
 - **Scoring criteria**: `sn_review_criteria.yaml`
@@ -40,6 +41,7 @@ into the `standard_name_desc_embedding` vector index. This means:
   `reviewer_comments`, `reviewed_at`, `review_tier`, `reviewer_model`
 - **Write semantics**: `write_standard_names()` uses coalesce — safe to re-run
 - **Embedding at generate time**: `persist_worker` calls `embed_descriptions_batch()`
+- **Embeddings are graph-local**: catalog YAML never contains embeddings
 - **Vector search**: `search_similar_names()` queries `standard_name_desc_embedding`
 - **Cluster grouping**: `enrichment.py` groups by `(primary_cluster × unit)`
 
@@ -390,35 +392,132 @@ New module: `imas_codex/standard_names/review/consolidation.py`
 
 ## Phase 2: Bootstrap Loop (Operational)
 
-Scoped batches make this tractable at scale. Run after Phase 1 implemented.
+Phase 1 (review tooling) is implemented. This phase bootstraps the standard names
+catalog from a clean slate using an investigative generate→inspect→improve loop.
 
-### Wave 1: Audit + review existing (62 names)
+### Prerequisites
+
 ```bash
-uv run imas-codex sn review --unreviewed --cost-limit 5.0
+# Clear all existing standard names (stale data from prior experiments)
+uv run imas-codex sn clear --all --include-accepted --include-sources
+uv run imas-codex sn status  # Confirm: 0 names
+```
+
+### Models
+
+| Stage | Model | Config Key |
+|-------|-------|------------|
+| Generate (compose) | `anthropic/claude-sonnet-4.6` | `[reasoning].model` |
+| Review (scoring) | `anthropic/claude-opus-4.6` | `[language].model` |
+
+### Step 1: Small-scope generation (2–3 IDS)
+
+Generate for well-understood IDS to establish baseline quality:
+
+```bash
+uv run imas-codex sn generate --source dd --ids equilibrium --cost-limit 2.0
+uv run imas-codex sn generate --source dd --ids core_profiles --cost-limit 2.0
+uv run imas-codex sn status
+```
+
+### Step 2: Inspect results
+
+Pause and examine the generated names before proceeding. Use multiple tools:
+
+```bash
+# CLI dry-run review (audits only, no LLM cost)
+uv run imas-codex sn review --dry-run
+
+# MCP tools for spot-checking
+# list_standard_names(tag="equilibrium")
+# fetch_standard_names("electron_temperature, safety_factor_q95")
+```
+
+Direct graph queries for deeper inspection:
+
+```cypher
+-- Distribution of grammar segments
+MATCH (sn:StandardName) WHERE sn.review_status = 'drafted'
+RETURN sn.physical_base, count(*) AS cnt ORDER BY cnt DESC LIMIT 20
+
+-- Check descriptions for physics depth
+MATCH (sn:StandardName) WHERE sn.review_status = 'drafted'
+RETURN sn.id, left(sn.description, 120) ORDER BY sn.id LIMIT 30
+
+-- Verify DD path linkage
+MATCH (imas:IMASNode)-[:HAS_STANDARD_NAME]->(sn:StandardName)
+RETURN sn.id, collect(imas.id)[..3] AS paths LIMIT 20
+```
+
+**Key questions to answer:**
+- Do names follow consistent grammar patterns?
+- Are descriptions physics-accurate with equations?
+- Are DD path linkages correct?
+- Any obvious duplicates or gaps?
+
+### Step 3: Review with LLM scoring
+
+```bash
+uv run imas-codex sn review --cost-limit 3.0
 uv run imas-codex sn status  # Check tier distribution
 ```
 
-### Wave 2: Generate + review by IDS (incremental)
-```bash
-for ids in edge_profiles summary mhd core_transport; do
-  uv run imas-codex sn generate --source dd --ids $ids --cost-limit 2.0
-  uv run imas-codex sn review --ids $ids --unreviewed --cost-limit 2.0
-done
+Inspect review results:
+
+```cypher
+-- Tier distribution
+MATCH (sn:StandardName) WHERE sn.review_tier IS NOT NULL
+RETURN sn.review_tier, count(*) AS cnt ORDER BY cnt DESC
+
+-- Low-scoring names with reviewer comments
+MATCH (sn:StandardName) WHERE sn.reviewer_score < 0.5
+RETURN sn.id, sn.reviewer_score, sn.review_tier, left(sn.reviewer_comments, 100)
+ORDER BY sn.reviewer_score ASC LIMIT 20
 ```
 
-### Wave 3: Regenerate poor-quality names
+### Step 4: Analyse and propose improvements
+
+Based on inspection findings, identify patterns:
+- Systematic grammar errors → prompt template fix
+- Missing physics context → enrichment/context injection improvement
+- Naming convention drift → grammar reference update
+- Poor descriptions → compose prompt improvement
+
+**CRITICAL: Request user confirmation before implementing any pipeline/prompt changes.**
+
+Document findings and proposed changes. This is a planning phase, not implementation.
+
+### Step 5: Iterate with broader scope
+
+After any pipeline improvements are confirmed and implemented:
+
 ```bash
-# Identify low-tier names from sn status, regenerate specific paths
-uv run imas-codex sn generate --source dd --paths "equilibrium/..." --force
-uv run imas-codex sn review --re-review --domain equilibrium --cost-limit 2.0
+# Expand to additional IDS
+uv run imas-codex sn generate --source dd --ids magnetics --cost-limit 2.0
+uv run imas-codex sn generate --source dd --ids edge_profiles --cost-limit 2.0
+uv run imas-codex sn generate --source dd --ids summary --cost-limit 2.0
+
+# Review new batch
+uv run imas-codex sn review --cost-limit 5.0
+uv run imas-codex sn status
 ```
 
-### Wave 4: Cross-domain consistency
-```bash
-# Full catalog audit + targeted re-review of flagged names
-uv run imas-codex sn review --re-review --cost-limit 10.0
-# Target: ≥1000 names, ≥80% good/outstanding tier
-```
+Repeat Steps 2–4 for each expansion wave.
+
+### Step 6: Cost summary
+
+Account all LLM costs per step and project to full DD rollout:
+
+| Metric | Value |
+|--------|-------|
+| Total leaf DD paths | ~61,366 across 87 IDS |
+| Paths per IDS (median) | ~300 |
+| Top IDS (summary) | 5,216 paths |
+
+Report actual costs from Steps 1+3+5, then extrapolate:
+- Cost per path (generate)
+- Cost per name (review)
+- Projected total for all 87 IDS
 
 ## Phase 3: Prompt Quality Improvements
 
