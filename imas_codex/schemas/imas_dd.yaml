@@ -259,11 +259,6 @@ enums:
           Typed descriptor with HAS_IDENTIFIER_SCHEMA relationship
           (coordinate_identifier, grid_type, etc.). Neither enriched, embedded,
           nor SN-extracted.
-      data:
-        description: >-
-          DEPRECATED — transitional value retained during migration from 3-value
-          to 6-value NodeCategory. Will be removed after migration completes.
-          Treated as equivalent to quantity in transitional consumer code.
       error:
         description: Uncertainty bound fields (_error_upper, _error_lower, _error_index)
       metadata:
