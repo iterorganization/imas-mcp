@@ -344,6 +344,7 @@ def sn_generate(
         limit=limit,
         compose_model=compose_model,
         name_only=name_only,
+        from_model=from_model,
     )
 
     if display:

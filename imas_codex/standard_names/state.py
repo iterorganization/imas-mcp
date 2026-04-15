@@ -39,9 +39,13 @@ class SNBuildState(DiscoveryStateBase):
     dry_run: bool = False
     force: bool = False  # Bypass source-level skip
     limit: int | None = None  # Cap on paths to process
+    from_model: str | None = None  # Regenerate names produced by this model (substring)
 
     # Model overrides (None = use defaults from pyproject.toml)
     compose_model: str | None = None  # Override for compose step (default: reasoning)
+
+    # Name-only mode: compose focuses on naming/grammar, preserves doc fields
+    name_only: bool = False
 
     # COCOS provenance (resolved once at extract start)
     dd_version: str | None = None

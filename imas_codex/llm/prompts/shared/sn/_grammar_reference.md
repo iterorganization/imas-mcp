@@ -43,6 +43,74 @@ Use any physics quantity in snake_case (e.g., temperature, density, magnetic_fie
   `passive_loop_current`, `flux_loop_voltage`, `poloidal_field_coil_current`.
 - **NEVER** use `_from_` — it implies causation (e.g., ❌ `current_from_passive_loop`).
 
+#### Process Attribution (`_due_to_`)
+
+Use the `_due_to_` pattern to separate process from base quantity:
+
+| ✅ Correct | ❌ Incorrect | Why |
+|------------|--------------|-----|
+| `plasma_current_due_to_bootstrap` | `bootstrap_current` | Process stuffed into physical_base |
+| `heating_power_due_to_ohmic` | `ohmic_heating_power` | Process stuffed into physical_base |
+| `electron_energy_due_to_collisions` | `collision_energy` | Process stuffed into physical_base |
+
+The process segment follows the base quantity with `_due_to_` as separator.
+All 26 process tokens from the vocabulary can be used in this pattern.
+
+#### Generic Bases Requiring Qualification
+
+These 12 physical bases are too generic to stand alone — they MUST be qualified
+with at least one of: subject, component, position, or `_of_` device reference.
+
+| Generic base | ❌ Invalid alone | ✅ Qualified examples |
+|--------------|------------------|----------------------|
+| `area` | `area` | `area_of_flux_loop`, `cross_section_area` |
+| `current` | `current` | `plasma_current`, `toroidal_current`, `passive_loop_current` |
+| `energy` | `energy` | `electron_energy`, `thermal_energy` |
+| `flux` | `flux` | `poloidal_magnetic_flux`, `particle_flux` |
+| `frequency` | `frequency` | `ion_cyclotron_frequency`, `collision_frequency` |
+| `number_density` | `number_density` | `electron_number_density`, `ion_number_density` |
+| `power` | `power` | `heating_power`, `radiated_power` |
+| `pressure` | `pressure` | `electron_pressure`, `magnetic_pressure` |
+| `temperature` | `temperature` | `electron_temperature`, `ion_temperature` |
+| `velocity` | `velocity` | `toroidal_velocity`, `radial_velocity` |
+| `voltage` | `voltage` | `loop_voltage`, `flux_loop_voltage` |
+| `volume` | `volume` | `plasma_volume`, `volume_of_flux_surface` |
+
+If the source context does not provide enough information to qualify the base,
+report this as a `vocab_gap` rather than using the bare generic base.
+
+#### Transformation Boundaries
+
+Only these 4 transformation tokens are valid in the grammar:
+
+| Token | Meaning | Example |
+|-------|---------|---------|
+| `flux_surface_averaged` | Average over flux surface | `flux_surface_averaged_electron_density` |
+| `line_integrated` | Integral along line of sight | `line_integrated_electron_density` |
+| `norm` | Normalized value | `norm_poloidal_magnetic_flux` |
+| `square_root` | Square root transform | `square_root_norm_poloidal_magnetic_flux` |
+
+**Do NOT invent transformation tokens** like `time_derivative_of`, `volume_averaged`,
+`second_derivative_of`, or `gradient_of`. These are valid physics operations but are
+NOT yet in the grammar.
+
+If you need a transformation not listed above, **report it as a `vocab_gap`** with
+`segment: "transformation"` and the needed token. Still generate the best name you
+can (typically base-only without the transformation) alongside the gap report.
+
+#### Grammar Ambiguities
+
+The `component` and `coordinate` segments share 12 overlapping tokens (e.g.,
+`radial`, `toroidal`, `poloidal`, `diamagnetic`, `parallel`, `perpendicular`).
+This creates parser ambiguity when both would apply.
+
+**If a name needs both component AND coordinate qualifiers:**
+- Report the affected name with a validation issue in `vocab_gaps`
+  using `segment: "grammar_ambiguity"` and describe the overlap
+- Generate the best single-qualifier name you can (prefer `component`)
+- Do NOT produce names that will fail grammar parse (e.g., names where
+  `diamagnetic` could be either component or coordinate)
+
 #### Processing Verbs
 
 Standard names describe the **physics quantity**, not how it was obtained.

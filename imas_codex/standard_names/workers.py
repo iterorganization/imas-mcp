@@ -98,6 +98,7 @@ async def extract_worker(state: SNBuildState, **_kwargs) -> None:
                     limit=state.limit or 500,
                     existing_names=existing,
                     on_status=_on_status,
+                    from_model=state.from_model,
                 )
         else:
             wlog.error("Unknown source: %s", state.source)
@@ -701,6 +702,23 @@ async def compose_worker(state: SNBuildState, **_kwargs) -> None:
                         "dd_version": batch.dd_version,
                     }
                 )
+
+                # In name-only mode, null out documentation fields so the
+                # coalesce write semantics in write_standard_names() preserve
+                # existing graph values.  Also clear review_input_hash to
+                # invalidate stale reviews.
+                if state.name_only:
+                    entry = candidates[-1]
+                    for doc_field in (
+                        "description",
+                        "documentation",
+                        "tags",
+                        "links",
+                        "validity_domain",
+                        "constraints",
+                    ):
+                        entry.pop(doc_field, None)
+                    entry["review_input_hash"] = None
 
             # Collect vocab gaps for later reporting
             if result.vocab_gaps:
@@ -1340,16 +1358,32 @@ async def validate_worker(state: SNBuildState, **_kwargs) -> None:
                             "validation_layer_summary": json.dumps(layer_summary),
                         }
                     )
-                except Exception:
+                except Exception as exc:
+                    exc_msg = str(exc).lower()
+                    issues: list[str] = []
+
+                    # Classify specific grammar ambiguities
+                    if "component" in exc_msg and "coordinate" in exc_msg:
+                        issues.append(
+                            f"grammar:ambiguity:component_coordinate_overlap: {name}"
+                        )
+                    elif "ambig" in exc_msg:
+                        issues.append(f"grammar:ambiguity:unclassified: {name}")
+                    else:
+                        issues.append(
+                            f"parse_error: grammar round-trip failed for {name}"
+                        )
+
                     wlog.debug(
-                        "Validation error for %r — marking with empty issues", name
+                        "Validation error for %r: %s — tagging with %s",
+                        name,
+                        exc_msg[:80],
+                        issues[0].split(":")[0],
                     )
                     results.append(
                         {
                             "id": name,
-                            "validation_issues": [
-                                f"parse_error: grammar round-trip failed for {name}"
-                            ],
+                            "validation_issues": issues,
                             "validation_layer_summary": json.dumps({}),
                         }
                     )
