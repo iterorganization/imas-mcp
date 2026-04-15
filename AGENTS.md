@@ -746,10 +746,13 @@ The LLM never provides the unit field.
 
 | Command | Purpose | Key Options |
 |---------|---------|-------------|
-| `sn generate` | Generate standard names from DD paths or facility signals via LLM pipeline | `--source {dd,signals}`, `--ids`, `--domain`, `--facility`, `--paths`, `--limit`, `-c/--cost-limit`, `--dry-run`, `--force`, `--reset-to` |
+| `sn generate` | Generate standard names from DD paths or facility signals via LLM pipeline | `--source {dd,signals}`, `--ids`, `--domain`, `--facility`, `--paths`, `--limit`, `-c/--cost-limit`, `--dry-run`, `--force`, `--reset-to`, `--from-model`, `--name-only` |
+| `sn review` | Score and tier existing drafted standard names via reviewer LLM | `--ids`, `--domain`, `--source`, `--limit`, `-c/--cost-limit`, `--dry-run`, `--force` |
+| `sn enrich` | Enrich existing standard names with documentation | `--ids`, `--domain`, `--status`, `-c/--cost-limit`, `--dry-run`, `--limit`, `--batch-size` |
 | `sn publish` | Export validated StandardName nodes to YAML catalog files | `--output-dir`, `--ids`, `--domain`, `--group-by {ids,domain,confidence}`, `--confidence-min`, `--catalog-dir`, `--create-pr` |
 | `sn import` | Import reviewed YAML catalog entries back into graph | `--catalog-dir` (required), `--tags`, `--dry-run`, `--check` |
 | `sn status` | Show standard name statistics from graph | — |
+| `sn gaps` | List grammar vocabulary gaps from composition | `--segment`, `--export {table,yaml}` |
 | `sn reset` | Reset standard names for re-processing | `--status` (required), `--to`, `--source`, `--ids`, `--dry-run` |
 | `sn clear` | Delete standard names from the graph (relationship-first safety model) | `--status`, `--all`, `--source`, `--ids`, `--include-accepted`, `--dry-run` |
 | `sn benchmark` | Benchmark LLM models on standard name generation quality | `--models`, `--ids`, `--reviewer-model`, `--max-candidates` |
@@ -808,6 +811,14 @@ Accepted names are catalog-authoritative and should rarely be deleted from the g
 filter. Accepts `extracted` or `drafted` as the target status. Useful for a clean re-run on a
 specific IDS without touching the rest of the graph.
 
+**`sn generate --from-model`** — Provenance-based regeneration filter. Selects only nodes whose
+`model` field contains the given substring (e.g. `--from-model gemini`). Useful for re-generating
+names produced by a specific model after benchmarking reveals a better alternative.
+
+**`sn generate --name-only`** — Name-only composition mode. The compose prompt focuses exclusively
+on naming and grammar — no documentation, description, or enrichment fields are generated. Faster
+and cheaper for bulk naming passes where enrichment will be added later via `sn enrich`.
+
 ### Write Semantics
 
 Two distinct write paths with different semantics:
@@ -844,6 +855,12 @@ by the model.
 each 0-20), `reviewer_comments`, `reviewed_at`, `review_tier` (outstanding/good/adequate/poor),
 `vocab_gap_detail` (JSON: segment/needed_token/reason), `catalog_commit_sha`,
 `validation_issues` (list of tagged strings), `validation_layer_summary` (JSON).
+
+**VocabGap nodes** record missing grammar tokens identified during composition when a needed
+vocabulary token does not exist in the ISN grammar. Linked via `HAS_SN_VOCAB_GAP` from IMASNode
+and FacilitySignal to the VocabGap node. Each VocabGap captures the segment type, needed token,
+and reason. Use `sn gaps` to view gaps as a table and `sn gaps --export yaml` to produce
+YAML suitable for ISN vocabulary issue filing.
 
 ### Architecture Boundary
 
