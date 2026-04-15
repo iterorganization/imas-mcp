@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from imas_codex.standard_names.sources.base import ExtractionBatch
-    from imas_codex.standard_names.state import SNBuildState
+    from imas_codex.standard_names.state import StandardNameBuildState
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +47,7 @@ _GRAMMAR_FIELDS = (
 # =============================================================================
 
 
-async def extract_worker(state: SNBuildState, **_kwargs) -> None:
+async def extract_worker(state: StandardNameBuildState, **_kwargs) -> None:
     """Extract candidate quantities from graph entities into batches.
 
     For DD source: queries IMASNode paths, groups by cluster/IDS/prefix.
@@ -432,7 +432,7 @@ def _enrich_batch_items(items: list[dict]) -> None:
 
 
 def _process_attachments(
-    attachments: list, state: SNBuildState, wlog: logging.LoggerAdapter
+    attachments: list, state: StandardNameBuildState, wlog: logging.LoggerAdapter
 ) -> None:
     """Attach DD paths to existing standard names without regeneration.
 
@@ -471,7 +471,7 @@ def _process_attachments(
         wlog.warning("Failed to process attachments", exc_info=True)
 
 
-async def compose_worker(state: SNBuildState, **_kwargs) -> None:
+async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
     """LLM-generate standard names from extracted batches.
 
     Uses acall_llm_structured() with system/user prompt split for
@@ -503,7 +503,7 @@ async def compose_worker(state: SNBuildState, **_kwargs) -> None:
     from imas_codex.llm.prompt_loader import render_prompt
     from imas_codex.settings import get_model
     from imas_codex.standard_names.context import build_compose_context
-    from imas_codex.standard_names.models import SNComposeBatch
+    from imas_codex.standard_names.models import StandardNameComposeBatch
 
     model = state.compose_model or get_model("reasoning")
     context = build_compose_context()
@@ -624,7 +624,7 @@ async def compose_worker(state: SNBuildState, **_kwargs) -> None:
             result, cost, tokens = await acall_llm_structured(
                 model=model,
                 messages=messages,
-                response_model=SNComposeBatch,
+                response_model=StandardNameComposeBatch,
             )
 
             state.compose_stats.cost += cost
@@ -682,7 +682,7 @@ async def compose_worker(state: SNBuildState, **_kwargs) -> None:
                 candidates.append(
                     {
                         "id": name_id,
-                        "source_type": "dd" if state.source == "dd" else "signal",
+                        "source_type": "dd" if state.source == "dd" else "signals",
                         "source_id": c.source_id,
                         "description": c.description,
                         "documentation": c.documentation,
@@ -720,17 +720,25 @@ async def compose_worker(state: SNBuildState, **_kwargs) -> None:
                         entry.pop(doc_field, None)
                     entry["review_input_hash"] = None
 
-            # Collect vocab gaps for later reporting
+            # Collect vocab gaps and persist immediately
             if result.vocab_gaps:
+                gap_dicts = []
                 for vg in result.vocab_gaps:
-                    state.stats.setdefault("vocab_gaps", []).append(
-                        {
-                            "source_id": vg.source_id,
-                            "segment": vg.segment,
-                            "needed_token": vg.needed_token,
-                            "reason": vg.reason,
-                        }
-                    )
+                    gap_dict = {
+                        "source_id": vg.source_id,
+                        "segment": vg.segment,
+                        "needed_token": vg.needed_token,
+                        "reason": vg.reason,
+                    }
+                    state.stats.setdefault("vocab_gaps", []).append(gap_dict)
+                    gap_dicts.append(gap_dict)
+
+                # Persist to graph immediately so gaps survive cost-limit interruption
+                from imas_codex.standard_names.graph_ops import write_vocab_gaps
+
+                source_type = "dd" if state.source == "dd" else "signals"
+                await asyncio.to_thread(write_vocab_gaps, gap_dicts, source_type)
+                wlog.debug("Persisted %d vocab gaps to graph", len(gap_dicts))
 
             # Process attachments — paths that map to existing names
             if result.attachments:
@@ -852,7 +860,7 @@ def _get_compose_context_for_review() -> dict[str, Any]:
     return build_compose_context()
 
 
-async def review_worker(state: SNBuildState, **_kwargs) -> None:
+async def review_worker(state: StandardNameBuildState, **_kwargs) -> None:
     """Cross-model review of composed standard name candidates.
 
     Uses a different LLM model family to review candidates produced by
@@ -1061,7 +1069,10 @@ async def _review_batch(
     """Review a single batch of candidates via LLM with unified scoring."""
     from imas_codex.discovery.base.llm import acall_llm_structured
     from imas_codex.llm.prompt_loader import render_prompt
-    from imas_codex.standard_names.models import SNQualityReviewBatch, SNReviewVerdict
+    from imas_codex.standard_names.models import (
+        StandardNameQualityReviewBatch,
+        StandardNameReviewVerdict,
+    )
 
     cal = calibration_entries or []
 
@@ -1110,7 +1121,7 @@ async def _review_batch(
     result, cost, tokens = await acall_llm_structured(
         model=model,
         messages=messages,
-        response_model=SNQualityReviewBatch,
+        response_model=StandardNameQualityReviewBatch,
     )
 
     entry_map: dict[str, dict] = {}
@@ -1133,7 +1144,7 @@ async def _review_batch(
         original["reviewer_comments"] = review.reasoning
         original["review_tier"] = review.scores.tier
 
-        if review.verdict == SNReviewVerdict.revise and review.revised_name:
+        if review.verdict == StandardNameReviewVerdict.revise and review.revised_name:
             revised_entry = dict(original)
             revised_entry["id"] = review.revised_name
             if review.revised_fields:
@@ -1153,7 +1164,7 @@ async def _review_batch(
         else:
             # All names are scored and persisted — no rejection
             scored.append(original)
-            if review.verdict == SNReviewVerdict.reject:
+            if review.verdict == StandardNameReviewVerdict.reject:
                 wlog.debug(
                     "Low score %r (%.2f/%.1f, %s): %s",
                     review.standard_name,
@@ -1258,7 +1269,7 @@ def _validate_via_isn(entry: dict) -> tuple[list[str], dict]:
     return issues, summary
 
 
-async def validate_worker(state: SNBuildState, **_kwargs) -> None:
+async def validate_worker(state: StandardNameBuildState, **_kwargs) -> None:
     """Validate composed names via ISN grammar checks (claim loop).
 
     Graph-primary: claims unvalidated StandardName nodes, runs ISN
@@ -1461,7 +1472,7 @@ def _convert_fields_to_grammar(fields: dict) -> dict:
 # =============================================================================
 
 
-async def consolidate_worker(state: SNBuildState, **_kwargs) -> None:
+async def consolidate_worker(state: StandardNameBuildState, **_kwargs) -> None:
     """Cross-batch consolidation: dedup, conflict detection, coverage accounting.
 
     Graph-primary: queries all validated StandardNames from graph, runs
@@ -1553,7 +1564,7 @@ async def consolidate_worker(state: SNBuildState, **_kwargs) -> None:
 # =============================================================================
 
 
-async def persist_worker(state: SNBuildState, **_kwargs) -> None:
+async def persist_worker(state: StandardNameBuildState, **_kwargs) -> None:
     """Compute embeddings for consolidated StandardNames (claim loop).
 
     Graph-primary: claims unembedded StandardNames, computes embeddings,

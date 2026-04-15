@@ -1,7 +1,7 @@
 """Tests for VocabGap infrastructure (Phase 2A–2D).
 
 Covers:
-- SNVocabGap / SNComposeBatch model parsing
+- StandardNameVocabGap / StandardNameComposeBatch model parsing
 - write_vocab_gaps dedup and relationship creation
 - Ambiguity detection tagging in validate_worker
 """
@@ -13,17 +13,17 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 # ---------------------------------------------------------------------------
-# Test 1: SNVocabGap model
+# Test 1: StandardNameVocabGap model
 # ---------------------------------------------------------------------------
 
 
 class TestSNVocabGapModel:
-    """SNVocabGap model validates and stores fields."""
+    """StandardNameVocabGap model validates and stores fields."""
 
     def test_basic_construction(self):
-        from imas_codex.standard_names.models import SNVocabGap
+        from imas_codex.standard_names.models import StandardNameVocabGap
 
-        gap = SNVocabGap(
+        gap = StandardNameVocabGap(
             source_id="equilibrium/time_slice/profiles_1d/psi",
             segment="transformation",
             needed_token="time_derivative_of",
@@ -37,22 +37,22 @@ class TestSNVocabGapModel:
     def test_all_fields_required(self):
         from pydantic import ValidationError
 
-        from imas_codex.standard_names.models import SNVocabGap
+        from imas_codex.standard_names.models import StandardNameVocabGap
 
         with pytest.raises(ValidationError):
-            SNVocabGap(source_id="path/a", segment="transformation")  # type: ignore[call-arg]
+            StandardNameVocabGap(source_id="path/a", segment="transformation")  # type: ignore[call-arg]
 
 
 # ---------------------------------------------------------------------------
-# Test 2: SNComposeBatch with vocab_gaps
+# Test 2: StandardNameComposeBatch with vocab_gaps
 # ---------------------------------------------------------------------------
 
 
 class TestSNComposeBatchVocabGaps:
-    """SNComposeBatch correctly parses vocab_gaps from LLM response."""
+    """StandardNameComposeBatch correctly parses vocab_gaps from LLM response."""
 
     def test_compose_batch_with_vocab_gaps(self):
-        from imas_codex.standard_names.models import SNComposeBatch
+        from imas_codex.standard_names.models import StandardNameComposeBatch
 
         data = {
             "candidates": [],
@@ -66,7 +66,7 @@ class TestSNComposeBatchVocabGaps:
                 }
             ],
         }
-        batch = SNComposeBatch(**data)
+        batch = StandardNameComposeBatch(**data)
         assert len(batch.vocab_gaps) == 1
         assert batch.vocab_gaps[0].segment == "transformation"
         assert batch.vocab_gaps[0].needed_token == "derivative_of"
@@ -75,13 +75,13 @@ class TestSNComposeBatchVocabGaps:
         )
 
     def test_compose_batch_vocab_gaps_default_empty(self):
-        from imas_codex.standard_names.models import SNComposeBatch
+        from imas_codex.standard_names.models import StandardNameComposeBatch
 
-        batch = SNComposeBatch(candidates=[], skipped=[])
+        batch = StandardNameComposeBatch(candidates=[], skipped=[])
         assert batch.vocab_gaps == []
 
     def test_compose_batch_multiple_gaps(self):
-        from imas_codex.standard_names.models import SNComposeBatch
+        from imas_codex.standard_names.models import StandardNameComposeBatch
 
         data = {
             "candidates": [],
@@ -101,7 +101,7 @@ class TestSNComposeBatchVocabGaps:
                 },
             ],
         }
-        batch = SNComposeBatch(**data)
+        batch = StandardNameComposeBatch(**data)
         assert len(batch.vocab_gaps) == 2
         assert {g.needed_token for g in batch.vocab_gaps} == {
             "derivative_of",
@@ -259,7 +259,7 @@ class TestWriteVocabGaps:
                 "reason": "missing subject token",
             }
         ]
-        self._call_write(gaps, mock_gc, source_type="signal")
+        self._call_write(gaps, mock_gc, source_type="signals")
 
         # Find the relationship query for FacilitySignal
         rel_calls = [

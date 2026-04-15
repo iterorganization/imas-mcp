@@ -31,7 +31,7 @@ def sample_standard_names() -> list[dict]:
         },
         {
             "id": "plasma_current",
-            "source_type": "signal",
+            "source_type": "signals",
             "source_id": "tcv:ip/measured",
             "physical_base": "current",
             "description": "Plasma current",

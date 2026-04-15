@@ -253,7 +253,7 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
 
     Each dict in *names* must have at least:
       - ``id``: the composed standard name string
-      - ``source_type``: "dd" or "signal"
+      - ``source_type``: "dd" or "signals"
       - ``source_id``: the originating path / signal ID
 
     Optional fields: ``physical_base``, ``subject``, ``component``,
@@ -399,7 +399,7 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
 
         # Create HAS_STANDARD_NAME relationships: entity → concept
         dd_names = [n for n in names if n.get("source_type") == "dd"]
-        signal_names = [n for n in names if n.get("source_type") == "signal"]
+        signal_names = [n for n in names if n.get("source_type") == "signals"]
 
         if dd_names:
             gc.query(
