@@ -71,6 +71,7 @@ def extract_dd_candidates(
     limit: int = 500,
     existing_names: set[str] | None = None,
     on_status: Callable[[str], None] | None = None,
+    from_model: str | None = None,
 ) -> list[ExtractionBatch]:
     """Extract candidate quantities from IMAS DD paths with enriched context.
 
@@ -85,6 +86,8 @@ def extract_dd_candidates(
         limit: Max paths to extract
         existing_names: Known standard names for dedup awareness
         on_status: Optional callback ``(text: str) -> None`` for progress updates
+        from_model: Only return paths whose existing StandardName was generated
+            by a model containing this substring
 
     Returns:
         List of ExtractionBatch objects grouped by (primary_cluster, unit)
@@ -129,6 +132,12 @@ def extract_dd_candidates(
         if domain_filter:
             where_parts.append("n.physics_domain = $domain_filter")
             params["domain_filter"] = domain_filter
+        if from_model:
+            where_parts.append(
+                "EXISTS { MATCH (n)-[:HAS_STANDARD_NAME]->(sn:StandardName) "
+                "WHERE sn.model CONTAINS $from_model }"
+            )
+            params["from_model"] = from_model
 
         where_clause = " AND ".join(where_parts)
         query = _ENRICHED_QUERY.format(where_clause=where_clause)
