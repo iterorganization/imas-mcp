@@ -599,6 +599,114 @@ def sn_status() -> None:
         console.print(f"[red]Error:[/red] {e}")
 
 
+@sn.command("gaps")
+@click.option(
+    "--segment",
+    default=None,
+    help="Filter by grammar segment (e.g., transformation, process)",
+)
+@click.option(
+    "--export",
+    "export_format",
+    type=click.Choice(["table", "yaml"]),
+    default="table",
+    show_default=True,
+    help="Output format (yaml for ISN issue filing)",
+)
+def sn_gaps(segment: str | None, export_format: str) -> None:
+    """List grammar vocabulary gaps identified during composition.
+
+    VocabGap nodes record missing grammar tokens found when the LLM
+    could not compose a valid standard name. Use --export yaml to
+    generate ISN issue filing data.
+
+    \b
+    Examples:
+      imas-codex sn gaps
+      imas-codex sn gaps --segment transformation
+      imas-codex sn gaps --export yaml
+    """
+    from rich.table import Table
+
+    from imas_codex.graph.client import GraphClient
+
+    with GraphClient() as gc:
+        # Query VocabGap nodes with source counts
+        params: dict = {}
+        where_clause = ""
+        if segment:
+            where_clause = "WHERE vg.segment = $segment"
+            params["segment"] = segment
+
+        results = list(
+            gc.query(
+                f"""
+                MATCH (vg:VocabGap)
+                {where_clause}
+                OPTIONAL MATCH (src)-[:HAS_SN_VOCAB_GAP]->(vg)
+                WITH vg, count(src) AS source_count,
+                     collect(DISTINCT labels(src)[0]) AS source_types
+                RETURN vg.id AS id,
+                       vg.segment AS segment,
+                       vg.needed_token AS needed_token,
+                       vg.example_count AS example_count,
+                       source_count,
+                       source_types,
+                       vg.first_seen_at AS first_seen,
+                       vg.last_seen_at AS last_seen
+                ORDER BY vg.segment, source_count DESC
+                """,
+                **params,
+            )
+        )
+
+    if not results:
+        console.print("[dim]No vocabulary gaps found.[/dim]")
+        if segment:
+            console.print(f"[dim]  (filtered by segment={segment})[/dim]")
+        return
+
+    if export_format == "yaml":
+        import yaml
+
+        export_data = []
+        for r in results:
+            entry = {
+                "segment": r["segment"],
+                "needed_token": r["needed_token"],
+                "example_count": r["example_count"] or r["source_count"],
+                "sources": r["source_types"],
+            }
+            export_data.append(entry)
+
+        console.print(yaml.dump(export_data, default_flow_style=False, sort_keys=False))
+        return
+
+    # Table format (default)
+    table = Table(title="Vocabulary Gaps")
+    table.add_column("Segment", style="cyan")
+    table.add_column("Needed Token", style="bold")
+    table.add_column("Sources", justify="right")
+    table.add_column("Example Count", justify="right")
+    table.add_column("First Seen")
+    table.add_column("Last Seen")
+
+    for r in results:
+        first_seen = str(r["first_seen"])[:10] if r["first_seen"] else "—"
+        last_seen = str(r["last_seen"])[:10] if r["last_seen"] else "—"
+        table.add_row(
+            r["segment"],
+            r["needed_token"],
+            str(r["source_count"]),
+            str(r["example_count"] or "—"),
+            first_seen,
+            last_seen,
+        )
+
+    console.print(table)
+    console.print(f"\n[dim]{len(results)} gaps found[/dim]")
+
+
 @sn.command("publish")
 @click.option(
     "--ids",
@@ -1625,3 +1733,237 @@ def sn_review(
             )
 
     asyncio.run(_run())
+
+
+@sn.command("enrich")
+@click.option("--ids", default=None, help="Scope to names linked to specific IDS")
+@click.option("--domain", default=None, help="Scope to physics domain")
+@click.option(
+    "--status",
+    "status_filter",
+    default=None,
+    help="Filter by review_status",
+)
+@click.option(
+    "-c",
+    "--cost-limit",
+    type=float,
+    default=5.0,
+    help="Max LLM spend in USD",
+)
+@click.option("--dry-run", is_flag=True, help="Show candidates without LLM calls")
+@click.option("--limit", type=int, default=None, help="Max names to enrich")
+@click.option("--batch-size", type=int, default=10, help="Names per LLM batch (max 20)")
+@click.option("-v", "--verbose", is_flag=True, help="Enable verbose logging")
+@click.option("-q", "--quiet", is_flag=True, help="Suppress progress output")
+def sn_enrich(
+    ids: str | None,
+    domain: str | None,
+    status_filter: str | None,
+    cost_limit: float,
+    dry_run: bool,
+    limit: int | None,
+    batch_size: int,
+    verbose: bool,
+    quiet: bool,
+) -> None:
+    """Enrich existing standard names with documentation.
+
+    \b
+    Takes names as fixed input and generates/improves documentation
+    fields (description, documentation, tags, links) using ALL linked
+    DD paths as context.
+
+    \b
+    Does NOT change: name, grammar fields, kind, or unit.
+    Clears review_input_hash so stale reviews are invalidated.
+
+    \b
+    Examples:
+      imas-codex sn enrich --ids equilibrium --cost-limit 3.0
+      imas-codex sn enrich --status drafted --dry-run
+      imas-codex sn enrich --limit 50 --batch-size 5
+    """
+    import asyncio
+
+    from imas_codex.cli.utils import setup_logging
+
+    setup_logging("DEBUG" if verbose else "WARNING")
+
+    from imas_codex.discovery.base.llm import set_litellm_offline_env
+
+    set_litellm_offline_env()
+
+    from imas_codex.standard_names.graph_ops import (
+        get_enrichment_candidates,
+        write_enrichment_results,
+    )
+
+    # ── Fetch candidates ──────────────────────────────────────────────
+    candidates = get_enrichment_candidates(
+        ids_filter=ids,
+        domain_filter=domain,
+        status_filter=status_filter,
+        limit=limit,
+    )
+
+    if not candidates:
+        console.print("[yellow]No enrichment candidates found[/yellow]")
+        return
+
+    if not quiet:
+        console.print("\n[bold]Standard Name Enrichment[/bold]")
+        console.print(f"  Candidates: {len(candidates)}")
+        if ids:
+            console.print(f"  IDS filter: {ids}")
+        if domain:
+            console.print(f"  Domain filter: {domain}")
+        if status_filter:
+            console.print(f"  Status filter: {status_filter}")
+        console.print(f"  Batch size: {min(batch_size, 20)}")
+        console.print(f"  Cost limit: ${cost_limit:.2f}")
+
+    if dry_run:
+        console.print(
+            f"\n[bold]Dry run:[/bold] {len(candidates)} names would be enriched:"
+        )
+        for c in candidates[:20]:
+            n_paths = len(c.get("dd_paths") or [])
+            has_docs = "✓" if c.get("documentation") else "✗"
+            console.print(f"  {c['id']} — {n_paths} linked paths, docs: {has_docs}")
+        if len(candidates) > 20:
+            console.print(f"  … and {len(candidates) - 20} more")
+        return
+
+    # ── Run async enrichment ──────────────────────────────────────────
+    batch_size = min(batch_size, 20)
+
+    async def _run_enrich() -> None:
+        from imas_codex.discovery.base.llm import acall_llm_structured
+        from imas_codex.llm.prompt_loader import render_prompt
+        from imas_codex.settings import get_model
+        from imas_codex.standard_names.models import SNEnrichBatch
+
+        model = get_model("language")
+        total_cost = 0.0
+        total_enriched = 0
+        total_batches = 0
+
+        # Render system prompt once
+        system_prompt = render_prompt("sn/enrich_system")
+
+        # Batch the candidates
+        batches = [
+            candidates[i : i + batch_size]
+            for i in range(0, len(candidates), batch_size)
+        ]
+
+        for batch_idx, batch in enumerate(batches):
+            if total_cost >= cost_limit:
+                if not quiet:
+                    console.print(
+                        f"[yellow]Cost limit reached: ${total_cost:.4f} >= ${cost_limit:.2f}[/yellow]"
+                    )
+                break
+
+            # Build per-name context for the user prompt
+            names_context = []
+            for c in batch:
+                grammar = {}
+                for seg in (
+                    "physical_base",
+                    "subject",
+                    "component",
+                    "coordinate",
+                    "position",
+                    "process",
+                    "geometric_base",
+                ):
+                    if c.get(seg):
+                        grammar[seg] = c[seg]
+
+                names_context.append(
+                    {
+                        "name": c["id"],
+                        "kind": c.get("kind", "scalar"),
+                        "unit": c.get("unit"),
+                        "description": c.get("description") or "",
+                        "documentation": c.get("documentation") or "",
+                        "tags": c.get("tags") or [],
+                        "links": c.get("links") or [],
+                        "validity_domain": c.get("validity_domain"),
+                        "constraints": c.get("constraints") or [],
+                        "grammar": grammar,
+                        "dd_paths": c.get("dd_paths") or [],
+                    }
+                )
+
+            user_prompt = render_prompt("sn/enrich_user", {"names": names_context})
+
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ]
+
+            try:
+                result = await acall_llm_structured(
+                    model=model,
+                    messages=messages,
+                    response_model=SNEnrichBatch,
+                    max_tokens=4096,
+                    temperature=0.3,
+                )
+                parsed, cost, tokens = result
+                total_cost += cost
+
+                # Match results back to candidates by name
+                result_map = {item.standard_name: item for item in parsed.items}
+                write_batch: list[dict] = []
+
+                for c in batch:
+                    enriched = result_map.get(c["id"])
+                    if enriched:
+                        write_batch.append(
+                            {
+                                "id": c["id"],
+                                "description": enriched.description,
+                                "documentation": enriched.documentation,
+                                "tags": enriched.tags or None,
+                                "links": enriched.links or None,
+                                "validity_domain": enriched.validity_domain,
+                                "constraints": enriched.constraints or None,
+                            }
+                        )
+                    else:
+                        logger.warning("LLM did not return result for %s", c["id"])
+
+                if write_batch:
+                    written = write_enrichment_results(write_batch)
+                    total_enriched += written
+
+                total_batches += 1
+
+                if not quiet:
+                    console.print(
+                        f"  Batch {batch_idx + 1}/{len(batches)}: "
+                        f"[green]{len(write_batch)}[/green] enriched, "
+                        f"cost ${cost:.4f} ({tokens} tokens)"
+                    )
+
+            except Exception as exc:
+                logger.error("Batch %d failed: %s", batch_idx + 1, exc)
+                if not quiet:
+                    console.print(
+                        f"  Batch {batch_idx + 1}/{len(batches)}: "
+                        f"[red]failed — {exc}[/red]"
+                    )
+
+        if not quiet:
+            console.print(
+                f"\n[bold]Enrichment complete:[/bold] "
+                f"[green]{total_enriched}[/green] names enriched "
+                f"in {total_batches} batches, "
+                f"total cost ${total_cost:.4f}"
+            )
+
+    asyncio.run(_run_enrich())
