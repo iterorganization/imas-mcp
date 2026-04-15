@@ -22,10 +22,10 @@ def _candidate(
     *,
     unit: str | None = "eV",
     kind: str = "scalar",
-    source_type: str = "dd",
+    source_types: list[str] | None = None,
     confidence: float = 0.9,
     tags: list[str] | None = None,
-    imas_paths: list[str] | None = None,
+    source_paths: list[str] | None = None,
     documentation: str = "",
     description: str = "",
 ) -> dict:
@@ -33,12 +33,12 @@ def _candidate(
     return {
         "id": name,
         "source_id": source_id,
-        "source_type": source_type,
+        "source_types": source_types or ["dd"],
         "unit": unit,
         "kind": kind,
         "confidence": confidence,
         "tags": tags or [],
-        "imas_paths": imas_paths or [],
+        "source_paths": source_paths or [],
         "documentation": documentation,
         "description": description,
     }
@@ -246,21 +246,21 @@ class TestDuplicateMerging:
             _candidate(
                 "electron_temperature",
                 "core/te",
-                imas_paths=["core_profiles/profiles_1d/electrons/temperature"],
+                source_paths=["core_profiles/profiles_1d/electrons/temperature"],
             ),
             _candidate(
                 "electron_temperature",
                 "core/te2",
-                imas_paths=["edge_profiles/profiles_1d/electrons/temperature"],
+                source_paths=["edge_profiles/profiles_1d/electrons/temperature"],
             ),
         ]
         result = consolidate_candidates(candidates)
 
         assert len(result.approved) == 1
-        paths = result.approved[0]["imas_paths"]
+        paths = result.approved[0]["source_paths"]
         assert "core_profiles/profiles_1d/electrons/temperature" in paths
         assert "edge_profiles/profiles_1d/electrons/temperature" in paths
-        # source_ids are also added as imas_paths
+        # source_ids are also added as source_paths
         assert "core/te" in paths
         assert "core/te2" in paths
 
@@ -464,7 +464,7 @@ class TestEdgeCases:
             {
                 "id": "electron_temperature",
                 "source_id": "core/te",
-                "source_type": "dd",
+                "source_types": ["dd"],
             },
         ]
         result = consolidate_candidates(candidates)
@@ -518,15 +518,15 @@ class TestMergeDuplicates:
 
     def test_paths_include_source_ids(self):
         group = [
-            _candidate("te", "core/te", imas_paths=["p1"]),
-            _candidate("te", "core/te2", imas_paths=["p2"]),
+            _candidate("te", "core/te", source_paths=["p1"]),
+            _candidate("te", "core/te2", source_paths=["p2"]),
         ]
         merged = _merge_duplicates(group)
 
-        assert "core/te" in merged["imas_paths"]
-        assert "core/te2" in merged["imas_paths"]
-        assert "p1" in merged["imas_paths"]
-        assert "p2" in merged["imas_paths"]
+        assert "core/te" in merged["source_paths"]
+        assert "core/te2" in merged["source_paths"]
+        assert "p1" in merged["source_paths"]
+        assert "p2" in merged["source_paths"]
 
     def test_empty_tags_handled(self):
         group = [
@@ -541,13 +541,13 @@ class TestMergeDuplicates:
 
     def test_empty_imas_paths_handled(self):
         group = [
-            _candidate("te", "core/te", imas_paths=None),
-            _candidate("te", "core/te2", imas_paths=["p1"]),
+            _candidate("te", "core/te", source_paths=None),
+            _candidate("te", "core/te2", source_paths=["p1"]),
         ]
-        group[0]["imas_paths"] = None
+        group[0]["source_paths"] = None
         merged = _merge_duplicates(group)
 
-        assert "p1" in merged["imas_paths"]
+        assert "p1" in merged["source_paths"]
 
 
 # =============================================================================

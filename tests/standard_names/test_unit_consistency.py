@@ -102,7 +102,7 @@ class TestCypherUsesHasUnit:
         mock_gc = MagicMock()
         mock_gc.query = MagicMock(return_value=[])
 
-        names = [{"id": "test_quantity", "unit": "eV", "source_type": "dd"}]
+        names = [{"id": "test_quantity", "unit": "eV", "source_types": ["dd"]}]
         with patch("imas_codex.standard_names.graph_ops.GraphClient") as MockGC:
             MockGC.return_value.__enter__ = MagicMock(return_value=mock_gc)
             MockGC.return_value.__exit__ = MagicMock(return_value=False)
@@ -121,7 +121,7 @@ class TestCypherUsesHasUnit:
         mock_gc = MagicMock()
         mock_gc.query = MagicMock(return_value=[])
 
-        names = [{"id": "test_quantity", "unit": "eV", "source_type": "dd"}]
+        names = [{"id": "test_quantity", "unit": "eV", "source_types": ["dd"]}]
         with patch("imas_codex.standard_names.graph_ops.GraphClient") as MockGC:
             MockGC.return_value.__enter__ = MagicMock(return_value=mock_gc)
             MockGC.return_value.__exit__ = MagicMock(return_value=False)
@@ -146,7 +146,7 @@ class TestCypherUsesHasUnit:
         mock_gc = MagicMock()
         mock_gc.query = MagicMock(return_value=[])
 
-        names = [{"id": "test_quantity", "unit": "eV", "source_type": "dd"}]
+        names = [{"id": "test_quantity", "unit": "eV", "source_types": ["dd"]}]
         with patch("imas_codex.standard_names.graph_ops.GraphClient") as MockGC:
             MockGC.return_value.__enter__ = MagicMock(return_value=mock_gc)
             MockGC.return_value.__exit__ = MagicMock(return_value=False)

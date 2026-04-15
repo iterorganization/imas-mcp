@@ -11,7 +11,7 @@ def sample_standard_names() -> list[dict]:
     return [
         {
             "id": "electron_temperature",
-            "source_type": "dd",
+            "source_types": ["dd"],
             "source_id": "core_profiles/profiles_1d/electrons/temperature",
             "physical_base": "temperature",
             "subject": "electron",
@@ -20,7 +20,7 @@ def sample_standard_names() -> list[dict]:
             "kind": "scalar",
             "tags": ["core_profiles", "kinetics"],
             "links": ["ion_temperature", "electron_density"],
-            "imas_paths": ["core_profiles/profiles_1d/electrons/temperature"],
+            "source_paths": ["core_profiles/profiles_1d/electrons/temperature"],
             "validity_domain": "core plasma",
             "constraints": ["T_e > 0"],
             "unit": "eV",
@@ -31,7 +31,7 @@ def sample_standard_names() -> list[dict]:
         },
         {
             "id": "plasma_current",
-            "source_type": "signals",
+            "source_types": ["signals"],
             "source_id": "tcv:ip/measured",
             "physical_base": "current",
             "description": "Plasma current",

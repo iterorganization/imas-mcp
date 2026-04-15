@@ -262,7 +262,7 @@ def graph_records_to_entries(
 ) -> list[StandardNamePublishEntry]:
     """Convert raw graph query dicts to :class:`StandardNamePublishEntry` objects.
 
-    Handles both schema-canonical properties (``source``, ``source_path``,
+    Handles both schema-canonical properties (``source_types``, ``source_path``,
     ``unit``) and legacy write properties (``source_type``,
     ``source_id``, ``units``).  Carries through all rich fields:
     documentation, links, dd_paths, constraints, validity_domain, kind.
@@ -273,8 +273,13 @@ def graph_records_to_entries(
         if not name:
             continue
 
-        # Source type (read from graph as 'source')
-        source = rec.get("source") or rec.get("source_type") or "dd"
+        # Source type (read from graph as 'source_types' list or legacy 'source')
+        source_types = rec.get("source_types") or []
+        source = (
+            source_types[0]
+            if source_types
+            else (rec.get("source") or rec.get("source_type") or "dd")
+        )
 
         # Resolve source ID (schema: source_path, legacy: source_id)
         source_id = rec.get("source_path") or rec.get("source_id") or ""
@@ -295,7 +300,7 @@ def graph_records_to_entries(
         documentation = rec.get("documentation")
         kind = rec.get("kind") or "scalar"
         links_raw = rec.get("links") or []
-        dd_paths_raw = rec.get("imas_paths") or []
+        dd_paths_raw = rec.get("source_paths") or []
         constraints_raw = rec.get("constraints") or []
         validity_domain = rec.get("validity_domain")
         cocos_transformation_type = rec.get("cocos_transformation_type")

@@ -11,7 +11,7 @@ def test_validation_issues_in_write_batch():
     # (actual graph write requires Neo4j — just verify dict construction)
     entry = {
         "id": "test_electron_temperature",
-        "source_type": "dd",
+        "source_types": ["dd"],
         "source_id": "core_profiles/profiles_1d/electrons/temperature",
         "validation_issues": ["[pydantic:name] test issue"],
         "validation_layer_summary": json.dumps(
@@ -25,7 +25,7 @@ def test_validation_issues_in_write_batch():
     # The batch dict construction should include these fields
     batch_item = {
         "id": entry["id"],
-        "source_type": entry.get("source_type"),
+        "source_types": entry.get("source_types"),
         "validation_issues": entry.get("validation_issues") or None,
         "validation_layer_summary": entry.get("validation_layer_summary"),
     }
@@ -48,7 +48,7 @@ def test_review_prompt_includes_validation_context():
                 "kind": "scalar",
                 "tags": [],
                 "grammar_fields": {},
-                "imas_paths": [],
+                "source_paths": [],
                 "validation_issues": ["[pydantic:name] test issue"],
             }
         ],

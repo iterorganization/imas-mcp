@@ -66,11 +66,11 @@ def _merge_duplicates(group: list[dict]) -> dict:
     # Union dd_paths
     all_paths: set[str] = set()
     for c in group:
-        all_paths.update(c.get("imas_paths") or [])
-        # Also add source_id as an imas_path
+        all_paths.update(c.get("source_paths") or [])
+        # Also add source_id as a source_path
         if c.get("source_id"):
             all_paths.add(c["source_id"])
-    merged["imas_paths"] = sorted(all_paths)
+    merged["source_paths"] = sorted(all_paths)
 
     # Union tags
     all_tags: set[str] = set()
@@ -118,7 +118,7 @@ def consolidate_candidates(
     Args:
         candidates: All composed candidate dicts from all batches.
             Each dict has at minimum: id (standard_name), source_id,
-            source_type, unit (may be None for dimensionless).
+            source_types, unit (may be None for dimensionless).
             May also have: kind, tags, description, documentation, etc.
         source_paths: Set of all source paths that were sent for composition.
             Used for coverage accounting. If None, coverage check is skipped.

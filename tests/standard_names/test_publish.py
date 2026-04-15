@@ -501,7 +501,7 @@ class TestGraphRecordsToEntries:
             {
                 "name": "plasma_current",
                 "description": "Ip",
-                "source_type": "dd",
+                "source_types": ["dd"],
                 "source_path": "equilibrium/global/ip",
                 "unit": "A",
                 "confidence": None,
@@ -565,7 +565,7 @@ class TestGraphRecordsToEntries:
                 "ids_name": "core_profiles",
                 "tags": ["core_profiles", "kinetics"],
                 "links": ["electron_temperature", "ion_density"],
-                "imas_paths": ["core_profiles/profiles_1d/ion/temperature"],
+                "source_paths": ["core_profiles/profiles_1d/ion/temperature"],
                 "constraints": ["T_i > 0"],
                 "validity_domain": "core plasma",
             }

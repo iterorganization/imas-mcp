@@ -3,11 +3,11 @@
 Supports two sources:
 - **ISN examples**: Shipped with ``imas-standard-names``, 42 entries
   covering core physics domains. Imported as ``review_status='accepted'``
-  and ``source_type='reference'``.
+  and ``source_types=['reference']``.
 - **WEST catalog**: ~305 entries from the ``west-standard-names`` repo.
   Requires two fixes (add ``physics_domain``, strip primary tags) before
   ISN validation. Imported as ``review_status='drafted'`` and
-  ``source_type='west'``.
+  ``source_types=['west']``.
 """
 
 from __future__ import annotations
@@ -167,7 +167,7 @@ def _entry_to_graph_dict(
     data: dict[str, Any],
     *,
     review_status: str,
-    source_type: str,
+    source_types: list[str],
 ) -> dict[str, Any]:
     """Convert a validated catalog-style dict to a ``write_standard_names`` dict.
 
@@ -179,8 +179,8 @@ def _entry_to_graph_dict(
         ``dd_paths``, ``validity_domain``, ``constraints``.
     review_status:
         Graph review_status to assign.
-    source_type:
-        Graph source_type to assign (``'reference'`` or ``'west'``).
+    source_types:
+        Graph source_types to assign (e.g., ``['reference']`` or ``['west']``).
     """
     grammar = _parse_grammar_fields(data["name"])
 
@@ -190,7 +190,7 @@ def _entry_to_graph_dict(
 
     return {
         "id": data["name"],
-        "source_type": source_type,
+        "source_types": source_types,
         # No source_id — these are external catalog entries, not DD/signal derived
         "description": data.get("description") or None,
         "documentation": data.get("documentation") or None,
@@ -198,7 +198,7 @@ def _entry_to_graph_dict(
         "unit": data.get("unit") or None,
         "tags": [str(t) for t in tags] if tags else None,
         "links": [str(lnk) for lnk in links] if links else None,
-        "imas_paths": list(dd_paths) if dd_paths else None,
+        "source_paths": list(dd_paths) if dd_paths else None,
         "validity_domain": data.get("validity_domain") or None,
         "constraints": list(data["constraints"]) if data.get("constraints") else None,
         "physics_domain": data.get("physics_domain") or None,
@@ -261,7 +261,7 @@ def load_isn_examples() -> tuple[list[dict[str, Any]], list[str]]:
 
             entries.append(
                 _entry_to_graph_dict(
-                    data, review_status="accepted", source_type="reference"
+                    data, review_status="accepted", source_types=["reference"]
                 )
             )
 
@@ -391,7 +391,9 @@ def load_west_catalog(
                 continue
 
             entries.append(
-                _entry_to_graph_dict(fixed, review_status="drafted", source_type="west")
+                _entry_to_graph_dict(
+                    fixed, review_status="drafted", source_types=["west"]
+                )
             )
 
     return entries, errors

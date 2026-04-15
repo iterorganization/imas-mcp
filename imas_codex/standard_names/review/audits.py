@@ -118,9 +118,9 @@ def compute_review_input_hash(name: dict[str, Any]) -> str:
     # COCOS transformation type
     parts.append(str(name.get("cocos_transformation_type") or ""))
 
-    # imas_paths (sorted)
-    imas_paths = name.get("imas_paths")
-    parts.append("|".join(sorted(imas_paths)) if imas_paths else "")
+    # source_paths (sorted)
+    source_paths = name.get("source_paths")
+    parts.append("|".join(sorted(source_paths)) if source_paths else "")
 
     payload = "\n".join(parts).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()

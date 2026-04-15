@@ -173,8 +173,8 @@ These names already exist in the catalog. Flag candidates that duplicate them:
 - **Kind**: {{ item.kind | default('N/A', true) }}
 - **Tags**: {{ item.tags | default([], true) | join(', ') }}
 - **Grammar Fields**: {{ item.grammar_fields or item.fields | default({}, true) }}
-{% if item.imas_paths %}
-- **IMAS Paths**: {{ item.imas_paths | join(', ') }}
+{% if item.source_paths %}
+- **IMAS Paths**: {{ item.source_paths | join(', ') }}
 {% endif %}
 {% if item.validation_issues %}
 **ISN Validation Issues:**

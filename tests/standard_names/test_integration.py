@@ -91,7 +91,7 @@ class TestEmbeddingCoverage:
         names = [
             {
                 "id": "electron_temperature",
-                "source_type": "dd",
+                "source_types": ["dd"],
                 "source_id": "core_profiles/profiles_1d/electrons/temperature",
                 "description": "Electron temperature",
                 # No embedding field — write should not touch it
@@ -126,12 +126,12 @@ class TestEmbeddingCoverage:
                 "unit": "eV",
                 "tags": ["core_profiles"],
                 "links": None,
-                "imas_paths": ["core_profiles/profiles_1d/electrons/temperature"],
+                "source_paths": ["core_profiles/profiles_1d/electrons/temperature"],
                 "validity_domain": "core plasma",
                 "constraints": ["T_e > 0"],
                 "physics_domain": "core_plasma_physics",
                 "review_status": "accepted",
-                "source_type": "dd",
+                "source_types": ["dd"],
                 "physical_base": "temperature",
                 "subject": "electron",
                 "component": None,
@@ -167,7 +167,7 @@ class TestEmbeddingCoverage:
         names = [
             {
                 "id": "electron_temperature",
-                "source_type": "dd",
+                "source_types": ["dd"],
                 "source_id": "core_profiles/profiles_1d/electrons/temperature",
                 "description": "Electron temperature",
                 "kind": "scalar",
@@ -206,7 +206,7 @@ class TestCoalesceSafety:
         ("kind", "b.kind, sn.kind"),
         ("tags", "b.tags, sn.tags"),
         ("links", "b.links, sn.links"),
-        ("imas_paths", "b.imas_paths, sn.imas_paths"),
+        ("source_paths", "b.source_paths, sn.source_paths"),
         ("validity_domain", "b.validity_domain, sn.validity_domain"),
         ("constraints", "b.constraints, sn.constraints"),
         ("confidence", "b.confidence, sn.confidence"),
@@ -229,11 +229,11 @@ class TestCoalesceSafety:
         mock_gc = MagicMock()
         mock_gc.query = MagicMock(return_value=[])
 
-        # Simulate a minimal sn-build write — only id and source_type provided
+        # Simulate a minimal sn-build write — only id and source_types provided
         names = [
             {
                 "id": "electron_temperature",
-                "source_type": "dd",
+                "source_types": ["dd"],
                 "source_id": "core_profiles/profiles_1d/electrons/temperature",
                 "description": "Electron temperature",
                 # review_status, documentation, kind, tags, etc. all absent/None
@@ -264,7 +264,7 @@ class TestCoalesceSafety:
         names = [
             {
                 "id": "plasma_current",
-                "source_type": "dd",
+                "source_types": ["dd"],
                 "source_id": "magnetics/method/0/ip",
             }
         ]
@@ -277,7 +277,7 @@ class TestCoalesceSafety:
         # All optional fields must appear in the batch (value may be None)
         required_keys = {
             "id",
-            "source_type",
+            "source_types",
             "physical_base",
             "subject",
             "component",
@@ -289,7 +289,7 @@ class TestCoalesceSafety:
             "kind",
             "tags",
             "links",
-            "imas_paths",
+            "source_paths",
             "validity_domain",
             "constraints",
             "unit",
@@ -312,7 +312,7 @@ class TestCoalesceSafety:
         )
 
         # Fields absent from source must be None (not some unexpected value)
-        for key in required_keys - {"id", "source_type"}:
+        for key in required_keys - {"id", "source_types"}:
             assert item[key] is None, (
                 f"Batch key '{key}' should be None when not supplied, got {item[key]!r}"
             )
@@ -330,7 +330,7 @@ class TestCoalesceSafety:
         names = [
             {
                 "id": "electron_temperature",
-                "source_type": "dd",
+                "source_types": ["dd"],
                 "source_id": "core_profiles/profiles_1d/electrons/temperature",
             }
         ]
@@ -373,12 +373,12 @@ class TestCoalesceSafety:
             "unit": "eV",
             "tags": ["core_profiles"],
             "links": None,
-            "imas_paths": ["core_profiles/profiles_1d/electrons/temperature"],
+            "source_paths": ["core_profiles/profiles_1d/electrons/temperature"],
             "validity_domain": "core plasma",
             "constraints": ["T_e > 0"],
             "physics_domain": "core_plasma_physics",
             "review_status": "accepted",
-            "source_type": "dd",
+            "source_types": ["dd"],
             "physical_base": "temperature",
             "subject": "electron",
             "component": None,
@@ -403,7 +403,7 @@ class TestCoalesceSafety:
         # --- Step 2: sn-build writes basic fields only ---
         basic_entry = {
             "id": "electron_temperature",
-            "source_type": "dd",
+            "source_types": ["dd"],
             "source_id": "core_profiles/profiles_1d/electrons/temperature",
             "description": "Electron temperature",
             # review_status, documentation, kind, validity_domain, constraints all absent
@@ -466,7 +466,7 @@ SAMPLE_GRAPH_RECORD: dict[str, Any] = {
     "kind": "scalar",
     "tags": [],
     "links": [],
-    "imas_paths": ["core_profiles/profiles_1d/electrons/temperature"],
+    "source_paths": ["core_profiles/profiles_1d/electrons/temperature"],
     "constraints": ["T_e > 0"],
     "validity_domain": "core plasma",
     "confidence": 0.95,
@@ -524,8 +524,8 @@ def _published_yaml_to_catalog(
 def _imported_dict_to_graph_record(d: dict[str, Any]) -> dict[str, Any]:
     """Normalise an imported graph dict for ``graph_records_to_entries``.
 
-    ``import_catalog`` returns dicts with ``id`` / ``units`` / ``imas_paths``
-    keys.  ``graph_records_to_entries`` reads ``imas_paths`` from graph
+    ``import_catalog`` returns dicts with ``id`` / ``units`` / ``source_paths``
+    keys.  ``graph_records_to_entries`` reads ``source_paths`` from graph
     records and maps to ``dd_paths`` on the Pydantic model.
     """
     rec = dict(d)
@@ -712,12 +712,12 @@ class TestRoundTripIdempotence:
             "unit",
             "tags",
             "links",
-            "imas_paths",
+            "source_paths",
             "validity_domain",
             "constraints",
             "physics_domain",
             "review_status",
-            "source_type",
+            "source_types",
         )
         for e1, e2 in zip(result1.entries, result2.entries, strict=True):
             for field in compared_fields:
@@ -734,7 +734,7 @@ class TestRoundTripIdempotence:
 # Rich sample data shared across E2E tests
 _RICH_SN_RECORD = {
     "id": "electron_temperature",
-    "source_type": "dd",
+    "source_types": ["dd"],
     "source_id": "core_profiles/profiles_1d/electrons/temperature",
     "ids_name": "core_profiles",
     "description": "Electron temperature in the core plasma",
@@ -746,7 +746,7 @@ _RICH_SN_RECORD = {
     "unit": "eV",
     "tags": ["spatial-profile"],
     "links": ["name:ion_temperature"],
-    "imas_paths": ["core_profiles/profiles_1d/electrons/temperature"],
+    "source_paths": ["core_profiles/profiles_1d/electrons/temperature"],
     "validity_domain": "core plasma",
     "constraints": ["T_e > 0"],
     "physical_base": "temperature",
@@ -768,7 +768,7 @@ _GRAPH_QUERY_ROW = {
     "unit": "eV",
     "tags": ["spatial-profile"],
     "links": ["name:ion_temperature"],
-    "imas_paths": ["core_profiles/profiles_1d/electrons/temperature"],
+    "source_paths": ["core_profiles/profiles_1d/electrons/temperature"],
     "constraints": ["T_e > 0"],
     "validity_domain": "core plasma",
     "confidence": 0.95,
@@ -903,8 +903,8 @@ class TestE2ERoundTrip:
         entry = result.entries[0]
         # catalog 'unit' passes through as graph 'unit'
         assert entry["unit"] == "eV"
-        # catalog 'dd_paths' → graph 'imas_paths'
-        assert entry["imas_paths"] == [
+        # catalog 'dd_paths' → graph 'source_paths'
+        assert entry["source_paths"] == [
             "core_profiles/profiles_1d/electrons/temperature"
         ]
         assert "dd_paths" not in entry
@@ -973,7 +973,7 @@ class TestE2ERoundTrip:
         assert "documentation" in imported
         assert imported["kind"] == "scalar"
         assert imported["unit"] == "eV"
-        assert imported["imas_paths"] == [
+        assert imported["source_paths"] == [
             "core_profiles/profiles_1d/electrons/temperature"
         ]
         assert imported["validity_domain"] == "core plasma"

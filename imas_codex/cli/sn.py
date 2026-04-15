@@ -582,9 +582,9 @@ def sn_status() -> None:
                 """
                 MATCH (sn:StandardName)
                 RETURN count(sn) AS total,
-                       count(CASE WHEN sn.source_type = 'dd' THEN 1 END) AS from_dd,
-                       count(CASE WHEN sn.source_type = 'signals' THEN 1 END) AS from_signals,
-                       count(CASE WHEN sn.source_type = 'manual' THEN 1 END) AS from_manual
+                       count(CASE WHEN 'dd' IN sn.source_types THEN 1 END) AS from_dd,
+                       count(CASE WHEN 'signals' IN sn.source_types THEN 1 END) AS from_signals,
+                       count(CASE WHEN 'manual' IN sn.source_types THEN 1 END) AS from_manual
             """
             )
             row = next(iter(result), None)
@@ -1594,7 +1594,7 @@ def sn_review(
                                sn.kind AS kind,
                                coalesce(u.id, sn.unit) AS unit,
                                sn.tags AS tags, sn.links AS links,
-                               sn.imas_paths AS imas_paths,
+                               sn.source_paths AS source_paths,
                                sn.physical_base AS physical_base,
                                sn.subject AS subject,
                                sn.component AS component,
@@ -1609,7 +1609,7 @@ def sn_review(
                                sn.embedding AS embedding,
                                sn.review_tier AS review_tier,
                                sn.link_status AS link_status,
-                               sn.source_type AS source_type,
+                               sn.source_types AS source_types,
                                sn.geometric_base AS geometric_base
                         """
                     )
@@ -1659,7 +1659,9 @@ def sn_review(
                 targets = [
                     n
                     for n in targets
-                    if any(p.startswith(ids + "/") for p in (n.get("imas_paths") or []))
+                    if any(
+                        p.startswith(ids + "/") for p in (n.get("source_paths") or [])
+                    )
                 ]
             if domain:
                 targets = [n for n in targets if n.get("physics_domain") == domain]

@@ -448,7 +448,7 @@ def _process_attachments(
 
     try:
         with GraphClient() as gc:
-            # Also add path to the StandardName's imas_paths list
+            # Also add path to the StandardName's source_paths list
             gc.query(
                 """
                 UNWIND $batch AS b
@@ -456,8 +456,8 @@ def _process_attachments(
                 MATCH (src:IMASNode {id: b.source_id})
                 MERGE (src)-[:HAS_STANDARD_NAME]->(sn)
                 WITH sn, b.source_id AS path
-                WHERE NOT path IN coalesce(sn.imas_paths, [])
-                SET sn.imas_paths = coalesce(sn.imas_paths, []) + path
+                WHERE NOT path IN coalesce(sn.source_paths, [])
+                SET sn.source_paths = coalesce(sn.source_paths, []) + path
                 """,
                 batch=batch,
             )
@@ -682,14 +682,14 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
                 candidates.append(
                     {
                         "id": name_id,
-                        "source_type": "dd" if state.source == "dd" else "signals",
+                        "source_types": ["dd"] if state.source == "dd" else ["signals"],
                         "source_id": c.source_id,
                         "description": c.description,
                         "documentation": c.documentation,
                         "kind": c.kind,
                         "tags": tags,
                         "links": links,
-                        "imas_paths": c.dd_paths,  # graph schema key
+                        "source_paths": c.dd_paths,  # graph schema key
                         "fields": c.grammar_fields,
                         "confidence": c.confidence,
                         "reason": c.reason,
@@ -1217,7 +1217,7 @@ def _validate_via_isn(entry: dict) -> tuple[list[str], dict]:
         "tags": entry.get("tags", []),
         "links": entry.get("links", []),
         "physics_domain": entry.get("physics_domain", ""),
-        "dd_paths": entry.get("imas_paths", []),
+        "dd_paths": entry.get("source_paths", []),
     }
     # ISN metadata kind forbids unit field entirely
     if isn_dict["kind"] != "metadata":
@@ -1648,12 +1648,12 @@ async def persist_worker(state: StandardNameBuildState, **_kwargs) -> None:
                     MATCH (sn:StandardName)
                     WHERE sn.embedded_at IS NOT NULL
                       AND sn.review_status = 'drafted'
-                    RETURN sn.id AS id, sn.imas_paths AS imas_paths
+                    RETURN sn.id AS id, sn.source_paths AS source_paths
                     """
                 )
                 for r in results:
                     new_name_ids.add(r["id"])
-                    for p in r["imas_paths"] or []:
+                    for p in r["source_paths"] or []:
                         source_paths.add(p)
 
         await asyncio.to_thread(_get_recent_names)

@@ -120,8 +120,8 @@ def _catalog_entry_to_dict(entry: Any, *, extra: dict | None = None) -> dict[str
     dd_paths = list(entry.dd_paths) if entry.dd_paths else None
     constraints = list(entry.constraints) if entry.constraints else None
 
-    # Determine source_type from presence of dd_paths
-    source_type = "dd" if dd_paths else "manual"
+    # Determine source_types from presence of dd_paths
+    source_types = ["dd"] if dd_paths else ["manual"]
 
     result = {
         "id": entry.name,
@@ -131,12 +131,12 @@ def _catalog_entry_to_dict(entry: Any, *, extra: dict | None = None) -> dict[str
         "unit": str(entry.unit) if entry.unit else None,
         "tags": tags or None,
         "links": links or None,
-        "imas_paths": dd_paths or None,
+        "source_paths": dd_paths or None,
         "validity_domain": entry.validity_domain or None,
         "constraints": constraints or None,
         "physics_domain": entry.physics_domain or None,
         "review_status": "accepted",
-        "source_type": source_type,
+        "source_types": source_types,
         # Grammar fields
         "physical_base": grammar["physical_base"],
         "subject": grammar["subject"],
@@ -189,7 +189,7 @@ def _write_catalog_entries(
                 sn.unit = b.unit,
                 sn.tags = b.tags,
                 sn.links = b.links,
-                sn.imas_paths = b.imas_paths,
+                sn.source_paths = b.source_paths,
                 sn.validity_domain = b.validity_domain,
                 sn.constraints = b.constraints,
                 sn.physics_domain = b.physics_domain,
@@ -203,7 +203,7 @@ def _write_catalog_entries(
                 sn.coordinate = b.coordinate,
                 sn.position = b.position,
                 sn.process = b.process,
-                sn.source_type = coalesce(b.source_type, sn.source_type),
+                sn.source_types = coalesce(b.source_types, sn.source_types),
                 sn.created_at = coalesce(sn.created_at, datetime()),
                 sn.embedding = coalesce(sn.embedding, null),
                 sn.embedded_at = coalesce(sn.embedded_at, null),
@@ -252,8 +252,8 @@ def _write_catalog_entries(
         # Create HAS_STANDARD_NAME relationships from dd_paths
         dd_batch = []
         for e in entries:
-            if e.get("imas_paths"):
-                for path in e["imas_paths"]:
+            if e.get("source_paths"):
+                for path in e["source_paths"]:
                     dd_batch.append({"id": e["id"], "source_id": path})
 
         if dd_batch:
@@ -378,7 +378,7 @@ _CHECK_FIELDS = (
     "kind",
     "unit",
     "tags",
-    "imas_paths",
+    "source_paths",
     "validity_domain",
     "constraints",
     "physics_domain",
@@ -458,7 +458,7 @@ def check_catalog(
                    sn.kind AS kind,
                    sn.unit AS unit,
                    sn.tags AS tags,
-                   sn.imas_paths AS imas_paths,
+                   sn.source_paths AS source_paths,
                    sn.validity_domain AS validity_domain,
                    sn.constraints AS constraints,
                    sn.physics_domain AS physics_domain,

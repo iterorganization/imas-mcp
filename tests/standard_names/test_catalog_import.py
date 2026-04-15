@@ -202,35 +202,35 @@ class TestFieldMapping:
         assert et_entry["unit"] == "eV"
 
     def test_maps_ids_paths_to_imas_paths(self, catalog_dir: Path) -> None:
-        """Catalog 'dd_paths' should map to graph 'imas_paths' key."""
+        """Catalog 'dd_paths' should map to graph 'source_paths' key."""
         from imas_codex.standard_names.catalog_import import import_catalog
 
         result = import_catalog(catalog_dir, dry_run=True)
 
         et_entry = next(e for e in result.entries if e["id"] == "electron_temperature")
-        assert et_entry["imas_paths"] == [
+        assert et_entry["source_paths"] == [
             "core_profiles/profiles_1d/electrons/temperature"
         ]
 
     def test_source_type_dd_for_entries_with_paths(self, catalog_dir: Path) -> None:
-        """Entries with dd_paths should have source_type='dd'."""
+        """Entries with dd_paths should have source_types=['dd']."""
         from imas_codex.standard_names.catalog_import import import_catalog
 
         result = import_catalog(catalog_dir, dry_run=True)
 
         et_entry = next(e for e in result.entries if e["id"] == "electron_temperature")
-        assert et_entry["source_type"] == "dd"
+        assert et_entry["source_types"] == ["dd"]
 
-    def test_source_type_manual_for_entries_without_paths(
+    def test_source_types_manual_for_entries_without_paths(
         self, catalog_dir: Path
     ) -> None:
-        """Entries without dd_paths should have source_type='manual'."""
+        """Entries without dd_paths should have source_types=['manual']."""
         from imas_codex.standard_names.catalog_import import import_catalog
 
         result = import_catalog(catalog_dir, dry_run=True)
 
         pc_entry = next(e for e in result.entries if e["id"] == "plasma_current")
-        assert pc_entry["source_type"] == "manual"
+        assert pc_entry["source_types"] == ["manual"]
 
     def test_maps_kind(self, catalog_dir: Path) -> None:
         """Catalog 'kind' field should be mapped correctly."""
@@ -249,7 +249,7 @@ class TestFieldMapping:
 
         # plasma_current has no dd_paths, empty tags, empty links
         pc_entry = next(e for e in result.entries if e["id"] == "plasma_current")
-        assert pc_entry["imas_paths"] is None
+        assert pc_entry["source_paths"] is None
         assert pc_entry["tags"] is None
         assert pc_entry["links"] is None
 
@@ -435,12 +435,12 @@ class TestWriteCatalogEntries:
                 "unit": "eV",
                 "tags": ["core"],
                 "links": None,
-                "imas_paths": None,
+                "source_paths": None,
                 "validity_domain": "core",
                 "constraints": None,
                 "physics_domain": "core_plasma_physics",
                 "review_status": "accepted",
-                "source_type": "dd",
+                "source_types": ["dd"],
                 "physical_base": "temperature",
                 "subject": "electron",
                 "component": None,
@@ -488,12 +488,12 @@ class TestWriteCatalogEntries:
                 "unit": "eV",
                 "tags": None,
                 "links": None,
-                "imas_paths": None,
+                "source_paths": None,
                 "validity_domain": None,
                 "constraints": None,
                 "physics_domain": None,
                 "review_status": "accepted",
-                "source_type": "dd",
+                "source_types": ["dd"],
                 "physical_base": "temperature",
                 "subject": "electron",
                 "component": None,
@@ -515,7 +515,7 @@ class TestWriteCatalogEntries:
         assert "MERGE (sn)-[:HAS_UNIT]->(u)" in unit_cypher
 
     def test_dd_relationship_from_imas_paths(self) -> None:
-        """Entries with imas_paths should create HAS_STANDARD_NAME from IMASNode."""
+        """Entries with source_paths should create HAS_STANDARD_NAME from IMASNode."""
         mock_gc = MagicMock()
         mock_gc.query = MagicMock(return_value=[])
 
@@ -528,12 +528,12 @@ class TestWriteCatalogEntries:
                 "unit": "eV",
                 "tags": None,
                 "links": None,
-                "imas_paths": ["core_profiles/profiles_1d/electrons/temperature"],
+                "source_paths": ["core_profiles/profiles_1d/electrons/temperature"],
                 "validity_domain": None,
                 "constraints": None,
                 "physics_domain": None,
                 "review_status": "accepted",
-                "source_type": "dd",
+                "source_types": ["dd"],
                 "physical_base": "temperature",
                 "subject": "electron",
                 "component": None,
@@ -555,7 +555,7 @@ class TestWriteCatalogEntries:
         assert "MERGE (src)-[:HAS_STANDARD_NAME]->(sn)" in dd_cypher
 
     def test_no_relationships_for_empty_fields(self) -> None:
-        """Entries without units/imas_paths should not create those relationships."""
+        """Entries without units/source_paths should not create those relationships."""
         mock_gc = MagicMock()
         mock_gc.query = MagicMock(return_value=[])
 
@@ -568,12 +568,12 @@ class TestWriteCatalogEntries:
                 "unit": None,
                 "tags": None,
                 "links": None,
-                "imas_paths": None,
+                "source_paths": None,
                 "validity_domain": None,
                 "constraints": None,
                 "physics_domain": None,
                 "review_status": "accepted",
-                "source_type": "manual",
+                "source_types": ["manual"],
                 "physical_base": None,
                 "subject": None,
                 "component": None,
@@ -652,12 +652,12 @@ class TestVersionTracking:
                 "unit": "eV",
                 "tags": None,
                 "links": None,
-                "imas_paths": None,
+                "source_paths": None,
                 "validity_domain": None,
                 "constraints": None,
                 "physics_domain": None,
                 "review_status": "accepted",
-                "source_type": "dd",
+                "source_types": ["dd"],
                 "physical_base": "temperature",
                 "subject": "electron",
                 "component": None,
@@ -699,12 +699,12 @@ class TestVersionTracking:
                 "unit": None,
                 "tags": None,
                 "links": None,
-                "imas_paths": None,
+                "source_paths": None,
                 "validity_domain": None,
                 "constraints": None,
                 "physics_domain": None,
                 "review_status": "accepted",
-                "source_type": "manual",
+                "source_types": ["manual"],
                 "physical_base": None,
                 "subject": None,
                 "component": None,
@@ -803,12 +803,12 @@ class TestImportIdempotency:
                 "kind",
                 "unit",
                 "tags",
-                "imas_paths",
+                "source_paths",
                 "validity_domain",
                 "constraints",
                 "physics_domain",
                 "review_status",
-                "source_type",
+                "source_types",
                 "physical_base",
                 "subject",
                 "component",
@@ -835,7 +835,7 @@ class TestCheckMode:
                 "kind": "scalar",
                 "unit": "eV",
                 "tags": None,
-                "imas_paths": ["core_profiles/profiles_1d/electrons/temperature"],
+                "source_paths": ["core_profiles/profiles_1d/electrons/temperature"],
                 "validity_domain": "core plasma",
                 "constraints": ["T_e > 0"],
                 "physics_domain": "core_plasma_physics",
@@ -848,7 +848,7 @@ class TestCheckMode:
                 "kind": "scalar",
                 "unit": "A",
                 "tags": None,
-                "imas_paths": None,
+                "source_paths": None,
                 "validity_domain": None,
                 "constraints": None,
                 "physics_domain": "equilibrium",
@@ -914,7 +914,7 @@ class TestCheckMode:
                 "kind": "scalar",
                 "unit": "eV",
                 "tags": None,
-                "imas_paths": ["core_profiles/profiles_1d/electrons/temperature"],
+                "source_paths": ["core_profiles/profiles_1d/electrons/temperature"],
                 "validity_domain": "core plasma",
                 "constraints": ["T_e > 0"],
                 "physics_domain": "core_plasma_physics",
@@ -927,7 +927,7 @@ class TestCheckMode:
                 "kind": "scalar",
                 "unit": "A",
                 "tags": None,
-                "imas_paths": None,
+                "source_paths": None,
                 "validity_domain": None,
                 "constraints": None,
                 "physics_domain": "equilibrium",
@@ -940,7 +940,7 @@ class TestCheckMode:
                 "kind": "scalar",
                 "unit": "m^-3",
                 "tags": None,
-                "imas_paths": None,
+                "source_paths": None,
                 "validity_domain": None,
                 "constraints": None,
                 "physics_domain": "core_plasma_physics",
@@ -978,7 +978,7 @@ class TestCheckMode:
                 "kind": "scalar",
                 "unit": "keV",  # differs from catalog (eV)
                 "tags": None,
-                "imas_paths": ["core_profiles/profiles_1d/electrons/temperature"],
+                "source_paths": ["core_profiles/profiles_1d/electrons/temperature"],
                 "validity_domain": "core plasma",
                 "constraints": ["T_e > 0"],
                 "physics_domain": "core_plasma_physics",
@@ -991,7 +991,7 @@ class TestCheckMode:
                 "kind": "scalar",
                 "unit": "A",
                 "tags": None,
-                "imas_paths": None,
+                "source_paths": None,
                 "validity_domain": None,
                 "constraints": None,
                 "physics_domain": "equilibrium",
@@ -1173,15 +1173,14 @@ class TestPublishImportRoundTrip:
         # 4. Verify all catalog fields map correctly into graph dict shape
         assert entry["id"] == "electron_temperature"
         assert entry["unit"] == "eV"
-        assert entry["imas_paths"] == [
+        assert entry["source_paths"] == [
             "core_profiles/profiles_1d/electrons/temperature"
         ]
         assert entry["review_status"] == "accepted"
-        assert entry["source_type"] == "dd"
+        assert entry["source_types"] == ["dd"]
         assert entry["physics_domain"] == "core_plasma_physics"
         assert entry["validity_domain"] == "core plasma"
         assert entry["constraints"] == ["T_e > 0"]
-        # Grammar-parsed fields should be populated
         assert entry["physical_base"] == "temperature"
         assert entry["subject"] == "electron"
 
@@ -1217,7 +1216,7 @@ class TestPublishImportRoundTrip:
         graph_records = [
             {
                 "name": "electron_temperature",
-                "source_type": "dd",
+                "source_types": ["dd"],
                 "source_id": "core_profiles/profiles_1d/electrons/temperature",
                 "unit": "eV",
                 "description": "Electron temperature",
@@ -1262,6 +1261,6 @@ class TestPublishImportRoundTrip:
         # Verify key fields survive the full publish→review→import cycle
         assert entry["id"] == "electron_temperature"
         assert entry["unit"] == "eV"
-        assert entry["source_type"] == "dd"
+        assert entry["source_types"] == ["dd"]
         assert entry["review_status"] == "accepted"
         assert entry["documentation"] == "Te from core profiles."

@@ -253,12 +253,12 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
 
     Each dict in *names* must have at least:
       - ``id``: the composed standard name string
-      - ``source_type``: "dd" or "signals"
+      - ``source_types``: ["dd"] or ["signals"] etc.
       - ``source_id``: the originating path / signal ID
 
     Optional fields: ``physical_base``, ``subject``, ``component``,
     ``coordinate``, ``position``, ``process``, ``unit``, ``description``,
-    ``documentation``, ``kind``, ``tags``, ``links``, ``imas_paths``,
+    ``documentation``, ``kind``, ``tags``, ``links``, ``source_paths``,
     ``validity_domain``, ``constraints``, ``model``, ``review_status``,
     ``generated_at``, ``confidence``, ``reviewer_model``, ``reviewer_score``,
     ``reviewer_scores``, ``reviewer_comments``, ``reviewed_at``,
@@ -315,7 +315,7 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
             """
             UNWIND $batch AS b
             MERGE (sn:StandardName {id: b.id})
-            SET sn.source_type = coalesce(b.source_type, sn.source_type),
+            SET sn.source_types = coalesce(b.source_types, sn.source_types),
                 sn.physical_base = coalesce(b.physical_base, sn.physical_base),
                 sn.subject = coalesce(b.subject, sn.subject),
                 sn.component = coalesce(b.component, sn.component),
@@ -327,7 +327,7 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
                 sn.kind = coalesce(b.kind, sn.kind),
                 sn.tags = coalesce(b.tags, sn.tags),
                 sn.links = coalesce(b.links, sn.links),
-                sn.imas_paths = coalesce(b.imas_paths, sn.imas_paths),
+                sn.source_paths = coalesce(b.source_paths, sn.source_paths),
                 sn.validity_domain = coalesce(b.validity_domain, sn.validity_domain),
                 sn.constraints = coalesce(b.constraints, sn.constraints),
                 sn.unit = coalesce(b.unit, sn.unit),
@@ -355,7 +355,7 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
             batch=[
                 {
                     "id": n["id"],
-                    "source_type": n.get("source_type") or None,
+                    "source_types": n.get("source_types") or None,
                     "physical_base": n.get("physical_base"),
                     "subject": n.get("subject"),
                     "component": n.get("component"),
@@ -367,7 +367,7 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
                     "kind": n.get("kind"),
                     "tags": n.get("tags") or None,
                     "links": n.get("links") or None,
-                    "imas_paths": n.get("imas_paths") or None,
+                    "source_paths": n.get("source_paths") or None,
                     "validity_domain": n.get("validity_domain"),
                     "constraints": n.get("constraints") or None,
                     "unit": n.get("unit"),
@@ -398,8 +398,8 @@ def write_standard_names(names: list[dict[str, Any]]) -> int:
         )
 
         # Create HAS_STANDARD_NAME relationships: entity → concept
-        dd_names = [n for n in names if n.get("source_type") == "dd"]
-        signal_names = [n for n in names if n.get("source_type") == "signals"]
+        dd_names = [n for n in names if "dd" in (n.get("source_types") or [])]
+        signal_names = [n for n in names if "signals" in (n.get("source_types") or [])]
 
         if dd_names:
             gc.query(
@@ -664,7 +664,7 @@ def claim_names_for_validation(limit: int = 50) -> tuple[str, list[dict[str, Any
             RETURN sn.id AS id, sn.description AS description,
                    sn.documentation AS documentation, sn.kind AS kind,
                    sn.unit AS unit, sn.tags AS tags, sn.links AS links,
-                   sn.imas_paths AS imas_paths,
+                   sn.source_paths AS source_paths,
                    sn.physical_base AS physical_base,
                    sn.subject AS subject,
                    sn.component AS component,
@@ -831,7 +831,7 @@ def get_validated_names(
     params: dict[str, Any] = {"limit": limit}
 
     if ids_filter:
-        where_parts.append("ANY(p IN sn.imas_paths WHERE p STARTS WITH $ids_prefix)")
+        where_parts.append("ANY(p IN sn.source_paths WHERE p STARTS WITH $ids_prefix)")
         params["ids_prefix"] = f"{ids_filter}/"
 
     where_clause = " AND ".join(where_parts)
@@ -846,7 +846,7 @@ def get_validated_names(
             RETURN sn.id AS id, sn.description AS description,
                    sn.documentation AS documentation, sn.kind AS kind,
                    sn.unit AS unit, sn.tags AS tags, sn.links AS links,
-                   sn.imas_paths AS imas_paths, sn.confidence AS confidence,
+                   sn.source_paths AS source_paths, sn.confidence AS confidence,
                    source_ids
             LIMIT $limit
             """,
@@ -945,13 +945,13 @@ def get_validated_standard_names(
                    coalesce(u.id, sn.unit) AS unit,
                    sn.tags AS tags,
                    sn.links AS links,
-                   sn.imas_paths AS imas_paths,
+                   sn.source_paths AS source_paths,
                    sn.constraints AS constraints,
                    sn.validity_domain AS validity_domain,
                    coalesce(sn.confidence, 1.0) AS confidence,
                    sn.model AS model,
-                   sn.source_type AS source,
-                   coalesce(sn.source_path, first_source) AS source_path,
+                   sn.source_types AS source_types,
+                   first_source AS source_path,
                    first_ids AS ids_name,
                    sn.physical_base AS physical_base,
                    sn.subject AS subject,
@@ -1015,7 +1015,7 @@ def reset_standard_names(
         where_clauses = ["sn.review_status = $from_status"]
 
         if source_filter:
-            where_clauses.append("sn.source_type = $source_filter")
+            where_clauses.append("$source_filter IN sn.source_types")
             params["source_filter"] = source_filter
 
         where = " AND ".join(where_clauses)
@@ -1177,7 +1177,7 @@ def clear_standard_names(
         sn_where_clauses = ["sn.review_status IN $statuses"]
 
         if source_filter:
-            sn_where_clauses.append("sn.source_type = $source_filter")
+            sn_where_clauses.append("$source_filter IN sn.source_types")
             params["source_filter"] = source_filter
 
         sn_where = " AND ".join(sn_where_clauses)

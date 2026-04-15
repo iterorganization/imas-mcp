@@ -136,18 +136,12 @@ classes:
         range: Unit
         annotations:
           relationship_type: HAS_UNIT
-      source_type:
+      source_types:
         description: >-
-          How this standard name was generated.
-          dd: extracted from IMAS Data Dictionary paths.
-          signals: extracted from facility signal descriptions.
-          manual: manually curated entry.
+          Unordered set of source types that contribute to this standard name.
+          E.g., ["dd"] for DD-only, ["dd", "signals"] for multi-source.
+        multivalued: true
         range: StandardNameSourceType
-      source_path:
-        description: >-
-          The source entity ID this name was derived from.
-          For DD: the IMASNode path (e.g., equilibrium/time_slice/profiles_1d/psi).
-          For signals: the FacilitySignal ID (e.g., tcv:equilibrium/plasma_current).
       confidence:
         description: LLM confidence score for generated names (0-1)
         range: float
@@ -187,8 +181,11 @@ classes:
         description: Internal cross-references to related standard names (name only)
         multivalued: true
         range: string
-      imas_paths:
-        description: IMAS DD paths mapped to this standard name
+      source_paths:
+        description: >-
+          All source entity IDs mapped to this standard name (union list).
+          DD paths are bare (no colon): "equilibrium/time_slice/profiles_1d/psi".
+          Signal IDs are facility-prefixed: "tcv:ip/measured".
         multivalued: true
         range: string
       validity_domain:

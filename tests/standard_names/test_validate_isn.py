@@ -18,7 +18,7 @@ def test_validate_via_isn_well_formed():
         "tags": [],
         "links": [],
         "physics_domain": "transport",
-        "imas_paths": ["core_profiles/profiles_1d/electrons/temperature"],
+        "source_paths": ["core_profiles/profiles_1d/electrons/temperature"],
     }
     issues, summary = _validate_via_isn(entry)
     assert summary["pydantic"]["passed"] is True

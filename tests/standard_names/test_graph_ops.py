@@ -50,13 +50,13 @@ class TestWriteStandardNames:
         cypher = merge_call[0][0]
 
         # Every field SET should use coalesce pattern
-        assert "coalesce(b.source_type, sn.source_type)" in cypher
+        assert "coalesce(b.source_types, sn.source_types)" in cypher
         assert "coalesce(b.description, sn.description)" in cypher
         assert "coalesce(b.documentation, sn.documentation)" in cypher
         assert "coalesce(b.kind, sn.kind)" in cypher
         assert "coalesce(b.tags, sn.tags)" in cypher
         assert "coalesce(b.links, sn.links)" in cypher
-        assert "coalesce(b.imas_paths, sn.imas_paths)" in cypher
+        assert "coalesce(b.source_paths, sn.source_paths)" in cypher
         assert "coalesce(b.validity_domain, sn.validity_domain)" in cypher
         assert "coalesce(b.constraints, sn.constraints)" in cypher
         assert "coalesce(b.confidence, sn.confidence)" in cypher
@@ -142,7 +142,7 @@ class TestWriteStandardNames:
         names = [
             {
                 "id": "test_name",
-                "source_type": "dd",
+                "source_types": ["dd"],
                 "source_id": "some/path",
             }
         ]
@@ -184,11 +184,11 @@ class TestWriteStandardNames:
         names = [
             {
                 "id": "test_name",
-                "source_type": "dd",
+                "source_types": ["dd"],
                 "source_id": "some/path",
                 "tags": [],
                 "links": [],
-                "imas_paths": [],
+                "source_paths": [],
                 "constraints": [],
             }
         ]
@@ -201,7 +201,7 @@ class TestWriteStandardNames:
         # Empty lists should become None so coalesce preserves existing
         assert first["tags"] is None
         assert first["links"] is None
-        assert first["imas_paths"] is None
+        assert first["source_paths"] is None
         assert first["constraints"] is None
 
 

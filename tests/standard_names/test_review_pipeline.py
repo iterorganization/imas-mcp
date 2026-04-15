@@ -430,7 +430,7 @@ def test_review_staleness_policy():
         "physical_base": "temperature",
         "subject": "electron",
         "cocos_transformation_type": None,
-        "imas_paths": ["core_profiles/profiles_1d/electrons/temperature"],
+        "source_paths": ["core_profiles/profiles_1d/electrons/temperature"],
     }
 
     hash1 = compute_review_input_hash(name)
@@ -481,7 +481,7 @@ def test_review_cli_dry_run():
             "unit": "eV",
             "tags": None,
             "links": None,
-            "imas_paths": None,
+            "source_paths": None,
             "physical_base": "temperature",
             "subject": "electron",
             "component": None,
@@ -495,7 +495,7 @@ def test_review_cli_dry_run():
             "embedding": [0.1, 0.2],
             "review_tier": None,
             "link_status": None,
-            "source_type": "dd",
+            "source_types": ["dd"],
             "geometric_base": None,
             "reviewer_comments": None,
             "source_id": "core_profiles/profiles_1d/electrons/temperature",
