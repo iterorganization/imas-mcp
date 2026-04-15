@@ -727,7 +727,7 @@ Five-phase DAG: **EXTRACT → COMPOSE → VALIDATE → CONSOLIDATE → PERSIST**
 
 | Module | Purpose |
 |--------|---------|
-| `imas_codex/standard_names/classifier.py` | 11-rule path classifier: quantity (→ name), metadata (→ skip), skip (→ discard) |
+| `imas_codex/standard_names/classifier.py` | 13-rule path classifier: quantity (→ name), metadata (→ skip), skip (→ discard). Rules 11a/11b added: structural keywords in description → skip, fit diagnostic paths → skip |
 | `imas_codex/standard_names/enrichment.py` | Primary cluster selection (IDS > domain > global scope), grouping cluster selection (global > domain > IDS), global grouping by (cluster × unit) |
 | `imas_codex/standard_names/consolidation.py` | Cross-batch dedup, 5 conflict checks, coverage gap accounting |
 | `imas_codex/standard_names/graph_ops.py` | Neo4j read/write with unit conflict detection + StandardNameSource CRUD (merge, claim, mark, reconcile) |
@@ -748,7 +748,7 @@ The LLM never provides the unit field.
 | Command | Purpose | Key Options |
 |---------|---------|-------------|
 | `sn generate` | Generate standard names from DD paths or facility signals via LLM pipeline | `--source {dd,signals}`, `--ids`, `--domain`, `--facility`, `--paths`, `--limit`, `-c/--cost-limit`, `--dry-run`, `--force`, `--reset-to`, `--from-model`, `--name-only` |
-| `sn review` | Score and tier existing drafted standard names via reviewer LLM | `--ids`, `--domain`, `--source`, `--limit`, `-c/--cost-limit`, `--dry-run`, `--force` |
+| `sn review` | Score and tier existing valid standard names via batched reviewer LLM (1:1 scoring invariant, retry-unmatched) | `--ids`, `--domain`, `--source`, `--limit`, `-c/--cost-limit`, `--dry-run`, `--force` |
 | `sn enrich` | Enrich existing standard names with documentation | `--ids`, `--domain`, `--status`, `-c/--cost-limit`, `--dry-run`, `--limit`, `--batch-size` |
 | `sn publish` | Export validated StandardName nodes to YAML catalog files | `--output-dir`, `--ids`, `--domain`, `--group-by {ids,domain,confidence}`, `--confidence-min`, `--catalog-dir`, `--create-pr` |
 | `sn import` | Import reviewed YAML catalog entries back into graph | `--catalog-dir` (required), `--tags`, `--dry-run`, `--check` |
@@ -794,6 +794,24 @@ drafted → published → accepted
 - **published**: Exported by `sn publish` to YAML catalog for human review
 - **accepted**: Imported by `sn import` from reviewed catalog (catalog-authoritative)
 
+### StandardName Validation Status
+
+A separate `validation_status` field gates names before they participate in review, consolidation, and publish:
+
+```
+pending → valid | quarantined
+```
+
+- **pending**: Default state when a name is first drafted
+- **valid**: Passed all critical validation checks — eligible for `sn review`, consolidation, and `sn publish`
+- **quarantined**: Failed one or more critical checks — excluded from downstream pipeline stages
+
+**Critical failures (→ quarantine):** grammar round-trip failure, Pydantic construction error, detected ambiguity.
+
+**Non-critical issues (→ valid):** semantic warnings, description quality hints — persisted as `validation_issues` but do not gate the name.
+
+Only `valid` names participate in `sn review`, consolidation, and `sn publish`.
+
 ### StandardNameSource Lifecycle
 
 `StandardNameSource` nodes track individual DD path / facility signal extraction through the pipeline. Written by the extract worker, updated by the compose worker.
@@ -809,7 +827,7 @@ extracted → composed | attached | vocab_gap | failed | stale
 - **failed**: Composition failed (LLM error, validation rejection)
 - **stale**: Source no longer exists in DD/signals graph (set by `sn reconcile`)
 
-**ID format**: `dd:{full_dd_path}` or `signals:{facility}:{signal_id}`
+**ID format**: `dd:{full_dd_path}` or `signals:{facility}:{signal_id}` — the `dd:` prefix is the canonical URI scheme for DD sources (e.g. `dd:equilibrium/time_slice/profiles_1d/psi`).
 
 **Reconciliation**: `sn reconcile --source-type dd` detects StandardNameSource nodes whose backing DD path or facility signal no longer exists in the graph and marks them `stale`.
 
@@ -873,6 +891,8 @@ the COCOS singleton node whose convention applies — works for any source (DD, 
 `dd_version` (string) is optional provenance recording which DD snapshot was used for DD-sourced names.
 Both `cocos` and `cocos_transformation_type` are injected post-LLM (like `unit`) — never generated
 by the model.
+
+**`physics_domain`:** Taken directly from the DD `IMASNode.physics_domain` field — DD-authoritative only. The LLM never fills this field. For ISN validation purposes, falls back to `"general"` when a name's `physics_domain` is absent or unrecognised.
 
 **Provenance fields** (v0.5.0): `reviewer_model`, `reviewer_score` (float 0-1, normalized from
 6×0-20), `reviewer_scores` (JSON: grammar/semantic/documentation/convention/completeness/compliance,

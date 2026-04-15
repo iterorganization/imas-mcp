@@ -102,6 +102,60 @@ compliance. Defined in `imas_codex/llm/config/sn_review_criteria.yaml`.
 **Verdict rules:** accept (≥0.60, no zero dimensions), reject (<0.40 or any
 zero dimension), revise (otherwise).
 
+## Review Pipeline
+
+`sn review` runs as a **standalone CLI command** (not part of `sn generate`).
+It scores all `valid` (not quarantined) drafted names via a batched LLM reviewer.
+
+### Architecture
+
+```
+ ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+ │  FETCH      │────▶│  SCORE      │────▶│  PERSIST    │
+ │             │     │             │     │             │
+ │ Query graph │     │ Batch LLM   │     │ Write score │
+ │ valid names │     │ calls with  │     │ tier verdict│
+ │ (no score)  │     │ 1:1 scoring │     │ to Neo4j    │
+ └─────────────┘     │ invariant   │     └─────────────┘
+                     └──────┬──────┘
+                            │ unmatched names
+                            ▼
+                     ┌─────────────┐
+                     │  RETRY      │
+                     │             │
+                     │ Single-item │
+                     │ retry for   │
+                     │ unmatched   │
+                     └─────────────┘
+```
+
+### 1:1 Scoring Invariant
+
+Each submitted name must receive exactly one score in the LLM response. The
+pipeline enforces this invariant:
+
+1. Names are sent to the reviewer in batches (typically 10–20 per call)
+2. After each batch, the response is matched back to submitted names by ID
+3. Any names not returned by the LLM (dropped or hallucinated) are collected
+   as **unmatched**
+4. Unmatched names are automatically retried individually (single-item batches)
+   to guarantee coverage
+
+This ensures no name is silently skipped due to LLM truncation or output
+format errors.
+
+### Cost Reference
+
+Approximate cost using `anthropic/claude-opus-4.6` as reviewer:
+
+| Scope | Names | Cost |
+|-------|-------|------|
+| 4 IDSs (equilibrium, core_profiles, edge_profiles, summary) | ~300 | ~$30 |
+| Full DD (~3,000 paths → ~1,200 names) | ~1,200 | ~$396 (projected) |
+
+Costs vary with batch size and model. Use `-c/--cost-limit` to cap spending
+per run.
+
 ## A/B Comparison (Plan 21 Outcomes)
 
 Plan 21 closed two categories of gaps relative to ISN's built-in capabilities:
@@ -144,6 +198,8 @@ Scope = Literal["quantity", "metadata", "skip"]
 | 7 | Unitless integers | `INT_0D`, no unit, passes rule 6 check | `quantity` |
 | 8–9 | Physics leaf types | `data_type` in `{FLT_0D..6D, INT_1D..2D, CPX_0D..2D}` | `quantity` |
 | 10 | Structure with unit | `STRUCTURE` or `STRUCT_ARRAY` with unit | `quantity` |
+| 11a | Structural keywords | Description contains structural keywords (e.g. "array of structure", "index of", "identifier of") | `skip` |
+| 11b | Fit diagnostics | Path matches fit-diagnostic segment patterns (e.g. `chi_squared`, `fit_quality`, `convergence`) | `skip` |
 | 11 | Fallback | Everything else | `skip` |
 
 Only `quantity` paths proceed to COMPOSE. `metadata` and `skip` are filtered
@@ -398,6 +454,31 @@ Additional transient statuses: `reviewed`, `validation_failed`, `vocab_gap`,
 **Safety model:** `sn reset` and `sn clear` require `--include-accepted` to
 touch accepted names. Accepted names are catalog-authoritative and rarely need
 graph modification.
+
+## Validation Gating
+
+A separate `validation_status` field (independent of `review_status`) gates
+names before they reach review, consolidation, or publish:
+
+```
+pending → valid | quarantined
+```
+
+| Status | Set by | Meaning |
+|--------|--------|---------|
+| `pending` | `sn generate` (PERSIST phase) | Default; awaiting validation |
+| `valid` | VALIDATE phase | Passed all critical checks; eligible for downstream stages |
+| `quarantined` | VALIDATE phase | Failed a critical check; excluded from review/consolidation/publish |
+
+**Critical failures (→ quarantine):**
+- Grammar round-trip failure (`parse_standard_name()` rejects the name)
+- Pydantic construction error (`create_standard_name_entry()` raises)
+- Detected ambiguity (name maps to multiple distinct physical quantities)
+
+**Non-critical issues (→ valid):** semantic warnings, description quality hints —
+recorded in `validation_issues` and surfaced to the reviewer, but do not quarantine.
+
+Only `valid` names participate in `sn review`, consolidation, and `sn publish`.
 
 ## File Map
 

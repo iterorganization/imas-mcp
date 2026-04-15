@@ -20,7 +20,7 @@ Plans validated against 62 existing standard names, current scoring architecture
 
 | Priority | Plan | Scope | Est. Agents |
 |----------|------|-------|-------------|
-| **P1** | [features/sn-bootstrap-loop.md](features/sn-bootstrap-loop.md) | Wire standalone `sn review` CLI (full catalog oversight), bootstrap generate→review loop | 1 agent |
+| ~~**P1**~~ | [features/sn-bootstrap-loop.md](features/sn-bootstrap-loop.md) | ✅ Phase 1 (review CLI) complete, ✅ Phase 2 (bootstrap loop) complete, ⏳ Phase 3 blocked (needs ≥500 reviewed names) | 1 agent |
 | **P2** | [features/dd-server-cleanup.md](features/dd-server-cleanup.md) | 3 surgical fixes: truncation count, migration API, fuzzy matcher | 1-3 agents |
 | **P3** | [features/search-quality-improvements.md](features/search-quality-improvements.md) | Careful ranking fixes (accessor de-ranking, IDS preference), evaluation alignment | 2 agents |
 | **P4** | [features/docs-refresh.md](features/docs-refresh.md) | Fix 7 stale docs, rewrite docs/README.md (17+ missing entries) | 1 agent |
@@ -29,9 +29,9 @@ Plans validated against 62 existing standard names, current scoring architecture
 ### Wave Implementation Order
 
 ```
-Wave 1: sn-bootstrap-loop Phase 1 (review CLI)  ←─┐
-Wave 2: dd-server-cleanup (all 3 fixes, parallel) ←┘ parallel with Wave 1
-Wave 3: sn-bootstrap-loop Phase 2 (operational bootstrap — agent prompt)
+Wave 1: sn-bootstrap-loop Phase 1 (review CLI)  ✅ complete
+Wave 2: dd-server-cleanup (all 3 fixes, parallel) ←─ next
+Wave 3: sn-bootstrap-loop Phase 2 (operational bootstrap) ✅ complete
 Wave 4: search-quality-improvements (Phases 1-2)
 Wave 5: docs-refresh (fix stale docs after code changes land)
 ```
