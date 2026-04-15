@@ -3,28 +3,35 @@
 from __future__ import annotations
 
 from imas_codex.standard_names.source_paths import (
+    DD_PREFIX,
+    SourceURI,
+    encode_dd_source,
     encode_source_path,
+    ids_prefix_for_source_paths,
     merge_source_paths,
     merge_source_types,
+    normalize_source_path,
     parse_source_path,
+    parse_source_uri,
     split_source_paths,
+    strip_dd_prefix,
 )
 
 
 class TestEncodeSourcePath:
-    def test_dd_path_stored_bare(self):
+    def test_dd_path_stored_with_dd_prefix(self):
         result = encode_source_path("dd", "equilibrium/time_slice/profiles_1d/psi")
-        assert result == "equilibrium/time_slice/profiles_1d/psi"
+        assert result == "dd:equilibrium/time_slice/profiles_1d/psi"
 
     def test_signal_stored_with_prefix(self):
         result = encode_source_path("signals", "tcv:ip/measured")
         assert result == "tcv:ip/measured"
 
-    def test_dd_path_no_colon_added(self):
+    def test_dd_path_has_dd_colon(self):
         result = encode_source_path(
             "dd", "core_profiles/profiles_1d/electrons/temperature"
         )
-        assert ":" not in result
+        assert result.startswith("dd:")
 
     def test_signal_id_preserves_facility_colon(self):
         result = encode_source_path("signals", "jet:te/core")
@@ -149,3 +156,90 @@ class TestMergeSourceTypes:
     def test_no_duplicates(self):
         result = merge_source_types(["dd", "dd"], ["dd"])
         assert result == ["dd"]
+
+
+# =============================================================================
+# New dd: prefix tests
+# =============================================================================
+
+
+class TestDDPrefix:
+    def test_constant_value(self):
+        assert DD_PREFIX == "dd:"
+
+
+class TestEncodeDDSource:
+    def test_adds_prefix(self):
+        assert encode_dd_source("eq/ts/p1d/psi") == "dd:eq/ts/p1d/psi"
+
+    def test_idempotent(self):
+        assert encode_dd_source("dd:eq/ts/p1d/psi") == "dd:eq/ts/p1d/psi"
+
+
+class TestNormalizeSourcePath:
+    def test_bare_dd_gets_prefix(self):
+        assert normalize_source_path("eq/ts") == "dd:eq/ts"
+
+    def test_already_prefixed_unchanged(self):
+        assert normalize_source_path("dd:eq/ts") == "dd:eq/ts"
+
+    def test_facility_unchanged(self):
+        assert normalize_source_path("tcv:ip") == "tcv:ip"
+
+
+class TestStripDDPrefix:
+    def test_strips_prefix(self):
+        assert strip_dd_prefix("dd:eq/ts/p1d/psi") == "eq/ts/p1d/psi"
+
+    def test_bare_path_unchanged(self):
+        assert strip_dd_prefix("eq/ts/p1d/psi") == "eq/ts/p1d/psi"
+
+    def test_facility_path_unchanged(self):
+        assert strip_dd_prefix("tcv:ip") == "tcv:ip"
+
+
+class TestIDSPrefixForSourcePaths:
+    def test_returns_dd_prefix(self):
+        assert ids_prefix_for_source_paths("equilibrium") == "dd:equilibrium/"
+
+    def test_core_profiles(self):
+        assert ids_prefix_for_source_paths("core_profiles") == "dd:core_profiles/"
+
+
+class TestParseSourceURI:
+    def test_dd_prefixed(self):
+        uri = parse_source_uri("dd:eq/ts/p1d/psi")
+        assert uri.source_type == "dd"
+        assert uri.source_id == "eq/ts/p1d/psi"
+        assert uri.uri == "dd:eq/ts/p1d/psi"
+
+    def test_facility(self):
+        uri = parse_source_uri("tcv:ip/measured")
+        assert uri.source_type == "tcv"
+        assert uri.source_id == "ip/measured"
+
+    def test_bare_legacy(self):
+        uri = parse_source_uri("eq/ts/p1d/psi")
+        assert uri.source_type == "dd"
+        assert uri.source_id == "eq/ts/p1d/psi"
+
+    def test_frozen(self):
+        uri = parse_source_uri("dd:eq/ts")
+        assert isinstance(uri, SourceURI)
+
+
+class TestNormalizationBoundary:
+    """Test the critical boundary: source_paths stores dd: URIs,
+    IMASNode.id stores bare paths."""
+
+    def test_encode_then_strip_round_trips(self):
+        bare = "equilibrium/time_slice/profiles_1d/psi"
+        encoded = encode_source_path("dd", bare)
+        assert encoded == f"dd:{bare}"
+        assert strip_dd_prefix(encoded) == bare
+
+    def test_split_dd_prefixed_paths(self):
+        paths = ["dd:eq/ts/p1d/psi", "tcv:ip/measured"]
+        result = split_source_paths(paths)
+        assert result["dd"] == ["eq/ts/p1d/psi"]
+        assert result["signals"] == ["tcv:ip/measured"]

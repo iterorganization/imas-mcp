@@ -123,6 +123,11 @@ def _catalog_entry_to_dict(entry: Any, *, extra: dict | None = None) -> dict[str
     # Determine source_types from presence of dd_paths
     source_types = ["dd"] if dd_paths else ["manual"]
 
+    # Encode dd_paths with dd: prefix for source_paths storage
+    from imas_codex.standard_names.source_paths import encode_dd_source
+
+    source_paths = [encode_dd_source(p) for p in dd_paths] if dd_paths else None
+
     result = {
         "id": entry.name,
         "description": entry.description or None,
@@ -131,7 +136,7 @@ def _catalog_entry_to_dict(entry: Any, *, extra: dict | None = None) -> dict[str
         "unit": str(entry.unit) if entry.unit else None,
         "tags": tags or None,
         "links": links or None,
-        "source_paths": dd_paths or None,
+        "source_paths": source_paths,
         "validity_domain": entry.validity_domain or None,
         "constraints": constraints or None,
         "physics_domain": entry.physics_domain or None,
@@ -250,11 +255,14 @@ def _write_catalog_entries(
             )
 
         # Create HAS_STANDARD_NAME relationships from dd_paths
+        # source_paths has dd: prefix; IMASNode.id uses bare paths
+        from imas_codex.standard_names.source_paths import strip_dd_prefix
+
         dd_batch = []
         for e in entries:
             if e.get("source_paths"):
                 for path in e["source_paths"]:
-                    dd_batch.append({"id": e["id"], "source_id": path})
+                    dd_batch.append({"id": e["id"], "source_id": strip_dd_prefix(path)})
 
         if dd_batch:
             gc.query(

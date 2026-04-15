@@ -240,7 +240,7 @@ RETURN sn.id AS name, sn.description AS description,
        sn.documentation AS documentation,
        sn.kind AS kind, coalesce(u.id, sn.unit) AS unit,
        sn.tags AS tags, sn.links AS links,
-       sn.source_paths AS dd_paths, sn.constraints AS constraints,
+       sn.source_paths AS source_paths, sn.constraints AS constraints,
        sn.validity_domain AS validity_domain,
        sn.physical_base AS physical_base, sn.subject AS subject,
        sn.component AS component, sn.coordinate AS coordinate,
@@ -286,7 +286,7 @@ def _format_fetch_report(rows: list[dict], requested: list[str]) -> str:
         unit = row.get("unit") or ""
         tags = row.get("tags") or []
         links = row.get("links") or []
-        dd_paths = row.get("dd_paths") or []
+        dd_paths = row.get("source_paths") or []
         constraints = row.get("constraints") or []
         validity_domain = row.get("validity_domain") or ""
         physical_base = row.get("physical_base") or ""
@@ -354,7 +354,7 @@ def _format_fetch_report(rows: list[dict], requested: list[str]) -> str:
                 if isinstance(dd_paths, list)
                 else str(dd_paths)
             )
-            lines.append(f"- **DD Paths:**{path_str}")
+            lines.append(f"- **Sources:**{path_str}")
         if constraints:
             c_str = (
                 ", ".join(constraints)
