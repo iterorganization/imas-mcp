@@ -245,3 +245,36 @@ class SNQualityReviewBatch(BaseModel):
     """LLM response for quality-scored review of a batch."""
 
     reviews: list[SNQualityReview]
+
+
+# =============================================================================
+# Enrichment models — documentation iteration (Phase 3D)
+# =============================================================================
+
+
+class SNEnrichItem(BaseModel):
+    """Enrichment result for a single standard name."""
+
+    standard_name: str = Field(
+        description="The standard name (must match input exactly)"
+    )
+    description: str = Field(description="One sentence definition, <120 chars")
+    documentation: str = Field(
+        description="Rich docs with LaTeX, links, typical values"
+    )
+    tags: list[str] = Field(default_factory=list, description="Classification tags")
+    links: list[str] = Field(
+        default_factory=list, description="Related standard names (name:xxx format)"
+    )
+    validity_domain: str | None = Field(
+        default=None, description="Physical region where quantity is meaningful"
+    )
+    constraints: list[str] = Field(
+        default_factory=list, description="Physical constraints on the quantity"
+    )
+
+
+class SNEnrichBatch(BaseModel):
+    """LLM response for enriching a batch of standard names."""
+
+    items: list[SNEnrichItem]

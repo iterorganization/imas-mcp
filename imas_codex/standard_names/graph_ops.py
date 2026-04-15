@@ -1409,3 +1409,143 @@ def resolve_links_batch(items: list[dict[str, Any]]) -> dict[str, Any]:
         "unresolved": still_unresolved,
         "failed": failed_count,
     }
+
+
+# =============================================================================
+# Enrichment helpers — documentation iteration (Phase 3D)
+# =============================================================================
+
+
+def get_enrichment_candidates(
+    ids_filter: str | None = None,
+    domain_filter: str | None = None,
+    status_filter: str | None = None,
+    limit: int | None = None,
+) -> list[dict[str, Any]]:
+    """Get StandardName nodes that need documentation enrichment.
+
+    Returns dicts with: id, description, documentation, kind, unit, tags,
+    physical_base, subject, component, coordinate, position, process,
+    plus all linked DD paths aggregated with their documentation.
+    """
+    with GraphClient() as gc:
+        params: dict[str, Any] = {}
+        where_clauses: list[str] = []
+
+        if ids_filter:
+            where_clauses.append(
+                "EXISTS { MATCH (src)-[:HAS_STANDARD_NAME]->(sn) "
+                "MATCH (src)-[:IN_IDS]->(ids:IDS {id: $ids_filter}) }"
+            )
+            params["ids_filter"] = ids_filter
+        if domain_filter:
+            where_clauses.append("sn.physics_domain = $domain_filter")
+            params["domain_filter"] = domain_filter
+        if status_filter:
+            where_clauses.append("sn.review_status = $status_filter")
+            params["status_filter"] = status_filter
+
+        where = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
+
+        limit_clause = ""
+        if limit:
+            limit_clause = "LIMIT $limit"
+            params["limit"] = limit
+
+        results = gc.query(
+            f"""
+            MATCH (sn:StandardName)
+            {where}
+            OPTIONAL MATCH (sn)-[:HAS_UNIT]->(u:Unit)
+            OPTIONAL MATCH (src)-[:HAS_STANDARD_NAME]->(sn)
+            WHERE src:IMASNode OR src:FacilitySignal
+            WITH sn, u,
+                 collect(DISTINCT {{
+                     path: src.id,
+                     description: src.description,
+                     documentation: src.documentation
+                 }}) AS dd_paths
+            RETURN sn.id AS id,
+                   sn.description AS description,
+                   sn.documentation AS documentation,
+                   sn.kind AS kind,
+                   coalesce(u.id, sn.unit) AS unit,
+                   sn.tags AS tags,
+                   sn.links AS links,
+                   sn.validity_domain AS validity_domain,
+                   sn.constraints AS constraints,
+                   sn.physical_base AS physical_base,
+                   sn.subject AS subject,
+                   sn.component AS component,
+                   sn.coordinate AS coordinate,
+                   sn.position AS position,
+                   sn.process AS process,
+                   sn.geometric_base AS geometric_base,
+                   sn.physics_domain AS physics_domain,
+                   sn.review_status AS review_status,
+                   dd_paths
+            ORDER BY sn.id
+            {limit_clause}
+            """,
+            **params,
+        )
+
+        candidates = []
+        for r in results or []:
+            row = dict(r)
+            # Filter out null-path entries from the OPTIONAL MATCH
+            dd_paths = row.get("dd_paths") or []
+            row["dd_paths"] = [p for p in dd_paths if p.get("path") is not None]
+            candidates.append(row)
+
+        logger.info("Found %d enrichment candidates", len(candidates))
+        return candidates
+
+
+def write_enrichment_results(results: list[dict[str, Any]]) -> int:
+    """Write enrichment results back to graph.
+
+    Only updates doc fields: description, documentation, tags, links,
+    validity_domain, constraints. Clears review_input_hash to invalidate
+    stale reviews.
+
+    Does NOT touch: id, physical_base, subject, component, coordinate,
+    position, process, kind, unit, model, etc.
+
+    Returns the number of nodes updated.
+    """
+    if not results:
+        return 0
+
+    with GraphClient() as gc:
+        gc.query(
+            """
+            UNWIND $batch AS b
+            MATCH (sn:StandardName {id: b.id})
+            SET sn.description = b.description,
+                sn.documentation = b.documentation,
+                sn.tags = b.tags,
+                sn.links = b.links,
+                sn.validity_domain = b.validity_domain,
+                sn.constraints = b.constraints,
+                sn.link_status = b.link_status,
+                sn.enriched_at = datetime(),
+                sn.review_input_hash = null
+            """,
+            batch=[
+                {
+                    "id": r["id"],
+                    "description": r.get("description") or "",
+                    "documentation": r.get("documentation") or "",
+                    "tags": r.get("tags") or None,
+                    "links": r.get("links") or None,
+                    "validity_domain": r.get("validity_domain"),
+                    "constraints": r.get("constraints") or None,
+                    "link_status": _compute_link_status(r.get("links")),
+                }
+                for r in results
+            ],
+        )
+
+    logger.info("Enriched %d StandardName nodes", len(results))
+    return len(results)
