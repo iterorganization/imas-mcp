@@ -538,6 +538,12 @@ async def run_sn_review_engine(
         stop_event: Optional asyncio.Event for CLI shutdown signalling.
         on_worker_status: Optional callback for progress display updates.
     """
+
+    # Persist must run to completion even when the review worker exhausts
+    # budget. Only CLI shutdown (stop_requested) should stop it.
+    def _downstream_should_stop() -> bool:
+        return state.stop_requested
+
     workers = [
         WorkerSpec(
             "extract",
@@ -561,6 +567,7 @@ async def run_sn_review_engine(
             "persist_phase",
             persist_review_worker,
             depends_on=["review_phase"],
+            should_stop_fn=_downstream_should_stop,
         ),
     ]
 
@@ -712,19 +719,31 @@ async def _review_single_batch(
         response_model=SNQualityReviewBatch,
     )
 
-    # Map reviews back to original entries by source_id
+    # Map reviews back to original entries by source_id AND by id (standard
+    # name).  Many StandardName nodes have source_id=None — the prompt renders
+    # this as "None" and the LLM may return the standard name string instead.
     entry_map: dict[str, dict] = {}
     for entry in names:
         sid = entry.get("source_id") or entry.get("id") or ""
         entry_map[sid] = entry
+        # Also index by standard name id for fallback matching
+        name_id = entry.get("id") or ""
+        if name_id and name_id != sid:
+            entry_map[name_id] = entry
 
     scored: list[dict] = []
     revised_count = 0
 
     for review in result.reviews:
-        original = entry_map.get(review.source_id)
+        original = entry_map.get(review.source_id) or entry_map.get(
+            review.standard_name
+        )
         if original is None:
-            wlog.debug("Review returned unknown source_id: %s", review.source_id)
+            wlog.debug(
+                "Review returned unknown source_id=%s / standard_name=%s",
+                review.source_id,
+                review.standard_name,
+            )
             continue
 
         # Store review scores on the entry
@@ -761,10 +780,14 @@ async def _review_single_batch(
                 )
 
     # Pass through entries not in the review result
-    reviewed_ids = {r.source_id for r in result.reviews}
+    reviewed_ids = set()
+    for r in result.reviews:
+        reviewed_ids.add(r.source_id)
+        reviewed_ids.add(r.standard_name)
     for entry in names:
         sid = entry.get("source_id") or entry.get("id") or ""
-        if sid not in reviewed_ids:
+        name_id = entry.get("id") or ""
+        if sid not in reviewed_ids and name_id not in reviewed_ids:
             scored.append(entry)
 
     return {
