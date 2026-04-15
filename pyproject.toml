@@ -259,7 +259,7 @@ triage-offset = 0.15
 location = "iter"
 
 [tool.imas-codex.language]
-model = "google/gemini-3.1-flash-lite-preview"
+model = "anthropic/claude-opus-4.6"
 batch-size = 50
 
 [tool.imas-codex.vision]
