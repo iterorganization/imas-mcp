@@ -778,8 +778,7 @@ singleton) and provides known-quality examples for reviewer consistency checks.
 | **Compose (recommended)** | `anthropic/claude-sonnet-4.6` | 76.5 | 32% Outstanding, best grammar + documentation |
 | **Compose (budget)** | `google/gemini-3.1-pro-preview` | 74.6 | Near-top quality, good consistency |
 | **Compose (light)** | `anthropic/claude-haiku-4.5` | 61.2 | Adequate for bulk generation |
-| **Review/scoring** | `anthropic/claude-opus-4.6` | — | Reviewer (5-dimensional rubric judge) |
-| **Mint review** | `anthropic/claude-sonnet-4.6` | — | Uses `get_model("reasoning")` |
+| **Review/scoring** | `anthropic/claude-opus-4.6` | — | Reviewer (6-dimensional rubric judge) |
 
 **GPT-5.4 compatibility:** GPT-5.x models require `strict: false` JSON schema wrapping
 (handled automatically in `llm.py`) and cannot use `temperature=0.0` (handled in benchmark).
