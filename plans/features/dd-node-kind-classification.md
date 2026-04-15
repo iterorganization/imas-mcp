@@ -162,18 +162,23 @@ All consumers import from this module — no inline `'data'` literals anywhere.
 
 ## Implementation Plan
 
-### Rollout Ordering (RD consensus)
+### Rollout Ordering (RD consensus, 3 rounds)
 
-The rollout must avoid a state where consumer code expects new categories but graph data still has `data`. The ordering is:
+The rollout avoids broken intermediate states by making consumers transitional BEFORE migration. This ensures no query window where consumers expect categories that don't yet exist (or vice versa).
 
-1. **Phase A**: Schema + build pipeline + shared classifier module (new builds produce new categories)
-2. **Phase B**: Migration (existing graph data converted, `data` value eliminated)
-3. **Phase C**: Consumer update (safe — all nodes now have new categories)
-4. **Phase D**: Schema cleanup (remove deprecated `data` from enum)
-5. **Phase E**: Validation + tests
-6. **Phase F**: Documentation
+1. **Phase A**: Schema + shared classifier + category constants (code only, build NOT wired yet)
+2. **Phase B**: Consumer update — all `node_category='data'` → import from constants (transitional sets include both `data` + new categories, so existing graph data continues to work)
+3. **Phase C**: Wire classifier into build pipeline (new DD builds produce new categories — consumers already accept them)
+4. **Phase D**: Migration — quiesce workers, shadow-property reclassification, atomic swap, stale embedding cleanup
+5. **Phase E**: Cleanup — remove `data` from constants + schema (after verification)
+6. **Phase F**: Validation + tests
+7. **Phase G**: Documentation
 
-**Key constraint**: Schema initially KEEPS `data` as a deprecated value so that pre-migration queries don't fail schema validation. `data` is removed only after migration confirms zero remaining nodes.
+**Key safety properties:**
+- After Phase B, consumers accept BOTH `data` and new categories → existing graph works
+- After Phase C, new builds produce new categories → consumers already accept them
+- After Phase D, no `data` nodes remain → transitional `data` in constants is a no-op
+- After Phase E, `data` removed entirely → clean state
 
 ### Shared Classifier Module (Single Source of Truth)
 
@@ -184,9 +189,9 @@ Contains the classification logic used by BOTH the build pipeline and the migrat
 - `classify_node_pass2(node_id, *, has_identifier_schema, is_coordinate_target, children_types) -> str | None`
 - `COORDINATE_SEGMENTS` fallback set
 
-Both `_classify_node()` in build_dd.py and the migration Cypher generator call this same module, ensuring rule consistency.
+Both `_classify_node()` in build_dd.py and the migration CLI call this same module, ensuring rule consistency. The migration fetches node facts from Neo4j, classifies in Python, and writes back in batches — no hand-written Cypher CASE expressions that could drift from the Python rules.
 
-### Phase A: Schema + Build Pipeline
+### Phase A: Schema + Classifier + Constants
 
 **Task 1: Schema Change**
 - `imas_codex/schemas/imas_dd.yaml`: Add 4 new values (quantity, coordinate, structural, identifier) to NodeCategory. **Keep `data` temporarily** as deprecated.
@@ -194,9 +199,12 @@ Both `_classify_node()` in build_dd.py and the migration Cypher generator call t
 
 **Task 2: Category Constants Module**
 - Create `imas_codex/core/node_categories.py`
-- Constants initially include `'data'` as transitional alias:
+- Constants include `'data'` as transitional alias:
   ```python
-  EMBEDDABLE_CATEGORIES = frozenset({"quantity", "data"})  # data is transitional
+  EMBEDDABLE_CATEGORIES = frozenset({"quantity", "data"})  # data removed in Phase E
+  SEARCHABLE_CATEGORIES = frozenset({"quantity", "coordinate", "data"})
+  SN_SOURCE_CATEGORIES = frozenset({"quantity", "data"})
+  ENRICHABLE_CATEGORIES = frozenset({"quantity", "coordinate", "data"})
   ```
 
 **Task 3: Shared Classifier Module**
@@ -204,66 +212,90 @@ Both `_classify_node()` in build_dd.py and the migration Cypher generator call t
 - Pass 1 rules (14 rules) + Pass 2 rules (3 rules)
 - Used by both build pipeline and migration
 
-**Task 4: Update `_classify_node()` in Build Pipeline**
-- `imas_codex/graph/build_dd.py`: Delegate to shared classifier
-- Update `_batch_create_path_nodes()` call site with full context
+### Phase B: Consumer Update (transitional — before migration)
 
-**Task 5: Add Pass 2 Relational Classification**
+**Task 4: Audit + Update All `node_category='data'` Consumers**
+Full grep-driven audit. Known locations (55 occurrences, 17+ files):
+- `sources/dd.py` (line 135)
+- `build_dd.py` (lines 2110, 2119, 2356, 2414, 2436)
+- `dd_graph_ops.py` (lines 69, 166, 200, 314)
+- `dd_workers.py` (lines 351, 392, 490)
+- `dd_ids_enrichment.py` (line 104)
+- `dd_progress.py` (line 145)
+- `cli/imas_dd.py` (line 523)
+- `ids/tools.py` (line 826)
+- `tools/graph_search.py` (lines 314, 535, 600, 1099, 1103, 2062, 2149, 2434, 2456)
+- `tools/migration_guide.py` (line 93)
+- `clusters.py` (line 201)
+- All tests with `node_category` assertions
+
+Every consumer → import appropriate constant from `node_categories.py`. Since constants include `'data'`, all existing queries continue to work against the current graph.
+
+**Task 5: Update Embedding Pipeline**
+- `phase_embed()`: `node_category IN $embeddable` using `EMBEDDABLE_CATEGORIES`
+
+**Task 6: Update Enrichment Pipeline**
+- Enrichment claim queries: `node_category IN $enrichable` using `ENRICHABLE_CATEGORIES`
+- Define terminal status for `coordinate` nodes: enrichable but never embedded
+
+**Task 7: Update SN Extraction Query**
+- `sources/dd.py`: `node_category IN $sn_categories` using `SN_SOURCE_CATEGORIES`
+- **Keep** `node_type = 'dynamic'` for v1
+
+**Task 8: Update Search/MCP Tools**
+- All tools → use `SEARCHABLE_CATEGORIES`
+
+### Phase C: Wire Classifier into Build Pipeline
+
+**Task 9: Update `_classify_node()` in Build Pipeline**
+- `imas_codex/graph/build_dd.py`: Delegate to shared classifier
+- Update `_batch_create_path_nodes()` call site with full context (data_type, unit, parent_data_type)
+
+**Task 10: Add Pass 2 Relational Classification**
 - `imas_codex/graph/build_dd.py`: New `_reclassify_relational()` function
 - Runs after all nodes + relationships created
 - Uses HAS_IDENTIFIER_SCHEMA, HAS_COORDINATE, children evidence
 
-### Phase B: Migration
+### Phase D: Migration
 
-**Task 6: Read-Only Classification Preview**
-Run full classification as read-only query using shared classifier logic. Compare predicted counts with actual graph counts above.
-Add post-preview audit: `FLT_* + no unit + predicted=quantity` → verify these are real dimensionless quantities, not missed coordinates.
+**Pre-migration gate:**
+1. Stop all DD build/enrich/embed workers
+2. Verify no active claims: `MATCH (n:IMASNode) WHERE n.claimed_at IS NOT NULL RETURN count(n)` → must be 0
+3. Clear any stale claims if needed
 
-**Task 7: Shadow-Property Migration**
-1. Write classification to `node_category_new` using shared classifier logic
-2. Validate distribution matches preview
-3. Verify zero `'data'` values in `node_category_new`
-4. Atomic swap: `SET n.node_category = n.node_category_new REMOVE n.node_category_new`
-
-**Task 8: Remove Stale Embeddings**
-Batch remove `embedding`, `embedded_at`, `embedding_hash`, `embedding_text` from non-embeddable nodes. Reset status from `embedded` → `built` for reclassified nodes.
-
-**Task 9: CLI Command**
+**Task 11: CLI Command**
 `imas-codex dd migrate-categories --preview` / `--apply`
-- New subcommand (not folded into `dd build`)
-- Preview shows predicted distribution without mutation
-- Apply runs shadow-property migration
+- Preview: query all `node_category='data'` nodes, classify in Python, report distribution
+- Apply: shadow-property migration
 
-### Phase C: Consumer Update (after migration)
+**Task 12: Shadow-Property Migration**
+1. Fetch all `node_category='data'` nodes with their properties + relationships in batches
+2. Classify each node in Python via `node_classifier.py` (Pass 1 + Pass 2)
+3. Write `node_category_new` property in batches
+4. **Validate coverage**: `count(node_category_new IS NOT NULL) == count(node_category='data')` — every data node must have a new category
+5. Verify zero `'data'` values in `node_category_new`
+6. Atomic swap: `SET n.node_category = n.node_category_new REMOVE n.node_category_new`
 
-**Task 10: Audit + Update All `node_category='data'` Consumers**
-Full grep-driven audit. Known locations: `sources/dd.py`, `build_dd.py`, `dd_graph_ops.py`, `dd_workers.py`, `dd_ids_enrichment.py`, `tools/graph_search.py`, `cli/imas_dd.py`, `ids/tools.py`, all tests.
-Every consumer → import from `node_categories.py`.
+**Task 13: Remove Stale Embeddings + Status Remap**
+Per-category status remapping after migration:
+- `quantity`: keep status as-is (all pipeline stages apply)
+- `coordinate`: if `embedded` → remove embedding fields, set status=`enriched` (terminal for coordinates)
+- `structural`: if `embedded` → remove embedding fields, set status=`built`
+- `identifier`: if `embedded` → remove embedding fields, set status=`built`
 
-**Task 11: Update Embedding Pipeline**
-- `phase_embed()`: `node_category IN $embeddable` using `EMBEDDABLE_CATEGORIES`
+Batch remove `embedding`, `embedded_at`, `embedding_hash`, `embedding_text` from all non-quantity nodes that have them.
 
-**Task 12: Update Enrichment Pipeline**
-- Enrichment claim queries in `dd_graph_ops.py`/`dd_workers.py`: update from `node_category='data'` to `node_category IN $enrichable` using `ENRICHABLE_CATEGORIES`
-- Define terminal status for `coordinate` nodes: enrichable but never embedded → terminal status is `enriched` (not `embedded`)
+### Phase E: Cleanup
 
-**Task 13: Update SN Extraction Query**
-- `sources/dd.py`: `node_category IN $sn_categories` using `SN_SOURCE_CATEGORIES`
-- **Keep** `node_type = 'dynamic'` for v1 (relax after non-dynamic quantity audit)
-
-**Task 14: Update Search/MCP Tools**
-- All tools → use `SEARCHABLE_CATEGORIES`
-
-### Phase D: Schema Cleanup
-
-**Task 15: Remove `data` from Schema**
-- After verifying zero `data` nodes remain, remove `data` from NodeCategory enum
-- Remove `'data'` from transitional category constant sets
+**Task 14: Remove `data` from Schema + Constants**
+- Verify zero `data` nodes remain: `MATCH (n:IMASNode {node_category: 'data'}) RETURN count(n)` → must be 0
+- Remove `data` from NodeCategory enum in `imas_dd.yaml`
+- Remove `'data'` from all transitional constant sets in `node_categories.py`
 - `uv run build-models --force`
 
-### Phase E: Validation + Tests
+### Phase F: Validation + Tests
 
-**Task 16: Post-Migration Verification**
+**Task 15: Post-Migration Verification**
 ```cypher
 MATCH (n:IMASNode) RETURN n.node_category, count(*) ORDER BY count(*) DESC
 MATCH (n:IMASNode {node_category: 'data'}) RETURN count(n) -- must be 0
@@ -271,21 +303,22 @@ MATCH (n:IMASNode) WHERE n.node_category = 'quantity' AND n.node_type <> 'dynami
   RETURN n.node_type, count(*) ORDER BY count(*) DESC
 MATCH (n:IMASNode) WHERE NOT (n.node_category IN ['quantity']) AND n.embedding IS NOT NULL
   RETURN count(n) -- must be 0 after stale embedding cleanup
+MATCH (n:IMASNode) WHERE n.node_category IS NULL RETURN count(n) -- must be 0
 ```
 
-**Task 17: Update Tests**
+**Task 16: Update Tests**
 - Unit tests for shared classifier (all 17 rules)
 - `test_node_category.py`: New categories
 - `test_classifier.py`: Verify on quantity-filtered nodes
 - Migration idempotence test
 - Update all tests asserting old enum values
 
-### Phase F: Documentation
+### Phase G: Documentation
 
-**Task 18: Documentation Updates**
+**Task 17: Documentation Updates**
 - `AGENTS.md`: NodeCategory expansion, pipeline matrix, centralized constants
 - `docs/architecture/standard-names.md`: Extraction filter changes
-- `plans/README.md`: Plan entry
+- `plans/README.md`: Plan status update
 - Schema reference: auto-generated
 
 ## SN node_type Filter Strategy
@@ -302,12 +335,17 @@ Magnetics STRUCTURE parents (node_type='none') are unblocked only after this aud
 | Risk | Mitigation |
 |---|---|
 | Partial migration state breaks queries | Shadow-property migration with atomic swap |
-| Next DD build reverts changes | Schema + build updated BEFORE migration (Phase A) |
-| Missing consumers of `'data'` | Full repo-wide grep audit (Task 5) |
+| Consumer queries break during migration | Consumers updated FIRST with transitional constants that include `data` (Phase B before D) |
+| Concurrent workers during migration | Pre-migration quiesce gate: stop workers, verify zero active claims |
+| Missing consumers of `'data'` | Full repo-wide grep audit (55 known occurrences, 17+ files) |
+| Migration misses some nodes | Explicit coverage check: `count(node_category_new IS NOT NULL) == count(data nodes)` |
+| Status inconsistency after reclassification | Per-category status remap: quantity keeps status, coordinate→enriched, structural/identifier→built |
 | Coordinate detection misses | Three-layer detection (relational + lexical + fallback) |
 | STRUCTURE+unit too broad for quantity | Pass 2 R3: require children evidence |
+| Build and migration classify differently | Single source of truth: `node_classifier.py` used by both |
 | Non-dynamic quantities in SN | Keep node_type filter for v1, audit before relaxing |
 | Vector space degradation | Embed quantity-only initially |
+| Next DD build reverts changes | Schema + build updated (Phase A+C) BEFORE migration (Phase D) |
 
 ## Estimated Impact
 
