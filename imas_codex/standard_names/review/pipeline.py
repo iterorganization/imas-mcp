@@ -362,7 +362,6 @@ async def review_review_worker(state: SNReviewState, **_kwargs: Any) -> None:
                         "Budget exhausted at batch %d — stopping review",
                         batch_idx,
                     )
-                    state.stop_requested = True
                     return []
 
             try:
@@ -565,11 +564,15 @@ async def run_sn_review_engine(
         ),
     ]
 
+    # The supervised loop must not exit on budget exhaustion — only on CLI
+    # shutdown. Budget control happens inside the review worker; persist must
+    # run to completion after review finishes.
     await run_discovery_engine(
         state,
         workers,
         stop_event=stop_event,
         on_worker_status=on_worker_status,
+        stop_fn=lambda: state.stop_requested,
     )
 
 
