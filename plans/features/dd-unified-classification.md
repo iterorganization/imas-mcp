@@ -8,7 +8,7 @@ remain in the classifier, the test suite still hardcodes `'data'`, and the monol
 `quantity` bucket conflates physics measurements (T_e, I_p, B_tor) with geometric shape
 parameters (elongation, triangularity, aspect_ratio). This plan addresses:
 
-1. **Splitting `quantity` → `physical_quantity` + `geometric_quantity`**
+1. **Splitting `quantity` → `physical_quantity` + `geometry`**
 2. **Fixing known classifier bugs** (Bug 1: reversed traversal, Bug 2: overbroad coordinate)
 3. **Fixing broken search** (dirty worktree reverted Phase B; tests still hardcode `'data'`)
 4. **Renaming pass1/pass2** to meaningful names
@@ -21,16 +21,17 @@ parameters (elongation, triangularity, aspect_ratio). This plan addresses:
 
 | Need | How the Split Helps |
 |------|---------------------|
-| **Standard name grammar** | Geometric quantities use different physical_bases (elongation, triangularity) vs physical quantities (temperature, current). The compose prompt can tailor guidance per type |
-| **Search UX** | Users can filter "show me only shape parameters" or "only physics measurements" |
+| **Standard name grammar** | Geometry nodes use ISN `geometric_base` (position, outline, trajectory) vs physical nodes use `physical_base` (temperature, current). The compose prompt can tailor guidance per type |
+| **Search UX** | Users can filter "show me only hardware geometry" or "only physics measurements" |
 | **Embedding quality** | Both types ARE embedded (both are meaningful). The split is informational, not a pipeline barrier |
-| **Validation** | Geometric quantities are typically dimensionless or length-only (m). A `geometric_quantity` node with unit `eV` would be suspicious |
+| **Validation** | Geometry nodes always have spatial units (m, rad, deg). A `geometry` node with unit `eV` would be suspicious |
 
 ### Non-Goals
 
 - Backwards compatibility (we can regenerate all nodes)
 - Sharing enum with StandardNameKind (orthogonal taxonomies — see ISN plan)
-- LLM-based classification for the split (rule-based is sufficient; LLM proved inadequate)
+- LLM-based classification for the split (rule-based via path patterns is sufficient)
+- Capturing plasma shape params as geometry (they are physics outputs → `physical_quantity`)
 
 ---
 
@@ -59,28 +60,39 @@ parameters (elongation, triangularity, aspect_ratio). This plan addresses:
 |----------|-------|-----------------|---------------------|
 | error | 31,281 | 31,281 | 31,281 |
 | metadata | 10,715 | 10,715 | 10,715 |
-| quantity | 9,993 | 12,282 | ~11,800 physical_quantity |
+| quantity | 9,993 | 12,282 | ~11,412 physical_quantity |
 | structural | 7,395 | 5,692 | 5,692 |
 | coordinate | 1,739 | 1,153 | 1,153 |
 | identifier | 243 | 243 | 243 |
-| geometric_quantity | — | — | ~482 |
+| geometry | — | — | ~870 |
 
 ---
 
 ## Design
 
-### 1. NodeCategory Enum (Final: 7 Values)
+### 1. NodeCategory Enum (Final: 8 Values)
+
+> **Major revision (2026-04-16):** Research in `plans/research/geometric-quantity-taxonomy.md`
+> showed the original `geometry` (17 leaf names, 36 nodes of plasma shape params)
+> was wrong. Elongation, triangularity, and aspect_ratio are **physics outputs** computed by
+> equilibrium codes. The correct `geometry` category captures **machine and diagnostic
+> hardware positions** (~870 nodes): coil r/z, vessel outlines, diagnostic lines of sight,
+> apertures. Classification is **structural** (path patterns + spatial units), not leaf-name
+> matching.
 
 ```yaml
 NodeCategory:
   physical_quantity:
     description: >-
       Measurable physics quantity (temperature, current, pressure, field,
-      density, flux). Enriched, embedded, searchable, SN-extractable.
-  geometric_quantity:
+      density, flux, elongation, triangularity, beta, safety_factor).
+      Enriched, embedded, searchable, SN-extractable.
+  geometry:
     description: >-
-      Shape/configuration parameter (elongation, triangularity, aspect_ratio,
-      minor_radius, major_radius). Enriched, embedded, searchable, SN-extractable.
+      Machine and diagnostic hardware geometry (coil r/z, vessel outline,
+      diagnostic LoS, aperture positions, detector dimensions). Things that
+      exist in real space before plasma. Enriched, embedded, searchable,
+      SN-extractable.
   coordinate:
     description: >-
       Independent variable (time, spatial coords, flux coordinates).
@@ -97,16 +109,24 @@ NodeCategory:
     description: Uncertainty bound fields (_error_upper, _error_lower, _error_index)
   metadata:
     description: Bookkeeping subtrees (ids_properties, code, identifier descriptors)
+  constant:
+    description: >-
+      Future — for physical/engineering constants if needed.
 ```
 
-**Removed**: `quantity` (replaced by `physical_quantity` + `geometric_quantity`)
+**Removed**: `quantity` (replaced by `physical_quantity` + `geometry`)
+
+**Key taxonomy decisions:**
+- Elongation, triangularity, squareness, shift → `physical_quantity` (equilibrium outputs)
+- Coil r/z, vessel outline, LoS, apertures → `geometry` (engineering inputs)
+- Plasma boundary outline → `physical_quantity` (NOT geometry — it's an equilibrium output)
 
 ### 2. Pipeline Participation Matrix (Updated)
 
 | NodeCategory | Enriched | Embedded | SN Extracted | Searchable |
 |---|---|---|---|---|
 | `physical_quantity` | ✓ | ✓ | ✓ | ✓ |
-| `geometric_quantity` | ✓ | ✓ | ✓ | ✓ |
+| `geometry` | ✓ | ✓ | ✓ | ✓ |
 | `coordinate` | ✓ | ✗ | ✗ | ✓ |
 | `structural` | ✗ | ✗ | ✗ | ✗ |
 | `identifier` | ✗ | ✗ | ✗ | ✗ |
@@ -115,7 +135,7 @@ NodeCategory:
 
 ```python
 # node_categories.py (updated)
-QUANTITY_CATEGORIES = frozenset({"physical_quantity", "geometric_quantity"})
+QUANTITY_CATEGORIES = frozenset({"physical_quantity", "geometry"})
 EMBEDDABLE_CATEGORIES = QUANTITY_CATEGORIES
 SN_SOURCE_CATEGORIES = QUANTITY_CATEGORIES
 SEARCHABLE_CATEGORIES = QUANTITY_CATEGORIES | {"coordinate"}
@@ -136,63 +156,81 @@ and eliminates the phase1/phase2 confusion.
 Rules 1–8 unchanged. Rules 9–15 modified:
 
 ```
-Rule 9a: FLT/CPX + physics unit + geometric name → geometric_quantity
+Rule 9a: FLT/CPX + spatial unit + geometry path pattern → geometry
 Rule 9b: FLT/CPX + physics unit → physical_quantity
 Rule 10a: FLT/CPX + no unit + coordinate segment → coordinate
-Rule 10b: FLT/CPX + no unit + geometric name → geometric_quantity
-Rule 10c: FLT/CPX + no unit → physical_quantity  (dimensionless physics: beta, q, zeff)
-Rule 11a: STRUCTURE + unit + geometric name → geometric_quantity
+Rule 10b: FLT/CPX + no unit → physical_quantity  (dimensionless physics: beta, q, zeff)
+Rule 11a: STRUCTURE + unit + geometry path pattern → geometry
 Rule 11b: STRUCTURE + unit → physical_quantity
 Rule 12: STRUCTURE without unit → structural
 Rule 13: INT_0D + no unit + no structural keywords → physical_quantity
-Rule 14a: INT + physics unit + geometric name → geometric_quantity
+Rule 14a: INT + spatial unit + geometry path pattern → geometry
 Rule 14b: INT + physics unit → physical_quantity
 Rule 15: Remaining INT → structural
 ```
 
-#### Geometric Quantity Name Set
+#### Geometry Detection: Structural Path Patterns
 
-Curated from IMAS DD analysis. Names match the LAST SEGMENT of the path.
-**Intentionally conservative** — only names that are unambiguously geometric
-shape/configuration parameters. Ambiguous terms (`volume`, `area`, `surface`,
-`length`, `perimeter`) default to `physical_quantity` and can be reclassified
-later with additional context if needed.
+> **Replaces the 17-name leaf set.** Geometry is identified by the DD subtree structure
+> (parent path patterns) combined with spatial units, not by leaf name matching.
+
+Geometry is classified when ALL of the following hold:
+1. **Spatial unit**: `m`, `rad`, `m^2`, `m^-1`, `m^3`, `deg` (or dimensionless for angles)
+2. **Path contains a geometry-indicating segment** (any ancestor):
 
 ```python
-GEOMETRIC_QUANTITY_NAMES: frozenset[str] = frozenset({
-    # Shape parameters (dimensionless ratios) — always geometric
-    "elongation", "elongation_upper", "elongation_lower",
-    "triangularity", "triangularity_upper", "triangularity_lower",
-    "squareness", "squareness_upper_inner", "squareness_upper_outer",
-    "squareness_lower_inner", "squareness_lower_outer",
-    "tilt", "ovality",
-    "aspect_ratio",
-
-    # Characteristic lengths (unit=m, describing plasma geometry)
-    "minor_radius", "major_radius",
-
-    # Displacement parameters
-    "shift",            # Shafranov shift
+GEOMETRY_PATH_PATTERNS: frozenset[str] = frozenset({
+    # Machine hardware
+    "geometry",          # Coil geometry, iron core, optical elements
+    "outline",           # Wall, vessel, coil cross-sections
+    "aperture",          # Diagnostic aperture positions
+    "line_of_sight",     # Diagnostic viewing geometry
+    "position",          # Gauge, probe, channel positions
+    "detector",          # Detector hardware dimensions
+    "mirror",            # Optical mirrors
+    "waveguide",         # Microwave waveguides
+    "launcher",          # Heating launchers
+    "antenna",           # RF antennas
+    "annular_grid",      # Bolometer grids
+    "first_wall",        # First wall contour
+    "limiter",           # Limiter geometry
+    "divertor",          # Divertor target geometry (coils, structure)
+    "vessel",            # Vacuum vessel
+    "pf_active",         # Poloidal field coils (structure)
+    "pf_passive",        # Passive conductors
 })
 ```
 
-**Confidence**: All entries are HIGH confidence — always geometric regardless of context.
+3. **NOT in an exclusion path** (plasma/computational outputs masquerading as geometry):
 
-**Explicitly excluded** (ambiguous or conflicting):
-- `volume`, `area`, `perimeter`, `length` — have physical units (m³, m², m) and
-  can refer to physical measurements. Default to `physical_quantity`.
-- `surface` — conflicts with accessor terminal in `dd_enrichment.py`'s classification.
-  Default to `physical_quantity`.
-- `geometric_axis`, `strike_point`, `x_point` — these are **containers** (STRUCTURE
-  type), not quantities. Their children (r, z, phi) are physical quantities.
+```python
+GEOMETRY_EXCLUSION_PATTERNS: frozenset[str] = frozenset({
+    "boundary",          # Plasma boundary (equilibrium output)
+    "separatrix",        # Plasma separatrix (equilibrium output)
+    "grid",              # Computational grids (not physical structure)
+    "ggd",               # General grid description
+    "flux_surface",      # Magnetic flux surfaces
+})
+```
 
-**Key exclusions** (physics dimensionless, NOT geometric):
-- beta, beta_pol, beta_tor, beta_tor_norm, beta_n — pressure ratio
-- q, safety_factor — stability parameter
-- zeff — effective charge composition
-- magnetic_shear — magnetic topology parameter
-- nustar — collisionality
-- li — internal inductance
+**Why path-pattern instead of leaf-name:**
+- Leaf names like `r`, `z`, `phi` appear in BOTH geometry (coil r/z) and physics (position r/z)
+- The distinguishing factor is the PARENT: `pf_active/coil/element/geometry/outline/r` is geometry
+  but `equilibrium/time_slice/boundary/outline/r` is physics (plasma boundary)
+- Path patterns capture ~870 nodes (8.7% of quantities); the old leaf-name set captured only 36
+
+**Plasma shape parameters stay as `physical_quantity`:**
+- elongation, triangularity, squareness, tilt, ovality → equilibrium-derived physics outputs
+- minor_radius, major_radius → describe the plasma, not the machine
+- aspect_ratio → dimensionless ratio derived from equilibrium
+- shift (only quantity "shift" in DD = Doppler frequency shift [Hz], not Shafranov)
+
+**IDS distribution of geometry nodes (~870):**
+- bolometer: 89% geometry (channel lines of sight, apertures)
+- camera_visible: 70% geometry (detector positions, optical paths)
+- pf_active: 55% geometry (coil outlines, conductor cross-sections)
+- interferometer, polarimeter, reflectometer: high geometry fraction (diagnostic hardware)
+- equilibrium, core_profiles: <1% geometry (these are physics IDSs)
 
 #### `refine_from_relationships(current_category, *, has_identifier_schema, is_coordinate_target, children_categories, data_type, unit, path) → str | None`
 
@@ -220,11 +258,10 @@ After the split, both must use `QUANTITY_CATEGORIES`:
 
 **Migration parity note**: The bottom-up processing order in the migration script (deepest
 paths first) ensures that when R3 runs on a parent STRUCTURE node, its children already
-have split categories (`physical_quantity`, `geometric_quantity`) — not legacy `"quantity"`.
+have split categories (`physical_quantity`, `geometry`) — not legacy `"quantity"`.
 However, as a safety net, the child evidence check should also accept legacy `"quantity"` as
 data-bearing (it IS a quantity, just unsplit). This means the actual check should be:
-`c in (QUANTITY_CATEGORIES | {"quantity", "coordinate", "structural"})`. The legacy `"quantity"`
-token will never appear after a fresh build, but prevents R3 from incorrectly demoting parents
+`c in (QUANTITY_CATEGORIES | {"quantity", "coordinate", "structural"})`. The legacy `"quantity"`token will never appear after a fresh build, but prevents R3 from incorrectly demoting parents
 if bottom-up ordering is somehow violated during migration.
 
 **Why this two-check approach**: Pure unit-based guard (round 1 fix) was too broad —
@@ -268,7 +305,7 @@ against imas-codex simultaneously.
 
 The committed `graph_search.py` already uses `$categories` parameter. Once the dirty
 worktree is resolved, search works with `SEARCHABLE_CATEGORIES`. After the quantity split,
-`SEARCHABLE_CATEGORIES = {"physical_quantity", "geometric_quantity", "coordinate"}` —
+`SEARCHABLE_CATEGORIES = {"physical_quantity", "geometry", "coordinate"}` —
 search automatically picks up both.
 
 #### 5b. New `node_category` Filter
@@ -277,7 +314,7 @@ Add `node_category` as an optional filter parameter to `search_dd_paths` and `li
 
 ```python
 # New parameter on search_dd_paths, list_dd_paths
-node_category: str | None  # "physical_quantity", "geometric_quantity", "coordinate", etc.
+node_category: str | None  # "physical_quantity", "geometry", "coordinate", etc.
 ```
 
 This enables queries like "show me only geometric shape parameters" or "only physics measurements".
@@ -297,7 +334,7 @@ makes the response self-contained without requiring follow-up queries.
 
 Add a convenience parameter `quantity_type` to search tools:
 - `"physical"` → filter to `physical_quantity` only
-- `"geometric"` → filter to `geometric_quantity` only
+- `"geometric"` → filter to `geometry` only
 - `"all"` (default) → both physical and geometric quantities
 
 ### 6. Enrichment Pipeline Assessment
@@ -352,22 +389,45 @@ that would be wastefully LLM-enriched.
 
 #### Model Selection
 
-| Model | Cost/MTok | SN Quality | Physics Accuracy |
-|-------|-----------|------------|------------------|
-| claude-opus-4.6 | ~$15 in, ~$75 out | — | Current default |
-| claude-sonnet-4.6 | ~$3 in, ~$15 out | 76.5 avg (best) | Proven in SN benchmark |
-| google/gemini-3.1-pro | ~$1.25 | 74.6 avg | Good but inconsistent |
+> **Critical finding (2026-04-16):** ALL current DD enrichment was done with
+> `google/gemini-3.1-flash-lite-preview` — the cheapest/weakest model available.
+> The plan previously framed this as "opus → sonnet downgrade"; the reality is
+> `flash-lite → sonnet` = massive quality UPGRADE at negligible cost difference.
 
-**Recommendation**: Use a DD-specific model override for enrichment, NOT a global
-`[tool.imas-codex.language]` change. Options:
+**5-Node Pilot Benchmark (real graph writes):**
+
+| Model | Time | Cost | Quality |
+|-------|------|------|---------|
+| gemini-3.1-flash-lite | 2.6s | $0.019 | Adequate — generic, thin descriptions |
+| claude-sonnet-4.6 | 14.4s | $0.021 | Excellent — precise physics context, practical |
+| claude-opus-4.6 | 25.7s | $0.021 | Excellent — most detailed, includes definitions |
+
+**Example: triangularity description**
+- **flash-lite:** "measures the degree of plasma indentation" — vague
+- **sonnet:** "quantifying the D-shape asymmetry... key shaping parameter influencing MHD stability, confinement, and power exhaust" — precise
+- **opus:** "defined as the horizontal offset of the maximum vertical extent from the geometric axis normalized by the minor radius" — includes formula
+
+**Cost projection for full re-enrichment:**
+
+| Scenario | Nodes | Cost | Time |
+|----------|-------|------|------|
+| Sonnet (all enrichable) | 11,699 | ~$50 | ~3 hours |
+| Flash-lite (all enrichable) | 11,699 | ~$45 | ~1 hour |
+| Marginal cost of sonnet | — | ~$5 | ~2 hours |
+
+**Recommendation**: Switch to `claude-sonnet-4.6` for DD enrichment. The $5 marginal
+cost buys dramatically better descriptions that directly improve:
+1. Embedding quality (better descriptions → better vectors → better search)
+2. Standard name generation (enriched descriptions are compose prompt context)
+3. MCP tool responses (descriptions surfaced to users)
+
+Use a DD-specific model override for enrichment, NOT a global change:
 1. **CLI override** (preferred): `uv run imas-codex imas dd enrich --model openrouter/anthropic/claude-sonnet-4.6`
 2. **Config section**: Add `[tool.imas-codex.dd-enrichment]` with its own `model` key
-3. **Environment**: `IMAS_CODEX_DD_ENRICHMENT_MODEL=openrouter/anthropic/claude-sonnet-4.6`
 
-Why not change the global `language` model:
-- `[tool.imas-codex.language]` affects discovery scoring, path classification, signal mapping
-- Changing it globally would invalidate ALL enrichment hashes across ALL subsystems
-- DD enrichment should be independently tunable
+Hash-based idempotency (`compute_enrichment_hash(context_text, model_name)`) means
+changing the model automatically invalidates the cache, forcing re-enrichment of all
+nodes — which is exactly what we want.
 
 #### Multi-Pass Enrichment Assessment
 
@@ -380,7 +440,7 @@ and coordinate relationships as additional context
 
 **Verdict**: Defer to post-recovery. The immediate priority is fixing classification
 and recovering embeddings. Multi-pass enrichment is a quality improvement that can be
-evaluated once the pipeline is stable. The model switch (opus → sonnet) alone should
+evaluated once the pipeline is stable. The model switch (flash-lite → sonnet) alone should
 improve quality significantly.
 
 ### 7. Two Classification Systems: Reconciliation Path
@@ -392,12 +452,12 @@ improve quality significantly.
 | Output | 7 categories | concept / accessor |
 | Used by | Build, search, SN extract, embed | Enrichment only |
 
-**Reconciliation**: The enrichment classifier's `FORCE_INCLUDE_CONCEPTS` set overlaps
-with the node classifier's `GEOMETRIC_QUANTITY_NAMES` (both include elongation,
-triangularity). After the split, FORCE_INCLUDE_CONCEPTS should be reviewed to ensure
-geometric quantities are still force-included as concepts (not demoted to accessors).
+**Reconciliation**: The enrichment classifier's `FORCE_INCLUDE_CONCEPTS` set should be
+reviewed to ensure geometry nodes (identified by path patterns, not leaf names) are
+still force-included as concepts (not demoted to accessors).
 
-No code merge needed — just ensure consistency in the overlapping name sets.
+No code merge needed — just ensure the enrichment classifier consults `node_category`
+(see section 6 above).
 
 ---
 
@@ -415,14 +475,18 @@ No code merge needed — just ensure consistency in the overlapping name sets.
     # Physical quantity (unitful)
     ("core_profiles/profiles_1d/electrons/temperature", "temperature", "FLT_1D", "eV", None, "physical_quantity"),
     ("eq/ts/profiles_1d/pressure", "pressure", "FLT_1D", "Pa", None, "physical_quantity"),
-    # Geometric quantity (unitful - length)
-    ("eq/ts/gq/minor_radius", "minor_radius", "FLT_0D", "m", None, "geometric_quantity"),
-    ("eq/ts/gq/major_radius", "major_radius", "FLT_0D", "m", None, "geometric_quantity"),
-    # Geometric quantity (dimensionless)
-    ("eq/ts/p1d/elongation", "elongation", "FLT_1D", "-", None, "geometric_quantity"),
-    ("eq/ts/gq/triangularity_upper", "triangularity_upper", "FLT_0D", "-", None, "geometric_quantity"),
-    ("eq/ts/gq/squareness_upper_inner", "squareness_upper_inner", "FLT_0D", "-", None, "geometric_quantity"),
-    ("eq/ts/gq/tilt", "tilt", "FLT_0D", "rad", None, "geometric_quantity"),
+    # Geometry (hardware/diagnostic structure — path-pattern based)
+    ("pf_active/coil/element/geometry/outline/r", "r", "FLT_1D", "m", None, "geometry"),
+    ("bolometer/channel/line_of_sight/first_point/r", "r", "FLT_0D", "m", None, "geometry"),
+    ("camera_visible/channel/detector/geometry/outline/r", "r", "FLT_1D", "m", None, "geometry"),
+    ("interferometer/channel/line_of_sight/first_point/phi", "phi", "FLT_0D", "rad", None, "geometry"),
+    # Plasma shape params → physical_quantity (NOT geometry — equilibrium outputs)
+    ("eq/ts/boundary/elongation", "elongation", "FLT_0D", "-", None, "physical_quantity"),
+    ("eq/ts/boundary/triangularity_upper", "triangularity_upper", "FLT_0D", "-", None, "physical_quantity"),
+    ("eq/ts/boundary/minor_radius", "minor_radius", "FLT_0D", "m", None, "physical_quantity"),
+    ("eq/ts/boundary/major_radius", "major_radius", "FLT_0D", "m", None, "physical_quantity"),
+    # Plasma boundary outline → physical_quantity (NOT geometry — equilibrium output)
+    ("eq/ts/boundary/outline/r", "r", "FLT_1D", "m", None, "physical_quantity"),
     # Physics dimensionless (NOT geometric — regression)
     ("eq/ts/gq/beta_tor", "beta_tor", "FLT_0D", "-", None, "physical_quantity"),
     ("eq/ts/p1d/q", "q", "FLT_1D", "-", None, "physical_quantity"),
@@ -486,7 +550,7 @@ def test_refine_from_relationships(current, kwargs, expected):
 ```python
 def test_quantity_categories_includes_both():
     assert "physical_quantity" in QUANTITY_CATEGORIES
-    assert "geometric_quantity" in QUANTITY_CATEGORIES
+    assert "geometry" in QUANTITY_CATEGORIES
 
 def test_embeddable_equals_quantity():
     assert EMBEDDABLE_CATEGORIES == QUANTITY_CATEGORIES
@@ -502,7 +566,7 @@ def test_old_quantity_not_in_any_set():
 def test_r3_structure_unit_with_quantity_children():
     """R3 must use QUANTITY_CATEGORIES, not 'quantity' literal.
     
-    A STRUCTURE+unit parent whose children are physical_quantity/geometric_quantity
+    A STRUCTURE+unit parent whose children are physical_quantity/geometry
     should remain a quantity (not be demoted to structural). This proves that the
     classifier works correctly with split categories — parity between fresh build
     and migration.
@@ -517,7 +581,7 @@ def test_r3_structure_unit_with_quantity_children():
         cat,
         has_identifier_schema=False,
         is_coordinate_target=False,
-        children_categories=["physical_quantity", "geometric_quantity", "coordinate"],
+        children_categories=["physical_quantity", "geometry", "coordinate"],
         data_type="STRUCTURE",
         unit="m",
     )
@@ -604,7 +668,7 @@ git diff HEAD --stat
 
 ### Step 2: Apply Schema + Classifier Changes
 
-1. Update `imas_dd.yaml`: Replace `quantity` with `physical_quantity` + `geometric_quantity`
+1. Update `imas_dd.yaml`: Replace `quantity` with `physical_quantity` + `geometry`
 2. Update `node_classifier.py`: Rename functions, add geometric rules, fix Bug 2 path parameter
 3. Update `node_categories.py`: Add `QUANTITY_CATEGORIES`, update all sets
 4. Update `build_dd.py`:
@@ -774,7 +838,7 @@ candidate nodes guarantees consistency between the build pipeline and the migrat
 Note: `parent_data_type` is fetched via `HAS_PARENT` join (not stored on IMASNode).
 
 **Why phases are applied sequentially**: Phase 2 queries `parent.node_category IN $qty_cats`
-which includes the newly split `physical_quantity` and `geometric_quantity` values. If
+which includes the newly split `physical_quantity` and `geometry` values. If
 phase 1 reclassifications aren't written before phase 2 queries, the parent lookup would
 fail to match — those parents would still show `quantity` (the old unsplit value).
 
@@ -851,7 +915,7 @@ not specific category values.
 | 0 | Kill stale agents, save dirty patches | — | Low |
 | 1 | Restore dirty worktree (`git checkout HEAD -- ...`) | 0 | Low: restores committed code |
 | 2 | Write TDD tests (test_node_classifier.py, test_node_categories.py) | — | Low: tests only |
-| 3 | Update schema (imas_dd.yaml): physical_quantity + geometric_quantity | — | Low: schema only |
+| 3 | Update schema (imas_dd.yaml): physical_quantity + geometry | — | Low: schema only |
 | 4 | Rebuild models (`uv run build-models --force`) | 3 | Low: auto-generated |
 | 5 | Update node_classifier.py (rename, add geometric rules, fix R2) | 2, 3 | Medium: core logic |
 | 6 | Update node_categories.py (QUANTITY_CATEGORIES, update sets) | 3 | Low: constants |
@@ -878,7 +942,7 @@ because coordinates remain searchable even though they are not embedded or SN-ex
 
 | File | Change |
 |------|--------|
-| `imas_codex/schemas/imas_dd.yaml` | Replace `quantity` with `physical_quantity` + `geometric_quantity` |
+| `imas_codex/schemas/imas_dd.yaml` | Replace `quantity` with `physical_quantity` + `geometry` |
 | `imas_codex/core/node_classifier.py` | Rename functions, add `GEOMETRIC_QUANTITY_NAMES`, add geometric rules, fix R2 with name+unit two-check guard |
 | `imas_codex/core/node_categories.py` | Add `QUANTITY_CATEGORIES`, update all sets |
 | `imas_codex/graph/build_dd.py` | Fix Bug 1: `PARENT_OF` → `HAS_PARENT` in `_reclassify_relational`. Update ALL legacy category predicates with **two distinct sets**: (a) identifier/coordinate override queries (lines ~2026, ~2035) → `QUANTITY_CATEGORIES \| {"coordinate", "structural"}` (these passes must still examine coordinate and structural nodes for reclassification), (b) STRUCTURE+unit validation query (line ~2047) → `QUANTITY_CATEGORIES` only. Update `phase_embeddings()` filter → `EMBEDDABLE_CATEGORIES`. |

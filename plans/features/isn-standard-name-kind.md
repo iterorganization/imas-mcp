@@ -4,7 +4,7 @@
 
 The `StandardNameKind` enum in ISN (imas-standard-names) has three values:
 `scalar`, `vector`, `metadata`. The imas-codex project is expanding its DD node
-classification to distinguish `physical_quantity` from `geometric_quantity`. This
+classification to distinguish `physical_quantity` from `geometry`. This
 plan assesses whether StandardNameKind needs corresponding changes.
 
 ## Current State
@@ -29,7 +29,7 @@ StandardNameKind:
 ```yaml
 NodeCategory:
   physical_quantity:   "Measurable physics quantity (T_e, I_p, B_tor)"
-  geometric_quantity:  "Shape/configuration parameter (elongation, triangularity)"
+  geometry:  "Machine/diagnostic hardware positions (coil r/z, vessel outlines, LoS)"
   coordinate:          "Independent variable (time, rho_tor_norm)"
   structural:          "Storage artifact"
   identifier:          "Typed descriptor"
@@ -44,7 +44,7 @@ NodeCategory:
 | **What it classifies** | Standard name entries | DD path nodes |
 | **Taxonomy** | Mathematical nature (scalar vs vector vs non-measurable) | Pipeline participation (embed/search/extract/enrich) |
 | **"metadata" means** | Non-measurable concept (coordinate system, grid type) | Bookkeeping subtree (ids_properties, code) |
-| **Physics/geometric distinction** | Not present | Explicit (physical_quantity vs geometric_quantity) |
+| **Physics/geometric distinction** | Not present | Explicit (physical_quantity vs geometry) |
 
 ## Fitness Assessment
 
@@ -81,13 +81,13 @@ structured geometric concepts (`position`, `outline`, `trajectory`) use the rest
 `geometric_base` branch with geometry-specific rules (object/geometry qualification,
 orientation/path completeness, extent dimensionality).
 
-**Key implication**: `geometric_quantity` (NodeCategory in DD) does NOT always map to
+**Key implication**: `geometry` (NodeCategory in DD) does NOT always map to
 `geometric_base` (ISN grammar branch). The DD classification describes the *physics origin*
 of the quantity (shape vs measurement), while the grammar branch describes the *naming
 structure*. These are orthogonal axes:
 - Structural geometry (`outline`, `trajectory`, `centroid`) → `geometric_base` grammar
 - Shape scalars (`elongation`, `triangularity`, `minor_radius`) → `physical_base` grammar (open-vocab)
-- Both are `geometric_quantity` in the DD NodeCategory
+- Both are `geometry` in the DD NodeCategory
 
 ## Design Options
 
@@ -167,7 +167,7 @@ If filtering standard names by geometric/physical becomes a frequent need,
 ```cypher
 // Query-time: find geometric standard names via linked DD nodes
 MATCH (node:IMASNode)-[:HAS_STANDARD_NAME]->(sn:StandardName)
-WHERE node.node_category = 'geometric_quantity'
+WHERE node.node_category = 'geometry'
 RETURN DISTINCT sn.id, sn.description
 ```
 
@@ -195,7 +195,7 @@ These are normal vocabulary additions, not structural changes.
 ## Relationship to imas-codex Plan
 
 The imas-codex plan (`dd-unified-classification.md`) handles:
-- NodeCategory split (physical_quantity + geometric_quantity)
+- NodeCategory split (physical_quantity + geometry)
 - Propagating category to SN pipeline
 - MCP tool filtering
 - Graph recovery
@@ -221,6 +221,26 @@ SN compose prompt in imas-codex should handle geometric quantities prescriptivel
 currently surface `node_category`. Pass either `node_category` or a derived
 `geometry_hint` into the compose context so the LLM can select the appropriate
 grammar branch. Without this, geometric quantities may be misgenerated.
+
+## Status & Cross-References
+
+**Status:** Superseded by `standard-names/27-sn-vector-hierarchy.md` for vector assessment.
+The vector portion of this plan's "keep as-is, vector unused" conclusion has been overturned
+by new research showing 37 core physics vector concepts with near-term value.
+
+**Cross-references:**
+- `standard-names/27-sn-vector-hierarchy.md` — vector SN hierarchy plan (supersedes vector assessment)
+- `dd-unified-classification.md` — geometry redefinition (`geometric_quantity` → `geometry`)
+
+**What remains valid in this plan:**
+- StandardNameKind recommendation (Option A: keep unchanged) ✓
+- Metadata kind assessment (keep as reserved, clean orphans) ✓
+- Grammar branch analysis (geometric_base vs physical_base) ✓
+- Clean boundary: ISN owns grammar/validation, imas-codex owns pipeline/graph ✓
+
+**What is superseded:**
+- Vector kind assessment → see `27-sn-vector-hierarchy.md` (37 vector parents, HAS_COMPONENT/HAS_MAGNITUDE)
+- The DD NodeCategory enum now uses `geometry` (not `geometric_quantity`) for ~870 hardware/diagnostic nodes
 
 ## RD Review History
 
