@@ -152,3 +152,42 @@ class TestCacheControlInjection:
         sys_msg = kwargs["messages"][0]
         # GPT messages should remain plain strings
         assert isinstance(sys_msg["content"], str)
+
+
+class TestCacheFieldExtraction:
+    """_extract_cache_fields reads both litellm and OpenRouter field names."""
+
+    def test_none_ptd(self):
+        assert llm._extract_cache_fields(None) == (0, 0)
+
+    def test_openrouter_cache_write_tokens(self):
+        """OpenRouter uses cache_write_tokens (model_extra), not cache_creation_tokens."""
+
+        class FakePTD:
+            cached_tokens = 0
+            cache_write_tokens = 4802
+
+        read, write = llm._extract_cache_fields(FakePTD())
+        assert read == 0
+        assert write == 4802
+
+    def test_litellm_cache_creation_tokens(self):
+        """litellm formal field cache_creation_tokens is also checked."""
+
+        class FakePTD:
+            cached_tokens = 1024
+            cache_creation_tokens = 500
+
+        read, write = llm._extract_cache_fields(FakePTD())
+        assert read == 1024
+        assert write == 500
+
+    def test_cached_tokens_read(self):
+        """cached_tokens indicates a cache HIT."""
+
+        class FakePTD:
+            cached_tokens = 8000
+
+        read, write = llm._extract_cache_fields(FakePTD())
+        assert read == 8000
+        assert write == 0

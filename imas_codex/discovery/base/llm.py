@@ -444,6 +444,26 @@ def extract_cost(response: Any) -> float:
     return 0.0
 
 
+def _extract_cache_fields(ptd: Any) -> tuple[int, int]:
+    """Extract cache read/write token counts from prompt_tokens_details.
+
+    Different providers use different field names:
+    - litellm formal: ``cache_creation_tokens`` (None by default)
+    - OpenRouter extra: ``cache_write_tokens``
+    - Both use: ``cached_tokens`` for reads
+
+    Returns ``(cached_read, cache_write)`` with 0 defaults.
+    """
+    if ptd is None:
+        return 0, 0
+    cached = getattr(ptd, "cached_tokens", 0) or 0
+    # Check both litellm formal field and OpenRouter's extra field
+    cache_write = getattr(ptd, "cache_creation_tokens", 0) or 0
+    if cache_write == 0:
+        cache_write = getattr(ptd, "cache_write_tokens", 0) or 0
+    return cached, cache_write
+
+
 def _log_cache_metrics(response: Any, model: str) -> None:
     """Log prompt cache hit/miss metrics from LLM response usage.
 
@@ -455,8 +475,7 @@ def _log_cache_metrics(response: Any, model: str) -> None:
     if not usage:
         return
     ptd = getattr(usage, "prompt_tokens_details", None)
-    cached = getattr(ptd, "cached_tokens", 0) or 0 if ptd else 0
-    cache_write = getattr(ptd, "cache_creation_tokens", 0) or 0 if ptd else 0
+    cached, cache_write = _extract_cache_fields(ptd)
     prompt = getattr(usage, "prompt_tokens", 0) or 0
     completion = getattr(usage, "completion_tokens", 0) or 0
 
@@ -507,9 +526,7 @@ def extract_cache_tokens(response: Any) -> tuple[int, int]:
     if not usage:
         return 0, 0
     ptd = getattr(usage, "prompt_tokens_details", None)
-    cached = getattr(ptd, "cached_tokens", 0) or 0 if ptd else 0
-    cache_write = getattr(ptd, "cache_creation_tokens", 0) or 0 if ptd else 0
-    return cached, cache_write
+    return _extract_cache_fields(ptd)
 
 
 def _sanitize_content(content: str) -> str:
