@@ -112,6 +112,85 @@ _METADATA_LEAVES: frozenset[str] = frozenset(
     {"description", "name", "comment", "source", "provider"}
 )
 
+# Path segments indicating machine / diagnostic hardware geometry.
+GEOMETRY_PATH_PATTERNS: frozenset[str] = frozenset(
+    {
+        "geometry",
+        "outline",
+        "aperture",
+        "line_of_sight",
+        "first_point",
+        "second_point",
+        "position",
+        "detector",
+        "mirror",
+        "waveguide",
+        "launcher",
+        "antenna",
+        "annular_grid",
+        "first_wall",
+        "limiter",
+        "divertor",
+        "vessel",
+        "pf_active",
+        "pf_passive",
+    }
+)
+
+# Path segments that indicate plasma physics outputs, NOT hardware
+# geometry, even when spatial units are present.
+GEOMETRY_EXCLUSION_PATTERNS: frozenset[str] = frozenset(
+    {
+        "boundary",
+        "separatrix",
+        "grid",
+        "ggd",
+        "flux_surface",
+        "constraint",
+        "magnetic_axis",
+        "pedestal",
+        "itb",
+        "etb",
+        "x_point",
+        "strike_point",
+    }
+)
+
+# Units that are purely spatial (lengths, angles, areas, volumes).
+# Inverse-spatial units (m^-1, m^-2, m^-3) are NOT included — those
+# are densities, not geometry.
+SPATIAL_UNITS: frozenset[str] = frozenset({"m", "rad", "m^2", "m^3", "deg"})
+
+
+# ──────────────────────────────────────────────────────────────────
+# Geometry detection helper
+# ──────────────────────────────────────────────────────────────────
+
+
+def _is_geometry_path(path: str, unit: str | None) -> bool:
+    """Check if a path represents machine/diagnostic hardware geometry.
+
+    A node is geometry when BOTH conditions hold:
+
+    1. **Spatial unit** (m, rad, m²,  m³, deg) — excludes inverse-spatial
+       units like m⁻¹, m⁻², m⁻³ (densities).
+    2. **Geometry ancestor** — at least one path segment matches
+       :data:`GEOMETRY_PATH_PATTERNS` AND no segment matches
+       :data:`GEOMETRY_EXCLUSION_PATTERNS`.
+
+    Note: Inclusion matching uses **exact segment match**, while exclusion
+    uses **substring** match so that composite names like
+    ``boundary_separatrix`` are caught.
+    """
+    if not unit or unit not in SPATIAL_UNITS:
+        return False
+    segments = path.split("/")
+    has_geometry_ancestor = any(seg in GEOMETRY_PATH_PATTERNS for seg in segments)
+    has_exclusion = any(
+        excl in seg for seg in segments for excl in GEOMETRY_EXCLUSION_PATTERNS
+    )
+    return has_geometry_ancestor and not has_exclusion
+
 
 # ──────────────────────────────────────────────────────────────────
 # Pass 1 — build-time classification (XML signals only)
@@ -145,7 +224,7 @@ def classify_node_pass1(
     -------
     str
         One of ``"error"``, ``"metadata"``, ``"coordinate"``, ``"structural"``,
-        ``"quantity"``.
+        ``"geometry"``, ``"quantity"``.
     """
     parts = path.split("/")
     last_seg = parts[-1] if parts else name
@@ -202,8 +281,11 @@ def classify_node_pass1(
             if kw in last_lower:
                 return "structural"
 
-    # Rule 9: Physics leaf type with physical unit → quantity
+    # Rule 9a: Physics leaf type + spatial unit + geometry ancestor → geometry
     if dt in PHYSICS_LEAF_TYPES and unit_str and unit_str not in _NO_UNIT:
+        if _is_geometry_path(path, unit_str):
+            return "geometry"
+        # Rule 9b: Physics leaf type + physics unit → quantity
         return "quantity"
 
     # Rule 10: Physics leaf type without unit
@@ -213,8 +295,11 @@ def classify_node_pass1(
         # Dimensionless physics quantity (e.g. elongation, beta)
         return "quantity"
 
-    # Rule 11: STRUCTURE / STRUCT_ARRAY with unit → provisional quantity
+    # Rule 11a: STRUCTURE + unit + geometry ancestor → geometry
     if dt in STRUCTURE_TYPES and unit_str and unit_str not in _NO_UNIT:
+        if _is_geometry_path(path, unit_str):
+            return "geometry"
+        # Rule 11b: STRUCTURE + unit → provisional quantity
         return "quantity"
 
     # Rule 12: STRUCTURE / STRUCT_ARRAY without unit → structural
@@ -225,8 +310,11 @@ def classify_node_pass1(
     if dt == "INT_0D" and (not unit_str or unit_str in _NO_UNIT):
         return "quantity"
 
-    # Rule 14: INT with physical unit → quantity
+    # Rule 14a: INT + spatial unit + geometry ancestor → geometry
     if dt in INTEGER_TYPES and unit_str and unit_str not in _NO_UNIT:
+        if _is_geometry_path(path, unit_str):
+            return "geometry"
+        # Rule 14b: INT + physics unit → quantity
         return "quantity"
 
     # Rule 15: Remaining INT → structural
@@ -250,6 +338,7 @@ def classify_node_pass2(
     children_categories: list[str] | None = None,
     data_type: str | None = None,
     unit: str | None = None,
+    name: str | None = None,
 ) -> str | None:
     """Refine classification using graph relationships.
 
@@ -272,6 +361,10 @@ def classify_node_pass2(
         DD data type string.
     unit:
         Physical unit string.
+    name:
+        Leaf segment of the path (e.g. ``"psi"``).  When provided,
+        enables the R2 name+unit guard that prevents physics data
+        with meaningful units from being reclassified as coordinates.
     """
     dt = (data_type or "").upper()
 
@@ -279,8 +372,16 @@ def classify_node_pass2(
     if has_identifier_schema:
         return "identifier"
 
-    # R2: Coordinate target → coordinate (overrides quantity/structural)
+    # R2: Coordinate target → coordinate (with name+unit guard)
+    # Canonical coordinate names (r, z, psi, …) always become coordinate.
+    # Physics data nodes with a meaningful unit keep their Pass 1 category
+    # even when they appear as coordinate targets.
     if is_coordinate_target and current_category != "error":
+        if name is not None:
+            if name in COORDINATE_SEGMENTS:
+                return "coordinate"
+            if unit and unit not in _NO_UNIT:
+                return None  # Keep current — physics data with meaningful unit
         return "coordinate"
 
     # R3: Validate STRUCTURE+unit as quantity
@@ -303,8 +404,11 @@ def classify_node_pass2(
 
 __all__ = [
     "COORDINATE_SEGMENTS",
+    "GEOMETRY_EXCLUSION_PATTERNS",
+    "GEOMETRY_PATH_PATTERNS",
     "INTEGER_TYPES",
     "PHYSICS_LEAF_TYPES",
+    "SPATIAL_UNITS",
     "STRING_TYPES",
     "STRUCTURAL_KEYWORDS",
     "STRUCTURE_TYPES",
