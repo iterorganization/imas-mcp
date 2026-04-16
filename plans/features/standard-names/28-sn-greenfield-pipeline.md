@@ -146,7 +146,7 @@ StandardName progression:       generated_at → validated_at → consolidated_a
 **LLM**: None.
 **Changes from current**: Minimal — already works well and already writes to graph.
 
-- Query DD paths by `node_category` ∈ {`physical_quantity`, `geometry`} (from DD classification plan)
+- Query DD paths by `node_category` ∈ {`quantity`, `geometry`} (from DD classification plan)
 - Also extract from facility signals (`--source signals`)
 - Classify via path classifier (quantity/metadata/skip)
 - Select primary + grouping clusters
@@ -576,7 +576,7 @@ Grand total with vectors: ~$65-70 per full generation run.
 
 ### Phase 0: Prerequisites (from DD Classification Plan)
 
-- DD `node_category` labels in place (`physical_quantity`, `geometry`)
+- DD `node_category` labels in place (`quantity`, `geometry`)
 - DD nodes re-enriched with sonnet (better descriptions → better SN context)
 - Classifier bugs fixed (reversed traversal, overbroad coordinate)
 - Verify existing claim infrastructure (`claimed_at`, `claim_token`, `@retry_on_deadlock`) covers new workers
