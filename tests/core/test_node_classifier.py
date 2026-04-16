@@ -311,6 +311,21 @@ class TestClassifyNodePass2:
         )
         assert result == "identifier"
 
+    def test_no_identifier_schema_keeps_quantity(self):
+        """Quantity node WITHOUT HAS_IDENTIFIER_SCHEMA must NOT be reclassified.
+
+        Regression test for the OPTIONAL MATCH + count(*) > 0 bug where
+        every enrichable node was incorrectly reclassified to identifier.
+        """
+        result = classify_node_pass2(
+            current_category="quantity",
+            has_identifier_schema=False,
+            is_coordinate_target=False,
+            name="pressure",
+            unit="Pa",
+        )
+        assert result is None  # None = keep current category
+
     # --- R2: Coordinate target with name+unit guard ---
 
     def test_coordinate_target_canonical_name(self):

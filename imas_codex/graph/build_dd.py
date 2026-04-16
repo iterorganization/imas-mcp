@@ -2027,23 +2027,23 @@ def _reclassify_relational(client: GraphClient) -> int:
     # Categories for pass 2 reclassification
     pass2_categories = sorted(ENRICHABLE_CATEGORIES | {"structural"})
 
-    # Fetch nodes with relevant relationships in a single query
+    # Fetch nodes with relevant relationships in a single query.
+    # Uses EXISTS {} subquery — OPTIONAL MATCH + count(*) > 0 is always
+    # true because count(*) counts rows (including the null match).
     rows = client.query(
         """
         MATCH (n:IMASNode)
         WHERE n.node_category IN $categories
-        OPTIONAL MATCH (n)-[:HAS_IDENTIFIER_SCHEMA]->()
-        WITH n, count(*) > 0 AS has_id_schema
-        WHERE has_id_schema
+          AND EXISTS { (n)-[:HAS_IDENTIFIER_SCHEMA]->() }
         RETURN n.id AS id, n.node_category AS current,
-               n.data_type AS data_type, n.unit AS unit,
+               n.data_type AS data_type, n.unit AS unit, n.name AS name,
                true AS has_identifier_schema
         UNION ALL
         MATCH (n:IMASNode)
         WHERE n.node_category IN $categories
         MATCH ()-[:HAS_COORDINATE]->(n)
         RETURN DISTINCT n.id AS id, n.node_category AS current,
-               n.data_type AS data_type, n.unit AS unit,
+               n.data_type AS data_type, n.unit AS unit, n.name AS name,
                false AS has_identifier_schema
         """,
         categories=pass2_categories,
@@ -2077,6 +2077,7 @@ def _reclassify_relational(client: GraphClient) -> int:
                 has_identifier_schema=True,
                 data_type=row.get("data_type"),
                 unit=row.get("unit"),
+                name=row.get("name"),
             )
         else:
             coord_targets.add(node_id)
@@ -2085,6 +2086,7 @@ def _reclassify_relational(client: GraphClient) -> int:
                 is_coordinate_target=True,
                 data_type=row.get("data_type"),
                 unit=row.get("unit"),
+                name=row.get("name"),
             )
 
         if new_cat and new_cat != row["current"]:
