@@ -429,9 +429,13 @@ cost buys dramatically better descriptions that directly improve:
 2. Standard name generation (enriched descriptions are compose prompt context)
 3. MCP tool responses (descriptions surfaced to users)
 
-Use a DD-specific model override for enrichment, NOT a global change:
-1. **CLI override** (preferred): `uv run imas-codex imas dd enrich --model openrouter/anthropic/claude-sonnet-4.6`
-2. **Config section**: Add `[tool.imas-codex.dd-enrichment]` with its own `model` key
+**Model threading** (required for full rebuild): Add `--model` CLI flag to `imas dd build`:
+1. CLI (`imas_dd.py`): New `--model` option, passed into `DDBuildState`
+2. `DDBuildState` (`dd_workers.py`): New `model: str | None` field
+3. `enrich_worker` (`dd_workers.py:345`): Use `state.model or get_model("language")`
+4. `enrich_imas_paths()` already accepts `model` parameter (`dd_enrichment.py:875`)
+
+Quick-start alternative: `IMAS_CODEX_LANGUAGE_MODEL=openrouter/anthropic/claude-sonnet-4.6`
 
 Hash-based idempotency (`compute_enrichment_hash(context_text, model_name)`) means
 changing the model automatically invalidates the cache, forcing re-enrichment of all
@@ -439,23 +443,29 @@ nodes — which is exactly what we want.
 
 #### Multi-Pass Enrichment Assessment
 
-The discovery paths pipeline uses a two-pass pattern (triage → detailed scoring) that
-produces high-quality results. The same multi-pass principle is applied at the SN pipeline
-level in the [SN Greenfield Pipeline](standard-names/28-sn-greenfield-pipeline.md), which
-separates naming (LLM call #1) from documentation (LLM call #2) with dynamic context
-retrieval between them.
+The SN pipeline uses multi-pass LLM architecture (NAME → ENRICH with POSTLINK context
+retrieval). The same principle applies to DD enrichment — descriptions improve when
+the LLM has access to sibling descriptions, cluster peer context, and cross-IDS
+duplicate descriptions from Pass 1.
 
-For DD enrichment specifically:
+**Design**: See [dd-multi-pass-enrichment.md](dd-multi-pass-enrichment.md) for the
+full plan. Key additions:
 
-**Pass 1** (current): Generate description + keywords from path context
-**Pass 2** (future): Refine description using sibling descriptions, cluster membership,
-and coordinate relationships as additional context
+1. **New `refined` status**: `built → enriched → refined → embedded`
+2. **New `refine_worker`**: Claims `enriched` nodes with sibling-readiness barrier,
+   gathers sibling descriptions + cluster peers + cross-IDS duplicates, calls LLM
+   with refinement prompt, writes `refined` status
+3. **Query-level barrier**: Refine worker only claims nodes whose enrichable siblings
+   are ALL past `built` — no global coordination needed, natural wavefront
+4. **Separate `refinement_hash`**: Includes Pass 1 description + sibling descriptions +
+   cluster peers + model name for idempotency
+5. **Embed worker updated**: Claims `refined` nodes instead of `enriched`
 
-**Verdict**: Defer multi-pass DD enrichment to post-reclassification. The immediate
-priority is fixing classification and switching to sonnet. The model upgrade alone
-(flash-lite → sonnet) provides a dramatic quality improvement. Multi-pass DD enrichment
-is a separate optimization for a future iteration — the SN pipeline's multi-pass design
-addresses the quality gap where it matters most (standard name documentation).
+**Cost**: ~$100 total (Pass 1 ~$50 + Pass 2 ~$50, both sonnet). Time: ~6 hours.
+Well within the $200 budget.
+
+**Implementation**: Steps 1 (schema) and 2–6 (graph ops, context, prompt, worker, CLI)
+integrate with this plan's execution order. Schema changes combined with Step 3 below.
 
 ### 7. Two Classification Systems: Reconciliation Path
 
@@ -701,25 +711,52 @@ git diff HEAD --stat
 5. Update `clusters/preprocessing.py`: replace `_classify_node(path, name) != "data"` with constant-based check
 6. Rebuild models: `uv run build-models --force`
 
-### Step 3: One-Off Graph Migration
+### Step 3: Full Rebuild — Reclassify + Re-Enrich All Nodes
 
-**Strategy: Python-driven, not Cypher-duplicated.** RD review correctly identified
-that duplicating classifier logic in Cypher is error-prone. Instead, run the full
-two-step Python classifier (attributes + relationships) over affected nodes.
+> **Major revision (2026-04-17):** Replaces the previous surgical migration (Steps 3-5)
+> with a simpler two-phase approach: in-place reclassification followed by full
+> re-enrichment with sonnet 4.6. All ~11,699 enrichable nodes get uniform sonnet-quality
+> descriptions, not just the ~2,289 reclassified ones.
+
+#### Why Not `--reset-to extracted`?
+
+`_reset_to_extracted()` in `dd_graph_ops.py` uses `DETACH DELETE` on all IMASNode
+nodes (`line 401`). This destroys ALL relationships, including **190K+ cross-domain
+links** that the DD build does NOT recreate:
+
+- `(CodeChunk)-[:REFERENCES_IMAS]->(IMASNode)` — code cross-references
+- `(IMASMapping)-[:SOURCE_PATH]->(SignalNode)`, `[:TARGET_PATH]->(IMASNode)` — signal mappings
+- `(StandardNameSource)-[:SOURCE_DD_PATH]->(IMASNode)` — SN extraction tracking
+- `(FacilitySignal)-[:HAS_STANDARD_NAME]->(StandardName)` via IMASNode links
+- `(IMASNode)-[:IN_CLUSTER]->(IMASSemanticCluster)` — semantic clusters
+
+**`--reset-to extracted` is destructive and MUST NOT be used on a shared graph.**
+
+#### Why Not `--reset-to built` Alone?
+
+`--reset-to built` resets enrichment/embedding fields but **does not reclassify** nodes.
+Classification happens during `phase_build` from DD XML (`dd_workers.py:248` skips build
+when `reset_to in ("built", "enriched")`). The quantity→physical_quantity/geometry split
+requires reclassification, which `--reset-to built` cannot provide.
+
+#### Correct Approach: In-Place Reclassification + Full Re-Enrichment
+
+**Phase A: Reclassify in place** (disposable Python script, ~3 minutes):
 
 ```python
-# migration_classify.py — run via: uv run python migration_classify.py
+# reclassify_dd_nodes.py — run via: uv run python reclassify_dd_nodes.py
 # (disposable script, do NOT commit)
+from collections import Counter
 from imas_codex.graph.client import GraphClient
 from imas_codex.core.node_classifier import classify_from_attributes, refine_from_relationships
 from imas_codex.core.node_categories import QUANTITY_CATEGORIES
 
 def fetch_relational_context(gc, node_id):
-    """Fetch the relational facts needed by refine_from_relationships.
-    
+    """Fetch relational facts for refine_from_relationships.
+
     Direction matters:
     - HAS_PARENT: (child)-[:HAS_PARENT]->(parent) — we want n's parent
-    - HAS_COORDINATE: (array)-[:HAS_COORDINATE]->(coord_target) — incoming means n IS a coordinate target
+    - HAS_COORDINATE: (array)-[:HAS_COORDINATE]->(coord_target) — incoming means n IS a coord target
     - HAS_IDENTIFIER_SCHEMA: (n)-[:HAS_IDENTIFIER_SCHEMA]->(schema)
     - Children: (child)-[:HAS_PARENT]->(n) — nodes whose parent is n
     """
@@ -739,7 +776,6 @@ def fetch_relational_context(gc, node_id):
 
 def full_classify(gc, node):
     """Run both classification steps — mirrors build_dd.py exactly."""
-    # Step 1: attribute-based
     ctx = fetch_relational_context(gc, node["id"])
     cat = classify_from_attributes(
         node["id"], node["name"],
@@ -747,7 +783,6 @@ def full_classify(gc, node):
         unit=node["unit"],
         parent_data_type=ctx.get("parent_data_type"),
     )
-    # Step 2: relationship-based refinement (full contract)
     refined = refine_from_relationships(
         cat,
         has_identifier_schema=ctx.get("has_id_schema", False),
@@ -760,159 +795,80 @@ def full_classify(gc, node):
     )
     return refined if refined is not None else cat
 
-reclassified = []
-
-def apply_one(gc, node_id, new_cat):
-    """Apply a single reclassification immediately (for bottom-up consistency)."""
-    gc.query("""
-        MATCH (n:IMASNode {id: $id})
-        SET n.node_category = $cat, n._migration_reclassified = true
-    """, id=node_id, cat=new_cat)
-
-def apply_batch(gc, batch):
-    """Write a batch of reclassifications to the graph immediately."""
-    for node_id, new_cat in batch:
-        apply_one(gc, node_id, new_cat)
+summary = Counter()
 
 with GraphClient() as gc:
-    # Phase 1: Re-classify ALL nodes currently labeled 'quantity'
-    # Sort by path depth (deepest first = bottom-up) so that when R3
-    # checks children_categories, child nodes already have split values.
+    # Reclassify ALL candidate nodes in one bottom-up pass.
+    # Bottom-up ordering ensures children are reclassified before parents,
+    # so R3 (STRUCTURE+unit validation) sees correct children_categories.
     nodes = list(gc.query("""
         MATCH (n:IMASNode)
-        WHERE n.node_category = 'quantity'
+        WHERE n.node_category IN ['quantity', 'structural', 'coordinate']
         RETURN n.id AS id, n.data_type AS data_type, n.unit AS unit,
-               split(n.id, '/')[-1] AS name, size(split(n.id, '/')) AS depth
+               split(n.id, '/')[-1] AS name, n.node_category AS old_cat,
+               size(split(n.id, '/')) AS depth
         ORDER BY depth DESC
     """))
-    phase1_count = 0
+
     for node in nodes:
         new_cat = full_classify(gc, node)
-        if new_cat != 'quantity':
-            # Apply immediately — parent nodes processed later will see
-            # updated child categories via fetch_relational_context()
-            apply_one(gc, node["id"], new_cat)
-            reclassified.append((node["id"], new_cat))
-            phase1_count += 1
-    print(f"Phase 1: {phase1_count} quantity nodes reclassified (bottom-up)")
+        if new_cat != node["old_cat"]:
+            # Write immediately — parent nodes processed later see updated children
+            gc.query("""
+                MATCH (n:IMASNode {id: $id})
+                SET n.node_category = $cat
+            """, id=node["id"], cat=new_cat)
+            summary[f"{node['old_cat']} → {new_cat}"] += 1
 
-    # Phase 2: Fix Bug 1 — structural nodes under quantity parents
-    # Now safe to query parent.node_category — phase 1 results are applied
-    bug1_nodes = list(gc.query("""
-        MATCH (n:IMASNode)-[:HAS_PARENT]->(parent:IMASNode)
-        WHERE n.node_category = 'structural'
-          AND parent.node_category IN $qty_cats
-          AND (n.data_type STARTS WITH 'FLT' OR n.data_type STARTS WITH 'CPX')
-        RETURN n.id AS id, n.data_type AS data_type, n.unit AS unit,
-               split(n.id, '/')[-1] AS name
-    """, qty_cats=list(QUANTITY_CATEGORIES)))
-    phase2_batch = []
-    for node in bug1_nodes:
-        new_cat = full_classify(gc, node)
-        if new_cat != 'structural':
-            phase2_batch.append((node["id"], new_cat))
-    
-    apply_batch(gc, phase2_batch)
-    reclassified.extend(phase2_batch)
-    print(f"Phase 2: {len(phase2_batch)} structural→quantity nodes reclassified")
-
-    # Phase 3: Fix Bug 2 — coordinate targets that should be quantities
-    bug2_nodes = list(gc.query("""
-        MATCH (n:IMASNode)<-[:HAS_COORDINATE]-(:IMASNode)
-        WHERE n.node_category = 'coordinate'
-          AND n.unit IS NOT NULL AND n.unit <> '-' AND n.unit <> ''
-        RETURN n.id AS id, n.data_type AS data_type, n.unit AS unit,
-               split(n.id, '/')[-1] AS name
-    """))
-    phase3_batch = []
-    for node in bug2_nodes:
-        new_cat = full_classify(gc, node)
-        if new_cat != 'coordinate':
-            phase3_batch.append((node["id"], new_cat))
-    
-    apply_batch(gc, phase3_batch)
-    reclassified.extend(phase3_batch)
-    print(f"Phase 3: {len(phase3_batch)} coordinate→quantity nodes reclassified")
-
-    # Summary
-    from collections import Counter
-    summary = Counter()
-    for _, new_cat in reclassified:
-        summary[new_cat] += 1
-
-    print(f"Migration complete: {len(reclassified)} nodes reclassified")
-    for cat, count in sorted(summary.items()):
-        print(f"  {cat}: {count}")
+    print(f"Reclassified {sum(summary.values())} nodes:")
+    for transition, count in sorted(summary.items()):
+        print(f"  {transition}: {count}")
 ```
+
+**Why one pass instead of three phases**: All three bugs (quantity split, Bug 1
+structural→quantity, Bug 2 coordinate→quantity) are handled by the updated
+classifier rules. Processing ALL candidate categories (`quantity`, `structural`,
+`coordinate`) in one bottom-up pass applies the correct classification uniformly.
+No phased application or migration markers needed.
 
 **Why Python instead of Cypher**: The Python classifier is the single source of truth.
 Running both `classify_from_attributes()` and `refine_from_relationships()` (with the
 full contract: `data_type`, `children_categories`, identifier/coordinate flags) over
-candidate nodes guarantees consistency between the build pipeline and the migration.
-Note: `parent_data_type` is fetched via `HAS_PARENT` join (not stored on IMASNode).
+candidate nodes guarantees consistency with the build pipeline.
 
-**Why phases are applied sequentially**: Phase 2 queries `parent.node_category IN $qty_cats`
-which includes the newly split `physical_quantity` and `geometry` values. If
-phase 1 reclassifications aren't written before phase 2 queries, the parent lookup would
-fail to match — those parents would still show `quantity` (the old unsplit value).
-
-### Step 4: Reset Reclassified Nodes for Re-Enrichment
-
-**Critical**: Reset ALL nodes whose category changed, regardless of current status.
-Nodes reclassified from `structural` or `coordinate` to a quantity category need
-full re-enrichment and re-embedding — even if they already have descriptions
-(generated under the wrong classification context).
-
-```cypher
-// Reset ALL reclassified nodes — includes 'built', 'enriched', AND 'embedded'
-// Field set is a superset of _RESET_CLEAR_FIELDS["built"] from dd_graph_ops.py (lines 362-374)
-// PLUS embedding_text (not in the dict but needed for complete vector cleanup) and
-// claimed_at/claim_token (handled separately by reset_imas_nodes at lines 453-457).
-MATCH (n:IMASNode)
-WHERE n._migration_reclassified = true
-SET n.status = 'built',
-    n.description = null,
-    n.keywords = null,
-    n.enrichment_hash = null,
-    n.enrichment_model = null,
-    n.enrichment_source = null,
-    n.enriched_at = null,
-    n.physics_domain = null,
-    n.embedding = null,
-    n.embedding_hash = null,
-    n.embedded_at = null,
-    n.embedding_text = null,
-    n.claimed_at = null,
-    n.claim_token = null,
-    n._migration_reclassified = null
-RETURN count(n) AS reset_for_enrichment;
-```
-
-The migration script (Step 3) sets `n._migration_reclassified = true` on every
-node it reclassifies. This temporary marker ensures we reset exactly the affected
-nodes. The reset clears ALL enrichment and embedding state — a superset of
-`_RESET_CLEAR_FIELDS["built"]` from `dd_graph_ops.py` (lines 362–374): the dict
-fields (`description`, `keywords`, `enrichment_hash`, `enrichment_model`,
-`enrichment_source`, `enriched_at`, `physics_domain`, `embedding`, `embedding_hash`,
-`embedded_at`) plus `embedding_text` (not in the dict but needed for complete
-vector cleanup) and `claimed_at`/`claim_token` (handled separately by
-`reset_imas_nodes()` at lines 453–457). This is critical because nodes
-reclassified from a quantity category to `structural` or `identifier` must not
-retain stale `description`, `keywords`, or `physics_domain` generated under the
-wrong classification context. Without clearing `embedding_hash`, embed workers
-could skip on a stale hash match and mark nodes as embedded with no vector.
-
-### Step 5: Re-Run Enrichment + Embedding
+**Phase B: Full re-enrichment with sonnet** (~$50, ~3 hours):
 
 ```bash
-# Re-enrich nodes that were reclassified (status=built)
-uv run imas-codex imas dd enrich --version 4.0.0
-
-# Re-embed nodes that were enriched (status=enriched)
-uv run imas-codex imas dd embed --version 4.0.0
+# Reset ALL enriched/embedded nodes to 'built' status (clears enrichment + embedding)
+# Then re-enrich ALL nodes with sonnet 4.6 and re-embed
+uv run imas-codex imas dd build --reset-to built
 ```
 
-**Cost estimate**: ~2,289 nodes × ~$0.01/node ≈ $23 for enrichment. Embedding is GPU-only (free).
+This uses `reset_imas_nodes("built")` which:
+- Resets all `enriched` and `embedded` nodes to `built` status
+- Clears enrichment fields: description, keywords, enrichment_hash, enrichment_model,
+  enrichment_source, enriched_at, physics_domain
+- Clears embedding fields: embedding, embedding_hash, embedded_at
+- Clears claim state: claimed_at, claim_token
+- **Preserves all nodes and relationships** (no DETACH DELETE)
+
+The enrich worker then re-enriches ALL ~11,699 enrichable nodes:
+- `physical_quantity` + `geometry` nodes → LLM enrichment with sonnet (positive override)
+- `coordinate` nodes → LLM enrichment with sonnet (in ENRICHABLE_CATEGORIES)
+- `structural`, `identifier`, `error`, `metadata` → template enrichment (no LLM cost)
+
+**Model configuration**: Thread a `--model` CLI flag through `DDBuildState` to the
+`enrich_worker`. The `enrich_imas_paths()` function already accepts a `model` parameter
+(`dd_enrichment.py:875`). For one-off rebuild, alternatively set:
+`IMAS_CODEX_LANGUAGE_MODEL=openrouter/anthropic/claude-sonnet-4.6`
+
+**Cost estimate**: ~11,699 enrichable nodes × ~$0.004/node (sonnet) ≈ $50.
+Embedding is GPU-only (free). Total time ~3 hours.
+
+**Why full re-enrichment instead of targeted**: Changing the model invalidates all
+enrichment hashes via `compute_enrichment_hash(context_text, model_name)`. Every node
+would be re-enriched anyway due to hash mismatch. A full `--reset-to built` is cleaner
+and ensures uniform sonnet quality across all descriptions — no mixed flash-lite/sonnet.
 
 ### Step 6: Update Test Suite
 
@@ -929,26 +885,46 @@ not specific category values.
 | 0 | Kill stale agents, save dirty patches | — | Low |
 | 1 | Restore dirty worktree (`git checkout HEAD -- ...`) | 0 | Low: restores committed code |
 | 2 | Write TDD tests (test_node_classifier.py, test_node_categories.py) | — | Low: tests only |
-| 3 | Update schema (imas_dd.yaml): physical_quantity + geometry | — | Low: schema only |
+| 3 | Update schema (imas_dd.yaml): physical_quantity + geometry + `refined` status + refinement fields | — | Low: schema only |
 | 4 | Rebuild models (`uv run build-models --force`) | 3 | Low: auto-generated |
 | 5 | Update node_classifier.py (rename, add geometric rules, fix R2) | 2, 3 | Medium: core logic |
 | 6 | Update node_categories.py (QUANTITY_CATEGORIES, update sets) | 3 | Low: constants |
 | 7 | Fix build_dd.py: Bug 1 + ALL legacy category predicates. Two distinct sets: identifier/coord override → `QUANTITY_CATEGORIES \| {coordinate, structural}`, STRUCTURE+unit → `QUANTITY_CATEGORIES`, embed filter → `EMBEDDABLE_CATEGORIES` | 6 | Medium: multiple sites |
 | 7a | Update clusters/preprocessing.py: replace `_classify_node != "data"` with constants | 6 | Low: one predicate |
-| 8 | Update dd_enrichment.py (positive override), dd_graph_ops.py (return node_category), dd_workers.py (thread through partitioning) | 6 | Low: guard clause + field addition |
+| 8 | Update dd_enrichment.py (positive override + `gather_refinement_context` + refinement prompt), dd_graph_ops.py (return node_category + refinement claim/mark/release), dd_workers.py (thread model + node_category + add `refine_worker`) | 6 | Medium: new worker + context |
 | 9 | Run TDD tests — all should pass | 2–8 | — |
 | 10 | Update graph_search.py: ensure `SEARCHABLE_CATEGORIES` (not `QUANTITY_CATEGORIES`) at search boundaries | 6 | Low: already parameterized |
 | 11 | Update test files (remove 'data' hardcoding). Delete `tests/graph/test_node_category.py` (superseded by new TDD tests) | 6 | Low: string replacement + delete |
 | 12 | Run full test suite | 9–11 | — |
-| 13 | Graph migration (Python-driven, disposable script) | 3–8 | Medium: data migration |
-| 14 | Reset reclassified nodes + re-enrich + re-embed | 13 | Medium: LLM cost ~$23 |
+| 13 | In-place reclassification (disposable Python script, ~3 min) | 3–8 | Medium: data update |
+| 14 | Full rebuild with multi-pass: `imas-codex imas dd build --reset-to built --model openrouter/anthropic/claude-sonnet-4.6` (~$100, ~6 hrs). Runs: enrich (Pass 1) → refine (Pass 2) → embed → cluster | 13 | Medium: LLM cost |
 | 15 | MCP tool augmentation (node_category filter, coordinate metadata). Thread new optional `node_category` param through: `server.py` tool signatures (`search_dd_paths` ~line 2483, `list_dd_paths` ~line 2660) → `graph_search.py` backing methods (`GraphSearchTool.search_dd_paths` ~line 229, `GraphListTool.list_dd_paths` ~line 1017). Also update `ids/tools.py` wrapper layer for parity. | 6, 10 | Low: additive |
-| 16 | DD enrichment model override (CLI or config) | — | Low: config change |
 
-**Key dependency note**: Step 13 (migration) depends on steps 3–8 ALL being complete
-and tested. The migration runs the Python classifier which must be updated first.
+**Key dependency note**: Step 13 (reclassification) depends on steps 3–8 ALL being
+complete and tested. The script runs the Python classifier which must be updated first.
+Step 14 (full re-enrichment) depends on Step 13 — nodes must be reclassified before
+re-enrichment to ensure the enrichment classifier's positive override routes correctly.
 Step 10 must use `SEARCHABLE_CATEGORIES` (includes `coordinate`), not `QUANTITY_CATEGORIES`,
 because coordinates remain searchable even though they are not embedded or SN-extracted.
+
+**Architecture compliance note**: The DD pipeline already implements the proven
+graph-as-state-machine pattern from the discovery pipelines:
+- Async workers via `run_discovery_engine()` (`dd_workers.py:1017`)
+- `@retry_on_deadlock()` decorators on all claim functions (`dd_graph_ops.py`)
+- `claim_token` two-step verify pattern (`dd_graph_ops.py:42-88`)
+- `ORDER BY rand()` for deadlock avoidance (with depth tiebreaker for bottom-up processing)
+- Status enum: `built → enriched → refined → embedded`
+- Multi-pass enrichment: `refine_worker` with sibling-readiness barrier (see
+  [dd-multi-pass-enrichment.md](dd-multi-pass-enrichment.md))
+No additional architecture changes needed — the DD pipeline was the ORIGINAL implementation
+of this pattern before it was adopted by the SN and discovery pipelines.
+
+**ISN dependency note**: This plan has **no blocking ISN dependencies**. The only ISN
+import used by DD code is `PhysicsDomain` (a simple enum re-exported from
+`imas_codex.core.physics_domain`), which is already satisfied by the current ISN release.
+ISN grammar extensions (Feature 03), JSON schema (Feature 04), and vocabulary extensions
+(Feature 06) are prerequisites for the SN Greenfield Pipeline's SECOND iteration, not
+for DD classification.
 
 ---
 
@@ -956,13 +932,14 @@ because coordinates remain searchable even though they are not embedded or SN-ex
 
 | File | Change |
 |------|--------|
-| `imas_codex/schemas/imas_dd.yaml` | Replace `quantity` with `physical_quantity` + `geometry` |
+| `imas_codex/schemas/imas_dd.yaml` | Replace `quantity` with `physical_quantity` + `geometry`. Add `refined` status to `IMASNodeStatus`. Add `refinement_hash`, `refined_at` fields to `IMASNode`. |
 | `imas_codex/core/node_classifier.py` | Rename functions, add `GEOMETRIC_QUANTITY_NAMES`, add geometric rules, fix R2 with name+unit two-check guard |
 | `imas_codex/core/node_categories.py` | Add `QUANTITY_CATEGORIES`, update all sets |
 | `imas_codex/graph/build_dd.py` | Fix Bug 1: `PARENT_OF` → `HAS_PARENT` in `_reclassify_relational`. Update ALL legacy category predicates with **two distinct sets**: (a) identifier/coordinate override queries (lines ~2026, ~2035) → `QUANTITY_CATEGORIES \| {"coordinate", "structural"}` (these passes must still examine coordinate and structural nodes for reclassification), (b) STRUCTURE+unit validation query (line ~2047) → `QUANTITY_CATEGORIES` only. Update `phase_embeddings()` filter → `EMBEDDABLE_CATEGORIES`. |
-| `imas_codex/graph/dd_enrichment.py` | Add positive override: quantity categories → always "concept" |
-| `imas_codex/graph/dd_graph_ops.py` | Return `p.node_category AS node_category` from `claim_paths_for_enrichment()` step-2 query (~line 88) |
-| `imas_codex/graph/dd_workers.py` | Thread `node_category` through template/LLM partitioning: quantity categories → always LLM path (override `is_accessor_terminal`) |
+| `imas_codex/graph/dd_enrichment.py` | Add positive override: quantity categories → always "concept". Add `gather_refinement_context()`, `build_refinement_messages()`, `compute_refinement_hash()`. |
+| `imas_codex/graph/dd_graph_ops.py` | Return `p.node_category AS node_category` from `claim_paths_for_enrichment()`. Add `claim_paths_for_refinement()` with sibling-readiness barrier, `mark_paths_refined()`, `release_refinement_claims()`, `has_pending_refinement()`. Update `claim_paths_for_embedding()` to claim `refined` instead of `enriched`. Update `_RESET_CLEAR_FIELDS` and `_RESET_SOURCE_STATUSES` for `refined`. |
+| `imas_codex/graph/dd_workers.py` | Thread `node_category` + model through partitioning. Add `refine_worker`. Update `DDBuildState` with `refine_stats`, `refine_phase`, `skip_refinement_hash`. Update `embed_worker` to claim `refined`. Update `run_dd_build_engine()` pipeline wiring. |
+| `imas_codex/llm/prompts/imas/refinement.md` | **New**: Refinement prompt template (preserve Pass 1, disambiguate, cross-reference, standardize terminology) |
 | `imas_codex/clusters/preprocessing.py` | Replace `_classify_node(path, name) != "data"` with `node_category not in EMBEDDABLE_CATEGORIES` (or equivalent constant check). This file filters paths for cluster generation — dropping all quantity nodes would break clusters. |
 | `imas_codex/tools/graph_search.py` | Restore from git (Phase B). Already uses `SEARCHABLE_CATEGORIES` (committed at ef0b049a). Add optional `node_category` filter param to `GraphSearchTool.search_dd_paths()` (~line 229) and `GraphListTool.list_dd_paths()` (~line 1017). When provided, narrows the category filter beyond `SEARCHABLE_CATEGORIES` (e.g., `physical_quantity` only). This is the actual MCP execution layer — `server.py` delegates directly here. |
 | `imas_codex/llm/server.py` | Thread `node_category` optional param through `search_dd_paths` (~line 2483) and `list_dd_paths` (~line 2660) MCP tool signatures. Pass through to `GraphSearchTool`/`GraphListTool` methods in `graph_search.py`. |
@@ -971,6 +948,7 @@ because coordinates remain searchable even though they are not embedded or SN-ex
 | `imas_codex/settings.py` | Restore from git if dirty |
 | `tests/core/test_node_classifier.py` | New: TDD tests for classifier |
 | `tests/core/test_node_categories.py` | New: TDD tests for constants |
+| `tests/graph/test_refine_worker.py` | New: TDD tests for sibling barrier, hash idempotency, status cascades |
 | `tests/search/*.py` (6 files) | Replace `'data'` → `SEARCHABLE_CATEGORIES` |
 | `tests/test_imas_search_remediation.py` | Replace `'data'` assertions |
 | `tests/graph/test_vector_search.py` | Replace `'data'` references |
@@ -980,17 +958,19 @@ because coordinates remain searchable even though they are not embedded or SN-ex
 
 ## Open Questions
 
-1. **Enrichment model switch timing**: Should the model switch happen with the quantity split
-   (Step 16) or as a separate follow-up? Using a DD-specific model override avoids invalidating
-   all enrichment hashes globally, but still re-enriches reclassified nodes.
+1. ~~**Enrichment model switch timing**~~: **Resolved.** Model switch is integrated into
+   the full rebuild (Step 14). `--model` CLI flag threading is part of Step 8.
+   Hash-based idempotency ensures the model change forces re-enrichment of all nodes.
 
-2. **Other agent's graph_search.py rewrite**: The dirty worktree contains a major rewrite.
-   Should we attempt to merge it with Phase B after restoration, or discard it entirely?
+2. ~~**Other agent's graph_search.py rewrite**~~: **Resolved.** Restore from git
+   (`git checkout HEAD -- ...`) in Step 1. The committed code at ef0b049a already
+   uses `SEARCHABLE_CATEGORIES`. Any future rewrites happen on top of restored baseline.
 
-3. **Post-migration audit**: After migration, report the top remaining `physical_quantity`
-   names with unit `-` or `m` and geometry-heavy docs/clusters. This identifies candidates
-   for safely expanding `GEOMETRIC_QUANTITY_NAMES` in a future iteration. The current 17-name
-   set is intentionally conservative (high precision, acceptable recall for v1).
+3. **Post-migration audit**: After reclassification + re-enrichment, report the top
+   remaining `physical_quantity` names with unit `-` or `m` and geometry-heavy
+   docs/clusters. This identifies candidates for safely expanding
+   `GEOMETRIC_QUANTITY_NAMES` in a future iteration. The current 17-name set is
+   intentionally conservative (high precision, acceptable recall for v1).
 
 ## RD Review History
 
