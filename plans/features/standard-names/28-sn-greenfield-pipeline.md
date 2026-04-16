@@ -29,28 +29,44 @@ bolted-on additions.
 
 ## Design Principles
 
-1. **Separation of concerns**: naming (grammar + physics) and documentation (exposition +
+1. **Graph is the ledger**: every worker that alters data writes to the graph immediately.
+   The graph is the single source of truth, the state machine, and the coordination
+   mechanism between workers. No in-memory state shuttling between pipeline stages.
+   Workers claim work from the graph and write results back to the graph.
+
+2. **Workers are named for what they do**: `extract` finds source paths, `name` generates
+   names, `organize` canonicalizes and builds hierarchy, `enrich` writes documentation,
+   `embed` computes vector embeddings. No `persist` — every worker persists its own output.
+
+3. **Separation of concerns**: naming (grammar + physics) and documentation (exposition +
    context) are different cognitive tasks → different LLM calls with different prompts,
    contexts, and potentially different models.
 
-2. **Context retrieval between LLM calls**: the POSTLINK stage is the critical innovation —
-   once we HAVE the name, we can do much richer context retrieval than was possible before
-   naming. This mirrors the proven discovery paths pipeline (TRIAGE → ENRICH → SCORE).
+4. **Context retrieval between LLM calls**: POSTLINK (inside `enrich_worker`) retrieves
+   rich expository context that wasn't available before naming. Wiki documentation, code
+   examples, facility signals — all searchable only once the standard name exists in the
+   graph. Mirrors the proven discovery paths pipeline (TRIAGE → ENRICH → SCORE).
 
-3. **Vector hierarchy as first-class pipeline stage**: GROUP runs naturally between NAME
-   and ENRICH as a deterministic pass on consolidated names. Not an afterthought.
+5. **Vector hierarchy as first-class pipeline stage**: GROUP (inside `organize_worker`)
+   runs on globally canonicalized names. Not an afterthought bolted onto composition.
 
-4. **Document-once pattern**: vector parents get canonical documentation; components get
+6. **Document-once pattern**: vector parents get canonical documentation; components get
    only direction-specific details with back-references. ~80% documentation deduplication
    within vector families.
 
-5. **Global canonicalization before expensive enrichment**: the within-run concept registry
-   (CONSOLIDATE) ensures no duplicate names reach the expensive ENRICH stage. Critical for
-   greenfield where there's no prior catalog to dedup against.
+7. **Global canonicalization before expensive enrichment**: `organize_worker` ensures no
+   duplicate or conflicting names reach the expensive `enrich_worker`. In greenfield, the
+   graph itself provides the dedup anchor — previously named batches are already committed.
 
-6. **True branching on confidence and characteristics**: the pipeline routes names through
-   different prompt templates based on type (vector parent / component / magnitude / standalone
-   scalar) and quality (retry low-confidence, quarantine invalid).
+8. **True branching on characteristics**: the `enrich_worker` routes names through different
+   prompt templates based on type (vector parent / component / magnitude / standalone scalar /
+   geometry) and retries on quality failure.
+
+9. **Pipeline progress via timestamps, not status enum**: each worker sets a timestamp
+   (`named_at`, `organized_at`, `enriched_at`, `embedded_at`) on the StandardName node.
+   These are orthogonal to `review_status` (human lifecycle) and `validation_status` (ISN
+   grammar checks). Claim queries use timestamp presence: `WHERE n.named_at IS NOT NULL
+   AND n.organized_at IS NULL`.
 
 ---
 
@@ -99,6 +115,7 @@ Cost difference is negligible (~$5 across full regeneration).
 The document-once pattern reduces this to ~147 KB stored while improving consistency —
 update the parent and all components inherit the correction.
 
+
 ---
 
 ## Pipeline Architecture
@@ -106,41 +123,51 @@ update the parent and all components inherit the correction.
 ### Overview
 
 ```
-EXTRACT → PRELINK → NAME → VALIDATE₁ → CONSOLIDATE → GROUP → POSTLINK → ENRICH → VALIDATE₂ → PERSIST
-                                ↓                                              ↓
-                           quarantine                                     retry / quarantine
+extract → name → organize → enrich → embed
+           ↓         ↓         ↓        ↓
+      [graph write] [graph write] [graph write] [graph write]
 ```
 
-Ten stages. Two LLM calls (NAME, ENRICH). Two validation gates (VALIDATE₁, VALIDATE₂).
-One deterministic grouping pass (GROUP). Two context retrieval passes (PRELINK, POSTLINK).
+Five async workers. Each writes to the graph. The graph is the coordination mechanism —
+workers claim items by timestamp presence, not in-memory queues.
 
-### Stage 1: EXTRACT
+```
+StandardNameSource lifecycle:  extracted → composed | attached | vocab_gap | failed
+StandardName timestamps:       named_at → organized_at → enriched_at → embedded_at
+```
 
-**Purpose**: Query source paths, classify, build initial batches.
+### Worker 1: `extract_worker`
+
+**Purpose**: Query source paths, classify, build batches, write source nodes.
 **LLM**: None.
-**Changes from current**: Minimal — already works well.
+**Changes from current**: Minimal — already works well and already writes to graph.
 
 - Query DD paths by `node_category` ∈ {`physical_quantity`, `geometry`} (from DD classification plan)
 - Also extract from facility signals (`--source signals`)
 - Classify via path classifier (quantity/metadata/skip)
 - Select primary + grouping clusters
 - Build batches grouped by (grouping_cluster × unit), max batch size configurable
-- Write `StandardNameSource` nodes for crash resilience
+- **Graph write**: `StandardNameSource` nodes (status: `extracted`)
 
-**Key difference for greenfield**: no existing StandardName nodes to auto-attach to. The
-`attachment` code path only activates after the first generation run populates the registry.
+The graph is now the source of truth for what needs naming. `name_worker` claims
+`extracted` sources from the graph — no in-memory state handoff.
 
-### Stage 2: PRELINK (structured context retrieval before naming)
+### Worker 2: `name_worker` (replaces compose_worker)
 
-**Purpose**: Gather authoritative structured context that helps the LLM choose the right
-canonical term. This is the current `_enrich_batch_items()` + `_prefetch_ids_context()`
-extracted as an explicit stage.
+**Purpose**: generate the standard name, kind, and grammar fields. Write valid names
+to the graph immediately. Invalid names never become StandardName nodes.
+**Model**: `get_model("reasoning")` — sonnet-class (good at naming, fast, cost-effective).
+**Pattern**: async claim loop (claims `StandardNameSource` batches from graph).
 
-**LLM**: None — pure graph queries.
-**What it retrieves per path**:
+**Internal sub-steps** (not separate workers — they form one atomic unit of work per batch):
 
-| Context | Source | Why before NAME |
-|---------|--------|-----------------|
+#### 2a. PRELINK (context gathering — graph reads only)
+
+Gather authoritative structured context that helps the LLM choose the right canonical term.
+This is the current `_enrich_batch_items()` + `_prefetch_ids_context()` extracted cleanly.
+
+| Context | Source | Why before naming |
+|---------|--------|-------------------|
 | Cross-IDS siblings | `IN_CLUSTER` traversal | Prevents synonymous names across IDSs |
 | Unit + domain | DD `HAS_UNIT` relationship | Informs physics classification |
 | COCOS info | `HAS_COCOS` relationship | Sign convention awareness |
@@ -148,17 +175,14 @@ extracted as an explicit stage.
 | Identifier schemas | `HAS_IDENTIFIER_SCHEMA` | Type classification |
 | Sibling fields | Same parent in DD | Related quantities |
 | IDS description + top sections | IDS metadata | IDS-level context |
-| Within-run registry | Previously named batches | Cross-batch dedup (greenfield critical) |
+| Already-named SNs | Graph query on existing `StandardName` nodes | Cross-batch dedup |
 
-**Within-run registry**: In greenfield, there are no "existing names" to dedup against.
-PRELINK maintains a process-wide registry of names generated so far. Each batch's NAME
-output is registered before the next batch's PRELINK runs. This provides the same dedup
-signal that the prior catalog used to provide.
+**Within-run dedup via graph**: in greenfield, previously named batches are already
+committed as `StandardName` nodes. PRELINK queries these — the graph itself is the
+dedup registry. No in-memory concept registry needed. This is the key simplification
+from the graph-as-ledger architecture.
 
-### Stage 3: NAME (LLM call #1 — naming only)
-
-**Purpose**: Generate the standard name, kind, and grammar fields. Nothing else.
-**Model**: `get_model("reasoning")` — sonnet-class (good at naming, fast, cost-effective).
+#### 2b. NAME (LLM call #1 — naming only)
 
 **Prompt design** (stripped down from current compose):
 
@@ -168,7 +192,7 @@ signal that the prior catalog used to provide.
 | Anti-patterns table | LaTeX formatting rules |
 | Template rules + naming guidance | Cross-reference instructions |
 | PRELINK context (siblings, unit, COCOS) | Tags, links, validity_domain, constraints |
-| Within-run registry (dedup) | Detailed documentation examples |
+| Existing SN names from graph (dedup) | Detailed documentation examples |
 | Category-specific guidance (physical vs geometry) | — |
 
 **Output model** (`StandardNameBatch`):
@@ -183,7 +207,7 @@ class NameCandidate(BaseModel):
 
 class StandardNameBatch(BaseModel):
     candidates: list[NameCandidate]
-    attachments: list[...]  # Paths mapping to existing names in registry
+    attachments: list[...]  # Paths mapping to existing names in graph
     skipped: list[...]      # Non-quantity paths
     vocab_gaps: list[...]   # Missing grammar tokens
 ```
@@ -194,13 +218,13 @@ class StandardNameBatch(BaseModel):
 - COCOS metadata injection
 - Grammar round-trip normalization (parse → compose → verify)
 
-**Batch sizing**: Larger batches possible (30-40 paths) since the task is simpler. The
+**Batch sizing**: larger batches possible (30-40 paths) since the task is simpler. The
 prompt is ~50% smaller without documentation rules — more token budget for paths.
 
-### Stage 4: VALIDATE₁ (early grammar gate)
+#### 2c. VALIDATE₁ (early grammar gate — no graph write)
 
-**Purpose**: Catch malformed names before investing in consolidation or enrichment.
-**LLM**: None.
+Pre-validation before committing names to graph. Invalid names **never become
+StandardName nodes** — they are rejected before the graph write.
 
 Checks (subset of current validation):
 1. Grammar round-trip: `compose(parse(name)) == name`
@@ -208,38 +232,51 @@ Checks (subset of current validation):
 3. Unit consistency: DD unit is valid for the claimed kind
 4. No vocabulary violations: all segments use known tokens
 
-**Branching**:
-- ✅ Valid → CONSOLIDATE
-- ❌ Grammar failure → **quarantine** with error detail (retry with smaller batch or manual fix)
-- ⚠️ Vocabulary gap → record `VocabGap` node, skip (same as current)
+**Routing**:
+- ✅ Valid → write to graph (2d below)
+- ❌ Grammar failure → rejection reason written to `StandardNameSource.last_error`,
+  source status → `failed`. The failed source is visible in graph for observability.
+- ⚠️ Vocabulary gap → `VocabGap` node created, source status → `vocab_gap`
 
-**Why early**: prevents wasted ENRICH spend on names that will fail final validation.
-Currently, validation runs after COMPOSE which includes expensive documentation.
+#### 2d. Graph write (per batch)
 
-### Stage 5: CONSOLIDATE (global canonicalization)
+- **Creates** `StandardName` nodes for valid names with `named_at = datetime()`
+- **Creates** `HAS_STANDARD_NAME` relationships from source IMASNode/FacilitySignal
+- **Creates** `HAS_UNIT` relationship
+- **Updates** `StandardNameSource` status → `composed` | `attached` | `vocab_gap` | `failed`
+- Sets `review_status = 'drafted'`, `validation_status = 'valid'` (passed VALIDATE₁)
 
-**Purpose**: Ensure every concept has exactly one canonical name before expensive enrichment.
+This is the critical design point: **names are committed to the graph immediately after
+validation, not buffered for a final persist**. Subsequent name_worker batches will see
+these names via PRELINK graph queries, providing natural cross-batch dedup.
+
+**Parallel race note**: concurrent name_worker instances can generate near-duplicate names
+before either sees the other's write. This is acceptable — `organize_worker` is the
+authoritative canonicalization pass. The graph write is an optimistic commit; organize
+is the global consistency check.
+
+### Worker 3: `organize_worker` (barriered reducer — not a claim loop)
+
+**Purpose**: global canonicalization + vector hierarchy creation. Runs as a single pass
+after `name_worker` completes (barriered via `depends_on: ["name_phase"]`).
 **LLM**: None (could optionally use LLM for synonym resolution in complex cases).
+**Pattern**: single-pass reducer, not a claim loop. Reads all named SNs, writes results.
 
-Operations:
-1. **Cross-batch dedup**: detect identical names from different batches → merge metadata
+This is explicitly a **barrier/reducer** — it processes the complete set of named SNs
+from the current run, not incremental batches. It must wait for all naming to complete.
+
+#### 3a. CONSOLIDATE (canonicalization)
+
+Operations on all `StandardName` nodes where `named_at IS NOT NULL AND organized_at IS NULL`:
+1. **Cross-batch dedup**: detect identical names from different batches → merge source paths
 2. **Synonym detection**: names with high embedding similarity but different strings → flag
 3. **Unit consistency**: same name from different sources must have same unit
 4. **Physics domain reconciliation**: majority vote across sources
 5. **Source path aggregation**: collect all DD paths that map to each canonical name
-6. **Update within-run registry**: register all canonical names for subsequent batches
 
-**Key for greenfield**: this is where the "single source of truth" for the generation run
-crystallizes. Every name that passes consolidation is a canonical entry that GROUP and
-ENRICH will process.
+#### 3b. GROUP (deterministic vector hierarchy — zero LLM)
 
-### Stage 6: GROUP (deterministic vector hierarchy — zero LLM)
-
-**Purpose**: detect vector families from component names, create vector parents and
-magnitudes.
-**LLM**: None — fully deterministic.
-
-This stage incorporates the full design from `27-sn-vector-hierarchy.md`:
+Incorporates the full design from `27-sn-vector-hierarchy.md`:
 
 1. **Parse** all consolidated `*_component_of_*` scalar SNs via ISN grammar
 2. **Reconstruct parent** by removing only the `component` segment — preserving ALL
@@ -256,41 +293,53 @@ This stage incorporates the full design from `27-sn-vector-hierarchy.md`:
 
 **Scope**: ~37 vector parents + ~37 magnitude scalars + ~117 linked existing components.
 
-**Why after CONSOLIDATE**: vector detection from `_component_of_` is only reliable after
-global normalization. Same family split across batches would never regroup otherwise.
+#### 3c. Graph write (single pass)
 
-### Stage 7: POSTLINK (rich context retrieval — triggered by names)
+- **Sets** `organized_at = datetime()` on all approved canonical names
+- **Creates** new vector parent + magnitude `StandardName` nodes (with `named_at` AND
+  `organized_at` set — they skip the name_worker since they're deterministically generated)
+- **Creates** `HAS_COMPONENT`, `HAS_MAGNITUDE` relationships
+- **Merges** duplicate names (loser gets `superseded_by` pointing to winner)
+- Logs conflicts and coverage gaps to state for reporting
 
-**Purpose**: gather expository context that the naming pass couldn't access because the
-names didn't exist yet. This is the critical innovation.
-**LLM**: None — pure graph queries + vector search.
+**Why after NAME completes**: vector detection from `_component_of_` is only reliable
+after global naming. Same family split across batches would never regroup otherwise.
+CONSOLIDATE must also see all names to detect synonyms/conflicts.
 
-| Context | Retrieval method | Why after NAME |
-|---------|-----------------|----------------|
+### Worker 4: `enrich_worker` (documentation via LLM)
+
+**Purpose**: generate comprehensive physics documentation for named + organized SNs.
+**Model**: `get_model("reasoning")` or dedicated enrichment model — sonnet or opus for
+maximum documentation quality.
+**Pattern**: async claim loop (claims `StandardName` nodes where `organized_at IS NOT NULL
+AND enriched_at IS NULL`).
+
+**Internal sub-steps** (per batch):
+
+#### 4a. POSTLINK (rich context retrieval — triggered by names)
+
+The critical innovation: once the name exists in the graph, we can retrieve expository
+context that was unavailable during naming.
+
+| Context | Retrieval method | Why after naming |
+|---------|-----------------|------------------|
 | Wiki documentation | Vector search over `wiki_chunk_embedding` using SN description | Needs the name/description to search |
 | Code examples | Vector search over `code_chunk_embedding` | Needs the name to find relevant code |
-| Facility signals | `HAS_STANDARD_NAME` traversal (from prior runs) or description match | Cross-references to real measurements |
+| Facility signals | `HAS_STANDARD_NAME` traversal or description match | Cross-references to real measurements |
 | Similar SN documentation | Vector search over `standard_name_desc_embedding` | Only meaningful once names exist |
 | Vector family context | `HAS_COMPONENT` / `HAS_MAGNITUDE` traversal | Only available after GROUP |
 | Diagnostic context | Signal → Diagnostic traversal | Which diagnostics measure this? |
 
 **Vector-aware context assembly**:
 - **For vector parents**: list all known components + their coordinate bases
-- **For components**: retrieve parent's documentation (if parent was enriched first) for
+- **For components**: retrieve parent's documentation (if parent enriched first) for
   document-once inheritance
 - **For magnitudes**: retrieve parent's documentation for norm-specific context
 - **For standalone scalars**: standard retrieval (wiki, code, signals)
 
-**Implementation**: new module `imas_codex/standard_names/postlink.py` with per-type
-context builders. Each returns a `PostlinkContext` dataclass that the ENRICH prompt
-template consumes.
+**Implementation**: `imas_codex/standard_names/postlink.py` with per-type context builders.
 
-### Stage 8: ENRICH (LLM call #2 — documentation only)
-
-**Purpose**: generate comprehensive physics documentation given a named SN + rich POSTLINK
-context.
-**Model**: `get_model("reasoning")` or dedicated enrichment model — sonnet or opus for
-maximum documentation quality.
+#### 4b. ENRICH (LLM call #2 — documentation only)
 
 **Prompt design** (focused on exposition):
 
@@ -325,7 +374,7 @@ class EnrichItem(BaseModel):
 | **Standalone scalar** | Full documentation | Standard: definition, equations, measurement, typical values, COCOS |
 | **Geometry** | Hardware documentation | Physical location, engineering context, installation parameters |
 
-**Batch sizing**: Smaller batches (10-15 items) since each item carries richer per-item
+**Batch sizing**: smaller batches (10-15 items) since each item carries richer per-item
 context from POSTLINK. Quality over throughput.
 
 **Documentation inheritance execution order**:
@@ -334,10 +383,7 @@ context from POSTLINK. Quality over throughput.
 3. Then enrich magnitudes with parent docs (37 calls — norm-specific)
 4. Then enrich standalone scalars (remaining — standard docs)
 
-### Stage 9: VALIDATE₂ (comprehensive final validation)
-
-**Purpose**: full ISN 3-layer validation + cross-referencing + hierarchy consistency.
-**LLM**: None.
+#### 4c. VALIDATE₂ (documentation quality gate)
 
 Checks:
 1. **ISN 3-layer**: Pydantic → semantic → description (existing)
@@ -346,71 +392,59 @@ Checks:
 4. **Description quality**: minimum length, contains key physics terms
 5. **Tag validation**: only valid secondary tags (from ISN vocabulary)
 
-**Branching**:
-- ✅ All checks pass → PERSIST
+**Routing**:
+- ✅ All checks pass → graph write
 - ⚠️ Documentation quality low → **retry ENRICH** with richer context or opus model
-- ❌ Critical failure → **quarantine** (grammar, unit, kind problems)
+  (max 2 retries before accepting as-is)
+- ❌ Critical failure → quarantine (set `validation_status = 'quarantined'`)
 
-### Stage 10: PERSIST (write + embed)
+#### 4d. Graph write (per batch)
 
-**Purpose**: write validated SNs to graph, embed descriptions.
-**Changes from current**: Minimal — already works well.
+- **Updates** `StandardName` nodes: description, documentation, tags, links, validity_domain,
+  constraints, validation_issues, validation_layer_summary
+- **Sets** `enriched_at = datetime()`
+- **Sets** `model` (which model produced the documentation)
+- **Updates** `validation_status` based on VALIDATE₂ results
 
-- Write with coalesce semantics (existing)
-- Embed descriptions via embedding server (existing)
-- Wire all relationships: HAS_STANDARD_NAME, HAS_UNIT, HAS_COMPONENT, HAS_MAGNITUDE
-- Set provenance fields: model, generated_at, dd_version, source_paths
+### Worker 5: `embed_worker` (replaces persist_worker)
 
----
+**Purpose**: compute vector embeddings for enriched StandardNames.
+**LLM**: None — uses embedding server.
+**Pattern**: async claim loop (claims `StandardName` nodes where `enriched_at IS NOT NULL
+AND embedded_at IS NULL`).
+**Changes from current**: rename only — the current persist_worker already does exactly this.
 
-## Branching Model
+- Claims batch from graph via `claim_token` pattern
+- Computes embeddings via embedding server
+- **Graph write**: sets `embedding`, `embedded_at = datetime()` on StandardName nodes
 
-The pipeline is not purely linear. Genuine branching occurs at three decision points:
-
-### After VALIDATE₁ (quality gate)
-
-```
-NAME output → VALIDATE₁
-                ├── ✅ valid grammar     → CONSOLIDATE
-                ├── ❌ grammar failure   → quarantine (log, skip, optionally retry)
-                └── ⚠️ vocabulary gap   → VocabGap node (log, skip)
-```
-
-### After CONSOLIDATE (dedup routing)
+### Graph State Machine
 
 ```
-CONSOLIDATE output
-    ├── 🆕 new canonical name     → GROUP / POSTLINK / ENRICH
-    ├── 🔗 attachment (existing)  → link only, skip ENRICH
-    └── ⚠️ conflict (same name,  → arbitrate (higher confidence wins)
-         different metadata)         or merge
+StandardNameSource (per DD path / signal):
+  extracted ─────────→ composed     (name_worker: LLM generated a new SN)
+       │                attached     (name_worker: auto-linked to existing SN)
+       │                vocab_gap    (name_worker: grammar token missing)
+       └───────────→ failed        (name_worker: validation rejected pre-graph-write)
+
+StandardName (per canonical name):
+  named_at ──→ organized_at ──→ enriched_at ──→ embedded_at
+  (name_worker) (organize_worker) (enrich_worker) (embed_worker)
 ```
 
-### After VALIDATE₂ (quality gate with retry)
+Pipeline progress tracked by timestamp presence. Each worker claims items
+where the prior timestamp is set and its own timestamp is NULL:
 
-```
-ENRICH output → VALIDATE₂
-                  ├── ✅ all checks pass  → PERSIST
-                  ├── ⚠️ doc quality low  → retry ENRICH (richer context / opus model)
-                  └── ❌ critical failure  → quarantine
-```
+| Worker | Claims where | Sets |
+|--------|-------------|------|
+| `name_worker` | `StandardNameSource.status = 'extracted'` | `StandardName.named_at` |
+| `organize_worker` | `StandardName.named_at IS NOT NULL AND organized_at IS NULL` | `organized_at` |
+| `enrich_worker` | `StandardName.organized_at IS NOT NULL AND enriched_at IS NULL` | `enriched_at` |
+| `embed_worker` | `StandardName.enriched_at IS NOT NULL AND embedded_at IS NULL` | `embedded_at` |
 
-### ENRICH prompt branching (by type)
-
-```
-POSTLINK context → ENRICH
-                     ├── vector parent    → canonical doc prompt
-                     ├── component        → differential doc prompt (parent docs as context)
-                     ├── magnitude        → norm-specific prompt (parent docs as context)
-                     ├── standalone scalar → full documentation prompt
-                     └── geometry         → hardware documentation prompt
-```
-
-This is genuine branching — different code paths, different prompt templates, different
-context assembly. Not just error handling.
-
----
-
+Orthogonal axes (unchanged):
+- `review_status`: drafted → published → accepted (human review lifecycle)
+- `validation_status`: pending → valid → quarantined (ISN grammar checks)
 ## Cost Model
 
 ### Per-Generation Run (~800 standard names from DD source)
@@ -453,6 +487,7 @@ Grand total with vectors: ~$65-70 per full generation run.
 
 ---
 
+
 ## Implementation Phases
 
 ### Phase 0: Prerequisites (from DD Classification Plan)
@@ -460,92 +495,81 @@ Grand total with vectors: ~$65-70 per full generation run.
 - DD `node_category` labels in place (`physical_quantity`, `geometry`)
 - DD nodes re-enriched with sonnet (better descriptions → better SN context)
 - Classifier bugs fixed (reversed traversal, overbroad coordinate)
+- `named_at`, `organized_at`, `enriched_at` timestamp fields added to StandardName schema
 
-### Phase 1: Pipeline Decomposition (NAME / ENRICH split)
+### Phase 1: `name_worker` (replaces compose_worker)
 
-**Goal**: Replace single COMPOSE with separate NAME and ENRICH stages.
+**Goal**: Replace single COMPOSE with NAME-only LLM call + immediate graph write.
 
-1. Create naming-focused prompt (`sn/name_system.md`, `sn/name_dd.md`)
+1. Add `named_at` timestamp to StandardName schema (LinkML)
+2. Create naming-focused prompt (`sn/name_system.md`, `sn/name_dd.md`)
    - Strip documentation guidance from compose_system.md
    - Keep grammar, vocabulary, anti-patterns, naming rules
    - Smaller system prompt (~15K tokens vs ~30K)
-
-2. Create documentation-focused prompt (`sn/enrich_system_v2.md`, `sn/enrich_dd.md`)
-   - Keep documentation quality guidance, LaTeX rules
-   - Add vector-aware sections (parent/component/magnitude templates)
-   - Add POSTLINK context slots
-
-3. Implement `name_worker()` — adapted from current compose_worker with doc fields stripped
-4. Implement `enrich_worker_v2()` — adapted from current enrich_worker with richer context
-5. Update pipeline DAG registration to wire NAME → ENRICH
+3. Extract PRELINK context gathering from `_enrich_batch_items()` into clean module
+4. Implement `name_worker()` with claim loop:
+   - Claims StandardNameSource batches from graph
+   - Runs PRELINK (graph reads)
+   - Calls NAME LLM (naming only)
+   - Runs VALIDATE₁ (grammar gate, in-memory)
+   - Writes valid StandardName nodes to graph with `named_at`
+   - Updates StandardNameSource status (composed/failed/vocab_gap)
+5. Rename `persist_worker` → `embed_worker` (no behavior change, just naming)
+6. Update pipeline DAG: extract → name → (organize) → enrich → embed
 
 **Tests**: existing `sn generate --name-only` tests provide baseline. Add tests for:
 - NAME produces valid grammar but no documentation
-- ENRICH produces documentation but doesn't change names
+- Graph write creates StandardName with `named_at` set
+- Failed names write rejection reason to StandardNameSource.last_error
+- Cross-batch dedup via graph query in PRELINK
 
-### Phase 2: PRELINK / POSTLINK Context Retrieval
+### Phase 2: `organize_worker` (consolidate + group)
 
-**Goal**: Extract context gathering into explicit pipeline stages.
+**Goal**: Global canonicalization + vector hierarchy as barriered reducer.
 
-1. Extract `_enrich_batch_items()` and `_prefetch_ids_context()` into `prelink.py`
+1. Add `organized_at` timestamp to StandardName schema
+2. Implement `organize_worker()` as single-pass reducer (depends_on name_phase)
+3. CONSOLIDATE sub-phase: cross-batch dedup, synonym detection, conflict resolution
+4. GROUP sub-phase: detect vector families, create parents + magnitudes
+5. Add `HAS_COMPONENT`, `HAS_MAGNITUDE` to SN schema
+6. Graph write: set `organized_at`, create vector/magnitude SNs, wire relationships
+7. Implement `superseded_by` for merged duplicates
+
+**Tests**: see `27-sn-vector-hierarchy.md` for detailed vector test strategy. Add:
+- Consolidation merges identical names from different batches
+- Vector parent creation from component names
+- Eligibility checks (tensor exclusion, min 2 components)
+- `organized_at` set on all approved names
+
+### Phase 3: `enrich_worker` (POSTLINK + LLM documentation)
+
+**Goal**: Generate documentation with rich dynamically-retrieved context.
+
+1. Add `enriched_at` timestamp to StandardName schema
 2. Create `postlink.py` with per-type context builders:
    - `build_vector_parent_context(name, components)`
    - `build_component_context(name, parent_docs)`
    - `build_magnitude_context(name, parent_docs)`
    - `build_scalar_context(name)` — wiki/code/signal retrieval
-3. Within-run concept registry for greenfield dedup
-4. Wire PRELINK before NAME, POSTLINK before ENRICH in pipeline DAG
+3. Create documentation-focused prompt (`sn/enrich_system_v2.md`, `sn/enrich_dd.md`)
+   - Add vector-aware sections (parent/component/magnitude templates)
+   - Add POSTLINK context slots
+   - Branching prompt templates per SN type
+4. Implement `enrich_worker()` with claim loop:
+   - Claims organized SNs from graph
+   - Runs POSTLINK (context retrieval)
+   - Calls ENRICH LLM (documentation only, branching by type)
+   - Runs VALIDATE₂ (quality gate)
+   - Writes documentation to graph with `enriched_at`
+   - Retry on low quality (max 2 retries)
+5. Documentation inheritance execution order: parents → components → magnitudes → standalone
 
-**Tests**: verify POSTLINK retrieves relevant context for each SN type.
+**Tests**: verify component docs shorter than parent docs; verify cross-references resolve;
+verify retry improves quality scores; verify quarantine captures critical failures.
 
-### Phase 3: VALIDATE₁ (early grammar gate)
+### Phase 4: MCP Tool Integration
 
-**Goal**: Catch malformed names before expensive enrichment.
-
-1. Extract grammar validation from current validate_worker into `validate_grammar()`
-2. Wire as gate between NAME and CONSOLIDATE
-3. Implement quarantine routing for failed names
-4. Add retry logic (optional: re-submit failed names in smaller batches)
-
-**Tests**: parametrized tests with known-invalid names → quarantine.
-
-### Phase 4: GROUP (vector hierarchy)
-
-**Goal**: Detect vector families, create parents + magnitudes.
-
-1. Add `HAS_COMPONENT`, `HAS_MAGNITUDE` to SN schema
-2. Implement component grouping (`group_vector_families()`)
-3. Implement eligibility checks (tensor exclusion, min 2 components)
-4. Create vector parent + magnitude SNs (deterministic naming)
-5. Golden test fixture: all `_component_of_` names → exact parent set
-
-**Tests**: see `27-sn-vector-hierarchy.md` for detailed test strategy.
-
-### Phase 5: Documentation Inheritance in ENRICH
-
-**Goal**: Document-once pattern for vector families.
-
-1. Implement execution ordering: parents → components → magnitudes → standalone
-2. Create branching prompt templates per SN type
-3. Component prompts include parent docs as authoritative context
-4. Magnitude prompts include parent docs for norm-specific context
-
-**Tests**: verify component docs are shorter than parent docs; verify cross-references resolve.
-
-### Phase 6: VALIDATE₂ + Quality Gating
-
-**Goal**: Comprehensive final validation with retry.
-
-1. Implement documentation link resolution
-2. Implement vector hierarchy consistency check
-3. Implement quality-based retry routing (low doc quality → retry ENRICH with opus)
-4. Wire retry loop with configurable max attempts
-
-**Tests**: verify retry improves quality scores; verify quarantine captures critical failures.
-
-### Phase 7: MCP Tool Integration
-
-**Goal**: Surface vector hierarchy and type-aware filtering in MCP tools.
+**Goal**: Surface vector hierarchy and pipeline-aware filtering in MCP tools.
 
 1. `search_standard_names`: show HAS_COMPONENT children for vector results
 2. `search_standard_names`: show vector parent for scalar component results
@@ -571,11 +595,12 @@ Grand total with vectors: ~$65-70 per full generation run.
    names synonymous?") or can embedding similarity + heuristics suffice? Start with
    heuristic, add LLM if precision is insufficient.
 
-2. **Within-run registry ordering**: batches are processed concurrently (semaphore=5).
-   The registry must be thread-safe and updated atomically between batches. Current
-   implementation uses async semaphore — may need a shared registry with locking.
+2. **Parallel name_worker races**: concurrent name_worker instances can generate
+   near-duplicate names before either sees the other's write. The organize_worker handles
+   this post-hoc. Should we add a semaphore to serialize graph writes within name_worker,
+   or accept the race and let organize clean up?
 
-3. **ENRICH retry budget**: how many retries before quarantine? Suggest max 2 retries
+3. **ENRICH retry budget**: how many retries before accepting as-is? Suggest max 2 retries
    with progressively richer context (retry 1: add wiki context, retry 2: switch to opus).
 
 4. **Geometry SN documentation**: geometry nodes (coil positions, vessel outlines) need
@@ -585,6 +610,10 @@ Grand total with vectors: ~$65-70 per full generation run.
 5. **Signal-sourced names**: when `--source signals` is used, PRELINK and POSTLINK need
    different retrieval strategies (facility-specific context vs DD-wide context). This is
    a Phase 2+ consideration.
+
+6. **Run scoping**: for production use (non-greenfield), a `run_id` on StandardNameSource
+   and StandardName would prevent mixing runs. In greenfield mode (graph starts empty)
+   this is unnecessary. Add as optional infrastructure when moving to incremental updates.
 
 ---
 
@@ -598,7 +627,18 @@ Grand total with vectors: ~$65-70 per full generation run.
 | 2 | Greenfield removes main dedup anchor | Blocking | Added within-run concept registry in PRELINK |
 | 3 | Some LINK context needed before NAME | Blocking | Split into PRELINK (structured, before NAME) and POSTLINK (expository, after GROUP) |
 | 4 | GROUP should run on globally normalized names | Blocking | GROUP runs after CONSOLIDATE, not on raw batch output |
-| 5 | Pipeline is mostly linear, not truly branched | Moderate | Added genuine branching: VALIDATE₁ gates, CONSOLIDATE routing, ENRICH type-branching, VALIDATE₂ retry |
-| 6 | Batch sizing should differ by stage | Minor | NAME: 30-40 items, ENRICH: 10-15 items |
-| 7 | REVIEW as inline quality gate | Minor | Added VALIDATE₂ retry routing; full REVIEW remains as separate command for catalog-wide scoring |
-| 8 | Consolidate should run after NAME AND after ENRICH | Minor | Primary CONSOLIDATE after NAME; light field-merge after ENRICH if needed |
+
+### Round 2 (Graph-as-ledger restructuring)
+
+User feedback: the plan described a linear 10-stage pipeline with a final PERSIST. Every
+stage that alters data should write to the graph. The graph is the ledger and state machine.
+
+| # | Finding | Severity | Resolution |
+|---|---------|----------|------------|
+| 1 | Need run scoping (`run_id`) for mixing runs/retries | Blocking (production) | Noted as Open Question #6. Greenfield starts empty — not blocking for initial implementation. |
+| 2 | Parallel name_worker races can create near-duplicates | Medium | Accepted: organize_worker is authoritative canonicalization. Graph write is optimistic; organize is global consistency. |
+| 3 | Ledger vs mutable state machine conflation | Medium | Resolved: accept state machine model. Rejection history visible via StandardNameSource.last_error + status. |
+| 4 | organize_worker is a reducer, not a claim-loop worker | Medium | Modeled as barriered phase (`depends_on: ["name_phase"]`), single-pass. |
+| 5 | Pipeline progress should use timestamps, not enum | Medium | Adopted: `named_at`, `organized_at`, `enriched_at`, `embedded_at` timestamps. |
+| 6 | Within-run registry can be the graph itself | Minor | Adopted: PRELINK queries existing StandardName nodes. No in-memory registry needed. |
+| 7 | Workers should be named for what they do | Minor | Adopted: persist → embed, compose → name, new organize worker. |
