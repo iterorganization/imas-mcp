@@ -2,20 +2,28 @@
 
 ## Problem Statement
 
-The `node_category` migration expanded IMASNode from 3 values (`data`/`error`/`metadata`)
-to 6 (`quantity`/`coordinate`/`structural`/`identifier`/`error`/`metadata`). Two bugs
-remain in the classifier, the test suite still hardcodes `'data'`, and the monolithic
-`quantity` bucket conflates physics measurements (T_e, I_p, B_tor) with geometric shape
-parameters (elongation, triangularity, aspect_ratio). This plan addresses:
+The DD classification system needs a principled taxonomy that distinguishes physics
+measurements from machine geometry, surfaces correct classifier semantics, and uses
+a capable enrichment model. The current system has a monolithic `quantity` bucket that
+conflates physics measurements (T_e, I_p, B_tor) with hardware geometry (coil positions,
+vessel outlines, diagnostic lines of sight), classifier bugs that misclassify ~2,300 nodes,
+and enrichment performed by the weakest available model (flash-lite). This plan designs
+the correct classification and enrichment pipeline, then applies it to all DD nodes.
+
+This is a **prerequisite** for the [SN Greenfield Pipeline](standard-names/28-sn-greenfield-pipeline.md) —
+`node_category` labels drive EXTRACT source filtering, and enrichment quality directly
+affects standard name generation context.
+
+The plan addresses:
 
 1. **Splitting `quantity` → `physical_quantity` + `geometry`**
-2. **Fixing known classifier bugs** (Bug 1: reversed traversal, Bug 2: overbroad coordinate)
-3. **Fixing broken search** (dirty worktree reverted Phase B; tests still hardcode `'data'`)
-4. **Renaming pass1/pass2** to meaningful names
+2. **Fixing classifier bugs** (Bug 1: reversed traversal, Bug 2: overbroad coordinate)
+3. **Restoring broken search** (dirty worktree reverted Phase B; tests hardcode `'data'`)
+4. **Renaming pass1/pass2** to meaningful function names
 5. **TDD test suite** for full labeling pipeline
 6. **MCP tool augmentation** to expose category and coordinate metadata
-7. **Enrichment pipeline improvements** (model selection, multi-pass assessment)
-8. **Graph recovery** via status machine (reset → re-enrich → re-embed)
+7. **Enrichment model upgrade** (flash-lite → sonnet, with benchmark evidence)
+8. **Full reclassification and re-enrichment** via status machine
 
 ### Why Split Quantity?
 
@@ -432,16 +440,22 @@ nodes — which is exactly what we want.
 #### Multi-Pass Enrichment Assessment
 
 The discovery paths pipeline uses a two-pass pattern (triage → detailed scoring) that
-produces high-quality results. Applying this to DD enrichment:
+produces high-quality results. The same multi-pass principle is applied at the SN pipeline
+level in the [SN Greenfield Pipeline](standard-names/28-sn-greenfield-pipeline.md), which
+separates naming (LLM call #1) from documentation (LLM call #2) with dynamic context
+retrieval between them.
+
+For DD enrichment specifically:
 
 **Pass 1** (current): Generate description + keywords from path context
-**Pass 2** (new): Refine description using sibling descriptions, cluster membership,
+**Pass 2** (future): Refine description using sibling descriptions, cluster membership,
 and coordinate relationships as additional context
 
-**Verdict**: Defer to post-recovery. The immediate priority is fixing classification
-and recovering embeddings. Multi-pass enrichment is a quality improvement that can be
-evaluated once the pipeline is stable. The model switch (flash-lite → sonnet) alone should
-improve quality significantly.
+**Verdict**: Defer multi-pass DD enrichment to post-reclassification. The immediate
+priority is fixing classification and switching to sonnet. The model upgrade alone
+(flash-lite → sonnet) provides a dramatic quality improvement. Multi-pass DD enrichment
+is a separate optimization for a future iteration — the SN pipeline's multi-pass design
+addresses the quality gap where it matters most (standard name documentation).
 
 ### 7. Two Classification Systems: Reconciliation Path
 

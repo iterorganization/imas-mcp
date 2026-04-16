@@ -21,7 +21,8 @@ Plans validated against 62 existing standard names, current scoring architecture
 | Priority | Plan | Scope | Est. Agents |
 |----------|------|-------|-------------|
 | ~~**P1**~~ | [features/sn-bootstrap-loop.md](features/sn-bootstrap-loop.md) | ✅ Phase 1 (review CLI) complete, ✅ Phase 2 (bootstrap loop) complete, ⏳ Phase 3 blocked (needs ≥500 reviewed names) | 1 agent |
-| **P1.5** | [features/dd-node-kind-classification.md](features/dd-node-kind-classification.md) | Expand NodeCategory 3→6 values, clean vector space, unblock SN extraction for magnetics + broader IDSs | 1 agent |
+| **P1.5** | [features/dd-unified-classification.md](features/dd-unified-classification.md) | 8-value NodeCategory, quantity→physical_quantity+geometry split, classifier bug fixes, sonnet enrichment model, MCP tool augmentation. **Prerequisite for P1.6.** | 2-3 agents |
+| **P1.6** | [features/standard-names/28-sn-greenfield-pipeline.md](features/standard-names/28-sn-greenfield-pipeline.md) | Greenfield SN pipeline: NAME→ENRICH split, PRELINK/POSTLINK context retrieval, vector hierarchy (GROUP), documentation inheritance. Clears all existing SNs. | 2-3 agents |
 | **P2** | [features/dd-server-cleanup.md](features/dd-server-cleanup.md) | 3 surgical fixes: truncation count, migration API, fuzzy matcher | 1-3 agents |
 | **P3** | [features/search-quality-improvements.md](features/search-quality-improvements.md) | Careful ranking fixes (accessor de-ranking, IDS preference), evaluation alignment | 2 agents |
 | **P4** | [features/docs-refresh.md](features/docs-refresh.md) | Fix 7 stale docs, rewrite docs/README.md (17+ missing entries) | 1 agent |
@@ -31,10 +32,11 @@ Plans validated against 62 existing standard names, current scoring architecture
 
 ```
 Wave 1: sn-bootstrap-loop Phase 1 (review CLI)  ✅ complete
-Wave 2: dd-server-cleanup (all 3 fixes, parallel) ←─ next
-Wave 3: sn-bootstrap-loop Phase 2 (operational bootstrap) ✅ complete
-Wave 4: search-quality-improvements (Phases 1-2)
-Wave 5: docs-refresh (fix stale docs after code changes land)
+Wave 2: dd-unified-classification (schema + classifier + enrichment model)
+Wave 3: sn-greenfield-pipeline (clear all SNs, run new multi-pass pipeline)
+Wave 4: dd-server-cleanup (all 3 fixes, parallel)
+Wave 5: search-quality-improvements (Phases 1-2)
+Wave 6: docs-refresh (fix stale docs after code changes land)
 ```
 
 ### Explicitly Removed / Deferred

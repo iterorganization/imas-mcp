@@ -1,5 +1,10 @@
 # SN Vector Hierarchy & Kind Assessment
 
+> **Status**: Research findings preserved here. Implementation details incorporated into
+> [`28-sn-greenfield-pipeline.md`](28-sn-greenfield-pipeline.md) as Stage 6 (GROUP) and
+> Stage 8 (ENRICH branching / documentation inheritance). This plan remains the canonical
+> reference for vector grouping research, eligibility rules, and the 37 core vector concepts.
+
 ## Problem Statement
 
 The standard name pipeline generates only `kind=scalar` names because it processes
