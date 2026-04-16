@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from imas_codex.discovery.base.llm import (
     _extract_balanced_json,
     _find_json_start,
     _is_pydantic_model,
     _sanitize_content,
+    _strip_unsupported_schema_props,
     _to_json_schema_format,
 )
 
@@ -60,6 +61,30 @@ def test_to_json_schema_format_nested():
     schema = result["json_schema"]["schema"]
     assert "items" in schema["properties"]
     assert "metadata" in schema["properties"]
+
+
+class ModelWithConstraints(BaseModel):
+    """Model with array/string constraints that some providers reject."""
+
+    keywords: list[str] = Field(default_factory=list, max_length=8)
+    name: str = Field(min_length=1, max_length=100)
+
+
+def test_strip_unsupported_schema_props_removes_maxItems():
+    """maxItems from max_length on list fields must be stripped."""
+    schema = ModelWithConstraints.model_json_schema()
+    cleaned = _strip_unsupported_schema_props(schema)
+    kw_prop = cleaned["properties"]["keywords"]
+    assert "maxItems" not in kw_prop
+
+
+def test_to_json_schema_format_strips_constraints():
+    """_to_json_schema_format should produce a provider-safe schema."""
+    result = _to_json_schema_format(ModelWithConstraints)
+    schema = result["json_schema"]["schema"]
+    kw_prop = schema["properties"]["keywords"]
+    assert "maxItems" not in kw_prop
+    # Pydantic validation still enforces it — just not in the API schema
 
 
 @pytest.mark.parametrize(

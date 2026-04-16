@@ -362,19 +362,47 @@ def _is_pydantic_model(obj: Any) -> bool:
         return False
 
 
+def _strip_unsupported_schema_props(schema: dict) -> dict:
+    """Recursively strip JSON Schema properties unsupported by some providers.
+
+    Anthropic (via Azure) rejects ``maxItems``, ``minItems``, ``minLength``,
+    ``maxLength`` (on arrays), and ``pattern`` in structured output schemas
+    even with ``strict: false``.  We strip them so the schema works across
+    all providers; our Pydantic parsing still validates these constraints.
+    """
+    unsupported = {"maxItems", "minItems", "minLength", "maxLength", "pattern"}
+    cleaned: dict = {}
+    for key, value in schema.items():
+        if key in unsupported:
+            continue
+        if isinstance(value, dict):
+            cleaned[key] = _strip_unsupported_schema_props(value)
+        elif isinstance(value, list):
+            cleaned[key] = [
+                _strip_unsupported_schema_props(item)
+                if isinstance(item, dict)
+                else item
+                for item in value
+            ]
+        else:
+            cleaned[key] = value
+    return cleaned
+
+
 def _to_json_schema_format(model_cls: type) -> dict:
     """Convert a Pydantic model class to a non-strict json_schema format.
 
     Uses ``strict: false`` so that freeform dicts (``dict[str, str]``)
-    are accepted by the API.  The model still receives the full schema
-    as guidance, and our Pydantic parsing validates the response.
+    are accepted by the API.  Strips provider-unsupported constraints
+    (``maxItems``, etc.) — Pydantic parsing validates them instead.
     """
+    raw_schema = model_cls.model_json_schema()
     return {
         "type": "json_schema",
         "json_schema": {
             "name": model_cls.__name__,
             "strict": False,
-            "schema": model_cls.model_json_schema(),
+            "schema": _strip_unsupported_schema_props(raw_schema),
         },
     }
 
