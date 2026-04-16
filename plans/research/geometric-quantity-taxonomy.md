@@ -1,6 +1,6 @@
 # Research: Geometric Quantity Taxonomy
 
-**Date:** 2025-07-23
+**Date:** 2025-07-23, updated 2026-04-16
 **Status:** Complete — findings feed into `dd-unified-classification.md` plan update
 
 ## Problem Statement
@@ -170,13 +170,108 @@ The compose prompt should include `node_category` so the LLM selects the appropr
 → node_category=physical_quantity, ids_filter=equilibrium
 ```
 
+## Category Naming Analysis
+
+### "Shift" Verification
+
+The DD path `reflectometer_fluctuation/channel/doppler/shift` [Hz] is the **only** `shift` classified as `quantity`. It's a Doppler frequency shift — unambiguously a physical quantity. `charge_exchange/.../shift` [m] is classified as `structural` (container node). No `shafranov_shift` leaf name exists in the DD. **Conclusion:** `shift` is correctly classified as `physical_quantity` in all cases.
+
+### Naming Options for Machine/Diagnostic Structure Category
+
+| Candidate | Pros | Cons |
+|-----------|------|------|
+| `geometry` | Shortest; ISN uses `geometric_base` for this concept | Ambiguous — plasma boundary outline is also "geometry" but is a physics output; users may expect elongation here |
+| `hardware_geometry` | Unambiguous; covers machine + diagnostics | "hardware" is not native IMAS terminology |
+| `machine_geometry` | Aligns with IMAS "machine_description" IDS convention | Diagnostic LoS/apertures are not "machine" per se |
+| `device_geometry` | Neutral term covering all hardware types | Less common in IMAS literature |
+| `static_geometry` | Captures key temporal semantic (pre-plasma) | Divertor tilt can change; describes WHEN not WHAT |
+
+### Recommendation
+
+**`geometry`** is the best name if — and only if — the definition is documented clearly as "spatial description of physical apparatus (machine structure, diagnostic hardware, heating systems)." The ambiguity risk with plasma boundary outlines is mitigated by the classifier's exclusion rules (boundary/separatrix/grid/ggd paths are excluded). The alignment with ISN's `geometric_base` grammar segment is a strong signal.
+
+If ambiguity is deemed too risky, **`device_geometry`** is the safe alternative.
+
 ## ISN StandardNameKind Assessment
 
-**Finding:** `kind=vector` is effectively unused — 0 instances in graph, all 20 "component_of" names use `kind=scalar`.
+### kind=vector: Latent Value via Component Grouping
 
-This is correct behavior: DD stores individual scalar components (B_r, B_z, B_phi), not vector-valued fields. The `vector` kind serves a grammatical validation purpose (enforcing component segment presence) but is never needed in practice because IMAS doesn't store multi-component vector quantities as single paths.
+**0 vector standard names exist** in the graph. All 20 "component_of" names use `kind=scalar` — which is correct. Each DD path stores one scalar component (B_r, B_z, B_phi), and each gets its own scalar name.
 
-**Recommendation:** Keep scalar/vector/metadata as-is. No ISN changes needed. Richer classification belongs in imas-codex's `node_category`, not in ISN's `Kind` enum.
+However, **standard names are source-independent naming concepts** — they are not limited to DD paths. Facility signals, synthetic diagnostic outputs, and simulation codes all use standard names. This fundamentally changes the vector assessment.
+
+400 vector groups exist in the DD (1,593 component nodes). 117 scalar component standard names already exist across 37 core physics parent concepts:
+
+```
+magnetic_field (kind=vector, unit=T)          ← DOES NOT EXIST (gap)
+  ├── radial_component_of_magnetic_field      ← exists (scalar) → DD, TCV signals, JET signals
+  ├── toroidal_component_of_magnetic_field    ← exists (scalar) → DD, TCV Bt, JET magnetics
+  ├── poloidal_component_of_magnetic_field    ← exists (scalar) → DD, probes
+  ├── parallel_component_of_magnetic_field    ← exists (scalar) → DD core_profiles
+  ├── x_component_of_magnetic_field           ← future (Cartesian, no DD mapping yet)
+  └── y_component_of_magnetic_field           ← future (Cartesian, no DD mapping yet)
+```
+
+A vector SN like `magnetic_field` is the PHYSICS CONCEPT that groups its component children. It doesn't need to map to a single DD path — it represents the vector quantity itself, valid across all data sources and coordinate systems.
+
+**ISN already supports this fully (verified):**
+- `StandardNameVectorEntry(name="magnetic_field", kind="vector", ...)` — Pydantic validates ✓
+- Grammar: `parse_standard_name("magnetic_field")` → `physical_base='magnetic_field'` ✓
+- Round-trip: `compose_standard_name(parse_standard_name("magnetic_field"))` → `"magnetic_field"` ✓
+- No ISN grammar or model changes required
+
+**37 core physics vector concepts** implied by existing scalar SNs:
+
+| Vector concept | Components | Key physics |
+|---------------|------------|-------------|
+| magnetic_field | 3 (toroidal, poloidal, parallel) | B-field |
+| electric_field | 5 (radial, toroidal, poloidal, parallel, diamagnetic) | E-field |
+| ion_velocity | 3 (parallel, radial, toroidal) | Ion flow |
+| electron_velocity | 3 (parallel, radial, toroidal) | Electron flow |
+| neutral_velocity | 3 (parallel, radial, toroidal) | Neutral flow |
+| current_density | 2 (diamagnetic, toroidal) | j |
+| plasma_current_density | 3 (parallel, toroidal, vertical) | j_plasma |
+| magnetic_vector_potential | 2 (radial, vertical) | A |
+| exb_drift_velocity | 3 (diamagnetic, parallel, radial) | v_ExB |
+| fast_ion_pressure | 2 (parallel, perpendicular) | Anisotropic pressure |
+| ... | ... | (27 more) |
+
+**What vector SNs enable:**
+1. **Concept-level search:** "find magnetic field" → returns vector parent AND all components with data sources
+2. **Coordinate system awareness:** vector groups components by coordinate basis
+3. **Cross-source linking:** same concept across DD paths, facility signals, simulation codes
+4. **Completeness checking:** "which magnetic field components are measured at TCV?"
+5. **HAS_COMPONENT relationships:** `(magnetic_field)-[:HAS_COMPONENT]->(toroidal_component_of_magnetic_field)`
+
+**This is a PIPELINE change, not an ISN change:**
+- ISN grammar already validates vector names
+- ISN `kind=vector` already exists with correct semantics
+- The gap is in imas-codex's compose pipeline — it processes individual DD paths → individual scalar names
+- Fix: a dedicated grouping pass that identifies component siblings and creates vector parent names
+
+**Corrected assessment:** `kind=vector` has **concrete, near-term value** for 37 core physics concepts. The previous "keep as-is" conclusion was wrong because it treated the DD as the only SN source. Creating vector parents is an imas-codex pipeline task — ISN needs no changes.
+
+### kind=metadata: Pipeline Gap
+
+**The SN pipeline cannot currently produce `kind=metadata` names.** `SN_SOURCE_CATEGORIES` only includes quantity nodes, and the LLM assigning `kind=metadata` to a quantity path is semantically wrong — quantities are measurable, metadata is not.
+
+Genuine metadata SN candidates exist in the DD (confinement mode labels, species identifiers, coordinate system types) but they live under `identifier` and `metadata` node categories, which are excluded from SN generation.
+
+**Options:**
+1. Expand `SN_SOURCE_CATEGORIES` to include `identifier` (~243 nodes) — enables metadata SN generation but needs classifier filtering for generic names
+2. Dedicated metadata SN pass with curated identifier list — higher quality, more effort
+3. Accept the gap — metadata SNs are a future capability
+
+**Recommendation:** Option 3 now (focus on physical_quantity + geometry quality), plan Option 1 as future increment.
+
+### Overall ISN Assessment
+
+Keep `scalar/vector/metadata` enum — it is fit for purpose, but `vector` is underutilized.
+
+- **scalar:** Working correctly, produces all current names
+- **vector:** **Concrete near-term value** — 37 physics vector concepts ready to create via pipeline grouping pass. No ISN changes needed. ISN grammar validates these names today.
+- **metadata:** Pipeline gap documented, planned for future increment
+- **Richer classification** (physical/geometric/hardware) belongs in imas-codex's `node_category`, not ISN's `Kind` — separation of concerns is correct
 
 ## Enrichment Model Benchmark
 
