@@ -4,24 +4,26 @@ Polling workers using the standard discovery engine pattern with
 graph-backed status tracking and ``has_work_fn`` phase wiring.
 
 Architecture:
-- Five workers: extract, build, enrich, embed, cluster
+- Six workers: extract, build, enrich, refine, embed, cluster
 - extract/build run once (extract XML, write nodes with status=built)
-- enrich/embed are polling loops that claim batches from the graph
+- enrich/refine/embed are polling loops that claim batches from the graph
 - cluster waits until embed phase is fully done
 
 IMASNode lifecycle::
 
-    built → enriched → embedded
+    built → enriched → refined → embedded
 
 Pipeline flow::
 
-    EXTRACT → BUILD ──→ ENRICH ──→ CLUSTER
-                   └──→ EMBED ──↗
+    EXTRACT → BUILD → ENRICH → REFINE → CLUSTER
+                                 └→ EMBED ──↗
 
 Build writes nodes with status=built.  As soon as the first batch
-lands, both enrich and embed workers can start claiming work.
+lands, enrich workers can start claiming work.
 Enrich claims built paths, enriches them, sets status=enriched.
-Embed claims enriched paths, embeds them, sets status=embedded.
+Refine claims enriched paths (with sibling-readiness barrier),
+refines them, sets status=refined.
+Embed claims refined paths, embeds them, sets status=embedded.
 Cluster requires all embedding to complete.
 """
 
@@ -59,6 +61,9 @@ class DDBuildState(DiscoveryStateBase):
     versions: list[str] = field(default_factory=list)
     ids_filter: set[str] | None = None
 
+    # LLM model override (used by enrich and refine workers)
+    model: str | None = None
+
     # Feature flags
     dry_run: bool = False
     reset_to: str | None = None
@@ -73,6 +78,11 @@ class DDBuildState(DiscoveryStateBase):
     def skip_enrichment_hash(self) -> bool:
         """Bypass per-path enrichment hash check (re-enrich all)."""
         return self.force or self.reset_to in ("extracted", "built")
+
+    @property
+    def skip_refinement_hash(self) -> bool:
+        """Bypass per-path refinement hash check (re-refine all)."""
+        return self.force or self.reset_to in ("extracted", "built", "enriched")
 
     @property
     def skip_embedding_hash(self) -> bool:
@@ -105,6 +115,7 @@ class DDBuildState(DiscoveryStateBase):
     extract_stats: WorkerStats = field(default_factory=WorkerStats)
     build_stats: WorkerStats = field(default_factory=WorkerStats)
     enrich_stats: WorkerStats = field(default_factory=WorkerStats)
+    refine_stats: WorkerStats = field(default_factory=WorkerStats)
     embed_stats: WorkerStats = field(default_factory=WorkerStats)
     cluster_stats: WorkerStats = field(default_factory=WorkerStats)
 
@@ -112,6 +123,7 @@ class DDBuildState(DiscoveryStateBase):
     extract_phase: PipelinePhase = field(init=False)
     build_phase: PipelinePhase = field(init=False)
     enrich_phase: PipelinePhase = field(init=False)
+    refine_phase: PipelinePhase = field(init=False)
     embed_phase: PipelinePhase = field(init=False)
     cluster_phase: PipelinePhase = field(init=False)
 
@@ -119,12 +131,13 @@ class DDBuildState(DiscoveryStateBase):
         self.extract_phase = PipelinePhase("extract")
         self.build_phase = PipelinePhase("build")
         self.enrich_phase = PipelinePhase("enrich")
+        self.refine_phase = PipelinePhase("refine")
         self.embed_phase = PipelinePhase("embed")
         self.cluster_phase = PipelinePhase("cluster")
 
     @property
     def total_cost(self) -> float:
-        return self.enrich_stats.cost
+        return self.enrich_stats.cost + self.refine_stats.cost
 
 
 def _style_stream_items(items: list[dict], primary_text_style: str) -> list[dict]:
@@ -342,7 +355,7 @@ async def enrich_worker(state: DDBuildState, **_kwargs) -> None:
     )
     from imas_codex.settings import get_model
 
-    model = get_model("language")
+    model = state.model or get_model("language")
 
     # Set initial totals from graph so progress bar shows real denominator
     # and initialize processed counts from already-completed work so that
@@ -356,9 +369,11 @@ async def enrich_worker(state: DDBuildState, **_kwargs) -> None:
         if total_nodes > 0:
             state.enrich_stats.total = total_nodes
             state.embed_stats.total = total_nodes
-            # Nodes already past enrichment (enriched or embedded)
-            already_enriched = status_counts.get("enriched", 0) + status_counts.get(
-                "embedded", 0
+            # Nodes already past enrichment (enriched, refined, or embedded)
+            already_enriched = (
+                status_counts.get("enriched", 0)
+                + status_counts.get("refined", 0)
+                + status_counts.get("embedded", 0)
             )
             state.enrich_stats.set_baseline(already_enriched)
             state.enrich_stats.processed = already_enriched
@@ -398,9 +413,11 @@ async def enrich_worker(state: DDBuildState, **_kwargs) -> None:
                     state.enrich_stats.total = total_nodes
                     state.embed_stats.total = total_nodes
                     # Keep processed in sync with graph state
-                    already_enriched = status_counts.get(
-                        "enriched", 0
-                    ) + status_counts.get("embedded", 0)
+                    already_enriched = (
+                        status_counts.get("enriched", 0)
+                        + status_counts.get("refined", 0)
+                        + status_counts.get("embedded", 0)
+                    )
                     state.enrich_stats.processed = max(
                         state.enrich_stats.processed, already_enriched
                     )
@@ -460,10 +477,133 @@ async def enrich_worker(state: DDBuildState, **_kwargs) -> None:
     state.enrich_stats.freeze_rate()
 
 
-async def embed_worker(state: DDBuildState, **_kwargs) -> None:
-    """Embedding polling loop: claim enriched → embed → mark embedded.
+async def refine_worker(state: DDBuildState, **_kwargs) -> None:
+    """Pass 2 refinement polling loop: claim enriched → refine → mark refined.
 
-    Polls the graph for IMASNodes with status=enriched, claims a batch,
+    Polls the graph for IMASNodes with status=enriched whose enrichable
+    siblings are ALL past ``built`` status (sibling-readiness barrier),
+    claims a batch, refines descriptions using sibling + cluster peer
+    context, then sets status=refined.
+
+    Exits when the phase is marked done by the supervision loop
+    (idle + no pending work).
+    """
+    from imas_codex.cli.logging import WorkerLogAdapter
+
+    wlog = WorkerLogAdapter(logger, worker_name="refine_worker")
+
+    if state.dry_run:
+        wlog.info("Refinement skipped (dry run)")
+        return
+
+    wlog.info("Starting Pass 2 refinement polling loop")
+
+    from imas_codex.graph.dd_graph_ops import (
+        claim_paths_for_refinement,
+        count_imas_nodes_by_status,
+        release_refinement_claims,
+    )
+    from imas_codex.settings import get_model
+
+    model = state.model or get_model("language")
+
+    # Set initial totals from graph so progress bar shows real denominator
+    try:
+        status_counts = await asyncio.to_thread(
+            count_imas_nodes_by_status, node_categories=ENRICHABLE_CATEGORIES
+        )
+        total_nodes = status_counts.get("total", 0)
+        if total_nodes > 0:
+            state.refine_stats.total = total_nodes
+            # Nodes already past refinement (refined or embedded)
+            already_refined = status_counts.get("refined", 0) + status_counts.get(
+                "embedded", 0
+            )
+            state.refine_stats.set_baseline(already_refined)
+            state.refine_stats.processed = already_refined
+    except Exception:
+        wlog.debug("Could not fetch initial refine counts", exc_info=True)
+
+    while not state.should_stop():
+        # Claim a batch of enriched paths (with sibling-readiness barrier)
+        paths = await asyncio.to_thread(
+            claim_paths_for_refinement,
+            50,
+            ids_filter=state.ids_filter,
+        )
+
+        if not paths:
+            state.refine_phase.record_idle()
+            if state.refine_phase.done:
+                break
+            # Refresh totals while idle
+            try:
+                status_counts = await asyncio.to_thread(
+                    count_imas_nodes_by_status,
+                    node_categories=ENRICHABLE_CATEGORIES,
+                )
+                total_nodes = status_counts.get("total", 0)
+                if total_nodes > 0:
+                    state.refine_stats.total = total_nodes
+                    already_refined = status_counts.get(
+                        "refined", 0
+                    ) + status_counts.get("embedded", 0)
+                    state.refine_stats.processed = max(
+                        state.refine_stats.processed, already_refined
+                    )
+            except Exception:
+                pass
+            await asyncio.sleep(1.0)
+            continue
+
+        state.refine_phase.record_activity(len(paths))
+        path_ids = [p["id"] for p in paths]
+
+        # Check stop AFTER claiming — release claims and exit promptly
+        if state.should_stop():
+            await asyncio.to_thread(release_refinement_claims, path_ids)
+            break
+
+        try:
+            updates = await _refine_batch(paths, model, state)
+
+            if updates:
+                await _batch_update_refinements_with_graph(updates)
+                state.refine_stats.processed += len(updates)
+                state.refine_stats.record_batch(len(updates))
+
+                llm_count = sum(
+                    1 for u in updates if u.get("refinement_model") != "skip"
+                )
+                state.stats["refined_llm"] = (
+                    state.stats.get("refined_llm", 0) + llm_count
+                )
+                state.stats["refined_skip"] = (
+                    state.stats.get("refined_skip", 0) + len(updates) - llm_count
+                )
+
+            # Release claims for paths not in the updates (LLM failures)
+            updated_ids = {u["id"] for u in updates} if updates else set()
+            failed_ids = [pid for pid in path_ids if pid not in updated_ids]
+            if failed_ids:
+                await asyncio.to_thread(release_refinement_claims, failed_ids)
+
+        except Exception:
+            wlog.exception("Error refining batch, releasing claims")
+            await asyncio.to_thread(release_refinement_claims, path_ids)
+
+    wlog.info(
+        "Refinement complete: %d LLM-refined, %d skipped",
+        state.stats.get("refined_llm", 0),
+        state.stats.get("refined_skip", 0),
+    )
+    state.refine_stats.freeze_rate()
+
+
+async def embed_worker(state: DDBuildState, **_kwargs) -> None:
+    """Embedding polling loop: claim refined → embed → mark embedded.
+
+    Polls the graph for IMASNodes with status=refined, claims a batch,
     generates embeddings, then sets status=embedded.  Exits when the
     phase is marked done (idle + no pending work).
     """
@@ -509,7 +649,7 @@ async def embed_worker(state: DDBuildState, **_kwargs) -> None:
         )
 
         if not paths:
-            if state.enrich_phase.done and not state.aux_embedding_done:
+            if state.refine_phase.done and not state.aux_embedding_done:
                 state.embed_stats.status_text = "IDS/identifier"
                 await _run_aux_embedding(state)
                 state.embed_stats.status_text = ""
@@ -798,6 +938,148 @@ async def _batch_update_enrichments_with_graph(updates: list[dict]) -> None:
     await asyncio.to_thread(mark_paths_enriched, updates)
 
 
+async def _refine_batch(
+    paths: list[dict],
+    model: str,
+    state: DDBuildState,
+) -> list[dict]:
+    """Refine a claimed batch of enriched IMASNode paths using Pass 2 context.
+
+    Async — uses ``acall_llm_structured`` for non-blocking LLM calls
+    and ``asyncio.to_thread`` for sync graph reads.
+
+    Returns list of update dicts ready for ``_batch_update_refinements_with_graph``.
+    """
+    import time as _time
+
+    from imas_codex.discovery.base.llm import acall_llm_structured
+    from imas_codex.graph.dd_enrichment import (
+        IMASPathEnrichmentBatch,
+        build_refinement_messages,
+        compute_refinement_hash,
+        gather_refinement_context,
+        is_accessor_terminal,
+    )
+
+    updates: list[dict] = []
+
+    # Accessor terminals don't need refinement — advance directly
+    template_paths = [
+        p for p in paths if is_accessor_terminal(p["id"], p["id"].split("/")[-1])
+    ]
+    llm_paths = [
+        p for p in paths if not is_accessor_terminal(p["id"], p["id"].split("/")[-1])
+    ]
+
+    # Template paths: advance without LLM call
+    for path in template_paths:
+        updates.append(
+            {
+                "id": path["id"],
+                "refinement_hash": "template",
+                "refinement_model": "skip",
+            }
+        )
+
+    # LLM refinement
+    if llm_paths:
+
+        def _gather_context():
+            from imas_codex.graph.client import GraphClient
+
+            with GraphClient() as client:
+                ids_info_result = client.query(
+                    "MATCH (i:IDS) RETURN i.id AS id, i.description AS description, "
+                    "i.physics_domain AS physics_domain"
+                )
+                ids_info = {r["id"]: r for r in ids_info_result}
+                refinement_contexts = gather_refinement_context(client, llm_paths)
+            return ids_info, refinement_contexts
+
+        ids_info, refinement_contexts = await asyncio.to_thread(_gather_context)
+
+        # Check hashes — skip already-refined (hash match)
+        to_refine = []
+        hash_match_updates = []
+        for ctx in refinement_contexts:
+            sib_descs = [s["description"] for s in ctx.get("siblings", [])]
+            peer_descs = [p["description"] for p in ctx.get("cluster_peers", [])]
+            expected_hash = compute_refinement_hash(
+                ctx.get("description", ""), sib_descs, peer_descs, model
+            )
+            if (
+                not state.skip_refinement_hash
+                and ctx.get("refinement_hash") == expected_hash
+            ):
+                # Hash matches — content unchanged. Still need to mark as
+                # refined so the node advances from enriched → refined.
+                hash_match_updates.append({"id": ctx["id"]})
+                continue
+            ctx["_expected_hash"] = expected_hash
+            to_refine.append(ctx)
+
+        # Advance hash-matched nodes without re-refining
+        if hash_match_updates:
+            updates.extend(hash_match_updates)
+
+        if to_refine:
+            messages = build_refinement_messages(to_refine, ids_info)
+            try:
+                batch_start = _time.time()
+                result, cost, tokens = await acall_llm_structured(
+                    model=model,
+                    messages=messages,
+                    response_model=IMASPathEnrichmentBatch,
+                )
+                state.refine_stats.cost += cost
+                batch_time = _time.time() - batch_start
+
+                for refinement in result.results:
+                    if refinement.path_index < 1 or refinement.path_index > len(
+                        to_refine
+                    ):
+                        continue
+                    ctx = to_refine[refinement.path_index - 1]
+                    update = {
+                        "id": ctx["id"],
+                        "description": refinement.description,
+                        "keywords": refinement.keywords[:5],
+                        "refinement_hash": ctx["_expected_hash"],
+                        "refinement_model": model,
+                    }
+                    if refinement.physics_domain:
+                        update["physics_domain"] = refinement.physics_domain
+                    updates.append(update)
+
+                # Stream items for display
+                stream_items = [
+                    {
+                        "primary_text": u["id"],
+                        "physics_domain": u.get("physics_domain", ""),
+                        "description": u.get("description", ""),
+                    }
+                    for u in updates
+                    if u.get("refinement_model") not in ("skip", None)
+                ]
+                if stream_items:
+                    state.refine_stats.stream_queue.add(
+                        stream_items,
+                        last_batch_time=batch_time,
+                    )
+
+            except Exception:
+                logger.exception("LLM refinement failed for batch")
+
+    return updates
+
+
+async def _batch_update_refinements_with_graph(updates: list[dict]) -> None:
+    """Write refinement updates to graph (sets status=refined)."""
+    from imas_codex.graph.dd_graph_ops import mark_paths_refined
+
+    await asyncio.to_thread(mark_paths_refined, updates)
+
+
 async def _embed_batch(
     paths: list[dict],
     state: DDBuildState,
@@ -1025,12 +1307,13 @@ async def run_dd_build_engine(
     Uses graph-backed ``has_work_fn`` wiring so workers start as soon
     as their upstream phase produces work — no blocking on full phase
     completion.  Build writes nodes with ``status=built``, enrich polls
-    for built paths, embed polls for enriched paths.
+    for built paths, refine polls for enriched paths, embed polls for
+    refined paths.
 
     Pipeline::
 
-        EXTRACT → BUILD ──→ ENRICH ──→ CLUSTER
-                       └──→ EMBED ──↗
+        EXTRACT → BUILD → ENRICH → REFINE → CLUSTER
+                                     └→ EMBED ──↗
     """
     from imas_codex.discovery.base.engine import OrphanRecoverySpec
     from imas_codex.graph import dd_graph_ops
@@ -1042,8 +1325,14 @@ async def run_dd_build_engine(
             or not state.build_phase.done
         )
     )
+    state.refine_phase.set_has_work_fn(
+        lambda: (
+            dd_graph_ops.has_pending_refinement(ids_filter=state.ids_filter)
+            or not state.enrich_phase.done
+        )
+    )
     state.embed_phase.set_has_work_fn(
-        lambda: dd_graph_ops.has_pending_embedding() or not state.enrich_phase.done
+        lambda: dd_graph_ops.has_pending_embedding() or not state.refine_phase.done
     )
 
     workers = [
@@ -1065,17 +1354,23 @@ async def run_dd_build_engine(
             depends_on=["build_phase"],
         ),
         WorkerSpec(
+            "refine",
+            "refine_phase",
+            refine_worker,
+            depends_on=["enrich_phase"],
+        ),
+        WorkerSpec(
             "embed",
             "embed_phase",
             embed_worker,
             count=4,
-            depends_on=["build_phase"],
+            depends_on=["refine_phase"],
         ),
         WorkerSpec(
             "cluster",
             "cluster_phase",
             cluster_worker,
-            depends_on=["enrich_phase", "embed_phase"],
+            depends_on=["refine_phase", "embed_phase"],
         ),
     ]
 

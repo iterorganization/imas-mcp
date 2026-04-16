@@ -1186,3 +1186,170 @@ def _batch_update_enrichments(
             """,
             updates=batch,
         )
+
+
+# =============================================================================
+# Pass 2 — Refinement
+# =============================================================================
+
+
+def compute_refinement_hash(
+    pass1_description: str,
+    sibling_descriptions: list[str],
+    cluster_peers: list[str],
+    model_name: str,
+) -> str:
+    """Hash of Pass 2 inputs for idempotent re-refinement."""
+    combined = (
+        f"{model_name}:{pass1_description}:"
+        + ":".join(sorted(sibling_descriptions))
+        + ":".join(sorted(cluster_peers))
+    )
+    return hashlib.sha256(combined.encode()).hexdigest()[:16]
+
+
+def gather_refinement_context(
+    client: GraphClient,
+    paths: list[dict],
+) -> list[dict]:
+    """Gather sibling and cluster peer context for refinement.
+
+    For each path, fetches:
+    - Own Pass 1 description
+    - Sibling descriptions (same parent's children)
+    - Cluster peer descriptions (IN_CLUSTER relationship, other IDSs)
+
+    Uses two batch UNWIND queries for efficiency.
+    """
+    path_ids = [p["id"] for p in paths]
+
+    # Query 1: Sibling descriptions (same parent, with descriptions)
+    sibling_results: dict[str, list[dict]] = {}
+    if path_ids:
+        rows = client.query(
+            """
+            UNWIND $path_ids AS pid
+            MATCH (p:IMASNode {id: pid})-[:HAS_PARENT]->(parent:IMASNode)
+                  <-[:HAS_PARENT]-(sib:IMASNode)
+            WHERE sib.id <> pid AND sib.description IS NOT NULL
+            RETURN pid AS path_id,
+                   collect(DISTINCT {name: sib.name,
+                                     description: sib.description})[..20]
+                   AS siblings
+            """,
+            path_ids=path_ids,
+        )
+        sibling_results = {r["path_id"]: r["siblings"] for r in rows}
+
+    # Query 2: Cluster peer descriptions (different IDS, with descriptions)
+    cluster_results: dict[str, list[dict]] = {}
+    if path_ids:
+        rows = client.query(
+            """
+            UNWIND $path_ids AS pid
+            MATCH (p:IMASNode {id: pid})-[:IN_CLUSTER]->
+                  (:IMASSemanticCluster)<-[:IN_CLUSTER]-(peer:IMASNode)
+            WHERE peer.id <> pid
+              AND peer.ids <> p.ids
+              AND peer.description IS NOT NULL
+            RETURN pid AS path_id,
+                   collect(DISTINCT {path: peer.id,
+                                     description: peer.description})[..10]
+                   AS cluster_peers
+            """,
+            path_ids=path_ids,
+        )
+        cluster_results = {r["path_id"]: r["cluster_peers"] for r in rows}
+
+    # Merge context for each path
+    enriched: list[dict] = []
+    for path in paths:
+        pid = path["id"]
+        ctx = {
+            **path,
+            "siblings": sibling_results.get(pid, []),
+            "cluster_peers": cluster_results.get(pid, []),
+        }
+        enriched.append(ctx)
+
+    return enriched
+
+
+def build_refinement_messages(
+    contexts: list[dict],
+    ids_info: dict[str, dict],
+) -> list[dict[str, Any]]:
+    """Build LLM messages for the refinement prompt.
+
+    Args:
+        contexts: Enriched path contexts from gather_refinement_context
+        ids_info: IDS metadata keyed by IDS name
+
+    Returns:
+        Messages list for call_llm_structured
+    """
+    from imas_codex.llm.prompt_loader import render_prompt
+
+    # Build the batch context for the prompt template
+    batch_data = []
+    for idx, ctx in enumerate(contexts, 1):
+        entry = {
+            "index": idx,
+            "path": ctx["id"],
+            "name": ctx.get("name", ctx["id"].split("/")[-1]),
+            "data_type": ctx.get("data_type", ""),
+            "pass1_description": ctx.get("description", ""),
+            "siblings": ctx.get("siblings", []),
+            "cluster_peers": ctx.get("cluster_peers", []),
+        }
+        batch_data.append(entry)
+
+    # Render the system prompt with schema context
+    system_prompt = render_prompt(
+        "imas/refinement",
+        context={"batch": batch_data},
+    )
+
+    # Build user message with batch data
+    user_lines = ["Refine the following IMAS path descriptions:\n"]
+    emitted_ids: set[str] = set()
+
+    for entry in batch_data:
+        ids_name = entry["path"].split("/")[0]
+        user_lines.append(f"\n### Path {entry['index']}: `{entry['path']}`")
+        user_lines.append(f"- Name: {entry['name']}")
+        if entry["data_type"]:
+            user_lines.append(f"- Data type: {entry['data_type']}")
+        if entry["pass1_description"]:
+            user_lines.append(f"- Pass 1 description: {entry['pass1_description']}")
+
+        # Sibling context
+        siblings = entry.get("siblings", [])
+        if siblings:
+            sib_lines = []
+            for s in siblings[:15]:
+                desc_preview = s["description"][:100]
+                sib_lines.append(f"  - **{s['name']}**: {desc_preview}")
+            user_lines.append(f"- Siblings ({len(siblings)} with descriptions):")
+            user_lines.extend(sib_lines)
+
+        # Cluster peer context
+        peers = entry.get("cluster_peers", [])
+        if peers:
+            peer_lines = []
+            for p in peers[:8]:
+                desc_preview = p["description"][:120]
+                peer_lines.append(f"  - `{p['path']}`: {desc_preview}")
+            user_lines.append(f"- Cluster peers in other IDSs ({len(peers)}):")
+            user_lines.extend(peer_lines)
+
+        # IDS description (once per IDS)
+        ids_desc = ids_info.get(ids_name, {}).get("description", "")
+        if ids_desc and ids_name not in emitted_ids:
+            user_lines.append(f"- IDS description: {ids_desc}")
+            emitted_ids.add(ids_name)
+
+    return [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": "\n".join(user_lines)},
+    ]

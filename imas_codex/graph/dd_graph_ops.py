@@ -5,7 +5,7 @@ pattern from ``imas_codex.discovery.base.claims``.
 
 IMASNode lifecycle::
 
-    built → enriched → embedded
+    built → enriched → refined → embedded
 
 DDVersion lifecycle::
 

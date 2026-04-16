@@ -47,6 +47,7 @@ async def test_enrich_worker_runs_aux_before_idle_completion(monkeypatch):
 async def test_embed_worker_runs_aux_before_idle_completion(monkeypatch):
     state = DDBuildState(facility="imas")
     state.enrich_phase.mark_done()
+    state.refine_phase.mark_done()
     state.embed_phase = PipelinePhase(
         "embed", has_work_fn=lambda: False, idle_threshold=1
     )

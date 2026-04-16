@@ -980,6 +980,11 @@ _DEFAULT_SCHEMA_NEEDS: dict[str, list[str]] = {
         "physics_domains",
         "imas_enrichment_schema",
     ],
+    # IMAS DD refinement (Pass 2)
+    "imas/refinement": [
+        "physics_domains",
+        "imas_enrichment_schema",
+    ],
     # Static tree enrichment
     "discovery/static-enricher": [
         "static_enrichment_schema",
