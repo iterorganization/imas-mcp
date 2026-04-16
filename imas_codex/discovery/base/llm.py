@@ -478,31 +478,36 @@ def _log_cache_metrics(response: Any, model: str) -> None:
     cached, cache_write = _extract_cache_fields(ptd)
     prompt = getattr(usage, "prompt_tokens", 0) or 0
     completion = getattr(usage, "completion_tokens", 0) or 0
+    cost = extract_cost(response)
 
     if cached > 0:
         pct = cached / prompt * 100 if prompt > 0 else 0
         logger.debug(
             "LLM cache HIT: %d/%d prompt tokens cached (%.0f%%), "
-            "completion=%d, model=%s",
+            "completion=%d, cost=$%.4f, model=%s",
             cached,
             prompt,
             pct,
             completion,
+            cost,
             model,
         )
     elif cache_write > 0:
         logger.debug(
-            "LLM cache WRITE: %d tokens written, prompt=%d, completion=%d, model=%s",
+            "LLM cache WRITE: %d tokens written, prompt=%d, "
+            "completion=%d, cost=$%.4f, model=%s",
             cache_write,
             prompt,
             completion,
+            cost,
             model,
         )
     else:
         logger.debug(
-            "LLM cache MISS: prompt=%d, completion=%d, model=%s",
+            "LLM cache MISS: prompt=%d, completion=%d, cost=$%.4f, model=%s",
             prompt,
             completion,
+            cost,
             model,
         )
 
