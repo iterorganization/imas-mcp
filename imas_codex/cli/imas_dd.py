@@ -74,13 +74,16 @@ imas.add_command(map_cmd, "map")
 )
 @click.option(
     "--reset-to",
-    type=click.Choice(["extracted", "built", "enriched"], case_sensitive=False),
+    type=click.Choice(
+        ["extracted", "built", "enriched", "refined"], case_sensitive=False
+    ),
     default=None,
     help=(
         "Reset nodes to a target state before rebuilding. "
         "extracted: delete all nodes and rebuild from DD XML. "
         "built: clear enrichments and re-enrich all nodes. "
-        "enriched: clear embeddings and re-embed all nodes."
+        "enriched: clear refinements and re-refine all nodes. "
+        "refined: clear embeddings and re-embed all nodes."
     ),
 )
 @click.option(
@@ -90,6 +93,16 @@ imas.add_command(map_cmd, "map")
 )
 @click.option(
     "--dry-run", is_flag=True, help="Preview changes without writing to graph"
+)
+@click.option(
+    "--model",
+    type=str,
+    default=None,
+    help=(
+        "Override the LLM model for enrichment and refinement "
+        "(e.g., 'openrouter/anthropic/claude-sonnet-4.6'). "
+        "Default: uses [tool.imas-codex.language] model from pyproject.toml."
+    ),
 )
 @click.option(
     "--force",
@@ -107,6 +120,7 @@ def imas_build(
     reset_to: str | None,
     ids_filter: str | None,
     dry_run: bool,
+    model: str | None,
     force: bool,
 ) -> None:
     """Build the IMAS Data Dictionary Knowledge Graph.
@@ -133,7 +147,9 @@ def imas_build(
         imas-codex imas dd build --from-version 4.0.0  # Incremental from 4.0.0
         imas-codex imas dd build --reset-to extracted  # Full rebuild from DD XML
         imas-codex imas dd build --reset-to built      # Re-enrich (prompt/model change)
-        imas-codex imas dd build --reset-to enriched   # Re-embed (embedding model change)
+        imas-codex imas dd build --reset-to enriched   # Re-refine only
+        imas-codex imas dd build --reset-to refined    # Re-embed (embedding model change)
+        imas-codex imas dd build --model openrouter/anthropic/claude-sonnet-4.6  # Override model
         imas-codex imas dd build --dry-run -v     # Preview without writing
         imas-codex imas dd build --ids-filter "core_profiles equilibrium"  # Test subset
         imas-codex imas dd build --force          # Full rebuild, no skips, no hash matches
@@ -190,6 +206,8 @@ def imas_build(
         log_print(f"  Versions: {len(versions)} ({versions[0]} → {versions[-1]})")
         if ids_set:
             log_print(f"  IDS filter: {sorted(ids_set)}")
+        if model:
+            log_print(f"  Model: {model}")
         if dry_run:
             log_print("  Mode: dry run")
         if force:
@@ -222,6 +240,7 @@ def imas_build(
             dry_run=dry_run,
             reset_to=reset_to,
             force=force,
+            model=model,
         )
 
         # Build display for rich mode
