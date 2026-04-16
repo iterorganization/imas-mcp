@@ -1034,6 +1034,7 @@ def _init_repl() -> dict[str, Any]:
         ids_filter: str | None = None,
         max_results: int = 10,
         dd_version: int | None = None,
+        node_category: str | None = None,
     ) -> str:
         """Search IMAS Data Dictionary using semantic search.
 
@@ -1045,6 +1046,7 @@ def _init_repl() -> dict[str, Any]:
             ids_filter: Optional IDS name filter (space-delimited)
             max_results: Maximum results
             dd_version: Filter by DD major version (e.g., 3 or 4)
+            node_category: Filter by node category (e.g., "quantity", "geometry", "coordinate"). Default: no filter.
 
         Returns:
             Formatted string with matching paths and documentation
@@ -1057,6 +1059,7 @@ def _init_repl() -> dict[str, Any]:
                     ids_filter=ids_filter,
                     max_results=max_results,
                     dd_version=dd_version,
+                    node_category=node_category,
                 )
             )
             if not result.hits:
@@ -1097,6 +1100,7 @@ def _init_repl() -> dict[str, Any]:
         leaf_only: bool = True,
         max_paths: int = 100,
         dd_version: int | None = None,
+        node_category: str | None = None,
     ) -> str:
         """List data paths in IDS.
 
@@ -1105,6 +1109,7 @@ def _init_repl() -> dict[str, Any]:
             leaf_only: Only return data fields
             max_paths: Limit output size
             dd_version: Filter by DD major version (e.g., 3 or 4)
+            node_category: Filter by node category (e.g., "quantity", "geometry", "coordinate"). Default: no filter.
 
         Returns:
             Tree structure in YAML format
@@ -1117,6 +1122,7 @@ def _init_repl() -> dict[str, Any]:
                     leaf_only=leaf_only,
                     max_paths=max_paths,
                     dd_version=dd_version,
+                    node_category=node_category,
                 )
             )
             return str(result)
@@ -2489,6 +2495,7 @@ class AgentsServer:
             k: int = 20,
             physics_domain: str | None = None,
             lifecycle_filter: str | None = None,
+            node_category: str | None = None,
         ) -> str:
             """Find IMAS Data Dictionary paths matching a concept. Use when you need to discover which paths store a given physical quantity.
 
@@ -2503,6 +2510,7 @@ class AgentsServer:
                 k: Maximum number of results. Default: 20.
                 physics_domain: Filter by physics domain (e.g., "magnetics", "equilibrium", "transport"). Default: no filter.
                 lifecycle_filter: Filter by lifecycle status ('active', 'alpha', 'obsolescent'). Default: no filter.
+                node_category: Filter by node category (e.g., "quantity", "geometry", "coordinate"). Default: no filter.
 
             Returns:
                 Formatted text report listing matched paths with types, units, cluster labels, and optional facility cross-references.
@@ -2527,6 +2535,7 @@ class AgentsServer:
                         dd_version=dd_version,
                         physics_domain=physics_domain,
                         lifecycle_filter=lifecycle_filter,
+                        node_category=node_category,
                     )
                 )
 
@@ -2665,6 +2674,7 @@ class AgentsServer:
             physics_domain: str | None = None,
             node_type: str | None = None,
             lifecycle_filter: str | None = None,
+            node_category: str | None = None,
         ) -> str:
             """Enumerate all paths under an IDS or subtree. Use to browse the structure of an IDS or discover available fields under a path prefix.
 
@@ -2678,6 +2688,7 @@ class AgentsServer:
                 physics_domain: Filter by physics domain (e.g., "magnetics", "equilibrium", "transport"). Default: no filter.
                 node_type: Filter by node type ('dynamic', 'static', 'constant'). Default: no filter.
                 lifecycle_filter: Filter by lifecycle status ('active', 'alpha', 'obsolescent'). Default: no filter.
+                node_category: Filter by node category (e.g., "quantity", "geometry", "coordinate"). Default: no filter.
 
             Returns:
                 Formatted text listing of paths with their data types.
@@ -2688,12 +2699,14 @@ class AgentsServer:
                 physics_domain is not None
                 or node_type is not None
                 or lifecycle_filter is not None
+                or node_category is not None
             ):
                 logger.debug(
-                    "Applying filters: physics_domain=%s node_type=%s lifecycle=%s",
+                    "Applying filters: physics_domain=%s node_type=%s lifecycle=%s node_category=%s",
                     physics_domain,
                     node_type,
                     lifecycle_filter,
+                    node_category,
                 )
             tools = _get_imas_tools()
             result = _run_async(
@@ -2705,6 +2718,7 @@ class AgentsServer:
                     physics_domain=physics_domain,
                     node_type=node_type,
                     lifecycle_filter=lifecycle_filter,
+                    node_category=node_category,
                 )
             )
             return format_list_report(result)

@@ -166,6 +166,22 @@ def warmup_encoder():
         logger.warning(f"Encoder warmup failed (will retry on first query): {e}")
 
 
+def _resolve_node_categories(node_category: str | None) -> list[str]:
+    """Resolve a node_category filter into a list of allowed categories.
+
+    When *node_category* is ``None``, returns the full
+    :data:`SEARCHABLE_CATEGORIES` set.  Otherwise, splits on commas and
+    intersects with ``SEARCHABLE_CATEGORIES`` to prevent injection of
+    non-searchable categories.
+    """
+    if node_category is None:
+        return list(SEARCHABLE_CATEGORIES)
+    requested = {c.strip() for c in node_category.split(",") if c.strip()}
+    valid = requested & SEARCHABLE_CATEGORIES
+    # Fall back to full set if the caller asked for categories that don't exist
+    return list(valid) if valid else list(SEARCHABLE_CATEGORIES)
+
+
 def _dd_version_clause(
     alias: str = "p",
     dd_version: int | None = None,
@@ -239,6 +255,7 @@ class GraphSearchTool:
         include_summary_ids: bool = False,
         physics_domain: str | None = None,
         lifecycle_filter: str | None = None,
+        node_category: str | None = None,
         ctx: Context | None = None,
     ) -> SearchPathsResult:
         """Search IMAS paths using hybrid vector + text search."""
@@ -259,6 +276,10 @@ class GraphSearchTool:
         query = normalize_imas_path(query)
 
         normalized_filter = normalize_ids_filter(ids_filter)
+
+        # Resolve effective node categories — restrict SEARCHABLE_CATEGORIES
+        # when the caller asks for a specific node_category.
+        effective_categories = _resolve_node_categories(node_category)
 
         # Determine whether to exclude summary IDS paths.
         # Only exclude when the user has not explicitly requested summary paths
@@ -296,7 +317,7 @@ class GraphSearchTool:
                 "embedding": embedding,
                 "k": min(max_results * 5, 500),
                 "vector_limit": min(max_results * 3, 150),
-                "categories": list(SEARCHABLE_CATEGORIES),
+                "categories": effective_categories,
             }
             if normalized_filter:
                 filter_clause = "AND path.ids IN $ids_filter"
@@ -336,6 +357,7 @@ class GraphSearchTool:
             normalized_filter,
             dd_version=dd_version,
             exclude_summary=_exclude_summary_ids,
+            categories=effective_categories,
         )
         text_scores: dict[str, float] = {}
         for r in text_results:
@@ -549,7 +571,7 @@ class GraphSearchTool:
                 RETURN parent_id, children, total
                 """,
                 parent_ids=parent_ids,
-                categories=list(SEARCHABLE_CATEGORIES),
+                categories=effective_categories,
             )
 
             children_by_parent: dict[str, tuple[list, int]] = {
@@ -1026,6 +1048,7 @@ class GraphListTool:
         physics_domain: str | None = None,
         node_type: str | None = None,
         lifecycle_filter: str | None = None,
+        node_category: str | None = None,
         ctx: Context | None = None,
     ) -> ListPathsResult:
         """List paths from graph."""
@@ -1098,7 +1121,7 @@ class GraphListTool:
                 return_clause = "RETURN p.id AS id"
 
             # Unified query — use ids= for plain IDS names, STARTS WITH for prefixes
-            dd_params["categories"] = list(SEARCHABLE_CATEGORIES)
+            dd_params["categories"] = _resolve_node_categories(node_category)
             if prefix:
                 match_clause = (
                     "WHERE p.id STARTS WITH $prefix AND p.node_category IN $categories"
@@ -2428,12 +2451,14 @@ def _text_search_dd_paths(
     *,
     dd_version: int | None = None,
     exclude_summary: bool = False,
+    categories: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Text-based search on IMAS paths by query string.
 
     Uses fulltext index for BM25 scoring when available, falls back to
     CONTAINS matching. Filters out generic metadata paths.
     """
+    _categories = categories if categories is not None else list(SEARCHABLE_CATEGORIES)
     query_lower = query.lower()
     query_words = [
         w
@@ -2450,7 +2475,7 @@ def _text_search_dd_paths(
     params: dict[str, Any] = {
         "query_lower": query_lower,
         "limit": contains_limit,
-        "categories": list(SEARCHABLE_CATEGORIES),
+        "categories": _categories,
     }
 
     dd_clause = _dd_version_clause("p", dd_version, params)
@@ -2473,7 +2498,7 @@ def _text_search_dd_paths(
         ft_params: dict[str, Any] = {
             "query": _build_phrase_aware_query(query),
             "limit": limit,
-            "categories": list(SEARCHABLE_CATEGORIES),
+            "categories": _categories,
         }
         if ids_filter is not None:
             filter_list = ids_filter if isinstance(ids_filter, list) else [ids_filter]
