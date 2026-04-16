@@ -6,6 +6,7 @@ Configuration is organized into subsections:
   [tool.imas-codex.data-dictionary] — DD version, include-ggd, include-error-fields
   [tool.imas-codex.embedding]      — embedding model, dimension, location
   [tool.imas-codex.language]       — language models, batch-size for structured output
+  [tool.imas-codex.dd-enrichment]  — model for DD path enrichment/refinement
   [tool.imas-codex.vision]         — vision models for image/document tasks
   [tool.imas-codex.agent]          — agent models for planning/exploration tasks
   [tool.imas-codex.compaction]     — compaction models for summarization tasks
@@ -73,7 +74,15 @@ def _get_section(section: str) -> dict:
 # ─── Valid model sections ───────────────────────────────────────────────────
 
 MODEL_SECTIONS = frozenset(
-    {"embedding", "language", "vision", "agent", "compaction", "reasoning"}
+    {
+        "embedding",
+        "language",
+        "vision",
+        "agent",
+        "compaction",
+        "reasoning",
+        "dd-enrichment",
+    }
 )
 
 # Default model per section (fallback when not configured)
@@ -84,6 +93,7 @@ _MODEL_DEFAULTS: dict[str, str] = {
     "agent": "anthropic/claude-sonnet-4.6",
     "compaction": "anthropic/claude-haiku-4.5",
     "reasoning": "anthropic/claude-sonnet-4.6",
+    "dd-enrichment": "anthropic/claude-sonnet-4.6",
 }
 
 # Environment variable names per section
@@ -94,6 +104,7 @@ _MODEL_ENV_VARS: dict[str, str] = {
     "agent": "IMAS_CODEX_AGENT_MODEL",
     "compaction": "IMAS_CODEX_COMPACTION_MODEL",
     "reasoning": "IMAS_CODEX_REASONING_MODEL",
+    "dd-enrichment": "IMAS_CODEX_DD_ENRICHMENT_MODEL",
 }
 
 

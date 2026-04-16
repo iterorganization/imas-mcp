@@ -85,7 +85,7 @@ class ClusterLabeler:
         Args:
             model: LLM model to use (default from settings)
         """
-        self.model = model or get_model("language")
+        self.model = model or get_model("dd-enrichment")
 
         # Load controlled vocabularies for response validation
         self._concepts = _load_vocabulary(CONCEPTS_SCHEMA, "PhysicsConcept")

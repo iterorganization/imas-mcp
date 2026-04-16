@@ -108,7 +108,7 @@ def enrich_identifier_schemas(
     from imas_codex.settings import get_model
 
     if model is None:
-        model = get_model("language")
+        model = get_model("dd-enrichment")
 
     stats: dict[str, Any] = {
         "enriched": 0,

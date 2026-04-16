@@ -355,7 +355,7 @@ async def enrich_worker(state: DDBuildState, **_kwargs) -> None:
     )
     from imas_codex.settings import get_model
 
-    model = state.model or get_model("language")
+    model = state.model or get_model("dd-enrichment")
 
     # Set initial totals from graph so progress bar shows real denominator
     # and initialize processed counts from already-completed work so that
@@ -505,7 +505,7 @@ async def refine_worker(state: DDBuildState, **_kwargs) -> None:
     )
     from imas_codex.settings import get_model
 
-    model = state.model or get_model("language")
+    model = state.model or get_model("dd-enrichment")
 
     # Set initial totals from graph so progress bar shows real denominator
     try:
@@ -1243,13 +1243,13 @@ async def _run_aux_enrichment(state: DDBuildState) -> None:
                 ]
                 ident_stats = enrich_identifier_schemas(
                     client,
-                    model=get_model("language"),
+                    model=get_model("dd-enrichment"),
                     force=state.skip_enrichment_hash,
                     on_items=_on_identifier_items,
                 )
                 ids_stats = enrich_ids_nodes(
                     client,
-                    model=get_model("language"),
+                    model=get_model("dd-enrichment"),
                     force=state.skip_enrichment_hash,
                     on_items=_on_ids_items,
                 )
