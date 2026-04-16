@@ -2229,16 +2229,16 @@ def phase_embed(
     # Detect error relationships before filtering (needs all paths)
     all_paths_for_errors = dict(merged_paths)
 
-    # Filter merged version data to data nodes only — error/metadata skip embedding
+    # Filter merged version data to embeddable nodes only
     merged_paths = {
         path: info
         for path, info in merged_paths.items()
-        if _classify_node(path, info.get("name", path.split("/")[-1])) == "data"
+        if _classify_node(path, info.get("name", path.split("/")[-1]))
+        in EMBEDDABLE_CATEGORIES
     }
 
     # Also include graph paths not in version_data (from previous builds)
-    # so that incremental builds still embed all paths.
-    # Only embed data nodes — error/metadata nodes are excluded.
+    # so that incremental builds still embed all embeddable paths.
     existing_paths_query = """
     MATCH (p:IMASNode)
     WHERE p.embedding IS NULL

@@ -353,12 +353,13 @@ def _print_build_summary(stats: dict) -> None:
         )
     if stats.get("enrichment_cost", 0) > 0:
         click.echo(f"Enrichment cost: ${stats['enrichment_cost']:.4f}")
-    click.echo(
-        f"Paths excluded from embedding (error/metadata): {stats['paths_filtered']}"
-    )
-    click.echo(f"HAS_ERROR relationships: {stats['error_relationships']}")
-    click.echo(f"Embeddings updated: {stats['embeddings_updated']}")
-    click.echo(f"Embeddings cached: {stats['embeddings_cached']}")
+    if stats.get("paths_filtered"):
+        click.echo(
+            f"Paths excluded from embedding (error/metadata): {stats['paths_filtered']}"
+        )
+    click.echo(f"HAS_ERROR relationships: {stats.get('error_relationships', 0)}")
+    click.echo(f"Embeddings updated: {stats.get('embeddings_updated', 0)}")
+    click.echo(f"Embeddings cached: {stats.get('embeddings_cached', 0)}")
     if stats.get("identifier_schemas_total", 0):
         click.echo(
             "Identifier schema embeddings: "
