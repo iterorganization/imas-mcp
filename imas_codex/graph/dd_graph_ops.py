@@ -177,13 +177,158 @@ def has_pending_enrichment(*, ids_filter: set[str] | None = None) -> bool:
 
 
 # =============================================================================
-# IMASNode — embedding claims (enriched → embedded)
+# IMASNode — refinement claims (enriched → refined)
+# =============================================================================
+
+
+@retry_on_deadlock()
+def claim_paths_for_refinement(
+    limit: int = 50,
+    *,
+    ids_filter: set[str] | None = None,
+) -> list[dict]:
+    """Claim enriched IMASNodes for Pass 2 refinement.
+
+    Only claims nodes whose enrichable siblings are ALL past ``built``
+    status (sibling-readiness barrier).  Uses the standard claim_token
+    two-step pattern.
+    """
+    token = str(uuid.uuid4())
+    cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
+
+    ids_clause = "AND p.ids IN $ids_filter" if ids_filter else ""
+    params: dict = {
+        "status": "enriched",
+        "cutoff": cutoff,
+        "limit": limit,
+        "token": token,
+    }
+    if ids_filter:
+        params["ids_filter"] = list(ids_filter)
+
+    with GraphClient() as gc:
+        # Step 1: Claim enriched nodes with sibling-readiness barrier
+        gc.query(
+            f"""
+            MATCH (p:IMASNode)
+            WHERE p.status = $status
+              AND p.node_category IN $categories
+              AND (p.claimed_at IS NULL
+                   OR p.claimed_at < datetime() - duration($cutoff))
+              {ids_clause}
+              AND NOT EXISTS {{
+                MATCH (p)-[:HAS_PARENT]->(parent)<-[:HAS_PARENT]-(sib:IMASNode)
+                WHERE sib.node_category IN $categories
+                  AND sib.status = 'built'
+              }}
+            WITH p
+            ORDER BY rand()
+            LIMIT $limit
+            SET p.claimed_at = datetime(), p.claim_token = $token
+            """,
+            categories=list(ENRICHABLE_CATEGORIES),
+            **params,
+        )
+
+        # Step 2: Read back only paths we won
+        result = gc.query(
+            """
+            MATCH (p:IMASNode {claim_token: $token})
+            RETURN p.id AS id, p.name AS name, p.description AS description,
+                   p.keywords AS keywords, p.data_type AS data_type,
+                   p.ids AS ids, p.unit AS unit,
+                   p.enrichment_source AS enrichment_source,
+                   p.refinement_hash AS refinement_hash
+            """,
+            token=token,
+        )
+        claimed = list(result)
+        logger.debug(
+            "claim_paths_for_refinement: requested %d, won %d",
+            limit,
+            len(claimed),
+        )
+        return claimed
+
+
+def mark_paths_refined(updates: list[dict]) -> int:
+    """Mark refined paths: set status=refined, write refinement_hash, refined_at.
+
+    Each update dict must have ``id`` and optionally ``description``,
+    ``keywords``, ``refinement_hash``.
+    """
+    if not updates:
+        return 0
+
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            UNWIND $updates AS item
+            MATCH (p:IMASNode {id: item.id})
+            SET p.status = 'refined',
+                p.description = coalesce(item.description, p.description),
+                p.keywords = coalesce(item.keywords, p.keywords),
+                p.refinement_hash = coalesce(item.refinement_hash, p.refinement_hash),
+                p.refined_at = datetime(),
+                p.claimed_at = null,
+                p.claim_token = null
+            RETURN count(p) AS updated
+            """,
+            updates=updates,
+        )
+        count = result[0]["updated"] if result else 0
+        return count
+
+
+def release_refinement_claims(path_ids: list[str]) -> None:
+    """Release refinement claims on error."""
+    if not path_ids:
+        return
+    with GraphClient() as gc:
+        gc.query(
+            """
+            UNWIND $ids AS pid
+            MATCH (p:IMASNode {id: pid})
+            WHERE p.claimed_at IS NOT NULL
+            SET p.claimed_at = null, p.claim_token = null
+            """,
+            ids=path_ids,
+        )
+
+
+def has_pending_refinement(*, ids_filter: set[str] | None = None) -> bool:
+    """Check if there are enriched IMASNodes awaiting refinement.
+
+    Counts ALL enriched nodes — both unclaimed and actively claimed.
+    """
+    ids_clause = "AND p.ids IN $ids_filter" if ids_filter else ""
+    params: dict = {"status": "enriched"}
+    if ids_filter:
+        params["ids_filter"] = list(ids_filter)
+
+    with GraphClient() as gc:
+        result = gc.query(
+            f"""
+            MATCH (p:IMASNode)
+            WHERE p.status = $status
+              AND p.node_category IN $categories
+              {ids_clause}
+            RETURN count(p) AS pending
+            """,
+            categories=list(ENRICHABLE_CATEGORIES),
+            **params,
+        )
+        return result[0]["pending"] > 0 if result else False
+
+
+# =============================================================================
+# IMASNode — embedding claims (refined → embedded)
 # =============================================================================
 
 
 @retry_on_deadlock()
 def claim_paths_for_embedding(limit: int = 500) -> list[dict]:
-    """Claim enriched IMASNodes for embedding generation.
+    """Claim refined IMASNodes for embedding generation.
 
     Returns list of dicts with path metadata needed by the embedding
     pipeline.
@@ -192,10 +337,10 @@ def claim_paths_for_embedding(limit: int = 500) -> list[dict]:
     cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
 
     with GraphClient() as gc:
-        # Step 1: Claim enriched data nodes for embedding.
+        # Step 1: Claim refined data nodes for embedding.
         # Prefer LLM-enriched nodes over template-enriched ones, but include
         # template-enriched nodes that have no embedding (e.g. after
-        # --reset-to enriched) to avoid an infinite spin where the worker
+        # --reset-to refined) to avoid an infinite spin where the worker
         # finds zero claimable paths.
         gc.query(
             """
@@ -210,7 +355,7 @@ def claim_paths_for_embedding(limit: int = 500) -> list[dict]:
             LIMIT $limit
             SET p.claimed_at = datetime(), p.claim_token = $token
             """,
-            status="enriched",
+            status="refined",
             categories=list(EMBEDDABLE_CATEGORIES),
             cutoff=cutoff,
             limit=limit,
@@ -307,9 +452,9 @@ def count_imas_nodes_by_status(
 
 
 def has_pending_embedding() -> bool:
-    """Check if there are enriched IMASNodes awaiting embedding.
+    """Check if there are refined IMASNodes awaiting embedding.
 
-    Counts ALL enriched nodes — both unclaimed and actively claimed.
+    Counts ALL refined nodes — both unclaimed and actively claimed.
     This prevents premature phase completion when workers still have
     claimed batches in flight (e.g. 4 embed workers each claim 500,
     the 4th goes idle with 1500 still being processed by the other 3).
@@ -322,7 +467,7 @@ def has_pending_embedding() -> bool:
               AND p.node_category IN $categories
             RETURN count(p) AS pending
             """,
-            status="enriched",
+            status="refined",
             categories=list(EMBEDDABLE_CATEGORIES),
         )
         return result[0]["pending"] > 0 if result else False
@@ -367,12 +512,21 @@ _RESET_CLEAR_FIELDS: dict[str, list[str]] = {
         "enrichment_model",
         "enrichment_source",
         "enriched_at",
+        "refinement_hash",
+        "refined_at",
+        "embedding",
+        "embedding_hash",
+        "embedded_at",
         "physics_domain",
+    ],
+    "enriched": [
+        "refinement_hash",
+        "refined_at",
         "embedding",
         "embedding_hash",
         "embedded_at",
     ],
-    "enriched": [
+    "refined": [
         "embedding",
         "embedding_hash",
         "embedded_at",
@@ -381,8 +535,9 @@ _RESET_CLEAR_FIELDS: dict[str, list[str]] = {
 
 # Statuses eligible for reset to each target
 _RESET_SOURCE_STATUSES: dict[str, list[str]] = {
-    "built": ["enriched", "embedded"],
-    "enriched": ["embedded"],
+    "built": ["enriched", "refined", "embedded"],
+    "enriched": ["refined", "embedded"],
+    "refined": ["embedded"],
 }
 
 
@@ -427,7 +582,8 @@ def reset_imas_nodes(
     """Reset IMASNode nodes to a target status for reprocessing.
 
     Args:
-        target_status: Target status (``extracted``, ``built``, or ``enriched``).
+        target_status: Target status (``extracted``, ``built``,
+            ``enriched``, or ``refined``).
         ids_filter: Optional set of IDS names to limit the reset.
 
     Returns:
