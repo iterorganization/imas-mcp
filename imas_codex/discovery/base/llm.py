@@ -683,10 +683,19 @@ def _build_kwargs(
     # Inject cache_control for models that support explicit breakpoints.
     # This must happen before building kwargs so both proxy and direct
     # paths benefit from prompt caching.
-    if _supports_cache_control(model):
+    supports_cache = _supports_cache_control(model)
+    if supports_cache:
         messages = inject_cache_control(messages)
 
-    if llm_location != "local" or os.getenv("LITELLM_PROXY_URL"):
+    # Decide routing: proxy vs direct.
+    # The LiteLLM proxy strips cache_control blocks and response_cost from
+    # responses, breaking prompt caching and actual cost reporting.  When
+    # the model supports caching and a direct API key is available, bypass
+    # the proxy to preserve both.
+    use_proxy = llm_location != "local" or bool(os.getenv("LITELLM_PROXY_URL"))
+    bypass_proxy = supports_cache and bool(os.getenv("OPENROUTER_API_KEY_IMAS_CODEX"))
+
+    if use_proxy and not bypass_proxy:
         proxy_url = get_llm_proxy_url()
         # The proxy model names use the openrouter/ prefix (e.g.
         # openrouter/google/gemini-3.1-flash-lite-preview).  When calling
@@ -710,16 +719,26 @@ def _build_kwargs(
         }
     else:
         model_id = ensure_model_prefix(model)
+        # When bypassing the proxy, always use the OpenRouter API key
+        # (not the proxy key that might have been passed in).
+        direct_key = (
+            os.getenv("OPENROUTER_API_KEY_IMAS_CODEX") or api_key
+            if bypass_proxy
+            else api_key
+        )
 
         kwargs = {
             "model": model_id,
-            "api_key": api_key,
+            "api_key": direct_key,
             "max_tokens": max_tokens
             if max_tokens is not None
             else limits["max_tokens"],
             "timeout": timeout if timeout is not None else limits["timeout"],
             "messages": messages,
         }
+
+        if bypass_proxy:
+            logger.debug("Bypassing proxy for %s (cache_control preserved)", model_id)
 
     if response_format is not None:
         # Always convert Pydantic models to explicit json_schema dicts.

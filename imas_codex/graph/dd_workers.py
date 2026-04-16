@@ -881,13 +881,19 @@ async def _enrich_batch(
             messages = build_enrichment_messages(to_enrich, ids_info)
             try:
                 batch_start = _time.time()
-                result, cost, tokens = await acall_llm_structured(
+                llm_out = await acall_llm_structured(
                     model=model,
                     messages=messages,
                     response_model=IMASPathEnrichmentBatch,
                 )
+                result, cost, tokens = llm_out
                 state.enrich_stats.cost += cost
                 batch_time = _time.time() - batch_start
+
+                # Allocate actual LLM cost evenly over attempted items.
+                # Template nodes get null (no LLM call); LLM nodes get
+                # actual per-node cost from the provider's response_cost.
+                per_node_cost = cost / len(to_enrich) if to_enrich else 0.0
 
                 for enrichment in result.results:
                     if enrichment.path_index < 1 or enrichment.path_index > len(
@@ -902,10 +908,19 @@ async def _enrich_batch(
                         "enrichment_hash": ctx["_expected_hash"],
                         "enrichment_model": model,
                         "enrichment_source": "llm",
+                        "enrich_llm_cost": per_node_cost,
                     }
                     if enrichment.physics_domain:
                         update["physics_domain"] = enrichment.physics_domain
                     updates.append(update)
+
+                if llm_out.cache_read_tokens:
+                    logger.info(
+                        "Enrich batch cache: %d read, %d creation, cost $%.4f",
+                        llm_out.cache_read_tokens,
+                        llm_out.cache_creation_tokens,
+                        cost,
+                    )
 
                 # Stream items for display
                 if updates:
@@ -1026,13 +1041,17 @@ async def _refine_batch(
             messages = build_refinement_messages(to_refine, ids_info)
             try:
                 batch_start = _time.time()
-                result, cost, tokens = await acall_llm_structured(
+                llm_out = await acall_llm_structured(
                     model=model,
                     messages=messages,
                     response_model=IMASPathEnrichmentBatch,
                 )
+                result, cost, tokens = llm_out
                 state.refine_stats.cost += cost
                 batch_time = _time.time() - batch_start
+
+                # Allocate actual LLM cost evenly over attempted items
+                per_node_cost = cost / len(to_refine) if to_refine else 0.0
 
                 for refinement in result.results:
                     if refinement.path_index < 1 or refinement.path_index > len(
@@ -1046,10 +1065,19 @@ async def _refine_batch(
                         "keywords": refinement.keywords[:5],
                         "refinement_hash": ctx["_expected_hash"],
                         "refinement_model": model,
+                        "refine_llm_cost": per_node_cost,
                     }
                     if refinement.physics_domain:
                         update["physics_domain"] = refinement.physics_domain
                     updates.append(update)
+
+                if llm_out.cache_read_tokens:
+                    logger.info(
+                        "Refine batch cache: %d read, %d creation, cost $%.4f",
+                        llm_out.cache_read_tokens,
+                        llm_out.cache_creation_tokens,
+                        cost,
+                    )
 
                 # Stream items for display
                 stream_items = [
@@ -1394,15 +1422,36 @@ async def run_dd_build_engine(
 
 
 def _write_build_metadata(state: DDBuildState) -> None:
-    """Write build timing, cost, and hash to the current DDVersion node."""
+    """Write build timing, cost, and hash to the current DDVersion node.
+
+    Enrichment and refinement costs are computed from per-node atomic
+    fields rather than relying solely on in-memory accumulators (which
+    are lost on crash/restart).
+    """
     from imas_codex import dd_version as current_dd_version
     from imas_codex.graph.client import GraphClient
 
     duration = time.time() - state.build_start_time
-    total_cost = state.total_cost
 
     try:
         with GraphClient() as client:
+            # Compute definitive costs from atomically persisted per-node data
+            cost_result = client.query(
+                """
+                MATCH (p:IMASNode)-[:AT_DD_VERSION]->(v:DDVersion {id: $version})
+                RETURN
+                    coalesce(sum(p.enrich_llm_cost), 0) AS enrich_cost,
+                    coalesce(sum(p.refine_llm_cost), 0) AS refine_cost
+                """,
+                version=current_dd_version,
+            )
+            enrich_cost = cost_result[0]["enrich_cost"] if cost_result else 0.0
+            refine_cost = cost_result[0]["refine_cost"] if cost_result else 0.0
+            graph_total = enrich_cost + refine_cost
+
+            # Use graph-derived cost (authoritative) with in-memory as fallback
+            total_cost = graph_total if graph_total > 0 else state.total_cost
+
             client.query(
                 """
                 MATCH (v:DDVersion {id: $version})
@@ -1410,13 +1459,22 @@ def _write_build_metadata(state: DDBuildState) -> None:
                     v.build_completed_at = datetime(),
                     v.build_duration = $duration,
                     v.build_cost = $total_cost,
-                    v.enrichment_cost = $enrichment_cost
+                    v.enrichment_cost = $enrichment_cost,
+                    v.refinement_cost = $refinement_cost
                 """,
                 version=current_dd_version,
                 build_hash=state.build_hash,
                 duration=duration,
                 total_cost=total_cost,
-                enrichment_cost=state.enrich_stats.cost,
+                enrichment_cost=enrich_cost,
+                refinement_cost=refine_cost,
+            )
+            logger.info(
+                "Build metadata: duration=%.0fs, enrich=$%.4f, refine=$%.4f, total=$%.4f",
+                duration,
+                enrich_cost,
+                refine_cost,
+                total_cost,
             )
     except Exception:
         logger.warning("Failed to write build metadata to graph", exc_info=True)

@@ -806,6 +806,12 @@ classes:
         description: >-
           ISO 8601 timestamp of when this node was last enriched. Used for
           selective reset of enrichments by time window.
+      enrich_llm_cost:
+        description: >-
+          Actual LLM cost (USD) for enriching this node, from the provider's
+          response_cost field. Written atomically when marking enriched.
+          Null for template-enriched nodes (no LLM call).
+        range: float
       refinement_hash:
         description: >-
           SHA256 hash of Pass 2 refinement inputs (Pass 1 description +
@@ -815,6 +821,12 @@ classes:
         description: >-
           ISO 8601 timestamp of when this node was last refined (Pass 2).
         range: datetime
+      refine_llm_cost:
+        description: >-
+          Actual LLM cost (USD) for refining this node, from the provider's
+          response_cost field. Written atomically when marking refined.
+          Null for template/skip-refined nodes (no LLM call).
+        range: float
       # Embedding fields for semantic search
       embedding_text:
         description: >-
