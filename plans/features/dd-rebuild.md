@@ -32,19 +32,16 @@ A full rebuild is cheaper and safer than surgical migration. Cost: ~$100. Time: 
 | structural | built | 7,395 |
 | identifier | built | 243 |
 
-**External relationships that MUST be preserved** (not rebuilt by DD pipeline):
-- `HAS_STANDARD_NAME` (428) — StandardName links
-- `HAS_STANDARD_NAME_VOCAB_GAP` (415) — VocabGap links
-- `FOR_IMAS_PATH` (94,158) — IMASNodeChange version history
-- `COORDINATE_SAME_AS` (14,878) — cross-node coordinate equivalence
+**All DD relationships are rebuilt by the pipeline** — `HAS_PARENT`, `HAS_COORDINATE`,
+`IN_CLUSTER`, `HAS_UNIT`, `HAS_IDENTIFIER_SCHEMA`, `INTRODUCED_IN`, `DEPRECATED_IN`,
+`RENAMED_TO`, `FOR_IMAS_PATH`, `COORDINATE_SAME_AS`, `HAS_ERROR`, `IN_IDS`.
 
-**Internal relationships** (rebuilt by DD pipeline if needed):
-- `HAS_PARENT` (120,668), `HAS_COORDINATE` (38,703), `IN_CLUSTER` (33,873),
-  `HAS_UNIT` (25,270), `INTRODUCED_IN` / `DEPRECATED_IN` / `IN_IDS`, etc.
+**StandardName relationships** (`HAS_STANDARD_NAME`, `HAS_STANDARD_NAME_VOCAB_GAP`) will
+be cleared before DD rebuild as part of the SN greenfield plan (P1.6). No preservation needed.
 
-**Reset strategy**: `--reset-to built` preserves ALL relationships and clears only
-enrichment fields (description, keywords, embedding, hashes, timestamps). Classification
-is updated in-place before reset.
+**Reset strategy**: `--reset-to built` clears enrichment fields and preserves build-time
+properties + all relationships. A full `--reset-to extracted` (DETACH DELETE + rebuild
+from XML) is also safe since all relationships are pipeline-internal.
 
 ---
 
