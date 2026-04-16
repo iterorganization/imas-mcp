@@ -227,15 +227,17 @@ enums:
   IMASNodeStatus:
     description: >-
       Pipeline lifecycle status for IMASNode paths during DD build.
-      Tracks progress through the build → enrich → embed pipeline.
+      Tracks progress through the build → enrich → refine → embed pipeline.
       Worker coordination uses claimed_at timestamps, not status values.
     permissible_values:
       built:
         description: Path node created in graph from DD XML extraction
       enriched:
-        description: LLM-generated description and keywords populated
+        description: Pass 1 LLM-generated description and keywords populated
+      refined:
+        description: Pass 2 description refined with sibling and peer context
       embedded:
-        description: Vector embedding generated from enriched description
+        description: Vector embedding generated from refined description
 
   NodeCategory:
     description: >-
@@ -244,8 +246,15 @@ enums:
     permissible_values:
       quantity:
         description: >-
-          Independent physics quantity (temperature, current, flux).
+          Measurable physics quantity (temperature, current, pressure, field,
+          density, flux, elongation, triangularity, beta, safety_factor).
           Enriched, embedded, searchable, and SN-extractable.
+      geometry:
+        description: >-
+          Machine and diagnostic hardware positions and dimensions.
+          Coil r/z, vessel outline, diagnostic lines of sight, aperture
+          positions, detector geometry. Things that exist in real space
+          before plasma. Enriched, embedded, searchable, and SN-extractable.
       coordinate:
         description: >-
           Independent variable (time, spatial coords, flux coordinates).
@@ -573,8 +582,8 @@ classes:
       status:
         description: >-
           Pipeline lifecycle status tracking progress through the DD build
-          pipeline: built → enriched → embedded.  Workers claim paths by
-          setting claimed_at, then advance the status on completion.
+          pipeline: built → enriched → refined → embedded.  Workers claim
+          paths by setting claimed_at, then advance the status on completion.
         range: IMASNodeStatus
         required: true
       node_category:
@@ -797,6 +806,15 @@ classes:
         description: >-
           ISO 8601 timestamp of when this node was last enriched. Used for
           selective reset of enrichments by time window.
+      refinement_hash:
+        description: >-
+          SHA256 hash of Pass 2 refinement inputs (Pass 1 description +
+          sibling descriptions + cluster peer descriptions + model name).
+          Used for idempotent re-refinement: if hash matches, skip.
+      refined_at:
+        description: >-
+          ISO 8601 timestamp of when this node was last refined (Pass 2).
+        range: datetime
       # Embedding fields for semantic search
       embedding_text:
         description: >-
