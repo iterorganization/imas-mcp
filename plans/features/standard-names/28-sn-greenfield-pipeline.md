@@ -151,17 +151,33 @@ StandardName progression:       generated_at → validated_at → consolidated_a
 - Classify via path classifier (quantity/metadata/skip)
 - Select primary + grouping clusters
 - Build batches grouped by (grouping_cluster × unit), max batch size configurable
-- **Graph write**: `StandardNameSource` nodes (status: `extracted`)
+- **Graph write**: `StandardNameSource` nodes with `status = 'extracted'` and `batch_key`
 
-The graph is now the source of truth for what needs naming. `name_worker` claims
-`extracted` sources from the graph — no in-memory state handoff.
+Each `StandardNameSource` node carries a `batch_key` (e.g., `cluster_id/unit` or
+`unclustered/ids/parent/unit`) that preserves the semantic grouping. The graph is
+now the source of truth for what needs naming — `name_worker` claims sources by
+`batch_key`, not random selection.
+
+**Two-level coordination** (critical for LLM context quality):
+
+| Level | Mechanism | Purpose |
+|-------|-----------|---------|
+| **Batch selection** | `name_worker` iterates unclaimed `batch_key` values | Preserves cluster×unit grouping — semantically similar paths go to the same LLM call |
+| **Within-batch anti-deadlock** | `ORDER BY rand()` inside `claim_standard_name_source_batch(batch_key)` | Prevents lock convoys when parallel workers compete for the same batch |
+
+This is the existing proven pattern from `graph_ops.py`: `claim_standard_name_source_batch()`
+filters by `batch_key` first, then applies `ORDER BY rand()` within that batch. The LLM
+receives a coherent set of paths sharing the same physics cluster and unit — this enables
+focused context injection (IDS description, cluster semantics, coordinate conventions) and
+produces better names than random path selection would.
 
 ### Worker 2: `name_worker` (replaces compose_worker)
 
 **Purpose**: generate the standard name, kind, and grammar fields. Write valid names
 to the graph immediately. Invalid names never become StandardName nodes.
 **Model**: `get_model("reasoning")` — sonnet-class (good at naming, fast, cost-effective).
-**Pattern**: async claim loop (claims `StandardNameSource` batches from graph).
+**Pattern**: async claim loop — claims `StandardNameSource` batches **by `batch_key`** from
+graph, preserving the semantic grouping established by `extract_worker`.
 
 **Internal sub-steps** (not separate workers — they form one atomic unit of work per batch):
 
@@ -443,8 +459,36 @@ StandardName (per canonical name):
   validation_status: pending → valid | quarantined (ISN grammar checks)
 ```
 
-**Claim pattern** (identical to `graph_ops.py` existing pattern):
 
+**Claim patterns** — two distinct approaches for the two node types:
+
+**StandardNameSource claims** (name_worker — batch-key-grouped):
+```python
+@retry_on_deadlock()
+def claim_standard_name_source_batch(batch_key, limit=50):
+    token = str(uuid.uuid4())
+    with GraphClient() as gc:
+        gc.query("""
+            MATCH (sns:StandardNameSource)
+            WHERE sns.batch_key = $batch_key
+              AND (
+                (sns.status = 'extracted' AND sns.claimed_at IS NULL)
+                OR (sns.claimed_at IS NOT NULL
+                    AND sns.claimed_at < datetime() - duration({minutes: $timeout}))
+              )
+            WITH sns ORDER BY rand() LIMIT $limit
+            SET sns.claimed_at = datetime(), sns.claim_token = $token
+        """, ...)
+        return token, list(gc.query(
+            "MATCH (sns:StandardNameSource {claim_token: $token}) RETURN ...", ...))
+```
+
+The `batch_key` filter **preserves semantic grouping** — all claimed sources share
+the same cluster x unit context. `ORDER BY rand()` is safe here because it only
+randomizes within a single batch, not across the entire population. This is the
+existing proven pattern from `graph_ops.py::claim_standard_name_source_batch()`.
+
+**StandardName claims** (enrich_worker, embed_worker — random selection):
 ```python
 @retry_on_deadlock()
 def claim_for_enrichment(limit=20):
@@ -465,11 +509,15 @@ def claim_for_enrichment(limit=20):
             "MATCH (sn:StandardName {claim_token: $token}) RETURN ...", ...))
 ```
 
+For enrichment and embedding, batch grouping is less critical — each name is
+enriched independently with its own POSTLINK context. `ORDER BY rand()` is the
+correct choice here for maximum parallelism.
+
 **Worker → claim query → mark fields**:
 
 | Worker | Claims where | On success sets |
 |--------|-------------|-----------------|
-| `name_worker` | `StandardNameSource.status = 'extracted' AND claimed_at IS NULL` | Source: `status = 'composed'`, `composed_at`. SN: `review_status = 'drafted'`, `generated_at`, `validated_at`, `validation_status = 'valid'` |
+| `name_worker` | `StandardNameSource.batch_key = $key AND status = 'extracted' AND claimed_at IS NULL` | Source: `status = 'composed'`, `composed_at`. SN: `review_status = 'drafted'`, `generated_at`, `validated_at`, `validation_status = 'valid'` |
 | `organize_worker` | `StandardName.validated_at IS NOT NULL AND consolidated_at IS NULL` (barrier — runs after name_phase completes) | `consolidated_at`, vector hierarchy relationships |
 | `enrich_worker` | `StandardName.consolidated_at IS NOT NULL AND enriched_at IS NULL AND claimed_at IS NULL` | `enriched_at`, documentation, tags, links |
 | `embed_worker` | `StandardName.enriched_at IS NOT NULL AND embedded_at IS NULL AND claimed_at IS NULL` | `embedded_at`, embedding vector |
