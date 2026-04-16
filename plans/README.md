@@ -21,8 +21,7 @@ Plans validated against 62 existing standard names, current scoring architecture
 | Priority | Plan | Scope | Est. Agents |
 |----------|------|-------|-------------|
 | ~~**P1**~~ | [features/sn-bootstrap-loop.md](features/sn-bootstrap-loop.md) | ✅ Phase 1 (review CLI) complete, ✅ Phase 2 (bootstrap loop) complete, ⏳ Phase 3 blocked (needs ≥500 reviewed names) | 1 agent |
-| **P1.5** | [features/dd-unified-classification.md](features/dd-unified-classification.md) | 8-value NodeCategory, quantity→physical_quantity+geometry split, classifier bug fixes, sonnet enrichment model, MCP tool augmentation. **Prerequisite for P1.5a and P1.6.** | 2-3 agents |
-| **P1.5a** | [features/dd-multi-pass-enrichment.md](features/dd-multi-pass-enrichment.md) | Multi-pass DD enrichment: Pass 1 (descriptions) → Pass 2 (refinement with sibling/peer context). New `refined` status, `refine_worker`, sibling-readiness barrier. Integrated into P1.5 rebuild (~$100 total). | 1 agent |
+| **P1.5** | [features/dd-rebuild.md](features/dd-rebuild.md) | Full DD rebuild: geometry classification, two-pass sonnet enrichment, `refined` status, refine_worker with sibling barrier, Bug 1-3 fixes, MCP tool augmentation (~$100). **Prerequisite for P1.6.** | 2-3 agents |
 | **P1.6** | [features/standard-names/28-sn-greenfield-pipeline.md](features/standard-names/28-sn-greenfield-pipeline.md) | Greenfield SN pipeline: NAME→ENRICH split, PRELINK/POSTLINK context retrieval, vector hierarchy (GROUP), documentation inheritance. Clears all existing SNs. | 2-3 agents |
 | **P2** | [features/dd-server-cleanup.md](features/dd-server-cleanup.md) | 3 surgical fixes: truncation count, migration API, fuzzy matcher | 1-3 agents |
 | **P3** | [features/search-quality-improvements.md](features/search-quality-improvements.md) | Careful ranking fixes (accessor de-ranking, IDS preference), evaluation alignment | 2 agents |
@@ -33,7 +32,7 @@ Plans validated against 62 existing standard names, current scoring architecture
 
 ```
 Wave 1: sn-bootstrap-loop Phase 1 (review CLI)  ✅ complete
-Wave 2: dd-unified-classification + dd-multi-pass-enrichment (schema + classifier + enrichment model + refine worker + full rebuild ~$100)
+Wave 2: dd-rebuild (classification + two-pass enrichment + model upgrade + full rebuild ~$100)
 Wave 3: sn-greenfield-pipeline (clear all SNs, run new multi-pass pipeline)
 Wave 4: dd-server-cleanup (all 3 fixes, parallel)
 Wave 5: search-quality-improvements (Phases 1-2)
@@ -57,6 +56,8 @@ Wave 6: docs-refresh (fix stale docs after code changes land)
 Fully implemented plans archived in `features/completed/` and `features/standard-names/completed/`.
 
 Notable recent completions:
+- `dd-unified-classification.md` — superseded by dd-rebuild.md (merged with multi-pass enrichment)
+- `dd-multi-pass-enrichment.md` — superseded by dd-rebuild.md (merged with classification)
 - `isn-standard-name-kind.md` — ISN StandardNameKind assessed: no changes needed (scalar/vector/metadata sufficient)
 - `26-sn-pipeline-quality-iteration.md` — superseded by #28 greenfield pipeline
 
