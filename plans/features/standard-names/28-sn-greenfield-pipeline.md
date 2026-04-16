@@ -62,11 +62,15 @@ bolted-on additions.
    prompt templates based on type (vector parent / component / magnitude / standalone scalar /
    geometry) and retries on quality failure.
 
-9. **Pipeline progress via timestamps, not status enum**: each worker sets a timestamp
-   (`named_at`, `organized_at`, `enriched_at`, `embedded_at`) on the StandardName node.
-   These are orthogonal to `review_status` (human lifecycle) and `validation_status` (ISN
-   grammar checks). Claim queries use timestamp presence: `WHERE n.named_at IS NOT NULL
-   AND n.organized_at IS NULL`.
+9. **Proven claim pattern for worker coordination**: workers claim items via
+   `claimed_at` + `claim_token` with `@retry_on_deadlock()` and `ORDER BY rand()` —
+   the same battle-tested pattern used by all discovery pipelines. Status enums
+   (`review_status`, `validation_status`, `StandardNameSource.status`) define durable
+   state transitions. Provenance timestamps (`generated_at`, `validated_at`,
+   `consolidated_at`, `enriched_at`, `embedded_at`) track when each stage completed
+   and gate downstream workers via `WHERE sn.consolidated_at IS NOT NULL AND
+   sn.enriched_at IS NULL AND sn.claimed_at IS NULL`.
+
 
 ---
 
@@ -129,11 +133,11 @@ extract → name → organize → enrich → embed
 ```
 
 Five async workers. Each writes to the graph. The graph is the coordination mechanism —
-workers claim items by timestamp presence, not in-memory queues.
+workers claim items via status enum + claimed_at/claim_token, following the proven discovery pipeline pattern.
 
 ```
 StandardNameSource lifecycle:  extracted → composed | attached | vocab_gap | failed
-StandardName timestamps:       named_at → organized_at → enriched_at → embedded_at
+StandardName progression:       generated_at → validated_at → consolidated_at → enriched_at → embedded_at
 ```
 
 ### Worker 1: `extract_worker`
@@ -240,7 +244,7 @@ Checks (subset of current validation):
 
 #### 2d. Graph write (per batch)
 
-- **Creates** `StandardName` nodes for valid names with `named_at = datetime()`
+- **Creates `StandardName` nodes with `review_status = 'drafted'`, `validation_status = 'valid'`, `generated_at`, `validated_at`
 - **Creates** `HAS_STANDARD_NAME` relationships from source IMASNode/FacilitySignal
 - **Creates** `HAS_UNIT` relationship
 - **Updates** `StandardNameSource` status → `composed` | `attached` | `vocab_gap` | `failed`
@@ -267,7 +271,7 @@ from the current run, not incremental batches. It must wait for all naming to co
 
 #### 3a. CONSOLIDATE (canonicalization)
 
-Operations on all `StandardName` nodes where `named_at IS NOT NULL AND organized_at IS NULL`:
+Operations on all `StandardName` nodes where `validated_at IS NOT NULL AND consolidated_at IS NULL`:
 1. **Cross-batch dedup**: detect identical names from different batches → merge source paths
 2. **Synonym detection**: names with high embedding similarity but different strings → flag
 3. **Unit consistency**: same name from different sources must have same unit
@@ -295,9 +299,9 @@ Incorporates the full design from `27-sn-vector-hierarchy.md`:
 
 #### 3c. Graph write (single pass)
 
-- **Sets** `organized_at = datetime()` on all approved canonical names
+- **Sets `consolidated_at = datetime()` on all approved canonical names
 - **Creates** new vector parent + magnitude `StandardName` nodes (with `named_at` AND
-  `organized_at` set — they skip the name_worker since they're deterministically generated)
+  ``consolidated_at` set — they skip the name_worker since they're deterministically generated)
 - **Creates** `HAS_COMPONENT`, `HAS_MAGNITUDE` relationships
 - **Merges** duplicate names (loser gets `superseded_by` pointing to winner)
 - Logs conflicts and coverage gaps to state for reporting
@@ -311,8 +315,8 @@ CONSOLIDATE must also see all names to detect synonyms/conflicts.
 **Purpose**: generate comprehensive physics documentation for named + organized SNs.
 **Model**: `get_model("reasoning")` or dedicated enrichment model — sonnet or opus for
 maximum documentation quality.
-**Pattern**: async claim loop (claims `StandardName` nodes where `organized_at IS NOT NULL
-AND enriched_at IS NULL`).
+**Pattern**: async claim loop (claims `StandardName` nodes where `consolidated_at IS NOT NULL
+AND enriched_at IS NULL AND claimed_at IS NULL`).
 
 **Internal sub-steps** (per batch):
 
@@ -402,7 +406,7 @@ Checks:
 
 - **Updates** `StandardName` nodes: description, documentation, tags, links, validity_domain,
   constraints, validation_issues, validation_layer_summary
-- **Sets** `enriched_at = datetime()`
+- **Sets `enriched_at = datetime()`, clears `claimed_at`, `claim_token``
 - **Sets** `model` (which model produced the documentation)
 - **Updates** `validation_status` based on VALIDATE₂ results
 
@@ -411,40 +415,72 @@ Checks:
 **Purpose**: compute vector embeddings for enriched StandardNames.
 **LLM**: None — uses embedding server.
 **Pattern**: async claim loop (claims `StandardName` nodes where `enriched_at IS NOT NULL
-AND embedded_at IS NULL`).
+AND embedded_at IS NULL AND claimed_at IS NULL`).
 **Changes from current**: rename only — the current persist_worker already does exactly this.
 
 - Claims batch from graph via `claim_token` pattern
 - Computes embeddings via embedding server
 - **Graph write**: sets `embedding`, `embedded_at = datetime()` on StandardName nodes
 
+
 ### Graph State Machine
+
+Workers coordinate using the **proven claim pattern** from the discovery pipeline
+(`claims.py`): status enum for durable state, `claimed_at` + `claim_token` for
+worker coordination, `@retry_on_deadlock()` + `ORDER BY rand()` for deadlock avoidance.
 
 ```
 StandardNameSource (per DD path / signal):
-  extracted ─────────→ composed     (name_worker: LLM generated a new SN)
-       │                attached     (name_worker: auto-linked to existing SN)
-       │                vocab_gap    (name_worker: grammar token missing)
-       └───────────→ failed        (name_worker: validation rejected pre-graph-write)
+  extracted ──→ composed     (name_worker: LLM generated a new SN)
+       │         attached     (name_worker: auto-linked to existing SN)
+       │         vocab_gap    (name_worker: grammar token missing)
+       └──────→ failed        (name_worker: validation rejected pre-graph-write)
+       └──────→ stale         (sn reconcile: source entity removed)
 
 StandardName (per canonical name):
-  named_at ──→ organized_at ──→ enriched_at ──→ embedded_at
-  (name_worker) (organize_worker) (enrich_worker) (embed_worker)
+  drafted ──→ drafted        (worker progression via status-gated claim queries)
+  review_status:  drafted → published → accepted (human review lifecycle)
+  validation_status: pending → valid | quarantined (ISN grammar checks)
 ```
 
-Pipeline progress tracked by timestamp presence. Each worker claims items
-where the prior timestamp is set and its own timestamp is NULL:
+**Claim pattern** (identical to `graph_ops.py` existing pattern):
 
-| Worker | Claims where | Sets |
-|--------|-------------|------|
-| `name_worker` | `StandardNameSource.status = 'extracted'` | `StandardName.named_at` |
-| `organize_worker` | `StandardName.named_at IS NOT NULL AND organized_at IS NULL` | `organized_at` |
-| `enrich_worker` | `StandardName.organized_at IS NOT NULL AND enriched_at IS NULL` | `enriched_at` |
-| `embed_worker` | `StandardName.enriched_at IS NOT NULL AND embedded_at IS NULL` | `embedded_at` |
+```python
+@retry_on_deadlock()
+def claim_for_enrichment(limit=20):
+    token = str(uuid.uuid4())
+    with GraphClient() as gc:
+        gc.query("""
+            MATCH (sn:StandardName)
+            WHERE sn.review_status = 'drafted'
+              AND sn.validation_status = 'valid'
+              AND sn.consolidated_at IS NOT NULL
+              AND sn.enriched_at IS NULL
+              AND (sn.claimed_at IS NULL
+                   OR sn.claimed_at < datetime() - duration($timeout))
+            WITH sn ORDER BY rand() LIMIT $limit
+            SET sn.claimed_at = datetime(), sn.claim_token = $token
+        """, ...)
+        return token, list(gc.query(
+            "MATCH (sn:StandardName {claim_token: $token}) RETURN ...", ...))
+```
 
-Orthogonal axes (unchanged):
-- `review_status`: drafted → published → accepted (human review lifecycle)
-- `validation_status`: pending → valid → quarantined (ISN grammar checks)
+**Worker → claim query → mark fields**:
+
+| Worker | Claims where | On success sets |
+|--------|-------------|-----------------|
+| `name_worker` | `StandardNameSource.status = 'extracted' AND claimed_at IS NULL` | Source: `status = 'composed'`, `composed_at`. SN: `review_status = 'drafted'`, `generated_at`, `validated_at`, `validation_status = 'valid'` |
+| `organize_worker` | `StandardName.validated_at IS NOT NULL AND consolidated_at IS NULL` (barrier — runs after name_phase completes) | `consolidated_at`, vector hierarchy relationships |
+| `enrich_worker` | `StandardName.consolidated_at IS NOT NULL AND enriched_at IS NULL AND claimed_at IS NULL` | `enriched_at`, documentation, tags, links |
+| `embed_worker` | `StandardName.enriched_at IS NOT NULL AND embedded_at IS NULL AND claimed_at IS NULL` | `embedded_at`, embedding vector |
+
+**Key**: `claimed_at IS NULL` in every claim query. `claim_token` two-step verify prevents
+double-claiming. `@retry_on_deadlock()` handles Neo4j transient errors. `ORDER BY rand()`
+avoids lock convoys. Timestamps (`generated_at`, `validated_at`, etc.) are **provenance
+markers** for observability — the actual gating is via status checks and NULL timestamp
+tests, coordinated by claimed_at/claim_token.
+
+
 ## Cost Model
 
 ### Per-Generation Run (~800 standard names from DD source)
@@ -495,7 +531,7 @@ Grand total with vectors: ~$65-70 per full generation run.
 - DD `node_category` labels in place (`physical_quantity`, `geometry`)
 - DD nodes re-enriched with sonnet (better descriptions → better SN context)
 - Classifier bugs fixed (reversed traversal, overbroad coordinate)
-- `named_at`, `organized_at`, `enriched_at` timestamp fields added to StandardName schema
+- Verify existing claim infrastructure (`claimed_at`, `claim_token`, `@retry_on_deadlock`) covers new workers
 
 ### Phase 1: `name_worker` (replaces compose_worker)
 
@@ -639,6 +675,6 @@ stage that alters data should write to the graph. The graph is the ledger and st
 | 2 | Parallel name_worker races can create near-duplicates | Medium | Accepted: organize_worker is authoritative canonicalization. Graph write is optimistic; organize is global consistency. |
 | 3 | Ledger vs mutable state machine conflation | Medium | Resolved: accept state machine model. Rejection history visible via StandardNameSource.last_error + status. |
 | 4 | organize_worker is a reducer, not a claim-loop worker | Medium | Modeled as barriered phase (`depends_on: ["name_phase"]`), single-pass. |
-| 5 | Pipeline progress should use timestamps, not enum | Medium | Adopted: `named_at`, `organized_at`, `enriched_at`, `embedded_at` timestamps. |
+| 5 | Pipeline progress uses proven claim pattern | Medium | Use existing `claimed_at` + `claim_token` + status enum + provenance timestamps (not timestamps as primary coordination). |
 | 6 | Within-run registry can be the graph itself | Minor | Adopted: PRELINK queries existing StandardName nodes. No in-memory registry needed. |
 | 7 | Workers should be named for what they do | Minor | Adopted: persist → embed, compose → name, new organize worker. |
