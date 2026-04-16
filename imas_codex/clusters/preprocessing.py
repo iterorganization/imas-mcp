@@ -8,6 +8,8 @@ embeddings to distinguish meaningful from generic paths.
 import re
 from typing import Any
 
+from imas_codex.core.node_categories import EMBEDDABLE_CATEGORIES
+
 
 class PathFilter:
     """Filters and preprocesses paths for relationship extraction.
@@ -41,7 +43,7 @@ class PathFilter:
             for path, path_data in paths.items():
                 # Skip error and metadata nodes
                 name = path.split("/")[-1] if "/" in path else path
-                if _classify_node(path, name) != "data":
+                if _classify_node(path, name) not in EMBEDDABLE_CATEGORIES:
                     continue
 
                 # Only skip paths with no documentation at all

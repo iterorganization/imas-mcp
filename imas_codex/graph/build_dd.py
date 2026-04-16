@@ -33,7 +33,12 @@ import imas
 import numpy as np
 
 from imas_codex import dd_version as current_dd_version
-from imas_codex.core.node_categories import EMBEDDABLE_CATEGORIES, SEARCHABLE_CATEGORIES
+from imas_codex.core.node_categories import (
+    EMBEDDABLE_CATEGORIES,
+    ENRICHABLE_CATEGORIES,
+    QUANTITY_CATEGORIES,
+    SEARCHABLE_CATEGORIES,
+)
 from imas_codex.core.paths import strip_path_annotations
 from imas_codex.core.physics_categorization import physics_categorizer
 from imas_codex.core.progress_monitor import (
@@ -2019,11 +2024,14 @@ def _reclassify_relational(client: GraphClient) -> int:
     """
     from imas_codex.core.node_classifier import classify_node_pass2
 
+    # Categories for pass 2 reclassification
+    pass2_categories = sorted(ENRICHABLE_CATEGORIES | {"structural"})
+
     # Fetch nodes with relevant relationships in a single query
     rows = client.query(
         """
         MATCH (n:IMASNode)
-        WHERE n.node_category IN ['quantity', 'coordinate', 'structural', 'data']
+        WHERE n.node_category IN $categories
         OPTIONAL MATCH (n)-[:HAS_IDENTIFIER_SCHEMA]->()
         WITH n, count(*) > 0 AS has_id_schema
         WHERE has_id_schema
@@ -2032,27 +2040,29 @@ def _reclassify_relational(client: GraphClient) -> int:
                true AS has_identifier_schema
         UNION ALL
         MATCH (n:IMASNode)
-        WHERE n.node_category IN ['quantity', 'coordinate', 'structural', 'data']
+        WHERE n.node_category IN $categories
         MATCH ()-[:HAS_COORDINATE]->(n)
         RETURN DISTINCT n.id AS id, n.node_category AS current,
                n.data_type AS data_type, n.unit AS unit,
                false AS has_identifier_schema
-        """
+        """,
+        categories=pass2_categories,
     )
 
     # Also check STRUCTURE+unit nodes for children evidence
     struct_rows = client.query(
         """
         MATCH (n:IMASNode)
-        WHERE n.node_category IN ['quantity', 'data']
+        WHERE n.node_category IN $quantity_categories
           AND n.data_type IN ['STRUCTURE', 'STRUCT_ARRAY']
           AND n.unit IS NOT NULL AND n.unit <> '' AND n.unit <> '-'
-        OPTIONAL MATCH (n)<-[:PARENT_OF]-(child:IMASNode)
+        OPTIONAL MATCH (child:IMASNode)-[:HAS_PARENT]->(n)
         WITH n, collect(child.node_category) AS children_cats
         RETURN n.id AS id, n.node_category AS current,
                n.data_type AS data_type, n.unit AS unit,
                children_cats
-        """
+        """,
+        quantity_categories=sorted(QUANTITY_CATEGORIES),
     )
 
     updates: dict[str, str] = {}
