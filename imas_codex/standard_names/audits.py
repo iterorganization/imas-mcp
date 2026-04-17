@@ -22,7 +22,48 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 # Checks whose failure demotes to quarantined
-CRITICAL_CHECKS = frozenset({"latex_def_check", "synonym_check", "multi_subject_check"})
+CRITICAL_CHECKS = frozenset(
+    {
+        "latex_def_check",
+        "synonym_check",
+        "multi_subject_check",
+        "placeholder_check",
+        "unit_validity_check",
+    }
+)
+
+# Tokens that indicate an unfilled prompt placeholder leaked through.
+# Matches bracketed tokens containing these words anywhere in documentation/description.
+_PLACEHOLDER_TOKENS = frozenset(
+    {
+        "condition",
+        "specific condition",
+        "specific physical condition",
+        "quantity",
+        "value",
+        "unit",
+        "placeholder",
+        "todo",
+        "fill in",
+        "tbd",
+    }
+)
+
+# Non-unit tokens that indicate an invalid unit expression — these are
+# shape-related or semantic labels that should never appear in a unit string.
+_INVALID_UNIT_TOKENS = frozenset(
+    {
+        "dimension",
+        "rank",
+        "fourier",
+        "component",
+        "coefficient",
+        "shape",
+        "index",
+        "tbd",
+        "n/a",
+    }
+)
 
 # Provenance verbs that should not appear in standard names
 _PROVENANCE_VERBS = frozenset(
@@ -266,6 +307,72 @@ def synonym_check(
     return issues
 
 
+def placeholder_check(candidate: dict[str, Any]) -> list[str]:
+    """Detect unfilled prompt placeholders leaking into name/description/documentation.
+
+    Flags bracketed tokens like ``[condition]``, ``[specific physical condition]``,
+    ``[quantity]`` — these indicate the LLM copied the prompt's placeholder
+    pattern verbatim instead of substituting a concrete value.
+    """
+    issues: list[str] = []
+    name = candidate.get("id") or candidate.get("standard_name") or ""
+    description = candidate.get("description") or ""
+    documentation = candidate.get("documentation") or ""
+
+    # Match [anything] where the inner text contains a placeholder token
+    bracket_pattern = re.compile(r"\[([^\[\]]{1,80})\]")
+    for field_name, text in (
+        ("name", name),
+        ("description", description),
+        ("documentation", documentation),
+    ):
+        if not text:
+            continue
+        for match in bracket_pattern.finditer(text):
+            inner = match.group(1).lower().strip()
+            # Skip markdown links [text](url) — these have concrete link text.
+            end = match.end()
+            if end < len(text) and text[end] == "(":
+                continue
+            # Only flag when the bracketed content matches a known placeholder
+            # token (single words or short phrases).
+            for token in _PLACEHOLDER_TOKENS:
+                if token in inner:
+                    issues.append(
+                        f"audit:placeholder_check: unfilled placeholder '[{match.group(1)}]' "
+                        f"in {field_name}"
+                    )
+                    break
+
+    return issues
+
+
+def unit_validity_check(candidate: dict[str, Any]) -> list[str]:
+    """Flag invented / malformed unit expressions.
+
+    Catches units containing semantic labels (e.g. ``m^dimension``, ``Wb*fourier``)
+    rather than valid SI symbols. Does not validate unit algebra (left to Pydantic /
+    pint); this is a defensive sanity check against LLM hallucinations.
+    """
+    issues: list[str] = []
+    unit = (candidate.get("unit") or "").lower()
+    if not unit or unit in ("1", "dimensionless", "-", "mixed", "none"):
+        return issues
+
+    # Split on unit algebra operators and check each token
+    tokens = re.split(r"[\s*/.^()·×]+", unit)
+    for tok in tokens:
+        if not tok:
+            continue
+        if tok in _INVALID_UNIT_TOKENS:
+            issues.append(
+                f"audit:unit_validity_check: unit '{candidate.get('unit')}' "
+                f"contains non-unit token '{tok}'"
+            )
+            break
+    return issues
+
+
 def unit_dimension_check(candidate: dict[str, Any]) -> list[str]:
     """Heuristic check that description nouns are consistent with unit.
 
@@ -395,6 +502,8 @@ def run_audits(
     all_issues: list[str] = []
 
     all_issues.extend(latex_def_check(candidate))
+    all_issues.extend(placeholder_check(candidate))
+    all_issues.extend(unit_validity_check(candidate))
     all_issues.extend(provenance_verb_check(candidate, source_path))
     all_issues.extend(synonym_check(candidate, existing_sns_in_domain or []))
     all_issues.extend(unit_dimension_check(candidate))

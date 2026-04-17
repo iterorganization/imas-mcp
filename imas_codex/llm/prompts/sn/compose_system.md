@@ -164,6 +164,21 @@ Define both when the DD provides both.
 entries. If one entry uses `poloidal_magnetic_flux`, all related entries must
 use `magnetic_flux` (not just `flux`).
 
+**NC-5 No abbreviations.** Spell words in full. ❌ `norm_poloidal_flux` →
+✅ `normalised_poloidal_magnetic_flux`; ❌ `sep_dist` → ✅ `separatrix_distance`.
+Acronyms (GGD, FOCS, EFIT, COCOS) and inline math shorthand (`dr_dz`, `d_psi`)
+are forbidden in names — spell the concept out.
+
+**NC-6 No redundant category suffixes.** Do not append generic type words that
+repeat information already carried by the root noun. ❌ `stokes_s0_parameter`
+→ ✅ `stokes_s0` (or a properly named intensity quantity); ❌ `flux_value` →
+✅ `flux`; ❌ `temperature_quantity` → ✅ `temperature`. Forbidden suffixes
+include: `_parameter`, `_value`, `_quantity`, `_data`, `_variable`.
+
+**NC-7 No dimension suffixes.** Do not encode the data's rank in the name:
+❌ `geometry_2d`, ❌ `field_3d`, ❌ `profile_1d`. The IDS path already carries
+this information; standard names describe the physical concept.
+
 ### Naming captures the physical quantity, not how it was obtained
 
 Standard names describe **what** is measured, not **how** it was measured or processed.
@@ -213,9 +228,14 @@ Always state which units variables are expressed in before applying conversions.
 inline link syntax when referencing other standard names in documentation.
 
 **DS-5 Sign conventions.** For COCOS-dependent or sign-ambiguous quantities,
-include a dedicated paragraph:
-`Sign convention: Positive when [specific physical condition].`
-Use plain text (not bold), separate paragraph, not inline.
+include a dedicated paragraph of the form:
+`Sign convention: Positive when <concrete physical statement>.`
+For example: `Sign convention: Positive when the current flows counter-clockwise
+viewed from above.` or `Sign convention: Positive when the flux increases
+outward from the magnetic axis.`
+**Never emit bracketed placeholders** such as `[condition]`, `[specific condition]`,
+or `[quantity]` in the output — write the concrete condition verbatim, or omit the
+sentence entirely. Use plain text (not bold), separate paragraph, not inline.
 
 {% if cocos_version is defined and cocos_version %}
 ### COCOS {{ cocos_version }} Reference
@@ -365,8 +385,11 @@ Every section listed below MUST appear. Omitting sections degrades review scores
 5. **Typical values** — give quantitative ranges from the tokamak parameter data above. Format:
    "In conventional tokamaks: X-Y [unit]; in spherical tokamaks: A-B [unit]."
 
-6. **Sign convention** — include for ALL COCOS-dependent quantities using EXACTLY the format:
-   "Sign convention: Positive when [specific condition]."
+6. **Sign convention** — include for ALL COCOS-dependent quantities using the pattern:
+   "Sign convention: Positive when <concrete physical condition>."
+   Write a CONCRETE physical condition (e.g. "the plasma current flows counter-clockwise
+   viewed from above", "the flux increases outward"). NEVER emit bracketed placeholders
+   like "[condition]" or "[specific condition]" in the final output.
    If not COCOS-dependent, state: "This quantity has no sign ambiguity."
 
 7. **Cross-references** — reference 2-4 related quantities using `[name](#name)` inline link format.

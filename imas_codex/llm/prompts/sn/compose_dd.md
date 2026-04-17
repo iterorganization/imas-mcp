@@ -117,8 +117,10 @@ Use them as quality benchmarks for naming style, documentation depth, and field 
 {% if cocos_version is defined and cocos_version %}- **COCOS convention:** {{ cocos_version }}{% if dd_version %} (DD {{ dd_version }}){% endif %}{% endif %}
 {% if item.cocos_guidance %}- **Sign convention guidance:** {{ item.cocos_guidance }}{% endif %}
   ⚠️ This quantity is COCOS-dependent. You MUST include a sign convention paragraph
-  in the documentation section using EXACTLY the format:
-  `Sign convention: Positive when [specific condition based on COCOS {{ cocos_version | default('') }}].`{% endif %}
+  in the documentation section of the form:
+  `Sign convention: Positive when <concrete physical condition consistent with COCOS {{ cocos_version | default('') }}>.`
+  Write the CONCRETE condition verbatim (e.g. "the current flows counter-clockwise
+  viewed from above"). NEVER output bracketed placeholders like `[condition]`.{% endif %}
 {% if item.identifier_schema %}- **Identifier schema:** {{ item.identifier_schema }}{% if item.identifier_schema_doc %} — {{ item.identifier_schema_doc }}{% endif %}{% endif %}
 {% if item.coord_path %}- **Coordinate:** {{ item.coord_path }}{% if item.coord_unit %} ({{ item.coord_unit }}){% endif %}{% endif %}
 {% if item.parent_path %}- **Parent structure:** {{ item.parent_path }} ({{ item.parent_type or 'STRUCTURE' }}){% endif %}

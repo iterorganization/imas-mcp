@@ -292,7 +292,103 @@ class TestRunAudits:
             is True
         )
         assert (
+            has_critical_audit_failure(["audit:placeholder_check: [condition]"]) is True
+        )
+        assert (
+            has_critical_audit_failure(
+                ["audit:unit_validity_check: non-unit token 'dimension'"]
+            )
+            is True
+        )
+        assert (
             has_critical_audit_failure(["audit:unit_dimension_check: mismatch"])
             is False
         )
         assert has_critical_audit_failure([]) is False
+
+
+# =========================================================================
+# placeholder_check
+# =========================================================================
+
+
+class TestPlaceholderCheck:
+    """Tests for placeholder_check audit."""
+
+    def test_pass_concrete_sign_convention(self):
+        from imas_codex.standard_names.audits import placeholder_check
+
+        c = {
+            "documentation": (
+                "Sign convention: Positive when the plasma current flows "
+                "counter-clockwise viewed from above."
+            ),
+        }
+        assert placeholder_check(c) == []
+
+    def test_fail_bracketed_condition(self):
+        from imas_codex.standard_names.audits import placeholder_check
+
+        c = {"documentation": "Sign convention: Positive when [condition]."}
+        issues = placeholder_check(c)
+        assert len(issues) == 1
+        assert "placeholder_check" in issues[0]
+
+    def test_fail_bracketed_specific_condition(self):
+        from imas_codex.standard_names.audits import placeholder_check
+
+        c = {"description": "Positive when [specific physical condition]"}
+        issues = placeholder_check(c)
+        assert len(issues) == 1
+
+    def test_pass_markdown_link(self):
+        """Markdown [text](url) links are not placeholders."""
+        from imas_codex.standard_names.audits import placeholder_check
+
+        c = {
+            "documentation": (
+                "See [magnetic_flux](#magnetic_flux) and [safety_factor](#safety_factor)."
+            ),
+        }
+        assert placeholder_check(c) == []
+
+    def test_pass_numeric_bracket(self):
+        """Numeric brackets like [1] or citation-like markers are not flagged."""
+        from imas_codex.standard_names.audits import placeholder_check
+
+        c = {"documentation": "See reference [1] and range [0, 1]."}
+        assert placeholder_check(c) == []
+
+
+# =========================================================================
+# unit_validity_check
+# =========================================================================
+
+
+class TestUnitValidityCheck:
+    """Tests for unit_validity_check audit."""
+
+    def test_pass_real_unit(self):
+        from imas_codex.standard_names.audits import unit_validity_check
+
+        for unit in ("m", "T", "Wb", "eV", "m^2", "kg*m/s^2", "m.s^-1", "1"):
+            assert unit_validity_check({"unit": unit}) == [], f"failed for {unit}"
+
+    def test_fail_m_caret_dimension(self):
+        from imas_codex.standard_names.audits import unit_validity_check
+
+        issues = unit_validity_check({"unit": "m^dimension"})
+        assert len(issues) == 1
+        assert "dimension" in issues[0]
+
+    def test_fail_fourier_in_unit(self):
+        from imas_codex.standard_names.audits import unit_validity_check
+
+        issues = unit_validity_check({"unit": "T*fourier"})
+        assert len(issues) == 1
+
+    def test_pass_empty_unit(self):
+        from imas_codex.standard_names.audits import unit_validity_check
+
+        assert unit_validity_check({"unit": ""}) == []
+        assert unit_validity_check({"unit": "dimensionless"}) == []
