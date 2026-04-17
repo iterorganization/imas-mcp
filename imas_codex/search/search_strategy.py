@@ -136,7 +136,7 @@ class SearchHit(SearchBase):
     )
 
     # COCOS transformation fields
-    cocos_label_transformation: str | None = Field(
+    cocos_transformation_type: str | None = Field(
         default=None,
         description="COCOS label (e.g., 'psi_like', 'ip_like') for sign transformation",
     )
@@ -196,6 +196,16 @@ class SearchHit(SearchBase):
     error_fields: list[str] | None = Field(
         default=None,
         description="Associated error field paths (via HAS_ERROR relationships)",
+    )
+
+    # Rename lineage (RENAMED_FROM / RENAMED_TO graph traversal)
+    rename_lineage: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Rename history for this path. Keys: renamed_from (list of old path IDs), "
+            "renamed_to (list of new path IDs), rename_version (str | None — the DD "
+            "version in which this path was itself renamed, i.e. has successors)."
+        ),
     )
 
     # Child node information for structure results

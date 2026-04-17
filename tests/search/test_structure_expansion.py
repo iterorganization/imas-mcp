@@ -25,11 +25,13 @@ def _make_gc_mock(enriched_rows, child_rows=None):
     skipped.  The only gc.query calls that actually occur are:
 
       1st call  — enrichment (returns enriched_rows)
-      2nd call  — child expansion (returns child_rows or [])
+      2nd call  — rename lineage (always empty for test paths)
+      3rd call  — child expansion (returns child_rows or [])
     """
     gc = MagicMock()
     call_sequence = [
         enriched_rows,  # enrichment
+        [],  # rename lineage (_fetch_rename_lineage, always empty for test paths)
         child_rows or [],  # child expansion
     ]
     gc.query = MagicMock(side_effect=call_sequence)
@@ -58,7 +60,7 @@ def _structure_row(path: str, ids: str = "tf") -> dict:
         "path_doc": None,
         "coordinate1_same_as": None,
         "coordinate2_same_as": None,
-        "cocos_label_transformation": None,
+        "cocos_transformation_type": None,
         "cocos_transformation_expression": None,
         "description": None,
         "keywords": None,

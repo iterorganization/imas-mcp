@@ -87,7 +87,7 @@ class IdsNode(BaseModel):
     )
 
     # COCOS transformation fields
-    cocos_label_transformation: str | None = None  # e.g., "psi_like", "ip_like"
+    cocos_transformation_type: str | None = None  # e.g., "psi_like", "ip_like"
     cocos_transformation_expression: str | None = None  # e.g., "- {psi_like}"
 
     # LLM enrichment fields
@@ -100,6 +100,9 @@ class IdsNode(BaseModel):
 
     # Children preview (populated when include_children=True for structure nodes)
     children_preview: list[dict] | None = None
+
+    # Rename lineage (RENAMED_FROM / RENAMED_TO graph traversal)
+    rename_lineage: dict[str, Any] | None = None
 
     # Additional XML attributes
     coordinate1: str | None = None

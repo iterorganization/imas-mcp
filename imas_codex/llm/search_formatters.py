@@ -599,7 +599,7 @@ def format_imas_report(
             if introduced:
                 parts.append(f"  Introduced: DD {introduced}")
 
-            cocos = p.get("cocos_label_transformation")
+            cocos = p.get("cocos_transformation_type")
             if cocos:
                 parts.append(f"  COCOS: {cocos}")
 
@@ -892,6 +892,15 @@ def format_fetch_paths_report(result: Any) -> str:
                 else:
                     parts.append(f"    - {ver} [{ctype}]")
 
+        # Rename lineage (RENAMED_FROM / RENAMED_TO)
+        lineage = getattr(node, "rename_lineage", None) or {}
+        for old_path in lineage.get("renamed_from") or []:
+            parts.append(f"  RENAMED FROM: {old_path}")
+        for new_path in lineage.get("renamed_to") or []:
+            ver = lineage.get("rename_version")
+            suffix = f" (in v{ver})" if ver else ""
+            parts.append(f"  RENAMED TO: {new_path}{suffix}")
+
         parts.append("")
 
     for nf in _get_value(result, "not_found_paths", []) or []:
@@ -1158,8 +1167,8 @@ def format_search_dd_report(result: Any, cluster_result: Any | None = None) -> s
                 parts.append(f"  Introduced: DD {hit.introduced_after_version}")
             if hit.keywords:
                 parts.append(f"  Keywords: {', '.join(hit.keywords)}")
-            if hit.cocos_label_transformation:
-                parts.append(f"  COCOS: {hit.cocos_label_transformation}")
+            if hit.cocos_transformation_type:
+                parts.append(f"  COCOS: {hit.cocos_transformation_type}")
             if hit.cluster_labels:
                 parts.append(f"  Clusters: {', '.join(hit.cluster_labels)}")
             if hit.see_also:
@@ -1169,6 +1178,15 @@ def format_search_dd_report(result: Any, cluster_result: Any | None = None) -> s
                 if extra > 0:
                     line += f" +{extra} more"
                 parts.append(line)
+
+            # Rename lineage (RENAMED_FROM / RENAMED_TO)
+            lineage = hit.rename_lineage or {}
+            for old_path in lineage.get("renamed_from") or []:
+                parts.append(f"  \u21b3 renamed from: {old_path}")
+            for new_path in lineage.get("renamed_to") or []:
+                ver = lineage.get("rename_version")
+                suffix = f" (in v{ver})" if ver else ""
+                parts.append(f"  \u21b3 renamed to: {new_path}{suffix}")
 
             # Facility cross-references
             xref = hit.facility_xrefs or {}
