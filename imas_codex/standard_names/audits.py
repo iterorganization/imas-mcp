@@ -38,6 +38,8 @@ CRITICAL_CHECKS = frozenset(
         "description_verb_drift_check",
         "structural_dim_tag_check",
         "name_unit_consistency_check",
+        "representation_artifact_check",
+        "causal_due_to_check",
     }
 )
 
@@ -1032,6 +1034,88 @@ def name_description_consistency_check(candidate: dict[str, Any]) -> list[str]:
     ]
 
 
+_REPRESENTATION_NAME_RE = re.compile(
+    r"_(?:coefficients|ggd|finite_element|interpolation|interpolation_coefficients|"
+    r"basis|spline|fourier_modes|harmonics_coefficients|ggd_coefficients|"
+    r"finite_element_interpolation_coefficients)(?:_|$)"
+)
+
+
+def representation_artifact_check(candidate: dict[str, Any]) -> list[str]:
+    """Flag names whose final tokens describe a basis-function representation.
+
+    Names ending in ``_coefficients``, ``_ggd_coefficients``,
+    ``_finite_element_interpolation_coefficients``, ``_basis``, ``_spline``,
+    ``_fourier_modes`` etc. are storage representations of an underlying
+    physical field, not standalone physics concepts.  They should be
+    quarantined and the corresponding source path skipped at classification.
+    """
+    name = str(candidate.get("id") or candidate.get("name") or "").strip().lower()
+    if not name:
+        return []
+    if _REPRESENTATION_NAME_RE.search(name):
+        return [
+            f"audit:representation_artifact_check: name '{name}' encodes a "
+            "basis-function or grid representation; the underlying physical "
+            "quantity already has a standard name on the sibling path — "
+            "this path should have been classified as skip"
+        ]
+    return []
+
+
+# Verbs/processes that are mis-used with the ``due_to_<X>`` template.  These
+# fall into two classes:
+#  - ``during_X`` would be more accurate (the X is a temporal event, not a
+#    physical cause): disruption, breakdown, ramp_up, ramp_down, flat_top
+#  - ``due_to_X_<verb>`` is required (X is an adjective, not a process noun):
+#    ohmic → ohmic_dissipation/ohmic_heating
+_DURE_TO_TEMPORAL = {
+    "disruption",
+    "breakdown",
+    "ramp_up",
+    "ramp_down",
+    "flat_top",
+    "shutdown",
+    "startup",
+}
+_DURE_TO_ADJECTIVE = {
+    "ohmic": "ohmic_dissipation or ohmic_heating",
+    "neutral_beam": "neutral_beam_injection",
+    "wave": "wave_heating",
+}
+
+
+def causal_due_to_check(candidate: dict[str, Any]) -> list[str]:
+    """Flag misuse of the ``due_to_<process>`` grammatical template.
+
+    The ``due_to_`` template asserts a causal physical process.  It is wrong
+    when the trailing token is a temporal event (use ``during_<event>``) or
+    a bare adjective (use ``due_to_<adjective>_<process_noun>``).
+    """
+    name = str(candidate.get("id") or candidate.get("name") or "").strip().lower()
+    if "_due_to_" not in name:
+        return []
+    issues: list[str] = []
+    suffix = name.split("_due_to_", 1)[1]
+    for event in _DURE_TO_TEMPORAL:
+        if suffix == event or suffix.startswith(event + "_"):
+            issues.append(
+                f"audit:causal_due_to_check: name '{name}' uses 'due_to_{event}' — "
+                f"'{event}' is a temporal event, not a physical process; use "
+                f"'during_{event}' instead"
+            )
+            break
+    for adj, suggestion in _DURE_TO_ADJECTIVE.items():
+        if suffix == adj or suffix == adj + "_":
+            issues.append(
+                f"audit:causal_due_to_check: name '{name}' uses 'due_to_{adj}' — "
+                f"'{adj}' is an adjective, not a process noun; use "
+                f"'due_to_{suggestion}' instead"
+            )
+            break
+    return issues
+
+
 def run_audits(
     candidate: dict[str, Any],
     existing_sns_in_domain: list[dict[str, Any]] | None = None,
@@ -1073,6 +1157,8 @@ def run_audits(
     all_issues.extend(name_unit_consistency_check(candidate))
     all_issues.extend(multi_subject_check(candidate))
     all_issues.extend(cocos_specificity_check(candidate, source_cocos_type))
+    all_issues.extend(representation_artifact_check(candidate))
+    all_issues.extend(causal_due_to_check(candidate))
 
     return all_issues
 

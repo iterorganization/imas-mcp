@@ -86,6 +86,15 @@ _FIT_CHILD_RE: re.Pattern[str] = re.compile(
 #: Regex matching a parent path segment ending in ``_fit``.
 _FIT_PARENT_RE: re.Pattern[str] = re.compile(r"(?:^|/)[A-Za-z0-9_]*_fit$")
 
+#: Regex matching basis-function / discretisation storage artifacts in a path
+#: segment.  These are representations of an underlying physics quantity, not
+#: independent concepts (e.g. GGD coefficients, finite-element interpolation
+#: coefficients).  They should not receive standard names.
+_REPRESENTATION_RE: re.Pattern[str] = re.compile(
+    r"(?:^|_)(?:coefficients|ggd|finite_element|interpolation|basis|spline|"
+    r"fourier_modes|harmonics_coefficients)(?:_|$)",
+)
+
 # Type alias for the three-way classification.
 Scope = Literal["quantity", "metadata", "skip"]
 
@@ -173,6 +182,19 @@ def classify_path(node: dict) -> Scope:
     # matched — those are valid provenance qualifiers.
     # ------------------------------------------------------------------
     if _FIT_DIAGNOSTIC_RE.search(last_segment):
+        return "skip"
+
+    # ------------------------------------------------------------------
+    # Rule 11d: Representation / basis-function storage artifacts → skip
+    # GGD coefficients, finite-element interpolation coefficients, spline
+    # bases, Fourier-mode harmonics — these store a representation of an
+    # underlying physical field, not an independent concept.  The physical
+    # field already has a standard name on a sibling path.
+    # ------------------------------------------------------------------
+    if _REPRESENTATION_RE.search(last_segment):
+        return "skip"
+    parent_segment = (node.get("parent_path") or "").split("/")[-1]
+    if parent_segment and _REPRESENTATION_RE.search(parent_segment):
         return "skip"
 
     # ------------------------------------------------------------------
