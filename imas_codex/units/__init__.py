@@ -14,7 +14,12 @@ logger = logging.getLogger(__name__)
 def format_unit_simple(
     unit, registry: pint.UnitRegistry, **options: dict[str, Any]
 ) -> str:
-    return ".".join(u if p == 1 else f"{u}^{p}" for u, p in unit.items())
+    def _fmt_exp(p: float | int) -> str:
+        # Coerce integer-valued floats (e.g. -1.0) to int to avoid 'ohm^-1.0'
+        ip = int(p)
+        return str(ip) if ip == p else str(p)
+
+    return ".".join(u if p == 1 else f"{u}^{_fmt_exp(p)}" for u, p in unit.items())
 
 
 if "U" not in pint.formatting.REGISTERED_FORMATTERS:
