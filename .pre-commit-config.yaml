@@ -3,10 +3,17 @@ repos:
     rev: v0.11.13
     hooks:
       - id: ruff
-        name: ruff linter
-        args: [--fix]
+        name: ruff linter (check-only — never modifies files)
+        # CRITICAL: no --fix. Auto-modifying hooks combined with
+        # pre-commit's stash/restore cycle can clobber other agents'
+        # unstaged work on conflict. Run `uv run ruff check --fix .`
+        # manually before committing.
+        args: [--no-fix]
       - id: ruff-format
-        name: ruff formatter
+        name: ruff formatter (check-only — never modifies files)
+        # CRITICAL: --check. Same rationale as above. Run
+        # `uv run ruff format .` manually before committing.
+        args: [--check]
 
   - repo: https://github.com/gitleaks/gitleaks
     rev: v8.24.3

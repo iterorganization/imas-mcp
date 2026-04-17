@@ -995,14 +995,28 @@ Install on any facility: `uv run imas-codex tools install <facility>`
 
 ## Commit Workflow
 
+**CRITICAL — pre-commit hooks are check-only and MUST NOT modify files.** The
+pre-commit framework's stash/restore cycle is dangerous in multi-agent
+environments: if a hook modifies a file while another agent has unstaged work on
+the same file, pre-commit stashes that unstaged work to `.cache/pre-commit/`,
+then rolls back all hook fixes on stash-restore conflict. During the stash
+window the other agent's edits are *off-disk* — any crash or abort risks silent
+data loss. All modifying hooks (`ruff --fix`, `ruff-format` write mode) have
+therefore been converted to check-only. Format and fix BEFORE staging:
+
 ```bash
-uv run ruff check --fix .           # Lint (Python only)
-uv run ruff format .                # Format
+uv run ruff check --fix .           # Lint + autofix (explicit, pre-stage)
+uv run ruff format .                # Format (explicit, pre-stage)
 git add <file1> <file2> ...         # Stage specific files (never git add -A)
 uv run git commit -m "type: concise summary"  # Conventional format
 git pull --no-rebase origin main     # Merge fork changes first
 git push origin main                 # Push to fork (NEVER upstream)
 ```
+
+If `ruff check` or `ruff format` fails in pre-commit, run the autofix command
+manually, `git add` the updated files, and re-commit. **Do not re-enable
+`--fix` or write-mode formatting in `.pre-commit-config.yaml`** — that
+reintroduces the multi-agent corruption risk.
 
 **Never stage:** auto-generated files (models.py, dd_models.py, schema_context_data.py), gitignored files, `*_private.yaml` files.
 
