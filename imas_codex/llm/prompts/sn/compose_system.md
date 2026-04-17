@@ -299,6 +299,37 @@ or `rate_of_change_of_<quantity>`. Never use `instant_change_of_...` —
 must match: if you describe a "rate of change" or "time derivative", the
 name must carry a rate marker.
 
+**NC-20 Amplitude / phase / magnitude use noun-suffix form, not `_of_`.**
+For the amplitude, phase, magnitude, real part, imaginary part, or modulus
+of a complex-valued or oscillatory quantity X, use the noun-suffix form
+`<X>_amplitude`, `<X>_phase`, `<X>_magnitude`, `<X>_real_part`,
+`<X>_imaginary_part`. Do NOT front-load with `amplitude_of_<X>`,
+`phase_of_<X>`, `magnitude_of_<X>` — these constructs break the grammar
+when `<X>` itself contains a `_of_` or `component_of_` chain. Within a
+single batch, pick one canonical form and use it consistently for every
+amplitude/phase pair of a family. ❌ `amplitude_of_parallel_component_of_wave_electric_field`
+→ ✅ `parallel_component_of_wave_electric_field_amplitude`. ❌
+`phase_of_right_hand_circularly_polarized_electric_field` → ✅
+`right_hand_circularly_polarized_electric_field_phase`.
+
+**NC-21 Spectral qualifier is `_per_toroidal_mode` — never `_per_toroidal_mode_number`.**
+When a quantity is resolved per toroidal (or poloidal) Fourier mode, the
+canonical suffix is `_per_toroidal_mode` or `_per_poloidal_mode`. Do not
+add the word `_number` — the mode index is implicit. Within a batch, use
+exactly one spelling. ❌ `wave_absorbed_power_per_toroidal_mode_number`
+→ ✅ `wave_absorbed_power_per_toroidal_mode`.
+
+**NC-22 Do not stack `_density` with `_per_<mode>` on an unintegrated
+quantity.** The `_density` suffix means "per unit volume / area / length"
+and must be matched by an inverse-length factor in the unit (m^-1, m^-2,
+m^-3). Appending `_per_toroidal_mode` to a raw power in Watts does not
+make it a density. If the source is a spectral density whose unit already
+carries m^-n, use `_density_per_toroidal_mode`; if the source is a plain
+per-mode power in W, drop `_density` and use
+`<...>_power_per_toroidal_mode`. ❌
+`electron_wave_heating_power_spectral_density_per_toroidal_mode` [W] → ✅
+`electron_wave_heating_power_per_toroidal_mode` [W].
+
 ### Physics disambiguation glossary
 
 These terms are NOT synonyms. Pick the one supported by the source

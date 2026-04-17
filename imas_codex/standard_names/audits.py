@@ -48,6 +48,8 @@ CRITICAL_CHECKS = frozenset(
         "aggregator_order_check",
         "named_feature_preposition_check",
         "diamagnetic_component_check",
+        "amplitude_of_prefix_check",
+        "mode_number_suffix_check",
     }
 )
 
@@ -1469,6 +1471,64 @@ def diamagnetic_component_check(candidate: dict[str, Any]) -> list[str]:
     ]
 
 
+def amplitude_of_prefix_check(candidate: dict[str, Any]) -> list[str]:
+    """Flag ``amplitude_of_<X>`` / ``phase_of_<X>`` / ``magnitude_of_<X>`` prefix forms.
+
+    For the amplitude, phase, magnitude, real part or imaginary part of a
+    quantity ``<X>``, the canonical ISN form is the noun-suffix construction
+    ``<X>_amplitude``, ``<X>_phase``, ``<X>_magnitude``, ``<X>_real_part``,
+    ``<X>_imaginary_part``. The prefix form ``amplitude_of_<X>`` and
+    siblings break the grammar when ``<X>`` contains a ``_of_`` or
+    ``component_of_`` chain (e.g. ``amplitude_of_parallel_component_of_*``
+    fails the vocabulary consistency check because ``amplitude_of_parallel``
+    is not a Component token). Use the noun-suffix form consistently.
+    """
+    name = str(candidate.get("id") or candidate.get("name") or "").strip().lower()
+    prefixes = (
+        "amplitude_of_",
+        "phase_of_",
+        "magnitude_of_",
+        "real_part_of_",
+        "imaginary_part_of_",
+        "modulus_of_",
+    )
+    for prefix in prefixes:
+        if name.startswith(prefix):
+            noun = prefix[:-4]  # strip trailing "_of_"
+            tail = name[len(prefix) :]
+            return [
+                f"audit:amplitude_of_prefix_check: name '{name}' uses "
+                f"'{prefix}<X>' prefix — canonical ISN form is the "
+                f"noun-suffix '{tail}_{noun}'. Prefix forms break grammar "
+                f"when <X> contains '_of_' or 'component_of_' chains."
+            ]
+    return []
+
+
+def mode_number_suffix_check(candidate: dict[str, Any]) -> list[str]:
+    """Flag ``_per_<axis>_mode_number`` — canonical suffix drops ``_number``.
+
+    The spectral qualifier is ``_per_toroidal_mode`` or ``_per_poloidal_mode``;
+    the ``_number`` token is redundant because the mode index is implicit.
+    Within a batch the spelling must be consistent: never emit both
+    ``_per_toroidal_mode`` and ``_per_toroidal_mode_number``.
+    """
+    name = str(candidate.get("id") or candidate.get("name") or "").strip().lower()
+    bad_suffixes = (
+        "_per_toroidal_mode_number",
+        "_per_poloidal_mode_number",
+    )
+    for suffix in bad_suffixes:
+        if name.endswith(suffix):
+            canonical = suffix.rsplit("_number", 1)[0]
+            return [
+                f"audit:mode_number_suffix_check: name '{name}' ends with "
+                f"'{suffix}' — canonical suffix is '{canonical}' (drop "
+                f"'_number'; the mode index is implicit)."
+            ]
+    return []
+
+
 def run_audits(
     candidate: dict[str, Any],
     existing_sns_in_domain: list[dict[str, Any]] | None = None,
@@ -1520,6 +1580,8 @@ def run_audits(
     all_issues.extend(aggregator_order_check(candidate))
     all_issues.extend(named_feature_preposition_check(candidate))
     all_issues.extend(diamagnetic_component_check(candidate))
+    all_issues.extend(amplitude_of_prefix_check(candidate))
+    all_issues.extend(mode_number_suffix_check(candidate))
 
     return all_issues
 
