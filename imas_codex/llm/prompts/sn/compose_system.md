@@ -482,6 +482,16 @@ is provided as context for your naming decisions.
     - A path under `core_instant_changes/...`, `*/instant_changes/...`, or any path containing `change` / `delta` / `tendency` represents an **incremental change** (event-driven step or rate). It MUST NOT be attached to a base-quantity standard name like `electron_density`. It MUST be attached only to names that begin with `change_in_`, `tendency_of_`, `rate_of_`, `rate_of_change_of_`, or `time_derivative_of_`.
     - Conversely, a base-quantity path (e.g. `core_profiles/profiles_1d/electrons/density`) MUST NOT be attached to a `change_in_*` / `tendency_of_*` / `rate_of_*` standard name.
     - When unsure, do not attach — emit a fresh candidate. Wrong attachments corrupt downstream consumers far more than missing attachments.
+14. **Tense prefix selection — match the path semantics**:
+    - Paths under `core_instant_changes/...` (or any IDS modelling **discrete event-driven changes** like sawtooth, ELM, pellet) → use `change_in_<base>`. These represent finite increments, not instantaneous time derivatives.
+    - Paths whose name contains `_dot`, ends in `_tendency`, or sits under an IDS explicitly named for time derivatives (e.g. `*_evolution`) → use `tendency_of_<base>` or `time_derivative_of_<base>`.
+    - Be **consistent across a batch**: if you choose `change_in_` for one path under `core_instant_changes/`, use `change_in_` for **every** path under that same IDS in the batch. Mixing `change_in_` and `tendency_of_` for sibling paths is an anti-pattern.
+15. **Component–tense ordering — Component MUST be outside the tense prefix** (ISN grammar requirement):
+    - Correct: `poloidal_component_of_change_in_ion_velocity` (Component=poloidal, base=`change_in_ion_velocity`).
+    - Correct: `toroidal_component_of_tendency_of_current_density`.
+    - **Incorrect**: `change_in_poloidal_component_of_ion_velocity` (parser collapses everything into `physical_base`, Component is lost).
+    - Rule of thumb: directional/projection prefixes (parallel/poloidal/toroidal/radial/normal/tangential) wrap the entire base — including any tense — never the other way round.
+16. **`_density` suffix MUST agree with declared unit** (dimensional anti-pattern): A name ending in `_density` claims a quantity per unit volume / area / length. The DD-supplied unit must contain `m^-3` (volumetric), `m^-2` (areal), or `m^-1` (linear). If the unit is a bare extensive quantity (e.g. `kg.m.s^-1` for momentum, `J` for energy without `m^-3`), **drop `_density`** or rename to reflect the actual quantity. Example: ❌ `toroidal_angular_momentum_density` with unit `kg.m.s^-1` → ✅ `toroidal_momentum_per_unit_radius` or simply `toroidal_momentum_profile` (no `_density` claim).
 
 ## Output Format
 

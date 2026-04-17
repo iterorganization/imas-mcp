@@ -41,6 +41,7 @@ CRITICAL_CHECKS = frozenset(
         "representation_artifact_check",
         "causal_due_to_check",
         "implicit_field_check",
+        "density_unit_consistency_check",
     }
 )
 
@@ -1160,6 +1161,42 @@ def implicit_field_check(candidate: dict[str, Any]) -> list[str]:
     return issues
 
 
+def density_unit_consistency_check(candidate: dict[str, Any]) -> list[str]:
+    """Flag ``_density`` suffix when the declared unit lacks an inverse-length factor.
+
+    A "density" in physics is a quantity per unit volume / area / length. The
+    declared unit must therefore include ``m^-3`` (volumetric), ``m^-2``
+    (areal), or ``m^-1`` (linear). Names ending in ``_density`` whose unit is
+    a bare extensive quantity (e.g. ``kg.m.s^-1`` for momentum) are misnamed —
+    drop ``_density`` or rename to reflect the actual quantity.
+
+    Examples flagged:
+    - ``toroidal_angular_momentum_density`` with unit ``kg.m.s^-1`` (linear
+      momentum, not density).
+    - ``electron_pressure_density`` with unit ``Pa`` (pressure already has
+      energy-per-volume dimensions; ``_density`` is redundant).
+    """
+    name = candidate.get("id", "")
+    unit = (candidate.get("unit") or "").strip()
+    if not name or not unit:
+        return []
+    if "_density" not in name and not name.endswith("_density"):
+        return []
+    # Acceptable density unit factors: any negative power of m.
+    if "m^-" in unit or "m**-" in unit:
+        return []
+    # Special case: dimensionless density (rare but valid for fractions/probabilities)
+    # is not flagged — declared unit "1" is allowed.
+    if unit in {"1", ""}:
+        return []
+    return [
+        f"audit:density_unit_consistency_check: name '{name}' ends with "
+        f"'_density' but declared unit '{unit}' has no inverse-length factor "
+        f"(expected m^-1, m^-2, or m^-3). Either drop '_density' or correct "
+        f"the unit."
+    ]
+
+
 def run_audits(
     candidate: dict[str, Any],
     existing_sns_in_domain: list[dict[str, Any]] | None = None,
@@ -1204,6 +1241,7 @@ def run_audits(
     all_issues.extend(representation_artifact_check(candidate))
     all_issues.extend(causal_due_to_check(candidate))
     all_issues.extend(implicit_field_check(candidate))
+    all_issues.extend(density_unit_consistency_check(candidate))
 
     return all_issues
 

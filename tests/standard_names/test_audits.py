@@ -767,3 +767,50 @@ class TestStructuralDimTagCheck:
             structural_dim_tag_check({"description": "A dimensionless parameter."})
             == []
         )
+
+
+class TestDensityUnitConsistencyCheck:
+    def test_fail_density_with_bare_momentum_unit(self):
+        from imas_codex.standard_names.audits import density_unit_consistency_check
+
+        issues = density_unit_consistency_check(
+            {"id": "toroidal_angular_momentum_density", "unit": "kg.m.s^-1"}
+        )
+        assert len(issues) == 1
+        assert "no inverse-length factor" in issues[0]
+
+    def test_pass_volumetric_density(self):
+        from imas_codex.standard_names.audits import density_unit_consistency_check
+
+        assert (
+            density_unit_consistency_check({"id": "electron_density", "unit": "m^-3"})
+            == []
+        )
+
+    def test_pass_areal_density(self):
+        from imas_codex.standard_names.audits import density_unit_consistency_check
+
+        assert (
+            density_unit_consistency_check(
+                {"id": "surface_charge_density", "unit": "C.m^-2"}
+            )
+            == []
+        )
+
+    def test_pass_dimensionless_density(self):
+        from imas_codex.standard_names.audits import density_unit_consistency_check
+
+        assert (
+            density_unit_consistency_check({"id": "ion_fraction_density", "unit": "1"})
+            == []
+        )
+
+    def test_pass_no_density_in_name(self):
+        from imas_codex.standard_names.audits import density_unit_consistency_check
+
+        assert (
+            density_unit_consistency_check(
+                {"id": "toroidal_torque", "unit": "kg.m^2.s^-2"}
+            )
+            == []
+        )
