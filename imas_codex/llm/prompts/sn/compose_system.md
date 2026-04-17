@@ -279,6 +279,23 @@ constraints). Canonical pairs (US ← prefer, UK ← never):
 This applies uniformly — UK spellings in descriptions create inconsistency
 with names derived from the same vocabulary and must be avoided.
 
+**NC-18 Never echo DD data-type dimensionality tags in descriptions.**
+Tokens like `1D`, `2D`, `3D` describe storage shape (from DD types such as
+`FLT_1D`), not physics. Describe what the quantity *is* (e.g. "radial
+profile of ...", "flux-surface-averaged ...", "evaluated on a radial grid")
+rather than how it is stored. Never write "1D radial profile", "1D radial
+grid", "as a 1D profile", etc. Drop the `1D` / `2D` / `3D` prefix; the
+coordinate specification already conveys dimensionality.
+
+**NC-19 Rate / time-derivative naming.** When the source quantity is a
+time derivative (path typically contains `d_dt`, `ddt`, or the DD unit
+includes `.s^-1` as a differentiator rather than a rate-of-reaction),
+name it with `tendency_of_<quantity>` (preferred) or `change_in_<quantity>`
+or `rate_of_change_of_<quantity>`. Never use `instant_change_of_...` —
+"instant" / "instantaneous" are not standard-name tokens. The description
+must match: if you describe a "rate of change" or "time derivative", the
+name must carry a rate marker.
+
 ### Physics disambiguation glossary
 
 These terms are NOT synonyms. Pick the one supported by the source

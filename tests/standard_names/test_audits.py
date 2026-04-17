@@ -491,7 +491,7 @@ class TestAbbreviationCheck:
 
         issues = abbreviation_check({"id": "norm_poloidal_magnetic_flux"})
         assert len(issues) == 1
-        assert "normalised" in issues[0]
+        assert "normalized" in issues[0]
 
     def test_fail_perp_interior(self):
         from imas_codex.standard_names.audits import abbreviation_check
@@ -506,7 +506,7 @@ class TestAbbreviationCheck:
     def test_pass_full_words(self):
         from imas_codex.standard_names.audits import abbreviation_check
 
-        assert abbreviation_check({"id": "normalised_poloidal_magnetic_flux"}) == []
+        assert abbreviation_check({"id": "normalized_poloidal_magnetic_flux"}) == []
         assert abbreviation_check({"id": "perpendicular_velocity_component"}) == []
 
     def test_pass_empty(self):
@@ -629,3 +629,118 @@ class TestAmericanSpellingCheck:
         )
         assert len(issues) == 1
         assert "Normalised" in issues[0]
+
+
+# =========================================================================
+# description_verb_drift_check
+# =========================================================================
+
+
+class TestDescriptionVerbDriftCheck:
+    """Name/description rate-marker consistency."""
+
+    def test_fail_instant_change_prefix(self):
+        from imas_codex.standard_names.audits import description_verb_drift_check
+
+        issues = description_verb_drift_check(
+            {
+                "id": "instant_change_in_electron_density",
+                "description": "Instantaneous signed change in electron number density.",
+            }
+        )
+        assert len(issues) == 1
+        assert "instant_change_" in issues[0] or "begins with" in issues[0]
+
+    def test_fail_rate_description_missing_marker(self):
+        from imas_codex.standard_names.audits import description_verb_drift_check
+
+        issues = description_verb_drift_check(
+            {
+                "id": "ion_temperature",
+                "description": "Instantaneous change in ion temperature due to a transient plasma event.",
+            }
+        )
+        assert len(issues) == 1
+        assert "rate" in issues[0] or "tendency_of_" in issues[0]
+
+    def test_pass_tendency_name(self):
+        from imas_codex.standard_names.audits import description_verb_drift_check
+
+        assert (
+            description_verb_drift_check(
+                {
+                    "id": "tendency_of_electron_density",
+                    "description": "Instantaneous signed change in electron density.",
+                }
+            )
+            == []
+        )
+
+    def test_pass_change_in_name(self):
+        from imas_codex.standard_names.audits import description_verb_drift_check
+
+        assert (
+            description_verb_drift_check(
+                {
+                    "id": "change_in_ion_temperature",
+                    "description": "Time derivative of ion temperature.",
+                }
+            )
+            == []
+        )
+
+    def test_pass_base_quantity_description(self):
+        from imas_codex.standard_names.audits import description_verb_drift_check
+
+        assert (
+            description_verb_drift_check(
+                {
+                    "id": "electron_temperature",
+                    "description": "Electron temperature radial profile.",
+                }
+            )
+            == []
+        )
+
+
+# =========================================================================
+# structural_dim_tag_check
+# =========================================================================
+
+
+class TestStructuralDimTagCheck:
+    """Advisory flag for DD data-type dimensionality tags in descriptions."""
+
+    def test_fail_1d_in_description(self):
+        from imas_codex.standard_names.audits import structural_dim_tag_check
+
+        issues = structural_dim_tag_check(
+            {"description": "Electron temperature as a 1D radial profile."}
+        )
+        assert len(issues) == 1
+        assert "1D" in issues[0]
+
+    def test_fail_2d_in_description(self):
+        from imas_codex.standard_names.audits import structural_dim_tag_check
+
+        issues = structural_dim_tag_check({"description": "2D map of poloidal flux."})
+        assert len(issues) == 1
+
+    def test_pass_no_tag(self):
+        from imas_codex.standard_names.audits import structural_dim_tag_check
+
+        assert (
+            structural_dim_tag_check(
+                {"description": "Electron temperature radial profile."}
+            )
+            == []
+        )
+
+    def test_pass_dimensionless(self):
+        from imas_codex.standard_names.audits import structural_dim_tag_check
+
+        # 'dimensionless' contains 'd' but not \bNd\b
+        assert (
+            structural_dim_tag_check({"description": "A dimensionless parameter."})
+            == []
+        )

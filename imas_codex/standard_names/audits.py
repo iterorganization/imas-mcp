@@ -35,6 +35,7 @@ CRITICAL_CHECKS = frozenset(
         "abbreviation_check",
         "name_description_consistency_check",
         "american_spelling_check",
+        "description_verb_drift_check",
     }
 )
 
@@ -281,6 +282,100 @@ def latex_def_check(candidate: dict[str, Any]) -> list[str]:
                 f"audit:latex_def_check: symbol ${sym}$ lacks a definition sentence"
             )
 
+    return issues
+
+
+# Time-derivative / rate-of-change markers that, when present in a
+# description, require the name to carry an explicit tendency/change marker.
+# Otherwise the name (a base quantity) contradicts the description (a rate).
+_RATE_DESC_PATTERNS = (
+    "instantaneous change",
+    "instantaneous signed change",
+    "rate of change",
+    "time derivative",
+    "time rate of change",
+    "signed change in",
+    "temporal derivative",
+    "per unit time",
+)
+
+# Name prefixes/tokens that legitimately describe a rate/change quantity.
+_RATE_NAME_MARKERS = (
+    "tendency_of_",
+    "change_in_",
+    "rate_of_change_of_",
+    "time_derivative_of_",
+)
+
+
+def description_verb_drift_check(candidate: dict[str, Any]) -> list[str]:
+    """Flag name/description verb drift on rate-type paths.
+
+    If a description claims the quantity is a time derivative or rate of
+    change but the name lacks a rate marker (``tendency_of_``,
+    ``change_in_``, ``rate_of_change_of_``), the name is mis-labelled as
+    a base quantity. This is a critical mismatch that invites downstream
+    misuse.
+
+    Conversely, avoid the awkward literal prefix ``instant_change_`` in
+    names — prefer ``change_in_`` or ``tendency_of_``. Names starting
+    with ``instant_change_`` are also flagged.
+    """
+    issues: list[str] = []
+    name = (
+        str(candidate.get("id") or candidate.get("standard_name") or "").strip().lower()
+    )
+    description = str(candidate.get("description") or "").lower()
+
+    if not name or not description:
+        return issues
+
+    # Guard: names starting with "instant_change_" or "instantaneous_change_"
+    # should be replaced with "change_in_" or "tendency_of_".
+    if name.startswith(("instant_change_", "instantaneous_change_")):
+        issues.append(
+            "audit:description_verb_drift_check: name begins with "
+            f"'{name.split('_')[0]}_change_'; prefer 'change_in_' or "
+            "'tendency_of_'"
+        )
+        return issues
+
+    has_rate_desc = any(pat in description for pat in _RATE_DESC_PATTERNS)
+    if not has_rate_desc:
+        return issues
+
+    has_rate_name = any(marker in name for marker in _RATE_NAME_MARKERS)
+    if not has_rate_name:
+        issues.append(
+            "audit:description_verb_drift_check: description implies a "
+            "rate/time-derivative but name lacks 'tendency_of_', "
+            "'change_in_', or 'rate_of_change_of_' marker"
+        )
+    return issues
+
+
+# Structural dimensionality tags leaked from DD data-type metadata that
+# should not appear in human-readable descriptions.
+_STRUCTURAL_DIM_RE = re.compile(r"\b([0-3])[dD]\b")
+
+
+def structural_dim_tag_check(candidate: dict[str, Any]) -> list[str]:
+    """Flag descriptions that echo DD data-type dimensionality tags.
+
+    Tokens like ``1D``, ``2D``, ``3D`` in a description are a leak from
+    the DD data type (``FLT_1D`` etc.) rather than a physically meaningful
+    descriptor. This is advisory only — descriptions should describe what
+    the quantity *is*, not how it is stored.
+    """
+    issues: list[str] = []
+    description = str(candidate.get("description") or "")
+    match = _STRUCTURAL_DIM_RE.search(description)
+    if match:
+        issues.append(
+            f"audit:structural_dim_tag_check: description contains "
+            f"storage-shape tag '{match.group(0)}' (remove or rephrase "
+            "in terms of the physical quantity)"
+        )
     return issues
 
 
@@ -631,8 +726,8 @@ def spectral_suffix_check(candidate: dict[str, Any]) -> list[str]:
 # Abbreviation prefixes/infixes forbidden by NC-5. A standard name must spell
 # the concept out in full — no truncation or contraction.
 _FORBIDDEN_ABBREVIATIONS = (
-    ("norm_", "normalised_"),
-    ("_norm_", "_normalised_"),
+    ("norm_", "normalized_"),
+    ("_norm_", "_normalized_"),
     ("perp_", "perpendicular_"),
     ("_perp_", "_perpendicular_"),
     ("par_", "parallel_"),
@@ -843,6 +938,8 @@ def run_audits(
     all_issues.extend(abbreviation_check(candidate))
     all_issues.extend(american_spelling_check(candidate))
     all_issues.extend(name_description_consistency_check(candidate))
+    all_issues.extend(description_verb_drift_check(candidate))
+    all_issues.extend(structural_dim_tag_check(candidate))
     all_issues.extend(provenance_verb_check(candidate, source_path))
     all_issues.extend(synonym_check(candidate, existing_sns_in_domain or []))
     all_issues.extend(unit_dimension_check(candidate))
