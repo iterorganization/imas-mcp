@@ -637,6 +637,37 @@ GOLD_SET: list[tuple[str, str, str | None, str | None, str, str | None, Scope]] 
         None,
         "skip",
     ),
+    # Rule 0: ``core_instant_changes`` is an event-delta IDS — leaves are
+    # "change in X" copies of core_profiles quantities.  Skip the entire
+    # IDS to avoid polluting the StandardName vocabulary with change_in_*
+    # duplicates and forcing contrived grammar.
+    (
+        "core_instant_changes/change/profiles_1d/electrons/density",
+        "FLT_1D",
+        "m^-3",
+        None,
+        "Change in electron density during transient event",
+        None,
+        "skip",
+    ),
+    (
+        "core_instant_changes/change/profiles_1d/e_field/parallel",
+        "FLT_1D",
+        "m^-1.V",
+        None,
+        "Change in parallel electric field",
+        None,
+        "skip",
+    ),
+    (
+        "core_instant_changes/vacuum_toroidal_field/b0",
+        "FLT_1D",
+        "T",
+        None,
+        "Vacuum toroidal field at R0",
+        None,
+        "skip",
+    ),
 ]
 
 

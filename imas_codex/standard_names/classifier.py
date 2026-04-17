@@ -135,6 +135,20 @@ def classify_path(node: dict) -> Scope:
     last_segment = path.rsplit("/", 1)[-1] if path else ""
 
     # ------------------------------------------------------------------
+    # Rule 0: Entire event-delta IDSs are skipped.
+    #
+    # ``core_instant_changes`` records before/after snapshots during
+    # transient events (ELM, pellet, sawtooth, MHD).  Its leaves are
+    # copies of ``core_profiles`` quantities prefixed with "change in X".
+    # Minting ``change_in_*`` StandardNames duplicates the core_profiles
+    # vocabulary and forces contrived grammar ("change_in_parallel" not
+    # in Component prefix vocab).  Codes consuming this IDS reuse the
+    # underlying core_profiles StandardNames via path linkage.
+    # ------------------------------------------------------------------
+    if path.startswith("core_instant_changes/") or path == "core_instant_changes":
+        return "skip"
+
+    # ------------------------------------------------------------------
     # Rule 1: /data under STRUCTURE parent with unit → metadata
     # ------------------------------------------------------------------
     if last_segment == "data" and parent_type in STRUCTURE_TYPES and unit is not None:
