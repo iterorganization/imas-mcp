@@ -43,6 +43,7 @@ CRITICAL_CHECKS = frozenset(
         "implicit_field_check",
         "density_unit_consistency_check",
         "position_coordinate_check",
+        "vector_field_component_check",
     }
 )
 
@@ -1198,6 +1199,46 @@ def density_unit_consistency_check(candidate: dict[str, Any]) -> list[str]:
     ]
 
 
+def vector_field_component_check(candidate: dict[str, Any]) -> list[str]:
+    """Flag ``_coordinate_of_<vector_field>`` and recommend ``_component_of_<vector_field>``.
+
+    The cylindrical-coordinate vocabulary (``radial``, ``vertical``, ``toroidal``,
+    ``major_radius``, ``z_coordinate``) describes a *point in space*. When the
+    target ``X`` is itself a vector field (surface normal, magnetic field vector,
+    velocity vector), the correct usage is ``<axis>_component_of_<X>`` — you
+    project the vector onto an axis, you do not extract a coordinate.
+
+    Caught from equilibrium iteration:
+    ``vertical_coordinate_of_surface_normal`` should be
+    ``vertical_component_of_surface_normal``.
+    """
+    name = candidate.get("id", "")
+    if not name:
+        return []
+    vector_field_tails = (
+        "surface_normal",
+        "magnetic_field_vector",
+        "electric_field_vector",
+        "velocity_vector",
+        "current_density_vector",
+        "poynting_vector",
+    )
+    issues: list[str] = []
+    for axis in ("radial", "vertical", "toroidal"):
+        bad = f"{axis}_coordinate_of_"
+        if bad not in name:
+            continue
+        for tail in vector_field_tails:
+            if name.endswith(bad + tail) or (bad + tail + "_") in name:
+                issues.append(
+                    f"audit:vector_field_component_check: name '{name}' applies "
+                    f"'_coordinate_of_' to vector field '{tail}'; rename to "
+                    f"'{axis}_component_of_{tail}' (vectors have components, "
+                    f"points have coordinates)."
+                )
+    return issues
+
+
 def position_coordinate_check(candidate: dict[str, Any]) -> list[str]:
     """Flag colloquial ``_position_of_X`` and recommend canonical coordinate vocabulary.
 
@@ -1283,6 +1324,7 @@ def run_audits(
     all_issues.extend(implicit_field_check(candidate))
     all_issues.extend(density_unit_consistency_check(candidate))
     all_issues.extend(position_coordinate_check(candidate))
+    all_issues.extend(vector_field_component_check(candidate))
 
     return all_issues
 

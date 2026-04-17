@@ -606,6 +606,37 @@ GOLD_SET: list[tuple[str, str, str | None, str | None, str, str | None, Scope]] 
         None,
         "skip",
     ),
+    # Rule 11d (path-anywhere): GGD subtree leaves classified as quantities
+    # leak through when the leaf is a generic noun (geometry, measure, space).
+    # Caught from equilibrium iter — produced grid_object_geometry,
+    # grid_object_measure, grid_object_space_index.
+    (
+        "equilibrium/grids_ggd/grid/space/objects_per_dimension/object/geometry",
+        "FLT_1D",
+        "m",
+        None,
+        "Geometry of the grid object",
+        None,
+        "skip",
+    ),
+    (
+        "equilibrium/grids_ggd/grid/space/objects_per_dimension/object/measure",
+        "FLT_0D",
+        "m",
+        None,
+        "Measure of the grid object",
+        None,
+        "skip",
+    ),
+    (
+        "edge_sources/source/ggd/grid_subset/element/object/space",
+        "INT_0D",
+        None,
+        None,
+        "Space index of the grid subset",
+        None,
+        "skip",
+    ),
 ]
 
 

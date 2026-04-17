@@ -197,6 +197,14 @@ def classify_path(node: dict) -> Scope:
     parent_segment = (node.get("parent_path") or "").split("/")[-1]
     if parent_segment and _REPRESENTATION_RE.search(parent_segment):
         return "skip"
+    # Path-anywhere check: GGD subtrees nest physics-shaped leaves several
+    # levels under ``grids_ggd/grid/...``.  The leaf segments alone (e.g.
+    # ``geometry``, ``measure``, ``space``) are too generic to filter, but
+    # the ancestor path is a reliable marker.  Caught from equilibrium iter:
+    # ``grid_object_geometry``, ``grid_object_measure``, ``grid_object_space_index``.
+    full_path = node.get("path") or node.get("id") or ""
+    if "grids_ggd/" in full_path or "/grid_subset/" in full_path:
+        return "skip"
 
     # ------------------------------------------------------------------
     # Rule 11c: Children of ``*_fit`` containers that represent per-fit

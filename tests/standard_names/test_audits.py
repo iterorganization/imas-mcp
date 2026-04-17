@@ -859,3 +859,52 @@ class TestPositionCoordinateCheck:
         # Plain `position_of_X` (no R/Z/phi qualifier) is acceptable for
         # unspecified 3-vector positions and must not be flagged.
         assert position_coordinate_check({"id": "position_of_strike_point"}) == []
+
+
+class TestVectorFieldComponentCheck:
+    """Tests for vector_field_component_check audit."""
+
+    def test_flags_vertical_coordinate_of_surface_normal(self):
+        from imas_codex.standard_names.audits import vector_field_component_check
+
+        issues = vector_field_component_check(
+            {"id": "vertical_coordinate_of_surface_normal"}
+        )
+        assert len(issues) == 1
+        assert "vector_field_component_check" in issues[0]
+        assert "vertical_component_of_surface_normal" in issues[0]
+
+    def test_flags_radial_coordinate_of_magnetic_field_vector(self):
+        from imas_codex.standard_names.audits import vector_field_component_check
+
+        issues = vector_field_component_check(
+            {"id": "radial_coordinate_of_magnetic_field_vector"}
+        )
+        assert len(issues) == 1
+        assert "radial_component_of_magnetic_field_vector" in issues[0]
+
+    def test_passes_vertical_coordinate_of_plasma_boundary(self):
+        from imas_codex.standard_names.audits import vector_field_component_check
+
+        # plasma_boundary is a geometric feature (point/curve), not a vector
+        # field — _coordinate_of_ is correct.
+        assert (
+            vector_field_component_check(
+                {"id": "vertical_coordinate_of_plasma_boundary"}
+            )
+            == []
+        )
+
+    def test_passes_vertical_component_of_surface_normal(self):
+        from imas_codex.standard_names.audits import vector_field_component_check
+
+        # The canonical form is not flagged.
+        assert (
+            vector_field_component_check({"id": "vertical_component_of_surface_normal"})
+            == []
+        )
+
+    def test_passes_unrelated_name(self):
+        from imas_codex.standard_names.audits import vector_field_component_check
+
+        assert vector_field_component_check({"id": "electron_temperature"}) == []
