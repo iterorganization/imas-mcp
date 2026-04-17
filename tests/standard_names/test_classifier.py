@@ -586,25 +586,25 @@ GOLD_SET: list[tuple[str, str, str | None, str | None, str, str | None, Scope]] 
         "skip",
     ),
     # -----------------------------------------------------------------------
-    # quantity — _measured/_reconstructed NOT skipped
+    # skip — per-fit provenance children of *_fit containers (Rule 11c)
     # -----------------------------------------------------------------------
     (
         "core_profiles/profiles_1d/electrons/density_fit/measured",
         "FLT_1D",
         "m^-3",
         None,
-        "Measured electron density",
+        "Measured electron density (fit input)",
         None,
-        "quantity",
+        "skip",
     ),
     (
         "core_profiles/profiles_1d/electrons/density_fit/reconstructed",
         "FLT_1D",
         "m^-3",
         None,
-        "Reconstructed electron density",
+        "Reconstructed electron density (fit output)",
         None,
-        "quantity",
+        "skip",
     ),
 ]
 
@@ -1187,6 +1187,68 @@ class TestRule11bFitDiagnostics:
         assert _STRUCTURAL_SEGMENT_RE is not None
         assert _STRUCTURAL_DESC_RE is not None
         assert _FIT_DIAGNOSTIC_RE is not None
+
+
+class TestRule11cFitContainerChildren:
+    """Rule 11c: Children of ``*_fit`` containers are per-fit provenance."""
+
+    def _make(
+        self,
+        *,
+        path: str,
+        data_type: str = "FLT_1D",
+        unit: str | None = "m^-3",
+        description: str = "Fit artefact",
+    ) -> dict:
+        return {
+            "path": path,
+            "data_type": data_type,
+            "unit": unit,
+            "parent_type": None,
+            "description": description,
+            "node_category": None,
+            "parent_path": "/".join(path.split("/")[:-1]) if "/" in path else None,
+            "cluster_label": None,
+        }
+
+    @pytest.mark.parametrize(
+        "child",
+        [
+            "reconstructed",
+            "measured",
+            "weight",
+            "time_measurement",
+            "time_measurement_slice",
+            "rho_tor_norm",
+        ],
+    )
+    def test_fit_container_children_skipped(self, child: str) -> None:
+        node = self._make(path=f"core_profiles/electrons/density_fit/{child}")
+        assert classify_path(node) == "skip"
+
+    def test_nested_fit_parent_skipped(self) -> None:
+        node = self._make(
+            path="equilibrium/time_slice/profiles_1d/q_fit/reconstructed",
+        )
+        assert classify_path(node) == "skip"
+
+    def test_measured_outside_fit_container_is_quantity(self) -> None:
+        """`_measured` leaf under non-fit parent remains a valid quantity."""
+        node = self._make(
+            path="core_profiles/electrons/density_measured",
+            description="Measured electron density",
+        )
+        assert classify_path(node) == "quantity"
+
+    def test_weight_outside_fit_container_not_forced_skip(self) -> None:
+        """`weight` under a non-fit parent isn't caught by 11c (falls to later rules)."""
+        node = self._make(
+            path="some_ids/group/weight",
+            data_type="FLT_1D",
+            unit="1",
+        )
+        # Not matched by 11c — parent is not *_fit. Falls through to physics-leaf.
+        assert classify_path(node) == "quantity"
 
 
 # ============================================================================

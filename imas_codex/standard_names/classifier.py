@@ -75,6 +75,17 @@ _FIT_DIAGNOSTIC_RE: re.Pattern[str] = re.compile(
     r"(?:^|_)(?:chi_squared|residual|covariance|fitting_weight|fit_type)(?:_|$)",
 )
 
+#: Regex for child segments under a ``*_fit`` parent that are per-fit
+#: provenance artefacts rather than independent physics concepts.  These
+#: paths live under e.g. ``equilibrium_fit/reconstructed`` or
+#: ``q_profile_fit/weight`` and should be skipped.
+_FIT_CHILD_RE: re.Pattern[str] = re.compile(
+    r"^(?:reconstructed|measured|weight|time_measurement(?:_.*)?|rho_tor_norm)$",
+)
+
+#: Regex matching a parent path segment ending in ``_fit``.
+_FIT_PARENT_RE: re.Pattern[str] = re.compile(r"(?:^|/)[A-Za-z0-9_]*_fit$")
+
 # Type alias for the three-way classification.
 Scope = Literal["quantity", "metadata", "skip"]
 
@@ -162,6 +173,21 @@ def classify_path(node: dict) -> Scope:
     # matched — those are valid provenance qualifiers.
     # ------------------------------------------------------------------
     if _FIT_DIAGNOSTIC_RE.search(last_segment):
+        return "skip"
+
+    # ------------------------------------------------------------------
+    # Rule 11c: Children of ``*_fit`` containers that represent per-fit
+    # provenance (reconstructed/measured/weight/time_measurement*/rho_tor_norm)
+    # are not independent physics concepts.  The underlying physical
+    # quantity already has a standard name on the non-fit path; these
+    # paths merely record the fit artefact.
+    # ------------------------------------------------------------------
+    parent_path: str | None = node.get("parent_path") or None
+    if (
+        parent_path
+        and _FIT_PARENT_RE.search(parent_path)
+        and _FIT_CHILD_RE.match(last_segment)
+    ):
         return "skip"
 
     # ------------------------------------------------------------------
