@@ -44,6 +44,7 @@ CRITICAL_CHECKS = frozenset(
         "density_unit_consistency_check",
         "position_coordinate_check",
         "vector_field_component_check",
+        "segment_order_check",
     }
 )
 
@@ -657,6 +658,21 @@ def name_unit_consistency_check(candidate: dict[str, Any]) -> list[str]:
             continue
         if token == "angle" and ("offset" in name_tokens or "gradient" in name_tokens):
             continue
+        # _peaking_factor, _profile_factor, _ratio, _fraction names are
+        # dimensionless by definition — the head noun (temperature, density)
+        # describes the numerator quantity, not the declared unit.
+        if any(
+            suffix in name
+            for suffix in (
+                "_peaking_factor",
+                "_profile_factor",
+                "_ratio",
+                "_fraction",
+                "_normalized",
+                "_normalised",
+            )
+        ):
+            continue
 
         if dimensionless:
             issues.append(
@@ -1090,6 +1106,12 @@ _DURE_TO_ADJECTIVE = {
     "runaway": "runaway_electrons",
     "fast_ion": "fast_ion_thermalisation",
     "alpha": "alpha_particle_heating",
+    "resistive": "resistive_dissipation or resistive_diffusion",
+    "non_inductive": "non_inductive_drive or non_inductive_current_drive",
+    "inductive": "inductive_drive",
+    "turbulent": "turbulent_transport",
+    "neoclassical": "neoclassical_transport",
+    "anomalous": "anomalous_transport",
 }
 
 
@@ -1278,6 +1300,51 @@ def position_coordinate_check(candidate: dict[str, Any]) -> list[str]:
     return issues
 
 
+def segment_order_check(candidate: dict[str, Any]) -> list[str]:
+    """Flag Component tokens appearing as a trailing suffix instead of a prefix.
+
+    ISN grammar places Component segments (``toroidal``, ``poloidal``, ``radial``,
+    ``parallel``, ``perpendicular``, ``vertical``, ``diamagnetic``) either as a
+    leading prefix or via the ``<axis>_component_of_<quantity>`` preposition. A
+    trailing ``_<component>`` suffix after the quantity reverses segment order.
+
+    Caught from transport iteration:
+    ``ion_rotation_frequency_toroidal`` → ``toroidal_ion_rotation_frequency`` or
+    ``toroidal_component_of_ion_rotation_frequency``.
+    """
+    name = str(candidate.get("id") or candidate.get("name") or "").strip().lower()
+    if not name:
+        return []
+    component_suffixes = (
+        "toroidal",
+        "poloidal",
+        "radial",
+        "parallel",
+        "perpendicular",
+        "vertical",
+        "diamagnetic",
+    )
+    issues: list[str] = []
+    for comp in component_suffixes:
+        if not name.endswith(f"_{comp}"):
+            continue
+        stem = name[: -(len(comp) + 1)]
+        # Only flag when the stem is a substantive quantity (has at least two
+        # tokens AND contains no other component token as a prefix already).
+        stem_tokens = stem.split("_")
+        if len(stem_tokens) < 2:
+            continue
+        if stem_tokens[0] in component_suffixes:
+            continue
+        issues.append(
+            f"audit:segment_order_check: name '{name}' ends with component "
+            f"token '_{comp}'; Component segments must precede the Subject or "
+            f"use '<axis>_component_of_<quantity>'. Rename to "
+            f"'{comp}_{stem}' or '{comp}_component_of_{stem}'."
+        )
+    return issues
+
+
 def run_audits(
     candidate: dict[str, Any],
     existing_sns_in_domain: list[dict[str, Any]] | None = None,
@@ -1325,6 +1392,7 @@ def run_audits(
     all_issues.extend(density_unit_consistency_check(candidate))
     all_issues.extend(position_coordinate_check(candidate))
     all_issues.extend(vector_field_component_check(candidate))
+    all_issues.extend(segment_order_check(candidate))
 
     return all_issues
 

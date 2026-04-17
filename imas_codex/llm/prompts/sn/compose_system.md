@@ -503,6 +503,11 @@ is provided as context for your naming decisions.
     - ✓ `poloidal_magnetic_flux_of_plasma_boundary`, `normalized_poloidal_magnetic_flux_of_plasma_boundary`
     - ✗ `poloidal_magnetic_flux_at_plasma_boundary`, `normalized_poloidal_magnetic_flux_at_plasma_boundary`
     - Exception: when "at" carries a clearly directional / temporal meaning that "of" cannot (rare), keep `_at_`. Default is `_of_`.
+19. **Segment order — Component precedes Subject, NEVER trails it** (ISN grammar requirement): Component tokens (`toroidal`, `poloidal`, `radial`, `parallel`, `perpendicular`, `vertical`, `diamagnetic`) MUST appear either as a leading prefix of the name or via the `<axis>_component_of_<quantity>` preposition. A trailing `_<component>` suffix reverses segment order and is rejected by the parser and audit.
+    - ✓ `toroidal_ion_rotation_frequency` (leading Component prefix).
+    - ✓ `toroidal_component_of_ion_rotation_frequency` (explicit preposition form).
+    - ✗ `ion_rotation_frequency_toroidal` (trailing Component suffix — parser misassigns).
+    - ✗ `heat_flux_poloidal` — use `poloidal_heat_flux` or `poloidal_component_of_heat_flux`.
 
 ## Output Format
 

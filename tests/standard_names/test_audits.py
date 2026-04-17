@@ -908,3 +908,125 @@ class TestVectorFieldComponentCheck:
         from imas_codex.standard_names.audits import vector_field_component_check
 
         assert vector_field_component_check({"id": "electron_temperature"}) == []
+
+
+class TestSegmentOrderCheck:
+    def test_fail_trailing_toroidal(self):
+        from imas_codex.standard_names.audits import segment_order_check
+
+        issues = segment_order_check({"id": "ion_rotation_frequency_toroidal"})
+        assert issues and "segment_order_check" in issues[0]
+
+    def test_fail_trailing_poloidal(self):
+        from imas_codex.standard_names.audits import segment_order_check
+
+        issues = segment_order_check({"id": "electron_flux_poloidal"})
+        assert issues and "segment_order_check" in issues[0]
+
+    def test_pass_leading_component(self):
+        from imas_codex.standard_names.audits import segment_order_check
+
+        assert segment_order_check({"id": "toroidal_ion_rotation_frequency"}) == []
+
+    def test_pass_component_of_preposition(self):
+        from imas_codex.standard_names.audits import segment_order_check
+
+        assert (
+            segment_order_check({"id": "toroidal_component_of_ion_rotation_frequency"})
+            == []
+        )
+
+    def test_pass_no_component_token(self):
+        from imas_codex.standard_names.audits import segment_order_check
+
+        assert segment_order_check({"id": "electron_temperature"}) == []
+
+
+class TestCausalDueToCheckExtended:
+    def test_fail_due_to_resistive(self):
+        from imas_codex.standard_names.audits import causal_due_to_check
+
+        issues = causal_due_to_check(
+            {"id": "parallel_current_density_due_to_resistive"}
+        )
+        assert issues and "resistive" in issues[0]
+
+    def test_fail_due_to_non_inductive(self):
+        from imas_codex.standard_names.audits import causal_due_to_check
+
+        issues = causal_due_to_check(
+            {"id": "parallel_current_density_due_to_non_inductive"}
+        )
+        assert issues and "non_inductive" in issues[0]
+
+    def test_fail_due_to_turbulent(self):
+        from imas_codex.standard_names.audits import causal_due_to_check
+
+        issues = causal_due_to_check({"id": "heat_flux_due_to_turbulent"})
+        assert issues and "turbulent" in issues[0]
+
+    def test_pass_due_to_resistive_diffusion(self):
+        from imas_codex.standard_names.audits import causal_due_to_check
+
+        assert (
+            causal_due_to_check(
+                {"id": "parallel_current_density_due_to_resistive_diffusion"}
+            )
+            == []
+        )
+
+
+class TestPeakingFactorExemption:
+    def test_pass_ion_temperature_peaking_factor(self):
+        from imas_codex.standard_names.audits import name_unit_consistency_check
+
+        assert (
+            name_unit_consistency_check(
+                {
+                    "id": "ion_temperature_peaking_factor",
+                    "unit": "1",
+                    "description": "Ratio of central to volume-averaged ion temperature",
+                }
+            )
+            == []
+        )
+
+    def test_pass_electron_temperature_profile_factor(self):
+        from imas_codex.standard_names.audits import name_unit_consistency_check
+
+        assert (
+            name_unit_consistency_check(
+                {
+                    "id": "electron_temperature_profile_factor",
+                    "unit": "1",
+                    "description": "Profile peaking factor for electron temperature",
+                }
+            )
+            == []
+        )
+
+    def test_pass_fraction(self):
+        from imas_codex.standard_names.audits import name_unit_consistency_check
+
+        assert (
+            name_unit_consistency_check(
+                {
+                    "id": "bootstrap_current_fraction",
+                    "unit": "1",
+                    "description": "Fraction of total current carried by bootstrap",
+                }
+            )
+            == []
+        )
+
+    def test_fail_bare_temperature_with_dimensionless(self):
+        from imas_codex.standard_names.audits import name_unit_consistency_check
+
+        issues = name_unit_consistency_check(
+            {
+                "id": "ion_temperature",
+                "unit": "1",
+                "description": "Ion temperature in dimensionless units",
+            }
+        )
+        assert issues
