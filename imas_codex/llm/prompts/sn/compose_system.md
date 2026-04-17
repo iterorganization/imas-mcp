@@ -492,6 +492,12 @@ is provided as context for your naming decisions.
     - **Incorrect**: `change_in_poloidal_component_of_ion_velocity` (parser collapses everything into `physical_base`, Component is lost).
     - Rule of thumb: directional/projection prefixes (parallel/poloidal/toroidal/radial/normal/tangential) wrap the entire base — including any tense — never the other way round.
 16. **`_density` suffix MUST agree with declared unit** (dimensional anti-pattern): A name ending in `_density` claims a quantity per unit volume / area / length. The DD-supplied unit must contain `m^-3` (volumetric), `m^-2` (areal), or `m^-1` (linear). If the unit is a bare extensive quantity (e.g. `kg.m.s^-1` for momentum, `J` for energy without `m^-3`), **drop `_density`** or rename to reflect the actual quantity. Example: ❌ `toroidal_angular_momentum_density` with unit `kg.m.s^-1` → ✅ `toroidal_momentum_per_unit_radius` or simply `toroidal_momentum_profile` (no `_density` claim).
+17. **Coordinate naming — use canonical coordinates, not `_position_of_X`**: When a quantity is a spatial coordinate of a component (antenna, launcher, sensor, etc.), use the canonical coordinate vocabulary, never the colloquial `_position_of_X`:
+    - Major radius (R, cylindrical radial) → `major_radius_of_<X>` ✓ (NOT `radial_position_of_<X>` ✗).
+    - Toroidal angle (φ) → `toroidal_angle_of_<X>` ✓ (NOT `toroidal_position_of_<X>` ✗).
+    - Vertical coordinate (Z) → `vertical_coordinate_of_<X>` or `z_coordinate_of_<X>` ✓ (NOT `vertical_position_of_<X>` ✗).
+    - "Position" without a directional qualifier is fine for general 3-vectors (e.g. `position_of_<X>` for an unspecified location).
+    - This rule prevents synonym proliferation (`major_radius_of_antenna` and `radial_position_of_antenna` would both end up in the catalog).
 
 ## Output Format
 

@@ -42,6 +42,7 @@ CRITICAL_CHECKS = frozenset(
         "causal_due_to_check",
         "implicit_field_check",
         "density_unit_consistency_check",
+        "position_coordinate_check",
     }
 )
 
@@ -1197,6 +1198,50 @@ def density_unit_consistency_check(candidate: dict[str, Any]) -> list[str]:
     ]
 
 
+def position_coordinate_check(candidate: dict[str, Any]) -> list[str]:
+    """Flag colloquial ``_position_of_X`` when description reveals a canonical coordinate.
+
+    Names like ``vertical_position_of_antenna``, ``radial_position_of_X`` and
+    ``toroidal_position_of_X`` should use the canonical coordinate vocabulary
+    when the description identifies the quantity as an R/Z/φ coordinate:
+
+    - ``radial_position_of_X`` (description = "Major radius coordinate") →
+      ``major_radius_of_X``.
+    - ``toroidal_position_of_X`` (description = "Toroidal angle coordinate") →
+      ``toroidal_angle_of_X``.
+    - ``vertical_position_of_X`` (description = "Z coordinate" / "Vertical
+      coordinate") → ``vertical_coordinate_of_X`` or ``z_coordinate_of_X``.
+
+    Avoids synonym proliferation between ``vertical_position_of_antenna`` and
+    ``vertical_coordinate_of_antenna`` etc.
+    """
+    name = candidate.get("id", "")
+    desc = (candidate.get("description") or "").lower()
+    if not name or not desc:
+        return []
+    issues: list[str] = []
+    patterns = (
+        ("radial_position_of_", ("major radius",), "major_radius_of_<X>"),
+        ("toroidal_position_of_", ("toroidal angle",), "toroidal_angle_of_<X>"),
+        (
+            "vertical_position_of_",
+            ("z coordinate", "vertical coordinate", "z-coordinate"),
+            "vertical_coordinate_of_<X> or z_coordinate_of_<X>",
+        ),
+    )
+    for prefix, evidence_terms, suggested in patterns:
+        if prefix not in name:
+            continue
+        if any(term in desc for term in evidence_terms):
+            issues.append(
+                f"audit:position_coordinate_check: name '{name}' uses "
+                f"'{prefix.rstrip('_')}_' colloquial form but description "
+                f"identifies it as a canonical coordinate "
+                f"({', '.join(evidence_terms)}); rename to {suggested}."
+            )
+    return issues
+
+
 def run_audits(
     candidate: dict[str, Any],
     existing_sns_in_domain: list[dict[str, Any]] | None = None,
@@ -1242,6 +1287,7 @@ def run_audits(
     all_issues.extend(causal_due_to_check(candidate))
     all_issues.extend(implicit_field_check(candidate))
     all_issues.extend(density_unit_consistency_check(candidate))
+    all_issues.extend(position_coordinate_check(candidate))
 
     return all_issues
 
