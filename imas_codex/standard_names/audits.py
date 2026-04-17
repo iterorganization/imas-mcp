@@ -1199,45 +1199,40 @@ def density_unit_consistency_check(candidate: dict[str, Any]) -> list[str]:
 
 
 def position_coordinate_check(candidate: dict[str, Any]) -> list[str]:
-    """Flag colloquial ``_position_of_X`` when description reveals a canonical coordinate.
+    """Flag colloquial ``_position_of_X`` and recommend canonical coordinate vocabulary.
 
     Names like ``vertical_position_of_antenna``, ``radial_position_of_X`` and
     ``toroidal_position_of_X`` should use the canonical coordinate vocabulary
-    when the description identifies the quantity as an R/Z/φ coordinate:
+    that aligns with cylindrical (R, φ, Z) tokamak conventions:
 
-    - ``radial_position_of_X`` (description = "Major radius coordinate") →
-      ``major_radius_of_X``.
-    - ``toroidal_position_of_X`` (description = "Toroidal angle coordinate") →
-      ``toroidal_angle_of_X``.
-    - ``vertical_position_of_X`` (description = "Z coordinate" / "Vertical
-      coordinate") → ``vertical_coordinate_of_X`` or ``z_coordinate_of_X``.
+    - ``radial_position_of_X`` → ``major_radius_of_X``.
+    - ``toroidal_position_of_X`` → ``toroidal_angle_of_X``.
+    - ``vertical_position_of_X`` → ``vertical_coordinate_of_X`` or
+      ``z_coordinate_of_X``.
 
-    Avoids synonym proliferation between ``vertical_position_of_antenna`` and
-    ``vertical_coordinate_of_antenna`` etc.
+    The check fires unconditionally on the colloquial name pattern (it does not
+    require a confirming description) because the canonical vocabulary already
+    covers every R/Z/φ-coordinate use case in IMAS. ``--name-only`` runs would
+    otherwise leak both forms into the catalog as unintended synonyms.
     """
     name = candidate.get("id", "")
-    desc = (candidate.get("description") or "").lower()
-    if not name or not desc:
+    if not name:
         return []
     issues: list[str] = []
     patterns = (
-        ("radial_position_of_", ("major radius",), "major_radius_of_<X>"),
-        ("toroidal_position_of_", ("toroidal angle",), "toroidal_angle_of_<X>"),
+        ("radial_position_of_", "major_radius_of_<X>"),
+        ("toroidal_position_of_", "toroidal_angle_of_<X>"),
         (
             "vertical_position_of_",
-            ("z coordinate", "vertical coordinate", "z-coordinate"),
             "vertical_coordinate_of_<X> or z_coordinate_of_<X>",
         ),
     )
-    for prefix, evidence_terms, suggested in patterns:
-        if prefix not in name:
-            continue
-        if any(term in desc for term in evidence_terms):
+    for prefix, suggested in patterns:
+        if prefix in name:
             issues.append(
                 f"audit:position_coordinate_check: name '{name}' uses "
-                f"'{prefix.rstrip('_')}_' colloquial form but description "
-                f"identifies it as a canonical coordinate "
-                f"({', '.join(evidence_terms)}); rename to {suggested}."
+                f"colloquial '{prefix.rstrip('_')}_' form; rename to "
+                f"{suggested} (cylindrical-coordinate canonical vocabulary)."
             )
     return issues
 

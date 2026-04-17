@@ -492,12 +492,17 @@ is provided as context for your naming decisions.
     - **Incorrect**: `change_in_poloidal_component_of_ion_velocity` (parser collapses everything into `physical_base`, Component is lost).
     - Rule of thumb: directional/projection prefixes (parallel/poloidal/toroidal/radial/normal/tangential) wrap the entire base — including any tense — never the other way round.
 16. **`_density` suffix MUST agree with declared unit** (dimensional anti-pattern): A name ending in `_density` claims a quantity per unit volume / area / length. The DD-supplied unit must contain `m^-3` (volumetric), `m^-2` (areal), or `m^-1` (linear). If the unit is a bare extensive quantity (e.g. `kg.m.s^-1` for momentum, `J` for energy without `m^-3`), **drop `_density`** or rename to reflect the actual quantity. Example: ❌ `toroidal_angular_momentum_density` with unit `kg.m.s^-1` → ✅ `toroidal_momentum_per_unit_radius` or simply `toroidal_momentum_profile` (no `_density` claim).
-17. **Coordinate naming — use canonical coordinates, not `_position_of_X`**: When a quantity is a spatial coordinate of a component (antenna, launcher, sensor, etc.), use the canonical coordinate vocabulary, never the colloquial `_position_of_X`:
-    - Major radius (R, cylindrical radial) → `major_radius_of_<X>` ✓ (NOT `radial_position_of_<X>` ✗).
-    - Toroidal angle (φ) → `toroidal_angle_of_<X>` ✓ (NOT `toroidal_position_of_<X>` ✗).
-    - Vertical coordinate (Z) → `vertical_coordinate_of_<X>` or `z_coordinate_of_<X>` ✓ (NOT `vertical_position_of_<X>` ✗).
-    - "Position" without a directional qualifier is fine for general 3-vectors (e.g. `position_of_<X>` for an unspecified location).
-    - This rule prevents synonym proliferation (`major_radius_of_antenna` and `radial_position_of_antenna` would both end up in the catalog).
+17. **Coordinate naming — ABSOLUTE RULE — use canonical coordinates, NEVER `_position_of_X`** (regardless of whether the description spells out "coordinate"): When a quantity is a spatial coordinate of a component, point, or geometric feature (antenna, launcher, sensor, axis, x-point, strike point, plasma boundary, separatrix, wall point, etc.), you MUST use the canonical coordinate vocabulary. The colloquial `_position_of_X` form is FORBIDDEN because it produces silent synonym pairs in the catalog (e.g. `vertical_coordinate_of_plasma_boundary` vs `vertical_position_of_plasma_boundary`).
+    - Major radius / cylindrical R coordinate → `major_radius_of_<X>` ✓ (NEVER `radial_position_of_<X>` ✗).
+    - Toroidal angle / cylindrical φ coordinate → `toroidal_angle_of_<X>` ✓ (NEVER `toroidal_position_of_<X>` ✗).
+    - Vertical / Z coordinate → `vertical_coordinate_of_<X>` ✓ (NEVER `vertical_position_of_<X>` ✗).
+    - For an unspecified 3-vector position with no directional qualifier, plain `position_of_<X>` is acceptable.
+    - For a *component* of a vector field (not a coordinate of a point), use `<axis>_component_of_<vector>` — e.g. `vertical_component_of_surface_normal_vector` (NOT `vertical_coordinate_of_surface_normal_vector` — surface normal is a vector field, you take its Z-component, not its Z-coordinate).
+    - This rule is unconditional and overrides any apparent symmetry with sibling names.
+18. **Preposition discipline for plasma-boundary / separatrix / wall properties — use `_of_` not `_at_`**: When a scalar property is evaluated AT a geometric feature that itself has a name (plasma boundary, separatrix, magnetic axis, x-point), prefer the possessive `_of_` form, NOT `_at_`. This prevents synonym pairs.
+    - ✓ `poloidal_magnetic_flux_of_plasma_boundary`, `normalized_poloidal_magnetic_flux_of_plasma_boundary`
+    - ✗ `poloidal_magnetic_flux_at_plasma_boundary`, `normalized_poloidal_magnetic_flux_at_plasma_boundary`
+    - Exception: when "at" carries a clearly directional / temporal meaning that "of" cannot (rare), keep `_at_`. Default is `_of_`.
 
 ## Output Format
 

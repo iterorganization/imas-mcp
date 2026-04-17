@@ -817,49 +817,33 @@ class TestDensityUnitConsistencyCheck:
 
 
 class TestPositionCoordinateCheck:
-    def test_fail_radial_position_with_major_radius_desc(self):
+    def test_fail_radial_position_unconditional(self):
         from imas_codex.standard_names.audits import position_coordinate_check
 
-        issues = position_coordinate_check(
-            {
-                "id": "radial_position_of_antenna_row",
-                "description": "Major radius coordinate of a lower hybrid antenna row.",
-            }
-        )
+        issues = position_coordinate_check({"id": "radial_position_of_antenna_row"})
         assert len(issues) == 1
         assert "major_radius_of_<X>" in issues[0]
 
-    def test_fail_toroidal_position_with_toroidal_angle_desc(self):
+    def test_fail_toroidal_position_unconditional(self):
         from imas_codex.standard_names.audits import position_coordinate_check
 
-        issues = position_coordinate_check(
-            {
-                "id": "toroidal_position_of_antenna_row",
-                "description": "Toroidal angle coordinate of the antenna row position.",
-            }
-        )
+        issues = position_coordinate_check({"id": "toroidal_position_of_antenna_row"})
         assert len(issues) == 1
+        assert "toroidal_angle_of_<X>" in issues[0]
 
-    def test_fail_vertical_position_with_z_coordinate_desc(self):
+    def test_fail_vertical_position_unconditional(self):
         from imas_codex.standard_names.audits import position_coordinate_check
 
-        issues = position_coordinate_check(
-            {
-                "id": "vertical_position_of_antenna",
-                "description": "Z coordinate of an antenna row position.",
-            }
-        )
+        issues = position_coordinate_check({"id": "vertical_position_of_x_point"})
         assert len(issues) == 1
+        assert "vertical_coordinate_of_<X>" in issues[0]
 
     def test_pass_canonical_major_radius(self):
         from imas_codex.standard_names.audits import position_coordinate_check
 
         assert (
             position_coordinate_check(
-                {
-                    "id": "major_radius_of_electron_cyclotron_launcher",
-                    "description": "Major radius coordinate of the EC launcher position.",
-                }
+                {"id": "major_radius_of_electron_cyclotron_launcher"}
             )
             == []
         )
@@ -867,12 +851,11 @@ class TestPositionCoordinateCheck:
     def test_pass_no_position_in_name(self):
         from imas_codex.standard_names.audits import position_coordinate_check
 
-        assert (
-            position_coordinate_check(
-                {
-                    "id": "electron_density",
-                    "description": "Electron density profile.",
-                }
-            )
-            == []
-        )
+        assert position_coordinate_check({"id": "electron_density"}) == []
+
+    def test_pass_plain_position_no_directional_qualifier(self):
+        from imas_codex.standard_names.audits import position_coordinate_check
+
+        # Plain `position_of_X` (no R/Z/phi qualifier) is acceptable for
+        # unspecified 3-vector positions and must not be flagged.
+        assert position_coordinate_check({"id": "position_of_strike_point"}) == []
