@@ -335,6 +335,7 @@ class GraphSearchTool:
                 YIELD node AS path, score
                 WHERE NOT (path)-[:DEPRECATED_IN]->(:DDVersion)
                   AND path.node_category IN $categories
+                  AND (path.node_category <> 'identifier' OR path.description IS NOT NULL)
                 {filter_clause}
                 {summary_clause}
                 {dd_clause}
@@ -479,6 +480,8 @@ class GraphSearchTool:
                    path.enrichment_source AS enrichment_source,
                    collect(DISTINCT coord.id) AS coordinates,
                    ident IS NOT NULL AS has_identifier_schema,
+                   ident.name AS identifier_schema_name,
+                   ident.description AS identifier_schema_description,
                    intro.id AS introduced_after_version
             """,
             path_ids=sorted_ids,
@@ -527,6 +530,10 @@ class GraphSearchTool:
                     keywords=r.get("keywords"),
                     enrichment_source=r.get("enrichment_source"),
                     has_identifier_schema=bool(r["has_identifier_schema"]),
+                    identifier_schema_name=r.get("identifier_schema_name"),
+                    identifier_schema_description=r.get(
+                        "identifier_schema_description"
+                    ),
                     introduced_after_version=r["introduced_after_version"],
                     score=scores.get(pid, 0.0),
                     rank=rank,
@@ -2469,6 +2476,7 @@ def _text_search_dd_paths(
     where_parts = [
         "NOT (p)-[:DEPRECATED_IN]->(:DDVersion)",
         "p.node_category IN $categories",
+        "(p.node_category <> 'identifier' OR p.description IS NOT NULL)",
     ]
     # Cap CONTAINS fallback to avoid full scans on large graphs
     contains_limit = min(limit, 100)
@@ -2494,7 +2502,7 @@ def _text_search_dd_paths(
 
     # Try fulltext index first (BM25 scoring)
     try:
-        ft_where = "WHERE NOT (p)-[:DEPRECATED_IN]->(:DDVersion) AND p.node_category IN $categories"
+        ft_where = "WHERE NOT (p)-[:DEPRECATED_IN]->(:DDVersion) AND p.node_category IN $categories AND (p.node_category <> 'identifier' OR p.description IS NOT NULL)"
         ft_params: dict[str, Any] = {
             "query": _build_phrase_aware_query(query),
             "limit": limit,

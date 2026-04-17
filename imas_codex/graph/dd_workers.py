@@ -1224,9 +1224,13 @@ async def _run_aux_enrichment(state: DDBuildState) -> None:
         def _on_ids_items(items: list[dict], batch_time: float) -> None:
             _publish_items(items, batch_time, primary_text_style="bold green")
 
-        def _run() -> tuple[int, int, dict[str, Any], dict[str, Any]]:
+        def _on_identifier_node_items(items: list[dict], batch_time: float) -> None:
+            _publish_items(items, batch_time, primary_text_style="bold yellow")
+
+        def _run() -> tuple[int, int, dict[str, Any], dict[str, Any], dict[str, Any]]:
             from imas_codex.graph.client import GraphClient
             from imas_codex.graph.dd_identifier_enrichment import (
+                enrich_identifier_nodes,
                 enrich_identifier_schemas,
             )
             from imas_codex.graph.dd_ids_enrichment import enrich_ids_nodes
@@ -1251,11 +1255,22 @@ async def _run_aux_enrichment(state: DDBuildState) -> None:
                     force=state.skip_enrichment_hash,
                     on_items=_on_ids_items,
                 )
-            return identifier_total, ids_total, ident_stats, ids_stats
+                # Step 3: Identifier IMASNode enrichment (runs last — benefits from sibling descriptions)
+                ident_node_stats = enrich_identifier_nodes(
+                    client,
+                    model=get_model("dd-enrichment"),
+                    force=state.skip_enrichment_hash,
+                    on_items=_on_identifier_node_items,
+                )
+            return identifier_total, ids_total, ident_stats, ids_stats, ident_node_stats
 
-        identifier_total, ids_total, ident_stats, ids_stats = await asyncio.to_thread(
-            _run
-        )
+        (
+            identifier_total,
+            ids_total,
+            ident_stats,
+            ids_stats,
+            ident_node_stats,
+        ) = await asyncio.to_thread(_run)
         state.stats["identifier_schemas_total"] = identifier_total
         state.stats["ids_total"] = ids_total
         state.stats["identifier_schemas_enriched"] = ident_stats.get("enriched", 0)
@@ -1264,6 +1279,9 @@ async def _run_aux_enrichment(state: DDBuildState) -> None:
         state.stats["ids_cached"] = ids_stats.get("cached", 0)
         state.enrich_stats.cost += ident_stats.get("cost", 0.0)
         state.enrich_stats.cost += ids_stats.get("cost", 0.0)
+        state.stats["identifier_nodes_enriched"] = ident_node_stats.get("enriched", 0)
+        state.stats["identifier_nodes_cached"] = ident_node_stats.get("cached", 0)
+        state.enrich_stats.cost += ident_node_stats.get("cost", 0.0)
         state.aux_enrichment_done = True
 
 
@@ -1294,9 +1312,13 @@ async def _run_aux_embedding(state: DDBuildState) -> None:
         def _on_ids_items(items: list[dict], batch_time: float) -> None:
             _publish_items(items, batch_time, primary_text_style="bold green")
 
-        def _run() -> tuple[dict[str, int], dict[str, int]]:
+        def _on_identifier_node_items(items: list[dict], batch_time: float) -> None:
+            _publish_items(items, batch_time, primary_text_style="bold yellow")
+
+        def _run() -> tuple[dict[str, int], dict[str, int], dict[str, int]]:
             from imas_codex.graph.client import GraphClient
             from imas_codex.graph.dd_identifier_enrichment import (
+                embed_identifier_nodes,
                 embed_identifier_schemas,
             )
             from imas_codex.graph.dd_ids_enrichment import embed_ids_nodes
@@ -1312,13 +1334,25 @@ async def _run_aux_embedding(state: DDBuildState) -> None:
                     force_reembed=state.skip_embedding_hash,
                     on_items=_on_ids_items,
                 )
-            return ident_stats, ids_stats
+                # Step 3: Embed identifier IMASNodes
+                ident_node_stats = embed_identifier_nodes(
+                    client,
+                    force_reembed=state.skip_embedding_hash,
+                    on_items=_on_identifier_node_items,
+                )
+            return ident_stats, ids_stats, ident_node_stats
 
-        ident_stats, ids_stats = await asyncio.to_thread(_run)
+        ident_stats, ids_stats, ident_node_stats = await asyncio.to_thread(_run)
         state.stats["identifier_embeddings_updated"] = ident_stats.get("updated", 0)
         state.stats["identifier_embeddings_cached"] = ident_stats.get("cached", 0)
         state.stats["ids_embeddings_updated"] = ids_stats.get("updated", 0)
         state.stats["ids_embeddings_cached"] = ids_stats.get("cached", 0)
+        state.stats["identifier_node_embeddings_updated"] = ident_node_stats.get(
+            "updated", 0
+        )
+        state.stats["identifier_node_embeddings_cached"] = ident_node_stats.get(
+            "cached", 0
+        )
         state.aux_embedding_done = True
 
 

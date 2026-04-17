@@ -23,7 +23,7 @@ from imas_codex.clusters import (
     RelationshipExtractionConfig,
     RelationshipExtractor,
 )
-from imas_codex.core.node_categories import EMBEDDABLE_CATEGORIES
+from imas_codex.core.node_categories import CLUSTERABLE_CATEGORIES
 from imas_codex.embeddings.cache import EmbeddingCache
 from imas_codex.embeddings.config import EncoderConfig
 from imas_codex.embeddings.encoder import Encoder
@@ -206,7 +206,7 @@ class Clusters:
                             THEN toFloat(with_emb) / embeddable
                             ELSE 0.0 END AS coverage
                 """,
-                embeddable_categories=list(EMBEDDABLE_CATEGORIES),
+                embeddable_categories=list(CLUSTERABLE_CATEGORIES),
             )
             if result:
                 row = result[0]

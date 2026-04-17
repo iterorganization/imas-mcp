@@ -230,3 +230,150 @@ class TestEnrichIdentifierSchemas:
         update_call = client.query.call_args_list[-1]
         updates = update_call.kwargs.get("updates") or update_call[1].get("updates")
         assert updates[0]["description"] == "Selects the coordinate system convention."
+
+
+class TestIdentifierNodeEnrichmentModels:
+    """Test Pydantic models for identifier node enrichment."""
+
+    def test_node_result(self):
+        from imas_codex.graph.dd_identifier_enrichment import (
+            IdentifierNodeEnrichmentResult,
+        )
+
+        r = IdentifierNodeEnrichmentResult(
+            path_index=1,
+            description="Selects the grid type for equilibrium reconstruction.",
+            keywords=["grid type", "equilibrium", "mesh"],
+        )
+        assert r.path_index == 1
+        assert "grid" in r.description
+        assert len(r.keywords) == 3
+
+    def test_node_batch(self):
+        from imas_codex.graph.dd_identifier_enrichment import (
+            IdentifierNodeEnrichmentBatch,
+            IdentifierNodeEnrichmentResult,
+        )
+
+        batch = IdentifierNodeEnrichmentBatch(
+            results=[
+                IdentifierNodeEnrichmentResult(
+                    path_index=1, description="Desc 1", keywords=["a"]
+                ),
+                IdentifierNodeEnrichmentResult(
+                    path_index=2, description="Desc 2", keywords=["b"]
+                ),
+            ]
+        )
+        assert len(batch.results) == 2
+
+
+class TestEnrichIdentifierNodes:
+    """Test enrichment of identifier IMASNodes (mocked LLM)."""
+
+    def test_skips_when_no_nodes(self):
+        from imas_codex.graph.dd_identifier_enrichment import enrich_identifier_nodes
+
+        client = MagicMock()
+        client.query.return_value = []
+        stats = enrich_identifier_nodes(client, model="test-model")
+        assert stats["enriched"] == 0
+        assert stats["cached"] == 0
+
+    def test_enriches_nodes_with_llm(self):
+        from imas_codex.graph.dd_identifier_enrichment import (
+            IdentifierNodeEnrichmentBatch,
+            IdentifierNodeEnrichmentResult,
+            enrich_identifier_nodes,
+        )
+
+        client = MagicMock()
+        # First query returns identifier nodes
+        client.query.side_effect = [
+            [
+                {
+                    "id": "equilibrium/time_slice/profiles_2d/grid_type/index",
+                    "name": "grid_type",
+                    "ids": "equilibrium",
+                    "documentation": "Integer identifier",
+                    "enrichment_hash": None,
+                    "parent_id": "equilibrium/time_slice/profiles_2d",
+                    "parent_name": "profiles_2d",
+                    "parent_description": "2D equilibrium profiles",
+                    "schema_id": "grid_type_identifier",
+                    "schema_name": "grid_type_identifier",
+                    "schema_description": "Defines the grid type for 2D profiles.",
+                    "schema_options": json.dumps(
+                        [
+                            {
+                                "index": 1,
+                                "name": "rectangular",
+                                "description": "Rectangular grid",
+                                "units": "",
+                            }
+                        ]
+                    ),
+                    "sibling_names": ["psi", "r", "z"],
+                }
+            ],
+            None,  # update query
+        ]
+
+        mock_result = IdentifierNodeEnrichmentBatch(
+            results=[
+                IdentifierNodeEnrichmentResult(
+                    path_index=1,
+                    description="Selects the 2D mesh type for equilibrium reconstruction.",
+                    keywords=["grid type", "equilibrium", "mesh"],
+                )
+            ]
+        )
+
+        with patch(
+            "imas_codex.discovery.base.llm.call_llm_structured",
+            return_value=(mock_result, 0.001, 100),
+        ):
+            stats = enrich_identifier_nodes(client, model="test-model")
+
+        assert stats["enriched"] == 1
+        # Verify graph update was called
+        update_call = client.query.call_args_list[-1]
+        updates = update_call.kwargs.get("updates") or update_call[1].get("updates")
+        assert (
+            updates[0]["description"]
+            == "Selects the 2D mesh type for equilibrium reconstruction."
+        )
+        assert updates[0]["enrichment_model"] == "test-model"
+
+    def test_caches_when_hash_matches(self):
+        from imas_codex.graph.dd_identifier_enrichment import (
+            _compute_enrichment_hash,
+            enrich_identifier_nodes,
+        )
+
+        # Pre-compute the expected hash
+        ctx_str = "test/path:schema_id:parent desc:doc"
+        expected_hash = _compute_enrichment_hash(ctx_str, "test-model")
+
+        client = MagicMock()
+        client.query.return_value = [
+            {
+                "id": "test/path",
+                "name": "identifier",
+                "ids": "test",
+                "documentation": "doc",
+                "enrichment_hash": expected_hash,
+                "parent_id": None,
+                "parent_name": None,
+                "parent_description": "parent desc",
+                "schema_id": "schema_id",
+                "schema_name": "schema_id",
+                "schema_description": "Schema desc",
+                "schema_options": None,
+                "sibling_names": [],
+            }
+        ]
+
+        stats = enrich_identifier_nodes(client, model="test-model")
+        assert stats["cached"] == 1
+        assert stats["enriched"] == 0

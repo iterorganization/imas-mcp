@@ -62,6 +62,31 @@ class IdentifierEnrichmentBatch(BaseModel):
     )
 
 
+class IdentifierNodeEnrichmentResult(BaseModel):
+    """Enrichment result for a single identifier IMASNode."""
+
+    path_index: int = Field(description="1-based index matching the input batch order")
+    description: str = Field(
+        description=(
+            "Context-aware description of this identifier field (1-3 sentences). "
+            "Explains what it classifies in its parent structure."
+        )
+    )
+    keywords: list[str] = Field(
+        default_factory=list,
+        max_length=5,
+        description="Searchable keywords — physics concepts, parent context",
+    )
+
+
+class IdentifierNodeEnrichmentBatch(BaseModel):
+    """Batch enrichment response from the LLM."""
+
+    results: list[IdentifierNodeEnrichmentResult] = Field(
+        description="Enrichment results, one per input path in batch order"
+    )
+
+
 # =============================================================================
 # Hash computation
 # =============================================================================
@@ -400,6 +425,368 @@ def embed_identifier_schemas(
 
     logger.info(
         f"Identifier schema embeddings: {stats['updated']} updated, "
+        f"{stats['cached']} cached"
+    )
+    return stats
+
+
+# =============================================================================
+# Identifier IMASNode Enrichment
+# =============================================================================
+
+
+def enrich_identifier_nodes(
+    client: GraphClient,
+    *,
+    model: str | None = None,
+    batch_size: int = 40,
+    force: bool = False,
+    on_progress: Callable[[int, int], None] | None = None,
+    on_items: Callable[[list[dict], float], None] | None = None,
+) -> dict[str, Any]:
+    """Enrich identifier-category IMASNodes with LLM-generated descriptions.
+
+    These are IMASNode paths like equilibrium/time_slice/profiles_2d/grid_type
+    that reference an IdentifierSchema. The enrichment explains what the
+    identifier classifies in its parent context.
+
+    Runs AFTER main enrichment so parent/sibling descriptions are available.
+    Lifecycle: built → enriched (skip refined).
+
+    Args:
+        client: Neo4j GraphClient
+        model: LLM model for enrichment (defaults to dd-enrichment model)
+        batch_size: Paths per LLM call
+        force: Re-enrich regardless of hash
+        on_progress: Optional (processed, total) callback
+        on_items: Optional callback for streaming enriched item labels
+
+    Returns:
+        Statistics dict with enriched/cached/cost/tokens counts.
+    """
+    from imas_codex.discovery.base.llm import call_llm_structured
+    from imas_codex.llm.prompt_loader import render_prompt
+    from imas_codex.settings import get_model
+
+    if model is None:
+        model = get_model("dd-enrichment")
+
+    stats: dict[str, Any] = {
+        "enriched": 0,
+        "cached": 0,
+        "cost": 0.0,
+        "tokens": 0,
+    }
+
+    # Query identifier IMASNodes needing enrichment
+    all_nodes = list(
+        client.query(
+            """
+            MATCH (n:IMASNode)
+            WHERE n.node_category = 'identifier'
+              AND (n.status = 'built' OR ($force AND n.status IN ['built', 'enriched', 'embedded']))
+            OPTIONAL MATCH (parent:IMASNode)-[:HAS_CHILD]->(n)
+            OPTIONAL MATCH (n)-[:HAS_IDENTIFIER_SCHEMA]->(schema:IdentifierSchema)
+            OPTIONAL MATCH (parent)-[:HAS_CHILD]->(sibling:IMASNode)
+              WHERE sibling.id <> n.id AND sibling.node_category IN ['quantity', 'geometry']
+            RETURN n.id AS id, n.name AS name, n.ids AS ids,
+                   n.documentation AS documentation,
+                   n.enrichment_hash AS enrichment_hash,
+                   parent.id AS parent_id, parent.name AS parent_name,
+                   parent.description AS parent_description,
+                   schema.id AS schema_id, schema.name AS schema_name,
+                   schema.description AS schema_description,
+                   schema.options AS schema_options,
+                   collect(DISTINCT sibling.name) AS sibling_names
+            ORDER BY n.id
+            """,
+            force=force,
+        )
+    )
+    total = len(all_nodes)
+    logger.info(f"Found {total} identifier IMASNodes to enrich")
+
+    if not all_nodes:
+        return stats
+
+    processed = 0
+    for batch_idx in range(0, total, batch_size):
+        batch = all_nodes[batch_idx : batch_idx + batch_size]
+
+        # Check hashes for cached entries
+        to_enrich = []
+        for node in batch:
+            ctx_str = (
+                f"{node['id']}:{node.get('schema_id', '')}:"
+                f"{node.get('parent_description', '')}:{node.get('documentation', '')}"
+            )
+            expected_hash = _compute_enrichment_hash(ctx_str, model)
+            if not force and node.get("enrichment_hash") == expected_hash:
+                stats["cached"] += 1
+                processed += 1
+            else:
+                node["_expected_hash"] = expected_hash
+                to_enrich.append(node)
+
+        if not to_enrich:
+            if on_progress:
+                on_progress(processed, total)
+            continue
+
+        # Build user message with path context
+        user_lines = ["Enrich the following IMAS identifier fields:\n"]
+        for idx, node in enumerate(to_enrich, 1):
+            user_lines.append(
+                f"\n### Path {idx}: `{node['name']}` (IDS: {node.get('ids', '')})"
+            )
+            if node.get("parent_name"):
+                user_lines.append(f"- Parent structure: `{node['parent_name']}`")
+            if node.get("parent_description"):
+                user_lines.append(f"- Parent description: {node['parent_description']}")
+            if node.get("documentation"):
+                user_lines.append(f"- Field documentation: {node['documentation']}")
+            if node.get("schema_name"):
+                user_lines.append(f"- Identifier schema: `{node['schema_name']}`")
+            if node.get("schema_description"):
+                user_lines.append(f"- Schema description: {node['schema_description']}")
+            if node.get("schema_options"):
+                try:
+                    options = json.loads(node["schema_options"])
+                    # Truncate to 5-8 options to control prompt size
+                    shown = options[:8]
+                    user_lines.append(
+                        f"- Schema options (first {len(shown)} of {len(options)}):"
+                    )
+                    for opt in shown:
+                        name = opt.get("name", "")
+                        desc = opt.get("description", "")
+                        line = f"    - {name}"
+                        if desc:
+                            line += f" — {desc}"
+                        user_lines.append(line)
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            sibling_names = node.get("sibling_names") or []
+            if sibling_names:
+                user_lines.append(
+                    f"- Sibling fields: {', '.join(str(s) for s in sibling_names[:10])}"
+                )
+
+        # Render system prompt
+        system_prompt = render_prompt("imas/identifier_node_enrichment")
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": "\n".join(user_lines)},
+        ]
+
+        try:
+            result, cost, tokens = call_llm_structured(
+                model=model,
+                messages=messages,
+                response_model=IdentifierNodeEnrichmentBatch,
+            )
+            stats["cost"] += cost
+            stats["tokens"] += tokens
+
+            # Build updates
+            updates = []
+            for enrichment in result.results:
+                if enrichment.path_index < 1 or enrichment.path_index > len(to_enrich):
+                    logger.warning(
+                        f"Invalid path_index {enrichment.path_index} in result"
+                    )
+                    continue
+
+                node = to_enrich[enrichment.path_index - 1]
+                updates.append(
+                    {
+                        "id": node["id"],
+                        "description": enrichment.description,
+                        "keywords": enrichment.keywords[:5],
+                        "enrichment_hash": node["_expected_hash"],
+                        "enrichment_model": model,
+                        "cost": cost / max(len(to_enrich), 1),
+                    }
+                )
+
+            # Batch update graph
+            if updates:
+                client.query(
+                    """
+                    UNWIND $updates AS u
+                    MATCH (n:IMASNode {id: u.id})
+                    SET n.description = u.description,
+                        n.keywords = u.keywords,
+                        n.enrichment_hash = u.enrichment_hash,
+                        n.enrichment_source = 'llm',
+                        n.enrichment_model = u.enrichment_model,
+                        n.enrich_llm_cost = u.cost,
+                        n.status = 'enriched',
+                        n.claimed_at = null,
+                        n.claim_token = null
+                    """,
+                    updates=updates,
+                )
+                stats["enriched"] += len(updates)
+                if on_items:
+                    on_items(
+                        [
+                            {
+                                "primary_text": u["id"],
+                                "description": u["description"],
+                            }
+                            for u in updates
+                        ],
+                        0.0,
+                    )
+
+        except Exception as e:
+            logger.error(f"Error enriching identifier node batch: {e}")
+
+        processed += len(to_enrich)
+        if on_progress:
+            on_progress(processed, total)
+
+    return stats
+
+
+# =============================================================================
+# Identifier IMASNode Embedding
+# =============================================================================
+
+
+def embed_identifier_nodes(
+    client: GraphClient,
+    *,
+    force_reembed: bool = False,
+    on_progress: Callable[[int, int], None] | None = None,
+    on_items: Callable[[list[dict], float], None] | None = None,
+) -> dict[str, int]:
+    """Generate embeddings for enriched identifier IMASNodes.
+
+    Sets status from 'enriched' → 'embedded'.
+
+    Returns:
+        Stats dict with updated/cached counts.
+    """
+    from imas_codex.embeddings.config import EncoderConfig
+    from imas_codex.embeddings.encoder import Encoder
+    from imas_codex.graph.build_dd import (
+        compute_embedding_hash,
+        generate_embedding_text,
+    )
+    from imas_codex.settings import get_embedding_dimension, get_embedding_model
+
+    stats: dict[str, int] = {"updated": 0, "cached": 0}
+
+    # Query enriched identifier nodes
+    results = list(
+        client.query("""
+            MATCH (n:IMASNode)
+            WHERE n.node_category = 'identifier' AND n.status = 'enriched'
+            RETURN n.id AS id, n.name AS name, n.ids AS ids,
+                   n.description AS description, n.keywords AS keywords,
+                   n.embedding_hash AS existing_hash
+            ORDER BY n.id
+        """)
+    )
+
+    if not results:
+        logger.info("No enriched identifier IMASNodes to embed")
+        return stats
+
+    total = len(results)
+    model_name = get_embedding_model()
+    dim = get_embedding_dimension()
+
+    # Ensure vector index exists for IMASNode (may already exist)
+    client.query(f"""
+        CREATE VECTOR INDEX imas_node_embedding IF NOT EXISTS
+        FOR (n:IMASNode) ON n.embedding
+        OPTIONS {{
+            indexConfig: {{
+                `vector.dimensions`: {dim},
+                `vector.similarity_function`: 'cosine',
+                `vector.quantization.enabled`: true
+            }}
+        }}
+    """)
+
+    # Compute embedding texts, filter cached
+    to_embed = []
+    for r in results:
+        path_info = {
+            "description": r.get("description") or "",
+            "documentation": "",
+            "keywords": r.get("keywords") or [],
+        }
+        text = generate_embedding_text(r["id"], path_info)
+        if not text:
+            stats["cached"] += 1
+            continue
+
+        text_hash = compute_embedding_hash(text, model_name)
+        if not force_reembed and r.get("existing_hash") == text_hash:
+            stats["cached"] += 1
+            continue
+
+        to_embed.append(
+            {
+                "id": r["id"],
+                "text": text,
+                "hash": text_hash,
+            }
+        )
+
+    if not to_embed:
+        logger.info(f"All {total} identifier IMASNode embeddings up to date")
+        return stats
+
+    # Generate embeddings
+    encoder = Encoder(
+        config=EncoderConfig(
+            model_name=model_name,
+            normalize_embeddings=True,
+        )
+    )
+    texts = [item["text"] for item in to_embed]
+    embeddings = encoder.embed_texts(texts)
+
+    # Store embeddings and advance status
+    batch_data = []
+    for i, item in enumerate(to_embed):
+        batch_data.append(
+            {
+                "id": item["id"],
+                "embedding": embeddings[i].tolist(),
+                "embedding_hash": item["hash"],
+            }
+        )
+
+    client.query(
+        """
+        UNWIND $batch AS b
+        MATCH (n:IMASNode {id: b.id})
+        SET n.embedding = b.embedding,
+            n.embedding_hash = b.embedding_hash,
+            n.embedded_at = datetime(),
+            n.status = 'embedded'
+        """,
+        batch=batch_data,
+    )
+    stats["updated"] = len(to_embed)
+
+    if on_items and batch_data:
+        on_items(
+            [{"primary_text": item["id"]} for item in batch_data],
+            0.0,
+        )
+    if on_progress:
+        on_progress(len(to_embed), total)
+
+    logger.info(
+        f"Identifier IMASNode embeddings: {stats['updated']} updated, "
         f"{stats['cached']} cached"
     )
     return stats

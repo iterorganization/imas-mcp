@@ -34,7 +34,7 @@ import numpy as np
 
 from imas_codex import dd_version as current_dd_version
 from imas_codex.core.node_categories import (
-    EMBEDDABLE_CATEGORIES,
+    CLUSTERABLE_CATEGORIES,
     ENRICHABLE_CATEGORIES,
     QUANTITY_CATEGORIES,
     SEARCHABLE_CATEGORIES,
@@ -2234,7 +2234,7 @@ def phase_embed(
         path: info
         for path, info in merged_paths.items()
         if _classify_node(path, info.get("name", path.split("/")[-1]))
-        in EMBEDDABLE_CATEGORIES
+        in CLUSTERABLE_CATEGORIES
     }
 
     # Also include graph paths not in version_data (from previous builds)
@@ -2250,7 +2250,9 @@ def phase_embed(
            p.physics_domain AS physics_domain,
            p.node_type AS node_type, p.ndim AS ndim
     """
-    for r in client.query(existing_paths_query, categories=list(EMBEDDABLE_CATEGORIES)):
+    for r in client.query(
+        existing_paths_query, categories=list(CLUSTERABLE_CATEGORIES)
+    ):
         pid = r["id"]
         if pid not in merged_paths:
             merged_paths[pid] = {k: v for k, v in r.items() if v is not None}

@@ -126,6 +126,14 @@ class SearchHit(SearchBase):
         default=False,
         description="Whether this path is governed by an identifier schema",
     )
+    identifier_schema_name: str | None = Field(
+        default=None,
+        description="Name of the identifier schema governing this path",
+    )
+    identifier_schema_description: str | None = Field(
+        default=None,
+        description="Description of the identifier schema governing this path",
+    )
 
     # COCOS transformation fields
     cocos_label_transformation: str | None = Field(

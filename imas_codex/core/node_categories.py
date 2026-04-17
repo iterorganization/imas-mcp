@@ -7,12 +7,18 @@ module rather than hard-coding category strings.
 # Base set of categories that behave like physics quantities
 # (enriched, embedded, searchable, SN-extractable).
 QUANTITY_CATEGORIES: frozenset[str] = frozenset({"quantity", "geometry"})
+IDENTIFIER_CATEGORIES: frozenset[str] = frozenset({"identifier"})
 
 # Nodes whose descriptions are embedded into the vector space.
-EMBEDDABLE_CATEGORIES: frozenset[str] = QUANTITY_CATEGORIES
+EMBEDDABLE_CATEGORIES: frozenset[str] = QUANTITY_CATEGORIES | IDENTIFIER_CATEGORIES
+
+# Nodes that participate in semantic clustering (physics quantities only).
+CLUSTERABLE_CATEGORIES: frozenset[str] = QUANTITY_CATEGORIES
 
 # Nodes surfaced by search / MCP tools.
-SEARCHABLE_CATEGORIES: frozenset[str] = QUANTITY_CATEGORIES | {"coordinate"}
+SEARCHABLE_CATEGORIES: frozenset[str] = (
+    QUANTITY_CATEGORIES | {"coordinate"} | IDENTIFIER_CATEGORIES
+)
 
 # Nodes eligible for standard-name extraction.
 SN_SOURCE_CATEGORIES: frozenset[str] = QUANTITY_CATEGORIES
@@ -22,8 +28,10 @@ SN_SOURCE_CATEGORIES: frozenset[str] = QUANTITY_CATEGORIES
 ENRICHABLE_CATEGORIES: frozenset[str] = QUANTITY_CATEGORIES | {"coordinate"}
 
 __all__ = [
+    "CLUSTERABLE_CATEGORIES",
     "EMBEDDABLE_CATEGORIES",
     "ENRICHABLE_CATEGORIES",
+    "IDENTIFIER_CATEGORIES",
     "QUANTITY_CATEGORIES",
     "SEARCHABLE_CATEGORIES",
     "SN_SOURCE_CATEGORIES",
