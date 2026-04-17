@@ -899,6 +899,14 @@ _FORBIDDEN_ABBREVIATIONS = (
     ("_avg_", "_average_"),
     ("sep_", "separatrix_"),
     ("_sep_", "_separatrix_"),
+    ("ec_", "electron_cyclotron_"),
+    ("_ec_", "_electron_cyclotron_"),
+    ("ic_", "ion_cyclotron_"),
+    ("_ic_", "_ion_cyclotron_"),
+    ("nbi_", "neutral_beam_injector_"),
+    ("_nbi_", "_neutral_beam_injector_"),
+    ("lh_", "lower_hybrid_"),
+    ("_lh_", "_lower_hybrid_"),
 )
 
 
@@ -918,14 +926,22 @@ def abbreviation_check(candidate: dict[str, Any]) -> list[str]:
     name = str(candidate.get("id") or candidate.get("name") or "").strip().lower()
     if not name:
         return []
+    tokens = set(name.split("_"))
     issues: list[str] = []
+    seen_bare: set[str] = set()
     for abbrev, full in _FORBIDDEN_ABBREVIATIONS:
-        # Boundary-sensitive match: leading or interior token only.
-        if name.startswith(abbrev) or abbrev in f"_{name}_":
+        # Strict token-boundary match: the abbreviation must appear as a
+        # whole token in the name, never as a letter subsequence inside
+        # another word (e.g. ``ic`` must not match ``ionic``).
+        bare = abbrev.strip("_")
+        if bare in seen_bare:
+            continue
+        if bare in tokens:
             issues.append(
                 f"audit:abbreviation_check: name '{name}' contains "
-                f"abbreviation '{abbrev.strip('_')}'; spell as '{full.strip('_')}'"
+                f"abbreviation '{bare}'; spell as '{full.strip('_')}'"
             )
+            seen_bare.add(bare)
             break  # one report per name is sufficient
     return issues
 

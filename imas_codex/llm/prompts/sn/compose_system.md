@@ -351,6 +351,26 @@ group. The terms `absorbed_power` and `heating_power` are not
 synonyms and MUST NOT alternate across species within the same
 source family.
 
+**NC-25 Prefer `<quantity>_of_<named_entity>` over attribute-stacking
+for named devices and parts.** When the subject is a named device
+(antenna, launcher, injector, mirror, coil), use the preposition
+`_of_` to attach the quantity to the device, not a left-stacked
+attribute chain. ❌ `neutral_beam_injector_beam_tangency_radius`,
+`ec_launcher_mirror_rotation_angle` → ✅
+`tangency_radius_of_neutral_beam_injector_beam`,
+`rotation_angle_of_electron_cyclotron_launcher_mirror`. Short
+attribute stacks (one or two tokens, e.g. `ion_atomic_mass`) remain
+acceptable; the rule applies when the subject is a named entity
+with three or more tokens.
+
+**NC-26 Never abbreviate heating-system or device names.** Spell out
+heating systems and devices in full, matching the ISN vocabulary:
+`electron_cyclotron` (not `ec`), `ion_cyclotron` (not `ic`),
+`neutral_beam_injector` (not `nbi`), `lower_hybrid` (not `lh`).
+Abbreviations are not in the ISN grammar and fragment the corpus
+across synonymous aliases. ❌ `ec_launcher_mirror_rotation_angle` →
+✅ `rotation_angle_of_electron_cyclotron_launcher_mirror`.
+
 ### Physics disambiguation glossary
 
 These terms are NOT synonyms. Pick the one supported by the source
