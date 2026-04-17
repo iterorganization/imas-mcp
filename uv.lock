@@ -1167,7 +1167,7 @@ dev = [
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "hdbscan", specifier = ">=0.8.41" },
     { name = "imas-python", specifier = ">=2.0.1" },
-    { name = "imas-standard-names", specifier = ">=0.7.0rc4" },
+    { name = "imas-standard-names", specifier = ">=0.7.0rc5" },
     { name = "ipykernel", specifier = ">=6.29.5" },
     { name = "ipython", specifier = ">=9.2.0" },
     { name = "jellyfish", specifier = ">=1.2.1" },
@@ -1246,7 +1246,7 @@ wheels = [
 
 [[package]]
 name = "imas-standard-names"
-version = "0.7.0rc4"
+version = "0.7.0rc5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
@@ -1257,9 +1257,9 @@ dependencies = [
     { name = "pyyaml" },
     { name = "strictyaml" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/e7/00/b976d082b394e9007662a71d244d5e54961ef26f54d70b7fd331efb015db/imas_standard_names-0.7.0rc4.tar.gz", hash = "sha256:32fca0e4df6ac2e63519f5d7e68cb36b25e91ac808f41863d9de347cc37479e6", size = 600551, upload-time = "2026-04-15T09:45:52.625Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/59/de/507fe26420e92d3c4d9448f4d8a54a68b5d84f6eb5aa1e1c8fd7060b8f75/imas_standard_names-0.7.0rc5.tar.gz", hash = "sha256:31ace17f212214965560499afbb410d8113cc4e3494f2146b94c356d20df2b6d", size = 611587, upload-time = "2026-04-16T18:08:57.974Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/bf/d9/fc16c0ca77fbb7140a39a4eb786c6a2ec3f5d5ba1718a6943512baa55abf/imas_standard_names-0.7.0rc4-py3-none-any.whl", hash = "sha256:16fb3d7698495bcd90fe6a7677a54858d6d395377fb0d40e3bdc1c5013d1592e", size = 267817, upload-time = "2026-04-15T09:45:50.601Z" },
+    { url = "https://files.pythonhosted.org/packages/71/ce/8e4141056922c1c1b1c68b410f93ccaa433d93654b8f97261db082fb3cc5/imas_standard_names-0.7.0rc5-py3-none-any.whl", hash = "sha256:b5916a507977a47024839360017e6c10fa65cb5800ea510acf6247c3d0754580", size = 269212, upload-time = "2026-04-16T18:08:56.304Z" },
 ]
 
 [[package]]
