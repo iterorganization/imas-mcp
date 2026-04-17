@@ -40,6 +40,7 @@ CRITICAL_CHECKS = frozenset(
         "name_unit_consistency_check",
         "representation_artifact_check",
         "causal_due_to_check",
+        "implicit_field_check",
     }
 )
 
@@ -1082,6 +1083,10 @@ _DURE_TO_ADJECTIVE = {
     "ohmic": "ohmic_dissipation or ohmic_heating",
     "neutral_beam": "neutral_beam_injection",
     "wave": "wave_heating",
+    "halo": "halo_currents",
+    "runaway": "runaway_electrons",
+    "fast_ion": "fast_ion_thermalisation",
+    "alpha": "alpha_particle_heating",
 }
 
 
@@ -1111,6 +1116,45 @@ def causal_due_to_check(candidate: dict[str, Any]) -> list[str]:
                 f"audit:causal_due_to_check: name '{name}' uses 'due_to_{adj}' — "
                 f"'{adj}' is an adjective, not a process noun; use "
                 f"'due_to_{suggestion}' instead"
+            )
+            break
+    return issues
+
+
+_FIELD_QUALIFIERS = (
+    "magnetic",
+    "electric",
+    "radiation",
+    "displacement",
+    "velocity",
+    "temperature",
+    "pressure",
+    "density",
+    "flow",
+    "vector",
+)
+
+
+def implicit_field_check(candidate: dict[str, Any]) -> list[str]:
+    """Flag bare ``_field`` token without a qualifier (e.g. ``vacuum_toroidal_field``).
+
+    The IMAS catalog and ISN convention require explicit ``magnetic_field``,
+    ``electric_field``, etc. — never the colloquial bare ``field``.
+    """
+    name = candidate.get("id", "")
+    if not name:
+        return []
+    tokens = name.split("_")
+    issues: list[str] = []
+    for i, tok in enumerate(tokens):
+        if tok != "field":
+            continue
+        prev = tokens[i - 1] if i > 0 else ""
+        if prev not in _FIELD_QUALIFIERS:
+            issues.append(
+                f"audit:implicit_field_check: name '{name}' contains bare '_field' "
+                f"after '{prev or '<start>'}'; qualify as 'magnetic_field', "
+                f"'electric_field', etc."
             )
             break
     return issues
@@ -1159,6 +1203,7 @@ def run_audits(
     all_issues.extend(cocos_specificity_check(candidate, source_cocos_type))
     all_issues.extend(representation_artifact_check(candidate))
     all_issues.extend(causal_due_to_check(candidate))
+    all_issues.extend(implicit_field_check(candidate))
 
     return all_issues
 

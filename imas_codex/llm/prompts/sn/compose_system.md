@@ -472,6 +472,12 @@ is provided as context for your naming decisions.
     - If you can clearly improve it, replace it and explain the improvement in documentation
     - If the previous name was marked as human-accepted (⚠️), strongly prefer keeping it
     - Never feel anchored to a bad previous name — replace without hesitation when you can do better
+11. **`due_to_<process>` template — strict rules** (recurring quality issue):
+    - The token after `due_to_` MUST be a **process noun** in the Process vocabulary (e.g. `ohmic_dissipation`, `impurity_radiation`, `induction`, `conduction`).
+    - **Never** put a temporal event after `due_to_` (`disruption`, `ramp_up`, `breakdown`). For events use `during_<event>` instead, e.g. `parallel_thermal_energy_during_disruption` (NOT `..._due_to_disruption`).
+    - **Never** put a bare adjective after `due_to_` (`ohmic`, `halo`, `runaway`, `neutral_beam`). Spell out the process noun: `due_to_ohmic_dissipation`, `due_to_halo_currents`, `due_to_runaway_electrons`, `due_to_neutral_beam_injection`.
+    - **Never combine `due_to_X_at_Y`** — the grammar does not support a position qualifier after `due_to_<process>`. If you need both a process and a position, **move the position to the subject prefix** as a `<position>_<rest>` construction. Example: instead of `electron_radiated_energy_due_to_impurity_radiation_at_halo_region`, use `halo_region_electron_radiated_energy_due_to_impurity_radiation`.
+12. **`field` ambiguity** — the bare token `field` is colloquial and ambiguous. Always qualify: `magnetic_field`, `electric_field`, `radiation_field`, `displacement_field`. The DD often abbreviates `b_field` or `field` for `magnetic_field` — expand it explicitly. Example: ❌ `vacuum_toroidal_field_at_reference_major_radius` → ✅ `vacuum_toroidal_magnetic_field_at_reference_major_radius`.
 
 ## Output Format
 
