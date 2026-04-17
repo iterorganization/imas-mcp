@@ -392,3 +392,178 @@ class TestUnitValidityCheck:
 
         assert unit_validity_check({"unit": ""}) == []
         assert unit_validity_check({"unit": "dimensionless"}) == []
+
+
+class TestGenericNounCheck:
+    """Tests for generic_noun_check audit."""
+
+    def test_fail_bare_geometry(self):
+        from imas_codex.standard_names.audits import generic_noun_check
+
+        issues = generic_noun_check({"id": "geometry"})
+        assert len(issues) == 1
+        assert "generic_noun_check" in issues[0]
+
+    def test_fail_bare_data(self):
+        from imas_codex.standard_names.audits import generic_noun_check
+
+        assert len(generic_noun_check({"id": "data"})) == 1
+
+    def test_pass_qualified_geometry(self):
+        from imas_codex.standard_names.audits import generic_noun_check
+
+        assert generic_noun_check({"id": "grid_object_geometry"}) == []
+
+    def test_pass_multi_token(self):
+        from imas_codex.standard_names.audits import generic_noun_check
+
+        assert generic_noun_check({"id": "electron_temperature"}) == []
+
+    def test_fail_generic_qualifier_plus_generic_noun(self):
+        from imas_codex.standard_names.audits import generic_noun_check
+
+        assert len(generic_noun_check({"id": "raw_data"})) == 1
+
+
+class TestTautologyCheck:
+    """Tests for tautology_check audit."""
+
+    def test_fail_position_of_position(self):
+        from imas_codex.standard_names.audits import tautology_check
+
+        issues = tautology_check({"id": "radial_position_of_reference_position"})
+        assert len(issues) == 1
+        assert "tautology_check" in issues[0]
+        assert "position" in issues[0]
+
+    def test_fail_component_of_component(self):
+        from imas_codex.standard_names.audits import tautology_check
+
+        assert len(tautology_check({"id": "normal_component_of_field_component"})) == 1
+
+    def test_pass_no_of(self):
+        from imas_codex.standard_names.audits import tautology_check
+
+        assert tautology_check({"id": "electron_temperature"}) == []
+
+    def test_pass_different_heads(self):
+        from imas_codex.standard_names.audits import tautology_check
+
+        assert tautology_check({"id": "radial_position_of_plasma_boundary"}) == []
+
+    def test_pass_of_without_tautology_head(self):
+        from imas_codex.standard_names.audits import tautology_check
+
+        assert tautology_check({"id": "elongation_of_plasma_boundary"}) == []
+
+
+class TestSpectralSuffixCheck:
+    """Tests for spectral_suffix_check audit."""
+
+    def test_fail_fourier_coefficients(self):
+        from imas_codex.standard_names.audits import spectral_suffix_check
+
+        issues = spectral_suffix_check({"id": "normal_field_fourier_coefficients"})
+        assert len(issues) == 1
+        assert "spectral_suffix_check" in issues[0]
+
+    def test_fail_harmonics(self):
+        from imas_codex.standard_names.audits import spectral_suffix_check
+
+        assert len(spectral_suffix_check({"id": "magnetic_field_harmonics"})) == 1
+
+    def test_pass_mode_prefix(self):
+        from imas_codex.standard_names.audits import spectral_suffix_check
+
+        assert spectral_suffix_check({"id": "mode_amplitude_of_normal_field"}) == []
+
+    def test_pass_ordinary_name(self):
+        from imas_codex.standard_names.audits import spectral_suffix_check
+
+        assert spectral_suffix_check({"id": "poloidal_magnetic_flux"}) == []
+
+
+class TestAbbreviationCheck:
+    """Tests for abbreviation_check audit."""
+
+    def test_fail_norm_prefix(self):
+        from imas_codex.standard_names.audits import abbreviation_check
+
+        issues = abbreviation_check({"id": "norm_poloidal_magnetic_flux"})
+        assert len(issues) == 1
+        assert "normalised" in issues[0]
+
+    def test_fail_perp_interior(self):
+        from imas_codex.standard_names.audits import abbreviation_check
+
+        assert len(abbreviation_check({"id": "velocity_perp_component"})) == 1
+
+    def test_fail_temp_prefix(self):
+        from imas_codex.standard_names.audits import abbreviation_check
+
+        assert len(abbreviation_check({"id": "temp_profile"})) == 1
+
+    def test_pass_full_words(self):
+        from imas_codex.standard_names.audits import abbreviation_check
+
+        assert abbreviation_check({"id": "normalised_poloidal_magnetic_flux"}) == []
+        assert abbreviation_check({"id": "perpendicular_velocity_component"}) == []
+
+    def test_pass_empty(self):
+        from imas_codex.standard_names.audits import abbreviation_check
+
+        assert abbreviation_check({"id": ""}) == []
+
+
+class TestNameDescriptionConsistencyCheck:
+    """Tests for name_description_consistency_check audit."""
+
+    def test_fail_fourier_desc_bare_name(self):
+        from imas_codex.standard_names.audits import (
+            name_description_consistency_check,
+        )
+
+        issues = name_description_consistency_check(
+            {
+                "id": "normal_component_of_magnetic_field",
+                "description": "Fourier coefficients of the normal component of the field.",
+            }
+        )
+        assert len(issues) == 1
+
+    def test_pass_decomposition_marker(self):
+        from imas_codex.standard_names.audits import (
+            name_description_consistency_check,
+        )
+
+        assert (
+            name_description_consistency_check(
+                {
+                    "id": "mode_amplitude_of_normal_field",
+                    "description": "Fourier coefficients of the normal field.",
+                }
+            )
+            == []
+        )
+
+    def test_pass_plain_desc(self):
+        from imas_codex.standard_names.audits import (
+            name_description_consistency_check,
+        )
+
+        assert (
+            name_description_consistency_check(
+                {
+                    "id": "electron_temperature",
+                    "description": "Electron temperature profile.",
+                }
+            )
+            == []
+        )
+
+    def test_pass_missing_fields(self):
+        from imas_codex.standard_names.audits import (
+            name_description_consistency_check,
+        )
+
+        assert name_description_consistency_check({"id": "x", "description": ""}) == []

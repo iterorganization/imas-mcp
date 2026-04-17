@@ -179,6 +179,95 @@ include: `_parameter`, `_value`, `_quantity`, `_data`, `_variable`.
 ❌ `geometry_2d`, ❌ `field_3d`, ❌ `profile_1d`. The IDS path already carries
 this information; standard names describe the physical concept.
 
+**NC-8 Name must be self-describing.** A standard name must convey its
+meaning without source-path context. Never emit a bare generic noun as the
+entire name. ❌ `geometry` → ✅ `grid_object_geometry`; ❌ `data` → ✅
+`signal_data` (or a specific physical quantity); ❌ `value` → specify what
+kind of value. If the DD path's leaf is a generic container, use the parent
+structure or coordinate system as the physical qualifier.
+
+**NC-9 No tautological preposition chains.** Do not repeat the same head
+noun across `_of_`. ❌ `radial_position_of_reference_position` →
+✅ `radial_position_of_gap_reference_point`;
+❌ `normal_component_of_field_component` → ✅ `normal_component_of_field`.
+The qualifier after `_of_` must introduce a new physical entity, not restate
+the head noun.
+
+**NC-10 No spectral-decomposition suffixes.** Do not append
+`_fourier_coefficients`, `_fourier_modes`, or `_harmonics` as a generic
+suffix to a quantity name. Spectral decompositions are expressed either as
+`mode_<n>_of_<quantity>` for a specific mode, or as a named amplitude/phase
+quantity (`fourier_amplitude_of_<quantity>`). ❌
+`normal_field_fourier_coefficients` → ✅ `mode_amplitude_of_normal_field`.
+
+**NC-11 R and Z coordinates describe the same entity.** When both
+`radial_position_of_X` and `vertical_position_of_X` appear, their
+descriptions MUST agree on which entity X refers to. Do not describe the
+R-coordinate as on the plasma boundary and the Z-coordinate as on the
+secondary separatrix — either X is on the plasma boundary or it is on the
+separatrix, and both components share that context. Reread both candidates
+before emitting them. Concrete rule: if name is
+`radial_position_of_plasma_boundary`, the description must be the
+R-coordinate along the *same* boundary contour that
+`vertical_position_of_plasma_boundary` describes; the two names form a
+(R,Z) pair parameterising one curve.
+
+**NC-12 Batch-canonical spelling — never emit an abbreviated variant
+alongside its full form.** Within a single batch, and relative to the
+PREFERRED VOCABULARY for the domain, use one canonical spelling per
+concept. If `normalised_poloidal_magnetic_flux` is in vocabulary, do not
+also emit `norm_poloidal_magnetic_flux` — they are the same quantity.
+Spell concept words out in full: `normalised`, `perpendicular`, `parallel`,
+`temperature`, `position`, `maximum`, `minimum`, `separatrix`. The
+truncated forms `norm_`, `perp_`, `par_`, `temp_`, `pos_`, `max_`, `min_`,
+`sep_` are forbidden. ❌ `norm_poloidal_flux` → ✅
+`normalised_poloidal_flux`. ❌ `perp_velocity` → ✅
+`perpendicular_velocity_component`.
+
+**NC-13 Never use `outline` as a physical quantity.** An outline is a set
+of 2D points (a contour), not a scalar or vector field. Do not emit names
+like `vertical_outline_of_plasma_boundary` or `horizontal_outline_of_*`.
+For the Z-coordinate along the boundary contour use
+`vertical_position_of_plasma_boundary`; the 2D contour itself is expressed
+as the pair of `(radial_position, vertical_position)` standard names, not a
+single `outline` name.
+
+**NC-14 Distance-between-entities uses `distance_between_X_and_Y` form.**
+When naming a separation between two named features, place the two feature
+names in a symmetric tail: `distance_between_<feature_A>_and_<feature_B>`.
+Do not front-load one feature as the quantity head. ✅
+`distance_between_inner_and_outer_separatrices`; ❌
+`separatrix_distance_between_inner_and_outer`. ✅
+`distance_between_magnetic_axis_and_geometric_axis`; ❌
+`magnetic_axis_distance_to_geometric_axis`.
+
+**NC-15 Description must match the name's concept.** If the name is the
+underlying quantity (e.g. `normal_component_of_magnetic_field`), the
+description must describe that quantity — not a Fourier/spectral
+decomposition of it. If the source data is a Fourier coefficient or
+spectral mode, the name must mark the decomposition explicitly
+(`mode_amplitude_of_normal_field`, `fourier_coefficient_of_*`). Never
+describe a decomposition under a name that denotes the underlying field.
+
+### Physics disambiguation glossary
+
+These terms are NOT synonyms. Pick the one supported by the source
+description; do not substitute:
+
+- `geometric_axis` — the geometric center of the plasma cross-section
+  (boundary centroid). Used for minor-radius reference. UNIT: m.
+- `magnetic_axis` — the point where the poloidal magnetic field vanishes
+  inside the plasma (flux-surface center). Distinct from geometric axis.
+- `current_center` / `current_centroid` — the first moment of the toroidal
+  current density distribution. Distinct from both geometric and magnetic
+  axes. Only use when the DD explicitly exposes a current-moment quantity.
+- `separatrix` (unqualified) — the last closed flux surface. In
+  double-null and near-double-null configurations, there are `primary`
+  and `secondary` variants; qualify when the DD distinguishes them.
+- `plasma_boundary` — the physical boundary used for a given computation
+  (may be the separatrix or a limiter-defined contour). Always include the
+  qualifier — do not substitute `separatrix` unless the source specifies it.
+
 ### Naming captures the physical quantity, not how it was obtained
 
 Standard names describe **what** is measured, not **how** it was measured or processed.

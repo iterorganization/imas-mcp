@@ -29,7 +29,59 @@ CRITICAL_CHECKS = frozenset(
         "multi_subject_check",
         "placeholder_check",
         "unit_validity_check",
+        "generic_noun_check",
+        "tautology_check",
+        "spectral_suffix_check",
+        "abbreviation_check",
+        "name_description_consistency_check",
     }
+)
+
+# Single-token names that are too generic to be self-describing standard names.
+# A standard name must convey its meaning without requiring source-path context.
+_GENERIC_NOUN_NAMES = frozenset(
+    {
+        "geometry",
+        "data",
+        "value",
+        "quantity",
+        "parameter",
+        "coefficient",
+        "coefficients",
+        "element",
+        "elements",
+        "object",
+        "objects",
+        "node",
+        "nodes",
+        "index",
+        "measure",
+        "type",
+        "name",
+        "label",
+        "status",
+        "flag",
+        "mode",
+        "state",
+        "version",
+        "identifier",
+        "metadata",
+    }
+)
+
+# Regex patterns for tautological preposition chains.
+# A name like "radial_position_of_reference_position" is wrong — "position_of_*_position"
+# repeats the head noun. Similarly "component_of_*_component".
+_TAUTOLOGY_HEADS = (
+    "position",
+    "component",
+    "coordinate",
+    "angle",
+    "distance",
+    "radius",
+    "height",
+    "width",
+    "length",
 )
 
 # Tokens that indicate an unfilled prompt placeholder leaked through.
@@ -477,13 +529,213 @@ def cocos_specificity_check(
     return issues
 
 
+def generic_noun_check(candidate: dict[str, Any]) -> list[str]:
+    """Flag names that are bare generic nouns without physics-specific qualifiers.
+
+    A standard name must be self-describing. Names like ``geometry``, ``data``,
+    ``value``, or ``measure`` require source-path context to interpret and
+    cannot be used as standalone identifiers across facilities.
+    """
+    name = str(candidate.get("id") or candidate.get("name") or "").strip()
+    if not name:
+        return []
+    tokens = [t for t in name.split("_") if t]
+    if len(tokens) == 0:
+        return []
+
+    if len(tokens) == 1 and tokens[0] in _GENERIC_NOUN_NAMES:
+        return [
+            f"audit:generic_noun_check: name '{name}' is a bare generic noun; "
+            "add a physics-specific qualifier (e.g. 'grid_object_geometry' "
+            "instead of 'geometry')"
+        ]
+
+    if len(tokens) == 2:
+        if tokens[-1] in _GENERIC_NOUN_NAMES and tokens[0] in {
+            "raw",
+            "input",
+            "output",
+            "generic",
+            "basic",
+        }:
+            return [
+                f"audit:generic_noun_check: name '{name}' uses a generic "
+                "qualifier + generic noun; specify the physical quantity"
+            ]
+
+    return []
+
+
+def tautology_check(candidate: dict[str, Any]) -> list[str]:
+    """Flag tautological preposition chains like 'position_of_X_position'.
+
+    Detects patterns where the same head noun (position, component, coordinate,
+    etc.) appears on both sides of an ``_of_`` connector. These names are
+    stylistically awkward and signal a missing physics-specific qualifier.
+    """
+    name = str(candidate.get("id") or candidate.get("name") or "").strip()
+    if "_of_" not in name:
+        return []
+
+    parts = name.split("_of_")
+    if len(parts) < 2:
+        return []
+
+    issues: list[str] = []
+    for i in range(len(parts) - 1):
+        left_tokens = parts[i].split("_")
+        right_tokens = parts[i + 1].split("_")
+        if not left_tokens or not right_tokens:
+            continue
+        left_head = left_tokens[-1]
+        right_head = right_tokens[-1]
+        if left_head in _TAUTOLOGY_HEADS and left_head == right_head:
+            issues.append(
+                f"audit:tautology_check: name '{name}' repeats head noun "
+                f"'{left_head}' across '_of_' (tautological chain); "
+                f"replace the second occurrence with a specific qualifier"
+            )
+            break
+
+    return issues
+
+
+def spectral_suffix_check(candidate: dict[str, Any]) -> list[str]:
+    """Flag names ending in spectral-decomposition suffixes.
+
+    Names like ``*_fourier_coefficients``, ``*_fourier_modes``, or
+    ``*_harmonics`` place the decomposition type at the end as a generic
+    suffix. The preferred pattern is ``mode_<n>_of_<quantity>`` or to name
+    the decomposition component explicitly (e.g. ``fourier_amplitude_of_X``).
+    """
+    name = str(candidate.get("id") or candidate.get("name") or "").strip().lower()
+    bad_suffixes = (
+        "_fourier_coefficients",
+        "_fourier_coefficient",
+        "_fourier_modes",
+        "_fourier_mode",
+        "_harmonics",
+        "_harmonic_coefficients",
+    )
+    for suf in bad_suffixes:
+        if name.endswith(suf):
+            return [
+                f"audit:spectral_suffix_check: name '{name}' ends with "
+                f"spectral suffix '{suf}'; use a mode-prefixed or "
+                "amplitude-of-quantity pattern instead"
+            ]
+    return []
+
+
+# Abbreviation prefixes/infixes forbidden by NC-5. A standard name must spell
+# the concept out in full — no truncation or contraction.
+_FORBIDDEN_ABBREVIATIONS = (
+    ("norm_", "normalised_"),
+    ("_norm_", "_normalised_"),
+    ("perp_", "perpendicular_"),
+    ("_perp_", "_perpendicular_"),
+    ("par_", "parallel_"),
+    ("_par_", "_parallel_"),
+    ("temp_", "temperature_"),
+    ("_temp_", "_temperature_"),
+    ("pos_", "position_"),
+    ("_pos_", "_position_"),
+    ("max_", "maximum_"),
+    ("_max_", "_maximum_"),
+    ("min_", "minimum_"),
+    ("_min_", "_minimum_"),
+    ("avg_", "average_"),
+    ("_avg_", "_average_"),
+    ("sep_", "separatrix_"),
+    ("_sep_", "_separatrix_"),
+)
+
+
+def abbreviation_check(candidate: dict[str, Any]) -> list[str]:
+    """Flag names that use truncated/abbreviated concept words.
+
+    NC-5 mandates spelled-out concept words. Common offenders that slip past
+    the LLM despite the prompt rule: ``norm_``, ``perp_``, ``par_``,
+    ``temp_``, ``pos_``, ``max_``, ``min_``, ``sep_``. This audit catches
+    them deterministically.
+
+    False-positive safety: ``min``, ``max``, and ``avg`` are only flagged at
+    token boundaries (prefix, suffix, or between underscores). Chemical
+    element symbols and unit tokens are not affected since this audit only
+    inspects the standard-name identifier, not units or documentation.
+    """
+    name = str(candidate.get("id") or candidate.get("name") or "").strip().lower()
+    if not name:
+        return []
+    issues: list[str] = []
+    for abbrev, full in _FORBIDDEN_ABBREVIATIONS:
+        # Boundary-sensitive match: leading or interior token only.
+        if name.startswith(abbrev) or abbrev in f"_{name}_":
+            issues.append(
+                f"audit:abbreviation_check: name '{name}' contains "
+                f"abbreviation '{abbrev.strip('_')}'; spell as '{full.strip('_')}'"
+            )
+            break  # one report per name is sufficient
+    return issues
+
+
+# Description tokens that indicate spectral/decomposition semantics. If the
+# description claims the quantity is a Fourier coefficient/spectral mode but
+# the name carries none of these markers, the name-description pair is
+# inconsistent.
+_SPECTRAL_DESC_PATTERNS = (
+    "fourier coefficient",
+    "fourier mode",
+    "spectral coefficient",
+    "spectral mode",
+    "harmonic amplitude",
+    "harmonic coefficient",
+)
+_SPECTRAL_NAME_MARKERS = (
+    "mode_",
+    "_mode_",
+    "_amplitude",
+    "fourier",
+    "harmonic",
+    "spectral",
+)
+
+
+def name_description_consistency_check(candidate: dict[str, Any]) -> list[str]:
+    """Flag names whose description asserts a different concept than the name.
+
+    Specifically detects the case where the description describes a
+    Fourier/spectral decomposition but the name is simply the underlying
+    quantity (e.g. ``normal_component_of_magnetic_field`` described as
+    "Fourier coefficients of the normal component ..."). Either the name
+    must mark the decomposition explicitly, or the description must be
+    rewritten to describe the underlying quantity.
+    """
+    name = str(candidate.get("id") or candidate.get("name") or "").strip().lower()
+    description = str(candidate.get("description") or "").lower()
+    if not name or not description:
+        return []
+    # Only flag when description strongly implies a decomposition
+    if not any(pat in description for pat in _SPECTRAL_DESC_PATTERNS):
+        return []
+    # But the name carries no decomposition marker
+    if any(marker in name for marker in _SPECTRAL_NAME_MARKERS):
+        return []
+    return [
+        f"audit:name_description_consistency_check: description of '{name}' "
+        "claims a spectral/Fourier decomposition but the name encodes only "
+        "the underlying quantity; either add a decomposition marker to the "
+        "name or rewrite the description"
+    ]
+
+
 def run_audits(
     candidate: dict[str, Any],
     existing_sns_in_domain: list[dict[str, Any]] | None = None,
     source_path: str | None = None,
     source_cocos_type: str | None = None,
 ) -> list[str]:
-    """Run all six audits on a candidate and return tagged issue strings.
+    """Run all audits on a candidate and return tagged issue strings.
 
     Each returned string has the format ``"audit:<check_name>: <detail>"``.
 
@@ -504,6 +756,11 @@ def run_audits(
     all_issues.extend(latex_def_check(candidate))
     all_issues.extend(placeholder_check(candidate))
     all_issues.extend(unit_validity_check(candidate))
+    all_issues.extend(generic_noun_check(candidate))
+    all_issues.extend(tautology_check(candidate))
+    all_issues.extend(spectral_suffix_check(candidate))
+    all_issues.extend(abbreviation_check(candidate))
+    all_issues.extend(name_description_consistency_check(candidate))
     all_issues.extend(provenance_verb_check(candidate, source_path))
     all_issues.extend(synonym_check(candidate, existing_sns_in_domain or []))
     all_issues.extend(unit_dimension_check(candidate))
