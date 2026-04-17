@@ -62,12 +62,6 @@ imas.add_command(map_cmd, "map")
 @click.option("-v", "--verbose", is_flag=True, help="Enable verbose logging")
 @click.option("-q", "--quiet", is_flag=True, help="Suppress all logging except errors")
 @click.option(
-    "-c",
-    "--current-only",
-    is_flag=True,
-    help="Process only current DD version (default: all versions)",
-)
-@click.option(
     "--from-version",
     type=str,
     help="Start from a specific version (for incremental updates)",
@@ -115,7 +109,6 @@ imas.add_command(map_cmd, "map")
 def imas_build(
     verbose: bool,
     quiet: bool,
-    current_only: bool,
     from_version: str | None,
     reset_to: str | None,
     ids_filter: str | None,
@@ -143,7 +136,6 @@ def imas_build(
     \b
     Examples:
         imas-codex imas dd build                  # Build all DD versions (default)
-        imas-codex imas dd build --current-only   # Build current version only
         imas-codex imas dd build --from-version 4.0.0  # Incremental from 4.0.0
         imas-codex imas dd build --reset-to extracted  # Full rebuild from DD XML
         imas-codex imas dd build --reset-to built      # Re-enrich (prompt/model change)
@@ -159,7 +151,6 @@ def imas_build(
 
     set_litellm_offline_env()
 
-    from imas_codex import dd_version as current_dd_version
     from imas_codex.cli.discover.common import (
         DiscoveryConfig,
         make_log_print,
@@ -182,9 +173,7 @@ def imas_build(
         # Determine versions to process
         available_versions = get_all_dd_versions()
 
-        if current_only:
-            versions = [current_dd_version]
-        elif from_version:
+        if from_version:
             try:
                 start_idx = available_versions.index(from_version)
                 versions = available_versions[start_idx:]

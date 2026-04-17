@@ -3378,15 +3378,22 @@ def _batch_create_path_nodes(
                 rels=path_rels,
             )
 
-        # Step 6: Create INTRODUCED_IN relationships (only if path doesn't already have one)
-        # A path should only have one INTRODUCED_IN relationship - to the first version
-        # where it appeared. If it was deprecated and re-added, we don't re-introduce it.
+        # Step 6: Create INTRODUCED_IN relationships pointing to the EARLIEST version
+        # each path is known to exist. If an existing INTRODUCED_IN points to a later
+        # version (by semver), redirect it to the current version. This is idempotent
+        # and tolerates out-of-order builds and partial rebuilds.
         client.query(
             """
             UNWIND $paths AS p
             MATCH (path:IMASNode {id: p.id})
-            WHERE NOT EXISTS { (path)-[:INTRODUCED_IN]->(:DDVersion) }
             MATCH (v:DDVersion {id: $version})
+            OPTIONAL MATCH (path)-[old:INTRODUCED_IN]->(oldv:DDVersion)
+            WITH path, v, old, oldv
+            WHERE old IS NULL
+               OR oldv.major > v.major
+               OR (oldv.major = v.major AND oldv.minor > v.minor)
+               OR (oldv.major = v.major AND oldv.minor = v.minor AND oldv.patch > v.patch)
+            FOREACH (_ IN CASE WHEN old IS NULL THEN [] ELSE [1] END | DELETE old)
             MERGE (path)-[:INTRODUCED_IN]->(v)
         """,
             paths=batch,
@@ -3511,10 +3518,20 @@ def _batch_create_path_changes(
     if not change_list:
         return 0
 
-    # Create IMASNodeChange nodes with semantic classification
+    # Create IMASNodeChange nodes with semantic classification.
+    # For path_added events specifically: skip creation if any earlier version
+    # already has a path_added event for this path. This prevents spurious
+    # "re-introduction" events when builds start mid-stream (empty prev_paths
+    # would otherwise mark every path as newly added).
     client.query(
         """
         UNWIND $changes AS c
+        WITH c
+        WHERE c.change_type <> 'path_added'
+           OR NOT EXISTS {
+                MATCH (:IMASNode {id: c.path})<-[:FOR_IMAS_PATH]-
+                      (:IMASNodeChange {change_type: 'path_added'})
+           }
         MERGE (change:IMASNodeChange {id: c.id})
         SET change.change_type = c.change_type,
             change.old_value = c.old_value,
@@ -3527,7 +3544,7 @@ def _batch_create_path_changes(
         changes=change_list,
     )
 
-    # Create relationships
+    # Create relationships (only for changes that were actually written above)
     client.query(
         """
         UNWIND $changes AS c
