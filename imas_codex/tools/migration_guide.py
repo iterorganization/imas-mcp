@@ -210,8 +210,9 @@ def _get_removals(
 ) -> list[dict]:
     """Get removed paths that are NOT renames.
 
-    Excludes paths that have a RENAMED_TO successor — those are reported
-    by _get_renames() instead. Only returns genuine removals.
+    Excludes paths that have a RENAMED_TO successor OR whose ancestor
+    (path prefix) was renamed — those are reported by _get_renames()
+    instead. Only returns genuine removals.
     """
     ids_clause = ""
     params: dict = {"versions": version_range}
@@ -223,7 +224,11 @@ def _get_removals(
         MATCH (c:IMASNodeChange)-[:IN_VERSION]->(v:DDVersion)
         WHERE v.id IN $versions AND c.change_type = 'path_removed'
         MATCH (c)-[:FOR_IMAS_PATH]->(p:IMASNode)
-        WHERE NOT EXISTS {{ (p)-[:RENAMED_TO]->() }} {ids_clause}
+        WHERE NOT EXISTS {{ (p)-[:RENAMED_TO]->() }}
+        AND NOT EXISTS {{
+            MATCH (ancestor:IMASNode)-[:RENAMED_TO]->()
+            WHERE p.id STARTS WITH ancestor.id + '/'
+        }} {ids_clause}
         RETURN p.ids AS ids, p.id AS path
         ORDER BY p.ids, p.id
         """,
