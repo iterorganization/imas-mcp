@@ -249,6 +249,17 @@ spectral mode, the name must mark the decomposition explicitly
 (`mode_amplitude_of_normal_field`, `fourier_coefficient_of_*`). Never
 describe a decomposition under a name that denotes the underlying field.
 
+**NC-16 Prefer `_of_<entity>` over `_at_<entity>` for properties of a
+named entity.** When the quantity is a property computed on/along a named
+entity (the plasma boundary, the separatrix, the magnetic axis), use
+`<quantity>_of_<entity>`. Reserve `_at_<location>` for values sampled at a
+specific point/location that is not itself a physical entity of the
+configuration. Do not emit both forms for the same quantity within a batch
+— pick one. ✅ `poloidal_magnetic_flux_of_plasma_boundary`; ❌ both
+`..._of_plasma_boundary` and `..._at_plasma_boundary`. Trivial cases (e.g.
+normalised flux = 1 on the boundary by construction) should simply be
+skipped, not named.
+
 ### Physics disambiguation glossary
 
 These terms are NOT synonyms. Pick the one supported by the source
