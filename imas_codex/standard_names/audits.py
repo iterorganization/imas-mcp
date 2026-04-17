@@ -45,6 +45,9 @@ CRITICAL_CHECKS = frozenset(
         "position_coordinate_check",
         "vector_field_component_check",
         "segment_order_check",
+        "aggregator_order_check",
+        "named_feature_preposition_check",
+        "diamagnetic_component_check",
     }
 )
 
@@ -1345,6 +1348,127 @@ def segment_order_check(candidate: dict[str, Any]) -> list[str]:
     return issues
 
 
+_AGGREGATOR_SUFFIXES = (
+    "volume_averaged",
+    "flux_surface_averaged",
+    "surface_averaged",
+    "line_averaged",
+    "density_averaged",
+    "time_averaged",
+)
+
+
+def aggregator_order_check(candidate: dict[str, Any]) -> list[str]:
+    """Flag Aggregator tokens appearing as a trailing suffix instead of a prefix.
+
+    ISN grammar places Aggregator segments (``volume_averaged``,
+    ``flux_surface_averaged``, ``line_averaged``, ``time_averaged``, etc.) as a
+    prefix before the physical base, not as a trailing suffix after it.
+
+    Caught from transport iteration:
+    ``ion_temperature_volume_averaged`` → ``volume_averaged_ion_temperature``
+    (matches pattern already used by ``volume_averaged_electron_temperature``).
+    """
+    name = str(candidate.get("id") or candidate.get("name") or "").strip().lower()
+    if not name:
+        return []
+    issues: list[str] = []
+    for agg in _AGGREGATOR_SUFFIXES:
+        suffix = f"_{agg}"
+        if not name.endswith(suffix):
+            continue
+        stem = name[: -len(suffix)]
+        # Skip if the aggregator is immediately after another aggregator prefix
+        # (defensive — unlikely in practice).
+        if not stem:
+            continue
+        issues.append(
+            f"audit:aggregator_order_check: name '{name}' ends with aggregator "
+            f"token '_{agg}'; Aggregator segments must precede the Subject/Base. "
+            f"Rename to '{agg}_{stem}'."
+        )
+    return issues
+
+
+_NAMED_FEATURE_TOKENS = (
+    "magnetic_axis",
+    "plasma_boundary",
+    "last_closed_flux_surface",
+    "separatrix",
+    "x_point",
+    "o_point",
+    "strike_point",
+    "inner_strike_point",
+    "outer_strike_point",
+    "stagnation_point",
+)
+
+
+def named_feature_preposition_check(candidate: dict[str, Any]) -> list[str]:
+    """Flag ``_at_<named_feature>`` when ``_of_<named_feature>`` is canonical.
+
+    When a scalar property is evaluated at a named geometric feature (magnetic
+    axis, x-point, plasma boundary, separatrix, strike point), the possessive
+    ``_of_`` form is canonical and prevents silent synonym pairs such as
+    ``poloidal_magnetic_flux_at_magnetic_axis`` vs
+    ``poloidal_magnetic_flux_of_magnetic_axis``.
+
+    Caught from transport iteration:
+    ``poloidal_magnetic_flux_at_magnetic_axis`` →
+    ``poloidal_magnetic_flux_of_magnetic_axis``.
+    ``loop_voltage_at_last_closed_flux_surface`` →
+    ``loop_voltage_of_last_closed_flux_surface``.
+    """
+    name = str(candidate.get("id") or candidate.get("name") or "").strip().lower()
+    if not name:
+        return []
+    issues: list[str] = []
+    for feat in _NAMED_FEATURE_TOKENS:
+        at_pattern = f"_at_{feat}"
+        if name.endswith(at_pattern) or at_pattern + "_" in name:
+            suggested = name.replace(at_pattern, f"_of_{feat}")
+            issues.append(
+                f"audit:named_feature_preposition_check: name '{name}' uses "
+                f"'_at_{feat}'; named geometric features take the possessive "
+                f"'_of_' form. Rename to '{suggested}'."
+            )
+    return issues
+
+
+_DIAMAGNETIC_COMPONENT_PATTERN = "diamagnetic_component_of_"
+
+
+def diamagnetic_component_check(candidate: dict[str, Any]) -> list[str]:
+    """Flag ``diamagnetic_component_of_*`` — diamagnetic is a drift, not a component.
+
+    ``diamagnetic`` labels a specific drift velocity ``v_dia = B × ∇p / (qnB²)``,
+    not a spatial projection axis like ``toroidal`` or ``poloidal``. Using
+    ``diamagnetic_component_of_<X>`` therefore either:
+
+    - Makes no physical sense for scalars and projected fields (e.g.
+      ``diamagnetic_component_of_electric_field``), or
+    - Is redundant for a drift velocity (``v_dia`` IS the diamagnetic drift,
+      not a component of something else).
+
+    Canonical constructions:
+    - For the drift velocity itself → ``diamagnetic_drift_velocity`` (no
+      ``_component_of_``).
+    - For a flux driven by the diamagnetic drift → ``diamagnetic_<base>`` or
+      ``<base>_due_to_diamagnetic_drift``.
+    """
+    name = str(candidate.get("id") or candidate.get("name") or "").strip().lower()
+    if _DIAMAGNETIC_COMPONENT_PATTERN not in name:
+        return []
+    tail = name.split(_DIAMAGNETIC_COMPONENT_PATTERN, 1)[1]
+    return [
+        f"audit:diamagnetic_component_check: name '{name}' uses "
+        f"'diamagnetic_component_of_{tail}' — 'diamagnetic' labels a drift "
+        f"(v_dia = B × ∇p / (qnB²)), not a spatial projection axis. Use "
+        f"'diamagnetic_drift_velocity' for the drift itself, or "
+        f"'<base>_due_to_diamagnetic_drift' for a flux driven by it."
+    ]
+
+
 def run_audits(
     candidate: dict[str, Any],
     existing_sns_in_domain: list[dict[str, Any]] | None = None,
@@ -1393,6 +1517,9 @@ def run_audits(
     all_issues.extend(position_coordinate_check(candidate))
     all_issues.extend(vector_field_component_check(candidate))
     all_issues.extend(segment_order_check(candidate))
+    all_issues.extend(aggregator_order_check(candidate))
+    all_issues.extend(named_feature_preposition_check(candidate))
+    all_issues.extend(diamagnetic_component_check(candidate))
 
     return all_issues
 

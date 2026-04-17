@@ -1030,3 +1030,123 @@ class TestPeakingFactorExemption:
             }
         )
         assert issues
+
+
+class TestAggregatorOrderCheck:
+    def test_fail_trailing_volume_averaged(self):
+        from imas_codex.standard_names.audits import aggregator_order_check
+
+        issues = aggregator_order_check({"id": "ion_temperature_volume_averaged"})
+        assert issues and "aggregator_order_check" in issues[0]
+        assert "volume_averaged_ion_temperature" in issues[0]
+
+    def test_fail_trailing_flux_surface_averaged(self):
+        from imas_codex.standard_names.audits import aggregator_order_check
+
+        issues = aggregator_order_check({"id": "current_density_flux_surface_averaged"})
+        assert issues and "flux_surface_averaged" in issues[0]
+
+    def test_fail_trailing_line_averaged(self):
+        from imas_codex.standard_names.audits import aggregator_order_check
+
+        issues = aggregator_order_check({"id": "electron_density_line_averaged"})
+        assert issues
+
+    def test_pass_leading_volume_averaged(self):
+        from imas_codex.standard_names.audits import aggregator_order_check
+
+        assert (
+            aggregator_order_check({"id": "volume_averaged_electron_temperature"}) == []
+        )
+
+    def test_pass_no_aggregator(self):
+        from imas_codex.standard_names.audits import aggregator_order_check
+
+        assert aggregator_order_check({"id": "electron_temperature"}) == []
+
+
+class TestNamedFeaturePrepositionCheck:
+    def test_fail_at_magnetic_axis(self):
+        from imas_codex.standard_names.audits import named_feature_preposition_check
+
+        issues = named_feature_preposition_check(
+            {"id": "poloidal_magnetic_flux_at_magnetic_axis"}
+        )
+        assert issues and "poloidal_magnetic_flux_of_magnetic_axis" in issues[0]
+
+    def test_fail_at_last_closed_flux_surface(self):
+        from imas_codex.standard_names.audits import named_feature_preposition_check
+
+        issues = named_feature_preposition_check(
+            {"id": "loop_voltage_at_last_closed_flux_surface"}
+        )
+        assert issues
+
+    def test_fail_at_x_point(self):
+        from imas_codex.standard_names.audits import named_feature_preposition_check
+
+        issues = named_feature_preposition_check(
+            {"id": "poloidal_magnetic_flux_at_x_point"}
+        )
+        assert issues
+
+    def test_pass_of_magnetic_axis(self):
+        from imas_codex.standard_names.audits import named_feature_preposition_check
+
+        assert (
+            named_feature_preposition_check(
+                {"id": "poloidal_magnetic_flux_of_magnetic_axis"}
+            )
+            == []
+        )
+
+    def test_pass_of_plasma_boundary(self):
+        from imas_codex.standard_names.audits import named_feature_preposition_check
+
+        assert (
+            named_feature_preposition_check(
+                {"id": "poloidal_magnetic_flux_of_plasma_boundary"}
+            )
+            == []
+        )
+
+    def test_pass_unrelated_name(self):
+        from imas_codex.standard_names.audits import named_feature_preposition_check
+
+        assert named_feature_preposition_check({"id": "electron_temperature"}) == []
+
+
+class TestDiamagneticComponentCheck:
+    def test_fail_diamagnetic_component_of_electric_field(self):
+        from imas_codex.standard_names.audits import diamagnetic_component_check
+
+        issues = diamagnetic_component_check(
+            {"id": "diamagnetic_component_of_electric_field"}
+        )
+        assert issues and "drift" in issues[0].lower()
+
+    def test_fail_diamagnetic_component_of_ion_velocity(self):
+        from imas_codex.standard_names.audits import diamagnetic_component_check
+
+        issues = diamagnetic_component_check(
+            {"id": "diamagnetic_component_of_ion_velocity"}
+        )
+        assert issues
+
+    def test_pass_diamagnetic_drift_velocity(self):
+        from imas_codex.standard_names.audits import diamagnetic_component_check
+
+        assert diamagnetic_component_check({"id": "diamagnetic_drift_velocity"}) == []
+
+    def test_pass_diamagnetic_current_density(self):
+        from imas_codex.standard_names.audits import diamagnetic_component_check
+
+        assert diamagnetic_component_check({"id": "diamagnetic_current_density"}) == []
+
+    def test_pass_toroidal_component(self):
+        from imas_codex.standard_names.audits import diamagnetic_component_check
+
+        assert (
+            diamagnetic_component_check({"id": "toroidal_component_of_electric_field"})
+            == []
+        )

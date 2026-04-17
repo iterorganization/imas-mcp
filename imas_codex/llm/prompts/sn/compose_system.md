@@ -508,6 +508,20 @@ is provided as context for your naming decisions.
     - ✓ `toroidal_component_of_ion_rotation_frequency` (explicit preposition form).
     - ✗ `ion_rotation_frequency_toroidal` (trailing Component suffix — parser misassigns).
     - ✗ `heat_flux_poloidal` — use `poloidal_heat_flux` or `poloidal_component_of_heat_flux`.
+20. **Aggregator position — prefix, NEVER trail** (ISN grammar requirement): Aggregator tokens (`volume_averaged`, `flux_surface_averaged`, `surface_averaged`, `line_averaged`, `density_averaged`, `time_averaged`) express an averaging operator applied to a base quantity. They MUST appear as a leading prefix, never as a trailing suffix.
+    - ✓ `volume_averaged_electron_temperature`, `line_averaged_electron_density`, `flux_surface_averaged_current_density`.
+    - ✗ `ion_temperature_volume_averaged`, `current_density_flux_surface_averaged`, `electron_density_line_averaged`.
+    - This prevents silent synonym pairs between the prefix and suffix forms.
+21. **Named-feature preposition — use `_of_` for magnetic axis, x-point, strike point, LCFS** (extension of Rule 18): All named geometric features take the possessive `_of_` form, not `_at_`. The vocabulary includes: `magnetic_axis`, `plasma_boundary`, `last_closed_flux_surface`, `separatrix`, `x_point`, `o_point`, `strike_point`, `inner_strike_point`, `outer_strike_point`, `stagnation_point`.
+    - ✓ `poloidal_magnetic_flux_of_magnetic_axis`, `loop_voltage_of_last_closed_flux_surface`, `poloidal_magnetic_flux_of_x_point`.
+    - ✗ `poloidal_magnetic_flux_at_magnetic_axis`, `loop_voltage_at_last_closed_flux_surface`, `poloidal_magnetic_flux_at_x_point`.
+22. **`diamagnetic` is a drift, NOT a projection axis** (physics semantic — critical): Unlike `toroidal`, `poloidal`, `radial`, or `parallel`, `diamagnetic` does NOT label a spatial projection axis. The diamagnetic drift velocity `v_dia = B × ∇p / (qnB²)` is itself a specific drift — it is not a component of another velocity along a diamagnetic axis. Therefore `diamagnetic_component_of_<X>` is ALWAYS physically wrong.
+    - ✓ `diamagnetic_drift_velocity` (the drift itself).
+    - ✓ `ion_diamagnetic_drift_velocity`, `electron_diamagnetic_drift_velocity`.
+    - ✓ `<base>_due_to_diamagnetic_drift` (a flux/current driven by the drift).
+    - ✗ `diamagnetic_component_of_electric_field` — makes no physical sense; an electric field does not have a "diamagnetic component."
+    - ✗ `diamagnetic_component_of_ion_velocity` — the diamagnetic drift IS a velocity; it is not a component of the ion bulk velocity.
+    - Use `toroidal`, `poloidal`, `parallel`, `perpendicular`, `radial` for projection axes; reserve `diamagnetic` for the drift-velocity concept itself.
 
 ## Output Format
 
