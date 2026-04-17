@@ -10,7 +10,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from imas_codex.core.node_categories import ENRICHABLE_CATEGORIES
+from imas_codex.core.node_categories import (
+    EMBEDDABLE_CATEGORIES,
+    ENRICHABLE_CATEGORIES,
+)
 from imas_codex.discovery.base.progress import (
     DataDrivenProgressDisplay,
     StageDisplaySpec,
@@ -85,7 +88,7 @@ def _build_stats(state: DDBuildState) -> list[tuple[str, str, str]]:
     if clusters:
         stats.append(("clusters", format_count(clusters), "cyan"))
 
-    cost = state.enrich_stats.cost
+    cost = state.total_cost
     if cost > 0:
         stats.append(("cost", f"${cost:.2f}", "yellow"))
 
@@ -100,7 +103,17 @@ def _build_pending(state: DDBuildState) -> list[tuple[str, int]]:
     pending_enrich = counts.get("built", 0)
     pending.append(("enrich", pending_enrich))
 
-    pending_embed = counts.get("enriched", 0)
+    pending_refine = counts.get("enriched", 0)
+    pending.append(("refine", pending_refine))
+
+    # Embed only applies to EMBEDDABLE_CATEGORIES (quantity, geometry)
+    # — coordinate nodes stop at refined. Use embeddable-scoped counts
+    # when available, falling back to enrichable-scoped refined count.
+    embed_counts = state.embeddable_status_counts
+    if embed_counts:
+        pending_embed = embed_counts.get("refined", 0)
+    else:
+        pending_embed = counts.get("refined", 0)
     pending.append(("embed", pending_embed))
 
     # Cluster is a single-shot phase: pending if embed is done but cluster hasn't run
@@ -133,13 +146,14 @@ def _get_accumulated_build_time() -> float:
 
 
 def _graph_refresh(state: DDBuildState, _facility: str) -> None:
-    """Refresh enrich/embed progress from graph status counts.
+    """Refresh enrich/refine/embed progress and LLM costs from graph.
 
-    Queries ``count_imas_nodes_by_status`` and updates the WorkerStats
-    ``processed`` and ``total`` from the authoritative graph state,
-    ensuring the display tracks actual graph progress rather than
-    in-memory counters that may miss items processed by other workers.
+    Queries ``count_imas_nodes_by_status`` for progress and per-node
+    atomic cost fields for authoritative cost tracking.  Graph costs
+    are synced into ``WorkerStats.cost`` so the display always reflects
+    the source of truth — no in-memory accumulators needed.
     """
+    from imas_codex.graph.client import GraphClient
     from imas_codex.graph.dd_graph_ops import count_imas_nodes_by_status
 
     try:
@@ -152,34 +166,52 @@ def _graph_refresh(state: DDBuildState, _facility: str) -> None:
     if total <= 0:
         return
 
-    # Enrich: built → enriched/embedded.  Processed = not-built.
+    # Enrich: built → enriched/refined/embedded.  Processed = not-built.
     built = counts.get("built", 0)
     enrich_processed = total - built
     state.enrich_stats.total = total
     state.enrich_stats.set_baseline(enrich_processed)
     state.enrich_stats.processed = enrich_processed
 
-    # Embed: enriched → embedded.  Processed = embedded count.
+    # Refine: enriched → refined/embedded.  Processed = refined + embedded.
+    refined = counts.get("refined", 0)
     embedded = counts.get("embedded", 0)
-    state.embed_stats.total = total
-    state.embed_stats.set_baseline(embedded)
-    state.embed_stats.processed = embedded
+    refine_processed = refined + embedded
+    state.refine_stats.total = total
+    state.refine_stats.set_baseline(refine_processed)
+    state.refine_stats.processed = refine_processed
 
-    # Accumulated enrichment cost from graph (source of truth across runs)
+    # Embed uses EMBEDDABLE_CATEGORIES (quantity+geometry, excludes coordinate)
     try:
-        from imas_codex.graph.client import GraphClient
+        embed_counts = count_imas_nodes_by_status(node_categories=EMBEDDABLE_CATEGORIES)
+        state.embeddable_status_counts = embed_counts
+        embed_total = embed_counts.get("total", 0)
+        embed_done = embed_counts.get("embedded", 0)
+        state.embed_stats.total = embed_total
+        state.embed_stats.set_baseline(embed_done)
+        state.embed_stats.processed = embed_done
+    except Exception:
+        # Fallback: use enrichable counts (slight overcount from coordinates)
+        state.embed_stats.total = total
+        state.embed_stats.set_baseline(embedded)
+        state.embed_stats.processed = embedded
 
+    # Sync LLM costs from per-node atomic fields (source of truth)
+    try:
         with GraphClient() as gc:
             cost_result = gc.query(
                 """
-                MATCH (v:DDVersion)
-                WHERE v.enrichment_cost IS NOT NULL
-                RETURN sum(v.enrichment_cost) AS accumulated_cost
+                MATCH (p:IMASNode)
+                WHERE p.enrich_llm_cost IS NOT NULL
+                   OR p.refine_llm_cost IS NOT NULL
+                RETURN
+                    coalesce(sum(p.enrich_llm_cost), 0) AS enrich_cost,
+                    coalesce(sum(p.refine_llm_cost), 0) AS refine_cost
                 """
             )
-        state.accumulated_cost = (
-            cost_result[0]["accumulated_cost"] or 0.0 if cost_result else 0.0
-        )
+        if cost_result:
+            state.enrich_stats.cost = float(cost_result[0]["enrich_cost"] or 0.0)
+            state.refine_stats.cost = float(cost_result[0]["refine_cost"] or 0.0)
     except Exception:
         pass
 
@@ -229,6 +261,13 @@ def create_dd_build_display(
             phase_attr="enrich_phase",
         ),
         StageDisplaySpec(
+            name="REFINE",
+            style="bold red",
+            group="refine",
+            stats_attr="refine_stats",
+            phase_attr="refine_phase",
+        ),
+        StageDisplaySpec(
             name="EMBED",
             style="bold magenta",
             group="embed",
@@ -254,6 +293,5 @@ def create_dd_build_display(
         graph_refresh_fn=lambda f: _graph_refresh(state, f),
         stats_fn=lambda: _build_stats(state),
         pending_fn=lambda: _build_pending(state),
-        accumulated_cost_fn=lambda: state.accumulated_cost,
         accumulated_time_fn=lambda: _get_accumulated_build_time(),
     )

@@ -101,9 +101,7 @@ class DDBuildState(DiscoveryStateBase):
 
     # Status breakdown from graph (for pending display)
     imas_node_status_counts: dict[str, int] = field(default_factory=dict)
-
-    # Accumulated cost from prior builds (queried from graph)
-    accumulated_cost: float = 0.0
+    embeddable_status_counts: dict[str, int] = field(default_factory=dict)
 
     # Auxiliary IDS / identifier enrichment and embedding run once per build
     aux_enrichment_done: bool = False
@@ -1435,15 +1433,18 @@ def _write_build_metadata(state: DDBuildState) -> None:
 
     try:
         with GraphClient() as client:
-            # Compute definitive costs from atomically persisted per-node data
+            # Compute definitive costs from atomically persisted per-node data.
+            # Query all IMASNodes — the graph is cleared before each full rebuild,
+            # so all per-node costs belong to this build cycle.
             cost_result = client.query(
                 """
-                MATCH (p:IMASNode)-[:AT_DD_VERSION]->(v:DDVersion {id: $version})
+                MATCH (p:IMASNode)
+                WHERE p.enrich_llm_cost IS NOT NULL
+                   OR p.refine_llm_cost IS NOT NULL
                 RETURN
                     coalesce(sum(p.enrich_llm_cost), 0) AS enrich_cost,
                     coalesce(sum(p.refine_llm_cost), 0) AS refine_cost
-                """,
-                version=current_dd_version,
+                """
             )
             enrich_cost = cost_result[0]["enrich_cost"] if cost_result else 0.0
             refine_cost = cost_result[0]["refine_cost"] if cost_result else 0.0
