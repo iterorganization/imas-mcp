@@ -1271,7 +1271,9 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
 # =============================================================================
 
 
-def _validate_via_isn(entry: dict) -> tuple[list[str], dict]:
+def _validate_via_isn(
+    entry: dict, *, name_only: bool = False
+) -> tuple[list[str], dict]:
     """Construct ISN Pydantic model and collect ALL validation issues.
 
     Returns:
@@ -1299,12 +1301,13 @@ def _validate_via_isn(entry: dict) -> tuple[list[str], dict]:
     isn_dict: dict[str, Any] = {
         "name": entry.get("id", ""),
         "kind": entry.get("kind", "scalar"),
-        "description": entry.get("description", ""),
-        "documentation": entry.get("documentation", ""),
-        "tags": entry.get("tags", []),
-        "links": entry.get("links", []),
         "dd_paths": isn_dd_paths,
     }
+    if not name_only:
+        isn_dict["description"] = entry.get("description", "")
+        isn_dict["documentation"] = entry.get("documentation", "")
+        isn_dict["tags"] = entry.get("tags", [])
+        isn_dict["links"] = entry.get("links", [])
     # ISN requires physics_domain — fall back to "general" when DD has no domain
     isn_dict["physics_domain"] = entry.get("physics_domain") or "general"
     # ISN metadata kind forbids unit field entirely
@@ -1317,7 +1320,7 @@ def _validate_via_isn(entry: dict) -> tuple[list[str], dict]:
     try:
         from imas_standard_names.models import create_standard_name_entry
 
-        model = create_standard_name_entry(isn_dict)
+        model = create_standard_name_entry(isn_dict, name_only=name_only)
     except ValidationError as e:
         summary["pydantic"]["passed"] = False
         summary["pydantic"]["error_count"] = len(e.errors())
@@ -1488,7 +1491,9 @@ async def validate_worker(state: StandardNameBuildState, **_kwargs) -> None:
                             pass
 
                     # ISN three-layer validation (annotate, never reject)
-                    issues, layer_summary = _validate_via_isn(entry)
+                    issues, layer_summary = _validate_via_isn(
+                        entry, name_only=state.name_only
+                    )
 
                     # --- L3: Post-gen audits ---
                     try:
