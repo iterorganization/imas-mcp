@@ -404,7 +404,7 @@ def _load_fixture_graph(client) -> None:
             "name: $name, "
             "documentation: $documentation, data_type: $data_type, units: $units, "
             "node_type: $node_type, physics_domain: $physics_domain, "
-            "node_category: 'data', "
+            "node_category: 'quantity', "
             "lifecycle_status: $lifecycle_status, "
             "cocos_transformation_type: $cocos_transformation_type})",
             id=p["id"],

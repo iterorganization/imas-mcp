@@ -116,16 +116,17 @@ class VersionTool:
 
         # ── Mode 2: bulk query ────────────────────────────────────────────────
         if not path_list:
-            if not change_type_filter and not follow_rename_chains:
+            if not change_type_filter:
+                # Rename-chain-only mode requires an ids_filter for scope;
+                # otherwise error out so callers must supply context.
+                if follow_rename_chains and ids_filter:
+                    return await self._rename_chain_query(ids_filter=ids_filter)
                 return {
                     "error": (
                         "Provide either 'paths' for per-path history, "
                         "or 'change_type_filter' for a bulk query."
                     )
                 }
-            if follow_rename_chains and not change_type_filter:
-                # Rename-chain only mode
-                return await self._rename_chain_query(ids_filter=ids_filter)
             result = await self._bulk_query(
                 change_type_filter=change_type_filter,
                 ids_filter=ids_filter,
