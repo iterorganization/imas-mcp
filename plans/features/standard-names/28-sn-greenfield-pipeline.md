@@ -574,12 +574,21 @@ Grand total with vectors: ~$65-70 per full generation run.
 
 ## Implementation Phases
 
-### Phase 0: Prerequisites (from DD Classification Plan)
+### Phase 0: Prerequisites (from DD Classification Plan) — ✅ complete
 
-- DD `node_category` labels in place (`quantity`, `geometry`)
-- DD nodes re-enriched with sonnet (better descriptions → better SN context)
-- Classifier bugs fixed (reversed traversal, overbroad coordinate)
-- Verify existing claim infrastructure (`claimed_at`, `claim_token`, `@retry_on_deadlock`) covers new workers
+- ✅ DD `node_category` labels in place (`quantity`, `geometry`, `coordinate`, `metadata`)
+  — verifiable via `get_ids_summary` / `list_dd_paths --node-category`.
+- ✅ DD nodes re-enriched with richer sonnet descriptions (see distribution probes in
+  `plans/features/dd-search-quality-ab.md`).
+- ✅ Classifier bugs fixed (reversed traversal, overbroad coordinate).
+- ✅ Existing claim infrastructure (`claimed_at`, `claim_token`, `@retry_on_deadlock`)
+  covers new workers.
+- ✅ `cocos_label_transformation` and `cocos_transformation_expression` present on all
+  COCOS-dependent DD leaves — used directly in PRELINK + name-worker prompt.
+- ✅ `find_related_dd_paths` cross-IDS similarity bug (self-hits, missing cocos_kin) is
+  **fixed** — `cocos_kin` section now returns COCOS-matched siblings on live graph.
+- ✅ `search_dd_paths` / `list_dd_paths` accept `cocos_transformation_type` filter and
+  surface the COCOS line in the formatter — usable from inside name_worker prompts.
 
 ### Phase 1: `name_worker` (replaces compose_worker)
 
@@ -591,6 +600,9 @@ Grand total with vectors: ~$65-70 per full generation run.
    - Keep grammar, vocabulary, anti-patterns, naming rules
    - Smaller system prompt (~15K tokens vs ~30K)
 3. Extract PRELINK context gathering from `_enrich_batch_items()` into clean module
+   - Use the fixed `find_related_dd_paths` to retrieve cross-IDS siblings
+   - Include `cocos_kin` as a first-class context slot (COCOS-aware grouping)
+   - Filter candidate sources by `node_category=quantity` via `list_dd_paths`
 4. Implement `name_worker()` with claim loop:
    - Claims StandardNameSource batches from graph
    - Runs PRELINK (graph reads)
@@ -658,7 +670,26 @@ verify retry improves quality scores; verify quarantine captures critical failur
 1. `search_standard_names`: show HAS_COMPONENT children for vector results
 2. `search_standard_names`: show vector parent for scalar component results
 3. Add `kind` filter parameter
-4. Add `node_category` filter (from DD plan) to `search_dd_paths`, `list_dd_paths`
+4. ✅ `node_category` filter on `search_dd_paths`/`list_dd_paths` — **shipped**
+5. ✅ `cocos_transformation_type` filter on `search_dd_paths`/`list_dd_paths` — **shipped**
+   (see `plans/features/dd-search-quality-ab.md`). Use from `sn review` / `sn benchmark`
+   to scope scoring runs to a single COCOS family.
+
+### Phase 5: Follow-ons from DD search quality A/B (Dec 2024)
+
+Newly unlocked by the DD tool upgrades — worth planning once Phase 1 lands:
+
+1. **COCOS-aware PRELINK filtering**: when a source has
+   `cocos_label_transformation`, scope the "related paths" slot to the same label via
+   `find_related_dd_paths(..., relationship_types=["cocos_kin"])`. Expect stronger
+   sign-convention consistency in generated names.
+2. **Keyword vocab-gap detection**: the LLM-enriched `keywords` field on DD nodes is
+   dense and physics-specific. Cross-check vocab gaps (`VocabGap` nodes) against DD
+   keywords to propose high-precision additions to the ISN grammar vocabulary before
+   re-running name_worker.
+3. **Unit-companion anchoring for name consolidation**: CONSOLIDATE can use the
+   `unit_companions` output of `find_related_dd_paths` as a weak-dedup signal
+   (same physical quantity across IDSs → single SN).
 
 ---
 

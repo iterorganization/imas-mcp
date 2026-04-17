@@ -1158,6 +1158,8 @@ def format_search_dd_report(result: Any, cluster_result: Any | None = None) -> s
                 parts.append(f"  Introduced: DD {hit.introduced_after_version}")
             if hit.keywords:
                 parts.append(f"  Keywords: {', '.join(hit.keywords)}")
+            if hit.cocos_label_transformation:
+                parts.append(f"  COCOS: {hit.cocos_label_transformation}")
             if hit.cluster_labels:
                 parts.append(f"  Clusters: {', '.join(hit.cluster_labels)}")
             if hit.see_also:
@@ -1248,7 +1250,9 @@ def format_path_context_report(result: dict[str, Any]) -> str:
             parts.append(f"\n**{cluster}**")
             for item in items:
                 doc = f" — {item['doc']}" if item.get("doc") else ""
-                parts.append(f"  - `{item['path']}`{doc}")
+                cat = item.get("node_category")
+                tag = f" [{cat}]" if cat else ""
+                parts.append(f"  - `{item['path']}`{tag}{doc}")
         parts.append("")
 
     if "coordinate_partners" in sections:
@@ -1274,7 +1278,36 @@ def format_path_context_report(result: dict[str, Any]) -> str:
             parts.append(f"\n**{unit}**")
             for item in items:
                 doc = f" — {item['doc']}" if item.get("doc") else ""
-                parts.append(f"  - `{item['path']}`{doc}")
+                cat = item.get("node_category")
+                dom = item.get("physics_domain")
+                tag_bits = []
+                if cat:
+                    tag_bits.append(cat)
+                if dom:
+                    tag_bits.append(dom)
+                tag = f" [{' · '.join(tag_bits)}]" if tag_bits else ""
+                parts.append(f"  - `{item['path']}`{tag}{doc}")
+        parts.append("")
+
+    if "cocos_kin" in sections:
+        kin = sections["cocos_kin"]
+        cocos_type = kin[0].get("cocos_type") if kin else None
+        header = (
+            f"### COCOS Kin ({len(kin)} paths, {cocos_type})"
+            if cocos_type
+            else f"### COCOS Kin ({len(kin)} paths)"
+        )
+        parts.append(header)
+        by_ids: dict[str, list[dict[str, Any]]] = {}
+        for item in kin:
+            by_ids.setdefault(item["ids"], []).append(item)
+        for ids_name, items in by_ids.items():
+            parts.append(f"\n**{ids_name}**")
+            for item in items:
+                doc = f" — {item['doc']}" if item.get("doc") else ""
+                cat = item.get("node_category")
+                tag = f" [{cat}]" if cat else ""
+                parts.append(f"  - `{item['path']}`{tag}{doc}")
         parts.append("")
 
     if "identifier_links" in sections:

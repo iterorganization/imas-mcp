@@ -256,6 +256,7 @@ class GraphSearchTool:
         physics_domain: str | None = None,
         lifecycle_filter: str | None = None,
         node_category: str | None = None,
+        cocos_transformation_type: str | None = None,
         ctx: Context | None = None,
     ) -> SearchPathsResult:
         """Search IMAS paths using hybrid vector + text search."""
@@ -489,6 +490,18 @@ class GraphSearchTool:
 
         # Index by path ID for score lookup
         enriched_by_id = {r["id"]: r for r in enriched or []}
+
+        # --- COCOS transformation filter (post-enrichment) ---
+        # Applied here rather than in Cypher WHERE so both vector and text
+        # search paths stay simple. The enriched query already fetches
+        # cocos_label_transformation, so no extra round-trip is needed.
+        if cocos_transformation_type:
+            enriched_by_id = {
+                pid: r
+                for pid, r in enriched_by_id.items()
+                if r.get("cocos_label") == cocos_transformation_type
+            }
+            sorted_ids = [pid for pid in sorted_ids if pid in enriched_by_id]
 
         # --- Optional facility cross-references ---
         facility_xrefs: dict[str, dict[str, Any]] = {}
@@ -1056,6 +1069,7 @@ class GraphListTool:
         node_type: str | None = None,
         lifecycle_filter: str | None = None,
         node_category: str | None = None,
+        cocos_transformation_type: str | None = None,
         ctx: Context | None = None,
     ) -> ListPathsResult:
         """List paths from graph."""
@@ -1111,6 +1125,11 @@ class GraphListTool:
             if lifecycle_filter:
                 extra_filters += " AND p.lifecycle_status = $lifecycle_filter"
                 dd_params["lifecycle_filter"] = lifecycle_filter
+            if cocos_transformation_type:
+                extra_filters += (
+                    " AND p.cocos_label_transformation = $cocos_transformation_type"
+                )
+                dd_params["cocos_transformation_type"] = cocos_transformation_type
 
             include_metadata = response_profile != "minimal"
 
@@ -1967,10 +1986,10 @@ class GraphPathContextTool:
     @mcp_tool(
         "Find paths in other IDSs that are related to a given path. "
         "Discovers related paths via shared clusters, coordinates, units, "
-        "and identifier schemas across IDS boundaries. "
+        "identifier schemas, and COCOS transformations across IDS boundaries. "
         "path (required): Exact IMAS path (e.g. 'equilibrium/time_slice/profiles_1d/psi'). "
         "relationship_types: Filter to specific types — 'semantic', 'cluster', 'coordinate', "
-        "'unit', 'identifier', or 'all' (default)."
+        "'unit', 'identifier', 'cocos', or 'all' (default)."
     )
     @handle_errors("find_related_dd_paths")
     async def find_related_dd_paths(
@@ -1986,15 +2005,20 @@ class GraphPathContextTool:
         dd_clause = _dd_version_clause("sibling", dd_version, dd_params)
         sections: dict[str, list[dict[str, Any]]] = {}
 
+        # Exclude noise categories (error fields, metadata subtrees) from all sections.
+        noise_clause = "AND NOT (sibling.node_category IN ['error','metadata'])"
+
         # Cluster siblings — paths in same cluster but different IDS
         if relationship_types in ("all", "cluster"):
             cluster_siblings = self._gc.query(
                 f"""
                 MATCH (p:IMASNode {{id: $path}})-[:IN_CLUSTER]->(cl:IMASSemanticCluster)
                       <-[:IN_CLUSTER]-(sibling:IMASNode)
-                WHERE sibling.ids <> p.ids {dd_clause}
+                WHERE sibling.ids <> p.ids {noise_clause} {dd_clause}
                 RETURN cl.label AS cluster, sibling.id AS path,
-                       sibling.ids AS ids, sibling.documentation AS doc
+                       sibling.ids AS ids,
+                       coalesce(nullIf(sibling.description, ''), sibling.documentation) AS doc,
+                       sibling.node_category AS node_category
                 ORDER BY cl.label, sibling.ids
                 LIMIT $limit
                 """,
@@ -2010,9 +2034,10 @@ class GraphPathContextTool:
                 f"""
                 MATCH (p:IMASNode {{id: $path}})-[:HAS_COORDINATE]->(coord:IMASCoordinateSpec)
                       <-[:HAS_COORDINATE]-(sibling:IMASNode)
-                WHERE sibling.ids <> p.ids {dd_clause}
+                WHERE sibling.ids <> p.ids {noise_clause} {dd_clause}
                 RETURN coord.id AS coordinate, sibling.id AS path,
-                       sibling.ids AS ids, sibling.data_type AS data_type
+                       sibling.ids AS ids, sibling.data_type AS data_type,
+                       sibling.node_category AS node_category
                 ORDER BY coord.id, sibling.ids
                 LIMIT $limit
                 """,
@@ -2022,16 +2047,21 @@ class GraphPathContextTool:
             if coord_partners:
                 sections["coordinate_partners"] = coord_partners
 
-        # Unit companions — paths with same unit in same physics domain
+        # Unit companions — paths sharing the same unit across IDS boundaries.
+        # Note: physics_domain filter previously here collapsed results to zero
+        # for cross-domain unit peers (e.g. psi's Wb siblings live in
+        # transport/magnetic_field_diagnostics/edge — not equilibrium).
         if relationship_types in ("all", "unit"):
             unit_companions = self._gc.query(
                 f"""
                 MATCH (p:IMASNode {{id: $path}})-[:HAS_UNIT]->(u:Unit)
                       <-[:HAS_UNIT]-(sibling:IMASNode)
-                WHERE sibling.ids <> p.ids
-                  AND sibling.physics_domain = p.physics_domain {dd_clause}
+                WHERE sibling.ids <> p.ids {noise_clause} {dd_clause}
                 RETURN u.id AS unit, sibling.id AS path,
-                       sibling.ids AS ids, sibling.documentation AS doc
+                       sibling.ids AS ids,
+                       coalesce(nullIf(sibling.description, ''), sibling.documentation) AS doc,
+                       sibling.node_category AS node_category,
+                       sibling.physics_domain AS physics_domain
                 ORDER BY u.id, sibling.ids
                 LIMIT $limit
                 """,
@@ -2047,7 +2077,7 @@ class GraphPathContextTool:
                 f"""
                 MATCH (p:IMASNode {{id: $path}})-[:HAS_IDENTIFIER_SCHEMA]->(s:IdentifierSchema)
                       <-[:HAS_IDENTIFIER_SCHEMA]-(sibling:IMASNode)
-                WHERE sibling.ids <> p.ids {dd_clause}
+                WHERE sibling.ids <> p.ids {noise_clause} {dd_clause}
                 RETURN s.name AS schema, sibling.id AS path,
                        sibling.ids AS ids
                 ORDER BY s.name
@@ -2058,6 +2088,31 @@ class GraphPathContextTool:
             )
             if ident_links:
                 sections["identifier_links"] = ident_links
+
+        # COCOS kin — peers sharing cocos_label_transformation across IDS.
+        # Only populates when the input path itself has a cocos transformation.
+        if relationship_types in ("all", "cocos"):
+            cocos_kin = self._gc.query(
+                f"""
+                MATCH (p:IMASNode {{id: $path}})
+                WHERE p.cocos_label_transformation IS NOT NULL
+                MATCH (sibling:IMASNode)
+                WHERE sibling.cocos_label_transformation = p.cocos_label_transformation
+                  AND sibling.ids <> p.ids
+                  AND sibling.id <> p.id
+                  {noise_clause} {dd_clause}
+                RETURN p.cocos_label_transformation AS cocos_type,
+                       sibling.id AS path, sibling.ids AS ids,
+                       coalesce(nullIf(sibling.description, ''), sibling.documentation) AS doc,
+                       sibling.node_category AS node_category
+                ORDER BY sibling.ids, sibling.id
+                LIMIT $limit
+                """,
+                **dd_params,
+                limit=max_results,
+            )
+            if cocos_kin:
+                sections["cocos_kin"] = cocos_kin
 
         return {
             "path": path,

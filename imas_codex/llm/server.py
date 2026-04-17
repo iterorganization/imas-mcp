@@ -1035,6 +1035,7 @@ def _init_repl() -> dict[str, Any]:
         max_results: int = 10,
         dd_version: int | None = None,
         node_category: str | None = None,
+        cocos_transformation_type: str | None = None,
     ) -> str:
         """Search IMAS Data Dictionary using semantic search.
 
@@ -1047,6 +1048,7 @@ def _init_repl() -> dict[str, Any]:
             max_results: Maximum results
             dd_version: Filter by DD major version (e.g., 3 or 4)
             node_category: Filter by node category (e.g., "quantity", "geometry", "coordinate"). Default: no filter.
+            cocos_transformation_type: Filter by COCOS transformation type (e.g., "psi_like", "ip_like", "b0_like"). Default: no filter.
 
         Returns:
             Formatted string with matching paths and documentation
@@ -1060,6 +1062,7 @@ def _init_repl() -> dict[str, Any]:
                     max_results=max_results,
                     dd_version=dd_version,
                     node_category=node_category,
+                    cocos_transformation_type=cocos_transformation_type,
                 )
             )
             if not result.hits:
@@ -1101,6 +1104,7 @@ def _init_repl() -> dict[str, Any]:
         max_paths: int = 100,
         dd_version: int | None = None,
         node_category: str | None = None,
+        cocos_transformation_type: str | None = None,
     ) -> str:
         """List data paths in IDS.
 
@@ -1110,6 +1114,7 @@ def _init_repl() -> dict[str, Any]:
             max_paths: Limit output size
             dd_version: Filter by DD major version (e.g., 3 or 4)
             node_category: Filter by node category (e.g., "quantity", "geometry", "coordinate"). Default: no filter.
+            cocos_transformation_type: Filter by COCOS transformation type (e.g., "psi_like", "ip_like"). Default: no filter.
 
         Returns:
             Tree structure in YAML format
@@ -1123,6 +1128,7 @@ def _init_repl() -> dict[str, Any]:
                     max_paths=max_paths,
                     dd_version=dd_version,
                     node_category=node_category,
+                    cocos_transformation_type=cocos_transformation_type,
                 )
             )
             return str(result)
@@ -2496,6 +2502,7 @@ class AgentsServer:
             physics_domain: str | None = None,
             lifecycle_filter: str | None = None,
             node_category: str | None = None,
+            cocos_transformation_type: str | None = None,
         ) -> str:
             """Find IMAS Data Dictionary paths matching a concept. Use when you need to discover which paths store a given physical quantity.
 
@@ -2511,6 +2518,7 @@ class AgentsServer:
                 physics_domain: Filter by physics domain (e.g., "magnetics", "equilibrium", "transport"). Default: no filter.
                 lifecycle_filter: Filter by lifecycle status ('active', 'alpha', 'obsolescent'). Default: no filter.
                 node_category: Filter by node category (e.g., "quantity", "geometry", "coordinate"). Default: no filter.
+                cocos_transformation_type: Filter by COCOS transformation type (e.g., "psi_like", "ip_like", "b0_like"). Default: no filter.
 
             Returns:
                 Formatted text report listing matched paths with types, units, cluster labels, and optional facility cross-references.
@@ -2536,6 +2544,7 @@ class AgentsServer:
                         physics_domain=physics_domain,
                         lifecycle_filter=lifecycle_filter,
                         node_category=node_category,
+                        cocos_transformation_type=cocos_transformation_type,
                     )
                 )
 
@@ -2675,6 +2684,7 @@ class AgentsServer:
             node_type: str | None = None,
             lifecycle_filter: str | None = None,
             node_category: str | None = None,
+            cocos_transformation_type: str | None = None,
         ) -> str:
             """Enumerate all paths under an IDS or subtree. Use to browse the structure of an IDS or discover available fields under a path prefix.
 
@@ -2689,6 +2699,7 @@ class AgentsServer:
                 node_type: Filter by node type ('dynamic', 'static', 'constant'). Default: no filter.
                 lifecycle_filter: Filter by lifecycle status ('active', 'alpha', 'obsolescent'). Default: no filter.
                 node_category: Filter by node category (e.g., "quantity", "geometry", "coordinate"). Default: no filter.
+                cocos_transformation_type: Filter by COCOS transformation type (e.g., "psi_like", "ip_like"). Default: no filter.
 
             Returns:
                 Formatted text listing of paths with their data types.
@@ -2700,13 +2711,15 @@ class AgentsServer:
                 or node_type is not None
                 or lifecycle_filter is not None
                 or node_category is not None
+                or cocos_transformation_type is not None
             ):
                 logger.debug(
-                    "Applying filters: physics_domain=%s node_type=%s lifecycle=%s node_category=%s",
+                    "Applying filters: physics_domain=%s node_type=%s lifecycle=%s node_category=%s cocos=%s",
                     physics_domain,
                     node_type,
                     lifecycle_filter,
                     node_category,
+                    cocos_transformation_type,
                 )
             tools = _get_imas_tools()
             result = _run_async(
@@ -2719,6 +2732,7 @@ class AgentsServer:
                     node_type=node_type,
                     lifecycle_filter=lifecycle_filter,
                     node_category=node_category,
+                    cocos_transformation_type=cocos_transformation_type,
                 )
             )
             return format_list_report(result)
@@ -2815,11 +2829,11 @@ class AgentsServer:
         ) -> str:
             """Find paths in other IDSs that are related to a given path. Use to discover cross-IDS connections — e.g. where the same physical quantity appears in different data structures.
 
-            Combines multiple relationship signals: vector similarity, shared cluster membership, common physics coordinates, matching units+domain, and shared identifier schemas. Generic coordinate matches (e.g. "1...N") are filtered out.
+            Combines multiple relationship signals: vector similarity, shared cluster membership, common physics coordinates, matching units, shared identifier schemas, and shared COCOS transformations. Error and metadata fields are filtered out. Unit matches are no longer restricted to the same physics domain, surfacing cross-domain peers.
 
             Args:
                 path: Exact IMAS path to find relatives for (e.g. "equilibrium/time_slice/profiles_1d/psi").
-                relationship_types: Which relationship types to include — "semantic", "cluster", "coordinate", "unit", "identifier", or "all". Default: "all".
+                relationship_types: Which relationship types to include — "semantic", "cluster", "coordinate", "unit", "identifier", "cocos", or "all". Default: "all".
                 max_results: Maximum results per relationship type. Default: 20.
                 dd_version: Filter by DD major version (3 or 4). Default: latest version.
 
