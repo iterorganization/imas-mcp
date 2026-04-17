@@ -395,11 +395,22 @@ def _strip_unsupported_schema_props(schema: dict) -> dict:
     """Recursively strip JSON Schema properties unsupported by some providers.
 
     Anthropic (via Azure) rejects ``maxItems``, ``minItems``, ``minLength``,
-    ``maxLength`` (on arrays), and ``pattern`` in structured output schemas
-    even with ``strict: false``.  We strip them so the schema works across
-    all providers; our Pydantic parsing still validates these constraints.
+    ``maxLength`` (on arrays), ``pattern``, and ``minimum``/``maximum``
+    (on numbers) in structured output schemas even with ``strict: false``.
+    We strip them so the schema works across all providers; our Pydantic
+    parsing still validates these constraints.
     """
-    unsupported = {"maxItems", "minItems", "minLength", "maxLength", "pattern"}
+    unsupported = {
+        "maxItems",
+        "minItems",
+        "minLength",
+        "maxLength",
+        "pattern",
+        "minimum",
+        "maximum",
+        "exclusiveMinimum",
+        "exclusiveMaximum",
+    }
     cleaned: dict = {}
     for key, value in schema.items():
         if key in unsupported:
