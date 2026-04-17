@@ -61,6 +61,14 @@ class StandardNameBuildState(DiscoveryStateBase):
     # Accumulated results
     stats: dict[str, Any] = field(default_factory=dict)
 
+    # Quality lever tracking (L3, L6, L7)
+    grammar_retries: int = 0
+    grammar_retries_succeeded: int = 0
+    opus_revisions_attempted: int = 0
+    opus_revisions_accepted: int = 0
+    audits_run: int = 0
+    audits_failed: int = 0
+
     # Per-phase progress (observed by display)
     extract_stats: WorkerStats = field(default_factory=WorkerStats)
     compose_stats: WorkerStats = field(default_factory=WorkerStats)

@@ -630,6 +630,119 @@ def _update_sources_after_vocab_gap(
         )
 
 
+# Opus model for L7 borderline revision pass
+_L7_REVISION_MODEL = "openrouter/anthropic/claude-opus-4.6"
+_L7_MIN_REMAINING_BUDGET = 0.50  # Skip L7 if remaining budget < this
+
+
+async def _grammar_retry(
+    original_name: str,
+    parse_error: str,
+    model: str,
+    acall_fn,
+) -> str | None:
+    """L6: Single grammar-failure re-prompt.
+
+    Asks the LLM to revise a name that failed grammar round-trip,
+    providing the parse error and a grammar cheat-sheet fragment.
+
+    Returns the revised name string, or None on failure.
+    """
+    from pydantic import BaseModel, Field
+
+    class GrammarRetryResponse(BaseModel):
+        revised_name: str = Field(
+            description="The revised standard name that passes grammar parsing"
+        )
+        explanation: str = Field(description="Brief explanation of the fix")
+
+    retry_prompt = (
+        f"The standard name `{original_name}` failed grammar parsing with error:\n"
+        f"  {parse_error}\n\n"
+        "Revise ONLY the name to pass the grammar round-trip. Rules:\n"
+        "- Pattern: [subject_][physical_base|geometric_base][_component][_position][_process][_object]\n"
+        "- physical_base is open vocabulary (snake_case physics terms)\n"
+        "- All other segments must use valid grammar tokens\n"
+        "- No abbreviations, no provenance verbs, no unit suffixes\n"
+        "- Return the MINIMAL fix — keep the name as close to the original as possible.\n"
+    )
+
+    try:
+        result, _cost, _tokens = await acall_fn(
+            model=model,
+            messages=[{"role": "user", "content": retry_prompt}],
+            response_model=GrammarRetryResponse,
+            service="standard-names",
+        )
+        return result.revised_name if result else None
+    except Exception:
+        return None
+
+
+async def _opus_revise_candidate(
+    candidate: dict,
+    domain_vocabulary: str,
+    reviewer_themes: list[str],
+    acall_fn,
+) -> str | None:
+    """L7: Revision pass for low-confidence candidates using Opus model.
+
+    Returns revised name string, or None on failure.
+    """
+    from pydantic import BaseModel, Field
+
+    class OpusRevisionResponse(BaseModel):
+        revised_name: str = Field(description="Improved standard name")
+        confidence: float = Field(ge=0, le=1, description="Confidence in the revision")
+        explanation: str = Field(description="Why this revision is better")
+
+    name = candidate.get("id", "")
+    reason = candidate.get("reason", "")
+    description = candidate.get("description", "")
+    original_confidence = candidate.get("confidence", 0.0)
+
+    prompt_parts = [
+        f"A standard name was generated with LOW confidence ({original_confidence:.2f}):",
+        f"  Name: `{name}`",
+        f"  Description: {description}",
+        f"  Reason: {reason}",
+        "",
+        "Revise the name to be more precise, following ISN grammar rules.",
+        "Pattern: [subject_][physical_base|geometric_base][_component][_position][_process][_object]",
+        "",
+    ]
+
+    if domain_vocabulary:
+        prompt_parts.append("Domain vocabulary (prefer these terms):")
+        # Include first 10 lines of vocabulary
+        for line in domain_vocabulary.split("\n")[:10]:
+            prompt_parts.append(f"  {line}")
+        prompt_parts.append("")
+
+    if reviewer_themes:
+        prompt_parts.append("Reviewer feedback themes to address:")
+        for theme in reviewer_themes[:5]:
+            prompt_parts.append(f"  - {theme}")
+        prompt_parts.append("")
+
+    prompt_parts.append(
+        "Return a revised name with improved confidence. Only revise if you can do CLEARLY better."
+    )
+
+    try:
+        result, _cost, _tokens = await acall_fn(
+            model=_L7_REVISION_MODEL,
+            messages=[{"role": "user", "content": "\n".join(prompt_parts)}],
+            response_model=OpusRevisionResponse,
+            service="standard-names",
+        )
+        if result and result.confidence > original_confidence:
+            return result.revised_name
+        return None
+    except Exception:
+        return None
+
+
 async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
     """LLM-generate standard names from extracted batches.
 
@@ -718,6 +831,37 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
                     "sigma_rho_theta_phi"
                 )
 
+    # --- L1: Domain-vocabulary pre-seeding ---
+    # Inject validated domain vocabulary into system prompt context
+    from imas_codex.standard_names.context import build_domain_vocabulary_preseed
+
+    domain_vocab = ""
+    if state.domain_filter:
+        domain_vocab = await asyncio.to_thread(
+            build_domain_vocabulary_preseed, state.domain_filter
+        )
+        if domain_vocab:
+            wlog.info(
+                "L1: Injected domain vocabulary preseed for %s", state.domain_filter
+            )
+    context["domain_vocabulary"] = domain_vocab
+
+    # --- L4: Reviewer-theme extraction ---
+    from imas_codex.standard_names.review.themes import extract_reviewer_themes
+
+    reviewer_themes: list[str] = []
+    if state.domain_filter:
+        reviewer_themes = await asyncio.to_thread(
+            extract_reviewer_themes, state.domain_filter
+        )
+        if reviewer_themes:
+            wlog.info(
+                "L4: Extracted %d reviewer themes for %s",
+                len(reviewer_themes),
+                state.domain_filter,
+            )
+    context["reviewer_themes"] = reviewer_themes
+
     system_prompt = render_prompt("sn/compose_system", context)
 
     wlog.info(
@@ -763,6 +907,34 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
                             cocos_label, batch.cocos_params
                         )
 
+            # --- L2: Reference SN few-shot retrieval ---
+            # Synthesize query from first 3 path descriptions
+            reference_exemplars: list[dict] = []
+            try:
+                from imas_codex.standard_names.search import (
+                    search_similar_sns_with_full_docs,
+                )
+
+                desc_snippets = [
+                    item.get("description", "")
+                    for item in batch.items[:3]
+                    if item.get("description")
+                ]
+                if desc_snippets:
+                    synth_query = "; ".join(desc_snippets)
+                    # Exclude names already in this batch's candidate IDs
+                    batch_ids = [
+                        item.get("path", "").replace("/", "_") for item in batch.items
+                    ]
+                    reference_exemplars = await asyncio.to_thread(
+                        search_similar_sns_with_full_docs,
+                        synth_query,
+                        k=5,
+                        exclude_ids=batch_ids,
+                    )
+            except Exception:
+                wlog.debug("L2: Reference exemplar search failed", exc_info=True)
+
             user_context = {
                 "items": batch.items,
                 "ids_name": batch.group_key,
@@ -770,6 +942,7 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
                 "existing_names": sorted(batch.existing_names)[:200],
                 "cluster_context": batch.context,
                 "nearby_existing_names": nearby,
+                "reference_exemplars": reference_exemplars,
                 "cocos_version": batch.cocos_version,
                 "dd_version": batch.dd_version,
             }
@@ -823,6 +996,7 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
                 # Normalize name via grammar round-trip BEFORE persist
                 # to avoid duplicate nodes if validate would rename
                 name_id = c.standard_name
+                grammar_failed = False
                 try:
                     from imas_standard_names.grammar import (
                         compose_standard_name,
@@ -836,8 +1010,32 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
                             "Pre-persist normalization: %r → %r", name_id, normalized
                         )
                         name_id = normalized
-                except Exception:
-                    wlog.debug("Grammar parse failed for %r — using raw name", name_id)
+                except Exception as gram_exc:
+                    grammar_failed = True
+                    wlog.debug(
+                        "Grammar parse failed for %r — attempting L6 retry", name_id
+                    )
+
+                    # --- L6: Grammar-failure re-prompt (single retry) ---
+                    state.grammar_retries += 1
+                    try:
+                        retry_name = await _grammar_retry(
+                            name_id, str(gram_exc), model, acall_llm_structured
+                        )
+                        if retry_name and retry_name != name_id:
+                            # Verify the retry result actually parses
+                            parsed = parse_standard_name(retry_name)
+                            normalized = compose_standard_name(parsed)
+                            name_id = normalized
+                            grammar_failed = False
+                            state.grammar_retries_succeeded += 1
+                            wlog.info(
+                                "L6: Grammar retry succeeded: %r → %r",
+                                c.standard_name,
+                                name_id,
+                            )
+                    except Exception:
+                        wlog.debug("L6: Grammar retry also failed for %r", name_id)
 
                 candidates.append(
                     {
@@ -865,6 +1063,10 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
                         "cocos_transformation_type": cocos_type,
                         "cocos": batch.cocos_version,
                         "dd_version": batch.dd_version,
+                        # L6: track grammar retry exhaustion
+                        **(
+                            {"_grammar_retry_exhausted": True} if grammar_failed else {}
+                        ),
                     }
                 )
 
@@ -971,6 +1173,58 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
     state.composed = composed
     state.compose_stats.errors = errors
 
+    # --- L7: Borderline-confidence two-pass (Opus revision) ---
+    remaining_budget = (state.cost_limit or float("inf")) - state.total_cost
+    low_confidence = [
+        c
+        for c in composed
+        if c.get("confidence", 1.0) < 0.7 and not c.get("_grammar_retry_exhausted")
+    ][:5]  # Cap at 5 per batch to respect cost budget
+
+    if low_confidence and remaining_budget >= _L7_MIN_REMAINING_BUDGET:
+        wlog.info(
+            "L7: Attempting Opus revision for %d low-confidence candidates",
+            len(low_confidence),
+        )
+        for cand in low_confidence:
+            if state.should_stop():
+                break
+            state.opus_revisions_attempted += 1
+            try:
+                revised = await _opus_revise_candidate(
+                    cand,
+                    domain_vocab,
+                    reviewer_themes,
+                    acall_llm_structured,
+                )
+                if revised and revised != cand.get("id"):
+                    # Verify revised name parses
+                    from imas_standard_names.grammar import (
+                        compose_standard_name as _compose_sn,
+                        parse_standard_name as _parse_sn,
+                    )
+
+                    parsed = _parse_sn(revised)
+                    normalized = _compose_sn(parsed)
+                    # Accept only if self-reported improvement
+                    wlog.info(
+                        "L7: Opus revision accepted: %r → %r",
+                        cand["id"],
+                        normalized,
+                    )
+                    cand["id"] = normalized
+                    state.opus_revisions_accepted += 1
+            except Exception:
+                wlog.debug(
+                    "L7: Opus revision failed for %r", cand.get("id"), exc_info=True
+                )
+    elif low_confidence and remaining_budget < _L7_MIN_REMAINING_BUDGET:
+        wlog.info(
+            "L7: Skipped — remaining budget $%.2f < $%.2f threshold",
+            remaining_budget,
+            _L7_MIN_REMAINING_BUDGET,
+        )
+
     attached = state.stats.get("attachments", 0)
     wlog.info(
         "Composition complete: %d composed, %d attached, %d errors (cost=$%.4f)",
@@ -983,6 +1237,10 @@ async def compose_worker(state: StandardNameBuildState, **_kwargs) -> None:
     state.stats["compose_errors"] = errors
     state.stats["compose_cost"] = state.compose_stats.cost
     state.stats["compose_model"] = model
+    state.stats["grammar_retries"] = state.grammar_retries
+    state.stats["grammar_retries_succeeded"] = state.grammar_retries_succeeded
+    state.stats["opus_revisions_attempted"] = state.opus_revisions_attempted
+    state.stats["opus_revisions_accepted"] = state.opus_revisions_accepted
 
     state.compose_stats.freeze_rate()
     state.compose_phase.mark_done()
@@ -1087,9 +1345,11 @@ def _is_quarantined(issues: list[str], layer_summary: dict) -> bool:
     - Pydantic validation failure (layer 1 did not pass)
     - Empty or missing description (no ``id`` or empty string)
     - Invalid kind value
+    - L3 critical audit failures (latex_def_check, synonym_check, multi_subject_check)
+    - L6 grammar retry exhausted
 
-    Non-critical issues (semantic warnings, description quality hints)
-    do NOT trigger quarantine — they are advisory annotations.
+    Non-critical issues (semantic warnings, description quality hints,
+    non-critical audits) do NOT trigger quarantine — they are advisory.
     """
     # Grammar round-trip failures are always critical
     if any(i.startswith("parse_error:") for i in issues):
@@ -1102,6 +1362,16 @@ def _is_quarantined(issues: list[str], layer_summary: dict) -> bool:
     # Pydantic validation failure (model construction failed)
     pydantic = layer_summary.get("pydantic", {})
     if not pydantic.get("passed", True):
+        return True
+
+    # L6: Grammar retry exhausted
+    if any("audit:grammar_retry_exhausted" in i for i in issues):
+        return True
+
+    # L3: Critical audit failures
+    from imas_codex.standard_names.audits import has_critical_audit_failure
+
+    if has_critical_audit_failure(issues):
         return True
 
     return False
@@ -1200,6 +1470,34 @@ async def validate_worker(state: StandardNameBuildState, **_kwargs) -> None:
                     # ISN three-layer validation (annotate, never reject)
                     issues, layer_summary = _validate_via_isn(entry)
 
+                    # --- L3: Post-gen audits ---
+                    try:
+                        from imas_codex.standard_names.audits import run_audits
+
+                        source_path = None
+                        source_paths = entry.get("source_paths") or []
+                        if source_paths:
+                            # Use first source path for provenance check
+                            source_path = strip_dd_prefix(source_paths[0])
+
+                        audit_issues = run_audits(
+                            candidate=entry,
+                            existing_sns_in_domain=None,  # Synonym check needs embeddings — skip in basic mode
+                            source_path=source_path,
+                            source_cocos_type=entry.get("cocos_transformation_type"),
+                        )
+                        if audit_issues:
+                            issues.extend(audit_issues)
+                        state.audits_run += 1
+                        if audit_issues:
+                            state.audits_failed += 1
+                    except Exception:
+                        wlog.debug("L3: Audit failed for %r", name, exc_info=True)
+
+                    # L6: grammar retry exhausted flag from compose
+                    if entry.get("_grammar_retry_exhausted"):
+                        issues.append("audit:grammar_retry_exhausted")
+
                     results.append(
                         {
                             "id": name,
@@ -1263,6 +1561,8 @@ async def validate_worker(state: StandardNameBuildState, **_kwargs) -> None:
 
     state.stats["validate_valid"] = total_valid
     state.stats["validate_invalid"] = total_invalid
+    state.stats["audits_run"] = state.audits_run
+    state.stats["audits_failed"] = state.audits_failed
     state.validate_stats.errors = total_invalid
     state.validate_stats.freeze_rate()
     state.validate_phase.mark_done()
